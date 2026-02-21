@@ -49,7 +49,7 @@
   "homepage": "https://github.com/optave/codegraph#readme",
   "dependencies": {
     "better-sqlite3": "^11.0.0",
-    "commander": "^12.0.0",
+    "commander": "^14.0.3",
     "web-tree-sitter": "^0.26.5"
   },
   "optionalDependencies": {
