@@ -342,6 +342,22 @@ export async function multiSearchData(queries, customDbPath, opts = {}) {
 
   const { vectors: queryVecs, dim } = await embed(queries, modelKey);
 
+  // Warn about similar queries that may bias RRF results
+  const SIMILARITY_WARN_THRESHOLD = 0.85;
+  for (let i = 0; i < queryVecs.length; i++) {
+    for (let j = i + 1; j < queryVecs.length; j++) {
+      const sim = cosineSim(queryVecs[i], queryVecs[j]);
+      if (sim >= SIMILARITY_WARN_THRESHOLD) {
+        warn(
+          `Queries "${queries[i]}" and "${queries[j]}" are very similar ` +
+          `(${(sim * 100).toFixed(0)}% cosine similarity). ` +
+          `This may bias RRF results toward their shared matches. ` +
+          `Consider using more distinct queries.`
+        );
+      }
+    }
+  }
+
   if (storedDim && dim !== storedDim) {
     console.log(`Warning: query model dimension (${dim}) doesn't match stored embeddings (${storedDim}).`);
     console.log(`  Re-run \`codegraph embed\` with the same model, or use --model to match.`);

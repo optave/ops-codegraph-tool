@@ -108,6 +108,7 @@ beforeAll(() => {
   // Query vectors used by the mocked embed()
   QUERY_VECTORS.set('auth', makeVec([1, 0, 0]));
   QUERY_VECTORS.set('jwt', makeVec([0, 1, 0]));
+  QUERY_VECTORS.set('authenticate', makeVec([0.99, 0.1, 0]));  // very similar to 'auth'
 });
 
 afterAll(() => {
@@ -195,6 +196,23 @@ describe('multiSearchData', () => {
   test('respects limit', async () => {
     const data = await multiSearchData(['auth', 'jwt'], dbPath, { minScore: 0.2, limit: 1 });
     expect(data.results).toHaveLength(1);
+  });
+
+  test('warns when queries are too similar', async () => {
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => {});
+    await multiSearchData(['auth', 'authenticate'], dbPath, { minScore: 0.2 });
+    const output = spy.mock.calls.map(c => c[0]).join('');
+    expect(output).toContain('very similar');
+    expect(output).toContain('bias RRF');
+    spy.mockRestore();
+  });
+
+  test('does not warn when queries are distinct', async () => {
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation(() => {});
+    await multiSearchData(['auth', 'jwt'], dbPath, { minScore: 0.2 });
+    const output = spy.mock.calls.map(c => c[0]).join('');
+    expect(output).not.toContain('very similar');
+    spy.mockRestore();
   });
 });
 
