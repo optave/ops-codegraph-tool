@@ -227,7 +227,8 @@ Add this to your project's `CLAUDE.md` to help AI agents use codegraph:
 ```markdown
 ## Code Navigation
 
-This project has a codegraph database at `.codegraph/graph.db`.
+This project uses codegraph (see Quick Start if not already installed).
+The codegraph database is at `.codegraph/graph.db`.
 
 - **Before modifying a function**: `codegraph fn <name> --no-tests`
 - **Before modifying a file**: `codegraph deps <file>`
