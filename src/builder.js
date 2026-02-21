@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
 import { openDb, initSchema } from './db.js';
-import { createParsers, getParser, extractSymbols, extractHCLSymbols, extractPythonSymbols, extractGoSymbols, extractRustSymbols, extractJavaSymbols } from './parser.js';
+import { createParsers, getParser, extractSymbols, extractHCLSymbols, extractPythonSymbols, extractGoSymbols, extractRustSymbols, extractJavaSymbols, extractCSharpSymbols, extractRubySymbols, extractPHPSymbols } from './parser.js';
 import { IGNORE_DIRS, EXTENSIONS, normalizePath } from './constants.js';
 import { loadConfig } from './config.js';
 import { warn, debug, info } from './logger.js';
@@ -300,11 +300,17 @@ export async function buildGraph(rootDir, opts = {}) {
       const isGo = filePath.endsWith('.go');
       const isRust = filePath.endsWith('.rs');
       const isJava = filePath.endsWith('.java');
+      const isCSharp = filePath.endsWith('.cs');
+      const isRuby = filePath.endsWith('.rb');
+      const isPHP = filePath.endsWith('.php');
       const symbols = isHCL ? extractHCLSymbols(tree, filePath)
         : isPython ? extractPythonSymbols(tree, filePath)
         : isGo ? extractGoSymbols(tree, filePath)
         : isRust ? extractRustSymbols(tree, filePath)
         : isJava ? extractJavaSymbols(tree, filePath)
+        : isCSharp ? extractCSharpSymbols(tree, filePath)
+        : isRuby ? extractRubySymbols(tree, filePath)
+        : isPHP ? extractPHPSymbols(tree, filePath)
         : extractSymbols(tree, filePath);
       fileSymbols.set(relPath, symbols);
 

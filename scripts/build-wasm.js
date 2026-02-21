@@ -31,6 +31,9 @@ const grammars = [
   { name: 'tree-sitter-go', pkg: 'tree-sitter-go', sub: null },
   { name: 'tree-sitter-rust', pkg: 'tree-sitter-rust', sub: null },
   { name: 'tree-sitter-java', pkg: 'tree-sitter-java', sub: null },
+  { name: 'tree-sitter-c-sharp', pkg: 'tree-sitter-c-sharp', sub: null },
+  { name: 'tree-sitter-ruby', pkg: 'tree-sitter-ruby', sub: null },
+  { name: 'tree-sitter-php', pkg: 'tree-sitter-php', sub: 'php' },
 ];
 
 for (const g of grammars) {

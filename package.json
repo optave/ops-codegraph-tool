@@ -60,10 +60,13 @@
     "@tree-sitter-grammars/tree-sitter-hcl": "^1.2.0",
     "@vitest/coverage-v8": "^4.0.18",
     "tree-sitter-cli": "^0.26.5",
+    "tree-sitter-c-sharp": "^0.23.1",
     "tree-sitter-go": "^0.23.4",
     "tree-sitter-java": "^0.23.5",
     "tree-sitter-javascript": "^0.25.0",
+    "tree-sitter-php": "^0.24.2",
     "tree-sitter-python": "^0.25.0",
+    "tree-sitter-ruby": "^0.23.1",
     "tree-sitter-rust": "^0.24.0",
     "tree-sitter-typescript": "^0.23.2",
     "vitest": "^4.0.18"

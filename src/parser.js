@@ -75,7 +75,34 @@ export async function createParsers() {
     warn(`Java parser failed to initialize: ${e.message}. Java files will be skipped.`);
   }
 
-  return { jsParser, tsParser, tsxParser, hclParser, pyParser, goParser, rustParser, javaParser };
+  let csharpParser = null;
+  try {
+    const CSharp = await Language.load(grammarPath('tree-sitter-c_sharp.wasm'));
+    csharpParser = new Parser();
+    csharpParser.setLanguage(CSharp);
+  } catch (e) {
+    warn(`C# parser failed to initialize: ${e.message}. C# files will be skipped.`);
+  }
+
+  let rubyParser = null;
+  try {
+    const Ruby = await Language.load(grammarPath('tree-sitter-ruby.wasm'));
+    rubyParser = new Parser();
+    rubyParser.setLanguage(Ruby);
+  } catch (e) {
+    warn(`Ruby parser failed to initialize: ${e.message}. Ruby files will be skipped.`);
+  }
+
+  let phpParser = null;
+  try {
+    const PHP = await Language.load(grammarPath('tree-sitter-php.wasm'));
+    phpParser = new Parser();
+    phpParser.setLanguage(PHP);
+  } catch (e) {
+    warn(`PHP parser failed to initialize: ${e.message}. PHP files will be skipped.`);
+  }
+
+  return { jsParser, tsParser, tsxParser, hclParser, pyParser, goParser, rustParser, javaParser, csharpParser, rubyParser, phpParser };
 }
 
 export function getParser(parsers, filePath) {
@@ -89,6 +116,9 @@ export function getParser(parsers, filePath) {
   if (filePath.endsWith('.go') && parsers.goParser) return parsers.goParser;
   if (filePath.endsWith('.rs') && parsers.rustParser) return parsers.rustParser;
   if (filePath.endsWith('.java') && parsers.javaParser) return parsers.javaParser;
+  if (filePath.endsWith('.cs') && parsers.csharpParser) return parsers.csharpParser;
+  if (filePath.endsWith('.rb') && parsers.rubyParser) return parsers.rubyParser;
+  if (filePath.endsWith('.php') && parsers.phpParser) return parsers.phpParser;
   return null;
 }
 
@@ -1042,6 +1072,502 @@ export function extractJavaSymbols(tree, filePath) {
         if (typeNode) {
           const typeName = typeNode.type === 'generic_type' ? typeNode.child(0)?.text : typeNode.text;
           if (typeName) calls.push({ name: typeName, line: node.startPosition.row + 1 });
+        }
+        break;
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) walk(node.child(i));
+  }
+
+  walk(tree.rootNode);
+  return { definitions, calls, imports, classes, exports };
+}
+
+/**
+ * Extract symbols from C# files.
+ */
+export function extractCSharpSymbols(tree, filePath) {
+  const definitions = [];
+  const calls = [];
+  const imports = [];
+  const classes = [];
+  const exports = [];
+
+  function findCSharpParentType(node) {
+    let current = node.parent;
+    while (current) {
+      if (current.type === 'class_declaration' || current.type === 'struct_declaration' ||
+          current.type === 'interface_declaration' || current.type === 'enum_declaration' ||
+          current.type === 'record_declaration') {
+        const nameNode = current.childForFieldName('name');
+        return nameNode ? nameNode.text : null;
+      }
+      current = current.parent;
+    }
+    return null;
+  }
+
+  function walk(node) {
+    switch (node.type) {
+      case 'class_declaration': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          definitions.push({ name: nameNode.text, kind: 'class', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+          extractCSharpBaseTypes(node, nameNode.text, classes);
+        }
+        break;
+      }
+
+      case 'struct_declaration': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          definitions.push({ name: nameNode.text, kind: 'class', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+          extractCSharpBaseTypes(node, nameNode.text, classes);
+        }
+        break;
+      }
+
+      case 'record_declaration': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          definitions.push({ name: nameNode.text, kind: 'class', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+          extractCSharpBaseTypes(node, nameNode.text, classes);
+        }
+        break;
+      }
+
+      case 'interface_declaration': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          definitions.push({ name: nameNode.text, kind: 'interface', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+          const body = node.childForFieldName('body');
+          if (body) {
+            for (let i = 0; i < body.childCount; i++) {
+              const child = body.child(i);
+              if (child && child.type === 'method_declaration') {
+                const methName = child.childForFieldName('name');
+                if (methName) {
+                  definitions.push({ name: `${nameNode.text}.${methName.text}`, kind: 'method', line: child.startPosition.row + 1, endLine: child.endPosition.row + 1 });
+                }
+              }
+            }
+          }
+        }
+        break;
+      }
+
+      case 'enum_declaration': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          definitions.push({ name: nameNode.text, kind: 'class', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+        }
+        break;
+      }
+
+      case 'method_declaration': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          const parentType = findCSharpParentType(node);
+          const fullName = parentType ? `${parentType}.${nameNode.text}` : nameNode.text;
+          definitions.push({ name: fullName, kind: 'method', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+        }
+        break;
+      }
+
+      case 'constructor_declaration': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          const parentType = findCSharpParentType(node);
+          const fullName = parentType ? `${parentType}.${nameNode.text}` : nameNode.text;
+          definitions.push({ name: fullName, kind: 'method', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+        }
+        break;
+      }
+
+      case 'property_declaration': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          const parentType = findCSharpParentType(node);
+          const fullName = parentType ? `${parentType}.${nameNode.text}` : nameNode.text;
+          definitions.push({ name: fullName, kind: 'method', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+        }
+        break;
+      }
+
+      case 'using_directive': {
+        // using System.Collections.Generic;
+        const nameNode = node.childForFieldName('name') || findChild(node, 'qualified_name') || findChild(node, 'identifier');
+        if (nameNode) {
+          const fullPath = nameNode.text;
+          const lastName = fullPath.split('.').pop();
+          imports.push({ source: fullPath, names: [lastName], line: node.startPosition.row + 1, csharpUsing: true });
+        }
+        break;
+      }
+
+      case 'invocation_expression': {
+        const fn = node.childForFieldName('function') || node.child(0);
+        if (fn) {
+          if (fn.type === 'identifier') {
+            calls.push({ name: fn.text, line: node.startPosition.row + 1 });
+          } else if (fn.type === 'member_access_expression') {
+            const name = fn.childForFieldName('name');
+            if (name) calls.push({ name: name.text, line: node.startPosition.row + 1 });
+          } else if (fn.type === 'generic_name' || fn.type === 'member_binding_expression') {
+            const name = fn.childForFieldName('name') || fn.child(0);
+            if (name) calls.push({ name: name.text, line: node.startPosition.row + 1 });
+          }
+        }
+        break;
+      }
+
+      case 'object_creation_expression': {
+        const typeNode = node.childForFieldName('type');
+        if (typeNode) {
+          const typeName = typeNode.type === 'generic_name' ? typeNode.childForFieldName('name')?.text || typeNode.child(0)?.text : typeNode.text;
+          if (typeName) calls.push({ name: typeName, line: node.startPosition.row + 1 });
+        }
+        break;
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) walk(node.child(i));
+  }
+
+  walk(tree.rootNode);
+  return { definitions, calls, imports, classes, exports };
+}
+
+function extractCSharpBaseTypes(node, className, classes) {
+  const baseList = node.childForFieldName('bases');
+  if (!baseList) return;
+  for (let i = 0; i < baseList.childCount; i++) {
+    const child = baseList.child(i);
+    if (!child) continue;
+    if (child.type === 'identifier' || child.type === 'qualified_name') {
+      classes.push({ name: className, extends: child.text, line: node.startPosition.row + 1 });
+    } else if (child.type === 'generic_name') {
+      const name = child.childForFieldName('name') || child.child(0);
+      if (name) classes.push({ name: className, extends: name.text, line: node.startPosition.row + 1 });
+    } else if (child.type === 'base_list') {
+      for (let j = 0; j < child.childCount; j++) {
+        const base = child.child(j);
+        if (base && (base.type === 'identifier' || base.type === 'qualified_name')) {
+          classes.push({ name: className, extends: base.text, line: node.startPosition.row + 1 });
+        } else if (base && base.type === 'generic_name') {
+          const name = base.childForFieldName('name') || base.child(0);
+          if (name) classes.push({ name: className, extends: name.text, line: node.startPosition.row + 1 });
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Extract symbols from Ruby files.
+ */
+export function extractRubySymbols(tree, filePath) {
+  const definitions = [];
+  const calls = [];
+  const imports = [];
+  const classes = [];
+  const exports = [];
+
+  function findRubyParentClass(node) {
+    let current = node.parent;
+    while (current) {
+      if (current.type === 'class') {
+        const nameNode = current.childForFieldName('name');
+        return nameNode ? nameNode.text : null;
+      }
+      if (current.type === 'module') {
+        const nameNode = current.childForFieldName('name');
+        return nameNode ? nameNode.text : null;
+      }
+      current = current.parent;
+    }
+    return null;
+  }
+
+  function walk(node) {
+    switch (node.type) {
+      case 'class': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          definitions.push({ name: nameNode.text, kind: 'class', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+          const superclass = node.childForFieldName('superclass');
+          if (superclass) {
+            // superclass wraps the < token and class name
+            for (let i = 0; i < superclass.childCount; i++) {
+              const child = superclass.child(i);
+              if (child && (child.type === 'constant' || child.type === 'scope_resolution')) {
+                classes.push({ name: nameNode.text, extends: child.text, line: node.startPosition.row + 1 });
+                break;
+              }
+            }
+            // Direct superclass node may be a constant
+            if (superclass.type === 'superclass') {
+              for (let i = 0; i < superclass.childCount; i++) {
+                const child = superclass.child(i);
+                if (child && (child.type === 'constant' || child.type === 'scope_resolution')) {
+                  classes.push({ name: nameNode.text, extends: child.text, line: node.startPosition.row + 1 });
+                  break;
+                }
+              }
+            }
+          }
+        }
+        break;
+      }
+
+      case 'module': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          definitions.push({ name: nameNode.text, kind: 'class', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+        }
+        break;
+      }
+
+      case 'method': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          const parentClass = findRubyParentClass(node);
+          const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
+          definitions.push({ name: fullName, kind: 'method', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+        }
+        break;
+      }
+
+      case 'singleton_method': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          const parentClass = findRubyParentClass(node);
+          const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
+          definitions.push({ name: fullName, kind: 'function', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+        }
+        break;
+      }
+
+      case 'call': {
+        const methodNode = node.childForFieldName('method');
+        if (methodNode) {
+          // Check for require/require_relative
+          if (methodNode.text === 'require' || methodNode.text === 'require_relative') {
+            const args = node.childForFieldName('arguments');
+            if (args) {
+              for (let i = 0; i < args.childCount; i++) {
+                const arg = args.child(i);
+                if (arg && (arg.type === 'string' || arg.type === 'string_content')) {
+                  const strContent = arg.text.replace(/^['"]|['"]$/g, '');
+                  imports.push({ source: strContent, names: [strContent.split('/').pop()], line: node.startPosition.row + 1, rubyRequire: true });
+                  break;
+                }
+                // Look inside string for string_content
+                if (arg && arg.type === 'string') {
+                  const content = findChild(arg, 'string_content');
+                  if (content) {
+                    imports.push({ source: content.text, names: [content.text.split('/').pop()], line: node.startPosition.row + 1, rubyRequire: true });
+                    break;
+                  }
+                }
+              }
+            }
+          } else if (methodNode.text === 'include' || methodNode.text === 'extend' || methodNode.text === 'prepend') {
+            // Module inclusion — treated like implements
+            const parentClass = findRubyParentClass(node);
+            if (parentClass) {
+              const args = node.childForFieldName('arguments');
+              if (args) {
+                for (let i = 0; i < args.childCount; i++) {
+                  const arg = args.child(i);
+                  if (arg && (arg.type === 'constant' || arg.type === 'scope_resolution')) {
+                    classes.push({ name: parentClass, implements: arg.text, line: node.startPosition.row + 1 });
+                  }
+                }
+              }
+            }
+          } else {
+            calls.push({ name: methodNode.text, line: node.startPosition.row + 1 });
+          }
+        }
+        break;
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) walk(node.child(i));
+  }
+
+  walk(tree.rootNode);
+  return { definitions, calls, imports, classes, exports };
+}
+
+/**
+ * Extract symbols from PHP files.
+ */
+export function extractPHPSymbols(tree, filePath) {
+  const definitions = [];
+  const calls = [];
+  const imports = [];
+  const classes = [];
+  const exports = [];
+
+  function findPHPParentClass(node) {
+    let current = node.parent;
+    while (current) {
+      if (current.type === 'class_declaration' || current.type === 'trait_declaration' || current.type === 'enum_declaration') {
+        const nameNode = current.childForFieldName('name');
+        return nameNode ? nameNode.text : null;
+      }
+      current = current.parent;
+    }
+    return null;
+  }
+
+  function walk(node) {
+    switch (node.type) {
+      case 'function_definition': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          definitions.push({ name: nameNode.text, kind: 'function', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+        }
+        break;
+      }
+
+      case 'class_declaration': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          definitions.push({ name: nameNode.text, kind: 'class', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+
+          // Check base clause (extends)
+          const baseClause = node.childForFieldName('base_clause') || findChild(node, 'base_clause');
+          if (baseClause) {
+            for (let i = 0; i < baseClause.childCount; i++) {
+              const child = baseClause.child(i);
+              if (child && (child.type === 'name' || child.type === 'qualified_name')) {
+                classes.push({ name: nameNode.text, extends: child.text, line: node.startPosition.row + 1 });
+                break;
+              }
+            }
+          }
+
+          // Check class interface clause (implements)
+          const interfaceClause = findChild(node, 'class_interface_clause');
+          if (interfaceClause) {
+            for (let i = 0; i < interfaceClause.childCount; i++) {
+              const child = interfaceClause.child(i);
+              if (child && (child.type === 'name' || child.type === 'qualified_name')) {
+                classes.push({ name: nameNode.text, implements: child.text, line: node.startPosition.row + 1 });
+              }
+            }
+          }
+        }
+        break;
+      }
+
+      case 'interface_declaration': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          definitions.push({ name: nameNode.text, kind: 'interface', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+          const body = node.childForFieldName('body');
+          if (body) {
+            for (let i = 0; i < body.childCount; i++) {
+              const child = body.child(i);
+              if (child && child.type === 'method_declaration') {
+                const methName = child.childForFieldName('name');
+                if (methName) {
+                  definitions.push({ name: `${nameNode.text}.${methName.text}`, kind: 'method', line: child.startPosition.row + 1, endLine: child.endPosition.row + 1 });
+                }
+              }
+            }
+          }
+        }
+        break;
+      }
+
+      case 'trait_declaration': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          definitions.push({ name: nameNode.text, kind: 'interface', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+        }
+        break;
+      }
+
+      case 'enum_declaration': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          definitions.push({ name: nameNode.text, kind: 'class', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+        }
+        break;
+      }
+
+      case 'method_declaration': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          const parentClass = findPHPParentClass(node);
+          const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
+          definitions.push({ name: fullName, kind: 'method', line: node.startPosition.row + 1, endLine: nodeEndLine(node) });
+        }
+        break;
+      }
+
+      case 'namespace_use_declaration': {
+        // use App\Models\User;
+        for (let i = 0; i < node.childCount; i++) {
+          const child = node.child(i);
+          if (child && child.type === 'namespace_use_clause') {
+            const nameNode = findChild(child, 'qualified_name') || findChild(child, 'name');
+            if (nameNode) {
+              const fullPath = nameNode.text;
+              const lastName = fullPath.split('\\').pop();
+              const alias = child.childForFieldName('alias');
+              imports.push({ source: fullPath, names: [alias ? alias.text : lastName], line: node.startPosition.row + 1, phpUse: true });
+            }
+          }
+          // Single use clause without wrapper
+          if (child && (child.type === 'qualified_name' || child.type === 'name')) {
+            const fullPath = child.text;
+            const lastName = fullPath.split('\\').pop();
+            imports.push({ source: fullPath, names: [lastName], line: node.startPosition.row + 1, phpUse: true });
+          }
+        }
+        break;
+      }
+
+      case 'function_call_expression': {
+        const fn = node.childForFieldName('function') || node.child(0);
+        if (fn) {
+          if (fn.type === 'name' || fn.type === 'identifier') {
+            calls.push({ name: fn.text, line: node.startPosition.row + 1 });
+          } else if (fn.type === 'qualified_name') {
+            const parts = fn.text.split('\\');
+            calls.push({ name: parts[parts.length - 1], line: node.startPosition.row + 1 });
+          }
+        }
+        break;
+      }
+
+      case 'member_call_expression': {
+        const name = node.childForFieldName('name');
+        if (name) {
+          calls.push({ name: name.text, line: node.startPosition.row + 1 });
+        }
+        break;
+      }
+
+      case 'scoped_call_expression': {
+        const name = node.childForFieldName('name');
+        if (name) {
+          calls.push({ name: name.text, line: node.startPosition.row + 1 });
+        }
+        break;
+      }
+
+      case 'object_creation_expression': {
+        const classNode = node.child(1); // skip 'new' keyword
+        if (classNode && (classNode.type === 'name' || classNode.type === 'qualified_name')) {
+          const parts = classNode.text.split('\\');
+          calls.push({ name: parts[parts.length - 1], line: node.startPosition.row + 1 });
         }
         break;
       }
