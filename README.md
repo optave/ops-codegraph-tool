@@ -23,6 +23,7 @@
   <a href="#-commands">Commands</a> •
   <a href="#-language-support">Languages</a> •
   <a href="#-ai-agent-integration">AI Integration</a> •
+  <a href="#-recommended-practices">Practices</a> •
   <a href="#-ci--github-actions">CI/CD</a> •
   <a href="#-contributing">Contributing</a>
 </p>
@@ -293,6 +294,15 @@ The codegraph database is at `.codegraph/graph.db`.
 
 Rebuild after major structural changes: `codegraph build`
 ```
+
+## 📋 Recommended Practices
+
+See **[docs/recommended-practices.md](docs/recommended-practices.md)** for integration guides:
+
+- **Git hooks** — auto-rebuild on commit, impact checks on push, commit message enrichment
+- **CI/CD** — PR impact comments, threshold gates, graph caching
+- **AI agents** — MCP server, CLAUDE.md templates, Claude Code hooks
+- **Developer workflow** — watch mode, explore-before-you-edit, semantic search
 
 ## 🔁 CI / GitHub Actions
 
