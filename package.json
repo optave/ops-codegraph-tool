@@ -65,5 +65,5 @@
     "tree-sitter-typescript": "^0.23.2",
     "vitest": "^3.0.0"
   },
-  "license": "MIT"
+  "license": "Apache-2.0"
 }

@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/codegraph"><img src="https://img.shields.io/npm/v/codegraph?style=flat-square&logo=npm&logoColor=white&label=npm" alt="npm version" /></a>
-  <a href="https://github.com/optave/codegraph/blob/main/LICENSE"><img src="https://img.shields.io/github/license/optave/codegraph?style=flat-square&logo=opensourceinitiative&logoColor=white" alt="MIT License" /></a>
+  <a href="https://github.com/optave/codegraph/blob/main/LICENSE"><img src="https://img.shields.io/github/license/optave/codegraph?style=flat-square&logo=opensourceinitiative&logoColor=white" alt="Apache-2.0 License" /></a>
   <a href="https://github.com/optave/codegraph/actions"><img src="https://img.shields.io/github/actions/workflow/status/optave/codegraph/codegraph-impact.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI" alt="CI" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D20-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node >= 20" />
   <img src="https://img.shields.io/badge/platform-local%20only-important?style=flat-square&logo=shield&logoColor=white" alt="Local Only" />
@@ -114,12 +114,26 @@ codegraph cycles --functions   # Function-level cycles
 
 ### Semantic Search
 
+Codegraph can build local embeddings for every function, method, and class, then search them by natural language. Everything runs locally using [@huggingface/transformers](https://huggingface.co/docs/transformers.js) — no API keys needed.
+
 ```bash
-codegraph embed                # Build embeddings (requires prior build)
-codegraph search "handle authentication"  # Natural language search
+codegraph embed                # Build embeddings (default: minilm)
+codegraph embed --model nomic  # Use a different model
+codegraph search "handle authentication"
 codegraph search "parse config" --min-score 0.4 -n 10
-codegraph models               # List available embedding models
+codegraph models               # List available models
 ```
+
+#### Available Models
+
+| Flag | Model | Dimensions | Size | License | Notes |
+|---|---|---|---|---|---|
+| `minilm` (default) | all-MiniLM-L6-v2 | 384 | ~23 MB | Apache-2.0 | Fastest, good for quick iteration |
+| `jina-small` | jina-embeddings-v2-small-en | 512 | ~33 MB | Apache-2.0 | Better quality, still small |
+| `jina-base` | jina-embeddings-v2-base-en | 768 | ~137 MB | Apache-2.0 | High quality, 8192 token context |
+| `nomic` | nomic-embed-text-v1 | 768 | ~137 MB | Apache-2.0 | Best quality, 8192 context |
+
+The model used during `embed` is stored in the database, so `search` auto-detects it — no need to pass `--model` when searching.
 
 ### AI Integration
 
@@ -288,7 +302,7 @@ npm test                # run tests with vitest
 
 ## 📄 License
 
-[MIT](LICENSE) — use it however you want.
+[Apache-2.0](LICENSE)
 
 ---
 
