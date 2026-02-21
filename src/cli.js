@@ -202,6 +202,7 @@ program
   .option('--min-score <score>', 'Minimum similarity threshold', '0.2')
   .option('-k, --kind <kind>', 'Filter by kind: function, method, class')
   .option('--file <pattern>', 'Filter by file path pattern')
+  .option('--rrf-k <number>', 'RRF k parameter for multi-query ranking', '60')
   .action(async (query, opts) => {
     await search(query, opts.db, {
       limit: parseInt(opts.limit),
@@ -209,7 +210,8 @@ program
       minScore: parseFloat(opts.minScore),
       model: opts.model,
       kind: opts.kind,
-      filePattern: opts.file
+      filePattern: opts.file,
+      rrfK: parseInt(opts.rrfK)
     });
   });
 
