@@ -24,7 +24,7 @@ export { exportDOT, exportMermaid, exportJSON } from './export.js';
 export { findCycles, formatCycles } from './cycles.js';
 
 // Embeddings
-export { buildEmbeddings, search, embed, cosineSim, MODELS, DEFAULT_MODEL } from './embedder.js';
+export { buildEmbeddings, search, searchData, multiSearchData, embed, cosineSim, MODELS, DEFAULT_MODEL } from './embedder.js';
 
 // Database utilities
 export { openDb, initSchema, findDbPath, openReadonlyOrFail } from './db.js';

@@ -219,13 +219,10 @@ export async function buildEmbeddings(rootDir, modelKey) {
 }
 
 /**
- * Semantic search with pre-filter support to reduce the search space.
+ * Shared setup for search functions: opens DB, validates embeddings/model, loads rows.
+ * Returns { db, rows, modelKey, storedDim } or null on failure (prints error).
  */
-export async function search(query, customDbPath, opts = {}) {
-  const limit = opts.limit || 15;
-  const noTests = opts.noTests || false;
-  const minScore = opts.minScore || 0.2;
-
+function _prepareSearch(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
 
   let count;
@@ -234,12 +231,12 @@ export async function search(query, customDbPath, opts = {}) {
   } catch {
     console.log('No embeddings table found. Run `codegraph embed` first.');
     db.close();
-    return;
+    return null;
   }
   if (count === 0) {
     console.log('No embeddings found. Run `codegraph embed` first.');
     db.close();
-    return;
+    return null;
   }
 
   let storedModel = null;
@@ -258,16 +255,8 @@ export async function search(query, customDbPath, opts = {}) {
     }
   }
 
-  const { vectors: [queryVec], dim } = await embed([query], modelKey);
-
-  if (storedDim && dim !== storedDim) {
-    console.log(`Warning: query model dimension (${dim}) doesn't match stored embeddings (${storedDim}).`);
-    console.log(`  Re-run \`codegraph embed\` with the same model, or use --model to match.`);
-    db.close();
-    return;
-  }
-
   // Pre-filter: allow filtering by kind or file pattern to reduce search space
+  const noTests = opts.noTests || false;
   const TEST_PATTERN = /\.(test|spec)\.|__test__|__tests__|\.stories\./;
   let sql = `
     SELECT e.node_id, e.vector, e.text_preview, n.name, n.kind, n.file, n.line
@@ -288,12 +277,37 @@ export async function search(query, customDbPath, opts = {}) {
     sql += ' WHERE ' + conditions.join(' AND ');
   }
 
-  const rows = db.prepare(sql).all(...params);
+  let rows = db.prepare(sql).all(...params);
+  if (noTests) {
+    rows = rows.filter(row => !TEST_PATTERN.test(row.file));
+  }
+
+  return { db, rows, modelKey, storedDim };
+}
+
+/**
+ * Single-query semantic search — returns data instead of printing.
+ * Returns { results: [{ name, kind, file, line, similarity }] } or null on failure.
+ */
+export async function searchData(query, customDbPath, opts = {}) {
+  const limit = opts.limit || 15;
+  const minScore = opts.minScore || 0.2;
+
+  const prepared = _prepareSearch(customDbPath, opts);
+  if (!prepared) return null;
+  const { db, rows, modelKey, storedDim } = prepared;
+
+  const { vectors: [queryVec], dim } = await embed([query], modelKey);
+
+  if (storedDim && dim !== storedDim) {
+    console.log(`Warning: query model dimension (${dim}) doesn't match stored embeddings (${storedDim}).`);
+    console.log(`  Re-run \`codegraph embed\` with the same model, or use --model to match.`);
+    db.close();
+    return null;
+  }
 
   const results = [];
   for (const row of rows) {
-    if (noTests && TEST_PATTERN.test(row.file)) continue;
-
     const vec = new Float32Array(new Uint8Array(row.vector).buffer);
     const sim = cosineSim(queryVec, vec);
 
@@ -309,22 +323,135 @@ export async function search(query, customDbPath, opts = {}) {
   }
 
   results.sort((a, b) => b.similarity - a.similarity);
+  db.close();
+  return { results: results.slice(0, limit) };
+}
 
-  console.log(`\nSemantic search: "${query}"\n`);
+/**
+ * Multi-query semantic search with Reciprocal Rank Fusion (RRF).
+ * Returns { results: [{ name, kind, file, line, rrf, queryScores }] } or null on failure.
+ */
+export async function multiSearchData(queries, customDbPath, opts = {}) {
+  const limit = opts.limit || 15;
+  const minScore = opts.minScore || 0.2;
+  const k = opts.rrfK || 60;
 
-  const topResults = results.slice(0, limit);
-  if (topResults.length === 0) {
-    console.log('  No results above threshold.');
-  } else {
-    for (const r of topResults) {
-      const bar = '#'.repeat(Math.round(r.similarity * 20));
-      const kindIcon = r.kind === 'function' ? 'f' : r.kind === 'class' ? '*' : 'o';
-      console.log(`  ${(r.similarity * 100).toFixed(1)}% ${bar}`);
-      console.log(`    ${kindIcon} ${r.name} -- ${r.file}:${r.line}`);
+  const prepared = _prepareSearch(customDbPath, opts);
+  if (!prepared) return null;
+  const { db, rows, modelKey, storedDim } = prepared;
+
+  const { vectors: queryVecs, dim } = await embed(queries, modelKey);
+
+  if (storedDim && dim !== storedDim) {
+    console.log(`Warning: query model dimension (${dim}) doesn't match stored embeddings (${storedDim}).`);
+    console.log(`  Re-run \`codegraph embed\` with the same model, or use --model to match.`);
+    db.close();
+    return null;
+  }
+
+  // Parse row vectors once
+  const rowVecs = rows.map(row => new Float32Array(new Uint8Array(row.vector).buffer));
+
+  // For each query: compute similarities, filter by minScore, rank
+  const perQueryRanked = queries.map((query, qi) => {
+    const scored = [];
+    for (let ri = 0; ri < rows.length; ri++) {
+      const sim = cosineSim(queryVecs[qi], rowVecs[ri]);
+      if (sim >= minScore) {
+        scored.push({ rowIndex: ri, similarity: sim });
+      }
+    }
+    scored.sort((a, b) => b.similarity - a.similarity);
+    // Assign 1-indexed ranks
+    return scored.map((item, rank) => ({ ...item, rank: rank + 1 }));
+  });
+
+  // Fuse results using RRF: for each unique row, sum 1/(k + rank_i) across queries
+  const fusionMap = new Map(); // rowIndex -> { rrfScore, queryScores[] }
+  for (let qi = 0; qi < queries.length; qi++) {
+    for (const item of perQueryRanked[qi]) {
+      if (!fusionMap.has(item.rowIndex)) {
+        fusionMap.set(item.rowIndex, { rrfScore: 0, queryScores: [] });
+      }
+      const entry = fusionMap.get(item.rowIndex);
+      entry.rrfScore += 1 / (k + item.rank);
+      entry.queryScores.push({
+        query: queries[qi],
+        similarity: item.similarity,
+        rank: item.rank
+      });
     }
   }
 
-  console.log(`\n  ${results.length} results total (showing top ${topResults.length})\n`);
+  // Build results sorted by RRF score
+  const results = [];
+  for (const [rowIndex, entry] of fusionMap) {
+    const row = rows[rowIndex];
+    results.push({
+      name: row.name,
+      kind: row.kind,
+      file: row.file,
+      line: row.line,
+      rrf: entry.rrfScore,
+      queryScores: entry.queryScores
+    });
+  }
+
+  results.sort((a, b) => b.rrf - a.rrf);
   db.close();
+  return { results: results.slice(0, limit) };
+}
+
+/**
+ * Semantic search with pre-filter support — CLI wrapper with multi-query detection.
+ */
+export async function search(query, customDbPath, opts = {}) {
+  // Split by semicolons, trim, filter empties
+  const queries = query.split(';').map(q => q.trim()).filter(q => q.length > 0);
+
+  if (queries.length <= 1) {
+    // Single-query path — preserve original output format
+    const singleQuery = queries[0] || query;
+    const data = await searchData(singleQuery, customDbPath, opts);
+    if (!data) return;
+
+    console.log(`\nSemantic search: "${singleQuery}"\n`);
+
+    if (data.results.length === 0) {
+      console.log('  No results above threshold.');
+    } else {
+      for (const r of data.results) {
+        const bar = '#'.repeat(Math.round(r.similarity * 20));
+        const kindIcon = r.kind === 'function' ? 'f' : r.kind === 'class' ? '*' : 'o';
+        console.log(`  ${(r.similarity * 100).toFixed(1)}% ${bar}`);
+        console.log(`    ${kindIcon} ${r.name} -- ${r.file}:${r.line}`);
+      }
+    }
+
+    console.log(`\n  ${data.results.length} results shown\n`);
+  } else {
+    // Multi-query path — RRF ranking
+    const data = await multiSearchData(queries, customDbPath, opts);
+    if (!data) return;
+
+    console.log(`\nMulti-query semantic search (RRF, k=${opts.rrfK || 60}):`);
+    queries.forEach((q, i) => console.log(`  [${i + 1}] "${q}"`));
+    console.log();
+
+    if (data.results.length === 0) {
+      console.log('  No results above threshold.');
+    } else {
+      for (const r of data.results) {
+        const kindIcon = r.kind === 'function' ? 'f' : r.kind === 'class' ? '*' : 'o';
+        console.log(`  RRF ${r.rrf.toFixed(4)}  ${kindIcon} ${r.name} -- ${r.file}:${r.line}`);
+        for (const qs of r.queryScores) {
+          const bar = '#'.repeat(Math.round(qs.similarity * 20));
+          console.log(`    [${queries.indexOf(qs.query) + 1}] ${(qs.similarity * 100).toFixed(1)}% ${bar} (rank ${qs.rank})`);
+        }
+      }
+    }
+
+    console.log(`\n  ${data.results.length} results shown\n`);
+  }
 }
 
