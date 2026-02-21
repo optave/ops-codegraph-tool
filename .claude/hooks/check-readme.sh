@@ -1,5 +1,5 @@
 #!/bin/bash
-# Hook: block git commit if README.md might need updating but isn't staged.
+# Hook: block git commit if README.md or CLAUDE.md might need updating but aren't staged.
 # Runs as a PreToolUse hook on Bash tool calls.
 
 INPUT=$(cat)
@@ -10,32 +10,33 @@ if ! echo "$COMMAND" | grep -qE '^\s*git\s+commit'; then
   exit 0
 fi
 
-# Check if README.md is staged
-README_STAGED=$(git diff --cached --name-only 2>/dev/null | grep -c '^README.md$')
+# Check which docs are staged
+STAGED_FILES=$(git diff --cached --name-only 2>/dev/null)
+README_STAGED=$(echo "$STAGED_FILES" | grep -c '^README.md$' || true)
+CLAUDE_STAGED=$(echo "$STAGED_FILES" | grep -c '^CLAUDE.md$' || true)
 
-if [ "$README_STAGED" -gt 0 ]; then
-  # README is staged, all good
+# If both are staged, all good
+if [ "$README_STAGED" -gt 0 ] && [ "$CLAUDE_STAGED" -gt 0 ]; then
   exit 0
 fi
-
-# Check if there are any staged files that might warrant a README update
-# (new language support, new commands, new features, config changes)
-STAGED_FILES=$(git diff --cached --name-only 2>/dev/null)
 
 # Heuristic: flag if source files, constants, or parser files changed
 NEEDS_CHECK=$(echo "$STAGED_FILES" | grep -cE '(src/|cli\.js|constants\.js|parser\.js|package\.json|grammars/)' || true)
 
 if [ "$NEEDS_CHECK" -gt 0 ]; then
-  # Don't block, but inject context so Claude checks README
-  jq -n '{
+  MISSING=""
+  [ "$README_STAGED" -eq 0 ] && MISSING="README.md"
+  [ "$CLAUDE_STAGED" -eq 0 ] && MISSING="${MISSING:+$MISSING and }CLAUDE.md"
+
+  jq -n --arg missing "$MISSING" '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
-      permissionDecisionReason: "README.md is not staged but source files were changed. Review whether README.md needs updating (language support table, feature list, command docs, etc.) before committing. If README truly does not need changes, re-run the commit with README check acknowledged."
+      permissionDecisionReason: ($missing + " not staged but source files were changed. Review whether these docs need updating — README.md (language support table, feature list, command docs) and CLAUDE.md (architecture table, supported languages, key design decisions). If they truly do not need changes, re-run the commit with docs check acknowledged.")
     }
   }'
   exit 0
 fi
 
-# Non-source changes (tests only, docs, etc.) — allow without README
+# Non-source changes (tests only, docs, etc.) — allow without doc updates
 exit 0
