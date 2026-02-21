@@ -363,6 +363,8 @@ npm install --legacy-peer-deps
 npm test                # run tests with vitest
 ```
 
+The `.wasm` grammar files in `grammars/` are pre-built and committed. If you upgrade a grammar devDependency, rebuild them with `npm run build:wasm`.
+
 1. Fork the repo
 2. Create your feature branch (`git checkout -b feat/amazing-feature`)
 3. Commit your changes
