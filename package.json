@@ -61,7 +61,7 @@
     "@vitest/coverage-v8": "^4.0.18",
     "tree-sitter-cli": "^0.26.5",
     "tree-sitter-javascript": "^0.23.1",
-    "tree-sitter-python": "^0.23.6",
+    "tree-sitter-python": "^0.25.0",
     "tree-sitter-typescript": "^0.23.2",
     "vitest": "^4.0.18"
   },
