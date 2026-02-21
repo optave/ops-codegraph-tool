@@ -47,7 +47,7 @@ Most dependency graph tools only tell you which **files** import which — codeg
 | Capability | codegraph | Madge | dep-cruiser | Skott | Nx graph | Sourcetrail |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
 | Function-level analysis | **Yes** | — | — | — | — | **Yes** |
-| Multi-language | **7** | 1 | 1 | 1 | Any (project) | 4 |
+| Multi-language | **10** | 1 | 1 | 1 | Any (project) | 4 |
 | Semantic search | **Yes** | — | — | — | — | — |
 | MCP / AI agent support | **Yes** | — | — | — | — | — |
 | Git diff impact | **Yes** | — | — | — | Partial | — |
@@ -64,7 +64,7 @@ Most dependency graph tools only tell you which **files** import which — codeg
 | | Differentiator | In practice |
 |---|---|---|
 | **🔬** | **Function-level, not just files** | Traces `handleAuth()` → `validateToken()` → `decryptJWT()` and shows 14 callers across 9 files break if `decryptJWT` changes |
-| **🌐** | **Multi-language, one CLI** | JS/TS + Python + Go + Rust + Java + Terraform in a single graph — no juggling Madge, pyan, and cflow |
+| **🌐** | **Multi-language, one CLI** | JS/TS + Python + Go + Rust + Java + C# + PHP + Ruby + Terraform in a single graph — no juggling Madge, pyan, and cflow |
 | **🤖** | **AI-agent ready** | Built-in [MCP server](https://modelcontextprotocol.io/) — AI assistants query your graph directly via `codegraph fn <name>` |
 | **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — ships with a GitHub Actions workflow |
 | **🔒** | **Fully local, zero telemetry** | No accounts, no API keys, no cloud, no data exfiltration — Apache-2.0, free forever |
@@ -236,6 +236,9 @@ codegraph mcp                  # Start MCP server for AI assistants
 | ![Go](https://img.shields.io/badge/-Go-00ADD8?style=flat-square&logo=go&logoColor=white) | `.go` | Functions, methods, structs, interfaces, imports, call sites |
 | ![Rust](https://img.shields.io/badge/-Rust-000000?style=flat-square&logo=rust&logoColor=white) | `.rs` | Functions, methods, structs, traits, `use` imports, call sites |
 | ![Java](https://img.shields.io/badge/-Java-ED8B00?style=flat-square&logo=openjdk&logoColor=white) | `.java` | Classes, methods, constructors, interfaces, imports, call sites |
+| ![C#](https://img.shields.io/badge/-C%23-512BD4?style=flat-square&logo=dotnet&logoColor=white) | `.cs` | Classes, structs, records, interfaces, enums, methods, constructors, using directives, invocations |
+| ![PHP](https://img.shields.io/badge/-PHP-777BB4?style=flat-square&logo=php&logoColor=white) | `.php` | Functions, classes, interfaces, traits, enums, methods, namespace use, calls |
+| ![Ruby](https://img.shields.io/badge/-Ruby-CC342D?style=flat-square&logo=ruby&logoColor=white) | `.rb` | Classes, modules, methods, singleton methods, require/require_relative, include/extend |
 | ![Terraform](https://img.shields.io/badge/-Terraform-844FBA?style=flat-square&logo=terraform&logoColor=white) | `.tf`, `.hcl` | Resource, data, variable, module, output blocks |
 
 ## ⚙️ How It Works
