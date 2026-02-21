@@ -39,12 +39,13 @@ npm link
 
 ---
 
-## 4. Publish to npm (Optional)
+## 4. Publish to npm
 
-When ready to publish:
+The package is published as [`@optave/codegraph`](https://www.npmjs.com/package/@optave/codegraph).
 
-1. Verify the package name is available: `npm search codegraph`
-   - If taken, consider scoping: change `"name"` to `"@optave/codegraph"` in package.json
+To publish a new version:
+
+1. Bump the version: `npm version patch` (or `minor` / `major`)
 2. Dry run: `npm publish --dry-run`
 3. Publish: `npm publish --access public`
 

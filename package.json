@@ -1,5 +1,5 @@
 {
-  "name": "codegraph",
+  "name": "@optave/codegraph",
   "version": "1.1.0",
   "description": "Local code graph CLI — parse codebases with tree-sitter, build dependency graphs, query them",
   "type": "module",

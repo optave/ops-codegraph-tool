@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/codegraph"><img src="https://img.shields.io/npm/v/codegraph?style=flat-square&logo=npm&logoColor=white&label=npm" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/@optave/codegraph"><img src="https://img.shields.io/npm/v/@optave/codegraph?style=flat-square&logo=npm&logoColor=white&label=npm" alt="npm version" /></a>
   <a href="https://github.com/optave/codegraph/blob/main/LICENSE"><img src="https://img.shields.io/github/license/optave/codegraph?style=flat-square&logo=opensourceinitiative&logoColor=white" alt="Apache-2.0 License" /></a>
   <a href="https://github.com/optave/codegraph/actions"><img src="https://img.shields.io/github/actions/workflow/status/optave/codegraph/codegraph-impact.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI" alt="CI" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D20-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node >= 20" />
@@ -37,7 +37,10 @@
 ## 🚀 Quick Start
 
 ```bash
-# Install
+# Install from npm
+npm install -g @optave/codegraph
+
+# Or install from source
 git clone https://github.com/optave/codegraph.git
 cd codegraph
 npm install
@@ -268,7 +271,7 @@ Create a `.codegraphrc.json` in your project root to customize behavior:
 Codegraph also exports a full API for use in your own tools:
 
 ```js
-import { buildGraph, queryNameData, findCycles, exportDOT } from 'codegraph';
+import { buildGraph, queryNameData, findCycles, exportDOT } from '@optave/codegraph';
 
 // Build the graph
 buildGraph('/path/to/project');
