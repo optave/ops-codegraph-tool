@@ -1,8 +1,8 @@
 /**
  * JavaScript/TypeScript parser tests.
  *
- * NOTE: These tests require vitest and tree-sitter to be installed.
- * Run: npm install --legacy-peer-deps
+ * NOTE: These tests require vitest and web-tree-sitter to be installed.
+ * Run: npm install
  * Then: npm test
  */
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -11,8 +11,8 @@ import { createParsers, getParser, extractSymbols } from '../../src/parser.js';
 describe('JavaScript parser', () => {
   let parsers;
 
-  beforeAll(() => {
-    parsers = createParsers();
+  beforeAll(async () => {
+    parsers = await createParsers();
   });
 
   function parseJS(code) {

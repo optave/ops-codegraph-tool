@@ -10,10 +10,13 @@ Run this first to install all dependencies including the new dev/optional ones:
 
 ```bash
 cd repo
-npm install --legacy-peer-deps
+npm install
 ```
 
+No `--legacy-peer-deps` needed — tree-sitter now uses WASM (no native compilation).
+
 This will install:
+- **web-tree-sitter** — WASM-based parser (no C++ build tools required)
 - **vitest** + **@vitest/coverage-v8** (dev) — test framework
 - **@huggingface/transformers** (optional) — semantic embeddings
 - **@modelcontextprotocol/sdk** (optional) — MCP server for AI assistants
@@ -53,17 +56,15 @@ When ready to publish:
 
 ---
 
-## 5. WASM Tree-Sitter Migration (Optional, Recommended)
+## 5. Rebuild WASM Grammars (Only If Upgrading Grammars)
 
-The current native tree-sitter requires C++ compilers on user machines and has peer dependency conflicts.
-Consider migrating to WASM-based tree-sitter:
+The `.wasm` grammar files in `grammars/` are pre-built and committed. You only need to rebuild them if you upgrade the grammar devDependencies:
 
 ```bash
-npm install web-tree-sitter
-# Then download WASM grammar files for each language
+npm run build:wasm
 ```
 
-This eliminates the `--legacy-peer-deps` requirement and fixes Windows installation issues.
+This uses `tree-sitter-cli` to compile each grammar package into a `.wasm` file.
 
 ---
 
@@ -131,5 +132,5 @@ Edit it to set custom ignore patterns, aliases, build options, etc.
 ### ESM Migration (Completed)
 - [x] **#6 ESM migration** — Full CommonJS-to-ESM conversion: `"type": "module"` in package.json, all `require()`/`module.exports` replaced with `import`/`export`, `.js` extensions on all local imports, `createRequire` used for CJS-only native addons (tree-sitter, better-sqlite3)
 
-### Not Yet Implemented (Require Larger Effort)
-- [ ] **#12 WASM tree-sitter** — Requires grammar WASM files and rewriting parser init
+### WASM Tree-Sitter Migration (Completed)
+- [x] **#12 WASM tree-sitter** — Migrated from native tree-sitter to web-tree-sitter (WASM). No C++ build tools needed, `npm install` works without `--legacy-peer-deps`. Pre-built `.wasm` grammars committed in `grammars/`.

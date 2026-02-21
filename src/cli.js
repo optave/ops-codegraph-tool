@@ -28,9 +28,9 @@ program
   .command('build [dir]')
   .description('Parse repo and build graph in .codegraph/graph.db')
   .option('--no-incremental', 'Force full rebuild (ignore file hashes)')
-  .action((dir, opts) => {
+  .action(async (dir, opts) => {
     const root = path.resolve(dir || '.');
-    buildGraph(root, { incremental: opts.incremental });
+    await buildGraph(root, { incremental: opts.incremental });
   });
 
 program
@@ -216,9 +216,9 @@ program
 program
   .command('watch [dir]')
   .description('Watch project for file changes and incrementally update the graph')
-  .action((dir) => {
+  .action(async (dir) => {
     const root = path.resolve(dir || '.');
-    watchProject(root);
+    await watchProject(root);
   });
 
 program.parse();

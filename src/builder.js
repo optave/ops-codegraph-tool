@@ -185,7 +185,7 @@ function getChangedFiles(db, allFiles, rootDir) {
   return { changed, removed, isFullBuild: false };
 }
 
-export function buildGraph(rootDir, opts = {}) {
+export async function buildGraph(rootDir, opts = {}) {
   const dbPath = path.join(rootDir, '.codegraph', 'graph.db');
   const db = openDb(dbPath);
   initSchema(db);
@@ -193,7 +193,7 @@ export function buildGraph(rootDir, opts = {}) {
   const config = loadConfig(rootDir);
   const incremental = opts.incremental !== false && config.build && config.build.incremental !== false;
 
-  const parsers = createParsers();
+  const parsers = await createParsers();
   const aliases = loadPathAliases(rootDir);
   // Merge config aliases
   if (config.aliases) {

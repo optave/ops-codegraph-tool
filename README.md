@@ -30,7 +30,7 @@
 
 > **Zero network calls. Zero telemetry. Your code never leaves your machine.**
 >
-> Codegraph uses [tree-sitter](https://tree-sitter.github.io/) to parse your codebase into an AST, extracts functions, classes, imports, and call sites, resolves dependencies, and stores everything in a local SQLite database. Query it instantly from the command line.
+> Codegraph uses [tree-sitter](https://tree-sitter.github.io/) (via WASM — no native compilation required) to parse your codebase into an AST, extracts functions, classes, imports, and call sites, resolves dependencies, and stores everything in a local SQLite database. Query it instantly from the command line.
 
 ---
 
@@ -40,7 +40,7 @@
 # Install
 git clone https://github.com/optave/codegraph.git
 cd codegraph
-npm install --legacy-peer-deps
+npm install
 npm link
 
 # Build a graph for any project
@@ -160,7 +160,7 @@ codegraph mcp                  # Start MCP server for AI assistants
                                                                  └─────────┘
 ```
 
-1. **Parse** — tree-sitter parses every source file into an AST
+1. **Parse** — tree-sitter (WASM) parses every source file into an AST
 2. **Extract** — Functions, classes, methods, interfaces, imports, exports, and call sites are extracted
 3. **Resolve** — Imports are resolved to actual files (handles ESM conventions, `tsconfig.json` path aliases, `baseUrl`)
 4. **Store** — Everything goes into SQLite as nodes + edges with tree-sitter node boundaries

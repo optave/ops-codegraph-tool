@@ -1,48 +1,51 @@
-import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { Parser, Language } from 'web-tree-sitter';
 import { warn, debug } from './logger.js';
 
-// Use createRequire for native tree-sitter addons (CJS modules)
-const require = createRequire(import.meta.url);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const Parser = require('tree-sitter');
-const JavaScript = require('tree-sitter-javascript');
-const TypeScript = require('tree-sitter-typescript');
+function grammarPath(name) {
+  return path.join(__dirname, '..', 'grammars', name);
+}
 
-let HCL = null;
-try { HCL = require('@tree-sitter-grammars/tree-sitter-hcl'); } catch { HCL = null; }
-let Python = null;
-try { Python = require('tree-sitter-python'); } catch { Python = null; }
+let _initialized = false;
 
-export function createParsers() {
+export async function createParsers() {
+  if (!_initialized) {
+    await Parser.init();
+    _initialized = true;
+  }
+
+  const JavaScript = await Language.load(grammarPath('tree-sitter-javascript.wasm'));
+  const TypeScript = await Language.load(grammarPath('tree-sitter-typescript.wasm'));
+  const TSX = await Language.load(grammarPath('tree-sitter-tsx.wasm'));
+
   const jsParser = new Parser();
   jsParser.setLanguage(JavaScript);
 
   const tsParser = new Parser();
-  tsParser.setLanguage(TypeScript.typescript);
+  tsParser.setLanguage(TypeScript);
 
   const tsxParser = new Parser();
-  tsxParser.setLanguage(TypeScript.tsx);
+  tsxParser.setLanguage(TSX);
 
   let hclParser = null;
-  if (HCL) {
-    try {
-      hclParser = new Parser();
-      hclParser.setLanguage(HCL);
-    } catch (e) {
-      warn(`HCL parser failed to initialize: ${e.message}. HCL files will be skipped.`);
-      hclParser = null;
-    }
+  try {
+    const HCL = await Language.load(grammarPath('tree-sitter-hcl.wasm'));
+    hclParser = new Parser();
+    hclParser.setLanguage(HCL);
+  } catch (e) {
+    warn(`HCL parser failed to initialize: ${e.message}. HCL files will be skipped.`);
   }
 
   let pyParser = null;
-  if (Python) {
-    try {
-      pyParser = new Parser();
-      pyParser.setLanguage(Python);
-    } catch (e) {
-      warn(`Python parser failed to initialize: ${e.message}. Python files will be skipped.`);
-      pyParser = null;
-    }
+  try {
+    const Python = await Language.load(grammarPath('tree-sitter-python.wasm'));
+    pyParser = new Parser();
+    pyParser.setLanguage(Python);
+  } catch (e) {
+    warn(`Python parser failed to initialize: ${e.message}. Python files will be skipped.`);
   }
 
   return { jsParser, tsParser, tsxParser, hclParser, pyParser };

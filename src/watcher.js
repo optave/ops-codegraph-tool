@@ -131,7 +131,7 @@ function updateFile(db, rootDir, filePath, parsers, stmts) {
   };
 }
 
-export function watchProject(rootDir) {
+export async function watchProject(rootDir) {
   const dbPath = path.join(rootDir, '.codegraph', 'graph.db');
   if (!fs.existsSync(dbPath)) {
     console.error('No graph.db found. Run `codegraph build` first.');
@@ -140,7 +140,7 @@ export function watchProject(rootDir) {
 
   const db = openDb(dbPath);
   initSchema(db);
-  const parsers = createParsers();
+  const parsers = await createParsers();
 
   const stmts = {
     insertNode: db.prepare('INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)'),
