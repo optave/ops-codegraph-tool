@@ -44,7 +44,7 @@ npm link
 When ready to publish:
 
 1. Verify the package name is available: `npm search codegraph`
-   - If taken, consider scoping: change `"name"` to `"@compass-soul/codegraph"` in package.json
+   - If taken, consider scoping: change `"name"` to `"@optave/codegraph"` in package.json
 2. Dry run: `npm publish --dry-run`
 3. Publish: `npm publish --access public`
 
