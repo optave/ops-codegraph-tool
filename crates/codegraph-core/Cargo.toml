@@ -22,7 +22,7 @@ tree-sitter-java = "0.23"
 tree-sitter-c-sharp = "0.23"
 tree-sitter-ruby = "0.23"
 tree-sitter-php = { version = "0.23", features = ["php"] }
-tree-sitter-hcl = "0.4"
+tree-sitter-hcl = "1"
 rayon = "1"
 send_wrapper = "0.6"
 
