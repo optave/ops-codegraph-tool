@@ -2,7 +2,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Language, Parser } from 'web-tree-sitter';
-import { normalizePath } from './constants.js';
 import { warn } from './logger.js';
 import { loadNative } from './native.js';
 
@@ -2145,7 +2144,7 @@ export async function parseFilesAuto(filePaths, rootDir, opts = {}) {
     const nativeResults = native.parseFiles(filePaths, rootDir);
     for (const r of nativeResults) {
       if (!r) continue;
-      const relPath = normalizePath(path.relative(rootDir, r.file));
+      const relPath = path.relative(rootDir, r.file).split(path.sep).join('/');
       result.set(relPath, normalizeNativeSymbols(r));
     }
     return result;
@@ -2163,7 +2162,7 @@ export async function parseFilesAuto(filePaths, rootDir, opts = {}) {
     }
     const symbols = wasmExtractSymbols(parsers, filePath, code);
     if (symbols) {
-      const relPath = normalizePath(path.relative(rootDir, filePath));
+      const relPath = path.relative(rootDir, filePath).split(path.sep).join('/');
       result.set(relPath, symbols);
     }
   }

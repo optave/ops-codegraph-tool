@@ -94,6 +94,21 @@ Releases are triggered via the `publish.yml` workflow (`workflow_dispatch`). By 
 
 The workflow can be overridden with a specific version via the `version-override` input. Locally, `npm run release:dry-run` previews the bump and changelog.
 
+## Dogfooding — codegraph on itself
+
+Codegraph is **our own tool**. Use it to analyze this repository before making changes:
+
+```bash
+node src/cli.js build .              # Build/update the graph
+node src/cli.js cycles               # Check for circular dependencies
+node src/cli.js map --limit 20       # Module overview & coupling hotspots
+node src/cli.js diff-impact main     # See impact of current branch changes
+node src/cli.js fn <name>            # Trace function-level dependency chains
+node src/cli.js deps src/<file>.js   # See what imports/depends on a file
+```
+
+If codegraph reports an error, crashes, or produces wrong results when analyzing itself, **fix the bug in the codebase** — don't just work around it. This is the best way to find and resolve real issues.
+
 ## Git Conventions
 
 - Never add AI co-authorship lines (`Co-Authored-By` or similar) to commit messages.

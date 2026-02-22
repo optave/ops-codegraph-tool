@@ -20,8 +20,6 @@ export const IGNORE_DIRS = new Set([
   '.env',
 ]);
 
-// Re-export as an indirect binding to avoid TDZ in the circular
-// parser.js ↔ constants.js import (no value read at evaluation time).
 export { SUPPORTED_EXTENSIONS as EXTENSIONS };
 
 export function shouldIgnore(dirName) {
