@@ -49,7 +49,7 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `cycles.js` | Circular dependency detection |
 | `export.js` | DOT/Mermaid/JSON graph export |
 | `watcher.js` | Watch mode for incremental rebuilds |
-| `config.js` | `.codegraphrc.json` loading |
+| `config.js` | `.codegraphrc.json` loading, env overrides, `apiKeyCommand` secret resolution |
 | `constants.js` | `EXTENSIONS` (derived from parser registry) and `IGNORE_DIRS` constants |
 | `native.js` | Native napi-rs addon loader with WASM fallback |
 | `resolve.js` | Import resolution (supports native batch mode) |
@@ -64,6 +64,7 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 - Non-required parsers (all except JS/TS/TSX) fail gracefully if their WASM grammar is unavailable
 - Import resolution uses a 6-level priority system with confidence scoring (import-aware → same-file → directory → parent → global → method hierarchy)
 - Incremental builds track file hashes in the DB to skip unchanged files
+- **Credential resolution:** `loadConfig` pipeline is `mergeConfig → applyEnvOverrides → resolveSecrets`. The `apiKeyCommand` config field shells out to an external secret manager via `execFileSync` (no shell). Priority: command output > env var > file config > defaults. On failure, warns and falls back gracefully
 
 **Database:** SQLite at `.codegraph/graph.db` with tables: `nodes`, `edges`, `metadata`, `embeddings`
 

@@ -366,6 +366,7 @@ See **[docs/recommended-practices.md](docs/recommended-practices.md)** for integ
 - **CI/CD** — PR impact comments, threshold gates, graph caching
 - **AI agents** — MCP server, CLAUDE.md templates, Claude Code hooks
 - **Developer workflow** — watch mode, explore-before-you-edit, semantic search
+- **Secure credentials** — `apiKeyCommand` with 1Password, Bitwarden, Vault, macOS Keychain, `pass`
 
 ## 🔁 CI / GitHub Actions
 
@@ -394,6 +395,23 @@ Create a `.codegraphrc.json` in your project root to customize behavior:
   }
 }
 ```
+
+### LLM credentials
+
+Codegraph supports an `apiKeyCommand` field for secure credential management. Instead of storing API keys in config files or environment variables, you can shell out to a secret manager at runtime:
+
+```json
+{
+  "llm": {
+    "provider": "openai",
+    "apiKeyCommand": "op read op://vault/openai/api-key"
+  }
+}
+```
+
+The command is split on whitespace and executed with `execFileSync` (no shell injection risk). Priority: **command output > `CODEGRAPH_LLM_API_KEY` env var > file config**. On failure, codegraph warns and falls back to the next source.
+
+Works with any secret manager: 1Password CLI (`op`), Bitwarden (`bw`), `pass`, HashiCorp Vault, macOS Keychain (`security`), AWS Secrets Manager, etc.
 
 ## 📖 Programmatic API
 

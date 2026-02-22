@@ -5,8 +5,22 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CONFIG_FILES, DEFAULTS, loadConfig } from '../../src/config.js';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import {
+  applyEnvOverrides,
+  CONFIG_FILES,
+  DEFAULTS,
+  loadConfig,
+  resolveSecrets,
+} from '../../src/config.js';
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    execFileSync: vi.fn(actual.execFileSync),
+  };
+});
 
 let tmpDir;
 
@@ -38,6 +52,28 @@ describe('DEFAULTS', () => {
     expect(DEFAULTS).toHaveProperty('query');
     expect(DEFAULTS.build).toHaveProperty('incremental', true);
     expect(DEFAULTS.query).toHaveProperty('defaultDepth', 3);
+  });
+
+  it('has embeddings defaults', () => {
+    expect(DEFAULTS.embeddings).toEqual({ model: 'minilm', llmProvider: null });
+  });
+
+  it('has llm defaults', () => {
+    expect(DEFAULTS.llm).toEqual({
+      provider: null,
+      model: null,
+      baseUrl: null,
+      apiKey: null,
+      apiKeyCommand: null,
+    });
+  });
+
+  it('has search defaults', () => {
+    expect(DEFAULTS.search).toEqual({ defaultMinScore: 0.2, rrfK: 60, topK: 15 });
+  });
+
+  it('has ci defaults', () => {
+    expect(DEFAULTS.ci).toEqual({ failOnCycles: false, impactThreshold: null });
   });
 });
 
@@ -114,5 +150,249 @@ describe('loadConfig', () => {
     fs.writeFileSync(path.join(dir, '.codegraphrc.json'), JSON.stringify({ include: ['src/**'] }));
     const config = loadConfig(dir);
     expect(config.include).toEqual(['src/**']);
+  });
+
+  it('deep-merges new search section with defaults', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'search-merge-'));
+    fs.writeFileSync(path.join(dir, '.codegraphrc.json'), JSON.stringify({ search: { topK: 50 } }));
+    const config = loadConfig(dir);
+    expect(config.search.topK).toBe(50);
+    expect(config.search.defaultMinScore).toBe(0.2);
+    expect(config.search.rrfK).toBe(60);
+  });
+});
+
+describe('applyEnvOverrides', () => {
+  const ENV_KEYS = ['CODEGRAPH_LLM_PROVIDER', 'CODEGRAPH_LLM_API_KEY', 'CODEGRAPH_LLM_MODEL'];
+
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      delete process.env[key];
+    }
+  });
+
+  it('overrides llm.provider from env', () => {
+    process.env.CODEGRAPH_LLM_PROVIDER = 'anthropic';
+    const config = applyEnvOverrides({
+      llm: { provider: null, model: null, baseUrl: null, apiKey: null },
+    });
+    expect(config.llm.provider).toBe('anthropic');
+  });
+
+  it('overrides llm.apiKey from env', () => {
+    process.env.CODEGRAPH_LLM_API_KEY = 'sk-test-123';
+    const config = applyEnvOverrides({
+      llm: { provider: null, model: null, baseUrl: null, apiKey: null },
+    });
+    expect(config.llm.apiKey).toBe('sk-test-123');
+  });
+
+  it('overrides llm.model from env', () => {
+    process.env.CODEGRAPH_LLM_MODEL = 'gpt-4';
+    const config = applyEnvOverrides({
+      llm: { provider: null, model: null, baseUrl: null, apiKey: null },
+    });
+    expect(config.llm.model).toBe('gpt-4');
+  });
+
+  it('env vars take priority over file config', () => {
+    process.env.CODEGRAPH_LLM_PROVIDER = 'anthropic';
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'env-priority-'));
+    fs.writeFileSync(
+      path.join(dir, '.codegraphrc.json'),
+      JSON.stringify({ llm: { provider: 'openai' } }),
+    );
+    const config = loadConfig(dir);
+    expect(config.llm.provider).toBe('anthropic');
+  });
+
+  it('leaves file config intact when env vars are not set', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'env-absent-'));
+    fs.writeFileSync(
+      path.join(dir, '.codegraphrc.json'),
+      JSON.stringify({ llm: { provider: 'openai' } }),
+    );
+    const config = loadConfig(dir);
+    expect(config.llm.provider).toBe('openai');
+  });
+});
+
+describe('resolveSecrets', () => {
+  let mockExecFile;
+
+  beforeAll(async () => {
+    const cp = await import('node:child_process');
+    mockExecFile = cp.execFileSync;
+  });
+
+  afterEach(() => {
+    mockExecFile.mockReset();
+  });
+
+  it('resolves apiKey from command', () => {
+    mockExecFile.mockReturnValue('secret-key-123');
+    const config = {
+      llm: {
+        provider: null,
+        model: null,
+        baseUrl: null,
+        apiKey: null,
+        apiKeyCommand: 'op read secret/key',
+      },
+    };
+    resolveSecrets(config);
+    expect(mockExecFile).toHaveBeenCalledWith('op', ['read', 'secret/key'], {
+      encoding: 'utf-8',
+      timeout: 10_000,
+      maxBuffer: 64 * 1024,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    expect(config.llm.apiKey).toBe('secret-key-123');
+  });
+
+  it('trims whitespace from command output', () => {
+    mockExecFile.mockReturnValue('  secret-key  \n');
+    const config = {
+      llm: {
+        provider: null,
+        model: null,
+        baseUrl: null,
+        apiKey: null,
+        apiKeyCommand: 'cat keyfile',
+      },
+    };
+    resolveSecrets(config);
+    expect(config.llm.apiKey).toBe('secret-key');
+  });
+
+  it('skips when apiKeyCommand is null', () => {
+    const config = {
+      llm: { provider: null, model: null, baseUrl: null, apiKey: 'existing', apiKeyCommand: null },
+    };
+    resolveSecrets(config);
+    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(config.llm.apiKey).toBe('existing');
+  });
+
+  it('skips when apiKeyCommand is not a string', () => {
+    const config = {
+      llm: { provider: null, model: null, baseUrl: null, apiKey: 'existing', apiKeyCommand: 42 },
+    };
+    resolveSecrets(config);
+    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(config.llm.apiKey).toBe('existing');
+  });
+
+  it('warns and preserves existing apiKey on command failure', () => {
+    mockExecFile.mockImplementation(() => {
+      throw new Error('command not found');
+    });
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const config = {
+      llm: {
+        provider: null,
+        model: null,
+        baseUrl: null,
+        apiKey: 'keep-me',
+        apiKeyCommand: 'bad-cmd',
+      },
+    };
+    resolveSecrets(config);
+    expect(config.llm.apiKey).toBe('keep-me');
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('apiKeyCommand failed'));
+    stderrSpy.mockRestore();
+  });
+
+  it('does not overwrite apiKey when command returns empty output', () => {
+    mockExecFile.mockReturnValue('   \n');
+    const config = {
+      llm: {
+        provider: null,
+        model: null,
+        baseUrl: null,
+        apiKey: 'original',
+        apiKeyCommand: 'echo ""',
+      },
+    };
+    resolveSecrets(config);
+    expect(config.llm.apiKey).toBe('original');
+  });
+
+  it('handles empty string command gracefully', () => {
+    const config = {
+      llm: { provider: null, model: null, baseUrl: null, apiKey: 'existing', apiKeyCommand: '  ' },
+    };
+    resolveSecrets(config);
+    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(config.llm.apiKey).toBe('existing');
+  });
+});
+
+describe('apiKeyCommand integration', () => {
+  const ENV_KEYS = ['CODEGRAPH_LLM_PROVIDER', 'CODEGRAPH_LLM_API_KEY', 'CODEGRAPH_LLM_MODEL'];
+  let mockExecFile;
+
+  beforeAll(async () => {
+    const cp = await import('node:child_process');
+    mockExecFile = cp.execFileSync;
+  });
+
+  afterEach(() => {
+    mockExecFile.mockReset();
+    for (const key of ENV_KEYS) {
+      delete process.env[key];
+    }
+  });
+
+  it('command output beats file apiKey', () => {
+    mockExecFile.mockReturnValue('command-key');
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'cmd-file-'));
+    fs.writeFileSync(
+      path.join(dir, '.codegraphrc.json'),
+      JSON.stringify({ llm: { apiKey: 'file-key', apiKeyCommand: 'vault get key' } }),
+    );
+    const config = loadConfig(dir);
+    expect(config.llm.apiKey).toBe('command-key');
+  });
+
+  it('command output beats env var', () => {
+    process.env.CODEGRAPH_LLM_API_KEY = 'env-key';
+    mockExecFile.mockReturnValue('command-key');
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'cmd-env-'));
+    fs.writeFileSync(
+      path.join(dir, '.codegraphrc.json'),
+      JSON.stringify({ llm: { apiKeyCommand: 'vault get key' } }),
+    );
+    const config = loadConfig(dir);
+    expect(config.llm.apiKey).toBe('command-key');
+  });
+
+  it('env var still works when no apiKeyCommand is set', () => {
+    process.env.CODEGRAPH_LLM_API_KEY = 'env-key';
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'env-no-cmd-'));
+    fs.writeFileSync(
+      path.join(dir, '.codegraphrc.json'),
+      JSON.stringify({ llm: { provider: 'openai' } }),
+    );
+    const config = loadConfig(dir);
+    expect(config.llm.apiKey).toBe('env-key');
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('graceful failure falls back to env var value', () => {
+    process.env.CODEGRAPH_LLM_API_KEY = 'env-fallback';
+    mockExecFile.mockImplementation(() => {
+      throw new Error('timeout');
+    });
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'cmd-fail-'));
+    fs.writeFileSync(
+      path.join(dir, '.codegraphrc.json'),
+      JSON.stringify({ llm: { apiKeyCommand: 'vault get key' } }),
+    );
+    const config = loadConfig(dir);
+    expect(config.llm.apiKey).toBe('env-fallback');
+    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('apiKeyCommand failed'));
+    stderrSpy.mockRestore();
   });
 });

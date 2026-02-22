@@ -332,6 +332,91 @@ codegraph search "catch exception; format error response; report failure to clie
 
 ---
 
+## Secure Credential Management
+
+Codegraph's LLM features (semantic search with LLM-generated descriptions, future `codegraph ask`) require an API key. Use `apiKeyCommand` to fetch it from a secret manager at runtime instead of hardcoding it in config files or leaking it through environment variables.
+
+### Why not environment variables?
+
+Environment variables are better than plaintext in config files, but they still leak via `ps e`, `/proc/<pid>/environ`, child processes, shell history, and CI logs. `apiKeyCommand` keeps the secret in your vault and only materializes it in process memory for the duration of the call.
+
+### Examples
+
+**1Password CLI:**
+
+```json
+{
+  "llm": {
+    "provider": "openai",
+    "apiKeyCommand": "op read op://Development/openai/api-key"
+  }
+}
+```
+
+**Bitwarden CLI:**
+
+```json
+{
+  "llm": {
+    "provider": "anthropic",
+    "apiKeyCommand": "bw get password anthropic-api-key"
+  }
+}
+```
+
+**macOS Keychain:**
+
+```json
+{
+  "llm": {
+    "provider": "openai",
+    "apiKeyCommand": "security find-generic-password -s codegraph-llm -w"
+  }
+}
+```
+
+**HashiCorp Vault:**
+
+```json
+{
+  "llm": {
+    "provider": "openai",
+    "apiKeyCommand": "vault kv get -field=api_key secret/codegraph/openai"
+  }
+}
+```
+
+**`pass` (GPG-encrypted):**
+
+```json
+{
+  "llm": {
+    "provider": "openai",
+    "apiKeyCommand": "pass show codegraph/openai-key"
+  }
+}
+```
+
+### Priority chain
+
+The resolution order is:
+
+1. **`apiKeyCommand`** output (highest priority)
+2. **`CODEGRAPH_LLM_API_KEY`** environment variable
+3. **`llm.apiKey`** in config file
+4. **`null`** (default)
+
+If the command fails (timeout, not found, non-zero exit), codegraph logs a warning and falls back to the next available source. The command has a 10-second timeout.
+
+### Security notes
+
+- The command is split on whitespace and executed with `execFileSync` (array args, no shell) — no shell injection risk
+- stdout is captured; stderr is discarded
+- The resolved key is held only in process memory, never written to disk
+- Keep `.codegraphrc.json` out of version control if it contains `apiKeyCommand` paths specific to your vault layout, or use a shared command that works across the team
+
+---
+
 ## .gitignore
 
 Add the codegraph database to `.gitignore` — it's a build artifact:
