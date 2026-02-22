@@ -15,7 +15,7 @@ Go to **Settings > Branches > Add branch protection rule** for `main`:
 | Required approvals | 1 |
 | Dismiss stale pull request approvals when new commits are pushed | Yes |
 | Require status checks to pass before merging | Yes |
-| Required status checks | `Preflight checks` (CI), `Lint` (CI), `Validate commits` (Commitlint), `Validate branch name` (Commitlint) |
+| Required status checks | `CI Testing Pipeline` (CI), `Lint` (CI), `Validate commits` (Commitlint), `Validate branch name` (Commitlint), `License Compliance Scan` (SHIELD) |
 | Require branches to be up to date before merging | Yes |
 | Require conversation resolution before merging | Yes |
 | Restrict who can push to matching branches | Optional (recommended for teams) |

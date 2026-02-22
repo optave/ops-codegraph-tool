@@ -68,3 +68,16 @@ jobs:
 
       - name: Check compilation
         run: cargo check --workspace
+
+  ci-pipeline:
+    if: always()
+    needs: [lint, test, rust-check]
+    runs-on: ubuntu-latest
+    name: CI Testing Pipeline
+    steps:
+      - name: Check results
+        run: |
+          if [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more CI jobs failed or were cancelled."
+            exit 1
+          fi

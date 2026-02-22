@@ -1,0 +1,130 @@
+name: "[SHIELD] Open Source Licenses"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+  pull_request:
+    branches: [main]
+    paths:
+      - "package.json"
+      - "package-lock.json"
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1" # Weekly on Monday at 3 AM
+
+jobs:
+  os-license:
+    name: License Compliance Scan
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Install license-checker
+        run: npm install -g license-checker
+
+      - name: Create reports directory
+        run: mkdir -p license-reports
+
+      - name: Run license check (allowlist)
+        id: allowlist
+        continue-on-error: true
+        run: |
+          license-checker \
+            --onlyAllow 'MIT;BSD-2-Clause;BSD-3-Clause;Apache-2.0;ISC;CC0-1.0;Unlicense;WTFPL;0BSD;CC-BY-3.0;CC-BY-4.0;BlueOak-1.0.0;Python-2.0' \
+            --summary | tee license-reports/allowlist-check.txt
+
+      - name: Generate JSON report
+        run: license-checker --json > license-reports/licenses.json
+
+      - name: Generate CSV report
+        run: license-checker --csv --out license-reports/licenses.csv
+
+      - name: Analyze results
+        run: |
+          report="license-reports/licenses.json"
+          total=$(jq 'keys | length' "$report")
+
+          echo "## License Compliance Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total dependencies scanned**: $total" >> $GITHUB_STEP_SUMMARY
+          echo "- **Scan date**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Show license distribution
+          echo "### License Distribution" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          jq -r '[.[] | .licenses // "Unknown"] | group_by(.) | map({license: .[0], count: length}) | sort_by(-.count) | .[] | "\(.count) x \(.license)"' "$report" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          # Check for restrictive licenses
+          restrictive=$(jq -r 'to_entries[] | select(.value.licenses | test("GPL|AGPL|LGPL|SSPL|BSL"; "i")) | "- **\(.key)**: \(.value.licenses)"' "$report" 2>/dev/null || true)
+
+          if [ -n "$restrictive" ]; then
+            echo "### Restrictive Licenses Found" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "$restrictive" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            echo "### License Restrictions Guide" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            if echo "$restrictive" | grep -qi "AGPL\|GPL-[23]"; then
+              echo "#### RED - GPL/AGPL" >> $GITHUB_STEP_SUMMARY
+              echo "- Must release ALL source code under GPL/AGPL if distributed" >> $GITHUB_STEP_SUMMARY
+              echo "- AGPL extends to network/SaaS use" >> $GITHUB_STEP_SUMMARY
+              echo "- **Action**: Replace with MIT/BSD/Apache alternatives" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            if echo "$restrictive" | grep -qi "LGPL"; then
+              echo "#### CAUTION - LGPL" >> $GITHUB_STEP_SUMMARY
+              echo "- Must provide source of LGPL components (not entire app)" >> $GITHUB_STEP_SUMMARY
+              echo "- Users must be able to replace LGPL components" >> $GITHUB_STEP_SUMMARY
+              echo "- **Action**: Review compliance requirements or replace" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            if echo "$restrictive" | grep -qi "SSPL\|BSL"; then
+              echo "#### RED - SSPL/BSL" >> $GITHUB_STEP_SUMMARY
+              echo "- Cannot offer as a service without releasing infrastructure code" >> $GITHUB_STEP_SUMMARY
+              echo "- **Action**: Replace if offering SaaS/cloud services" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+            fi
+
+            # Save issues summary
+            echo "# Restrictive Licenses Found" > license-reports/issues-summary.md
+            echo "" >> license-reports/issues-summary.md
+            echo "$restrictive" >> license-reports/issues-summary.md
+
+            echo "FAILURE: Restrictive licenses found in dependencies"
+            exit 1
+          else
+            echo "### All Clear" >> $GITHUB_STEP_SUMMARY
+            echo "All dependencies use permissive licenses (MIT, BSD, Apache, ISC, etc.)" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "All dependencies use acceptable licenses"
+          fi
+
+      - name: Upload license reports
+        uses: actions/upload-artifact@v5
+        with:
+          name: license-compliance-reports
+          path: license-reports/
+          retention-days: 90
+        if: always()
