@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
-## [1.5.0](https://github.com/optave/codegraph/compare/v1.4.0...v1.5.0) (2026-02-22)
+## [2.0.0](https://github.com/optave/codegraph/compare/v1.4.0...v2.0.0) (2026-02-22)
 
 **Phase 2.5 — Multi-Repo MCP & Structural Analysis.** This release adds multi-repo support for AI agents, structural analysis with architectural metrics, and hardens security across the MCP server and SQL layers.
 

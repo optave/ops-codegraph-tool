@@ -98,6 +98,7 @@ jobs:
     permissions:
       contents: write
       id-token: write
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v4
@@ -229,12 +230,29 @@ jobs:
         if: "!inputs.dry-run"
         run: npm publish --access public --provenance
 
-      - name: Push version commit and tag
-        if: github.event_name == 'workflow_dispatch' && !inputs.dry-run
+      - name: Push version bump via PR
+        if: "!inputs.dry-run"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git push origin main
-          TAG="v${{ steps.version.outputs.new_version }}"
-          # Skip if tag already exists on remote (e.g. created by a GitHub release)
+          VERSION="${{ steps.version.outputs.new_version }}"
+          TAG="v${VERSION}"
+          BRANCH="release/v${VERSION}"
+
+          # Check if there are version bump changes to push
+          if git diff --quiet HEAD; then
+            echo "No version bump commit to push — skipping PR"
+          else
+            git push origin "HEAD:refs/heads/${BRANCH}"
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "chore: release v${VERSION}" \
+              --body "Automated version bump to \`${VERSION}\` and CHANGELOG update from publish workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+            echo "::notice::Version bump PR created for ${BRANCH} → main"
+          fi
+
+          # Push tag (skip if it already exists on remote)
           if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
             echo "Tag $TAG already exists on remote — skipping tag push"
           else
