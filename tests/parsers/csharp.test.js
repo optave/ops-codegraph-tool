@@ -60,14 +60,14 @@ describe('C# parser', () => {
   it('extracts enum declarations', () => {
     const symbols = parseCSharp(`public enum Color { Red, Green, Blue }`);
     expect(symbols.definitions).toContainEqual(
-      expect.objectContaining({ name: 'Color', kind: 'class' }),
+      expect.objectContaining({ name: 'Color', kind: 'enum' }),
     );
   });
 
   it('extracts struct declarations', () => {
     const symbols = parseCSharp(`public struct Point { public int X; public int Y; }`);
     expect(symbols.definitions).toContainEqual(
-      expect.objectContaining({ name: 'Point', kind: 'class' }),
+      expect.objectContaining({ name: 'Point', kind: 'struct' }),
     );
   });
 

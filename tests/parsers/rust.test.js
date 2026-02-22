@@ -25,21 +25,21 @@ describe('Rust parser', () => {
   it('extracts struct declarations', () => {
     const symbols = parseRust(`struct User { name: String, age: u32 }`);
     expect(symbols.definitions).toContainEqual(
-      expect.objectContaining({ name: 'User', kind: 'class' }),
+      expect.objectContaining({ name: 'User', kind: 'struct' }),
     );
   });
 
   it('extracts enum declarations', () => {
     const symbols = parseRust(`enum Color { Red, Green, Blue }`);
     expect(symbols.definitions).toContainEqual(
-      expect.objectContaining({ name: 'Color', kind: 'class' }),
+      expect.objectContaining({ name: 'Color', kind: 'enum' }),
     );
   });
 
   it('extracts trait declarations', () => {
     const symbols = parseRust(`trait Drawable { fn draw(&self); fn area(&self) -> f64; }`);
     expect(symbols.definitions).toContainEqual(
-      expect.objectContaining({ name: 'Drawable', kind: 'interface' }),
+      expect.objectContaining({ name: 'Drawable', kind: 'trait' }),
     );
     expect(symbols.definitions).toContainEqual(
       expect.objectContaining({ name: 'Drawable.draw', kind: 'method' }),

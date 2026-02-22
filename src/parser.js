@@ -731,7 +731,7 @@ export function extractGoSymbols(tree, _filePath) {
             if (typeNode.type === 'struct_type') {
               definitions.push({
                 name: nameNode.text,
-                kind: 'class',
+                kind: 'struct',
                 line: node.startPosition.row + 1,
                 endLine: nodeEndLine(node),
               });
@@ -876,7 +876,7 @@ export function extractRustSymbols(tree, _filePath) {
         if (nameNode) {
           definitions.push({
             name: nameNode.text,
-            kind: 'class',
+            kind: 'struct',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
           });
@@ -889,7 +889,7 @@ export function extractRustSymbols(tree, _filePath) {
         if (nameNode) {
           definitions.push({
             name: nameNode.text,
-            kind: 'class',
+            kind: 'enum',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
           });
@@ -902,7 +902,7 @@ export function extractRustSymbols(tree, _filePath) {
         if (nameNode) {
           definitions.push({
             name: nameNode.text,
-            kind: 'interface',
+            kind: 'trait',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
           });
@@ -1186,7 +1186,7 @@ export function extractJavaSymbols(tree, _filePath) {
         if (nameNode) {
           definitions.push({
             name: nameNode.text,
-            kind: 'class',
+            kind: 'enum',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
           });
@@ -1320,7 +1320,7 @@ export function extractCSharpSymbols(tree, _filePath) {
         if (nameNode) {
           definitions.push({
             name: nameNode.text,
-            kind: 'class',
+            kind: 'struct',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
           });
@@ -1334,7 +1334,7 @@ export function extractCSharpSymbols(tree, _filePath) {
         if (nameNode) {
           definitions.push({
             name: nameNode.text,
-            kind: 'class',
+            kind: 'record',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
           });
@@ -1378,7 +1378,7 @@ export function extractCSharpSymbols(tree, _filePath) {
         if (nameNode) {
           definitions.push({
             name: nameNode.text,
-            kind: 'class',
+            kind: 'enum',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
           });
@@ -1588,7 +1588,7 @@ export function extractRubySymbols(tree, _filePath) {
         if (nameNode) {
           definitions.push({
             name: nameNode.text,
-            kind: 'class',
+            kind: 'module',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
           });
@@ -1818,7 +1818,7 @@ export function extractPHPSymbols(tree, _filePath) {
         if (nameNode) {
           definitions.push({
             name: nameNode.text,
-            kind: 'interface',
+            kind: 'trait',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
           });
@@ -1831,7 +1831,7 @@ export function extractPHPSymbols(tree, _filePath) {
         if (nameNode) {
           definitions.push({
             name: nameNode.text,
-            kind: 'class',
+            kind: 'enum',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
           });

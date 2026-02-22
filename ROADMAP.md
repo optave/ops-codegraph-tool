@@ -13,7 +13,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | Phase | Theme | Key Deliverables | Status |
 |-------|-------|-----------------|--------|
 | [**1**](#phase-1--rust-core) | Rust Core | Rust parsing engine via napi-rs, parallel parsing, incremental tree-sitter, JS orchestration layer | **Complete** (v1.3.0) |
-| [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config | **Complete** (v1.4.0) |
+| [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Partial** — core complete (v1.4.0), 2.5 planned |
 | [**3**](#phase-3--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, hybrid search | Planned |
 | [**4**](#phase-4--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions | Planned |
 | [**5**](#phase-5--expanded-language-support) | Expanded Language Support | 8 new languages (12 → 20), parser utilities | Planned |
@@ -170,6 +170,20 @@ New configuration options in `.codegraphrc.json`:
 - ✅ `apiKeyCommand` — shell out to external secret managers (1Password, Bitwarden, Vault, pass, macOS Keychain) at runtime via `execFileSync` (no shell injection). Priority: command output > env var > file config > defaults. Graceful fallback on failure.
 
 **Affected files:** `src/config.js`
+
+### 2.5 — Multi-Repo MCP
+
+Support querying multiple codebases from a single MCP server instance.
+
+- Registry file at `~/.codegraph/registry.json` mapping repo names to their `.codegraph/graph.db` paths
+- Lazy DB connections — only opened when a repo is first queried
+- Add optional `repo` parameter to all MCP tools to target a specific repository
+- Auto-registration: `codegraph build` adds the current project to the registry
+- New CLI commands: `codegraph registry list|add|remove` for manual management
+- Default behavior: when `repo` is omitted, use the local `.codegraph/graph.db` (backwards compatible)
+
+**New files:** `src/registry.js`
+**Affected files:** `src/mcp.js`, `src/cli.js`, `src/builder.js`
 
 ---
 

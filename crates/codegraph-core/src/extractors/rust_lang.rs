@@ -50,7 +50,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             if let Some(name_node) = node.child_by_field_name("name") {
                 symbols.definitions.push(Definition {
                     name: node_text(&name_node, source).to_string(),
-                    kind: "class".to_string(),
+                    kind: "struct".to_string(),
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
@@ -62,7 +62,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             if let Some(name_node) = node.child_by_field_name("name") {
                 symbols.definitions.push(Definition {
                     name: node_text(&name_node, source).to_string(),
-                    kind: "class".to_string(),
+                    kind: "enum".to_string(),
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
@@ -75,7 +75,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 let trait_name = node_text(&name_node, source).to_string();
                 symbols.definitions.push(Definition {
                     name: trait_name.clone(),
-                    kind: "interface".to_string(),
+                    kind: "trait".to_string(),
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,

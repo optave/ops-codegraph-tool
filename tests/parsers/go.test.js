@@ -37,10 +37,10 @@ func (s Server) Name() string { return "" }`);
     );
   });
 
-  it('extracts struct types as class kind', () => {
+  it('extracts struct types as struct kind', () => {
     const symbols = parseGo(`package main\ntype User struct { Name string; Age int }`);
     expect(symbols.definitions).toContainEqual(
-      expect.objectContaining({ name: 'User', kind: 'class' }),
+      expect.objectContaining({ name: 'User', kind: 'struct' }),
     );
   });
 

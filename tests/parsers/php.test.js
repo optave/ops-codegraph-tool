@@ -56,7 +56,7 @@ describe('PHP parser', () => {
   public function getCreatedAt() {}
 }`);
     expect(symbols.definitions).toContainEqual(
-      expect.objectContaining({ name: 'HasTimestamps', kind: 'interface' }),
+      expect.objectContaining({ name: 'HasTimestamps', kind: 'trait' }),
     );
   });
 
@@ -112,7 +112,7 @@ function run() {
   it('extracts enum declarations', () => {
     const symbols = parsePHP(`<?php enum Color { case Red; case Green; case Blue; }`);
     expect(symbols.definitions).toContainEqual(
-      expect.objectContaining({ name: 'Color', kind: 'class' }),
+      expect.objectContaining({ name: 'Color', kind: 'enum' }),
     );
   });
 });

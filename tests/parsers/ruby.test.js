@@ -64,7 +64,7 @@ end`);
   end
 end`);
     expect(symbols.definitions).toContainEqual(
-      expect.objectContaining({ name: 'Serializable', kind: 'class' }),
+      expect.objectContaining({ name: 'Serializable', kind: 'module' }),
     );
     expect(symbols.definitions).toContainEqual(
       expect.objectContaining({ name: 'Serializable.serialize', kind: 'method' }),

@@ -76,7 +76,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                             "struct_type" => {
                                 symbols.definitions.push(Definition {
                                     name,
-                                    kind: "class".to_string(),
+                                    kind: "struct".to_string(),
                                     line: start_line(node),
                                     end_line: Some(end_line(node)),
                                     decorators: None,

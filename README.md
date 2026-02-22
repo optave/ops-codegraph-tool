@@ -45,27 +45,27 @@ Most dependency graph tools only tell you which **files** import which — codeg
 
 ### Feature comparison
 
-| Capability | codegraph | Madge | dep-cruiser | Skott | Nx graph | Sourcetrail |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Function-level analysis | **Yes** | — | — | — | — | **Yes** |
-| Multi-language | **10** | 1 | 1 | 1 | Any (project) | 4 |
-| Semantic search | **Yes** | — | — | — | — | — |
-| MCP / AI agent support | **Yes** | — | — | — | — | — |
-| Git diff impact | **Yes** | — | — | — | Partial | — |
-| Persistent database | **Yes** | — | — | — | — | Yes |
-| Watch mode | **Yes** | — | — | — | Daemon | — |
-| CI workflow included | **Yes** | — | Rules | — | Yes | — |
-| Cycle detection | **Yes** | Yes | Yes | Yes | — | — |
-| Zero config | **Yes** | Yes | — | Yes | — | — |
-| Fully local / no telemetry | **Yes** | Yes | Yes | Yes | Partial | Yes |
-| Free & open source | **Yes** | Yes | Yes | Yes | Partial | Archived |
+| Capability | codegraph | Madge | dep-cruiser | Skott | Nx graph | Sourcetrail | GitNexus |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Function-level analysis | **Yes** | — | — | — | — | **Yes** | **Yes** |
+| Multi-language | **11** | 1 | 1 | 1 | Any (project) | 4 | 9 |
+| Semantic search | **Yes** | — | — | — | — | — | **Yes** |
+| MCP / AI agent support | **Yes** | — | — | — | — | — | **Yes** |
+| Git diff impact | **Yes** | — | — | — | Partial | — | **Yes** |
+| Persistent database | **Yes** | — | — | — | — | Yes | **Yes** |
+| Watch mode | **Yes** | — | — | — | Daemon | — | — |
+| CI workflow included | **Yes** | — | Rules | — | Yes | — | — |
+| Cycle detection | **Yes** | Yes | Yes | Yes | — | — | — |
+| Zero config | **Yes** | Yes | — | Yes | — | — | **Yes** |
+| Fully local / no telemetry | **Yes** | Yes | Yes | Yes | Partial | Yes | **Yes** |
+| Free & open source | **Yes** | Yes | Yes | Yes | Partial | Archived | No |
 
 ### What makes codegraph different
 
 | | Differentiator | In practice |
 |---|---|---|
 | **🔬** | **Function-level, not just files** | Traces `handleAuth()` → `validateToken()` → `decryptJWT()` and shows 14 callers across 9 files break if `decryptJWT` changes |
-| **🌐** | **Multi-language, one CLI** | JS/TS + Python + Go + Rust + Java + C# + PHP + Ruby + Terraform in a single graph — no juggling Madge, pyan, and cflow |
+| **🌐** | **Multi-language, one CLI** | JS/TS + Python + Go + Rust + Java + C# + PHP + Ruby + HCL in a single graph — no juggling Madge, pyan, and cflow |
 | **🤖** | **AI-agent ready** | Built-in [MCP server](https://modelcontextprotocol.io/) — AI assistants query your graph directly via `codegraph fn <name>` |
 | **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — ships with a GitHub Actions workflow |
 | **🔒** | **Fully local, zero telemetry** | No accounts, no API keys, no cloud, no data exfiltration — Apache-2.0, free forever |
@@ -88,6 +88,7 @@ Many tools in this space are cloud-based or SaaS — meaning your code leaves yo
 | [Understand](https://scitools.com/) | Deep multi-language static analysis | $100+/month per seat, proprietary, GUI-only, no CI or AI integration |
 | [Snyk Code](https://snyk.io/) | AI-powered security scanning | Cloud-based — code sent to Snyk servers for analysis, not a dependency graph tool |
 | [pyan](https://github.com/Technologicat/pyan) / [cflow](https://www.gnu.org/software/cflow/) | Function-level call graphs | Single-language each (Python / C only), no persistence, no queries |
+| [GitNexus](https://gitnexus.dev/) | Function-level graph with hybrid search and MCP | PolyForm Noncommercial license, no watch mode, no cycle detection, no CI workflow |
 
 ---
 
@@ -228,7 +229,7 @@ codegraph mcp                  # Start MCP server for AI assistants
 | `-j, --json` | Output as JSON |
 | `-v, --verbose` | Enable debug output |
 | `--engine <engine>` | Parser engine: `native`, `wasm`, or `auto` (default: `auto`) |
-| `-k, --kind <kind>` | Filter by kind: `function`, `method`, `class` (search) |
+| `-k, --kind <kind>` | Filter by kind: `function`, `method`, `class`, `struct`, `enum`, `trait`, `record`, `module` (search) |
 | `--file <pattern>` | Filter by file path pattern (search) |
 | `--rrf-k <n>` | RRF smoothing constant for multi-query search (default 60) |
 

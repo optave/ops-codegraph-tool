@@ -73,7 +73,31 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
 
           # Check for restrictive licenses
+          # Allowlist: packages reviewed and approved despite containing LGPL in license string
+          # Each entry requires a justification comment above it
+          # @img/sharp-* — bundles libvips (LGPL-3.0) as dynamic lib inside Apache-2.0 sharp;
+          #   LGPL satisfied by npm's replaceable node_modules; codegraph doesn't use sharp directly
+          LICENSE_ALLOWLIST="@img/sharp-"
+
           restrictive=$(jq -r 'to_entries[] | select(.value.licenses | test("GPL|AGPL|LGPL|SSPL|BSL"; "i")) | "- **\(.key)**: \(.value.licenses)"' "$report" 2>/dev/null || true)
+
+          # Filter out explicitly allowlisted packages
+          if [ -n "$restrictive" ]; then
+            filtered=""
+            while IFS= read -r line; do
+              skip=false
+              for allowed in $LICENSE_ALLOWLIST; do
+                if echo "$line" | grep -q "$allowed"; then
+                  skip=true
+                  break
+                fi
+              done
+              if [ "$skip" = false ]; then
+                filtered="${filtered}${line}\n"
+              fi
+            done <<< "$restrictive"
+            restrictive=$(echo -e "$filtered" | sed '/^$/d')
+          fi
 
           if [ -n "$restrictive" ]; then
             echo "### Restrictive Licenses Found" >> $GITHUB_STEP_SUMMARY

@@ -60,7 +60,7 @@ describe('Java parser', () => {
   it('extracts enum declarations', () => {
     const symbols = parseJava(`public enum Color { RED, GREEN, BLUE }`);
     expect(symbols.definitions).toContainEqual(
-      expect.objectContaining({ name: 'Color', kind: 'class' }),
+      expect.objectContaining({ name: 'Color', kind: 'enum' }),
     );
   });
 

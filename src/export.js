@@ -62,7 +62,7 @@ export function exportDOT(db, opts = {}) {
       FROM edges e
       JOIN nodes n1 ON e.source_id = n1.id
       JOIN nodes n2 ON e.target_id = n2.id
-      WHERE n1.kind IN ('function', 'method', 'class') AND n2.kind IN ('function', 'method', 'class')
+      WHERE n1.kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module') AND n2.kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module')
       AND e.kind = 'calls'
     `)
       .all();
@@ -111,7 +111,7 @@ export function exportMermaid(db, opts = {}) {
       FROM edges e
       JOIN nodes n1 ON e.source_id = n1.id
       JOIN nodes n2 ON e.target_id = n2.id
-      WHERE n1.kind IN ('function', 'method', 'class') AND n2.kind IN ('function', 'method', 'class')
+      WHERE n1.kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module') AND n2.kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module')
       AND e.kind = 'calls'
     `)
       .all();
