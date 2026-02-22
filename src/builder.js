@@ -7,6 +7,7 @@ import { createParsers, getParser, extractSymbols, extractHCLSymbols, extractPyt
 import { IGNORE_DIRS, EXTENSIONS, normalizePath } from './constants.js';
 import { loadConfig } from './config.js';
 import { warn, debug, info } from './logger.js';
+import { loadNative, isNativeAvailable } from './native.js';
 
 export function collectFiles(dir, files = [], config = {}) {
   let entries;
@@ -193,7 +194,21 @@ export async function buildGraph(rootDir, opts = {}) {
   const config = loadConfig(rootDir);
   const incremental = opts.incremental !== false && config.build && config.build.incremental !== false;
 
-  const parsers = await createParsers();
+  // Engine selection: 'native', 'wasm', or 'auto' (default)
+  const enginePref = opts.engine || 'auto';
+  const useNative = enginePref === 'native' || (enginePref === 'auto' && isNativeAvailable());
+  const native = useNative ? loadNative() : null;
+
+  if (native) {
+    console.log(`Using native engine (v${native.engineVersion()})`);
+  } else {
+    if (enginePref === 'native') {
+      console.warn('Native engine requested but unavailable — falling back to WASM');
+    }
+    console.log('Using WASM engine');
+  }
+
+  const parsers = useNative ? null : await createParsers();
   const aliases = loadPathAliases(rootDir);
   // Merge config aliases
   if (config.aliases) {
@@ -268,6 +283,75 @@ export async function buildGraph(rootDir, opts = {}) {
     ? files.map(f => ({ file: f }))
     : changed;
 
+  // ── Native engine fast path ──────────────────────────────────────────
+  if (native) {
+    const filePaths = filesToParse.map(item => item.file);
+    const nativeResults = native.parseFiles(filePaths, rootDir);
+
+    const insertNative = db.transaction(() => {
+      for (const result of nativeResults) {
+        if (!result) continue;
+        const relPath = normalizePath(path.relative(rootDir, result.file));
+
+        // Adapt native field names to match JS convention (snake_case → camelCase)
+        const symbols = {
+          definitions: (result.definitions || []).map(d => ({
+            name: d.name, kind: d.kind, line: d.line,
+            endLine: d.endLine ?? d.end_line ?? null,
+            decorators: d.decorators
+          })),
+          calls: (result.calls || []).map(c => ({
+            name: c.name, line: c.line, dynamic: c.dynamic
+          })),
+          imports: (result.imports || []).map(i => ({
+            source: i.source, names: i.names || [], line: i.line,
+            typeOnly: i.typeOnly ?? i.type_only,
+            reexport: i.reexport ?? i.reexport,
+            wildcardReexport: i.wildcardReexport ?? i.wildcard_reexport,
+            pythonImport: i.pythonImport ?? i.python_import,
+            goImport: i.goImport ?? i.go_import,
+            rustUse: i.rustUse ?? i.rust_use,
+            javaImport: i.javaImport ?? i.java_import,
+            csharpUsing: i.csharpUsing ?? i.csharp_using,
+            rubyRequire: i.rubyRequire ?? i.ruby_require,
+            phpUse: i.phpUse ?? i.php_use
+          })),
+          classes: (result.classes || []).map(c => ({
+            name: c.name, extends: c.extends, implements: c.implements, line: c.line
+          })),
+          exports: (result.exports || []).map(e => ({
+            name: e.name, kind: e.kind, line: e.line
+          }))
+        };
+        fileSymbols.set(relPath, symbols);
+
+        insertNode.run(relPath, 'file', relPath, 0, null);
+        for (const def of symbols.definitions) {
+          insertNode.run(def.name, def.kind, relPath, def.line, def.endLine || null);
+        }
+        for (const exp of symbols.exports) {
+          insertNode.run(exp.name, exp.kind, relPath, exp.line, null);
+        }
+
+        // Update file hash for incremental builds
+        if (upsertHash) {
+          let code;
+          try { code = fs.readFileSync(result.file, 'utf-8'); } catch { code = null; }
+          if (code !== null) {
+            const hash = fileHash(code);
+            upsertHash.run(relPath, hash, Date.now());
+          }
+        }
+
+        parsed++;
+        if (parsed % 100 === 0) process.stdout.write(`  Parsed ${parsed}/${filesToParse.length} files\r`);
+      }
+      skipped = filesToParse.length - parsed;
+    });
+    insertNative();
+  } else {
+  // ── WASM engine path (original) ────────────────────────────────────
+
   const insertMany = db.transaction(() => {
     for (const item of filesToParse) {
       const filePath = item.file;
@@ -335,6 +419,7 @@ export async function buildGraph(rootDir, opts = {}) {
     }
   });
   insertMany();
+  } // end else (WASM path)
   console.log(`Parsed ${parsed} files (${skipped} skipped)`);
 
   // Clean up removed file hashes

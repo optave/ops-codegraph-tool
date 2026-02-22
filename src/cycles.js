@@ -1,5 +1,8 @@
+import { loadNative } from './native.js';
+
 /**
  * Detect circular dependencies in the codebase using Tarjan's SCC algorithm.
+ * Dispatches to native Rust implementation when available, falls back to JS.
  * @param {object} db - Open SQLite database
  * @param {object} opts - { fileLevel: true }
  * @returns {string[][]} Array of cycles, each cycle is an array of file paths
@@ -7,7 +10,7 @@
 export function findCycles(db, opts = {}) {
   const fileLevel = opts.fileLevel !== false;
 
-  // Build adjacency list
+  // Build adjacency list from SQLite (stays in JS — only the algorithm can move to Rust)
   let edges;
   if (fileLevel) {
     edges = db.prepare(`
@@ -32,6 +35,20 @@ export function findCycles(db, opts = {}) {
     `).all();
   }
 
+  // Try native Rust implementation
+  const native = loadNative();
+  if (native) {
+    return native.detectCycles(edges);
+  }
+
+  // Fallback: JS Tarjan
+  return findCyclesJS(edges);
+}
+
+/**
+ * Pure-JS Tarjan's SCC implementation.
+ */
+export function findCyclesJS(edges) {
   const graph = new Map();
   for (const { source, target } of edges) {
     if (!graph.has(source)) graph.set(source, []);

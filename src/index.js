@@ -35,5 +35,8 @@ export { loadConfig } from './config.js';
 // Shared constants
 export { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
 
+// Native engine
+export { isNativeAvailable } from './native.js';
+
 // Logger
 export { setVerbose } from './logger.js';

@@ -1,0 +1,197 @@
+use std::path::{Path, PathBuf};
+
+use crate::types::{AliasMapping, ImportResolutionInput, PathAliases, ResolvedImport};
+
+/// Normalize a path to use forward slashes (cross-platform consistency).
+fn normalize_path(p: &str) -> String {
+    p.replace('\\', "/")
+}
+
+/// Try resolving via path aliases (tsconfig/jsconfig paths).
+fn resolve_via_alias(
+    import_source: &str,
+    aliases: &PathAliases,
+    _root_dir: &str,
+) -> Option<String> {
+    // baseUrl resolution
+    if let Some(base_url) = &aliases.base_url {
+        if !import_source.starts_with('.') && !import_source.starts_with('/') {
+            let candidate = PathBuf::from(base_url).join(import_source);
+            for ext in &["", ".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx", "/index.js"]
+            {
+                let full = format!("{}{}", candidate.display(), ext);
+                if Path::new(&full).exists() {
+                    return Some(full);
+                }
+            }
+        }
+    }
+
+    // Path pattern resolution
+    for mapping in &aliases.paths {
+        let prefix = mapping.pattern.trim_end_matches('*');
+        if !import_source.starts_with(prefix) {
+            continue;
+        }
+        let rest = &import_source[prefix.len()..];
+        for target in &mapping.targets {
+            let resolved = target.replace('*', rest);
+            for ext in &["", ".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx", "/index.js"]
+            {
+                let full = format!("{}{}", resolved, ext);
+                if Path::new(&full).exists() {
+                    return Some(full);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Resolve a single import path, mirroring `resolveImportPath()` in builder.js.
+pub fn resolve_import_path(
+    from_file: &str,
+    import_source: &str,
+    root_dir: &str,
+    aliases: &PathAliases,
+) -> String {
+    // Try alias resolution for non-relative imports
+    if !import_source.starts_with('.') {
+        if let Some(alias_resolved) = resolve_via_alias(import_source, aliases, root_dir) {
+            let root = Path::new(root_dir);
+            if let Ok(rel) = Path::new(&alias_resolved).strip_prefix(root) {
+                return normalize_path(&rel.display().to_string());
+            }
+            return normalize_path(&alias_resolved);
+        }
+        // Bare specifier (e.g., "lodash") — return as-is
+        return import_source.to_string();
+    }
+
+    // Relative import
+    let dir = Path::new(from_file).parent().unwrap_or(Path::new(""));
+    let resolved = dir.join(import_source);
+    let resolved_str = resolved.display().to_string();
+
+    // .js → .ts remap
+    if resolved_str.ends_with(".js") {
+        let ts_candidate = resolved_str.replace(".js", ".ts");
+        if Path::new(&ts_candidate).exists() {
+            let root = Path::new(root_dir);
+            if let Ok(rel) = Path::new(&ts_candidate).strip_prefix(root) {
+                return normalize_path(&rel.display().to_string());
+            }
+        }
+        let tsx_candidate = resolved_str.replace(".js", ".tsx");
+        if Path::new(&tsx_candidate).exists() {
+            let root = Path::new(root_dir);
+            if let Ok(rel) = Path::new(&tsx_candidate).strip_prefix(root) {
+                return normalize_path(&rel.display().to_string());
+            }
+        }
+    }
+
+    // Extension probing
+    let extensions = [
+        ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py", "/index.ts", "/index.tsx", "/index.js",
+        "/__init__.py",
+    ];
+    for ext in &extensions {
+        let candidate = format!("{}{}", resolved_str, ext);
+        if Path::new(&candidate).exists() {
+            let root = Path::new(root_dir);
+            if let Ok(rel) = Path::new(&candidate).strip_prefix(root) {
+                return normalize_path(&rel.display().to_string());
+            }
+        }
+    }
+
+    // Exact match
+    if Path::new(&resolved_str).exists() {
+        let root = Path::new(root_dir);
+        if let Ok(rel) = Path::new(&resolved_str).strip_prefix(root) {
+            return normalize_path(&rel.display().to_string());
+        }
+    }
+
+    // Fallback: return relative path
+    let root = Path::new(root_dir);
+    if let Ok(rel) = resolved.strip_prefix(root) {
+        normalize_path(&rel.display().to_string())
+    } else {
+        normalize_path(&resolved_str)
+    }
+}
+
+/// Compute proximity-based confidence for call resolution.
+/// Mirrors `computeConfidence()` in builder.js.
+pub fn compute_confidence(
+    caller_file: &str,
+    target_file: &str,
+    imported_from: Option<&str>,
+) -> f64 {
+    if target_file.is_empty() || caller_file.is_empty() {
+        return 0.3;
+    }
+    if caller_file == target_file {
+        return 1.0;
+    }
+    if let Some(imp) = imported_from {
+        if imp == target_file {
+            return 1.0;
+        }
+    }
+
+    let caller_dir = Path::new(caller_file)
+        .parent()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let target_dir = Path::new(target_file)
+        .parent()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+
+    if caller_dir == target_dir {
+        return 0.7;
+    }
+
+    let caller_parent = Path::new(&caller_dir)
+        .parent()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let target_parent = Path::new(&target_dir)
+        .parent()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+
+    if caller_parent == target_parent {
+        return 0.5;
+    }
+
+    0.3
+}
+
+/// Batch resolve multiple imports.
+pub fn resolve_imports_batch(
+    inputs: &[ImportResolutionInput],
+    root_dir: &str,
+    aliases: &PathAliases,
+) -> Vec<ResolvedImport> {
+    inputs
+        .iter()
+        .map(|input| {
+            let resolved = resolve_import_path(
+                &input.from_file,
+                &input.import_source,
+                root_dir,
+                aliases,
+            );
+            ResolvedImport {
+                from_file: input.from_file.clone(),
+                import_source: input.import_source.clone(),
+                resolved_path: resolved,
+            }
+        })
+        .collect()
+}

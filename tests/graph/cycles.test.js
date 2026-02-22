@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db.js';
-import { findCycles } from '../../src/cycles.js';
+import { findCycles, findCyclesJS } from '../../src/cycles.js';
 
 function createTestDb() {
   const db = new Database(':memory:');
@@ -61,5 +61,37 @@ describe('findCycles', () => {
     expect(cycles).toHaveLength(1);
     expect(cycles[0]).toHaveLength(3);
     db.close();
+  });
+});
+
+describe('findCyclesJS (pure JS Tarjan)', () => {
+  it('detects no cycles in acyclic edges', () => {
+    const edges = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+    ];
+    const cycles = findCyclesJS(edges);
+    expect(cycles).toHaveLength(0);
+  });
+
+  it('detects a 2-node cycle from raw edges', () => {
+    const edges = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'a' },
+    ];
+    const cycles = findCyclesJS(edges);
+    expect(cycles).toHaveLength(1);
+    expect(cycles[0]).toHaveLength(2);
+  });
+
+  it('detects a 3-node cycle from raw edges', () => {
+    const edges = [
+      { source: 'a', target: 'b' },
+      { source: 'b', target: 'c' },
+      { source: 'c', target: 'a' },
+    ];
+    const cycles = findCyclesJS(edges);
+    expect(cycles).toHaveLength(1);
+    expect(cycles[0]).toHaveLength(3);
   });
 });

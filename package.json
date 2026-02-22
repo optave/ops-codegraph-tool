@@ -54,7 +54,11 @@
   },
   "optionalDependencies": {
     "@huggingface/transformers": "^3.8.1",
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@optave/codegraph-linux-x64-gnu": "0.1.0",
+    "@optave/codegraph-darwin-arm64": "0.1.0",
+    "@optave/codegraph-darwin-x64": "0.1.0",
+    "@optave/codegraph-win32-x64-msvc": "0.1.0"
   },
   "devDependencies": {
     "@tree-sitter-grammars/tree-sitter-hcl": "^1.2.0",

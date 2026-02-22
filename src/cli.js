@@ -17,8 +17,9 @@ const program = new Command();
 program
   .name('codegraph')
   .description('Local code dependency graph tool')
-  .version('1.1.0')
+  .version('1.2.0')
   .option('-v, --verbose', 'Enable verbose/debug output')
+  .option('--engine <engine>', 'Parser engine: native, wasm, or auto (default: auto)', 'auto')
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts();
     if (opts.verbose) setVerbose(true);
@@ -30,7 +31,8 @@ program
   .option('--no-incremental', 'Force full rebuild (ignore file hashes)')
   .action(async (dir, opts) => {
     const root = path.resolve(dir || '.');
-    await buildGraph(root, { incremental: opts.incremental });
+    const engine = program.opts().engine;
+    await buildGraph(root, { incremental: opts.incremental, engine });
   });
 
 program
