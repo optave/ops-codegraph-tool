@@ -17,7 +17,7 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 4 | 3.9 | [harshkedia177/axon](https://github.com/harshkedia177/axon) | 29 | Python | None | 11-phase pipeline, KuzuDB, Leiden community detection, dead code, change coupling |
 | 5 | 3.8 | [anrgct/autodev-codebase](https://github.com/anrgct/autodev-codebase) | 111 | TypeScript | None | 40+ languages, 7 embedding providers, Cytoscape.js visualization, LLM reranking |
 | 6 | 3.7 | [Anandb71/arbor](https://github.com/Anandb71/arbor) | 85 | Rust | MIT | Native GUI, confidence scoring, architectural role classification, fuzzy search, MCP |
-| **7** | **3.6** | **[@optave/codegraph](https://github.com/optave/codegraph)** | — | **JS/Rust** | **Apache-2.0** | **Dual engine (native Rust + WASM), 11 languages, SQLite, MCP, semantic search, zero-cloud** |
+| **7** | **3.6** | **[@optave/codegraph](https://github.com/optave/codegraph)** | — | **JS/Rust** | **Apache-2.0** | **Sub-second incremental rebuilds, dual engine (native Rust + WASM), 11 languages, MCP, zero-cost core + optional LLM enhancement** |
 | 8 | 3.4 | [Durafen/Claude-code-memory](https://github.com/Durafen/Claude-code-memory) | 72 | Python | None | Memory Guard quality gate, persistent codebase memory, Voyage AI + Qdrant |
 | 9 | 3.3 | [NeuralRays/codexray](https://github.com/NeuralRays/codexray) | 2 | TypeScript | MIT | 16 MCP tools, TF-IDF semantic search (~50MB), dead code, complexity, path finding |
 | 10 | 3.2 | [al1-nasir/codegraph-cli](https://github.com/al1-nasir/codegraph-cli) | 11 | Python | MIT | CrewAI multi-agent system, 6 LLM providers, browser explorer, DOCX export |
@@ -77,11 +77,12 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 
 | Strength | Details |
 |----------|---------|
-| **Zero-dependency deployment** | `npm install` and done. No Docker, no cloud, no API keys needed. Most competitors require Docker (Memgraph, Neo4j, Dgraph, Qdrant) or cloud APIs |
+| **Always-fresh graph (incremental rebuilds)** | File-level MD5 hashing means only changed files are re-parsed. Change 1 file in a 3,000-file project → rebuild in under a second. No other tool in this space offers this. Competitors re-index everything from scratch — making them unusable in commit hooks, watch mode, or agent-driven loops |
+| **Zero-cost core, LLM-enhanced when you choose** | The full graph pipeline (parse, resolve, query, impact analysis) runs with no API keys, no cloud, no cost. LLM features (richer embeddings, semantic search) are an optional layer on top — using whichever provider the user already works with. Competitors either require cloud APIs for core features (code-graph-rag, autodev-codebase) or offer no AI enhancement at all (CKB, axon). Nobody else offers both modes in one tool |
+| **Data goes only where you send it** | Your code reaches exactly one place: the AI agent you already chose (via MCP). No additional third-party services, no surprise cloud calls. Competitors like code-graph-rag, autodev-codebase, and Claude-code-memory send your code to additional AI providers beyond the agent you're using |
 | **Dual engine architecture** | Only project with native Rust (napi-rs) + automatic WASM fallback. Others are pure Rust OR pure JS/Python — never both |
 | **Single-repo MCP isolation** | Security-conscious default: tools have no `repo` property unless `--multi-repo` is explicitly enabled. Most competitors default to exposing everything |
-| **Incremental builds** | File-hash-based skip of unchanged files. Some competitors re-index everything |
-| **Platform binaries** | Published `@optave/codegraph-{platform}-{arch}` optional packages — true npm-native distribution |
+| **Zero-dependency deployment** | `npm install` and done. No Docker, no external databases, no Python, no SCIP toolchains. Published platform-specific binaries (`@optave/codegraph-{platform}-{arch}`) resolve automatically |
 | **Import resolution depth** | 6-level priority system with confidence scoring — more sophisticated than most competitors' resolution |
 
 ---
@@ -135,6 +136,7 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 ### Tier 2: High impact, medium effort
 | Feature | Inspired by | Why |
 |---------|------------|-----|
+| **Optional LLM provider integration** | code-graph-rag, autodev-codebase | Bring-your-own provider (OpenAI, etc.) for richer embeddings and AI-powered search. Enhancement layer only — core graph never depends on it. No other tool offers both zero-cost local and LLM-enhanced modes in one package |
 | **Compound MCP tools** | CKB | `explore`/`understand` meta-tools that batch deps + fn + map into single responses. Biggest token-savings opportunity |
 | **Token counting on responses** | glimpse, arbor | tiktoken-based counts so agents know context budget consumed |
 | **Node classification** | arbor | Auto-tag Entry Point / Core / Utility / Adapter from in-degree/out-degree patterns |
@@ -153,10 +155,10 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | Feature | Why skip |
 |---------|----------|
 | Memgraph/Neo4j/KuzuDB | Our SQLite = zero Docker, simpler deployment. Query gap matters less than simplicity |
-| Multi-provider AI | We're deliberately cloud-free — that's a feature, not a limitation |
 | SCIP indexing | Would require maintaining SCIP toolchains per language. Tree-sitter + native Rust is the right bet |
 | CrewAI multi-agent | Overengineered for a code analysis tool. Keep the scope focused |
 | Clipboard/LLM-dump mode | Different product category (glimpse). We're a graph tool, not a context-packer |
+| Cloud APIs for core features | We will add LLM provider support, but as an **optional enhancement layer** — the core graph must always work with zero API keys and zero cost. This is the opposite of code-graph-rag's approach where cloud APIs are required for core functionality |
 
 ---
 

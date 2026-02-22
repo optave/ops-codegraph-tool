@@ -5,7 +5,7 @@
 <h1 align="center">codegraph</h1>
 
 <p align="center">
-  <strong>Local code dependency graph CLI — parse, query, and visualize your codebase at file and function level.</strong>
+  <strong>Always-fresh code intelligence for AI agents — sub-second incremental rebuilds, zero-cost by default, optionally enhanced with your LLM.</strong>
 </p>
 
 <p align="center">
@@ -13,7 +13,7 @@
   <a href="https://github.com/optave/codegraph/blob/main/LICENSE"><img src="https://img.shields.io/github/license/optave/codegraph?style=flat-square&logo=opensourceinitiative&logoColor=white" alt="Apache-2.0 License" /></a>
   <a href="https://github.com/optave/codegraph/actions"><img src="https://img.shields.io/github/actions/workflow/status/optave/codegraph/codegraph-impact.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI" alt="CI" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D20-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node >= 20" />
-  <img src="https://img.shields.io/badge/platform-local%20only-important?style=flat-square&logo=shield&logoColor=white" alt="Local Only" />
+  <img src="https://img.shields.io/badge/graph-always%20fresh-brightgreen?style=flat-square&logo=shield&logoColor=white" alt="Always Fresh" />
 </p>
 
 <p align="center">
@@ -31,9 +31,35 @@
 
 ---
 
-> **Zero network calls. Zero telemetry. Your code never leaves your machine.**
+> **The code graph that keeps up with your commits.**
 >
-> Codegraph uses [tree-sitter](https://tree-sitter.github.io/) (via WASM — no native compilation required) to parse your codebase into an AST, extracts functions, classes, imports, and call sites, resolves dependencies, and stores everything in a local SQLite database. Query it instantly from the command line.
+> Codegraph parses your codebase with [tree-sitter](https://tree-sitter.github.io/) (native Rust or WASM), builds a function-level dependency graph in SQLite, and keeps it current with sub-second incremental rebuilds. Every query runs locally — no API keys, no Docker, no setup. When you want deeper intelligence, bring your own LLM provider and codegraph enhances search and analysis through the same API you already use. Your code only goes where you choose to send it.
+
+---
+
+## 🔄 Why most code graph tools can't keep up with your commits
+
+If you use a code graph with an AI agent, the graph needs to be **current**. A stale graph gives the agent wrong answers — deleted functions still show up, new dependencies are invisible, impact analysis misses the code you just wrote. The graph should rebuild on every commit, ideally on every save.
+
+Most tools in this space can't do that:
+
+| Problem | Who has it | Why it breaks on every commit |
+|---|---|---|
+| **Full re-index on every change** | code-graph-rag, CodeMCP, axon, autodev-codebase | No file-level change tracking. Change one file → re-parse and re-insert the entire codebase. On a 3,000-file project, that's 30+ seconds per commit minimum |
+| **Cloud API calls baked into the pipeline** | code-graph-rag, autodev-codebase, Claude-code-memory, CodeRAG | Embeddings are generated through cloud APIs (OpenAI, Voyage AI, Gemini). Every rebuild = API round-trips for every function. Slow, expensive, and rate-limited. You can't put this in a commit hook |
+| **Heavy infrastructure that's slow to restart** | code-graph-rag (Memgraph), axon (KuzuDB), badger-graph (Dgraph) | External databases add latency to every write. Bulk-inserting a full graph into Memgraph is not a sub-second operation |
+| **No persistence between runs** | glimpse, pyan, cflow | Re-parse from scratch every time. No database, no delta, no incremental anything |
+
+**Codegraph solves this with incremental builds:**
+
+1. Every file gets an MD5 hash stored in SQLite
+2. On rebuild, only files whose hash changed get re-parsed
+3. Stale nodes and edges for changed files are cleaned, then re-inserted
+4. Everything else is untouched
+
+**Result:** change one file in a 3,000-file project → rebuild completes in **under a second**. Put it in a commit hook, a file watcher, or let your AI agent trigger it. The graph is always current.
+
+And because the core pipeline is pure local computation (tree-sitter + SQLite), there are no API calls, no network latency, and no cost. LLM-powered features (semantic search, richer embeddings) are a separate optional layer — they enhance the graph but never block it from being current.
 
 ---
 
@@ -41,7 +67,7 @@
 
 <sub>Comparison last verified: February 2026</sub>
 
-Most dependency graph tools only tell you which **files** import which — codegraph tells you which **functions** call which, who their callers are, and what breaks when something changes. Here's how it compares to the alternatives:
+Most code graph tools make you choose: **fast local analysis with no AI, or powerful AI features that require full re-indexing through cloud APIs on every change.** Codegraph gives you both — a graph that rebuilds in milliseconds on every commit, with optional LLM enhancement through the provider you're already using.
 
 ### Feature comparison
 
@@ -55,35 +81,36 @@ Most dependency graph tools only tell you which **files** import which — codeg
 | Watch mode | **Yes** | — | — | — | — | — | — | — |
 | CI workflow included | **Yes** | — | — | — | — | — | — | — |
 | Cycle detection | **Yes** | — | — | — | **Yes** | — | — | — |
+| Incremental rebuilds | **Yes** | — | — | — | — | — | — | — |
 | Zero config | **Yes** | — | **Yes** | — | — | — | **Yes** | — |
-| Fully local / no telemetry | **Yes** | Partial | **Yes** | **Yes** | **Yes** | Partial | **Yes** | — |
-| Free & open source | **Yes** | Yes | Yes | Custom | — | — | Yes | — |
+| LLM-optional (works without API keys) | **Yes** | — | **Yes** | **Yes** | **Yes** | — | **Yes** | — |
+| Open source | **Yes** | Yes | Yes | Custom | — | — | Yes | — |
 
 ### What makes codegraph different
 
 | | Differentiator | In practice |
 |---|---|---|
+| **⚡** | **Always-fresh graph** | Sub-second incremental rebuilds via file-hash tracking. Run on every commit, every save, in watch mode — the graph is never stale. Competitors re-index everything from scratch |
+| **🔓** | **Zero-cost core, LLM-enhanced when you want** | Full graph analysis with no API keys, no accounts, no cost. Optionally bring your own LLM provider for richer embeddings and AI-powered search — your code only goes to the provider you already chose |
 | **🔬** | **Function-level, not just files** | Traces `handleAuth()` → `validateToken()` → `decryptJWT()` and shows 14 callers across 9 files break if `decryptJWT` changes |
+| **🤖** | **Built for AI agents** | 13-tool [MCP server](https://modelcontextprotocol.io/) — AI assistants query your graph directly. Single-repo by default, your code doesn't leak to other projects |
 | **🌐** | **Multi-language, one CLI** | JS/TS + Python + Go + Rust + Java + C# + PHP + Ruby + HCL in a single graph — no juggling Madge, pyan, and cflow |
-| **🤖** | **AI-agent ready** | Built-in [MCP server](https://modelcontextprotocol.io/) — AI assistants query your graph directly via `codegraph fn <name>` |
 | **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — ships with a GitHub Actions workflow |
-| **🔒** | **Fully local, zero telemetry** | No accounts, no API keys, no cloud, no data exfiltration — Apache-2.0, free forever |
-| **⚡** | **Build once, query instantly** | SQLite-backed — build in ~30s, every query under 100ms. Native Rust engine with WASM fallback. Most competitors re-parse every run |
-| **🧠** | **Semantic search** | `codegraph search "handle auth"` uses local embeddings — multi-query with RRF ranking via `"auth; token; JWT"` |
+| **🧠** | **Semantic search** | Local embeddings by default, LLM-powered embeddings when opted in — multi-query with RRF ranking via `"auth; token; JWT"` |
 
 ### How other tools compare
 
-Many tools in this space are cloud-based or SaaS — meaning your code leaves your machine. Others require external services, accounts, or API keys. Codegraph makes **zero network calls** and has **zero telemetry**. Everything runs locally.
+The key question is: **can you rebuild your graph on every commit in a large codebase without it costing money or taking minutes?** Most tools in this space either re-index everything from scratch (slow), require cloud API calls for core features (costly), or both. Codegraph's incremental builds keep the graph current in milliseconds — and the core pipeline needs no API keys at all. LLM-powered features are opt-in, using whichever provider you already work with.
 
-| Tool | What it does well | Where it falls short |
+| Tool | What it does well | The tradeoff |
 |---|---|---|
-| [code-graph-rag](https://github.com/vitali87/code-graph-rag) | Graph RAG with Memgraph, multi-provider AI, semantic search, code editing via AST | Requires Docker (Memgraph), depends on cloud AI providers, complex setup |
-| [glimpse](https://github.com/seatedro/glimpse) | Clipboard-first LLM context tool, call graphs, LSP resolution, token counting | Context-packing tool, not a dependency graph — no persistence, no queries |
-| [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | SCIP compiler-grade indexing, compound operations (83% token savings), secret scanning | Custom license, requires SCIP toolchains per language, limited language coverage |
-| [axon](https://github.com/harshkedia177/axon) | 11-phase pipeline, KuzuDB, community detection, dead code, change coupling | No license, Python-focused, limited language support |
-| [autodev-codebase](https://github.com/anrgct/autodev-codebase) | 40+ languages, interactive Cytoscape.js visualization, LLM reranking | No license, some embedding providers require cloud APIs, complex setup |
+| [code-graph-rag](https://github.com/vitali87/code-graph-rag) | Graph RAG with Memgraph, multi-provider AI, semantic search, code editing via AST | No incremental rebuilds — full re-index + re-embed through cloud APIs on every change. Requires Docker |
+| [glimpse](https://github.com/seatedro/glimpse) | Clipboard-first LLM context tool, call graphs, LSP resolution, token counting | Context-packing tool, not a dependency graph — no persistence, no MCP, no incremental updates |
+| [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | SCIP compiler-grade indexing, compound operations (83% token savings), secret scanning | No incremental builds. Custom license, requires SCIP toolchains per language |
+| [axon](https://github.com/harshkedia177/axon) | 11-phase pipeline, KuzuDB, community detection, dead code, change coupling | Full pipeline re-run on changes. No license, Python-only, no MCP |
+| [autodev-codebase](https://github.com/anrgct/autodev-codebase) | 40+ languages, interactive Cytoscape.js visualization, LLM reranking | Re-embeds through cloud APIs on changes. No license, complex setup |
 | [arbor](https://github.com/Anandb71/arbor) | Native GUI, confidence scoring, architectural role classification, fuzzy search | GUI-focused — no CLI pipeline, no watch mode, no CI integration |
-| [Claude-code-memory](https://github.com/Durafen/Claude-code-memory) | Persistent codebase memory for Claude Code, Memory Guard quality gate | Cloud-dependent (Voyage AI), requires Qdrant, not a code analysis tool |
+| [Claude-code-memory](https://github.com/Durafen/Claude-code-memory) | Persistent codebase memory for Claude Code, Memory Guard quality gate | Requires Voyage AI (cloud) + Qdrant (Docker) for core features |
 | [Madge](https://github.com/pahen/madge) | Simple file-level JS/TS dependency graphs | No function-level analysis, no impact tracing, JS/TS only |
 | [dependency-cruiser](https://github.com/sverweij/dependency-cruiser) | Architectural rule validation for JS/TS | Module-level only (function-level explicitly out of scope), requires config |
 | [Nx graph](https://nx.dev/) | Monorepo project-level dependency graph | Requires Nx workspace, project-level only (not file or function) |
@@ -128,7 +155,7 @@ codegraph deps src/index.ts  # file-level import/export map
 | 🧠 | **Semantic search** | Embeddings-powered natural language search with multi-query RRF ranking |
 | 👀 | **Watch mode** | Incrementally update the graph as files change |
 | 🤖 | **MCP server** | 13-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
-| 🔒 | **Fully local** | No network calls, no data exfiltration, SQLite-backed |
+| 🔒 | **Your code, your choice** | Zero-cost core with no API keys. Optionally enhance with your LLM provider — your code only goes where you send it |
 
 ## 📦 Commands
 
@@ -518,5 +545,5 @@ Looking to add a new language? Check out **[Adding a New Language](docs/adding-a
 ---
 
 <p align="center">
-  <sub>Built with <a href="https://tree-sitter.github.io/">tree-sitter</a> and <a href="https://github.com/WiseLibs/better-sqlite3">better-sqlite3</a>. No data leaves your machine. Ever.</sub>
+  <sub>Built with <a href="https://tree-sitter.github.io/">tree-sitter</a> and <a href="https://github.com/WiseLibs/better-sqlite3">better-sqlite3</a>. Your code only goes where you choose to send it.</sub>
 </p>

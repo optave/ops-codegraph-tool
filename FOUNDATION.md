@@ -8,9 +8,9 @@
 
 ## Why Codegraph Exists
 
-There are 20+ code analysis and code graph tools in the open-source ecosystem. Most require Docker, Python environments, cloud API keys, or external databases. None of them ship as a single npm package with native performance.
+There are 20+ code analysis and code graph tools in the open-source ecosystem. They all force a choice: **fast local analysis with no AI, or powerful AI features that require full re-indexing through cloud APIs on every change.** None of them give you an always-current graph that you can rebuild on every commit and optionally enhance with the LLM provider you already use.
 
-Codegraph exists to be **the code intelligence engine for the JavaScript ecosystem** — the one you `npm install` and it just works, on every platform, with nothing else to set up.
+Codegraph exists to be **the code intelligence engine that keeps up with your commits** — an always-fresh graph that works at zero cost out of the box, with optional LLM enhancement through the provider you choose. Your code only goes where you send it.
 
 ---
 
@@ -18,17 +18,17 @@ Codegraph exists to be **the code intelligence engine for the JavaScript ecosyst
 
 These principles define what codegraph is and is not. Every feature decision, PR review, and architectural choice should be measured against them.
 
-### 1. Zero-infrastructure deployment
+### 1. The graph is always current
 
-**Codegraph must never require anything beyond `npm install`.**
+**Codegraph must rebuild fast enough to run on every commit, every save, in every agent loop.**
 
-No Docker. No external databases. No cloud accounts. No API keys for core functionality. No Python. No Go toolchain. No manual compilation steps.
+This is our single most important differentiator. Every competitor in this space either re-indexes from scratch on every change (making them unusable in tight loops) or requires cloud API calls baked into the rebuild pipeline (making them slow and costly to run frequently).
 
-SQLite is our database because it's embedded. WASM grammars are our fallback because they run everywhere Node.js runs. Optional dependencies (`@huggingface/transformers`, `@modelcontextprotocol/sdk`) are lazy-loaded and degrade gracefully.
+File-level MD5 hashing means only changed files are re-parsed. Change one file in a 3,000-file project → rebuild in under a second. This makes commit hooks, watch mode, and AI-agent-triggered rebuilds practical. The graph is never stale.
 
-This is our single most important differentiator. Every competitor that adds Docker to their install instructions loses users we should capture.
+The core pipeline is pure local computation — tree-sitter + SQLite. No API calls, no network latency, no cost. This isn't about being anti-cloud. It's about being fast enough that the graph can stay current without waiting on anything external.
 
-*Test: can a developer on a fresh machine run `npm install @optave/codegraph && codegraph build .` with zero prior setup? If not, we broke this principle.*
+*Test: after changing one file in a 1000-file project, does `codegraph build .` complete in under 500ms? Can it run in a commit hook without the developer noticing?*
 
 ### 2. Native speed, universal reach
 
@@ -52,15 +52,17 @@ This principle extends beyond import resolution. When we add features — dead c
 
 *Test: does every query result include enough context for the consumer to judge its reliability?*
 
-### 4. Incremental by default
+### 4. Zero-cost core, LLM-enhanced when you choose
 
-**Never re-parse what hasn't changed.**
+**The full graph works with no API keys. AI features are an optional layer on top.**
 
-File-level MD5 hashing tracks what changed between builds. Only modified files get re-parsed, and their stale nodes/edges are cleaned before re-insertion. This makes watch-mode and AI-agent loops practical — rebuilds drop from seconds to milliseconds.
+The core pipeline — parse, resolve, store, query, impact analysis — runs entirely locally with zero cost. No accounts, no API keys, no cloud calls. This is the mode that runs on every commit.
 
-This is not a feature flag. It's the default behavior. The graph is always fresh with minimum work.
+LLM-powered features (richer embeddings, semantic search, AI-enhanced analysis) are an optional enhancement layer. When enabled, they use whichever provider the user already works with (OpenAI, etc.). Your code goes to exactly one place: the provider you chose. No additional third-party services, no surprise cloud calls.
 
-*Test: after changing one file in a 1000-file project, does `codegraph build .` complete in under 500ms?*
+This dual-mode approach is unique in the competitive landscape. Competitors either require cloud APIs for core functionality (code-graph-rag, autodev-codebase) or offer no AI enhancement at all (CKB, axon, arbor). Nobody else offers both modes in one tool.
+
+*Test: does every core command (`build`, `query`, `fn`, `deps`, `impact`, `diff-impact`, `cycles`, `map`) work with zero API keys? Are LLM features additive, never blocking?*
 
 ### 5. Embeddable first, CLI second
 
@@ -116,15 +118,16 @@ Staying in our lane means we can be embedded inside tools that do those things �
 - Features that improve **result quality**: fuzzy search, confidence scoring, node classification, compound queries that reduce agent round-trips
 - Features that improve **speed**: faster native parsing, smarter incremental builds, lighter-weight search alternatives (FTS5/TF-IDF alongside full embeddings)
 - Features that improve **embeddability**: better programmatic API, streaming results, output format options
+- **Optional LLM provider integration**: bring-your-own provider (OpenAI, etc.) for richer embeddings, AI-powered search, and enhanced analysis — always as an additive layer that never blocks the core pipeline (Principle 4)
 
 ### We will not build
 
-- External database backends (Memgraph, Neo4j, Qdrant, etc.) — violates Principle 1
-- Cloud API integrations for core functionality — violates Principle 1
+- External database backends (Memgraph, Neo4j, Qdrant, etc.) — violates Principle 1 (speed) and zero-infrastructure goal
+- Cloud API calls in the core pipeline — violates Principle 1 (the graph must always rebuild in under a second) and Principle 4 (zero-cost core)
 - AI-powered code generation or editing — violates Principle 8
 - Multi-agent orchestration — violates Principle 8
 - Native desktop GUI — outside our lane; we're a library
-- Features that require non-npm dependencies — violates Principle 1
+- Features that require non-npm dependencies — keeps deployment simple
 
 ---
 
@@ -132,18 +135,20 @@ Staying in our lane means we can be embedded inside tools that do those things �
 
 As of February 2026, codegraph is **#7 out of 22** in the code intelligence tool space (see [COMPETITIVE_ANALYSIS.md](./COMPETITIVE_ANALYSIS.md)).
 
-Six tools rank above us on feature breadth and community size. But none of them occupy our niche: **the npm-native, zero-config, dual-engine code intelligence library.**
+Six tools rank above us on feature breadth and community size. But none of them can answer yes to all three questions:
 
-| What competitors need | What codegraph needs |
-|-----------------------|----------------------|
-| Docker (Memgraph, Neo4j, Qdrant, Dgraph) | Nothing |
-| Python environment | Nothing |
-| Cloud API keys (OpenAI, Gemini, Voyage AI) | Nothing |
-| Manual Rust/Go compilation | Nothing |
-| External secret management setup | Nothing |
-| `npm install @optave/codegraph` | That's it |
+1. **Can you rebuild the graph on every commit in a large codebase?** — Only codegraph has incremental builds. Everyone else re-indexes from scratch.
+2. **Does the core pipeline work with zero API keys and zero cost?** — Tools like code-graph-rag and autodev-codebase require cloud APIs for core features. Codegraph's full graph pipeline is local and costless.
+3. **Can you optionally enhance with your LLM provider?** — Local-only tools (CKB, axon, arbor) have no AI enhancement path. Cloud-dependent tools force it. Only codegraph makes it optional.
 
-Our path to #1 is not feature parity with every competitor. It's making codegraph **the obvious default for any JavaScript developer or tool that needs code intelligence** — because it's the only one that doesn't ask them to leave the npm ecosystem.
+| What competitors force you to choose | What codegraph gives you |
+|--------------------------------------|--------------------------|
+| Fast local analysis **or** AI-powered features | Both — zero-cost core + optional LLM layer |
+| Full re-index on every change **or** stale graph | Always-current graph via incremental builds |
+| Code goes to multiple cloud services **or** no AI at all | Code goes only to the one provider you chose |
+| Docker + Python + external DB **or** nothing works | `npm install` and done |
+
+Our path to #1 is not feature parity with every competitor. It's being **the only code intelligence tool where the graph is always current, works at zero cost, and optionally gets smarter with the LLM you already use.**
 
 ---
 
