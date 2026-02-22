@@ -1,5 +1,5 @@
 #!/bin/bash
-# Hook: block git commit if README.md or CLAUDE.md might need updating but aren't staged.
+# Hook: block git commit if README.md, CLAUDE.md, or ROADMAP.md might need updating but aren't staged.
 # Runs as a PreToolUse hook on Bash tool calls.
 
 INPUT=$(cat)
@@ -14,9 +14,10 @@ fi
 STAGED_FILES=$(git diff --cached --name-only 2>/dev/null)
 README_STAGED=$(echo "$STAGED_FILES" | grep -c '^README.md$' || true)
 CLAUDE_STAGED=$(echo "$STAGED_FILES" | grep -c '^CLAUDE.md$' || true)
+ROADMAP_STAGED=$(echo "$STAGED_FILES" | grep -c '^ROADMAP.md$' || true)
 
-# If both are staged, all good
-if [ "$README_STAGED" -gt 0 ] && [ "$CLAUDE_STAGED" -gt 0 ]; then
+# If all three are staged, all good
+if [ "$README_STAGED" -gt 0 ] && [ "$CLAUDE_STAGED" -gt 0 ] && [ "$ROADMAP_STAGED" -gt 0 ]; then
   exit 0
 fi
 
@@ -26,13 +27,14 @@ NEEDS_CHECK=$(echo "$STAGED_FILES" | grep -cE '(src/|cli\.js|constants\.js|parse
 if [ "$NEEDS_CHECK" -gt 0 ]; then
   MISSING=""
   [ "$README_STAGED" -eq 0 ] && MISSING="README.md"
-  [ "$CLAUDE_STAGED" -eq 0 ] && MISSING="${MISSING:+$MISSING and }CLAUDE.md"
+  [ "$CLAUDE_STAGED" -eq 0 ] && MISSING="${MISSING:+$MISSING, }CLAUDE.md"
+  [ "$ROADMAP_STAGED" -eq 0 ] && MISSING="${MISSING:+$MISSING, }ROADMAP.md"
 
   jq -n --arg missing "$MISSING" '{
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
       permissionDecision: "deny",
-      permissionDecisionReason: ($missing + " not staged but source files were changed. Review whether these docs need updating — README.md (language support table, feature list, command docs) and CLAUDE.md (architecture table, supported languages, key design decisions). If they truly do not need changes, re-run the commit with docs check acknowledged.")
+      permissionDecisionReason: ($missing + " not staged but source files were changed. Review whether these docs need updating — README.md (language support table, feature list, command docs), CLAUDE.md (architecture table, supported languages, key design decisions), and ROADMAP.md (phase status, new features, deliverables). If they truly do not need changes, re-run the commit with docs check acknowledged.")
     }
   }'
   exit 0
