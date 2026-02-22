@@ -16,7 +16,7 @@ describe('JavaScript parser', () => {
   });
 
   function parseJS(code) {
-    const parser = parsers.jsParser;
+    const parser = parsers.get('javascript');
     const tree = parser.parse(code);
     return extractSymbols(tree, 'test.js');
   }

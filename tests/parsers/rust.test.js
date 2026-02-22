@@ -9,7 +9,7 @@ describe('Rust parser', () => {
   });
 
   function parseRust(code) {
-    const parser = parsers.rustParser;
+    const parser = parsers.get('rust');
     if (!parser) throw new Error('Rust parser not available');
     const tree = parser.parse(code);
     return extractRustSymbols(tree, 'test.rs');

@@ -9,7 +9,7 @@ describe('Java parser', () => {
   });
 
   function parseJava(code) {
-    const parser = parsers.javaParser;
+    const parser = parsers.get('java');
     if (!parser) throw new Error('Java parser not available');
     const tree = parser.parse(code);
     return extractJavaSymbols(tree, 'Test.java');

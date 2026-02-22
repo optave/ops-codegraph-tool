@@ -9,7 +9,7 @@ describe('Go parser', () => {
   });
 
   function parseGo(code) {
-    const parser = parsers.goParser;
+    const parser = parsers.get('go');
     if (!parser) throw new Error('Go parser not available');
     const tree = parser.parse(code);
     return extractGoSymbols(tree, 'test.go');

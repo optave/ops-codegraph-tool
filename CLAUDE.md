@@ -41,7 +41,7 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `cli.js` | Commander CLI entry point (`bin.codegraph`) |
 | `index.js` | Programmatic API exports |
 | `builder.js` | Graph building: file collection, parsing, import resolution, incremental hashing |
-| `parser.js` | tree-sitter WASM wrapper; extracts functions, classes, methods, imports, exports, call sites |
+| `parser.js` | tree-sitter WASM wrapper; `LANGUAGE_REGISTRY` + per-language extractors for functions, classes, methods, imports, exports, call sites |
 | `queries.js` | Query functions: symbol search, file deps, impact analysis, diff-impact |
 | `embedder.js` | Semantic search with `@huggingface/transformers`; multi-query RRF ranking |
 | `db.js` | SQLite schema and operations (`better-sqlite3`) |
@@ -50,7 +50,7 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `export.js` | DOT/Mermaid/JSON graph export |
 | `watcher.js` | Watch mode for incremental rebuilds |
 | `config.js` | `.codegraphrc.json` loading |
-| `constants.js` | `EXTENSIONS` and `IGNORE_DIRS` constants |
+| `constants.js` | `EXTENSIONS` (derived from parser registry) and `IGNORE_DIRS` constants |
 | `native.js` | Native napi-rs addon loader with WASM fallback |
 | `resolve.js` | Import resolution (supports native batch mode) |
 | `logger.js` | Structured logging (`warn`, `debug`, `info`, `error`) |
@@ -59,8 +59,9 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 - **Dual-engine architecture:** Native Rust parsing via napi-rs (`crates/codegraph-core/`) with automatic fallback to WASM. Controlled by `--engine native|wasm|auto` (default: `auto`)
 - Platform-specific prebuilt binaries published as optional npm packages (`@optave/codegraph-{platform}-{arch}`)
 - WASM grammars are built from devDeps on `npm install` (via `prepare` script) and not committed to git — used as fallback when native addon is unavailable
+- **Language parser registry:** `LANGUAGE_REGISTRY` in `parser.js` is the single source of truth for all supported languages — maps each language to `{ id, extensions, grammarFile, extractor, required }`. `EXTENSIONS` in `constants.js` is derived from the registry. Adding a new language requires one registry entry + extractor function
 - `@huggingface/transformers` and `@modelcontextprotocol/sdk` are optional dependencies, lazy-loaded
-- HCL and Python parsers fail gracefully if unavailable
+- Non-required parsers (all except JS/TS/TSX) fail gracefully if their WASM grammar is unavailable
 - Import resolution uses a 6-level priority system with confidence scoring (import-aware → same-file → directory → parent → global → method hierarchy)
 - Incremental builds track file hashes in the DB to skip unchanged files
 

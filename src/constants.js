@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { SUPPORTED_EXTENSIONS } from './parser.js';
 
 export const IGNORE_DIRS = new Set([
   'node_modules',
@@ -19,30 +20,16 @@ export const IGNORE_DIRS = new Set([
   '.env',
 ]);
 
-export const EXTENSIONS = new Set([
-  '.js',
-  '.jsx',
-  '.ts',
-  '.tsx',
-  '.mjs',
-  '.cjs',
-  '.tf',
-  '.hcl',
-  '.py',
-  '.go',
-  '.rs',
-  '.java',
-  '.cs',
-  '.rb',
-  '.php',
-]);
+// Re-export as an indirect binding to avoid TDZ in the circular
+// parser.js ↔ constants.js import (no value read at evaluation time).
+export { SUPPORTED_EXTENSIONS as EXTENSIONS };
 
 export function shouldIgnore(dirName) {
   return IGNORE_DIRS.has(dirName) || dirName.startsWith('.');
 }
 
 export function isSupportedFile(filePath) {
-  return EXTENSIONS.has(path.extname(filePath));
+  return SUPPORTED_EXTENSIONS.has(path.extname(filePath));
 }
 
 /**

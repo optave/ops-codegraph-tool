@@ -9,7 +9,7 @@ describe('Ruby parser', () => {
   });
 
   function parseRuby(code) {
-    const parser = parsers.rubyParser;
+    const parser = parsers.get('ruby');
     if (!parser) throw new Error('Ruby parser not available');
     const tree = parser.parse(code);
     return extractRubySymbols(tree, 'test.rb');

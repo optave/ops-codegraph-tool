@@ -9,7 +9,7 @@ describe('PHP parser', () => {
   });
 
   function parsePHP(code) {
-    const parser = parsers.phpParser;
+    const parser = parsers.get('php');
     if (!parser) throw new Error('PHP parser not available');
     const tree = parser.parse(code);
     return extractPHPSymbols(tree, 'test.php');

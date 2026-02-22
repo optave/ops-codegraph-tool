@@ -20,126 +20,29 @@ export async function createParsers() {
     _initialized = true;
   }
 
-  const JavaScript = await Language.load(grammarPath('tree-sitter-javascript.wasm'));
-  const TypeScript = await Language.load(grammarPath('tree-sitter-typescript.wasm'));
-  const TSX = await Language.load(grammarPath('tree-sitter-tsx.wasm'));
-
-  const jsParser = new Parser();
-  jsParser.setLanguage(JavaScript);
-
-  const tsParser = new Parser();
-  tsParser.setLanguage(TypeScript);
-
-  const tsxParser = new Parser();
-  tsxParser.setLanguage(TSX);
-
-  let hclParser = null;
-  try {
-    const HCL = await Language.load(grammarPath('tree-sitter-hcl.wasm'));
-    hclParser = new Parser();
-    hclParser.setLanguage(HCL);
-  } catch (e) {
-    warn(`HCL parser failed to initialize: ${e.message}. HCL files will be skipped.`);
+  const parsers = new Map();
+  for (const entry of LANGUAGE_REGISTRY) {
+    try {
+      const lang = await Language.load(grammarPath(entry.grammarFile));
+      const parser = new Parser();
+      parser.setLanguage(lang);
+      parsers.set(entry.id, parser);
+    } catch (e) {
+      if (entry.required) throw e;
+      warn(
+        `${entry.id} parser failed to initialize: ${e.message}. ${entry.id} files will be skipped.`,
+      );
+      parsers.set(entry.id, null);
+    }
   }
-
-  let pyParser = null;
-  try {
-    const Python = await Language.load(grammarPath('tree-sitter-python.wasm'));
-    pyParser = new Parser();
-    pyParser.setLanguage(Python);
-  } catch (e) {
-    warn(`Python parser failed to initialize: ${e.message}. Python files will be skipped.`);
-  }
-
-  let goParser = null;
-  try {
-    const Go = await Language.load(grammarPath('tree-sitter-go.wasm'));
-    goParser = new Parser();
-    goParser.setLanguage(Go);
-  } catch (e) {
-    warn(`Go parser failed to initialize: ${e.message}. Go files will be skipped.`);
-  }
-
-  let rustParser = null;
-  try {
-    const Rust = await Language.load(grammarPath('tree-sitter-rust.wasm'));
-    rustParser = new Parser();
-    rustParser.setLanguage(Rust);
-  } catch (e) {
-    warn(`Rust parser failed to initialize: ${e.message}. Rust files will be skipped.`);
-  }
-
-  let javaParser = null;
-  try {
-    const Java = await Language.load(grammarPath('tree-sitter-java.wasm'));
-    javaParser = new Parser();
-    javaParser.setLanguage(Java);
-  } catch (e) {
-    warn(`Java parser failed to initialize: ${e.message}. Java files will be skipped.`);
-  }
-
-  let csharpParser = null;
-  try {
-    const CSharp = await Language.load(grammarPath('tree-sitter-c_sharp.wasm'));
-    csharpParser = new Parser();
-    csharpParser.setLanguage(CSharp);
-  } catch (e) {
-    warn(`C# parser failed to initialize: ${e.message}. C# files will be skipped.`);
-  }
-
-  let rubyParser = null;
-  try {
-    const Ruby = await Language.load(grammarPath('tree-sitter-ruby.wasm'));
-    rubyParser = new Parser();
-    rubyParser.setLanguage(Ruby);
-  } catch (e) {
-    warn(`Ruby parser failed to initialize: ${e.message}. Ruby files will be skipped.`);
-  }
-
-  let phpParser = null;
-  try {
-    const PHP = await Language.load(grammarPath('tree-sitter-php.wasm'));
-    phpParser = new Parser();
-    phpParser.setLanguage(PHP);
-  } catch (e) {
-    warn(`PHP parser failed to initialize: ${e.message}. PHP files will be skipped.`);
-  }
-
-  return {
-    jsParser,
-    tsParser,
-    tsxParser,
-    hclParser,
-    pyParser,
-    goParser,
-    rustParser,
-    javaParser,
-    csharpParser,
-    rubyParser,
-    phpParser,
-  };
+  return parsers;
 }
 
 export function getParser(parsers, filePath) {
-  if (filePath.endsWith('.tsx')) return parsers.tsxParser;
-  if (filePath.endsWith('.ts') || filePath.endsWith('.d.ts')) return parsers.tsParser;
-  if (
-    filePath.endsWith('.js') ||
-    filePath.endsWith('.jsx') ||
-    filePath.endsWith('.mjs') ||
-    filePath.endsWith('.cjs')
-  )
-    return parsers.jsParser;
-  if (filePath.endsWith('.py') && parsers.pyParser) return parsers.pyParser;
-  if ((filePath.endsWith('.tf') || filePath.endsWith('.hcl')) && parsers.hclParser)
-    return parsers.hclParser;
-  if (filePath.endsWith('.go') && parsers.goParser) return parsers.goParser;
-  if (filePath.endsWith('.rs') && parsers.rustParser) return parsers.rustParser;
-  if (filePath.endsWith('.java') && parsers.javaParser) return parsers.javaParser;
-  if (filePath.endsWith('.cs') && parsers.csharpParser) return parsers.csharpParser;
-  if (filePath.endsWith('.rb') && parsers.rubyParser) return parsers.rubyParser;
-  if (filePath.endsWith('.php') && parsers.phpParser) return parsers.phpParser;
-  return null;
+  const ext = path.extname(filePath);
+  const entry = _extToLang.get(ext);
+  if (!entry) return null;
+  return parsers.get(entry.id) || null;
 }
 
 function nodeEndLine(node) {
@@ -2093,6 +1996,99 @@ function normalizeNativeSymbols(result) {
 }
 
 /**
+ * Declarative registry of all supported languages.
+ * Adding a new language requires only a new entry here + its extractor function.
+ */
+export const LANGUAGE_REGISTRY = [
+  {
+    id: 'javascript',
+    extensions: ['.js', '.jsx', '.mjs', '.cjs'],
+    grammarFile: 'tree-sitter-javascript.wasm',
+    extractor: extractSymbols,
+    required: true,
+  },
+  {
+    id: 'typescript',
+    extensions: ['.ts'],
+    grammarFile: 'tree-sitter-typescript.wasm',
+    extractor: extractSymbols,
+    required: true,
+  },
+  {
+    id: 'tsx',
+    extensions: ['.tsx'],
+    grammarFile: 'tree-sitter-tsx.wasm',
+    extractor: extractSymbols,
+    required: true,
+  },
+  {
+    id: 'hcl',
+    extensions: ['.tf', '.hcl'],
+    grammarFile: 'tree-sitter-hcl.wasm',
+    extractor: extractHCLSymbols,
+    required: false,
+  },
+  {
+    id: 'python',
+    extensions: ['.py'],
+    grammarFile: 'tree-sitter-python.wasm',
+    extractor: extractPythonSymbols,
+    required: false,
+  },
+  {
+    id: 'go',
+    extensions: ['.go'],
+    grammarFile: 'tree-sitter-go.wasm',
+    extractor: extractGoSymbols,
+    required: false,
+  },
+  {
+    id: 'rust',
+    extensions: ['.rs'],
+    grammarFile: 'tree-sitter-rust.wasm',
+    extractor: extractRustSymbols,
+    required: false,
+  },
+  {
+    id: 'java',
+    extensions: ['.java'],
+    grammarFile: 'tree-sitter-java.wasm',
+    extractor: extractJavaSymbols,
+    required: false,
+  },
+  {
+    id: 'csharp',
+    extensions: ['.cs'],
+    grammarFile: 'tree-sitter-c_sharp.wasm',
+    extractor: extractCSharpSymbols,
+    required: false,
+  },
+  {
+    id: 'ruby',
+    extensions: ['.rb'],
+    grammarFile: 'tree-sitter-ruby.wasm',
+    extractor: extractRubySymbols,
+    required: false,
+  },
+  {
+    id: 'php',
+    extensions: ['.php'],
+    grammarFile: 'tree-sitter-php.wasm',
+    extractor: extractPHPSymbols,
+    required: false,
+  },
+];
+
+const _extToLang = new Map();
+for (const entry of LANGUAGE_REGISTRY) {
+  for (const ext of entry.extensions) {
+    _extToLang.set(ext, entry);
+  }
+}
+
+export const SUPPORTED_EXTENSIONS = new Set(_extToLang.keys());
+
+/**
  * WASM extraction helper: picks the right extractor based on file extension.
  */
 function wasmExtractSymbols(parsers, filePath, code) {
@@ -2107,16 +2103,9 @@ function wasmExtractSymbols(parsers, filePath, code) {
     return null;
   }
 
-  if (filePath.endsWith('.tf') || filePath.endsWith('.hcl'))
-    return extractHCLSymbols(tree, filePath);
-  if (filePath.endsWith('.py')) return extractPythonSymbols(tree, filePath);
-  if (filePath.endsWith('.go')) return extractGoSymbols(tree, filePath);
-  if (filePath.endsWith('.rs')) return extractRustSymbols(tree, filePath);
-  if (filePath.endsWith('.java')) return extractJavaSymbols(tree, filePath);
-  if (filePath.endsWith('.cs')) return extractCSharpSymbols(tree, filePath);
-  if (filePath.endsWith('.rb')) return extractRubySymbols(tree, filePath);
-  if (filePath.endsWith('.php')) return extractPHPSymbols(tree, filePath);
-  return extractSymbols(tree, filePath);
+  const ext = path.extname(filePath);
+  const entry = _extToLang.get(ext);
+  return entry ? entry.extractor(tree, filePath) : null;
 }
 
 /**

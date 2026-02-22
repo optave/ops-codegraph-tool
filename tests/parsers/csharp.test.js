@@ -9,7 +9,7 @@ describe('C# parser', () => {
   });
 
   function parseCSharp(code) {
-    const parser = parsers.csharpParser;
+    const parser = parsers.get('csharp');
     if (!parser) throw new Error('C# parser not available');
     const tree = parser.parse(code);
     return extractCSharpSymbols(tree, 'Test.cs');

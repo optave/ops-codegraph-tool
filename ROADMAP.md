@@ -105,19 +105,19 @@ Ensure the transition is seamless.
 
 **Goal:** Fix structural issues that make subsequent phases harder.
 
-### 2.1 — Language Parser Registry
+### 2.1 — Language Parser Registry ✅
 
 Replace scattered parser init/selection logic with a single declarative registry.
 
-- Create a `LANGUAGE_REGISTRY` object mapping each language to `{ extensions, grammarFile, extractor, required }`
-- Refactor `createParsers()` to iterate the registry instead of individual try/catch blocks
-- Refactor `getParser()` to use registry extension lookup
-- Refactor `builder.js` Pass 1 to dispatch extractors via registry instead of chained `if/else`
-- Auto-generate `EXTENSIONS` from registry (remove manual list in `constants.js`)
+- ✅ Create a `LANGUAGE_REGISTRY` array mapping each language to `{ id, extensions, grammarFile, extractor, required }`
+- ✅ Refactor `createParsers()` to iterate the registry instead of individual try/catch blocks (returns `Map<string, Parser|null>`)
+- ✅ Refactor `getParser()` to use registry extension lookup via `_extToLang` Map
+- ✅ Refactor `wasmExtractSymbols()` to dispatch extractors via `entry.extractor`
+- ✅ Auto-generate `EXTENSIONS` from registry (re-exported from `parser.js` via `SUPPORTED_EXTENSIONS`)
 
 **Result:** Adding a new language becomes a single registry entry + extractor function.
 
-**Affected files:** `src/parser.js`, `src/builder.js`, `src/constants.js`
+**Affected files:** `src/parser.js`, `src/constants.js`
 
 ### 2.2 — Complete MCP Server
 

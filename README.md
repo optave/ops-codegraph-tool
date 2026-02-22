@@ -449,7 +449,7 @@ const { results: fused } = await multiSearchData(
 See **[ROADMAP.md](ROADMAP.md)** for the full development roadmap. Current plan:
 
 1. ~~**Rust Core**~~ — **Complete** (v1.3.0) — native tree-sitter parsing via napi-rs, parallel multi-core parsing, incremental re-parsing, import resolution & cycle detection in Rust
-2. **Foundation Hardening** — parser registry, complete MCP server, test coverage, enhanced config
+2. **Foundation Hardening** — ~~parser registry~~, complete MCP server, test coverage, enhanced config
 3. **Intelligent Embeddings** — LLM-generated descriptions, hybrid search
 4. **Natural Language Queries** — `codegraph ask` command, conversational sessions
 5. **Expanded Language Support** — 8 new languages (12 → 20)
