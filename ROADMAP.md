@@ -1,8 +1,8 @@
 # Codegraph Roadmap
 
-> **Current version:** 1.2.0 | **Status:** Active development | **Updated:** February 2025
+> **Current version:** 1.2.0 | **Status:** Active development | **Updated:** February 2026
 
-Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across six phases — closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
+Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across seven phases — closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
 **LLM strategy:** All LLM-powered features are **optional enhancements**. Everything works without an API key. When configured (OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint), users unlock richer semantic search and natural language queries.
 
@@ -12,30 +12,98 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 
 | Phase | Theme | Key Deliverables | Status |
 |-------|-------|-----------------|--------|
-| [**1**](#phase-1--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config | Planned |
-| [**2**](#phase-2--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, hybrid search | Planned |
-| [**3**](#phase-3--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions | Planned |
-| [**4**](#phase-4--expanded-language-support) | Expanded Language Support | 8 new languages (12 → 20), parser utilities | Planned |
-| [**5**](#phase-5--github-integration--ci) | GitHub Integration & CI | Reusable GitHub Action, PR review, SARIF output | Planned |
-| [**6**](#phase-6--interactive-visualization--advanced-features) | Visualization & Advanced | Web UI, dead code detection, monorepo, agentic search | Planned |
+| [**1**](#phase-1--rust-core) | Rust Core | Rust parsing engine via napi-rs, parallel parsing, incremental tree-sitter, JS orchestration layer | Planned |
+| [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config | Planned |
+| [**3**](#phase-3--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, hybrid search | Planned |
+| [**4**](#phase-4--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions | Planned |
+| [**5**](#phase-5--expanded-language-support) | Expanded Language Support | 8 new languages (12 → 20), parser utilities | Planned |
+| [**6**](#phase-6--github-integration--ci) | GitHub Integration & CI | Reusable GitHub Action, PR review, SARIF output | Planned |
+| [**7**](#phase-7--interactive-visualization--advanced-features) | Visualization & Advanced | Web UI, dead code detection, monorepo, agentic search | Planned |
 
 ### Dependency graph
 
 ```
-Phase 1 (Foundation)
-  ├──→ Phase 2 (Embeddings)  ──→ Phase 3 (NL Queries)
-  ├──→ Phase 4 (Languages)
-  └──→ Phase 5 (GitHub/CI)
-Phases 1-3 ──→ Phase 6 (Visualization & Advanced)
+Phase 1 (Rust Core)
+  └──→ Phase 2 (Foundation Hardening)
+         ├──→ Phase 3 (Embeddings)  ──→ Phase 4 (NL Queries)
+         ├──→ Phase 5 (Languages)
+         └──→ Phase 6 (GitHub/CI)
+Phases 1-4 ──→ Phase 7 (Visualization & Advanced)
 ```
 
 ---
 
-## Phase 1 — Foundation Hardening
+## Phase 1 — Rust Core
+
+**Goal:** Move the CPU-intensive parsing and graph engine to Rust, keeping JS for CLI orchestration, MCP, and embeddings. This unlocks parallel parsing, incremental tree-sitter, lower memory usage, and optional standalone binary distribution.
+
+### 1.1 — Rust Workspace & napi-rs Setup
+
+Bootstrap the Rust side of the project.
+
+- Create `crates/codegraph-core/` with a Cargo workspace
+- Set up [napi-rs](https://napi.rs/) to compile Rust → `.node` native addon
+- Configure CI matrix for prebuilt binaries: `linux-x64`, `darwin-arm64`, `darwin-x64`, `win32-x64`
+- Add npm optionalDependencies for platform-specific packages (same pattern as SWC/esbuild)
+- Fallback to existing JS/WASM path if native addon is unavailable
+
+**Result:** `npm install` pulls a prebuilt binary; no Rust toolchain required for end users.
+
+### 1.2 — Native tree-sitter Parsing
+
+Replace WASM-based parsing with native tree-sitter in Rust.
+
+- Link tree-sitter grammars natively (no more `.wasm` files)
+- Implement file parsing with rayon for multi-core parallelism
+- Expose `parseFiles(filePaths)` to JS via napi-rs, returning extracted symbols/imports/calls
+- Benchmark: target 10-50x improvement over WASM on large codebases
+
+**Result:** Parsing thousands of files uses all CPU cores. The `grammars/` directory and `build:wasm` step are no longer needed.
+
+**Affected files:** `src/parser.js` (becomes a thin JS wrapper over native addon)
+
+### 1.3 — Incremental Parsing
+
+Leverage native tree-sitter's `edit + re-parse` API.
+
+- Track previous parse trees in memory for open/watched files
+- On file change, apply edits to the existing tree and re-parse only the changed regions
+- Integrate with `codegraph watch` for near-instant incremental rebuilds
+
+**Result:** Watch mode re-parses only changed lines instead of entire files.
+
+**Affected files:** `src/watcher.js`, `src/parser.js`
+
+### 1.4 — Import Resolution & Graph Algorithms in Rust
+
+Move the hot-path graph logic to Rust.
+
+- Port the 6-level import resolution priority system with confidence scoring
+- Port cycle detection (currently `src/cycles.js`) to Rust
+- Keep SQLite operations in JS (better-sqlite3 is already fast and synchronous)
+- Expose `resolveImports()` and `detectCycles()` to JS via napi-rs
+
+**Result:** Import resolution and cycle detection run in Rust with full type safety. Complex state machines benefit from Rust's type system.
+
+### 1.5 — Graceful Degradation & Migration
+
+Ensure the transition is seamless.
+
+- Keep the existing JS/WASM parser as a fallback when the native addon is unavailable
+- Auto-detect at startup: native addon available → use Rust path; otherwise → WASM path
+- No breaking changes to CLI, MCP, or programmatic API
+- Add `--engine native|wasm` flag for explicit selection
+- Migrate existing tests to validate both engines produce identical output
+
+**Result:** Zero breaking changes. Users get faster parsing automatically; nothing else changes.
+
+---
+
+## Phase 2 — Foundation Hardening
 
 **Goal:** Fix structural issues that make subsequent phases harder.
 
-### 1.1 — Language Parser Registry
+### 2.1 — Language Parser Registry
 
 Replace scattered parser init/selection logic with a single declarative registry.
 
@@ -49,7 +117,7 @@ Replace scattered parser init/selection logic with a single declarative registry
 
 **Affected files:** `src/parser.js`, `src/builder.js`, `src/constants.js`
 
-### 1.2 — Complete MCP Server
+### 2.2 — Complete MCP Server
 
 Expose all CLI capabilities through MCP, going from 5 → 11 tools.
 
@@ -64,7 +132,7 @@ Expose all CLI capabilities through MCP, going from 5 → 11 tools.
 
 **Affected files:** `src/mcp.js`
 
-### 1.3 — Test Coverage Gaps
+### 2.3 — Test Coverage Gaps
 
 Add tests for currently untested modules.
 
@@ -74,7 +142,7 @@ Add tests for currently untested modules.
 | `tests/config/config.test.js` | Config loading, defaults, invalid configs |
 | `tests/integration/cli.test.js` | End-to-end CLI smoke tests |
 
-### 1.4 — Enhanced Configuration
+### 2.4 — Enhanced Configuration
 
 New configuration options in `.codegraphrc.json`:
 
@@ -98,11 +166,11 @@ Environment variable fallbacks: `CODEGRAPH_LLM_PROVIDER`, `CODEGRAPH_LLM_API_KEY
 
 ---
 
-## Phase 2 — Intelligent Embeddings
+## Phase 3 — Intelligent Embeddings
 
 **Goal:** Dramatically improve semantic search quality by embedding natural-language descriptions instead of raw code.
 
-### 2.1 — LLM Description Generator
+### 3.1 — LLM Description Generator
 
 For each function/method/class node, generate a concise natural-language description:
 
@@ -130,7 +198,7 @@ For each function/method/class node, generate a concise natural-language descrip
 
 **New file:** `src/describer.js`
 
-### 2.2 — Enhanced Embedding Pipeline
+### 3.2 — Enhanced Embedding Pipeline
 
 - When descriptions exist, embed the description text instead of raw code
 - Keep raw code as fallback when no description is available
@@ -141,7 +209,7 @@ For each function/method/class node, generate a concise natural-language descrip
 
 **Affected files:** `src/embedder.js`
 
-### 2.3 — Hybrid Search
+### 3.3 — Hybrid Search
 
 Combine vector similarity with keyword matching.
 
@@ -156,11 +224,11 @@ Combine vector similarity with keyword matching.
 
 ---
 
-## Phase 3 — Natural Language Queries
+## Phase 4 — Natural Language Queries
 
 **Goal:** Allow developers to ask questions about their codebase in plain English.
 
-### 3.1 — Query Engine
+### 4.1 — Query Engine
 
 ```bash
 codegraph ask "How does the authentication flow work?"
@@ -186,7 +254,7 @@ codegraph ask "How does the authentication flow work?"
 
 **New file:** `src/nlquery.js`
 
-### 3.2 — Conversational Sessions
+### 4.2 — Conversational Sessions
 
 Multi-turn conversations with session memory.
 
@@ -200,7 +268,7 @@ codegraph sessions clear
 - Store conversation history in SQLite table `sessions`
 - Include prior Q&A pairs in subsequent prompts
 
-### 3.3 — MCP Integration
+### 4.3 — MCP Integration
 
 New MCP tool: `ask_codebase` — natural language query via MCP.
 
@@ -210,11 +278,11 @@ Enables AI coding agents (Claude Code, Cursor, etc.) to ask codegraph questions 
 
 ---
 
-## Phase 4 — Expanded Language Support
+## Phase 5 — Expanded Language Support
 
 **Goal:** Go from 12 → 20 supported languages.
 
-### 4.1 — Batch 1: High Demand
+### 5.1 — Batch 1: High Demand
 
 | Language | Extensions | Grammar | Effort |
 |----------|-----------|---------|--------|
@@ -223,7 +291,7 @@ Enables AI coding agents (Claude Code, Cursor, etc.) to ask codegraph questions 
 | Kotlin | `.kt`, `.kts` | `tree-sitter-kotlin` | Low |
 | Swift | `.swift` | `tree-sitter-swift` | Medium |
 
-### 4.2 — Batch 2: Growing Ecosystems
+### 5.2 — Batch 2: Growing Ecosystems
 
 | Language | Extensions | Grammar | Effort |
 |----------|-----------|---------|--------|
@@ -232,7 +300,7 @@ Enables AI coding agents (Claude Code, Cursor, etc.) to ask codegraph questions 
 | Lua | `.lua` | `tree-sitter-lua` | Low |
 | Zig | `.zig` | `tree-sitter-zig` | Low |
 
-### 4.3 — Parser Abstraction Layer
+### 5.3 — Parser Abstraction Layer
 
 Extract shared patterns from existing extractors into reusable helpers.
 
@@ -248,11 +316,11 @@ Extract shared patterns from existing extractors into reusable helpers.
 
 ---
 
-## Phase 5 — GitHub Integration & CI
+## Phase 6 — GitHub Integration & CI
 
 **Goal:** Bring codegraph's analysis into pull request workflows.
 
-### 5.1 — Reusable GitHub Action
+### 6.1 — Reusable GitHub Action
 
 A reusable GitHub Action that runs on PRs:
 
@@ -274,7 +342,7 @@ A reusable GitHub Action that runs on PRs:
 
 **New file:** `.github/actions/codegraph-ci/action.yml`
 
-### 5.2 — PR Review Integration
+### 6.2 — PR Review Integration
 
 ```bash
 codegraph review --pr <number>
@@ -290,7 +358,7 @@ Requires `gh` CLI. For each changed function:
 
 **New file:** `src/github.js`
 
-### 5.3 — SARIF Output
+### 6.3 — SARIF Output
 
 Add SARIF output format for cycle detection. SARIF integrates with GitHub Code Scanning, showing issues inline in the PR.
 
@@ -298,9 +366,9 @@ Add SARIF output format for cycle detection. SARIF integrates with GitHub Code S
 
 ---
 
-## Phase 6 — Interactive Visualization & Advanced Features
+## Phase 7 — Interactive Visualization & Advanced Features
 
-### 6.1 — Interactive Web Visualization
+### 7.1 — Interactive Web Visualization
 
 ```bash
 codegraph viz
@@ -320,7 +388,7 @@ Opens a local web UI at `localhost:3000` with:
 
 **New file:** `src/visualizer.js`
 
-### 6.2 — Dead Code Detection
+### 7.2 — Dead Code Detection
 
 ```bash
 codegraph dead
@@ -331,7 +399,7 @@ Find functions/methods/classes with zero incoming edges (never called). Filters 
 
 **Affected files:** `src/queries.js`
 
-### 6.3 — Cross-Repository Support (Monorepo)
+### 7.3 — Cross-Repository Support (Monorepo)
 
 Support multi-package monorepos with cross-package edges.
 
@@ -341,7 +409,7 @@ Support multi-package monorepos with cross-package edges.
 - `codegraph build --workspace` to scan all packages
 - Impact analysis across package boundaries
 
-### 6.4 — Agentic Search
+### 7.4 — Agentic Search
 
 Recursive reference-following search that traces connections.
 
@@ -371,12 +439,13 @@ Each phase includes targeted verification:
 
 | Phase | Verification |
 |-------|-------------|
-| **1** | `npm test`, manual MCP client test for all tools, config loading tests |
-| **2** | Compare `codegraph search` quality before/after descriptions on a real repo |
-| **3** | `codegraph ask "How does import resolution work?"` against codegraph itself |
-| **4** | Parse sample files for each new language, verify definitions/calls/imports |
-| **5** | Test PR in a fork, verify GitHub Action comment is posted |
-| **6** | `codegraph viz` loads, nodes are interactive, search works |
+| **1** | Benchmark native vs WASM parsing on a large repo, verify identical output from both engines |
+| **2** | `npm test`, manual MCP client test for all tools, config loading tests |
+| **3** | Compare `codegraph search` quality before/after descriptions on a real repo |
+| **4** | `codegraph ask "How does import resolution work?"` against codegraph itself |
+| **5** | Parse sample files for each new language, verify definitions/calls/imports |
+| **6** | Test PR in a fork, verify GitHub Action comment is posted |
+| **7** | `codegraph viz` loads, nodes are interactive, search works |
 
 **Full integration test** after all phases:
 
