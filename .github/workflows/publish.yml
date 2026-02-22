@@ -20,7 +20,8 @@ on:
 permissions: {}
 
 jobs:
-  test:
+  preflight:
+    name: Preflight checks
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -33,7 +34,7 @@ jobs:
       - run: npm test
 
   build-native:
-    needs: test
+    needs: preflight
     strategy:
       fail-fast: false
       matrix:
