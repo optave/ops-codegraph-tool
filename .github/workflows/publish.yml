@@ -128,15 +128,23 @@ jobs:
           CURRENT=$(node -p "require('./package.json').version")
 
           if [ "${{ github.event_name }}" = "release" ]; then
-            echo "Triggered by release event — using existing version $CURRENT"
+            # Extract version from the release tag instead of trusting package.json
+            TAG="${{ github.event.release.tag_name }}"
+            RELEASE_VERSION="${TAG#v}"
+            if [ "$CURRENT" != "$RELEASE_VERSION" ]; then
+              echo "::warning::package.json ($CURRENT) doesn't match release tag ($TAG) — bumping to match"
+              npx commit-and-tag-version --release-as "$RELEASE_VERSION" --skip.tag --skip.changelog
+            else
+              echo "Triggered by release event — version $CURRENT matches tag $TAG"
+            fi
           else
             OVERRIDE="${{ inputs.version-override }}"
             if [ -n "$OVERRIDE" ] && [ "$CURRENT" = "$OVERRIDE" ]; then
               echo "Version already at $OVERRIDE — skipping bump"
             elif [ -n "$OVERRIDE" ]; then
-              npx commit-and-tag-version --release-as "$OVERRIDE"
+              npx commit-and-tag-version --release-as "$OVERRIDE" --skip.tag
             else
-              npx commit-and-tag-version
+              npx commit-and-tag-version --skip.tag
             fi
           fi
 
@@ -225,4 +233,11 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && !inputs.dry-run
         run: |
           git push origin main
-          git push origin "v${{ steps.version.outputs.new_version }}"
+          TAG="v${{ steps.version.outputs.new_version }}"
+          # Skip if tag already exists on remote (e.g. created by a GitHub release)
+          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q .; then
+            echo "Tag $TAG already exists on remote — skipping tag push"
+          else
+            git tag -a "$TAG" -m "release: $TAG"
+            git push origin "$TAG"
+          fi
