@@ -173,10 +173,10 @@ export async function watchProject(rootDir, opts = {}) {
     countNodes: db.prepare('SELECT COUNT(*) as c FROM nodes WHERE file = ?'),
     countEdgesForFile: null,
     findNodeInFile: db.prepare(
-      "SELECT id, file FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface') AND file = ?",
+      "SELECT id, file FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module') AND file = ?",
     ),
     findNodeByName: db.prepare(
-      "SELECT id, file FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface')",
+      "SELECT id, file FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module')",
     ),
   };
 
