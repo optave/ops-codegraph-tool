@@ -143,7 +143,7 @@ const TOOLS = [
   {
     name: 'list_functions',
     description:
-      'List functions, methods, and classes in the codebase, optionally filtered by file or name pattern',
+      'List functions, methods, classes, structs, enums, traits, records, and modules in the codebase, optionally filtered by file or name pattern',
     inputSchema: {
       type: 'object',
       properties: {

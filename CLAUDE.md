@@ -42,7 +42,7 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `index.js` | Programmatic API exports |
 | `builder.js` | Graph building: file collection, parsing, import resolution, incremental hashing |
 | `parser.js` | tree-sitter WASM wrapper; `LANGUAGE_REGISTRY` + per-language extractors for functions, classes, methods, imports, exports, call sites |
-| `queries.js` | Query functions: symbol search, file deps, impact analysis, diff-impact |
+| `queries.js` | Query functions: symbol search, file deps, impact analysis, diff-impact; `SYMBOL_KINDS` constant defines all node kinds |
 | `embedder.js` | Semantic search with `@huggingface/transformers`; multi-query RRF ranking |
 | `db.js` | SQLite schema and operations (`better-sqlite3`) |
 | `mcp.js` | MCP server exposing graph queries to AI agents |
@@ -60,6 +60,7 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 - Platform-specific prebuilt binaries published as optional npm packages (`@optave/codegraph-{platform}-{arch}`)
 - WASM grammars are built from devDeps on `npm install` (via `prepare` script) and not committed to git — used as fallback when native addon is unavailable
 - **Language parser registry:** `LANGUAGE_REGISTRY` in `parser.js` is the single source of truth for all supported languages — maps each language to `{ id, extensions, grammarFile, extractor, required }`. `EXTENSIONS` in `constants.js` is derived from the registry. Adding a new language requires one registry entry + extractor function
+- **Node kinds:** `SYMBOL_KINDS` in `queries.js` lists all valid kinds: `function`, `method`, `class`, `interface`, `type`, `struct`, `enum`, `trait`, `record`, `module`. Language-specific types use their native kind (e.g. Go structs → `struct`, Rust traits → `trait`, Ruby modules → `module`) rather than mapping everything to `class`/`interface`
 - `@huggingface/transformers` and `@modelcontextprotocol/sdk` are optional dependencies, lazy-loaded
 - Non-required parsers (all except JS/TS/TSX) fail gracefully if their WASM grammar is unavailable
 - Import resolution uses a 6-level priority system with confidence scoring (import-aware → same-file → directory → parent → global → method hierarchy)
