@@ -19,7 +19,13 @@ import {
   moduleMap,
   queryName,
 } from './queries.js';
-import { listRepos, REGISTRY_PATH, registerRepo, unregisterRepo } from './registry.js';
+import {
+  listRepos,
+  pruneRegistry,
+  REGISTRY_PATH,
+  registerRepo,
+  unregisterRepo,
+} from './registry.js';
 import { watchProject } from './watcher.js';
 
 const program = new Command();
@@ -187,9 +193,14 @@ program
   .command('mcp')
   .description('Start MCP (Model Context Protocol) server for AI assistant integration')
   .option('-d, --db <path>', 'Path to graph.db')
+  .option('--repos <names>', 'Comma-separated list of allowed repo names (restricts access)')
   .action(async (opts) => {
     const { startMCPServer } = await import('./mcp.js');
-    await startMCPServer(opts.db);
+    const mcpOpts = {};
+    if (opts.repos) {
+      mcpOpts.allowedRepos = opts.repos.split(',').map((s) => s.trim());
+    }
+    await startMCPServer(opts.db, mcpOpts);
   });
 
 // ─── Registry commands ──────────────────────────────────────────────────
@@ -239,6 +250,21 @@ registry
     } else {
       console.error(`Repository "${name}" not found in registry.`);
       process.exit(1);
+    }
+  });
+
+registry
+  .command('prune')
+  .description('Remove registry entries whose directories no longer exist')
+  .action(() => {
+    const pruned = pruneRegistry();
+    if (pruned.length === 0) {
+      console.log('No stale entries found.');
+    } else {
+      for (const entry of pruned) {
+        console.log(`Pruned "${entry.name}" (${entry.path})`);
+      }
+      console.log(`\nRemoved ${pruned.length} stale ${pruned.length === 1 ? 'entry' : 'entries'}.`);
     }
   });
 
@@ -293,6 +319,53 @@ program
       filePattern: opts.file,
       rrfK: parseInt(opts.rrfK, 10),
     });
+  });
+
+program
+  .command('structure [dir]')
+  .description(
+    'Show project directory structure with hierarchy, cohesion scores, and per-file metrics',
+  )
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('--depth <n>', 'Max directory depth')
+  .option('--sort <metric>', 'Sort by: cohesion | fan-in | fan-out | density | files', 'files')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (dir, opts) => {
+    const { structureData, formatStructure } = await import('./structure.js');
+    const data = structureData(opts.db, {
+      directory: dir,
+      depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
+      sort: opts.sort,
+    });
+    if (opts.json) {
+      console.log(JSON.stringify(data, null, 2));
+    } else {
+      console.log(formatStructure(data));
+    }
+  });
+
+program
+  .command('hotspots')
+  .description(
+    'Find structural hotspots: files or directories with extreme fan-in, fan-out, or symbol density',
+  )
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-n, --limit <number>', 'Number of results', '10')
+  .option('--metric <metric>', 'fan-in | fan-out | density | coupling', 'fan-in')
+  .option('--level <level>', 'file | directory', 'file')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (opts) => {
+    const { hotspotsData, formatHotspots } = await import('./structure.js');
+    const data = hotspotsData(opts.db, {
+      metric: opts.metric,
+      level: opts.level,
+      limit: parseInt(opts.limit, 10),
+    });
+    if (opts.json) {
+      console.log(JSON.stringify(data, null, 2));
+    } else {
+      console.log(formatHotspots(data));
+    }
   });
 
 program

@@ -50,11 +50,22 @@ export {
 export {
   listRepos,
   loadRegistry,
+  pruneRegistry,
   REGISTRY_PATH,
   registerRepo,
   resolveRepoDbPath,
   saveRegistry,
   unregisterRepo,
 } from './registry.js';
+// Structure analysis
+export {
+  buildStructure,
+  formatHotspots,
+  formatModuleBoundaries,
+  formatStructure,
+  hotspotsData,
+  moduleBoundariesData,
+  structureData,
+} from './structure.js';
 // Watch mode
 export { watchProject } from './watcher.js';

@@ -33,6 +33,19 @@ export const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
       CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
       CREATE INDEX IF NOT EXISTS idx_edges_kind ON edges(kind);
+      CREATE TABLE IF NOT EXISTS node_metrics (
+        node_id INTEGER PRIMARY KEY,
+        line_count INTEGER,
+        symbol_count INTEGER,
+        import_count INTEGER,
+        export_count INTEGER,
+        fan_in INTEGER,
+        fan_out INTEGER,
+        cohesion REAL,
+        file_count INTEGER,
+        FOREIGN KEY(node_id) REFERENCES nodes(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_node_metrics_node ON node_metrics(node_id);
     `,
   },
   {

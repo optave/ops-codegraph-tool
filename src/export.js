@@ -24,25 +24,60 @@ export function exportDOT(db, opts = {}) {
     `)
       .all();
 
+    // Try to use directory nodes from DB (built by structure analysis)
+    const hasDirectoryNodes =
+      db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'directory'").get().c > 0;
+
     const dirs = new Map();
     const allFiles = new Set();
     for (const { source, target } of edges) {
       allFiles.add(source);
       allFiles.add(target);
     }
-    for (const file of allFiles) {
-      const dir = path.dirname(file) || '.';
-      if (!dirs.has(dir)) dirs.set(dir, []);
-      dirs.get(dir).push(file);
+
+    if (hasDirectoryNodes) {
+      // Use DB directory structure with cohesion labels
+      const dbDirs = db
+        .prepare(`
+          SELECT n.id, n.name, nm.cohesion
+          FROM nodes n
+          LEFT JOIN node_metrics nm ON n.id = nm.node_id
+          WHERE n.kind = 'directory'
+        `)
+        .all();
+
+      for (const d of dbDirs) {
+        const containedFiles = db
+          .prepare(`
+            SELECT n.name FROM edges e
+            JOIN nodes n ON e.target_id = n.id
+            WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'file'
+          `)
+          .all(d.id)
+          .map((r) => r.name)
+          .filter((f) => allFiles.has(f));
+
+        if (containedFiles.length > 0) {
+          dirs.set(d.name, { files: containedFiles, cohesion: d.cohesion });
+        }
+      }
+    } else {
+      // Fallback: reconstruct from path.dirname()
+      for (const file of allFiles) {
+        const dir = path.dirname(file) || '.';
+        if (!dirs.has(dir)) dirs.set(dir, { files: [], cohesion: null });
+        dirs.get(dir).files.push(file);
+      }
     }
 
     let clusterIdx = 0;
-    for (const [dir, files] of [...dirs].sort()) {
+    for (const [dir, info] of [...dirs].sort((a, b) => a[0].localeCompare(b[0]))) {
       lines.push(`  subgraph cluster_${clusterIdx++} {`);
-      lines.push(`    label="${dir}";`);
+      const cohLabel = info.cohesion !== null ? ` (cohesion: ${info.cohesion.toFixed(2)})` : '';
+      lines.push(`    label="${dir}${cohLabel}";`);
       lines.push(`    style=dashed;`);
       lines.push(`    color="#999999";`);
-      for (const f of files) {
+      for (const f of info.files) {
         const label = path.basename(f);
         lines.push(`    "${f}" [label="${label}"];`);
       }

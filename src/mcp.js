@@ -173,6 +173,46 @@ const TOOLS = [
     },
   },
   {
+    name: 'structure',
+    description:
+      'Show project structure with directory hierarchy, cohesion scores, and per-file metrics',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        directory: { type: 'string', description: 'Filter to a specific directory path' },
+        depth: { type: 'number', description: 'Max directory depth to show' },
+        sort: {
+          type: 'string',
+          enum: ['cohesion', 'fan-in', 'fan-out', 'density', 'files'],
+          description: 'Sort directories by metric',
+        },
+        ...REPO_PROP,
+      },
+    },
+  },
+  {
+    name: 'hotspots',
+    description:
+      'Find structural hotspots: files or directories with extreme fan-in, fan-out, or symbol density',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        metric: {
+          type: 'string',
+          enum: ['fan-in', 'fan-out', 'density', 'coupling'],
+          description: 'Metric to rank by',
+        },
+        level: {
+          type: 'string',
+          enum: ['file', 'directory'],
+          description: 'Rank files or directories',
+        },
+        limit: { type: 'number', description: 'Number of results to return', default: 10 },
+        ...REPO_PROP,
+      },
+    },
+  },
+  {
     name: 'list_repos',
     description: 'List all repositories registered in the codegraph registry',
     inputSchema: {
@@ -187,8 +227,13 @@ export { TOOLS };
 /**
  * Start the MCP server.
  * This function requires @modelcontextprotocol/sdk to be installed.
+ *
+ * @param {string} [customDbPath] - Path to a specific graph.db
+ * @param {object} [options]
+ * @param {string[]} [options.allowedRepos] - Restrict access to these repo names only
  */
-export async function startMCPServer(customDbPath) {
+export async function startMCPServer(customDbPath, options = {}) {
+  const { allowedRepos } = options;
   let Server, StdioServerTransport;
   try {
     const sdk = await import('@modelcontextprotocol/sdk/server/index.js');
@@ -231,6 +276,9 @@ export async function startMCPServer(customDbPath) {
     try {
       let dbPath = customDbPath || undefined;
       if (args.repo) {
+        if (allowedRepos && !allowedRepos.includes(args.repo)) {
+          throw new Error(`Repository "${args.repo}" is not in the allowed repos list.`);
+        }
         const { resolveRepoDbPath } = await import('./registry.js');
         const resolved = resolveRepoDbPath(args.repo);
         if (!resolved)
@@ -333,9 +381,31 @@ export async function startMCPServer(customDbPath) {
             noTests: args.no_tests,
           });
           break;
+        case 'structure': {
+          const { structureData } = await import('./structure.js');
+          result = structureData(dbPath, {
+            directory: args.directory,
+            depth: args.depth,
+            sort: args.sort,
+          });
+          break;
+        }
+        case 'hotspots': {
+          const { hotspotsData } = await import('./structure.js');
+          result = hotspotsData(dbPath, {
+            metric: args.metric,
+            level: args.level,
+            limit: args.limit,
+          });
+          break;
+        }
         case 'list_repos': {
           const { listRepos } = await import('./registry.js');
-          result = { repos: listRepos() };
+          let repos = listRepos();
+          if (allowedRepos) {
+            repos = repos.filter((r) => allowedRepos.includes(r.name));
+          }
+          result = { repos };
           break;
         }
         default:

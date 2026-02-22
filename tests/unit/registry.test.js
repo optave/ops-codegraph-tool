@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   listRepos,
   loadRegistry,
+  pruneRegistry,
   REGISTRY_PATH,
   registerRepo,
   resolveRepoDbPath,
@@ -148,6 +149,65 @@ describe('registerRepo', () => {
     const { entry } = registerRepo(dir, 'proj', registryPath);
     expect(entry.addedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
+
+  it('auto-suffixes when basename collides with different path', () => {
+    const dir1 = path.join(tmpDir, 'workspace1', 'api');
+    const dir2 = path.join(tmpDir, 'workspace2', 'api');
+    fs.mkdirSync(dir1, { recursive: true });
+    fs.mkdirSync(dir2, { recursive: true });
+
+    const { name: name1 } = registerRepo(dir1, undefined, registryPath);
+    const { name: name2 } = registerRepo(dir2, undefined, registryPath);
+
+    expect(name1).toBe('api');
+    expect(name2).toBe('api-2');
+
+    const reg = loadRegistry(registryPath);
+    expect(reg.repos.api.path).toBe(dir1);
+    expect(reg.repos['api-2'].path).toBe(dir2);
+  });
+
+  it('auto-suffix increments past existing suffixes', () => {
+    const dir1 = path.join(tmpDir, 'a', 'app');
+    const dir2 = path.join(tmpDir, 'b', 'app');
+    const dir3 = path.join(tmpDir, 'c', 'app');
+    fs.mkdirSync(dir1, { recursive: true });
+    fs.mkdirSync(dir2, { recursive: true });
+    fs.mkdirSync(dir3, { recursive: true });
+
+    registerRepo(dir1, undefined, registryPath);
+    registerRepo(dir2, undefined, registryPath);
+    const { name: name3 } = registerRepo(dir3, undefined, registryPath);
+
+    expect(name3).toBe('app-3');
+  });
+
+  it('re-registering same path with no explicit name updates in place', () => {
+    const dir = path.join(tmpDir, 'mylib');
+    fs.mkdirSync(dir, { recursive: true });
+
+    const { name: first } = registerRepo(dir, undefined, registryPath);
+    const { name: second } = registerRepo(dir, undefined, registryPath);
+
+    expect(first).toBe('mylib');
+    expect(second).toBe('mylib');
+    expect(Object.keys(loadRegistry(registryPath).repos)).toHaveLength(1);
+  });
+
+  it('explicit name always overwrites (no suffix)', () => {
+    const dir1 = path.join(tmpDir, 'one');
+    const dir2 = path.join(tmpDir, 'two');
+    fs.mkdirSync(dir1, { recursive: true });
+    fs.mkdirSync(dir2, { recursive: true });
+
+    registerRepo(dir1, 'shared', registryPath);
+    const { name } = registerRepo(dir2, 'shared', registryPath);
+
+    expect(name).toBe('shared');
+    const reg = loadRegistry(registryPath);
+    expect(reg.repos.shared.path).toBe(dir2);
+    expect(Object.keys(reg.repos)).toHaveLength(1);
+  });
 });
 
 // ─── unregisterRepo ─────────────────────────────────────────────────
@@ -223,5 +283,56 @@ describe('resolveRepoDbPath', () => {
     registerRepo(dir, 'proj', registryPath);
     const result = resolveRepoDbPath('proj', registryPath);
     expect(result).toBeUndefined();
+  });
+});
+
+// ─── pruneRegistry ─────────────────────────────────────────────────
+
+describe('pruneRegistry', () => {
+  it('removes entries whose directories no longer exist', () => {
+    const dir1 = path.join(tmpDir, 'exists');
+    const dir2 = path.join(tmpDir, 'gone');
+    fs.mkdirSync(dir1, { recursive: true });
+    fs.mkdirSync(dir2, { recursive: true });
+
+    registerRepo(dir1, 'exists', registryPath);
+    registerRepo(dir2, 'gone', registryPath);
+
+    // Remove the directory to make it stale
+    fs.rmSync(dir2, { recursive: true, force: true });
+
+    const pruned = pruneRegistry(registryPath);
+    expect(pruned).toHaveLength(1);
+    expect(pruned[0].name).toBe('gone');
+    expect(pruned[0].path).toBe(dir2);
+
+    const reg = loadRegistry(registryPath);
+    expect(reg.repos.exists).toBeDefined();
+    expect(reg.repos.gone).toBeUndefined();
+  });
+
+  it('returns empty array when nothing to prune', () => {
+    const dir = path.join(tmpDir, 'healthy');
+    fs.mkdirSync(dir, { recursive: true });
+    registerRepo(dir, 'healthy', registryPath);
+
+    const pruned = pruneRegistry(registryPath);
+    expect(pruned).toEqual([]);
+  });
+
+  it('does not write file when nothing pruned', () => {
+    const dir = path.join(tmpDir, 'ok');
+    fs.mkdirSync(dir, { recursive: true });
+    registerRepo(dir, 'ok', registryPath);
+
+    const mtimeBefore = fs.statSync(registryPath).mtimeMs;
+    pruneRegistry(registryPath);
+    const mtimeAfter = fs.statSync(registryPath).mtimeMs;
+    expect(mtimeAfter).toBe(mtimeBefore);
+  });
+
+  it('returns empty array for empty registry', () => {
+    const pruned = pruneRegistry(registryPath);
+    expect(pruned).toEqual([]);
   });
 });

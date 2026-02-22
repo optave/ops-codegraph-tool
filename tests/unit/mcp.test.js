@@ -20,6 +20,8 @@ const ALL_TOOL_NAMES = [
   'semantic_search',
   'export_graph',
   'list_functions',
+  'structure',
+  'hotspots',
   'list_repos',
 ];
 
@@ -111,6 +113,24 @@ describe('TOOLS', () => {
     expect(lf.inputSchema.properties).toHaveProperty('file');
     expect(lf.inputSchema.properties).toHaveProperty('pattern');
     expect(lf.inputSchema.properties).toHaveProperty('no_tests');
+  });
+
+  it('structure has no required parameters', () => {
+    const st = TOOLS.find((t) => t.name === 'structure');
+    expect(st).toBeDefined();
+    expect(st.inputSchema.required).toBeUndefined();
+    expect(st.inputSchema.properties).toHaveProperty('directory');
+    expect(st.inputSchema.properties).toHaveProperty('depth');
+    expect(st.inputSchema.properties).toHaveProperty('sort');
+  });
+
+  it('hotspots has no required parameters', () => {
+    const hs = TOOLS.find((t) => t.name === 'hotspots');
+    expect(hs).toBeDefined();
+    expect(hs.inputSchema.required).toBeUndefined();
+    expect(hs.inputSchema.properties).toHaveProperty('metric');
+    expect(hs.inputSchema.properties).toHaveProperty('level');
+    expect(hs.inputSchema.properties).toHaveProperty('limit');
   });
 
   it('every tool except list_repos has optional repo property', () => {
@@ -455,6 +475,191 @@ describe('startMCPServer handler dispatch', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('unknown-repo');
     expect(result.content[0].text).toContain('not found');
+
+    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
+    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
+    vi.doUnmock('../../src/registry.js');
+    vi.doUnmock('../../src/queries.js');
+  });
+
+  it('rejects repo not in allowedRepos list', async () => {
+    const handlers = {};
+
+    vi.doMock('@modelcontextprotocol/sdk/server/index.js', () => ({
+      Server: class MockServer {
+        setRequestHandler(name, handler) {
+          handlers[name] = handler;
+        }
+        async connect() {}
+      },
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
+      StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('../../src/registry.js', () => ({
+      resolveRepoDbPath: vi.fn(() => '/some/path'),
+    }));
+    vi.doMock('../../src/queries.js', () => ({
+      queryNameData: vi.fn(),
+      impactAnalysisData: vi.fn(),
+      moduleMapData: vi.fn(),
+      fileDepsData: vi.fn(),
+      fnDepsData: vi.fn(),
+      fnImpactData: vi.fn(),
+      diffImpactData: vi.fn(),
+      listFunctionsData: vi.fn(),
+    }));
+
+    const { startMCPServer } = await import('../../src/mcp.js');
+    await startMCPServer(undefined, { allowedRepos: ['allowed-repo'] });
+
+    const result = await handlers['tools/call']({
+      params: { name: 'query_function', arguments: { name: 'test', repo: 'blocked-repo' } },
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('blocked-repo');
+    expect(result.content[0].text).toContain('not in the allowed');
+
+    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
+    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
+    vi.doUnmock('../../src/registry.js');
+    vi.doUnmock('../../src/queries.js');
+  });
+
+  it('allows repo in allowedRepos list', async () => {
+    const handlers = {};
+
+    vi.doMock('@modelcontextprotocol/sdk/server/index.js', () => ({
+      Server: class MockServer {
+        setRequestHandler(name, handler) {
+          handlers[name] = handler;
+        }
+        async connect() {}
+      },
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
+      StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('../../src/registry.js', () => ({
+      resolveRepoDbPath: vi.fn(() => '/resolved/db'),
+    }));
+
+    const queryMock = vi.fn(() => ({ query: 'test', results: [] }));
+    vi.doMock('../../src/queries.js', () => ({
+      queryNameData: queryMock,
+      impactAnalysisData: vi.fn(),
+      moduleMapData: vi.fn(),
+      fileDepsData: vi.fn(),
+      fnDepsData: vi.fn(),
+      fnImpactData: vi.fn(),
+      diffImpactData: vi.fn(),
+      listFunctionsData: vi.fn(),
+    }));
+
+    const { startMCPServer } = await import('../../src/mcp.js');
+    await startMCPServer(undefined, { allowedRepos: ['my-repo'] });
+
+    const result = await handlers['tools/call']({
+      params: { name: 'query_function', arguments: { name: 'test', repo: 'my-repo' } },
+    });
+    expect(result.isError).toBeUndefined();
+    expect(queryMock).toHaveBeenCalledWith('test', '/resolved/db');
+
+    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
+    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
+    vi.doUnmock('../../src/registry.js');
+    vi.doUnmock('../../src/queries.js');
+  });
+
+  it('list_repos filters by allowedRepos', async () => {
+    const handlers = {};
+
+    vi.doMock('@modelcontextprotocol/sdk/server/index.js', () => ({
+      Server: class MockServer {
+        setRequestHandler(name, handler) {
+          handlers[name] = handler;
+        }
+        async connect() {}
+      },
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
+      StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('../../src/registry.js', () => ({
+      resolveRepoDbPath: vi.fn(),
+      listRepos: vi.fn(() => [
+        { name: 'alpha', path: '/alpha' },
+        { name: 'beta', path: '/beta' },
+        { name: 'gamma', path: '/gamma' },
+      ]),
+    }));
+    vi.doMock('../../src/queries.js', () => ({
+      queryNameData: vi.fn(),
+      impactAnalysisData: vi.fn(),
+      moduleMapData: vi.fn(),
+      fileDepsData: vi.fn(),
+      fnDepsData: vi.fn(),
+      fnImpactData: vi.fn(),
+      diffImpactData: vi.fn(),
+      listFunctionsData: vi.fn(),
+    }));
+
+    const { startMCPServer } = await import('../../src/mcp.js');
+    await startMCPServer(undefined, { allowedRepos: ['alpha', 'gamma'] });
+
+    const result = await handlers['tools/call']({
+      params: { name: 'list_repos', arguments: {} },
+    });
+    const data = JSON.parse(result.content[0].text);
+    expect(data.repos).toHaveLength(2);
+    expect(data.repos.map((r) => r.name)).toEqual(['alpha', 'gamma']);
+
+    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
+    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
+    vi.doUnmock('../../src/registry.js');
+    vi.doUnmock('../../src/queries.js');
+  });
+
+  it('list_repos returns all repos when no allowlist', async () => {
+    const handlers = {};
+
+    vi.doMock('@modelcontextprotocol/sdk/server/index.js', () => ({
+      Server: class MockServer {
+        setRequestHandler(name, handler) {
+          handlers[name] = handler;
+        }
+        async connect() {}
+      },
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
+      StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('../../src/registry.js', () => ({
+      resolveRepoDbPath: vi.fn(),
+      listRepos: vi.fn(() => [
+        { name: 'alpha', path: '/alpha' },
+        { name: 'beta', path: '/beta' },
+      ]),
+    }));
+    vi.doMock('../../src/queries.js', () => ({
+      queryNameData: vi.fn(),
+      impactAnalysisData: vi.fn(),
+      moduleMapData: vi.fn(),
+      fileDepsData: vi.fn(),
+      fnDepsData: vi.fn(),
+      fnImpactData: vi.fn(),
+      diffImpactData: vi.fn(),
+      listFunctionsData: vi.fn(),
+    }));
+
+    const { startMCPServer } = await import('../../src/mcp.js');
+    await startMCPServer();
+
+    const result = await handlers['tools/call']({
+      params: { name: 'list_repos', arguments: {} },
+    });
+    const data = JSON.parse(result.content[0].text);
+    expect(data.repos).toHaveLength(2);
 
     vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
     vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');

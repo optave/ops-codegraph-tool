@@ -1,0 +1,493 @@
+import path from 'node:path';
+import { normalizePath } from './constants.js';
+import { openReadonlyOrFail } from './db.js';
+import { debug } from './logger.js';
+
+// ─── Build-time: insert directory nodes, contains edges, and metrics ────
+
+/**
+ * Build directory structure nodes, containment edges, and compute metrics.
+ * Called from builder.js after edge building.
+ *
+ * @param {import('better-sqlite3').Database} db - Open read-write database
+ * @param {Map<string, object>} fileSymbols - Map of relPath → { definitions, imports, exports, calls }
+ * @param {string} rootDir - Absolute root directory
+ * @param {Map<string, number>} lineCountMap - Map of relPath → line count
+ * @param {Set<string>} directories - Set of relative directory paths
+ */
+export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, directories) {
+  const insertNode = db.prepare(
+    'INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
+  );
+  const getNodeId = db.prepare(
+    'SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? AND line = ?',
+  );
+  const insertEdge = db.prepare(
+    'INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?, ?, ?, ?, ?)',
+  );
+  const upsertMetric = db.prepare(`
+    INSERT OR REPLACE INTO node_metrics
+      (node_id, line_count, symbol_count, import_count, export_count, fan_in, fan_out, cohesion, file_count)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  // Clean previous directory nodes/edges (idempotent rebuild)
+  db.exec(`
+    DELETE FROM edges WHERE kind = 'contains';
+    DELETE FROM node_metrics;
+    DELETE FROM nodes WHERE kind = 'directory';
+  `);
+
+  // Step 1: Ensure all directories are represented (including intermediate parents)
+  const allDirs = new Set();
+  for (const dir of directories) {
+    let d = dir;
+    while (d && d !== '.') {
+      allDirs.add(d);
+      d = normalizePath(path.dirname(d));
+    }
+  }
+  // Also add dirs derived from file paths
+  for (const relPath of fileSymbols.keys()) {
+    let d = normalizePath(path.dirname(relPath));
+    while (d && d !== '.') {
+      allDirs.add(d);
+      d = normalizePath(path.dirname(d));
+    }
+  }
+
+  // Step 2: Insert directory nodes
+  const insertDirs = db.transaction(() => {
+    for (const dir of allDirs) {
+      insertNode.run(dir, 'directory', dir, 0, null);
+    }
+  });
+  insertDirs();
+
+  // Step 3: Insert 'contains' edges (dir → file, dir → subdirectory)
+  const insertContains = db.transaction(() => {
+    // dir → file
+    for (const relPath of fileSymbols.keys()) {
+      const dir = normalizePath(path.dirname(relPath));
+      if (!dir || dir === '.') continue;
+      const dirRow = getNodeId.get(dir, 'directory', dir, 0);
+      const fileRow = getNodeId.get(relPath, 'file', relPath, 0);
+      if (dirRow && fileRow) {
+        insertEdge.run(dirRow.id, fileRow.id, 'contains', 1.0, 0);
+      }
+    }
+    // dir → subdirectory
+    for (const dir of allDirs) {
+      const parent = normalizePath(path.dirname(dir));
+      if (!parent || parent === '.' || parent === dir) continue;
+      const parentRow = getNodeId.get(parent, 'directory', parent, 0);
+      const childRow = getNodeId.get(dir, 'directory', dir, 0);
+      if (parentRow && childRow) {
+        insertEdge.run(parentRow.id, childRow.id, 'contains', 1.0, 0);
+      }
+    }
+  });
+  insertContains();
+
+  // Step 4: Compute per-file metrics
+  // Pre-compute fan-in/fan-out per file from import edges
+  const fanInMap = new Map();
+  const fanOutMap = new Map();
+  const importEdges = db
+    .prepare(`
+      SELECT n1.file AS source_file, n2.file AS target_file
+      FROM edges e
+      JOIN nodes n1 ON e.source_id = n1.id
+      JOIN nodes n2 ON e.target_id = n2.id
+      WHERE e.kind IN ('imports', 'imports-type')
+        AND n1.file != n2.file
+    `)
+    .all();
+
+  for (const { source_file, target_file } of importEdges) {
+    fanOutMap.set(source_file, (fanOutMap.get(source_file) || 0) + 1);
+    fanInMap.set(target_file, (fanInMap.get(target_file) || 0) + 1);
+  }
+
+  const computeFileMetrics = db.transaction(() => {
+    for (const [relPath, symbols] of fileSymbols) {
+      const fileRow = getNodeId.get(relPath, 'file', relPath, 0);
+      if (!fileRow) continue;
+
+      const lineCount = lineCountMap.get(relPath) || 0;
+      // Deduplicate definitions by name+kind+line
+      const seen = new Set();
+      let symbolCount = 0;
+      for (const d of symbols.definitions) {
+        const key = `${d.name}|${d.kind}|${d.line}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          symbolCount++;
+        }
+      }
+      const importCount = symbols.imports.length;
+      const exportCount = symbols.exports.length;
+      const fanIn = fanInMap.get(relPath) || 0;
+      const fanOut = fanOutMap.get(relPath) || 0;
+
+      upsertMetric.run(
+        fileRow.id,
+        lineCount,
+        symbolCount,
+        importCount,
+        exportCount,
+        fanIn,
+        fanOut,
+        null,
+        null,
+      );
+    }
+  });
+  computeFileMetrics();
+
+  // Step 5: Compute per-directory metrics
+  // Build a map of dir → descendant files
+  const dirFiles = new Map();
+  for (const dir of allDirs) {
+    dirFiles.set(dir, []);
+  }
+  for (const relPath of fileSymbols.keys()) {
+    let d = normalizePath(path.dirname(relPath));
+    while (d && d !== '.') {
+      if (dirFiles.has(d)) {
+        dirFiles.get(d).push(relPath);
+      }
+      d = normalizePath(path.dirname(d));
+    }
+  }
+
+  const computeDirMetrics = db.transaction(() => {
+    for (const [dir, files] of dirFiles) {
+      const dirRow = getNodeId.get(dir, 'directory', dir, 0);
+      if (!dirRow) continue;
+
+      const fileCount = files.length;
+      let symbolCount = 0;
+      let totalFanIn = 0;
+      let totalFanOut = 0;
+      const filesInDir = new Set(files);
+
+      for (const f of files) {
+        const sym = fileSymbols.get(f);
+        if (sym) {
+          const seen = new Set();
+          for (const d of sym.definitions) {
+            const key = `${d.name}|${d.kind}|${d.line}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              symbolCount++;
+            }
+          }
+        }
+      }
+
+      // Compute cross-boundary fan-in/fan-out and cohesion
+      let intraEdges = 0;
+      let crossEdges = 0;
+      for (const { source_file, target_file } of importEdges) {
+        const srcInside = filesInDir.has(source_file);
+        const tgtInside = filesInDir.has(target_file);
+        if (srcInside && tgtInside) {
+          intraEdges++;
+        } else if (srcInside || tgtInside) {
+          crossEdges++;
+          if (!srcInside && tgtInside) totalFanIn++;
+          if (srcInside && !tgtInside) totalFanOut++;
+        }
+      }
+
+      const totalEdges = intraEdges + crossEdges;
+      const cohesion = totalEdges > 0 ? intraEdges / totalEdges : null;
+
+      upsertMetric.run(
+        dirRow.id,
+        null,
+        symbolCount,
+        null,
+        null,
+        totalFanIn,
+        totalFanOut,
+        cohesion,
+        fileCount,
+      );
+    }
+  });
+  computeDirMetrics();
+
+  const dirCount = allDirs.size;
+  debug(`Structure: ${dirCount} directories, ${fileSymbols.size} files with metrics`);
+}
+
+// ─── Query functions (read-only) ──────────────────────────────────────
+
+/**
+ * Return hierarchical directory tree with metrics.
+ */
+export function structureData(customDbPath, opts = {}) {
+  const db = openReadonlyOrFail(customDbPath);
+  const filterDir = opts.directory || null;
+  const maxDepth = opts.depth || null;
+  const sortBy = opts.sort || 'files';
+
+  // Get all directory nodes with their metrics
+  let dirs = db
+    .prepare(`
+      SELECT n.id, n.name, n.file, nm.symbol_count, nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
+      FROM nodes n
+      LEFT JOIN node_metrics nm ON n.id = nm.node_id
+      WHERE n.kind = 'directory'
+    `)
+    .all();
+
+  if (filterDir) {
+    const norm = normalizePath(filterDir);
+    dirs = dirs.filter((d) => d.name === norm || d.name.startsWith(`${norm}/`));
+  }
+
+  if (maxDepth) {
+    const baseDepth = filterDir ? normalizePath(filterDir).split('/').length : 0;
+    dirs = dirs.filter((d) => {
+      const depth = d.name.split('/').length - baseDepth;
+      return depth <= maxDepth;
+    });
+  }
+
+  // Sort
+  const sortFn = getSortFn(sortBy);
+  dirs.sort(sortFn);
+
+  // Get file metrics for each directory
+  const result = dirs.map((d) => {
+    const files = db
+      .prepare(`
+        SELECT n.name, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count, nm.fan_in, nm.fan_out
+        FROM edges e
+        JOIN nodes n ON e.target_id = n.id
+        LEFT JOIN node_metrics nm ON n.id = nm.node_id
+        WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'file'
+      `)
+      .all(d.id);
+
+    const subdirs = db
+      .prepare(`
+        SELECT n.name
+        FROM edges e
+        JOIN nodes n ON e.target_id = n.id
+        WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'directory'
+      `)
+      .all(d.id);
+
+    return {
+      directory: d.name,
+      fileCount: d.file_count || 0,
+      symbolCount: d.symbol_count || 0,
+      fanIn: d.fan_in || 0,
+      fanOut: d.fan_out || 0,
+      cohesion: d.cohesion,
+      density: d.file_count > 0 ? (d.symbol_count || 0) / d.file_count : 0,
+      files: files.map((f) => ({
+        file: f.name,
+        lineCount: f.line_count || 0,
+        symbolCount: f.symbol_count || 0,
+        importCount: f.import_count || 0,
+        exportCount: f.export_count || 0,
+        fanIn: f.fan_in || 0,
+        fanOut: f.fan_out || 0,
+      })),
+      subdirectories: subdirs.map((s) => s.name),
+    };
+  });
+
+  db.close();
+  return { directories: result, count: result.length };
+}
+
+/**
+ * Return top N files or directories ranked by a chosen metric.
+ */
+export function hotspotsData(customDbPath, opts = {}) {
+  const db = openReadonlyOrFail(customDbPath);
+  const metric = opts.metric || 'fan-in';
+  const level = opts.level || 'file';
+  const limit = opts.limit || 10;
+
+  const kind = level === 'directory' ? 'directory' : 'file';
+  const orderCol = metricToColumn(metric);
+
+  const rows = db
+    .prepare(`
+      SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
+             nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
+      FROM nodes n
+      JOIN node_metrics nm ON n.id = nm.node_id
+      WHERE n.kind = ?
+      ORDER BY ${orderCol} DESC
+      LIMIT ?
+    `)
+    .all(kind, limit);
+
+  const hotspots = rows.map((r) => ({
+    name: r.name,
+    kind: r.kind,
+    lineCount: r.line_count,
+    symbolCount: r.symbol_count,
+    importCount: r.import_count,
+    exportCount: r.export_count,
+    fanIn: r.fan_in,
+    fanOut: r.fan_out,
+    cohesion: r.cohesion,
+    fileCount: r.file_count,
+    density:
+      r.file_count > 0
+        ? (r.symbol_count || 0) / r.file_count
+        : r.line_count > 0
+          ? (r.symbol_count || 0) / r.line_count
+          : 0,
+    coupling: (r.fan_in || 0) + (r.fan_out || 0),
+  }));
+
+  db.close();
+  return { metric, level, limit, hotspots };
+}
+
+/**
+ * Return directories with cohesion above threshold, with top exports/imports.
+ */
+export function moduleBoundariesData(customDbPath, opts = {}) {
+  const db = openReadonlyOrFail(customDbPath);
+  const threshold = opts.threshold || 0.3;
+
+  const dirs = db
+    .prepare(`
+      SELECT n.id, n.name, nm.symbol_count, nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
+      FROM nodes n
+      JOIN node_metrics nm ON n.id = nm.node_id
+      WHERE n.kind = 'directory' AND nm.cohesion IS NOT NULL AND nm.cohesion >= ?
+      ORDER BY nm.cohesion DESC
+    `)
+    .all(threshold);
+
+  const modules = dirs.map((d) => {
+    // Get files inside this directory
+    const files = db
+      .prepare(`
+        SELECT n.name FROM edges e
+        JOIN nodes n ON e.target_id = n.id
+        WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'file'
+      `)
+      .all(d.id)
+      .map((f) => f.name);
+
+    return {
+      directory: d.name,
+      cohesion: d.cohesion,
+      fileCount: d.file_count || 0,
+      symbolCount: d.symbol_count || 0,
+      fanIn: d.fan_in || 0,
+      fanOut: d.fan_out || 0,
+      files,
+    };
+  });
+
+  db.close();
+  return { threshold, modules, count: modules.length };
+}
+
+// ─── Formatters ───────────────────────────────────────────────────────
+
+export function formatStructure(data) {
+  if (data.count === 0) return 'No directory structure found. Run "codegraph build" first.';
+
+  const lines = [`\nProject structure (${data.count} directories):\n`];
+  for (const d of data.directories) {
+    const cohStr = d.cohesion !== null ? ` cohesion=${d.cohesion.toFixed(2)}` : '';
+    const depth = d.directory.split('/').length - 1;
+    const indent = '  '.repeat(depth);
+    lines.push(
+      `${indent}${d.directory}/  (${d.fileCount} files, ${d.symbolCount} symbols, <-${d.fanIn} ->${d.fanOut}${cohStr})`,
+    );
+    for (const f of d.files) {
+      lines.push(
+        `${indent}  ${path.basename(f.file)}  ${f.lineCount}L ${f.symbolCount}sym <-${f.fanIn} ->${f.fanOut}`,
+      );
+    }
+  }
+  return lines.join('\n');
+}
+
+export function formatHotspots(data) {
+  if (data.hotspots.length === 0) return 'No hotspots found. Run "codegraph build" first.';
+
+  const lines = [`\nHotspots by ${data.metric} (${data.level}-level, top ${data.limit}):\n`];
+  let rank = 1;
+  for (const h of data.hotspots) {
+    const extra =
+      h.kind === 'directory'
+        ? `${h.fileCount} files, cohesion=${h.cohesion !== null ? h.cohesion.toFixed(2) : 'n/a'}`
+        : `${h.lineCount || 0}L, ${h.symbolCount || 0} symbols`;
+    lines.push(
+      `  ${String(rank++).padStart(2)}. ${h.name}  <-${h.fanIn || 0} ->${h.fanOut || 0}  (${extra})`,
+    );
+  }
+  return lines.join('\n');
+}
+
+export function formatModuleBoundaries(data) {
+  if (data.count === 0) return `No modules found with cohesion >= ${data.threshold}.`;
+
+  const lines = [`\nModule boundaries (cohesion >= ${data.threshold}, ${data.count} modules):\n`];
+  for (const m of data.modules) {
+    lines.push(
+      `  ${m.directory}/  cohesion=${m.cohesion.toFixed(2)}  (${m.fileCount} files, ${m.symbolCount} symbols)`,
+    );
+    lines.push(`    Incoming: ${m.fanIn} edges    Outgoing: ${m.fanOut} edges`);
+    if (m.files.length > 0) {
+      lines.push(
+        `    Files: ${m.files.slice(0, 5).join(', ')}${m.files.length > 5 ? ` ... +${m.files.length - 5}` : ''}`,
+      );
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────
+
+function getSortFn(sortBy) {
+  switch (sortBy) {
+    case 'cohesion':
+      return (a, b) => (b.cohesion ?? -1) - (a.cohesion ?? -1);
+    case 'fan-in':
+      return (a, b) => (b.fan_in || 0) - (a.fan_in || 0);
+    case 'fan-out':
+      return (a, b) => (b.fan_out || 0) - (a.fan_out || 0);
+    case 'density':
+      return (a, b) => {
+        const da = a.file_count > 0 ? (a.symbol_count || 0) / a.file_count : 0;
+        const db_ = b.file_count > 0 ? (b.symbol_count || 0) / b.file_count : 0;
+        return db_ - da;
+      };
+    default:
+      return (a, b) => a.name.localeCompare(b.name);
+  }
+}
+
+function metricToColumn(metric) {
+  switch (metric) {
+    case 'fan-in':
+      return 'nm.fan_in';
+    case 'fan-out':
+      return 'nm.fan_out';
+    case 'density':
+      return 'nm.symbol_count';
+    case 'coupling':
+      return '(COALESCE(nm.fan_in, 0) + COALESCE(nm.fan_out, 0))';
+    default:
+      return 'nm.fan_in';
+  }
+}

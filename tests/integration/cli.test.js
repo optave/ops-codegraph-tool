@@ -140,6 +140,29 @@ describe('CLI smoke tests', () => {
     expect(data).toHaveProperty('edges');
   });
 
+  // ─── Structure ──────────────────────────────────────────────────────
+  test('structure --json returns valid JSON with directories', () => {
+    const out = run('structure', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data).toHaveProperty('directories');
+    expect(data).toHaveProperty('count');
+  });
+
+  // ─── Hotspots ──────────────────────────────────────────────────────
+  test('hotspots --json returns valid JSON with hotspots', () => {
+    const out = run('hotspots', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data).toHaveProperty('hotspots');
+    expect(data).toHaveProperty('metric');
+    expect(data).toHaveProperty('level');
+  });
+
+  test('hotspots --level directory returns directory hotspots', () => {
+    const out = run('hotspots', '--db', dbPath, '--level', 'directory', '--json');
+    const data = JSON.parse(out);
+    expect(data.level).toBe('directory');
+  });
+
   // ─── Info ────────────────────────────────────────────────────────────
   test('info outputs engine diagnostics', () => {
     const out = run('info');
@@ -216,5 +239,39 @@ describe('Registry CLI commands', () => {
       expect(err.status).toBe(1);
       expect(err.stderr || err.stdout).toContain('not found');
     }
+  });
+
+  test('registry prune removes stale entries', () => {
+    const staleDir = path.join(tmpHome, 'stale-project');
+    fs.mkdirSync(staleDir, { recursive: true });
+
+    runReg('registry', 'add', staleDir, '-n', 'stale');
+    // Remove the directory to make it stale
+    fs.rmSync(staleDir, { recursive: true, force: true });
+
+    const out = runReg('registry', 'prune');
+    expect(out).toContain('Pruned');
+    expect(out).toContain('stale');
+  });
+
+  test('registry prune reports nothing when no stale entries', () => {
+    // Add a valid repo
+    runReg('registry', 'add', tmpDir, '-n', 'valid-proj');
+
+    const out = runReg('registry', 'prune');
+    expect(out).toContain('No stale entries found');
+  });
+
+  test('registry add auto-suffixes on basename collision', () => {
+    const dir1 = path.join(tmpHome, 'ws1', 'api');
+    const dir2 = path.join(tmpHome, 'ws2', 'api');
+    fs.mkdirSync(dir1, { recursive: true });
+    fs.mkdirSync(dir2, { recursive: true });
+
+    const out1 = runReg('registry', 'add', dir1);
+    expect(out1).toContain('"api"');
+
+    const out2 = runReg('registry', 'add', dir2);
+    expect(out2).toContain('"api-2"');
   });
 });

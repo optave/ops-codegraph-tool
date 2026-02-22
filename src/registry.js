@@ -36,11 +36,38 @@ export function saveRegistry(registry, registryPath = REGISTRY_PATH) {
 /**
  * Register a project directory. Idempotent.
  * Name defaults to `path.basename(rootDir)`.
+ *
+ * When no explicit name is provided and the basename already exists
+ * pointing to a different path, auto-suffixes (`api` → `api-2`, `api-3`, …).
+ * Re-registering the same path updates in place. Explicit names always overwrite.
  */
 export function registerRepo(rootDir, name, registryPath = REGISTRY_PATH) {
   const absRoot = path.resolve(rootDir);
-  const repoName = name || path.basename(absRoot);
+  const baseName = name || path.basename(absRoot);
   const registry = loadRegistry(registryPath);
+
+  let repoName = baseName;
+
+  // Auto-suffix only when no explicit name was provided
+  if (!name) {
+    const existing = registry.repos[baseName];
+    if (existing && path.resolve(existing.path) !== absRoot) {
+      // Basename collision with a different path — find next available suffix
+      let suffix = 2;
+      while (registry.repos[`${baseName}-${suffix}`]) {
+        const entry = registry.repos[`${baseName}-${suffix}`];
+        if (path.resolve(entry.path) === absRoot) {
+          // Already registered under this suffixed name — update in place
+          repoName = `${baseName}-${suffix}`;
+          break;
+        }
+        suffix++;
+      }
+      if (repoName === baseName) {
+        repoName = `${baseName}-${suffix}`;
+      }
+    }
+  }
 
   registry.repos[repoName] = {
     path: absRoot,
@@ -92,4 +119,27 @@ export function resolveRepoDbPath(name, registryPath = REGISTRY_PATH) {
     return undefined;
   }
   return entry.dbPath;
+}
+
+/**
+ * Remove registry entries whose repo directory no longer exists on disk.
+ * Only checks the repo directory (not the DB file — a missing DB is normal pre-build state).
+ * Returns an array of `{ name, path }` for each pruned entry.
+ */
+export function pruneRegistry(registryPath = REGISTRY_PATH) {
+  const registry = loadRegistry(registryPath);
+  const pruned = [];
+
+  for (const [name, entry] of Object.entries(registry.repos)) {
+    if (!fs.existsSync(entry.path)) {
+      pruned.push({ name, path: entry.path });
+      delete registry.repos[name];
+    }
+  }
+
+  if (pruned.length > 0) {
+    saveRegistry(registry, registryPath);
+  }
+
+  return pruned;
 }

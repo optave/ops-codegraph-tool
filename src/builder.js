@@ -10,18 +10,20 @@ import { computeConfidence, resolveImportPath, resolveImportsBatch } from './res
 
 export { resolveImportPath } from './resolve.js';
 
-export function collectFiles(dir, files = [], config = {}) {
+export function collectFiles(dir, files = [], config = {}, directories = null) {
+  const trackDirs = directories !== null;
   let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch (err) {
     warn(`Cannot read directory ${dir}: ${err.message}`);
-    return files;
+    return trackDirs ? { files, directories } : files;
   }
 
   // Merge config ignoreDirs with defaults
   const extraIgnore = config.ignoreDirs ? new Set(config.ignoreDirs) : null;
 
+  let hasFiles = false;
   for (const entry of entries) {
     if (entry.name.startsWith('.') && entry.name !== '.') {
       if (IGNORE_DIRS.has(entry.name)) continue;
@@ -32,12 +34,16 @@ export function collectFiles(dir, files = [], config = {}) {
 
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      collectFiles(full, files, config);
+      collectFiles(full, files, config, directories);
     } else if (EXTENSIONS.has(path.extname(entry.name))) {
       files.push(full);
+      hasFiles = true;
     }
   }
-  return files;
+  if (trackDirs && hasFiles) {
+    directories.add(dir);
+  }
+  return trackDirs ? { files, directories } : files;
 }
 
 export function loadPathAliases(rootDir) {
@@ -163,7 +169,9 @@ export async function buildGraph(rootDir, opts = {}) {
     );
   }
 
-  const files = collectFiles(rootDir, [], config);
+  const collected = collectFiles(rootDir, [], config, new Set());
+  const files = collected.files;
+  const discoveredDirs = collected.directories;
   console.log(`Found ${files.length} files to parse`);
 
   // Check for incremental build
@@ -179,23 +187,28 @@ export async function buildGraph(rootDir, opts = {}) {
 
   if (isFullBuild) {
     db.exec(
-      'PRAGMA foreign_keys = OFF; DELETE FROM edges; DELETE FROM nodes; PRAGMA foreign_keys = ON;',
+      'PRAGMA foreign_keys = OFF; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM nodes; PRAGMA foreign_keys = ON;',
     );
   } else {
     console.log(`Incremental: ${changed.length} changed, ${removed.length} removed`);
-    // Remove nodes/edges for changed and removed files
+    // Remove metrics/edges/nodes for changed and removed files
     const deleteNodesForFile = db.prepare('DELETE FROM nodes WHERE file = ?');
     const deleteEdgesForFile = db.prepare(`
       DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = @f)
       OR target_id IN (SELECT id FROM nodes WHERE file = @f)
     `);
+    const deleteMetricsForFile = db.prepare(
+      'DELETE FROM node_metrics WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)',
+    );
     for (const relPath of removed) {
       deleteEdgesForFile.run({ f: relPath });
+      deleteMetricsForFile.run(relPath);
       deleteNodesForFile.run(relPath);
     }
     for (const item of changed) {
       const relPath = item.relPath || normalizePath(path.relative(rootDir, item.file));
       deleteEdgesForFile.run({ f: relPath });
+      deleteMetricsForFile.run(relPath);
       deleteNodesForFile.run(relPath);
     }
   }
@@ -538,6 +551,30 @@ export async function buildGraph(rootDir, opts = {}) {
     }
   });
   buildEdges();
+
+  // Build line count map for structure metrics
+  const lineCountMap = new Map();
+  for (const [relPath] of fileSymbols) {
+    const absPath = path.join(rootDir, relPath);
+    try {
+      const content = fs.readFileSync(absPath, 'utf-8');
+      lineCountMap.set(relPath, content.split('\n').length);
+    } catch {
+      lineCountMap.set(relPath, 0);
+    }
+  }
+
+  // Build directory structure, containment edges, and metrics
+  const relDirs = new Set();
+  for (const absDir of discoveredDirs) {
+    relDirs.add(normalizePath(path.relative(rootDir, absDir)));
+  }
+  try {
+    const { buildStructure } = await import('./structure.js');
+    buildStructure(db, fileSymbols, rootDir, lineCountMap, relDirs);
+  } catch (err) {
+    debug(`Structure analysis failed: ${err.message}`);
+  }
 
   const nodeCount = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c;
   console.log(`Graph built: ${nodeCount} nodes, ${edgeCount} edges`);
