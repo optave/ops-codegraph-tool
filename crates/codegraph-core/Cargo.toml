@@ -27,4 +27,4 @@ rayon = "1"
 send_wrapper = "0.6"
 
 [build-dependencies]
-napi-build = "3"
+napi-build = "2"
