@@ -25,6 +25,7 @@
   <a href="#-ai-agent-integration">AI Integration</a> •
   <a href="#-recommended-practices">Practices</a> •
   <a href="#-ci--github-actions">CI/CD</a> •
+  <a href="#-roadmap">Roadmap</a> •
   <a href="#-contributing">Contributing</a>
 </p>
 
@@ -418,6 +419,18 @@ const { results: fused } = await multiSearchData(
 - **No full type inference** — parses `.d.ts` interfaces but doesn't use TypeScript's type checker for overload resolution
 - **Dynamic calls are best-effort** — complex computed property access and `eval` patterns are not resolved
 - **Python imports** — resolves relative imports but doesn't follow `sys.path` or virtual environment packages
+
+## 🗺️ Roadmap
+
+See **[ROADMAP.md](ROADMAP.md)** for the full development roadmap. Current plan:
+
+1. **Rust Core** — native tree-sitter parsing via napi-rs, parallel multi-core parsing, incremental re-parsing, import resolution & cycle detection in Rust
+2. **Foundation Hardening** — parser registry, complete MCP server, test coverage, enhanced config
+3. **Intelligent Embeddings** — LLM-generated descriptions, hybrid search
+4. **Natural Language Queries** — `codegraph ask` command, conversational sessions
+5. **Expanded Language Support** — 8 new languages (12 → 20)
+6. **GitHub Integration & CI** — reusable GitHub Action, PR review, SARIF output
+7. **Visualization & Advanced** — web UI, dead code detection, monorepo support, agentic search
 
 ## 🤝 Contributing
 
