@@ -5,6 +5,9 @@ import { describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import { initSchema } from '../../src/db.js';
 import { findCycles, findCyclesJS } from '../../src/cycles.js';
+import { isNativeAvailable, loadNative } from '../../src/native.js';
+
+const hasNative = isNativeAvailable();
 
 function createTestDb() {
   const db = new Database(':memory:');
@@ -93,5 +96,67 @@ describe('findCyclesJS (pure JS Tarjan)', () => {
     const cycles = findCyclesJS(edges);
     expect(cycles).toHaveLength(1);
     expect(cycles[0]).toHaveLength(3);
+  });
+});
+
+// ── Native vs JS parity ────────────────────────────────────────────
+
+describe.skipIf(!hasNative)('Cycle detection: native vs JS parity', () => {
+  const native = hasNative ? loadNative() : null;
+
+  function sortCycles(cycles) {
+    return cycles
+      .map(c => [...c].sort())
+      .sort((a, b) => a[0].localeCompare(b[0]));
+  }
+
+  it('no cycles — both engines agree', () => {
+    const edges = [
+      { source: 'a.js', target: 'b.js' },
+      { source: 'b.js', target: 'c.js' },
+    ];
+    const jsResult = findCyclesJS(edges);
+    const nativeResult = native.detectCycles(edges);
+    expect(sortCycles(nativeResult)).toEqual(sortCycles(jsResult));
+  });
+
+  it('2-node cycle — both engines agree', () => {
+    const edges = [
+      { source: 'a.js', target: 'b.js' },
+      { source: 'b.js', target: 'a.js' },
+    ];
+    const jsResult = findCyclesJS(edges);
+    const nativeResult = native.detectCycles(edges);
+    expect(sortCycles(nativeResult)).toEqual(sortCycles(jsResult));
+  });
+
+  it('3-node cycle — both engines agree', () => {
+    const edges = [
+      { source: 'a.js', target: 'b.js' },
+      { source: 'b.js', target: 'c.js' },
+      { source: 'c.js', target: 'a.js' },
+    ];
+    const jsResult = findCyclesJS(edges);
+    const nativeResult = native.detectCycles(edges);
+    expect(sortCycles(nativeResult)).toEqual(sortCycles(jsResult));
+  });
+
+  it('multiple independent cycles — both engines agree', () => {
+    const edges = [
+      // Cycle 1: a <-> b
+      { source: 'a.js', target: 'b.js' },
+      { source: 'b.js', target: 'a.js' },
+      // Cycle 2: x -> y -> z -> x
+      { source: 'x.js', target: 'y.js' },
+      { source: 'y.js', target: 'z.js' },
+      { source: 'z.js', target: 'x.js' },
+      // Non-cyclic tail
+      { source: 'p.js', target: 'q.js' },
+    ];
+    const jsResult = findCyclesJS(edges);
+    const nativeResult = native.detectCycles(edges);
+    expect(jsResult).toHaveLength(2);
+    expect(nativeResult).toHaveLength(2);
+    expect(sortCycles(nativeResult)).toEqual(sortCycles(jsResult));
   });
 });

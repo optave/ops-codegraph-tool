@@ -7,6 +7,9 @@ import { parseFilesAuto, getActiveEngine } from './parser.js';
 import { IGNORE_DIRS, EXTENSIONS, normalizePath } from './constants.js';
 import { loadConfig } from './config.js';
 import { warn, debug, info } from './logger.js';
+import { resolveImportPath, computeConfidence, resolveImportsBatch } from './resolve.js';
+
+export { resolveImportPath } from './resolve.js';
 
 export function collectFiles(dir, files = [], config = {}) {
   let entries;
@@ -61,70 +64,6 @@ export function loadPathAliases(rootDir) {
     }
   }
   return aliases;
-}
-
-function resolveViaAlias(importSource, aliases, rootDir) {
-  if (aliases.baseUrl && !importSource.startsWith('.') && !importSource.startsWith('/')) {
-    const candidate = path.resolve(aliases.baseUrl, importSource);
-    for (const ext of ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.js']) {
-      const full = candidate + ext;
-      if (fs.existsSync(full)) return full;
-    }
-  }
-
-  for (const [pattern, targets] of Object.entries(aliases.paths)) {
-    const prefix = pattern.replace(/\*$/, '');
-    if (!importSource.startsWith(prefix)) continue;
-    const rest = importSource.slice(prefix.length);
-    for (const target of targets) {
-      const resolved = target.replace(/\*$/, rest);
-      for (const ext of ['', '.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx', '/index.js']) {
-        const full = resolved + ext;
-        if (fs.existsSync(full)) return full;
-      }
-    }
-  }
-  return null;
-}
-
-export function resolveImportPath(fromFile, importSource, rootDir, aliases) {
-  if (!importSource.startsWith('.') && aliases) {
-    const aliasResolved = resolveViaAlias(importSource, aliases, rootDir);
-    if (aliasResolved) return normalizePath(path.relative(rootDir, aliasResolved));
-  }
-  if (!importSource.startsWith('.')) return importSource;
-  const dir = path.dirname(fromFile);
-  let resolved = path.resolve(dir, importSource);
-
-  if (resolved.endsWith('.js')) {
-    const tsCandidate = resolved.replace(/\.js$/, '.ts');
-    if (fs.existsSync(tsCandidate)) return normalizePath(path.relative(rootDir, tsCandidate));
-    const tsxCandidate = resolved.replace(/\.js$/, '.tsx');
-    if (fs.existsSync(tsxCandidate)) return normalizePath(path.relative(rootDir, tsxCandidate));
-  }
-
-  for (const ext of ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.py', '/index.ts', '/index.tsx', '/index.js', '/__init__.py']) {
-    const candidate = resolved + ext;
-    if (fs.existsSync(candidate)) {
-      return normalizePath(path.relative(rootDir, candidate));
-    }
-  }
-  if (fs.existsSync(resolved)) return normalizePath(path.relative(rootDir, resolved));
-  return normalizePath(path.relative(rootDir, resolved));
-}
-
-/**
- * Compute proximity-based confidence for call resolution.
- */
-function computeConfidence(callerFile, targetFile, importedFrom) {
-  if (!targetFile || !callerFile) return 0.3;
-  if (callerFile === targetFile) return 1.0;
-  if (importedFrom === targetFile) return 1.0;
-  if (path.dirname(callerFile) === path.dirname(targetFile)) return 0.7;
-  const callerParent = path.dirname(path.dirname(callerFile));
-  const targetParent = path.dirname(path.dirname(targetFile));
-  if (callerParent === targetParent) return 0.5;
-  return 0.3;
 }
 
 /**
@@ -325,13 +264,33 @@ export async function buildGraph(rootDir, opts = {}) {
     }
   }
 
+  // ── Batch import resolution ────────────────────────────────────────
+  // Collect all (fromFile, importSource) pairs and resolve in one native call
+  const batchInputs = [];
+  for (const [relPath, symbols] of fileSymbols) {
+    const absFile = path.join(rootDir, relPath);
+    for (const imp of symbols.imports) {
+      batchInputs.push({ fromFile: absFile, importSource: imp.source });
+    }
+  }
+  const batchResolved = resolveImportsBatch(batchInputs, rootDir, aliases);
+
+  function getResolved(absFile, importSource) {
+    if (batchResolved) {
+      const key = `${absFile}|${importSource}`;
+      const hit = batchResolved.get(key);
+      if (hit !== undefined) return hit;
+    }
+    return resolveImportPath(absFile, importSource, rootDir, aliases);
+  }
+
   // Build re-export map for barrel resolution
   const reexportMap = new Map();
   for (const [relPath, symbols] of fileSymbols) {
     const reexports = symbols.imports.filter(imp => imp.reexport);
     if (reexports.length > 0) {
       reexportMap.set(relPath, reexports.map(imp => ({
-        source: resolveImportPath(path.join(rootDir, relPath), imp.source, rootDir, aliases),
+        source: getResolved(path.join(rootDir, relPath), imp.source),
         names: imp.names,
         wildcardReexport: imp.wildcardReexport || false
       })));
@@ -406,7 +365,7 @@ export async function buildGraph(rootDir, opts = {}) {
 
       // Import edges
       for (const imp of symbols.imports) {
-        const resolvedPath = resolveImportPath(path.join(rootDir, relPath), imp.source, rootDir, aliases);
+        const resolvedPath = getResolved(path.join(rootDir, relPath), imp.source);
         const targetRow = getNodeId.get(resolvedPath, 'file', resolvedPath, 0);
         if (targetRow) {
           const edgeKind = imp.reexport ? 'reexports' : imp.typeOnly ? 'imports-type' : 'imports';
@@ -434,7 +393,7 @@ export async function buildGraph(rootDir, opts = {}) {
       // Build import name -> target file mapping
       const importedNames = new Map();
       for (const imp of symbols.imports) {
-        const resolvedPath = resolveImportPath(path.join(rootDir, relPath), imp.source, rootDir, aliases);
+        const resolvedPath = getResolved(path.join(rootDir, relPath), imp.source);
         for (const name of imp.names) {
           const cleanName = name.replace(/^\*\s+as\s+/, '');
           importedNames.set(cleanName, resolvedPath);

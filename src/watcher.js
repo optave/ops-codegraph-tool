@@ -4,7 +4,7 @@ import path from 'path';
 import { openDb, initSchema } from './db.js';
 import { parseFileIncremental, createParseTreeCache, getActiveEngine } from './parser.js';
 import { IGNORE_DIRS, EXTENSIONS, normalizePath } from './constants.js';
-import { resolveImportPath } from './builder.js';
+import { resolveImportPath } from './resolve.js';
 import { warn, debug, info } from './logger.js';
 
 function shouldIgnore(filePath) {
