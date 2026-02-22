@@ -56,6 +56,65 @@ describe('exportMermaid', () => {
   });
 });
 
+describe('exportDOT — function-level', () => {
+  it('generates function-level DOT with fileLevel: false', () => {
+    const db = createTestDb();
+    insertNode(db, 'src/a.js', 'file', 'src/a.js', 0);
+    insertNode(db, 'src/b.js', 'file', 'src/b.js', 0);
+    const fnA = insertNode(db, 'doWork', 'function', 'src/a.js', 5);
+    const fnB = insertNode(db, 'helper', 'function', 'src/b.js', 10);
+    insertEdge(db, fnA, fnB, 'calls');
+
+    const dot = exportDOT(db, { fileLevel: false });
+    expect(dot).toContain('digraph codegraph');
+    expect(dot).toContain('doWork');
+    expect(dot).toContain('helper');
+    expect(dot).toContain('->');
+    db.close();
+  });
+
+  it('generates multi-directory subgraph clusters', () => {
+    const db = createTestDb();
+    const a = insertNode(db, 'src/a.js', 'file', 'src/a.js', 0);
+    const b = insertNode(db, 'lib/b.js', 'file', 'lib/b.js', 0);
+    insertEdge(db, a, b, 'imports');
+
+    const dot = exportDOT(db);
+    expect(dot).toContain('cluster_');
+    expect(dot).toContain('label="src"');
+    expect(dot).toContain('label="lib"');
+    db.close();
+  });
+});
+
+describe('exportDOT — empty graph', () => {
+  it('produces minimal DOT for empty graph', () => {
+    const db = createTestDb();
+    const dot = exportDOT(db);
+    expect(dot).toContain('digraph codegraph');
+    expect(dot).toContain('}');
+    db.close();
+  });
+});
+
+describe('exportMermaid — function-level', () => {
+  it('generates function-level Mermaid with fileLevel: false', () => {
+    const db = createTestDb();
+    insertNode(db, 'src/a.js', 'file', 'src/a.js', 0);
+    insertNode(db, 'src/b.js', 'file', 'src/b.js', 0);
+    const fnA = insertNode(db, 'doWork', 'function', 'src/a.js', 5);
+    const fnB = insertNode(db, 'helper', 'function', 'src/b.js', 10);
+    insertEdge(db, fnA, fnB, 'calls');
+
+    const mermaid = exportMermaid(db, { fileLevel: false });
+    expect(mermaid).toContain('graph LR');
+    expect(mermaid).toContain('doWork');
+    expect(mermaid).toContain('helper');
+    expect(mermaid).toContain('-->');
+    db.close();
+  });
+});
+
 describe('exportJSON', () => {
   it('returns structured data', () => {
     const db = createTestDb();

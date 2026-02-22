@@ -104,6 +104,53 @@ describe('findCyclesJS (pure JS Tarjan)', () => {
   });
 });
 
+describe('findCycles — function-level', () => {
+  it('detects function-level cycles with fileLevel: false', () => {
+    const db = createTestDb();
+    insertNode(db, 'src/a.js', 'file', 'src/a.js', 0);
+    insertNode(db, 'src/b.js', 'file', 'src/b.js', 0);
+    const fnA = insertNode(db, 'doWork', 'function', 'src/a.js', 5);
+    const fnB = insertNode(db, 'helper', 'function', 'src/b.js', 10);
+    insertEdge(db, fnA, fnB, 'calls');
+    insertEdge(db, fnB, fnA, 'calls');
+
+    const cycles = findCycles(db, { fileLevel: false });
+    expect(cycles).toHaveLength(1);
+    expect(cycles[0]).toHaveLength(2);
+    db.close();
+  });
+});
+
+describe('formatCycles', () => {
+  it('returns no-cycles message for empty array', () => {
+    const { formatCycles } = require('../../src/cycles.js');
+    const output = formatCycles([]);
+    expect(output.toLowerCase()).toMatch(/no.*circular/);
+  });
+
+  it('formats a single cycle with all member files', () => {
+    const { formatCycles } = require('../../src/cycles.js');
+    const output = formatCycles([['a.js', 'b.js']]);
+    expect(output).toContain('a.js');
+    expect(output).toContain('b.js');
+    expect(output).toMatch(/1/);
+  });
+
+  it('formats multiple cycles with distinct labels', () => {
+    const { formatCycles } = require('../../src/cycles.js');
+    const output = formatCycles([
+      ['a.js', 'b.js'],
+      ['x.js', 'y.js', 'z.js'],
+    ]);
+    // should indicate 2 cycles and reference each one
+    expect(output).toMatch(/2/);
+    expect(output).toContain('a.js');
+    expect(output).toContain('x.js');
+    expect(output).toContain('y.js');
+    expect(output).toContain('z.js');
+  });
+});
+
 // ── Native vs JS parity ────────────────────────────────────────────
 
 describe.skipIf(!hasNative)('Cycle detection: native vs JS parity', () => {
