@@ -61,9 +61,9 @@ describeOrSkip('Build parity: native vs WASM', () => {
     copyDirSync(FIXTURE_DIR, nativeDir);
 
     // Build with WASM
-    await buildGraph(wasmDir, { engine: 'wasm', incremental: false });
+    await buildGraph(wasmDir, { engine: 'wasm', incremental: false, skipRegistry: true });
     // Build with native
-    await buildGraph(nativeDir, { engine: 'native', incremental: false });
+    await buildGraph(nativeDir, { engine: 'native', incremental: false, skipRegistry: true });
   }, 60_000);
 
   afterAll(() => {

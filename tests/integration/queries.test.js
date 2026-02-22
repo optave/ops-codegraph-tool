@@ -231,6 +231,6 @@ describe('diffImpactData', () => {
   test('returns error when run outside a git repo', () => {
     const data = diffImpactData(dbPath);
     expect(data).toHaveProperty('error');
-    expect(data.error).toMatch(/git diff/i);
+    expect(data.error).toMatch(/not a git repository/i);
   });
 });

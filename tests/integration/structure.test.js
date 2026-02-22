@@ -49,7 +49,7 @@ beforeAll(async () => {
     fs.writeFileSync(path.join(tmpDir, relPath), content);
   }
 
-  await buildGraph(tmpDir, { engine: 'wasm' });
+  await buildGraph(tmpDir, { engine: 'wasm', skipRegistry: true });
   dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
 });
 

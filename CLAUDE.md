@@ -110,6 +110,17 @@ node src/cli.js deps src/<file>.js   # See what imports/depends on a file
 
 If codegraph reports an error, crashes, or produces wrong results when analyzing itself, **fix the bug in the codebase** — don't just work around it. This is the best way to find and resolve real issues.
 
+## Parallel Sessions
+
+Multiple Claude Code instances run concurrently in this repo. To avoid breaking each other's work:
+
+- **Never unstage files** (`git reset`, `git restore --staged`) — another session may have staged them intentionally.
+- **Never delete or revert files** you didn't create or modify in this session.
+- **Never run `git checkout -- <file>`** or `git restore <file>` on files outside your task scope.
+- **Never run `git add .` or `git add -A`** — only stage files you explicitly changed.
+- **Ignore "unexpected" dirty files** — if `git status` shows changes you didn't make, leave them alone. They belong to another session.
+- **Do not "clean up" lint/format issues** in files you aren't working on. Another session may be mid-edit.
+
 ## Git Conventions
 
 - Never add AI co-authorship lines (`Co-Authored-By` or similar) to commit messages.

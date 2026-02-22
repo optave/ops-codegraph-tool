@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { pruneRegistry } from '../../src/registry.js';
 
 const CLI = path.resolve('src/cli.js');
 
@@ -60,6 +61,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+  pruneRegistry();
 });
 
 describe('CLI smoke tests', () => {

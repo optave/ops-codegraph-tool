@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import { findDbPath, openReadonlyOrFail } from './db.js';
 
@@ -451,9 +452,25 @@ export function diffImpactData(customDbPath, opts = {}) {
   const dbPath = findDbPath(customDbPath);
   const repoRoot = path.resolve(path.dirname(dbPath), '..');
 
+  // Verify we're in a git repository before running git diff
+  let checkDir = repoRoot;
+  let isGitRepo = false;
+  while (checkDir) {
+    if (fs.existsSync(path.join(checkDir, '.git'))) {
+      isGitRepo = true;
+      break;
+    }
+    const parent = path.dirname(checkDir);
+    if (parent === checkDir) break;
+    checkDir = parent;
+  }
+  if (!isGitRepo) {
+    db.close();
+    return { error: `Not a git repository: ${repoRoot}` };
+  }
+
   let diffOutput;
   try {
-    // FIX: Use execFileSync with array args to prevent shell injection
     const args = opts.staged
       ? ['diff', '--cached', '--unified=0', '--no-color']
       : ['diff', opts.ref || 'HEAD', '--unified=0', '--no-color'];
@@ -461,6 +478,7 @@ export function diffImpactData(customDbPath, opts = {}) {
       cwd: repoRoot,
       encoding: 'utf-8',
       maxBuffer: 10 * 1024 * 1024,
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
   } catch (e) {
     db.close();
