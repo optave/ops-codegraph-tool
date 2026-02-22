@@ -11,7 +11,7 @@ Codegraph (`@optave/codegraph`) is a local code dependency graph CLI. It parses 
 ## Commands
 
 ```bash
-npm install --legacy-peer-deps   # Install (--legacy-peer-deps required)
+npm install                      # Install dependencies
 npm test                         # Run all tests (vitest)
 npm run test:watch               # Watch mode
 npm run test:coverage            # Coverage report

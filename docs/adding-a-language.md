@@ -65,7 +65,7 @@ Use the placeholder **`<lang>`** for your language name (e.g. `c`, `swift`,
 Then install:
 
 ```bash
-npm install --legacy-peer-deps
+npm install
 ```
 
 ### 2. `scripts/build-wasm.js` — register the grammar

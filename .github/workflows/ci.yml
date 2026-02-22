@@ -22,7 +22,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: npm install
 
       - name: Run Biome
         run: npx @biomejs/biome check src/ tests/
@@ -46,7 +46,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Install dependencies
-        run: npm install --legacy-peer-deps
+        run: npm install
 
       - name: Run tests
         run: npm test

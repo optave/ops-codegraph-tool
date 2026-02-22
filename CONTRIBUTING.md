@@ -11,7 +11,7 @@ kinds — bug fixes, new features, documentation, and new language support.
 ```bash
 git clone https://github.com/optave/codegraph.git
 cd codegraph
-npm install --legacy-peer-deps   # --legacy-peer-deps is required
+npm install
 npm test                         # run the full test suite
 ```
 

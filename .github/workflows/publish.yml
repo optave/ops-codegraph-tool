@@ -30,7 +30,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - run: npm install --legacy-peer-deps
+      - run: npm install
       - run: npm test
 
   build-native:
@@ -111,7 +111,7 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
 
-      - run: npm install --legacy-peer-deps
+      - run: npm install
 
       - name: Configure git
         run: |

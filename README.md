@@ -463,7 +463,7 @@ Contributions are welcome! See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the fu
 ```bash
 git clone https://github.com/optave/codegraph.git
 cd codegraph
-npm install --legacy-peer-deps
+npm install
 npm test
 ```
 
