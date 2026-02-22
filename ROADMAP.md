@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 1.3.0 | **Status:** Active development | **Updated:** February 2026
+> **Current version:** 1.4.0 | **Status:** Active development | **Updated:** February 2026
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across seven phases — closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -13,7 +13,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | Phase | Theme | Key Deliverables | Status |
 |-------|-------|-----------------|--------|
 | [**1**](#phase-1--rust-core) | Rust Core | Rust parsing engine via napi-rs, parallel parsing, incremental tree-sitter, JS orchestration layer | **Complete** (v1.3.0) |
-| [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config | Planned |
+| [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config | **Complete** (v1.4.0) |
 | [**3**](#phase-3--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, hybrid search | Planned |
 | [**4**](#phase-4--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions | Planned |
 | [**5**](#phase-5--expanded-language-support) | Expanded Language Support | 8 new languages (12 → 20), parser utilities | Planned |
@@ -101,7 +101,9 @@ Ensure the transition is seamless.
 
 ---
 
-## Phase 2 — Foundation Hardening
+## Phase 2 — Foundation Hardening ✅
+
+> **Status:** Complete — shipped in v1.4.0
 
 **Goal:** Fix structural issues that make subsequent phases harder.
 
@@ -119,32 +121,33 @@ Replace scattered parser init/selection logic with a single declarative registry
 
 **Affected files:** `src/parser.js`, `src/constants.js`
 
-### 2.2 — Complete MCP Server
+### 2.2 — Complete MCP Server ✅
 
 Expose all CLI capabilities through MCP, going from 5 → 11 tools.
 
 | New tool | Wraps | Description |
 |----------|-------|-------------|
-| `fn_deps` | `fnDepsData` | Function-level dependency chain |
-| `fn_impact` | `fnImpactData` | Function-level blast radius |
-| `diff_impact` | `diffImpactData` | Git diff impact analysis |
-| `semantic_search` | `searchData` | Embedding-powered search |
-| `export_graph` | export functions | DOT/Mermaid/JSON export |
-| `list_functions` | — | List functions in a file or by pattern |
+| ✅ `fn_deps` | `fnDepsData` | Function-level dependency chain |
+| ✅ `fn_impact` | `fnImpactData` | Function-level blast radius |
+| ✅ `diff_impact` | `diffImpactData` | Git diff impact analysis |
+| ✅ `semantic_search` | `searchData` | Embedding-powered search |
+| ✅ `export_graph` | export functions | DOT/Mermaid/JSON export |
+| ✅ `list_functions` | — | List functions in a file or by pattern |
 
 **Affected files:** `src/mcp.js`
 
-### 2.3 — Test Coverage Gaps
+### 2.3 — Test Coverage Gaps ✅
 
 Add tests for currently untested modules.
 
 | New test file | Coverage |
 |---------------|----------|
-| `tests/mcp/mcp.test.js` | All MCP tools (mock stdio transport) |
-| `tests/config/config.test.js` | Config loading, defaults, invalid configs |
-| `tests/integration/cli.test.js` | End-to-end CLI smoke tests |
+| ✅ `tests/unit/mcp.test.js` | All MCP tools (mock stdio transport) |
+| ✅ `tests/unit/config.test.js` | Config loading, defaults, env overrides, apiKeyCommand |
+| ✅ `tests/integration/cli.test.js` | End-to-end CLI smoke tests |
+| ✅ `tests/unit/*.test.js` | Unit tests for 8 core modules (coverage 62% → 75%) |
 
-### 2.4 — Enhanced Configuration
+### 2.4 — Enhanced Configuration ✅
 
 New configuration options in `.codegraphrc.json`:
 
@@ -155,14 +158,16 @@ New configuration options in `.codegraphrc.json`:
     "provider": "openai",
     "model": "gpt-4o-mini",
     "baseUrl": null,
-    "apiKey": null
+    "apiKey": null,
+    "apiKeyCommand": "op read op://vault/openai/api-key"
   },
   "search": { "defaultMinScore": 0.2, "rrfK": 60, "topK": 15 },
   "ci": { "failOnCycles": false, "impactThreshold": null }
 }
 ```
 
-Environment variable fallbacks: `CODEGRAPH_LLM_PROVIDER`, `CODEGRAPH_LLM_API_KEY`, `CODEGRAPH_LLM_MODEL`
+- ✅ Environment variable fallbacks: `CODEGRAPH_LLM_PROVIDER`, `CODEGRAPH_LLM_API_KEY`, `CODEGRAPH_LLM_MODEL`
+- ✅ `apiKeyCommand` — shell out to external secret managers (1Password, Bitwarden, Vault, pass, macOS Keychain) at runtime via `execFileSync` (no shell injection). Priority: command output > env var > file config > defaults. Graceful fallback on failure.
 
 **Affected files:** `src/config.js`
 
