@@ -434,22 +434,16 @@ See **[ROADMAP.md](ROADMAP.md)** for the full development roadmap. Current plan:
 
 ## 🤝 Contributing
 
-Contributions are welcome! Here's how to get started:
+Contributions are welcome! See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full guide — setup, workflow, commit convention, testing, and architecture notes.
 
 ```bash
 git clone https://github.com/optave/codegraph.git
 cd codegraph
 npm install --legacy-peer-deps
-npm test                # run tests with vitest
+npm test
 ```
 
-The `.wasm` grammar files in `grammars/` are pre-built and committed. If you upgrade a grammar devDependency, rebuild them with `npm run build:wasm`.
-
-1. Fork the repo
-2. Create your feature branch (`git checkout -b feat/amazing-feature`)
-3. Commit your changes
-4. Push to the branch
-5. Open a Pull Request
+Looking to add a new language? Check out **[Adding a New Language](docs/adding-a-language.md)**.
 
 ## 📄 License
 
