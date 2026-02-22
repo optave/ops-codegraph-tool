@@ -6,8 +6,7 @@ on:
       - 'v*'
   workflow_dispatch:
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   build:
@@ -18,26 +17,28 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             package: '@optave/codegraph-linux-x64-gnu'
-            node-arch: x64
-            node-os: linux
+            node_arch: x64
+            node_os: linux
           - os: macos-latest
             target: aarch64-apple-darwin
             package: '@optave/codegraph-darwin-arm64'
-            node-arch: arm64
-            node-os: darwin
-          - os: macos-13
+            node_arch: arm64
+            node_os: darwin
+          - os: macos-14
             target: x86_64-apple-darwin
             package: '@optave/codegraph-darwin-x64'
-            node-arch: x64
-            node-os: darwin
+            node_arch: x64
+            node_os: darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             package: '@optave/codegraph-win32-x64-msvc'
-            node-arch: x64
-            node-os: win32
+            node_arch: x64
+            node_os: win32
 
     runs-on: ${{ matrix.os }}
     name: Build ${{ matrix.target }}
+    permissions:
+      contents: read
 
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +47,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -68,10 +68,10 @@ jobs:
       - name: Prepare platform package
         shell: bash
         run: |
-          PKG_DIR="npm/${{ matrix.node-os }}-${{ matrix.node-arch }}"
+          PKG_DIR="npm/${{ matrix.node_os }}-${{ matrix.node_arch }}"
           mkdir -p "$PKG_DIR"
 
-          # Copy the built .node file (use glob to avoid Windows find issues)
+          # Copy the built .node file
           cp crates/codegraph-core/*.node "$PKG_DIR/codegraph-core.node"
 
           # Read version from root package.json
@@ -79,33 +79,37 @@ jobs:
 
           # Generate package.json for the platform package
           cat > "$PKG_DIR/package.json" <<EOF
-{
-  "name": "${{ matrix.package }}",
-  "version": "${VERSION}",
-  "description": "Native codegraph-core binary for ${{ matrix.node-os }}-${{ matrix.node-arch }}",
-  "os": ["${{ matrix.node-os }}"],
-  "cpu": ["${{ matrix.node-arch }}"],
-  "main": "codegraph-core.node",
-  "files": ["codegraph-core.node"],
-  "license": "Apache-2.0",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/optave/codegraph.git"
-  }
-}
-EOF
+          {
+            "name": "${{ matrix.package }}",
+            "version": "${VERSION}",
+            "description": "Native codegraph-core binary for ${{ matrix.node_os }}-${{ matrix.node_arch }}",
+            "os": ["${{ matrix.node_os }}"],
+            "cpu": ["${{ matrix.node_arch }}"],
+            "main": "codegraph-core.node",
+            "files": ["codegraph-core.node"],
+            "license": "Apache-2.0",
+            "repository": {
+              "type": "git",
+              "url": "https://github.com/optave/codegraph.git"
+            }
+          }
+          EOF
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: native-${{ matrix.node-os }}-${{ matrix.node-arch }}
-          path: npm/${{ matrix.node-os }}-${{ matrix.node-arch }}/
+          name: native-${{ matrix.node_os }}-${{ matrix.node_arch }}
+          path: npm/${{ matrix.node_os }}-${{ matrix.node_arch }}/
           if-no-files-found: error
 
   publish:
     needs: build
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
 
     steps:
       - uses: actions/checkout@v4
@@ -123,8 +127,6 @@ EOF
 
       - name: Publish platform packages
         shell: bash
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           for dir in artifacts/native-*/; do
             echo "Publishing $(cat "$dir/package.json" | grep '"name"')"
