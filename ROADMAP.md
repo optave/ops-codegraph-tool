@@ -39,7 +39,7 @@ Phases 1-4 ──→ Phase 7 (Visualization & Advanced)
 
 **Goal:** Move the CPU-intensive parsing and graph engine to Rust, keeping JS for CLI orchestration, MCP, and embeddings. This unlocks parallel parsing, incremental tree-sitter, lower memory usage, and optional standalone binary distribution.
 
-### 1.1 — Rust Workspace & napi-rs Setup
+### 1.1 — Rust Workspace & napi-rs Setup ✅
 
 Bootstrap the Rust side of the project.
 
@@ -51,7 +51,7 @@ Bootstrap the Rust side of the project.
 
 **Result:** `npm install` pulls a prebuilt binary; no Rust toolchain required for end users.
 
-### 1.2 — Native tree-sitter Parsing
+### 1.2 — Native tree-sitter Parsing ✅
 
 Replace WASM-based parsing with native tree-sitter in Rust.
 
@@ -64,7 +64,7 @@ Replace WASM-based parsing with native tree-sitter in Rust.
 
 **Affected files:** `src/parser.js` (becomes a thin JS wrapper over native addon)
 
-### 1.3 — Incremental Parsing
+### 1.3 — Incremental Parsing ✅
 
 Leverage native tree-sitter's `edit + re-parse` API.
 
@@ -76,7 +76,7 @@ Leverage native tree-sitter's `edit + re-parse` API.
 
 **Affected files:** `src/watcher.js`, `src/parser.js`
 
-### 1.4 — Import Resolution & Graph Algorithms in Rust
+### 1.4 — Import Resolution & Graph Algorithms in Rust ✅
 
 Move the hot-path graph logic to Rust.
 
@@ -87,7 +87,7 @@ Move the hot-path graph logic to Rust.
 
 **Result:** Import resolution and cycle detection run in Rust with full type safety. Complex state machines benefit from Rust's type system.
 
-### 1.5 — Graceful Degradation & Migration
+### 1.5 — Graceful Degradation & Migration ✅
 
 Ensure the transition is seamless.
 
