@@ -28,11 +28,14 @@ import {
 } from './registry.js';
 import { watchProject } from './watcher.js';
 
+const __cliDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'));
+const pkg = JSON.parse(fs.readFileSync(path.join(__cliDir, '..', 'package.json'), 'utf-8'));
+
 const program = new Command();
 program
   .name('codegraph')
   .description('Local code dependency graph tool')
-  .version('1.3.0')
+  .version(pkg.version)
   .option('-v, --verbose', 'Enable verbose/debug output')
   .option('--engine <engine>', 'Parser engine: native, wasm, or auto (default: auto)', 'auto')
   .hook('preAction', (thisCommand) => {
@@ -214,6 +217,7 @@ registry
   .description('List all registered repositories')
   .option('-j, --json', 'Output as JSON')
   .action((opts) => {
+    pruneRegistry();
     const repos = listRepos();
     if (opts.json) {
       console.log(JSON.stringify(repos, null, 2));

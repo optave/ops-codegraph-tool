@@ -422,7 +422,8 @@ export async function startMCPServer(customDbPath, options = {}) {
           break;
         }
         case 'list_repos': {
-          const { listRepos } = await import('./registry.js');
+          const { listRepos, pruneRegistry } = await import('./registry.js');
+          pruneRegistry();
           let repos = listRepos();
           if (allowedRepos) {
             repos = repos.filter((r) => allowedRepos.includes(r.name));
