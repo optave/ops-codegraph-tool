@@ -1,7 +1,10 @@
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import fs from 'node:fs';
 import { Parser, Language } from 'web-tree-sitter';
 import { warn, debug } from './logger.js';
+import { loadNative, isNativeAvailable } from './native.js';
+import { normalizePath } from './constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1578,4 +1581,153 @@ export function extractPHPSymbols(tree, filePath) {
 
   walk(tree.rootNode);
   return { definitions, calls, imports, classes, exports };
+}
+
+// ── Unified API ──────────────────────────────────────────────────────────────
+
+function resolveEngine(opts = {}) {
+  const pref = opts.engine || 'auto';
+  if (pref === 'wasm') return { name: 'wasm', native: null };
+  if (pref === 'native' || pref === 'auto') {
+    const native = loadNative();
+    if (native) return { name: 'native', native };
+    if (pref === 'native') {
+      warn('Native engine requested but unavailable — falling back to WASM');
+    }
+  }
+  return { name: 'wasm', native: null };
+}
+
+/**
+ * Normalize native engine output to match the camelCase convention
+ * used by the WASM extractors.
+ */
+function normalizeNativeSymbols(result) {
+  return {
+    definitions: (result.definitions || []).map(d => ({
+      name: d.name, kind: d.kind, line: d.line,
+      endLine: d.endLine ?? d.end_line ?? null,
+      decorators: d.decorators
+    })),
+    calls: (result.calls || []).map(c => ({
+      name: c.name, line: c.line, dynamic: c.dynamic
+    })),
+    imports: (result.imports || []).map(i => ({
+      source: i.source, names: i.names || [], line: i.line,
+      typeOnly: i.typeOnly ?? i.type_only,
+      reexport: i.reexport,
+      wildcardReexport: i.wildcardReexport ?? i.wildcard_reexport,
+      pythonImport: i.pythonImport ?? i.python_import,
+      goImport: i.goImport ?? i.go_import,
+      rustUse: i.rustUse ?? i.rust_use,
+      javaImport: i.javaImport ?? i.java_import,
+      csharpUsing: i.csharpUsing ?? i.csharp_using,
+      rubyRequire: i.rubyRequire ?? i.ruby_require,
+      phpUse: i.phpUse ?? i.php_use
+    })),
+    classes: (result.classes || []).map(c => ({
+      name: c.name, extends: c.extends, implements: c.implements, line: c.line
+    })),
+    exports: (result.exports || []).map(e => ({
+      name: e.name, kind: e.kind, line: e.line
+    }))
+  };
+}
+
+/**
+ * WASM extraction helper: picks the right extractor based on file extension.
+ */
+function wasmExtractSymbols(parsers, filePath, code) {
+  const parser = getParser(parsers, filePath);
+  if (!parser) return null;
+
+  let tree;
+  try { tree = parser.parse(code); }
+  catch (e) {
+    warn(`Parse error in ${filePath}: ${e.message}`);
+    return null;
+  }
+
+  if (filePath.endsWith('.tf') || filePath.endsWith('.hcl')) return extractHCLSymbols(tree, filePath);
+  if (filePath.endsWith('.py')) return extractPythonSymbols(tree, filePath);
+  if (filePath.endsWith('.go')) return extractGoSymbols(tree, filePath);
+  if (filePath.endsWith('.rs')) return extractRustSymbols(tree, filePath);
+  if (filePath.endsWith('.java')) return extractJavaSymbols(tree, filePath);
+  if (filePath.endsWith('.cs')) return extractCSharpSymbols(tree, filePath);
+  if (filePath.endsWith('.rb')) return extractRubySymbols(tree, filePath);
+  if (filePath.endsWith('.php')) return extractPHPSymbols(tree, filePath);
+  return extractSymbols(tree, filePath);
+}
+
+/**
+ * Parse a single file and return normalized symbols.
+ *
+ * @param {string} filePath  Absolute path to the file.
+ * @param {string} source    Source code string.
+ * @param {object} [opts]    Options: { engine: 'native'|'wasm'|'auto' }
+ * @returns {Promise<{definitions, calls, imports, classes, exports}|null>}
+ */
+export async function parseFileAuto(filePath, source, opts = {}) {
+  const { name, native } = resolveEngine(opts);
+
+  if (native) {
+    const result = native.parseFile(filePath, source);
+    return result ? normalizeNativeSymbols(result) : null;
+  }
+
+  // WASM path
+  const parsers = await createParsers();
+  return wasmExtractSymbols(parsers, filePath, source);
+}
+
+/**
+ * Parse multiple files in bulk and return a Map<relPath, symbols>.
+ *
+ * @param {string[]} filePaths  Absolute paths to files.
+ * @param {string}   rootDir    Project root for computing relative paths.
+ * @param {object}   [opts]     Options: { engine: 'native'|'wasm'|'auto' }
+ * @returns {Promise<Map<string, {definitions, calls, imports, classes, exports}>>}
+ */
+export async function parseFilesAuto(filePaths, rootDir, opts = {}) {
+  const { name, native } = resolveEngine(opts);
+  const result = new Map();
+
+  if (native) {
+    const nativeResults = native.parseFiles(filePaths, rootDir);
+    for (const r of nativeResults) {
+      if (!r) continue;
+      const relPath = normalizePath(path.relative(rootDir, r.file));
+      result.set(relPath, normalizeNativeSymbols(r));
+    }
+    return result;
+  }
+
+  // WASM path
+  const parsers = await createParsers();
+  for (const filePath of filePaths) {
+    let code;
+    try { code = fs.readFileSync(filePath, 'utf-8'); }
+    catch (err) {
+      warn(`Skipping ${path.relative(rootDir, filePath)}: ${err.message}`);
+      continue;
+    }
+    const symbols = wasmExtractSymbols(parsers, filePath, code);
+    if (symbols) {
+      const relPath = normalizePath(path.relative(rootDir, filePath));
+      result.set(relPath, symbols);
+    }
+  }
+  return result;
+}
+
+/**
+ * Report which engine is active.
+ *
+ * @param {object} [opts]  Options: { engine: 'native'|'wasm'|'auto' }
+ * @returns {{ name: 'native'|'wasm', version: string|null }}
+ */
+export function getActiveEngine(opts = {}) {
+  const { name, native } = resolveEngine(opts);
+  const version = native ? (typeof native.engineVersion === 'function' ? native.engineVersion() : null) : null;
+  return { name, version };
 }

@@ -2,11 +2,10 @@
 import fs from 'fs';
 import path from 'path';
 import { openDb, initSchema } from './db.js';
-import { createParsers, getParser, extractSymbols, extractHCLSymbols, extractPythonSymbols } from './parser.js';
+import { parseFileAuto, getActiveEngine } from './parser.js';
 import { IGNORE_DIRS, EXTENSIONS, normalizePath } from './constants.js';
 import { resolveImportPath } from './builder.js';
 import { warn, debug, info } from './logger.js';
-import { loadNative } from './native.js';
 
 function shouldIgnore(filePath) {
   const parts = filePath.split(path.sep);
@@ -20,7 +19,7 @@ function isTrackedExt(filePath) {
 /**
  * Parse a single file and update the database incrementally.
  */
-function updateFile(db, rootDir, filePath, parsers, stmts, native) {
+async function updateFile(db, rootDir, filePath, stmts, engineOpts) {
   const relPath = normalizePath(path.relative(rootDir, filePath));
 
   const oldNodes = stmts.countNodes.get(relPath)?.c || 0;
@@ -40,46 +39,8 @@ function updateFile(db, rootDir, filePath, parsers, stmts, native) {
     return null;
   }
 
-  let symbols;
-  if (native) {
-    // Use native engine for parsing
-    const result = native.parseFile(filePath, code);
-    if (!result) return null;
-    symbols = {
-      definitions: (result.definitions || []).map(d => ({
-        name: d.name, kind: d.kind, line: d.line,
-        endLine: d.endLine ?? d.end_line ?? null
-      })),
-      calls: (result.calls || []).map(c => ({
-        name: c.name, line: c.line, dynamic: c.dynamic
-      })),
-      imports: (result.imports || []).map(i => ({
-        source: i.source, names: i.names || [], line: i.line,
-        typeOnly: i.typeOnly ?? i.type_only,
-        reexport: i.reexport, wildcardReexport: i.wildcardReexport ?? i.wildcard_reexport
-      })),
-      classes: result.classes || [],
-      exports: (result.exports || []).map(e => ({
-        name: e.name, kind: e.kind, line: e.line
-      }))
-    };
-  } else {
-    const parser = getParser(parsers, filePath);
-    if (!parser) return null;
-
-    let tree;
-    try { tree = parser.parse(code); }
-    catch (err) {
-      warn(`Parse error in ${relPath}: ${err.message}`);
-      return null;
-    }
-
-    const isHCL = filePath.endsWith('.tf') || filePath.endsWith('.hcl');
-    const isPython = filePath.endsWith('.py');
-    symbols = isHCL ? extractHCLSymbols(tree, filePath)
-      : isPython ? extractPythonSymbols(tree, filePath)
-      : extractSymbols(tree, filePath);
-  }
+  const symbols = await parseFileAuto(filePath, code, engineOpts);
+  if (!symbols) return null;
 
   stmts.insertNode.run(relPath, 'file', relPath, 0, null);
 
@@ -166,11 +127,9 @@ export async function watchProject(rootDir) {
 
   const db = openDb(dbPath);
   initSchema(db);
-  const native = loadNative();
-  const parsers = native ? null : await createParsers();
-  if (native) {
-    console.log(`Watch mode using native engine (v${native.engineVersion()})`);
-  }
+  const engineOpts = { engine: 'auto' };
+  const { name: engineName, version: engineVersion } = getActiveEngine(engineOpts);
+  console.log(`Watch mode using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
 
   const stmts = {
     insertNode: db.prepare('INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)'),
@@ -194,18 +153,16 @@ export async function watchProject(rootDir) {
   let timer = null;
   const DEBOUNCE_MS = 300;
 
-  function processPending() {
+  async function processPending() {
     const files = [...pending];
     pending.clear();
 
-    const updates = db.transaction(() => {
-      const results = [];
-      for (const filePath of files) {
-        const result = updateFile(db, rootDir, filePath, parsers, stmts, native);
-        if (result) results.push(result);
-      }
-      return results;
-    })();
+    const results = [];
+    for (const filePath of files) {
+      const result = await updateFile(db, rootDir, filePath, stmts, engineOpts);
+      if (result) results.push(result);
+    }
+    const updates = results;
 
     for (const r of updates) {
       const nodeDelta = r.nodesAdded - r.nodesRemoved;

@@ -35,6 +35,9 @@ export { loadConfig } from './config.js';
 // Shared constants
 export { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
 
+// Unified parser API
+export { parseFileAuto, parseFilesAuto, getActiveEngine } from './parser.js';
+
 // Native engine
 export { isNativeAvailable } from './native.js';
 
