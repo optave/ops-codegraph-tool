@@ -128,7 +128,7 @@ codegraph deps src/index.ts  # file-level import/export map
 | 📤 | **Export** | DOT (Graphviz), Mermaid, and JSON graph export |
 | 🧠 | **Semantic search** | Embeddings-powered natural language search with multi-query RRF ranking |
 | 👀 | **Watch mode** | Incrementally update the graph as files change |
-| 🤖 | **MCP server** | Model Context Protocol integration for AI assistants |
+| 🤖 | **MCP server** | 12-tool MCP server with multi-repo support for AI assistants |
 | 🔒 | **Fully local** | No network calls, no data exfiltration, SQLite-backed |
 
 ## 📦 Commands
@@ -212,6 +212,20 @@ A single trailing semicolon is ignored (falls back to single-query mode). The `-
 | `bge-large` | bge-large-en-v1.5 | 1024 | ~335 MB | MIT | Best general retrieval, top MTEB scores |
 
 The model used during `embed` is stored in the database, so `search` auto-detects it — no need to pass `--model` when searching.
+
+### Multi-Repo Registry
+
+Manage a global registry of codegraph-enabled projects. AI agents can query any registered repo from a single MCP session using the `repo` parameter.
+
+```bash
+codegraph registry list        # List all registered repos
+codegraph registry list --json # JSON output
+codegraph registry add <dir>   # Register a project directory
+codegraph registry add <dir> -n my-name  # Custom name
+codegraph registry remove <name>  # Unregister
+```
+
+`codegraph build` auto-registers the project — no manual setup needed.
 
 ### AI Integration
 
@@ -310,11 +324,13 @@ Benchmarked on a ~3,200-file TypeScript project:
 
 ### MCP Server
 
-Codegraph includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) server, so AI assistants can query your dependency graph directly:
+Codegraph includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) server with 12 tools, so AI assistants can query your dependency graph directly:
 
 ```bash
 codegraph mcp
 ```
+
+All MCP tools accept an optional `repo` parameter to target any registered repository. Use `list_repos` to see available repos. When `repo` is omitted, the local `.codegraph/graph.db` is used (backwards compatible).
 
 ### CLAUDE.md / Agent Instructions
 
@@ -468,7 +484,7 @@ const { results: fused } = await multiSearchData(
 See **[ROADMAP.md](ROADMAP.md)** for the full development roadmap. Current plan:
 
 1. ~~**Rust Core**~~ — **Complete** (v1.3.0) — native tree-sitter parsing via napi-rs, parallel multi-core parsing, incremental re-parsing, import resolution & cycle detection in Rust
-2. ~~**Foundation Hardening**~~ — **Complete** (v1.4.0) — parser registry, 11-tool MCP server, test coverage 62%→75%, `apiKeyCommand` secret resolution
+2. ~~**Foundation Hardening**~~ — **Complete** (v1.4.0) — parser registry, 12-tool MCP server with multi-repo support, test coverage 62%→75%, `apiKeyCommand` secret resolution, global repo registry
 3. **Intelligent Embeddings** — LLM-generated descriptions, hybrid search
 4. **Natural Language Queries** — `codegraph ask` command, conversational sessions
 5. **Expanded Language Support** — 8 new languages (12 → 20)

@@ -52,6 +52,7 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `config.js` | `.codegraphrc.json` loading, env overrides, `apiKeyCommand` secret resolution |
 | `constants.js` | `EXTENSIONS` (derived from parser registry) and `IGNORE_DIRS` constants |
 | `native.js` | Native napi-rs addon loader with WASM fallback |
+| `registry.js` | Global repo registry (`~/.codegraph/registry.json`) for multi-repo MCP |
 | `resolve.js` | Import resolution (supports native batch mode) |
 | `logger.js` | Structured logging (`warn`, `debug`, `info`, `error`) |
 

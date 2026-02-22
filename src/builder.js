@@ -4,7 +4,7 @@ import path from 'node:path';
 import { loadConfig } from './config.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
 import { initSchema, openDb } from './db.js';
-import { warn } from './logger.js';
+import { debug, warn } from './logger.js';
 import { getActiveEngine, parseFilesAuto } from './parser.js';
 import { computeConfidence, resolveImportPath, resolveImportsBatch } from './resolve.js';
 
@@ -543,4 +543,11 @@ export async function buildGraph(rootDir, opts = {}) {
   console.log(`Graph built: ${nodeCount} nodes, ${edgeCount} edges`);
   console.log(`Stored in ${dbPath}`);
   db.close();
+
+  try {
+    const { registerRepo } = await import('./registry.js');
+    registerRepo(rootDir);
+  } catch (err) {
+    debug(`Auto-registration failed: ${err.message}`);
+  }
 }

@@ -19,6 +19,7 @@ import {
   moduleMap,
   queryName,
 } from './queries.js';
+import { listRepos, REGISTRY_PATH, registerRepo, unregisterRepo } from './registry.js';
 import { watchProject } from './watcher.js';
 
 const program = new Command();
@@ -189,6 +190,56 @@ program
   .action(async (opts) => {
     const { startMCPServer } = await import('./mcp.js');
     await startMCPServer(opts.db);
+  });
+
+// ─── Registry commands ──────────────────────────────────────────────────
+
+const registry = program.command('registry').description('Manage the multi-repo project registry');
+
+registry
+  .command('list')
+  .description('List all registered repositories')
+  .option('-j, --json', 'Output as JSON')
+  .action((opts) => {
+    const repos = listRepos();
+    if (opts.json) {
+      console.log(JSON.stringify(repos, null, 2));
+    } else if (repos.length === 0) {
+      console.log(`No repositories registered.\nRegistry: ${REGISTRY_PATH}`);
+    } else {
+      console.log(`Registered repositories (${REGISTRY_PATH}):\n`);
+      for (const r of repos) {
+        const dbExists = fs.existsSync(r.dbPath);
+        const status = dbExists ? '' : ' [DB missing]';
+        console.log(`  ${r.name}${status}`);
+        console.log(`    Path: ${r.path}`);
+        console.log(`    DB:   ${r.dbPath}`);
+        console.log();
+      }
+    }
+  });
+
+registry
+  .command('add <dir>')
+  .description('Register a project directory')
+  .option('-n, --name <name>', 'Custom name (defaults to directory basename)')
+  .action((dir, opts) => {
+    const absDir = path.resolve(dir);
+    const { name, entry } = registerRepo(absDir, opts.name);
+    console.log(`Registered "${name}" → ${entry.path}`);
+  });
+
+registry
+  .command('remove <name>')
+  .description('Unregister a repository by name')
+  .action((name) => {
+    const removed = unregisterRepo(name);
+    if (removed) {
+      console.log(`Removed "${name}" from registry.`);
+    } else {
+      console.error(`Repository "${name}" not found in registry.`);
+      process.exit(1);
+    }
   });
 
 // ─── Embedding commands ─────────────────────────────────────────────────

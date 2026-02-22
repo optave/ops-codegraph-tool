@@ -13,7 +13,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | Phase | Theme | Key Deliverables | Status |
 |-------|-------|-----------------|--------|
 | [**1**](#phase-1--rust-core) | Rust Core | Rust parsing engine via napi-rs, parallel parsing, incremental tree-sitter, JS orchestration layer | **Complete** (v1.3.0) |
-| [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Partial** — core complete (v1.4.0), 2.5 planned |
+| [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Complete** (v1.4.0) |
 | [**3**](#phase-3--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, hybrid search | Planned |
 | [**4**](#phase-4--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions | Planned |
 | [**5**](#phase-5--expanded-language-support) | Expanded Language Support | 8 new languages (12 → 20), parser utilities | Planned |
@@ -171,19 +171,19 @@ New configuration options in `.codegraphrc.json`:
 
 **Affected files:** `src/config.js`
 
-### 2.5 — Multi-Repo MCP
+### 2.5 — Multi-Repo MCP ✅
 
 Support querying multiple codebases from a single MCP server instance.
 
-- Registry file at `~/.codegraph/registry.json` mapping repo names to their `.codegraph/graph.db` paths
-- Lazy DB connections — only opened when a repo is first queried
-- Add optional `repo` parameter to all MCP tools to target a specific repository
-- Auto-registration: `codegraph build` adds the current project to the registry
-- New CLI commands: `codegraph registry list|add|remove` for manual management
-- Default behavior: when `repo` is omitted, use the local `.codegraph/graph.db` (backwards compatible)
+- ✅ Registry file at `~/.codegraph/registry.json` mapping repo names to their `.codegraph/graph.db` paths
+- ✅ Add optional `repo` parameter to all 11 MCP tools to target a specific repository
+- ✅ New `list_repos` MCP tool (12th tool) to enumerate registered repositories
+- ✅ Auto-registration: `codegraph build` adds the current project to the registry
+- ✅ New CLI commands: `codegraph registry list|add|remove` for manual management
+- ✅ Default behavior: when `repo` is omitted, use the local `.codegraph/graph.db` (backwards compatible)
 
 **New files:** `src/registry.js`
-**Affected files:** `src/mcp.js`, `src/cli.js`, `src/builder.js`
+**Affected files:** `src/mcp.js`, `src/cli.js`, `src/builder.js`, `src/index.js`
 
 ---
 
@@ -478,6 +478,15 @@ codegraph ask "How does routing work?"
 codegraph diff-impact HEAD~5
 codegraph viz
 ```
+
+---
+
+## Watch List
+
+Technology changes to monitor that may unlock future improvements.
+
+- **`node:sqlite` (Node.js built-in)** — **primary target.** Zero native dependencies, eliminates C++ addon breakage on Node major releases (`better-sqlite3` already broken on Node 24/25). Currently Stability 1.1 (Active Development) as of Node 25.x. Adopt when it reaches Stability 2, or use as a fallback alongside `better-sqlite3` (dual-engine pattern like native/WASM parsing). Backed by the Node.js project — no startup risk.
+- **`libsql` (SQLite fork by Turso)** — monitor only. Drop-in `better-sqlite3` replacement with built-in DiskANN vector search. However, Turso is pivoting engineering focus to Limbo (full Rust SQLite rewrite), leaving libsql as legacy. Pre-1.0 (v0.5.x) with uncertain long-term maintenance. Low switching cost (API-compatible, data is standard SQLite), but not worth adopting until the Turso/Limbo situation clarifies.
 
 ---
 

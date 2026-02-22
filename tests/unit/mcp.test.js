@@ -20,6 +20,7 @@ const ALL_TOOL_NAMES = [
   'semantic_search',
   'export_graph',
   'list_functions',
+  'list_repos',
 ];
 
 // ─── TOOLS schema ──────────────────────────────────────────────────
@@ -110,6 +111,24 @@ describe('TOOLS', () => {
     expect(lf.inputSchema.properties).toHaveProperty('file');
     expect(lf.inputSchema.properties).toHaveProperty('pattern');
     expect(lf.inputSchema.properties).toHaveProperty('no_tests');
+  });
+
+  it('every tool except list_repos has optional repo property', () => {
+    for (const tool of TOOLS) {
+      if (tool.name === 'list_repos') continue;
+      expect(tool.inputSchema.properties).toHaveProperty('repo');
+      expect(tool.inputSchema.properties.repo.type).toBe('string');
+      // repo must never be required
+      if (tool.inputSchema.required) {
+        expect(tool.inputSchema.required).not.toContain('repo');
+      }
+    }
+  });
+
+  it('list_repos tool exists with no required params', () => {
+    const lr = TOOLS.find((t) => t.name === 'list_repos');
+    expect(lr).toBeDefined();
+    expect(lr.inputSchema.required).toBeUndefined();
   });
 });
 
@@ -349,6 +368,97 @@ describe('startMCPServer handler dispatch', () => {
 
     vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
     vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
+    vi.doUnmock('../../src/queries.js');
+  });
+
+  it('resolves repo param via registry', async () => {
+    const handlers = {};
+
+    vi.doMock('@modelcontextprotocol/sdk/server/index.js', () => ({
+      Server: class MockServer {
+        setRequestHandler(name, handler) {
+          handlers[name] = handler;
+        }
+        async connect() {}
+      },
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
+      StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('../../src/registry.js', () => ({
+      resolveRepoDbPath: vi.fn((name) =>
+        name === 'my-project' ? '/resolved/path/.codegraph/graph.db' : undefined,
+      ),
+    }));
+
+    const queryMock = vi.fn(() => ({ query: 'test', results: [] }));
+    vi.doMock('../../src/queries.js', () => ({
+      queryNameData: queryMock,
+      impactAnalysisData: vi.fn(),
+      moduleMapData: vi.fn(),
+      fileDepsData: vi.fn(),
+      fnDepsData: vi.fn(),
+      fnImpactData: vi.fn(),
+      diffImpactData: vi.fn(),
+      listFunctionsData: vi.fn(),
+    }));
+
+    const { startMCPServer } = await import('../../src/mcp.js');
+    await startMCPServer();
+
+    const result = await handlers['tools/call']({
+      params: { name: 'query_function', arguments: { name: 'test', repo: 'my-project' } },
+    });
+    expect(result.isError).toBeUndefined();
+    expect(queryMock).toHaveBeenCalledWith('test', '/resolved/path/.codegraph/graph.db');
+
+    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
+    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
+    vi.doUnmock('../../src/registry.js');
+    vi.doUnmock('../../src/queries.js');
+  });
+
+  it('returns error when repo not found in registry', async () => {
+    const handlers = {};
+
+    vi.doMock('@modelcontextprotocol/sdk/server/index.js', () => ({
+      Server: class MockServer {
+        setRequestHandler(name, handler) {
+          handlers[name] = handler;
+        }
+        async connect() {}
+      },
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
+      StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('../../src/registry.js', () => ({
+      resolveRepoDbPath: vi.fn(() => undefined),
+    }));
+    vi.doMock('../../src/queries.js', () => ({
+      queryNameData: vi.fn(),
+      impactAnalysisData: vi.fn(),
+      moduleMapData: vi.fn(),
+      fileDepsData: vi.fn(),
+      fnDepsData: vi.fn(),
+      fnImpactData: vi.fn(),
+      diffImpactData: vi.fn(),
+      listFunctionsData: vi.fn(),
+    }));
+
+    const { startMCPServer } = await import('../../src/mcp.js');
+    await startMCPServer();
+
+    const result = await handlers['tools/call']({
+      params: { name: 'query_function', arguments: { name: 'test', repo: 'unknown-repo' } },
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('unknown-repo');
+    expect(result.content[0].text).toContain('not found');
+
+    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
+    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
+    vi.doUnmock('../../src/registry.js');
     vi.doUnmock('../../src/queries.js');
   });
 });

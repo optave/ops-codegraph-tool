@@ -46,5 +46,15 @@ export {
   moduleMapData,
   queryNameData,
 } from './queries.js';
+// Registry (multi-repo)
+export {
+  listRepos,
+  loadRegistry,
+  REGISTRY_PATH,
+  registerRepo,
+  resolveRepoDbPath,
+  saveRegistry,
+  unregisterRepo,
+} from './registry.js';
 // Watch mode
 export { watchProject } from './watcher.js';

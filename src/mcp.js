@@ -9,6 +9,13 @@ import { createRequire } from 'node:module';
 import { findCycles } from './cycles.js';
 import { findDbPath } from './db.js';
 
+const REPO_PROP = {
+  repo: {
+    type: 'string',
+    description: 'Repository name from the registry (omit for local project)',
+  },
+};
+
 const TOOLS = [
   {
     name: 'query_function',
@@ -22,6 +29,7 @@ const TOOLS = [
           description: 'Traversal depth for transitive callers',
           default: 2,
         },
+        ...REPO_PROP,
       },
       required: ['name'],
     },
@@ -33,6 +41,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         file: { type: 'string', description: 'File path (partial match supported)' },
+        ...REPO_PROP,
       },
       required: ['file'],
     },
@@ -44,6 +53,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         file: { type: 'string', description: 'File path to analyze' },
+        ...REPO_PROP,
       },
       required: ['file'],
     },
@@ -53,7 +63,9 @@ const TOOLS = [
     description: 'Detect circular dependencies in the codebase',
     inputSchema: {
       type: 'object',
-      properties: {},
+      properties: {
+        ...REPO_PROP,
+      },
     },
   },
   {
@@ -63,6 +75,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         limit: { type: 'number', description: 'Number of top files to show', default: 20 },
+        ...REPO_PROP,
       },
     },
   },
@@ -75,6 +88,7 @@ const TOOLS = [
         name: { type: 'string', description: 'Function/method/class name (partial match)' },
         depth: { type: 'number', description: 'Transitive caller depth', default: 3 },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...REPO_PROP,
       },
       required: ['name'],
     },
@@ -89,6 +103,7 @@ const TOOLS = [
         name: { type: 'string', description: 'Function/method/class name (partial match)' },
         depth: { type: 'number', description: 'Max traversal depth', default: 5 },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...REPO_PROP,
       },
       required: ['name'],
     },
@@ -103,6 +118,7 @@ const TOOLS = [
         ref: { type: 'string', description: 'Git ref to diff against (default: HEAD)' },
         depth: { type: 'number', description: 'Transitive caller depth', default: 3 },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...REPO_PROP,
       },
     },
   },
@@ -116,6 +132,7 @@ const TOOLS = [
         query: { type: 'string', description: 'Natural language search query' },
         limit: { type: 'number', description: 'Max results to return', default: 15 },
         min_score: { type: 'number', description: 'Minimum similarity score (0-1)', default: 0.2 },
+        ...REPO_PROP,
       },
       required: ['query'],
     },
@@ -136,6 +153,7 @@ const TOOLS = [
           description: 'File-level graph (true) or function-level (false)',
           default: true,
         },
+        ...REPO_PROP,
       },
       required: ['format'],
     },
@@ -150,7 +168,16 @@ const TOOLS = [
         file: { type: 'string', description: 'Filter by file path (partial match)' },
         pattern: { type: 'string', description: 'Filter by function name (partial match)' },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...REPO_PROP,
       },
+    },
+  },
+  {
+    name: 'list_repos',
+    description: 'List all repositories registered in the codegraph registry',
+    inputSchema: {
+      type: 'object',
+      properties: {},
     },
   },
 ];
@@ -200,9 +227,19 @@ export async function startMCPServer(customDbPath) {
 
   server.setRequestHandler('tools/call', async (request) => {
     const { name, arguments: args } = request.params;
-    const dbPath = customDbPath || undefined;
 
     try {
+      let dbPath = customDbPath || undefined;
+      if (args.repo) {
+        const { resolveRepoDbPath } = await import('./registry.js');
+        const resolved = resolveRepoDbPath(args.repo);
+        if (!resolved)
+          throw new Error(
+            `Repository "${args.repo}" not found in registry or its database is missing.`,
+          );
+        dbPath = resolved;
+      }
+
       let result;
       switch (name) {
         case 'query_function':
@@ -296,6 +333,11 @@ export async function startMCPServer(customDbPath) {
             noTests: args.no_tests,
           });
           break;
+        case 'list_repos': {
+          const { listRepos } = await import('./registry.js');
+          result = { repos: listRepos() };
+          break;
+        }
         default:
           return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
       }

@@ -158,3 +158,63 @@ describe('CLI smoke tests', () => {
     expect(out).toContain('Usage');
   });
 });
+
+// ─── Registry CLI ───────────────────────────────────────────────────────
+
+describe('Registry CLI commands', () => {
+  let tmpHome;
+
+  /** Run CLI with isolated HOME to avoid touching real registry */
+  function runReg(...args) {
+    return execFileSync('node', [CLI, ...args], {
+      cwd: tmpDir,
+      encoding: 'utf-8',
+      timeout: 30_000,
+      env: { ...process.env, HOME: tmpHome, USERPROFILE: tmpHome },
+    });
+  }
+
+  beforeAll(() => {
+    tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-reghome-'));
+  });
+
+  afterAll(() => {
+    if (tmpHome) fs.rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  test('registry list shows empty when no repos registered', () => {
+    const out = runReg('registry', 'list');
+    expect(out).toContain('No repositories registered');
+  });
+
+  test('registry add + list --json shows added repo', () => {
+    runReg('registry', 'add', tmpDir, '-n', 'test-proj');
+    const out = runReg('registry', 'list', '--json');
+    const repos = JSON.parse(out);
+    expect(repos).toHaveLength(1);
+    expect(repos[0].name).toBe('test-proj');
+    expect(repos[0].path).toBe(tmpDir);
+  });
+
+  test('registry remove removes a repo', () => {
+    // Ensure it exists from previous test (or add it)
+    try {
+      runReg('registry', 'add', tmpDir, '-n', 'to-remove');
+    } catch {
+      /* already exists */
+    }
+
+    const out = runReg('registry', 'remove', 'to-remove');
+    expect(out).toContain('Removed');
+  });
+
+  test('registry remove nonexistent exits with error', () => {
+    try {
+      runReg('registry', 'remove', 'nonexistent-repo');
+      throw new Error('Expected command to fail');
+    } catch (err) {
+      expect(err.status).toBe(1);
+      expect(err.stderr || err.stdout).toContain('not found');
+    }
+  });
+});
