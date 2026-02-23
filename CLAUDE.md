@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **Use codegraph before editing code.** This project has a pre-built dependency graph at `.codegraph/graph.db`. Before modifying any function or file, run `node src/cli.js where <name>` to locate it, `node src/cli.js explain <target>` to understand the structure, `node src/cli.js context <name> -T` to gather full context, and `node src/cli.js fn-impact <name> -T` to check blast radius. After staging changes, run `node src/cli.js diff-impact --staged -T` to verify impact. This saves tokens, prevents blind edits, and catches breakage before it happens. See the [Dogfooding](#dogfooding--codegraph-on-itself) section for the full command reference.
+
 ## Project Overview
 
 Codegraph (`@optave/codegraph`) is a local code dependency graph CLI. It parses codebases with tree-sitter (WASM), builds function-level dependency graphs stored in SQLite, and supports semantic search with local embeddings. No cloud services required.
