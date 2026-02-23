@@ -315,30 +315,40 @@ export function hotspotsData(customDbPath, opts = {}) {
   const metric = opts.metric || 'fan-in';
   const level = opts.level || 'file';
   const limit = opts.limit || 10;
+  const noTests = opts.noTests || false;
 
   const kind = level === 'directory' ? 'directory' : 'file';
+
+  const testFilter =
+    noTests && kind === 'file'
+      ? `AND n.name NOT LIKE '%.test.%'
+         AND n.name NOT LIKE '%.spec.%'
+         AND n.name NOT LIKE '%__test__%'
+         AND n.name NOT LIKE '%__tests__%'
+         AND n.name NOT LIKE '%.stories.%'`
+      : '';
 
   const HOTSPOT_QUERIES = {
     'fan-in': db.prepare(`
       SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
              nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
       FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
-      WHERE n.kind = ? ORDER BY nm.fan_in DESC NULLS LAST LIMIT ?`),
+      WHERE n.kind = ? ${testFilter} ORDER BY nm.fan_in DESC NULLS LAST LIMIT ?`),
     'fan-out': db.prepare(`
       SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
              nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
       FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
-      WHERE n.kind = ? ORDER BY nm.fan_out DESC NULLS LAST LIMIT ?`),
+      WHERE n.kind = ? ${testFilter} ORDER BY nm.fan_out DESC NULLS LAST LIMIT ?`),
     density: db.prepare(`
       SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
              nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
       FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
-      WHERE n.kind = ? ORDER BY nm.symbol_count DESC NULLS LAST LIMIT ?`),
+      WHERE n.kind = ? ${testFilter} ORDER BY nm.symbol_count DESC NULLS LAST LIMIT ?`),
     coupling: db.prepare(`
       SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
              nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
       FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
-      WHERE n.kind = ? ORDER BY (COALESCE(nm.fan_in, 0) + COALESCE(nm.fan_out, 0)) DESC NULLS LAST LIMIT ?`),
+      WHERE n.kind = ? ${testFilter} ORDER BY (COALESCE(nm.fan_in, 0) + COALESCE(nm.fan_out, 0)) DESC NULLS LAST LIMIT ?`),
   };
 
   const stmt = HOTSPOT_QUERIES[metric] || HOTSPOT_QUERIES['fan-in'];

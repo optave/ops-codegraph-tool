@@ -38,9 +38,12 @@ export { isNativeAvailable } from './native.js';
 export { getActiveEngine, parseFileAuto, parseFilesAuto } from './parser.js';
 // Query functions (data-returning)
 export {
+  ALL_SYMBOL_KINDS,
   contextData,
   diffImpactData,
   explainData,
+  FALSE_POSITIVE_CALLER_THRESHOLD,
+  FALSE_POSITIVE_NAMES,
   fileDepsData,
   fnDepsData,
   fnImpactData,
@@ -48,6 +51,7 @@ export {
   moduleMapData,
   queryNameData,
   statsData,
+  whereData,
 } from './queries.js';
 // Registry (multi-repo)
 export {
