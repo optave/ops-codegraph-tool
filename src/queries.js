@@ -3,7 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { findCycles } from './cycles.js';
 import { findDbPath, openReadonlyOrFail } from './db.js';
+import { debug } from './logger.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
+
+/**
+ * Resolve a file path relative to repoRoot, rejecting traversal outside the repo.
+ * Returns null if the resolved path escapes repoRoot.
+ */
+function safePath(repoRoot, file) {
+  const resolved = path.resolve(repoRoot, file);
+  if (!resolved.startsWith(repoRoot + path.sep) && resolved !== repoRoot) return null;
+  return resolved;
+}
 
 const TEST_PATTERN = /\.(test|spec)\.|__test__|__tests__|\.stories\./;
 function isTestFile(filePath) {
@@ -1132,13 +1143,15 @@ export function fnDeps(name, customDbPath, opts = {}) {
 
 function readSourceRange(repoRoot, file, startLine, endLine) {
   try {
-    const absPath = path.resolve(repoRoot, file);
+    const absPath = safePath(repoRoot, file);
+    if (!absPath) return null;
     const content = fs.readFileSync(absPath, 'utf-8');
     const lines = content.split('\n');
     const start = Math.max(0, (startLine || 1) - 1);
     const end = Math.min(lines.length, endLine || startLine + 50);
     return lines.slice(start, end).join('\n');
-  } catch {
+  } catch (e) {
+    debug(`readSourceRange failed for ${file}: ${e.message}`);
     return null;
   }
 }
@@ -1262,11 +1275,16 @@ export function contextData(name, customDbPath, opts = {}) {
   function getFileLines(file) {
     if (fileCache.has(file)) return fileCache.get(file);
     try {
-      const absPath = path.resolve(repoRoot, file);
+      const absPath = safePath(repoRoot, file);
+      if (!absPath) {
+        fileCache.set(file, null);
+        return null;
+      }
       const lines = fs.readFileSync(absPath, 'utf-8').split('\n');
       fileCache.set(file, lines);
       return lines;
-    } catch {
+    } catch (e) {
+      debug(`getFileLines failed for ${file}: ${e.message}`);
       fileCache.set(file, null);
       return null;
     }
@@ -1703,11 +1721,16 @@ export function explainData(target, customDbPath, opts = {}) {
   function getFileLines(file) {
     if (fileCache.has(file)) return fileCache.get(file);
     try {
-      const absPath = path.resolve(repoRoot, file);
+      const absPath = safePath(repoRoot, file);
+      if (!absPath) {
+        fileCache.set(file, null);
+        return null;
+      }
       const lines = fs.readFileSync(absPath, 'utf-8').split('\n');
       fileCache.set(file, lines);
       return lines;
-    } catch {
+    } catch (e) {
+      debug(`getFileLines failed for ${file}: ${e.message}`);
       fileCache.set(file, null);
       return null;
     }
