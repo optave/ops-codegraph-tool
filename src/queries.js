@@ -1859,7 +1859,7 @@ function whereSymbolImpl(db, target, noTests) {
   });
 }
 
-function whereFileImpl(db, target, _noTests) {
+function whereFileImpl(db, target) {
   const fileNodes = db
     .prepare(`SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'`)
     .all(`%${target}%`);
@@ -1915,9 +1915,7 @@ export function whereData(target, customDbPath, opts = {}) {
   const noTests = opts.noTests || false;
   const fileMode = opts.file || false;
 
-  const results = fileMode
-    ? whereFileImpl(db, target, noTests)
-    : whereSymbolImpl(db, target, noTests);
+  const results = fileMode ? whereFileImpl(db, target) : whereSymbolImpl(db, target, noTests);
 
   db.close();
   return { target, mode: fileMode ? 'file' : 'symbol', results };
