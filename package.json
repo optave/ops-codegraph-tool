@@ -30,7 +30,7 @@
     "lint:fix": "biome check --write src/ tests/",
     "format": "biome format --write src/ tests/",
     "prepare": "npm run build:wasm && husky && npm run deps:tree",
-    "deps:tree": "node -e \"const{execSync}=require('child_process');const t=execSync('npm ls --all',{encoding:'utf8'});require('fs').writeFileSync('DEPENDENCIES.md','# Dependencies\\n\\n```\\n'+t+'```\\n')\"",
+    "deps:tree": "node -e \"const{execSync}=require('child_process');const t=execSync('npm ls --all --omit=dev',{encoding:'utf8'});require('fs').writeFileSync('DEPENDENCIES.md','# Dependencies\\n\\n```\\n'+t+'```\\n')\"",
     "release": "commit-and-tag-version",
     "release:dry-run": "commit-and-tag-version --dry-run",
     "version": "node scripts/sync-native-versions.js && git add package.json",
