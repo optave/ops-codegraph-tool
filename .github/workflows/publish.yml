@@ -158,7 +158,7 @@ jobs:
           echo "Publishing version $VERSION"
 
       - name: Disable prepublishOnly
-        run: npm pkg set scripts.prepublishOnly=""
+        run: npm pkg delete scripts.prepublishOnly
 
       - name: Download native artifacts
         uses: actions/download-artifact@v4
