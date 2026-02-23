@@ -1,7 +1,7 @@
 # Dependencies
 
 ```
-@optave/codegraph@2.0.0 H:\Vscode\codegraph
+@optave/codegraph@2.1.0 /home/runner/work/codegraph/codegraph
 ├─┬ @huggingface/transformers@3.8.1
 │ ├── @huggingface/jinja@0.5.5
 │ ├─┬ onnxruntime-node@1.21.0
@@ -71,21 +71,23 @@
 │   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-libvips-linux-ppc64@1.2.4
 │   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-libvips-linux-riscv64@1.2.4
 │   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-libvips-linux-s390x@1.2.4
-│   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-libvips-linux-x64@1.2.4
+│   ├── @img/sharp-libvips-linux-x64@1.2.4
 │   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-libvips-linuxmusl-arm64@1.2.4
-│   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-libvips-linuxmusl-x64@1.2.4
+│   ├── @img/sharp-libvips-linuxmusl-x64@1.2.4
 │   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-linux-arm@0.34.5
 │   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-linux-arm64@0.34.5
 │   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-linux-ppc64@0.34.5
 │   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-linux-riscv64@0.34.5
 │   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-linux-s390x@0.34.5
-│   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-linux-x64@0.34.5
+│   ├─┬ @img/sharp-linux-x64@0.34.5
+│   │ └── @img/sharp-libvips-linux-x64@1.2.4 deduped
 │   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-linuxmusl-arm64@0.34.5
-│   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-linuxmusl-x64@0.34.5
+│   ├─┬ @img/sharp-linuxmusl-x64@0.34.5
+│   │ └── @img/sharp-libvips-linuxmusl-x64@1.2.4 deduped
 │   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-wasm32@0.34.5
 │   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-win32-arm64@0.34.5
 │   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-win32-ia32@0.34.5
-│   ├── @img/sharp-win32-x64@0.34.5
+│   ├── UNMET OPTIONAL DEPENDENCY @img/sharp-win32-x64@0.34.5
 │   ├── detect-libc@2.1.2
 │   └── semver@7.7.4
 ├─┬ @modelcontextprotocol/sdk@1.26.0
@@ -246,10 +248,10 @@
 │ ├─┬ zod-to-json-schema@3.25.1
 │ │ └── zod@4.3.6 deduped
 │ └── zod@4.3.6
-├── UNMET OPTIONAL DEPENDENCY @optave/codegraph-darwin-arm64@2.0.0
-├── UNMET OPTIONAL DEPENDENCY @optave/codegraph-darwin-x64@2.0.0
-├── UNMET OPTIONAL DEPENDENCY @optave/codegraph-linux-x64-gnu@2.0.0
-├── UNMET OPTIONAL DEPENDENCY @optave/codegraph-win32-x64-msvc@2.0.0
+├── UNMET OPTIONAL DEPENDENCY @optave/codegraph-darwin-arm64@2.1.0
+├── UNMET OPTIONAL DEPENDENCY @optave/codegraph-darwin-x64@2.1.0
+├── @optave/codegraph-linux-x64-gnu@2.0.0 invalid: "2.1.0" from the root project
+├── UNMET OPTIONAL DEPENDENCY @optave/codegraph-win32-x64-msvc@2.1.0
 ├─┬ better-sqlite3@12.6.2
 │ ├─┬ bindings@1.5.0
 │ │ └── file-uri-to-path@1.0.0
