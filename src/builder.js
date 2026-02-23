@@ -493,10 +493,16 @@ export async function buildGraph(rootDir, opts = {}) {
             );
             if (methodCandidates.length > 0) {
               targets = methodCandidates;
-            } else {
-              // Global fallback
+            } else if (
+              !call.receiver ||
+              call.receiver === 'this' ||
+              call.receiver === 'self' ||
+              call.receiver === 'super'
+            ) {
+              // Global fallback — only for standalone calls or this/self/super calls
               targets = nodesByName.get(call.name) || [];
             }
+            // else: method call on a receiver — skip global fallback entirely
           }
         }
 

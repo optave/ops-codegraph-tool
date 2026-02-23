@@ -199,14 +199,18 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                             name: node_text(&fn_node, source).to_string(),
                             line: start_line(node),
                             dynamic: None,
+                            receiver: None,
                         });
                     }
                     "member_access_expression" => {
                         if let Some(name) = fn_node.child_by_field_name("name") {
+                            let receiver = fn_node.child_by_field_name("expression")
+                                .map(|expr| node_text(&expr, source).to_string());
                             symbols.calls.push(Call {
                                 name: node_text(&name, source).to_string(),
                                 line: start_line(node),
                                 dynamic: None,
+                                receiver,
                             });
                         }
                     }
@@ -219,6 +223,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                 name: node_text(&name, source).to_string(),
                                 line: start_line(node),
                                 dynamic: None,
+                                receiver: None,
                             });
                         }
                     }
@@ -242,6 +247,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                         name,
                         line: start_line(node),
                         dynamic: None,
+                        receiver: None,
                     });
                 }
             }

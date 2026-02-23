@@ -75,6 +75,7 @@ function normalize(symbols) {
       name: c.name,
       line: c.line,
       ...(c.dynamic ? { dynamic: true } : {}),
+      ...(c.receiver ? { receiver: c.receiver } : {}),
     })),
     imports: (symbols.imports || []).map((i) => ({
       source: i.source,

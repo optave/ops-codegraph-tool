@@ -143,10 +143,13 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                         }
                     }
                 } else {
+                    let receiver = node.child_by_field_name("receiver")
+                        .map(|r| node_text(&r, source).to_string());
                     symbols.calls.push(Call {
                         name: method_text.to_string(),
                         line: start_line(node),
                         dynamic: None,
+                        receiver,
                     });
                 }
             }

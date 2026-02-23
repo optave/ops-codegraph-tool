@@ -388,6 +388,7 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
             name: node_text(fn_node, source).to_string(),
             line: start_line(call_node),
             dynamic: None,
+            receiver: None,
         }),
         "member_expression" => {
             let obj = fn_node.child_by_field_name("object");
@@ -402,6 +403,7 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                             name: node_text(obj, source).to_string(),
                             line: start_line(call_node),
                             dynamic: Some(true),
+                            receiver: None,
                         });
                     }
                     if obj.kind() == "member_expression" {
@@ -410,6 +412,7 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                                 name: node_text(&inner_prop, source).to_string(),
                                 line: start_line(call_node),
                                 dynamic: Some(true),
+                                receiver: None,
                             });
                         }
                     }
@@ -419,18 +422,24 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
             if prop.kind() == "string" || prop.kind() == "string_fragment" {
                 let method_name = node_text(&prop, source).replace(&['\'', '"'][..], "");
                 if !method_name.is_empty() {
+                    let receiver = fn_node.child_by_field_name("object")
+                        .map(|obj| node_text(&obj, source).to_string());
                     return Some(Call {
                         name: method_name,
                         line: start_line(call_node),
                         dynamic: Some(true),
+                        receiver,
                     });
                 }
             }
 
+            let receiver = fn_node.child_by_field_name("object")
+                .map(|obj| node_text(&obj, source).to_string());
             Some(Call {
                 name: prop_text.to_string(),
                 line: start_line(call_node),
                 dynamic: None,
+                receiver,
             })
         }
         "subscript_expression" => {
@@ -440,10 +449,13 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                     let method_name = node_text(&index, source)
                         .replace(&['\'', '"', '`'][..], "");
                     if !method_name.is_empty() && !method_name.contains('$') {
+                        let receiver = fn_node.child_by_field_name("object")
+                            .map(|obj| node_text(&obj, source).to_string());
                         return Some(Call {
                             name: method_name,
                             line: start_line(call_node),
                             dynamic: Some(true),
+                            receiver,
                         });
                     }
                 }

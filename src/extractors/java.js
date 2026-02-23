@@ -203,7 +203,10 @@ export function extractJavaSymbols(tree, _filePath) {
       case 'method_invocation': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
-          calls.push({ name: nameNode.text, line: node.startPosition.row + 1 });
+          const obj = node.childForFieldName('object');
+          const call = { name: nameNode.text, line: node.startPosition.row + 1 };
+          if (obj) call.receiver = obj.text;
+          calls.push(call);
         }
         break;
       }

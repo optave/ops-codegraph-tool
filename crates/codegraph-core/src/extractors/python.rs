@@ -85,18 +85,24 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
         "call" => {
             if let Some(fn_node) = node.child_by_field_name("function") {
-                let call_name = match fn_node.kind() {
-                    "identifier" => Some(node_text(&fn_node, source).to_string()),
-                    "attribute" => fn_node
-                        .child_by_field_name("attribute")
-                        .map(|a| node_text(&a, source).to_string()),
-                    _ => None,
+                let (call_name, receiver) = match fn_node.kind() {
+                    "identifier" => (Some(node_text(&fn_node, source).to_string()), None),
+                    "attribute" => {
+                        let name = fn_node
+                            .child_by_field_name("attribute")
+                            .map(|a| node_text(&a, source).to_string());
+                        let recv = fn_node.child_by_field_name("object")
+                            .map(|obj| node_text(&obj, source).to_string());
+                        (name, recv)
+                    }
+                    _ => (None, None),
                 };
                 if let Some(name) = call_name {
                     symbols.calls.push(Call {
                         name,
                         line: start_line(node),
                         dynamic: None,
+                        receiver,
                     });
                 }
             }

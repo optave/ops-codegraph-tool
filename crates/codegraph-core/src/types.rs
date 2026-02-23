@@ -18,6 +18,7 @@ pub struct Call {
     pub name: String,
     pub line: u32,
     pub dynamic: Option<bool>,
+    pub receiver: Option<String>,
 }
 
 #[napi(object)]

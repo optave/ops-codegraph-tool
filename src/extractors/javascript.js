@@ -313,6 +313,18 @@ function extractImplementsFromNode(node) {
   return result;
 }
 
+function extractReceiverName(objNode) {
+  if (!objNode) return undefined;
+  if (objNode.type === 'identifier') return objNode.text;
+  if (objNode.type === 'this') return 'this';
+  if (objNode.type === 'super') return 'super';
+  if (objNode.type === 'member_expression') {
+    const prop = objNode.childForFieldName('property');
+    if (prop) return objNode.text;
+  }
+  return objNode.text;
+}
+
 function extractCallInfo(fn, callNode) {
   if (fn.type === 'identifier') {
     return { name: fn.text, line: callNode.startPosition.row + 1 };
@@ -335,19 +347,25 @@ function extractCallInfo(fn, callNode) {
 
     if (prop.type === 'string' || prop.type === 'string_fragment') {
       const methodName = prop.text.replace(/['"]/g, '');
-      if (methodName)
-        return { name: methodName, line: callNode.startPosition.row + 1, dynamic: true };
+      if (methodName) {
+        const receiver = extractReceiverName(obj);
+        return { name: methodName, line: callNode.startPosition.row + 1, dynamic: true, receiver };
+      }
     }
 
-    return { name: prop.text, line: callNode.startPosition.row + 1 };
+    const receiver = extractReceiverName(obj);
+    return { name: prop.text, line: callNode.startPosition.row + 1, receiver };
   }
 
   if (fn.type === 'subscript_expression') {
+    const obj = fn.childForFieldName('object');
     const index = fn.childForFieldName('index');
     if (index && (index.type === 'string' || index.type === 'template_string')) {
       const methodName = index.text.replace(/['"`]/g, '');
-      if (methodName && !methodName.includes('$'))
-        return { name: methodName, line: callNode.startPosition.row + 1, dynamic: true };
+      if (methodName && !methodName.includes('$')) {
+        const receiver = extractReceiverName(obj);
+        return { name: methodName, line: callNode.startPosition.row + 1, dynamic: true, receiver };
+      }
     }
   }
 

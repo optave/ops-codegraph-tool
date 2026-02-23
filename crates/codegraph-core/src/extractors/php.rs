@@ -212,6 +212,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                             name: node_text(&fn_node, source).to_string(),
                             line: start_line(node),
                             dynamic: None,
+                            receiver: None,
                         });
                     }
                     "qualified_name" => {
@@ -221,6 +222,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                             name: last.to_string(),
                             line: start_line(node),
                             dynamic: None,
+                            receiver: None,
                         });
                     }
                     _ => {}
@@ -230,20 +232,26 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
         "member_call_expression" => {
             if let Some(name) = node.child_by_field_name("name") {
+                let receiver = node.child_by_field_name("object")
+                    .map(|obj| node_text(&obj, source).to_string());
                 symbols.calls.push(Call {
                     name: node_text(&name, source).to_string(),
                     line: start_line(node),
                     dynamic: None,
+                    receiver,
                 });
             }
         }
 
         "scoped_call_expression" => {
             if let Some(name) = node.child_by_field_name("name") {
+                let receiver = node.child_by_field_name("scope")
+                    .map(|s| node_text(&s, source).to_string());
                 symbols.calls.push(Call {
                     name: node_text(&name, source).to_string(),
                     line: start_line(node),
                     dynamic: None,
+                    receiver,
                 });
             }
         }
@@ -258,6 +266,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                         name: last.to_string(),
                         line: start_line(node),
                         dynamic: None,
+                        receiver: None,
                     });
                 }
             }

@@ -192,10 +192,13 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
         "method_invocation" => {
             if let Some(name_node) = node.child_by_field_name("name") {
+                let receiver = node.child_by_field_name("object")
+                    .map(|obj| node_text(&obj, source).to_string());
                 symbols.calls.push(Call {
                     name: node_text(&name_node, source).to_string(),
                     line: start_line(node),
                     dynamic: None,
+                    receiver,
                 });
             }
         }
@@ -212,6 +215,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                         name,
                         line: start_line(node),
                         dynamic: None,
+                        receiver: None,
                     });
                 }
             }

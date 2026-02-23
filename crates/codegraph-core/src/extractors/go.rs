@@ -158,14 +158,18 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                             name: node_text(&fn_node, source).to_string(),
                             line: start_line(node),
                             dynamic: None,
+                            receiver: None,
                         });
                     }
                     "selector_expression" => {
                         if let Some(field) = fn_node.child_by_field_name("field") {
+                            let receiver = fn_node.child_by_field_name("operand")
+                                .map(|op| node_text(&op, source).to_string());
                             symbols.calls.push(Call {
                                 name: node_text(&field, source).to_string(),
                                 line: start_line(node),
                                 dynamic: None,
+                                receiver,
                             });
                         }
                     }
