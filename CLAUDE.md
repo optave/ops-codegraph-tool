@@ -112,14 +112,20 @@ If codegraph reports an error, crashes, or produces wrong results when analyzing
 
 ## Parallel Sessions
 
-Multiple Claude Code instances run concurrently in this repo. To avoid breaking each other's work:
+Multiple Claude Code instances run concurrently in this repo. **Every session must start with `/worktree`** to get an isolated copy of the repo before making any changes. This prevents cross-session interference entirely.
 
-- **Never unstage files** (`git reset`, `git restore --staged`) — another session may have staged them intentionally.
-- **Never delete or revert files** you didn't create or modify in this session.
-- **Never run `git checkout -- <file>`** or `git restore <file>` on files outside your task scope.
-- **Never run `git add .` or `git add -A`** — only stage files you explicitly changed.
-- **Ignore "unexpected" dirty files** — if `git status` shows changes you didn't make, leave them alone. They belong to another session.
-- **Do not "clean up" lint/format issues** in files you aren't working on. Another session may be mid-edit.
+**Safety hooks** (`.claude/hooks/guard-git.sh` and `track-edits.sh`) enforce these rules automatically:
+
+- `guard-git.sh` (PreToolUse on Bash) **blocks**: `git add .`, `git add -A`, `git reset`, `git checkout -- <file>`, `git restore <file>`, `git clean`, `git stash`. It allows `git restore --staged <file>` for safe unstaging.
+- `guard-git.sh` also **validates commits**: compares staged files against the session edit log and blocks commits that include files you didn't edit.
+- `track-edits.sh` (PostToolUse on Edit/Write) logs every file you touch to `.claude/session-edits.log` (gitignored, per-worktree).
+
+**Rules:**
+- Run `/worktree` before starting work
+- Stage only files you explicitly changed
+- Commit with specific file paths: `git commit <files> -m "msg"`
+- Ignore unexpected dirty files — they belong to another session
+- Do not clean up lint/format issues in files you aren't working on
 
 ## Git Conventions
 

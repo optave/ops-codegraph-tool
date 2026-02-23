@@ -197,14 +197,29 @@ You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
-        "command": "codegraph build --incremental"
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codegraph build",
+            "timeout": 30
+          }
+        ]
       }
     ]
   }
 }
 ```
 
-This ensures the graph stays fresh as the AI agent modifies files.
+This ensures the graph stays fresh as the AI agent modifies files. Incremental builds are automatic — only changed files are re-parsed.
+
+#### Parallel session safety hooks
+
+When multiple AI agents work on the same repo concurrently, add hooks to prevent cross-session interference:
+
+- **Edit tracker** (PostToolUse on Edit|Write): log every file path touched to `.claude/session-edits.log`
+- **Git guard** (PreToolUse on Bash): block `git add .`, `git reset`, `git restore`, `git clean`, `git stash`, and validate that `git commit` only includes files from the session edit log
+
+See this repo's `.claude/hooks/track-edits.sh` and `guard-git.sh` for a working implementation. Pair with the `/worktree` command so each session gets an isolated copy of the repo.
 
 ---
 
