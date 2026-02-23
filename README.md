@@ -45,10 +45,10 @@ Most tools in this space can't do that:
 
 | Problem | Who has it | Why it breaks on every commit |
 |---|---|---|
-| **Full re-index on every change** | code-graph-rag, CodeMCP, axon, joern, cpg | No file-level change tracking. Change one file → re-parse and re-insert the entire codebase. On a 3,000-file project, that's 30+ seconds per commit minimum |
+| **Full re-index on every change** | code-graph-rag, CodeMCP, axon, joern, cpg, GitNexus | No file-level change tracking. Change one file → re-parse and re-insert the entire codebase. On a 3,000-file project, that's 30+ seconds per commit minimum |
 | **Cloud API calls baked into the pipeline** | code-graph-rag, CodeRAG | Embeddings are generated through cloud APIs (OpenAI, Voyage AI, Gemini). Every rebuild = API round-trips for every function. Slow, expensive, and rate-limited. You can't put this in a commit hook |
 | **Heavy infrastructure that's slow to restart** | code-graph-rag (Memgraph), axon (KuzuDB), badger-graph (Dgraph) | External databases add latency to every write. Bulk-inserting a full graph into Memgraph is not a sub-second operation |
-| **No persistence between runs** | glimpse, pyan, cflow | Re-parse from scratch every time. No database, no delta, no incremental anything |
+| **No persistence between runs** | pyan, cflow | Re-parse from scratch every time. No database, no delta, no incremental anything |
 
 **Codegraph solves this with incremental builds:**
 
@@ -71,17 +71,17 @@ Most code graph tools make you choose: **fast local analysis with no AI, or powe
 
 ### Feature comparison
 
-| Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [glimpse](https://github.com/seatedro/glimpse) | [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | [axon](https://github.com/harshkedia177/axon) |
+| Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) | [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | [axon](https://github.com/harshkedia177/axon) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | Function-level analysis | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
-| Multi-language | **11** | **14** | **32** | Multi | **~10** | Multi | SCIP langs | Few |
-| Semantic search | **Yes** | — | **Yes** | **Yes** | — | — | — | — |
-| MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | — | **Yes** | — |
-| Git diff impact | **Yes** | — | — | — | — | — | — | **Yes** |
+| Multi-language | **11** | **14** | **32** | Multi | **~10** | **9** | SCIP langs | Few |
+| Semantic search | **Yes** | — | **Yes** | **Yes** | — | **Yes** | — | — |
+| MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | — |
+| Git diff impact | **Yes** | — | — | — | — | **Yes** | — | **Yes** |
 | Watch mode | **Yes** | — | **Yes** | — | — | — | — | — |
 | Cycle detection | **Yes** | — | **Yes** | — | — | — | — | **Yes** |
 | Incremental rebuilds | **Yes** | — | **Yes** | — | — | — | — | — |
-| Zero config | **Yes** | — | **Yes** | — | — | **Yes** | — | — |
+| Zero config | **Yes** | — | **Yes** | — | — | — | — | — |
 | Embeddable JS library (`npm install`) | **Yes** | — | — | — | — | — | — | — |
 | LLM-optional (works without API keys) | **Yes** | **Yes** | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** |
 | Open source | **Yes** | Yes | Yes | Yes | Yes | Yes | Custom | — |
@@ -108,7 +108,7 @@ The key question is: **can you rebuild your graph on every commit in a large cod
 | [narsil-mcp](https://github.com/postrv/narsil-mcp) | 90 MCP tools, 32 languages, taint analysis, SBOM, dead code, neural search, Merkle-tree incremental indexing, single ~30MB binary | Primarily MCP-only — no standalone CLI query interface. Neural search requires API key or ONNX source build |
 | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | Graph RAG with Memgraph, multi-provider AI, semantic search, code editing via AST | No incremental rebuilds — full re-index + re-embed through cloud APIs on every change. Requires Docker |
 | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | Formal Code Property Graph (AST + CFG + PDG + DFG), ~10 languages, MCP module, LLVM IR support, academic specifications | No incremental builds. Requires JVM + Gradle, no zero config, no watch mode |
-| [glimpse](https://github.com/seatedro/glimpse) | Clipboard-first LLM context tool, call graphs, LSP resolution, token counting | Context-packing tool, not a dependency graph — no persistence, no MCP, no incremental updates |
+| [GitNexus](https://github.com/abhigyanpatwari/GitNexus) | Knowledge graph with precomputed structural intelligence, 7 MCP tools, hybrid search (BM25 + semantic + RRF), clustering, process tracing | Full 6-phase pipeline re-run on changes. KuzuDB graph DB, browser mode limited to ~5,000 files |
 | [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | SCIP compiler-grade indexing, compound operations (83% token savings), secret scanning | No incremental builds. Custom license, requires SCIP toolchains per language |
 | [axon](https://github.com/harshkedia177/axon) | 11-phase pipeline, KuzuDB, community detection, dead code, change coupling | Full pipeline re-run on changes. No license, Python-only, no MCP |
 | [Madge](https://github.com/pahen/madge) | Simple file-level JS/TS dependency graphs | No function-level analysis, no impact tracing, JS/TS only |

@@ -1,7 +1,7 @@
 # Competitive Analysis — Code Graph / Code Intelligence Tools
 
 **Date:** 2026-02-22
-**Scope:** 135+ code analysis tools evaluated, 80+ ranked against `@optave/codegraph`
+**Scope:** 136+ code analysis tools evaluated, 81+ ranked against `@optave/codegraph`
 
 ---
 
@@ -19,87 +19,88 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 4 | 4.2 | [Fraunhofer-AISEC/cpg](https://github.com/Fraunhofer-AISEC/cpg) | 411 | Kotlin | Apache-2.0 | CPG library for 8+ languages with MCP module, Neo4j visualization, formal specs, LLVM IR support |
 | 5 | 4.2 | [seatedro/glimpse](https://github.com/seatedro/glimpse) | 349 | Rust | MIT | Clipboard-first codebase-to-LLM tool with call graphs, token counting, LSP resolution |
 | 6 | 4.0 | [SimplyLiz/CodeMCP (CKB)](https://github.com/SimplyLiz/CodeMCP) | 59 | Go | Custom | SCIP-based indexing, compound operations (83% token savings), CODEOWNERS, secret scanning |
-| 7 | 3.9 | [harshkedia177/axon](https://github.com/harshkedia177/axon) | 29 | Python | None | 11-phase pipeline, KuzuDB, Leiden community detection, dead code, change coupling |
-| 8 | 3.8 | [anrgct/autodev-codebase](https://github.com/anrgct/autodev-codebase) | 111 | TypeScript | None | 40+ languages, 7 embedding providers, Cytoscape.js visualization, LLM reranking |
-| 9 | 3.8 | [ShiftLeftSecurity/codepropertygraph](https://github.com/ShiftLeftSecurity/codepropertygraph) | 564 | Scala | Apache-2.0 | CPG specification + Tinkergraph library, Scala query DSL, protobuf serialization (Joern foundation) |
-| 10 | 3.8 | [Jakedismo/codegraph-rust](https://github.com/Jakedismo/codegraph-rust) | 142 | Rust | None | 100% Rust GraphRAG, SurrealDB, LSP-powered dataflow analysis, architecture boundary enforcement |
-| 11 | 3.7 | [Anandb71/arbor](https://github.com/Anandb71/arbor) | 85 | Rust | MIT | Native GUI, confidence scoring, architectural role classification, fuzzy search, MCP |
-| 12 | 3.7 | [JudiniLabs/mcp-code-graph](https://github.com/JudiniLabs/mcp-code-graph) | 380 | JavaScript | MIT | Cloud-hosted MCP server by CodeGPT, semantic search, dependency links (requires account) |
-| 13 | 3.7 | [entrepeneur4lyf/code-graph-mcp](https://github.com/entrepeneur4lyf/code-graph-mcp) | 80 | Python | MIT | ast-grep for 25+ languages, complexity metrics, code smells, circular dependency detection |
-| 14 | 3.7 | [cs-au-dk/jelly](https://github.com/cs-au-dk/jelly) | 417 | TypeScript | BSD-3 | Academic-grade JS/TS points-to analysis, call graphs, vulnerability exposure, 5 published papers |
-| **15** | **3.6** | **[@optave/codegraph](https://github.com/optave/codegraph)** | — | **JS/Rust** | **Apache-2.0** | **Sub-second incremental rebuilds, dual engine (native Rust + WASM), 11 languages, MCP, zero-cost core + optional LLM enhancement** |
-| 16 | 3.5 | [er77/code-graph-rag-mcp](https://github.com/er77/code-graph-rag-mcp) | 89 | TypeScript | MIT | 26 MCP methods, 11 languages, tree-sitter, semantic search, hotspot analysis, clone detection |
-| 17 | 3.5 | [MikeRecognex/mcp-codebase-index](https://github.com/MikeRecognex/mcp-codebase-index) | 25 | Python | AGPL-3.0 | 18 MCP tools, zero runtime deps, auto-incremental reindexing via git diff |
-| 18 | 3.5 | [nahisaho/CodeGraphMCPServer](https://github.com/nahisaho/CodeGraphMCPServer) | 7 | Python | MIT | GraphRAG with Louvain community detection, 16 languages, 14 MCP tools, 334 tests |
-| 19 | 3.5 | [colbymchenry/codegraph](https://github.com/colbymchenry/codegraph) | 165 | TypeScript | MIT | tree-sitter + SQLite + MCP, Claude Code token reduction benchmarks, npx installer |
-| 20 | 3.5 | [dundalek/stratify](https://github.com/dundalek/stratify) | 102 | Clojure | MIT | Multi-backend extraction (LSP/SCIP/Joern), 10 languages, DGML/CodeCharta output, architecture linting |
-| 21 | 3.5 | [kraklabs/cie](https://github.com/kraklabs/cie) | 9 | Go | AGPL-3.0 | Code Intelligence Engine: 20+ MCP tools, tree-sitter, semantic search (Ollama), Homebrew, single Go binary |
-| 22 | 3.4 | [Durafen/Claude-code-memory](https://github.com/Durafen/Claude-code-memory) | 72 | Python | None | Memory Guard quality gate, persistent codebase memory, Voyage AI + Qdrant |
-| 23 | 3.3 | [NeuralRays/codexray](https://github.com/NeuralRays/codexray) | 2 | TypeScript | MIT | 16 MCP tools, TF-IDF semantic search (~50MB), dead code, complexity, path finding |
-| 24 | 3.3 | [DucPhamNgoc08/CodeVisualizer](https://github.com/DucPhamNgoc08/CodeVisualizer) | 475 | TypeScript | MIT | VS Code extension, tree-sitter WASM, flowcharts + dependency graphs, 5 AI providers, 9 themes |
-| 25 | 3.3 | [helabenkhalfallah/code-health-meter](https://github.com/helabenkhalfallah/code-health-meter) | 34 | JavaScript | MIT | Formal health metrics (MI, CC, Louvain modularity), published in ACM TOSEM 2025 |
-| 26 | 3.3 | [JohT/code-graph-analysis-pipeline](https://github.com/JohT/code-graph-analysis-pipeline) | 27 | Cypher | GPL-3.0 | 200+ CSV reports, ML anomaly detection, Leiden/HashGNN, jQAssistant + Neo4j for Java |
-| 27 | 3.3 | [Lekssays/codebadger](https://github.com/Lekssays/codebadger) | 43 | Python | GPL-3.0 | Containerized MCP server using Joern CPG, 12+ languages |
-| 28 | 3.2 | [al1-nasir/codegraph-cli](https://github.com/al1-nasir/codegraph-cli) | 11 | Python | MIT | CrewAI multi-agent system, 6 LLM providers, browser explorer, DOCX export |
-| 29 | 3.1 | [anasdayeh/claude-context-local](https://github.com/anasdayeh/claude-context-local) | 0 | Python | None | 100% local, Merkle DAG incremental indexing, sharded FAISS, hybrid BM25+vector, GPU accel |
-| 30 | 3.0 | [Vasu014/loregrep](https://github.com/Vasu014/loregrep) | 12 | Rust | Apache-2.0 | In-memory index library, Rust + Python bindings, AI-tool-ready schemas |
-| 31 | 3.0 | [xnuinside/codegraph](https://github.com/xnuinside/codegraph) | 438 | Python | MIT | Python-only interactive HTML dependency diagrams with zoom/pan/search |
-| 32 | 3.0 | [Adrninistrator/java-all-call-graph](https://github.com/Adrninistrator/java-all-call-graph) | 551 | Java | Apache-2.0 | Complete Java bytecode call graphs, Spring/MyBatis-aware, SQL-queryable DB |
-| 33 | 3.0 | [Technologicat/pyan](https://github.com/Technologicat/pyan) | 395 | Python | GPL-2.0 | Python 3 call graph generator, module import analysis, cycle detection, interactive HTML |
-| 34 | 3.0 | [GaloisInc/MATE](https://github.com/GaloisInc/MATE) | 194 | Python | BSD-3 | DARPA-funded interactive CPG-based bug hunting for C/C++ via LLVM |
-| 35 | 3.0 | [clouditor/cloud-property-graph](https://github.com/clouditor/cloud-property-graph) | 28 | Kotlin | Apache-2.0 | Connects code property graphs with cloud runtime security assessment |
+| 7 | 4.0 | [abhigyanpatwari/GitNexus](https://github.com/abhigyanpatwari/GitNexus) | — | TS/JS | MIT | Knowledge graph with precomputed structural intelligence, 7 MCP tools, hybrid BM25+semantic search, clustering, process tracing, KuzuDB |
+| 8 | 3.9 | [harshkedia177/axon](https://github.com/harshkedia177/axon) | 29 | Python | None | 11-phase pipeline, KuzuDB, Leiden community detection, dead code, change coupling |
+| 9 | 3.8 | [anrgct/autodev-codebase](https://github.com/anrgct/autodev-codebase) | 111 | TypeScript | None | 40+ languages, 7 embedding providers, Cytoscape.js visualization, LLM reranking |
+| 10 | 3.8 | [ShiftLeftSecurity/codepropertygraph](https://github.com/ShiftLeftSecurity/codepropertygraph) | 564 | Scala | Apache-2.0 | CPG specification + Tinkergraph library, Scala query DSL, protobuf serialization (Joern foundation) |
+| 11 | 3.8 | [Jakedismo/codegraph-rust](https://github.com/Jakedismo/codegraph-rust) | 142 | Rust | None | 100% Rust GraphRAG, SurrealDB, LSP-powered dataflow analysis, architecture boundary enforcement |
+| 12 | 3.7 | [Anandb71/arbor](https://github.com/Anandb71/arbor) | 85 | Rust | MIT | Native GUI, confidence scoring, architectural role classification, fuzzy search, MCP |
+| 13 | 3.7 | [JudiniLabs/mcp-code-graph](https://github.com/JudiniLabs/mcp-code-graph) | 380 | JavaScript | MIT | Cloud-hosted MCP server by CodeGPT, semantic search, dependency links (requires account) |
+| 14 | 3.7 | [entrepeneur4lyf/code-graph-mcp](https://github.com/entrepeneur4lyf/code-graph-mcp) | 80 | Python | MIT | ast-grep for 25+ languages, complexity metrics, code smells, circular dependency detection |
+| 15 | 3.7 | [cs-au-dk/jelly](https://github.com/cs-au-dk/jelly) | 417 | TypeScript | BSD-3 | Academic-grade JS/TS points-to analysis, call graphs, vulnerability exposure, 5 published papers |
+| **16** | **3.6** | **[@optave/codegraph](https://github.com/optave/codegraph)** | — | **JS/Rust** | **Apache-2.0** | **Sub-second incremental rebuilds, dual engine (native Rust + WASM), 11 languages, MCP, zero-cost core + optional LLM enhancement** |
+| 17 | 3.5 | [er77/code-graph-rag-mcp](https://github.com/er77/code-graph-rag-mcp) | 89 | TypeScript | MIT | 26 MCP methods, 11 languages, tree-sitter, semantic search, hotspot analysis, clone detection |
+| 18 | 3.5 | [MikeRecognex/mcp-codebase-index](https://github.com/MikeRecognex/mcp-codebase-index) | 25 | Python | AGPL-3.0 | 18 MCP tools, zero runtime deps, auto-incremental reindexing via git diff |
+| 19 | 3.5 | [nahisaho/CodeGraphMCPServer](https://github.com/nahisaho/CodeGraphMCPServer) | 7 | Python | MIT | GraphRAG with Louvain community detection, 16 languages, 14 MCP tools, 334 tests |
+| 20 | 3.5 | [colbymchenry/codegraph](https://github.com/colbymchenry/codegraph) | 165 | TypeScript | MIT | tree-sitter + SQLite + MCP, Claude Code token reduction benchmarks, npx installer |
+| 21 | 3.5 | [dundalek/stratify](https://github.com/dundalek/stratify) | 102 | Clojure | MIT | Multi-backend extraction (LSP/SCIP/Joern), 10 languages, DGML/CodeCharta output, architecture linting |
+| 22 | 3.5 | [kraklabs/cie](https://github.com/kraklabs/cie) | 9 | Go | AGPL-3.0 | Code Intelligence Engine: 20+ MCP tools, tree-sitter, semantic search (Ollama), Homebrew, single Go binary |
+| 23 | 3.4 | [Durafen/Claude-code-memory](https://github.com/Durafen/Claude-code-memory) | 72 | Python | None | Memory Guard quality gate, persistent codebase memory, Voyage AI + Qdrant |
+| 24 | 3.3 | [NeuralRays/codexray](https://github.com/NeuralRays/codexray) | 2 | TypeScript | MIT | 16 MCP tools, TF-IDF semantic search (~50MB), dead code, complexity, path finding |
+| 25 | 3.3 | [DucPhamNgoc08/CodeVisualizer](https://github.com/DucPhamNgoc08/CodeVisualizer) | 475 | TypeScript | MIT | VS Code extension, tree-sitter WASM, flowcharts + dependency graphs, 5 AI providers, 9 themes |
+| 26 | 3.3 | [helabenkhalfallah/code-health-meter](https://github.com/helabenkhalfallah/code-health-meter) | 34 | JavaScript | MIT | Formal health metrics (MI, CC, Louvain modularity), published in ACM TOSEM 2025 |
+| 27 | 3.3 | [JohT/code-graph-analysis-pipeline](https://github.com/JohT/code-graph-analysis-pipeline) | 27 | Cypher | GPL-3.0 | 200+ CSV reports, ML anomaly detection, Leiden/HashGNN, jQAssistant + Neo4j for Java |
+| 28 | 3.3 | [Lekssays/codebadger](https://github.com/Lekssays/codebadger) | 43 | Python | GPL-3.0 | Containerized MCP server using Joern CPG, 12+ languages |
+| 29 | 3.2 | [al1-nasir/codegraph-cli](https://github.com/al1-nasir/codegraph-cli) | 11 | Python | MIT | CrewAI multi-agent system, 6 LLM providers, browser explorer, DOCX export |
+| 30 | 3.1 | [anasdayeh/claude-context-local](https://github.com/anasdayeh/claude-context-local) | 0 | Python | None | 100% local, Merkle DAG incremental indexing, sharded FAISS, hybrid BM25+vector, GPU accel |
+| 31 | 3.0 | [Vasu014/loregrep](https://github.com/Vasu014/loregrep) | 12 | Rust | Apache-2.0 | In-memory index library, Rust + Python bindings, AI-tool-ready schemas |
+| 32 | 3.0 | [xnuinside/codegraph](https://github.com/xnuinside/codegraph) | 438 | Python | MIT | Python-only interactive HTML dependency diagrams with zoom/pan/search |
+| 33 | 3.0 | [Adrninistrator/java-all-call-graph](https://github.com/Adrninistrator/java-all-call-graph) | 551 | Java | Apache-2.0 | Complete Java bytecode call graphs, Spring/MyBatis-aware, SQL-queryable DB |
+| 34 | 3.0 | [Technologicat/pyan](https://github.com/Technologicat/pyan) | 395 | Python | GPL-2.0 | Python 3 call graph generator, module import analysis, cycle detection, interactive HTML |
+| 35 | 3.0 | [GaloisInc/MATE](https://github.com/GaloisInc/MATE) | 194 | Python | BSD-3 | DARPA-funded interactive CPG-based bug hunting for C/C++ via LLVM |
+| 36 | 3.0 | [clouditor/cloud-property-graph](https://github.com/clouditor/cloud-property-graph) | 28 | Kotlin | Apache-2.0 | Connects code property graphs with cloud runtime security assessment |
 
 ### Tier 2: Niche & Single-Language Tools (score 2.0–2.9)
 
 | # | Score | Project | Stars | Lang | License | Summary |
 |---|-------|---------|-------|------|---------|---------|
-| 36 | 2.9 | [rahulvgmail/CodeInteliMCP](https://github.com/rahulvgmail/CodeInteliMCP) | 8 | Python | None | DuckDB + ChromaDB (zero Docker), multi-repo, lightweight embedded DBs |
-| 37 | 2.8 | [scottrogowski/code2flow](https://github.com/scottrogowski/code2flow) | 4,528 | Python | MIT | Call graphs for Python/JS/Ruby/PHP via AST, DOT output, 100% test coverage |
-| 38 | 2.8 | [ysk8hori/typescript-graph](https://github.com/ysk8hori/typescript-graph) | 200 | TypeScript | None | TypeScript file-level dependency Mermaid diagrams, code metrics (MI, CC), watch mode |
-| 39 | 2.8 | [nuanced-dev/nuanced-py](https://github.com/nuanced-dev/nuanced-py) | 126 | Python | MIT | Python call graph enrichment designed for AI agent consumption |
-| 40 | 2.8 | [Bikach/codeGraph](https://github.com/Bikach/codeGraph) | 6 | TypeScript | MIT | Neo4j graph, Claude Code slash commands, Kotlin support, 40-50% cost reduction |
-| 41 | 2.8 | [ChrisRoyse/CodeGraph](https://github.com/ChrisRoyse/CodeGraph) | 65 | TypeScript | None | Neo4j + MCP, multi-language, framework detection (React, Tailwind, Supabase) |
-| 42 | 2.8 | [Symbolk/Code2Graph](https://github.com/Symbolk/Code2Graph) | 48 | Java | None | Multilingual code → language-agnostic graph representation |
-| 43 | 2.7 | [yumeiriowl/repo-graphrag-mcp](https://github.com/yumeiriowl/repo-graphrag-mcp) | 3 | Python | MIT | LightRAG + tree-sitter, entity merge (code ↔ docs), implementation planning tool |
-| 44 | 2.7 | [davidfraser/pyan](https://github.com/davidfraser/pyan) | 712 | Python | GPL-2.0 | Python call graph generator (stable fork), DOT/SVG/HTML output, Sphinx integration |
-| 45 | 2.7 | [mamuz/PhpDependencyAnalysis](https://github.com/mamuz/PhpDependencyAnalysis) | 572 | PHP | MIT | PHP dependency graphs, cycle detection, architecture verification against defined layers |
-| 46 | 2.7 | [faraazahmad/graphsense](https://github.com/faraazahmad/graphsense) | 35 | TypeScript | MIT | MCP server providing code intelligence via static analysis |
-| 47 | 2.7 | [JonnoC/CodeRAG](https://github.com/JonnoC/CodeRAG) | 14 | TypeScript | MIT | Enterprise code intelligence with CK metrics, Neo4j, 23 analysis tools, MCP server |
-| 48 | 2.6 | [0xjcf/MCP_CodeAnalysis](https://github.com/0xjcf/MCP_CodeAnalysis) | 7 | Python/TS | None | Stateful tools (XState), Redis sessions, socio-technical analysis, dual language impl |
-| 49 | 2.5 | [koknat/callGraph](https://github.com/koknat/callGraph) | 325 | Perl | GPL-3.0 | Multi-language (22+) call graph generator via regex, GraphViz output |
-| 50 | 2.5 | [RaheesAhmed/code-context-mcp](https://github.com/RaheesAhmed/code-context-mcp) | 0 | Python | MIT | Security pattern detection, auto architecture diagrams, code flow tracing |
-| 51 | 2.5 | [league1991/CodeAtlasVsix](https://github.com/league1991/CodeAtlasVsix) | 265 | C# | GPL-2.0 | Visual Studio plugin, Doxygen-based call graph navigation (VS 2010-2015 era) |
-| 52 | 2.5 | [beicause/call-graph](https://github.com/beicause/call-graph) | 105 | TypeScript | Apache-2.0 | VS Code extension generating call graphs via LSP call hierarchy API |
-| 53 | 2.5 | [Thibault-Knobloch/codebase-intelligence](https://github.com/Thibault-Knobloch/codebase-intelligence) | 44 | Python | None | Code indexing + call graph + vector DB + natural language queries (requires OpenAI) |
-| 54 | 2.5 | [darkmacheken/wasmati](https://github.com/darkmacheken/wasmati) | 31 | C++ | Apache-2.0 | CPG infrastructure for scanning vulnerabilities in WebAssembly |
-| 55 | 2.5 | [sutragraph/sutracli](https://github.com/sutragraph/sutracli) | 28 | Python | GPL-3.0 | AI-powered cross-repo dependency graphs for coding agents |
-| 56 | 2.5 | [julianjensen/ast-flow-graph](https://github.com/julianjensen/ast-flow-graph) | 69 | JavaScript | Other | JavaScript control flow graphs from AST analysis |
-| 57 | 2.5 | [yoanbernabeu/grepai-skills](https://github.com/yoanbernabeu/grepai-skills) | 14 | — | MIT | 27 AI agent skills for semantic code search and call graph analysis |
-| 59 | 2.4 | [shantham/codegraph](https://github.com/shantham/codegraph) | 0 | TypeScript | MIT | Polished `npx` one-command installer, sqlite-vss, 7 MCP tools |
-| 60 | 2.3 | [ozyyshr/RepoGraph](https://github.com/ozyyshr/RepoGraph) | 251 | Python | Apache-2.0 | SWE-bench code graph research (ctags + networkx for LLM context) |
-| 61 | 2.3 | [emad-elsaid/rubrowser](https://github.com/emad-elsaid/rubrowser) | 644 | Ruby | MIT | Ruby-only interactive D3 force-directed dependency graph |
-| 62 | 2.3 | [Chentai-Kao/call-graph-plugin](https://github.com/Chentai-Kao/call-graph-plugin) | 87 | Kotlin | None | IntelliJ plugin for visualizing call graphs in IDE |
-| 63 | 2.3 | [ehabterra/apispec](https://github.com/ehabterra/apispec) | 72 | Go | Apache-2.0 | OpenAPI 3.1 spec generator from Go code via call graph analysis |
-| 64 | 2.3 | [huoyo/ko-time](https://github.com/huoyo/ko-time) | 61 | Java | LGPL-2.1 | Spring Boot call graph with runtime durations |
-| 65 | 2.3 | [Fraunhofer-AISEC/codyze](https://github.com/Fraunhofer-AISEC/codyze) | 91 | Kotlin | None | CPG-based analyzer for cryptographic API misuse (archived, merged into cpg repo) |
-| 66 | 2.3 | [CartographAI/mcp-server-codegraph](https://github.com/CartographAI/mcp-server-codegraph) | 17 | JavaScript | MIT | Lightweight MCP code graph (3 tools only, Python/JS/Rust) |
-| 67 | 2.3 | [YounesBensafia/DevLens](https://github.com/YounesBensafia/DevLens) | 21 | Python | None | Repo scanner with AI summaries, dead code detection (dep graph not yet implemented) |
-| 68 | 2.3 | [0xd219b/codegraph](https://github.com/0xd219b/codegraph) | 0 | Rust | None | Pure Rust, HTTP server mode, Java + Go support |
-| 69 | 2.3 | [aryx/codegraph](https://github.com/aryx/codegraph) | 6 | OCaml | Other | Multi-language source code dependency visualizer (the original "codegraph" name) |
-| 70 | 2.2 | [jmarkowski/codeviz](https://github.com/jmarkowski/codeviz) | 144 | Python | MIT | C/C++ `#include` header dependency graph visualization |
-| 71 | 2.2 | [juanallo/vscode-dependency-cruiser](https://github.com/juanallo/vscode-dependency-cruiser) | 76 | JavaScript | MIT | VS Code wrapper for dependency-cruiser (JS/TS) |
-| 72 | 2.2 | [hidva/as2cfg](https://github.com/hidva/as2cfg) | 63 | Rust | GPL-3.0 | Intel assembly → control flow graph |
-| 73 | 2.2 | [microsoft/cmd-call-graph](https://github.com/microsoft/cmd-call-graph) | 55 | Python | MIT | Call graphs for Windows CMD batch files |
-| 74 | 2.2 | [siggy/gographs](https://github.com/siggy/gographs) | 52 | Go | MIT | Go package dependency graph generator |
-| 75 | 2.2 | [henryhale/depgraph](https://github.com/henryhale/depgraph) | 33 | Go | MIT | Go-focused codebase dependency analysis |
-| 76 | 2.2 | [2015xli/clangd-graph-rag](https://github.com/2015xli/clangd-graph-rag) | 28 | Python | Apache-2.0 | C/C++ Neo4j GraphRAG via clangd (scales to Linux kernel) |
-| 77 | 2.1 | [floydw1234/badger-graph](https://github.com/floydw1234/badger-graph) | 0 | Python | None | Dgraph backend (Docker), C struct field access tracking |
-| 78 | 2.0 | [crubier/code-to-graph](https://github.com/crubier/code-to-graph) | 382 | JavaScript | None | JS code → Mermaid flowchart (single-function, web demo) |
-| 79 | 2.0 | [khushil/code-graph-rag](https://github.com/khushil/code-graph-rag) | 0 | Python | MIT | Fork of vitali87/code-graph-rag with no modifications |
-| 80 | 2.0 | [FalkorDB/code-graph-backend](https://github.com/FalkorDB/code-graph-backend) | 26 | Python | MIT | FalkorDB (Redis-based graph) code analysis demo |
-| 81 | 2.0 | [jillesvangurp/spring-depend](https://github.com/jillesvangurp/spring-depend) | 46 | Java | MIT | Spring bean dependency graph extraction |
-| 82 | 2.0 | [ivan-m/SourceGraph](https://github.com/ivan-m/SourceGraph) | 27 | Haskell | GPL-3.0 | Haskell graph-theoretic code analysis (last updated 2022) |
-| 83 | 2.0 | [brutski/go-code-graph](https://github.com/brutski/go-code-graph) | 13 | Go | MIT | Go codebase analyzer with MCP integration |
+| 37 | 2.9 | [rahulvgmail/CodeInteliMCP](https://github.com/rahulvgmail/CodeInteliMCP) | 8 | Python | None | DuckDB + ChromaDB (zero Docker), multi-repo, lightweight embedded DBs |
+| 38 | 2.8 | [scottrogowski/code2flow](https://github.com/scottrogowski/code2flow) | 4,528 | Python | MIT | Call graphs for Python/JS/Ruby/PHP via AST, DOT output, 100% test coverage |
+| 39 | 2.8 | [ysk8hori/typescript-graph](https://github.com/ysk8hori/typescript-graph) | 200 | TypeScript | None | TypeScript file-level dependency Mermaid diagrams, code metrics (MI, CC), watch mode |
+| 40 | 2.8 | [nuanced-dev/nuanced-py](https://github.com/nuanced-dev/nuanced-py) | 126 | Python | MIT | Python call graph enrichment designed for AI agent consumption |
+| 41 | 2.8 | [Bikach/codeGraph](https://github.com/Bikach/codeGraph) | 6 | TypeScript | MIT | Neo4j graph, Claude Code slash commands, Kotlin support, 40-50% cost reduction |
+| 42 | 2.8 | [ChrisRoyse/CodeGraph](https://github.com/ChrisRoyse/CodeGraph) | 65 | TypeScript | None | Neo4j + MCP, multi-language, framework detection (React, Tailwind, Supabase) |
+| 43 | 2.8 | [Symbolk/Code2Graph](https://github.com/Symbolk/Code2Graph) | 48 | Java | None | Multilingual code → language-agnostic graph representation |
+| 44 | 2.7 | [yumeiriowl/repo-graphrag-mcp](https://github.com/yumeiriowl/repo-graphrag-mcp) | 3 | Python | MIT | LightRAG + tree-sitter, entity merge (code ↔ docs), implementation planning tool |
+| 45 | 2.7 | [davidfraser/pyan](https://github.com/davidfraser/pyan) | 712 | Python | GPL-2.0 | Python call graph generator (stable fork), DOT/SVG/HTML output, Sphinx integration |
+| 46 | 2.7 | [mamuz/PhpDependencyAnalysis](https://github.com/mamuz/PhpDependencyAnalysis) | 572 | PHP | MIT | PHP dependency graphs, cycle detection, architecture verification against defined layers |
+| 47 | 2.7 | [faraazahmad/graphsense](https://github.com/faraazahmad/graphsense) | 35 | TypeScript | MIT | MCP server providing code intelligence via static analysis |
+| 48 | 2.7 | [JonnoC/CodeRAG](https://github.com/JonnoC/CodeRAG) | 14 | TypeScript | MIT | Enterprise code intelligence with CK metrics, Neo4j, 23 analysis tools, MCP server |
+| 49 | 2.6 | [0xjcf/MCP_CodeAnalysis](https://github.com/0xjcf/MCP_CodeAnalysis) | 7 | Python/TS | None | Stateful tools (XState), Redis sessions, socio-technical analysis, dual language impl |
+| 50 | 2.5 | [koknat/callGraph](https://github.com/koknat/callGraph) | 325 | Perl | GPL-3.0 | Multi-language (22+) call graph generator via regex, GraphViz output |
+| 51 | 2.5 | [RaheesAhmed/code-context-mcp](https://github.com/RaheesAhmed/code-context-mcp) | 0 | Python | MIT | Security pattern detection, auto architecture diagrams, code flow tracing |
+| 52 | 2.5 | [league1991/CodeAtlasVsix](https://github.com/league1991/CodeAtlasVsix) | 265 | C# | GPL-2.0 | Visual Studio plugin, Doxygen-based call graph navigation (VS 2010-2015 era) |
+| 53 | 2.5 | [beicause/call-graph](https://github.com/beicause/call-graph) | 105 | TypeScript | Apache-2.0 | VS Code extension generating call graphs via LSP call hierarchy API |
+| 54 | 2.5 | [Thibault-Knobloch/codebase-intelligence](https://github.com/Thibault-Knobloch/codebase-intelligence) | 44 | Python | None | Code indexing + call graph + vector DB + natural language queries (requires OpenAI) |
+| 55 | 2.5 | [darkmacheken/wasmati](https://github.com/darkmacheken/wasmati) | 31 | C++ | Apache-2.0 | CPG infrastructure for scanning vulnerabilities in WebAssembly |
+| 56 | 2.5 | [sutragraph/sutracli](https://github.com/sutragraph/sutracli) | 28 | Python | GPL-3.0 | AI-powered cross-repo dependency graphs for coding agents |
+| 57 | 2.5 | [julianjensen/ast-flow-graph](https://github.com/julianjensen/ast-flow-graph) | 69 | JavaScript | Other | JavaScript control flow graphs from AST analysis |
+| 58 | 2.5 | [yoanbernabeu/grepai-skills](https://github.com/yoanbernabeu/grepai-skills) | 14 | — | MIT | 27 AI agent skills for semantic code search and call graph analysis |
+| 60 | 2.4 | [shantham/codegraph](https://github.com/shantham/codegraph) | 0 | TypeScript | MIT | Polished `npx` one-command installer, sqlite-vss, 7 MCP tools |
+| 61 | 2.3 | [ozyyshr/RepoGraph](https://github.com/ozyyshr/RepoGraph) | 251 | Python | Apache-2.0 | SWE-bench code graph research (ctags + networkx for LLM context) |
+| 62 | 2.3 | [emad-elsaid/rubrowser](https://github.com/emad-elsaid/rubrowser) | 644 | Ruby | MIT | Ruby-only interactive D3 force-directed dependency graph |
+| 63 | 2.3 | [Chentai-Kao/call-graph-plugin](https://github.com/Chentai-Kao/call-graph-plugin) | 87 | Kotlin | None | IntelliJ plugin for visualizing call graphs in IDE |
+| 64 | 2.3 | [ehabterra/apispec](https://github.com/ehabterra/apispec) | 72 | Go | Apache-2.0 | OpenAPI 3.1 spec generator from Go code via call graph analysis |
+| 65 | 2.3 | [huoyo/ko-time](https://github.com/huoyo/ko-time) | 61 | Java | LGPL-2.1 | Spring Boot call graph with runtime durations |
+| 66 | 2.3 | [Fraunhofer-AISEC/codyze](https://github.com/Fraunhofer-AISEC/codyze) | 91 | Kotlin | None | CPG-based analyzer for cryptographic API misuse (archived, merged into cpg repo) |
+| 67 | 2.3 | [CartographAI/mcp-server-codegraph](https://github.com/CartographAI/mcp-server-codegraph) | 17 | JavaScript | MIT | Lightweight MCP code graph (3 tools only, Python/JS/Rust) |
+| 68 | 2.3 | [YounesBensafia/DevLens](https://github.com/YounesBensafia/DevLens) | 21 | Python | None | Repo scanner with AI summaries, dead code detection (dep graph not yet implemented) |
+| 69 | 2.3 | [0xd219b/codegraph](https://github.com/0xd219b/codegraph) | 0 | Rust | None | Pure Rust, HTTP server mode, Java + Go support |
+| 70 | 2.3 | [aryx/codegraph](https://github.com/aryx/codegraph) | 6 | OCaml | Other | Multi-language source code dependency visualizer (the original "codegraph" name) |
+| 71 | 2.2 | [jmarkowski/codeviz](https://github.com/jmarkowski/codeviz) | 144 | Python | MIT | C/C++ `#include` header dependency graph visualization |
+| 72 | 2.2 | [juanallo/vscode-dependency-cruiser](https://github.com/juanallo/vscode-dependency-cruiser) | 76 | JavaScript | MIT | VS Code wrapper for dependency-cruiser (JS/TS) |
+| 73 | 2.2 | [hidva/as2cfg](https://github.com/hidva/as2cfg) | 63 | Rust | GPL-3.0 | Intel assembly → control flow graph |
+| 74 | 2.2 | [microsoft/cmd-call-graph](https://github.com/microsoft/cmd-call-graph) | 55 | Python | MIT | Call graphs for Windows CMD batch files |
+| 75 | 2.2 | [siggy/gographs](https://github.com/siggy/gographs) | 52 | Go | MIT | Go package dependency graph generator |
+| 76 | 2.2 | [henryhale/depgraph](https://github.com/henryhale/depgraph) | 33 | Go | MIT | Go-focused codebase dependency analysis |
+| 77 | 2.2 | [2015xli/clangd-graph-rag](https://github.com/2015xli/clangd-graph-rag) | 28 | Python | Apache-2.0 | C/C++ Neo4j GraphRAG via clangd (scales to Linux kernel) |
+| 78 | 2.1 | [floydw1234/badger-graph](https://github.com/floydw1234/badger-graph) | 0 | Python | None | Dgraph backend (Docker), C struct field access tracking |
+| 79 | 2.0 | [crubier/code-to-graph](https://github.com/crubier/code-to-graph) | 382 | JavaScript | None | JS code → Mermaid flowchart (single-function, web demo) |
+| 80 | 2.0 | [khushil/code-graph-rag](https://github.com/khushil/code-graph-rag) | 0 | Python | MIT | Fork of vitali87/code-graph-rag with no modifications |
+| 81 | 2.0 | [FalkorDB/code-graph-backend](https://github.com/FalkorDB/code-graph-backend) | 26 | Python | MIT | FalkorDB (Redis-based graph) code analysis demo |
+| 82 | 2.0 | [jillesvangurp/spring-depend](https://github.com/jillesvangurp/spring-depend) | 46 | Java | MIT | Spring bean dependency graph extraction |
+| 83 | 2.0 | [ivan-m/SourceGraph](https://github.com/ivan-m/SourceGraph) | 27 | Haskell | GPL-3.0 | Haskell graph-theoretic code analysis (last updated 2022) |
+| 84 | 2.0 | [brutski/go-code-graph](https://github.com/brutski/go-code-graph) | 13 | Go | MIT | Go codebase analyzer with MCP integration |
 
 ### Tier 3: Minimal or Inactive (score < 2.0)
 
@@ -134,35 +135,36 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 4 | cpg | 5 | 5 | 2 | 5 | 5 | 3 |
 | 5 | glimpse | 4 | 4 | 5 | 3 | 5 | 5 |
 | 6 | CKB | 5 | 5 | 4 | 3 | 4 | 3 |
-| 7 | axon | 5 | 5 | 4 | 2 | 4 | 2 |
-| 8 | autodev-codebase | 5 | 3 | 3 | 5 | 3 | 4 |
-| 9 | codepropertygraph | 4 | 5 | 2 | 4 | 5 | 3 |
-| 10 | codegraph-rust | 5 | 5 | 2 | 4 | 4 | 3 |
-| 11 | arbor | 4 | 4 | 5 | 4 | 5 | 3 |
-| 12 | mcp-code-graph | 4 | 3 | 4 | 4 | 3 | 4 |
-| 13 | code-graph-mcp | 4 | 4 | 4 | 5 | 3 | 2 |
-| 14 | jelly | 4 | 5 | 4 | 1 | 5 | 3 |
-| **15** | **codegraph (us)** | **3** | **3** | **5** | **4** | **4** | **2** |
-| 16 | code-graph-rag-mcp | 5 | 4 | 3 | 4 | 3 | 2 |
-| 17 | mcp-codebase-index | 4 | 3 | 5 | 3 | 4 | 2 |
-| 18 | CodeGraphMCPServer | 4 | 4 | 4 | 5 | 3 | 1 |
-| 19 | colbymchenry/codegraph | 4 | 3 | 5 | 3 | 3 | 3 |
-| 20 | stratify | 4 | 4 | 2 | 5 | 4 | 2 |
-| 21 | cie | 5 | 4 | 4 | 3 | 4 | 1 |
-| 22 | Claude-code-memory | 4 | 3 | 3 | 3 | 4 | 3 |
-| 23 | codexray | 5 | 4 | 4 | 4 | 3 | 1 |
-| 24 | CodeVisualizer | 4 | 3 | 5 | 3 | 3 | 2 |
-| 25 | code-health-meter | 3 | 5 | 5 | 1 | 4 | 2 |
-| 26 | code-graph-analysis-pipeline | 5 | 5 | 1 | 2 | 5 | 2 |
-| 27 | codebadger | 4 | 4 | 3 | 5 | 3 | 1 |
-| 28 | codegraph-cli | 5 | 3 | 3 | 2 | 3 | 2 |
-| 29 | claude-context-local | 4 | 3 | 3 | 4 | 4 | 1 |
-| 30 | loregrep | 3 | 3 | 4 | 3 | 5 | 2 |
-| 31 | xnuinside/codegraph | 3 | 2 | 5 | 1 | 3 | 4 |
-| 32 | java-all-call-graph | 4 | 4 | 3 | 1 | 3 | 3 |
-| 33 | pyan | 3 | 3 | 5 | 1 | 4 | 2 |
-| 34 | MATE | 3 | 5 | 1 | 1 | 3 | 2 |
-| 35 | cloud-property-graph | 4 | 4 | 2 | 2 | 4 | 2 |
+| 7 | GitNexus | 5 | 5 | 4 | 4 | 4 | 2 |
+| 8 | axon | 5 | 5 | 4 | 2 | 4 | 2 |
+| 9 | autodev-codebase | 5 | 3 | 3 | 5 | 3 | 4 |
+| 10 | codepropertygraph | 4 | 5 | 2 | 4 | 5 | 3 |
+| 11 | codegraph-rust | 5 | 5 | 2 | 4 | 4 | 3 |
+| 12 | arbor | 4 | 4 | 5 | 4 | 5 | 3 |
+| 13 | mcp-code-graph | 4 | 3 | 4 | 4 | 3 | 4 |
+| 14 | code-graph-mcp | 4 | 4 | 4 | 5 | 3 | 2 |
+| 15 | jelly | 4 | 5 | 4 | 1 | 5 | 3 |
+| **16** | **codegraph (us)** | **3** | **3** | **5** | **4** | **4** | **2** |
+| 17 | code-graph-rag-mcp | 5 | 4 | 3 | 4 | 3 | 2 |
+| 18 | mcp-codebase-index | 4 | 3 | 5 | 3 | 4 | 2 |
+| 19 | CodeGraphMCPServer | 4 | 4 | 4 | 5 | 3 | 1 |
+| 20 | colbymchenry/codegraph | 4 | 3 | 5 | 3 | 3 | 3 |
+| 21 | stratify | 4 | 4 | 2 | 5 | 4 | 2 |
+| 22 | cie | 5 | 4 | 4 | 3 | 4 | 1 |
+| 23 | Claude-code-memory | 4 | 3 | 3 | 3 | 4 | 3 |
+| 24 | codexray | 5 | 4 | 4 | 4 | 3 | 1 |
+| 25 | CodeVisualizer | 4 | 3 | 5 | 3 | 3 | 2 |
+| 26 | code-health-meter | 3 | 5 | 5 | 1 | 4 | 2 |
+| 27 | code-graph-analysis-pipeline | 5 | 5 | 1 | 2 | 5 | 2 |
+| 28 | codebadger | 4 | 4 | 3 | 5 | 3 | 1 |
+| 29 | codegraph-cli | 5 | 3 | 3 | 2 | 3 | 2 |
+| 30 | claude-context-local | 4 | 3 | 3 | 4 | 4 | 1 |
+| 31 | loregrep | 3 | 3 | 4 | 3 | 5 | 2 |
+| 32 | xnuinside/codegraph | 3 | 2 | 5 | 1 | 3 | 4 |
+| 33 | java-all-call-graph | 4 | 4 | 3 | 1 | 3 | 3 |
+| 34 | pyan | 3 | 3 | 5 | 1 | 4 | 2 |
+| 35 | MATE | 3 | 5 | 1 | 1 | 3 | 2 |
+| 36 | cloud-property-graph | 4 | 4 | 2 | 2 | 4 | 2 |
 
 **Scoring criteria:**
 - **Features** (1-5): breadth of tools, MCP integration, search, visualization, export
@@ -227,23 +229,31 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 - **Compound operations**: `explore`/`understand`/`prepareChange` batch multiple queries into one call — 83% token reduction, 60-70% fewer tool calls
 - **CODEOWNERS + secret scanning**: enterprise features we lack entirely
 
-### vs axon (#7, 29 stars)
+### vs GitNexus (#7)
+- **Precomputed structural intelligence**: 6-phase pipeline (structure, parsing, resolution, clustering, processes, search) precomputes everything at index time — queries return complete context in a single call. Our queries traverse the graph at query time
+- **Clustering and process tracing**: Leiden-style community detection groups related symbols into functional clusters; execution flow tracing from entry points. We have neither
+- **Hybrid search**: BM25 + semantic + RRF with process-grouped results — our semantic search lacks the BM25/process grouping layer
+- **Multi-file coordinated rename**: validated against graph structure and text — we have no refactoring tools
+- **Auto-generated context files**: LLM-powered wiki and AGENTS.md/CLAUDE.md generation from the knowledge graph
+- **Tradeoff**: Full pipeline re-run on changes (no incremental builds), KuzuDB graph DB (heavier than SQLite), browser mode limited to ~5,000 files
+
+### vs axon (#8, 29 stars)
 - **Analysis depth**: their 11-phase pipeline includes community detection (Leiden), execution flow tracing, git change coupling, dead code detection — all features we lack
 - **Graph database**: KuzuDB with native Cypher is more expressive for complex graph queries than our SQLite
 - **Branch structural diff**: compares code structure between branches using git worktrees
 
-### vs codegraph-rust (#10, 142 stars)
+### vs codegraph-rust (#11, 142 stars)
 - **LSP-powered analysis**: compiler-grade cross-file references via rust-analyzer, pyright, gopls vs our tree-sitter heuristics
 - **Dataflow edges**: defines/uses/flows_to/returns/mutates relationships we don't capture
 - **Architecture boundary enforcement**: configurable rules for detecting violations — we have no architectural awareness
 - **Tiered indexing**: fast/balanced/full modes for different use cases — we have one mode
 
-### vs jelly (#14, 417 stars)
+### vs jelly (#15, 417 stars)
 - **Points-to analysis**: flow-insensitive analysis with access paths for JS/TS — fundamentally more precise than our tree-sitter-based call resolution
 - **Academic rigor**: 5 published papers backing the methodology (Aarhus University)
 - **Vulnerability exposure analysis**: library usage pattern matching specific to the JS/TS ecosystem
 
-### vs colbymchenry/codegraph (#19, 165 stars)
+### vs colbymchenry/codegraph (#20, 165 stars)
 - **Naming competitor**: same name, same tech stack (tree-sitter + SQLite + MCP + Node.js) — marketplace confusion risk
 - **Published benchmarks**: 67% fewer tool calls and measurable Claude Code token reduction — compelling marketing angle we lack
 - **One-liner setup**: `npx @colbymchenry/codegraph` with interactive installer auto-configures Claude Code
@@ -276,8 +286,8 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 |---------|------------|-----|
 | **Interactive HTML visualization** | autodev-codebase, CodeVisualizer | `codegraph viz` → opens interactive vis.js/Cytoscape.js graph in browser |
 | **Git change coupling** | axon | Analyze git history for files that always change together — enhances `diff-impact` |
-| **Community detection** | axon, CodeGraphMCPServer | Leiden/Louvain algorithm to discover natural module boundaries vs actual file organization |
-| **Execution flow tracing** | axon, code-context-mcp | Framework-aware entry point detection + BFS flow tracing |
+| **Community detection** | axon, GitNexus, CodeGraphMCPServer | Leiden/Louvain algorithm to discover natural module boundaries vs actual file organization |
+| **Execution flow tracing** | axon, GitNexus, code-context-mcp | Framework-aware entry point detection + BFS flow tracing |
 | **Dataflow analysis** | codegraph-rust | Define/use chains and flows_to/returns/mutates edges — major analysis depth increase |
 | **Architecture boundary rules** | codegraph-rust, stratify | User-defined rules for allowed/forbidden dependencies between modules |
 
