@@ -57,6 +57,11 @@ jobs:
             echo "Stable release: $VERSION (from tag $TAG)"
           elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             VERSION="${{ inputs.version }}"
+            VERSION="${VERSION#v}"
+            if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+              echo "::error::Invalid version '$VERSION'. Expected semver (e.g. 2.1.0)."
+              exit 1
+            fi
             NPM_TAG="latest"
             echo "Stable release (manual retry): $VERSION"
           else
