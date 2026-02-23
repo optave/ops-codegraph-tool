@@ -97,18 +97,34 @@ The workflow can be overridden with a specific version via the `version-override
 
 ## Dogfooding — codegraph on itself
 
-Codegraph is **our own tool**. Use it to analyze this repository before making changes:
+Codegraph is **our own tool**. Use it to analyze this repository before making changes. If codegraph reports an error, crashes, or produces wrong results when analyzing itself, **fix the bug in the codebase** — don't just work around it.
 
+### Before modifying code, always:
+1. `node src/cli.js where <name>` — find where the symbol lives
+2. `node src/cli.js explain <file-or-function>` — understand the structure
+3. `node src/cli.js context <name> -T` — get full context (source, deps, callers)
+4. `node src/cli.js fn-impact <name> -T` — check blast radius before editing
+
+### After modifying code:
+5. `node src/cli.js diff-impact --staged -T` — verify impact before committing
+
+### Other useful commands
 ```bash
-node src/cli.js build .              # Build/update the graph
+node src/cli.js build .              # Build/update the graph (incremental)
+node src/cli.js map --limit 20       # Module overview & most-connected nodes
+node src/cli.js stats                # Graph health and quality score
+node src/cli.js fn <name> -T         # Function call chain (callers + callees)
+node src/cli.js deps src/<file>.js   # File-level imports and importers
+node src/cli.js diff-impact main     # Impact of current branch vs main
 node src/cli.js cycles               # Check for circular dependencies
-node src/cli.js map --limit 20       # Module overview & coupling hotspots
-node src/cli.js diff-impact main     # See impact of current branch changes
-node src/cli.js fn <name>            # Trace function-level dependency chains
-node src/cli.js deps src/<file>.js   # See what imports/depends on a file
+node src/cli.js search "<query>"     # Semantic search (requires `embed` first)
 ```
 
-If codegraph reports an error, crashes, or produces wrong results when analyzing itself, **fix the bug in the codebase** — don't just work around it. This is the best way to find and resolve real issues.
+### Flags
+- `-T` / `--no-tests` — exclude test files (use by default)
+- `-j` / `--json` — JSON output for programmatic use
+- `-f, --file <path>` — scope to a specific file (partial match)
+- `-k, --kind <kind>` — filter by symbol kind (function, method, class, etc.)
 
 ## Parallel Sessions
 
