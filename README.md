@@ -376,15 +376,16 @@ Dynamic patterns like `fn.call()`, `fn.apply()`, `fn.bind()`, and `obj["method"]
 
 ## 📊 Performance
 
-Benchmarked on a ~3,200-file TypeScript project:
+Self-measured on every release via CI ([full history](generated/BENCHMARKS.md)):
 
-| Metric | Value |
+| Metric | Latest |
 |---|---|
-| Build time | ~30s |
-| Nodes | 19,000+ |
-| Edges | 120,000+ |
-| Query time | <100ms |
-| DB size | ~5 MB |
+| Build speed (native) | **2.5 ms/file** |
+| Build speed (WASM) | **5 ms/file** |
+| Query time | **1ms** |
+| ~50,000 files (est.) | **~125.0s build** |
+
+Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 
 ## 🤖 AI Agent Integration
 
