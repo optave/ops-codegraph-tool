@@ -269,10 +269,10 @@ jobs:
           BRANCH="release/v${VERSION}"
 
           # Check if there are version bump changes to push
-          if git diff --quiet HEAD; then
+          if git diff --quiet HEAD -- package.json package-lock.json CHANGELOG.md DEPENDENCIES.md; then
             echo "No version bump commit to push — skipping PR"
           else
-            git add -A
+            git add package.json package-lock.json CHANGELOG.md DEPENDENCIES.md
             git commit -m "chore: release v${VERSION}"
             git push origin "HEAD:refs/heads/${BRANCH}"
             gh pr create \
