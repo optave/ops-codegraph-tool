@@ -282,7 +282,9 @@ export async function startMCPServer(customDbPath, options = {}) {
     { capabilities: { tools: {} } },
   );
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: buildToolList(multiRepo) }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: buildToolList(multiRepo),
+  }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
