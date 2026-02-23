@@ -196,6 +196,10 @@ describe('startMCPServer handler dispatch', () => {
     vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
       StdioServerTransport: class MockTransport {},
     }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
+    }));
 
     // Mock query functions
     vi.doMock('../../src/queries.js', () => ({
@@ -251,6 +255,10 @@ describe('startMCPServer handler dispatch', () => {
     vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
       StdioServerTransport: class MockTransport {},
     }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
+    }));
 
     const fnDepsMock = vi.fn(() => ({ name: 'myFn', results: [{ callers: [] }] }));
     vi.doMock('../../src/queries.js', () => ({
@@ -291,6 +299,10 @@ describe('startMCPServer handler dispatch', () => {
     }));
     vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
       StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
     }));
 
     const fnImpactMock = vi.fn(() => ({ name: 'test', results: [] }));
@@ -335,6 +347,10 @@ describe('startMCPServer handler dispatch', () => {
     }));
     vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
       StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
     }));
 
     const diffImpactMock = vi.fn(() => ({ changedFiles: 2, affectedFunctions: [] }));
@@ -381,6 +397,10 @@ describe('startMCPServer handler dispatch', () => {
     }));
     vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
       StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
     }));
 
     const listFnMock = vi.fn(() => ({
@@ -430,6 +450,10 @@ describe('startMCPServer handler dispatch', () => {
     vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
       StdioServerTransport: class MockTransport {},
     }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
+    }));
     vi.doMock('../../src/registry.js', () => ({
       resolveRepoDbPath: vi.fn((name) =>
         name === 'my-project' ? '/resolved/path/.codegraph/graph.db' : undefined,
@@ -477,6 +501,10 @@ describe('startMCPServer handler dispatch', () => {
     vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
       StdioServerTransport: class MockTransport {},
     }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
+    }));
     vi.doMock('../../src/registry.js', () => ({
       resolveRepoDbPath: vi.fn(() => undefined),
     }));
@@ -520,6 +548,10 @@ describe('startMCPServer handler dispatch', () => {
     }));
     vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
       StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
     }));
     vi.doMock('../../src/registry.js', () => ({
       resolveRepoDbPath: vi.fn(() => '/some/path'),
@@ -565,6 +597,10 @@ describe('startMCPServer handler dispatch', () => {
     vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
       StdioServerTransport: class MockTransport {},
     }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
+    }));
     vi.doMock('../../src/registry.js', () => ({
       resolveRepoDbPath: vi.fn(() => '/resolved/db'),
     }));
@@ -609,6 +645,10 @@ describe('startMCPServer handler dispatch', () => {
     }));
     vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
       StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
     }));
     vi.doMock('../../src/registry.js', () => ({
       resolveRepoDbPath: vi.fn(),
@@ -660,6 +700,10 @@ describe('startMCPServer handler dispatch', () => {
     vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
       StdioServerTransport: class MockTransport {},
     }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
+    }));
     vi.doMock('../../src/registry.js', () => ({
       resolveRepoDbPath: vi.fn(),
       listRepos: vi.fn(() => [
@@ -708,6 +752,10 @@ describe('startMCPServer handler dispatch', () => {
     vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
       StdioServerTransport: class MockTransport {},
     }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
+    }));
     vi.doMock('../../src/queries.js', () => ({
       queryNameData: vi.fn(),
       impactAnalysisData: vi.fn(),
@@ -748,6 +796,10 @@ describe('startMCPServer handler dispatch', () => {
     vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
       StdioServerTransport: class MockTransport {},
     }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
+    }));
     vi.doMock('../../src/queries.js', () => ({
       queryNameData: vi.fn(),
       impactAnalysisData: vi.fn(),
@@ -787,6 +839,10 @@ describe('startMCPServer handler dispatch', () => {
     }));
     vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
       StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
     }));
     vi.doMock('../../src/queries.js', () => ({
       queryNameData: vi.fn(),
