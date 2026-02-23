@@ -1,0 +1,14 @@
+{
+  "name": "@optave/codegraph-linux-x64-gnu",
+  "version": "2.1.0",
+  "description": "Native codegraph-core binary for linux-x64",
+  "os": ["linux"],
+  "cpu": ["x64"],
+  "main": "codegraph-core.node",
+  "files": ["codegraph-core.node"],
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/optave/codegraph.git"
+  }
+}

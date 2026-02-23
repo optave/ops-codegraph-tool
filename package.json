@@ -1,6 +1,6 @@
 {
   "name": "@optave/codegraph",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Local code graph CLI — parse codebases with tree-sitter, build dependency graphs, query them",
   "type": "module",
   "main": "src/index.js",
@@ -33,8 +33,7 @@
     "deps:tree": "node scripts/gen-deps.cjs",
     "release": "commit-and-tag-version",
     "release:dry-run": "commit-and-tag-version --dry-run",
-    "version": "node scripts/sync-native-versions.js && git add package.json",
-    "prepublishOnly": "npm test"
+    "version": "node scripts/sync-native-versions.js && git add package.json"
   },
   "keywords": [
     "codegraph",
@@ -62,19 +61,19 @@
   "optionalDependencies": {
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@optave/codegraph-darwin-arm64": "2.0.0",
-    "@optave/codegraph-darwin-x64": "2.0.0",
-    "@optave/codegraph-linux-x64-gnu": "2.0.0",
-    "@optave/codegraph-win32-x64-msvc": "2.0.0"
+    "@optave/codegraph-darwin-arm64": "2.1.0",
+    "@optave/codegraph-darwin-x64": "2.1.0",
+    "@optave/codegraph-linux-x64-gnu": "2.1.0",
+    "@optave/codegraph-win32-x64-msvc": "2.1.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",
     "@commitlint/cli": "^19.8",
     "@commitlint/config-conventional": "^19.8",
-    "commit-and-tag-version": "^12.5",
-    "husky": "^9.1",
     "@tree-sitter-grammars/tree-sitter-hcl": "^1.2.0",
     "@vitest/coverage-v8": "^4.0.18",
+    "commit-and-tag-version": "^12.5",
+    "husky": "^9.1",
     "tree-sitter-c-sharp": "^0.23.1",
     "tree-sitter-cli": "^0.26.5",
     "tree-sitter-go": "^0.23.4",
