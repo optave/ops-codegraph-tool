@@ -27,6 +27,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { initSchema } from '../../src/db.js';
 import {
   diffImpactData,
+  explainData,
   fileDepsData,
   fnDepsData,
   fnImpactData,
@@ -276,5 +277,72 @@ describe('diffImpactData', () => {
     const data = diffImpactData(dbPath);
     expect(data).toHaveProperty('error');
     expect(data.error).toMatch(/not a git repository/i);
+  });
+});
+
+// ─── explainData ──────────────────────────────────────────────────────
+
+describe('explainData', () => {
+  test('file-level: returns public/internal split with imports', () => {
+    const data = explainData('auth.js', dbPath);
+    expect(data.kind).toBe('file');
+    expect(data.results).toHaveLength(1);
+
+    const r = data.results[0];
+    expect(r.file).toBe('auth.js');
+    expect(r.symbolCount).toBe(2);
+    // Both authenticate and validateToken are called from middleware.js
+    expect(r.publicApi.map((s) => s.name)).toContain('authenticate');
+    expect(r.publicApi.map((s) => s.name)).toContain('validateToken');
+    // auth.js doesn't import anything
+    expect(r.imports).toHaveLength(0);
+    expect(r.importedBy.map((i) => i.file)).toContain('middleware.js');
+  });
+
+  test('file-level: data flow shows intra-file calls', () => {
+    const data = explainData('auth.js', dbPath);
+    const r = data.results[0];
+    const authFlow = r.dataFlow.find((df) => df.caller === 'authenticate');
+    expect(authFlow).toBeDefined();
+    expect(authFlow.callees).toContain('validateToken');
+  });
+
+  test('file-level: empty for unknown file', () => {
+    const data = explainData('nonexistent.js', dbPath);
+    expect(data.kind).toBe('file');
+    expect(data.results).toHaveLength(0);
+  });
+
+  test('function-level: callees and callers', () => {
+    const data = explainData('authMiddleware', dbPath);
+    expect(data.kind).toBe('function');
+    expect(data.results).toHaveLength(1);
+
+    const r = data.results[0];
+    expect(r.name).toBe('authMiddleware');
+    expect(r.callees.map((c) => c.name)).toContain('authenticate');
+    expect(r.callees.map((c) => c.name)).toContain('validateToken');
+    expect(r.callers.map((c) => c.name)).toContain('handleRoute');
+  });
+
+  test('function-level: empty for unknown', () => {
+    const data = explainData('nonexistentFunction', dbPath);
+    expect(data.kind).toBe('function');
+    expect(data.results).toHaveLength(0);
+  });
+
+  test('target detection: file path triggers file mode', () => {
+    const data = explainData('auth.js', dbPath);
+    expect(data.kind).toBe('file');
+  });
+
+  test('target detection: plain name triggers function mode', () => {
+    const data = explainData('authenticate', dbPath);
+    expect(data.kind).toBe('function');
+  });
+
+  test('target detection: path with slash triggers file mode', () => {
+    const data = explainData('src/auth.js', dbPath);
+    expect(data.kind).toBe('file');
   });
 });

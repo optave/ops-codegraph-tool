@@ -11,8 +11,10 @@ import { buildEmbeddings, MODELS, search } from './embedder.js';
 import { exportDOT, exportJSON, exportMermaid } from './export.js';
 import { setVerbose } from './logger.js';
 import {
+  ALL_SYMBOL_KINDS,
   context,
   diffImpact,
+  explain,
   fileDeps,
   fnDeps,
   fnImpact,
@@ -106,11 +108,19 @@ program
   .description('Function-level dependencies: callers, callees, and transitive call chain')
   .option('-d, --db <path>', 'Path to graph.db')
   .option('--depth <n>', 'Transitive caller depth', '3')
+  .option('-f, --file <path>', 'Scope search to functions in this file (partial match)')
+  .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('-j, --json', 'Output as JSON')
   .action((name, opts) => {
+    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+      process.exit(1);
+    }
     fnDeps(name, opts.db, {
       depth: parseInt(opts.depth, 10),
+      file: opts.file,
+      kind: opts.kind,
       noTests: !opts.tests,
       json: opts.json,
     });
@@ -121,11 +131,19 @@ program
   .description('Function-level impact: what functions break if this one changes')
   .option('-d, --db <path>', 'Path to graph.db')
   .option('--depth <n>', 'Max transitive depth', '5')
+  .option('-f, --file <path>', 'Scope search to functions in this file (partial match)')
+  .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('-j, --json', 'Output as JSON')
   .action((name, opts) => {
+    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+      process.exit(1);
+    }
     fnImpact(name, opts.db, {
       depth: parseInt(opts.depth, 10),
+      file: opts.file,
+      kind: opts.kind,
       noTests: !opts.tests,
       json: opts.json,
     });
@@ -136,18 +154,36 @@ program
   .description('Full context for a function: source, deps, callers, tests, signature')
   .option('-d, --db <path>', 'Path to graph.db')
   .option('--depth <n>', 'Include callee source up to N levels deep', '0')
+  .option('-f, --file <path>', 'Scope search to functions in this file (partial match)')
+  .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
   .option('--no-source', 'Metadata only (skip source extraction)')
   .option('--include-tests', 'Include test source code')
   .option('-T, --no-tests', 'Exclude test files from callers')
   .option('-j, --json', 'Output as JSON')
   .action((name, opts) => {
+    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+      process.exit(1);
+    }
     context(name, opts.db, {
       depth: parseInt(opts.depth, 10),
+      file: opts.file,
+      kind: opts.kind,
       noSource: !opts.source,
       noTests: !opts.tests,
       includeTests: opts.includeTests,
       json: opts.json,
     });
+  });
+
+program
+  .command('explain <target>')
+  .description('Structural summary of a file or function (no LLM needed)')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-T, --no-tests', 'Exclude test/spec files')
+  .option('-j, --json', 'Output as JSON')
+  .action((target, opts) => {
+    explain(target, opts.db, { noTests: !opts.tests, json: opts.json });
   });
 
 program

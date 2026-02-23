@@ -40,6 +40,7 @@ export { getActiveEngine, parseFileAuto, parseFilesAuto } from './parser.js';
 export {
   contextData,
   diffImpactData,
+  explainData,
   fileDepsData,
   fnDepsData,
   fnImpactData,
