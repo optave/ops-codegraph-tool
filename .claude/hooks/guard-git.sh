@@ -21,8 +21,8 @@ if [ -z "$COMMAND" ]; then
   exit 0
 fi
 
-# Only act on git commands
-if ! echo "$COMMAND" | grep -qE '^\s*git\s+'; then
+# Act on git and gh commands (may appear after cd "..." &&)
+if ! echo "$COMMAND" | grep -qE '(^|\s|&&\s*)(git|gh)\s+'; then
   exit 0
 fi
 
@@ -74,21 +74,47 @@ if echo "$COMMAND" | grep -qE '^\s*git\s+stash'; then
   deny "BLOCKED: 'git stash' hides all working tree changes including other sessions' work. In worktree mode, commit your changes directly instead."
 fi
 
-# --- Branch name validation on push ---
+# --- Branch name validation helper ---
 
-if echo "$COMMAND" | grep -qE '^\s*git\s+push'; then
-  BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || true
+validate_branch_name() {
+  # Try to get branch from the working directory where the command runs
+  # Extract cd target if command starts with cd "..." && ...
+  local work_dir=""
+  if echo "$COMMAND" | grep -qE '^\s*cd\s+'; then
+    work_dir=$(echo "$COMMAND" | sed -nE 's/^\s*cd\s+"?([^"&]+)"?\s*&&.*/\1/p')
+  fi
+
+  local BRANCH=""
+  if [ -n "$work_dir" ] && [ -d "$work_dir" ]; then
+    BRANCH=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
+  fi
+  if [ -z "$BRANCH" ]; then
+    BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || true
+  fi
+
   if [ -n "$BRANCH" ] && [ "$BRANCH" != "main" ] && [ "$BRANCH" != "HEAD" ]; then
-    PATTERN="^(feat|fix|docs|refactor|test|chore|ci|perf|build|release|dependabot|revert)/"
+    local PATTERN="^(feat|fix|docs|refactor|test|chore|ci|perf|build|release|dependabot|revert)/"
     if [[ ! "$BRANCH" =~ $PATTERN ]]; then
       deny "BLOCKED: Branch '$BRANCH' does not match required pattern. Branch names must start with: feat/, fix/, docs/, refactor/, test/, chore/, ci/, perf/, build/, release/, revert/"
     fi
   fi
+}
+
+# --- Branch name validation on push ---
+
+if echo "$COMMAND" | grep -qE '(^|\s|&&\s*)git\s+push'; then
+  validate_branch_name
+fi
+
+# --- Branch name validation on gh pr create ---
+
+if echo "$COMMAND" | grep -qE '(^|\s|&&\s*)gh\s+pr\s+create'; then
+  validate_branch_name
 fi
 
 # --- Commit validation against edit log ---
 
-if echo "$COMMAND" | grep -qE '^\s*git\s+commit'; then
+if echo "$COMMAND" | grep -qE '(^|\s|&&\s*)git\s+commit'; then
   PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
   LOG_FILE="$PROJECT_DIR/.claude/session-edits.log"
 
