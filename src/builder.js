@@ -11,6 +11,37 @@ import { computeConfidence, resolveImportPath, resolveImportsBatch } from './res
 
 export { resolveImportPath } from './resolve.js';
 
+const BUILTIN_RECEIVERS = new Set([
+  'console',
+  'Math',
+  'JSON',
+  'Object',
+  'Array',
+  'String',
+  'Number',
+  'Boolean',
+  'Date',
+  'RegExp',
+  'Map',
+  'Set',
+  'WeakMap',
+  'WeakSet',
+  'Promise',
+  'Symbol',
+  'Error',
+  'TypeError',
+  'RangeError',
+  'Proxy',
+  'Reflect',
+  'Intl',
+  'globalThis',
+  'window',
+  'document',
+  'process',
+  'Buffer',
+  'require',
+]);
+
 export function collectFiles(dir, files = [], config = {}, directories = null) {
   const trackDirs = directories !== null;
   let entries;
@@ -458,7 +489,9 @@ export async function buildGraph(rootDir, opts = {}) {
       }
 
       // Call edges with confidence scoring — using pre-loaded lookup maps (N+1 fix)
+      const seenCallEdges = new Set();
       for (const call of symbols.calls) {
+        if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
         let caller = null;
         for (const def of symbols.definitions) {
           if (def.line <= call.line) {
@@ -499,8 +532,10 @@ export async function buildGraph(rootDir, opts = {}) {
               call.receiver === 'self' ||
               call.receiver === 'super'
             ) {
-              // Global fallback — only for standalone calls or this/self/super calls
-              targets = nodesByName.get(call.name) || [];
+              // Scoped fallback — same-dir or parent-dir only, not global
+              targets = (nodesByName.get(call.name) || []).filter(
+                (n) => computeConfidence(relPath, n.file, null) >= 0.5,
+              );
             }
             // else: method call on a receiver — skip global fallback entirely
           }
@@ -515,7 +550,9 @@ export async function buildGraph(rootDir, opts = {}) {
         }
 
         for (const t of targets) {
-          if (t.id !== caller.id) {
+          const edgeKey = `${caller.id}|${t.id}`;
+          if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
+            seenCallEdges.add(edgeKey);
             const confidence = computeConfidence(relPath, t.file, importedFrom);
             insertEdge.run(caller.id, t.id, 'calls', confidence, isDynamic);
             edgeCount++;
