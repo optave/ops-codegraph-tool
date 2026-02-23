@@ -101,6 +101,34 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'context',
+    description:
+      'Full context for a function: source code, dependencies with summaries, callers, signature, and related tests — everything needed to understand or modify a function in one call',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Function/method/class name (partial match)' },
+        depth: {
+          type: 'number',
+          description: 'Include callee source up to N levels deep (0=no source, 1=direct)',
+          default: 0,
+        },
+        no_source: {
+          type: 'boolean',
+          description: 'Skip source extraction (metadata only)',
+          default: false,
+        },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        include_tests: {
+          type: 'boolean',
+          description: 'Include test file source code',
+          default: false,
+        },
+      },
+      required: ['name'],
+    },
+  },
+  {
     name: 'diff_impact',
     description: 'Analyze git diff to find which functions changed and their transitive callers',
     inputSchema: {
@@ -270,6 +298,7 @@ export async function startMCPServer(customDbPath, options = {}) {
     fileDepsData,
     fnDepsData,
     fnImpactData,
+    contextData,
     diffImpactData,
     listFunctionsData,
   } = await import('./queries.js');
@@ -346,6 +375,14 @@ export async function startMCPServer(customDbPath, options = {}) {
           result = fnImpactData(args.name, dbPath, {
             depth: args.depth,
             noTests: args.no_tests,
+          });
+          break;
+        case 'context':
+          result = contextData(args.name, dbPath, {
+            depth: args.depth,
+            noSource: args.no_source,
+            noTests: args.no_tests,
+            includeTests: args.include_tests,
           });
           break;
         case 'diff_impact':

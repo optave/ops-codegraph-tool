@@ -11,6 +11,7 @@ import { buildEmbeddings, MODELS, search } from './embedder.js';
 import { exportDOT, exportJSON, exportMermaid } from './export.js';
 import { setVerbose } from './logger.js';
 import {
+  context,
   diffImpact,
   fileDeps,
   fnDeps,
@@ -126,6 +127,25 @@ program
     fnImpact(name, opts.db, {
       depth: parseInt(opts.depth, 10),
       noTests: !opts.tests,
+      json: opts.json,
+    });
+  });
+
+program
+  .command('context <name>')
+  .description('Full context for a function: source, deps, callers, tests, signature')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('--depth <n>', 'Include callee source up to N levels deep', '0')
+  .option('--no-source', 'Metadata only (skip source extraction)')
+  .option('--include-tests', 'Include test source code')
+  .option('-T, --no-tests', 'Exclude test files from callers')
+  .option('-j, --json', 'Output as JSON')
+  .action((name, opts) => {
+    context(name, opts.db, {
+      depth: parseInt(opts.depth, 10),
+      noSource: !opts.source,
+      noTests: !opts.tests,
+      includeTests: opts.includeTests,
       json: opts.json,
     });
   });

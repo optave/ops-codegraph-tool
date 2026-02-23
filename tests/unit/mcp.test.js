@@ -16,6 +16,7 @@ const ALL_TOOL_NAMES = [
   'module_map',
   'fn_deps',
   'fn_impact',
+  'context',
   'diff_impact',
   'semantic_search',
   'export_graph',
@@ -209,6 +210,7 @@ describe('startMCPServer handler dispatch', () => {
       fileDepsData: vi.fn(() => ({ file: 'test', results: [] })),
       fnDepsData: vi.fn(() => ({ name: 'test', results: [] })),
       fnImpactData: vi.fn(() => ({ name: 'test', results: [] })),
+      contextData: vi.fn(() => ({ name: 'test', results: [] })),
       diffImpactData: vi.fn(() => ({ changedFiles: 0, affectedFunctions: [] })),
       listFunctionsData: vi.fn(() => ({ count: 0, functions: [] })),
     }));
@@ -268,6 +270,7 @@ describe('startMCPServer handler dispatch', () => {
       fileDepsData: vi.fn(),
       fnDepsData: fnDepsMock,
       fnImpactData: vi.fn(),
+      contextData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
     }));
@@ -313,6 +316,7 @@ describe('startMCPServer handler dispatch', () => {
       fileDepsData: vi.fn(),
       fnDepsData: vi.fn(),
       fnImpactData: fnImpactMock,
+      contextData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
     }));
@@ -361,6 +365,7 @@ describe('startMCPServer handler dispatch', () => {
       fileDepsData: vi.fn(),
       fnDepsData: vi.fn(),
       fnImpactData: vi.fn(),
+      contextData: vi.fn(),
       diffImpactData: diffImpactMock,
       listFunctionsData: vi.fn(),
     }));
@@ -414,6 +419,7 @@ describe('startMCPServer handler dispatch', () => {
       fileDepsData: vi.fn(),
       fnDepsData: vi.fn(),
       fnImpactData: vi.fn(),
+      contextData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: listFnMock,
     }));
@@ -468,6 +474,7 @@ describe('startMCPServer handler dispatch', () => {
       fileDepsData: vi.fn(),
       fnDepsData: vi.fn(),
       fnImpactData: vi.fn(),
+      contextData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
     }));
@@ -515,6 +522,7 @@ describe('startMCPServer handler dispatch', () => {
       fileDepsData: vi.fn(),
       fnDepsData: vi.fn(),
       fnImpactData: vi.fn(),
+      contextData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
     }));
@@ -563,6 +571,7 @@ describe('startMCPServer handler dispatch', () => {
       fileDepsData: vi.fn(),
       fnDepsData: vi.fn(),
       fnImpactData: vi.fn(),
+      contextData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
     }));
@@ -613,6 +622,7 @@ describe('startMCPServer handler dispatch', () => {
       fileDepsData: vi.fn(),
       fnDepsData: vi.fn(),
       fnImpactData: vi.fn(),
+      contextData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
     }));
@@ -666,6 +676,7 @@ describe('startMCPServer handler dispatch', () => {
       fileDepsData: vi.fn(),
       fnDepsData: vi.fn(),
       fnImpactData: vi.fn(),
+      contextData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
     }));
@@ -719,6 +730,7 @@ describe('startMCPServer handler dispatch', () => {
       fileDepsData: vi.fn(),
       fnDepsData: vi.fn(),
       fnImpactData: vi.fn(),
+      contextData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
     }));
@@ -763,6 +775,7 @@ describe('startMCPServer handler dispatch', () => {
       fileDepsData: vi.fn(),
       fnDepsData: vi.fn(),
       fnImpactData: vi.fn(),
+      contextData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
     }));
@@ -807,6 +820,7 @@ describe('startMCPServer handler dispatch', () => {
       fileDepsData: vi.fn(),
       fnDepsData: vi.fn(),
       fnImpactData: vi.fn(),
+      contextData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
     }));
@@ -851,6 +865,7 @@ describe('startMCPServer handler dispatch', () => {
       fileDepsData: vi.fn(),
       fnDepsData: vi.fn(),
       fnImpactData: vi.fn(),
+      contextData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
     }));

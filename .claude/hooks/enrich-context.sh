@@ -69,7 +69,11 @@ printf '%s' "$DEPS" | node -e "
       if(importedBy)ctx+='\n  Imported by: '+importedBy;
       if(defs)ctx+='\n  Defines: '+defs;
       console.log(JSON.stringify({
-        hookSpecificOutput: { additionalContext: ctx }
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
+          additionalContext: ctx
+        }
       }));
     } catch(e) {}
   });

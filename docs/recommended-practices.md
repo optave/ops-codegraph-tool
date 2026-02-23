@@ -224,6 +224,18 @@ You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-
 
 **Enrichment hook** (PreToolUse on Read/Grep): when Claude reads a file, the hook runs `codegraph deps` and injects import/export context into the conversation via `additionalContext`. This means Claude sees "this file imports X, Y and is imported by Z" without having to be told.
 
+> **Important:** For `additionalContext` to surface in the agent's context, the hook output must include all three fields in `hookSpecificOutput`: `hookEventName: "PreToolUse"`, `permissionDecision: "allow"`, and `additionalContext`. Without `hookEventName` and `permissionDecision`, the context is silently dropped. Example output:
+>
+> ```json
+> {
+>   "hookSpecificOutput": {
+>     "hookEventName": "PreToolUse",
+>     "permissionDecision": "allow",
+>     "additionalContext": "[codegraph] src/builder.js\n  Imports: src/config.js, src/db.js"
+>   }
+> }
+> ```
+
 **Graph update hook** (PostToolUse on Edit/Write): keeps the graph incrementally updated after each file edit. Only changed files are re-parsed.
 
 > **Windows note:** If your hooks use bash scripts, normalize backslashes inside `node -e` rather than bash (`${VAR//\\//}` fails on Git Bash). See this repo's `.claude/hooks/enrich-context.sh` for the pattern.

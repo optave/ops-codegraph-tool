@@ -38,6 +38,7 @@ export { isNativeAvailable } from './native.js';
 export { getActiveEngine, parseFileAuto, parseFilesAuto } from './parser.js';
 // Query functions (data-returning)
 export {
+  contextData,
   diffImpactData,
   fileDepsData,
   fnDepsData,
