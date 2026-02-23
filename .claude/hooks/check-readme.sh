@@ -3,7 +3,14 @@
 # Runs as a PreToolUse hook on Bash tool calls.
 
 INPUT=$(cat)
-COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty')
+COMMAND=$(echo "$INPUT" | node -e "
+  let d='';
+  process.stdin.on('data',c=>d+=c);
+  process.stdin.on('end',()=>{
+    const p=JSON.parse(d).tool_input?.command||'';
+    if(p)process.stdout.write(p);
+  });
+" 2>/dev/null) || true
 
 # Only act on git commit commands
 if ! echo "$COMMAND" | grep -qE '^\s*git\s+commit'; then
@@ -30,13 +37,16 @@ if [ "$NEEDS_CHECK" -gt 0 ]; then
   [ "$CLAUDE_STAGED" -eq 0 ] && MISSING="${MISSING:+$MISSING, }CLAUDE.md"
   [ "$ROADMAP_STAGED" -eq 0 ] && MISSING="${MISSING:+$MISSING, }ROADMAP.md"
 
-  jq -n --arg missing "$MISSING" '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: ($missing + " not staged but source files were changed. Review whether these docs need updating — README.md (language support table, feature list, command docs), CLAUDE.md (architecture table, supported languages, key design decisions), and ROADMAP.md (phase status, new features, deliverables). If they truly do not need changes, re-run the commit with docs check acknowledged.")
-    }
-  }'
+  node -e "
+    const missing = process.argv[1];
+    console.log(JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: missing + ' not staged but source files were changed. Review whether these docs need updating — README.md (language support table, feature list, command docs), CLAUDE.md (architecture table, supported languages, key design decisions), and ROADMAP.md (phase status, new features, deliverables). If they truly do not need changes, re-run the commit with docs check acknowledged.'
+      }
+    }));
+  " "$MISSING"
   exit 0
 fi
 
