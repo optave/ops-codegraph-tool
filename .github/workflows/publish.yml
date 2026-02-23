@@ -22,8 +22,8 @@ jobs:
   preflight:
     name: Preflight checks
     runs-on: ubuntu-latest
-    # Skip dev publish when the push is a stable release version bump
-    if: "${{ github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore: release v') }}"
+    # Skip dev publish when the push is a stable release version bump (direct push or merged PR)
+    if: "${{ github.event_name != 'push' || (!startsWith(github.event.head_commit.message, 'chore: release v') && !contains(github.event.head_commit.message, 'release/v')) }}"
     permissions:
       contents: read
     steps:
