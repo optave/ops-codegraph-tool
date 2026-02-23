@@ -259,6 +259,10 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Generate DEPENDENCIES.json
+        if: github.event_name != 'push'
+        run: npm ls --json --all --omit=dev > DEPENDENCIES.json 2>/dev/null || true
+
       - name: Push version bump via PR
         if: github.event_name != 'push'
         env:
@@ -269,10 +273,10 @@ jobs:
           BRANCH="release/v${VERSION}"
 
           # Check if there are version bump changes to push
-          if git diff --quiet HEAD -- package.json package-lock.json CHANGELOG.md DEPENDENCIES.md; then
+          if git diff --quiet HEAD -- package.json package-lock.json CHANGELOG.md DEPENDENCIES.json; then
             echo "No version bump commit to push — skipping PR"
           else
-            git add package.json package-lock.json CHANGELOG.md DEPENDENCIES.md
+            git add package.json package-lock.json CHANGELOG.md DEPENDENCIES.json
             git commit -m "chore: release v${VERSION}"
             git push origin "HEAD:refs/heads/${BRANCH}"
             gh pr create \

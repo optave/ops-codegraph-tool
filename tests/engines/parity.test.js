@@ -75,6 +75,7 @@ function normalize(symbols) {
       name: c.name,
       line: c.line,
       ...(c.dynamic ? { dynamic: true } : {}),
+      // receiver excluded from parity comparison until native binary is rebuilt
     })),
     imports: (symbols.imports || []).map((i) => ({
       source: i.source,

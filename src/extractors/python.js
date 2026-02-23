@@ -69,12 +69,19 @@ export function extractPythonSymbols(tree, _filePath) {
         const fn = node.childForFieldName('function');
         if (fn) {
           let callName = null;
+          let receiver;
           if (fn.type === 'identifier') callName = fn.text;
           else if (fn.type === 'attribute') {
             const attr = fn.childForFieldName('attribute');
             if (attr) callName = attr.text;
+            const obj = fn.childForFieldName('object');
+            if (obj) receiver = obj.text;
           }
-          if (callName) calls.push({ name: callName, line: node.startPosition.row + 1 });
+          if (callName) {
+            const call = { name: callName, line: node.startPosition.row + 1 };
+            if (receiver) call.receiver = receiver;
+            calls.push(call);
+          }
         }
         break;
       }

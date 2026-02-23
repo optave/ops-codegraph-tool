@@ -245,12 +245,15 @@ export { TOOLS, buildToolList };
 export async function startMCPServer(customDbPath, options = {}) {
   const { allowedRepos } = options;
   const multiRepo = options.multiRepo || !!allowedRepos;
-  let Server, StdioServerTransport;
+  let Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema;
   try {
     const sdk = await import('@modelcontextprotocol/sdk/server/index.js');
     Server = sdk.Server;
     const transport = await import('@modelcontextprotocol/sdk/server/stdio.js');
     StdioServerTransport = transport.StdioServerTransport;
+    const types = await import('@modelcontextprotocol/sdk/types.js');
+    ListToolsRequestSchema = types.ListToolsRequestSchema;
+    CallToolRequestSchema = types.CallToolRequestSchema;
   } catch {
     console.error(
       'MCP server requires @modelcontextprotocol/sdk.\n' +
@@ -279,9 +282,11 @@ export async function startMCPServer(customDbPath, options = {}) {
     { capabilities: { tools: {} } },
   );
 
-  server.setRequestHandler('tools/list', async () => ({ tools: buildToolList(multiRepo) }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: buildToolList(multiRepo),
+  }));
 
-  server.setRequestHandler('tools/call', async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
     try {

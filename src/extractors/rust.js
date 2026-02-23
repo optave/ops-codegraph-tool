@@ -135,10 +135,20 @@ export function extractRustSymbols(tree, _filePath) {
             calls.push({ name: fn.text, line: node.startPosition.row + 1 });
           } else if (fn.type === 'field_expression') {
             const field = fn.childForFieldName('field');
-            if (field) calls.push({ name: field.text, line: node.startPosition.row + 1 });
+            if (field) {
+              const value = fn.childForFieldName('value');
+              const call = { name: field.text, line: node.startPosition.row + 1 };
+              if (value) call.receiver = value.text;
+              calls.push(call);
+            }
           } else if (fn.type === 'scoped_identifier') {
             const name = fn.childForFieldName('name');
-            if (name) calls.push({ name: name.text, line: node.startPosition.row + 1 });
+            if (name) {
+              const path = fn.childForFieldName('path');
+              const call = { name: name.text, line: node.startPosition.row + 1 };
+              if (path) call.receiver = path.text;
+              calls.push(call);
+            }
           }
         }
         break;

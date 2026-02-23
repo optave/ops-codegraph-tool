@@ -1,2 +1,8 @@
-# Enforce LF line endings in the repo (Biome requires LF)
+# Enforce LF line endings for all text files
 * text=auto eol=lf
+
+# Binary files
+*.wasm binary
+*.node binary
+*.png binary
+*.ico binary

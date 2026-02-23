@@ -101,6 +101,7 @@ function normalizeNativeSymbols(result) {
       name: c.name,
       line: c.line,
       dynamic: c.dynamic,
+      receiver: c.receiver,
     })),
     imports: (result.imports || []).map((i) => ({
       source: i.source,

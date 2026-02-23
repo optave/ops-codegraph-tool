@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # rebuild-graph.sh — PostToolUse hook for Edit and Write tools
-# Incrementally rebuilds the codegraph after source file edits.
+# Incrementally updates the codegraph after source file edits.
 # Always exits 0 (informational only, never blocks).
 
 set -euo pipefail
 
 INPUT=$(cat)
 
-# Extract file path using node (jq may not be available on Windows)
+# Extract file path and normalize backslashes — all in node to avoid
+# bash backslash issues on Windows/Git Bash
 FILE_PATH=$(echo "$INPUT" | node -e "
   let d='';
   process.stdin.on('data',c=>d+=c);
   process.stdin.on('end',()=>{
-    const p=JSON.parse(d).tool_input?.file_path||'';
+    const p=(JSON.parse(d).tool_input?.file_path||'').replace(/\\\\/g,'/');
     if(p)process.stdout.write(p);
   });
 " 2>/dev/null) || true

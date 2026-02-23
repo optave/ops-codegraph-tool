@@ -70,4 +70,36 @@ describe('JavaScript parser', () => {
     const dynamicCalls = symbols.calls.filter((c) => c.dynamic);
     expect(dynamicCalls.length).toBeGreaterThanOrEqual(1);
   });
+
+  it('captures receiver for method calls', () => {
+    const symbols = parseJS(`
+      obj.method();
+      standalone();
+      this.foo();
+      arr[0].bar();
+      a.b.c();
+    `);
+    const method = symbols.calls.find((c) => c.name === 'method');
+    expect(method).toBeDefined();
+    expect(method.receiver).toBe('obj');
+
+    const standalone = symbols.calls.find((c) => c.name === 'standalone');
+    expect(standalone).toBeDefined();
+    expect(standalone.receiver).toBeUndefined();
+
+    const foo = symbols.calls.find((c) => c.name === 'foo');
+    expect(foo).toBeDefined();
+    expect(foo.receiver).toBe('this');
+
+    const c = symbols.calls.find((c) => c.name === 'c');
+    expect(c).toBeDefined();
+    expect(c.receiver).toBe('a.b');
+  });
+
+  it('does not set receiver for .call()/.apply()/.bind() unwrapped calls', () => {
+    const symbols = parseJS(`fn.call(null, arg);`);
+    const fnCall = symbols.calls.find((c) => c.name === 'fn');
+    expect(fnCall).toBeDefined();
+    expect(fnCall.receiver).toBeUndefined();
+  });
 });

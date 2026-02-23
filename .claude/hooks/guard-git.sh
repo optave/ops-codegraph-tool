@@ -74,6 +74,18 @@ if echo "$COMMAND" | grep -qE '^\s*git\s+stash'; then
   deny "BLOCKED: 'git stash' hides all working tree changes including other sessions' work. In worktree mode, commit your changes directly instead."
 fi
 
+# --- Branch name validation on push ---
+
+if echo "$COMMAND" | grep -qE '^\s*git\s+push'; then
+  BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || true
+  if [ -n "$BRANCH" ] && [ "$BRANCH" != "main" ] && [ "$BRANCH" != "HEAD" ]; then
+    PATTERN="^(feat|fix|docs|refactor|test|chore|ci|perf|build|release|dependabot|revert)/"
+    if [[ ! "$BRANCH" =~ $PATTERN ]]; then
+      deny "BLOCKED: Branch '$BRANCH' does not match required pattern. Branch names must start with: feat/, fix/, docs/, refactor/, test/, chore/, ci/, perf/, build/, release/, revert/"
+    fi
+  fi
+fi
+
 # --- Commit validation against edit log ---
 
 if echo "$COMMAND" | grep -qE '^\s*git\s+commit'; then

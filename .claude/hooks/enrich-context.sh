@@ -8,20 +8,23 @@ set -euo pipefail
 # Read the tool input from stdin
 INPUT=$(cat)
 
-# Extract file path based on tool type
-# Read tool uses tool_input.file_path, Grep uses tool_input.path
-FILE_PATH=$(echo "$INPUT" | node -e "
+# Extract file path and convert to relative — all in node to avoid
+# bash backslash issues on Windows/Git Bash
+REL_PATH=$(printf '%s' "$INPUT" | CLAUDE_PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}" node -e "
   let d='';
   process.stdin.on('data',c=>d+=c);
   process.stdin.on('end',()=>{
     const o=JSON.parse(d).tool_input||{};
-    const p=o.file_path||o.path||'';
-    if(p)process.stdout.write(p);
+    let p=(o.file_path||o.path||'').replace(/\\\\/g,'/');
+    if(!p)return;
+    let dir=(process.env.CLAUDE_PROJECT_DIR||'.').replace(/\\\\/g,'/');
+    if(p.startsWith(dir))p=p.slice(dir.length+1);
+    process.stdout.write(p);
   });
 " 2>/dev/null) || true
 
 # Guard: no file path found
-if [ -z "$FILE_PATH" ]; then
+if [ -z "$REL_PATH" ]; then
   exit 0
 fi
 
@@ -36,15 +39,6 @@ if ! command -v codegraph &>/dev/null && ! command -v npx &>/dev/null; then
   exit 0
 fi
 
-# Convert absolute path to relative (strip project dir prefix)
-REL_PATH="$FILE_PATH"
-PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
-if [[ "$FILE_PATH" == "${PROJECT_DIR}"* ]]; then
-  REL_PATH="${FILE_PATH#"${PROJECT_DIR}"/}"
-fi
-# Normalize backslashes to forward slashes (Windows compatibility)
-REL_PATH="${REL_PATH//\\//}"
-
 # Run codegraph deps and capture output
 DEPS=""
 if command -v codegraph &>/dev/null; then
@@ -58,20 +52,24 @@ if [ -z "$DEPS" ] || [ "$DEPS" = "null" ]; then
   exit 0
 fi
 
-# Output as informational context (never deny)
-echo "$DEPS" | node -e "
+# Output as additionalContext so it surfaces in Claude's context
+printf '%s' "$DEPS" | node -e "
   let d='';
   process.stdin.on('data',c=>d+=c);
   process.stdin.on('end',()=>{
     try {
       const o=JSON.parse(d);
       const r=o.results?.[0]||{};
-      const imports=(r.imports||[]).length;
-      const importedBy=(r.importedBy||[]).length;
-      const defs=(r.definitions||[]).length;
+      const imports=(r.imports||[]).map(i=>i.file).join(', ');
+      const importedBy=(r.importedBy||[]).map(i=>i.file).join(', ');
+      const defs=(r.definitions||[]).map(d=>d.kind+' '+d.name).join(', ');
       const file=o.file||'unknown';
+      let ctx='[codegraph] '+file;
+      if(imports)ctx+='\n  Imports: '+imports;
+      if(importedBy)ctx+='\n  Imported by: '+importedBy;
+      if(defs)ctx+='\n  Defines: '+defs;
       console.log(JSON.stringify({
-        hookSpecificOutput: 'Codegraph context for '+file+':\\n  Imports: '+imports+' files\\n  Imported by: '+importedBy+' files\\n  Definitions: '+defs+' symbols'
+        hookSpecificOutput: { additionalContext: ctx }
       }));
     } catch(e) {}
   });

@@ -170,7 +170,10 @@ export function extractRubySymbols(tree, _filePath) {
               }
             }
           } else {
-            calls.push({ name: methodNode.text, line: node.startPosition.row + 1 });
+            const recv = node.childForFieldName('receiver');
+            const call = { name: methodNode.text, line: node.startPosition.row + 1 };
+            if (recv) call.receiver = recv.text;
+            calls.push(call);
           }
         }
         break;

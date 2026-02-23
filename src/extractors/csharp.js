@@ -186,7 +186,12 @@ export function extractCSharpSymbols(tree, _filePath) {
             calls.push({ name: fn.text, line: node.startPosition.row + 1 });
           } else if (fn.type === 'member_access_expression') {
             const name = fn.childForFieldName('name');
-            if (name) calls.push({ name: name.text, line: node.startPosition.row + 1 });
+            if (name) {
+              const expr = fn.childForFieldName('expression');
+              const call = { name: name.text, line: node.startPosition.row + 1 };
+              if (expr) call.receiver = expr.text;
+              calls.push(call);
+            }
           } else if (fn.type === 'generic_name' || fn.type === 'member_binding_expression') {
             const name = fn.childForFieldName('name') || fn.child(0);
             if (name) calls.push({ name: name.text, line: node.startPosition.row + 1 });

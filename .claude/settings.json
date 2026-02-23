@@ -22,7 +22,7 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/enrich-context.sh\"",
-            "timeout": 5
+            "timeout": 10
           }
         ]
       },
@@ -32,7 +32,7 @@
           {
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/enrich-context.sh\"",
-            "timeout": 5
+            "timeout": 10
           }
         ]
       }
@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/rebuild-graph.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/update-graph.sh\"",
             "timeout": 30
           },
           {

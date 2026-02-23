@@ -138,23 +138,30 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                             name: node_text(&fn_node, source).to_string(),
                             line: start_line(node),
                             dynamic: None,
+                            receiver: None,
                         });
                     }
                     "field_expression" => {
                         if let Some(field) = fn_node.child_by_field_name("field") {
+                            let receiver = fn_node.child_by_field_name("value")
+                                .map(|v| node_text(&v, source).to_string());
                             symbols.calls.push(Call {
                                 name: node_text(&field, source).to_string(),
                                 line: start_line(node),
                                 dynamic: None,
+                                receiver,
                             });
                         }
                     }
                     "scoped_identifier" => {
                         if let Some(name) = fn_node.child_by_field_name("name") {
+                            let receiver = fn_node.child_by_field_name("path")
+                                .map(|p| node_text(&p, source).to_string());
                             symbols.calls.push(Call {
                                 name: node_text(&name, source).to_string(),
                                 line: start_line(node),
                                 dynamic: None,
+                                receiver,
                             });
                         }
                     }
@@ -169,6 +176,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     name: format!("{}!", node_text(&macro_node, source)),
                     line: start_line(node),
                     dynamic: None,
+                    receiver: None,
                 });
             }
         }

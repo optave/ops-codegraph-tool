@@ -206,7 +206,10 @@ export function extractPHPSymbols(tree, _filePath) {
       case 'member_call_expression': {
         const name = node.childForFieldName('name');
         if (name) {
-          calls.push({ name: name.text, line: node.startPosition.row + 1 });
+          const obj = node.childForFieldName('object');
+          const call = { name: name.text, line: node.startPosition.row + 1 };
+          if (obj) call.receiver = obj.text;
+          calls.push(call);
         }
         break;
       }
@@ -214,7 +217,10 @@ export function extractPHPSymbols(tree, _filePath) {
       case 'scoped_call_expression': {
         const name = node.childForFieldName('name');
         if (name) {
-          calls.push({ name: name.text, line: node.startPosition.row + 1 });
+          const scope = node.childForFieldName('scope');
+          const call = { name: name.text, line: node.startPosition.row + 1 };
+          if (scope) call.receiver = scope.text;
+          calls.push(call);
         }
         break;
       }

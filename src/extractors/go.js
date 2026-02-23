@@ -152,7 +152,12 @@ export function extractGoSymbols(tree, _filePath) {
             calls.push({ name: fn.text, line: node.startPosition.row + 1 });
           } else if (fn.type === 'selector_expression') {
             const field = fn.childForFieldName('field');
-            if (field) calls.push({ name: field.text, line: node.startPosition.row + 1 });
+            if (field) {
+              const operand = fn.childForFieldName('operand');
+              const call = { name: field.text, line: node.startPosition.row + 1 };
+              if (operand) call.receiver = operand.text;
+              calls.push(call);
+            }
           }
         }
         break;
