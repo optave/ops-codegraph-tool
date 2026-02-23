@@ -8,9 +8,6 @@ on:
       - "package-lock.json"
   pull_request:
     branches: [main]
-    paths:
-      - "package.json"
-      - "package-lock.json"
   workflow_dispatch:
   schedule:
     - cron: "0 3 * * 1" # Weekly on Monday at 3 AM
