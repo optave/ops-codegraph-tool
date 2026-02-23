@@ -45,8 +45,8 @@ Most tools in this space can't do that:
 
 | Problem | Who has it | Why it breaks on every commit |
 |---|---|---|
-| **Full re-index on every change** | code-graph-rag, CodeMCP, axon, autodev-codebase | No file-level change tracking. Change one file → re-parse and re-insert the entire codebase. On a 3,000-file project, that's 30+ seconds per commit minimum |
-| **Cloud API calls baked into the pipeline** | code-graph-rag, autodev-codebase, Claude-code-memory, CodeRAG | Embeddings are generated through cloud APIs (OpenAI, Voyage AI, Gemini). Every rebuild = API round-trips for every function. Slow, expensive, and rate-limited. You can't put this in a commit hook |
+| **Full re-index on every change** | code-graph-rag, CodeMCP, axon, joern, cpg | No file-level change tracking. Change one file → re-parse and re-insert the entire codebase. On a 3,000-file project, that's 30+ seconds per commit minimum |
+| **Cloud API calls baked into the pipeline** | code-graph-rag, CodeRAG | Embeddings are generated through cloud APIs (OpenAI, Voyage AI, Gemini). Every rebuild = API round-trips for every function. Slow, expensive, and rate-limited. You can't put this in a commit hook |
 | **Heavy infrastructure that's slow to restart** | code-graph-rag (Memgraph), axon (KuzuDB), badger-graph (Dgraph) | External databases add latency to every write. Bulk-inserting a full graph into Memgraph is not a sub-second operation |
 | **No persistence between runs** | glimpse, pyan, cflow | Re-parse from scratch every time. No database, no delta, no incremental anything |
 
@@ -71,20 +71,20 @@ Most code graph tools make you choose: **fast local analysis with no AI, or powe
 
 ### Feature comparison
 
-| Capability | codegraph | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | [glimpse](https://github.com/seatedro/glimpse) | [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | [axon](https://github.com/harshkedia177/axon) | [autodev-codebase](https://github.com/anrgct/autodev-codebase) | [arbor](https://github.com/Anandb71/arbor) | [Claude-code-memory](https://github.com/Durafen/Claude-code-memory) |
+| Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [glimpse](https://github.com/seatedro/glimpse) | [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | [axon](https://github.com/harshkedia177/axon) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Function-level analysis | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | — |
-| Multi-language | **11** | Multi | Multi | SCIP langs | Few | **40+** | Multi | — |
-| Semantic search | **Yes** | **Yes** | — | — | — | **Yes** | **Yes** | **Yes** |
-| MCP / AI agent support | **Yes** | **Yes** | — | **Yes** | — | — | **Yes** | **Yes** |
-| Git diff impact | **Yes** | — | — | — | **Yes** | — | — | — |
-| Watch mode | **Yes** | — | — | — | — | — | — | — |
+| Function-level analysis | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
+| Multi-language | **11** | **14** | **32** | Multi | **~10** | Multi | SCIP langs | Few |
+| Semantic search | **Yes** | — | **Yes** | **Yes** | — | — | — | — |
+| MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | — | **Yes** | — |
+| Git diff impact | **Yes** | — | — | — | — | — | — | **Yes** |
+| Watch mode | **Yes** | — | **Yes** | — | — | — | — | — |
 | CI workflow included | **Yes** | — | — | — | — | — | — | — |
-| Cycle detection | **Yes** | — | — | — | **Yes** | — | — | — |
-| Incremental rebuilds | **Yes** | — | — | — | — | — | — | — |
-| Zero config | **Yes** | — | **Yes** | — | — | — | **Yes** | — |
-| LLM-optional (works without API keys) | **Yes** | — | **Yes** | **Yes** | **Yes** | — | **Yes** | — |
-| Open source | **Yes** | Yes | Yes | Custom | — | — | Yes | — |
+| Cycle detection | **Yes** | — | **Yes** | — | — | — | — | **Yes** |
+| Incremental rebuilds | **Yes** | — | **Yes** | — | — | — | — | — |
+| Zero config | **Yes** | — | **Yes** | — | — | **Yes** | — | — |
+| LLM-optional (works without API keys) | **Yes** | **Yes** | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** |
+| Open source | **Yes** | Yes | Yes | Yes | Yes | Yes | Custom | — |
 
 ### What makes codegraph different
 
@@ -104,13 +104,13 @@ The key question is: **can you rebuild your graph on every commit in a large cod
 
 | Tool | What it does well | The tradeoff |
 |---|---|---|
+| [joern](https://github.com/joernio/joern) | Full CPG (AST + CFG + PDG) for vulnerability discovery, Scala query DSL, 14 languages, daily releases | No incremental builds — full re-parse on every change. Requires JDK 21, no built-in MCP, no watch mode |
+| [narsil-mcp](https://github.com/postrv/narsil-mcp) | 90 MCP tools, 32 languages, taint analysis, SBOM, dead code, neural search, Merkle-tree incremental indexing, single ~30MB binary | Primarily MCP-only — no standalone CLI query interface. Neural search requires API key or ONNX source build |
 | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | Graph RAG with Memgraph, multi-provider AI, semantic search, code editing via AST | No incremental rebuilds — full re-index + re-embed through cloud APIs on every change. Requires Docker |
+| [cpg](https://github.com/Fraunhofer-AISEC/cpg) | Formal Code Property Graph (AST + CFG + PDG + DFG), ~10 languages, MCP module, LLVM IR support, academic specifications | No incremental builds. Requires JVM + Gradle, no zero config, no watch mode |
 | [glimpse](https://github.com/seatedro/glimpse) | Clipboard-first LLM context tool, call graphs, LSP resolution, token counting | Context-packing tool, not a dependency graph — no persistence, no MCP, no incremental updates |
 | [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | SCIP compiler-grade indexing, compound operations (83% token savings), secret scanning | No incremental builds. Custom license, requires SCIP toolchains per language |
 | [axon](https://github.com/harshkedia177/axon) | 11-phase pipeline, KuzuDB, community detection, dead code, change coupling | Full pipeline re-run on changes. No license, Python-only, no MCP |
-| [autodev-codebase](https://github.com/anrgct/autodev-codebase) | 40+ languages, interactive Cytoscape.js visualization, LLM reranking | Re-embeds through cloud APIs on changes. No license, complex setup |
-| [arbor](https://github.com/Anandb71/arbor) | Native GUI, confidence scoring, architectural role classification, fuzzy search | GUI-focused — no CLI pipeline, no watch mode, no CI integration |
-| [Claude-code-memory](https://github.com/Durafen/Claude-code-memory) | Persistent codebase memory for Claude Code, Memory Guard quality gate | Requires Voyage AI (cloud) + Qdrant (Docker) for core features |
 | [Madge](https://github.com/pahen/madge) | Simple file-level JS/TS dependency graphs | No function-level analysis, no impact tracing, JS/TS only |
 | [dependency-cruiser](https://github.com/sverweij/dependency-cruiser) | Architectural rule validation for JS/TS | Module-level only (function-level explicitly out of scope), requires config |
 | [Nx graph](https://nx.dev/) | Monorepo project-level dependency graph | Requires Nx workspace, project-level only (not file or function) |
