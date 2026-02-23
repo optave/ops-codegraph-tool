@@ -398,6 +398,7 @@ describe('startMCPServer handler dispatch', () => {
       fnImpactData: vi.fn(),
       contextData: vi.fn(),
       explainData: vi.fn(),
+      whereData: vi.fn(),
       diffImpactData: diffImpactMock,
       listFunctionsData: vi.fn(),
     }));
@@ -453,6 +454,7 @@ describe('startMCPServer handler dispatch', () => {
       fnImpactData: vi.fn(),
       contextData: vi.fn(),
       explainData: vi.fn(),
+      whereData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: listFnMock,
     }));
