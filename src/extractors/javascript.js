@@ -139,9 +139,11 @@ export function extractSymbols(tree, _filePath) {
           if (callInfo) {
             calls.push(callInfo);
           }
+          if (fn.type === 'member_expression') {
+            const cbDef = extractCallbackDefinition(node, fn);
+            if (cbDef) definitions.push(cbDef);
+          }
         }
-        const cbDef = extractCallbackDefinition(node);
-        if (cbDef) definitions.push(cbDef);
         break;
       }
 
@@ -320,10 +322,6 @@ function extractReceiverName(objNode) {
   if (objNode.type === 'identifier') return objNode.text;
   if (objNode.type === 'this') return 'this';
   if (objNode.type === 'super') return 'super';
-  if (objNode.type === 'member_expression') {
-    const prop = objNode.childForFieldName('property');
-    if (prop) return objNode.text;
-  }
   return objNode.text;
 }
 
@@ -432,8 +430,8 @@ const EXPRESS_METHODS = new Set([
 ]);
 const EVENT_METHODS = new Set(['on', 'once', 'addEventListener', 'addListener']);
 
-function extractCallbackDefinition(callNode) {
-  const fn = callNode.childForFieldName('function');
+function extractCallbackDefinition(callNode, fn) {
+  if (!fn) fn = callNode.childForFieldName('function');
   if (!fn || fn.type !== 'member_expression') return null;
 
   const prop = fn.childForFieldName('property');
