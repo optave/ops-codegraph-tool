@@ -116,6 +116,41 @@ The key question is: **can you rebuild your graph on every commit in a large cod
 | [Nx graph](https://nx.dev/) | Monorepo project-level dependency graph | Requires Nx workspace, project-level only (not file or function) |
 | [pyan](https://github.com/Technologicat/pyan) / [cflow](https://www.gnu.org/software/cflow/) | Function-level call graphs | Single-language each (Python / C only), no persistence, no queries |
 
+### Codegraph vs. Narsil-MCP: How to Decide
+
+If you are looking for local code intelligence over MCP, the closest alternative to `codegraph` is [postrv/narsil-mcp](https://github.com/postrv/narsil-mcp). Both projects aim to give AI agents deep context about your codebase, but they approach the problem with fundamentally different philosophies. 
+
+Here is a cold, analytical breakdown to help you decide which tool fits your workflow.
+
+#### The Core Difference
+
+* **Codegraph is a surgical scalpel.** It does one thing exceptionally well: building an always-fresh, function-level dependency graph in SQLite and exposing it to AI agents with zero fluff.
+* **Narsil-MCP is a Swiss Army knife.** It is a sprawling, "batteries-included" intelligence server that includes everything from taint analysis and SBOM generation to SPARQL knowledge graphs.
+
+#### Feature Comparison
+
+| Aspect | Optave Codegraph | Narsil-MCP |
+| :--- | :--- | :--- |
+| **Philosophy** | Lean, deterministic, AI-optimized | Comprehensive, feature-dense |
+| **AI Tool Count** | 13 focused tools | 90 distinct tools |
+| **Language Support** | 11 languages | 32 languages |
+| **Primary Interface** | CLI-first with MCP integration | MCP-first (CLI is secondary) |
+| **Supply Chain Risk** | Low (minimal dependency tree) | Higher (requires massive dependency graph for embedded ML/scanners) |
+| **Graph Updates** | Sub-second incremental (file-hash) | Parallel re-indexing / Merkle trees |
+
+#### Choose Codegraph if:
+
+* **You want to optimize AI agent reasoning.** Large Language Models degrade in performance and hallucinate when overwhelmed with choices. Codegraph’s tight 13-tool surface area ensures agents quickly understand their capabilities without wasting context window tokens.
+* **You are concerned about supply chain attacks.** To support 90 tools, SBOMs, and neural embeddings, a tool must pull in a massive dependency tree. Codegraph keeps its dependencies minimal, dramatically reducing the risk of malicious code sneaking onto your machine.
+* **You want deterministic blast-radius checks.** Features like `diff-impact` are built specifically to tell you exactly how a changed function cascades through your codebase before you merge a PR.
+* **You value a strong standalone CLI.** You want to query your code graph locally without necessarily spinning up an AI agent.
+
+#### Choose Narsil-MCP if:
+
+* **You want security and code intelligence together.** You dont want a separated MCP for security and prefer an 'all-in-one solution.
+* **You use niche languages.** Your codebase relies heavily on languages outside of Codegraph's core 11 (e.g., Fortran, Erlang, Zig, Swift).
+* **You are willing to manage tool presets.** Because 90 tools will overload an AI's context window, you don't mind manually configuring preset files (like "Minimal" or "Balanced") to restrict what the AI can see depending on your editor.
+
 ---
 
 ## 🚀 Quick Start
