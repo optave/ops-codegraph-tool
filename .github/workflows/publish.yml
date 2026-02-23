@@ -178,7 +178,7 @@ jobs:
       - name: Download native artifacts
         uses: actions/download-artifact@v4
         with:
-          path: artifacts/
+          path: ${{ runner.temp }}/artifacts/
 
       - name: Check if main package already published
         id: check-main
@@ -209,16 +209,19 @@ jobs:
             ["win32-x64"]="@optave/codegraph-win32-x64-msvc"
           )
 
-          for artifact_dir in artifacts/native-*/; do
+          ARTIFACTS="${RUNNER_TEMP}/artifacts"
+          PKG_DIR="${RUNNER_TEMP}/pkg"
+
+          for artifact_dir in "${ARTIFACTS}"/native-*/; do
             platform=$(basename "$artifact_dir" | sed 's/^native-//')
             pkg_name=${PACKAGES[$platform]}
             node_os=${platform%%-*}
             node_arch=${platform##*-}
 
-            mkdir -p "pkg/$platform"
-            cp "$artifact_dir"/*.node "pkg/$platform/codegraph-core.node"
+            mkdir -p "${PKG_DIR}/$platform"
+            cp "$artifact_dir"/*.node "${PKG_DIR}/$platform/codegraph-core.node"
 
-            cat > "pkg/$platform/package.json" <<PKGJSON
+            cat > "${PKG_DIR}/$platform/package.json" <<PKGJSON
           {
             "name": "${pkg_name}",
             "version": "${VERSION}",
@@ -242,7 +245,7 @@ jobs:
             fi
 
             echo "Publishing ${pkg_name}@${VERSION} with --tag ${NPM_TAG}"
-            npm publish "./pkg/$platform" --access public --provenance --tag "$NPM_TAG"
+            npm publish "${PKG_DIR}/$platform" --access public --provenance --tag "$NPM_TAG"
           done
 
       - name: Publish main package
