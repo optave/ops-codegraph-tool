@@ -188,12 +188,24 @@ Use `--kind function` to cut noise. Use `--file <pattern>` to scope.
 
 ### Claude Code hooks
 
-You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) to automatically rebuild the graph after file edits:
+You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) to give Claude automatic dependency context and keep the graph fresh as it edits files:
 
 ```json
 // .claude/settings.json
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/enrich-context.sh\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
@@ -210,16 +222,26 @@ You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-
 }
 ```
 
-This ensures the graph stays fresh as the AI agent modifies files. Incremental builds are automatic — only changed files are re-parsed.
+**Enrichment hook** (PreToolUse on Read/Grep): when Claude reads a file, the hook runs `codegraph deps` and injects import/export context into the conversation via `additionalContext`. This means Claude sees "this file imports X, Y and is imported by Z" without having to be told.
+
+**Graph update hook** (PostToolUse on Edit/Write): keeps the graph incrementally updated after each file edit. Only changed files are re-parsed.
+
+> **Windows note:** If your hooks use bash scripts, normalize backslashes inside `node -e` rather than bash (`${VAR//\\//}` fails on Git Bash). See this repo's `.claude/hooks/enrich-context.sh` for the pattern.
+
+See this repo's `.claude/hooks/` directory for working implementations:
+- `enrich-context.sh` — dependency context injection
+- `update-graph.sh` — incremental graph updates after edits
+- `guard-git.sh` — blocks dangerous git commands + validates branch names
+- `track-edits.sh` — logs edited files for commit validation
 
 #### Parallel session safety hooks
 
 When multiple AI agents work on the same repo concurrently, add hooks to prevent cross-session interference:
 
 - **Edit tracker** (PostToolUse on Edit|Write): log every file path touched to `.claude/session-edits.log`
-- **Git guard** (PreToolUse on Bash): block `git add .`, `git reset`, `git restore`, `git clean`, `git stash`, and validate that `git commit` only includes files from the session edit log
+- **Git guard** (PreToolUse on Bash): block `git add .`, `git reset`, `git restore`, `git clean`, `git stash`; validate that `git commit` only includes files from the session edit log; validate branch names match conventional prefixes
 
-See this repo's `.claude/hooks/track-edits.sh` and `guard-git.sh` for a working implementation. Pair with the `/worktree` command so each session gets an isolated copy of the repo.
+Pair with the `/worktree` command so each session gets an isolated copy of the repo.
 
 ---
 
