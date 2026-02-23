@@ -265,10 +265,10 @@ A single trailing semicolon is ignored (falls back to single-query mode). The `-
 
 | Flag | Model | Dimensions | Size | License | Notes |
 |---|---|---|---|---|---|
-| `minilm` (default) | all-MiniLM-L6-v2 | 384 | ~23 MB | Apache-2.0 | Fastest, good for quick iteration |
+| `minilm` | all-MiniLM-L6-v2 | 384 | ~23 MB | Apache-2.0 | Fastest, good for quick iteration |
 | `jina-small` | jina-embeddings-v2-small-en | 512 | ~33 MB | Apache-2.0 | Better quality, still small |
 | `jina-base` | jina-embeddings-v2-base-en | 768 | ~137 MB | Apache-2.0 | High quality, 8192 token context |
-| `jina-code` | jina-embeddings-v2-base-code | 768 | ~137 MB | Apache-2.0 | **Best for code search**, trained on code+text |
+| `jina-code` (default) | jina-embeddings-v2-base-code | 768 | ~137 MB | Apache-2.0 | **Best for code search**, trained on code+text |
 | `nomic` | nomic-embed-text-v1 | 768 | ~137 MB | Apache-2.0 | Good quality, 8192 context |
 | `nomic-v1.5` | nomic-embed-text-v1.5 | 768 | ~137 MB | Apache-2.0 | Improved nomic, Matryoshka dimensions |
 | `bge-large` | bge-large-en-v1.5 | 1024 | ~335 MB | MIT | Best general retrieval, top MTEB scores |

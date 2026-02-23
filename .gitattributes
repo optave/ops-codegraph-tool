@@ -1,0 +1,2 @@
+# Enforce LF line endings in the repo (Biome requires LF)
+* text=auto eol=lf
