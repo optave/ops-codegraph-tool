@@ -160,6 +160,50 @@ describe('moduleMapData', () => {
     const data = moduleMapData(dbPath, 2);
     expect(data.topNodes).toHaveLength(2);
   });
+
+  test('excludes contains edges from ranking and counts', () => {
+    // Build a separate DB with contains + imports edges
+    const tmpDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-contains-'));
+    fs.mkdirSync(path.join(tmpDir2, '.codegraph'));
+    const dbPath2 = path.join(tmpDir2, '.codegraph', 'graph.db');
+
+    const db2 = new Database(dbPath2);
+    db2.pragma('journal_mode = WAL');
+    initSchema(db2);
+
+    // Two file nodes
+    const fA = insertNode(db2, 'a.js', 'file', 'a.js', 0);
+    const fB = insertNode(db2, 'b.js', 'file', 'b.js', 0);
+    const fC = insertNode(db2, 'c.js', 'file', 'c.js', 0);
+
+    // a.js gets only a contains edge (structural)
+    insertEdge(db2, fC, fA, 'contains');
+    // b.js gets an imports edge (real dependency)
+    insertEdge(db2, fC, fB, 'imports');
+
+    db2.close();
+
+    try {
+      const data = moduleMapData(dbPath2);
+      const nodeA = data.topNodes.find((n) => n.file === 'a.js');
+      const nodeB = data.topNodes.find((n) => n.file === 'b.js');
+
+      // b.js (imports edge) should have inEdges=1, a.js (contains edge) should have inEdges=0
+      expect(nodeB.inEdges).toBe(1);
+      expect(nodeA.inEdges).toBe(0);
+
+      // b.js should rank above a.js
+      const indexA = data.topNodes.indexOf(nodeA);
+      const indexB = data.topNodes.indexOf(nodeB);
+      expect(indexB).toBeLessThan(indexA);
+
+      // c.js outEdges should only count the imports edge, not contains
+      const nodeC = data.topNodes.find((n) => n.file === 'c.js');
+      expect(nodeC.outEdges).toBe(1);
+    } finally {
+      fs.rmSync(tmpDir2, { recursive: true, force: true });
+    }
+  });
 });
 
 // ─── fileDepsData ──────────────────────────────────────────────────────
@@ -231,6 +275,6 @@ describe('diffImpactData', () => {
   test('returns error when run outside a git repo', () => {
     const data = diffImpactData(dbPath);
     expect(data).toHaveProperty('error');
-    expect(data.error).toMatch(/git diff/i);
+    expect(data.error).toMatch(/not a git repository/i);
   });
 });

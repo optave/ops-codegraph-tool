@@ -110,6 +110,23 @@ node src/cli.js deps src/<file>.js   # See what imports/depends on a file
 
 If codegraph reports an error, crashes, or produces wrong results when analyzing itself, **fix the bug in the codebase** — don't just work around it. This is the best way to find and resolve real issues.
 
+## Parallel Sessions
+
+Multiple Claude Code instances run concurrently in this repo. **Every session must start with `/worktree`** to get an isolated copy of the repo before making any changes. This prevents cross-session interference entirely.
+
+**Safety hooks** (`.claude/hooks/guard-git.sh` and `track-edits.sh`) enforce these rules automatically:
+
+- `guard-git.sh` (PreToolUse on Bash) **blocks**: `git add .`, `git add -A`, `git reset`, `git checkout -- <file>`, `git restore <file>`, `git clean`, `git stash`. It allows `git restore --staged <file>` for safe unstaging.
+- `guard-git.sh` also **validates commits**: compares staged files against the session edit log and blocks commits that include files you didn't edit.
+- `track-edits.sh` (PostToolUse on Edit/Write) logs every file you touch to `.claude/session-edits.log` (gitignored, per-worktree).
+
+**Rules:**
+- Run `/worktree` before starting work
+- Stage only files you explicitly changed
+- Commit with specific file paths: `git commit <files> -m "msg"`
+- Ignore unexpected dirty files — they belong to another session
+- Do not clean up lint/format issues in files you aren't working on
+
 ## Git Conventions
 
 - Never add AI co-authorship lines (`Co-Authored-By` or similar) to commit messages.

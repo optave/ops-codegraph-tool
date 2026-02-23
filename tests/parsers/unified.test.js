@@ -22,6 +22,12 @@ describe('Unified parser API', () => {
       expect(engine.name).toBe('wasm');
       expect(engine.version).toBeNull();
     });
+
+    it('throws when engine=native is explicitly requested but unavailable', () => {
+      const engine = getActiveEngine();
+      if (engine.name === 'native') return; // skip — native is available
+      expect(() => getActiveEngine({ engine: 'native' })).toThrow(/[Nn]ative/);
+    });
   });
 
   describe('parseFileAuto', () => {

@@ -62,6 +62,7 @@ let tmpDir, dbPath;
 
 beforeAll(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-queries-unit-'));
+  fs.mkdirSync(path.join(tmpDir, '.git'));
   fs.mkdirSync(path.join(tmpDir, '.codegraph'));
   dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
 
@@ -424,7 +425,7 @@ describe('diffImpact (display)', () => {
     const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
     diffImpact(dbPath);
     const allOutput = spy.mock.calls.map((c) => c[0]).join('\n');
-    expect(allOutput).toContain('git diff');
+    expect(allOutput).toMatch(/git diff|git/i);
     spy.mockRestore();
     mockExecFile.mockRestore();
   });

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from './config.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
@@ -581,10 +582,18 @@ export async function buildGraph(rootDir, opts = {}) {
   console.log(`Stored in ${dbPath}`);
   db.close();
 
-  try {
-    const { registerRepo } = await import('./registry.js');
-    registerRepo(rootDir);
-  } catch (err) {
-    debug(`Auto-registration failed: ${err.message}`);
+  if (!opts.skipRegistry) {
+    const tmpDir = path.resolve(os.tmpdir());
+    const resolvedRoot = path.resolve(rootDir);
+    if (resolvedRoot.startsWith(tmpDir)) {
+      debug(`Skipping auto-registration for temp directory: ${resolvedRoot}`);
+    } else {
+      try {
+        const { registerRepo } = await import('./registry.js');
+        registerRepo(rootDir);
+      } catch (err) {
+        debug(`Auto-registration failed: ${err.message}`);
+      }
+    }
   }
 }

@@ -2,9 +2,11 @@ use std::path::{Path, PathBuf};
 
 use crate::types::{AliasMapping, ImportResolutionInput, PathAliases, ResolvedImport};
 
-/// Normalize a path to use forward slashes (cross-platform consistency).
+/// Normalize a path to use forward slashes and clean `.` / `..` segments
+/// (cross-platform consistency).
 fn normalize_path(p: &str) -> String {
-    p.replace('\\', "/")
+    let cleaned: PathBuf = Path::new(p).components().collect();
+    cleaned.display().to_string().replace('\\', "/")
 }
 
 /// Try resolving via path aliases (tsconfig/jsconfig paths).
@@ -69,10 +71,10 @@ pub fn resolve_import_path(
         return import_source.to_string();
     }
 
-    // Relative import
+    // Relative import — normalize immediately to remove `.` / `..` segments
     let dir = Path::new(from_file).parent().unwrap_or(Path::new(""));
-    let resolved = dir.join(import_source);
-    let resolved_str = resolved.display().to_string();
+    let resolved: PathBuf = dir.join(import_source).components().collect();
+    let resolved_str = resolved.display().to_string().replace('\\', "/");
 
     // .js → .ts remap
     if resolved_str.ends_with(".js") {

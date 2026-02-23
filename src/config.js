@@ -19,7 +19,7 @@ export const DEFAULTS = {
     defaultDepth: 3,
     defaultLimit: 20,
   },
-  embeddings: { model: 'minilm', llmProvider: null },
+  embeddings: { model: 'jina-code', llmProvider: null },
   llm: { provider: null, model: null, baseUrl: null, apiKey: null, apiKeyCommand: null },
   search: { defaultMinScore: 0.2, rrfK: 60, topK: 15 },
   ci: { failOnCycles: false, impactThreshold: null },

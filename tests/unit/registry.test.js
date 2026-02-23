@@ -1,8 +1,10 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  DEFAULT_TTL_DAYS,
   listRepos,
   loadRegistry,
   pruneRegistry,
@@ -28,8 +30,26 @@ afterEach(() => {
 // ─── REGISTRY_PATH ──────────────────────────────────────────────────
 
 describe('REGISTRY_PATH', () => {
-  it('points to ~/.codegraph/registry.json', () => {
+  it('points to ~/.codegraph/registry.json by default', () => {
     expect(REGISTRY_PATH).toBe(path.join(os.homedir(), '.codegraph', 'registry.json'));
+  });
+
+  it('respects CODEGRAPH_REGISTRY_PATH env var', () => {
+    const customPath = path.join(tmpDir, 'custom', 'registry.json');
+    const result = execFileSync(
+      'node',
+      [
+        '--input-type=module',
+        '-e',
+        `import { REGISTRY_PATH } from './src/registry.js'; process.stdout.write(REGISTRY_PATH);`,
+      ],
+      {
+        cwd: path.resolve(import.meta.dirname, '..', '..'),
+        encoding: 'utf-8',
+        env: { ...process.env, CODEGRAPH_REGISTRY_PATH: customPath },
+      },
+    );
+    expect(result).toBe(customPath);
   });
 });
 
@@ -142,12 +162,24 @@ describe('registerRepo', () => {
     expect(Object.keys(reg.repos)).toHaveLength(1);
   });
 
-  it('sets addedAt as ISO string', () => {
+  it('sets addedAt and lastAccessedAt as ISO strings', () => {
     const dir = path.join(tmpDir, 'proj');
     fs.mkdirSync(dir, { recursive: true });
 
     const { entry } = registerRepo(dir, 'proj', registryPath);
     expect(entry.addedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(entry.lastAccessedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('preserves original addedAt on re-registration', () => {
+    const dir = path.join(tmpDir, 'proj');
+    fs.mkdirSync(dir, { recursive: true });
+
+    const { entry: first } = registerRepo(dir, 'proj', registryPath);
+    const originalAddedAt = first.addedAt;
+    const { entry: second } = registerRepo(dir, 'proj', registryPath);
+
+    expect(second.addedAt).toBe(originalAddedAt);
   });
 
   it('auto-suffixes when basename collides with different path', () => {
@@ -239,7 +271,7 @@ describe('listRepos', () => {
     expect(repos).toEqual([]);
   });
 
-  it('returns repos sorted by name', () => {
+  it('returns repos sorted by name with lastAccessedAt', () => {
     const dirA = path.join(tmpDir, 'aaa');
     const dirZ = path.join(tmpDir, 'zzz');
     const dirM = path.join(tmpDir, 'mmm');
@@ -253,6 +285,9 @@ describe('listRepos', () => {
 
     const repos = listRepos(registryPath);
     expect(repos.map((r) => r.name)).toEqual(['aaa', 'mmm', 'zzz']);
+    for (const r of repos) {
+      expect(r.lastAccessedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    }
   });
 });
 
@@ -289,7 +324,7 @@ describe('resolveRepoDbPath', () => {
 // ─── pruneRegistry ─────────────────────────────────────────────────
 
 describe('pruneRegistry', () => {
-  it('removes entries whose directories no longer exist', () => {
+  it('removes entries whose directories no longer exist (reason: missing)', () => {
     const dir1 = path.join(tmpDir, 'exists');
     const dir2 = path.join(tmpDir, 'gone');
     fs.mkdirSync(dir1, { recursive: true });
@@ -305,10 +340,94 @@ describe('pruneRegistry', () => {
     expect(pruned).toHaveLength(1);
     expect(pruned[0].name).toBe('gone');
     expect(pruned[0].path).toBe(dir2);
+    expect(pruned[0].reason).toBe('missing');
 
     const reg = loadRegistry(registryPath);
     expect(reg.repos.exists).toBeDefined();
     expect(reg.repos.gone).toBeUndefined();
+  });
+
+  it('removes entries idle beyond TTL (reason: expired)', () => {
+    const dir = path.join(tmpDir, 'old-project');
+    fs.mkdirSync(dir, { recursive: true });
+
+    // Manually write a registry entry with an old lastAccessedAt
+    const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(); // 60 days ago
+    const registry = {
+      repos: {
+        'old-project': {
+          path: dir,
+          dbPath: path.join(dir, '.codegraph', 'graph.db'),
+          addedAt: oldDate,
+          lastAccessedAt: oldDate,
+        },
+      },
+    };
+    saveRegistry(registry, registryPath);
+
+    const pruned = pruneRegistry(registryPath, 30);
+    expect(pruned).toHaveLength(1);
+    expect(pruned[0].name).toBe('old-project');
+    expect(pruned[0].reason).toBe('expired');
+  });
+
+  it('keeps entries within TTL window', () => {
+    const dir = path.join(tmpDir, 'fresh');
+    fs.mkdirSync(dir, { recursive: true });
+    registerRepo(dir, 'fresh', registryPath);
+
+    const pruned = pruneRegistry(registryPath, 30);
+    expect(pruned).toEqual([]);
+
+    const reg = loadRegistry(registryPath);
+    expect(reg.repos.fresh).toBeDefined();
+  });
+
+  it('falls back to addedAt when lastAccessedAt is missing', () => {
+    const dir = path.join(tmpDir, 'legacy');
+    fs.mkdirSync(dir, { recursive: true });
+
+    const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+    const registry = {
+      repos: {
+        legacy: {
+          path: dir,
+          dbPath: path.join(dir, '.codegraph', 'graph.db'),
+          addedAt: oldDate,
+        },
+      },
+    };
+    saveRegistry(registry, registryPath);
+
+    const pruned = pruneRegistry(registryPath, 30);
+    expect(pruned).toHaveLength(1);
+    expect(pruned[0].reason).toBe('expired');
+  });
+
+  it('respects custom TTL', () => {
+    const dir = path.join(tmpDir, 'project');
+    fs.mkdirSync(dir, { recursive: true });
+
+    // 10 days ago
+    const recentDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const registry = {
+      repos: {
+        project: {
+          path: dir,
+          dbPath: path.join(dir, '.codegraph', 'graph.db'),
+          addedAt: recentDate,
+          lastAccessedAt: recentDate,
+        },
+      },
+    };
+    saveRegistry(registry, registryPath);
+
+    // 30-day TTL: should keep
+    expect(pruneRegistry(registryPath, 30)).toEqual([]);
+    // 7-day TTL: should prune
+    const pruned = pruneRegistry(registryPath, 7);
+    expect(pruned).toHaveLength(1);
+    expect(pruned[0].reason).toBe('expired');
   });
 
   it('returns empty array when nothing to prune', () => {
@@ -334,5 +453,38 @@ describe('pruneRegistry', () => {
   it('returns empty array for empty registry', () => {
     const pruned = pruneRegistry(registryPath);
     expect(pruned).toEqual([]);
+  });
+});
+
+// ─── DEFAULT_TTL_DAYS ──────────────────────────────────────────────
+
+describe('DEFAULT_TTL_DAYS', () => {
+  it('is 30 days', () => {
+    expect(DEFAULT_TTL_DAYS).toBe(30);
+  });
+});
+
+// ─── resolveRepoDbPath lastAccessedAt ──────────────────────────────
+
+describe('resolveRepoDbPath updates lastAccessedAt', () => {
+  it('touches lastAccessedAt on successful resolve', () => {
+    const dir = path.join(tmpDir, 'proj');
+    const dbDir = path.join(dir, '.codegraph');
+    const dbFile = path.join(dbDir, 'graph.db');
+    fs.mkdirSync(dbDir, { recursive: true });
+    fs.writeFileSync(dbFile, '');
+
+    registerRepo(dir, 'proj', registryPath);
+
+    // Manually backdate lastAccessedAt
+    const reg = loadRegistry(registryPath);
+    reg.repos.proj.lastAccessedAt = '2025-01-01T00:00:00.000Z';
+    saveRegistry(reg, registryPath);
+
+    resolveRepoDbPath('proj', registryPath);
+
+    const updated = loadRegistry(registryPath);
+    expect(updated.repos.proj.lastAccessedAt).not.toBe('2025-01-01T00:00:00.000Z');
+    expect(new Date(updated.repos.proj.lastAccessedAt).getFullYear()).toBeGreaterThanOrEqual(2026);
   });
 });

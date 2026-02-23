@@ -44,7 +44,7 @@ beforeAll(async () => {
   for (const [name, content] of Object.entries(FIXTURE_FILES)) {
     fs.writeFileSync(path.join(tmpDir, name), content);
   }
-  await buildGraph(tmpDir);
+  await buildGraph(tmpDir, { skipRegistry: true });
   dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
 });
 

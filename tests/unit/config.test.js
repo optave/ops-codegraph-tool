@@ -55,7 +55,7 @@ describe('DEFAULTS', () => {
   });
 
   it('has embeddings defaults', () => {
-    expect(DEFAULTS.embeddings).toEqual({ model: 'minilm', llmProvider: null });
+    expect(DEFAULTS.embeddings).toEqual({ model: 'jina-code', llmProvider: null });
   });
 
   it('has llm defaults', () => {

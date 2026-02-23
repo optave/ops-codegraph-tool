@@ -10,7 +10,15 @@ INPUT=$(cat)
 
 # Extract file path based on tool type
 # Read tool uses tool_input.file_path, Grep uses tool_input.path
-FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // .tool_input.path // empty' 2>/dev/null)
+FILE_PATH=$(echo "$INPUT" | node -e "
+  let d='';
+  process.stdin.on('data',c=>d+=c);
+  process.stdin.on('end',()=>{
+    const o=JSON.parse(d).tool_input||{};
+    const p=o.file_path||o.path||'';
+    if(p)process.stdout.write(p);
+  });
+" 2>/dev/null) || true
 
 # Guard: no file path found
 if [ -z "$FILE_PATH" ]; then
@@ -30,8 +38,9 @@ fi
 
 # Convert absolute path to relative (strip project dir prefix)
 REL_PATH="$FILE_PATH"
-if [[ "$FILE_PATH" == "${CLAUDE_PROJECT_DIR}"* ]]; then
-  REL_PATH="${FILE_PATH#"${CLAUDE_PROJECT_DIR}"/}"
+PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
+if [[ "$FILE_PATH" == "${PROJECT_DIR}"* ]]; then
+  REL_PATH="${FILE_PATH#"${PROJECT_DIR}"/}"
 fi
 # Normalize backslashes to forward slashes (Windows compatibility)
 REL_PATH="${REL_PATH//\\//}"
@@ -50,13 +59,22 @@ if [ -z "$DEPS" ] || [ "$DEPS" = "null" ]; then
 fi
 
 # Output as informational context (never deny)
-echo "$DEPS" | jq -c '{
-  hookSpecificOutput: (
-    "Codegraph context for " + (.file // "unknown") + ":\n" +
-    "  Imports: " + ((.results[0].imports // []) | length | tostring) + " files\n" +
-    "  Imported by: " + ((.results[0].importedBy // []) | length | tostring) + " files\n" +
-    "  Definitions: " + ((.results[0].definitions // []) | length | tostring) + " symbols"
-  )
-}' 2>/dev/null || true
+echo "$DEPS" | node -e "
+  let d='';
+  process.stdin.on('data',c=>d+=c);
+  process.stdin.on('end',()=>{
+    try {
+      const o=JSON.parse(d);
+      const r=o.results?.[0]||{};
+      const imports=(r.imports||[]).length;
+      const importedBy=(r.importedBy||[]).length;
+      const defs=(r.definitions||[]).length;
+      const file=o.file||'unknown';
+      console.log(JSON.stringify({
+        hookSpecificOutput: 'Codegraph context for '+file+':\\n  Imports: '+imports+' files\\n  Imported by: '+importedBy+' files\\n  Definitions: '+defs+' symbols'
+      }));
+    } catch(e) {}
+  });
+" 2>/dev/null || true
 
 exit 0

@@ -3,7 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { debug, warn } from './logger.js';
 
-export const REGISTRY_PATH = path.join(os.homedir(), '.codegraph', 'registry.json');
+export const REGISTRY_PATH =
+  process.env.CODEGRAPH_REGISTRY_PATH || path.join(os.homedir(), '.codegraph', 'registry.json');
+
+/** Default TTL: entries not accessed within 30 days are pruned. */
+export const DEFAULT_TTL_DAYS = 30;
 
 /**
  * Load the registry from disk.
@@ -69,10 +73,12 @@ export function registerRepo(rootDir, name, registryPath = REGISTRY_PATH) {
     }
   }
 
+  const now = new Date().toISOString();
   registry.repos[repoName] = {
     path: absRoot,
     dbPath: path.join(absRoot, '.codegraph', 'graph.db'),
-    addedAt: new Date().toISOString(),
+    addedAt: registry.repos[repoName]?.addedAt || now,
+    lastAccessedAt: now,
   };
 
   saveRegistry(registry, registryPath);
@@ -102,6 +108,7 @@ export function listRepos(registryPath = REGISTRY_PATH) {
       path: entry.path,
       dbPath: entry.dbPath,
       addedAt: entry.addedAt,
+      lastAccessedAt: entry.lastAccessedAt || entry.addedAt,
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -118,21 +125,31 @@ export function resolveRepoDbPath(name, registryPath = REGISTRY_PATH) {
     warn(`Registry: database missing for "${name}" at ${entry.dbPath}`);
     return undefined;
   }
+  // Touch lastAccessedAt on successful resolution
+  entry.lastAccessedAt = new Date().toISOString();
+  saveRegistry(registry, registryPath);
   return entry.dbPath;
 }
 
 /**
- * Remove registry entries whose repo directory no longer exists on disk.
- * Only checks the repo directory (not the DB file — a missing DB is normal pre-build state).
- * Returns an array of `{ name, path }` for each pruned entry.
+ * Remove registry entries whose repo directory no longer exists on disk,
+ * or that haven't been accessed within `ttlDays` days.
+ * Returns an array of `{ name, path, reason }` for each pruned entry.
  */
-export function pruneRegistry(registryPath = REGISTRY_PATH) {
+export function pruneRegistry(registryPath = REGISTRY_PATH, ttlDays = DEFAULT_TTL_DAYS) {
   const registry = loadRegistry(registryPath);
   const pruned = [];
+  const cutoff = Date.now() - ttlDays * 24 * 60 * 60 * 1000;
 
   for (const [name, entry] of Object.entries(registry.repos)) {
     if (!fs.existsSync(entry.path)) {
-      pruned.push({ name, path: entry.path });
+      pruned.push({ name, path: entry.path, reason: 'missing' });
+      delete registry.repos[name];
+      continue;
+    }
+    const lastAccess = Date.parse(entry.lastAccessedAt || entry.addedAt);
+    if (lastAccess < cutoff) {
+      pruned.push({ name, path: entry.path, reason: 'expired' });
       delete registry.repos[name];
     }
   }

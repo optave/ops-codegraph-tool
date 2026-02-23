@@ -36,7 +36,7 @@ export function main() {
 `.trimStart(),
 };
 
-let tmpDir, dbPath;
+let tmpDir, tmpHome, dbPath;
 
 /** Run the CLI and return stdout as a string. Throws on non-zero exit. */
 function run(...args) {
@@ -44,11 +44,13 @@ function run(...args) {
     cwd: tmpDir,
     encoding: 'utf-8',
     timeout: 30_000,
+    env: { ...process.env, HOME: tmpHome, USERPROFILE: tmpHome },
   });
 }
 
 beforeAll(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cli-'));
+  tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-clihome-'));
   for (const [name, content] of Object.entries(FIXTURE_FILES)) {
     fs.writeFileSync(path.join(tmpDir, name), content);
   }
@@ -60,6 +62,7 @@ beforeAll(async () => {
 
 afterAll(() => {
   if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+  if (tmpHome) fs.rmSync(tmpHome, { recursive: true, force: true });
 });
 
 describe('CLI smoke tests', () => {

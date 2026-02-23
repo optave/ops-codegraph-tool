@@ -617,6 +617,7 @@ describe('startMCPServer handler dispatch', () => {
         { name: 'beta', path: '/beta' },
         { name: 'gamma', path: '/gamma' },
       ]),
+      pruneRegistry: vi.fn(),
     }));
     vi.doMock('../../src/queries.js', () => ({
       queryNameData: vi.fn(),
@@ -665,6 +666,7 @@ describe('startMCPServer handler dispatch', () => {
         { name: 'alpha', path: '/alpha' },
         { name: 'beta', path: '/beta' },
       ]),
+      pruneRegistry: vi.fn(),
     }));
     vi.doMock('../../src/queries.js', () => ({
       queryNameData: vi.fn(),

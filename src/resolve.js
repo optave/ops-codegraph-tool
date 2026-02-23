@@ -31,7 +31,7 @@ function resolveViaAlias(importSource, aliases, _rootDir) {
     }
   }
 
-  for (const [pattern, targets] of Object.entries(aliases.paths)) {
+  for (const [pattern, targets] of Object.entries(aliases.paths || {})) {
     const prefix = pattern.replace(/\*$/, '');
     if (!importSource.startsWith(prefix)) continue;
     const rest = importSource.slice(prefix.length);
@@ -113,12 +113,13 @@ export function resolveImportPath(fromFile, importSource, rootDir, aliases) {
   const native = loadNative();
   if (native) {
     try {
-      return native.resolveImport(
+      const result = native.resolveImport(
         fromFile,
         importSource,
         rootDir,
         convertAliasesForNative(aliases),
       );
+      return normalizePath(path.normalize(result));
     } catch {
       // fall through to JS
     }
@@ -158,7 +159,7 @@ export function resolveImportsBatch(inputs, rootDir, aliases) {
     const results = native.resolveImports(nativeInputs, rootDir, convertAliasesForNative(aliases));
     const map = new Map();
     for (const r of results) {
-      map.set(`${r.fromFile}|${r.importSource}`, r.resolvedPath);
+      map.set(`${r.fromFile}|${r.importSource}`, normalizePath(path.normalize(r.resolvedPath)));
     }
     return map;
   } catch {

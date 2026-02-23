@@ -1,6 +1,9 @@
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
+import { findCycles } from './cycles.js';
 import { findDbPath, openReadonlyOrFail } from './db.js';
+import { LANGUAGE_REGISTRY } from './parser.js';
 
 const TEST_PATTERN = /\.(test|spec)\.|__test__|__tests__|\.stories\./;
 function isTestFile(filePath) {
@@ -190,14 +193,14 @@ export function moduleMapData(customDbPath, limit = 20) {
   const nodes = db
     .prepare(`
     SELECT n.*,
-      (SELECT COUNT(*) FROM edges WHERE source_id = n.id) as out_edges,
-      (SELECT COUNT(*) FROM edges WHERE target_id = n.id) as in_edges
+      (SELECT COUNT(*) FROM edges WHERE source_id = n.id AND kind != 'contains') as out_edges,
+      (SELECT COUNT(*) FROM edges WHERE target_id = n.id AND kind != 'contains') as in_edges
     FROM nodes n
     WHERE n.kind = 'file'
       AND n.file NOT LIKE '%.test.%'
       AND n.file NOT LIKE '%.spec.%'
       AND n.file NOT LIKE '%__test__%'
-    ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id) DESC
+    ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id AND kind != 'contains') DESC
     LIMIT ?
   `)
     .all(limit);
@@ -451,9 +454,25 @@ export function diffImpactData(customDbPath, opts = {}) {
   const dbPath = findDbPath(customDbPath);
   const repoRoot = path.resolve(path.dirname(dbPath), '..');
 
+  // Verify we're in a git repository before running git diff
+  let checkDir = repoRoot;
+  let isGitRepo = false;
+  while (checkDir) {
+    if (fs.existsSync(path.join(checkDir, '.git'))) {
+      isGitRepo = true;
+      break;
+    }
+    const parent = path.dirname(checkDir);
+    if (parent === checkDir) break;
+    checkDir = parent;
+  }
+  if (!isGitRepo) {
+    db.close();
+    return { error: `Not a git repository: ${repoRoot}` };
+  }
+
   let diffOutput;
   try {
-    // FIX: Use execFileSync with array args to prevent shell injection
     const args = opts.staged
       ? ['diff', '--cached', '--unified=0', '--no-color']
       : ['diff', opts.ref || 'HEAD', '--unified=0', '--no-color'];
@@ -461,6 +480,7 @@ export function diffImpactData(customDbPath, opts = {}) {
       cwd: repoRoot,
       encoding: 'utf-8',
       maxBuffer: 10 * 1024 * 1024,
+      stdio: ['pipe', 'pipe', 'pipe'],
     });
   } catch (e) {
     db.close();
@@ -594,6 +614,172 @@ export function listFunctionsData(customDbPath, opts = {}) {
 
   db.close();
   return { count: rows.length, functions: rows };
+}
+
+export function statsData(customDbPath) {
+  const db = openReadonlyOrFail(customDbPath);
+
+  // Node breakdown by kind
+  const nodeRows = db.prepare('SELECT kind, COUNT(*) as c FROM nodes GROUP BY kind').all();
+  const nodesByKind = {};
+  let totalNodes = 0;
+  for (const r of nodeRows) {
+    nodesByKind[r.kind] = r.c;
+    totalNodes += r.c;
+  }
+
+  // Edge breakdown by kind
+  const edgeRows = db.prepare('SELECT kind, COUNT(*) as c FROM edges GROUP BY kind').all();
+  const edgesByKind = {};
+  let totalEdges = 0;
+  for (const r of edgeRows) {
+    edgesByKind[r.kind] = r.c;
+    totalEdges += r.c;
+  }
+
+  // File/language distribution — map extensions via LANGUAGE_REGISTRY
+  const extToLang = new Map();
+  for (const entry of LANGUAGE_REGISTRY) {
+    for (const ext of entry.extensions) {
+      extToLang.set(ext, entry.id);
+    }
+  }
+  const fileNodes = db.prepare("SELECT file FROM nodes WHERE kind = 'file'").all();
+  const byLanguage = {};
+  for (const row of fileNodes) {
+    const ext = path.extname(row.file).toLowerCase();
+    const lang = extToLang.get(ext) || 'other';
+    byLanguage[lang] = (byLanguage[lang] || 0) + 1;
+  }
+  const langCount = Object.keys(byLanguage).length;
+
+  // Cycles
+  const fileCycles = findCycles(db, { fileLevel: true });
+  const fnCycles = findCycles(db, { fileLevel: false });
+
+  // Top 5 coupling hotspots (fan-in + fan-out, file nodes)
+  const hotspotRows = db
+    .prepare(`
+    SELECT n.file,
+      (SELECT COUNT(*) FROM edges WHERE target_id = n.id) as fan_in,
+      (SELECT COUNT(*) FROM edges WHERE source_id = n.id) as fan_out
+    FROM nodes n
+    WHERE n.kind = 'file'
+    ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id)
+           + (SELECT COUNT(*) FROM edges WHERE source_id = n.id) DESC
+    LIMIT 5
+  `)
+    .all();
+  const hotspots = hotspotRows.map((r) => ({
+    file: r.file,
+    fanIn: r.fan_in,
+    fanOut: r.fan_out,
+  }));
+
+  // Embeddings metadata
+  let embeddings = null;
+  try {
+    const count = db.prepare('SELECT COUNT(*) as c FROM embeddings').get();
+    if (count && count.c > 0) {
+      const meta = {};
+      const metaRows = db.prepare('SELECT key, value FROM embedding_meta').all();
+      for (const r of metaRows) meta[r.key] = r.value;
+      embeddings = {
+        count: count.c,
+        model: meta.model || null,
+        dim: meta.dim ? parseInt(meta.dim, 10) : null,
+        builtAt: meta.built_at || null,
+      };
+    }
+  } catch {
+    /* embeddings table may not exist */
+  }
+
+  db.close();
+  return {
+    nodes: { total: totalNodes, byKind: nodesByKind },
+    edges: { total: totalEdges, byKind: edgesByKind },
+    files: { total: fileNodes.length, languages: langCount, byLanguage },
+    cycles: { fileLevel: fileCycles.length, functionLevel: fnCycles.length },
+    hotspots,
+    embeddings,
+  };
+}
+
+export function stats(customDbPath, opts = {}) {
+  const data = statsData(customDbPath);
+  if (opts.json) {
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  // Human-readable output
+  console.log('\n# Codegraph Stats\n');
+
+  // Nodes
+  console.log(`Nodes:     ${data.nodes.total} total`);
+  const kindEntries = Object.entries(data.nodes.byKind).sort((a, b) => b[1] - a[1]);
+  const kindParts = kindEntries.map(([k, v]) => `${k} ${v}`);
+  // Print in rows of 3
+  for (let i = 0; i < kindParts.length; i += 3) {
+    const row = kindParts
+      .slice(i, i + 3)
+      .map((p) => p.padEnd(18))
+      .join('');
+    console.log(`  ${row}`);
+  }
+
+  // Edges
+  console.log(`\nEdges:     ${data.edges.total} total`);
+  const edgeEntries = Object.entries(data.edges.byKind).sort((a, b) => b[1] - a[1]);
+  const edgeParts = edgeEntries.map(([k, v]) => `${k} ${v}`);
+  for (let i = 0; i < edgeParts.length; i += 3) {
+    const row = edgeParts
+      .slice(i, i + 3)
+      .map((p) => p.padEnd(18))
+      .join('');
+    console.log(`  ${row}`);
+  }
+
+  // Files
+  console.log(`\nFiles:     ${data.files.total} (${data.files.languages} languages)`);
+  const langEntries = Object.entries(data.files.byLanguage).sort((a, b) => b[1] - a[1]);
+  const langParts = langEntries.map(([k, v]) => `${k} ${v}`);
+  for (let i = 0; i < langParts.length; i += 3) {
+    const row = langParts
+      .slice(i, i + 3)
+      .map((p) => p.padEnd(18))
+      .join('');
+    console.log(`  ${row}`);
+  }
+
+  // Cycles
+  console.log(
+    `\nCycles:    ${data.cycles.fileLevel} file-level, ${data.cycles.functionLevel} function-level`,
+  );
+
+  // Hotspots
+  if (data.hotspots.length > 0) {
+    console.log(`\nTop ${data.hotspots.length} coupling hotspots:`);
+    for (let i = 0; i < data.hotspots.length; i++) {
+      const h = data.hotspots[i];
+      console.log(
+        `  ${String(i + 1).padStart(2)}. ${h.file.padEnd(35)} fan-in: ${String(h.fanIn).padStart(3)}  fan-out: ${String(h.fanOut).padStart(3)}`,
+      );
+    }
+  }
+
+  // Embeddings
+  if (data.embeddings) {
+    const e = data.embeddings;
+    console.log(
+      `\nEmbeddings: ${e.count} vectors (${e.model || 'unknown'}, ${e.dim || '?'}d) built ${e.builtAt || 'unknown'}`,
+    );
+  } else {
+    console.log('\nEmbeddings: not built');
+  }
+
+  console.log();
 }
 
 // ─── Human-readable output (original formatting) ───────────────────────

@@ -18,6 +18,7 @@ import {
   impactAnalysis,
   moduleMap,
   queryName,
+  stats,
 } from './queries.js';
 import {
   listRepos,
@@ -28,11 +29,14 @@ import {
 } from './registry.js';
 import { watchProject } from './watcher.js';
 
+const __cliDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'));
+const pkg = JSON.parse(fs.readFileSync(path.join(__cliDir, '..', 'package.json'), 'utf-8'));
+
 const program = new Command();
 program
   .name('codegraph')
   .description('Local code dependency graph tool')
-  .version('1.3.0')
+  .version(pkg.version)
   .option('-v, --verbose', 'Enable verbose/debug output')
   .option('--engine <engine>', 'Parser engine: native, wasm, or auto (default: auto)', 'auto')
   .hook('preAction', (thisCommand) => {
@@ -76,6 +80,15 @@ program
   .option('-j, --json', 'Output as JSON')
   .action((opts) => {
     moduleMap(opts.db, parseInt(opts.limit, 10), { json: opts.json });
+  });
+
+program
+  .command('stats')
+  .description('Show graph health overview: nodes, edges, languages, cycles, hotspots, embeddings')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-j, --json', 'Output as JSON')
+  .action((opts) => {
+    stats(opts.db, { json: opts.json });
   });
 
 program
@@ -214,6 +227,7 @@ registry
   .description('List all registered repositories')
   .option('-j, --json', 'Output as JSON')
   .action((opts) => {
+    pruneRegistry();
     const repos = listRepos();
     if (opts.json) {
       console.log(JSON.stringify(repos, null, 2));
@@ -257,14 +271,16 @@ registry
 
 registry
   .command('prune')
-  .description('Remove registry entries whose directories no longer exist')
-  .action(() => {
-    const pruned = pruneRegistry();
+  .description('Remove stale registry entries (missing directories or idle beyond TTL)')
+  .option('--ttl <days>', 'Days of inactivity before pruning (default: 30)', '30')
+  .action((opts) => {
+    const pruned = pruneRegistry(undefined, parseInt(opts.ttl, 10));
     if (pruned.length === 0) {
       console.log('No stale entries found.');
     } else {
       for (const entry of pruned) {
-        console.log(`Pruned "${entry.name}" (${entry.path})`);
+        const tag = entry.reason === 'expired' ? 'expired' : 'missing';
+        console.log(`Pruned "${entry.name}" (${entry.path}) [${tag}]`);
       }
       console.log(`\nRemoved ${pruned.length} stale ${pruned.length === 1 ? 'entry' : 'entries'}.`);
     }
@@ -278,7 +294,7 @@ program
   .action(() => {
     console.log('\nAvailable embedding models:\n');
     for (const [key, config] of Object.entries(MODELS)) {
-      const def = key === 'minilm' ? ' (default)' : '';
+      const def = key === 'jina-code' ? ' (default)' : '';
       console.log(`  ${key.padEnd(12)} ${String(config.dim).padStart(4)}d  ${config.desc}${def}`);
     }
     console.log('\nUsage: codegraph embed --model <name>');
@@ -292,8 +308,8 @@ program
   )
   .option(
     '-m, --model <name>',
-    'Embedding model: minilm (default), jina-small, jina-base, jina-code, nomic, nomic-v1.5, bge-large. Run `codegraph models` for details',
-    'minilm',
+    'Embedding model: minilm, jina-small, jina-base, jina-code (default), nomic, nomic-v1.5, bge-large. Run `codegraph models` for details',
+    'jina-code',
   )
   .action(async (dir, opts) => {
     const root = path.resolve(dir || '.');

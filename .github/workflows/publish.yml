@@ -1,19 +1,14 @@
 name: Publish
 
 on:
+  push:
+    branches: [main]
   release:
     types: [published]
-  workflow_dispatch:
-    inputs:
-      version-override:
-        description: "Override auto-detected bump (patch/minor/major/x.y.z). Leave empty to auto-detect from commits."
-        required: false
-        type: string
-      dry-run:
-        description: "Dry run (skip actual publish)"
-        required: false
-        type: boolean
-        default: false
+
+concurrency:
+  group: publish
+  cancel-in-progress: true
 
 permissions: {}
 
@@ -21,6 +16,8 @@ jobs:
   preflight:
     name: Preflight checks
     runs-on: ubuntu-latest
+    # Skip dev publish when the push is a stable release version bump
+    if: github.event_name == 'release' || !startsWith(github.event.head_commit.message, 'chore: release v')
     permissions:
       contents: read
     steps:
@@ -30,6 +27,39 @@ jobs:
           node-version: "22"
       - run: npm install
       - run: npm test
+
+  compute-version:
+    needs: preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.compute.outputs.version }}
+      npm_tag: ${{ steps.compute.outputs.npm_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute version
+        id: compute
+        run: |
+          CURRENT=$(node -p "require('./package.json').version")
+
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+            VERSION="${TAG#v}"
+            NPM_TAG="latest"
+            echo "Stable release: $VERSION (from tag $TAG)"
+          else
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+            NEXT_PATCH=$((PATCH + 1))
+            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+            VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${SHORT_SHA}"
+            NPM_TAG="dev"
+            echo "Dev release: $VERSION"
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "npm_tag=$NPM_TAG" >> "$GITHUB_OUTPUT"
 
   build-native:
     needs: preflight
@@ -92,7 +122,7 @@ jobs:
           if-no-files-found: error
 
   publish:
-    needs: build-native
+    needs: [compute-version, build-native]
     runs-on: ubuntu-latest
     environment: npm-publish
     permissions:
@@ -117,48 +147,18 @@ jobs:
 
       - run: npm install
 
-      - name: Configure git
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Bump version
+      - name: Set version
         id: version
+        env:
+          VERSION: ${{ needs.compute-version.outputs.version }}
         run: |
           git checkout -- package-lock.json
-          CURRENT=$(node -p "require('./package.json').version")
+          npm version "$VERSION" --no-git-tag-version
+          node scripts/sync-native-versions.js
+          echo "Publishing version $VERSION"
 
-          if [ "${{ github.event_name }}" = "release" ]; then
-            # Extract version from the release tag instead of trusting package.json
-            TAG="${{ github.event.release.tag_name }}"
-            RELEASE_VERSION="${TAG#v}"
-            if [ "$CURRENT" != "$RELEASE_VERSION" ]; then
-              echo "::warning::package.json ($CURRENT) doesn't match release tag ($TAG) — bumping to match"
-              npx commit-and-tag-version --release-as "$RELEASE_VERSION" --skip.tag --skip.changelog
-            else
-              echo "Triggered by release event — version $CURRENT matches tag $TAG"
-            fi
-          else
-            OVERRIDE="${{ inputs.version-override }}"
-            if [ -n "$OVERRIDE" ] && [ "$CURRENT" = "$OVERRIDE" ]; then
-              echo "Version already at $OVERRIDE — skipping bump"
-            elif [ -n "$OVERRIDE" ]; then
-              npx commit-and-tag-version --release-as "$OVERRIDE" --skip.tag
-            else
-              npx commit-and-tag-version --skip.tag
-            fi
-          fi
-
-          NEW_VERSION=$(node -p "require('./package.json').version")
-          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
-
-          # Verify the version was actually bumped (skip for release events and matching overrides)
-          if [ "${{ github.event_name }}" != "release" ] && [ "$NEW_VERSION" = "$CURRENT" ] && [ "$CURRENT" != "$OVERRIDE" ]; then
-            echo "::error::Version was not bumped (still $CURRENT). Check commit history or provide a version-override."
-            exit 1
-          fi
-
-          echo "Will publish version $NEW_VERSION (was $CURRENT)"
+      - name: Disable prepublishOnly
+        run: npm pkg set scripts.prepublishOnly=""
 
       - name: Download native artifacts
         uses: actions/download-artifact@v4
@@ -166,21 +166,23 @@ jobs:
           path: artifacts/
 
       - name: Verify version not already on npm
+        env:
+          VERSION: ${{ needs.compute-version.outputs.version }}
         run: |
-          VERSION="${{ steps.version.outputs.new_version }}"
           PKG="@optave/codegraph"
           echo "Checking if $PKG@$VERSION already exists on npm..."
           if npm view "$PKG@$VERSION" version 2>/dev/null; then
-            echo "::error::$PKG@$VERSION is already published on npm. Bump to a higher version."
+            echo "::error::$PKG@$VERSION is already published on npm."
             exit 1
           fi
           echo "$PKG@$VERSION is not yet published — proceeding"
 
       - name: Publish platform packages
+        env:
+          VERSION: ${{ needs.compute-version.outputs.version }}
+          NPM_TAG: ${{ needs.compute-version.outputs.npm_tag }}
         shell: bash
         run: |
-          VERSION="${{ steps.version.outputs.new_version }}"
-
           declare -A PACKAGES=(
             ["linux-x64"]="@optave/codegraph-linux-x64-gnu"
             ["darwin-arm64"]="@optave/codegraph-darwin-arm64"
@@ -214,28 +216,29 @@ jobs:
           }
           PKGJSON
 
-            echo "Publishing ${pkg_name}@${VERSION}"
-            if [ "${{ inputs.dry-run }}" = "true" ]; then
-              npm publish "./pkg/$platform" --access public --provenance --dry-run
-            else
-              npm publish "./pkg/$platform" --access public --provenance
-            fi
+            echo "Publishing ${pkg_name}@${VERSION} with --tag ${NPM_TAG}"
+            npm publish "./pkg/$platform" --access public --provenance --tag "$NPM_TAG"
           done
 
-      - name: Publish main package (dry run)
-        if: inputs.dry-run
-        run: npm publish --access public --provenance --dry-run
-
       - name: Publish main package
-        if: "!inputs.dry-run"
-        run: npm publish --access public --provenance
+        env:
+          NPM_TAG: ${{ needs.compute-version.outputs.npm_tag }}
+        run: npm publish --access public --provenance --tag "$NPM_TAG"
+
+      # ── Stable-only: version bump PR and tag ──
+
+      - name: Configure git
+        if: github.event_name == 'release'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Push version bump via PR
-        if: "!inputs.dry-run"
+        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.compute-version.outputs.version }}
         run: |
-          VERSION="${{ steps.version.outputs.new_version }}"
           TAG="v${VERSION}"
           BRANCH="release/v${VERSION}"
 
@@ -243,6 +246,8 @@ jobs:
           if git diff --quiet HEAD; then
             echo "No version bump commit to push — skipping PR"
           else
+            git add -A
+            git commit -m "chore: release v${VERSION}"
             git push origin "HEAD:refs/heads/${BRANCH}"
             gh pr create \
               --base main \
@@ -259,3 +264,25 @@ jobs:
             git tag -a "$TAG" -m "release: $TAG"
             git push origin "$TAG"
           fi
+
+      # ── Dev-only: summary with install instructions ──
+
+      - name: Summary
+        if: github.event_name == 'push'
+        env:
+          VERSION: ${{ needs.compute-version.outputs.version }}
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Dev Release Published
+
+          **Version:** \`${VERSION}\`
+          **Commit:** \`${{ github.sha }}\`
+
+          ### Install
+
+          \`\`\`bash
+          npm install @optave/codegraph@dev
+          # or pin this exact version:
+          npm install @optave/codegraph@${VERSION}
+          \`\`\`
+          EOF
