@@ -175,19 +175,23 @@ jobs:
         with:
           path: artifacts/
 
-      - name: Verify version not already on npm
+      - name: Check if main package already published
+        id: check-main
         env:
           VERSION: ${{ needs.compute-version.outputs.version }}
         run: |
           PKG="@optave/codegraph"
           echo "Checking if $PKG@$VERSION already exists on npm..."
           if npm view "$PKG@$VERSION" version 2>/dev/null; then
-            echo "::error::$PKG@$VERSION is already published on npm."
-            exit 1
+            echo "⚠️  $PKG@$VERSION is already published — will skip publish steps"
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$PKG@$VERSION is not yet published — proceeding"
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "$PKG@$VERSION is not yet published — proceeding"
 
       - name: Publish platform packages
+        if: steps.check-main.outputs.already_published == 'false'
         env:
           VERSION: ${{ needs.compute-version.outputs.version }}
           NPM_TAG: ${{ needs.compute-version.outputs.npm_tag }}
@@ -226,11 +230,18 @@ jobs:
           }
           PKGJSON
 
+            # Skip if this exact version is already published (idempotent re-runs)
+            if npm view "${pkg_name}@${VERSION}" version 2>/dev/null; then
+              echo "⚠️  ${pkg_name}@${VERSION} already published — skipping"
+              continue
+            fi
+
             echo "Publishing ${pkg_name}@${VERSION} with --tag ${NPM_TAG}"
             npm publish "./pkg/$platform" --access public --provenance --tag "$NPM_TAG"
           done
 
       - name: Publish main package
+        if: steps.check-main.outputs.already_published == 'false'
         env:
           NPM_TAG: ${{ needs.compute-version.outputs.npm_tag }}
         run: npm publish --access public --provenance --tag "$NPM_TAG"
