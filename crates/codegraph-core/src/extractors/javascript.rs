@@ -146,6 +146,9 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     symbols.calls.push(call_info);
                 }
             }
+            if let Some(cb_def) = extract_callback_definition(node, source) {
+                symbols.definitions.push(cb_def);
+            }
         }
 
         "import_statement" => {
@@ -466,6 +469,126 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
     }
 }
 
+fn find_anonymous_callback<'a>(args_node: &Node<'a>) -> Option<Node<'a>> {
+    for i in 0..args_node.child_count() {
+        if let Some(child) = args_node.child(i) {
+            if child.kind() == "arrow_function" || child.kind() == "function_expression" {
+                return Some(child);
+            }
+        }
+    }
+    None
+}
+
+fn find_first_string_arg<'a>(args_node: &Node<'a>, source: &'a [u8]) -> Option<String> {
+    for i in 0..args_node.child_count() {
+        if let Some(child) = args_node.child(i) {
+            if child.kind() == "string" {
+                return Some(node_text(&child, source).replace(&['\'', '"'][..], ""));
+            }
+        }
+    }
+    None
+}
+
+fn walk_call_chain<'a>(start_node: &Node<'a>, method_name: &str, source: &[u8]) -> Option<Node<'a>> {
+    let mut current = Some(*start_node);
+    while let Some(node) = current {
+        if node.kind() == "call_expression" {
+            if let Some(fn_node) = node.child_by_field_name("function") {
+                if fn_node.kind() == "member_expression" {
+                    if let Some(prop) = fn_node.child_by_field_name("property") {
+                        if node_text(&prop, source) == method_name {
+                            return Some(node);
+                        }
+                    }
+                }
+            }
+        }
+        current = match node.kind() {
+            "member_expression" => node.child_by_field_name("object"),
+            "call_expression" => node.child_by_field_name("function"),
+            _ => None,
+        };
+    }
+    None
+}
+
+fn is_express_method(method: &str) -> bool {
+    matches!(
+        method,
+        "get" | "post" | "put" | "delete" | "patch" | "options" | "head" | "all" | "use"
+    )
+}
+
+fn is_event_method(method: &str) -> bool {
+    matches!(method, "on" | "once" | "addEventListener" | "addListener")
+}
+
+fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Definition> {
+    let fn_node = call_node.child_by_field_name("function")?;
+    if fn_node.kind() != "member_expression" {
+        return None;
+    }
+
+    let prop = fn_node.child_by_field_name("property")?;
+    let method = node_text(&prop, source);
+
+    let args = call_node
+        .child_by_field_name("arguments")
+        .or_else(|| find_child(call_node, "arguments"))?;
+
+    // Commander: .action(callback) with .command('name') in chain
+    if method == "action" {
+        let cb = find_anonymous_callback(&args)?;
+        let obj = fn_node.child_by_field_name("object")?;
+        let command_call = walk_call_chain(&obj, "command", source)?;
+        let cmd_args = command_call
+            .child_by_field_name("arguments")
+            .or_else(|| find_child(&command_call, "arguments"))?;
+        let cmd_name = find_first_string_arg(&cmd_args, source)?;
+        let first_word = cmd_name.split_whitespace().next().unwrap_or(&cmd_name);
+        return Some(Definition {
+            name: format!("command:{}", first_word),
+            kind: "function".to_string(),
+            line: start_line(&cb),
+            end_line: Some(end_line(&cb)),
+            decorators: None,
+        });
+    }
+
+    // Express: app.get('/path', callback)
+    if is_express_method(method) {
+        let str_arg = find_first_string_arg(&args, source)?;
+        if !str_arg.starts_with('/') {
+            return None;
+        }
+        let cb = find_anonymous_callback(&args)?;
+        return Some(Definition {
+            name: format!("route:{} {}", method.to_uppercase(), str_arg),
+            kind: "function".to_string(),
+            line: start_line(&cb),
+            end_line: Some(end_line(&cb)),
+            decorators: None,
+        });
+    }
+
+    // Events: emitter.on('event', callback)
+    if is_event_method(method) {
+        let event_name = find_first_string_arg(&args, source)?;
+        let cb = find_anonymous_callback(&args)?;
+        return Some(Definition {
+            name: format!("event:{}", event_name),
+            kind: "function".to_string(),
+            line: start_line(&cb),
+            end_line: Some(end_line(&cb)),
+            decorators: None,
+        });
+    }
+
+    None
+}
+
 fn extract_superclass(heritage: &Node, source: &[u8]) -> Option<String> {
     for i in 0..heritage.child_count() {
         if let Some(child) = heritage.child(i) {
@@ -615,5 +738,71 @@ mod tests {
         let s = parse_js("export * from './helpers';");
         assert_eq!(s.imports.len(), 1);
         assert_eq!(s.imports[0].wildcard_reexport, Some(true));
+    }
+
+    #[test]
+    fn extracts_commander_action_callback() {
+        let s = parse_js("program.command('build [dir]').action(async (dir, opts) => { run(); });");
+        let def = s.definitions.iter().find(|d| d.name == "command:build");
+        assert!(def.is_some(), "should extract command:build definition");
+        assert_eq!(def.unwrap().kind, "function");
+    }
+
+    #[test]
+    fn extracts_commander_query_command() {
+        let s = parse_js("program.command('query <name>').action(() => { search(); });");
+        let def = s.definitions.iter().find(|d| d.name == "command:query");
+        assert!(def.is_some(), "should extract command:query definition");
+    }
+
+    #[test]
+    fn skips_commander_named_handler() {
+        let s = parse_js("program.command('test').action(handleTest);");
+        let defs: Vec<_> = s.definitions.iter().filter(|d| d.name.starts_with("command:")).collect();
+        assert!(defs.is_empty(), "should not extract when handler is a named reference");
+    }
+
+    #[test]
+    fn extracts_express_get_route() {
+        let s = parse_js("app.get('/api/users', (req, res) => { res.json([]); });");
+        let def = s.definitions.iter().find(|d| d.name == "route:GET /api/users");
+        assert!(def.is_some(), "should extract route:GET /api/users");
+        assert_eq!(def.unwrap().kind, "function");
+    }
+
+    #[test]
+    fn extracts_express_post_route() {
+        let s = parse_js("router.post('/api/items', async (req, res) => { save(); });");
+        let def = s.definitions.iter().find(|d| d.name == "route:POST /api/items");
+        assert!(def.is_some(), "should extract route:POST /api/items");
+    }
+
+    #[test]
+    fn skips_map_get_false_positive() {
+        let s = parse_js("myMap.get('someKey');");
+        let defs: Vec<_> = s.definitions.iter().filter(|d| d.name.starts_with("route:")).collect();
+        assert!(defs.is_empty(), "should not extract Map.get as a route");
+    }
+
+    #[test]
+    fn extracts_event_on_callback() {
+        let s = parse_js("emitter.on('data', (chunk) => { process(chunk); });");
+        let def = s.definitions.iter().find(|d| d.name == "event:data");
+        assert!(def.is_some(), "should extract event:data");
+        assert_eq!(def.unwrap().kind, "function");
+    }
+
+    #[test]
+    fn extracts_event_once_callback() {
+        let s = parse_js("server.once('listening', () => { log(); });");
+        let def = s.definitions.iter().find(|d| d.name == "event:listening");
+        assert!(def.is_some(), "should extract event:listening");
+    }
+
+    #[test]
+    fn skips_event_named_handler() {
+        let s = parse_js("emitter.on('data', handleData);");
+        let defs: Vec<_> = s.definitions.iter().filter(|d| d.name.starts_with("event:")).collect();
+        assert!(defs.is_empty(), "should not extract when handler is a named reference");
     }
 }

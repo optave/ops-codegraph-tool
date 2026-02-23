@@ -140,6 +140,8 @@ export function extractSymbols(tree, _filePath) {
             calls.push(callInfo);
           }
         }
+        const cbDef = extractCallbackDefinition(node);
+        if (cbDef) definitions.push(cbDef);
         break;
       }
 
@@ -367,6 +369,126 @@ function extractCallInfo(fn, callNode) {
         return { name: methodName, line: callNode.startPosition.row + 1, dynamic: true, receiver };
       }
     }
+  }
+
+  return null;
+}
+
+function findAnonymousCallback(argsNode) {
+  for (let i = 0; i < argsNode.childCount; i++) {
+    const child = argsNode.child(i);
+    if (child && (child.type === 'arrow_function' || child.type === 'function_expression')) {
+      return child;
+    }
+  }
+  return null;
+}
+
+function findFirstStringArg(argsNode) {
+  for (let i = 0; i < argsNode.childCount; i++) {
+    const child = argsNode.child(i);
+    if (child && child.type === 'string') {
+      return child.text.replace(/['"]/g, '');
+    }
+  }
+  return null;
+}
+
+function walkCallChain(startNode, methodName) {
+  let current = startNode;
+  while (current) {
+    if (current.type === 'call_expression') {
+      const fn = current.childForFieldName('function');
+      if (fn && fn.type === 'member_expression') {
+        const prop = fn.childForFieldName('property');
+        if (prop && prop.text === methodName) {
+          return current;
+        }
+      }
+    }
+    if (current.type === 'member_expression') {
+      const obj = current.childForFieldName('object');
+      current = obj;
+    } else if (current.type === 'call_expression') {
+      const fn = current.childForFieldName('function');
+      current = fn;
+    } else {
+      break;
+    }
+  }
+  return null;
+}
+
+const EXPRESS_METHODS = new Set([
+  'get',
+  'post',
+  'put',
+  'delete',
+  'patch',
+  'options',
+  'head',
+  'all',
+  'use',
+]);
+const EVENT_METHODS = new Set(['on', 'once', 'addEventListener', 'addListener']);
+
+function extractCallbackDefinition(callNode) {
+  const fn = callNode.childForFieldName('function');
+  if (!fn || fn.type !== 'member_expression') return null;
+
+  const prop = fn.childForFieldName('property');
+  if (!prop) return null;
+  const method = prop.text;
+
+  const args = callNode.childForFieldName('arguments') || findChild(callNode, 'arguments');
+  if (!args) return null;
+
+  // Commander: .action(callback) with .command('name') in chain
+  if (method === 'action') {
+    const cb = findAnonymousCallback(args);
+    if (!cb) return null;
+    const commandCall = walkCallChain(fn.childForFieldName('object'), 'command');
+    if (!commandCall) return null;
+    const cmdArgs =
+      commandCall.childForFieldName('arguments') || findChild(commandCall, 'arguments');
+    if (!cmdArgs) return null;
+    const cmdName = findFirstStringArg(cmdArgs);
+    if (!cmdName) return null;
+    const firstWord = cmdName.split(/\s/)[0];
+    return {
+      name: `command:${firstWord}`,
+      kind: 'function',
+      line: cb.startPosition.row + 1,
+      endLine: nodeEndLine(cb),
+    };
+  }
+
+  // Express: app.get('/path', callback)
+  if (EXPRESS_METHODS.has(method)) {
+    const strArg = findFirstStringArg(args);
+    if (!strArg || !strArg.startsWith('/')) return null;
+    const cb = findAnonymousCallback(args);
+    if (!cb) return null;
+    return {
+      name: `route:${method.toUpperCase()} ${strArg}`,
+      kind: 'function',
+      line: cb.startPosition.row + 1,
+      endLine: nodeEndLine(cb),
+    };
+  }
+
+  // Events: emitter.on('event', callback)
+  if (EVENT_METHODS.has(method)) {
+    const eventName = findFirstStringArg(args);
+    if (!eventName) return null;
+    const cb = findAnonymousCallback(args);
+    if (!cb) return null;
+    return {
+      name: `event:${eventName}`,
+      kind: 'function',
+      line: cb.startPosition.row + 1,
+      endLine: nodeEndLine(cb),
+    };
   }
 
   return null;

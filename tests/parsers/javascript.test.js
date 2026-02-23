@@ -102,4 +102,91 @@ describe('JavaScript parser', () => {
     expect(fnCall).toBeDefined();
     expect(fnCall.receiver).toBeUndefined();
   });
+
+  describe('callback pattern extraction', () => {
+    // Commander patterns
+    it('extracts Commander .command().action() with arrow function', () => {
+      const symbols = parseJS(
+        `program.command('build [dir]').action(async (dir, opts) => { run(); });`,
+      );
+      const def = symbols.definitions.find((d) => d.name === 'command:build');
+      expect(def).toBeDefined();
+      expect(def.kind).toBe('function');
+    });
+
+    it('extracts Commander command with angle-bracket arg', () => {
+      const symbols = parseJS(`program.command('query <name>').action(() => { search(); });`);
+      const def = symbols.definitions.find((d) => d.name === 'command:query');
+      expect(def).toBeDefined();
+    });
+
+    it('does not extract Commander action with named handler', () => {
+      const symbols = parseJS(`program.command('test').action(handleTest);`);
+      const defs = symbols.definitions.filter((d) => d.name.startsWith('command:'));
+      expect(defs).toHaveLength(0);
+    });
+
+    it('still extracts calls inside Commander callback body', () => {
+      const symbols = parseJS(
+        `program.command('build [dir]').action(async (dir) => { buildGraph(dir); });`,
+      );
+      expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'buildGraph' }));
+    });
+
+    // Express patterns
+    it('extracts Express app.get route', () => {
+      const symbols = parseJS(`app.get('/api/users', (req, res) => { res.json([]); });`);
+      const def = symbols.definitions.find((d) => d.name === 'route:GET /api/users');
+      expect(def).toBeDefined();
+      expect(def.kind).toBe('function');
+    });
+
+    it('extracts Express router.post route', () => {
+      const symbols = parseJS(`router.post('/api/items', async (req, res) => { save(); });`);
+      const def = symbols.definitions.find((d) => d.name === 'route:POST /api/items');
+      expect(def).toBeDefined();
+    });
+
+    it('does not extract Map.get as Express route', () => {
+      const symbols = parseJS(`myMap.get('someKey');`);
+      const defs = symbols.definitions.filter((d) => d.name.startsWith('route:'));
+      expect(defs).toHaveLength(0);
+    });
+
+    // Event patterns
+    it('extracts emitter.on event callback', () => {
+      const symbols = parseJS(`emitter.on('data', (chunk) => { process(chunk); });`);
+      const def = symbols.definitions.find((d) => d.name === 'event:data');
+      expect(def).toBeDefined();
+      expect(def.kind).toBe('function');
+    });
+
+    it('extracts server.once event callback', () => {
+      const symbols = parseJS(`server.once('listening', () => { log(); });`);
+      const def = symbols.definitions.find((d) => d.name === 'event:listening');
+      expect(def).toBeDefined();
+    });
+
+    it('does not extract event with named handler', () => {
+      const symbols = parseJS(`emitter.on('data', handleData);`);
+      const defs = symbols.definitions.filter((d) => d.name.startsWith('event:'));
+      expect(defs).toHaveLength(0);
+    });
+
+    // Line range verification
+    it('sets correct line and endLine on callback definition', () => {
+      const code = [
+        'app.get("/users",', // line 1
+        '  (req, res) => {', // line 2 — callback starts
+        '    res.json([]);', // line 3
+        '  }', // line 4 — callback ends
+        ');', // line 5
+      ].join('\n');
+      const symbols = parseJS(code);
+      const def = symbols.definitions.find((d) => d.name === 'route:GET /users');
+      expect(def).toBeDefined();
+      expect(def.line).toBe(2);
+      expect(def.endLine).toBe(4);
+    });
+  });
 });
