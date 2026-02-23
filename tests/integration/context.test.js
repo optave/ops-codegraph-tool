@@ -246,4 +246,23 @@ describe('contextData', () => {
       }
     }
   });
+
+  test('exact match ranks first', () => {
+    const data = contextData('openDb', dbPath);
+    // openDb should be first result since it's an exact match
+    expect(data.results[0].name).toBe('openDb');
+  });
+
+  test('--file scopes to matching file', () => {
+    const data = contextData('main', dbPath, { file: 'caller.js' });
+    expect(data.results.length).toBeGreaterThanOrEqual(1);
+    for (const r of data.results) {
+      expect(r.file).toContain('caller.js');
+    }
+  });
+
+  test('--kind method returns empty for function fixtures', () => {
+    const data = contextData('openDb', dbPath, { kind: 'method' });
+    expect(data.results).toHaveLength(0);
+  });
 });
