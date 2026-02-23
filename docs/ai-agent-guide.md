@@ -151,7 +151,7 @@ codegraph deps src/builder.js
 | | |
 |---|---|
 | **MCP tool** | `file_deps` |
-| **Key flags** | `-j` (JSON) |
+| **Key flags** | `-T` (no tests), `-j` (JSON) |
 | **When to use** | Understanding a file's position in the dependency graph |
 | **Output** | Imports list, importers list, symbols defined in the file |
 
@@ -241,7 +241,7 @@ codegraph impact src/parser.js
 | | |
 |---|---|
 | **MCP tool** | `impact_analysis` |
-| **Key flags** | `-j` (JSON) |
+| **Key flags** | `-T` (no tests), `-j` (JSON) |
 | **When to use** | Assessing file-level change impact |
 | **Output** | Affected files grouped by dependency depth, total count |
 
@@ -275,7 +275,7 @@ codegraph map --limit 20
 | | |
 |---|---|
 | **MCP tool** | `module_map` |
-| **Key flags** | `-n, --limit` (default: 20), `-j` (JSON) |
+| **Key flags** | `-n, --limit` (default: 20), `-T` (no tests), `-j` (JSON) |
 | **When to use** | Orientation — understanding codebase structure at a glance |
 | **Output** | Top N files ranked by connections, with in/out edge counts |
 
@@ -290,7 +290,7 @@ codegraph stats
 | | |
 |---|---|
 | **MCP tool** | (use via CLI) |
-| **Key flags** | `-j` (JSON) |
+| **Key flags** | `-T` (no tests), `-j` (JSON) |
 | **When to use** | Checking graph health, verifying build completeness |
 | **Output** | Counts by kind, edge counts, language breakdown, quality score (0–100) |
 
@@ -305,7 +305,7 @@ codegraph structure --depth 2 --sort cohesion
 | | |
 |---|---|
 | **MCP tool** | `structure` |
-| **Key flags** | `--depth <n>`, `--sort <metric>` (cohesion, fan-in, fan-out, density, files), `-j` (JSON) |
+| **Key flags** | `--depth <n>`, `--sort <metric>` (cohesion, fan-in, fan-out, density, files), `-T` (no tests), `-j` (JSON) |
 | **When to use** | Understanding project layout and identifying well/poorly-cohesive modules |
 | **Output** | Tree with per-directory metrics |
 
@@ -321,7 +321,7 @@ codegraph hotspots --level directory --metric fan-out
 | | |
 |---|---|
 | **MCP tool** | `hotspots` |
-| **Key flags** | `--metric` (fan-in, fan-out, density, coupling; default: fan-in), `--level` (file, directory), `-n, --limit` (default: 10), `-j` (JSON) |
+| **Key flags** | `--metric` (fan-in, fan-out, density, coupling; default: fan-in), `--level` (file, directory), `-n, --limit` (default: 10), `-T` (no tests), `-j` (JSON) |
 | **When to use** | Finding the most critical or problematic parts of the codebase |
 | **Output** | Ranked list of files/directories by the chosen metric |
 
@@ -337,7 +337,7 @@ codegraph cycles --functions
 | | |
 |---|---|
 | **MCP tool** | `find_cycles` |
-| **Key flags** | `--functions` (function-level instead of file-level), `-j` (JSON) |
+| **Key flags** | `--functions` (function-level instead of file-level), `-T` (no tests), `-j` (JSON) |
 | **When to use** | Verifying no new cycles were introduced |
 | **Output** | List of cycles, each shown as a chain of files/functions |
 
@@ -384,7 +384,7 @@ codegraph query buildGraph
 | | |
 |---|---|
 | **MCP tool** | `query_function` |
-| **Key flags** | `-j` (JSON) |
+| **Key flags** | `-T` (no tests), `-j` (JSON) |
 | **When to use** | Quick one-off lookup (prefer `fn` or `context` for richer data) |
 
 #### `export` — Export graph
@@ -398,7 +398,7 @@ codegraph export --format mermaid --functions -o graph.md
 | | |
 |---|---|
 | **MCP tool** | `export_graph` |
-| **Key flags** | `-f, --format` (dot, mermaid, json), `--functions` (function-level), `-o, --output` (file) |
+| **Key flags** | `-f, --format` (dot, mermaid, json), `--functions` (function-level), `-T` (no tests), `-o, --output` (file) |
 | **When to use** | Visualization, documentation, or external tool integration |
 
 #### `list_functions` (MCP only)
@@ -809,7 +809,7 @@ fi
 
 | Flag | Short | Description | Available on |
 |------|-------|-------------|-------------|
-| `--no-tests` | `-T` | Exclude test/spec files | fn, fn-impact, context, explain, where, diff-impact, search |
+| `--no-tests` | `-T` | Exclude test/spec files | All query commands (fn, fn-impact, context, explain, where, diff-impact, search, map, deps, impact, query, stats, hotspots, cycles, export, structure) |
 | `--json` | `-j` | JSON output | Most commands |
 | `--file <path>` | `-f` | Scope to a file | fn, fn-impact, context, where |
 | `--kind <kind>` | `-k` | Filter by symbol kind | fn, fn-impact, context |
