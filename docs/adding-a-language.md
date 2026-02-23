@@ -1,8 +1,7 @@
 # Adding a New Language to Codegraph
 
 This guide walks through every file you need to touch when adding support for a
-new programming language. It covers both the **WASM engine** (main branch) and
-the **native Rust engine** (`feat/rust-core` branch).
+new programming language.
 
 ---
 
@@ -19,6 +18,32 @@ Both engines produce the same `FileSymbols` structure, so graph building and
 queries are engine-agnostic. When adding a new language you implement the
 extraction logic **twice** — once in JavaScript (WASM) and once in Rust
 (native) — and a parity test guarantees they agree.
+
+### The LANGUAGE_REGISTRY
+
+`LANGUAGE_REGISTRY` in `src/parser.js` is the **single source of truth** for all
+supported languages. Each entry declares:
+
+```js
+{
+  id: 'go',                          // Language identifier
+  extensions: ['.go'],               // File extensions (auto-derives EXTENSIONS)
+  grammarFile: 'tree-sitter-go.wasm', // WASM grammar filename
+  extractor: extractGoSymbols,       // Extraction function reference
+  required: false,                   // true = crash if missing; false = skip gracefully
+}
+```
+
+Adding a language to the WASM engine requires **one registry entry** plus an
+extractor function. Everything else — extension routing, parser loading, dispatch
+— is automatic.
+
+- `SUPPORTED_EXTENSIONS` (re-exported as `EXTENSIONS` in `constants.js`) is
+  **derived** from the registry. You never edit it manually.
+- `createParsers()` iterates the registry and builds a `Map<id, Parser>`.
+- `getParser()` uses an extension→registry lookup map (`_extToLang`).
+- `wasmExtractSymbols()` calls `entry.extractor(tree, filePath)` — no ternary chains.
+- `parseFilesAuto()` in `builder.js` handles all dispatch — no per-language routing needed.
 
 ---
 
@@ -40,11 +65,15 @@ FileSymbols {
 
 | Structure | Fields | Notes |
 |-----------|--------|-------|
-| `Definition` | `name`, `kind`, `line`, `endLine`, `decorators?` | `kind` ∈ `function`, `method`, `class`, `interface`, `type` |
+| `Definition` | `name`, `kind`, `line`, `endLine`, `decorators?` | `kind` ∈ `SYMBOL_KINDS` (see below) |
 | `Call` | `name`, `line`, `dynamic?` | |
 | `Import` | `source`, `names[]`, `line`, `<lang>Import?` | Set a language flag like `cInclude: true` |
 | `ClassRelation` | `name`, `extends?`, `implements?`, `line` | |
 | `ExportInfo` | `name`, `kind`, `line` | |
+
+**Symbol kinds:** `function`, `method`, `class`, `interface`, `type`, `struct`,
+`enum`, `trait`, `record`, `module`. Use the language's native kind (e.g. Go
+structs → `struct`, Rust traits → `trait`, Ruby modules → `module`).
 
 Methods inside a class use the `ClassName.methodName` naming convention.
 
@@ -85,50 +114,19 @@ Build the WASM binary:
 npm run build:wasm
 ```
 
-This generates `grammars/tree-sitter-<lang>.wasm`. Commit this file.
+This generates `grammars/tree-sitter-<lang>.wasm` (gitignored — built from
+devDeps on `npm install`).
 
-### 3. `src/constants.js` — register file extensions
+### 3. `src/parser.js` — add extractor and registry entry
 
-```js
-export const EXTENSIONS = new Set([
-  // ... existing ...
-  '.<ext>',          // e.g. '.c', '.h'
-]);
-```
+This is the only source file where you need to make changes on the JS side.
+Two things to do:
 
-### 4. `src/parser.js` — WASM extraction (3 changes)
+#### 3a. Create `extract<Lang>Symbols(tree, filePath)`
 
-#### 4a. Load the grammar in `createParsers()`
-
-Follow the graceful-fallback pattern used by every optional language:
-
-```js
-let <lang>Parser = null;
-try {
-  const <Lang> = await Language.load(grammarPath('tree-sitter-<lang>.wasm'));
-  <lang>Parser = new Parser();
-  <lang>Parser.setLanguage(<Lang>);
-} catch (e) {
-  warn(`<Lang> parser failed to initialize: ${e.message}. <Lang> files will be skipped.`);
-}
-```
-
-Return it from the object: `return { ..., <lang>Parser };`
-
-#### 4b. Route extensions in `getParser()`
-
-```js
-if ((filePath.endsWith('.<ext>')) && parsers.<lang>Parser)
-  return parsers.<lang>Parser;
-```
-
-> Place this *before* the `return null;` at the end of `getParser()`.
-
-#### 4c. Create `extract<Lang>Symbols(tree, filePath)`
-
-This is where the real work happens. Write a recursive AST walker that matches
-tree-sitter node types for your language. Copy the pattern from an existing
-extractor like `extractGoSymbols` or `extractRustSymbols`:
+Write a recursive AST walker that matches tree-sitter node types for your
+language. Copy the pattern from an existing extractor like `extractGoSymbols` or
+`extractRustSymbols`:
 
 ```js
 /**
@@ -197,36 +195,36 @@ export function extract<Lang>Symbols(tree, filePath) {
 to explore AST node types for your language. Paste sample code and inspect the
 tree to find the right `node.type` strings.
 
-#### 4d. Add WASM dispatch in `wasmExtractSymbols()` (feat/rust-core only)
+#### 3b. Add an entry to `LANGUAGE_REGISTRY`
 
-On the `feat/rust-core` branch, `parser.js` has a unified `wasmExtractSymbols`
-helper. Add your language before the final `return extractSymbols(...)`:
-
-```js
-if (filePath.endsWith('.<ext>')) return extract<Lang>Symbols(tree, filePath);
-```
-
-### 5. `src/builder.js` — route parsing (main branch only)
-
-On `main`, the builder dispatches manually. On `feat/rust-core` this is
-replaced by `parseFilesAuto`, so **skip this step on the rust branch**.
-
-**main branch** — add your language to the import and ternary chain:
+Add your language to the `LANGUAGE_REGISTRY` array in `src/parser.js`:
 
 ```js
-// Import
-import { ..., extract<Lang>Symbols } from './parser.js';
-
-// In the parsing loop, add before `extractSymbols(tree, filePath)`
-const is<Lang> = filePath.endsWith('.<ext>');
-// ... add to the ternary chain:
-: is<Lang> ? extract<Lang>Symbols(tree, filePath)
+{
+  id: '<lang>',
+  extensions: ['.<ext>'],
+  grammarFile: 'tree-sitter-<lang>.wasm',
+  extractor: extract<Lang>Symbols,
+  required: false,
+},
 ```
 
-### 6. `src/parser.js` — update `normalizeNativeSymbols` (feat/rust-core only)
+Set `required: false` so codegraph still works when the WASM grammar isn't
+available (e.g. in CI without `npm install`). Only JS/TS/TSX are `required: true`.
+
+That's it for the WASM engine. The registry automatically:
+- Adds `.<ext>` to `SUPPORTED_EXTENSIONS` (and `EXTENSIONS` in `constants.js`)
+- Registers the parser in `createParsers()`
+- Routes `getParser()` calls via the extension map
+- Dispatches to your extractor in `wasmExtractSymbols()`
+- Handles `builder.js` routing via `parseFilesAuto()`
+
+**You do not need to edit `constants.js` or `builder.js`.**
+
+### 4. `src/parser.js` — update `normalizeNativeSymbols` (if needed)
 
 If your language's imports use a language-specific flag (e.g. `c_include`), add
-the camelCase mapping:
+the camelCase mapping in `normalizeNativeSymbols`:
 
 ```js
 <lang>Import: i.<lang>Import ?? i.<lang>_import,
@@ -234,16 +232,16 @@ the camelCase mapping:
 
 ---
 
-## Native Engine (feat/rust-core branch)
+## Native Engine (Rust)
 
-### 7. `crates/codegraph-core/Cargo.toml` — add the Rust tree-sitter crate
+### 5. `crates/codegraph-core/Cargo.toml` — add the Rust tree-sitter crate
 
 ```toml
 [dependencies]
 tree-sitter-<lang> = "0.x"
 ```
 
-### 8. `crates/codegraph-core/src/parser_registry.rs` — register the language
+### 6. `crates/codegraph-core/src/parser_registry.rs` — register the language
 
 Three changes in this file:
 
@@ -274,7 +272,7 @@ impl LanguageKind {
 }
 ```
 
-### 9. `crates/codegraph-core/src/extractors/<lang>.rs` — implement the Rust extractor
+### 7. `crates/codegraph-core/src/extractors/<lang>.rs` — implement the Rust extractor
 
 Create a new file following the pattern in `go.rs` or `rust_lang.rs`:
 
@@ -332,7 +330,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 | `named_child_text(&node, "field", source)` | Shorthand for field text |
 | `start_line(&node)` / `end_line(&node)` | 1-based line numbers |
 
-### 10. `crates/codegraph-core/src/extractors/mod.rs` — wire it up
+### 8. `crates/codegraph-core/src/extractors/mod.rs` — wire it up
 
 ```rust
 // 1. Declare module
@@ -347,7 +345,7 @@ pub fn extract_symbols(...) -> FileSymbols {
 }
 ```
 
-### 11. `crates/codegraph-core/src/types.rs` — add language flag (if needed)
+### 9. `crates/codegraph-core/src/types.rs` — add language flag (if needed)
 
 If your imports need a language-specific flag, add it to the `Import` struct:
 
@@ -361,7 +359,7 @@ And update `Import::new()` to default it to `None`.
 
 ## Tests
 
-### 12. `tests/parsers/<lang>.test.js` — WASM parser tests
+### 10. `tests/parsers/<lang>.test.js` — WASM parser tests
 
 Follow the pattern from `tests/parsers/go.test.js`:
 
@@ -377,7 +375,7 @@ describe('<Lang> parser', () => {
   });
 
   function parse<Lang>(code) {
-    const parser = parsers.<lang>Parser;
+    const parser = parsers.get('<lang>');
     if (!parser) throw new Error('<Lang> parser not available');
     const tree = parser.parse(code);
     return extract<Lang>Symbols(tree, 'test.<ext>');
@@ -394,6 +392,9 @@ describe('<Lang> parser', () => {
 });
 ```
 
+> **Note:** `parsers` is a `Map` — use `parsers.get('<lang>')`, not
+> `parsers.<lang>Parser`.
+
 **Recommended test cases:**
 - Function definitions (regular, with parameters)
 - Class/struct/enum definitions
@@ -403,7 +404,7 @@ describe('<Lang> parser', () => {
 - Type definitions / aliases
 - Forward declarations (if applicable)
 
-### 13. Parity tests (feat/rust-core only)
+### 11. Parity tests — native vs WASM
 
 Add test snippets to `tests/engines/parity.test.js` to verify the native and
 WASM extractors produce identical output for your language.
@@ -422,27 +423,34 @@ npx vitest run tests/parsers/<lang>.test.js
 # 3. Run the full test suite
 npm test
 
-# 4. (feat/rust-core) Build native and test parity
+# 4. Build native and test parity
 cd crates/codegraph-core && cargo build
 npx vitest run tests/engines/parity.test.js
+
+# 5. Test on a real project
+codegraph build /path/to/a/<lang>/project
+codegraph map
+codegraph fn someFunction
 ```
 
 ---
 
 ## File Checklist Summary
 
-| # | File | Branch | Action |
+| # | File | Engine | Action |
 |---|------|--------|--------|
-| 1 | `package.json` | both | Add `tree-sitter-<lang>` devDependency |
-| 2 | `scripts/build-wasm.js` | both | Add grammar entry |
-| 3 | `grammars/tree-sitter-<lang>.wasm` | both | Generated by `npm run build:wasm` |
-| 4 | `src/constants.js` | both | Add file extensions |
-| 5 | `src/parser.js` | both | Load grammar, route parser, add `extract<Lang>Symbols()`, add WASM dispatch |
-| 6 | `src/builder.js` | main only | Import + ternary routing (not needed on rust branch) |
-| 7 | `tests/parsers/<lang>.test.js` | both | WASM parser tests |
-| 8 | `crates/codegraph-core/Cargo.toml` | rust | Add tree-sitter crate |
-| 9 | `crates/.../parser_registry.rs` | rust | Register enum + extension + grammar |
-| 10 | `crates/.../extractors/<lang>.rs` | rust | Implement `SymbolExtractor` trait |
-| 11 | `crates/.../extractors/mod.rs` | rust | Declare module + dispatch arm |
-| 12 | `crates/.../types.rs` | rust | Add language flag to `Import` (if needed) |
-| 13 | `tests/engines/parity.test.js` | rust | Cross-engine validation snippets |
+| 1 | `package.json` | WASM | Add `tree-sitter-<lang>` devDependency |
+| 2 | `scripts/build-wasm.js` | WASM | Add grammar entry to array |
+| 3 | `src/parser.js` | WASM | Create `extract<Lang>Symbols()` + add `LANGUAGE_REGISTRY` entry |
+| 4 | `src/parser.js` | WASM | Update `normalizeNativeSymbols` (if language flag needed) |
+| 5 | `crates/codegraph-core/Cargo.toml` | Native | Add tree-sitter crate |
+| 6 | `crates/.../parser_registry.rs` | Native | Register enum + extension + grammar |
+| 7 | `crates/.../extractors/<lang>.rs` | Native | Implement `SymbolExtractor` trait |
+| 8 | `crates/.../extractors/mod.rs` | Native | Declare module + dispatch arm |
+| 9 | `crates/.../types.rs` | Native | Add language flag to `Import` (if needed) |
+| 10 | `tests/parsers/<lang>.test.js` | WASM | Parser extraction tests |
+| 11 | `tests/engines/parity.test.js` | Both | Cross-engine validation snippets |
+
+**Files you do NOT need to touch:**
+- `src/constants.js` — `EXTENSIONS` is derived from the registry automatically
+- `src/builder.js` — `parseFilesAuto()` uses the registry, no manual routing
