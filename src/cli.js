@@ -18,6 +18,7 @@ import {
   impactAnalysis,
   moduleMap,
   queryName,
+  stats,
 } from './queries.js';
 import {
   listRepos,
@@ -79,6 +80,15 @@ program
   .option('-j, --json', 'Output as JSON')
   .action((opts) => {
     moduleMap(opts.db, parseInt(opts.limit, 10), { json: opts.json });
+  });
+
+program
+  .command('stats')
+  .description('Show graph health overview: nodes, edges, languages, cycles, hotspots, embeddings')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-j, --json', 'Output as JSON')
+  .action((opts) => {
+    stats(opts.db, { json: opts.json });
   });
 
 program

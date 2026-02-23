@@ -45,6 +45,7 @@ export {
   impactAnalysisData,
   moduleMapData,
   queryNameData,
+  statsData,
 } from './queries.js';
 // Registry (multi-repo)
 export {
