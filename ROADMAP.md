@@ -2,7 +2,7 @@
 
 > **Current version:** 1.4.0 | **Status:** Active development | **Updated:** February 2026
 
-Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across seven phases — closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
+Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across eight phases — closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
 **LLM strategy:** All LLM-powered features are **optional enhancements**. Everything works without an API key. When configured (OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint), users unlock richer semantic search and natural language queries.
 
@@ -14,21 +14,23 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 |-------|-------|-----------------|--------|
 | [**1**](#phase-1--rust-core) | Rust Core | Rust parsing engine via napi-rs, parallel parsing, incremental tree-sitter, JS orchestration layer | **Complete** (v1.3.0) |
 | [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Complete** (v1.4.0) |
-| [**3**](#phase-3--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, hybrid search | Planned |
-| [**4**](#phase-4--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions | Planned |
-| [**5**](#phase-5--expanded-language-support) | Expanded Language Support | 8 new languages (12 → 20), parser utilities | Planned |
-| [**6**](#phase-6--github-integration--ci) | GitHub Integration & CI | Reusable GitHub Action, PR review, SARIF output | Planned |
-| [**7**](#phase-7--interactive-visualization--advanced-features) | Visualization & Advanced | Web UI, dead code detection, monorepo, agentic search | Planned |
+| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring | Parser plugin system, repository pattern, pipeline builder, engine strategy, analysis/formatting split, domain errors, CLI commands, composable MCP, curated API | Planned |
+| [**4**](#phase-4--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, hybrid search | Planned |
+| [**5**](#phase-5--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions | Planned |
+| [**6**](#phase-6--expanded-language-support) | Expanded Language Support | 8 new languages (12 → 20), parser utilities | Planned |
+| [**7**](#phase-7--github-integration--ci) | GitHub Integration & CI | Reusable GitHub Action, PR review, SARIF output | Planned |
+| [**8**](#phase-8--interactive-visualization--advanced-features) | Visualization & Advanced | Web UI, dead code detection, monorepo, agentic search | Planned |
 
 ### Dependency graph
 
 ```
 Phase 1 (Rust Core)
   └──→ Phase 2 (Foundation Hardening)
-         ├──→ Phase 3 (Embeddings)  ──→ Phase 4 (NL Queries)
-         ├──→ Phase 5 (Languages)
-         └──→ Phase 6 (GitHub/CI)
-Phases 1-4 ──→ Phase 7 (Visualization & Advanced)
+         └──→ Phase 3 (Architectural Refactoring)
+                ├──→ Phase 4 (Embeddings)  ──→ Phase 5 (NL Queries)
+                ├──→ Phase 6 (Languages)
+                └──→ Phase 7 (GitHub/CI)
+Phases 1-5 ──→ Phase 8 (Visualization & Advanced)
 ```
 
 ---
@@ -187,11 +189,297 @@ Support querying multiple codebases from a single MCP server instance.
 
 ---
 
-## Phase 3 — Intelligent Embeddings
+## Phase 3 — Architectural Refactoring
+
+**Goal:** Restructure the codebase for modularity, testability, and long-term maintainability. These are internal improvements — no new user-facing features, but they make every subsequent phase easier to build and maintain.
+
+> Reference: [generated/architecture.md](generated/architecture.md) — full analysis with code examples and rationale.
+
+### 3.1 — Parser Plugin System
+
+Split `parser.js` (2,200+ lines) into a modular directory structure with isolated per-language extractors.
+
+```
+src/parser/
+  index.js              # Public API: parseFileAuto, parseFilesAuto
+  registry.js           # LANGUAGE_REGISTRY + extension mapping
+  engine.js             # Native/WASM init, engine resolution, grammar loading
+  tree-utils.js         # findChild, findParentClass, walkTree helpers
+  base-extractor.js     # Shared walk loop + accumulator framework
+  extractors/
+    javascript.js       # JS/TS/TSX
+    python.js
+    go.js
+    rust.js
+    java.js
+    csharp.js
+    ruby.js
+    php.js
+    hcl.js
+```
+
+Introduce a `BaseExtractor` that owns the tree walk loop. Each language extractor declares a `nodeType → handler` map instead of reimplementing the traversal. Eliminates repeated walk-and-switch boilerplate across 9+ extractors.
+
+**Affected files:** `src/parser.js` → split into `src/parser/`
+
+### 3.2 — Repository Pattern for Data Access
+
+Consolidate all SQL into a single `Repository` class. Currently SQL is scattered across `builder.js`, `queries.js`, `embedder.js`, `watcher.js`, and `cycles.js`.
+
+```
+src/db/
+  connection.js         # Open, WAL mode, pragma tuning
+  migrations.js         # Schema versions
+  repository.js         # ALL data access methods (reads + writes)
+```
+
+All prepared statements, index tuning, and schema knowledge live in one place. Consumers never see SQL. Enables an `InMemoryRepository` for fast unit tests.
+
+**Affected files:** `src/db.js` → split into `src/db/`, SQL extracted from `builder.js`, `queries.js`, `embedder.js`, `watcher.js`, `cycles.js`
+
+### 3.3 — Analysis / Formatting Separation
+
+Split `queries.js` (800+ lines) into pure analysis modules and presentation formatters.
+
+```
+src/analysis/           # Pure data: take repository, return typed results
+  impact.js
+  call-chain.js
+  diff-impact.js
+  module-map.js
+  class-hierarchy.js
+
+src/formatters/         # Presentation: take data, produce strings
+  cli-formatter.js
+  json-formatter.js
+  table-formatter.js
+```
+
+Analysis modules return pure data. The CLI, MCP server, and programmatic API each pick their own formatter (or none). Eliminates the `*Data()` / `*()` dual-function pattern.
+
+**Affected files:** `src/queries.js` → split into `src/analysis/` + `src/formatters/`
+
+### 3.4 — Builder Pipeline Architecture
+
+Refactor `buildGraph()` from a monolithic mega-function into explicit, independently testable pipeline stages.
+
+```js
+const pipeline = [
+  collectFiles,      // (rootDir, config) => filePaths[]
+  detectChanges,     // (filePaths, db) => { changed, removed, isFullBuild }
+  parseFiles,        // (filePaths, engineOpts) => Map<file, symbols>
+  insertNodes,       // (symbolMap, db) => nodeIndex
+  resolveImports,    // (symbolMap, rootDir, aliases) => importEdges[]
+  buildCallEdges,    // (symbolMap, nodeIndex) => callEdges[]
+  buildClassEdges,   // (symbolMap, nodeIndex) => classEdges[]
+  resolveBarrels,    // (edges, symbolMap) => resolvedEdges[]
+  insertEdges,       // (allEdges, db) => stats
+]
+```
+
+Watch mode reuses the same stages (triggered per-file instead of per-project), eliminating the divergence between `watcher.js` and `builder.js` where bug fixes must be applied separately.
+
+**Affected files:** `src/builder.js`, `src/watcher.js`
+
+### 3.5 — Unified Engine Interface
+
+Replace scattered `engine.name === 'native'` branching with a Strategy pattern. Every consumer receives an engine object with the same API regardless of backend.
+
+```js
+const engine = createEngine(opts) // returns same interface for native or WASM
+engine.parseFile(path, source)
+engine.resolveImports(batch, rootDir, aliases)
+engine.detectCycles(db)
+```
+
+Consumers never branch on native vs WASM. Adding a third backend (e.g., remote parsing service) requires zero consumer changes.
+
+**Affected files:** `src/parser.js`, `src/resolve.js`, `src/cycles.js`, `src/builder.js`, `src/native.js`
+
+### 3.6 — Qualified Names & Hierarchical Scoping
+
+Enrich the node model with scope information to reduce ambiguity.
+
+```sql
+ALTER TABLE nodes ADD COLUMN qualified_name TEXT;  -- 'DateHelper.format'
+ALTER TABLE nodes ADD COLUMN scope TEXT;            -- 'DateHelper'
+ALTER TABLE nodes ADD COLUMN visibility TEXT;       -- 'public' | 'private' | 'protected'
+```
+
+Enables queries like "all methods of class X" without traversing edges. Reduces reliance on heuristic confidence scoring for name collisions.
+
+**Affected files:** `src/db.js`, `src/parser.js` (extractors), `src/queries.js`, `src/builder.js`
+
+### 3.7 — Composable MCP Tool Registry
+
+Replace the monolithic `TOOLS` array + `switch` dispatch in `mcp.js` with self-contained tool modules.
+
+```
+src/mcp/
+  server.js             # MCP server setup, transport, lifecycle
+  tool-registry.js      # Dynamic tool registration + auto-discovery
+  tools/
+    query-function.js   # { schema, handler } per tool
+    file-deps.js
+    impact-analysis.js
+    ...
+```
+
+Adding a new MCP tool = adding a file. No other files change.
+
+**Affected files:** `src/mcp.js` → split into `src/mcp/`
+
+### 3.8 — CLI Command Objects
+
+Move from inline Commander chains in `cli.js` to self-contained command modules.
+
+```
+src/cli/
+  index.js              # Commander setup, auto-discover commands
+  commands/
+    build.js            # { name, description, options, validate, execute }
+    query.js
+    impact.js
+    ...
+```
+
+Each command is independently testable by calling `execute()` directly. The CLI index auto-discovers and registers them.
+
+**Affected files:** `src/cli.js` → split into `src/cli/`
+
+### 3.9 — Domain Error Hierarchy
+
+Replace ad-hoc error handling (mix of thrown `Error`, returned `null`, `logger.warn()`, `process.exit(1)`) with structured domain errors.
+
+```js
+class CodegraphError extends Error { constructor(message, { code, file, cause }) { ... } }
+class ParseError extends CodegraphError { code = 'PARSE_FAILED' }
+class DbError extends CodegraphError { code = 'DB_ERROR' }
+class ConfigError extends CodegraphError { code = 'CONFIG_INVALID' }
+class ResolutionError extends CodegraphError { code = 'RESOLUTION_FAILED' }
+class EngineError extends CodegraphError { code = 'ENGINE_UNAVAILABLE' }
+```
+
+CLI catches domain errors and formats for humans. MCP returns structured error responses. No more `process.exit()` from library code.
+
+**New file:** `src/errors.js`
+
+### 3.10 — Curated Public API Surface
+
+Reduce `index.js` from ~40 re-exports to a curated public API. Use `package.json` `exports` field to enforce module boundaries.
+
+```json
+{ "exports": { ".": "./src/index.js", "./cli": "./src/cli.js" } }
+```
+
+Internal modules become truly internal. Consumers can only import from documented entry points.
+
+**Affected files:** `src/index.js`, `package.json`
+
+### 3.11 — Embedder Subsystem Extraction
+
+Restructure `embedder.js` (525 lines) into a standalone subsystem with pluggable vector storage.
+
+```
+src/embeddings/
+  index.js              # Public API
+  model-registry.js     # Model definitions, batch sizes, loading
+  generator.js          # Source → text preparation → batch embedding
+  store.js              # Vector storage (pluggable: SQLite blob, HNSW index)
+  search.js             # Similarity search, RRF multi-query fusion
+```
+
+Decouples embedding schema from the graph DB. The pluggable store interface enables future O(log n) ANN search (e.g., `hnswlib-node`) when symbol counts reach 50K+.
+
+**Affected files:** `src/embedder.js` → split into `src/embeddings/`
+
+### 3.12 — Testing Pyramid
+
+Add proper unit test layer below the existing integration tests.
+
+- Pure unit tests for extractors (pass AST node, assert symbols — no file I/O)
+- Pure unit tests for BFS/Tarjan algorithms (pass adjacency list, assert result)
+- Pure unit tests for confidence scoring (pass parameters, assert score)
+- Repository mock for query tests (in-memory data, no SQLite)
+- E2E tests that invoke the CLI binary and assert exit codes + stdout
+
+The repository pattern (3.2) directly enables this: unit tests use `InMemoryRepository`, integration tests use `SqliteRepository`.
+
+### 3.13 — Event-Driven Pipeline
+
+Add an event/streaming architecture to the build pipeline for progress reporting, cancellation, and large-repo support.
+
+```js
+pipeline.on('file:parsed',    (file, symbols) => { /* progress */ })
+pipeline.on('file:indexed',   (file, nodeCount) => { /* progress */ })
+pipeline.on('build:complete',  (stats) => { /* summary */ })
+pipeline.on('error',           (file, err) => { /* continue or abort */ })
+await pipeline.run(rootDir)
+```
+
+Unifies build and watch code paths. Large builds stream results to the DB incrementally instead of buffering in memory.
+
+**Affected files:** `src/builder.js`, `src/watcher.js`, `src/cli.js`
+
+### 3.14 — Subgraph Export Filtering
+
+Add focus/filter options to the export module so visualizations are usable for real projects.
+
+```bash
+codegraph export --format dot --focus src/builder.js --depth 2
+codegraph export --format mermaid --filter "src/api/**" --kind function
+codegraph export --format json --changed
+```
+
+The export module receives a subgraph specification (focus node + depth, file pattern, kind filter) and extracts the relevant subgraph before formatting.
+
+**Affected files:** `src/export.js`, `src/cli.js`
+
+### 3.15 — Transitive Import-Aware Confidence
+
+Before falling back to proximity heuristics, walk the import graph from the caller file. If any import path (even indirect through barrel files) reaches a candidate, score it 0.9. Only fall back to proximity when no import path exists.
+
+**Affected files:** `src/resolve.js`, `src/builder.js`
+
+### 3.16 — Query Result Caching
+
+Add a TTL/LRU cache between the analysis layer and the repository. Particularly valuable for MCP where an agent session may repeatedly query related symbols.
+
+```js
+class QueryCache {
+  constructor(db, maxAge = 60_000) { ... }
+  get(key) { ... }        // key = query name + args hash
+  set(key, value) { ... }
+  invalidate() { ... }    // called after any DB mutation
+}
+```
+
+### 3.17 — Configuration Profiles
+
+Support profile-based configuration for monorepos with multiple services.
+
+```json
+{
+  "profiles": {
+    "backend":  { "include": ["services/api/**"], "build": { "dbPath": ".codegraph/api.db" } },
+    "frontend": { "include": ["apps/web/**"], "build": { "dbPath": ".codegraph/web.db" } }
+  }
+}
+```
+
+```bash
+codegraph build --profile backend
+```
+
+**Affected files:** `src/config.js`, `src/cli.js`
+
+---
+
+## Phase 4 — Intelligent Embeddings
 
 **Goal:** Dramatically improve semantic search quality by embedding natural-language descriptions instead of raw code.
 
-### 3.1 — LLM Description Generator
+### 4.1 — LLM Description Generator
 
 For each function/method/class node, generate a concise natural-language description:
 
@@ -219,7 +507,7 @@ For each function/method/class node, generate a concise natural-language descrip
 
 **New file:** `src/describer.js`
 
-### 3.2 — Enhanced Embedding Pipeline
+### 4.2 — Enhanced Embedding Pipeline
 
 - When descriptions exist, embed the description text instead of raw code
 - Keep raw code as fallback when no description is available
@@ -230,7 +518,7 @@ For each function/method/class node, generate a concise natural-language descrip
 
 **Affected files:** `src/embedder.js`
 
-### 3.3 — Hybrid Search
+### 4.3 — Hybrid Search
 
 Combine vector similarity with keyword matching.
 
@@ -245,11 +533,11 @@ Combine vector similarity with keyword matching.
 
 ---
 
-## Phase 4 — Natural Language Queries
+## Phase 5 — Natural Language Queries
 
 **Goal:** Allow developers to ask questions about their codebase in plain English.
 
-### 4.1 — Query Engine
+### 5.1 — Query Engine
 
 ```bash
 codegraph ask "How does the authentication flow work?"
@@ -275,7 +563,7 @@ codegraph ask "How does the authentication flow work?"
 
 **New file:** `src/nlquery.js`
 
-### 4.2 — Conversational Sessions
+### 5.2 — Conversational Sessions
 
 Multi-turn conversations with session memory.
 
@@ -289,7 +577,7 @@ codegraph sessions clear
 - Store conversation history in SQLite table `sessions`
 - Include prior Q&A pairs in subsequent prompts
 
-### 4.3 — MCP Integration
+### 5.3 — MCP Integration
 
 New MCP tool: `ask_codebase` — natural language query via MCP.
 
@@ -299,11 +587,11 @@ Enables AI coding agents (Claude Code, Cursor, etc.) to ask codegraph questions 
 
 ---
 
-## Phase 5 — Expanded Language Support
+## Phase 6 — Expanded Language Support
 
 **Goal:** Go from 12 → 20 supported languages.
 
-### 5.1 — Batch 1: High Demand
+### 6.1 — Batch 1: High Demand
 
 | Language | Extensions | Grammar | Effort |
 |----------|-----------|---------|--------|
@@ -312,7 +600,7 @@ Enables AI coding agents (Claude Code, Cursor, etc.) to ask codegraph questions 
 | Kotlin | `.kt`, `.kts` | `tree-sitter-kotlin` | Low |
 | Swift | `.swift` | `tree-sitter-swift` | Medium |
 
-### 5.2 — Batch 2: Growing Ecosystems
+### 6.2 — Batch 2: Growing Ecosystems
 
 | Language | Extensions | Grammar | Effort |
 |----------|-----------|---------|--------|
@@ -321,7 +609,7 @@ Enables AI coding agents (Claude Code, Cursor, etc.) to ask codegraph questions 
 | Lua | `.lua` | `tree-sitter-lua` | Low |
 | Zig | `.zig` | `tree-sitter-zig` | Low |
 
-### 5.3 — Parser Abstraction Layer
+### 6.3 — Parser Abstraction Layer
 
 Extract shared patterns from existing extractors into reusable helpers.
 
@@ -337,11 +625,11 @@ Extract shared patterns from existing extractors into reusable helpers.
 
 ---
 
-## Phase 6 — GitHub Integration & CI
+## Phase 7 — GitHub Integration & CI
 
 **Goal:** Bring codegraph's analysis into pull request workflows.
 
-### 6.1 — Reusable GitHub Action
+### 7.1 — Reusable GitHub Action
 
 A reusable GitHub Action that runs on PRs:
 
@@ -363,7 +651,7 @@ A reusable GitHub Action that runs on PRs:
 
 **New file:** `.github/actions/codegraph-ci/action.yml`
 
-### 6.2 — PR Review Integration
+### 7.2 — PR Review Integration
 
 ```bash
 codegraph review --pr <number>
@@ -379,7 +667,7 @@ Requires `gh` CLI. For each changed function:
 
 **New file:** `src/github.js`
 
-### 6.3 — SARIF Output
+### 7.3 — SARIF Output
 
 Add SARIF output format for cycle detection. SARIF integrates with GitHub Code Scanning, showing issues inline in the PR.
 
@@ -387,9 +675,9 @@ Add SARIF output format for cycle detection. SARIF integrates with GitHub Code S
 
 ---
 
-## Phase 7 — Interactive Visualization & Advanced Features
+## Phase 8 — Interactive Visualization & Advanced Features
 
-### 7.1 — Interactive Web Visualization
+### 8.1 — Interactive Web Visualization
 
 ```bash
 codegraph viz
@@ -409,7 +697,7 @@ Opens a local web UI at `localhost:3000` with:
 
 **New file:** `src/visualizer.js`
 
-### 7.2 — Dead Code Detection
+### 8.2 — Dead Code Detection
 
 ```bash
 codegraph dead
@@ -420,7 +708,7 @@ Find functions/methods/classes with zero incoming edges (never called). Filters 
 
 **Affected files:** `src/queries.js`
 
-### 7.3 — Cross-Repository Support (Monorepo)
+### 8.3 — Cross-Repository Support (Monorepo)
 
 Support multi-package monorepos with cross-package edges.
 
@@ -430,7 +718,7 @@ Support multi-package monorepos with cross-package edges.
 - `codegraph build --workspace` to scan all packages
 - Impact analysis across package boundaries
 
-### 7.4 — Agentic Search
+### 8.4 — Agentic Search
 
 Recursive reference-following search that traces connections.
 
@@ -462,11 +750,12 @@ Each phase includes targeted verification:
 |-------|-------------|
 | **1** | Benchmark native vs WASM parsing on a large repo, verify identical output from both engines |
 | **2** | `npm test`, manual MCP client test for all tools, config loading tests |
-| **3** | Compare `codegraph search` quality before/after descriptions on a real repo |
-| **4** | `codegraph ask "How does import resolution work?"` against codegraph itself |
-| **5** | Parse sample files for each new language, verify definitions/calls/imports |
-| **6** | Test PR in a fork, verify GitHub Action comment is posted |
-| **7** | `codegraph viz` loads, nodes are interactive, search works |
+| **3** | All existing tests pass after refactoring; new unit tests for each extracted module; zero behavior changes |
+| **4** | Compare `codegraph search` quality before/after descriptions on a real repo |
+| **5** | `codegraph ask "How does import resolution work?"` against codegraph itself |
+| **6** | Parse sample files for each new language, verify definitions/calls/imports |
+| **7** | Test PR in a fork, verify GitHub Action comment is posted |
+| **8** | `codegraph viz` loads, nodes are interactive, search works |
 
 **Full integration test** after all phases:
 

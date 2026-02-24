@@ -1,8 +1,8 @@
 {
-  "version": "2.1.0",
+  "version": "2.2.1",
   "name": "@optave/codegraph",
   "problems": [
-    "invalid: @optave/codegraph-win32-x64-msvc@2.0.0 H:\\Vscode\\codegraph\\.claude\\worktrees\\dogfood-2.1.0\\node_modules\\@optave\\codegraph-win32-x64-msvc"
+    "invalid: @optave/codegraph-linux-x64-gnu@2.1.0 /home/runner/work/codegraph/codegraph/node_modules/@optave/codegraph-linux-x64-gnu"
   ],
   "dependencies": {
     "@huggingface/transformers": {
@@ -324,25 +324,47 @@
             "@img/sharp-libvips-linux-ppc64": {},
             "@img/sharp-libvips-linux-riscv64": {},
             "@img/sharp-libvips-linux-s390x": {},
-            "@img/sharp-libvips-linux-x64": {},
+            "@img/sharp-libvips-linux-x64": {
+              "version": "1.2.4",
+              "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linux-x64/-/sharp-libvips-linux-x64-1.2.4.tgz",
+              "overridden": false
+            },
             "@img/sharp-libvips-linuxmusl-arm64": {},
-            "@img/sharp-libvips-linuxmusl-x64": {},
+            "@img/sharp-libvips-linuxmusl-x64": {
+              "version": "1.2.4",
+              "resolved": "https://registry.npmjs.org/@img/sharp-libvips-linuxmusl-x64/-/sharp-libvips-linuxmusl-x64-1.2.4.tgz",
+              "overridden": false
+            },
             "@img/sharp-linux-arm": {},
             "@img/sharp-linux-arm64": {},
             "@img/sharp-linux-ppc64": {},
             "@img/sharp-linux-riscv64": {},
             "@img/sharp-linux-s390x": {},
-            "@img/sharp-linux-x64": {},
+            "@img/sharp-linux-x64": {
+              "version": "0.34.5",
+              "resolved": "https://registry.npmjs.org/@img/sharp-linux-x64/-/sharp-linux-x64-0.34.5.tgz",
+              "overridden": false,
+              "dependencies": {
+                "@img/sharp-libvips-linux-x64": {
+                  "version": "1.2.4"
+                }
+              }
+            },
             "@img/sharp-linuxmusl-arm64": {},
-            "@img/sharp-linuxmusl-x64": {},
+            "@img/sharp-linuxmusl-x64": {
+              "version": "0.34.5",
+              "resolved": "https://registry.npmjs.org/@img/sharp-linuxmusl-x64/-/sharp-linuxmusl-x64-0.34.5.tgz",
+              "overridden": false,
+              "dependencies": {
+                "@img/sharp-libvips-linuxmusl-x64": {
+                  "version": "1.2.4"
+                }
+              }
+            },
             "@img/sharp-wasm32": {},
             "@img/sharp-win32-arm64": {},
             "@img/sharp-win32-ia32": {},
-            "@img/sharp-win32-x64": {
-              "version": "0.34.5",
-              "resolved": "https://registry.npmjs.org/@img/sharp-win32-x64/-/sharp-win32-x64-0.34.5.tgz",
-              "overridden": false
-            },
+            "@img/sharp-win32-x64": {},
             "detect-libc": {
               "version": "2.1.2",
               "resolved": "https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz",
@@ -1089,15 +1111,16 @@
     },
     "@optave/codegraph-darwin-arm64": {},
     "@optave/codegraph-darwin-x64": {},
-    "@optave/codegraph-linux-x64-gnu": {},
-    "@optave/codegraph-win32-x64-msvc": {
-      "version": "2.0.0",
+    "@optave/codegraph-linux-x64-gnu": {
+      "version": "2.1.0",
+      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-2.1.0.tgz",
       "overridden": false,
-      "invalid": "\"2.1.0\" from the root project",
+      "invalid": "\"2.2.1\" from the root project",
       "problems": [
-        "invalid: @optave/codegraph-win32-x64-msvc@2.0.0 H:\\Vscode\\codegraph\\.claude\\worktrees\\dogfood-2.1.0\\node_modules\\@optave\\codegraph-win32-x64-msvc"
+        "invalid: @optave/codegraph-linux-x64-gnu@2.1.0 /home/runner/work/codegraph/codegraph/node_modules/@optave/codegraph-linux-x64-gnu"
       ]
     },
+    "@optave/codegraph-win32-x64-msvc": {},
     "better-sqlite3": {
       "version": "12.6.2",
       "resolved": "https://registry.npmjs.org/better-sqlite3/-/better-sqlite3-12.6.2.tgz",
@@ -1350,7 +1373,7 @@
   },
   "error": {
     "code": "ELSPROBLEMS",
-    "summary": "invalid: @optave/codegraph-win32-x64-msvc@2.0.0 H:\\Vscode\\codegraph\\.claude\\worktrees\\dogfood-2.1.0\\node_modules\\@optave\\codegraph-win32-x64-msvc",
+    "summary": "invalid: @optave/codegraph-linux-x64-gnu@2.1.0 /home/runner/work/codegraph/codegraph/node_modules/@optave/codegraph-linux-x64-gnu",
     "detail": ""
   }
 }

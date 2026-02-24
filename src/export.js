@@ -1,10 +1,12 @@
 import path from 'node:path';
+import { isTestFile } from './queries.js';
 
 /**
  * Export the dependency graph in DOT (Graphviz) format.
  */
 export function exportDOT(db, opts = {}) {
   const fileLevel = opts.fileLevel !== false;
+  const noTests = opts.noTests || false;
   const lines = [
     'digraph codegraph {',
     '  rankdir=LR;',
@@ -14,7 +16,7 @@ export function exportDOT(db, opts = {}) {
   ];
 
   if (fileLevel) {
-    const edges = db
+    let edges = db
       .prepare(`
       SELECT DISTINCT n1.file AS source, n2.file AS target
       FROM edges e
@@ -23,6 +25,7 @@ export function exportDOT(db, opts = {}) {
       WHERE n1.file != n2.file AND e.kind IN ('imports', 'imports-type', 'calls')
     `)
       .all();
+    if (noTests) edges = edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target));
 
     // Try to use directory nodes from DB (built by structure analysis)
     const hasDirectoryNodes =
@@ -89,7 +92,7 @@ export function exportDOT(db, opts = {}) {
       lines.push(`  "${source}" -> "${target}";`);
     }
   } else {
-    const edges = db
+    let edges = db
       .prepare(`
       SELECT n1.name AS source_name, n1.kind AS source_kind, n1.file AS source_file,
              n2.name AS target_name, n2.kind AS target_kind, n2.file AS target_file,
@@ -101,6 +104,8 @@ export function exportDOT(db, opts = {}) {
       AND e.kind = 'calls'
     `)
       .all();
+    if (noTests)
+      edges = edges.filter((e) => !isTestFile(e.source_file) && !isTestFile(e.target_file));
 
     for (const e of edges) {
       const sId = `${e.source_file}:${e.source_name}`.replace(/[^a-zA-Z0-9_]/g, '_');
@@ -120,10 +125,11 @@ export function exportDOT(db, opts = {}) {
  */
 export function exportMermaid(db, opts = {}) {
   const fileLevel = opts.fileLevel !== false;
+  const noTests = opts.noTests || false;
   const lines = ['graph LR'];
 
   if (fileLevel) {
-    const edges = db
+    let edges = db
       .prepare(`
       SELECT DISTINCT n1.file AS source, n2.file AS target
       FROM edges e
@@ -132,6 +138,7 @@ export function exportMermaid(db, opts = {}) {
       WHERE n1.file != n2.file AND e.kind IN ('imports', 'imports-type', 'calls')
     `)
       .all();
+    if (noTests) edges = edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target));
 
     for (const { source, target } of edges) {
       const s = source.replace(/[^a-zA-Z0-9]/g, '_');
@@ -139,7 +146,7 @@ export function exportMermaid(db, opts = {}) {
       lines.push(`  ${s}["${source}"] --> ${t}["${target}"]`);
     }
   } else {
-    const edges = db
+    let edges = db
       .prepare(`
       SELECT n1.name AS source_name, n1.file AS source_file,
              n2.name AS target_name, n2.file AS target_file
@@ -150,6 +157,8 @@ export function exportMermaid(db, opts = {}) {
       AND e.kind = 'calls'
     `)
       .all();
+    if (noTests)
+      edges = edges.filter((e) => !isTestFile(e.source_file) && !isTestFile(e.target_file));
 
     for (const e of edges) {
       const sId = `${e.source_file}_${e.source_name}`.replace(/[^a-zA-Z0-9]/g, '_');
@@ -164,14 +173,17 @@ export function exportMermaid(db, opts = {}) {
 /**
  * Export as JSON adjacency list.
  */
-export function exportJSON(db) {
-  const nodes = db
+export function exportJSON(db, opts = {}) {
+  const noTests = opts.noTests || false;
+
+  let nodes = db
     .prepare(`
     SELECT id, name, kind, file, line FROM nodes WHERE kind = 'file'
   `)
     .all();
+  if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
 
-  const edges = db
+  let edges = db
     .prepare(`
     SELECT DISTINCT n1.file AS source, n2.file AS target, e.kind
     FROM edges e
@@ -180,6 +192,7 @@ export function exportJSON(db) {
     WHERE n1.file != n2.file
   `)
     .all();
+  if (noTests) edges = edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target));
 
   return { nodes, edges };
 }

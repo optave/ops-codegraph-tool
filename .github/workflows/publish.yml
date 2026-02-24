@@ -22,8 +22,8 @@ jobs:
   preflight:
     name: Preflight checks
     runs-on: ubuntu-latest
-    # Skip dev publish when the push is a stable release version bump
-    if: "${{ github.event_name != 'push' || !startsWith(github.event.head_commit.message, 'chore: release v') }}"
+    # Skip dev publish when the push is a stable release version bump (direct push or merged PR)
+    if: "${{ github.event_name != 'push' || (!startsWith(github.event.head_commit.message, 'chore: release v') && !contains(github.event.head_commit.message, 'release/v')) }}"
     permissions:
       contents: read
     steps:
@@ -66,9 +66,25 @@ jobs:
             echo "Stable release (manual retry): $VERSION"
           else
             IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-            NEXT_PATCH=$((PATCH + 1))
+            BASE_PATCH=$((PATCH + 1))
             SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-            VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${SHORT_SHA}"
+
+            # Query npm for the highest dev patch number published so far
+            LATEST_DEV=$(npm view "@optave/codegraph" versions --json 2>/dev/null \
+              | node -e "
+                const versions = JSON.parse(require('fs').readFileSync(0,'utf8'));
+                const prefix = '${MAJOR}.${MINOR}.';
+                let maxPatch = ${BASE_PATCH} - 1;
+                for (const v of (Array.isArray(versions) ? versions : [versions])) {
+                  if (v.startsWith(prefix) && v.includes('-dev.')) {
+                    const patch = parseInt(v.split('.')[2], 10);
+                    if (patch > maxPatch) maxPatch = patch;
+                  }
+                }
+                console.log(maxPatch + 1);
+              " 2>/dev/null) || LATEST_DEV="$BASE_PATCH"
+
+            VERSION="${MAJOR}.${MINOR}.${LATEST_DEV}-dev.${SHORT_SHA}"
             NPM_TAG="dev"
             echo "Dev release: $VERSION"
           fi

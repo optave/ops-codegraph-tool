@@ -2,6 +2,7 @@ import path from 'node:path';
 import { normalizePath } from './constants.js';
 import { openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
+import { isTestFile } from './queries.js';
 
 // ─── Build-time: insert directory nodes, contains edges, and metrics ────
 
@@ -233,6 +234,7 @@ export function structureData(customDbPath, opts = {}) {
   const filterDir = opts.directory || null;
   const maxDepth = opts.depth || null;
   const sortBy = opts.sort || 'files';
+  const noTests = opts.noTests || false;
 
   // Get all directory nodes with their metrics
   let dirs = db
@@ -263,7 +265,7 @@ export function structureData(customDbPath, opts = {}) {
 
   // Get file metrics for each directory
   const result = dirs.map((d) => {
-    const files = db
+    let files = db
       .prepare(`
         SELECT n.name, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count, nm.fan_in, nm.fan_out
         FROM edges e
@@ -272,6 +274,7 @@ export function structureData(customDbPath, opts = {}) {
         WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'file'
       `)
       .all(d.id);
+    if (noTests) files = files.filter((f) => !isTestFile(f.name));
 
     const subdirs = db
       .prepare(`
@@ -282,14 +285,15 @@ export function structureData(customDbPath, opts = {}) {
       `)
       .all(d.id);
 
+    const fileCount = noTests ? files.length : d.file_count || 0;
     return {
       directory: d.name,
-      fileCount: d.file_count || 0,
+      fileCount,
       symbolCount: d.symbol_count || 0,
       fanIn: d.fan_in || 0,
       fanOut: d.fan_out || 0,
       cohesion: d.cohesion,
-      density: d.file_count > 0 ? (d.symbol_count || 0) / d.file_count : 0,
+      density: fileCount > 0 ? (d.symbol_count || 0) / fileCount : 0,
       files: files.map((f) => ({
         file: f.name,
         lineCount: f.line_count || 0,

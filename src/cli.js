@@ -216,6 +216,7 @@ program
   .option('--depth <n>', 'Max transitive caller depth', '3')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('-j, --json', 'Output as JSON')
+  .option('-f, --format <format>', 'Output format: text, mermaid, json', 'text')
   .action((ref, opts) => {
     diffImpact(opts.db, {
       ref,
@@ -223,6 +224,7 @@ program
       depth: parseInt(opts.depth, 10),
       noTests: !opts.tests,
       json: opts.json,
+      format: opts.format,
     });
   });
 
@@ -234,10 +236,11 @@ program
   .option('-d, --db <path>', 'Path to graph.db')
   .option('-f, --format <format>', 'Output format: dot, mermaid, json', 'dot')
   .option('--functions', 'Function-level graph instead of file-level')
+  .option('-T, --no-tests', 'Exclude test/spec files')
   .option('-o, --output <file>', 'Write to file instead of stdout')
   .action((opts) => {
     const db = new Database(findDbPath(opts.db), { readonly: true });
-    const exportOpts = { fileLevel: !opts.functions };
+    const exportOpts = { fileLevel: !opts.functions, noTests: !opts.tests };
 
     let output;
     switch (opts.format) {
@@ -245,7 +248,7 @@ program
         output = exportMermaid(db, exportOpts);
         break;
       case 'json':
-        output = JSON.stringify(exportJSON(db), null, 2);
+        output = JSON.stringify(exportJSON(db, exportOpts), null, 2);
         break;
       default:
         output = exportDOT(db, exportOpts);
@@ -267,10 +270,11 @@ program
   .description('Detect circular dependencies in the codebase')
   .option('-d, --db <path>', 'Path to graph.db')
   .option('--functions', 'Function-level cycle detection')
+  .option('-T, --no-tests', 'Exclude test/spec files')
   .option('-j, --json', 'Output as JSON')
   .action((opts) => {
     const db = new Database(findDbPath(opts.db), { readonly: true });
-    const cycles = findCycles(db, { fileLevel: !opts.functions });
+    const cycles = findCycles(db, { fileLevel: !opts.functions, noTests: !opts.tests });
     db.close();
 
     if (opts.json) {
@@ -372,7 +376,7 @@ program
   .action(() => {
     console.log('\nAvailable embedding models:\n');
     for (const [key, config] of Object.entries(MODELS)) {
-      const def = key === 'jina-code' ? ' (default)' : '';
+      const def = key === 'nomic-v1.5' ? ' (default)' : '';
       console.log(`  ${key.padEnd(12)} ${String(config.dim).padStart(4)}d  ${config.desc}${def}`);
     }
     console.log('\nUsage: codegraph embed --model <name>');
@@ -386,8 +390,8 @@ program
   )
   .option(
     '-m, --model <name>',
-    'Embedding model: minilm, jina-small, jina-base, jina-code (default), nomic, nomic-v1.5, bge-large. Run `codegraph models` for details',
-    'jina-code',
+    'Embedding model: minilm, jina-small, jina-base, jina-code, nomic, nomic-v1.5 (default), bge-large. Run `codegraph models` for details',
+    'nomic-v1.5',
   )
   .action(async (dir, opts) => {
     const root = path.resolve(dir || '.');
@@ -425,6 +429,7 @@ program
   .option('-d, --db <path>', 'Path to graph.db')
   .option('--depth <n>', 'Max directory depth')
   .option('--sort <metric>', 'Sort by: cohesion | fan-in | fan-out | density | files', 'files')
+  .option('-T, --no-tests', 'Exclude test/spec files')
   .option('-j, --json', 'Output as JSON')
   .action(async (dir, opts) => {
     const { structureData, formatStructure } = await import('./structure.js');
@@ -432,6 +437,7 @@ program
       directory: dir,
       depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
       sort: opts.sort,
+      noTests: !opts.tests,
     });
     if (opts.json) {
       console.log(JSON.stringify(data, null, 2));

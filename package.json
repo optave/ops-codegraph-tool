@@ -1,6 +1,6 @@
 {
   "name": "@optave/codegraph",
-  "version": "2.1.0",
+  "version": "2.2.1",
   "description": "Local code graph CLI — parse codebases with tree-sitter, build dependency graphs, query them",
   "type": "module",
   "main": "src/index.js",
@@ -61,10 +61,10 @@
   "optionalDependencies": {
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@optave/codegraph-darwin-arm64": "2.1.0",
-    "@optave/codegraph-darwin-x64": "2.1.0",
-    "@optave/codegraph-linux-x64-gnu": "2.1.0",
-    "@optave/codegraph-win32-x64-msvc": "2.1.0"
+    "@optave/codegraph-darwin-arm64": "2.2.1",
+    "@optave/codegraph-darwin-x64": "2.2.1",
+    "@optave/codegraph-linux-x64-gnu": "2.2.1",
+    "@optave/codegraph-win32-x64-msvc": "2.2.1"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",

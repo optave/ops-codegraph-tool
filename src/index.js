@@ -41,6 +41,7 @@ export {
   ALL_SYMBOL_KINDS,
   contextData,
   diffImpactData,
+  diffImpactMermaid,
   explainData,
   FALSE_POSITIVE_CALLER_THRESHOLD,
   FALSE_POSITIVE_NAMES,

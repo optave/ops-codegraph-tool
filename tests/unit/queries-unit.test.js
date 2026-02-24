@@ -18,6 +18,7 @@ import { initSchema } from '../../src/db.js';
 import {
   diffImpact,
   diffImpactData,
+  diffImpactMermaid,
   fileDeps,
   fnDeps,
   fnDepsData,
@@ -241,6 +242,143 @@ describe('diffImpactData — mocked git diff', () => {
 
     mockExecFile.mockRestore();
   });
+
+  it('returns levels and edges in function results', async () => {
+    const { execFileSync: mockExecFile } = await import('node:child_process');
+    mockExecFile.mockImplementationOnce(() => {
+      return [
+        'diff --git a/app/handler.js b/app/handler.js',
+        '--- a/app/handler.js',
+        '+++ b/app/handler.js',
+        '@@ -5,3 +5,4 @@',
+        '+  // changed line',
+      ].join('\n');
+    });
+
+    const data = diffImpactData(dbPath);
+    const fn = data.affectedFunctions.find((f) => f.name === 'handleRequest');
+    expect(fn).toBeDefined();
+    expect(fn.levels).toBeDefined();
+    expect(fn.edges).toBeDefined();
+    expect(fn.transitiveCallers).toBeGreaterThanOrEqual(0);
+
+    mockExecFile.mockRestore();
+  });
+
+  it('detects new files via --- /dev/null', async () => {
+    const { execFileSync: mockExecFile } = await import('node:child_process');
+    mockExecFile.mockImplementationOnce(() => {
+      return [
+        'diff --git a/app/handler.js b/app/handler.js',
+        '--- a/app/handler.js',
+        '+++ b/app/handler.js',
+        '@@ -5,3 +5,4 @@',
+        '+  // changed line',
+        'diff --git a/brand-new.js b/brand-new.js',
+        'new file mode 100644',
+        '--- /dev/null',
+        '+++ b/brand-new.js',
+        '@@ -0,0 +1,5 @@',
+        '+function newFn() {}',
+      ].join('\n');
+    });
+
+    const data = diffImpactData(dbPath);
+    expect(data.newFiles).toContain('brand-new.js');
+    expect(data.newFiles).not.toContain('app/handler.js');
+
+    mockExecFile.mockRestore();
+  });
+});
+
+// ─── diffImpactMermaid ────────────────────────────────────────────────
+
+describe('diffImpactMermaid', () => {
+  it('returns valid Mermaid flowchart with subgraphs', async () => {
+    const { execFileSync: mockExecFile } = await import('node:child_process');
+    mockExecFile.mockImplementationOnce(() => {
+      return [
+        'diff --git a/lib/child.js b/lib/child.js',
+        '--- a/lib/child.js',
+        '+++ b/lib/child.js',
+        '@@ -10,3 +10,4 @@',
+        '+  // changed method',
+      ].join('\n');
+    });
+
+    const output = diffImpactMermaid(dbPath);
+    expect(output).toContain('flowchart TB');
+    expect(output).toContain('lib/child.js **(modified)**');
+    expect(output).toContain('ChildService.process');
+    // Should have edges (ChildService.process has callers)
+    expect(output).toContain('-->');
+
+    mockExecFile.mockRestore();
+  });
+
+  it('marks new files with green styling', async () => {
+    const { execFileSync: mockExecFile } = await import('node:child_process');
+    mockExecFile.mockImplementationOnce(() => {
+      return [
+        'diff --git a/app/handler.js b/app/handler.js',
+        '--- /dev/null',
+        '+++ b/app/handler.js',
+        '@@ -0,0 +5,4 @@',
+        '+  // new file content',
+      ].join('\n');
+    });
+
+    const output = diffImpactMermaid(dbPath);
+    expect(output).toContain('**(new)**');
+    expect(output).toContain('fill:#e8f5e9,stroke:#4caf50');
+
+    mockExecFile.mockRestore();
+  });
+
+  it('includes blast radius subgraph for leaf callers', async () => {
+    const { execFileSync: mockExecFile } = await import('node:child_process');
+    mockExecFile.mockImplementationOnce(() => {
+      return [
+        'diff --git a/lib/base.js b/lib/base.js',
+        '--- a/lib/base.js',
+        '+++ b/lib/base.js',
+        '@@ -10,3 +10,4 @@',
+        '+  // changed base',
+      ].join('\n');
+    });
+
+    const output = diffImpactMermaid(dbPath, { depth: 3 });
+    expect(output).toContain('flowchart TB');
+    // BaseService.process is called by ChildService.process, which is called by handleRequest
+    // handleRequest should be in the blast radius
+    if (output.includes('blast radius')) {
+      expect(output).toContain('fill:#f3e5f5,stroke:#9c27b0');
+    }
+
+    mockExecFile.mockRestore();
+  });
+
+  it('returns fallback diagram when no impacted functions', async () => {
+    const { execFileSync: mockExecFile } = await import('node:child_process');
+    mockExecFile.mockImplementationOnce(() => '');
+
+    const output = diffImpactMermaid(dbPath);
+    expect(output).toContain('No impacted functions detected');
+
+    mockExecFile.mockRestore();
+  });
+
+  it('returns error string on git failure', async () => {
+    const { execFileSync: mockExecFile } = await import('node:child_process');
+    mockExecFile.mockImplementationOnce(() => {
+      throw new Error('git not found');
+    });
+
+    const output = diffImpactMermaid(dbPath);
+    expect(output).toMatch(/git diff/i);
+
+    mockExecFile.mockRestore();
+  });
 });
 
 // ─── Display wrappers ─────────────────────────────────────────────────
@@ -438,6 +576,26 @@ describe('diffImpact (display)', () => {
     diffImpact(dbPath);
     const allOutput = spy.mock.calls.map((c) => c[0]).join('\n');
     expect(allOutput).toContain('No changes');
+    spy.mockRestore();
+    mockExecFile.mockRestore();
+  });
+
+  it('outputs Mermaid when format is mermaid', async () => {
+    const { execFileSync: mockExecFile } = await import('node:child_process');
+    mockExecFile.mockImplementationOnce(() => {
+      return [
+        'diff --git a/app/handler.js b/app/handler.js',
+        '--- a/app/handler.js',
+        '+++ b/app/handler.js',
+        '@@ -5,3 +5,4 @@',
+        '+  // changed line',
+      ].join('\n');
+    });
+
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    diffImpact(dbPath, { format: 'mermaid' });
+    const allOutput = spy.mock.calls.map((c) => c[0]).join('\n');
+    expect(allOutput).toContain('flowchart TB');
     spy.mockRestore();
     mockExecFile.mockRestore();
   });

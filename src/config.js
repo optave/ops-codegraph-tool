@@ -19,7 +19,7 @@ export const DEFAULTS = {
     defaultDepth: 3,
     defaultLimit: 20,
   },
-  embeddings: { model: 'jina-code', llmProvider: null },
+  embeddings: { model: 'nomic-v1.5', llmProvider: null },
   llm: { provider: null, model: null, baseUrl: null, apiKey: null, apiKeyCommand: null },
   search: { defaultMinScore: 0.2, rrfK: 60, topK: 15 },
   ci: { failOnCycles: false, impactThreshold: null },

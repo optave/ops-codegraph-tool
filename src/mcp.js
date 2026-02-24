@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 import { findCycles } from './cycles.js';
 import { findDbPath } from './db.js';
-import { ALL_SYMBOL_KINDS } from './queries.js';
+import { ALL_SYMBOL_KINDS, diffImpactMermaid } from './queries.js';
 
 const REPO_PROP = {
   repo: {
@@ -201,6 +201,11 @@ const BASE_TOOLS = [
         ref: { type: 'string', description: 'Git ref to diff against (default: HEAD)' },
         depth: { type: 'number', description: 'Transitive caller depth', default: 3 },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        format: {
+          type: 'string',
+          enum: ['json', 'mermaid'],
+          description: 'Output format (default: json)',
+        },
       },
     },
   },
@@ -467,12 +472,21 @@ export async function startMCPServer(customDbPath, options = {}) {
           });
           break;
         case 'diff_impact':
-          result = diffImpactData(dbPath, {
-            staged: args.staged,
-            ref: args.ref,
-            depth: args.depth,
-            noTests: args.no_tests,
-          });
+          if (args.format === 'mermaid') {
+            result = diffImpactMermaid(dbPath, {
+              staged: args.staged,
+              ref: args.ref,
+              depth: args.depth,
+              noTests: args.no_tests,
+            });
+          } else {
+            result = diffImpactData(dbPath, {
+              staged: args.staged,
+              ref: args.ref,
+              depth: args.depth,
+              noTests: args.no_tests,
+            });
+          }
           break;
         case 'semantic_search': {
           const { searchData } = await import('./embedder.js');

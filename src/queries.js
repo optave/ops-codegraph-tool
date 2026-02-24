@@ -17,7 +17,7 @@ function safePath(repoRoot, file) {
 }
 
 const TEST_PATTERN = /\.(test|spec)\.|__test__|__tests__|\.stories\./;
-function isTestFile(filePath) {
+export function isTestFile(filePath) {
   return TEST_PATTERN.test(filePath);
 }
 
@@ -608,16 +608,34 @@ export function diffImpactData(customDbPath, opts = {}) {
 
   if (!diffOutput.trim()) {
     db.close();
-    return { changedFiles: 0, affectedFunctions: [], affectedFiles: [], summary: null };
+    return {
+      changedFiles: 0,
+      newFiles: [],
+      affectedFunctions: [],
+      affectedFiles: [],
+      summary: null,
+    };
   }
 
   const changedRanges = new Map();
+  const newFiles = new Set();
   let currentFile = null;
+  let prevIsDevNull = false;
   for (const line of diffOutput.split('\n')) {
+    if (line.startsWith('--- /dev/null')) {
+      prevIsDevNull = true;
+      continue;
+    }
+    if (line.startsWith('--- ')) {
+      prevIsDevNull = false;
+      continue;
+    }
     const fileMatch = line.match(/^\+\+\+ b\/(.+)/);
     if (fileMatch) {
       currentFile = fileMatch[1];
       if (!changedRanges.has(currentFile)) changedRanges.set(currentFile, []);
+      if (prevIsDevNull) newFiles.add(currentFile);
+      prevIsDevNull = false;
       continue;
     }
     const hunkMatch = line.match(/^@@ .+ \+(\d+)(?:,(\d+))? @@/);
@@ -630,7 +648,13 @@ export function diffImpactData(customDbPath, opts = {}) {
 
   if (changedRanges.size === 0) {
     db.close();
-    return { changedFiles: 0, affectedFunctions: [], affectedFiles: [], summary: null };
+    return {
+      changedFiles: 0,
+      newFiles: [],
+      affectedFunctions: [],
+      affectedFiles: [],
+      summary: null,
+    };
   }
 
   const affectedFunctions = [];
@@ -658,6 +682,10 @@ export function diffImpactData(customDbPath, opts = {}) {
     const visited = new Set([fn.id]);
     let frontier = [fn.id];
     let totalCallers = 0;
+    const levels = {};
+    const edges = [];
+    const idToKey = new Map();
+    idToKey.set(fn.id, `${fn.file}::${fn.name}:${fn.line}`);
     for (let d = 1; d <= maxDepth; d++) {
       const nextFrontier = [];
       for (const fid of frontier) {
@@ -673,6 +701,11 @@ export function diffImpactData(customDbPath, opts = {}) {
             visited.add(c.id);
             nextFrontier.push(c.id);
             allAffected.add(`${c.file}:${c.name}`);
+            const callerKey = `${c.file}::${c.name}:${c.line}`;
+            idToKey.set(c.id, callerKey);
+            if (!levels[d]) levels[d] = [];
+            levels[d].push({ name: c.name, kind: c.kind, file: c.file, line: c.line });
+            edges.push({ from: idToKey.get(fid), to: callerKey });
             totalCallers++;
           }
         }
@@ -686,6 +719,8 @@ export function diffImpactData(customDbPath, opts = {}) {
       file: fn.file,
       line: fn.line,
       transitiveCallers: totalCallers,
+      levels,
+      edges,
     };
   });
 
@@ -695,6 +730,7 @@ export function diffImpactData(customDbPath, opts = {}) {
   db.close();
   return {
     changedFiles: changedRanges.size,
+    newFiles: [...newFiles],
     affectedFunctions: functionResults,
     affectedFiles: [...affectedFiles],
     summary: {
@@ -703,6 +739,120 @@ export function diffImpactData(customDbPath, opts = {}) {
       filesAffected: affectedFiles.size,
     },
   };
+}
+
+export function diffImpactMermaid(customDbPath, opts = {}) {
+  const data = diffImpactData(customDbPath, opts);
+  if (data.error) return data.error;
+  if (data.changedFiles === 0 || data.affectedFunctions.length === 0) {
+    return 'flowchart TB\n    none["No impacted functions detected"]';
+  }
+
+  const newFileSet = new Set(data.newFiles || []);
+  const lines = ['flowchart TB'];
+
+  // Assign stable Mermaid node IDs
+  let nodeCounter = 0;
+  const nodeIdMap = new Map();
+  const nodeLabels = new Map();
+  function nodeId(key, label) {
+    if (!nodeIdMap.has(key)) {
+      nodeIdMap.set(key, `n${nodeCounter++}`);
+      if (label) nodeLabels.set(key, label);
+    }
+    return nodeIdMap.get(key);
+  }
+
+  // Register all nodes (changed functions + their callers)
+  for (const fn of data.affectedFunctions) {
+    nodeId(`${fn.file}::${fn.name}:${fn.line}`, fn.name);
+    for (const callers of Object.values(fn.levels || {})) {
+      for (const c of callers) {
+        nodeId(`${c.file}::${c.name}:${c.line}`, c.name);
+      }
+    }
+  }
+
+  // Collect all edges and determine blast radius
+  const allEdges = new Set();
+  const edgeFromNodes = new Set();
+  const edgeToNodes = new Set();
+  const changedKeys = new Set();
+
+  for (const fn of data.affectedFunctions) {
+    changedKeys.add(`${fn.file}::${fn.name}:${fn.line}`);
+    for (const edge of fn.edges || []) {
+      const edgeKey = `${edge.from}|${edge.to}`;
+      if (!allEdges.has(edgeKey)) {
+        allEdges.add(edgeKey);
+        edgeFromNodes.add(edge.from);
+        edgeToNodes.add(edge.to);
+      }
+    }
+  }
+
+  // Blast radius: caller nodes that are never a source (leaf nodes of the impact tree)
+  const blastRadiusKeys = new Set();
+  for (const key of edgeToNodes) {
+    if (!edgeFromNodes.has(key) && !changedKeys.has(key)) {
+      blastRadiusKeys.add(key);
+    }
+  }
+
+  // Intermediate callers: not changed, not blast radius
+  const intermediateKeys = new Set();
+  for (const key of edgeToNodes) {
+    if (!changedKeys.has(key) && !blastRadiusKeys.has(key)) {
+      intermediateKeys.add(key);
+    }
+  }
+
+  // Group changed functions by file
+  const fileGroups = new Map();
+  for (const fn of data.affectedFunctions) {
+    if (!fileGroups.has(fn.file)) fileGroups.set(fn.file, []);
+    fileGroups.get(fn.file).push(fn);
+  }
+
+  // Emit changed-file subgraphs
+  let sgCounter = 0;
+  for (const [file, fns] of fileGroups) {
+    const isNew = newFileSet.has(file);
+    const tag = isNew ? 'new' : 'modified';
+    const sgId = `sg${sgCounter++}`;
+    lines.push(`    subgraph ${sgId}["${file} **(${tag})**"]`);
+    for (const fn of fns) {
+      const key = `${fn.file}::${fn.name}:${fn.line}`;
+      lines.push(`        ${nodeIdMap.get(key)}["${fn.name}"]`);
+    }
+    lines.push('    end');
+    const style = isNew ? 'fill:#e8f5e9,stroke:#4caf50' : 'fill:#fff3e0,stroke:#ff9800';
+    lines.push(`    style ${sgId} ${style}`);
+  }
+
+  // Emit intermediate caller nodes (outside subgraphs)
+  for (const key of intermediateKeys) {
+    lines.push(`    ${nodeIdMap.get(key)}["${nodeLabels.get(key)}"]`);
+  }
+
+  // Emit blast radius subgraph
+  if (blastRadiusKeys.size > 0) {
+    const sgId = `sg${sgCounter++}`;
+    lines.push(`    subgraph ${sgId}["Callers **(blast radius)**"]`);
+    for (const key of blastRadiusKeys) {
+      lines.push(`        ${nodeIdMap.get(key)}["${nodeLabels.get(key)}"]`);
+    }
+    lines.push('    end');
+    lines.push(`    style ${sgId} fill:#f3e5f5,stroke:#9c27b0`);
+  }
+
+  // Emit edges (impact flows from changed fn toward callers)
+  for (const edgeKey of allEdges) {
+    const [from, to] = edgeKey.split('|');
+    lines.push(`    ${nodeIdMap.get(from)} --> ${nodeIdMap.get(to)}`);
+  }
+
+  return lines.join('\n');
 }
 
 export function listFunctionsData(customDbPath, opts = {}) {
@@ -814,17 +964,24 @@ export function statsData(customDbPath, opts = {}) {
   const langCount = Object.keys(byLanguage).length;
 
   // Cycles
-  const fileCycles = findCycles(db, { fileLevel: true });
-  const fnCycles = findCycles(db, { fileLevel: false });
+  const fileCycles = findCycles(db, { fileLevel: true, noTests });
+  const fnCycles = findCycles(db, { fileLevel: false, noTests });
 
   // Top 5 coupling hotspots (fan-in + fan-out, file nodes)
+  const testFilter = noTests
+    ? `AND n.file NOT LIKE '%.test.%'
+       AND n.file NOT LIKE '%.spec.%'
+       AND n.file NOT LIKE '%__test__%'
+       AND n.file NOT LIKE '%__tests__%'
+       AND n.file NOT LIKE '%.stories.%'`
+    : '';
   const hotspotRows = db
     .prepare(`
     SELECT n.file,
       (SELECT COUNT(*) FROM edges WHERE target_id = n.id) as fan_in,
       (SELECT COUNT(*) FROM edges WHERE source_id = n.id) as fan_out
     FROM nodes n
-    WHERE n.kind = 'file'
+    WHERE n.kind = 'file' ${testFilter}
     ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id)
            + (SELECT COUNT(*) FROM edges WHERE source_id = n.id) DESC
   `)
@@ -856,14 +1013,17 @@ export function statsData(customDbPath, opts = {}) {
   }
 
   // Graph quality metrics
+  const qualityTestFilter = testFilter.replace(/n\.file/g, 'file');
   const totalCallable = db
-    .prepare("SELECT COUNT(*) as c FROM nodes WHERE kind IN ('function', 'method')")
+    .prepare(
+      `SELECT COUNT(*) as c FROM nodes WHERE kind IN ('function', 'method') ${qualityTestFilter}`,
+    )
     .get().c;
   const callableWithCallers = db
     .prepare(`
       SELECT COUNT(DISTINCT e.target_id) as c FROM edges e
       JOIN nodes n ON e.target_id = n.id
-      WHERE e.kind = 'calls' AND n.kind IN ('function', 'method')
+      WHERE e.kind = 'calls' AND n.kind IN ('function', 'method') ${testFilter}
     `)
     .get().c;
   const callerCoverage = totalCallable > 0 ? callableWithCallers / totalCallable : 0;
@@ -2069,8 +2229,12 @@ export function fnImpact(name, customDbPath, opts = {}) {
 }
 
 export function diffImpact(customDbPath, opts = {}) {
+  if (opts.format === 'mermaid') {
+    console.log(diffImpactMermaid(customDbPath, opts));
+    return;
+  }
   const data = diffImpactData(customDbPath, opts);
-  if (opts.json) {
+  if (opts.json || opts.format === 'json') {
     console.log(JSON.stringify(data, null, 2));
     return;
   }

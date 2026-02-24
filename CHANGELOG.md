@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [2.2.0](https://github.com/optave/codegraph/compare/v2.1.0...v2.2.0) (2026-02-23)
+
+**New query commands, smarter call resolution, and full `--no-tests` coverage.** This release adds `explain`, `where`, and `context` commands for richer code exploration, introduces three-tier incremental change detection, improves call resolution accuracy, and extends the `--no-tests` flag to every query command.
+
+### Features
+
+* **cli:** add `codegraph explain <file|function>` command — structural summary without an LLM ([ff72655](https://github.com/optave/codegraph/commit/ff72655))
+* **cli:** add `codegraph where <name>` command — fast symbol lookup for definition and usage ([7fafbaa](https://github.com/optave/codegraph/commit/7fafbaa))
+* **cli:** add `codegraph context <name>` command — full function context (source, deps, callers) in one call ([3fa88b4](https://github.com/optave/codegraph/commit/3fa88b4))
+* **cli:** add graph quality score to `stats` command ([130a52a](https://github.com/optave/codegraph/commit/130a52a))
+* **cli:** add `--no-tests` flag to all remaining query commands for consistent test file filtering ([937b60f](https://github.com/optave/codegraph/commit/937b60f))
+* **parser:** extract symbols from Commander/Express/Event callback patterns ([2ac24ef](https://github.com/optave/codegraph/commit/2ac24ef))
+* **builder:** three-tier incremental change detection — skip unchanged, reparse modified, clean removed ([4b50af1](https://github.com/optave/codegraph/commit/4b50af1))
+* **hooks:** add remind-codegraph hook to nudge agents before editing ([e6ddeea](https://github.com/optave/codegraph/commit/e6ddeea))
+* **ci:** automated performance benchmarks per release ([f79d6f2](https://github.com/optave/codegraph/commit/f79d6f2))
+* **ci:** add `workflow_dispatch` trigger for retrying failed stable releases ([8d4f0cb](https://github.com/optave/codegraph/commit/8d4f0cb))
+
+### Bug Fixes
+
+* **resolve:** improve call resolution accuracy with scoped fallback, dedup, and built-in skip ([3a11191](https://github.com/optave/codegraph/commit/3a11191))
+* **parser:** add receiver field to call sites to eliminate false positive edges ([b08c2b2](https://github.com/optave/codegraph/commit/b08c2b2))
+* **queries:** `statsData` fully filters test nodes and edges when `--no-tests` is set ([2f9730a](https://github.com/optave/codegraph/commit/2f9730a))
+* **mcp:** fix file/kind parameter handling in MCP handlers ([d5af194](https://github.com/optave/codegraph/commit/d5af194))
+* **mcp:** use schema objects for `setRequestHandler` instead of string literals ([fa0d358](https://github.com/optave/codegraph/commit/fa0d358))
+* **security:** add path traversal guard and debug logging to file read helpers ([93a9bcf](https://github.com/optave/codegraph/commit/93a9bcf))
+* **hooks:** fix Claude Code hooks for Windows and add branch name validation ([631e27a](https://github.com/optave/codegraph/commit/631e27a))
+* **hooks:** add required `hookSpecificOutput` fields for context injection ([d51a3a4](https://github.com/optave/codegraph/commit/d51a3a4))
+* **hooks:** guard-git hook validates branch name on `gh pr create` ([c9426fa](https://github.com/optave/codegraph/commit/c9426fa))
+* **ci:** rewrite Claude Code workflow for working automated PR reviews ([1ed4121](https://github.com/optave/codegraph/commit/1ed4121))
+* **ci:** move publish artifacts to `$RUNNER_TEMP` to prevent repo contamination ([d9849fa](https://github.com/optave/codegraph/commit/d9849fa))
+* **ci:** make publish workflow resilient to partial failures ([5dd5b00](https://github.com/optave/codegraph/commit/5dd5b00))
+* **ci:** validate version input in `workflow_dispatch` ([73a1e6b](https://github.com/optave/codegraph/commit/73a1e6b))
+* fix default embedding model in README and enforce LF line endings ([c852707](https://github.com/optave/codegraph/commit/c852707))
+* exclude dev dependencies from DEPENDENCIES.md ([63c6923](https://github.com/optave/codegraph/commit/63c6923))
+
+### Documentation
+
+* add AI Agent Guide with 6-step workflow, command reference, and MCP mapping ([5965fb4](https://github.com/optave/codegraph/commit/5965fb4))
+* rewrite adding-a-language guide for LANGUAGE_REGISTRY architecture ([8504702](https://github.com/optave/codegraph/commit/8504702))
+* add Codegraph vs Narsil-MCP and GitNexus comparison sections to README ([aac963c](https://github.com/optave/codegraph/commit/aac963c))
+* update CLAUDE.md dogfooding section to follow recommended practices ([04dbfe6](https://github.com/optave/codegraph/commit/04dbfe6))
+* update Claude Code hooks section with enrichment pattern and Windows notes ([4987de9](https://github.com/optave/codegraph/commit/4987de9))
+
 ## [2.1.0](https://github.com/optave/codegraph/compare/v2.0.0...v2.1.0) (2026-02-23)
 
 **Parser refactor, unified publish pipeline, and quality-of-life improvements.** This release splits the monolithic parser into per-language extractor files, consolidates the dev and stable publish workflows into a single pipeline, adds the `codegraph stats` command, and hardens native engine path handling and registry management.

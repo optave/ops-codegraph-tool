@@ -55,7 +55,7 @@ export const MODELS = {
   },
 };
 
-export const DEFAULT_MODEL = 'jina-code';
+export const DEFAULT_MODEL = 'nomic-v1.5';
 const BATCH_SIZE_MAP = {
   minilm: 32,
   'jina-small': 16,
