@@ -153,6 +153,8 @@ description.
 |-----------|-----------------|-------------|
 | `node scripts/benchmark.js` | Build speed (native vs WASM), query latency | Changes to `builder.js`, `parser.js`, `queries.js`, `resolve.js`, `db.js`, or the native engine |
 | `node scripts/embedding-benchmark.js` | Search recall (Hit@1/3/5/10) across models | Changes to `embedder.js` or embedding strategies |
+| `node scripts/query-benchmark.js` | Query depth scaling, diff-impact latency | Changes to `queries.js`, `resolve.js`, or `db.js` |
+| `node scripts/incremental-benchmark.js` | Incremental build, import resolution throughput | Changes to `builder.js`, `resolve.js`, `parser.js`, or `journal.js` |
 
 ### How to report results
 
