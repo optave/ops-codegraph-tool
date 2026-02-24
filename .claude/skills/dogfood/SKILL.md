@@ -287,12 +287,14 @@ If the entire dogfooding session finds **zero bugs**, the release is validated. 
 
 1. In the codegraph repo (not the temp dir), edit `package.json` `optionalDependencies` to pin all `@optave/codegraph-*` packages to `$ARGUMENTS`.
 2. Run `npm install` to update the lockfile.
-3. Commit and push directly to main:
+3. Create a PR to update the native binary pins:
    ```bash
-   git checkout main
+   git checkout -b chore/pin-native-binaries-v$ARGUMENTS main
    git add package.json package-lock.json
    git commit -m "chore: pin native binaries to v$ARGUMENTS after clean dogfood"
-   git push origin main
+   gh pr create --base main \
+     --title "chore: pin native binaries to v$ARGUMENTS" \
+     --body "Validated in dogfooding session — zero bugs found."
    ```
 
 This signals that v$ARGUMENTS has been manually verified end-to-end.
