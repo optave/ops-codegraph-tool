@@ -8,3 +8,4 @@ grammars/*.wasm
 .claude/codegraph-checked.log
 artifacts/
 pkg/
+DEPENDENCIES.md
