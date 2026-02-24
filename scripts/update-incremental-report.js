@@ -148,3 +148,40 @@ md += `<!-- INCREMENTAL_BENCHMARK_DATA\n${JSON.stringify(history, null, 2)}\n-->
 fs.mkdirSync(path.dirname(reportPath), { recursive: true });
 fs.writeFileSync(reportPath, md);
 console.error(`Updated ${path.relative(root, reportPath)}`);
+
+// ── Regression detection ─────────────────────────────────────────────────
+const REGRESSION_THRESHOLD = 0.15; // 15% regression triggers a warning
+const prev = history[1] || null;
+
+function checkRegression(label, current, previous) {
+	if (previous == null || previous === 0) return;
+	const pct = (current - previous) / previous;
+	if (pct > REGRESSION_THRESHOLD) {
+		const msg = `${label}: ${previous} → ${current} (+${Math.round(pct * 100)}%, threshold ${Math.round(REGRESSION_THRESHOLD * 100)}%)`;
+		if (process.env.GITHUB_ACTIONS) {
+			console.error(`::warning title=Benchmark Regression::${msg}`);
+		} else {
+			console.error(`⚠ REGRESSION: ${msg}`);
+		}
+	}
+}
+
+if (prev) {
+	for (const engineKey of ['native', 'wasm']) {
+		const e = latest[engineKey];
+		const p = prev[engineKey];
+		if (!e || !p) continue;
+		const tag = `[${engineKey}]`;
+		checkRegression(`${tag} Full build`, e.fullBuildMs, p.fullBuildMs);
+		checkRegression(`${tag} No-op rebuild`, e.noopRebuildMs, p.noopRebuildMs);
+		checkRegression(`${tag} 1-file rebuild`, e.oneFileRebuildMs, p.oneFileRebuildMs);
+	}
+	const re = latest.resolve;
+	const rp = prev.resolve;
+	if (re && rp) {
+		checkRegression(`[resolve] JS fallback`, re.jsFallbackMs, rp.jsFallbackMs);
+		if (re.nativeBatchMs != null && rp.nativeBatchMs != null) {
+			checkRegression(`[resolve] Native batch`, re.nativeBatchMs, rp.nativeBatchMs);
+		}
+	}
+}

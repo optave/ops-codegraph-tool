@@ -142,3 +142,36 @@ md += `<!-- QUERY_BENCHMARK_DATA\n${JSON.stringify(history, null, 2)}\n-->\n`;
 fs.mkdirSync(path.dirname(reportPath), { recursive: true });
 fs.writeFileSync(reportPath, md);
 console.error(`Updated ${path.relative(root, reportPath)}`);
+
+// ── Regression detection ─────────────────────────────────────────────────
+const REGRESSION_THRESHOLD = 0.15; // 15% regression triggers a warning
+const prev = history[1] || null;
+
+function checkRegression(label, current, previous) {
+	if (previous == null || previous === 0) return;
+	const pct = (current - previous) / previous;
+	if (pct > REGRESSION_THRESHOLD) {
+		const msg = `${label}: ${previous} → ${current} (+${Math.round(pct * 100)}%, threshold ${Math.round(REGRESSION_THRESHOLD * 100)}%)`;
+		if (process.env.GITHUB_ACTIONS) {
+			console.error(`::warning title=Benchmark Regression::${msg}`);
+		} else {
+			console.error(`⚠ REGRESSION: ${msg}`);
+		}
+	}
+}
+
+if (prev) {
+	for (const engineKey of ['native', 'wasm']) {
+		const e = latest[engineKey];
+		const p = prev[engineKey];
+		if (!e || !p) continue;
+		const tag = `[${engineKey}]`;
+		checkRegression(`${tag} fnDeps d1`, e.fnDeps.depth1Ms, p.fnDeps.depth1Ms);
+		checkRegression(`${tag} fnDeps d3`, e.fnDeps.depth3Ms, p.fnDeps.depth3Ms);
+		checkRegression(`${tag} fnDeps d5`, e.fnDeps.depth5Ms, p.fnDeps.depth5Ms);
+		checkRegression(`${tag} fnImpact d1`, e.fnImpact.depth1Ms, p.fnImpact.depth1Ms);
+		checkRegression(`${tag} fnImpact d3`, e.fnImpact.depth3Ms, p.fnImpact.depth3Ms);
+		checkRegression(`${tag} fnImpact d5`, e.fnImpact.depth5Ms, p.fnImpact.depth5Ms);
+		checkRegression(`${tag} diffImpact`, e.diffImpact.latencyMs, p.diffImpact.latencyMs);
+	}
+}

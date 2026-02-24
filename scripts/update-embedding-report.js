@@ -132,3 +132,35 @@ md += `\n<!-- EMBEDDING_BENCHMARK_DATA\n${JSON.stringify(history, null, 2)}\n-->
 fs.mkdirSync(path.dirname(reportPath), { recursive: true });
 fs.writeFileSync(reportPath, md);
 console.error(`Updated ${path.relative(root, reportPath)}`);
+
+// ── Regression detection ─────────────────────────────────────────────────
+const REGRESSION_THRESHOLD = 0.15; // 15% regression triggers a warning
+const prev = history[1] || null;
+
+function checkRegression(label, current, previous, lowerIsBetter = true) {
+	if (previous == null || previous === 0) return;
+	const pct = (current - previous) / previous;
+	const regressed = lowerIsBetter ? pct > REGRESSION_THRESHOLD : pct < -REGRESSION_THRESHOLD;
+	if (regressed) {
+		const delta = lowerIsBetter ? `+${Math.round(pct * 100)}%` : `${Math.round(pct * 100)}%`;
+		const msg = `${label}: ${previous} → ${current} (${delta}, threshold ${Math.round(REGRESSION_THRESHOLD * 100)}%)`;
+		if (process.env.GITHUB_ACTIONS) {
+			console.error(`::warning title=Benchmark Regression::${msg}`);
+		} else {
+			console.error(`⚠ REGRESSION: ${msg}`);
+		}
+	}
+}
+
+if (prev) {
+	for (const [modelKey, m] of Object.entries(latest.models)) {
+		const pm = prev.models?.[modelKey];
+		if (!pm) continue;
+		const tag = `[${modelKey}]`;
+		// Hit rates: higher is better (regression = drop)
+		checkRegression(`${tag} Hit@1`, m.hits1 / m.total, pm.hits1 / pm.total, false);
+		checkRegression(`${tag} Hit@5`, m.hits5 / m.total, pm.hits5 / pm.total, false);
+		// Embed time: lower is better (regression = increase)
+		checkRegression(`${tag} Embed time`, m.embedTimeMs, pm.embedTimeMs);
+	}
+}

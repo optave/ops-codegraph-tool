@@ -154,6 +154,35 @@ fs.mkdirSync(path.dirname(benchmarkPath), { recursive: true });
 fs.writeFileSync(benchmarkPath, md);
 console.error(`Updated ${path.relative(root, benchmarkPath)}`);
 
+// ── Regression detection ─────────────────────────────────────────────────
+const REGRESSION_THRESHOLD = 0.15; // 15% regression triggers a warning
+const prev = history[1] || null;
+
+function checkRegression(label, current, previous) {
+	if (previous == null || previous === 0) return;
+	const pct = (current - previous) / previous;
+	if (pct > REGRESSION_THRESHOLD) {
+		const msg = `${label}: ${previous} → ${current} (+${Math.round(pct * 100)}%, threshold ${Math.round(REGRESSION_THRESHOLD * 100)}%)`;
+		if (process.env.GITHUB_ACTIONS) {
+			console.error(`::warning title=Benchmark Regression::${msg}`);
+		} else {
+			console.error(`⚠ REGRESSION: ${msg}`);
+		}
+	}
+}
+
+if (prev) {
+	for (const engineKey of ['native', 'wasm']) {
+		const e = latest[engineKey];
+		const p = prev[engineKey];
+		if (!e || !p) continue;
+		const tag = `[${engineKey}]`;
+		checkRegression(`${tag} Build ms/file`, e.perFile.buildTimeMs, p.perFile.buildTimeMs);
+		checkRegression(`${tag} Query time`, e.queryTimeMs, p.queryTimeMs);
+		checkRegression(`${tag} DB bytes/file`, e.perFile.dbSizeBytes, p.perFile.dbSizeBytes);
+	}
+}
+
 // ── Patch README.md ──────────────────────────────────────────────────────
 if (fs.existsSync(readmePath)) {
 	let readme = fs.readFileSync(readmePath, 'utf8');
