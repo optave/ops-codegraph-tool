@@ -587,11 +587,12 @@ See **[ROADMAP.md](ROADMAP.md)** for the full development roadmap. Current plan:
 
 1. ~~**Rust Core**~~ — **Complete** (v1.3.0) — native tree-sitter parsing via napi-rs, parallel multi-core parsing, incremental re-parsing, import resolution & cycle detection in Rust
 2. ~~**Foundation Hardening**~~ — **Complete** (v1.4.0) — parser registry, 12-tool MCP server with multi-repo support, test coverage 62%→75%, `apiKeyCommand` secret resolution, global repo registry
-3. **Intelligent Embeddings** — LLM-generated descriptions, hybrid search
-4. **Natural Language Queries** — `codegraph ask` command, conversational sessions
-5. **Expanded Language Support** — 8 new languages (12 → 20)
-6. **GitHub Integration & CI** — reusable GitHub Action, PR review, SARIF output
-7. **Visualization & Advanced** — web UI, dead code detection, monorepo support, agentic search
+3. **Architectural Refactoring** — parser plugin system, repository pattern, pipeline builder, engine strategy, domain errors, curated API
+4. **Intelligent Embeddings** — LLM-generated descriptions, hybrid search
+5. **Natural Language Queries** — `codegraph ask` command, conversational sessions
+6. **Expanded Language Support** — 8 new languages (12 → 20)
+7. **GitHub Integration & CI** — reusable GitHub Action, PR review, SARIF output
+8. **Visualization & Advanced** — web UI, dead code detection, monorepo support, agentic search
 
 ## 🤝 Contributing
 
