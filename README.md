@@ -67,6 +67,38 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 | After `/clear`, starts from scratch | Graph persists — next session picks up where this one left off |
 | Suggests renaming a function, breaks 14 call sites silently | `diff-impact --staged` catches the breakage before you commit |
 
+### Feature comparison
+
+<sub>Comparison last verified: February 2026</sub>
+
+| Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) | [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | [axon](https://github.com/harshkedia177/axon) |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| Function-level analysis | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
+| Multi-language | **11** | **14** | **32** | Multi | **~10** | **9** | SCIP langs | Few |
+| Semantic search | **Yes** | — | **Yes** | **Yes** | — | **Yes** | — | — |
+| MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | — |
+| Git diff impact | **Yes** | — | — | — | — | **Yes** | — | **Yes** |
+| Watch mode | **Yes** | — | **Yes** | — | — | — | — | — |
+| Cycle detection | **Yes** | — | **Yes** | — | — | — | — | **Yes** |
+| Incremental rebuilds | **O(changed)** | — | O(n) Merkle | — | — | — | — | — |
+| Zero config | **Yes** | — | **Yes** | — | — | — | — | — |
+| Embeddable JS library (`npm install`) | **Yes** | — | — | — | — | — | — | — |
+| LLM-optional (works without API keys) | **Yes** | **Yes** | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** |
+| Commercial use allowed | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | — | — | — |
+| Open source | **Yes** | Yes | Yes | Yes | Yes | Yes | Custom | — |
+
+### What makes codegraph different
+
+| | Differentiator | In practice |
+|---|---|---|
+| **⚡** | **Always-fresh graph** | Three-tier change detection: journal (O(changed)) → mtime+size (O(n) stats) → hash (O(changed) reads). Sub-second rebuilds even on large codebases |
+| **🔓** | **Zero-cost core, LLM-enhanced when you want** | Full graph analysis with no API keys, no accounts, no cost. Optionally bring your own LLM provider — your code only goes where you choose |
+| **🔬** | **Function-level, not just files** | Traces `handleAuth()` → `validateToken()` → `decryptJWT()` and shows 14 callers across 9 files break if `decryptJWT` changes |
+| **🤖** | **Built for AI agents** | 17-tool [MCP server](https://modelcontextprotocol.io/) — AI assistants query your graph directly. Single-repo by default |
+| **🌐** | **Multi-language, one CLI** | JS/TS + Python + Go + Rust + Java + C# + PHP + Ruby + HCL in a single graph |
+| **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — ships with a GitHub Actions workflow |
+| **🧠** | **Semantic search** | Local embeddings by default, LLM-powered when opted in — multi-query with RRF ranking via `"auth; token; JWT"` |
+
 ---
 
 ## 🚀 Quick Start
