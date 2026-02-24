@@ -7,7 +7,8 @@
   "exports": {
     ".": {
       "import": "./src/index.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "bin": {
     "codegraph": "./src/cli.js"
