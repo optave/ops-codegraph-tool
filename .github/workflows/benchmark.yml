@@ -9,7 +9,7 @@ on:
 permissions: {}
 
 jobs:
-  benchmark:
+  build-benchmark:
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' ||
@@ -31,16 +31,22 @@ jobs:
 
       - run: npm install
 
-      - name: Run benchmark
+      - name: Run build benchmark
         run: node scripts/benchmark.js 2>/dev/null > benchmark-result.json
 
-      - name: Update report
+      - name: Update build report
         run: node scripts/update-benchmark-report.js benchmark-result.json
+
+      - name: Upload build result
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-benchmark-result
+          path: benchmark-result.json
 
       - name: Check for changes
         id: changes
         run: |
-          if git diff --quiet HEAD -- generated/BENCHMARKS.md README.md; then
+          if git diff --quiet HEAD -- generated/BUILD-BENCHMARKS.md README.md; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
@@ -54,20 +60,89 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          BRANCH="benchmark/update-$(date +%Y%m%d-%H%M%S)"
+          BRANCH="benchmark/build-$(date +%Y%m%d-%H%M%S)"
           git checkout -b "$BRANCH"
-          git add generated/BENCHMARKS.md README.md
-          git commit -m "docs: update performance benchmarks"
+          git add generated/BUILD-BENCHMARKS.md README.md
+          git commit -m "docs: update build performance benchmarks"
           git push origin "$BRANCH"
 
           gh pr create \
             --base main \
             --head "$BRANCH" \
-            --title "docs: update performance benchmarks" \
-            --body "Automated benchmark update from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+            --title "docs: update build performance benchmarks" \
+            --body "Automated build benchmark update from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
 
-      - name: Upload result artifact
+  embedding-benchmark:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm install
+
+      - name: Cache HuggingFace models
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-models-${{ runner.os }}-${{ hashFiles('src/embedder.js') }}
+          restore-keys: hf-models-${{ runner.os }}-
+
+      - name: Build graph
+        run: node src/cli.js build .
+
+      - name: Run embedding benchmark
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: node scripts/embedding-benchmark.js 2>/dev/null > embedding-benchmark-result.json
+
+      - name: Update embedding report
+        run: node scripts/update-embedding-report.js embedding-benchmark-result.json
+
+      - name: Upload embedding result
         uses: actions/upload-artifact@v4
         with:
-          name: benchmark-result
-          path: benchmark-result.json
+          name: embedding-benchmark-result
+          path: embedding-benchmark-result.json
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet HEAD -- generated/EMBEDDING-BENCHMARKS.md; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push via PR
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          BRANCH="benchmark/embedding-$(date +%Y%m%d-%H%M%S)"
+          git checkout -b "$BRANCH"
+          git add generated/EMBEDDING-BENCHMARKS.md
+          git commit -m "docs: update embedding benchmarks"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "docs: update embedding benchmarks" \
+            --body "Automated embedding benchmark update from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."

@@ -2,7 +2,7 @@
 
 /**
  * Update benchmark report — reads benchmark JSON and updates:
- *   1. generated/BENCHMARKS.md  (historical table + raw JSON in HTML comment)
+ *   1. generated/BUILD-BENCHMARKS.md  (historical table + raw JSON in HTML comment)
  *   2. README.md                (performance section with latest numbers)
  *
  * Usage:
@@ -28,10 +28,10 @@ if (arg) {
 const entry = JSON.parse(jsonText);
 
 // ── Paths ────────────────────────────────────────────────────────────────
-const benchmarkPath = path.join(root, 'generated', 'BENCHMARKS.md');
+const benchmarkPath = path.join(root, 'generated', 'BUILD-BENCHMARKS.md');
 const readmePath = path.join(root, 'README.md');
 
-// ── Load existing history from BENCHMARKS.md ─────────────────────────────
+// ── Load existing history from BUILD-BENCHMARKS.md ─────────────────────────────
 let history = [];
 if (fs.existsSync(benchmarkPath)) {
 	const content = fs.readFileSync(benchmarkPath, 'utf8');
@@ -96,7 +96,7 @@ function engineRow(h, prev, engineKey) {
 	);
 }
 
-// ── Build BENCHMARKS.md ──────────────────────────────────────────────────
+// ── Build BUILD-BENCHMARKS.md ──────────────────────────────────────────────────
 let md = '# Codegraph Performance Benchmarks\n\n';
 md += 'Self-measured on every release by running codegraph on its own codebase.\n';
 md += 'Metrics are normalized per file for cross-version comparability.\n\n';
@@ -177,7 +177,7 @@ if (fs.existsSync(readmePath)) {
 
 	const perfSection = `## 📊 Performance
 
-Self-measured on every release via CI ([full history](generated/BENCHMARKS.md)):
+Self-measured on every release via CI ([build benchmarks](generated/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/EMBEDDING-BENCHMARKS.md)):
 
 | Metric | Latest |
 |---|---|
