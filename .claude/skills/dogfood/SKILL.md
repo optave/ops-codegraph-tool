@@ -392,6 +392,33 @@ Write the report to `generated/DOGFOOD_REPORT_v$ARGUMENTS.md` with this structur
 
 ---
 
+## Phase 10 — Commit the Report
+
+The dogfood report **must** be committed to the repository — do not leave it as an untracked file.
+
+1. **If bug-fix PRs were created during Phase 7:** Add the report to the **first** PR's branch:
+   ```bash
+   git checkout <first-pr-branch>
+   git add generated/DOGFOOD_REPORT_v$ARGUMENTS.md
+   git commit -m "docs: add dogfood report for v$ARGUMENTS"
+   git push
+   ```
+
+2. **If no PRs were created** (zero bugs / green path): Create a dedicated PR for the report:
+   ```bash
+   git checkout -b docs/dogfood-report-v$ARGUMENTS main
+   git add generated/DOGFOOD_REPORT_v$ARGUMENTS.md
+   git commit -m "docs: add dogfood report for v$ARGUMENTS"
+   git push -u origin docs/dogfood-report-v$ARGUMENTS
+   gh pr create --base main \
+     --title "docs: add dogfood report for v$ARGUMENTS" \
+     --body "Dogfooding report for v$ARGUMENTS. See generated/DOGFOOD_REPORT_v$ARGUMENTS.md for full details."
+   ```
+
+3. **Verify** the report file appears in the PR diff before moving on.
+
+---
+
 ## Rules
 
 - Be thorough but honest. Don't inflate the rating.
