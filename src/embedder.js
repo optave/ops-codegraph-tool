@@ -324,6 +324,14 @@ export async function buildEmbeddings(rootDir, modelKey, customDbPath, options =
   const strategy = options.strategy || 'structured';
   const dbPath = customDbPath || findDbPath(null);
 
+  if (!fs.existsSync(dbPath)) {
+    console.error(
+      `No codegraph database found at ${dbPath}.\n` +
+        `Run "codegraph build" first to analyze your codebase.`,
+    );
+    process.exit(1);
+  }
+
   const db = new Database(dbPath);
   initEmbeddingsSchema(db);
 

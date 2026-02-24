@@ -2,12 +2,11 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import Database from 'better-sqlite3';
 import { Command } from 'commander';
 import { buildGraph } from './builder.js';
 import { loadConfig } from './config.js';
 import { findCycles, formatCycles } from './cycles.js';
-import { findDbPath } from './db.js';
+import { openReadonlyOrFail } from './db.js';
 import { buildEmbeddings, EMBEDDING_STRATEGIES, MODELS, search } from './embedder.js';
 import { exportDOT, exportJSON, exportMermaid } from './export.js';
 import { setVerbose } from './logger.js';
@@ -275,7 +274,7 @@ program
   .option('--min-confidence <score>', 'Minimum edge confidence threshold (default: 0.5)', '0.5')
   .option('-o, --output <file>', 'Write to file instead of stdout')
   .action((opts) => {
-    const db = new Database(findDbPath(opts.db), { readonly: true });
+    const db = openReadonlyOrFail(opts.db);
     const exportOpts = {
       fileLevel: !opts.functions,
       noTests: resolveNoTests(opts),
@@ -314,7 +313,7 @@ program
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action((opts) => {
-    const db = new Database(findDbPath(opts.db), { readonly: true });
+    const db = openReadonlyOrFail(opts.db);
     const cycles = findCycles(db, { fileLevel: !opts.functions, noTests: resolveNoTests(opts) });
     db.close();
 
