@@ -170,15 +170,18 @@ describe('three-tier incremental builds', () => {
   });
 
   test('rebuild with no changes detects nothing (Tier 1 mtime+size)', async () => {
-    const consoleSpy = [];
-    const origLog = console.log;
-    console.log = (...args) => consoleSpy.push(args.join(' '));
+    const stderrSpy = [];
+    const origWrite = process.stderr.write;
+    process.stderr.write = (chunk) => {
+      stderrSpy.push(String(chunk));
+      return true;
+    };
     try {
       await buildGraph(incrDir, { skipRegistry: true });
     } finally {
-      console.log = origLog;
+      process.stderr.write = origWrite;
     }
-    const output = consoleSpy.join('\n');
+    const output = stderrSpy.join('');
     expect(output).toContain('No changes detected');
   });
 
@@ -190,15 +193,18 @@ describe('three-tier incremental builds', () => {
       `${FIXTURE_FILES['math.js']}\nexport function subtract(a, b) { return a - b; }\n`,
     );
 
-    const consoleSpy = [];
-    const origLog = console.log;
-    console.log = (...args) => consoleSpy.push(args.join(' '));
+    const stderrSpy = [];
+    const origWrite = process.stderr.write;
+    process.stderr.write = (chunk) => {
+      stderrSpy.push(String(chunk));
+      return true;
+    };
     try {
       await buildGraph(incrDir, { skipRegistry: true });
     } finally {
-      console.log = origLog;
+      process.stderr.write = origWrite;
     }
-    const output = consoleSpy.join('\n');
+    const output = stderrSpy.join('');
     expect(output).toContain('Incremental: 1 changed');
 
     // Verify the new function was added
@@ -231,15 +237,18 @@ describe('three-tier incremental builds', () => {
     );
     fs.appendFileSync(path.join(incrDir, '.codegraph', JOURNAL_FILENAME), 'utils.js\n');
 
-    const consoleSpy = [];
-    const origLog = console.log;
-    console.log = (...args) => consoleSpy.push(args.join(' '));
+    const stderrSpy = [];
+    const origWrite = process.stderr.write;
+    process.stderr.write = (chunk) => {
+      stderrSpy.push(String(chunk));
+      return true;
+    };
     try {
       await buildGraph(incrDir, { skipRegistry: true });
     } finally {
-      console.log = origLog;
+      process.stderr.write = origWrite;
     }
-    const output = consoleSpy.join('\n');
+    const output = stderrSpy.join('');
     expect(output).toContain('Incremental: 1 changed');
 
     // Verify the new function was added
@@ -264,15 +273,18 @@ describe('three-tier incremental builds', () => {
     );
 
     // Rebuild with no actual changes — should still detect nothing via Tier 1
-    const consoleSpy = [];
-    const origLog = console.log;
-    console.log = (...args) => consoleSpy.push(args.join(' '));
+    const stderrSpy = [];
+    const origWrite = process.stderr.write;
+    process.stderr.write = (chunk) => {
+      stderrSpy.push(String(chunk));
+      return true;
+    };
     try {
       await buildGraph(incrDir, { skipRegistry: true });
     } finally {
-      console.log = origLog;
+      process.stderr.write = origWrite;
     }
-    const output = consoleSpy.join('\n');
+    const output = stderrSpy.join('');
     expect(output).toContain('No changes detected');
   });
 });
