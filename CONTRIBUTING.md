@@ -141,30 +141,46 @@ tests/
 - Parser tests use inline code strings parsed directly with tree-sitter
 - Always run the full suite (`npm test`) before submitting a PR
 
-## Benchmarks
+## Regression Benchmarks
 
-Two benchmark scripts live in `scripts/`. Run them before and after your changes
-to make sure you're not degrading performance.
+Two regression benchmark scripts live in `scripts/`. These are **not** unit
+tests — they measure performance metrics that reviewers use to judge whether a
+change is acceptable. If your PR touches code covered by a benchmark, you
+**must** run it before and after your changes and include the results in the PR
+description.
 
-| Script | What it measures | When to run |
-|--------|-----------------|-------------|
+| Benchmark | What it measures | When to run |
+|-----------|-----------------|-------------|
 | `node scripts/benchmark.js` | Build speed (native vs WASM), query latency | Changes to `builder.js`, `parser.js`, `queries.js`, `resolve.js`, `db.js`, or the native engine |
-| `node scripts/embedding-benchmark.js` | Embedding search recall (Hit@1/3/5/10) across models | Changes to `embedder.js` or embedding strategies |
+| `node scripts/embedding-benchmark.js` | Search recall (Hit@1/3/5/10) across models | Changes to `embedder.js` or embedding strategies |
 
-Both scripts output JSON to stdout (progress goes to stderr), so you can save
-results for comparison:
+### How to report results
+
+Both scripts output JSON to stdout (progress goes to stderr). Run the relevant
+benchmark on `main` (before), then on your branch (after), and paste both in
+your PR description:
 
 ```bash
-# Before your changes
+git stash && git checkout main
 node scripts/benchmark.js > before.json
-node scripts/embedding-benchmark.js > before-embed.json
 
-# After your changes
+git checkout - && git stash pop
 node scripts/benchmark.js > after.json
-node scripts/embedding-benchmark.js > after-embed.json
 ```
 
-If recall or build speed regresses, investigate before opening a PR.
+In the PR, include a table like:
+
+```
+## Benchmark results
+
+| Metric       | Before | After  | Delta |
+|--------------|--------|--------|-------|
+| Build (ms)   | 1200   | 1180   | -20   |
+| Hit@1        | 75.5%  | 76.2%  | +0.7% |
+```
+
+Regressions are not automatically blocking, but unexplained drops in speed or
+recall will be questioned during review.
 
 ## Common Contribution Types
 
