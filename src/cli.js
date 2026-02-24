@@ -8,7 +8,7 @@ import { buildGraph } from './builder.js';
 import { loadConfig } from './config.js';
 import { findCycles, formatCycles } from './cycles.js';
 import { findDbPath } from './db.js';
-import { buildEmbeddings, MODELS, search } from './embedder.js';
+import { buildEmbeddings, EMBEDDING_STRATEGIES, MODELS, search } from './embedder.js';
 import { exportDOT, exportJSON, exportMermaid } from './export.js';
 import { setVerbose } from './logger.js';
 import {
@@ -418,9 +418,12 @@ program
     console.log('\nAvailable embedding models:\n');
     for (const [key, config] of Object.entries(MODELS)) {
       const def = key === 'minilm' ? ' (default)' : '';
-      console.log(`  ${key.padEnd(12)} ${String(config.dim).padStart(4)}d  ${config.desc}${def}`);
+      const ctx = config.contextWindow ? `${config.contextWindow} ctx` : '';
+      console.log(
+        `  ${key.padEnd(12)} ${String(config.dim).padStart(4)}d  ${ctx.padEnd(9)} ${config.desc}${def}`,
+      );
     }
-    console.log('\nUsage: codegraph embed --model <name>');
+    console.log('\nUsage: codegraph embed --model <name> --strategy <structured|source>');
     console.log('       codegraph search "query" --model <name>\n');
   });
 
@@ -434,9 +437,20 @@ program
     'Embedding model: minilm (default), jina-small, jina-base, jina-code, nomic, nomic-v1.5, bge-large. Run `codegraph models` for details',
     'minilm',
   )
+  .option(
+    '-s, --strategy <name>',
+    `Embedding strategy: ${EMBEDDING_STRATEGIES.join(', ')}. "structured" uses graph context (callers/callees), "source" embeds raw code`,
+    'structured',
+  )
   .action(async (dir, opts) => {
+    if (!EMBEDDING_STRATEGIES.includes(opts.strategy)) {
+      console.error(
+        `Unknown strategy: ${opts.strategy}. Available: ${EMBEDDING_STRATEGIES.join(', ')}`,
+      );
+      process.exit(1);
+    }
     const root = path.resolve(dir || '.');
-    await buildEmbeddings(root, opts.model);
+    await buildEmbeddings(root, opts.model, undefined, { strategy: opts.strategy });
   });
 
 program

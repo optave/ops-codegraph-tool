@@ -26,46 +26,55 @@ export const MODELS = {
   minilm: {
     name: 'Xenova/all-MiniLM-L6-v2',
     dim: 384,
+    contextWindow: 256,
     desc: 'Smallest, fastest (~23MB). General text.',
     quantized: true,
   },
   'jina-small': {
     name: 'Xenova/jina-embeddings-v2-small-en',
     dim: 512,
+    contextWindow: 8192,
     desc: 'Small, good quality (~33MB). General text.',
     quantized: false,
   },
   'jina-base': {
     name: 'Xenova/jina-embeddings-v2-base-en',
     dim: 768,
+    contextWindow: 8192,
     desc: 'Good quality (~137MB). General text, 8192 token context.',
     quantized: false,
   },
   'jina-code': {
     name: 'Xenova/jina-embeddings-v2-base-code',
     dim: 768,
+    contextWindow: 8192,
     desc: 'Code-aware (~137MB). Trained on code+text, best for code search.',
     quantized: false,
   },
   nomic: {
     name: 'Xenova/nomic-embed-text-v1',
     dim: 768,
+    contextWindow: 8192,
     desc: 'Good local quality (~137MB). 8192 context.',
     quantized: false,
   },
   'nomic-v1.5': {
     name: 'nomic-ai/nomic-embed-text-v1.5',
     dim: 768,
+    contextWindow: 8192,
     desc: 'Improved nomic (~137MB). Matryoshka dimensions, 8192 context.',
     quantized: false,
   },
   'bge-large': {
     name: 'Xenova/bge-large-en-v1.5',
     dim: 1024,
+    contextWindow: 512,
     desc: 'Best general retrieval (~335MB). Top MTEB scores.',
     quantized: false,
   },
 };
+
+export const EMBEDDING_STRATEGIES = ['structured', 'source'];
 
 export const DEFAULT_MODEL = 'minilm';
 const BATCH_SIZE_MAP = {
@@ -87,6 +96,108 @@ function getModelConfig(modelKey) {
     process.exit(1);
   }
   return config;
+}
+
+/**
+ * Rough token estimate (~4 chars per token for code/English).
+ * Conservative — avoids adding a tokenizer dependency.
+ */
+export function estimateTokens(text) {
+  return Math.ceil(text.length / 4);
+}
+
+/**
+ * Extract leading comment text (JSDoc, //, #, etc.) above a function line.
+ * Returns the cleaned comment text or null if none found.
+ */
+function extractLeadingComment(lines, fnLineIndex) {
+  const raw = [];
+  for (let i = fnLineIndex - 1; i >= Math.max(0, fnLineIndex - 15); i--) {
+    const trimmed = lines[i].trim();
+    if (/^(\/\/|\/\*|\*\/|\*|#|\/\/\/)/.test(trimmed)) {
+      raw.unshift(trimmed);
+    } else if (trimmed === '') {
+      if (raw.length > 0) break;
+    } else {
+      break;
+    }
+  }
+  if (raw.length === 0) return null;
+  return raw
+    .map((line) =>
+      line
+        .replace(/^\/\*\*?\s?|\*\/$/g, '') // opening /** or /* and closing */
+        .replace(/^\*\s?/, '') // middle * lines
+        .replace(/^\/\/\/?\s?/, '') // // or ///
+        .replace(/^#\s?/, '') // # (Python/Ruby)
+        .trim(),
+    )
+    .filter((l) => l.length > 0)
+    .join(' ');
+}
+
+/**
+ * Build graph-enriched text for a symbol using dependency context.
+ * Produces compact, semantic text (~100 tokens) instead of full source code.
+ */
+function buildStructuredText(node, file, lines, calleesStmt, callersStmt) {
+  const readable = splitIdentifier(node.name);
+  const parts = [`${node.kind} ${node.name} (${readable}) in ${file}`];
+  const startLine = Math.max(0, node.line - 1);
+
+  // Extract parameters from signature (best-effort, single-line)
+  const sigLine = lines[startLine] || '';
+  const paramMatch = sigLine.match(/\(([^)]*)\)/);
+  if (paramMatch?.[1]?.trim()) {
+    parts.push(`Parameters: ${paramMatch[1].trim()}`);
+  }
+
+  // Graph context: callees (capped at 10)
+  const callees = calleesStmt.all(node.id);
+  if (callees.length > 0) {
+    parts.push(
+      `Calls: ${callees
+        .slice(0, 10)
+        .map((c) => c.name)
+        .join(', ')}`,
+    );
+  }
+
+  // Graph context: callers (capped at 10)
+  const callers = callersStmt.all(node.id);
+  if (callers.length > 0) {
+    parts.push(
+      `Called by: ${callers
+        .slice(0, 10)
+        .map((c) => c.name)
+        .join(', ')}`,
+    );
+  }
+
+  // Leading comment (high semantic value) or first few lines of code
+  const comment = extractLeadingComment(lines, startLine);
+  if (comment) {
+    parts.push(comment);
+  } else {
+    const endLine = Math.min(lines.length, startLine + 4);
+    const snippet = lines.slice(startLine, endLine).join('\n').trim();
+    if (snippet) parts.push(snippet);
+  }
+
+  return parts.join('\n');
+}
+
+/**
+ * Build raw source-code text for a symbol (original strategy).
+ */
+function buildSourceText(node, file, lines) {
+  const startLine = Math.max(0, node.line - 1);
+  const endLine = node.end_line
+    ? Math.min(lines.length, node.end_line)
+    : Math.min(lines.length, startLine + 15);
+  const context = lines.slice(startLine, endLine).join('\n');
+  const readable = splitIdentifier(node.name);
+  return `${node.kind} ${node.name} (${readable}) in ${file}\n${context}`;
 }
 
 /**
@@ -203,10 +314,14 @@ function initEmbeddingsSchema(db) {
 
 /**
  * Build embeddings for all functions/methods/classes in the graph.
+ * @param {string} rootDir - Project root directory
+ * @param {string} modelKey - Model identifier from MODELS registry
+ * @param {string} [customDbPath] - Override path to graph.db
+ * @param {object} [options] - Embedding options
+ * @param {string} [options.strategy='structured'] - 'structured' (graph-enriched) or 'source' (raw code)
  */
-export async function buildEmbeddings(rootDir, modelKey, customDbPath) {
-  // path already imported at top
-  // fs already imported at top
+export async function buildEmbeddings(rootDir, modelKey, customDbPath, options = {}) {
+  const strategy = options.strategy || 'structured';
   const dbPath = customDbPath || findDbPath(null);
 
   const db = new Database(dbPath);
@@ -221,7 +336,24 @@ export async function buildEmbeddings(rootDir, modelKey, customDbPath) {
     )
     .all();
 
-  console.log(`Building embeddings for ${nodes.length} symbols...`);
+  console.log(`Building embeddings for ${nodes.length} symbols (strategy: ${strategy})...`);
+
+  // Prepare graph-context queries for structured strategy
+  let calleesStmt, callersStmt;
+  if (strategy === 'structured') {
+    calleesStmt = db.prepare(`
+      SELECT DISTINCT n.name FROM edges e
+      JOIN nodes n ON e.target_id = n.id
+      WHERE e.source_id = ? AND e.kind = 'calls'
+      ORDER BY n.name
+    `);
+    callersStmt = db.prepare(`
+      SELECT DISTINCT n.name FROM edges e
+      JOIN nodes n ON e.source_id = n.id
+      WHERE e.target_id = ? AND e.kind = 'calls'
+      ORDER BY n.name
+    `);
+  }
 
   const byFile = new Map();
   for (const node of nodes) {
@@ -232,6 +364,9 @@ export async function buildEmbeddings(rootDir, modelKey, customDbPath) {
   const texts = [];
   const nodeIds = [];
   const previews = [];
+  const config = getModelConfig(modelKey);
+  const contextWindow = config.contextWindow;
+  let overflowCount = 0;
 
   for (const [file, fileNodes] of byFile) {
     const fullPath = path.join(rootDir, file);
@@ -244,18 +379,29 @@ export async function buildEmbeddings(rootDir, modelKey, customDbPath) {
     }
 
     for (const node of fileNodes) {
-      const startLine = Math.max(0, node.line - 1);
-      const endLine = node.end_line
-        ? Math.min(lines.length, node.end_line)
-        : Math.min(lines.length, startLine + 15);
-      const context = lines.slice(startLine, endLine).join('\n');
+      let text =
+        strategy === 'structured'
+          ? buildStructuredText(node, file, lines, calleesStmt, callersStmt)
+          : buildSourceText(node, file, lines);
 
-      const readable = splitIdentifier(node.name);
-      const text = `${node.kind} ${node.name} (${readable}) in ${file}\n${context}`;
+      // Detect and handle context window overflow
+      const tokens = estimateTokens(text);
+      if (tokens > contextWindow) {
+        overflowCount++;
+        const maxChars = contextWindow * 4;
+        text = text.slice(0, maxChars);
+      }
+
       texts.push(text);
       nodeIds.push(node.id);
       previews.push(`${node.name} (${node.kind}) -- ${file}:${node.line}`);
     }
+  }
+
+  if (overflowCount > 0) {
+    warn(
+      `${overflowCount} symbol(s) exceeded model context window (${contextWindow} tokens) and were truncated`,
+    );
   }
 
   console.log(`Embedding ${texts.length} symbols...`);
@@ -269,16 +415,19 @@ export async function buildEmbeddings(rootDir, modelKey, customDbPath) {
     for (let i = 0; i < vectors.length; i++) {
       insert.run(nodeIds[i], Buffer.from(vectors[i].buffer), previews[i]);
     }
-    const config = getModelConfig(modelKey);
     insertMeta.run('model', config.name);
     insertMeta.run('dim', String(dim));
     insertMeta.run('count', String(vectors.length));
+    insertMeta.run('strategy', strategy);
     insertMeta.run('built_at', new Date().toISOString());
+    if (overflowCount > 0) {
+      insertMeta.run('truncated_count', String(overflowCount));
+    }
   });
   insertAll();
 
   console.log(
-    `\nStored ${vectors.length} embeddings (${dim}d, ${getModelConfig(modelKey).name}) in graph.db`,
+    `\nStored ${vectors.length} embeddings (${dim}d, ${config.name}, strategy: ${strategy}) in graph.db`,
   );
   db.close();
 }
