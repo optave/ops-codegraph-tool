@@ -146,3 +146,129 @@ jobs:
             --head "$BRANCH" \
             --title "docs: update embedding benchmarks" \
             --body "Automated embedding benchmark update from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+
+  query-benchmark:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm install
+
+      - name: Run query benchmark
+        run: node scripts/query-benchmark.js 2>/dev/null > query-benchmark-result.json
+
+      - name: Update query report
+        run: node scripts/update-query-report.js query-benchmark-result.json
+
+      - name: Upload query result
+        uses: actions/upload-artifact@v4
+        with:
+          name: query-benchmark-result
+          path: query-benchmark-result.json
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet HEAD -- generated/QUERY-BENCHMARKS.md; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push via PR
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          BRANCH="benchmark/query-$(date +%Y%m%d-%H%M%S)"
+          git checkout -b "$BRANCH"
+          git add generated/QUERY-BENCHMARKS.md
+          git commit -m "docs: update query benchmarks"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "docs: update query benchmarks" \
+            --body "Automated query benchmark update from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+
+  incremental-benchmark:
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm install
+
+      - name: Run incremental benchmark
+        run: node scripts/incremental-benchmark.js 2>/dev/null > incremental-benchmark-result.json
+
+      - name: Update incremental report
+        run: node scripts/update-incremental-report.js incremental-benchmark-result.json
+
+      - name: Upload incremental result
+        uses: actions/upload-artifact@v4
+        with:
+          name: incremental-benchmark-result
+          path: incremental-benchmark-result.json
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if git diff --quiet HEAD -- generated/INCREMENTAL-BENCHMARKS.md; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push via PR
+        if: steps.changes.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          BRANCH="benchmark/incremental-$(date +%Y%m%d-%H%M%S)"
+          git checkout -b "$BRANCH"
+          git add generated/INCREMENTAL-BENCHMARKS.md
+          git commit -m "docs: update incremental benchmarks"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "docs: update incremental benchmarks" \
+            --body "Automated incremental benchmark update from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
