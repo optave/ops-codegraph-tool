@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const outFile = path.join('generated', 'DEPENDENCIES.md');
+fs.mkdirSync(path.dirname(outFile), { recursive: true });
 
 try {
   const tree = execSync('npm ls --all --omit=dev', { encoding: 'utf8' });

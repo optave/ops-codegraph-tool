@@ -264,7 +264,7 @@ jobs:
 
       - name: Generate DEPENDENCIES.json
         if: github.event_name != 'push'
-        run: npm ls --json --all --omit=dev > generated/DEPENDENCIES.json 2>/dev/null || true
+        run: mkdir -p generated && npm ls --json --all --omit=dev > generated/DEPENDENCIES.json 2>/dev/null || true
 
       - name: Push version bump via PR
         if: github.event_name != 'push'
