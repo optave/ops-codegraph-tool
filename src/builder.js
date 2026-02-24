@@ -5,7 +5,7 @@ import { loadConfig } from './config.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
 import { initSchema, openDb } from './db.js';
 import { readJournal, writeJournalHeader } from './journal.js';
-import { debug, warn } from './logger.js';
+import { debug, info, warn } from './logger.js';
 import { getActiveEngine, parseFilesAuto } from './parser.js';
 import { computeConfidence, resolveImportPath, resolveImportsBatch } from './resolve.js';
 
@@ -344,7 +344,7 @@ export async function buildGraph(rootDir, opts = {}) {
   // Engine selection: 'native', 'wasm', or 'auto' (default)
   const engineOpts = { engine: opts.engine || 'auto' };
   const { name: engineName, version: engineVersion } = getActiveEngine(engineOpts);
-  console.log(`Using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
+  info(`Using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
 
   const aliases = loadPathAliases(rootDir);
   // Merge config aliases
@@ -357,7 +357,7 @@ export async function buildGraph(rootDir, opts = {}) {
   }
 
   if (aliases.baseUrl || Object.keys(aliases.paths).length > 0) {
-    console.log(
+    info(
       `Loaded path aliases: baseUrl=${aliases.baseUrl || 'none'}, ${Object.keys(aliases.paths).length} path mappings`,
     );
   }
@@ -365,7 +365,7 @@ export async function buildGraph(rootDir, opts = {}) {
   const collected = collectFiles(rootDir, [], config, new Set());
   const files = collected.files;
   const discoveredDirs = collected.directories;
-  console.log(`Found ${files.length} files to parse`);
+  info(`Found ${files.length} files to parse`);
 
   // Check for incremental build
   const { changed, removed, isFullBuild } = incremental
@@ -396,7 +396,7 @@ export async function buildGraph(rootDir, opts = {}) {
         /* ignore heal errors */
       }
     }
-    console.log('No changes detected. Graph is up to date.');
+    info('No changes detected. Graph is up to date.');
     db.close();
     writeJournalHeader(rootDir, Date.now());
     return;
@@ -407,7 +407,7 @@ export async function buildGraph(rootDir, opts = {}) {
       'PRAGMA foreign_keys = OFF; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM nodes; PRAGMA foreign_keys = ON;',
     );
   } else {
-    console.log(`Incremental: ${parseChanges.length} changed, ${removed.length} removed`);
+    info(`Incremental: ${parseChanges.length} changed, ${removed.length} removed`);
     // Remove metrics/edges/nodes for changed and removed files
     const deleteNodesForFile = db.prepare('DELETE FROM nodes WHERE file = ?');
     const deleteEdgesForFile = db.prepare(`
@@ -527,7 +527,7 @@ export async function buildGraph(rootDir, opts = {}) {
 
   const parsed = allSymbols.size;
   const skipped = filesToParse.length - parsed;
-  console.log(`Parsed ${parsed} files (${skipped} skipped)`);
+  info(`Parsed ${parsed} files (${skipped} skipped)`);
 
   // Clean up removed file hashes
   if (upsertHash && removed.length > 0) {
@@ -821,8 +821,8 @@ export async function buildGraph(rootDir, opts = {}) {
   }
 
   const nodeCount = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c;
-  console.log(`Graph built: ${nodeCount} nodes, ${edgeCount} edges`);
-  console.log(`Stored in ${dbPath}`);
+  info(`Graph built: ${nodeCount} nodes, ${edgeCount} edges`);
+  info(`Stored in ${dbPath}`);
   db.close();
 
   // Write journal header after successful build

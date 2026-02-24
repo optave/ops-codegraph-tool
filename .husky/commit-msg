@@ -1,3 +1,4 @@
+#!/bin/sh
 npx --no -- commitlint --edit $1
 
 # Append codegraph impact summary if available

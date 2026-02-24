@@ -18,6 +18,7 @@ export const DEFAULTS = {
   query: {
     defaultDepth: 3,
     defaultLimit: 20,
+    excludeTests: false,
   },
   embeddings: { model: 'nomic-v1.5', llmProvider: null },
   llm: { provider: null, model: null, baseUrl: null, apiKey: null, apiKeyCommand: null },

@@ -129,7 +129,7 @@ All test directories show `cohesion=0.00`, which is technically correct (tests i
 
 ## 5. Suggestions for Improvement
 
-### 5.1 UX: Default `--no-tests` in Config
+### 5.1 UX: Default `--no-tests` in Config — IMPLEMENTED
 
 Many codebases have large test directories. A `.codegraphrc.json` option like `"excludeTests": true` would let users default to production-only views:
 ```json
@@ -139,21 +139,29 @@ Many codebases have large test directories. A `.codegraphrc.json` option like `"
 ```
 This would save typing `-T` on every command while still allowing `--include-tests` to override.
 
-### 5.2 UX: `map` Could Show Coupling Score
+**Implementation:** Added `query.excludeTests` to config defaults (`config.js`). CLI loads config at startup and uses a `resolveNoTests()` helper: `--include-tests` flag always overrides to include, `-T` always excludes, otherwise falls back to config value. All commands with `--no-tests` now also accept `--include-tests`.
+
+### 5.2 UX: `map` Could Show Coupling Score — IMPLEMENTED
 
 The `map` command shows fan-in/fan-out bars, but doesn't show the actual coupling score (in+out combined). The `stats` command shows "Top 5 coupling hotspots" — `map` could integrate this as a column since it already has the data.
 
-### 5.3 UX: `explain` Is the Most Useful Command for AI Workflows
+**Implementation:** Added `coupling` field (in+out) to `moduleMapData` and display as `=NNN` column in `map` output.
+
+### 5.3 UX: `explain` Is the Most Useful Command for AI Workflows — IMPLEMENTED
 
 The `explain` command produces the most AI-agent-friendly output — structured sections (exports, internals, data flow) that give an LLM exactly the context it needs. Consider:
 - Making it the default recommendation in the README for AI workflows
 - Adding a `--depth` option to recursively explain dependencies
 
-### 5.4 Performance: Status Messages to stderr
+**Implementation:** Added `--depth <n>` option (default 0) to the `explain` command. When depth > 0 on a function target, recursively explains each callee's structure (callees, callers, signature, tests) up to N levels deep with cycle-safe visited tracking. Works with both text and JSON output.
+
+### 5.4 Performance: Status Messages to stderr — IMPLEMENTED
 
 The native engine still prints "Using native engine" to stdout, which pollutes piped output. Consider using `process.stderr.write` for status messages, keeping stdout clean for actual data output.
 
-### 5.5 UX: `--no-tests` Help Text Consistency
+**Implementation:** Replaced all `console.log` status messages in `builder.js` with `info()` from the logger (which writes to stderr).
+
+### 5.5 UX: `--no-tests` Help Text Consistency — ALREADY DONE
 
 All commands now use `'Exclude test/spec files from results'` after this fix. Future commands should follow the same wording.
 
@@ -163,7 +171,7 @@ All commands now use `'Exclude test/spec files from results'` after this fix. Fu
 
 Codegraph v2.1.0 on Windows x64 with the native engine is **solid**. All 22 commands work correctly, edge cases are handled gracefully, the test suite is comprehensive (494 tests), and the native binary installs cleanly as an optional dependency.
 
-The bugs found (missing `--no-tests` wiring on 6 CLI commands + 4 MCP tools, hook not catching `gh pr create`) are fixed in this PR. The engine parity gap is the most significant technical observation — worth tracking but not blocking since both engines produce usable graphs.
+The bugs found (missing `--no-tests` wiring on 6 CLI commands + 4 MCP tools, hook not catching `gh pr create`) are fixed in this PR. All 5 suggestions from section 5 have been implemented. The engine parity gap is the most significant technical observation — worth tracking but not blocking since both engines produce usable graphs.
 
-**Rating: 9/10** — Production-ready with minor consistency issues.
+**Rating: 9/10** — Production-ready with minor consistency issues. All suggestions addressed.
 

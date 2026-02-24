@@ -334,6 +334,7 @@ export function moduleMapData(customDbPath, limit = 20, opts = {}) {
     dir: path.dirname(n.file) || '.',
     inEdges: n.in_edges,
     outEdges: n.out_edges,
+    coupling: n.in_edges + n.out_edges,
   }));
 
   const totalNodes = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c;
@@ -1263,10 +1264,10 @@ export function moduleMap(customDbPath, limit = 20, opts = {}) {
   for (const [dir, files] of [...dirs].sort()) {
     console.log(`  [${dir}/]`);
     for (const f of files) {
-      const total = f.inEdges + f.outEdges;
-      const bar = '#'.repeat(Math.min(total, 40));
+      const coupling = f.inEdges + f.outEdges;
+      const bar = '#'.repeat(Math.min(coupling, 40));
       console.log(
-        `    ${path.basename(f.file).padEnd(35)} <-${String(f.inEdges).padStart(3)} ->${String(f.outEdges).padStart(3)}  ${bar}`,
+        `    ${path.basename(f.file).padEnd(35)} <-${String(f.inEdges).padStart(3)} ->${String(f.outEdges).padStart(3)}  =${String(coupling).padStart(3)}  ${bar}`,
       );
     }
   }
@@ -1920,6 +1921,7 @@ function explainFunctionImpl(db, target, noTests, getFileLines) {
 export function explainData(target, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   const noTests = opts.noTests || false;
+  const depth = opts.depth || 0;
   const kind = isFileLikeTarget(target) ? 'file' : 'function';
 
   const dbPath = findDbPath(customDbPath);
@@ -1948,6 +1950,37 @@ export function explainData(target, customDbPath, opts = {}) {
     kind === 'file'
       ? explainFileImpl(db, target, getFileLines)
       : explainFunctionImpl(db, target, noTests, getFileLines);
+
+  // Recursive dependency explanation for function targets
+  if (kind === 'function' && depth > 0 && results.length > 0) {
+    const visited = new Set(results.map((r) => `${r.name}:${r.file}:${r.line}`));
+
+    function explainCallees(parentResults, currentDepth) {
+      if (currentDepth <= 0) return;
+      for (const r of parentResults) {
+        const newCallees = [];
+        for (const callee of r.callees) {
+          const key = `${callee.name}:${callee.file}:${callee.line}`;
+          if (visited.has(key)) continue;
+          visited.add(key);
+          const calleeResults = explainFunctionImpl(db, callee.name, noTests, getFileLines);
+          const exact = calleeResults.find(
+            (cr) => cr.file === callee.file && cr.line === callee.line,
+          );
+          if (exact) {
+            exact._depth = (r._depth || 0) + 1;
+            newCallees.push(exact);
+          }
+        }
+        if (newCallees.length > 0) {
+          r.depDetails = newCallees;
+          explainCallees(newCallees, currentDepth - 1);
+        }
+      }
+    }
+
+    explainCallees(results, depth);
+  }
 
   db.close();
   return { target, kind, results };
@@ -2008,45 +2041,62 @@ export function explain(target, customDbPath, opts = {}) {
       console.log();
     }
   } else {
-    for (const r of data.results) {
+    function printFunctionExplain(r, indent = '') {
       const lineRange = r.endLine ? `${r.line}-${r.endLine}` : `${r.line}`;
       const lineInfo = r.lineCount ? `${r.lineCount} lines` : '';
       const summaryPart = r.summary ? ` | ${r.summary}` : '';
-      console.log(`\n# ${r.name} (${r.kind})  ${r.file}:${lineRange}`);
+      const depthLevel = r._depth || 0;
+      const heading = depthLevel === 0 ? '#' : '##'.padEnd(depthLevel + 2, '#');
+      console.log(`\n${indent}${heading} ${r.name} (${r.kind})  ${r.file}:${lineRange}`);
       if (lineInfo || r.summary) {
-        console.log(`  ${lineInfo}${summaryPart}`);
+        console.log(`${indent}  ${lineInfo}${summaryPart}`);
       }
       if (r.signature) {
-        if (r.signature.params != null) console.log(`  Parameters: (${r.signature.params})`);
-        if (r.signature.returnType) console.log(`  Returns: ${r.signature.returnType}`);
+        if (r.signature.params != null)
+          console.log(`${indent}  Parameters: (${r.signature.params})`);
+        if (r.signature.returnType) console.log(`${indent}  Returns: ${r.signature.returnType}`);
       }
 
       if (r.callees.length > 0) {
-        console.log(`\n## Calls (${r.callees.length})`);
+        console.log(`\n${indent}  Calls (${r.callees.length}):`);
         for (const c of r.callees) {
-          console.log(`  ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}`);
+          console.log(`${indent}    ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}`);
         }
       }
 
       if (r.callers.length > 0) {
-        console.log(`\n## Called by (${r.callers.length})`);
+        console.log(`\n${indent}  Called by (${r.callers.length}):`);
         for (const c of r.callers) {
-          console.log(`  ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}`);
+          console.log(`${indent}    ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}`);
         }
       }
 
       if (r.relatedTests.length > 0) {
         const label = r.relatedTests.length === 1 ? 'file' : 'files';
-        console.log(`\n## Tests (${r.relatedTests.length} ${label})`);
+        console.log(`\n${indent}  Tests (${r.relatedTests.length} ${label}):`);
         for (const t of r.relatedTests) {
-          console.log(`  ${t.file}`);
+          console.log(`${indent}    ${t.file}`);
         }
       }
 
       if (r.callees.length === 0 && r.callers.length === 0) {
-        console.log(`  (no call edges found -- may be invoked dynamically or via re-exports)`);
+        console.log(
+          `${indent}  (no call edges found -- may be invoked dynamically or via re-exports)`,
+        );
+      }
+
+      // Render recursive dependency details
+      if (r.depDetails && r.depDetails.length > 0) {
+        console.log(`\n${indent}  --- Dependencies (depth ${depthLevel + 1}) ---`);
+        for (const dep of r.depDetails) {
+          printFunctionExplain(dep, `${indent}  `);
+        }
       }
       console.log();
+    }
+
+    for (const r of data.results) {
+      printFunctionExplain(r);
     }
   }
 }

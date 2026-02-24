@@ -5,6 +5,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { Command } from 'commander';
 import { buildGraph } from './builder.js';
+import { loadConfig } from './config.js';
 import { findCycles, formatCycles } from './cycles.js';
 import { findDbPath } from './db.js';
 import { buildEmbeddings, MODELS, search } from './embedder.js';
@@ -36,6 +37,8 @@ import { watchProject } from './watcher.js';
 const __cliDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'));
 const pkg = JSON.parse(fs.readFileSync(path.join(__cliDir, '..', 'package.json'), 'utf-8'));
 
+const config = loadConfig(process.cwd());
+
 const program = new Command();
 program
   .name('codegraph')
@@ -47,6 +50,18 @@ program
     const opts = thisCommand.opts();
     if (opts.verbose) setVerbose(true);
   });
+
+/**
+ * Resolve the effective noTests value: CLI flag > config > false.
+ * Commander sets opts.tests to false when --no-tests is passed.
+ * When --include-tests is passed, always return false (include tests).
+ * Otherwise, fall back to config.query.excludeTests.
+ */
+function resolveNoTests(opts) {
+  if (opts.includeTests) return false;
+  if (opts.tests === false) return true;
+  return config.query?.excludeTests || false;
+}
 
 program
   .command('build [dir]')
@@ -63,9 +78,10 @@ program
   .description('Find a function/class, show callers and callees')
   .option('-d, --db <path>', 'Path to graph.db')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action((name, opts) => {
-    queryName(name, opts.db, { noTests: !opts.tests, json: opts.json });
+    queryName(name, opts.db, { noTests: resolveNoTests(opts), json: opts.json });
   });
 
 program
@@ -73,9 +89,10 @@ program
   .description('Show what depends on this file (transitive)')
   .option('-d, --db <path>', 'Path to graph.db')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action((file, opts) => {
-    impactAnalysis(file, opts.db, { noTests: !opts.tests, json: opts.json });
+    impactAnalysis(file, opts.db, { noTests: resolveNoTests(opts), json: opts.json });
   });
 
 program
@@ -84,9 +101,13 @@ program
   .option('-d, --db <path>', 'Path to graph.db')
   .option('-n, --limit <number>', 'Number of top nodes', '20')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action((opts) => {
-    moduleMap(opts.db, parseInt(opts.limit, 10), { noTests: !opts.tests, json: opts.json });
+    moduleMap(opts.db, parseInt(opts.limit, 10), {
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+    });
   });
 
 program
@@ -94,9 +115,10 @@ program
   .description('Show graph health overview: nodes, edges, languages, cycles, hotspots, embeddings')
   .option('-d, --db <path>', 'Path to graph.db')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action((opts) => {
-    stats(opts.db, { noTests: !opts.tests, json: opts.json });
+    stats(opts.db, { noTests: resolveNoTests(opts), json: opts.json });
   });
 
 program
@@ -104,9 +126,10 @@ program
   .description('Show what this file imports and what imports it')
   .option('-d, --db <path>', 'Path to graph.db')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action((file, opts) => {
-    fileDeps(file, opts.db, { noTests: !opts.tests, json: opts.json });
+    fileDeps(file, opts.db, { noTests: resolveNoTests(opts), json: opts.json });
   });
 
 program
@@ -117,6 +140,7 @@ program
   .option('-f, --file <path>', 'Scope search to functions in this file (partial match)')
   .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action((name, opts) => {
     if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
@@ -127,7 +151,7 @@ program
       depth: parseInt(opts.depth, 10),
       file: opts.file,
       kind: opts.kind,
-      noTests: !opts.tests,
+      noTests: resolveNoTests(opts),
       json: opts.json,
     });
   });
@@ -140,6 +164,7 @@ program
   .option('-f, --file <path>', 'Scope search to functions in this file (partial match)')
   .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action((name, opts) => {
     if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
@@ -150,7 +175,7 @@ program
       depth: parseInt(opts.depth, 10),
       file: opts.file,
       kind: opts.kind,
-      noTests: !opts.tests,
+      noTests: resolveNoTests(opts),
       json: opts.json,
     });
   });
@@ -163,8 +188,9 @@ program
   .option('-f, --file <path>', 'Scope search to functions in this file (partial match)')
   .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
   .option('--no-source', 'Metadata only (skip source extraction)')
-  .option('--include-tests', 'Include test source code')
+  .option('--with-test-source', 'Include test source code')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action((name, opts) => {
     if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
@@ -176,8 +202,8 @@ program
       file: opts.file,
       kind: opts.kind,
       noSource: !opts.source,
-      noTests: !opts.tests,
-      includeTests: opts.includeTests,
+      noTests: resolveNoTests(opts),
+      includeTests: opts.withTestSource,
       json: opts.json,
     });
   });
@@ -186,10 +212,16 @@ program
   .command('explain <target>')
   .description('Structural summary of a file or function (no LLM needed)')
   .option('-d, --db <path>', 'Path to graph.db')
+  .option('--depth <n>', 'Recursively explain dependencies up to N levels deep', '0')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action((target, opts) => {
-    explain(target, opts.db, { noTests: !opts.tests, json: opts.json });
+    explain(target, opts.db, {
+      depth: parseInt(opts.depth, 10),
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+    });
   });
 
 program
@@ -198,6 +230,7 @@ program
   .option('-d, --db <path>', 'Path to graph.db')
   .option('-f, --file <path>', 'File overview: list symbols, imports, exports')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action((name, opts) => {
     if (!name && !opts.file) {
@@ -205,7 +238,7 @@ program
       process.exit(1);
     }
     const target = opts.file || name;
-    where(target, opts.db, { file: !!opts.file, noTests: !opts.tests, json: opts.json });
+    where(target, opts.db, { file: !!opts.file, noTests: resolveNoTests(opts), json: opts.json });
   });
 
 program
@@ -215,6 +248,7 @@ program
   .option('--staged', 'Analyze staged changes instead of unstaged')
   .option('--depth <n>', 'Max transitive caller depth', '3')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .option('-f, --format <format>', 'Output format: text, mermaid, json', 'text')
   .action((ref, opts) => {
@@ -222,7 +256,7 @@ program
       ref,
       staged: opts.staged,
       depth: parseInt(opts.depth, 10),
-      noTests: !opts.tests,
+      noTests: resolveNoTests(opts),
       json: opts.json,
       format: opts.format,
     });
@@ -237,10 +271,11 @@ program
   .option('-f, --format <format>', 'Output format: dot, mermaid, json', 'dot')
   .option('--functions', 'Function-level graph instead of file-level')
   .option('-T, --no-tests', 'Exclude test/spec files')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-o, --output <file>', 'Write to file instead of stdout')
   .action((opts) => {
     const db = new Database(findDbPath(opts.db), { readonly: true });
-    const exportOpts = { fileLevel: !opts.functions, noTests: !opts.tests };
+    const exportOpts = { fileLevel: !opts.functions, noTests: resolveNoTests(opts) };
 
     let output;
     switch (opts.format) {
@@ -271,10 +306,11 @@ program
   .option('-d, --db <path>', 'Path to graph.db')
   .option('--functions', 'Function-level cycle detection')
   .option('-T, --no-tests', 'Exclude test/spec files')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action((opts) => {
     const db = new Database(findDbPath(opts.db), { readonly: true });
-    const cycles = findCycles(db, { fileLevel: !opts.functions, noTests: !opts.tests });
+    const cycles = findCycles(db, { fileLevel: !opts.functions, noTests: resolveNoTests(opts) });
     db.close();
 
     if (opts.json) {
@@ -405,6 +441,7 @@ program
   .option('-m, --model <name>', 'Override embedding model (auto-detects from DB)')
   .option('-n, --limit <number>', 'Max results', '15')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('--min-score <score>', 'Minimum similarity threshold', '0.2')
   .option('-k, --kind <kind>', 'Filter by kind: function, method, class')
   .option('--file <pattern>', 'Filter by file path pattern')
@@ -412,7 +449,7 @@ program
   .action(async (query, opts) => {
     await search(query, opts.db, {
       limit: parseInt(opts.limit, 10),
-      noTests: !opts.tests,
+      noTests: resolveNoTests(opts),
       minScore: parseFloat(opts.minScore),
       model: opts.model,
       kind: opts.kind,
@@ -430,6 +467,7 @@ program
   .option('--depth <n>', 'Max directory depth')
   .option('--sort <metric>', 'Sort by: cohesion | fan-in | fan-out | density | files', 'files')
   .option('-T, --no-tests', 'Exclude test/spec files')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action(async (dir, opts) => {
     const { structureData, formatStructure } = await import('./structure.js');
@@ -437,7 +475,7 @@ program
       directory: dir,
       depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
       sort: opts.sort,
-      noTests: !opts.tests,
+      noTests: resolveNoTests(opts),
     });
     if (opts.json) {
       console.log(JSON.stringify(data, null, 2));
@@ -456,6 +494,7 @@ program
   .option('--metric <metric>', 'fan-in | fan-out | density | coupling', 'fan-in')
   .option('--level <level>', 'file | directory', 'file')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action(async (opts) => {
     const { hotspotsData, formatHotspots } = await import('./structure.js');
@@ -463,7 +502,7 @@ program
       metric: opts.metric,
       level: opts.level,
       limit: parseInt(opts.limit, 10),
-      noTests: !opts.tests,
+      noTests: resolveNoTests(opts),
     });
     if (opts.json) {
       console.log(JSON.stringify(data, null, 2));

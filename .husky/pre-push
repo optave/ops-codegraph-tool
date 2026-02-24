@@ -1,3 +1,4 @@
+#!/bin/sh
 IMPACT=$(codegraph diff-impact origin/main --json -T 2>/dev/null || node src/cli.js diff-impact origin/main --json -T 2>/dev/null)
 if [ -n "$IMPACT" ]; then
   AFFECTED=$(echo "$IMPACT" | node -e "
