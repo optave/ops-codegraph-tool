@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { coChangeForFiles } from './cochange.js';
 import { findCycles } from './cycles.js';
 import { findDbPath, openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
@@ -731,34 +732,17 @@ export function diffImpactData(customDbPath, opts = {}) {
   for (const key of allAffected) affectedFiles.add(key.split(':')[0]);
 
   // Look up historically coupled files from co-change data
-  const historicallyCoupled = [];
+  let historicallyCoupled = [];
   try {
     db.prepare('SELECT 1 FROM co_changes LIMIT 1').get();
     const changedFilesList = [...changedRanges.keys()];
-    const staticFiles = new Set([...changedRanges.keys(), ...affectedFiles]);
-    const placeholders = changedFilesList.map(() => '?').join(',');
-    const coRows = db
-      .prepare(
-        `SELECT file_a, file_b, commit_count, jaccard
-         FROM co_changes
-         WHERE (file_a IN (${placeholders}) OR file_b IN (${placeholders}))
-           AND jaccard >= 0.3
-         ORDER BY jaccard DESC
-         LIMIT 20`,
-      )
-      .all(...changedFilesList, ...changedFilesList);
-    for (const row of coRows) {
-      const partner = changedFilesList.includes(row.file_a) ? row.file_b : row.file_a;
-      const source = changedFilesList.includes(row.file_a) ? row.file_a : row.file_b;
-      if (!staticFiles.has(partner) && (!noTests || !isTestFile(partner))) {
-        historicallyCoupled.push({
-          file: partner,
-          coupledWith: source,
-          jaccard: row.jaccard,
-          commitCount: row.commit_count,
-        });
-      }
-    }
+    const coResults = coChangeForFiles(changedFilesList, db, {
+      minJaccard: 0.3,
+      limit: 20,
+      noTests,
+    });
+    // Exclude files already found via static analysis
+    historicallyCoupled = coResults.filter((r) => !affectedFiles.has(r.file));
   } catch {
     /* co_changes table doesn't exist — skip silently */
   }
