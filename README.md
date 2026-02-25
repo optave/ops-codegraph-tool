@@ -144,7 +144,7 @@ Or connect directly via MCP:
 codegraph mcp          # 17-tool MCP server — AI queries the graph directly
 ```
 
-Full agent setup: [AI Agent Guide](docs/ai-agent-guide.md) &middot; [CLAUDE.md template](docs/ai-agent-guide.md#claudemd-template)
+Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAUDE.md template](docs/guides/ai-agent-guide.md#claudemd-template)
 
 ---
 
@@ -416,7 +416,7 @@ codegraph mcp --repos a,b      # Restrict to specific repos (implies --multi-rep
 
 ### CLAUDE.md / Agent Instructions
 
-Add this to your project's `CLAUDE.md` to help AI agents use codegraph (full template in the [AI Agent Guide](docs/ai-agent-guide.md#claudemd-template)):
+Add this to your project's `CLAUDE.md` to help AI agents use codegraph (full template in the [AI Agent Guide](docs/guides/ai-agent-guide.md#claudemd-template)):
 
 ```markdown
 ## Code Navigation
@@ -474,7 +474,7 @@ Use `--kind function` to cut noise. Use `--file <pattern>` to scope.
 
 ## 📋 Recommended Practices
 
-See **[docs/recommended-practices.md](docs/recommended-practices.md)** for integration guides:
+See **[docs/guides/recommended-practices.md](docs/guides/recommended-practices.md)** for integration guides:
 
 - **Git hooks** — auto-rebuild on commit, impact checks on push, commit message enrichment
 - **CI/CD** — PR impact comments, threshold gates, graph caching
@@ -482,7 +482,7 @@ See **[docs/recommended-practices.md](docs/recommended-practices.md)** for integ
 - **Developer workflow** — watch mode, explore-before-you-edit, semantic search
 - **Secure credentials** — `apiKeyCommand` with 1Password, Bitwarden, Vault, macOS Keychain, `pass`
 
-For AI-specific integration, see the **[AI Agent Guide](docs/ai-agent-guide.md)** — a comprehensive reference covering the 6-step agent workflow, complete command-to-MCP mapping, Claude Code hooks, and token-saving patterns.
+For AI-specific integration, see the **[AI Agent Guide](docs/guides/ai-agent-guide.md)** — a comprehensive reference covering the 6-step agent workflow, complete command-to-MCP mapping, Claude Code hooks, and token-saving patterns.
 
 ## 🔁 CI / GitHub Actions
 
@@ -619,7 +619,7 @@ npm install
 npm test
 ```
 
-Looking to add a new language? Check out **[Adding a New Language](docs/adding-a-language.md)**.
+Looking to add a new language? Check out **[Adding a New Language](docs/guides/adding-a-language.md)**.
 
 ## 📄 License
 
