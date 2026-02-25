@@ -280,6 +280,7 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('--min-confidence <score>', 'Minimum edge confidence threshold (default: 0.5)', '0.5')
+  .option('--direction <dir>', 'Flowchart direction for Mermaid: TB, LR, RL, BT', 'LR')
   .option('-o, --output <file>', 'Write to file instead of stdout')
   .action((opts) => {
     const db = openReadonlyOrFail(opts.db);
@@ -287,6 +288,7 @@ program
       fileLevel: !opts.functions,
       noTests: resolveNoTests(opts),
       minConfidence: parseFloat(opts.minConfidence),
+      direction: opts.direction,
     };
 
     let output;
