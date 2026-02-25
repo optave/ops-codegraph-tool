@@ -827,6 +827,43 @@ export async function buildGraph(rootDir, opts = {}) {
     }
   }
 
+  // For incremental builds, buildStructure needs ALL files (not just changed ones)
+  // because it clears and rebuilds all contains edges and directory metrics.
+  // Load unchanged files from the DB so structure data stays complete.
+  if (!isFullBuild) {
+    const existingFiles = db.prepare("SELECT DISTINCT file FROM nodes WHERE kind = 'file'").all();
+    const defsByFile = db.prepare(
+      "SELECT name, kind, line FROM nodes WHERE file = ? AND kind != 'file' AND kind != 'directory'",
+    );
+    const importsByFile = db.prepare(
+      `SELECT DISTINCT n2.file AS source FROM edges e
+       JOIN nodes n1 ON e.source_id = n1.id
+       JOIN nodes n2 ON e.target_id = n2.id
+       WHERE n1.file = ? AND e.kind = 'imports'`,
+    );
+    let loadedFromDb = 0;
+    for (const { file: relPath } of existingFiles) {
+      if (!fileSymbols.has(relPath)) {
+        fileSymbols.set(relPath, {
+          definitions: defsByFile.all(relPath),
+          imports: importsByFile.all(relPath),
+          exports: [],
+        });
+        loadedFromDb++;
+      }
+      if (!lineCountMap.has(relPath)) {
+        const absPath = path.join(rootDir, relPath);
+        try {
+          const content = fs.readFileSync(absPath, 'utf-8');
+          lineCountMap.set(relPath, content.split('\n').length);
+        } catch {
+          lineCountMap.set(relPath, 0);
+        }
+      }
+    }
+    debug(`Structure: ${fileSymbols.size} files (${loadedFromDb} loaded from DB)`);
+  }
+
   // Build directory structure, containment edges, and metrics
   const relDirs = new Set();
   for (const absDir of discoveredDirs) {
