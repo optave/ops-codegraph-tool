@@ -835,29 +835,45 @@ export async function buildGraph(rootDir, opts = {}) {
     const defsByFile = db.prepare(
       "SELECT name, kind, line FROM nodes WHERE file = ? AND kind != 'file' AND kind != 'directory'",
     );
-    const importsByFile = db.prepare(
-      `SELECT DISTINCT n2.file AS source FROM edges e
+    // Count imports per file — buildStructure only uses imports.length for metrics
+    const importCountByFile = db.prepare(
+      `SELECT COUNT(DISTINCT n2.file) AS cnt FROM edges e
        JOIN nodes n1 ON e.source_id = n1.id
        JOIN nodes n2 ON e.target_id = n2.id
        WHERE n1.file = ? AND e.kind = 'imports'`,
     );
+    const lineCountByFile = db.prepare(
+      `SELECT n.name AS file, m.line_count
+       FROM node_metrics m JOIN nodes n ON m.node_id = n.id
+       WHERE n.kind = 'file'`,
+    );
+    const cachedLineCounts = new Map();
+    for (const row of lineCountByFile.all()) {
+      cachedLineCounts.set(row.file, row.line_count);
+    }
     let loadedFromDb = 0;
     for (const { file: relPath } of existingFiles) {
       if (!fileSymbols.has(relPath)) {
+        const importCount = importCountByFile.get(relPath)?.cnt || 0;
         fileSymbols.set(relPath, {
           definitions: defsByFile.all(relPath),
-          imports: importsByFile.all(relPath),
+          imports: new Array(importCount),
           exports: [],
         });
         loadedFromDb++;
       }
       if (!lineCountMap.has(relPath)) {
-        const absPath = path.join(rootDir, relPath);
-        try {
-          const content = fs.readFileSync(absPath, 'utf-8');
-          lineCountMap.set(relPath, content.split('\n').length);
-        } catch {
-          lineCountMap.set(relPath, 0);
+        const cached = cachedLineCounts.get(relPath);
+        if (cached != null) {
+          lineCountMap.set(relPath, cached);
+        } else {
+          const absPath = path.join(rootDir, relPath);
+          try {
+            const content = fs.readFileSync(absPath, 'utf-8');
+            lineCountMap.set(relPath, content.split('\n').length);
+          } catch {
+            lineCountMap.set(relPath, 0);
+          }
         }
       }
     }
