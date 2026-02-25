@@ -21,6 +21,7 @@ export {
   buildEmbeddings,
   cosineSim,
   DEFAULT_MODEL,
+  disposeModel,
   EMBEDDING_STRATEGIES,
   embed,
   estimateTokens,

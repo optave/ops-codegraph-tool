@@ -238,10 +238,25 @@ async function loadTransformers() {
   }
 }
 
+/**
+ * Dispose the current ONNX session and free memory.
+ * Safe to call when no model is loaded (no-op).
+ */
+export async function disposeModel() {
+  if (extractor) {
+    await extractor.dispose();
+    extractor = null;
+  }
+  activeModel = null;
+}
+
 async function loadModel(modelKey) {
   const config = getModelConfig(modelKey);
 
   if (extractor && activeModel === config.name) return { extractor, config };
+
+  // Dispose previous model before loading a different one
+  await disposeModel();
 
   const transformers = await loadTransformers();
   pipeline = transformers.pipeline;
