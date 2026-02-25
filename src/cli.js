@@ -7,7 +7,13 @@ import { buildGraph } from './builder.js';
 import { loadConfig } from './config.js';
 import { findCycles, formatCycles } from './cycles.js';
 import { openReadonlyOrFail } from './db.js';
-import { buildEmbeddings, EMBEDDING_STRATEGIES, MODELS, search } from './embedder.js';
+import {
+  buildEmbeddings,
+  DEFAULT_MODEL,
+  EMBEDDING_STRATEGIES,
+  MODELS,
+  search,
+} from './embedder.js';
 import { exportDOT, exportJSON, exportMermaid } from './export.js';
 import { setVerbose } from './logger.js';
 import {
@@ -423,7 +429,7 @@ program
   .command('models')
   .description('List available embedding models')
   .action(() => {
-    const defaultModel = config.embeddings?.model || 'minilm';
+    const defaultModel = config.embeddings?.model || DEFAULT_MODEL;
     console.log('\nAvailable embedding models:\n');
     for (const [key, cfg] of Object.entries(MODELS)) {
       const def = key === defaultModel ? ' (default)' : '';
@@ -458,7 +464,7 @@ program
       process.exit(1);
     }
     const root = path.resolve(dir || '.');
-    const model = opts.model || config.embeddings?.model || 'minilm';
+    const model = opts.model || config.embeddings?.model || DEFAULT_MODEL;
     await buildEmbeddings(root, model, undefined, { strategy: opts.strategy });
   });
 
