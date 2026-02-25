@@ -144,7 +144,9 @@ export function pruneRegistry(
   const registry = loadRegistry(registryPath);
   const pruned = [];
   const cutoff = Date.now() - ttlDays * 24 * 60 * 60 * 1000;
-  const excludeSet = new Set(excludeNames);
+  const excludeSet = new Set(
+    excludeNames.filter((n) => typeof n === 'string' && n.trim().length > 0),
+  );
 
   for (const [name, entry] of Object.entries(registry.repos)) {
     if (excludeSet.has(name)) continue;
