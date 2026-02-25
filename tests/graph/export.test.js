@@ -43,15 +43,63 @@ describe('exportDOT', () => {
 });
 
 describe('exportMermaid', () => {
-  it('generates valid Mermaid syntax', () => {
+  it('generates valid Mermaid syntax with flowchart LR default', () => {
     const db = createTestDb();
     const a = insertNode(db, 'src/a.js', 'file', 'src/a.js', 0);
     const b = insertNode(db, 'src/b.js', 'file', 'src/b.js', 0);
     insertEdge(db, a, b, 'imports');
 
     const mermaid = exportMermaid(db);
-    expect(mermaid).toContain('graph LR');
+    expect(mermaid).toContain('flowchart LR');
     expect(mermaid).toContain('-->');
+    db.close();
+  });
+
+  it('uses custom direction option', () => {
+    const db = createTestDb();
+    const a = insertNode(db, 'src/a.js', 'file', 'src/a.js', 0);
+    const b = insertNode(db, 'src/b.js', 'file', 'src/b.js', 0);
+    insertEdge(db, a, b, 'imports');
+
+    const mermaid = exportMermaid(db, { direction: 'TB' });
+    expect(mermaid).toContain('flowchart TB');
+    db.close();
+  });
+
+  it('groups files into directory subgraphs', () => {
+    const db = createTestDb();
+    const a = insertNode(db, 'src/a.js', 'file', 'src/a.js', 0);
+    const b = insertNode(db, 'lib/b.js', 'file', 'lib/b.js', 0);
+    insertEdge(db, a, b, 'imports');
+
+    const mermaid = exportMermaid(db);
+    expect(mermaid).toContain('subgraph');
+    expect(mermaid).toContain('"src"');
+    expect(mermaid).toContain('"lib"');
+    expect(mermaid).toContain('end');
+    db.close();
+  });
+
+  it('adds edge labels from edge kind', () => {
+    const db = createTestDb();
+    const a = insertNode(db, 'src/a.js', 'file', 'src/a.js', 0);
+    const b = insertNode(db, 'src/b.js', 'file', 'src/b.js', 0);
+    insertEdge(db, a, b, 'imports');
+
+    const mermaid = exportMermaid(db);
+    expect(mermaid).toContain('-->|imports|');
+    db.close();
+  });
+
+  it('collapses imports-type to imports label', () => {
+    const db = createTestDb();
+    const a = insertNode(db, 'src/a.js', 'file', 'src/a.js', 0);
+    const b = insertNode(db, 'src/b.js', 'file', 'src/b.js', 0);
+    insertEdge(db, a, b, 'imports-type');
+
+    const mermaid = exportMermaid(db);
+    expect(mermaid).toContain('-->|imports|');
+    expect(mermaid).not.toContain('imports-type');
     db.close();
   });
 });
@@ -107,10 +155,84 @@ describe('exportMermaid — function-level', () => {
     insertEdge(db, fnA, fnB, 'calls');
 
     const mermaid = exportMermaid(db, { fileLevel: false });
-    expect(mermaid).toContain('graph LR');
+    expect(mermaid).toContain('flowchart LR');
     expect(mermaid).toContain('doWork');
     expect(mermaid).toContain('helper');
     expect(mermaid).toContain('-->');
+    db.close();
+  });
+
+  it('uses stadium shape for functions', () => {
+    const db = createTestDb();
+    const fnA = insertNode(db, 'doWork', 'function', 'src/a.js', 5);
+    const fnB = insertNode(db, 'helper', 'function', 'src/b.js', 10);
+    insertEdge(db, fnA, fnB, 'calls');
+
+    const mermaid = exportMermaid(db, { fileLevel: false });
+    expect(mermaid).toContain('(["doWork"])');
+    expect(mermaid).toContain('(["helper"])');
+    db.close();
+  });
+
+  it('uses hexagon shape for classes', () => {
+    const db = createTestDb();
+    const cls = insertNode(db, 'MyClass', 'class', 'src/a.js', 5);
+    const fn = insertNode(db, 'helper', 'function', 'src/b.js', 10);
+    insertEdge(db, cls, fn, 'calls');
+
+    const mermaid = exportMermaid(db, { fileLevel: false });
+    expect(mermaid).toContain('{{"MyClass"}}');
+    db.close();
+  });
+
+  it('uses subroutine shape for modules', () => {
+    const db = createTestDb();
+    const mod = insertNode(db, 'MyModule', 'module', 'src/a.js', 5);
+    const fn = insertNode(db, 'helper', 'function', 'src/b.js', 10);
+    insertEdge(db, mod, fn, 'calls');
+
+    const mermaid = exportMermaid(db, { fileLevel: false });
+    expect(mermaid).toContain('[["MyModule"]]');
+    db.close();
+  });
+
+  it('adds edge labels for calls', () => {
+    const db = createTestDb();
+    const fnA = insertNode(db, 'doWork', 'function', 'src/a.js', 5);
+    const fnB = insertNode(db, 'helper', 'function', 'src/b.js', 10);
+    insertEdge(db, fnA, fnB, 'calls');
+
+    const mermaid = exportMermaid(db, { fileLevel: false });
+    expect(mermaid).toContain('-->|calls|');
+    db.close();
+  });
+
+  it('groups functions by file into subgraphs', () => {
+    const db = createTestDb();
+    const fnA = insertNode(db, 'doWork', 'function', 'src/a.js', 5);
+    const fnB = insertNode(db, 'helper', 'function', 'src/b.js', 10);
+    insertEdge(db, fnA, fnB, 'calls');
+
+    const mermaid = exportMermaid(db, { fileLevel: false });
+    expect(mermaid).toContain('subgraph');
+    expect(mermaid).toContain('"src/a.js"');
+    expect(mermaid).toContain('"src/b.js"');
+    expect(mermaid).toContain('end');
+    db.close();
+  });
+
+  it('applies role styling', () => {
+    const db = createTestDb();
+    const fnA = insertNode(db, 'doWork', 'function', 'src/a.js', 5);
+    const fnB = insertNode(db, 'helper', 'function', 'src/b.js', 10);
+    // Add role to the nodes
+    db.prepare('UPDATE nodes SET role = ? WHERE id = ?').run('entry', fnA);
+    db.prepare('UPDATE nodes SET role = ? WHERE id = ?').run('utility', fnB);
+    insertEdge(db, fnA, fnB, 'calls');
+
+    const mermaid = exportMermaid(db, { fileLevel: false });
+    expect(mermaid).toContain('fill:#e8f5e9,stroke:#4caf50');
+    expect(mermaid).toContain('fill:#f5f5f5,stroke:#9e9e9e');
     db.close();
   });
 });
