@@ -24,7 +24,7 @@ function globMatch(filePath, pattern) {
   // Normalize separators to forward slashes
   const normalized = filePath.replace(/\\/g, '/');
   // Escape regex specials except glob chars
-  let regex = pattern.replace(/\\/g, '/').replace(/[.+^${}()|\\[\]]/g, '\\$&');
+  let regex = pattern.replace(/\\/g, '/').replace(/[.+^${}()|[\]\\]/g, '\\$&');
   // Replace ** first (matches any path segment), then * and ?
   regex = regex.replace(/\*\*/g, '\0');
   regex = regex.replace(/\*/g, '[^/]*');
@@ -518,7 +518,7 @@ function _prepareSearch(customDbPath, opts = {}) {
     conditions.push('n.kind = ?');
     params.push(opts.kind);
   }
-  const isGlob = opts.filePattern && /[*?{[\]]/.test(opts.filePattern);
+  const isGlob = opts.filePattern && /[*?[\]]/.test(opts.filePattern);
   if (opts.filePattern && !isGlob) {
     conditions.push('n.file LIKE ?');
     params.push(`%${opts.filePattern}%`);
