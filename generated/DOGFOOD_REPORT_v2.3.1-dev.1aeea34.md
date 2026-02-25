@@ -208,20 +208,30 @@ PASS — embeddings correctly lost with DB deletion, graceful error message.
 
 ## 5. Engine Comparison
 
+### Initial observation (false alarm)
+
+During the dogfooding session, sequential WASM and native builds showed a 3-edge delta (909 vs 906). This was initially attributed to minor engine differences in ambiguous call resolution.
+
+### Controlled re-test
+
+A dedicated `edge-diff.mjs` script was run to eliminate confounding variables. It performs back-to-back `--no-incremental` builds with each engine on the **exact same source state**, then diffs every edge:
+
 | Metric | Native | WASM | Delta |
 |--------|--------|------|-------|
-| Files | 101 | 101 | 0 |
-| Nodes | 587 | 587 | 0 |
-| Calls | 652 | 654 | -2 |
-| Imports | 116 | 117 | -1 |
-| Contains | 113 | 113 | 0 |
-| Reexports | 25 | 25 | 0 |
-| **Total Edges** | **906** | **909** | **-3 (0.3%)** |
-| Quality Score | 82 | 82 | 0 |
-| Call Confidence | 97.85% | 97.86% | ~0 |
-| Caller Coverage | 56.33% | 56.33% | 0 |
+| Nodes | 614 | 614 | 0 |
+| Edges | 997 | 997 | 0 |
 
-**Assessment:** Excellent parity. Node count is identical. The 3-edge difference (0.3%) is within acceptable tolerance — likely minor differences in how each engine handles ambiguous call resolution.
+```
+WASM edges: 997  Native edges: 997  Delta: 0
+```
+
+**0 edges in WASM-only, 0 in native-only — 100% parity.**
+
+### Root cause of initial delta
+
+The original 3-edge difference was caused by **concurrent repo modifications between the sequential builds**. Other Claude Code sessions were editing files in the shared repo during the dogfooding session, so each engine build saw a slightly different set of source files. When both engines build the same source state, they produce identical results.
+
+**Assessment:** Full engine parity confirmed. Native and WASM engines produce identical graphs when given identical input.
 
 ---
 
@@ -394,7 +404,7 @@ File counts fluctuated slightly (99-106) across builds due to concurrent repo mo
 
 v2.3.1-dev.1aeea34 is a solid release with significant new features (co-change analysis, node roles, enhanced Mermaid export) and important fixes (config model respect, model disposal, structure preservation). All 578 tests pass, lint is clean, and every CLI command works correctly with proper edge case handling.
 
-Engine parity is excellent (0.3% edge difference). Performance is consistent with v2.3.0 — no regressions detected. The embedding recall benchmark shows nomic as the best model (Hit@5: 99.7%).
+Engine parity is confirmed at 100% — the initial 3-edge delta was a false alarm caused by concurrent repo modifications during sequential builds (see Section 5). Performance is consistent with v2.3.0 — no regressions detected. The embedding recall benchmark shows nomic as the best model (Hit@5: 99.7%).
 
 The release introduces 4,201 new lines across 47 files with zero test failures and zero bugs found during dogfooding.
 
