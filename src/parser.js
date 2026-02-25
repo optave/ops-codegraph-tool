@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Language, Parser } from 'web-tree-sitter';
+import { Language, Parser, Query } from 'web-tree-sitter';
 import { warn } from './logger.js';
 import { getNative, loadNative } from './native.js';
 
@@ -38,6 +38,33 @@ function grammarPath(name) {
 
 let _initialized = false;
 
+// Query cache for JS/TS/TSX extractors (populated during createParsers)
+const _queryCache = new Map();
+
+// Shared patterns for all JS/TS/TSX (class_declaration excluded — name type differs)
+const COMMON_QUERY_PATTERNS = [
+  '(function_declaration name: (identifier) @fn_name) @fn_node',
+  '(variable_declarator name: (identifier) @varfn_name value: (arrow_function) @varfn_value)',
+  '(variable_declarator name: (identifier) @varfn_name value: (function_expression) @varfn_value)',
+  '(method_definition name: (property_identifier) @meth_name) @meth_node',
+  '(import_statement source: (string) @imp_source) @imp_node',
+  '(export_statement) @exp_node',
+  '(call_expression function: (identifier) @callfn_name) @callfn_node',
+  '(call_expression function: (member_expression) @callmem_fn) @callmem_node',
+  '(call_expression function: (subscript_expression) @callsub_fn) @callsub_node',
+  '(expression_statement (assignment_expression left: (member_expression) @assign_left right: (_) @assign_right)) @assign_node',
+];
+
+// JS: class name is (identifier)
+const JS_CLASS_PATTERN = '(class_declaration name: (identifier) @cls_name) @cls_node';
+
+// TS/TSX: class name is (type_identifier), plus interface and type alias
+const TS_EXTRA_PATTERNS = [
+  '(class_declaration name: (type_identifier) @cls_name) @cls_node',
+  '(interface_declaration name: (type_identifier) @iface_name) @iface_node',
+  '(type_alias_declaration name: (type_identifier) @type_name) @type_node',
+];
+
 export async function createParsers() {
   if (!_initialized) {
     await Parser.init();
@@ -51,6 +78,14 @@ export async function createParsers() {
       const parser = new Parser();
       parser.setLanguage(lang);
       parsers.set(entry.id, parser);
+      // Compile and cache tree-sitter Query for JS/TS/TSX extractors
+      if (entry.extractor === extractSymbols && !_queryCache.has(entry.id)) {
+        const isTS = entry.id === 'typescript' || entry.id === 'tsx';
+        const patterns = isTS
+          ? [...COMMON_QUERY_PATTERNS, ...TS_EXTRA_PATTERNS]
+          : [...COMMON_QUERY_PATTERNS, JS_CLASS_PATTERN];
+        _queryCache.set(entry.id, new Query(lang, patterns.join('\n')));
+      }
     } catch (e) {
       if (entry.required) throw e;
       warn(
@@ -242,7 +277,9 @@ function wasmExtractSymbols(parsers, filePath, code) {
 
   const ext = path.extname(filePath);
   const entry = _extToLang.get(ext);
-  return entry ? entry.extractor(tree, filePath) : null;
+  if (!entry) return null;
+  const query = _queryCache.get(entry.id) || null;
+  return entry.extractor(tree, filePath, query);
 }
 
 /**
