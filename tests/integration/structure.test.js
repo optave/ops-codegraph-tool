@@ -133,6 +133,33 @@ describe('structureData', () => {
   });
 });
 
+describe('structureData file limit', () => {
+  test('default fileLimit truncates files and includes warning when exceeded', () => {
+    // Use a very low fileLimit to trigger truncation on the small fixture
+    const data = structureData(dbPath, { fileLimit: 2 });
+    const shownFiles = data.directories.reduce((sum, d) => sum + d.files.length, 0);
+    expect(shownFiles).toBeLessThanOrEqual(2);
+    expect(data.suppressed).toBeGreaterThan(0);
+    expect(data.warning).toMatch(/files omitted/);
+    expect(data.warning).toMatch(/--full/);
+  });
+
+  test('full: true returns all files without warning', () => {
+    const data = structureData(dbPath, { full: true });
+    const totalFiles = data.directories.reduce((sum, d) => sum + d.files.length, 0);
+    expect(totalFiles).toBeGreaterThan(0);
+    expect(data.suppressed).toBeUndefined();
+    expect(data.warning).toBeUndefined();
+  });
+
+  test('no truncation when total files are within limit', () => {
+    // fileLimit higher than total files should not add warning
+    const data = structureData(dbPath, { fileLimit: 100 });
+    expect(data.suppressed).toBeUndefined();
+    expect(data.warning).toBeUndefined();
+  });
+});
+
 describe('hotspotsData', () => {
   test('returns file hotspots ranked by fan-in', () => {
     const data = hotspotsData(dbPath, { metric: 'fan-in', level: 'file', limit: 5 });

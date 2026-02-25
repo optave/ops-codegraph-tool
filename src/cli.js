@@ -502,6 +502,7 @@ program
   .option('-d, --db <path>', 'Path to graph.db')
   .option('--depth <n>', 'Max directory depth')
   .option('--sort <metric>', 'Sort by: cohesion | fan-in | fan-out | density | files', 'files')
+  .option('--full', 'Show all files without limit')
   .option('-T, --no-tests', 'Exclude test/spec files')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
@@ -511,6 +512,7 @@ program
       directory: dir,
       depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
       sort: opts.sort,
+      full: opts.full,
       noTests: resolveNoTests(opts),
     });
     if (opts.json) {
