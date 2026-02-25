@@ -7,6 +7,15 @@
 
 // Graph building
 export { buildGraph, collectFiles, loadPathAliases, resolveImportPath } from './builder.js';
+// Co-change analysis
+export {
+  analyzeCoChanges,
+  coChangeData,
+  coChangeForFiles,
+  coChangeTopData,
+  computeCoChanges,
+  scanGitHistory,
+} from './cochange.js';
 // Configuration
 export { loadConfig } from './config.js';
 // Shared constants

@@ -24,6 +24,12 @@ export const DEFAULTS = {
   llm: { provider: null, model: null, baseUrl: null, apiKey: null, apiKeyCommand: null },
   search: { defaultMinScore: 0.2, rrfK: 60, topK: 15 },
   ci: { failOnCycles: false, impactThreshold: null },
+  coChange: {
+    since: '1 year ago',
+    minSupport: 3,
+    minJaccard: 0.3,
+    maxFilesPerCommit: 50,
+  },
 };
 
 /**

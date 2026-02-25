@@ -563,6 +563,68 @@ program
   });
 
 program
+  .command('co-change [file]')
+  .description(
+    'Analyze git history for files that change together. Use --analyze to scan, or query existing data.',
+  )
+  .option('--analyze', 'Scan git history and populate co-change data')
+  .option('--since <date>', 'Git date for history window (default: "1 year ago")')
+  .option('--min-support <n>', 'Minimum co-occurrence count (default: 3)')
+  .option('--min-jaccard <n>', 'Minimum Jaccard similarity 0-1 (default: 0.3)')
+  .option('--full', 'Force full re-scan (ignore incremental state)')
+  .option('-n, --limit <n>', 'Max results', '20')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-T, --no-tests', 'Exclude test/spec files')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (file, opts) => {
+    const { analyzeCoChanges, coChangeData, coChangeTopData, formatCoChange, formatCoChangeTop } =
+      await import('./cochange.js');
+
+    if (opts.analyze) {
+      const result = analyzeCoChanges(opts.db, {
+        since: opts.since || config.coChange?.since,
+        minSupport: opts.minSupport ? parseInt(opts.minSupport, 10) : config.coChange?.minSupport,
+        maxFilesPerCommit: config.coChange?.maxFilesPerCommit,
+        full: opts.full,
+      });
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else if (result.error) {
+        console.error(result.error);
+        process.exit(1);
+      } else {
+        console.log(
+          `\nCo-change analysis complete: ${result.pairsFound} pairs from ${result.commitsScanned} commits (since: ${result.since})\n`,
+        );
+      }
+      return;
+    }
+
+    const queryOpts = {
+      limit: parseInt(opts.limit, 10),
+      minJaccard: opts.minJaccard ? parseFloat(opts.minJaccard) : config.coChange?.minJaccard,
+      noTests: resolveNoTests(opts),
+    };
+
+    if (file) {
+      const data = coChangeData(file, opts.db, queryOpts);
+      if (opts.json) {
+        console.log(JSON.stringify(data, null, 2));
+      } else {
+        console.log(formatCoChange(data));
+      }
+    } else {
+      const data = coChangeTopData(opts.db, queryOpts);
+      if (opts.json) {
+        console.log(JSON.stringify(data, null, 2));
+      } else {
+        console.log(formatCoChangeTop(data));
+      }
+    }
+  });
+
+program
   .command('watch [dir]')
   .description('Watch project for file changes and incrementally update the graph')
   .action(async (dir) => {

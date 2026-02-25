@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { coChangeForFiles } from './cochange.js';
 import { findCycles } from './cycles.js';
 import { findDbPath, openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
@@ -730,16 +731,34 @@ export function diffImpactData(customDbPath, opts = {}) {
   const affectedFiles = new Set();
   for (const key of allAffected) affectedFiles.add(key.split(':')[0]);
 
+  // Look up historically coupled files from co-change data
+  let historicallyCoupled = [];
+  try {
+    db.prepare('SELECT 1 FROM co_changes LIMIT 1').get();
+    const changedFilesList = [...changedRanges.keys()];
+    const coResults = coChangeForFiles(changedFilesList, db, {
+      minJaccard: 0.3,
+      limit: 20,
+      noTests,
+    });
+    // Exclude files already found via static analysis
+    historicallyCoupled = coResults.filter((r) => !affectedFiles.has(r.file));
+  } catch {
+    /* co_changes table doesn't exist — skip silently */
+  }
+
   db.close();
   return {
     changedFiles: changedRanges.size,
     newFiles: [...newFiles],
     affectedFunctions: functionResults,
     affectedFiles: [...affectedFiles],
+    historicallyCoupled,
     summary: {
       functionsChanged: affectedFunctions.length,
       callersAffected: allAffected.size,
       filesAffected: affectedFiles.size,
+      historicallyCoupledCount: historicallyCoupled.length,
     },
   };
 }
@@ -2428,9 +2447,20 @@ export function diffImpact(customDbPath, opts = {}) {
     console.log(`  ${kindIcon(fn.kind)} ${fn.name} -- ${fn.file}:${fn.line}`);
     if (fn.transitiveCallers > 0) console.log(`    ^ ${fn.transitiveCallers} transitive callers`);
   }
+  if (data.historicallyCoupled && data.historicallyCoupled.length > 0) {
+    console.log('\n  Historically coupled (not in static graph):\n');
+    for (const c of data.historicallyCoupled) {
+      const pct = `${(c.jaccard * 100).toFixed(0)}%`;
+      console.log(
+        `    ${c.file}  <- coupled with ${c.coupledWith} (${pct}, ${c.commitCount} commits)`,
+      );
+    }
+  }
   if (data.summary) {
-    console.log(
-      `\n  Summary: ${data.summary.functionsChanged} functions changed -> ${data.summary.callersAffected} callers affected across ${data.summary.filesAffected} files\n`,
-    );
+    let summaryLine = `\n  Summary: ${data.summary.functionsChanged} functions changed -> ${data.summary.callersAffected} callers affected across ${data.summary.filesAffected} files`;
+    if (data.summary.historicallyCoupledCount > 0) {
+      summaryLine += `, ${data.summary.historicallyCoupledCount} historically coupled`;
+    }
+    console.log(`${summaryLine}\n`);
   }
 }
