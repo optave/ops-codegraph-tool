@@ -24,13 +24,18 @@ function globMatch(filePath, pattern) {
   // Normalize separators to forward slashes
   const normalized = filePath.replace(/\\/g, '/');
   // Escape regex specials except glob chars
-  let regex = pattern.replace(/\\/g, '/').replace(/[.+^${}()|[\]]/g, '\\$&');
+  let regex = pattern.replace(/\\/g, '/').replace(/[.+^${}()|\\[\]]/g, '\\$&');
   // Replace ** first (matches any path segment), then * and ?
   regex = regex.replace(/\*\*/g, '\0');
   regex = regex.replace(/\*/g, '[^/]*');
   regex = regex.replace(/\0/g, '.*');
   regex = regex.replace(/\?/g, '[^/]');
-  return new RegExp(`^${regex}$`).test(normalized);
+  try {
+    return new RegExp(`^${regex}$`).test(normalized);
+  } catch {
+    // Malformed pattern — fall back to substring match
+    return normalized.includes(pattern);
+  }
 }
 
 // Lazy-load transformers (heavy, optional module)
