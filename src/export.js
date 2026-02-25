@@ -305,7 +305,9 @@ export function exportMermaid(db, opts = {}) {
     const allKeys = [...nodeIdMap.keys()];
     const roleStyles = [];
     for (const key of allKeys) {
-      const [file, name] = key.split('::');
+      const colonIdx = key.indexOf('::');
+      const file = colonIdx !== -1 ? key.slice(0, colonIdx) : key;
+      const name = colonIdx !== -1 ? key.slice(colonIdx + 2) : '';
       const row = db
         .prepare('SELECT role FROM nodes WHERE file = ? AND name = ? AND role IS NOT NULL LIMIT 1')
         .get(file, name);
