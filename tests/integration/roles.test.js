@@ -59,7 +59,7 @@ beforeAll(() => {
   const process_ = insertNode(db, 'processData', 'function', 'app.js', 10);
   const helper = insertNode(db, 'helper', 'function', 'lib.js', 1);
   const format = insertNode(db, 'format', 'function', 'lib.js', 10);
-  const unused = insertNode(db, 'unused', 'function', 'lib.js', 20);
+  insertNode(db, 'unused', 'function', 'lib.js', 20);
   const testFn = insertNode(db, 'testMain', 'function', 'app.test.js', 1);
 
   // Import edges

@@ -897,7 +897,9 @@ export async function buildGraph(rootDir, opts = {}) {
     const { classifyNodeRoles } = await import('./structure.js');
     const roleSummary = classifyNodeRoles(db);
     debug(
-      `Roles: ${Object.entries(roleSummary).map(([r, c]) => `${r}=${c}`).join(', ')}`,
+      `Roles: ${Object.entries(roleSummary)
+        .map(([r, c]) => `${r}=${c}`)
+        .join(', ')}`,
     );
   } catch (err) {
     debug(`Role classification failed: ${err.message}`);

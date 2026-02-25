@@ -1082,9 +1082,7 @@ export function statsData(customDbPath, opts = {}) {
   // Role distribution
   let roleRows;
   if (noTests) {
-    const allRoleNodes = db
-      .prepare('SELECT role, file FROM nodes WHERE role IS NOT NULL')
-      .all();
+    const allRoleNodes = db.prepare('SELECT role, file FROM nodes WHERE role IS NOT NULL').all();
     const filtered = allRoleNodes.filter((n) => !isTestFile(n.file));
     const counts = {};
     for (const n of filtered) counts[n.role] = (counts[n.role] || 0) + 1;

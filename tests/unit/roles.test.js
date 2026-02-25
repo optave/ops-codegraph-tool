@@ -157,7 +157,7 @@ describe('classifyNodeRoles', () => {
   it('adapts median thresholds to data', () => {
     // Create a small graph: 2 functions with fan_in=[1,1], fan_out=[1,1]
     // median of non-zero = 1 for both, so fan_in >= 1 = high, fan_out >= 1 = high
-    const fA = insertNode('a.js', 'file', 'a.js', 0);
+    insertNode('a.js', 'file', 'a.js', 0);
     const fn1 = insertNode('fn1', 'function', 'a.js', 1);
     const fn2 = insertNode('fn2', 'function', 'a.js', 10);
 
@@ -176,7 +176,7 @@ describe('classifyNodeRoles', () => {
     // Only import edge, no call edge
     insertEdge(fA, fn1, 'imports');
 
-    const summary = classifyNodeRoles(db);
+    classifyNodeRoles(db);
     const role = db.prepare("SELECT role FROM nodes WHERE name = 'fn1'").get();
     expect(role.role).toBe('dead');
   });
