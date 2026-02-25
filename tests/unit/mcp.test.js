@@ -25,6 +25,7 @@ const ALL_TOOL_NAMES = [
   'list_functions',
   'structure',
   'hotspots',
+  'co_changes',
   'node_roles',
   'list_repos',
 ];

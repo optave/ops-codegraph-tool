@@ -730,16 +730,51 @@ export function diffImpactData(customDbPath, opts = {}) {
   const affectedFiles = new Set();
   for (const key of allAffected) affectedFiles.add(key.split(':')[0]);
 
+  // Look up historically coupled files from co-change data
+  const historicallyCoupled = [];
+  try {
+    db.prepare('SELECT 1 FROM co_changes LIMIT 1').get();
+    const changedFilesList = [...changedRanges.keys()];
+    const staticFiles = new Set([...changedRanges.keys(), ...affectedFiles]);
+    const placeholders = changedFilesList.map(() => '?').join(',');
+    const coRows = db
+      .prepare(
+        `SELECT file_a, file_b, commit_count, jaccard
+         FROM co_changes
+         WHERE (file_a IN (${placeholders}) OR file_b IN (${placeholders}))
+           AND jaccard >= 0.3
+         ORDER BY jaccard DESC
+         LIMIT 20`,
+      )
+      .all(...changedFilesList, ...changedFilesList);
+    for (const row of coRows) {
+      const partner = changedFilesList.includes(row.file_a) ? row.file_b : row.file_a;
+      const source = changedFilesList.includes(row.file_a) ? row.file_a : row.file_b;
+      if (!staticFiles.has(partner) && (!noTests || !isTestFile(partner))) {
+        historicallyCoupled.push({
+          file: partner,
+          coupledWith: source,
+          jaccard: row.jaccard,
+          commitCount: row.commit_count,
+        });
+      }
+    }
+  } catch {
+    /* co_changes table doesn't exist — skip silently */
+  }
+
   db.close();
   return {
     changedFiles: changedRanges.size,
     newFiles: [...newFiles],
     affectedFunctions: functionResults,
     affectedFiles: [...affectedFiles],
+    historicallyCoupled,
     summary: {
       functionsChanged: affectedFunctions.length,
       callersAffected: allAffected.size,
       filesAffected: affectedFiles.size,
+      historicallyCoupledCount: historicallyCoupled.length,
     },
   };
 }
@@ -2428,9 +2463,20 @@ export function diffImpact(customDbPath, opts = {}) {
     console.log(`  ${kindIcon(fn.kind)} ${fn.name} -- ${fn.file}:${fn.line}`);
     if (fn.transitiveCallers > 0) console.log(`    ^ ${fn.transitiveCallers} transitive callers`);
   }
+  if (data.historicallyCoupled && data.historicallyCoupled.length > 0) {
+    console.log('\n  Historically coupled (not in static graph):\n');
+    for (const c of data.historicallyCoupled) {
+      const pct = `${(c.jaccard * 100).toFixed(0)}%`;
+      console.log(
+        `    ${c.file}  <- coupled with ${c.coupledWith} (${pct}, ${c.commitCount} commits)`,
+      );
+    }
+  }
   if (data.summary) {
-    console.log(
-      `\n  Summary: ${data.summary.functionsChanged} functions changed -> ${data.summary.callersAffected} callers affected across ${data.summary.filesAffected} files\n`,
-    );
+    let summaryLine = `\n  Summary: ${data.summary.functionsChanged} functions changed -> ${data.summary.callersAffected} callers affected across ${data.summary.filesAffected} files`;
+    if (data.summary.historicallyCoupledCount > 0) {
+      summaryLine += `, ${data.summary.historicallyCoupledCount} historically coupled`;
+    }
+    console.log(`${summaryLine}\n`);
   }
 }

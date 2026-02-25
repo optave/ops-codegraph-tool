@@ -71,6 +71,27 @@ export const MIGRATIONS = [
     version: 4,
     up: `ALTER TABLE file_hashes ADD COLUMN size INTEGER DEFAULT 0;`,
   },
+  {
+    version: 5,
+    up: `
+      CREATE TABLE IF NOT EXISTS co_changes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_a TEXT NOT NULL,
+        file_b TEXT NOT NULL,
+        commit_count INTEGER NOT NULL,
+        jaccard REAL NOT NULL,
+        last_commit_epoch INTEGER,
+        UNIQUE(file_a, file_b)
+      );
+      CREATE INDEX IF NOT EXISTS idx_co_changes_file_a ON co_changes(file_a);
+      CREATE INDEX IF NOT EXISTS idx_co_changes_file_b ON co_changes(file_b);
+      CREATE INDEX IF NOT EXISTS idx_co_changes_jaccard ON co_changes(jaccard DESC);
+      CREATE TABLE IF NOT EXISTS co_change_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `,
+  },
 ];
 
 export function openDb(dbPath) {

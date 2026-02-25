@@ -312,6 +312,27 @@ const BASE_TOOLS = [
       },
     },
   },
+  {
+    name: 'co_changes',
+    description:
+      'Find files that historically change together based on git commit history. Requires prior `codegraph co-change --analyze`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          description: 'File path (partial match). Omit for top global pairs.',
+        },
+        limit: { type: 'number', description: 'Max results', default: 20 },
+        min_jaccard: {
+          type: 'number',
+          description: 'Minimum Jaccard similarity (0-1)',
+          default: 0.3,
+        },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+      },
+    },
+  },
 ];
 
 const LIST_REPOS_TOOL = {
@@ -582,6 +603,21 @@ export async function startMCPServer(customDbPath, options = {}) {
             limit: args.limit,
             noTests: args.no_tests,
           });
+          break;
+        }
+        case 'co_changes': {
+          const { coChangeData, coChangeTopData } = await import('./cochange.js');
+          result = args.file
+            ? coChangeData(args.file, dbPath, {
+                limit: args.limit,
+                minJaccard: args.min_jaccard,
+                noTests: args.no_tests,
+              })
+            : coChangeTopData(dbPath, {
+                limit: args.limit,
+                minJaccard: args.min_jaccard,
+                noTests: args.no_tests,
+              });
           break;
         }
         case 'list_repos': {
