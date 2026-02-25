@@ -604,7 +604,7 @@ const { results: fused } = await multiSearchData(
 
 ## 🗺️ Roadmap
 
-See **[ROADMAP.md](ROADMAP.md)** for the full development roadmap and **[STABILITY.md](STABILITY.md)** for the stability policy and versioning guarantees. Current plan:
+See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap and **[STABILITY.md](STABILITY.md)** for the stability policy and versioning guarantees. Current plan:
 
 1. ~~**Rust Core**~~ — **Complete** (v1.3.0) — native tree-sitter parsing via napi-rs, parallel multi-core parsing, incremental re-parsing, import resolution & cycle detection in Rust
 2. ~~**Foundation Hardening**~~ — **Complete** (v1.4.0) — parser registry, 12-tool MCP server with multi-repo support, test coverage 62%→75%, `apiKeyCommand` secret resolution, global repo registry

@@ -1,7 +1,7 @@
 # Stability Policy
 
 > **Status: Anticipated — not yet active.**
-> This policy describes the stability guarantees codegraph *will* provide once the public API surface stabilizes after [Phase 3 — Architectural Refactoring](ROADMAP.md). Until then, breaking changes may still land in minor releases as the internal architecture is restructured.
+> This policy describes the stability guarantees codegraph *will* provide once the public API surface stabilizes after [Phase 3 — Architectural Refactoring](docs/roadmap/ROADMAP.md). Until then, breaking changes may still land in minor releases as the internal architecture is restructured.
 
 ---
 

@@ -1,7 +1,7 @@
 # Codegraph Feature Backlog
 
 **Last updated:** 2026-02-25
-**Source:** Features derived from [COMPETITIVE_ANALYSIS.md](../generated/COMPETITIVE_ANALYSIS.md) and internal roadmap discussions.
+**Source:** Features derived from [COMPETITIVE_ANALYSIS.md](../../generated/COMPETITIVE_ANALYSIS.md) and internal roadmap discussions.
 
 ---
 
@@ -12,7 +12,7 @@ Each item has a short title, description, category, expected benefit, and four a
 | Column | Meaning |
 |--------|---------|
 | **Zero-dep** | Can this feature be implemented without adding new runtime dependencies to the project? A checkmark means it builds entirely on what we already ship (tree-sitter, SQLite, existing AST). Blank means it needs evaluation. Features that require new deps raise the install footprint and maintenance burden — they need stronger justification. |
-| **Foundation-aligned** | Does this feature align with the [FOUNDATION.md](../FOUNDATION.md) core principles? Specifically: does it keep the graph always-current (P1), maintain zero-cost core with optional LLM enhancement (P4), respect embeddable-first design (P5), and stay honest about what we are — a code intelligence engine, not an application (P8)? A checkmark means full alignment. An X means it conflicts with at least one principle and needs a deliberate exception. |
+| **Foundation-aligned** | Does this feature align with the [FOUNDATION.md](../../FOUNDATION.md) core principles? Specifically: does it keep the graph always-current (P1), maintain zero-cost core with optional LLM enhancement (P4), respect embeddable-first design (P5), and stay honest about what we are — a code intelligence engine, not an application (P8)? A checkmark means full alignment. An X means it conflicts with at least one principle and needs a deliberate exception. |
 | **Problem-fit (1-5)** | How directly does this feature address the core problem from our README: *AI coding assistants waste tokens re-orienting themselves in large codebases, hallucinate dependencies, and miss blast radius.* A 5 means it directly reduces token waste, prevents hallucinated deps, or catches breakage. A 1 means it's tangential — nice to have but doesn't solve the stated problem. |
 | **Breaking** | Is this a breaking change? `Yes` means existing CLI output, API signatures, DB schema, or MCP tool contracts change in incompatible ways. `No` means it's purely additive. Breaking changes require a major version bump. |
 
