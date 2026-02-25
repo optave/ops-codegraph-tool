@@ -98,7 +98,7 @@ export const MODELS = {
 
 export const EMBEDDING_STRATEGIES = ['structured', 'source'];
 
-export const DEFAULT_MODEL = 'minilm';
+export const DEFAULT_MODEL = 'nomic-v1.5';
 const BATCH_SIZE_MAP = {
   minilm: 32,
   'jina-small': 16,

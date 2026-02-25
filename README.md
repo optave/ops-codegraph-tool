@@ -55,7 +55,7 @@ cd your-project
 codegraph build
 ```
 
-That's it. No config files, no Docker, no JVM, no API keys, no accounts. The graph is ready to query. Add `codegraph mcp` to your AI agent's config and it has full access to your dependency graph through 18 MCP tools.
+That's it. No config files, no Docker, no JVM, no API keys, no accounts. The graph is ready to query. Add `codegraph mcp` to your AI agent's config and it has full access to your dependency graph through 19 MCP tools.
 
 ### Why it matters
 
@@ -78,6 +78,7 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 | Semantic search | **Yes** | — | **Yes** | **Yes** | — | **Yes** | — | — |
 | MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | — |
 | Git diff impact | **Yes** | — | — | — | — | **Yes** | — | **Yes** |
+| Git co-change analysis | **Yes** | — | — | — | — | — | **Yes** | **Yes** |
 | Watch mode | **Yes** | — | **Yes** | — | — | — | — | — |
 | Dead code / role classification | **Yes** | — | **Yes** | — | — | — | — | **Yes** |
 | Cycle detection | **Yes** | — | **Yes** | — | — | — | — | **Yes** |
@@ -96,9 +97,9 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 | **🔓** | **Zero-cost core, LLM-enhanced when you want** | Full graph analysis with no API keys, no accounts, no cost. Optionally bring your own LLM provider — your code only goes where you choose |
 | **🔬** | **Function-level, not just files** | Traces `handleAuth()` → `validateToken()` → `decryptJWT()` and shows 14 callers across 9 files break if `decryptJWT` changes |
 | **🏷️** | **Role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` — agents instantly know what they're looking at |
-| **🤖** | **Built for AI agents** | 18-tool [MCP server](https://modelcontextprotocol.io/) — AI assistants query your graph directly. Single-repo by default |
+| **🤖** | **Built for AI agents** | 19-tool [MCP server](https://modelcontextprotocol.io/) — AI assistants query your graph directly. Single-repo by default |
 | **🌐** | **Multi-language, one CLI** | JS/TS + Python + Go + Rust + Java + C# + PHP + Ruby + HCL in a single graph |
-| **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — ships with a GitHub Actions workflow |
+| **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — enriched with historically coupled files from git co-change analysis. Ships with a GitHub Actions workflow |
 | **🧠** | **Semantic search** | Local embeddings by default, LLM-powered when opted in — multi-query with RRF ranking via `"auth; token; JWT"` |
 
 ---
@@ -143,7 +144,7 @@ After modifying code:
 Or connect directly via MCP:
 
 ```bash
-codegraph mcp          # 18-tool MCP server — AI queries the graph directly
+codegraph mcp          # 19-tool MCP server — AI queries the graph directly
 ```
 
 Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAUDE.md template](docs/guides/ai-agent-guide.md#claudemd-template)
@@ -161,6 +162,7 @@ Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAU
 | 🎯 | **Deep context** | `context` gives AI agents source, deps, callers, signature, and tests for a function in one call; `explain` gives structural summaries of files or functions |
 | 📍 | **Fast lookup** | `where` shows exactly where a symbol is defined and used — minimal, fast |
 | 📊 | **Diff impact** | Parse `git diff`, find overlapping functions, trace their callers |
+| 🔗 | **Co-change analysis** | Analyze git history for files that always change together — surfaces hidden coupling the static graph can't see; enriches `diff-impact` with historically coupled files |
 | 🗺️ | **Module map** | Bird's-eye view of your most-connected files |
 | 🏗️ | **Structure & hotspots** | Directory cohesion scores, fan-in/fan-out hotspot detection, module boundaries |
 | 🏷️ | **Node role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` based on connectivity patterns — agents instantly know architectural role |
@@ -168,7 +170,7 @@ Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAU
 | 📤 | **Export** | DOT (Graphviz), Mermaid, and JSON graph export |
 | 🧠 | **Semantic search** | Embeddings-powered natural language search with multi-query RRF ranking |
 | 👀 | **Watch mode** | Incrementally update the graph as files change |
-| 🤖 | **MCP server** | 18-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
+| 🤖 | **MCP server** | 19-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
 | ⚡ | **Always fresh** | Three-tier incremental detection — sub-second rebuilds even on large codebases |
 
 ## 📦 Commands
@@ -218,6 +220,22 @@ codegraph diff-impact --staged # Impact of staged changes
 codegraph diff-impact HEAD~3   # Impact vs a specific ref
 codegraph diff-impact main --format mermaid -T  # Mermaid flowchart of blast radius
 ```
+
+### Co-Change Analysis
+
+Analyze git history to find files that always change together — surfaces hidden coupling the static graph can't see. Requires a git repository.
+
+```bash
+codegraph co-change --analyze          # Scan git history and populate co-change data
+codegraph co-change src/queries.js     # Show co-change partners for a file
+codegraph co-change                    # Show top co-changing file pairs globally
+codegraph co-change --since 6m         # Limit to last 6 months of history
+codegraph co-change --min-jaccard 0.5  # Only show strong coupling (Jaccard >= 0.5)
+codegraph co-change --min-support 5    # Minimum co-commit count
+codegraph co-change --full             # Include all details
+```
+
+Co-change data also enriches `diff-impact` — historically coupled files appear in a `historicallyCoupled` section alongside the static dependency analysis.
 
 ### Structure & Hotspots
 
@@ -408,7 +426,7 @@ Optional: `@huggingface/transformers` (semantic search), `@modelcontextprotocol/
 
 ### MCP Server
 
-Codegraph includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) server with 18 tools, so AI assistants can query your dependency graph directly:
+Codegraph includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) server with 19 tools, so AI assistants can query your dependency graph directly:
 
 ```bash
 codegraph mcp                  # Single-repo mode (default) — only local project
@@ -595,6 +613,7 @@ const { results: fused } = await multiSearchData(
 | Incremental rebuilds | **O(changed)** | — | O(n) Merkle | — | — | — |
 | MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** |
 | Git diff impact | **Yes** | — | — | — | — | **Yes** |
+| Git co-change analysis | **Yes** | — | — | — | — | — |
 | Dead code / role classification | **Yes** | — | **Yes** | — | — | — |
 | Semantic search | **Yes** | — | **Yes** | **Yes** | — | **Yes** |
 | Watch mode | **Yes** | — | **Yes** | — | — | — |
