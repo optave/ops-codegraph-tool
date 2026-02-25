@@ -20,7 +20,7 @@ export const DEFAULTS = {
     defaultLimit: 20,
     excludeTests: false,
   },
-  embeddings: { model: 'nomic-v1.5', llmProvider: null },
+  embeddings: { model: 'minilm', llmProvider: null },
   llm: { provider: null, model: null, baseUrl: null, apiKey: null, apiKeyCommand: null },
   search: { defaultMinScore: 0.2, rrfK: 60, topK: 15 },
   ci: { failOnCycles: false, impactThreshold: null },

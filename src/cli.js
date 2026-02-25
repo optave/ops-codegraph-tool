@@ -423,12 +423,13 @@ program
   .command('models')
   .description('List available embedding models')
   .action(() => {
+    const defaultModel = config.embeddings?.model || 'minilm';
     console.log('\nAvailable embedding models:\n');
-    for (const [key, config] of Object.entries(MODELS)) {
-      const def = key === 'minilm' ? ' (default)' : '';
-      const ctx = config.contextWindow ? `${config.contextWindow} ctx` : '';
+    for (const [key, cfg] of Object.entries(MODELS)) {
+      const def = key === defaultModel ? ' (default)' : '';
+      const ctx = cfg.contextWindow ? `${cfg.contextWindow} ctx` : '';
       console.log(
-        `  ${key.padEnd(12)} ${String(config.dim).padStart(4)}d  ${ctx.padEnd(9)} ${config.desc}${def}`,
+        `  ${key.padEnd(12)} ${String(cfg.dim).padStart(4)}d  ${ctx.padEnd(9)} ${cfg.desc}${def}`,
       );
     }
     console.log('\nUsage: codegraph embed --model <name> --strategy <structured|source>');
@@ -442,8 +443,7 @@ program
   )
   .option(
     '-m, --model <name>',
-    'Embedding model: minilm (default), jina-small, jina-base, jina-code, nomic, nomic-v1.5, bge-large. Run `codegraph models` for details',
-    'minilm',
+    'Embedding model (default from config or minilm). Run `codegraph models` for details',
   )
   .option(
     '-s, --strategy <name>',
@@ -458,7 +458,8 @@ program
       process.exit(1);
     }
     const root = path.resolve(dir || '.');
-    await buildEmbeddings(root, opts.model, undefined, { strategy: opts.strategy });
+    const model = opts.model || config.embeddings?.model || 'minilm';
+    await buildEmbeddings(root, model, undefined, { strategy: opts.strategy });
   });
 
 program
