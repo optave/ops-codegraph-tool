@@ -31,9 +31,6 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
 
-      - name: Install license-checker
-        run: npm install -g license-checker
-
       - name: Create reports directory
         run: mkdir -p license-reports
 
@@ -41,15 +38,15 @@ jobs:
         id: allowlist
         continue-on-error: true
         run: |
-          license-checker \
+          npx --yes license-checker \
             --onlyAllow 'MIT;BSD-2-Clause;BSD-3-Clause;Apache-2.0;ISC;CC0-1.0;Unlicense;WTFPL;0BSD;CC-BY-3.0;CC-BY-4.0;BlueOak-1.0.0;Python-2.0' \
             --summary | tee license-reports/allowlist-check.txt
 
       - name: Generate JSON report
-        run: license-checker --json > license-reports/licenses.json
+        run: npx --yes license-checker --json > license-reports/licenses.json
 
       - name: Generate CSV report
-        run: license-checker --csv --out license-reports/licenses.csv
+        run: npx --yes license-checker --csv --out license-reports/licenses.csv
 
       - name: Analyze results
         run: |

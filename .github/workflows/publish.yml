@@ -295,7 +295,7 @@ jobs:
           if git diff --quiet HEAD -- package.json package-lock.json CHANGELOG.md generated/DEPENDENCIES.json; then
             echo "No version bump commit to push — skipping PR"
           else
-            git add package.json package-lock.json CHANGELOG.md generated/DEPENDENCIES.json
+            git add -f package.json package-lock.json CHANGELOG.md generated/DEPENDENCIES.json
             git commit -m "chore: release v${VERSION}"
             git push origin "HEAD:refs/heads/${BRANCH}"
             gh pr create \
