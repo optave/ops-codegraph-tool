@@ -259,7 +259,7 @@ const BASE_TOOLS = [
   {
     name: 'structure',
     description:
-      'Show project structure with directory hierarchy, cohesion scores, and per-file metrics',
+      'Show project structure with directory hierarchy, cohesion scores, and per-file metrics. Per-file details are capped at 25 files by default; use full=true to show all.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -269,6 +269,11 @@ const BASE_TOOLS = [
           type: 'string',
           enum: ['cohesion', 'fan-in', 'fan-out', 'density', 'files'],
           description: 'Sort directories by metric',
+        },
+        full: {
+          type: 'boolean',
+          description: 'Return all files without limit',
+          default: false,
         },
       },
     },
@@ -592,6 +597,7 @@ export async function startMCPServer(customDbPath, options = {}) {
             directory: args.directory,
             depth: args.depth,
             sort: args.sort,
+            full: args.full,
           });
           break;
         }
