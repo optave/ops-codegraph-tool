@@ -62,7 +62,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          BRANCH="benchmark/build-$(date +%Y%m%d-%H%M%S)"
+          BRANCH="docs/benchmark-build-$(date +%Y%m%d-%H%M%S)"
           git checkout -b "$BRANCH"
           git add generated/BUILD-BENCHMARKS.md README.md
           git commit -m "docs: update build performance benchmarks"
@@ -139,7 +139,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          BRANCH="benchmark/embedding-$(date +%Y%m%d-%H%M%S)"
+          BRANCH="docs/benchmark-embedding-$(date +%Y%m%d-%H%M%S)"
           git checkout -b "$BRANCH"
           git add generated/EMBEDDING-BENCHMARKS.md
           git commit -m "docs: update embedding benchmarks"
@@ -204,7 +204,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          BRANCH="benchmark/query-$(date +%Y%m%d-%H%M%S)"
+          BRANCH="docs/benchmark-query-$(date +%Y%m%d-%H%M%S)"
           git checkout -b "$BRANCH"
           git add generated/QUERY-BENCHMARKS.md
           git commit -m "docs: update query benchmarks"
@@ -269,7 +269,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          BRANCH="benchmark/incremental-$(date +%Y%m%d-%H%M%S)"
+          BRANCH="docs/benchmark-incremental-$(date +%Y%m%d-%H%M%S)"
           git checkout -b "$BRANCH"
           git add generated/INCREMENTAL-BENCHMARKS.md
           git commit -m "docs: update incremental benchmarks"
