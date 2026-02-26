@@ -6,7 +6,7 @@
 
 ## The Problem
 
-In a [viral LinkedIn post](https://www.linkedin.com/posts/johannesr314_claude-vibecoding-activity-7432157088828678144-CiI_), **Johannes R.**, Senior Software Engineer at Google, described the #1 challenge of "vibe coding": keeping a fast-moving codebase from rotting.
+In a [LinkedIn post](https://www.linkedin.com/posts/johannesr314_claude-vibecoding-activity-7432157088828678144-CiI_), **Johannes R.**, Senior Software Engineer at Google, described the #1 challenge of "vibe coding": keeping a fast-moving codebase from rotting.
 
 His answer isn't a better prompt. It's a different architecture.
 
