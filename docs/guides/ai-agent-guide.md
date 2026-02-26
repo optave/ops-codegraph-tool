@@ -230,6 +230,23 @@ codegraph fn-impact resolve --file resolve.js --depth 3
 | **When to use** | Before modifying a function — know who depends on it |
 | **Output** | Affected functions at each depth level, total count |
 
+#### `path` — Shortest path between two symbols
+
+Find how symbol A reaches symbol B through the call graph.
+
+```bash
+codegraph path buildGraph openDb -T           # Forward: A calls...calls B
+codegraph path validateToken handleRoute --reverse  # Backward: B is called by...A
+codegraph path parseConfig loadFile --max-depth 5
+```
+
+| | |
+|---|---|
+| **MCP tool** | `symbol_path` |
+| **Key flags** | `--max-depth <n>` (default: 10), `--kinds <kinds>` (default: calls), `--reverse`, `--from-file`, `--to-file`, `-k, --kind`, `-T` (no tests), `-j` (JSON) |
+| **When to use** | Understanding how two functions are connected through the call chain |
+| **Output** | Ordered path with edge kinds, hop count, alternate path count |
+
 #### `impact` — File-level transitive impact
 
 Show all files that transitively depend on a given file.
@@ -475,6 +492,7 @@ codegraph mcp --repos "myapp,lib"      # Restricted repo list
 | `module_map` | `map` | Most-connected files overview |
 | `fn_deps` | `fn <name>` | Function-level call chain |
 | `fn_impact` | `fn-impact <name>` | Function-level blast radius |
+| `symbol_path` | `path <from> <to>` | Shortest path between two symbols |
 | `context` | `context <name>` | Full function context |
 | `explain` | `explain <target>` | Structural summary |
 | `where` | `where <name>` | Symbol definition and usage |

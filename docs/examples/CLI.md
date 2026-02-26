@@ -286,6 +286,60 @@ Function impact: f buildGraph -- src/builder.js:335
 
 ---
 
+## path — Shortest path between two symbols
+
+Find how symbol A reaches symbol B through the call graph:
+
+```bash
+codegraph path buildGraph openDb -T
+```
+
+```
+Path from buildGraph to openDb (1 hop):
+
+  f buildGraph (function) -- src/builder.js:335
+    --[calls]--> f openDb (function) -- src/db.js:76
+```
+
+Multi-hop paths show each intermediate step:
+
+```bash
+codegraph path resolveNoTests openDb -T
+```
+
+```
+Path from resolveNoTests to openDb (2 hops):
+
+  f resolveNoTests (function) -- src/cli.js:59
+    --[calls]--> f buildGraph (function) -- src/builder.js:335
+      --[calls]--> f openDb (function) -- src/db.js:76
+```
+
+Reverse direction — follow edges backward (B is called by... called by A):
+
+```bash
+codegraph path openDb buildGraph -T --reverse
+```
+
+```
+Path from openDb to buildGraph (1 hop) (reverse):
+
+  f openDb (function) -- src/db.js:76
+    --[calls]--> f buildGraph (function) -- src/builder.js:335
+```
+
+When no path exists:
+
+```bash
+codegraph path openDb buildGraph -T
+```
+
+```
+No path from "openDb" to "buildGraph" within 10 hops.
+```
+
+---
+
 ## impact — File-level transitive dependents
 
 ```bash

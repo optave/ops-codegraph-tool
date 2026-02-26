@@ -247,6 +247,74 @@ Function impact: f buildGraph -- src/builder.js:335
 
 ---
 
+## symbol_path — Shortest path between two symbols
+
+Find how one function reaches another through the call graph.
+
+```json
+{
+  "tool": "symbol_path",
+  "arguments": { "from": "resolveNoTests", "to": "openDb", "no_tests": true }
+}
+```
+
+```json
+{
+  "from": "resolveNoTests",
+  "to": "openDb",
+  "found": true,
+  "hops": 2,
+  "path": [
+    { "name": "resolveNoTests", "kind": "function", "file": "src/cli.js", "line": 59, "edgeKind": null },
+    { "name": "buildGraph", "kind": "function", "file": "src/builder.js", "line": 335, "edgeKind": "calls" },
+    { "name": "openDb", "kind": "function", "file": "src/db.js", "line": 76, "edgeKind": "calls" }
+  ],
+  "alternateCount": 0,
+  "edgeKinds": ["calls"],
+  "reverse": false,
+  "maxDepth": 10
+}
+```
+
+Reverse direction — follow edges backward:
+
+```json
+{
+  "tool": "symbol_path",
+  "arguments": { "from": "openDb", "to": "buildGraph", "reverse": true, "no_tests": true }
+}
+```
+
+```json
+{
+  "from": "openDb",
+  "to": "buildGraph",
+  "found": true,
+  "hops": 1,
+  "path": [
+    { "name": "openDb", "kind": "function", "file": "src/db.js", "line": 76, "edgeKind": null },
+    { "name": "buildGraph", "kind": "function", "file": "src/builder.js", "line": 335, "edgeKind": "calls" }
+  ],
+  "alternateCount": 0,
+  "reverse": true
+}
+```
+
+When no path exists, `found` is `false` and the path is empty:
+
+```json
+{
+  "from": "openDb",
+  "to": "buildGraph",
+  "found": false,
+  "hops": null,
+  "path": [],
+  "alternateCount": 0
+}
+```
+
+---
+
 ## impact_analysis — File-level transitive dependents
 
 ```json

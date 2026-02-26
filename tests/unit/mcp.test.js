@@ -16,6 +16,7 @@ const ALL_TOOL_NAMES = [
   'module_map',
   'fn_deps',
   'fn_impact',
+  'symbol_path',
   'context',
   'explain',
   'where',
@@ -96,6 +97,21 @@ describe('TOOLS', () => {
     expect(fi.inputSchema.properties).toHaveProperty('file');
     expect(fi.inputSchema.properties).toHaveProperty('kind');
     expect(fi.inputSchema.properties.kind.enum).toBeDefined();
+  });
+
+  it('symbol_path requires from and to parameters', () => {
+    const sp = TOOLS.find((t) => t.name === 'symbol_path');
+    expect(sp).toBeDefined();
+    expect(sp.inputSchema.required).toContain('from');
+    expect(sp.inputSchema.required).toContain('to');
+    expect(sp.inputSchema.properties).toHaveProperty('max_depth');
+    expect(sp.inputSchema.properties).toHaveProperty('edge_kinds');
+    expect(sp.inputSchema.properties).toHaveProperty('reverse');
+    expect(sp.inputSchema.properties).toHaveProperty('from_file');
+    expect(sp.inputSchema.properties).toHaveProperty('to_file');
+    expect(sp.inputSchema.properties).toHaveProperty('kind');
+    expect(sp.inputSchema.properties.kind.enum).toBeDefined();
+    expect(sp.inputSchema.properties).toHaveProperty('no_tests');
   });
 
   it('where requires target parameter', () => {
@@ -237,6 +253,7 @@ describe('startMCPServer handler dispatch', () => {
       diffImpactData: vi.fn(() => ({ changedFiles: 0, affectedFunctions: [] })),
       listFunctionsData: vi.fn(() => ({ count: 0, functions: [] })),
       rolesData: vi.fn(() => ({ count: 0, summary: {}, symbols: [] })),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
     // Clear module cache and reimport
@@ -300,6 +317,7 @@ describe('startMCPServer handler dispatch', () => {
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
       rolesData: vi.fn(),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -357,6 +375,7 @@ describe('startMCPServer handler dispatch', () => {
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
       rolesData: vi.fn(),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -409,6 +428,7 @@ describe('startMCPServer handler dispatch', () => {
       diffImpactData: diffImpactMock,
       listFunctionsData: vi.fn(),
       rolesData: vi.fn(),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -466,6 +486,7 @@ describe('startMCPServer handler dispatch', () => {
       diffImpactData: vi.fn(),
       listFunctionsData: listFnMock,
       rolesData: vi.fn(),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -524,6 +545,7 @@ describe('startMCPServer handler dispatch', () => {
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
       rolesData: vi.fn(),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -577,6 +599,7 @@ describe('startMCPServer handler dispatch', () => {
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
       rolesData: vi.fn(),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -629,6 +652,7 @@ describe('startMCPServer handler dispatch', () => {
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
       rolesData: vi.fn(),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -683,6 +707,7 @@ describe('startMCPServer handler dispatch', () => {
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
       rolesData: vi.fn(),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -740,6 +765,7 @@ describe('startMCPServer handler dispatch', () => {
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
       rolesData: vi.fn(),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -797,6 +823,7 @@ describe('startMCPServer handler dispatch', () => {
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
       rolesData: vi.fn(),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -845,6 +872,7 @@ describe('startMCPServer handler dispatch', () => {
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
       rolesData: vi.fn(),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -893,6 +921,7 @@ describe('startMCPServer handler dispatch', () => {
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
       rolesData: vi.fn(),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -941,6 +970,7 @@ describe('startMCPServer handler dispatch', () => {
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
       rolesData: vi.fn(),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');

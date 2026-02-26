@@ -71,6 +71,7 @@ export {
   impactAnalysisData,
   kindIcon,
   moduleMapData,
+  pathData,
   queryNameData,
   rolesData,
   statsData,

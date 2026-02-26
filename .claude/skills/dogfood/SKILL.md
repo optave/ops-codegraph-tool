@@ -203,7 +203,7 @@ Before writing the report, **stop and think** about:
 
 - What testing approaches am I missing?
 - **Cross-command pipelines:** Have I tested `build` → `embed` → `search` → modify → `build` → `search`? Have I tested `watch` detecting changes then `diff-impact`?
-- **MCP server:** Have I tested the `mcp` command? Initialize via JSON-RPC on stdin, send `tools/list`, verify all 17 tools are present. Test single-repo mode (default — `list_repos` should be absent, no `repo` parameter on tools) vs `--multi-repo` mode.
+- **MCP server:** Have I tested the `mcp` command? Initialize via JSON-RPC on stdin, send `tools/list`, verify all 18 tools are present. Test single-repo mode (default — `list_repos` should be absent, no `repo` parameter on tools) vs `--multi-repo` mode.
 - **Programmatic API:** Have I tested `require('@optave/codegraph')` or `import` from `index.js`? Key exports to verify: `buildGraph`, `loadConfig`, `openDb`, `findDbPath`, `contextData`, `explainData`, `whereData`, `fnDepsData`, `diffImpactData`, `statsData`, `isNativeAvailable`, `EXTENSIONS`, `IGNORE_DIRS`, `ALL_SYMBOL_KINDS`, `MODELS`.
 - **Config options:** Have I tested `.codegraphrc.json`? Create one with `include`/`exclude` patterns, custom `aliases`, `build.incremental: false`, `query.defaultDepth`, `search.defaultMinScore`. Verify overrides work.
 - **Env var overrides:** `CODEGRAPH_LLM_PROVIDER`, `CODEGRAPH_LLM_API_KEY`, `CODEGRAPH_LLM_MODEL`, `CODEGRAPH_REGISTRY_PATH`.

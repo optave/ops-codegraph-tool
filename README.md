@@ -158,7 +158,7 @@ Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAU
 | 🔍 | **Symbol search** | Find any function, class, or method by name — exact match priority, relevance scoring, `--file` and `--kind` filters |
 | 📁 | **File dependencies** | See what a file imports and what imports it |
 | 💥 | **Impact analysis** | Trace every file affected by a change (transitive) |
-| 🧬 | **Function-level tracing** | Call chains, caller trees, and function-level impact with qualified call resolution |
+| 🧬 | **Function-level tracing** | Call chains, caller trees, function-level impact, and A→B pathfinding with qualified call resolution |
 | 🎯 | **Deep context** | `context` gives AI agents source, deps, callers, signature, and tests for a function in one call; `explain` gives structural summaries of files or functions |
 | 📍 | **Fast lookup** | `where` shows exactly where a symbol is defined and used — minimal, fast |
 | 📊 | **Diff impact** | Parse `git diff`, find overlapping functions, trace their callers |
@@ -217,6 +217,9 @@ codegraph impact <file>        # Transitive reverse dependency trace
 codegraph fn <name>            # Function-level: callers, callees, call chain
 codegraph fn <name> --no-tests --depth 5
 codegraph fn-impact <name>     # What functions break if this one changes
+codegraph path <from> <to>     # Shortest path between two symbols (A calls...calls B)
+codegraph path <from> <to> --reverse  # Follow edges backward
+codegraph path <from> <to> --max-depth 5 --kinds calls,imports
 codegraph diff-impact          # Impact of unstaged git changes
 codegraph diff-impact --staged # Impact of staged changes
 codegraph diff-impact HEAD~3   # Impact vs a specific ref
@@ -316,7 +319,7 @@ codegraph registry remove <name>  # Unregister
 | Flag | Description |
 |---|---|
 | `-d, --db <path>` | Custom path to `graph.db` |
-| `-T, --no-tests` | Exclude `.test.`, `.spec.`, `__test__` files (available on `fn`, `fn-impact`, `context`, `explain`, `where`, `diff-impact`, `search`, `map`, `hotspots`, `deps`, `impact`) |
+| `-T, --no-tests` | Exclude `.test.`, `.spec.`, `__test__` files (available on `fn`, `fn-impact`, `path`, `context`, `explain`, `where`, `diff-impact`, `search`, `map`, `hotspots`, `deps`, `impact`) |
 | `--depth <n>` | Transitive trace depth (default varies by command) |
 | `-j, --json` | Output as JSON |
 | `-v, --verbose` | Enable debug output |
@@ -462,6 +465,7 @@ This project uses codegraph. The database is at `.codegraph/graph.db`.
 - `codegraph build .` — rebuild the graph (incremental by default)
 - `codegraph map` — module overview
 - `codegraph fn <name> -T` — function call chain
+- `codegraph path <from> <to> -T` — shortest call path between two symbols
 - `codegraph deps <file>` — file-level dependencies
 - `codegraph search "<query>"` — semantic search (requires `codegraph embed`)
 - `codegraph cycles` — check for circular dependencies

@@ -565,6 +565,255 @@ export function fnImpactData(name, customDbPath, opts = {}) {
   return { name, results };
 }
 
+export function pathData(from, to, customDbPath, opts = {}) {
+  const db = openReadonlyOrFail(customDbPath);
+  const noTests = opts.noTests || false;
+  const maxDepth = opts.maxDepth || 10;
+  const edgeKinds = opts.edgeKinds || ['calls'];
+  const reverse = opts.reverse || false;
+
+  const fromNodes = findMatchingNodes(db, from, {
+    noTests,
+    file: opts.fromFile,
+    kind: opts.kind,
+  });
+  if (fromNodes.length === 0) {
+    db.close();
+    return {
+      from,
+      to,
+      found: false,
+      error: `No symbol matching "${from}"`,
+      fromCandidates: [],
+      toCandidates: [],
+    };
+  }
+
+  const toNodes = findMatchingNodes(db, to, {
+    noTests,
+    file: opts.toFile,
+    kind: opts.kind,
+  });
+  if (toNodes.length === 0) {
+    db.close();
+    return {
+      from,
+      to,
+      found: false,
+      error: `No symbol matching "${to}"`,
+      fromCandidates: fromNodes
+        .slice(0, 5)
+        .map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line })),
+      toCandidates: [],
+    };
+  }
+
+  const sourceNode = fromNodes[0];
+  const targetNode = toNodes[0];
+
+  const fromCandidates = fromNodes
+    .slice(0, 5)
+    .map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line }));
+  const toCandidates = toNodes
+    .slice(0, 5)
+    .map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line }));
+
+  // Self-path
+  if (sourceNode.id === targetNode.id) {
+    db.close();
+    return {
+      from,
+      to,
+      fromCandidates,
+      toCandidates,
+      found: true,
+      hops: 0,
+      path: [
+        {
+          name: sourceNode.name,
+          kind: sourceNode.kind,
+          file: sourceNode.file,
+          line: sourceNode.line,
+          edgeKind: null,
+        },
+      ],
+      alternateCount: 0,
+      edgeKinds,
+      reverse,
+      maxDepth,
+    };
+  }
+
+  // Build edge kind filter
+  const kindPlaceholders = edgeKinds.map(() => '?').join(', ');
+
+  // BFS — direction depends on `reverse` flag
+  // Forward: source_id → target_id (A calls... calls B)
+  // Reverse: target_id → source_id (B is called by... called by A)
+  const neighborQuery = reverse
+    ? `SELECT n.id, n.name, n.kind, n.file, n.line, e.kind AS edge_kind
+       FROM edges e JOIN nodes n ON e.source_id = n.id
+       WHERE e.target_id = ? AND e.kind IN (${kindPlaceholders})`
+    : `SELECT n.id, n.name, n.kind, n.file, n.line, e.kind AS edge_kind
+       FROM edges e JOIN nodes n ON e.target_id = n.id
+       WHERE e.source_id = ? AND e.kind IN (${kindPlaceholders})`;
+  const neighborStmt = db.prepare(neighborQuery);
+
+  const visited = new Set([sourceNode.id]);
+  // parent map: nodeId → { parentId, edgeKind }
+  const parent = new Map();
+  let queue = [sourceNode.id];
+  let found = false;
+  let alternateCount = 0;
+  let foundDepth = -1;
+
+  for (let depth = 1; depth <= maxDepth; depth++) {
+    const nextQueue = [];
+    for (const currentId of queue) {
+      const neighbors = neighborStmt.all(currentId, ...edgeKinds);
+      for (const n of neighbors) {
+        if (noTests && isTestFile(n.file)) continue;
+        if (n.id === targetNode.id) {
+          if (!found) {
+            found = true;
+            foundDepth = depth;
+            parent.set(n.id, { parentId: currentId, edgeKind: n.edge_kind });
+          }
+          alternateCount++;
+          continue;
+        }
+        if (!visited.has(n.id)) {
+          visited.add(n.id);
+          parent.set(n.id, { parentId: currentId, edgeKind: n.edge_kind });
+          nextQueue.push(n.id);
+        }
+      }
+    }
+    if (found) break;
+    queue = nextQueue;
+    if (queue.length === 0) break;
+  }
+
+  if (!found) {
+    db.close();
+    return {
+      from,
+      to,
+      fromCandidates,
+      toCandidates,
+      found: false,
+      hops: null,
+      path: [],
+      alternateCount: 0,
+      edgeKinds,
+      reverse,
+      maxDepth,
+    };
+  }
+
+  // alternateCount includes the one we kept; subtract 1 for "alternates"
+  alternateCount = Math.max(0, alternateCount - 1);
+
+  // Reconstruct path from target back to source
+  const pathIds = [targetNode.id];
+  let cur = targetNode.id;
+  while (cur !== sourceNode.id) {
+    const p = parent.get(cur);
+    pathIds.push(p.parentId);
+    cur = p.parentId;
+  }
+  pathIds.reverse();
+
+  // Build path with node info
+  const nodeCache = new Map();
+  const getNode = (id) => {
+    if (nodeCache.has(id)) return nodeCache.get(id);
+    const row = db.prepare('SELECT name, kind, file, line FROM nodes WHERE id = ?').get(id);
+    nodeCache.set(id, row);
+    return row;
+  };
+
+  const resultPath = pathIds.map((id, idx) => {
+    const node = getNode(id);
+    const edgeKind = idx === 0 ? null : parent.get(id).edgeKind;
+    return { name: node.name, kind: node.kind, file: node.file, line: node.line, edgeKind };
+  });
+
+  db.close();
+  return {
+    from,
+    to,
+    fromCandidates,
+    toCandidates,
+    found: true,
+    hops: foundDepth,
+    path: resultPath,
+    alternateCount,
+    edgeKinds,
+    reverse,
+    maxDepth,
+  };
+}
+
+export function symbolPath(from, to, customDbPath, opts = {}) {
+  const data = pathData(from, to, customDbPath, opts);
+  if (opts.json) {
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  if (data.error) {
+    console.log(data.error);
+    return;
+  }
+
+  if (!data.found) {
+    const dir = data.reverse ? 'reverse ' : '';
+    console.log(`No ${dir}path from "${from}" to "${to}" within ${data.maxDepth} hops.`);
+    if (data.fromCandidates.length > 1) {
+      console.log(
+        `\n  "${from}" matched ${data.fromCandidates.length} symbols — using top match: ${data.fromCandidates[0].name} (${data.fromCandidates[0].file}:${data.fromCandidates[0].line})`,
+      );
+    }
+    if (data.toCandidates.length > 1) {
+      console.log(
+        `  "${to}" matched ${data.toCandidates.length} symbols — using top match: ${data.toCandidates[0].name} (${data.toCandidates[0].file}:${data.toCandidates[0].line})`,
+      );
+    }
+    return;
+  }
+
+  if (data.hops === 0) {
+    console.log(`\n"${from}" and "${to}" resolve to the same symbol (0 hops):`);
+    const n = data.path[0];
+    console.log(`  ${kindIcon(n.kind)} ${n.name} (${n.kind}) -- ${n.file}:${n.line}\n`);
+    return;
+  }
+
+  const dir = data.reverse ? ' (reverse)' : '';
+  console.log(
+    `\nPath from ${from} to ${to} (${data.hops} ${data.hops === 1 ? 'hop' : 'hops'})${dir}:\n`,
+  );
+  for (let i = 0; i < data.path.length; i++) {
+    const n = data.path[i];
+    const indent = '  '.repeat(i + 1);
+    if (i === 0) {
+      console.log(`${indent}${kindIcon(n.kind)} ${n.name} (${n.kind}) -- ${n.file}:${n.line}`);
+    } else {
+      console.log(
+        `${indent}--[${n.edgeKind}]--> ${kindIcon(n.kind)} ${n.name} (${n.kind}) -- ${n.file}:${n.line}`,
+      );
+    }
+  }
+
+  if (data.alternateCount > 0) {
+    console.log(
+      `\n  (${data.alternateCount} alternate shortest ${data.alternateCount === 1 ? 'path' : 'paths'} at same depth)`,
+    );
+  }
+  console.log();
+}
+
 /**
  * Fix #2: Shell injection vulnerability.
  * Uses execFileSync instead of execSync to prevent shell interpretation of user input.

@@ -124,6 +124,33 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'symbol_path',
+    description: 'Find the shortest path between two symbols in the call graph (A calls...calls B)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'Source symbol name (partial match)' },
+        to: { type: 'string', description: 'Target symbol name (partial match)' },
+        max_depth: { type: 'number', description: 'Maximum BFS depth', default: 10 },
+        edge_kinds: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Edge kinds to follow (default: ["calls"])',
+        },
+        reverse: { type: 'boolean', description: 'Follow edges backward', default: false },
+        from_file: { type: 'string', description: 'Disambiguate source by file (partial match)' },
+        to_file: { type: 'string', description: 'Disambiguate target by file (partial match)' },
+        kind: {
+          type: 'string',
+          enum: ALL_SYMBOL_KINDS,
+          description: 'Filter both symbols by kind',
+        },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+      },
+      required: ['from', 'to'],
+    },
+  },
+  {
     name: 'context',
     description:
       'Full context for a function: source code, dependencies with summaries, callers, signature, and related tests — everything needed to understand or modify a function in one call',
@@ -448,6 +475,7 @@ export async function startMCPServer(customDbPath, options = {}) {
     fileDepsData,
     fnDepsData,
     fnImpactData,
+    pathData,
     contextData,
     explainData,
     whereData,
@@ -530,6 +558,17 @@ export async function startMCPServer(customDbPath, options = {}) {
           result = fnImpactData(args.name, dbPath, {
             depth: args.depth,
             file: args.file,
+            kind: args.kind,
+            noTests: args.no_tests,
+          });
+          break;
+        case 'symbol_path':
+          result = pathData(args.from, args.to, dbPath, {
+            maxDepth: args.max_depth,
+            edgeKinds: args.edge_kinds,
+            reverse: args.reverse,
+            fromFile: args.from_file,
+            toFile: args.to_file,
             kind: args.kind,
             noTests: args.no_tests,
           });

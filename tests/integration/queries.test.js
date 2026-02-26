@@ -33,6 +33,7 @@ import {
   fnImpactData,
   impactAnalysisData,
   moduleMapData,
+  pathData,
   queryNameData,
   statsData,
   whereData,
@@ -321,6 +322,96 @@ describe('fnImpactData', () => {
     expect(r.levels[1]).toBeDefined();
     expect(r.levels[1].length).toBeGreaterThanOrEqual(1);
     expect(r.levels[2]).toBeUndefined();
+  });
+});
+
+// ─── pathData ─────────────────────────────────────────────────────────
+
+describe('pathData', () => {
+  test('finds direct 1-hop path', () => {
+    const data = pathData('authMiddleware', 'authenticate', dbPath);
+    expect(data.found).toBe(true);
+    expect(data.hops).toBe(1);
+    expect(data.path).toHaveLength(2);
+    expect(data.path[0].name).toBe('authMiddleware');
+    expect(data.path[0].edgeKind).toBeNull();
+    expect(data.path[1].name).toBe('authenticate');
+    expect(data.path[1].edgeKind).toBe('calls');
+  });
+
+  test('finds multi-hop path', () => {
+    const data = pathData('handleRoute', 'validateToken', dbPath);
+    expect(data.found).toBe(true);
+    expect(data.hops).toBe(2);
+    expect(data.path).toHaveLength(3);
+    expect(data.path[0].name).toBe('handleRoute');
+    expect(data.path[data.path.length - 1].name).toBe('validateToken');
+  });
+
+  test('returns not found when no forward path exists', () => {
+    const data = pathData('validateToken', 'handleRoute', dbPath);
+    expect(data.found).toBe(false);
+    expect(data.path).toHaveLength(0);
+  });
+
+  test('reverse direction finds upstream path', () => {
+    const data = pathData('validateToken', 'handleRoute', dbPath, { reverse: true });
+    expect(data.found).toBe(true);
+    expect(data.hops).toBeGreaterThanOrEqual(1);
+    expect(data.path[0].name).toBe('validateToken');
+    expect(data.path[data.path.length - 1].name).toBe('handleRoute');
+    expect(data.reverse).toBe(true);
+  });
+
+  test('self-path returns 0 hops', () => {
+    const data = pathData('authenticate', 'authenticate', dbPath);
+    expect(data.found).toBe(true);
+    expect(data.hops).toBe(0);
+    expect(data.path).toHaveLength(1);
+    expect(data.path[0].name).toBe('authenticate');
+  });
+
+  test('maxDepth limits search', () => {
+    // handleRoute → validateToken is 2 hops; maxDepth=1 should miss it
+    const data = pathData('handleRoute', 'validateToken', dbPath, { maxDepth: 1 });
+    expect(data.found).toBe(false);
+  });
+
+  test('nonexistent from symbol returns error', () => {
+    const data = pathData('nonexistent', 'authenticate', dbPath);
+    expect(data.found).toBe(false);
+    expect(data.error).toContain('nonexistent');
+  });
+
+  test('nonexistent to symbol returns error', () => {
+    const data = pathData('authenticate', 'nonexistent', dbPath);
+    expect(data.found).toBe(false);
+    expect(data.error).toContain('nonexistent');
+  });
+
+  test('noTests filters test file nodes', () => {
+    // testAuthenticate → authenticate exists, but with noTests testAuthenticate is excluded
+    const data = pathData('testAuthenticate', 'validateToken', dbPath, { noTests: true });
+    expect(data.found).toBe(false);
+    expect(data.fromCandidates).toHaveLength(0);
+  });
+
+  test('alternateCount reports alternate shortest paths', () => {
+    // handleRoute → validateToken: two 2-hop paths
+    //   handleRoute → authMiddleware → validateToken
+    //   handleRoute → authenticate → validateToken
+    // (also handleRoute → formatResponse → validateToken at 0.3 confidence)
+    const data = pathData('handleRoute', 'validateToken', dbPath);
+    expect(data.found).toBe(true);
+    expect(data.alternateCount).toBeGreaterThanOrEqual(1);
+  });
+
+  test('populates fromCandidates and toCandidates', () => {
+    const data = pathData('authMiddleware', 'authenticate', dbPath);
+    expect(data.fromCandidates.length).toBeGreaterThanOrEqual(1);
+    expect(data.toCandidates.length).toBeGreaterThanOrEqual(1);
+    expect(data.fromCandidates[0]).toHaveProperty('name');
+    expect(data.fromCandidates[0]).toHaveProperty('file');
   });
 });
 

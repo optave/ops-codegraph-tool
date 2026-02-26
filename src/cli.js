@@ -29,6 +29,7 @@ import {
   queryName,
   roles,
   stats,
+  symbolPath,
   VALID_ROLES,
   where,
 } from './queries.js';
@@ -193,6 +194,36 @@ program
     fnImpact(name, opts.db, {
       depth: parseInt(opts.depth, 10),
       file: opts.file,
+      kind: opts.kind,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+    });
+  });
+
+program
+  .command('path <from> <to>')
+  .description('Find shortest path between two symbols (A calls...calls B)')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('--max-depth <n>', 'Maximum BFS depth', '10')
+  .option('--kinds <kinds>', 'Comma-separated edge kinds to follow (default: calls)')
+  .option('--reverse', 'Follow edges backward (B is called by...called by A)')
+  .option('--from-file <path>', 'Disambiguate source symbol by file (partial match)')
+  .option('--to-file <path>', 'Disambiguate target symbol by file (partial match)')
+  .option('-k, --kind <kind>', 'Filter both symbols by kind')
+  .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .action((from, to, opts) => {
+    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+      process.exit(1);
+    }
+    symbolPath(from, to, opts.db, {
+      maxDepth: parseInt(opts.maxDepth, 10),
+      edgeKinds: opts.kinds ? opts.kinds.split(',').map((s) => s.trim()) : undefined,
+      reverse: opts.reverse,
+      fromFile: opts.fromFile,
+      toFile: opts.toFile,
       kind: opts.kind,
       noTests: resolveNoTests(opts),
       json: opts.json,

@@ -115,6 +115,15 @@ describe('CLI smoke tests', () => {
     expect(data).toHaveProperty('results');
   });
 
+  // ─── Path ───────────────────────────────────────────────────────────
+  test('path --json returns valid JSON with path info', () => {
+    const out = run('path', 'sumOfSquares', 'add', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data).toHaveProperty('found');
+    expect(data).toHaveProperty('path');
+    expect(data).toHaveProperty('hops');
+  });
+
   // ─── Cycles ──────────────────────────────────────────────────────────
   test('cycles --json returns valid JSON', () => {
     const out = run('cycles', '--db', dbPath, '--json');
