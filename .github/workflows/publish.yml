@@ -250,6 +250,7 @@ jobs:
             exit 0
           }
 
+          # When fewer than 5 dev releases exist, OLD_TAGS is empty and the loop is a no-op
           echo "$OLD_TAGS" | while read -r tag; do
             [ -z "$tag" ] && continue
             echo "Deleting old dev release: $tag"
@@ -272,8 +273,14 @@ jobs:
           Tarballs attached to [GitHub release \`${TAG}\`](${{ github.server_url }}/${{ github.repository }}/releases/tag/${TAG}).
 
           \`\`\`bash
-          # Install the main package from the release tarball:
+          # Install the main package (uses WASM fallback):
           npm install ${{ github.server_url }}/${{ github.repository }}/releases/download/${TAG}/optave-codegraph-${VERSION}.tgz
+
+          # For native performance, also install your platform package:
+          # Linux x64:
+          npm install ${{ github.server_url }}/${{ github.repository }}/releases/download/${TAG}/optave-codegraph-linux-x64-gnu-${VERSION}.tgz
+          # macOS arm64:
+          npm install ${{ github.server_url }}/${{ github.repository }}/releases/download/${TAG}/optave-codegraph-darwin-arm64-${VERSION}.tgz
           \`\`\`
           EOF
 
