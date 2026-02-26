@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from './config.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
-import { getBuildMeta, initSchema, openDb, setBuildMeta } from './db.js';
+import { closeDb, getBuildMeta, initSchema, openDb, setBuildMeta } from './db.js';
 import { readJournal, writeJournalHeader } from './journal.js';
 import { debug, info, warn } from './logger.js';
 import { getActiveEngine, parseFilesAuto } from './parser.js';
@@ -418,7 +418,7 @@ export async function buildGraph(rootDir, opts = {}) {
       }
     }
     info('No changes detected. Graph is up to date.');
-    db.close();
+    closeDb(db);
     writeJournalHeader(rootDir, Date.now());
     return;
   }
@@ -477,7 +477,9 @@ export async function buildGraph(rootDir, opts = {}) {
     info(
       `Incremental: ${parseChanges.length} changed, ${removed.length} removed${reverseDeps.size > 0 ? `, ${reverseDeps.size} reverse-deps` : ''}`,
     );
-
+    if (parseChanges.length > 0)
+      debug(`Changed files: ${parseChanges.map((c) => c.relPath).join(', ')}`);
+    if (removed.length > 0) debug(`Removed files: ${removed.join(', ')}`);
     // Remove embeddings/metrics/edges/nodes for changed and removed files
     // Embeddings must be deleted BEFORE nodes (we need node IDs to find them)
     const deleteEmbeddingsForFile = hasEmbeddings
@@ -1010,7 +1012,7 @@ export async function buildGraph(rootDir, opts = {}) {
     debug(`Failed to write build metadata: ${err.message}`);
   }
 
-  db.close();
+  closeDb(db);
 
   // Write journal header after successful build
   writeJournalHeader(rootDir, Date.now());

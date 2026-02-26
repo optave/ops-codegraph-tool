@@ -240,6 +240,34 @@ describe('checkForUpdates', () => {
     }
   });
 
+  it('returns null for prerelease versions (e.g. beta)', async () => {
+    const origIsTTY = process.stderr.isTTY;
+    process.stderr.isTTY = true;
+    try {
+      const result = await checkForUpdates('2.0.0-beta.1', {
+        cachePath,
+        _fetchLatest: async () => '2.0.0',
+      });
+      expect(result).toBeNull();
+    } finally {
+      process.stderr.isTTY = origIsTTY;
+    }
+  });
+
+  it('returns null for dev versions (e.g. -dev)', async () => {
+    const origIsTTY = process.stderr.isTTY;
+    process.stderr.isTTY = true;
+    try {
+      const result = await checkForUpdates('1.5.0-dev', {
+        cachePath,
+        _fetchLatest: async () => '2.0.0',
+      });
+      expect(result).toBeNull();
+    } finally {
+      process.stderr.isTTY = origIsTTY;
+    }
+  });
+
   it('returns null from fresh cache when version is current', async () => {
     const origIsTTY = process.stderr.isTTY;
     process.stderr.isTTY = true;

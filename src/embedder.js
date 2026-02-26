@@ -2,8 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
-import Database from 'better-sqlite3';
-import { findDbPath, openReadonlyOrFail } from './db.js';
+import { closeDb, findDbPath, openDb, openReadonlyOrFail } from './db.js';
 import { info, warn } from './logger.js';
 
 /**
@@ -407,7 +406,7 @@ export async function buildEmbeddings(rootDir, modelKey, customDbPath, options =
     process.exit(1);
   }
 
-  const db = new Database(dbPath);
+  const db = openDb(dbPath);
   initEmbeddingsSchema(db);
 
   db.exec('DELETE FROM embeddings');
@@ -512,7 +511,7 @@ export async function buildEmbeddings(rootDir, modelKey, customDbPath, options =
   console.log(
     `\nStored ${vectors.length} embeddings (${dim}d, ${config.name}, strategy: ${strategy}) in graph.db`,
   );
-  db.close();
+  closeDb(db);
 }
 
 /**

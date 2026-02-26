@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { normalizePath } from './constants.js';
-import { findDbPath, initSchema, openDb, openReadonlyOrFail } from './db.js';
+import { closeDb, findDbPath, initSchema, openDb, openReadonlyOrFail } from './db.js';
 import { warn } from './logger.js';
 import { isTestFile } from './queries.js';
 
@@ -145,7 +145,7 @@ export function analyzeCoChanges(customDbPath, opts = {}) {
   const repoRoot = path.resolve(path.dirname(dbPath), '..');
 
   if (!fs.existsSync(path.join(repoRoot, '.git'))) {
-    db.close();
+    closeDb(db);
     return { error: `Not a git repository: ${repoRoot}` };
   }
 
@@ -245,7 +245,7 @@ export function analyzeCoChanges(customDbPath, opts = {}) {
 
   const totalPairs = db.prepare('SELECT COUNT(*) as cnt FROM co_changes').get().cnt;
 
-  db.close();
+  closeDb(db);
 
   return {
     pairsFound: totalPairs,
@@ -275,14 +275,14 @@ export function coChangeData(file, customDbPath, opts = {}) {
   try {
     db.prepare('SELECT 1 FROM co_changes LIMIT 1').get();
   } catch {
-    db.close();
+    closeDb(db);
     return { error: 'No co-change data found. Run `codegraph co-change --analyze` first.' };
   }
 
   // Resolve file via partial match
   const resolvedFile = resolveCoChangeFile(db, file);
   if (!resolvedFile) {
-    db.close();
+    closeDb(db);
     return { error: `No co-change data found for file matching "${file}"` };
   }
 
@@ -311,7 +311,7 @@ export function coChangeData(file, customDbPath, opts = {}) {
   }
 
   const meta = getCoChangeMeta(db);
-  db.close();
+  closeDb(db);
 
   return { file: resolvedFile, partners, meta };
 }
@@ -334,7 +334,7 @@ export function coChangeTopData(customDbPath, opts = {}) {
   try {
     db.prepare('SELECT 1 FROM co_changes LIMIT 1').get();
   } catch {
-    db.close();
+    closeDb(db);
     return { error: 'No co-change data found. Run `codegraph co-change --analyze` first.' };
   }
 
@@ -363,7 +363,7 @@ export function coChangeTopData(customDbPath, opts = {}) {
   }
 
   const meta = getCoChangeMeta(db);
-  db.close();
+  closeDb(db);
 
   return { pairs, meta };
 }

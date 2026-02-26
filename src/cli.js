@@ -470,6 +470,7 @@ program
     `Embedding strategy: ${EMBEDDING_STRATEGIES.join(', ')}. "structured" uses graph context (callers/callees), "source" embeds raw code`,
     'structured',
   )
+  .option('-d, --db <path>', 'Path to graph.db')
   .action(async (dir, opts) => {
     if (!EMBEDDING_STRATEGIES.includes(opts.strategy)) {
       console.error(
@@ -479,7 +480,7 @@ program
     }
     const root = path.resolve(dir || '.');
     const model = opts.model || config.embeddings?.model || DEFAULT_MODEL;
-    await buildEmbeddings(root, model, undefined, { strategy: opts.strategy });
+    await buildEmbeddings(root, model, opts.db, { strategy: opts.strategy });
   });
 
 program
