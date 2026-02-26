@@ -59,8 +59,15 @@
     "commander": "^14.0.3",
     "web-tree-sitter": "^0.26.5"
   },
+  "peerDependencies": {
+    "@huggingface/transformers": "^3.8.1"
+  },
+  "peerDependenciesMeta": {
+    "@huggingface/transformers": {
+      "optional": true
+    }
+  },
   "optionalDependencies": {
-    "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@optave/codegraph-darwin-arm64": "2.3.0",
     "@optave/codegraph-darwin-x64": "2.3.0",

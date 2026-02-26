@@ -1,5 +1,7 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createInterface } from 'node:readline';
 import Database from 'better-sqlite3';
 import { findDbPath, openReadonlyOrFail } from './db.js';
 import { warn } from './logger.js';
@@ -223,17 +225,51 @@ function buildSourceText(node, file, lines) {
 }
 
 /**
+ * Prompt the user to install a missing package interactively.
+ * Returns true if the package was installed, false otherwise.
+ * Skips the prompt entirely in non-TTY environments (CI, piped stdin).
+ */
+function promptInstall(packageName) {
+  if (!process.stdin.isTTY) return Promise.resolve(false);
+
+  return new Promise((resolve) => {
+    const rl = createInterface({ input: process.stdin, output: process.stderr });
+    rl.question(`Semantic search requires ${packageName}. Install it now? [y/N] `, (answer) => {
+      rl.close();
+      if (answer.trim().toLowerCase() !== 'y') return resolve(false);
+      try {
+        execFileSync('npm', ['install', packageName], {
+          stdio: 'inherit',
+          timeout: 300_000,
+        });
+        resolve(true);
+      } catch {
+        resolve(false);
+      }
+    });
+  });
+}
+
+/**
  * Lazy-load @huggingface/transformers.
- * This is an optional dependency — gives a clear error if not installed.
+ * If the package is missing, prompts the user to install it interactively.
+ * In non-TTY environments, prints an error and exits.
  */
 async function loadTransformers() {
   try {
     return await import('@huggingface/transformers');
   } catch {
-    console.error(
-      'Semantic search requires @huggingface/transformers.\n' +
-        'Install it with: npm install @huggingface/transformers',
-    );
+    const pkg = '@huggingface/transformers';
+    const installed = await promptInstall(pkg);
+    if (installed) {
+      try {
+        return await import(pkg);
+      } catch {
+        console.error(`\n${pkg} was installed but failed to load. Please check your environment.`);
+        process.exit(1);
+      }
+    }
+    console.error(`Semantic search requires ${pkg}.\n` + `Install it with: npm install ${pkg}`);
     process.exit(1);
   }
 }
