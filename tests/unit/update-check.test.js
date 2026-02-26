@@ -10,6 +10,8 @@ let cachePath;
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-update-'));
   cachePath = path.join(tmpDir, '.codegraph', 'update-check.json');
+  // Clear CI env so the early-return guard doesn't short-circuit every test
+  vi.stubEnv('CI', '');
 });
 
 afterEach(() => {
