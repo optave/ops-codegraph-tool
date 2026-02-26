@@ -28,8 +28,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: "npm"
 
-      - run: npm install
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
 
       - name: Run build benchmark
         run: node scripts/benchmark.js 2>/dev/null > benchmark-result.json
@@ -91,8 +93,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: "npm"
 
-      - run: npm install
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
 
       - name: Cache HuggingFace models
         uses: actions/cache@v4
@@ -166,8 +170,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: "npm"
 
-      - run: npm install
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
 
       - name: Run query benchmark
         run: node scripts/query-benchmark.js 2>/dev/null > query-benchmark-result.json
@@ -229,8 +235,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: "npm"
 
-      - run: npm install
+      - name: Install dependencies
+        run: npm ci --prefer-offline --no-audit --no-fund
 
       - name: Run incremental benchmark
         run: node scripts/incremental-benchmark.js 2>/dev/null > incremental-benchmark-result.json

@@ -25,6 +25,8 @@ const ALL_TOOL_NAMES = [
   'list_functions',
   'structure',
   'hotspots',
+  'co_changes',
+  'node_roles',
   'list_repos',
 ];
 
@@ -232,6 +234,7 @@ describe('startMCPServer handler dispatch', () => {
       whereData: vi.fn(() => ({ target: 'test', mode: 'symbol', results: [] })),
       diffImpactData: vi.fn(() => ({ changedFiles: 0, affectedFunctions: [] })),
       listFunctionsData: vi.fn(() => ({ count: 0, functions: [] })),
+      rolesData: vi.fn(() => ({ count: 0, summary: {}, symbols: [] })),
     }));
 
     // Clear module cache and reimport
@@ -294,6 +297,7 @@ describe('startMCPServer handler dispatch', () => {
       whereData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
+      rolesData: vi.fn(),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -350,6 +354,7 @@ describe('startMCPServer handler dispatch', () => {
       whereData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
+      rolesData: vi.fn(),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -401,6 +406,7 @@ describe('startMCPServer handler dispatch', () => {
       whereData: vi.fn(),
       diffImpactData: diffImpactMock,
       listFunctionsData: vi.fn(),
+      rolesData: vi.fn(),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -457,6 +463,7 @@ describe('startMCPServer handler dispatch', () => {
       whereData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: listFnMock,
+      rolesData: vi.fn(),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -514,6 +521,7 @@ describe('startMCPServer handler dispatch', () => {
       whereData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
+      rolesData: vi.fn(),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -566,6 +574,7 @@ describe('startMCPServer handler dispatch', () => {
       whereData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
+      rolesData: vi.fn(),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -617,6 +626,7 @@ describe('startMCPServer handler dispatch', () => {
       whereData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
+      rolesData: vi.fn(),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -670,6 +680,7 @@ describe('startMCPServer handler dispatch', () => {
       whereData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
+      rolesData: vi.fn(),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -726,6 +737,7 @@ describe('startMCPServer handler dispatch', () => {
       whereData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
+      rolesData: vi.fn(),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -782,6 +794,7 @@ describe('startMCPServer handler dispatch', () => {
       whereData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
+      rolesData: vi.fn(),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -829,6 +842,7 @@ describe('startMCPServer handler dispatch', () => {
       whereData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
+      rolesData: vi.fn(),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -876,6 +890,7 @@ describe('startMCPServer handler dispatch', () => {
       whereData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
+      rolesData: vi.fn(),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');
@@ -923,6 +938,7 @@ describe('startMCPServer handler dispatch', () => {
       whereData: vi.fn(),
       diffImpactData: vi.fn(),
       listFunctionsData: vi.fn(),
+      rolesData: vi.fn(),
     }));
 
     const { startMCPServer } = await import('../../src/mcp.js');

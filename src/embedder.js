@@ -16,6 +16,28 @@ function splitIdentifier(name) {
     .trim();
 }
 
+/**
+ * Match a file path against a glob pattern.
+ * Supports *, **, and ? wildcards. Zero dependencies.
+ */
+function globMatch(filePath, pattern) {
+  // Normalize separators to forward slashes
+  const normalized = filePath.replace(/\\/g, '/');
+  // Escape regex specials except glob chars
+  let regex = pattern.replace(/\\/g, '/').replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  // Replace ** first (matches any path segment), then * and ?
+  regex = regex.replace(/\*\*/g, '\0');
+  regex = regex.replace(/\*/g, '[^/]*');
+  regex = regex.replace(/\0/g, '.*');
+  regex = regex.replace(/\?/g, '[^/]');
+  try {
+    return new RegExp(`^${regex}$`).test(normalized);
+  } catch {
+    // Malformed pattern — fall back to substring match
+    return normalized.includes(pattern);
+  }
+}
+
 // Lazy-load transformers (heavy, optional module)
 let pipeline = null;
 let _cos_sim = null;
@@ -76,7 +98,7 @@ export const MODELS = {
 
 export const EMBEDDING_STRATEGIES = ['structured', 'source'];
 
-export const DEFAULT_MODEL = 'minilm';
+export const DEFAULT_MODEL = 'nomic-v1.5';
 const BATCH_SIZE_MAP = {
   minilm: 32,
   'jina-small': 16,
@@ -216,10 +238,25 @@ async function loadTransformers() {
   }
 }
 
+/**
+ * Dispose the current ONNX session and free memory.
+ * Safe to call when no model is loaded (no-op).
+ */
+export async function disposeModel() {
+  if (extractor) {
+    await extractor.dispose();
+    extractor = null;
+  }
+  activeModel = null;
+}
+
 async function loadModel(modelKey) {
   const config = getModelConfig(modelKey);
 
   if (extractor && activeModel === config.name) return { extractor, config };
+
+  // Dispose previous model before loading a different one
+  await disposeModel();
 
   const transformers = await loadTransformers();
   pipeline = transformers.pipeline;
@@ -496,7 +533,8 @@ function _prepareSearch(customDbPath, opts = {}) {
     conditions.push('n.kind = ?');
     params.push(opts.kind);
   }
-  if (opts.filePattern) {
+  const isGlob = opts.filePattern && /[*?[\]]/.test(opts.filePattern);
+  if (opts.filePattern && !isGlob) {
     conditions.push('n.file LIKE ?');
     params.push(`%${opts.filePattern}%`);
   }
@@ -505,6 +543,9 @@ function _prepareSearch(customDbPath, opts = {}) {
   }
 
   let rows = db.prepare(sql).all(...params);
+  if (isGlob) {
+    rows = rows.filter((row) => globMatch(row.file, opts.filePattern));
+  }
   if (noTests) {
     rows = rows.filter((row) => !TEST_PATTERN.test(row.file));
   }
@@ -668,6 +709,11 @@ export async function search(query, customDbPath, opts = {}) {
     const data = await searchData(singleQuery, customDbPath, opts);
     if (!data) return;
 
+    if (opts.json) {
+      console.log(JSON.stringify(data, null, 2));
+      return;
+    }
+
     console.log(`\nSemantic search: "${singleQuery}"\n`);
 
     if (data.results.length === 0) {
@@ -686,6 +732,11 @@ export async function search(query, customDbPath, opts = {}) {
     // Multi-query path — RRF ranking
     const data = await multiSearchData(queries, customDbPath, opts);
     if (!data) return;
+
+    if (opts.json) {
+      console.log(JSON.stringify(data, null, 2));
+      return;
+    }
 
     console.log(`\nMulti-query semantic search (RRF, k=${opts.rrfK || 60}):`);
     queries.forEach((q, i) => {

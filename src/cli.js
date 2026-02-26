@@ -7,7 +7,13 @@ import { buildGraph } from './builder.js';
 import { loadConfig } from './config.js';
 import { findCycles, formatCycles } from './cycles.js';
 import { openReadonlyOrFail } from './db.js';
-import { buildEmbeddings, EMBEDDING_STRATEGIES, MODELS, search } from './embedder.js';
+import {
+  buildEmbeddings,
+  DEFAULT_MODEL,
+  EMBEDDING_STRATEGIES,
+  MODELS,
+  search,
+} from './embedder.js';
 import { exportDOT, exportJSON, exportMermaid } from './export.js';
 import { setVerbose } from './logger.js';
 import {
@@ -21,7 +27,9 @@ import {
   impactAnalysis,
   moduleMap,
   queryName,
+  roles,
   stats,
+  VALID_ROLES,
   where,
 } from './queries.js';
 import {
@@ -31,6 +39,7 @@ import {
   registerRepo,
   unregisterRepo,
 } from './registry.js';
+import { checkForUpdates, printUpdateNotification } from './update-check.js';
 import { watchProject } from './watcher.js';
 
 const __cliDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'));
@@ -48,6 +57,17 @@ program
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts();
     if (opts.verbose) setVerbose(true);
+  })
+  .hook('postAction', async (_thisCommand, actionCommand) => {
+    const name = actionCommand.name();
+    if (name === 'mcp' || name === 'watch') return;
+    if (actionCommand.opts().json) return;
+    try {
+      const result = await checkForUpdates(pkg.version);
+      if (result) printUpdateNotification(result.current, result.latest);
+    } catch {
+      /* never break CLI */
+    }
   });
 
 /**
@@ -272,6 +292,7 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('--min-confidence <score>', 'Minimum edge confidence threshold (default: 0.5)', '0.5')
+  .option('--direction <dir>', 'Flowchart direction for Mermaid: TB, LR, RL, BT', 'LR')
   .option('-o, --output <file>', 'Write to file instead of stdout')
   .action((opts) => {
     const db = openReadonlyOrFail(opts.db);
@@ -279,6 +300,7 @@ program
       fileLevel: !opts.functions,
       noTests: resolveNoTests(opts),
       minConfidence: parseFloat(opts.minConfidence),
+      direction: opts.direction,
     };
 
     let output;
@@ -395,8 +417,15 @@ registry
   .command('prune')
   .description('Remove stale registry entries (missing directories or idle beyond TTL)')
   .option('--ttl <days>', 'Days of inactivity before pruning (default: 30)', '30')
+  .option('--exclude <names>', 'Comma-separated repo names to preserve from pruning')
   .action((opts) => {
-    const pruned = pruneRegistry(undefined, parseInt(opts.ttl, 10));
+    const excludeNames = opts.exclude
+      ? opts.exclude
+          .split(',')
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0)
+      : [];
+    const pruned = pruneRegistry(undefined, parseInt(opts.ttl, 10), excludeNames);
     if (pruned.length === 0) {
       console.log('No stale entries found.');
     } else {
@@ -414,12 +443,13 @@ program
   .command('models')
   .description('List available embedding models')
   .action(() => {
+    const defaultModel = config.embeddings?.model || DEFAULT_MODEL;
     console.log('\nAvailable embedding models:\n');
-    for (const [key, config] of Object.entries(MODELS)) {
-      const def = key === 'minilm' ? ' (default)' : '';
-      const ctx = config.contextWindow ? `${config.contextWindow} ctx` : '';
+    for (const [key, cfg] of Object.entries(MODELS)) {
+      const def = key === defaultModel ? ' (default)' : '';
+      const ctx = cfg.contextWindow ? `${cfg.contextWindow} ctx` : '';
       console.log(
-        `  ${key.padEnd(12)} ${String(config.dim).padStart(4)}d  ${ctx.padEnd(9)} ${config.desc}${def}`,
+        `  ${key.padEnd(12)} ${String(cfg.dim).padStart(4)}d  ${ctx.padEnd(9)} ${cfg.desc}${def}`,
       );
     }
     console.log('\nUsage: codegraph embed --model <name> --strategy <structured|source>');
@@ -433,8 +463,7 @@ program
   )
   .option(
     '-m, --model <name>',
-    'Embedding model: minilm (default), jina-small, jina-base, jina-code, nomic, nomic-v1.5, bge-large. Run `codegraph models` for details',
-    'minilm',
+    'Embedding model (default from config or minilm). Run `codegraph models` for details',
   )
   .option(
     '-s, --strategy <name>',
@@ -449,7 +478,8 @@ program
       process.exit(1);
     }
     const root = path.resolve(dir || '.');
-    await buildEmbeddings(root, opts.model, undefined, { strategy: opts.strategy });
+    const model = opts.model || config.embeddings?.model || DEFAULT_MODEL;
+    await buildEmbeddings(root, model, undefined, { strategy: opts.strategy });
   });
 
 program
@@ -464,6 +494,7 @@ program
   .option('-k, --kind <kind>', 'Filter by kind: function, method, class')
   .option('--file <pattern>', 'Filter by file path pattern')
   .option('--rrf-k <number>', 'RRF k parameter for multi-query ranking', '60')
+  .option('-j, --json', 'Output as JSON')
   .action(async (query, opts) => {
     await search(query, opts.db, {
       limit: parseInt(opts.limit, 10),
@@ -473,6 +504,7 @@ program
       kind: opts.kind,
       filePattern: opts.file,
       rrfK: parseInt(opts.rrfK, 10),
+      json: opts.json,
     });
   });
 
@@ -484,6 +516,7 @@ program
   .option('-d, --db <path>', 'Path to graph.db')
   .option('--depth <n>', 'Max directory depth')
   .option('--sort <metric>', 'Sort by: cohesion | fan-in | fan-out | density | files', 'files')
+  .option('--full', 'Show all files without limit')
   .option('-T, --no-tests', 'Exclude test/spec files')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
@@ -493,6 +526,7 @@ program
       directory: dir,
       depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
       sort: opts.sort,
+      full: opts.full,
       noTests: resolveNoTests(opts),
     });
     if (opts.json) {
@@ -526,6 +560,90 @@ program
       console.log(JSON.stringify(data, null, 2));
     } else {
       console.log(formatHotspots(data));
+    }
+  });
+
+program
+  .command('roles')
+  .description('Show node role classification: entry, core, utility, adapter, dead, leaf')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('--role <role>', `Filter by role (${VALID_ROLES.join(', ')})`)
+  .option('-f, --file <path>', 'Scope to a specific file (partial match)')
+  .option('-T, --no-tests', 'Exclude test/spec files')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .action((opts) => {
+    if (opts.role && !VALID_ROLES.includes(opts.role)) {
+      console.error(`Invalid role "${opts.role}". Valid roles: ${VALID_ROLES.join(', ')}`);
+      process.exit(1);
+    }
+    roles(opts.db, {
+      role: opts.role,
+      file: opts.file,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+    });
+  });
+
+program
+  .command('co-change [file]')
+  .description(
+    'Analyze git history for files that change together. Use --analyze to scan, or query existing data.',
+  )
+  .option('--analyze', 'Scan git history and populate co-change data')
+  .option('--since <date>', 'Git date for history window (default: "1 year ago")')
+  .option('--min-support <n>', 'Minimum co-occurrence count (default: 3)')
+  .option('--min-jaccard <n>', 'Minimum Jaccard similarity 0-1 (default: 0.3)')
+  .option('--full', 'Force full re-scan (ignore incremental state)')
+  .option('-n, --limit <n>', 'Max results', '20')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-T, --no-tests', 'Exclude test/spec files')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (file, opts) => {
+    const { analyzeCoChanges, coChangeData, coChangeTopData, formatCoChange, formatCoChangeTop } =
+      await import('./cochange.js');
+
+    if (opts.analyze) {
+      const result = analyzeCoChanges(opts.db, {
+        since: opts.since || config.coChange?.since,
+        minSupport: opts.minSupport ? parseInt(opts.minSupport, 10) : config.coChange?.minSupport,
+        maxFilesPerCommit: config.coChange?.maxFilesPerCommit,
+        full: opts.full,
+      });
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else if (result.error) {
+        console.error(result.error);
+        process.exit(1);
+      } else {
+        console.log(
+          `\nCo-change analysis complete: ${result.pairsFound} pairs from ${result.commitsScanned} commits (since: ${result.since})\n`,
+        );
+      }
+      return;
+    }
+
+    const queryOpts = {
+      limit: parseInt(opts.limit, 10),
+      minJaccard: opts.minJaccard ? parseFloat(opts.minJaccard) : config.coChange?.minJaccard,
+      noTests: resolveNoTests(opts),
+    };
+
+    if (file) {
+      const data = coChangeData(file, opts.db, queryOpts);
+      if (opts.json) {
+        console.log(JSON.stringify(data, null, 2));
+      } else {
+        console.log(formatCoChange(data));
+      }
+    } else {
+      const data = coChangeTopData(opts.db, queryOpts);
+      if (opts.json) {
+        console.log(JSON.stringify(data, null, 2));
+      } else {
+        console.log(formatCoChangeTop(data));
+      }
     }
   });
 
@@ -564,6 +682,43 @@ program
     console.log(`  Engine flag   : --engine ${engine}`);
     console.log(`  Active engine : ${activeName}${activeVersion ? ` (v${activeVersion})` : ''}`);
     console.log();
+
+    // Build metadata from DB
+    try {
+      const { findDbPath, getBuildMeta } = await import('./db.js');
+      const Database = (await import('better-sqlite3')).default;
+      const dbPath = findDbPath();
+      const fs = await import('node:fs');
+      if (fs.existsSync(dbPath)) {
+        const db = new Database(dbPath, { readonly: true });
+        const buildEngine = getBuildMeta(db, 'engine');
+        const buildVersion = getBuildMeta(db, 'codegraph_version');
+        const builtAt = getBuildMeta(db, 'built_at');
+        db.close();
+
+        if (buildEngine || buildVersion || builtAt) {
+          console.log('Build metadata');
+          console.log('──────────────');
+          if (buildEngine) console.log(`  Engine        : ${buildEngine}`);
+          if (buildVersion) console.log(`  Version       : ${buildVersion}`);
+          if (builtAt) console.log(`  Built at      : ${builtAt}`);
+
+          if (buildVersion && buildVersion !== program.version()) {
+            console.log(
+              `  ⚠ DB was built with v${buildVersion}, current is v${program.version()}. Consider: codegraph build --no-incremental`,
+            );
+          }
+          if (buildEngine && buildEngine !== activeName) {
+            console.log(
+              `  ⚠ DB was built with ${buildEngine} engine, active is ${activeName}. Consider: codegraph build --no-incremental`,
+            );
+          }
+          console.log();
+        }
+      }
+    } catch {
+      /* diagnostics must never crash */
+    }
   });
 
 program.parse();

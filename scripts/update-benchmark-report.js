@@ -214,9 +214,10 @@ ${rows}
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 `;
 
-	// Match the performance section from header to next ## header or end
-	// Use \r?\n to handle both Unix and Windows line endings
-	const perfRegex = /## 📊 Performance\r?\n[\s\S]*?(?=\r?\n## |$)/;
+	// Match the performance section from header to next h2 (## ) header or end.
+	// The lookahead must reject h3+ (###) so subsections like "### Lightweight
+	// Footprint" are preserved and not swallowed by the replacement.
+	const perfRegex = /## 📊 Performance\r?\n[\s\S]*?(?=\r?\n## (?!#)|$)/;
 	if (perfRegex.test(readme)) {
 		readme = readme.replace(perfRegex, perfSection);
 	} else {

@@ -13,7 +13,7 @@ on:
         type: string
 
 concurrency:
-  group: publish
+  group: publish-${{ github.event_name }}
   cancel-in-progress: true
 
 permissions: {}
@@ -318,7 +318,7 @@ jobs:
           VERSION: ${{ needs.compute-version.outputs.version }}
         run: |
           git checkout -- package-lock.json
-          npm version "$VERSION" --no-git-tag-version
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
           node scripts/sync-native-versions.js
           echo "Publishing version $VERSION"
 

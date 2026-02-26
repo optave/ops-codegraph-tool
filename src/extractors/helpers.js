@@ -4,7 +4,8 @@ export function nodeEndLine(node) {
 
 export function findChild(node, type) {
   for (let i = 0; i < node.childCount; i++) {
-    if (node.child(i).type === type) return node.child(i);
+    const child = node.child(i);
+    if (child.type === type) return child;
   }
   return null;
 }

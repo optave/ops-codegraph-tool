@@ -517,5 +517,5 @@ cp node_modules/@optave/codegraph/.github/workflows/codegraph-impact.yml .github
 codegraph embed
 
 # 7. (Optional) Add CLAUDE.md for AI agents
-# See docs/ai-agent-guide.md for the full template
+# See docs/guides/ai-agent-guide.md for the full template
 ```

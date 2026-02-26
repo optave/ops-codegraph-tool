@@ -71,7 +71,65 @@ export const MIGRATIONS = [
     version: 4,
     up: `ALTER TABLE file_hashes ADD COLUMN size INTEGER DEFAULT 0;`,
   },
+  {
+    version: 5,
+    up: `
+      CREATE TABLE IF NOT EXISTS co_changes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file_a TEXT NOT NULL,
+        file_b TEXT NOT NULL,
+        commit_count INTEGER NOT NULL,
+        jaccard REAL NOT NULL,
+        last_commit_epoch INTEGER,
+        UNIQUE(file_a, file_b)
+      );
+      CREATE INDEX IF NOT EXISTS idx_co_changes_file_a ON co_changes(file_a);
+      CREATE INDEX IF NOT EXISTS idx_co_changes_file_b ON co_changes(file_b);
+      CREATE INDEX IF NOT EXISTS idx_co_changes_jaccard ON co_changes(jaccard DESC);
+      CREATE TABLE IF NOT EXISTS co_change_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `,
+  },
+  {
+    version: 6,
+    up: `
+      CREATE TABLE IF NOT EXISTS file_commit_counts (
+        file TEXT PRIMARY KEY,
+        commit_count INTEGER NOT NULL DEFAULT 0
+      );
+    `,
+  },
+  {
+    version: 7,
+    up: `
+      CREATE TABLE IF NOT EXISTS build_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `,
+  },
 ];
+
+export function getBuildMeta(db, key) {
+  try {
+    const row = db.prepare('SELECT value FROM build_meta WHERE key = ?').get(key);
+    return row ? row.value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setBuildMeta(db, entries) {
+  const upsert = db.prepare('INSERT OR REPLACE INTO build_meta (key, value) VALUES (?, ?)');
+  const tx = db.transaction(() => {
+    for (const [key, value] of Object.entries(entries)) {
+      upsert.run(key, String(value));
+    }
+  });
+  tx();
+}
 
 export function openDb(dbPath) {
   const dir = path.dirname(dbPath);
@@ -112,6 +170,16 @@ export function initSchema(db) {
   }
   try {
     db.exec('ALTER TABLE edges ADD COLUMN dynamic INTEGER DEFAULT 0');
+  } catch {
+    /* already exists */
+  }
+  try {
+    db.exec('ALTER TABLE nodes ADD COLUMN role TEXT');
+  } catch {
+    /* already exists */
+  }
+  try {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_role ON nodes(role)');
   } catch {
     /* already exists */
   }

@@ -220,6 +220,24 @@ describe('multiSearchData', () => {
   });
 });
 
+describe('searchData file pattern', () => {
+  test('glob src/*.js matches only direct children of src/', async () => {
+    const data = await searchData('auth', dbPath, { minScore: 0.01, filePattern: 'src/*.js' });
+    expect(data).not.toBeNull();
+    for (const r of data.results) {
+      expect(r.file).toMatch(/^src\/[^/]+\.js$/);
+    }
+  });
+
+  test('plain substring auth still works (backward compat)', async () => {
+    const data = await searchData('auth', dbPath, { minScore: 0.01, filePattern: 'auth' });
+    expect(data).not.toBeNull();
+    for (const r of data.results) {
+      expect(r.file).toContain('auth');
+    }
+  });
+});
+
 describe('search (CLI wrapper)', () => {
   /** Capture console.log calls and return joined output. */
   function captureLog(fn) {
@@ -252,5 +270,23 @@ describe('search (CLI wrapper)', () => {
     const out = await captureLog(() => search('auth ;', dbPath, { minScore: 0.2 }));
     expect(out).toContain('Semantic search: "auth"');
     expect(out).not.toContain('Multi-query');
+  });
+
+  test('single query with json: true outputs valid JSON with results array', async () => {
+    const out = await captureLog(() => search('auth', dbPath, { minScore: 0.2, json: true }));
+    const parsed = JSON.parse(out);
+    expect(parsed.results).toBeInstanceOf(Array);
+    expect(parsed.results.length).toBeGreaterThan(0);
+    expect(parsed.results[0]).toHaveProperty('similarity');
+    expect(parsed.results[0]).toHaveProperty('name');
+  });
+
+  test('multi query with json: true outputs valid JSON with rrf and queryScores', async () => {
+    const out = await captureLog(() => search('auth ; jwt', dbPath, { minScore: 0.2, json: true }));
+    const parsed = JSON.parse(out);
+    expect(parsed.results).toBeInstanceOf(Array);
+    expect(parsed.results.length).toBeGreaterThan(0);
+    expect(parsed.results[0]).toHaveProperty('rrf');
+    expect(parsed.results[0]).toHaveProperty('queryScores');
   });
 });

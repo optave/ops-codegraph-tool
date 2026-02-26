@@ -130,9 +130,9 @@ describe('CLI smoke tests', () => {
   });
 
   // ─── Export (Mermaid) ────────────────────────────────────────────────
-  test('export -f mermaid outputs graph LR', () => {
+  test('export -f mermaid outputs flowchart LR', () => {
     const out = run('export', '--db', dbPath, '-f', 'mermaid');
-    expect(out).toContain('graph LR');
+    expect(out).toContain('flowchart LR');
   });
 
   // ─── Export (JSON) ───────────────────────────────────────────────────

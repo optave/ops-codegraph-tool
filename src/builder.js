@@ -3,13 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from './config.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
-import { initSchema, openDb } from './db.js';
+import { getBuildMeta, initSchema, openDb, setBuildMeta } from './db.js';
 import { readJournal, writeJournalHeader } from './journal.js';
 import { debug, info, warn } from './logger.js';
 import { getActiveEngine, parseFilesAuto } from './parser.js';
 import { computeConfidence, resolveImportPath, resolveImportsBatch } from './resolve.js';
 
 export { resolveImportPath } from './resolve.js';
+
+const __builderDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'));
+const CODEGRAPH_VERSION = JSON.parse(
+  fs.readFileSync(path.join(__builderDir, '..', 'package.json'), 'utf-8'),
+).version;
 
 const BUILTIN_RECEIVERS = new Set([
   'console',
@@ -345,6 +350,22 @@ export async function buildGraph(rootDir, opts = {}) {
   const engineOpts = { engine: opts.engine || 'auto' };
   const { name: engineName, version: engineVersion } = getActiveEngine(engineOpts);
   info(`Using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
+
+  // Check for engine/version mismatch on incremental builds
+  if (incremental) {
+    const prevEngine = getBuildMeta(db, 'engine');
+    const prevVersion = getBuildMeta(db, 'codegraph_version');
+    if (prevEngine && prevEngine !== engineName) {
+      warn(
+        `Engine changed (${prevEngine} → ${engineName}). Consider rebuilding with --no-incremental for consistency.`,
+      );
+    }
+    if (prevVersion && prevVersion !== CODEGRAPH_VERSION) {
+      warn(
+        `Codegraph version changed (${prevVersion} → ${CODEGRAPH_VERSION}). Consider rebuilding with --no-incremental for consistency.`,
+      );
+    }
+  }
 
   const aliases = loadPathAliases(rootDir);
   // Merge config aliases
@@ -827,6 +848,59 @@ export async function buildGraph(rootDir, opts = {}) {
     }
   }
 
+  // For incremental builds, buildStructure needs ALL files (not just changed ones)
+  // because it clears and rebuilds all contains edges and directory metrics.
+  // Load unchanged files from the DB so structure data stays complete.
+  if (!isFullBuild) {
+    const existingFiles = db.prepare("SELECT DISTINCT file FROM nodes WHERE kind = 'file'").all();
+    const defsByFile = db.prepare(
+      "SELECT name, kind, line FROM nodes WHERE file = ? AND kind != 'file' AND kind != 'directory'",
+    );
+    // Count imports per file — buildStructure only uses imports.length for metrics
+    const importCountByFile = db.prepare(
+      `SELECT COUNT(DISTINCT n2.file) AS cnt FROM edges e
+       JOIN nodes n1 ON e.source_id = n1.id
+       JOIN nodes n2 ON e.target_id = n2.id
+       WHERE n1.file = ? AND e.kind = 'imports'`,
+    );
+    const lineCountByFile = db.prepare(
+      `SELECT n.name AS file, m.line_count
+       FROM node_metrics m JOIN nodes n ON m.node_id = n.id
+       WHERE n.kind = 'file'`,
+    );
+    const cachedLineCounts = new Map();
+    for (const row of lineCountByFile.all()) {
+      cachedLineCounts.set(row.file, row.line_count);
+    }
+    let loadedFromDb = 0;
+    for (const { file: relPath } of existingFiles) {
+      if (!fileSymbols.has(relPath)) {
+        const importCount = importCountByFile.get(relPath)?.cnt || 0;
+        fileSymbols.set(relPath, {
+          definitions: defsByFile.all(relPath),
+          imports: new Array(importCount),
+          exports: [],
+        });
+        loadedFromDb++;
+      }
+      if (!lineCountMap.has(relPath)) {
+        const cached = cachedLineCounts.get(relPath);
+        if (cached != null) {
+          lineCountMap.set(relPath, cached);
+        } else {
+          const absPath = path.join(rootDir, relPath);
+          try {
+            const content = fs.readFileSync(absPath, 'utf-8');
+            lineCountMap.set(relPath, content.split('\n').length);
+          } catch {
+            lineCountMap.set(relPath, 0);
+          }
+        }
+      }
+    }
+    debug(`Structure: ${fileSymbols.size} files (${loadedFromDb} loaded from DB)`);
+  }
+
   // Build directory structure, containment edges, and metrics
   const relDirs = new Set();
   for (const absDir of discoveredDirs) {
@@ -837,6 +911,19 @@ export async function buildGraph(rootDir, opts = {}) {
     buildStructure(db, fileSymbols, rootDir, lineCountMap, relDirs);
   } catch (err) {
     debug(`Structure analysis failed: ${err.message}`);
+  }
+
+  // Classify node roles (entry, core, utility, adapter, dead, leaf)
+  try {
+    const { classifyNodeRoles } = await import('./structure.js');
+    const roleSummary = classifyNodeRoles(db);
+    debug(
+      `Roles: ${Object.entries(roleSummary)
+        .map(([r, c]) => `${r}=${c}`)
+        .join(', ')}`,
+    );
+  } catch (err) {
+    debug(`Role classification failed: ${err.message}`);
   }
 
   const nodeCount = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c;
@@ -857,6 +944,18 @@ export async function buildGraph(rootDir, opts = {}) {
     } catch {
       /* ignore — embeddings table may have been dropped */
     }
+  }
+
+  // Persist build metadata for mismatch detection
+  try {
+    setBuildMeta(db, {
+      engine: engineName,
+      engine_version: engineVersion || '',
+      codegraph_version: CODEGRAPH_VERSION,
+      built_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    debug(`Failed to write build metadata: ${err.message}`);
   }
 
   db.close();
