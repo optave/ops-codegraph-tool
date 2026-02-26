@@ -406,10 +406,14 @@ Self-measured on every release via CI ([build benchmarks](generated/BUILD-BENCHM
 
 | Metric | Latest |
 |---|---|
-| Build speed (native) | **2.1 ms/file** |
-| Build speed (WASM) | **6.4 ms/file** |
-| Query time | **2ms** |
-| ~50,000 files (est.) | **~105.0s build** |
+| Build speed (native) | **4.7 ms/file** |
+| Build speed (WASM) | **9.2 ms/file** |
+| Query time | **3ms** |
+| No-op rebuild (native) | **3ms** |
+| 1-file rebuild (native) | **260ms** |
+| Query: fn-deps | **2ms** |
+| Query: path | **1.1ms** |
+| ~50,000 files (est.) | **~235.0s build** |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 
