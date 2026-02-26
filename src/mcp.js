@@ -8,7 +8,7 @@
 import { createRequire } from 'node:module';
 import { findCycles } from './cycles.js';
 import { findDbPath } from './db.js';
-import { ALL_SYMBOL_KINDS, diffImpactMermaid } from './queries.js';
+import { ALL_SYMBOL_KINDS, diffImpactMermaid, VALID_ROLES } from './queries.js';
 
 const REPO_PROP = {
   repo: {
@@ -259,7 +259,7 @@ const BASE_TOOLS = [
   {
     name: 'structure',
     description:
-      'Show project structure with directory hierarchy, cohesion scores, and per-file metrics',
+      'Show project structure with directory hierarchy, cohesion scores, and per-file metrics. Per-file details are capped at 25 files by default; use full=true to show all.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -270,6 +270,28 @@ const BASE_TOOLS = [
           enum: ['cohesion', 'fan-in', 'fan-out', 'density', 'files'],
           description: 'Sort directories by metric',
         },
+        full: {
+          type: 'boolean',
+          description: 'Return all files without limit',
+          default: false,
+        },
+      },
+    },
+  },
+  {
+    name: 'node_roles',
+    description:
+      'Show node role classification (entry, core, utility, adapter, dead, leaf) based on connectivity patterns',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        role: {
+          type: 'string',
+          enum: VALID_ROLES,
+          description: 'Filter to a specific role',
+        },
+        file: { type: 'string', description: 'Scope to a specific file (partial match)' },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
       },
     },
   },
@@ -291,6 +313,27 @@ const BASE_TOOLS = [
           description: 'Rank files or directories',
         },
         limit: { type: 'number', description: 'Number of results to return', default: 10 },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+      },
+    },
+  },
+  {
+    name: 'co_changes',
+    description:
+      'Find files that historically change together based on git commit history. Requires prior `codegraph co-change --analyze`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: {
+          type: 'string',
+          description: 'File path (partial match). Omit for top global pairs.',
+        },
+        limit: { type: 'number', description: 'Max results', default: 20 },
+        min_jaccard: {
+          type: 'number',
+          description: 'Minimum Jaccard similarity (0-1)',
+          default: 0.3,
+        },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
       },
     },
@@ -372,6 +415,7 @@ export async function startMCPServer(customDbPath, options = {}) {
     whereData,
     diffImpactData,
     listFunctionsData,
+    rolesData,
   } = await import('./queries.js');
 
   const require = createRequire(import.meta.url);
@@ -540,12 +584,20 @@ export async function startMCPServer(customDbPath, options = {}) {
             noTests: args.no_tests,
           });
           break;
+        case 'node_roles':
+          result = rolesData(dbPath, {
+            role: args.role,
+            file: args.file,
+            noTests: args.no_tests,
+          });
+          break;
         case 'structure': {
           const { structureData } = await import('./structure.js');
           result = structureData(dbPath, {
             directory: args.directory,
             depth: args.depth,
             sort: args.sort,
+            full: args.full,
           });
           break;
         }
@@ -557,6 +609,21 @@ export async function startMCPServer(customDbPath, options = {}) {
             limit: args.limit,
             noTests: args.no_tests,
           });
+          break;
+        }
+        case 'co_changes': {
+          const { coChangeData, coChangeTopData } = await import('./cochange.js');
+          result = args.file
+            ? coChangeData(args.file, dbPath, {
+                limit: args.limit,
+                minJaccard: args.min_jaccard,
+                noTests: args.no_tests,
+              })
+            : coChangeTopData(dbPath, {
+                limit: args.limit,
+                minJaccard: args.min_jaccard,
+                noTests: args.no_tests,
+              });
           break;
         }
         case 'list_repos': {

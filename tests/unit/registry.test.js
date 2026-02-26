@@ -454,6 +454,71 @@ describe('pruneRegistry', () => {
     const pruned = pruneRegistry(registryPath);
     expect(pruned).toEqual([]);
   });
+
+  it('excluded entry survives missing-dir prune', () => {
+    const dir1 = path.join(tmpDir, 'keep');
+    const dir2 = path.join(tmpDir, 'gone-excluded');
+    fs.mkdirSync(dir1, { recursive: true });
+    fs.mkdirSync(dir2, { recursive: true });
+
+    registerRepo(dir1, 'keep', registryPath);
+    registerRepo(dir2, 'gone-excluded', registryPath);
+
+    // Remove the directory
+    fs.rmSync(dir2, { recursive: true, force: true });
+
+    const pruned = pruneRegistry(registryPath, 30, ['gone-excluded']);
+    expect(pruned).toHaveLength(0);
+
+    const reg = loadRegistry(registryPath);
+    expect(reg.repos['gone-excluded']).toBeDefined();
+  });
+
+  it('excluded entry survives TTL prune', () => {
+    const dir = path.join(tmpDir, 'protected');
+    fs.mkdirSync(dir, { recursive: true });
+
+    const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+    const registry = {
+      repos: {
+        protected: {
+          path: dir,
+          dbPath: path.join(dir, '.codegraph', 'graph.db'),
+          addedAt: oldDate,
+          lastAccessedAt: oldDate,
+        },
+      },
+    };
+    saveRegistry(registry, registryPath);
+
+    const pruned = pruneRegistry(registryPath, 30, ['protected']);
+    expect(pruned).toHaveLength(0);
+
+    const reg = loadRegistry(registryPath);
+    expect(reg.repos.protected).toBeDefined();
+  });
+
+  it('empty exclude array prunes normally (backward compat)', () => {
+    const dir = path.join(tmpDir, 'stale');
+    fs.mkdirSync(dir, { recursive: true });
+
+    const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+    const registry = {
+      repos: {
+        stale: {
+          path: dir,
+          dbPath: path.join(dir, '.codegraph', 'graph.db'),
+          addedAt: oldDate,
+          lastAccessedAt: oldDate,
+        },
+      },
+    };
+    saveRegistry(registry, registryPath);
+
+    const pruned = pruneRegistry(registryPath, 30, []);
+    expect(pruned).toHaveLength(1);
+    expect(pruned[0].name).toBe('stale');
+  });
 });
 
 // ─── DEFAULT_TTL_DAYS ──────────────────────────────────────────────

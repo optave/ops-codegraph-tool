@@ -1,6 +1,6 @@
 # Competitive Analysis — Code Graph / Code Intelligence Tools
 
-**Date:** 2026-02-22
+**Date:** 2026-02-25
 **Scope:** 136+ code analysis tools evaluated, 81+ ranked against `@optave/codegraph`
 
 ---
@@ -20,15 +20,15 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 5 | 4.2 | [seatedro/glimpse](https://github.com/seatedro/glimpse) | 349 | Rust | MIT | Clipboard-first codebase-to-LLM tool with call graphs, token counting, LSP resolution |
 | 6 | 4.0 | [SimplyLiz/CodeMCP (CKB)](https://github.com/SimplyLiz/CodeMCP) | 59 | Go | Custom | SCIP-based indexing, compound operations (83% token savings), CODEOWNERS, secret scanning |
 | 7 | 4.0 | [abhigyanpatwari/GitNexus](https://github.com/abhigyanpatwari/GitNexus) | — | TS/JS | PolyForm NC | Knowledge graph with precomputed structural intelligence, 7 MCP tools, hybrid BM25+semantic search, clustering, process tracing, KuzuDB. **Non-commercial only** |
-| 8 | 3.9 | [harshkedia177/axon](https://github.com/harshkedia177/axon) | 29 | Python | None | 11-phase pipeline, KuzuDB, Leiden community detection, dead code, change coupling |
-| 9 | 3.8 | [anrgct/autodev-codebase](https://github.com/anrgct/autodev-codebase) | 111 | TypeScript | None | 40+ languages, 7 embedding providers, Cytoscape.js visualization, LLM reranking |
-| 10 | 3.8 | [ShiftLeftSecurity/codepropertygraph](https://github.com/ShiftLeftSecurity/codepropertygraph) | 564 | Scala | Apache-2.0 | CPG specification + Tinkergraph library, Scala query DSL, protobuf serialization (Joern foundation) |
-| 11 | 3.8 | [Jakedismo/codegraph-rust](https://github.com/Jakedismo/codegraph-rust) | 142 | Rust | None | 100% Rust GraphRAG, SurrealDB, LSP-powered dataflow analysis, architecture boundary enforcement |
-| 12 | 3.7 | [Anandb71/arbor](https://github.com/Anandb71/arbor) | 85 | Rust | MIT | Native GUI, confidence scoring, architectural role classification, fuzzy search, MCP |
-| 13 | 3.7 | [JudiniLabs/mcp-code-graph](https://github.com/JudiniLabs/mcp-code-graph) | 380 | JavaScript | MIT | Cloud-hosted MCP server by CodeGPT, semantic search, dependency links (requires account) |
-| 14 | 3.7 | [entrepeneur4lyf/code-graph-mcp](https://github.com/entrepeneur4lyf/code-graph-mcp) | 80 | Python | MIT | ast-grep for 25+ languages, complexity metrics, code smells, circular dependency detection |
-| 15 | 3.7 | [cs-au-dk/jelly](https://github.com/cs-au-dk/jelly) | 417 | TypeScript | BSD-3 | Academic-grade JS/TS points-to analysis, call graphs, vulnerability exposure, 5 published papers |
-| **16** | **3.8** | **[@optave/codegraph](https://github.com/optave/codegraph)** | — | **JS/Rust** | **Apache-2.0** | **Sub-second incremental rebuilds, dual engine (native Rust + WASM), 11 languages, 17-tool MCP, qualified call resolution, `context`/`explain`/`where` AI-optimized commands, structure/hotspot analysis, zero-cost core + optional LLM enhancement** |
+| **8** | **4.0** | **[@optave/codegraph](https://github.com/optave/codegraph)** | — | **JS/Rust** | **Apache-2.0** | **Sub-second incremental rebuilds, dual engine (native Rust + WASM), 11 languages, 18-tool MCP, qualified call resolution, `context`/`explain`/`where` AI-optimized commands, structure/hotspot analysis, node role classification (entry/core/utility/adapter/dead/leaf), dead code detection, zero-cost core + optional LLM enhancement** |
+| 9 | 3.9 | [harshkedia177/axon](https://github.com/harshkedia177/axon) | 29 | Python | None | 11-phase pipeline, KuzuDB, Leiden community detection, dead code, change coupling |
+| 10 | 3.8 | [anrgct/autodev-codebase](https://github.com/anrgct/autodev-codebase) | 111 | TypeScript | None | 40+ languages, 7 embedding providers, Cytoscape.js visualization, LLM reranking |
+| 11 | 3.8 | [ShiftLeftSecurity/codepropertygraph](https://github.com/ShiftLeftSecurity/codepropertygraph) | 564 | Scala | Apache-2.0 | CPG specification + Tinkergraph library, Scala query DSL, protobuf serialization (Joern foundation) |
+| 12 | 3.8 | [Jakedismo/codegraph-rust](https://github.com/Jakedismo/codegraph-rust) | 142 | Rust | None | 100% Rust GraphRAG, SurrealDB, LSP-powered dataflow analysis, architecture boundary enforcement |
+| 13 | 3.7 | [Anandb71/arbor](https://github.com/Anandb71/arbor) | 85 | Rust | MIT | Native GUI, confidence scoring, architectural role classification, fuzzy search, MCP |
+| 14 | 3.7 | [JudiniLabs/mcp-code-graph](https://github.com/JudiniLabs/mcp-code-graph) | 380 | JavaScript | MIT | Cloud-hosted MCP server by CodeGPT, semantic search, dependency links (requires account) |
+| 15 | 3.7 | [entrepeneur4lyf/code-graph-mcp](https://github.com/entrepeneur4lyf/code-graph-mcp) | 80 | Python | MIT | ast-grep for 25+ languages, complexity metrics, code smells, circular dependency detection |
+| 16 | 3.7 | [cs-au-dk/jelly](https://github.com/cs-au-dk/jelly) | 417 | TypeScript | BSD-3 | Academic-grade JS/TS points-to analysis, call graphs, vulnerability exposure, 5 published papers |
 | 17 | 3.5 | [er77/code-graph-rag-mcp](https://github.com/er77/code-graph-rag-mcp) | 89 | TypeScript | MIT | 26 MCP methods, 11 languages, tree-sitter, semantic search, hotspot analysis, clone detection |
 | 18 | 3.5 | [MikeRecognex/mcp-codebase-index](https://github.com/MikeRecognex/mcp-codebase-index) | 25 | Python | AGPL-3.0 | 18 MCP tools, zero runtime deps, auto-incremental reindexing via git diff |
 | 19 | 3.5 | [nahisaho/CodeGraphMCPServer](https://github.com/nahisaho/CodeGraphMCPServer) | 7 | Python | MIT | GraphRAG with Louvain community detection, 16 languages, 14 MCP tools, 334 tests |
@@ -136,15 +136,15 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 5 | glimpse | 4 | 4 | 5 | 3 | 5 | 5 |
 | 6 | CKB | 5 | 5 | 4 | 3 | 4 | 3 |
 | 7 | GitNexus | 5 | 5 | 4 | 4 | 4 | 2 |
-| 8 | axon | 5 | 5 | 4 | 2 | 4 | 2 |
-| 9 | autodev-codebase | 5 | 3 | 3 | 5 | 3 | 4 |
-| 10 | codepropertygraph | 4 | 5 | 2 | 4 | 5 | 3 |
-| 11 | codegraph-rust | 5 | 5 | 2 | 4 | 4 | 3 |
-| 12 | arbor | 4 | 4 | 5 | 4 | 5 | 3 |
-| 13 | mcp-code-graph | 4 | 3 | 4 | 4 | 3 | 4 |
-| 14 | code-graph-mcp | 4 | 4 | 4 | 5 | 3 | 2 |
-| 15 | jelly | 4 | 5 | 4 | 1 | 5 | 3 |
-| **16** | **codegraph (us)** | **4** | **4** | **5** | **4** | **4** | **2** |
+| **8** | **codegraph (us)** | **5** | **4** | **5** | **4** | **4** | **2** |
+| 9 | axon | 5 | 5 | 4 | 2 | 4 | 2 |
+| 10 | autodev-codebase | 5 | 3 | 3 | 5 | 3 | 4 |
+| 11 | codepropertygraph | 4 | 5 | 2 | 4 | 5 | 3 |
+| 12 | codegraph-rust | 5 | 5 | 2 | 4 | 4 | 3 |
+| 13 | arbor | 4 | 4 | 5 | 4 | 5 | 3 |
+| 14 | mcp-code-graph | 4 | 3 | 4 | 4 | 3 | 4 |
+| 15 | code-graph-mcp | 4 | 4 | 4 | 5 | 3 | 2 |
+| 16 | jelly | 4 | 5 | 4 | 1 | 5 | 3 |
 | 17 | code-graph-rag-mcp | 5 | 4 | 3 | 4 | 3 | 2 |
 | 18 | mcp-codebase-index | 4 | 3 | 5 | 3 | 4 | 2 |
 | 19 | CodeGraphMCPServer | 4 | 4 | 4 | 5 | 3 | 1 |
@@ -186,10 +186,11 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | **Zero-cost core, LLM-enhanced when you choose** | The full graph pipeline (parse, resolve, query, impact analysis) runs with no API keys, no cloud, no cost. LLM features (richer embeddings, semantic search) are an optional layer on top — using whichever provider the user already works with. Competitors either require cloud APIs for core features (code-graph-rag, autodev-codebase, mcp-code-graph) or offer no AI enhancement at all (CKB, axon). Nobody else offers both modes in one tool |
 | **Data goes only where you send it** | Your code reaches exactly one place: the AI agent you already chose (via MCP). No additional third-party services, no surprise cloud calls. Competitors like code-graph-rag, autodev-codebase, mcp-code-graph, and Claude-code-memory send your code to additional AI providers beyond the agent you're using |
 | **Dual engine architecture** | Only project with native Rust (napi-rs) + automatic WASM fallback. Others are pure Rust (narsil-mcp, codegraph-rust) OR pure JS/Python — never both |
-| **Standalone CLI + MCP** | Full CLI experience (`context`, `explain`, `where`, `fn`, `diff-impact`, `map`, `deps`, `search`, `structure`, `hotspots`) alongside 17-tool MCP server. Many competitors are MCP-only (narsil-mcp, code-graph-mcp, CodeGraphMCPServer) with no standalone query interface |
+| **Standalone CLI + MCP** | Full CLI experience (`context`, `explain`, `where`, `fn`, `diff-impact`, `map`, `deps`, `search`, `structure`, `hotspots`, `roles`) alongside 18-tool MCP server. Many competitors are MCP-only (narsil-mcp, code-graph-mcp, CodeGraphMCPServer) with no standalone query interface |
 | **Single-repo MCP isolation** | Security-conscious default: tools have no `repo` property unless `--multi-repo` is explicitly enabled. Most competitors default to exposing everything |
 | **Zero-dependency deployment** | `npm install` and done. No Docker, no external databases, no Python, no SCIP toolchains, no JVM. Published platform-specific binaries (`@optave/codegraph-{platform}-{arch}`) resolve automatically. Joern requires JDK 21, cpg requires Gradle + language-specific deps, codegraph-rust requires SurrealDB + LSP servers |
 | **Structure & quality analysis** | `structure` shows directory cohesion scores, `hotspots` finds files with extreme fan-in/fan-out/density, `stats` includes a graph quality score (0-100) with false-positive warnings. These give agents architectural awareness without requiring external tools |
+| **Node role classification** | Every symbol is auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` based on fan-in/fan-out patterns with adaptive median thresholds. Agents instantly know a function's architectural role without reading surrounding code. Inspired by arbor's role classification — but we compute roles automatically during graph build rather than requiring manual tagging, and we surface roles across all query commands (`where`, `explain`, `context`, `stats`, `list-functions`). Dead code detection comes free as a byproduct |
 | **Callback pattern extraction** | Extracts symbols from Commander `.command().action()` (as `command:build`), Express route handlers (as `route:GET /api/users`), and event emitter listeners (as `event:data`). No competitor extracts symbols from framework callback patterns |
 
 ---
@@ -207,7 +208,7 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 - **Feature breadth**: 90 MCP tools vs our 17; covers taint analysis, SBOM, license compliance, control flow graphs, data flow analysis
 - **Language count**: 32 languages (including Verilog, Fortran, PowerShell, Nix) vs our 11
 - **Security analysis**: vulnerability scanning with OWASP/CWE coverage — we have no security features
-- **Dead code detection**: built-in — we lack this
+- **Dead code detection**: built-in — *(Gap closed: our `roles --role dead` now surfaces unreferenced non-exported symbols)*
 - **Single-binary deployment**: ~30MB Rust binary via brew/scoop/cargo/npm — as easy as ours
 
 ### vs code-graph-rag (#3, 1,916 stars)
@@ -240,23 +241,24 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 - **Auto-generated context files**: LLM-powered wiki and AGENTS.md/CLAUDE.md generation from the knowledge graph
 - **Tradeoff**: Full pipeline re-run on changes (no incremental builds), KuzuDB graph DB (heavier than SQLite), browser mode limited to ~5,000 files
 
-### vs axon (#8, 29 stars)
-- **Analysis depth**: their 11-phase pipeline includes community detection (Leiden), execution flow tracing, git change coupling, dead code detection — all features we lack
+### vs axon (#9, 29 stars)
+- **Analysis depth**: their 11-phase pipeline includes community detection (Leiden), execution flow tracing, git change coupling, dead code detection — *(Gap narrowed: we now have dead code detection via node role classification)*
 - **Graph database**: KuzuDB with native Cypher is more expressive for complex graph queries than our SQLite
 - **Branch structural diff**: compares code structure between branches using git worktrees
 
-### vs codegraph-rust (#11, 142 stars)
+### vs codegraph-rust (#12, 142 stars)
 - **LSP-powered analysis**: compiler-grade cross-file references via rust-analyzer, pyright, gopls vs our tree-sitter heuristics
 - **Dataflow edges**: defines/uses/flows_to/returns/mutates relationships we don't capture
 - **Architecture boundary enforcement**: configurable rules for detecting violations — we have no architectural awareness
 - **Tiered indexing**: fast/balanced/full modes for different use cases — we have one mode
 
-### vs jelly (#15, 417 stars)
+### vs jelly (#16, 417 stars)
 - **Points-to analysis**: flow-insensitive analysis with access paths for JS/TS — fundamentally more precise than our tree-sitter-based call resolution
 - **Academic rigor**: 5 published papers backing the methodology (Aarhus University)
 - **Vulnerability exposure analysis**: library usage pattern matching specific to the JS/TS ecosystem
 
 ### vs colbymchenry/codegraph (#20, 165 stars)
+- **No role classification**: they lack node role classification or dead code detection — we now have both
 - **Naming competitor**: same name, same tech stack (tree-sitter + SQLite + MCP + Node.js) — marketplace confusion risk
 - **Published benchmarks**: 67% fewer tool calls and measurable Claude Code token reduction — compelling marketing angle we lack. *(Gap narrowed: our `context` and `explain` compound commands now provide similar token savings by batching multiple queries into one call)*
 - **One-liner setup**: `npx @colbymchenry/codegraph` with interactive installer auto-configures Claude Code
@@ -268,7 +270,7 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 ### Tier 1: High impact, low effort
 | Feature | Inspired by | Why | Status |
 |---------|------------|-----|--------|
-| **Dead code detection** | narsil-mcp, axon, codexray, CKB | We have the graph — find nodes with zero incoming edges (minus entry points/exports). Agents constantly ask "is this used?" | TODO |
+| ~~**Dead code detection**~~ | narsil-mcp, axon, codexray, CKB | ~~We have the graph — find nodes with zero incoming edges (minus entry points/exports). Agents constantly ask "is this used?"~~ | **DONE** — Delivered via node classification. `roles --role dead` lists all unreferenced, non-exported symbols |
 | ~~**Fuzzy symbol search**~~ | arbor | ~~Add Levenshtein/Jaro-Winkler to `fn` command. Currently requires exact match~~ | **DONE** — `fn` now has relevance scoring (exact > prefix > word-boundary > substring) with fan-in tiebreaker, plus `--file` and `--kind` filters |
 | ~~**Expose confidence scores**~~ | arbor | ~~Already computed internally in import resolution — just surface them~~ | **DONE** — confidence scores stored on every call edge, surfaced in `stats` graph quality score |
 | **Shortest path A→B** | codexray, arbor | BFS on existing edges table. We have `fn` for single chains but no A→B pathfinding | TODO |
@@ -279,7 +281,7 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | **Optional LLM provider integration** | code-graph-rag, autodev-codebase | Bring-your-own provider (OpenAI, etc.) for richer embeddings and AI-powered search. Enhancement layer only — core graph never depends on it. No other tool offers both zero-cost local and LLM-enhanced modes in one package | TODO |
 | ~~**Compound MCP tools**~~ | CKB, colbymchenry/codegraph | ~~`explore`/`understand` meta-tools that batch deps + fn + map into single responses~~ | **DONE** — `context` returns source + deps + callers + signature + tests in one call; `explain` returns structural summaries of files or functions |
 | **Token counting on responses** | glimpse, arbor | tiktoken-based counts so agents know context budget consumed | TODO |
-| **Node classification** | arbor | Auto-tag Entry Point / Core / Utility / Adapter from in-degree/out-degree patterns | TODO |
+| ~~**Node classification**~~ | arbor | ~~Auto-tag Entry Point / Core / Utility / Adapter from in-degree/out-degree patterns~~ | **DONE** — `classifyNodeRoles()` tags every symbol as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf`. New `roles` CLI command, `node_roles` MCP tool (18 tools), `--role`/`--file` filters. Roles surfaced in `where`/`explain`/`context`/`stats`/`list-functions` |
 | **TF-IDF lightweight search** | codexray | SQLite FTS5 + TF-IDF as a middle tier (~50MB) between "no search" and full transformers (~500MB) | TODO |
 | **OWASP/CWE pattern detection** | narsil-mcp, CKB | Security pattern scanning on the existing AST — hardcoded secrets, SQL injection patterns, XSS | TODO |
 | **Formal code health metrics** | code-health-meter | Cyclomatic complexity, Maintainability Index, Halstead metrics per function — we already parse the AST | TODO |

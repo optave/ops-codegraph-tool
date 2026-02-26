@@ -2,8 +2,224 @@ import { findChild, nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from a JS/TS parsed AST.
+ * When a compiled tree-sitter Query is provided (from parser.js),
+ * uses the fast query-based path. Falls back to manual tree walk otherwise.
  */
-export function extractSymbols(tree, _filePath) {
+export function extractSymbols(tree, _filePath, query) {
+  if (query) return extractSymbolsQuery(tree, query);
+  return extractSymbolsWalk(tree);
+}
+
+// ── Query-based extraction (fast path) ──────────────────────────────────────
+
+function extractSymbolsQuery(tree, query) {
+  const definitions = [];
+  const calls = [];
+  const imports = [];
+  const classes = [];
+  const exps = [];
+
+  const matches = query.matches(tree.rootNode);
+
+  for (const match of matches) {
+    // Build capture lookup for this match (1-3 captures each, very fast)
+    const c = Object.create(null);
+    for (const cap of match.captures) c[cap.name] = cap.node;
+
+    if (c.fn_node) {
+      // function_declaration
+      definitions.push({
+        name: c.fn_name.text,
+        kind: 'function',
+        line: c.fn_node.startPosition.row + 1,
+        endLine: nodeEndLine(c.fn_node),
+      });
+    } else if (c.varfn_name) {
+      // variable_declarator with arrow_function / function_expression
+      const declNode = c.varfn_name.parent?.parent;
+      const line = declNode ? declNode.startPosition.row + 1 : c.varfn_name.startPosition.row + 1;
+      definitions.push({
+        name: c.varfn_name.text,
+        kind: 'function',
+        line,
+        endLine: nodeEndLine(c.varfn_value),
+      });
+    } else if (c.cls_node) {
+      // class_declaration
+      const className = c.cls_name.text;
+      const startLine = c.cls_node.startPosition.row + 1;
+      definitions.push({
+        name: className,
+        kind: 'class',
+        line: startLine,
+        endLine: nodeEndLine(c.cls_node),
+      });
+      const heritage =
+        c.cls_node.childForFieldName('heritage') || findChild(c.cls_node, 'class_heritage');
+      if (heritage) {
+        const superName = extractSuperclass(heritage);
+        if (superName) classes.push({ name: className, extends: superName, line: startLine });
+        const implementsList = extractImplements(heritage);
+        for (const iface of implementsList) {
+          classes.push({ name: className, implements: iface, line: startLine });
+        }
+      }
+    } else if (c.meth_node) {
+      // method_definition
+      const methName = c.meth_name.text;
+      const parentClass = findParentClass(c.meth_node);
+      const fullName = parentClass ? `${parentClass}.${methName}` : methName;
+      definitions.push({
+        name: fullName,
+        kind: 'method',
+        line: c.meth_node.startPosition.row + 1,
+        endLine: nodeEndLine(c.meth_node),
+      });
+    } else if (c.iface_node) {
+      // interface_declaration (TS/TSX only)
+      const ifaceName = c.iface_name.text;
+      definitions.push({
+        name: ifaceName,
+        kind: 'interface',
+        line: c.iface_node.startPosition.row + 1,
+        endLine: nodeEndLine(c.iface_node),
+      });
+      const body =
+        c.iface_node.childForFieldName('body') ||
+        findChild(c.iface_node, 'interface_body') ||
+        findChild(c.iface_node, 'object_type');
+      if (body) extractInterfaceMethods(body, ifaceName, definitions);
+    } else if (c.type_node) {
+      // type_alias_declaration (TS/TSX only)
+      definitions.push({
+        name: c.type_name.text,
+        kind: 'type',
+        line: c.type_node.startPosition.row + 1,
+        endLine: nodeEndLine(c.type_node),
+      });
+    } else if (c.imp_node) {
+      // import_statement
+      const isTypeOnly = c.imp_node.text.startsWith('import type');
+      const modPath = c.imp_source.text.replace(/['"]/g, '');
+      const names = extractImportNames(c.imp_node);
+      imports.push({
+        source: modPath,
+        names,
+        line: c.imp_node.startPosition.row + 1,
+        typeOnly: isTypeOnly,
+      });
+    } else if (c.exp_node) {
+      // export_statement
+      const exportLine = c.exp_node.startPosition.row + 1;
+      const decl = c.exp_node.childForFieldName('declaration');
+      if (decl) {
+        const declType = decl.type;
+        const kindMap = {
+          function_declaration: 'function',
+          class_declaration: 'class',
+          interface_declaration: 'interface',
+          type_alias_declaration: 'type',
+        };
+        const kind = kindMap[declType];
+        if (kind) {
+          const n = decl.childForFieldName('name');
+          if (n) exps.push({ name: n.text, kind, line: exportLine });
+        }
+      }
+      const source = c.exp_node.childForFieldName('source') || findChild(c.exp_node, 'string');
+      if (source && !decl) {
+        const modPath = source.text.replace(/['"]/g, '');
+        const reexportNames = extractImportNames(c.exp_node);
+        const nodeText = c.exp_node.text;
+        const isWildcard = nodeText.includes('export *') || nodeText.includes('export*');
+        imports.push({
+          source: modPath,
+          names: reexportNames,
+          line: exportLine,
+          reexport: true,
+          wildcardReexport: isWildcard && reexportNames.length === 0,
+        });
+      }
+    } else if (c.callfn_node) {
+      // call_expression with identifier function
+      calls.push({
+        name: c.callfn_name.text,
+        line: c.callfn_node.startPosition.row + 1,
+      });
+    } else if (c.callmem_node) {
+      // call_expression with member_expression function
+      const callInfo = extractCallInfo(c.callmem_fn, c.callmem_node);
+      if (callInfo) calls.push(callInfo);
+      const cbDef = extractCallbackDefinition(c.callmem_node, c.callmem_fn);
+      if (cbDef) definitions.push(cbDef);
+    } else if (c.callsub_node) {
+      // call_expression with subscript_expression function
+      const callInfo = extractCallInfo(c.callsub_fn, c.callsub_node);
+      if (callInfo) calls.push(callInfo);
+    } else if (c.assign_node) {
+      // CommonJS: module.exports = require(...) / module.exports = { ...require(...) }
+      handleCommonJSAssignment(c.assign_left, c.assign_right, c.assign_node, imports);
+    }
+  }
+
+  return { definitions, calls, imports, classes, exports: exps };
+}
+
+function handleCommonJSAssignment(left, right, node, imports) {
+  if (!left || !right) return;
+  const leftText = left.text;
+  if (!leftText.startsWith('module.exports') && leftText !== 'exports') return;
+
+  const rightType = right.type;
+  const assignLine = node.startPosition.row + 1;
+
+  if (rightType === 'call_expression') {
+    const fn = right.childForFieldName('function');
+    const args = right.childForFieldName('arguments') || findChild(right, 'arguments');
+    if (fn && fn.text === 'require' && args) {
+      const strArg = findChild(args, 'string');
+      if (strArg) {
+        imports.push({
+          source: strArg.text.replace(/['"]/g, ''),
+          names: [],
+          line: assignLine,
+          reexport: true,
+          wildcardReexport: true,
+        });
+      }
+    }
+  }
+
+  if (rightType === 'object') {
+    for (let ci = 0; ci < right.childCount; ci++) {
+      const child = right.child(ci);
+      if (child && child.type === 'spread_element') {
+        const spreadExpr = child.child(1) || child.childForFieldName('value');
+        if (spreadExpr && spreadExpr.type === 'call_expression') {
+          const fn2 = spreadExpr.childForFieldName('function');
+          const args2 =
+            spreadExpr.childForFieldName('arguments') || findChild(spreadExpr, 'arguments');
+          if (fn2 && fn2.text === 'require' && args2) {
+            const strArg2 = findChild(args2, 'string');
+            if (strArg2) {
+              imports.push({
+                source: strArg2.text.replace(/['"]/g, ''),
+                names: [],
+                line: assignLine,
+                reexport: true,
+                wildcardReexport: true,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+// ── Manual tree walk (fallback when Query not available) ────────────────────
+
+function extractSymbolsWalk(tree) {
   const definitions = [];
   const calls = [];
   const imports = [];
@@ -28,30 +244,23 @@ export function extractSymbols(tree, _filePath) {
       case 'class_declaration': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
-          const cls = {
-            name: nameNode.text,
+          const className = nameNode.text;
+          const startLine = node.startPosition.row + 1;
+          definitions.push({
+            name: className,
             kind: 'class',
-            line: node.startPosition.row + 1,
+            line: startLine,
             endLine: nodeEndLine(node),
-          };
-          definitions.push(cls);
+          });
           const heritage = node.childForFieldName('heritage') || findChild(node, 'class_heritage');
           if (heritage) {
             const superName = extractSuperclass(heritage);
             if (superName) {
-              classes.push({
-                name: nameNode.text,
-                extends: superName,
-                line: node.startPosition.row + 1,
-              });
+              classes.push({ name: className, extends: superName, line: startLine });
             }
             const implementsList = extractImplements(heritage);
             for (const iface of implementsList) {
-              classes.push({
-                name: nameNode.text,
-                implements: iface,
-                line: node.startPosition.row + 1,
-              });
+              classes.push({ name: className, implements: iface, line: startLine });
             }
           }
         }
@@ -113,19 +322,20 @@ export function extractSymbols(tree, _filePath) {
           if (declarator && declarator.type === 'variable_declarator') {
             const nameN = declarator.childForFieldName('name');
             const valueN = declarator.childForFieldName('value');
-            if (
-              nameN &&
-              valueN &&
-              (valueN.type === 'arrow_function' ||
-                valueN.type === 'function_expression' ||
-                valueN.type === 'function')
-            ) {
-              definitions.push({
-                name: nameN.text,
-                kind: 'function',
-                line: node.startPosition.row + 1,
-                endLine: nodeEndLine(valueN),
-              });
+            if (nameN && valueN) {
+              const valType = valueN.type;
+              if (
+                valType === 'arrow_function' ||
+                valType === 'function_expression' ||
+                valType === 'function'
+              ) {
+                definitions.push({
+                  name: nameN.text,
+                  kind: 'function',
+                  line: node.startPosition.row + 1,
+                  endLine: nodeEndLine(valueN),
+                });
+              }
             }
           }
         }
@@ -136,9 +346,7 @@ export function extractSymbols(tree, _filePath) {
         const fn = node.childForFieldName('function');
         if (fn) {
           const callInfo = extractCallInfo(fn, node);
-          if (callInfo) {
-            calls.push(callInfo);
-          }
+          if (callInfo) calls.push(callInfo);
           if (fn.type === 'member_expression') {
             const cbDef = extractCallbackDefinition(node, fn);
             if (cbDef) definitions.push(cbDef);
@@ -164,33 +372,32 @@ export function extractSymbols(tree, _filePath) {
       }
 
       case 'export_statement': {
+        const exportLine = node.startPosition.row + 1;
         const decl = node.childForFieldName('declaration');
         if (decl) {
-          if (decl.type === 'function_declaration') {
+          const declType = decl.type;
+          const kindMap = {
+            function_declaration: 'function',
+            class_declaration: 'class',
+            interface_declaration: 'interface',
+            type_alias_declaration: 'type',
+          };
+          const kind = kindMap[declType];
+          if (kind) {
             const n = decl.childForFieldName('name');
-            if (n)
-              exports.push({ name: n.text, kind: 'function', line: node.startPosition.row + 1 });
-          } else if (decl.type === 'class_declaration') {
-            const n = decl.childForFieldName('name');
-            if (n) exports.push({ name: n.text, kind: 'class', line: node.startPosition.row + 1 });
-          } else if (decl.type === 'interface_declaration') {
-            const n = decl.childForFieldName('name');
-            if (n)
-              exports.push({ name: n.text, kind: 'interface', line: node.startPosition.row + 1 });
-          } else if (decl.type === 'type_alias_declaration') {
-            const n = decl.childForFieldName('name');
-            if (n) exports.push({ name: n.text, kind: 'type', line: node.startPosition.row + 1 });
+            if (n) exports.push({ name: n.text, kind, line: exportLine });
           }
         }
         const source = node.childForFieldName('source') || findChild(node, 'string');
         if (source && !decl) {
           const modPath = source.text.replace(/['"]/g, '');
           const reexportNames = extractImportNames(node);
-          const isWildcard = node.text.includes('export *') || node.text.includes('export*');
+          const nodeText = node.text;
+          const isWildcard = nodeText.includes('export *') || nodeText.includes('export*');
           imports.push({
             source: modPath,
             names: reexportNames,
-            line: node.startPosition.row + 1,
+            line: exportLine,
             reexport: true,
             wildcardReexport: isWildcard && reexportNames.length === 0,
           });
@@ -212,9 +419,8 @@ export function extractSymbols(tree, _filePath) {
                 if (fn && fn.text === 'require' && args) {
                   const strArg = findChild(args, 'string');
                   if (strArg) {
-                    const modPath = strArg.text.replace(/['"]/g, '');
                     imports.push({
-                      source: modPath,
+                      source: strArg.text.replace(/['"]/g, ''),
                       names: [],
                       line: node.startPosition.row + 1,
                       reexport: true,
@@ -236,9 +442,8 @@ export function extractSymbols(tree, _filePath) {
                       if (fn2 && fn2.text === 'require' && args2) {
                         const strArg2 = findChild(args2, 'string');
                         if (strArg2) {
-                          const modPath2 = strArg2.text.replace(/['"]/g, '');
                           imports.push({
-                            source: modPath2,
+                            source: strArg2.text.replace(/['"]/g, ''),
                             names: [],
                             line: node.startPosition.row + 1,
                             reexport: true,
@@ -265,6 +470,8 @@ export function extractSymbols(tree, _filePath) {
   walkJavaScriptNode(tree.rootNode);
   return { definitions, calls, imports, classes, exports };
 }
+
+// ── Shared helpers ──────────────────────────────────────────────────────────
 
 function extractInterfaceMethods(bodyNode, interfaceName, definitions) {
   for (let i = 0; i < bodyNode.childCount; i++) {
@@ -319,52 +526,63 @@ function extractImplementsFromNode(node) {
 
 function extractReceiverName(objNode) {
   if (!objNode) return undefined;
-  if (objNode.type === 'identifier') return objNode.text;
-  if (objNode.type === 'this') return 'this';
-  if (objNode.type === 'super') return 'super';
+  const t = objNode.type;
+  if (t === 'identifier' || t === 'this' || t === 'super') return objNode.text;
   return objNode.text;
 }
 
 function extractCallInfo(fn, callNode) {
-  if (fn.type === 'identifier') {
+  const fnType = fn.type;
+  if (fnType === 'identifier') {
     return { name: fn.text, line: callNode.startPosition.row + 1 };
   }
 
-  if (fn.type === 'member_expression') {
+  if (fnType === 'member_expression') {
     const obj = fn.childForFieldName('object');
     const prop = fn.childForFieldName('property');
     if (!prop) return null;
 
-    if (prop.text === 'call' || prop.text === 'apply' || prop.text === 'bind') {
+    const callLine = callNode.startPosition.row + 1;
+    const propText = prop.text;
+
+    if (propText === 'call' || propText === 'apply' || propText === 'bind') {
       if (obj && obj.type === 'identifier')
-        return { name: obj.text, line: callNode.startPosition.row + 1, dynamic: true };
+        return { name: obj.text, line: callLine, dynamic: true };
       if (obj && obj.type === 'member_expression') {
         const innerProp = obj.childForFieldName('property');
-        if (innerProp)
-          return { name: innerProp.text, line: callNode.startPosition.row + 1, dynamic: true };
+        if (innerProp) return { name: innerProp.text, line: callLine, dynamic: true };
       }
     }
 
-    if (prop.type === 'string' || prop.type === 'string_fragment') {
-      const methodName = prop.text.replace(/['"]/g, '');
+    const propType = prop.type;
+    if (propType === 'string' || propType === 'string_fragment') {
+      const methodName = propText.replace(/['"]/g, '');
       if (methodName) {
         const receiver = extractReceiverName(obj);
-        return { name: methodName, line: callNode.startPosition.row + 1, dynamic: true, receiver };
+        return { name: methodName, line: callLine, dynamic: true, receiver };
       }
     }
 
     const receiver = extractReceiverName(obj);
-    return { name: prop.text, line: callNode.startPosition.row + 1, receiver };
+    return { name: propText, line: callLine, receiver };
   }
 
-  if (fn.type === 'subscript_expression') {
+  if (fnType === 'subscript_expression') {
     const obj = fn.childForFieldName('object');
     const index = fn.childForFieldName('index');
-    if (index && (index.type === 'string' || index.type === 'template_string')) {
-      const methodName = index.text.replace(/['"`]/g, '');
-      if (methodName && !methodName.includes('$')) {
-        const receiver = extractReceiverName(obj);
-        return { name: methodName, line: callNode.startPosition.row + 1, dynamic: true, receiver };
+    if (index) {
+      const indexType = index.type;
+      if (indexType === 'string' || indexType === 'template_string') {
+        const methodName = index.text.replace(/['"`]/g, '');
+        if (methodName && !methodName.includes('$')) {
+          const receiver = extractReceiverName(obj);
+          return {
+            name: methodName,
+            line: callNode.startPosition.row + 1,
+            dynamic: true,
+            receiver,
+          };
+        }
       }
     }
   }
@@ -395,7 +613,8 @@ function findFirstStringArg(argsNode) {
 function walkCallChain(startNode, methodName) {
   let current = startNode;
   while (current) {
-    if (current.type === 'call_expression') {
+    const curType = current.type;
+    if (curType === 'call_expression') {
       const fn = current.childForFieldName('function');
       if (fn && fn.type === 'member_expression') {
         const prop = fn.childForFieldName('property');
@@ -403,13 +622,9 @@ function walkCallChain(startNode, methodName) {
           return current;
         }
       }
-    }
-    if (current.type === 'member_expression') {
-      const obj = current.childForFieldName('object');
-      current = obj;
-    } else if (current.type === 'call_expression') {
-      const fn = current.childForFieldName('function');
       current = fn;
+    } else if (curType === 'member_expression') {
+      current = current.childForFieldName('object');
     } else {
       break;
     }
@@ -506,7 +721,8 @@ function extractSuperclass(heritage) {
 function findParentClass(node) {
   let current = node.parent;
   while (current) {
-    if (current.type === 'class_declaration' || current.type === 'class') {
+    const t = current.type;
+    if (t === 'class_declaration' || t === 'class') {
       const nameNode = current.childForFieldName('name');
       return nameNode ? nameNode.text : null;
     }

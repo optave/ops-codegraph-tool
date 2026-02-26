@@ -24,7 +24,7 @@ const root = path.resolve(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 const dbPath = path.join(root, '.codegraph', 'graph.db');
 
-const { buildEmbeddings, MODELS, searchData } = await import(
+const { buildEmbeddings, MODELS, searchData, disposeModel } = await import(
 	new URL('../src/embedder.js', import.meta.url).href
 );
 
@@ -129,6 +129,7 @@ for (const key of modelKeys) {
 	} catch (err) {
 		console.error(`  FAILED: ${err.message}`);
 	}
+	await disposeModel();
 }
 
 // Restore console.log for JSON output

@@ -55,7 +55,7 @@ cd your-project
 codegraph build
 ```
 
-That's it. No config files, no Docker, no JVM, no API keys, no accounts. The graph is ready to query. Add `codegraph mcp` to your AI agent's config and it has full access to your dependency graph through 17 MCP tools.
+That's it. No config files, no Docker, no JVM, no API keys, no accounts. The graph is ready to query. Add `codegraph mcp` to your AI agent's config and it has full access to your dependency graph through 19 MCP tools.
 
 ### Why it matters
 
@@ -78,7 +78,9 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 | Semantic search | **Yes** | — | **Yes** | **Yes** | — | **Yes** | — | — |
 | MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | — |
 | Git diff impact | **Yes** | — | — | — | — | **Yes** | — | **Yes** |
+| Git co-change analysis | **Yes** | — | — | — | — | — | **Yes** | **Yes** |
 | Watch mode | **Yes** | — | **Yes** | — | — | — | — | — |
+| Dead code / role classification | **Yes** | — | **Yes** | — | — | — | — | **Yes** |
 | Cycle detection | **Yes** | — | **Yes** | — | — | — | — | **Yes** |
 | Incremental rebuilds | **O(changed)** | — | O(n) Merkle | — | — | — | — | — |
 | Zero config | **Yes** | — | **Yes** | — | — | — | — | — |
@@ -94,9 +96,10 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 | **⚡** | **Always-fresh graph** | Three-tier change detection: journal (O(changed)) → mtime+size (O(n) stats) → hash (O(changed) reads). Sub-second rebuilds even on large codebases |
 | **🔓** | **Zero-cost core, LLM-enhanced when you want** | Full graph analysis with no API keys, no accounts, no cost. Optionally bring your own LLM provider — your code only goes where you choose |
 | **🔬** | **Function-level, not just files** | Traces `handleAuth()` → `validateToken()` → `decryptJWT()` and shows 14 callers across 9 files break if `decryptJWT` changes |
-| **🤖** | **Built for AI agents** | 17-tool [MCP server](https://modelcontextprotocol.io/) — AI assistants query your graph directly. Single-repo by default |
+| **🏷️** | **Role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` — agents instantly know what they're looking at |
+| **🤖** | **Built for AI agents** | 19-tool [MCP server](https://modelcontextprotocol.io/) — AI assistants query your graph directly. Single-repo by default |
 | **🌐** | **Multi-language, one CLI** | JS/TS + Python + Go + Rust + Java + C# + PHP + Ruby + HCL in a single graph |
-| **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — ships with a GitHub Actions workflow |
+| **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — enriched with historically coupled files from git co-change analysis. Ships with a GitHub Actions workflow |
 | **🧠** | **Semantic search** | Local embeddings by default, LLM-powered when opted in — multi-query with RRF ranking via `"auth; token; JWT"` |
 
 ---
@@ -141,10 +144,10 @@ After modifying code:
 Or connect directly via MCP:
 
 ```bash
-codegraph mcp          # 17-tool MCP server — AI queries the graph directly
+codegraph mcp          # 19-tool MCP server — AI queries the graph directly
 ```
 
-Full agent setup: [AI Agent Guide](docs/ai-agent-guide.md) &middot; [CLAUDE.md template](docs/ai-agent-guide.md#claudemd-template)
+Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAUDE.md template](docs/guides/ai-agent-guide.md#claudemd-template)
 
 ---
 
@@ -159,14 +162,18 @@ Full agent setup: [AI Agent Guide](docs/ai-agent-guide.md) &middot; [CLAUDE.md t
 | 🎯 | **Deep context** | `context` gives AI agents source, deps, callers, signature, and tests for a function in one call; `explain` gives structural summaries of files or functions |
 | 📍 | **Fast lookup** | `where` shows exactly where a symbol is defined and used — minimal, fast |
 | 📊 | **Diff impact** | Parse `git diff`, find overlapping functions, trace their callers |
+| 🔗 | **Co-change analysis** | Analyze git history for files that always change together — surfaces hidden coupling the static graph can't see; enriches `diff-impact` with historically coupled files |
 | 🗺️ | **Module map** | Bird's-eye view of your most-connected files |
 | 🏗️ | **Structure & hotspots** | Directory cohesion scores, fan-in/fan-out hotspot detection, module boundaries |
+| 🏷️ | **Node role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` based on connectivity patterns — agents instantly know architectural role |
 | 🔄 | **Cycle detection** | Find circular dependencies at file or function level |
 | 📤 | **Export** | DOT (Graphviz), Mermaid, and JSON graph export |
 | 🧠 | **Semantic search** | Embeddings-powered natural language search with multi-query RRF ranking |
 | 👀 | **Watch mode** | Incrementally update the graph as files change |
-| 🤖 | **MCP server** | 17-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
+| 🤖 | **MCP server** | 19-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
 | ⚡ | **Always fresh** | Three-tier incremental detection — sub-second rebuilds even on large codebases |
+
+See [docs/examples](docs/examples) for real-world CLI and MCP usage examples.
 
 ## 📦 Commands
 
@@ -189,6 +196,9 @@ codegraph map -n 50 --no-tests # Top 50, excluding test files
 codegraph where <name>         # Where is a symbol defined and used?
 codegraph where --file src/db.js  # List symbols, imports, exports for a file
 codegraph stats                # Graph health: nodes, edges, languages, quality score
+codegraph roles                # Node role classification (entry, core, utility, adapter, dead, leaf)
+codegraph roles --role dead -T # Find dead code (unreferenced, non-exported symbols)
+codegraph roles --role core --file src/  # Core symbols in src/
 ```
 
 ### Deep Context (AI-Optimized)
@@ -212,6 +222,22 @@ codegraph diff-impact --staged # Impact of staged changes
 codegraph diff-impact HEAD~3   # Impact vs a specific ref
 codegraph diff-impact main --format mermaid -T  # Mermaid flowchart of blast radius
 ```
+
+### Co-Change Analysis
+
+Analyze git history to find files that always change together — surfaces hidden coupling the static graph can't see. Requires a git repository.
+
+```bash
+codegraph co-change --analyze          # Scan git history and populate co-change data
+codegraph co-change src/queries.js     # Show co-change partners for a file
+codegraph co-change                    # Show top co-changing file pairs globally
+codegraph co-change --since 6m         # Limit to last 6 months of history
+codegraph co-change --min-jaccard 0.5  # Only show strong coupling (Jaccard >= 0.5)
+codegraph co-change --min-support 5    # Minimum co-commit count
+codegraph co-change --full             # Include all details
+```
+
+Co-change data also enriches `diff-impact` — historically coupled files appear in a `historicallyCoupled` section alongside the static dependency analysis.
 
 ### Structure & Hotspots
 
@@ -379,7 +405,7 @@ Self-measured on every release via CI ([build benchmarks](generated/BUILD-BENCHM
 |---|---|
 | Build speed (native) | **1.9 ms/file** |
 | Build speed (WASM) | **6.6 ms/file** |
-| Query time | **1ms** |
+| Query time | **2ms** |
 | ~50,000 files (est.) | **~95.0s build** |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
@@ -402,7 +428,7 @@ Optional: `@huggingface/transformers` (semantic search), `@modelcontextprotocol/
 
 ### MCP Server
 
-Codegraph includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) server with 17 tools, so AI assistants can query your dependency graph directly:
+Codegraph includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) server with 19 tools, so AI assistants can query your dependency graph directly:
 
 ```bash
 codegraph mcp                  # Single-repo mode (default) — only local project
@@ -416,7 +442,7 @@ codegraph mcp --repos a,b      # Restrict to specific repos (implies --multi-rep
 
 ### CLAUDE.md / Agent Instructions
 
-Add this to your project's `CLAUDE.md` to help AI agents use codegraph (full template in the [AI Agent Guide](docs/ai-agent-guide.md#claudemd-template)):
+Add this to your project's `CLAUDE.md` to help AI agents use codegraph (full template in the [AI Agent Guide](docs/guides/ai-agent-guide.md#claudemd-template)):
 
 ```markdown
 ## Code Navigation
@@ -474,7 +500,7 @@ Use `--kind function` to cut noise. Use `--file <pattern>` to scope.
 
 ## 📋 Recommended Practices
 
-See **[docs/recommended-practices.md](docs/recommended-practices.md)** for integration guides:
+See **[docs/guides/recommended-practices.md](docs/guides/recommended-practices.md)** for integration guides:
 
 - **Git hooks** — auto-rebuild on commit, impact checks on push, commit message enrichment
 - **CI/CD** — PR impact comments, threshold gates, graph caching
@@ -482,7 +508,7 @@ See **[docs/recommended-practices.md](docs/recommended-practices.md)** for integ
 - **Developer workflow** — watch mode, explore-before-you-edit, semantic search
 - **Secure credentials** — `apiKeyCommand` with 1Password, Bitwarden, Vault, macOS Keychain, `pass`
 
-For AI-specific integration, see the **[AI Agent Guide](docs/ai-agent-guide.md)** — a comprehensive reference covering the 6-step agent workflow, complete command-to-MCP mapping, Claude Code hooks, and token-saving patterns.
+For AI-specific integration, see the **[AI Agent Guide](docs/guides/ai-agent-guide.md)** — a comprehensive reference covering the 6-step agent workflow, complete command-to-MCP mapping, Claude Code hooks, and token-saving patterns.
 
 ## 🔁 CI / GitHub Actions
 
@@ -508,9 +534,14 @@ Create a `.codegraphrc.json` in your project root to customize behavior:
   },
   "build": {
     "incremental": true
+  },
+  "query": {
+    "excludeTests": true
   }
 }
 ```
+
+> **Tip:** `excludeTests` can also be set at the top level as a shorthand — `{ "excludeTests": true }` is equivalent to nesting it under `query`. If both are present, the nested `query.excludeTests` takes precedence.
 
 ### LLM credentials
 
@@ -589,6 +620,8 @@ const { results: fused } = await multiSearchData(
 | Incremental rebuilds | **O(changed)** | — | O(n) Merkle | — | — | — |
 | MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** |
 | Git diff impact | **Yes** | — | — | — | — | **Yes** |
+| Git co-change analysis | **Yes** | — | — | — | — | — |
+| Dead code / role classification | **Yes** | — | **Yes** | — | — | — |
 | Semantic search | **Yes** | — | **Yes** | **Yes** | — | **Yes** |
 | Watch mode | **Yes** | — | **Yes** | — | — | — |
 | Zero config, no Docker/JVM | **Yes** | — | **Yes** | — | — | — |
@@ -597,7 +630,7 @@ const { results: fused } = await multiSearchData(
 
 ## 🗺️ Roadmap
 
-See **[ROADMAP.md](ROADMAP.md)** for the full development roadmap and **[STABILITY.md](STABILITY.md)** for the stability policy and versioning guarantees. Current plan:
+See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap and **[STABILITY.md](STABILITY.md)** for the stability policy and versioning guarantees. Current plan:
 
 1. ~~**Rust Core**~~ — **Complete** (v1.3.0) — native tree-sitter parsing via napi-rs, parallel multi-core parsing, incremental re-parsing, import resolution & cycle detection in Rust
 2. ~~**Foundation Hardening**~~ — **Complete** (v1.4.0) — parser registry, 12-tool MCP server with multi-repo support, test coverage 62%→75%, `apiKeyCommand` secret resolution, global repo registry
@@ -606,7 +639,7 @@ See **[ROADMAP.md](ROADMAP.md)** for the full development roadmap and **[STABILI
 5. **Natural Language Queries** — `codegraph ask` command, conversational sessions
 6. **Expanded Language Support** — 8 new languages (12 → 20)
 7. **GitHub Integration & CI** — reusable GitHub Action, PR review, SARIF output
-8. **Visualization & Advanced** — web UI, dead code detection, monorepo support, agentic search
+8. **Visualization & Advanced** — web UI, monorepo support, agentic search
 
 ## 🤝 Contributing
 
@@ -619,7 +652,7 @@ npm install
 npm test
 ```
 
-Looking to add a new language? Check out **[Adding a New Language](docs/adding-a-language.md)**.
+Looking to add a new language? Check out **[Adding a New Language](docs/guides/adding-a-language.md)**.
 
 ## 📄 License
 

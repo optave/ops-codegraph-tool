@@ -1,7 +1,7 @@
 # Stability Policy
 
 > **Status: Anticipated — not yet active.**
-> This policy describes the stability guarantees codegraph *will* provide once the public API surface stabilizes after [Phase 3 — Architectural Refactoring](ROADMAP.md). Until then, breaking changes may still land in minor releases as the internal architecture is restructured.
+> This policy describes the stability guarantees codegraph *will* provide once the public API surface stabilizes after [Phase 3 — Architectural Refactoring](docs/roadmap/ROADMAP.md). Until then, breaking changes may still land in minor releases as the internal architecture is restructured.
 
 ---
 
@@ -109,7 +109,7 @@ LTS will be activated based on community adoption and demand — there is no fix
 |---------|--------------|---------|
 | CLI commands | Documented via `--help` and [README](README.md#-commands) | No change needed |
 | Programmatic API (`index.js`) | Documented in README examples | Auto-generated JSDoc reference (Phase 3+) |
-| MCP tools | Documented in [AI Agent Guide](docs/ai-agent-guide.md) | Versioned schema reference (Phase 3+) |
+| MCP tools | Documented in [AI Agent Guide](docs/guides/ai-agent-guide.md) | Versioned schema reference (Phase 3+) |
 
 The planned auto-generated reference will cover all public exports from `index.js` with full type signatures, parameter descriptions, and usage examples.
 

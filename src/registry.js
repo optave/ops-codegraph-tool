@@ -136,12 +136,20 @@ export function resolveRepoDbPath(name, registryPath = REGISTRY_PATH) {
  * or that haven't been accessed within `ttlDays` days.
  * Returns an array of `{ name, path, reason }` for each pruned entry.
  */
-export function pruneRegistry(registryPath = REGISTRY_PATH, ttlDays = DEFAULT_TTL_DAYS) {
+export function pruneRegistry(
+  registryPath = REGISTRY_PATH,
+  ttlDays = DEFAULT_TTL_DAYS,
+  excludeNames = [],
+) {
   const registry = loadRegistry(registryPath);
   const pruned = [];
   const cutoff = Date.now() - ttlDays * 24 * 60 * 60 * 1000;
+  const excludeSet = new Set(
+    excludeNames.filter((n) => typeof n === 'string' && n.trim().length > 0),
+  );
 
   for (const [name, entry] of Object.entries(registry.repos)) {
+    if (excludeSet.has(name)) continue;
     if (!fs.existsSync(entry.path)) {
       pruned.push({ name, path: entry.path, reason: 'missing' });
       delete registry.repos[name];

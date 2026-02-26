@@ -2,6 +2,58 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [2.4.0](https://github.com/optave/codegraph/compare/v2.3.0...v2.4.0) (2026-02-25)
+
+**Co-change analysis, node roles, faster parsing, and richer Mermaid output.** This release adds git co-change analysis to surface files that change together, classifies nodes by architectural role (entry/core/utility/adapter/dead/leaf), replaces the manual AST walk with tree-sitter's Query API for significantly faster JS/TS/TSX extraction, and enhances Mermaid export with subgraphs, edge labels, node shapes, and styling.
+
+### Features
+
+* **cli:** add git co-change analysis — surfaces files that frequently change together using Jaccard similarity on git history ([61785f7](https://github.com/optave/codegraph/commit/61785f7))
+* **cli:** add node role classification — automatically labels nodes as entry, core, utility, adapter, dead, or leaf based on graph topology ([165f6ca](https://github.com/optave/codegraph/commit/165f6ca))
+* **cli:** add `--json` to `search`, `--file` glob filter, `--exclude` to `prune`, exclude worktrees from vitest ([00ed205](https://github.com/optave/codegraph/commit/00ed205))
+* **cli:** add update notification after commands — checks npm for newer versions and displays an upgrade hint ([eb3ccdf](https://github.com/optave/codegraph/commit/eb3ccdf))
+* **export:** enhance Mermaid export with subgraphs, edge labels, node shapes, and styling ([ae301c0](https://github.com/optave/codegraph/commit/ae301c0))
+
+### Performance
+
+* **parser:** replace manual AST walk with tree-sitter Query API for JS/TS/TSX extraction ([fb6a139](https://github.com/optave/codegraph/commit/fb6a139))
+* **builder:** avoid disk reads for line counts during incremental rebuild ([7b538bc](https://github.com/optave/codegraph/commit/7b538bc))
+
+### Bug Fixes
+
+* **builder:** preserve structure data during incremental builds ([7377fd9](https://github.com/optave/codegraph/commit/7377fd9))
+* **embedder:** make embed command respect config `embeddings.model` ([77ffffc](https://github.com/optave/codegraph/commit/77ffffc))
+* **embedder:** use `DEFAULT_MODEL` as single source of truth for embed default ([832fa49](https://github.com/optave/codegraph/commit/832fa49))
+* **embedder:** add model disposal to prevent ONNX memory leak ([383e899](https://github.com/optave/codegraph/commit/383e899))
+* **export:** escape quotes in Mermaid labels ([1c4ca34](https://github.com/optave/codegraph/commit/1c4ca34))
+* **queries:** recompute Jaccard from total file counts during incremental co-change analysis ([e2a771b](https://github.com/optave/codegraph/commit/e2a771b))
+* **queries:** collect all distinct edge kinds per pair instead of keeping only first ([4f40eee](https://github.com/optave/codegraph/commit/4f40eee))
+* **queries:** skip keys without `::` separator in role lookup ([0c10e23](https://github.com/optave/codegraph/commit/0c10e23))
+* **resolve:** use `indexOf` for `::` split to handle paths with colons ([b9d6ae4](https://github.com/optave/codegraph/commit/b9d6ae4))
+* validate glob patterns and exclude names, clarify regex escaping ([6cf191f](https://github.com/optave/codegraph/commit/6cf191f))
+* clean up regex escaping and remove unsupported brace from glob detection ([ab0d3a0](https://github.com/optave/codegraph/commit/ab0d3a0))
+* **ci:** prevent benchmark updater from deleting README subsections ([bd1682a](https://github.com/optave/codegraph/commit/bd1682a))
+* **ci:** add `--allow-same-version` to `npm version` in publish workflow ([9edaf15](https://github.com/optave/codegraph/commit/9edaf15))
+
+### Refactoring
+
+* reuse `coChangeForFiles` in `diffImpactData` ([aef1787](https://github.com/optave/codegraph/commit/aef1787))
+
+### Testing
+
+* add query vs walk parity tests for JS/TS/TSX extractors ([e68f6a7](https://github.com/optave/codegraph/commit/e68f6a7))
+
+### Chores
+
+* configure `bge-large` as default embedding model ([c21c387](https://github.com/optave/codegraph/commit/c21c387))
+
+### Documentation
+
+* add co-change analysis to README and mark backlog #9 done ([f977f9c](https://github.com/optave/codegraph/commit/f977f9c))
+* reorganize docs — move guides to `docs/guides/`, roadmap into `docs/` ([ad423b7](https://github.com/optave/codegraph/commit/ad423b7))
+* move roadmap files into `docs/roadmap/` ([693a8aa](https://github.com/optave/codegraph/commit/693a8aa))
+* add Plan Mode Default working principle to CLAUDE.md ([c682f38](https://github.com/optave/codegraph/commit/c682f38))
+
 ## [2.3.0](https://github.com/optave/codegraph/compare/v2.2.1...v2.3.0) (2026-02-23)
 
 **Smarter embeddings, richer CLI output, and robustness fixes.** This release introduces graph-enriched embedding strategies that use dependency context instead of raw source code, adds config-level test exclusion and recursive explain depth, outputs Mermaid diagrams from `diff-impact`, filters low-confidence edges from exports, and fixes numerous issues found through dogfooding.

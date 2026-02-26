@@ -7,6 +7,15 @@
 
 // Graph building
 export { buildGraph, collectFiles, loadPathAliases, resolveImportPath } from './builder.js';
+// Co-change analysis
+export {
+  analyzeCoChanges,
+  coChangeData,
+  coChangeForFiles,
+  coChangeTopData,
+  computeCoChanges,
+  scanGitHistory,
+} from './cochange.js';
 // Configuration
 export { loadConfig } from './config.js';
 // Shared constants
@@ -14,13 +23,21 @@ export { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
 // Circular dependency detection
 export { findCycles, formatCycles } from './cycles.js';
 // Database utilities
-export { findDbPath, initSchema, openDb, openReadonlyOrFail } from './db.js';
+export {
+  findDbPath,
+  getBuildMeta,
+  initSchema,
+  openDb,
+  openReadonlyOrFail,
+  setBuildMeta,
+} from './db.js';
 
 // Embeddings
 export {
   buildEmbeddings,
   cosineSim,
   DEFAULT_MODEL,
+  disposeModel,
   EMBEDDING_STRATEGIES,
   embed,
   estimateTokens,
@@ -53,7 +70,9 @@ export {
   impactAnalysisData,
   moduleMapData,
   queryNameData,
+  rolesData,
   statsData,
+  VALID_ROLES,
   whereData,
 } from './queries.js';
 // Registry (multi-repo)
@@ -70,6 +89,7 @@ export {
 // Structure analysis
 export {
   buildStructure,
+  classifyNodeRoles,
   formatHotspots,
   formatModuleBoundaries,
   formatStructure,
