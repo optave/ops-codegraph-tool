@@ -234,17 +234,27 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # List dev releases sorted newest-first, skip the first 5, delete the rest
-          gh release list --limit 100 --json tagName,isPrerelease,createdAt \
-            | jq -r '
-                [ .[] | select(.isPrerelease and (.tagName | startswith("dev-v"))) ]
-                | sort_by(.createdAt) | reverse
-                | .[5:]
-                | .[].tagName
-              ' \
-            | while read -r tag; do
-                echo "Deleting old dev release: $tag"
-                gh release delete "$tag" --yes --cleanup-tag
-              done
+          # Non-critical: failures here should not fail the workflow
+          TAGS=$(gh release list --limit 100 --json tagName,isPrerelease,createdAt 2>&1) || {
+            echo "::warning::Failed to list releases for pruning: ${TAGS}"
+            exit 0
+          }
+
+          OLD_TAGS=$(echo "$TAGS" | jq -r '
+              [ .[] | select(.isPrerelease and (.tagName | startswith("dev-v"))) ]
+              | sort_by(.createdAt) | reverse
+              | .[5:]
+              | .[].tagName
+            ' 2>&1) || {
+            echo "::warning::Failed to parse release list for pruning: ${OLD_TAGS}"
+            exit 0
+          }
+
+          echo "$OLD_TAGS" | while read -r tag; do
+            [ -z "$tag" ] && continue
+            echo "Deleting old dev release: $tag"
+            gh release delete "$tag" --yes --cleanup-tag || echo "::warning::Failed to delete release ${tag}"
+          done
 
       - name: Summary
         env:
