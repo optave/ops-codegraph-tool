@@ -1043,7 +1043,7 @@ export async function buildGraph(rootDir, opts = {}) {
       built_at: new Date().toISOString(),
     });
   } catch (err) {
-    debug(`Failed to write build metadata: ${err.message}`);
+    warn(`Failed to write build metadata: ${err.message}`);
   }
 
   closeDb(db);
