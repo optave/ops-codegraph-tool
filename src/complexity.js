@@ -703,13 +703,16 @@ export function complexityData(customDbPath, opts = {}) {
   if (aboveThreshold) {
     const conditions = [];
     if (thresholds.cognitive?.warn != null) {
-      conditions.push(`fc.cognitive >= ${thresholds.cognitive.warn}`);
+      const val = Number(thresholds.cognitive.warn);
+      if (!Number.isNaN(val)) conditions.push(`fc.cognitive >= ${val}`);
     }
     if (thresholds.cyclomatic?.warn != null) {
-      conditions.push(`fc.cyclomatic >= ${thresholds.cyclomatic.warn}`);
+      const val = Number(thresholds.cyclomatic.warn);
+      if (!Number.isNaN(val)) conditions.push(`fc.cyclomatic >= ${val}`);
     }
     if (thresholds.maxNesting?.warn != null) {
-      conditions.push(`fc.max_nesting >= ${thresholds.maxNesting.warn}`);
+      const val = Number(thresholds.maxNesting.warn);
+      if (!Number.isNaN(val)) conditions.push(`fc.max_nesting >= ${val}`);
     }
     if (thresholds.maintainabilityIndex?.warn != null) {
       conditions.push(
