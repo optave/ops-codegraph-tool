@@ -1363,6 +1363,29 @@ export function statsData(customDbPath, opts = {}) {
   const roles = {};
   for (const r of roleRows) roles[r.role] = r.c;
 
+  // Complexity summary
+  let complexity = null;
+  try {
+    const cRows = db
+      .prepare(
+        `SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting
+       FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
+       WHERE n.kind IN ('function','method') ${testFilter}`,
+      )
+      .all();
+    if (cRows.length > 0) {
+      complexity = {
+        analyzed: cRows.length,
+        avgCognitive: +(cRows.reduce((s, r) => s + r.cognitive, 0) / cRows.length).toFixed(1),
+        avgCyclomatic: +(cRows.reduce((s, r) => s + r.cyclomatic, 0) / cRows.length).toFixed(1),
+        maxCognitive: Math.max(...cRows.map((r) => r.cognitive)),
+        maxCyclomatic: Math.max(...cRows.map((r) => r.cyclomatic)),
+      };
+    }
+  } catch {
+    /* table may not exist in older DBs */
+  }
+
   db.close();
   return {
     nodes: { total: totalNodes, byKind: nodesByKind },
@@ -1373,6 +1396,7 @@ export function statsData(customDbPath, opts = {}) {
     embeddings,
     quality,
     roles,
+    complexity,
   };
 }
 
@@ -1483,6 +1507,14 @@ export function stats(customDbPath, opts = {}) {
         .join('');
       console.log(`  ${row}`);
     }
+  }
+
+  // Complexity
+  if (data.complexity) {
+    const cx = data.complexity;
+    console.log(
+      `\nComplexity: ${cx.analyzed} functions | avg cognitive: ${cx.avgCognitive} | avg cyclomatic: ${cx.avgCyclomatic} | max cognitive: ${cx.maxCognitive}`,
+    );
   }
 
   console.log();
@@ -1947,6 +1979,25 @@ export function contextData(name, customDbPath, opts = {}) {
       });
     }
 
+    // Complexity metrics
+    let complexityMetrics = null;
+    try {
+      const cRow = db
+        .prepare(
+          'SELECT cognitive, cyclomatic, max_nesting FROM function_complexity WHERE node_id = ?',
+        )
+        .get(node.id);
+      if (cRow) {
+        complexityMetrics = {
+          cognitive: cRow.cognitive,
+          cyclomatic: cRow.cyclomatic,
+          maxNesting: cRow.max_nesting,
+        };
+      }
+    } catch {
+      /* table may not exist */
+    }
+
     return {
       name: node.name,
       kind: node.kind,
@@ -1956,6 +2007,7 @@ export function contextData(name, customDbPath, opts = {}) {
       endLine: node.end_line || null,
       source,
       signature,
+      complexity: complexityMetrics,
       callees,
       callers,
       relatedTests,
@@ -1987,6 +2039,16 @@ export function context(name, customDbPath, opts = {}) {
       console.log('## Type/Shape Info');
       if (r.signature.params != null) console.log(`  Parameters: (${r.signature.params})`);
       if (r.signature.returnType) console.log(`  Returns: ${r.signature.returnType}`);
+      console.log();
+    }
+
+    // Complexity
+    if (r.complexity) {
+      const cx = r.complexity;
+      console.log('## Complexity');
+      console.log(
+        `  Cognitive: ${cx.cognitive} | Cyclomatic: ${cx.cyclomatic} | Max Nesting: ${cx.maxNesting}`,
+      );
       console.log();
     }
 
@@ -2208,6 +2270,25 @@ function explainFunctionImpl(db, target, noTests, getFileLines) {
       .filter((r) => isTestFile(r.file))
       .map((r) => ({ file: r.file }));
 
+    // Complexity metrics
+    let complexityMetrics = null;
+    try {
+      const cRow = db
+        .prepare(
+          'SELECT cognitive, cyclomatic, max_nesting FROM function_complexity WHERE node_id = ?',
+        )
+        .get(node.id);
+      if (cRow) {
+        complexityMetrics = {
+          cognitive: cRow.cognitive,
+          cyclomatic: cRow.cyclomatic,
+          maxNesting: cRow.max_nesting,
+        };
+      }
+    } catch {
+      /* table may not exist */
+    }
+
     return {
       name: node.name,
       kind: node.kind,
@@ -2218,6 +2299,7 @@ function explainFunctionImpl(db, target, noTests, getFileLines) {
       lineCount,
       summary,
       signature,
+      complexity: complexityMetrics,
       callees,
       callers,
       relatedTests,
@@ -2365,6 +2447,13 @@ export function explain(target, customDbPath, opts = {}) {
         if (r.signature.params != null)
           console.log(`${indent}  Parameters: (${r.signature.params})`);
         if (r.signature.returnType) console.log(`${indent}  Returns: ${r.signature.returnType}`);
+      }
+
+      if (r.complexity) {
+        const cx = r.complexity;
+        console.log(
+          `${indent}  Complexity: cognitive=${cx.cognitive} cyclomatic=${cx.cyclomatic} nesting=${cx.maxNesting}`,
+        );
       }
 
       if (r.callees.length > 0) {

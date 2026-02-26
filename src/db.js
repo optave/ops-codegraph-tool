@@ -110,6 +110,20 @@ export const MIGRATIONS = [
       );
     `,
   },
+  {
+    version: 8,
+    up: `
+      CREATE TABLE IF NOT EXISTS function_complexity (
+        node_id INTEGER PRIMARY KEY,
+        cognitive INTEGER NOT NULL,
+        cyclomatic INTEGER NOT NULL,
+        max_nesting INTEGER NOT NULL,
+        FOREIGN KEY(node_id) REFERENCES nodes(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_fc_cognitive ON function_complexity(cognitive DESC);
+      CREATE INDEX IF NOT EXISTS idx_fc_cyclomatic ON function_complexity(cyclomatic DESC);
+    `,
+  },
 ];
 
 export function getBuildMeta(db, key) {

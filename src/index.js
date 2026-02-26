@@ -5,6 +5,8 @@
  *   import { buildGraph, queryNameData, findCycles, exportDOT } from 'codegraph';
  */
 
+// Branch comparison
+export { branchCompareData, branchCompareMermaid } from './branch-compare.js';
 // Graph building
 export { buildGraph, collectFiles, loadPathAliases, resolveImportPath } from './builder.js';
 // Co-change analysis
@@ -16,6 +18,13 @@ export {
   computeCoChanges,
   scanGitHistory,
 } from './cochange.js';
+// Complexity metrics
+export {
+  COMPLEXITY_RULES,
+  complexity,
+  complexityData,
+  computeFunctionComplexity,
+} from './complexity.js';
 // Configuration
 export { loadConfig } from './config.js';
 // Shared constants

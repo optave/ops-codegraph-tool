@@ -713,6 +713,55 @@ program
   });
 
 program
+  .command('complexity [target]')
+  .description('Show per-function complexity metrics (cognitive, cyclomatic, nesting depth)')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-n, --limit <number>', 'Max results', '20')
+  .option('--sort <metric>', 'Sort by: cognitive | cyclomatic | nesting', 'cognitive')
+  .option('--above-threshold', 'Only functions exceeding warn thresholds')
+  .option('-f, --file <path>', 'Scope to file (partial match)')
+  .option('-k, --kind <kind>', 'Filter by symbol kind')
+  .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (target, opts) => {
+    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+      process.exit(1);
+    }
+    const { complexity } = await import('./complexity.js');
+    complexity(opts.db, {
+      target,
+      limit: parseInt(opts.limit, 10),
+      sort: opts.sort,
+      aboveThreshold: opts.aboveThreshold,
+      file: opts.file,
+      kind: opts.kind,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+    });
+  });
+
+program
+  .command('branch-compare <base> <target>')
+  .description('Compare code structure between two branches/refs')
+  .option('--depth <n>', 'Max transitive caller depth', '3')
+  .option('-T, --no-tests', 'Exclude test/spec files')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .option('-f, --format <format>', 'Output format: text, mermaid, json', 'text')
+  .action(async (base, target, opts) => {
+    const { branchCompare } = await import('./branch-compare.js');
+    await branchCompare(base, target, {
+      engine: program.opts().engine,
+      depth: parseInt(opts.depth, 10),
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      format: opts.format,
+    });
+  });
+
+program
   .command('watch [dir]')
   .description('Watch project for file changes and incrementally update the graph')
   .action(async (dir) => {

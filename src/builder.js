@@ -496,10 +496,19 @@ export async function buildGraph(rootDir, opts = {}) {
     const deleteMetricsForFile = db.prepare(
       'DELETE FROM node_metrics WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)',
     );
+    let deleteComplexityForFile;
+    try {
+      deleteComplexityForFile = db.prepare(
+        'DELETE FROM function_complexity WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)',
+      );
+    } catch {
+      deleteComplexityForFile = null;
+    }
     for (const relPath of removed) {
       deleteEmbeddingsForFile?.run(relPath);
       deleteEdgesForFile.run({ f: relPath });
       deleteMetricsForFile.run(relPath);
+      deleteComplexityForFile?.run(relPath);
       deleteNodesForFile.run(relPath);
     }
     for (const item of parseChanges) {
@@ -507,6 +516,7 @@ export async function buildGraph(rootDir, opts = {}) {
       deleteEmbeddingsForFile?.run(relPath);
       deleteEdgesForFile.run({ f: relPath });
       deleteMetricsForFile.run(relPath);
+      deleteComplexityForFile?.run(relPath);
       deleteNodesForFile.run(relPath);
     }
 
@@ -994,6 +1004,14 @@ export async function buildGraph(rootDir, opts = {}) {
     );
   } catch (err) {
     debug(`Role classification failed: ${err.message}`);
+  }
+
+  // Compute per-function complexity metrics (cognitive, cyclomatic, nesting)
+  try {
+    const { buildComplexityMetrics } = await import('./complexity.js');
+    await buildComplexityMetrics(db, allSymbols, rootDir, engineOpts);
+  } catch (err) {
+    debug(`Complexity analysis failed: ${err.message}`);
   }
 
   const nodeCount = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c;

@@ -403,6 +403,35 @@ const BASE_TOOLS = [
       },
     },
   },
+  {
+    name: 'complexity',
+    description:
+      'Show per-function complexity metrics (cognitive, cyclomatic, max nesting depth). Sorted by most complex first.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Function name filter (partial match)' },
+        file: { type: 'string', description: 'Scope to file (partial match)' },
+        limit: { type: 'number', description: 'Max results', default: 20 },
+        sort: {
+          type: 'string',
+          enum: ['cognitive', 'cyclomatic', 'nesting'],
+          description: 'Sort metric',
+          default: 'cognitive',
+        },
+        above_threshold: {
+          type: 'boolean',
+          description: 'Only functions exceeding warn thresholds',
+          default: false,
+        },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        kind: {
+          type: 'string',
+          description: 'Filter by symbol kind (function, method, class, etc.)',
+        },
+      },
+    },
+  },
 ];
 
 const LIST_REPOS_TOOL = {
@@ -717,6 +746,19 @@ export async function startMCPServer(customDbPath, options = {}) {
           const { listEntryPointsData } = await import('./flow.js');
           result = listEntryPointsData(dbPath, {
             noTests: args.no_tests,
+          });
+          break;
+        }
+        case 'complexity': {
+          const { complexityData } = await import('./complexity.js');
+          result = complexityData(dbPath, {
+            target: args.name,
+            file: args.file,
+            limit: args.limit,
+            sort: args.sort,
+            aboveThreshold: args.above_threshold,
+            noTests: args.no_tests,
+            kind: args.kind,
           });
           break;
         }

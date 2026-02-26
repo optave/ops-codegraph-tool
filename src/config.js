@@ -24,6 +24,13 @@ export const DEFAULTS = {
   llm: { provider: null, model: null, baseUrl: null, apiKey: null, apiKeyCommand: null },
   search: { defaultMinScore: 0.2, rrfK: 60, topK: 15 },
   ci: { failOnCycles: false, impactThreshold: null },
+  manifesto: {
+    rules: {
+      cognitive: { warn: 15, fail: null },
+      cyclomatic: { warn: 10, fail: null },
+      maxNesting: { warn: 4, fail: null },
+    },
+  },
   coChange: {
     since: '1 year ago',
     minSupport: 3,

@@ -30,6 +30,7 @@ const ALL_TOOL_NAMES = [
   'node_roles',
   'execution_flow',
   'list_entry_points',
+  'complexity',
   'list_repos',
 ];
 
@@ -986,5 +987,83 @@ describe('startMCPServer handler dispatch', () => {
     vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
     vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
     vi.doUnmock('../../src/queries.js');
+  });
+
+  it('dispatches complexity to complexityData', async () => {
+    const handlers = {};
+
+    vi.doMock('@modelcontextprotocol/sdk/server/index.js', () => ({
+      Server: class MockServer {
+        setRequestHandler(name, handler) {
+          handlers[name] = handler;
+        }
+        async connect() {}
+      },
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
+      StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
+    }));
+
+    vi.doMock('../../src/queries.js', () => ({
+      queryNameData: vi.fn(),
+      impactAnalysisData: vi.fn(),
+      moduleMapData: vi.fn(),
+      fileDepsData: vi.fn(),
+      fnDepsData: vi.fn(),
+      fnImpactData: vi.fn(),
+      contextData: vi.fn(),
+      explainData: vi.fn(),
+      whereData: vi.fn(),
+      diffImpactData: vi.fn(),
+      listFunctionsData: vi.fn(),
+      rolesData: vi.fn(),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
+    }));
+
+    const complexityMock = vi.fn(() => ({
+      functions: [{ name: 'buildGraph', cognitive: 50, cyclomatic: 20, maxNesting: 5 }],
+      summary: { analyzed: 1, avgCognitive: 50, avgCyclomatic: 20 },
+      thresholds: { cognitive: { warn: 15 }, cyclomatic: { warn: 10 }, maxNesting: { warn: 4 } },
+    }));
+    vi.doMock('../../src/complexity.js', () => ({
+      complexityData: complexityMock,
+    }));
+
+    const { startMCPServer } = await import('../../src/mcp.js');
+    await startMCPServer('/tmp/test.db');
+
+    const result = await handlers['tools/call']({
+      params: {
+        name: 'complexity',
+        arguments: {
+          name: 'buildGraph',
+          file: 'src/builder.js',
+          limit: 10,
+          sort: 'cyclomatic',
+          above_threshold: true,
+          no_tests: true,
+          kind: 'function',
+        },
+      },
+    });
+    expect(result.isError).toBeUndefined();
+    expect(complexityMock).toHaveBeenCalledWith('/tmp/test.db', {
+      target: 'buildGraph',
+      file: 'src/builder.js',
+      limit: 10,
+      sort: 'cyclomatic',
+      aboveThreshold: true,
+      noTests: true,
+      kind: 'function',
+    });
+
+    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
+    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
+    vi.doUnmock('../../src/queries.js');
+    vi.doUnmock('../../src/complexity.js');
   });
 });
