@@ -648,6 +648,39 @@ program
   });
 
 program
+  .command('flow [name]')
+  .description(
+    'Trace execution flow forward from an entry point (route, command, event) through callees to leaves',
+  )
+  .option('--list', 'List all entry points grouped by type')
+  .option('--depth <n>', 'Max forward traversal depth', '10')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-f, --file <path>', 'Scope to a specific file (partial match)')
+  .option('-k, --kind <kind>', 'Filter by symbol kind')
+  .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (name, opts) => {
+    if (!name && !opts.list) {
+      console.error('Provide a function/entry point name or use --list to see all entry points.');
+      process.exit(1);
+    }
+    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+      process.exit(1);
+    }
+    const { flow } = await import('./flow.js');
+    flow(name, opts.db, {
+      list: opts.list,
+      depth: parseInt(opts.depth, 10),
+      file: opts.file,
+      kind: opts.kind,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+    });
+  });
+
+program
   .command('watch [dir]')
   .description('Watch project for file changes and incrementally update the graph')
   .action(async (dir) => {

@@ -338,6 +338,44 @@ const BASE_TOOLS = [
       },
     },
   },
+  {
+    name: 'execution_flow',
+    description:
+      'Trace execution flow forward from an entry point (route, command, event) through callees to leaf functions. Answers "what happens when X is called?"',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description:
+            'Entry point or function name (e.g. "POST /login", "build"). Supports prefix-stripped matching.',
+        },
+        depth: { type: 'number', description: 'Max forward traversal depth', default: 10 },
+        file: {
+          type: 'string',
+          description: 'Scope search to functions in this file (partial match)',
+        },
+        kind: {
+          type: 'string',
+          enum: ALL_SYMBOL_KINDS,
+          description: 'Filter to a specific symbol kind',
+        },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'list_entry_points',
+    description:
+      'List all framework entry points (routes, commands, events) in the codebase, grouped by type',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+      },
+    },
+  },
 ];
 
 const LIST_REPOS_TOOL = {
@@ -624,6 +662,23 @@ export async function startMCPServer(customDbPath, options = {}) {
                 minJaccard: args.min_jaccard,
                 noTests: args.no_tests,
               });
+          break;
+        }
+        case 'execution_flow': {
+          const { flowData } = await import('./flow.js');
+          result = flowData(args.name, dbPath, {
+            depth: args.depth,
+            file: args.file,
+            kind: args.kind,
+            noTests: args.no_tests,
+          });
+          break;
+        }
+        case 'list_entry_points': {
+          const { listEntryPointsData } = await import('./flow.js');
+          result = listEntryPointsData(dbPath, {
+            noTests: args.no_tests,
+          });
           break;
         }
         case 'list_repos': {

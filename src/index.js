@@ -31,7 +31,6 @@ export {
   openReadonlyOrFail,
   setBuildMeta,
 } from './db.js';
-
 // Embeddings
 export {
   buildEmbeddings,
@@ -48,6 +47,8 @@ export {
 } from './embedder.js';
 // Export (DOT/Mermaid/JSON)
 export { exportDOT, exportJSON, exportMermaid } from './export.js';
+// Execution flow tracing
+export { entryPointType, flowData, listEntryPointsData } from './flow.js';
 // Logger
 export { setVerbose } from './logger.js';
 // Native engine
@@ -68,6 +69,7 @@ export {
   fnDepsData,
   fnImpactData,
   impactAnalysisData,
+  kindIcon,
   moduleMapData,
   queryNameData,
   rolesData,
@@ -90,6 +92,7 @@ export {
 export {
   buildStructure,
   classifyNodeRoles,
+  FRAMEWORK_ENTRY_PREFIXES,
   formatHotspots,
   formatModuleBoundaries,
   formatStructure,

@@ -27,6 +27,8 @@ const ALL_TOOL_NAMES = [
   'hotspots',
   'co_changes',
   'node_roles',
+  'execution_flow',
+  'list_entry_points',
   'list_repos',
 ];
 

@@ -172,7 +172,7 @@ function findMatchingNodes(db, name, opts = {}) {
   return nodes;
 }
 
-function kindIcon(kind) {
+export function kindIcon(kind) {
   switch (kind) {
     case 'function':
       return 'f';
