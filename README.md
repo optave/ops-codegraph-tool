@@ -403,26 +403,12 @@ Self-measured on every release via CI ([build benchmarks](generated/BUILD-BENCHM
 
 | Metric | Latest |
 |---|---|
-| Build speed (native) | **1.9 ms/file** |
-| Build speed (WASM) | **6.6 ms/file** |
+| Build speed (native) | **2.1 ms/file** |
+| Build speed (WASM) | **6.5 ms/file** |
 | Query time | **2ms** |
-| ~50,000 files (est.) | **~95.0s build** |
+| ~50,000 files (est.) | **~105.0s build** |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
-
-### Lightweight Footprint
-
-<a href="https://www.npmjs.com/package/@optave/codegraph"><img src="https://img.shields.io/npm/unpacked-size/@optave/codegraph?style=flat-square&label=unpacked%20size" alt="npm unpacked size" /></a>
-
-Only **3 runtime dependencies** — everything else is optional or a devDependency:
-
-| Dependency | What it does | | |
-|---|---|---|---|
-| [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | Fast, synchronous SQLite driver | ![GitHub stars](https://img.shields.io/github/stars/WiseLibs/better-sqlite3?style=flat-square&label=%E2%AD%90) | ![npm downloads](https://img.shields.io/npm/dw/better-sqlite3?style=flat-square&label=%F0%9F%93%A5%2Fwk) |
-| [commander](https://github.com/tj/commander.js) | CLI argument parsing | ![GitHub stars](https://img.shields.io/github/stars/tj/commander.js?style=flat-square&label=%E2%AD%90) | ![npm downloads](https://img.shields.io/npm/dw/commander?style=flat-square&label=%F0%9F%93%A5%2Fwk) |
-| [web-tree-sitter](https://github.com/tree-sitter/tree-sitter) | WASM tree-sitter bindings | ![GitHub stars](https://img.shields.io/github/stars/tree-sitter/tree-sitter?style=flat-square&label=%E2%AD%90) | ![npm downloads](https://img.shields.io/npm/dw/web-tree-sitter?style=flat-square&label=%F0%9F%93%A5%2Fwk) |
-
-Optional: `@huggingface/transformers` (semantic search), `@modelcontextprotocol/sdk` (MCP server) — lazy-loaded only when needed.
 
 ## 🤖 AI Agent Integration
 

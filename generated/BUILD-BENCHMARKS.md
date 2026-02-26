@@ -5,6 +5,8 @@ Metrics are normalized per file for cross-version comparability.
 
 | Version | Engine | Date | Files | Build (ms/file) | Query (ms) | Nodes/file | Edges/file | DB (bytes/file) |
 |---------|--------|------|------:|----------------:|-----------:|-----------:|-----------:|----------------:|
+| 2.4.0 | native | 2026-02-26 | 107 | 2.1 ↑11% | 1.6 ↑7% | 5.9 ~ | 9.5 ↑4% | 4517 ↑17% |
+| 2.4.0 | wasm | 2026-02-26 | 107 | 6.5 ~ | 2.1 ~ | 5.9 ~ | 9.5 ↑4% | 4517 ↑17% |
 | 2.3.0 | native | 2026-02-24 | 99 | 1.9 ~ | 1.5 ↑7% | 5.8 ↑7% | 9.1 ~ | 3848 ~ |
 | 2.3.0 | wasm | 2026-02-24 | 99 | 6.6 ~ | 2.1 ↑11% | 5.8 ~ | 9.1 ↑3% | 3848 ~ |
 | 2.1.0 | native | 2026-02-23 | 92 | 1.9 ↓24% | 1.4 ↑17% | 5.4 ↑6% | 9.1 ↓47% | 3829 ↓14% |
@@ -18,23 +20,23 @@ Metrics are normalized per file for cross-version comparability.
 
 | Metric | Value |
 |--------|-------|
-| Build time | 183ms |
+| Build time | 224ms |
 | Query time | 2ms |
-| Nodes | 575 |
-| Edges | 897 |
-| DB size | 372 KB |
-| Files | 99 |
+| Nodes | 630 |
+| Edges | 1,018 |
+| DB size | 472 KB |
+| Files | 107 |
 
 #### WASM
 
 | Metric | Value |
 |--------|-------|
-| Build time | 649ms |
+| Build time | 699ms |
 | Query time | 2ms |
-| Nodes | 575 |
-| Edges | 897 |
-| DB size | 372 KB |
-| Files | 99 |
+| Nodes | 630 |
+| Edges | 1,018 |
+| DB size | 472 KB |
+| Files | 107 |
 
 ### Estimated performance at 50,000 files
 
@@ -42,13 +44,44 @@ Extrapolated linearly from per-file metrics above.
 
 | Metric | Native (Rust) | WASM |
 |--------|---:|---:|
-| Build time | 95.0s | 330.0s |
-| DB size | 183.5 MB | 183.5 MB |
-| Nodes | 290,000 | 290,000 |
-| Edges | 455,000 | 455,000 |
+| Build time | 105.0s | 325.0s |
+| DB size | 215.4 MB | 215.4 MB |
+| Nodes | 295,000 | 295,000 |
+| Edges | 475,000 | 475,000 |
 
 <!-- BENCHMARK_DATA
 [
+  {
+    "version": "2.4.0",
+    "date": "2026-02-26",
+    "files": 107,
+    "wasm": {
+      "buildTimeMs": 699,
+      "queryTimeMs": 2.1,
+      "nodes": 630,
+      "edges": 1018,
+      "dbSizeBytes": 483328,
+      "perFile": {
+        "buildTimeMs": 6.5,
+        "nodes": 5.9,
+        "edges": 9.5,
+        "dbSizeBytes": 4517
+      }
+    },
+    "native": {
+      "buildTimeMs": 224,
+      "queryTimeMs": 1.6,
+      "nodes": 630,
+      "edges": 1018,
+      "dbSizeBytes": 483328,
+      "perFile": {
+        "buildTimeMs": 2.1,
+        "nodes": 5.9,
+        "edges": 9.5,
+        "dbSizeBytes": 4517
+      }
+    }
+  },
   {
     "version": "2.3.0",
     "date": "2026-02-24",
