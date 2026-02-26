@@ -330,6 +330,8 @@ export function structureData(customDbPath, opts = {}) {
   const maxDepth = opts.depth || null;
   const sortBy = opts.sort || 'files';
   const noTests = opts.noTests || false;
+  const full = opts.full || false;
+  const fileLimit = opts.fileLimit || 25;
 
   // Get all directory nodes with their metrics
   let dirs = db
@@ -403,6 +405,33 @@ export function structureData(customDbPath, opts = {}) {
   });
 
   db.close();
+
+  // Apply global file limit unless full mode
+  if (!full) {
+    const totalFiles = result.reduce((sum, d) => sum + d.files.length, 0);
+    if (totalFiles > fileLimit) {
+      let shown = 0;
+      for (const d of result) {
+        const remaining = fileLimit - shown;
+        if (remaining <= 0) {
+          d.files = [];
+        } else if (d.files.length > remaining) {
+          d.files = d.files.slice(0, remaining);
+          shown = fileLimit;
+        } else {
+          shown += d.files.length;
+        }
+      }
+      const suppressed = totalFiles - fileLimit;
+      return {
+        directories: result,
+        count: result.length,
+        suppressed,
+        warning: `${suppressed} files omitted (showing ${fileLimit}/${totalFiles}). Use --full to show all files, or narrow with --directory.`,
+      };
+    }
+  }
+
   return { directories: result, count: result.length };
 }
 
@@ -538,6 +567,10 @@ export function formatStructure(data) {
         `${indent}  ${path.basename(f.file)}  ${f.lineCount}L ${f.symbolCount}sym <-${f.fanIn} ->${f.fanOut}`,
       );
     }
+  }
+  if (data.warning) {
+    lines.push('');
+    lines.push(`⚠ ${data.warning}`);
   }
   return lines.join('\n');
 }
