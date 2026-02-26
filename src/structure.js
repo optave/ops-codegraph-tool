@@ -226,6 +226,8 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
 
 // ─── Node role classification ─────────────────────────────────────────
 
+export const FRAMEWORK_ENTRY_PREFIXES = ['route:', 'event:', 'command:'];
+
 function median(sorted) {
   if (sorted.length === 0) return 0;
   const mid = Math.floor(sorted.length / 2);
@@ -235,7 +237,7 @@ function median(sorted) {
 export function classifyNodeRoles(db) {
   const rows = db
     .prepare(
-      `SELECT n.id, n.kind, n.file,
+      `SELECT n.id, n.name, n.kind, n.file,
         COALESCE(fi.cnt, 0) AS fan_in,
         COALESCE(fo.cnt, 0) AS fan_out
       FROM nodes n
@@ -287,7 +289,10 @@ export function classifyNodeRoles(db) {
     const isExported = exportedIds.has(row.id);
 
     let role;
-    if (row.fan_in === 0 && !isExported) {
+    const isFrameworkEntry = FRAMEWORK_ENTRY_PREFIXES.some((p) => row.name.startsWith(p));
+    if (isFrameworkEntry) {
+      role = 'entry';
+    } else if (row.fan_in === 0 && !isExported) {
       role = 'dead';
     } else if (row.fan_in === 0 && isExported) {
       role = 'entry';
