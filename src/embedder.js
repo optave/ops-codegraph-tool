@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import Database from 'better-sqlite3';
 import { findDbPath, openReadonlyOrFail } from './db.js';
-import { warn } from './logger.js';
+import { info, warn } from './logger.js';
 
 /**
  * Split an identifier into readable words.
@@ -135,8 +135,10 @@ export function estimateTokens(text) {
  * Returns the cleaned comment text or null if none found.
  */
 function extractLeadingComment(lines, fnLineIndex) {
+  if (fnLineIndex > lines.length) return null;
   const raw = [];
   for (let i = fnLineIndex - 1; i >= Math.max(0, fnLineIndex - 15); i--) {
+    if (i >= lines.length) continue;
     const trimmed = lines[i].trim();
     if (/^(\/\/|\/\*|\*\/|\*|#|\/\/\/)/.test(trimmed)) {
       raw.unshift(trimmed);
@@ -298,7 +300,7 @@ async function loadModel(modelKey) {
   pipeline = transformers.pipeline;
   _cos_sim = transformers.cos_sim;
 
-  console.log(`Loading embedding model: ${config.name} (${config.dim}d)...`);
+  info(`Loading embedding model: ${config.name} (${config.dim}d)...`);
   const pipelineOpts = config.quantized ? { quantized: true } : {};
   try {
     extractor = await pipeline('feature-extraction', config.name, pipelineOpts);
@@ -321,7 +323,7 @@ async function loadModel(modelKey) {
     process.exit(1);
   }
   activeModel = config.name;
-  console.log('Model loaded.');
+  info('Model loaded.');
   return { extractor, config };
 }
 

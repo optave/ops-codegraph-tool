@@ -69,9 +69,10 @@
   },
   "optionalDependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@optave/codegraph-darwin-arm64": "2.3.0",
-    "@optave/codegraph-darwin-x64": "2.3.0",
-    "@optave/codegraph-linux-x64-gnu": "2.3.0"
+    "@optave/codegraph-darwin-arm64": "2.4.0",
+    "@optave/codegraph-darwin-x64": "2.4.0",
+    "@optave/codegraph-linux-x64-gnu": "2.4.0",
+    "@optave/codegraph-win32-x64-msvc": "2.4.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",
