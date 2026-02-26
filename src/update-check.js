@@ -109,6 +109,7 @@ export async function checkForUpdates(currentVersion, options = {}) {
   if (process.env.CI) return null;
   if (process.env.NO_UPDATE_CHECK) return null;
   if (!process.stderr.isTTY) return null;
+  if (currentVersion.includes('-')) return null;
 
   const cachePath = options.cachePath || CACHE_PATH;
   const fetchFn = options._fetchLatest || fetchLatestVersion;

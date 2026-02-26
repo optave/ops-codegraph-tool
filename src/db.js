@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { debug } from './logger.js';
+import { debug, warn } from './logger.js';
 
 // ─── Schema Migrations ─────────────────────────────────────────────────
 export const MIGRATIONS = [
@@ -134,9 +134,57 @@ export function setBuildMeta(db, entries) {
 export function openDb(dbPath) {
   const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  acquireAdvisoryLock(dbPath);
   const db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  db.pragma('busy_timeout = 5000');
+  db.__lockPath = `${dbPath}.lock`;
   return db;
+}
+
+export function closeDb(db) {
+  db.close();
+  if (db.__lockPath) releaseAdvisoryLock(db.__lockPath);
+}
+
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function acquireAdvisoryLock(dbPath) {
+  const lockPath = `${dbPath}.lock`;
+  try {
+    if (fs.existsSync(lockPath)) {
+      const content = fs.readFileSync(lockPath, 'utf-8').trim();
+      const pid = Number(content);
+      if (pid && pid !== process.pid && isProcessAlive(pid)) {
+        warn(`Another process (PID ${pid}) may be using this database. Proceeding with caution.`);
+      }
+    }
+  } catch {
+    /* ignore read errors */
+  }
+  try {
+    fs.writeFileSync(lockPath, String(process.pid), 'utf-8');
+  } catch {
+    /* best-effort */
+  }
+}
+
+function releaseAdvisoryLock(lockPath) {
+  try {
+    const content = fs.readFileSync(lockPath, 'utf-8').trim();
+    if (Number(content) === process.pid) {
+      fs.unlinkSync(lockPath);
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 export function initSchema(db) {

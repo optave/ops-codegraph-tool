@@ -8,6 +8,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+  closeDb,
   findDbPath,
   getBuildMeta,
   initSchema,
@@ -74,7 +75,7 @@ describe('openDb', () => {
     const db = openDb(dbPath);
     expect(fs.existsSync(dbDir)).toBe(true);
     expect(db).toBeDefined();
-    db.close();
+    closeDb(db);
   });
 
   it('returns a functional database', () => {
@@ -89,7 +90,25 @@ describe('openDb', () => {
     );
     const row = db.prepare('SELECT * FROM nodes WHERE name = ?').get('test');
     expect(row.name).toBe('test');
-    db.close();
+    closeDb(db);
+  });
+
+  it('sets busy_timeout pragma to 5000', () => {
+    const dbPath = path.join(tmpDir, 'busy-timeout.db');
+    const db = openDb(dbPath);
+    const timeout = db.pragma('busy_timeout', { simple: true });
+    expect(timeout).toBe(5000);
+    closeDb(db);
+  });
+
+  it('creates lock file on open and removes on closeDb', () => {
+    const dbPath = path.join(tmpDir, 'locktest.db');
+    const lockPath = `${dbPath}.lock`;
+    const db = openDb(dbPath);
+    expect(fs.existsSync(lockPath)).toBe(true);
+    expect(fs.readFileSync(lockPath, 'utf-8').trim()).toBe(String(process.pid));
+    closeDb(db);
+    expect(fs.existsSync(lockPath)).toBe(false);
   });
 });
 
@@ -196,7 +215,7 @@ describe('openReadonlyOrFail', () => {
     const dbPath = path.join(tmpDir, 'readonly-test.db');
     const db = openDb(dbPath);
     initSchema(db);
-    db.close();
+    closeDb(db);
 
     const readDb = openReadonlyOrFail(dbPath);
     expect(readDb).toBeDefined();

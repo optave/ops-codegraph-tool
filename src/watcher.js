@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { readFileSafe } from './builder.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
-import { initSchema, openDb } from './db.js';
+import { closeDb, initSchema, openDb } from './db.js';
 import { appendJournalEntries } from './journal.js';
 import { info, warn } from './logger.js';
 import { createParseTreeCache, getActiveEngine, parseFileIncremental } from './parser.js';
@@ -261,7 +261,7 @@ export async function watchProject(rootDir, opts = {}) {
       }
     }
     if (cache) cache.clear();
-    db.close();
+    closeDb(db);
     process.exit(0);
   });
 }

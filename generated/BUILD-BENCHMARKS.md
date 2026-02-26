@@ -5,7 +5,8 @@ Metrics are normalized per file for cross-version comparability.
 
 | Version | Engine | Date | Files | Build (ms/file) | Query (ms) | Nodes/file | Edges/file | DB (bytes/file) |
 |---------|--------|------|------:|----------------:|-----------:|-----------:|-----------:|----------------:|
-| 2.4.0 | wasm | 2026-02-26 | 112 | 4.6 ↓30% | 1.9 ↓10% | 6 ↑3% | 9.8 ↑8% | 4425 ↑15% |
+| 2.4.0 | native | 2026-02-26 | 109 | 2.2 ↑16% | 1.6 ↑7% | 5.9 ~ | 9.6 ↑5% | 4397 ↑14% |
+| 2.4.0 | wasm | 2026-02-26 | 109 | 6.4 ↓3% | 2.1 ~ | 5.9 ~ | 9.6 ↑5% | 4397 ↑14% |
 | 2.3.0 | native | 2026-02-24 | 99 | 1.9 ~ | 1.5 ↑7% | 5.8 ↑7% | 9.1 ~ | 3848 ~ |
 | 2.3.0 | wasm | 2026-02-24 | 99 | 6.6 ~ | 2.1 ↑11% | 5.8 ~ | 9.1 ↑3% | 3848 ~ |
 | 2.1.0 | native | 2026-02-23 | 92 | 1.9 ↓24% | 1.4 ↑17% | 5.4 ↑6% | 9.1 ↓47% | 3829 ↓14% |
@@ -15,16 +16,28 @@ Metrics are normalized per file for cross-version comparability.
 
 ### Raw totals (latest)
 
+#### Native (Rust)
+
+| Metric | Value |
+|--------|-------|
+| Build time | 235ms |
+| Query time | 2ms |
+| Nodes | 640 |
+| Edges | 1,049 |
+| DB size | 468 KB |
+| Files | 109 |
+
+
 #### WASM
 
 | Metric | Value |
 |--------|-------|
-| Build time | 519ms |
+| Build time | 700ms |
 | Query time | 2ms |
-| Nodes | 672 |
-| Edges | 1,094 |
-| DB size | 484 KB |
-| Files | 112 |
+| Nodes | 640 |
+| Edges | 1,049 |
+| DB size | 468 KB |
+| Files | 109 |
 
 ### Estimated performance at 50,000 files
 
@@ -32,10 +45,10 @@ Extrapolated linearly from per-file metrics above.
 
 | Metric | Native (Rust) | WASM |
 |--------|---:|---:|
-| Build time | n/a | 230.0s |
-| DB size | n/a | 211.0 MB |
-| Nodes | n/a | 300,000 |
-| Edges | n/a | 490,000 |
+| Build time | 110.0s | 320.0s |
+| DB size | 209.7 MB | 209.7 MB |
+| Nodes | 295,000 | 295,000 |
+| Edges | 480,000 | 480,000 |
 
 ### Incremental Rebuilds
 
@@ -54,18 +67,18 @@ Extrapolated linearly from per-file metrics above.
   {
     "version": "2.4.0",
     "date": "2026-02-26",
-    "files": 112,
+    "files": 109,
     "wasm": {
-      "buildTimeMs": 519,
-      "queryTimeMs": 1.9,
-      "nodes": 672,
-      "edges": 1094,
-      "dbSizeBytes": 495616,
+      "buildTimeMs": 700,
+      "queryTimeMs": 2.1,
+      "nodes": 640,
+      "edges": 1049,
+      "dbSizeBytes": 479232,
       "perFile": {
-        "buildTimeMs": 4.6,
-        "nodes": 6,
-        "edges": 9.8,
-        "dbSizeBytes": 4425
+        "buildTimeMs": 6.4,
+        "nodes": 5.9,
+        "edges": 9.6,
+        "dbSizeBytes": 4397
       },
       "noopRebuildMs": 5,
       "oneFileRebuildMs": 233,
@@ -76,7 +89,19 @@ Extrapolated linearly from per-file metrics above.
         "rolesMs": 0.8
       }
     },
-    "native": null
+    "native": {
+      "buildTimeMs": 235,
+      "queryTimeMs": 1.6,
+      "nodes": 640,
+      "edges": 1049,
+      "dbSizeBytes": 479232,
+      "perFile": {
+        "buildTimeMs": 2.2,
+        "nodes": 5.9,
+        "edges": 9.6,
+        "dbSizeBytes": 4397
+      }
+    }
   },
   {
     "version": "2.3.0",
