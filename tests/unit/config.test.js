@@ -162,6 +162,34 @@ describe('loadConfig', () => {
   });
 });
 
+describe('excludeTests hoisting', () => {
+  it('hoists top-level excludeTests into query.excludeTests', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'exclude-top-'));
+    fs.writeFileSync(path.join(dir, '.codegraphrc.json'), JSON.stringify({ excludeTests: true }));
+    const config = loadConfig(dir);
+    expect(config.query.excludeTests).toBe(true);
+    expect(config.excludeTests).toBeUndefined();
+  });
+
+  it('nested query.excludeTests takes precedence over top-level', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'exclude-nested-'));
+    fs.writeFileSync(
+      path.join(dir, '.codegraphrc.json'),
+      JSON.stringify({ excludeTests: true, query: { excludeTests: false } }),
+    );
+    const config = loadConfig(dir);
+    expect(config.query.excludeTests).toBe(false);
+  });
+
+  it('hoists top-level excludeTests: false correctly', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'exclude-false-'));
+    fs.writeFileSync(path.join(dir, '.codegraphrc.json'), JSON.stringify({ excludeTests: false }));
+    const config = loadConfig(dir);
+    expect(config.query.excludeTests).toBe(false);
+    expect(config.excludeTests).toBeUndefined();
+  });
+});
+
 describe('applyEnvOverrides', () => {
   const ENV_KEYS = ['CODEGRAPH_LLM_PROVIDER', 'CODEGRAPH_LLM_API_KEY', 'CODEGRAPH_LLM_MODEL'];
 

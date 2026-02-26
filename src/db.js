@@ -101,7 +101,35 @@ export const MIGRATIONS = [
       );
     `,
   },
+  {
+    version: 7,
+    up: `
+      CREATE TABLE IF NOT EXISTS build_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+    `,
+  },
 ];
+
+export function getBuildMeta(db, key) {
+  try {
+    const row = db.prepare('SELECT value FROM build_meta WHERE key = ?').get(key);
+    return row ? row.value : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setBuildMeta(db, entries) {
+  const upsert = db.prepare('INSERT OR REPLACE INTO build_meta (key, value) VALUES (?, ?)');
+  const tx = db.transaction(() => {
+    for (const [key, value] of Object.entries(entries)) {
+      upsert.run(key, String(value));
+    }
+  });
+  tx();
+}
 
 export function openDb(dbPath) {
   const dir = path.dirname(dbPath);
