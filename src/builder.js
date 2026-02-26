@@ -441,7 +441,43 @@ export async function buildGraph(rootDir, opts = {}) {
         : deletions,
     );
   } else {
-    info(`Incremental: ${parseChanges.length} changed, ${removed.length} removed`);
+    // ── Reverse-dependency cascade (issue #116) ─────────────────────
+    // Find files with edges pointing TO changed/removed files.
+    // Their nodes stay intact (preserving IDs), but outgoing edges are
+    // deleted so they can be rebuilt during the edge-building pass.
+    const changedRelPaths = new Set();
+    for (const item of parseChanges) {
+      changedRelPaths.add(item.relPath || normalizePath(path.relative(rootDir, item.file)));
+    }
+    for (const relPath of removed) {
+      changedRelPaths.add(relPath);
+    }
+
+    const reverseDeps = new Set();
+    if (changedRelPaths.size > 0) {
+      const findReverseDeps = db.prepare(`
+        SELECT DISTINCT n_src.file FROM edges e
+        JOIN nodes n_src ON e.source_id = n_src.id
+        JOIN nodes n_tgt ON e.target_id = n_tgt.id
+        WHERE n_tgt.file = ? AND n_src.file != n_tgt.file
+      `);
+      for (const relPath of changedRelPaths) {
+        for (const row of findReverseDeps.all(relPath)) {
+          if (!changedRelPaths.has(row.file) && !reverseDeps.has(row.file)) {
+            // Verify the file still exists on disk
+            const absPath = path.join(rootDir, row.file);
+            if (fs.existsSync(absPath)) {
+              reverseDeps.add(row.file);
+            }
+          }
+        }
+      }
+    }
+
+    info(
+      `Incremental: ${parseChanges.length} changed, ${removed.length} removed${reverseDeps.size > 0 ? `, ${reverseDeps.size} reverse-deps` : ''}`,
+    );
+
     // Remove embeddings/metrics/edges/nodes for changed and removed files
     // Embeddings must be deleted BEFORE nodes (we need node IDs to find them)
     const deleteEmbeddingsForFile = hasEmbeddings
@@ -452,6 +488,9 @@ export async function buildGraph(rootDir, opts = {}) {
       DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = @f)
       OR target_id IN (SELECT id FROM nodes WHERE file = @f)
     `);
+    const deleteOutgoingEdgesForFile = db.prepare(
+      'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
+    );
     const deleteMetricsForFile = db.prepare(
       'DELETE FROM node_metrics WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)',
     );
@@ -467,6 +506,16 @@ export async function buildGraph(rootDir, opts = {}) {
       deleteEdgesForFile.run({ f: relPath });
       deleteMetricsForFile.run(relPath);
       deleteNodesForFile.run(relPath);
+    }
+
+    // Process reverse deps: delete only outgoing edges (nodes/IDs preserved)
+    // then add them to the parse list so they participate in edge building
+    for (const relPath of reverseDeps) {
+      deleteOutgoingEdgesForFile.run(relPath);
+    }
+    for (const relPath of reverseDeps) {
+      const absPath = path.join(rootDir, relPath);
+      parseChanges.push({ file: absPath, relPath, _reverseDepOnly: true });
     }
   }
 
@@ -529,9 +578,12 @@ export async function buildGraph(rootDir, opts = {}) {
       }
 
       // Update file hash with real mtime+size for incremental builds
+      // Skip for reverse-dep files — they didn't actually change
       if (upsertHash) {
         const precomputed = precomputedData.get(relPath);
-        if (precomputed?.hash) {
+        if (precomputed?._reverseDepOnly) {
+          // no-op: file unchanged, hash already correct
+        } else if (precomputed?.hash) {
           const stat = precomputed.stat || fileStat(path.join(rootDir, relPath));
           const mtime = stat ? Math.floor(stat.mtimeMs) : 0;
           const size = stat ? stat.size : 0;

@@ -261,6 +261,75 @@ describe('three-tier incremental builds', () => {
     expect(names).toContain('helper');
   });
 
+  test('incremental rebuild preserves edges from unchanged files (issue #116)', async () => {
+    // Reset all files to original state and do a clean build
+    for (const [name, content] of Object.entries(FIXTURE_FILES)) {
+      fs.writeFileSync(path.join(incrDir, name), content);
+    }
+    await buildGraph(incrDir, { skipRegistry: true, incremental: false });
+
+    // Record baseline edges
+    const db1 = new Database(incrDbPath, { readonly: true });
+    const baselineImports = db1
+      .prepare(`
+        SELECT s.file as src, t.file as tgt FROM edges e
+        JOIN nodes s ON e.source_id = s.id
+        JOIN nodes t ON e.target_id = t.id
+        WHERE e.kind = 'imports' AND s.kind = 'file' AND t.kind = 'file'
+      `)
+      .all()
+      .map((e) => `${e.src}->${e.tgt}`)
+      .sort();
+    const baselineCalls = db1
+      .prepare(`
+        SELECT s.name as caller, t.name as callee FROM edges e
+        JOIN nodes s ON e.source_id = s.id
+        JOIN nodes t ON e.target_id = t.id
+        WHERE e.kind = 'calls'
+      `)
+      .all()
+      .map((e) => `${e.caller}->${e.callee}`)
+      .sort();
+    db1.close();
+
+    // Touch math.js (append a comment — content changes but exports don't)
+    const mathPath = path.join(incrDir, 'math.js');
+    fs.writeFileSync(mathPath, `${FIXTURE_FILES['math.js']}// touched\n`);
+
+    // Incremental rebuild
+    await buildGraph(incrDir, { skipRegistry: true });
+
+    // Assert import edges match baseline
+    const db2 = new Database(incrDbPath, { readonly: true });
+    const afterImports = db2
+      .prepare(`
+        SELECT s.file as src, t.file as tgt FROM edges e
+        JOIN nodes s ON e.source_id = s.id
+        JOIN nodes t ON e.target_id = t.id
+        WHERE e.kind = 'imports' AND s.kind = 'file' AND t.kind = 'file'
+      `)
+      .all()
+      .map((e) => `${e.src}->${e.tgt}`)
+      .sort();
+    const afterCalls = db2
+      .prepare(`
+        SELECT s.name as caller, t.name as callee FROM edges e
+        JOIN nodes s ON e.source_id = s.id
+        JOIN nodes t ON e.target_id = t.id
+        WHERE e.kind = 'calls'
+      `)
+      .all()
+      .map((e) => `${e.caller}->${e.callee}`)
+      .sort();
+    db2.close();
+
+    // Key assertions: edges FROM unchanged files TO math.js must survive
+    expect(afterImports).toContain('utils.js->math.js');
+    expect(afterImports).toContain('index.js->math.js');
+    expect(afterImports).toEqual(baselineImports);
+    expect(afterCalls).toEqual(baselineCalls);
+  });
+
   test('rebuild with corrupt journal falls back to Tier 1', async () => {
     // Reset utils.js
     fs.writeFileSync(path.join(incrDir, 'utils.js'), FIXTURE_FILES['utils.js']);
