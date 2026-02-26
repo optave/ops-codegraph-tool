@@ -62,6 +62,26 @@ Extrapolated linearly from per-file metrics above.
 |---------|--------|------------:|--------------:|----------:|----------:|
 | 2.4.0 | wasm | 1.8 | 1.4 | 0.8 | 0.8 |
 
+<!-- NOTES_START -->
+### Notes
+
+**WASM regression (v2.0.0 → v2.1.0, ↑32% — persists in v2.3.0):** The
+"v2.1.0" entry was measured after the v2.1.0 tag on main, when `package.json`
+still read "2.1.0" but the codebase already included post-release features:
+receiver field extraction (`b08c2b2`) and Commander/Express callback extraction
+(`2ac24ef`). Both added WASM-to-JS boundary crossings on every
+`call_expression` AST node. The native engine was unaffected because its Rust
+extractors have zero boundary overhead — and it gained a net 24% speedup from
+the ~45% edge reduction introduced by scoped call-resolution fallback
+(`3a11191`). For WASM the extra crossings outweighed the edge savings. A
+targeted fix in `d4ef6da` gated `extractCallbackDefinition` behind a
+`member_expression` type check and eliminated redundant `childForFieldName`
+calls, but the v2.3.0 CI benchmark confirms this was **insufficient** — WASM
+remains at 6.6 ms/file (vs 5.0 in v2.0.0). The WASM/Native ratio widened from
+2.0x to 3.5x. Further optimization of WASM boundary crossings in the JS
+extractor is needed to recover the regression.
+<!-- NOTES_END -->
+
 <!-- BENCHMARK_DATA
 [
   {
