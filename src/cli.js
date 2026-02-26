@@ -682,6 +682,43 @@ program
     console.log(`  Engine flag   : --engine ${engine}`);
     console.log(`  Active engine : ${activeName}${activeVersion ? ` (v${activeVersion})` : ''}`);
     console.log();
+
+    // Build metadata from DB
+    try {
+      const { findDbPath, getBuildMeta } = await import('./db.js');
+      const Database = (await import('better-sqlite3')).default;
+      const dbPath = findDbPath();
+      const fs = await import('node:fs');
+      if (fs.existsSync(dbPath)) {
+        const db = new Database(dbPath, { readonly: true });
+        const buildEngine = getBuildMeta(db, 'engine');
+        const buildVersion = getBuildMeta(db, 'codegraph_version');
+        const builtAt = getBuildMeta(db, 'built_at');
+        db.close();
+
+        if (buildEngine || buildVersion || builtAt) {
+          console.log('Build metadata');
+          console.log('──────────────');
+          if (buildEngine) console.log(`  Engine        : ${buildEngine}`);
+          if (buildVersion) console.log(`  Version       : ${buildVersion}`);
+          if (builtAt) console.log(`  Built at      : ${builtAt}`);
+
+          if (buildVersion && buildVersion !== program.version()) {
+            console.log(
+              `  ⚠ DB was built with v${buildVersion}, current is v${program.version()}. Consider: codegraph build --no-incremental`,
+            );
+          }
+          if (buildEngine && buildEngine !== activeName) {
+            console.log(
+              `  ⚠ DB was built with ${buildEngine} engine, active is ${activeName}. Consider: codegraph build --no-incremental`,
+            );
+          }
+          console.log();
+        }
+      }
+    } catch {
+      /* diagnostics must never crash */
+    }
   });
 
 program.parse();

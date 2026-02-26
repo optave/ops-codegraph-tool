@@ -3,13 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from './config.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
-import { initSchema, openDb } from './db.js';
+import { getBuildMeta, initSchema, openDb, setBuildMeta } from './db.js';
 import { readJournal, writeJournalHeader } from './journal.js';
 import { debug, info, warn } from './logger.js';
 import { getActiveEngine, parseFilesAuto } from './parser.js';
 import { computeConfidence, resolveImportPath, resolveImportsBatch } from './resolve.js';
 
 export { resolveImportPath } from './resolve.js';
+
+const __builderDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'));
+const CODEGRAPH_VERSION = JSON.parse(
+  fs.readFileSync(path.join(__builderDir, '..', 'package.json'), 'utf-8'),
+).version;
 
 const BUILTIN_RECEIVERS = new Set([
   'console',
@@ -345,6 +350,22 @@ export async function buildGraph(rootDir, opts = {}) {
   const engineOpts = { engine: opts.engine || 'auto' };
   const { name: engineName, version: engineVersion } = getActiveEngine(engineOpts);
   info(`Using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
+
+  // Check for engine/version mismatch on incremental builds
+  if (incremental) {
+    const prevEngine = getBuildMeta(db, 'engine');
+    const prevVersion = getBuildMeta(db, 'codegraph_version');
+    if (prevEngine && prevEngine !== engineName) {
+      warn(
+        `Engine changed (${prevEngine} → ${engineName}). Consider rebuilding with --no-incremental for consistency.`,
+      );
+    }
+    if (prevVersion && prevVersion !== CODEGRAPH_VERSION) {
+      warn(
+        `Codegraph version changed (${prevVersion} → ${CODEGRAPH_VERSION}). Consider rebuilding with --no-incremental for consistency.`,
+      );
+    }
+  }
 
   const aliases = loadPathAliases(rootDir);
   // Merge config aliases
@@ -923,6 +944,18 @@ export async function buildGraph(rootDir, opts = {}) {
     } catch {
       /* ignore — embeddings table may have been dropped */
     }
+  }
+
+  // Persist build metadata for mismatch detection
+  try {
+    setBuildMeta(db, {
+      engine: engineName,
+      engine_version: engineVersion || '',
+      codegraph_version: CODEGRAPH_VERSION,
+      built_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    debug(`Failed to write build metadata: ${err.message}`);
   }
 
   db.close();

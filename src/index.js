@@ -23,7 +23,14 @@ export { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
 // Circular dependency detection
 export { findCycles, formatCycles } from './cycles.js';
 // Database utilities
-export { findDbPath, initSchema, openDb, openReadonlyOrFail } from './db.js';
+export {
+  findDbPath,
+  getBuildMeta,
+  initSchema,
+  openDb,
+  openReadonlyOrFail,
+  setBuildMeta,
+} from './db.js';
 
 // Embeddings
 export {

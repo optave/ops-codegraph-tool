@@ -1,5 +1,5 @@
 /**
- * Unit tests for src/db.js
+ * Unit tests for src/db.js — build_meta helpers included
  */
 
 import fs from 'node:fs';
@@ -7,7 +7,15 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { findDbPath, initSchema, MIGRATIONS, openDb, openReadonlyOrFail } from '../../src/db.js';
+import {
+  findDbPath,
+  getBuildMeta,
+  initSchema,
+  MIGRATIONS,
+  openDb,
+  openReadonlyOrFail,
+  setBuildMeta,
+} from '../../src/db.js';
 
 let tmpDir;
 
@@ -123,6 +131,47 @@ describe('findDbPath', () => {
     } finally {
       process.cwd = origCwd;
     }
+  });
+});
+
+describe('build_meta', () => {
+  it('table is created by migration v7', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    const tables = db
+      .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+      .all()
+      .map((r) => r.name);
+    expect(tables).toContain('build_meta');
+    db.close();
+  });
+
+  it('getBuildMeta returns null for missing table (pre-v7 schema)', () => {
+    const db = new Database(':memory:');
+    // No initSchema — no build_meta table
+    const result = getBuildMeta(db, 'engine');
+    expect(result).toBeNull();
+    db.close();
+  });
+
+  it('setBuildMeta writes and getBuildMeta reads', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    setBuildMeta(db, { engine: 'wasm', codegraph_version: '1.0.0' });
+    expect(getBuildMeta(db, 'engine')).toBe('wasm');
+    expect(getBuildMeta(db, 'codegraph_version')).toBe('1.0.0');
+    expect(getBuildMeta(db, 'nonexistent')).toBeNull();
+    db.close();
+  });
+
+  it('setBuildMeta upserts existing keys', () => {
+    const db = new Database(':memory:');
+    initSchema(db);
+    setBuildMeta(db, { engine: 'wasm' });
+    expect(getBuildMeta(db, 'engine')).toBe('wasm');
+    setBuildMeta(db, { engine: 'native' });
+    expect(getBuildMeta(db, 'engine')).toBe('native');
+    db.close();
   });
 });
 

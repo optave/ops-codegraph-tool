@@ -534,9 +534,14 @@ Create a `.codegraphrc.json` in your project root to customize behavior:
   },
   "build": {
     "incremental": true
+  },
+  "query": {
+    "excludeTests": true
   }
 }
 ```
+
+> **Tip:** `excludeTests` can also be set at the top level as a shorthand — `{ "excludeTests": true }` is equivalent to nesting it under `query`. If both are present, the nested `query.excludeTests` takes precedence.
 
 ### LLM credentials
 

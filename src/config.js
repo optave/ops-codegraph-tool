@@ -45,7 +45,12 @@ export function loadConfig(cwd) {
         const raw = fs.readFileSync(filePath, 'utf-8');
         const config = JSON.parse(raw);
         debug(`Loaded config from ${filePath}`);
-        return resolveSecrets(applyEnvOverrides(mergeConfig(DEFAULTS, config)));
+        const merged = mergeConfig(DEFAULTS, config);
+        if ('excludeTests' in config && !(config.query && 'excludeTests' in config.query)) {
+          merged.query.excludeTests = Boolean(config.excludeTests);
+        }
+        delete merged.excludeTests;
+        return resolveSecrets(applyEnvOverrides(merged));
       } catch (err) {
         debug(`Failed to parse config ${filePath}: ${err.message}`);
       }
