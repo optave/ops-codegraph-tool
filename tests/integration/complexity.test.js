@@ -242,13 +242,7 @@ describe('complexityData', () => {
     expect(data.functions.length).toBe(0);
   });
 
-  test('handles non-numeric thresholds gracefully', () => {
-    // Patch config to inject non-numeric thresholds via opts override
-    // complexityData reads thresholds from config, so we test by calling
-    // with aboveThreshold=true and verifying correct behavior even when
-    // the underlying config could have bad values.
-    // Here we verify that the baseline with valid thresholds still
-    // produces correct exceeds and summary.aboveWarn values.
+  test('produces correct exceeds and aboveWarn with valid thresholds', () => {
     const data = complexityData(dbPath);
     expect(data.summary.aboveWarn).toBeGreaterThan(0);
     const handleReq = data.functions.find((f) => f.name === 'handleRequest');
