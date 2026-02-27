@@ -100,8 +100,17 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
-    queryName(name, opts.db, { noTests: resolveNoTests(opts), json: opts.json });
+    queryName(name, opts.db, {
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
+    });
   });
 
 program
@@ -282,13 +291,23 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
     if (!name && !opts.file) {
       console.error('Provide a symbol name or use --file <path>');
       process.exit(1);
     }
     const target = opts.file || name;
-    where(target, opts.db, { file: !!opts.file, noTests: resolveNoTests(opts), json: opts.json });
+    where(target, opts.db, {
+      file: !!opts.file,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
+    });
   });
 
 program
@@ -604,6 +623,9 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((opts) => {
     if (opts.role && !VALID_ROLES.includes(opts.role)) {
       console.error(`Invalid role "${opts.role}". Valid roles: ${VALID_ROLES.join(', ')}`);
@@ -614,6 +636,9 @@ program
       file: opts.file,
       noTests: resolveNoTests(opts),
       json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -692,6 +717,9 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (name, opts) => {
     if (!name && !opts.list) {
       console.error('Provide a function/entry point name or use --list to see all entry points.');
@@ -709,16 +737,24 @@ program
       kind: opts.kind,
       noTests: resolveNoTests(opts),
       json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 
 program
   .command('complexity [target]')
-  .description('Show per-function complexity metrics (cognitive, cyclomatic, nesting depth)')
+  .description('Show per-function complexity metrics (cognitive, cyclomatic, nesting depth, MI)')
   .option('-d, --db <path>', 'Path to graph.db')
   .option('-n, --limit <number>', 'Max results', '20')
-  .option('--sort <metric>', 'Sort by: cognitive | cyclomatic | nesting', 'cognitive')
+  .option(
+    '--sort <metric>',
+    'Sort by: cognitive | cyclomatic | nesting | mi | volume | effort | bugs | loc',
+    'cognitive',
+  )
   .option('--above-threshold', 'Only functions exceeding warn thresholds')
+  .option('--health', 'Show health metrics (Halstead, MI) columns')
   .option('-f, --file <path>', 'Scope to file (partial match)')
   .option('-k, --kind <kind>', 'Filter by symbol kind')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
@@ -735,6 +771,7 @@ program
       limit: parseInt(opts.limit, 10),
       sort: opts.sort,
       aboveThreshold: opts.aboveThreshold,
+      health: opts.health,
       file: opts.file,
       kind: opts.kind,
       noTests: resolveNoTests(opts),

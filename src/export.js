@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { paginateResult } from './paginate.js';
 import { isTestFile } from './queries.js';
 
 const DEFAULT_MIN_CONFIDENCE = 0.5;
@@ -10,6 +11,7 @@ export function exportDOT(db, opts = {}) {
   const fileLevel = opts.fileLevel !== false;
   const noTests = opts.noTests || false;
   const minConf = opts.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
+  const edgeLimit = opts.limit;
   const lines = [
     'digraph codegraph {',
     '  rankdir=LR;',
@@ -30,6 +32,8 @@ export function exportDOT(db, opts = {}) {
     `)
       .all(minConf);
     if (noTests) edges = edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target));
+    const totalFileEdges = edges.length;
+    if (edgeLimit && edges.length > edgeLimit) edges = edges.slice(0, edgeLimit);
 
     // Try to use directory nodes from DB (built by structure analysis)
     const hasDirectoryNodes =
@@ -95,6 +99,9 @@ export function exportDOT(db, opts = {}) {
     for (const { source, target } of edges) {
       lines.push(`  "${source}" -> "${target}";`);
     }
+    if (edgeLimit && totalFileEdges > edgeLimit) {
+      lines.push(`  // Truncated: showing ${edges.length} of ${totalFileEdges} edges`);
+    }
   } else {
     let edges = db
       .prepare(`
@@ -111,6 +118,8 @@ export function exportDOT(db, opts = {}) {
       .all(minConf);
     if (noTests)
       edges = edges.filter((e) => !isTestFile(e.source_file) && !isTestFile(e.target_file));
+    const totalFnEdges = edges.length;
+    if (edgeLimit && edges.length > edgeLimit) edges = edges.slice(0, edgeLimit);
 
     for (const e of edges) {
       const sId = `${e.source_file}:${e.source_name}`.replace(/[^a-zA-Z0-9_]/g, '_');
@@ -118,6 +127,9 @@ export function exportDOT(db, opts = {}) {
       lines.push(`  ${sId} [label="${e.source_name}\\n${path.basename(e.source_file)}"];`);
       lines.push(`  ${tId} [label="${e.target_name}\\n${path.basename(e.target_file)}"];`);
       lines.push(`  ${sId} -> ${tId};`);
+    }
+    if (edgeLimit && totalFnEdges > edgeLimit) {
+      lines.push(`  // Truncated: showing ${edges.length} of ${totalFnEdges} edges`);
     }
   }
 
@@ -169,6 +181,7 @@ export function exportMermaid(db, opts = {}) {
   const noTests = opts.noTests || false;
   const minConf = opts.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
   const direction = opts.direction || 'LR';
+  const edgeLimit = opts.limit;
   const lines = [`flowchart ${direction}`];
 
   let nodeCounter = 0;
@@ -190,6 +203,8 @@ export function exportMermaid(db, opts = {}) {
     `)
       .all(minConf);
     if (noTests) edges = edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target));
+    const totalMermaidFileEdges = edges.length;
+    if (edgeLimit && edges.length > edgeLimit) edges = edges.slice(0, edgeLimit);
 
     // Collect all files referenced in edges
     const allFiles = new Set();
@@ -248,6 +263,9 @@ export function exportMermaid(db, opts = {}) {
     for (const { source, target, labels } of edgeMap.values()) {
       lines.push(`  ${nodeId(source)} -->|${[...labels].join(', ')}| ${nodeId(target)}`);
     }
+    if (edgeLimit && totalMermaidFileEdges > edgeLimit) {
+      lines.push(`  %% Truncated: showing ${edges.length} of ${totalMermaidFileEdges} edges`);
+    }
   } else {
     let edges = db
       .prepare(`
@@ -265,6 +283,8 @@ export function exportMermaid(db, opts = {}) {
       .all(minConf);
     if (noTests)
       edges = edges.filter((e) => !isTestFile(e.source_file) && !isTestFile(e.target_file));
+    const totalMermaidFnEdges = edges.length;
+    if (edgeLimit && edges.length > edgeLimit) edges = edges.slice(0, edgeLimit);
 
     // Group nodes by file for subgraphs
     const fileNodes = new Map();
@@ -300,6 +320,9 @@ export function exportMermaid(db, opts = {}) {
       const sId = nodeId(`${e.source_file}::${e.source_name}`);
       const tId = nodeId(`${e.target_file}::${e.target_name}`);
       lines.push(`  ${sId} -->|${e.edge_kind}| ${tId}`);
+    }
+    if (edgeLimit && totalMermaidFnEdges > edgeLimit) {
+      lines.push(`  %% Truncated: showing ${edges.length} of ${totalMermaidFnEdges} edges`);
     }
 
     // Role styling — query roles for all referenced nodes
@@ -348,5 +371,6 @@ export function exportJSON(db, opts = {}) {
     .all(minConf);
   if (noTests) edges = edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target));
 
-  return { nodes, edges };
+  const base = { nodes, edges };
+  return paginateResult(base, 'edges', { limit: opts.limit, offset: opts.offset });
 }

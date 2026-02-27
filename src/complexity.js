@@ -55,6 +55,259 @@ export const COMPLEXITY_RULES = new Map([
   ['tsx', JS_TS_RULES],
 ]);
 
+// ─── Halstead Operator/Operand Classification ────────────────────────────
+
+const JS_TS_HALSTEAD = {
+  operatorLeafTypes: new Set([
+    // Arithmetic
+    '+',
+    '-',
+    '*',
+    '/',
+    '%',
+    '**',
+    // Assignment
+    '=',
+    '+=',
+    '-=',
+    '*=',
+    '/=',
+    '%=',
+    '**=',
+    '<<=',
+    '>>=',
+    '>>>=',
+    '&=',
+    '|=',
+    '^=',
+    '&&=',
+    '||=',
+    '??=',
+    // Comparison
+    '==',
+    '===',
+    '!=',
+    '!==',
+    '<',
+    '>',
+    '<=',
+    '>=',
+    // Logical
+    '&&',
+    '||',
+    '!',
+    '??',
+    // Bitwise
+    '&',
+    '|',
+    '^',
+    '~',
+    '<<',
+    '>>',
+    '>>>',
+    // Unary
+    '++',
+    '--',
+    // Keywords as operators
+    'typeof',
+    'instanceof',
+    'new',
+    'return',
+    'throw',
+    'yield',
+    'await',
+    'if',
+    'else',
+    'for',
+    'while',
+    'do',
+    'switch',
+    'case',
+    'break',
+    'continue',
+    'try',
+    'catch',
+    'finally',
+    // Arrow, spread, ternary, access
+    '=>',
+    '...',
+    '?',
+    ':',
+    '.',
+    '?.',
+    // Delimiters counted as operators
+    ',',
+    ';',
+  ]),
+  operandLeafTypes: new Set([
+    'identifier',
+    'property_identifier',
+    'shorthand_property_identifier',
+    'shorthand_property_identifier_pattern',
+    'number',
+    'string_fragment',
+    'regex_pattern',
+    'true',
+    'false',
+    'null',
+    'undefined',
+    'this',
+    'super',
+    'private_property_identifier',
+  ]),
+  compoundOperators: new Set([
+    'call_expression',
+    'subscript_expression',
+    'new_expression',
+    'template_substitution',
+  ]),
+  skipTypes: new Set(['type_annotation', 'type_parameters', 'return_type', 'implements_clause']),
+};
+
+export const HALSTEAD_RULES = new Map([
+  ['javascript', JS_TS_HALSTEAD],
+  ['typescript', JS_TS_HALSTEAD],
+  ['tsx', JS_TS_HALSTEAD],
+]);
+
+// ─── Halstead Metrics Computation ─────────────────────────────────────────
+
+/**
+ * Compute Halstead metrics for a function's AST subtree.
+ *
+ * @param {object} functionNode - tree-sitter node for the function
+ * @param {string} language - Language ID
+ * @returns {{ n1: number, n2: number, bigN1: number, bigN2: number, vocabulary: number, length: number, volume: number, difficulty: number, effort: number, bugs: number } | null}
+ */
+export function computeHalsteadMetrics(functionNode, language) {
+  const rules = HALSTEAD_RULES.get(language);
+  if (!rules) return null;
+
+  const operators = new Map(); // type -> count
+  const operands = new Map(); // text -> count
+
+  function walk(node) {
+    if (!node) return;
+
+    // Skip type annotation subtrees
+    if (rules.skipTypes.has(node.type)) return;
+
+    // Compound operators (non-leaf): count the node type as an operator
+    if (rules.compoundOperators.has(node.type)) {
+      operators.set(node.type, (operators.get(node.type) || 0) + 1);
+    }
+
+    // Leaf nodes: classify as operator or operand
+    if (node.childCount === 0) {
+      if (rules.operatorLeafTypes.has(node.type)) {
+        operators.set(node.type, (operators.get(node.type) || 0) + 1);
+      } else if (rules.operandLeafTypes.has(node.type)) {
+        const text = node.text;
+        operands.set(text, (operands.get(text) || 0) + 1);
+      }
+    }
+
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i));
+    }
+  }
+
+  walk(functionNode);
+
+  const n1 = operators.size; // distinct operators
+  const n2 = operands.size; // distinct operands
+  let bigN1 = 0; // total operators
+  for (const c of operators.values()) bigN1 += c;
+  let bigN2 = 0; // total operands
+  for (const c of operands.values()) bigN2 += c;
+
+  const vocabulary = n1 + n2;
+  const length = bigN1 + bigN2;
+
+  // Guard against zero
+  const volume = vocabulary > 0 ? length * Math.log2(vocabulary) : 0;
+  const difficulty = n2 > 0 ? (n1 / 2) * (bigN2 / n2) : 0;
+  const effort = difficulty * volume;
+  const bugs = volume / 3000;
+
+  return {
+    n1,
+    n2,
+    bigN1,
+    bigN2,
+    vocabulary,
+    length,
+    volume: +volume.toFixed(2),
+    difficulty: +difficulty.toFixed(2),
+    effort: +effort.toFixed(2),
+    bugs: +bugs.toFixed(4),
+  };
+}
+
+// ─── LOC Metrics Computation ──────────────────────────────────────────────
+
+/**
+ * Compute LOC metrics from a function node's source text.
+ *
+ * @param {object} functionNode - tree-sitter node
+ * @returns {{ loc: number, sloc: number, commentLines: number }}
+ */
+export function computeLOCMetrics(functionNode) {
+  const text = functionNode.text;
+  const lines = text.split('\n');
+  const loc = lines.length;
+
+  let commentLines = 0;
+  let blankLines = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === '') {
+      blankLines++;
+    } else if (
+      trimmed.startsWith('//') ||
+      trimmed.startsWith('/*') ||
+      trimmed.startsWith('*') ||
+      trimmed.startsWith('*/')
+    ) {
+      commentLines++;
+    }
+  }
+
+  const sloc = Math.max(1, loc - blankLines - commentLines);
+  return { loc, sloc, commentLines };
+}
+
+// ─── Maintainability Index ────────────────────────────────────────────────
+
+/**
+ * Compute normalized Maintainability Index (0-100 scale).
+ *
+ * Original SEI formula: MI = 171 - 5.2*ln(V) - 0.23*G - 16.2*ln(LOC) + 50*sin(sqrt(2.4*CM))
+ * Microsoft normalization: max(0, min(100, MI * 100/171))
+ *
+ * @param {number} volume - Halstead volume
+ * @param {number} cyclomatic - Cyclomatic complexity
+ * @param {number} sloc - Source lines of code
+ * @param {number} [commentRatio] - Comment ratio (0-1), optional
+ * @returns {number} Normalized MI (0-100)
+ */
+export function computeMaintainabilityIndex(volume, cyclomatic, sloc, commentRatio) {
+  // Guard against zero/negative values in logarithms
+  const safeVolume = Math.max(volume, 1);
+  const safeSLOC = Math.max(sloc, 1);
+
+  let mi = 171 - 5.2 * Math.log(safeVolume) - 0.23 * cyclomatic - 16.2 * Math.log(safeSLOC);
+
+  if (commentRatio != null && commentRatio > 0) {
+    mi += 50 * Math.sin(Math.sqrt(2.4 * commentRatio));
+  }
+
+  // Microsoft normalization: 0-100 scale
+  const normalized = Math.max(0, Math.min(100, (mi * 100) / 171));
+  return +normalized.toFixed(1);
+}
+
 // ─── Algorithm: Single-Traversal DFS ──────────────────────────────────────
 
 /**
@@ -264,7 +517,14 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
   const { getParser } = await import('./parser.js');
 
   const upsert = db.prepare(
-    'INSERT OR REPLACE INTO function_complexity (node_id, cognitive, cyclomatic, max_nesting) VALUES (?, ?, ?, ?)',
+    `INSERT OR REPLACE INTO function_complexity
+     (node_id, cognitive, cyclomatic, max_nesting,
+      loc, sloc, comment_lines,
+      halstead_n1, halstead_n2, halstead_big_n1, halstead_big_n2,
+      halstead_vocabulary, halstead_length, halstead_volume,
+      halstead_difficulty, halstead_effort, halstead_bugs,
+      maintainability_index)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const getNodeId = db.prepare(
     "SELECT id FROM nodes WHERE name = ? AND kind IN ('function','method') AND file = ? AND line = ?",
@@ -336,10 +596,36 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
         const result = computeFunctionComplexity(funcNode, langId);
         if (!result) continue;
 
+        const halstead = computeHalsteadMetrics(funcNode, langId);
+        const loc = computeLOCMetrics(funcNode);
+
+        const volume = halstead ? halstead.volume : 0;
+        const commentRatio = loc.loc > 0 ? loc.commentLines / loc.loc : 0;
+        const mi = computeMaintainabilityIndex(volume, result.cyclomatic, loc.sloc, commentRatio);
+
         const row = getNodeId.get(def.name, relPath, def.line);
         if (!row) continue;
 
-        upsert.run(row.id, result.cognitive, result.cyclomatic, result.maxNesting);
+        upsert.run(
+          row.id,
+          result.cognitive,
+          result.cyclomatic,
+          result.maxNesting,
+          loc.loc,
+          loc.sloc,
+          loc.commentLines,
+          halstead ? halstead.n1 : 0,
+          halstead ? halstead.n2 : 0,
+          halstead ? halstead.bigN1 : 0,
+          halstead ? halstead.bigN2 : 0,
+          halstead ? halstead.vocabulary : 0,
+          halstead ? halstead.length : 0,
+          volume,
+          halstead ? halstead.difficulty : 0,
+          halstead ? halstead.effort : 0,
+          halstead ? halstead.bugs : 0,
+          mi,
+        );
         analyzed++;
       }
 
@@ -425,6 +711,11 @@ export function complexityData(customDbPath, opts = {}) {
     if (thresholds.maxNesting?.warn != null) {
       conditions.push(`fc.max_nesting >= ${thresholds.maxNesting.warn}`);
     }
+    if (thresholds.maintainabilityIndex?.warn != null) {
+      conditions.push(
+        `fc.maintainability_index > 0 AND fc.maintainability_index <= ${thresholds.maintainabilityIndex.warn}`,
+      );
+    }
     if (conditions.length > 0) {
       having = `AND (${conditions.join(' OR ')})`;
     }
@@ -434,6 +725,11 @@ export function complexityData(customDbPath, opts = {}) {
     cognitive: 'fc.cognitive DESC',
     cyclomatic: 'fc.cyclomatic DESC',
     nesting: 'fc.max_nesting DESC',
+    mi: 'fc.maintainability_index ASC',
+    volume: 'fc.halstead_volume DESC',
+    effort: 'fc.halstead_effort DESC',
+    bugs: 'fc.halstead_bugs DESC',
+    loc: 'fc.loc DESC',
   };
   const orderBy = orderMap[sort] || 'fc.cognitive DESC';
 
@@ -442,7 +738,9 @@ export function complexityData(customDbPath, opts = {}) {
     rows = db
       .prepare(
         `SELECT n.name, n.kind, n.file, n.line, n.end_line,
-              fc.cognitive, fc.cyclomatic, fc.max_nesting
+              fc.cognitive, fc.cyclomatic, fc.max_nesting,
+              fc.loc, fc.sloc, fc.maintainability_index,
+              fc.halstead_volume, fc.halstead_difficulty, fc.halstead_effort, fc.halstead_bugs
        FROM function_complexity fc
        JOIN nodes n ON fc.node_id = n.id
        ${where} ${having}
@@ -466,6 +764,12 @@ export function complexityData(customDbPath, opts = {}) {
       exceeds.push('cyclomatic');
     if (thresholds.maxNesting?.warn != null && r.max_nesting >= thresholds.maxNesting.warn)
       exceeds.push('maxNesting');
+    if (
+      thresholds.maintainabilityIndex?.warn != null &&
+      r.maintainability_index > 0 &&
+      r.maintainability_index <= thresholds.maintainabilityIndex.warn
+    )
+      exceeds.push('maintainabilityIndex');
 
     return {
       name: r.name,
@@ -476,6 +780,15 @@ export function complexityData(customDbPath, opts = {}) {
       cognitive: r.cognitive,
       cyclomatic: r.cyclomatic,
       maxNesting: r.max_nesting,
+      loc: r.loc || 0,
+      sloc: r.sloc || 0,
+      maintainabilityIndex: r.maintainability_index || 0,
+      halstead: {
+        volume: r.halstead_volume || 0,
+        difficulty: r.halstead_difficulty || 0,
+        effort: r.halstead_effort || 0,
+        bugs: r.halstead_bugs || 0,
+      },
       exceeds: exceeds.length > 0 ? exceeds : undefined,
     };
   });
@@ -485,7 +798,7 @@ export function complexityData(customDbPath, opts = {}) {
   try {
     const allRows = db
       .prepare(
-        `SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting
+        `SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.maintainability_index
        FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
        WHERE n.kind IN ('function','method')
        ${noTests ? `AND n.file NOT LIKE '%.test.%' AND n.file NOT LIKE '%.spec.%' AND n.file NOT LIKE '%__test__%' AND n.file NOT LIKE '%__tests__%' AND n.file NOT LIKE '%.stories.%'` : ''}`,
@@ -493,17 +806,23 @@ export function complexityData(customDbPath, opts = {}) {
       .all();
 
     if (allRows.length > 0) {
+      const miValues = allRows.map((r) => r.maintainability_index || 0);
       summary = {
         analyzed: allRows.length,
         avgCognitive: +(allRows.reduce((s, r) => s + r.cognitive, 0) / allRows.length).toFixed(1),
         avgCyclomatic: +(allRows.reduce((s, r) => s + r.cyclomatic, 0) / allRows.length).toFixed(1),
         maxCognitive: Math.max(...allRows.map((r) => r.cognitive)),
         maxCyclomatic: Math.max(...allRows.map((r) => r.cyclomatic)),
+        avgMI: +(miValues.reduce((s, v) => s + v, 0) / miValues.length).toFixed(1),
+        minMI: +Math.min(...miValues).toFixed(1),
         aboveWarn: allRows.filter(
           (r) =>
             (thresholds.cognitive?.warn != null && r.cognitive >= thresholds.cognitive.warn) ||
             (thresholds.cyclomatic?.warn != null && r.cyclomatic >= thresholds.cyclomatic.warn) ||
-            (thresholds.maxNesting?.warn != null && r.max_nesting >= thresholds.maxNesting.warn),
+            (thresholds.maxNesting?.warn != null && r.max_nesting >= thresholds.maxNesting.warn) ||
+            (thresholds.maintainabilityIndex?.warn != null &&
+              r.maintainability_index > 0 &&
+              r.maintainability_index <= thresholds.maintainabilityIndex.warn),
         ).length,
       };
     }
@@ -540,27 +859,48 @@ export function complexity(customDbPath, opts = {}) {
   const header = opts.aboveThreshold ? 'Functions Above Threshold' : 'Function Complexity';
   console.log(`\n# ${header}\n`);
 
-  // Table header
-  console.log(
-    `  ${'Function'.padEnd(40)} ${'File'.padEnd(30)} ${'Cog'.padStart(4)} ${'Cyc'.padStart(4)} ${'Nest'.padStart(5)}`,
-  );
-  console.log(
-    `  ${'─'.repeat(40)} ${'─'.repeat(30)} ${'─'.repeat(4)} ${'─'.repeat(4)} ${'─'.repeat(5)}`,
-  );
-
-  for (const fn of data.functions) {
-    const name = fn.name.length > 38 ? `${fn.name.slice(0, 37)}…` : fn.name;
-    const file = fn.file.length > 28 ? `…${fn.file.slice(-27)}` : fn.file;
-    const warn = fn.exceeds ? ' !' : '';
+  if (opts.health) {
+    // Health-focused view with Halstead + MI columns
     console.log(
-      `  ${name.padEnd(40)} ${file.padEnd(30)} ${String(fn.cognitive).padStart(4)} ${String(fn.cyclomatic).padStart(4)} ${String(fn.maxNesting).padStart(5)}${warn}`,
+      `  ${'Function'.padEnd(35)} ${'File'.padEnd(25)} ${'MI'.padStart(5)} ${'Vol'.padStart(7)} ${'Diff'.padStart(6)} ${'Effort'.padStart(9)} ${'Bugs'.padStart(6)} ${'LOC'.padStart(5)} ${'SLOC'.padStart(5)}`,
     );
+    console.log(
+      `  ${'─'.repeat(35)} ${'─'.repeat(25)} ${'─'.repeat(5)} ${'─'.repeat(7)} ${'─'.repeat(6)} ${'─'.repeat(9)} ${'─'.repeat(6)} ${'─'.repeat(5)} ${'─'.repeat(5)}`,
+    );
+
+    for (const fn of data.functions) {
+      const name = fn.name.length > 33 ? `${fn.name.slice(0, 32)}…` : fn.name;
+      const file = fn.file.length > 23 ? `…${fn.file.slice(-22)}` : fn.file;
+      const miWarn = fn.exceeds?.includes('maintainabilityIndex') ? '!' : ' ';
+      console.log(
+        `  ${name.padEnd(35)} ${file.padEnd(25)} ${String(fn.maintainabilityIndex).padStart(5)}${miWarn}${String(fn.halstead.volume).padStart(7)} ${String(fn.halstead.difficulty).padStart(6)} ${String(fn.halstead.effort).padStart(9)} ${String(fn.halstead.bugs).padStart(6)} ${String(fn.loc).padStart(5)} ${String(fn.sloc).padStart(5)}`,
+      );
+    }
+  } else {
+    // Default view with MI column appended
+    console.log(
+      `  ${'Function'.padEnd(40)} ${'File'.padEnd(30)} ${'Cog'.padStart(4)} ${'Cyc'.padStart(4)} ${'Nest'.padStart(5)} ${'MI'.padStart(5)}`,
+    );
+    console.log(
+      `  ${'─'.repeat(40)} ${'─'.repeat(30)} ${'─'.repeat(4)} ${'─'.repeat(4)} ${'─'.repeat(5)} ${'─'.repeat(5)}`,
+    );
+
+    for (const fn of data.functions) {
+      const name = fn.name.length > 38 ? `${fn.name.slice(0, 37)}…` : fn.name;
+      const file = fn.file.length > 28 ? `…${fn.file.slice(-27)}` : fn.file;
+      const warn = fn.exceeds ? ' !' : '';
+      const mi = fn.maintainabilityIndex > 0 ? String(fn.maintainabilityIndex) : '-';
+      console.log(
+        `  ${name.padEnd(40)} ${file.padEnd(30)} ${String(fn.cognitive).padStart(4)} ${String(fn.cyclomatic).padStart(4)} ${String(fn.maxNesting).padStart(5)} ${mi.padStart(5)}${warn}`,
+      );
+    }
   }
 
   if (data.summary) {
     const s = data.summary;
+    const miPart = s.avgMI != null ? ` | avg MI: ${s.avgMI}` : '';
     console.log(
-      `\n  ${s.analyzed} functions analyzed | avg cognitive: ${s.avgCognitive} | avg cyclomatic: ${s.avgCyclomatic} | ${s.aboveWarn} above threshold`,
+      `\n  ${s.analyzed} functions analyzed | avg cognitive: ${s.avgCognitive} | avg cyclomatic: ${s.avgCyclomatic}${miPart} | ${s.aboveWarn} above threshold`,
     );
   }
   console.log();

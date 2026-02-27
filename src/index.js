@@ -26,6 +26,10 @@ export {
   complexity,
   complexityData,
   computeFunctionComplexity,
+  computeHalsteadMetrics,
+  computeLOCMetrics,
+  computeMaintainabilityIndex,
+  HALSTEAD_RULES,
 } from './complexity.js';
 // Configuration
 export { loadConfig } from './config.js';
@@ -66,6 +70,8 @@ export { setVerbose } from './logger.js';
 export { manifesto, manifestoData, RULE_DEFS } from './manifesto.js';
 // Native engine
 export { isNativeAvailable } from './native.js';
+// Pagination utilities
+export { MCP_DEFAULTS, MCP_MAX_LIMIT, paginate, paginateResult } from './paginate.js';
 
 // Unified parser API
 export { getActiveEngine, parseFileAuto, parseFilesAuto } from './parser.js';

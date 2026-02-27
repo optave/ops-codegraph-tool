@@ -503,6 +503,8 @@ describe('startMCPServer handler dispatch', () => {
       file: 'utils',
       pattern: 'parse',
       noTests: undefined,
+      limit: 100,
+      offset: 0,
     });
 
     vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
@@ -560,6 +562,8 @@ describe('startMCPServer handler dispatch', () => {
     expect(result.isError).toBeUndefined();
     expect(queryMock).toHaveBeenCalledWith('test', '/resolved/path/.codegraph/graph.db', {
       noTests: undefined,
+      limit: 50,
+      offset: 0,
     });
 
     vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
@@ -720,7 +724,11 @@ describe('startMCPServer handler dispatch', () => {
       params: { name: 'query_function', arguments: { name: 'test', repo: 'my-repo' } },
     });
     expect(result.isError).toBeUndefined();
-    expect(queryMock).toHaveBeenCalledWith('test', '/resolved/db', { noTests: undefined });
+    expect(queryMock).toHaveBeenCalledWith('test', '/resolved/db', {
+      noTests: undefined,
+      limit: 50,
+      offset: 0,
+    });
 
     vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
     vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');

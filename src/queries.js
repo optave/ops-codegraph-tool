@@ -5,6 +5,7 @@ import { coChangeForFiles } from './cochange.js';
 import { findCycles } from './cycles.js';
 import { findDbPath, openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
+import { paginateResult } from './paginate.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
 
 /**
@@ -248,7 +249,8 @@ export function queryNameData(name, customDbPath, opts = {}) {
   });
 
   db.close();
-  return { query: name, results };
+  const base = { query: name, results };
+  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
 }
 
 export function impactAnalysisData(file, customDbPath, opts = {}) {
@@ -1153,7 +1155,8 @@ export function listFunctionsData(customDbPath, opts = {}) {
   if (noTests) rows = rows.filter((r) => !isTestFile(r.file));
 
   db.close();
-  return { count: rows.length, functions: rows };
+  const base = { count: rows.length, functions: rows };
+  return paginateResult(base, 'functions', { limit: opts.limit, offset: opts.offset });
 }
 
 export function statsData(customDbPath, opts = {}) {
@@ -1368,18 +1371,21 @@ export function statsData(customDbPath, opts = {}) {
   try {
     const cRows = db
       .prepare(
-        `SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting
+        `SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.maintainability_index
        FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
        WHERE n.kind IN ('function','method') ${testFilter}`,
       )
       .all();
     if (cRows.length > 0) {
+      const miValues = cRows.map((r) => r.maintainability_index || 0);
       complexity = {
         analyzed: cRows.length,
         avgCognitive: +(cRows.reduce((s, r) => s + r.cognitive, 0) / cRows.length).toFixed(1),
         avgCyclomatic: +(cRows.reduce((s, r) => s + r.cyclomatic, 0) / cRows.length).toFixed(1),
         maxCognitive: Math.max(...cRows.map((r) => r.cognitive)),
         maxCyclomatic: Math.max(...cRows.map((r) => r.cyclomatic)),
+        avgMI: +(miValues.reduce((s, v) => s + v, 0) / miValues.length).toFixed(1),
+        minMI: +Math.min(...miValues).toFixed(1),
       };
     }
   } catch {
@@ -1521,8 +1527,9 @@ export async function stats(customDbPath, opts = {}) {
   // Complexity
   if (data.complexity) {
     const cx = data.complexity;
+    const miPart = cx.avgMI != null ? ` | avg MI: ${cx.avgMI} | min MI: ${cx.minMI}` : '';
     console.log(
-      `\nComplexity: ${cx.analyzed} functions | avg cognitive: ${cx.avgCognitive} | avg cyclomatic: ${cx.avgCyclomatic} | max cognitive: ${cx.maxCognitive}`,
+      `\nComplexity: ${cx.analyzed} functions | avg cognitive: ${cx.avgCognitive} | avg cyclomatic: ${cx.avgCyclomatic} | max cognitive: ${cx.maxCognitive}${miPart}`,
     );
   }
 
@@ -1540,7 +1547,16 @@ export async function stats(customDbPath, opts = {}) {
 // ─── Human-readable output (original formatting) ───────────────────────
 
 export function queryName(name, customDbPath, opts = {}) {
-  const data = queryNameData(name, customDbPath, { noTests: opts.noTests });
+  const data = queryNameData(name, customDbPath, {
+    noTests: opts.noTests,
+    limit: opts.limit,
+    offset: opts.offset,
+  });
+  if (opts.ndjson) {
+    if (data._pagination) console.log(JSON.stringify({ _meta: data._pagination }));
+    for (const r of data.results) console.log(JSON.stringify(r));
+    return;
+  }
   if (opts.json) {
     console.log(JSON.stringify(data, null, 2));
     return;
@@ -2001,7 +2017,7 @@ export function contextData(name, customDbPath, opts = {}) {
     try {
       const cRow = db
         .prepare(
-          'SELECT cognitive, cyclomatic, max_nesting FROM function_complexity WHERE node_id = ?',
+          'SELECT cognitive, cyclomatic, max_nesting, maintainability_index, halstead_volume FROM function_complexity WHERE node_id = ?',
         )
         .get(node.id);
       if (cRow) {
@@ -2009,6 +2025,8 @@ export function contextData(name, customDbPath, opts = {}) {
           cognitive: cRow.cognitive,
           cyclomatic: cRow.cyclomatic,
           maxNesting: cRow.max_nesting,
+          maintainabilityIndex: cRow.maintainability_index || 0,
+          halsteadVolume: cRow.halstead_volume || 0,
         };
       }
     } catch {
@@ -2062,9 +2080,10 @@ export function context(name, customDbPath, opts = {}) {
     // Complexity
     if (r.complexity) {
       const cx = r.complexity;
+      const miPart = cx.maintainabilityIndex ? ` | MI: ${cx.maintainabilityIndex}` : '';
       console.log('## Complexity');
       console.log(
-        `  Cognitive: ${cx.cognitive} | Cyclomatic: ${cx.cyclomatic} | Max Nesting: ${cx.maxNesting}`,
+        `  Cognitive: ${cx.cognitive} | Cyclomatic: ${cx.cyclomatic} | Max Nesting: ${cx.maxNesting}${miPart}`,
       );
       console.log();
     }
@@ -2292,7 +2311,7 @@ function explainFunctionImpl(db, target, noTests, getFileLines) {
     try {
       const cRow = db
         .prepare(
-          'SELECT cognitive, cyclomatic, max_nesting FROM function_complexity WHERE node_id = ?',
+          'SELECT cognitive, cyclomatic, max_nesting, maintainability_index, halstead_volume FROM function_complexity WHERE node_id = ?',
         )
         .get(node.id);
       if (cRow) {
@@ -2300,6 +2319,8 @@ function explainFunctionImpl(db, target, noTests, getFileLines) {
           cognitive: cRow.cognitive,
           cyclomatic: cRow.cyclomatic,
           maxNesting: cRow.max_nesting,
+          maintainabilityIndex: cRow.maintainability_index || 0,
+          halsteadVolume: cRow.halstead_volume || 0,
         };
       }
     } catch {
@@ -2468,8 +2489,9 @@ export function explain(target, customDbPath, opts = {}) {
 
       if (r.complexity) {
         const cx = r.complexity;
+        const miPart = cx.maintainabilityIndex ? ` MI=${cx.maintainabilityIndex}` : '';
         console.log(
-          `${indent}  Complexity: cognitive=${cx.cognitive} cyclomatic=${cx.cyclomatic} nesting=${cx.maxNesting}`,
+          `${indent}  Complexity: cognitive=${cx.cognitive} cyclomatic=${cx.cyclomatic} nesting=${cx.maxNesting}${miPart}`,
         );
       }
 
@@ -2616,11 +2638,17 @@ export function whereData(target, customDbPath, opts = {}) {
   const results = fileMode ? whereFileImpl(db, target) : whereSymbolImpl(db, target, noTests);
 
   db.close();
-  return { target, mode: fileMode ? 'file' : 'symbol', results };
+  const base = { target, mode: fileMode ? 'file' : 'symbol', results };
+  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
 }
 
 export function where(target, customDbPath, opts = {}) {
   const data = whereData(target, customDbPath, opts);
+  if (opts.ndjson) {
+    if (data._pagination) console.log(JSON.stringify({ _meta: data._pagination }));
+    for (const r of data.results) console.log(JSON.stringify(r));
+    return;
+  }
   if (opts.json) {
     console.log(JSON.stringify(data, null, 2));
     return;
@@ -2702,11 +2730,17 @@ export function rolesData(customDbPath, opts = {}) {
   }
 
   db.close();
-  return { count: rows.length, summary, symbols: rows };
+  const base = { count: rows.length, summary, symbols: rows };
+  return paginateResult(base, 'symbols', { limit: opts.limit, offset: opts.offset });
 }
 
 export function roles(customDbPath, opts = {}) {
   const data = rolesData(customDbPath, opts);
+  if (opts.ndjson) {
+    if (data._pagination) console.log(JSON.stringify({ _meta: data._pagination }));
+    for (const s of data.symbols) console.log(JSON.stringify(s));
+    return;
+  }
   if (opts.json) {
     console.log(JSON.stringify(data, null, 2));
     return;

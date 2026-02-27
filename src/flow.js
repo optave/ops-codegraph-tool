@@ -6,6 +6,7 @@
  */
 
 import { openReadonlyOrFail } from './db.js';
+import { paginateResult } from './paginate.js';
 import { isTestFile, kindIcon } from './queries.js';
 import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
 
@@ -69,7 +70,8 @@ export function listEntryPointsData(dbPath, opts = {}) {
   }
 
   db.close();
-  return { entries, byType, count: entries.length };
+  const base = { entries, byType, count: entries.length };
+  return paginateResult(base, 'entries', { limit: opts.limit, offset: opts.offset });
 }
 
 /**
@@ -285,7 +287,16 @@ function findBestMatch(db, name, opts = {}) {
  */
 export function flow(name, dbPath, opts = {}) {
   if (opts.list) {
-    const data = listEntryPointsData(dbPath, { noTests: opts.noTests });
+    const data = listEntryPointsData(dbPath, {
+      noTests: opts.noTests,
+      limit: opts.limit,
+      offset: opts.offset,
+    });
+    if (opts.ndjson) {
+      if (data._pagination) console.log(JSON.stringify({ _meta: data._pagination }));
+      for (const e of data.entries) console.log(JSON.stringify(e));
+      return;
+    }
     if (opts.json) {
       console.log(JSON.stringify(data, null, 2));
       return;

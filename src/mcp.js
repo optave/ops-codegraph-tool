@@ -8,6 +8,7 @@
 import { createRequire } from 'node:module';
 import { findCycles } from './cycles.js';
 import { findDbPath } from './db.js';
+import { MCP_DEFAULTS, MCP_MAX_LIMIT } from './paginate.js';
 import { ALL_SYMBOL_KINDS, diffImpactMermaid, VALID_ROLES } from './queries.js';
 
 const REPO_PROP = {
@@ -15,6 +16,11 @@ const REPO_PROP = {
     type: 'string',
     description: 'Repository name from the registry (omit for local project)',
   },
+};
+
+const PAGINATION_PROPS = {
+  limit: { type: 'number', description: 'Max results to return (pagination)' },
+  offset: { type: 'number', description: 'Skip this many results (pagination, default: 0)' },
 };
 
 const BASE_TOOLS = [
@@ -31,6 +37,7 @@ const BASE_TOOLS = [
           default: 2,
         },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
       required: ['name'],
     },
@@ -214,6 +221,7 @@ const BASE_TOOLS = [
           default: false,
         },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
       required: ['target'],
     },
@@ -266,6 +274,7 @@ const BASE_TOOLS = [
           description: 'File-level graph (true) or function-level (false)',
           default: true,
         },
+        ...PAGINATION_PROPS,
       },
       required: ['format'],
     },
@@ -280,6 +289,7 @@ const BASE_TOOLS = [
         file: { type: 'string', description: 'Filter by file path (partial match)' },
         pattern: { type: 'string', description: 'Filter by function name (partial match)' },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
     },
   },
@@ -319,6 +329,7 @@ const BASE_TOOLS = [
         },
         file: { type: 'string', description: 'Scope to a specific file (partial match)' },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
     },
   },
@@ -400,13 +411,14 @@ const BASE_TOOLS = [
       type: 'object',
       properties: {
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
     },
   },
   {
     name: 'complexity',
     description:
-      'Show per-function complexity metrics (cognitive, cyclomatic, max nesting depth). Sorted by most complex first.',
+      'Show per-function complexity metrics (cognitive, cyclomatic, nesting, Halstead, Maintainability Index). Sorted by most complex first.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -415,13 +427,18 @@ const BASE_TOOLS = [
         limit: { type: 'number', description: 'Max results', default: 20 },
         sort: {
           type: 'string',
-          enum: ['cognitive', 'cyclomatic', 'nesting'],
+          enum: ['cognitive', 'cyclomatic', 'nesting', 'mi', 'volume', 'effort', 'bugs', 'loc'],
           description: 'Sort metric',
           default: 'cognitive',
         },
         above_threshold: {
           type: 'boolean',
           description: 'Only functions exceeding warn thresholds',
+          default: false,
+        },
+        health: {
+          type: 'boolean',
+          description: 'Include Halstead and Maintainability Index metrics',
           default: false,
         },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
@@ -599,7 +616,11 @@ export async function startMCPServer(customDbPath, options = {}) {
       let result;
       switch (name) {
         case 'query_function':
-          result = queryNameData(args.name, dbPath, { noTests: args.no_tests });
+          result = queryNameData(args.name, dbPath, {
+            noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.query_function, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
+          });
           break;
         case 'file_deps':
           result = fileDepsData(args.file, dbPath, { noTests: args.no_tests });
@@ -661,6 +682,8 @@ export async function startMCPServer(customDbPath, options = {}) {
           result = whereData(args.target, dbPath, {
             file: args.file_mode,
             noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.where, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
           });
           break;
         case 'diff_impact':
@@ -700,15 +723,21 @@ export async function startMCPServer(customDbPath, options = {}) {
           const { exportDOT, exportMermaid, exportJSON } = await import('./export.js');
           const db = new Database(findDbPath(dbPath), { readonly: true });
           const fileLevel = args.file_level !== false;
+          const exportLimit = args.limit
+            ? Math.min(args.limit, MCP_MAX_LIMIT)
+            : MCP_DEFAULTS.export_graph;
           switch (args.format) {
             case 'dot':
-              result = exportDOT(db, { fileLevel });
+              result = exportDOT(db, { fileLevel, limit: exportLimit });
               break;
             case 'mermaid':
-              result = exportMermaid(db, { fileLevel });
+              result = exportMermaid(db, { fileLevel, limit: exportLimit });
               break;
             case 'json':
-              result = exportJSON(db);
+              result = exportJSON(db, {
+                limit: exportLimit,
+                offset: args.offset ?? 0,
+              });
               break;
             default:
               db.close();
@@ -730,6 +759,8 @@ export async function startMCPServer(customDbPath, options = {}) {
             file: args.file,
             pattern: args.pattern,
             noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.list_functions, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
           });
           break;
         case 'node_roles':
@@ -737,6 +768,8 @@ export async function startMCPServer(customDbPath, options = {}) {
             role: args.role,
             file: args.file,
             noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.node_roles, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
           });
           break;
         case 'structure': {
@@ -788,6 +821,8 @@ export async function startMCPServer(customDbPath, options = {}) {
           const { listEntryPointsData } = await import('./flow.js');
           result = listEntryPointsData(dbPath, {
             noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.list_entry_points, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
           });
           break;
         }
@@ -799,6 +834,7 @@ export async function startMCPServer(customDbPath, options = {}) {
             limit: args.limit,
             sort: args.sort,
             aboveThreshold: args.above_threshold,
+            health: args.health,
             noTests: args.no_tests,
             kind: args.kind,
           });

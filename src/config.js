@@ -29,6 +29,7 @@ export const DEFAULTS = {
       cognitive: { warn: 15, fail: null },
       cyclomatic: { warn: 10, fail: null },
       maxNesting: { warn: 4, fail: null },
+      maintainabilityIndex: { warn: 20, fail: null },
       importCount: { warn: null, fail: null },
       exportCount: { warn: null, fail: null },
       lineCount: { warn: null, fail: null },

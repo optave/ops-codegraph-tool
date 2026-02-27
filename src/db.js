@@ -124,6 +124,26 @@ export const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_fc_cyclomatic ON function_complexity(cyclomatic DESC);
     `,
   },
+  {
+    version: 9,
+    up: `
+      ALTER TABLE function_complexity ADD COLUMN loc INTEGER DEFAULT 0;
+      ALTER TABLE function_complexity ADD COLUMN sloc INTEGER DEFAULT 0;
+      ALTER TABLE function_complexity ADD COLUMN comment_lines INTEGER DEFAULT 0;
+      ALTER TABLE function_complexity ADD COLUMN halstead_n1 INTEGER DEFAULT 0;
+      ALTER TABLE function_complexity ADD COLUMN halstead_n2 INTEGER DEFAULT 0;
+      ALTER TABLE function_complexity ADD COLUMN halstead_big_n1 INTEGER DEFAULT 0;
+      ALTER TABLE function_complexity ADD COLUMN halstead_big_n2 INTEGER DEFAULT 0;
+      ALTER TABLE function_complexity ADD COLUMN halstead_vocabulary INTEGER DEFAULT 0;
+      ALTER TABLE function_complexity ADD COLUMN halstead_length INTEGER DEFAULT 0;
+      ALTER TABLE function_complexity ADD COLUMN halstead_volume REAL DEFAULT 0;
+      ALTER TABLE function_complexity ADD COLUMN halstead_difficulty REAL DEFAULT 0;
+      ALTER TABLE function_complexity ADD COLUMN halstead_effort REAL DEFAULT 0;
+      ALTER TABLE function_complexity ADD COLUMN halstead_bugs REAL DEFAULT 0;
+      ALTER TABLE function_complexity ADD COLUMN maintainability_index REAL DEFAULT 0;
+      CREATE INDEX IF NOT EXISTS idx_fc_mi ON function_complexity(maintainability_index ASC);
+    `,
+  },
 ];
 
 export function getBuildMeta(db, key) {
