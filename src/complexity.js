@@ -712,7 +712,9 @@ export function complexityData(customDbPath, opts = {}) {
       conditions.push(`fc.max_nesting >= ${thresholds.maxNesting.warn}`);
     }
     if (thresholds.maintainabilityIndex?.warn != null) {
-      conditions.push(`fc.maintainability_index <= ${thresholds.maintainabilityIndex.warn}`);
+      conditions.push(
+        `fc.maintainability_index > 0 AND fc.maintainability_index <= ${thresholds.maintainabilityIndex.warn}`,
+      );
     }
     if (conditions.length > 0) {
       having = `AND (${conditions.join(' OR ')})`;
