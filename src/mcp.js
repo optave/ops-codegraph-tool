@@ -433,6 +433,22 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'manifesto',
+    description:
+      'Evaluate manifesto rules and return pass/fail verdicts for code health. Checks function complexity, file metrics, and cycle rules against configured thresholds.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', description: 'Scope to file (partial match)' },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        kind: {
+          type: 'string',
+          description: 'Filter by symbol kind (function, method, class, etc.)',
+        },
+      },
+    },
+  },
+  {
     name: 'communities',
     description:
       'Detect natural module boundaries using Louvain community detection. Compares discovered communities against directory structure and surfaces architectural drift.',
@@ -783,6 +799,15 @@ export async function startMCPServer(customDbPath, options = {}) {
             limit: args.limit,
             sort: args.sort,
             aboveThreshold: args.above_threshold,
+            noTests: args.no_tests,
+            kind: args.kind,
+          });
+          break;
+        }
+        case 'manifesto': {
+          const { manifestoData } = await import('./manifesto.js');
+          result = manifestoData(dbPath, {
+            file: args.file,
             noTests: args.no_tests,
             kind: args.kind,
           });

@@ -29,6 +29,12 @@ export const DEFAULTS = {
       cognitive: { warn: 15, fail: null },
       cyclomatic: { warn: 10, fail: null },
       maxNesting: { warn: 4, fail: null },
+      importCount: { warn: null, fail: null },
+      exportCount: { warn: null, fail: null },
+      lineCount: { warn: null, fail: null },
+      fanIn: { warn: null, fail: null },
+      fanOut: { warn: null, fail: null },
+      noCycles: { warn: null, fail: null },
     },
   },
   coChange: {

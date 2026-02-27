@@ -743,6 +743,29 @@ program
   });
 
 program
+  .command('manifesto')
+  .description('Evaluate manifesto rules (pass/fail verdicts for code health)')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-f, --file <path>', 'Scope to file (partial match)')
+  .option('-k, --kind <kind>', 'Filter by symbol kind')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (opts) => {
+    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+      process.exit(1);
+    }
+    const { manifesto } = await import('./manifesto.js');
+    manifesto(opts.db, {
+      file: opts.file,
+      kind: opts.kind,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+    });
+  });
+
+program
   .command('communities')
   .description('Detect natural module boundaries using Louvain community detection')
   .option('--functions', 'Function-level instead of file-level')

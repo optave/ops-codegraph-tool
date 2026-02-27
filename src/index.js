@@ -62,6 +62,8 @@ export { exportDOT, exportJSON, exportMermaid } from './export.js';
 export { entryPointType, flowData, listEntryPointsData } from './flow.js';
 // Logger
 export { setVerbose } from './logger.js';
+// Manifesto rule engine
+export { manifesto, manifestoData, RULE_DEFS } from './manifesto.js';
 // Native engine
 export { isNativeAvailable } from './native.js';
 
