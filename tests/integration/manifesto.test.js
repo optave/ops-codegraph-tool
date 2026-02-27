@@ -291,6 +291,54 @@ describe('manifestoData', () => {
     }
   });
 
+  test('reportOnly complexity rules ignore user-configured fail thresholds', () => {
+    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-manifesto-reportonly-'));
+    fs.mkdirSync(path.join(configDir, '.codegraph'));
+    const roDbPath = path.join(configDir, '.codegraph', 'graph.db');
+
+    fs.copyFileSync(dbPath, roDbPath);
+
+    // User attempts to set fail thresholds on complexity rules
+    fs.writeFileSync(
+      path.join(configDir, '.codegraphrc.json'),
+      JSON.stringify({
+        manifesto: {
+          rules: {
+            cognitive: { warn: 15, fail: 5 },
+            cyclomatic: { warn: 10, fail: 3 },
+            maxNesting: { warn: 4, fail: 2 },
+          },
+        },
+      }),
+    );
+
+    const origCwd = process.cwd();
+    try {
+      process.chdir(configDir);
+      const data = manifestoData(roDbPath);
+
+      // fail thresholds should be forced to null (reportOnly)
+      for (const name of ['cognitive', 'cyclomatic', 'maxNesting']) {
+        const rule = data.rules.find((r) => r.name === name);
+        expect(rule.thresholds.fail).toBeNull();
+      }
+
+      // All violations should be warn-only, never fail
+      const complexityViolations = data.violations.filter(
+        (v) => v.rule === 'cognitive' || v.rule === 'cyclomatic' || v.rule === 'maxNesting',
+      );
+      for (const v of complexityViolations) {
+        expect(v.level).toBe('warn');
+      }
+
+      // Overall result should pass (no fail-level violations)
+      expect(data.passed).toBe(true);
+    } finally {
+      process.chdir(origCwd);
+      fs.rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
   test('noCycles rule with fail threshold sets passed=false', () => {
     const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-manifesto-fail-'));
     fs.mkdirSync(path.join(configDir, '.codegraph'));

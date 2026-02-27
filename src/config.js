@@ -26,9 +26,9 @@ export const DEFAULTS = {
   ci: { failOnCycles: false, impactThreshold: null },
   manifesto: {
     rules: {
-      cognitive: { warn: 15, fail: null },
-      cyclomatic: { warn: 10, fail: null },
-      maxNesting: { warn: 4, fail: null },
+      cognitive: { warn: 15 },
+      cyclomatic: { warn: 10 },
+      maxNesting: { warn: 4 },
       maintainabilityIndex: { warn: 20, fail: null },
       importCount: { warn: null, fail: null },
       exportCount: { warn: null, fail: null },

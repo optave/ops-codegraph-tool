@@ -12,18 +12,20 @@ import { debug } from './logger.js';
  * defaults: { warn, fail } — null means disabled
  */
 export const RULE_DEFS = [
-  { name: 'cognitive', level: 'function', metric: 'cognitive', defaults: { warn: 15, fail: null } },
+  { name: 'cognitive', level: 'function', metric: 'cognitive', defaults: { warn: 15, fail: null }, reportOnly: true },
   {
     name: 'cyclomatic',
     level: 'function',
     metric: 'cyclomatic',
     defaults: { warn: 10, fail: null },
+    reportOnly: true,
   },
   {
     name: 'maxNesting',
     level: 'function',
     metric: 'max_nesting',
     defaults: { warn: 4, fail: null },
+    reportOnly: true,
   },
   {
     name: 'importCount',
@@ -67,7 +69,7 @@ function resolveRules(userRules) {
     const user = userRules?.[def.name];
     resolved[def.name] = {
       warn: user?.warn !== undefined ? user.warn : def.defaults.warn,
-      fail: user?.fail !== undefined ? user.fail : def.defaults.fail,
+      fail: def.reportOnly ? null : (user?.fail !== undefined ? user.fail : def.defaults.fail),
     };
   }
   return resolved;
