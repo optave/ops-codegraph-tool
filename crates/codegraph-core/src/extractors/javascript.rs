@@ -1,5 +1,5 @@
 use tree_sitter::{Node, Tree};
-use crate::complexity::compute_function_complexity;
+use crate::complexity::{compute_function_complexity, JS_TS_RULES};
 use crate::types::*;
 use super::helpers::*;
 use super::SymbolExtractor;
@@ -24,7 +24,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
-                    complexity: Some(compute_function_complexity(node)),
+                    complexity: Some(compute_function_complexity(node, &JS_TS_RULES)),
                 });
             }
         }
@@ -80,7 +80,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
-                    complexity: Some(compute_function_complexity(node)),
+                    complexity: Some(compute_function_complexity(node, &JS_TS_RULES)),
                 });
             }
         }
@@ -138,7 +138,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     line: start_line(node),
                                     end_line: Some(end_line(&value_n)),
                                     decorators: None,
-                                    complexity: Some(compute_function_complexity(&value_n)),
+                                    complexity: Some(compute_function_complexity(&value_n, &JS_TS_RULES)),
                                 });
                             }
                         }
@@ -562,7 +562,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             line: start_line(&cb),
             end_line: Some(end_line(&cb)),
             decorators: None,
-            complexity: Some(compute_function_complexity(&cb)),
+            complexity: Some(compute_function_complexity(&cb, &JS_TS_RULES)),
         });
     }
 
@@ -579,7 +579,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             line: start_line(&cb),
             end_line: Some(end_line(&cb)),
             decorators: None,
-            complexity: Some(compute_function_complexity(&cb)),
+            complexity: Some(compute_function_complexity(&cb, &JS_TS_RULES)),
         });
     }
 
@@ -593,7 +593,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             line: start_line(&cb),
             end_line: Some(end_line(&cb)),
             decorators: None,
-            complexity: Some(compute_function_complexity(&cb)),
+            complexity: Some(compute_function_complexity(&cb, &JS_TS_RULES)),
         });
     }
 

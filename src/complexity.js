@@ -3,6 +3,7 @@ import path from 'node:path';
 import { loadConfig } from './config.js';
 import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
+import { LANGUAGE_REGISTRY } from './parser.js';
 import { isTestFile } from './queries.js';
 
 // ─── Language-Specific Node Type Registry ─────────────────────────────────
@@ -293,6 +294,14 @@ export const COMPLEXITY_RULES = new Map([
   ['ruby', RUBY_RULES],
   ['php', PHP_RULES],
 ]);
+
+// Extensions whose language has complexity rules — used to skip needless WASM init
+const COMPLEXITY_EXTENSIONS = new Set();
+for (const entry of LANGUAGE_REGISTRY) {
+  if (COMPLEXITY_RULES.has(entry.id)) {
+    for (const ext of entry.extensions) COMPLEXITY_EXTENSIONS.add(ext);
+  }
+}
 
 // ─── Halstead Operator/Operand Classification ────────────────────────────
 
@@ -1387,8 +1396,11 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
   let parsers = null;
   let extToLang = null;
   let needsFallback = false;
-  for (const [, symbols] of fileSymbols) {
+  for (const [relPath, symbols] of fileSymbols) {
     if (!symbols._tree) {
+      // Only consider files whose language actually has complexity rules
+      const ext = path.extname(relPath).toLowerCase();
+      if (!COMPLEXITY_EXTENSIONS.has(ext)) continue;
       // Check if all function/method defs have pre-computed complexity (native engine)
       const hasPrecomputed = symbols.definitions.every(
         (d) => (d.kind !== 'function' && d.kind !== 'method') || d.complexity,
@@ -1400,7 +1412,7 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
     }
   }
   if (needsFallback) {
-    const { createParsers, LANGUAGE_REGISTRY } = await import('./parser.js');
+    const { createParsers } = await import('./parser.js');
     parsers = await createParsers();
     extToLang = new Map();
     for (const entry of LANGUAGE_REGISTRY) {
@@ -1440,8 +1452,9 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
 
       // Only attempt WASM fallback if we actually need AST-based computation
       if (!allPrecomputed && !tree) {
-        if (!extToLang) continue; // No WASM parsers available
         const ext = path.extname(relPath).toLowerCase();
+        if (!COMPLEXITY_EXTENSIONS.has(ext)) continue; // Language has no complexity rules
+        if (!extToLang) continue; // No WASM parsers available
         langId = extToLang.get(ext);
         if (!langId) continue;
 

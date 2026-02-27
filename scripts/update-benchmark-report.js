@@ -134,6 +134,31 @@ for (const engineKey of ['native', 'wasm']) {
 	md += `| Files | ${latest.files} |\n\n`;
 }
 
+// ── Build Phase Breakdown (latest) ────────────────────────────────────
+const hasPhases = latest.native?.phases || latest.wasm?.phases;
+if (hasPhases) {
+	md += '### Build Phase Breakdown (latest)\n\n';
+	const phaseKeys = ['parseMs', 'insertMs', 'resolveMs', 'edgesMs', 'structureMs', 'rolesMs', 'complexityMs'];
+	const phaseLabels = {
+		parseMs: 'Parse',
+		insertMs: 'Insert nodes',
+		resolveMs: 'Resolve imports',
+		edgesMs: 'Build edges',
+		structureMs: 'Structure',
+		rolesMs: 'Roles',
+		complexityMs: 'Complexity',
+	};
+
+	md += '| Phase | Native | WASM |\n';
+	md += '|-------|-------:|-----:|\n';
+	for (const key of phaseKeys) {
+		const nVal = latest.native?.phases?.[key];
+		const wVal = latest.wasm?.phases?.[key];
+		md += `| ${phaseLabels[key]} | ${nVal != null ? nVal + ' ms' : 'n/a'} | ${wVal != null ? wVal + ' ms' : 'n/a'} |\n`;
+	}
+	md += '\n';
+}
+
 // ── Extrapolated estimate for large repos ────────────────────────────────
 const ESTIMATE_FILES = 50_000;
 md += `### Estimated performance at ${(ESTIMATE_FILES).toLocaleString()} files\n\n`;

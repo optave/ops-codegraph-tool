@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { loadConfig } from './config.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
 import { closeDb, getBuildMeta, initSchema, openDb, setBuildMeta } from './db.js';
@@ -565,9 +566,14 @@ export async function buildGraph(rootDir, opts = {}) {
 
   const filesToParse = isFullBuild ? files.map((f) => ({ file: f })) : parseChanges;
 
+  // ── Phase timing ────────────────────────────────────────────────────
+  const _t = {};
+
   // ── Unified parse via parseFilesAuto ───────────────────────────────
   const filePaths = filesToParse.map((item) => item.file);
+  _t.parse0 = performance.now();
   const allSymbols = await parseFilesAuto(filePaths, rootDir, engineOpts);
+  _t.parseMs = performance.now() - _t.parse0;
 
   // Build a lookup from incremental data (changed items may carry pre-computed hashes + stats)
   const precomputedData = new Map();
@@ -627,7 +633,9 @@ export async function buildGraph(rootDir, opts = {}) {
       }
     }
   });
+  _t.insert0 = performance.now();
   insertAll();
+  _t.insertMs = performance.now() - _t.insert0;
 
   const parsed = allSymbols.size;
   const skipped = filesToParse.length - parsed;
@@ -643,6 +651,7 @@ export async function buildGraph(rootDir, opts = {}) {
 
   // ── Batch import resolution ────────────────────────────────────────
   // Collect all (fromFile, importSource) pairs and resolve in one native call
+  _t.resolve0 = performance.now();
   const batchInputs = [];
   for (const [relPath, symbols] of fileSymbols) {
     const absFile = path.join(rootDir, relPath);
@@ -651,6 +660,7 @@ export async function buildGraph(rootDir, opts = {}) {
     }
   }
   const batchResolved = resolveImportsBatch(batchInputs, rootDir, aliases);
+  _t.resolveMs = performance.now() - _t.resolve0;
 
   function getResolved(absFile, importSource) {
     if (batchResolved) {
@@ -738,6 +748,7 @@ export async function buildGraph(rootDir, opts = {}) {
   }
 
   // Second pass: build edges
+  _t.edges0 = performance.now();
   let edgeCount = 0;
   const buildEdges = db.transaction(() => {
     for (const [relPath, symbols] of fileSymbols) {
@@ -915,6 +926,7 @@ export async function buildGraph(rootDir, opts = {}) {
     }
   });
   buildEdges();
+  _t.edgesMs = performance.now() - _t.edges0;
 
   // Build line count map for structure metrics (prefer cached _lineCount from parser)
   const lineCountMap = new Map();
@@ -986,6 +998,7 @@ export async function buildGraph(rootDir, opts = {}) {
   }
 
   // Build directory structure, containment edges, and metrics
+  _t.structure0 = performance.now();
   const relDirs = new Set();
   for (const absDir of discoveredDirs) {
     relDirs.add(normalizePath(path.relative(rootDir, absDir)));
@@ -996,8 +1009,10 @@ export async function buildGraph(rootDir, opts = {}) {
   } catch (err) {
     debug(`Structure analysis failed: ${err.message}`);
   }
+  _t.structureMs = performance.now() - _t.structure0;
 
   // Classify node roles (entry, core, utility, adapter, dead, leaf)
+  _t.roles0 = performance.now();
   try {
     const { classifyNodeRoles } = await import('./structure.js');
     const roleSummary = classifyNodeRoles(db);
@@ -1009,14 +1024,17 @@ export async function buildGraph(rootDir, opts = {}) {
   } catch (err) {
     debug(`Role classification failed: ${err.message}`);
   }
+  _t.rolesMs = performance.now() - _t.roles0;
 
   // Compute per-function complexity metrics (cognitive, cyclomatic, nesting)
+  _t.complexity0 = performance.now();
   try {
     const { buildComplexityMetrics } = await import('./complexity.js');
     await buildComplexityMetrics(db, allSymbols, rootDir, engineOpts);
   } catch (err) {
     debug(`Complexity analysis failed: ${err.message}`);
   }
+  _t.complexityMs = performance.now() - _t.complexity0;
 
   // Release any remaining cached WASM trees for GC
   for (const [, symbols] of allSymbols) {
@@ -1076,4 +1094,16 @@ export async function buildGraph(rootDir, opts = {}) {
       }
     }
   }
+
+  return {
+    phases: {
+      parseMs: +_t.parseMs.toFixed(1),
+      insertMs: +_t.insertMs.toFixed(1),
+      resolveMs: +_t.resolveMs.toFixed(1),
+      edgesMs: +_t.edgesMs.toFixed(1),
+      structureMs: +_t.structureMs.toFixed(1),
+      rolesMs: +_t.rolesMs.toFixed(1),
+      complexityMs: +_t.complexityMs.toFixed(1),
+    },
+  };
 }

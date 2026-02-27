@@ -1,4 +1,5 @@
 use tree_sitter::{Node, Tree};
+use crate::complexity::{compute_function_complexity, PYTHON_RULES};
 use crate::types::*;
 use super::helpers::*;
 use super::SymbolExtractor;
@@ -39,7 +40,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     } else {
                         Some(decorators)
                     },
-                    complexity: None,
+                    complexity: Some(compute_function_complexity(node, &PYTHON_RULES)),
                 });
             }
         }

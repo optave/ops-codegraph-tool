@@ -77,7 +77,7 @@ async function benchmarkEngine(engine) {
 	if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
 
 	const buildStart = performance.now();
-	await buildGraph(root, { engine, incremental: false });
+	const buildResult = await buildGraph(root, { engine, incremental: false });
 	const buildTimeMs = performance.now() - buildStart;
 
 	const queryStart = performance.now();
@@ -155,6 +155,7 @@ async function benchmarkEngine(engine) {
 		noopRebuildMs,
 		oneFileRebuildMs,
 		queries,
+		phases: buildResult?.phases || null,
 	};
 }
 
@@ -185,6 +186,7 @@ const result = {
 		noopRebuildMs: wasm.noopRebuildMs,
 		oneFileRebuildMs: wasm.oneFileRebuildMs,
 		queries: wasm.queries,
+		phases: wasm.phases,
 	},
 	native: native
 		? {
@@ -197,6 +199,7 @@ const result = {
 				noopRebuildMs: native.noopRebuildMs,
 				oneFileRebuildMs: native.oneFileRebuildMs,
 				queries: native.queries,
+				phases: native.phases,
 			}
 		: null,
 };
