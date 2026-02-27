@@ -238,6 +238,16 @@ You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-
             "timeout": 30
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-git-ops.sh\"",
+            "timeout": 30
+          }
+        ]
       }
     ]
   }
@@ -262,14 +272,18 @@ You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-
 
 **Graph update hook** (PostToolUse on Edit/Write): keeps the graph incrementally updated after each file edit. Only changed files are re-parsed.
 
+**Git operation hook** (PostToolUse on Bash): detects `git rebase`, `git revert`, `git cherry-pick`, `git merge`, and `git pull` commands and automatically: (1) rebuilds the codegraph so dependency context stays fresh, (2) logs all files changed by the operation to `session-edits.log` so commit validation doesn't block rebase-modified files, and (3) clears stale entries from `codegraph-checked.log` so the edit reminder re-fires for affected files. Uses `ORIG_HEAD` (set by all these git operations) to detect which files changed. If the operation failed (e.g. merge conflicts), the diff safely returns nothing.
+
 > **Windows note:** If your hooks use bash scripts, normalize backslashes inside `node -e` rather than bash (`${VAR//\\//}` fails on Git Bash). See this repo's `.claude/hooks/enrich-context.sh` for the pattern.
 
-See this repo's `.claude/hooks/` directory for working implementations:
+**Ready-to-use examples** are in [`docs/examples/claude-code-hooks/`](../examples/claude-code-hooks/) with a complete `settings.json` and setup instructions:
 - `enrich-context.sh` — dependency context injection
 - `remind-codegraph.sh` — pre-edit reminder to check context/impact
 - `update-graph.sh` — incremental graph updates after edits
-- `guard-git.sh` — blocks dangerous git commands + validates branch names
+- `post-git-ops.sh` — graph rebuild + edit tracking after rebase/revert/merge
+- `guard-git.sh` — blocks dangerous git commands + validates commits
 - `track-edits.sh` — logs edited files for commit validation
+- `track-moves.sh` — logs file moves/copies for commit validation
 
 #### Parallel session safety hooks
 
@@ -279,6 +293,18 @@ When multiple AI agents work on the same repo concurrently, add hooks to prevent
 - **Git guard** (PreToolUse on Bash): block `git add .`, `git reset`, `git restore`, `git clean`, `git stash`; validate that `git commit` only includes files from the session edit log; validate branch names match conventional prefixes
 
 Pair with the `/worktree` command so each session gets an isolated copy of the repo.
+
+#### Git operation resilience
+
+Git operations like `rebase`, `revert`, `cherry-pick`, `merge`, and `pull` change file contents without going through the Edit/Write tools. Without special handling, this leaves the codegraph database stale, the edit tracker unaware of changed files, and the edit reminder not re-firing for modified files.
+
+The **`post-git-ops.sh`** hook (PostToolUse on Bash) detects these operations and fixes all three problems:
+
+1. **Graph rebuild** — runs `codegraph build` so that dependency context from `enrich-context.sh` reflects the post-operation state
+2. **Edit log update** — uses `git diff --name-only ORIG_HEAD HEAD` to find files changed by the operation and appends them to `session-edits.log`, so `guard-git.sh` won't block commits that include rebase-modified files
+3. **Reminder reset** — removes changed files from `codegraph-checked.log` so the agent is prompted to re-check context and impact before editing those files again
+
+The codegraph incremental build itself is naturally resilient to git operations — it uses content hashing (not timestamps alone) to detect changes, and its reverse-dependency cascade ensures all affected import edges are rebuilt. The hook simply ensures the rebuild is triggered automatically rather than requiring a manual `codegraph build`.
 
 ---
 
