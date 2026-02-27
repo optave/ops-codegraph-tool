@@ -125,12 +125,20 @@ function resolveEngine(opts = {}) {
  */
 function normalizeNativeSymbols(result) {
   return {
+    _lineCount: result.lineCount ?? result.line_count ?? null,
     definitions: (result.definitions || []).map((d) => ({
       name: d.name,
       kind: d.kind,
       line: d.line,
       endLine: d.endLine ?? d.end_line ?? null,
       decorators: d.decorators,
+      complexity: d.complexity
+        ? {
+            cognitive: d.complexity.cognitive,
+            cyclomatic: d.complexity.cyclomatic,
+            maxNesting: d.complexity.maxNesting ?? d.complexity.max_nesting,
+          }
+        : null,
     })),
     calls: (result.calls || []).map((c) => ({
       name: c.name,
@@ -342,6 +350,7 @@ export async function parseFilesAuto(filePaths, rootDir, opts = {}) {
       const relPath = path.relative(rootDir, filePath).split(path.sep).join('/');
       extracted.symbols._tree = extracted.tree;
       extracted.symbols._langId = extracted.langId;
+      extracted.symbols._lineCount = code.split('\n').length;
       result.set(relPath, extracted.symbols);
     }
   }

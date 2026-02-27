@@ -1,4 +1,5 @@
 use tree_sitter::{Node, Tree};
+use crate::complexity::compute_function_complexity;
 use crate::types::*;
 use super::helpers::*;
 use super::SymbolExtractor;
@@ -23,6 +24,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
+                    complexity: Some(compute_function_complexity(node)),
                 });
             }
         }
@@ -36,6 +38,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
+                    complexity: None,
                 });
 
                 // Heritage: extends + implements
@@ -77,6 +80,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
+                    complexity: Some(compute_function_complexity(node)),
                 });
             }
         }
@@ -90,6 +94,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
+                    complexity: None,
                 });
                 // Extract interface methods
                 let body = node
@@ -110,6 +115,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
+                    complexity: None,
                 });
             }
         }
@@ -132,6 +138,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     line: start_line(node),
                                     end_line: Some(end_line(&value_n)),
                                     decorators: None,
+                                    complexity: Some(compute_function_complexity(&value_n)),
                                 });
                             }
                         }
@@ -340,6 +347,7 @@ fn extract_interface_methods(
                         line: start_line(&child),
                         end_line: Some(end_line(&child)),
                         decorators: None,
+                        complexity: None,
                     });
                 }
             }
@@ -554,6 +562,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             line: start_line(&cb),
             end_line: Some(end_line(&cb)),
             decorators: None,
+            complexity: Some(compute_function_complexity(&cb)),
         });
     }
 
@@ -570,6 +579,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             line: start_line(&cb),
             end_line: Some(end_line(&cb)),
             decorators: None,
+            complexity: Some(compute_function_complexity(&cb)),
         });
     }
 
@@ -583,6 +593,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             line: start_line(&cb),
             end_line: Some(end_line(&cb)),
             decorators: None,
+            complexity: Some(compute_function_complexity(&cb)),
         });
     }
 

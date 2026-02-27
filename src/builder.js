@@ -880,12 +880,12 @@ export async function buildGraph(rootDir, opts = {}) {
         }
       }
 
-      // Class extends edges
+      // Class extends edges (use pre-loaded maps instead of inline DB queries)
       for (const cls of symbols.classes) {
         if (cls.extends) {
-          const sourceRow = db
-            .prepare('SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ?')
-            .get(cls.name, 'class', relPath);
+          const sourceRow = (nodesByNameAndFile.get(`${cls.name}|${relPath}`) || []).find(
+            (n) => n.kind === 'class',
+          );
           const targetCandidates = nodesByName.get(cls.extends) || [];
           const targetRows = targetCandidates.filter((n) => n.kind === 'class');
           if (sourceRow) {
@@ -897,9 +897,9 @@ export async function buildGraph(rootDir, opts = {}) {
         }
 
         if (cls.implements) {
-          const sourceRow = db
-            .prepare('SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ?')
-            .get(cls.name, 'class', relPath);
+          const sourceRow = (nodesByNameAndFile.get(`${cls.name}|${relPath}`) || []).find(
+            (n) => n.kind === 'class',
+          );
           const targetCandidates = nodesByName.get(cls.implements) || [];
           const targetRows = targetCandidates.filter(
             (n) => n.kind === 'interface' || n.kind === 'class',
@@ -916,15 +916,19 @@ export async function buildGraph(rootDir, opts = {}) {
   });
   buildEdges();
 
-  // Build line count map for structure metrics
+  // Build line count map for structure metrics (prefer cached _lineCount from parser)
   const lineCountMap = new Map();
-  for (const [relPath] of fileSymbols) {
-    const absPath = path.join(rootDir, relPath);
-    try {
-      const content = fs.readFileSync(absPath, 'utf-8');
-      lineCountMap.set(relPath, content.split('\n').length);
-    } catch {
-      lineCountMap.set(relPath, 0);
+  for (const [relPath, symbols] of fileSymbols) {
+    if (symbols._lineCount) {
+      lineCountMap.set(relPath, symbols._lineCount);
+    } else {
+      const absPath = path.join(rootDir, relPath);
+      try {
+        const content = fs.readFileSync(absPath, 'utf-8');
+        lineCountMap.set(relPath, content.split('\n').length);
+      } catch {
+        lineCountMap.set(relPath, 0);
+      }
     }
   }
 

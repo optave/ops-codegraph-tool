@@ -234,14 +234,20 @@ function findFunctionNode(rootNode, startLine, _endLine, rules) {
  * @param {object} [engineOpts] - engine options (unused; always uses WASM for AST)
  */
 export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOpts) {
-  // Only initialize WASM parsers if some files lack a cached tree (native engine path)
+  // Only initialize WASM parsers if some files lack both a cached tree AND pre-computed complexity
   let parsers = null;
   let extToLang = null;
   let needsFallback = false;
   for (const [, symbols] of fileSymbols) {
     if (!symbols._tree) {
-      needsFallback = true;
-      break;
+      // Check if all function/method defs have pre-computed complexity (native engine)
+      const hasPrecomputed = symbols.definitions.every(
+        (d) => (d.kind !== 'function' && d.kind !== 'method') || d.complexity,
+      );
+      if (!hasPrecomputed) {
+        needsFallback = true;
+        break;
+      }
     }
   }
   if (needsFallback) {
@@ -268,11 +274,17 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
 
   const tx = db.transaction(() => {
     for (const [relPath, symbols] of fileSymbols) {
+      // Check if all function/method defs have pre-computed complexity
+      const allPrecomputed = symbols.definitions.every(
+        (d) => (d.kind !== 'function' && d.kind !== 'method') || d.complexity,
+      );
+
       let tree = symbols._tree;
       let langId = symbols._langId;
 
-      // Fallback: re-read and re-parse when no cached tree (native engine)
-      if (!tree) {
+      // Only attempt WASM fallback if we actually need AST-based computation
+      if (!allPrecomputed && !tree) {
+        if (!extToLang) continue; // No WASM parsers available
         const ext = path.extname(relPath).toLowerCase();
         langId = extToLang.get(ext);
         if (!langId) continue;
@@ -295,12 +307,28 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
         }
       }
 
-      const rules = COMPLEXITY_RULES.get(langId);
-      if (!rules) continue;
+      const rules = langId ? COMPLEXITY_RULES.get(langId) : null;
 
       for (const def of symbols.definitions) {
         if (def.kind !== 'function' && def.kind !== 'method') continue;
         if (!def.line) continue;
+
+        // Use pre-computed complexity from native engine if available
+        if (def.complexity) {
+          const row = getNodeId.get(def.name, relPath, def.line);
+          if (!row) continue;
+          upsert.run(
+            row.id,
+            def.complexity.cognitive,
+            def.complexity.cyclomatic,
+            def.complexity.maxNesting ?? def.complexity.max_nesting ?? 0,
+          );
+          analyzed++;
+          continue;
+        }
+
+        // Fallback: compute from AST tree
+        if (!tree || !rules) continue;
 
         const funcNode = findFunctionNode(tree.rootNode, def.line, def.endLine, rules);
         if (!funcNode) continue;

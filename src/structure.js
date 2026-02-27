@@ -162,6 +162,48 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
     }
   }
 
+  // Build reverse index: file → set of ancestor directories (O(files × depth))
+  const fileToAncestorDirs = new Map();
+  for (const [dir, files] of dirFiles) {
+    for (const f of files) {
+      if (!fileToAncestorDirs.has(f)) fileToAncestorDirs.set(f, new Set());
+      fileToAncestorDirs.get(f).add(dir);
+    }
+  }
+
+  // Single O(E) pass: pre-aggregate edge counts per directory
+  const dirEdgeCounts = new Map();
+  for (const dir of allDirs) {
+    dirEdgeCounts.set(dir, { intra: 0, fanIn: 0, fanOut: 0 });
+  }
+  for (const { source_file, target_file } of importEdges) {
+    const srcDirs = fileToAncestorDirs.get(source_file);
+    const tgtDirs = fileToAncestorDirs.get(target_file);
+    if (!srcDirs && !tgtDirs) continue;
+
+    // For each directory that contains the source file
+    if (srcDirs) {
+      for (const dir of srcDirs) {
+        const counts = dirEdgeCounts.get(dir);
+        if (!counts) continue;
+        if (tgtDirs?.has(dir)) {
+          counts.intra++;
+        } else {
+          counts.fanOut++;
+        }
+      }
+    }
+    // For each directory that contains the target but NOT the source
+    if (tgtDirs) {
+      for (const dir of tgtDirs) {
+        if (srcDirs?.has(dir)) continue; // already counted as intra
+        const counts = dirEdgeCounts.get(dir);
+        if (!counts) continue;
+        counts.fanIn++;
+      }
+    }
+  }
+
   const computeDirMetrics = db.transaction(() => {
     for (const [dir, files] of dirFiles) {
       const dirRow = getNodeId.get(dir, 'directory', dir, 0);
@@ -169,9 +211,6 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
 
       const fileCount = files.length;
       let symbolCount = 0;
-      let totalFanIn = 0;
-      let totalFanOut = 0;
-      const filesInDir = new Set(files);
 
       for (const f of files) {
         const sym = fileSymbols.get(f);
@@ -187,23 +226,10 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
         }
       }
 
-      // Compute cross-boundary fan-in/fan-out and cohesion
-      let intraEdges = 0;
-      let crossEdges = 0;
-      for (const { source_file, target_file } of importEdges) {
-        const srcInside = filesInDir.has(source_file);
-        const tgtInside = filesInDir.has(target_file);
-        if (srcInside && tgtInside) {
-          intraEdges++;
-        } else if (srcInside || tgtInside) {
-          crossEdges++;
-          if (!srcInside && tgtInside) totalFanIn++;
-          if (srcInside && !tgtInside) totalFanOut++;
-        }
-      }
-
-      const totalEdges = intraEdges + crossEdges;
-      const cohesion = totalEdges > 0 ? intraEdges / totalEdges : null;
+      // O(1) lookup from pre-aggregated edge counts
+      const counts = dirEdgeCounts.get(dir) || { intra: 0, fanIn: 0, fanOut: 0 };
+      const totalEdges = counts.intra + counts.fanIn + counts.fanOut;
+      const cohesion = totalEdges > 0 ? counts.intra / totalEdges : null;
 
       upsertMetric.run(
         dirRow.id,
@@ -211,8 +237,8 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
         symbolCount,
         null,
         null,
-        totalFanIn,
-        totalFanOut,
+        counts.fanIn,
+        counts.fanOut,
         cohesion,
         fileCount,
       );

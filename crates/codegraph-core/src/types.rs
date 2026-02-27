@@ -3,6 +3,14 @@ use serde::{Deserialize, Serialize};
 
 #[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ComplexityMetrics {
+    pub cognitive: u32,
+    pub cyclomatic: u32,
+    pub max_nesting: u32,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Definition {
     pub name: String,
     pub kind: String,
@@ -10,6 +18,7 @@ pub struct Definition {
     pub end_line: Option<u32>,
     #[napi(ts_type = "string[] | undefined")]
     pub decorators: Option<Vec<String>>,
+    pub complexity: Option<ComplexityMetrics>,
 }
 
 #[napi(object)]
@@ -86,6 +95,7 @@ pub struct FileSymbols {
     pub imports: Vec<Import>,
     pub classes: Vec<ClassRelation>,
     pub exports: Vec<ExportInfo>,
+    pub line_count: Option<u32>,
 }
 
 impl FileSymbols {
@@ -97,6 +107,7 @@ impl FileSymbols {
             imports: Vec::new(),
             classes: Vec::new(),
             exports: Vec::new(),
+            line_count: None,
         }
     }
 }

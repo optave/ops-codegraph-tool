@@ -40,6 +40,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
+                    complexity: None,
                 });
                 if let Some(superclass) = node.child_by_field_name("superclass") {
                     // Walk superclass node to find the constant
@@ -56,6 +57,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
+                    complexity: None,
                 });
             }
         }
@@ -74,6 +76,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
+                    complexity: None,
                 });
             }
         }
@@ -92,6 +95,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
+                    complexity: None,
                 });
             }
         }

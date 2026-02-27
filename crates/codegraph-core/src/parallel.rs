@@ -15,6 +15,7 @@ pub fn parse_files_parallel(file_paths: &[String], root_dir: &str) -> Vec<FileSy
         .filter_map(|file_path| {
             let lang = LanguageKind::from_extension(file_path)?;
             let source = fs::read(file_path).ok()?;
+            let line_count = source.iter().filter(|&&b| b == b'\n').count() as u32 + 1;
 
             let mut parser = Parser::new();
             parser
@@ -22,7 +23,8 @@ pub fn parse_files_parallel(file_paths: &[String], root_dir: &str) -> Vec<FileSy
                 .ok()?;
 
             let tree = parser.parse(&source, None)?;
-            let symbols = extract_symbols(lang, &tree, &source, file_path);
+            let mut symbols = extract_symbols(lang, &tree, &source, file_path);
+            symbols.line_count = Some(line_count);
             Some(symbols)
         })
         .collect()
@@ -39,5 +41,8 @@ pub fn parse_file(file_path: &str, source: &str) -> Option<FileSymbols> {
         .ok()?;
 
     let tree = parser.parse(source_bytes, None)?;
-    Some(extract_symbols(lang, &tree, source_bytes, file_path))
+    let line_count = source_bytes.iter().filter(|&&b| b == b'\n').count() as u32 + 1;
+    let mut symbols = extract_symbols(lang, &tree, source_bytes, file_path);
+    symbols.line_count = Some(line_count);
+    Some(symbols)
 }
