@@ -254,9 +254,11 @@ describe('COMPLEXITY_RULES', () => {
     expect(COMPLEXITY_RULES.has('tsx')).toBe(true);
   });
 
-  it('returns undefined for unsupported languages', () => {
-    expect(COMPLEXITY_RULES.has('python')).toBe(false);
-    expect(COMPLEXITY_RULES.has('go')).toBe(false);
+  it('supports all 10 languages, not hcl', () => {
+    for (const lang of ['python', 'go', 'rust', 'java', 'c_sharp', 'ruby', 'php']) {
+      expect(COMPLEXITY_RULES.has(lang)).toBe(true);
+    }
+    expect(COMPLEXITY_RULES.has('hcl')).toBe(false);
   });
 });
 
@@ -344,9 +346,11 @@ describe('HALSTEAD_RULES', () => {
     expect(HALSTEAD_RULES.has('tsx')).toBe(true);
   });
 
-  it('does not support python or go', () => {
-    expect(HALSTEAD_RULES.has('python')).toBe(false);
-    expect(HALSTEAD_RULES.has('go')).toBe(false);
+  it('supports all 10 languages, not hcl', () => {
+    for (const lang of ['python', 'go', 'rust', 'java', 'c_sharp', 'ruby', 'php']) {
+      expect(HALSTEAD_RULES.has(lang)).toBe(true);
+    }
+    expect(HALSTEAD_RULES.has('hcl')).toBe(false);
   });
 });
 
@@ -447,5 +451,499 @@ describe('computeMaintainabilityIndex', () => {
 
     const result2 = computeMaintainabilityIndex(0, 0, 0, 0);
     expect(Number.isFinite(result2)).toBe(true);
+  });
+});
+
+// ─── Multi-Language Complexity Tests ─────────────────────────────────────
+
+function makeHelpers(langId, parsersPromise) {
+  const rules = COMPLEXITY_RULES.get(langId);
+  let parser;
+  let available = false;
+  beforeAll(async () => {
+    const parsers = await parsersPromise;
+    parser = parsers.get(langId);
+    available = !!parser;
+  });
+  beforeEach(({ skip }) => {
+    if (!available) skip();
+  });
+  const parse = (code) => parser.parse(code).rootNode;
+  const getFunction = (root) => {
+    function find(node) {
+      if (rules.functionNodes.has(node.type)) return node;
+      for (let i = 0; i < node.childCount; i++) {
+        const r = find(node.child(i));
+        if (r) return r;
+      }
+      return null;
+    }
+    return find(root);
+  };
+  const analyze = (code) => {
+    const funcNode = getFunction(parse(code));
+    if (!funcNode) throw new Error(`No function found in ${langId} snippet`);
+    return computeFunctionComplexity(funcNode, langId);
+  };
+  const halstead = (code) => {
+    const funcNode = getFunction(parse(code));
+    if (!funcNode) throw new Error(`No function found in ${langId} snippet`);
+    return computeHalsteadMetrics(funcNode, langId);
+  };
+  const loc = (code) => {
+    const funcNode = getFunction(parse(code));
+    if (!funcNode) throw new Error(`No function found in ${langId} snippet`);
+    return computeLOCMetrics(funcNode, langId);
+  };
+  return { parse, getFunction, analyze, halstead, loc };
+}
+
+// Shared parsers promise to avoid re-initializing per suite
+let _parsersPromise;
+function sharedParsers() {
+  if (!_parsersPromise) _parsersPromise = createParsers();
+  return _parsersPromise;
+}
+
+// ─── Python ──────────────────────────────────────────────────────────────
+
+describe('Python complexity', () => {
+  const { analyze, halstead, loc } = makeHelpers('python', sharedParsers());
+
+  it('simple function', () => {
+    const r = analyze('def add(a, b):\n    return a + b\n');
+    expect(r).toEqual({ cognitive: 0, cyclomatic: 1, maxNesting: 0 });
+  });
+
+  it('single if', () => {
+    const r = analyze('def check(x):\n    if x > 0:\n        return True\n    return False\n');
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('if/elif/else chain', () => {
+    const r = analyze(
+      'def classify(x):\n    if x > 0:\n        return "pos"\n    elif x < 0:\n        return "neg"\n    else:\n        return "zero"\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 1 });
+  });
+
+  it('nested if', () => {
+    const r = analyze(
+      'def nested(x, y):\n    if x > 0:\n        if y > 0:\n            return True\n    return False\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('for loop with condition', () => {
+    const r = analyze(
+      'def search(arr, t):\n    for item in arr:\n        if item == t:\n            return True\n    return False\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('while loop', () => {
+    const r = analyze('def countdown(n):\n    while n > 0:\n        n -= 1\n');
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('try/except', () => {
+    const r = analyze(
+      'def safe(s):\n    try:\n        return int(s)\n    except ValueError:\n        return None\n',
+    );
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('logical operators', () => {
+    const r = analyze('def check(a, b):\n    if a and b:\n        return True\n');
+    expect(r.cognitive).toBe(2);
+    expect(r.cyclomatic).toBe(3);
+  });
+
+  it('halstead: positive volume', () => {
+    const h = halstead('def add(a, b):\n    return a + b\n');
+    expect(h).not.toBeNull();
+    expect(h.volume).toBeGreaterThan(0);
+  });
+
+  it('LOC: # comments detected', () => {
+    const l = loc('def f():\n    # comment\n    return 1\n');
+    expect(l.commentLines).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ─── Go ──────────────────────────────────────────────────────────────────
+
+describe('Go complexity', () => {
+  const { analyze, halstead } = makeHelpers('go', sharedParsers());
+
+  it('simple function', () => {
+    const r = analyze('package main\nfunc add(a int, b int) int {\n\treturn a + b\n}\n');
+    expect(r).toEqual({ cognitive: 0, cyclomatic: 1, maxNesting: 0 });
+  });
+
+  it('single if', () => {
+    const r = analyze(
+      'package main\nfunc check(x int) bool {\n\tif x > 0 {\n\t\treturn true\n\t}\n\treturn false\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('if/else-if/else chain', () => {
+    const r = analyze(
+      'package main\nfunc classify(x int) string {\n\tif x > 0 {\n\t\treturn "pos"\n\t} else if x < 0 {\n\t\treturn "neg"\n\t} else {\n\t\treturn "zero"\n\t}\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 1 });
+  });
+
+  it('nested if', () => {
+    const r = analyze(
+      'package main\nfunc nested(x int, y int) bool {\n\tif x > 0 {\n\t\tif y > 0 {\n\t\t\treturn true\n\t\t}\n\t}\n\treturn false\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('for loop with condition', () => {
+    const r = analyze(
+      'package main\nfunc search(arr []int, t int) bool {\n\tfor _, v := range arr {\n\t\tif v == t {\n\t\t\treturn true\n\t\t}\n\t}\n\treturn false\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('switch', () => {
+    const r = analyze(
+      'package main\nfunc sw(x int) string {\n\tswitch x {\n\tcase 1:\n\t\treturn "one"\n\tcase 2:\n\t\treturn "two"\n\tdefault:\n\t\treturn "other"\n\t}\n}\n',
+    );
+    expect(r.cognitive).toBe(1);
+    expect(r.cyclomatic).toBeGreaterThanOrEqual(3);
+  });
+
+  it('logical operators', () => {
+    const r = analyze(
+      'package main\nfunc check(a bool, b bool) bool {\n\tif a && b {\n\t\treturn true\n\t}\n\treturn false\n}\n',
+    );
+    expect(r.cognitive).toBe(2);
+    expect(r.cyclomatic).toBe(3);
+  });
+
+  it('halstead: positive volume', () => {
+    const h = halstead('package main\nfunc add(a int, b int) int {\n\treturn a + b\n}\n');
+    expect(h).not.toBeNull();
+    expect(h.volume).toBeGreaterThan(0);
+  });
+});
+
+// ─── Rust ────────────────────────────────────────────────────────────────
+
+describe('Rust complexity', () => {
+  const { analyze, halstead } = makeHelpers('rust', sharedParsers());
+
+  it('simple function', () => {
+    const r = analyze('fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n');
+    expect(r).toEqual({ cognitive: 0, cyclomatic: 1, maxNesting: 0 });
+  });
+
+  it('single if', () => {
+    const r = analyze(
+      'fn check(x: i32) -> bool {\n    if x > 0 {\n        return true;\n    }\n    false\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('if/else-if/else chain', () => {
+    const r = analyze(
+      'fn classify(x: i32) -> &str {\n    if x > 0 {\n        "pos"\n    } else if x < 0 {\n        "neg"\n    } else {\n        "zero"\n    }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 1 });
+  });
+
+  it('nested if', () => {
+    const r = analyze(
+      'fn nested(x: i32, y: i32) -> bool {\n    if x > 0 {\n        if y > 0 {\n            return true;\n        }\n    }\n    false\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('loop with condition', () => {
+    const r = analyze(
+      'fn search(arr: &[i32], t: i32) -> bool {\n    for v in arr {\n        if *v == t {\n            return true;\n        }\n    }\n    false\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('match expression', () => {
+    const r = analyze(
+      'fn sw(x: i32) -> &str {\n    match x {\n        1 => "one",\n        2 => "two",\n        _ => "other",\n    }\n}\n',
+    );
+    expect(r.cognitive).toBe(1);
+    expect(r.cyclomatic).toBeGreaterThanOrEqual(3);
+  });
+
+  it('logical operators', () => {
+    const r = analyze(
+      'fn check(a: bool, b: bool) -> bool {\n    if a && b {\n        return true;\n    }\n    false\n}\n',
+    );
+    expect(r.cognitive).toBe(2);
+    expect(r.cyclomatic).toBe(3);
+  });
+
+  it('halstead: positive volume', () => {
+    const h = halstead('fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n');
+    expect(h).not.toBeNull();
+    expect(h.volume).toBeGreaterThan(0);
+  });
+});
+
+// ─── Java ────────────────────────────────────────────────────────────────
+
+describe('Java complexity', () => {
+  const { analyze, halstead } = makeHelpers('java', sharedParsers());
+
+  it('simple method', () => {
+    const r = analyze('class C {\n    int add(int a, int b) {\n        return a + b;\n    }\n}\n');
+    expect(r).toEqual({ cognitive: 0, cyclomatic: 1, maxNesting: 0 });
+  });
+
+  it('single if', () => {
+    const r = analyze(
+      'class C {\n    boolean check(int x) {\n        if (x > 0) {\n            return true;\n        }\n        return false;\n    }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('if/else-if/else chain', () => {
+    const r = analyze(
+      'class C {\n    String classify(int x) {\n        if (x > 0) {\n            return "pos";\n        } else if (x < 0) {\n            return "neg";\n        } else {\n            return "zero";\n        }\n    }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 1 });
+  });
+
+  it('nested if', () => {
+    const r = analyze(
+      'class C {\n    boolean nested(int x, int y) {\n        if (x > 0) {\n            if (y > 0) {\n                return true;\n            }\n        }\n        return false;\n    }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('for loop with condition', () => {
+    const r = analyze(
+      'class C {\n    int search(int[] arr, int t) {\n        for (int i = 0; i < arr.length; i++) {\n            if (arr[i] == t) {\n                return i;\n            }\n        }\n        return -1;\n    }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('try/catch', () => {
+    const r = analyze(
+      'class C {\n    int safe(String s) {\n        try {\n            return Integer.parseInt(s);\n        } catch (Exception e) {\n            return 0;\n        }\n    }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('logical operators', () => {
+    const r = analyze(
+      'class C {\n    boolean check(boolean a, boolean b) {\n        if (a && b) {\n            return true;\n        }\n        return false;\n    }\n}\n',
+    );
+    expect(r.cognitive).toBe(2);
+    expect(r.cyclomatic).toBe(3);
+  });
+
+  it('halstead: positive volume', () => {
+    const h = halstead('class C {\n    int add(int a, int b) {\n        return a + b;\n    }\n}\n');
+    expect(h).not.toBeNull();
+    expect(h.volume).toBeGreaterThan(0);
+  });
+});
+
+// ─── C# ──────────────────────────────────────────────────────────────────
+
+describe('C# complexity', () => {
+  const { analyze, halstead } = makeHelpers('c_sharp', sharedParsers());
+
+  it('simple method', () => {
+    const r = analyze('class C {\n    int Add(int a, int b) {\n        return a + b;\n    }\n}\n');
+    expect(r).toEqual({ cognitive: 0, cyclomatic: 1, maxNesting: 0 });
+  });
+
+  it('single if', () => {
+    const r = analyze(
+      'class C {\n    bool Check(int x) {\n        if (x > 0) {\n            return true;\n        }\n        return false;\n    }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('if/else-if/else chain', () => {
+    const r = analyze(
+      'class C {\n    string Classify(int x) {\n        if (x > 0) {\n            return "pos";\n        } else if (x < 0) {\n            return "neg";\n        } else {\n            return "zero";\n        }\n    }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 1 });
+  });
+
+  it('nested if', () => {
+    const r = analyze(
+      'class C {\n    bool Nested(int x, int y) {\n        if (x > 0) {\n            if (y > 0) {\n                return true;\n            }\n        }\n        return false;\n    }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('foreach with condition', () => {
+    const r = analyze(
+      'class C {\n    bool Search(int[] arr, int t) {\n        foreach (var v in arr) {\n            if (v == t) {\n                return true;\n            }\n        }\n        return false;\n    }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('switch', () => {
+    const r = analyze(
+      'class C {\n    string Sw(int x) {\n        switch (x) {\n            case 1: return "one";\n            case 2: return "two";\n            default: return "other";\n        }\n    }\n}\n',
+    );
+    expect(r.cognitive).toBe(1);
+    expect(r.cyclomatic).toBeGreaterThanOrEqual(3);
+  });
+
+  it('try/catch', () => {
+    const r = analyze(
+      'class C {\n    int Safe(string s) {\n        try {\n            return int.Parse(s);\n        } catch (Exception e) {\n            return 0;\n        }\n    }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('halstead: positive volume', () => {
+    const h = halstead('class C {\n    int Add(int a, int b) {\n        return a + b;\n    }\n}\n');
+    expect(h).not.toBeNull();
+    expect(h.volume).toBeGreaterThan(0);
+  });
+});
+
+// ─── Ruby ────────────────────────────────────────────────────────────────
+
+describe('Ruby complexity', () => {
+  const { analyze, halstead, loc } = makeHelpers('ruby', sharedParsers());
+
+  it('simple method', () => {
+    const r = analyze('def add(a, b)\n  a + b\nend\n');
+    expect(r).toEqual({ cognitive: 0, cyclomatic: 1, maxNesting: 0 });
+  });
+
+  it('single if', () => {
+    const r = analyze('def check(x)\n  if x > 0\n    return true\n  end\n  false\nend\n');
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('if/elsif/else chain', () => {
+    const r = analyze(
+      'def classify(x)\n  if x > 0\n    "pos"\n  elsif x < 0\n    "neg"\n  else\n    "zero"\n  end\nend\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 1 });
+  });
+
+  it('nested if', () => {
+    const r = analyze(
+      'def nested(x, y)\n  if x > 0\n    if y > 0\n      return true\n    end\n  end\n  false\nend\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('while loop', () => {
+    const r = analyze('def countdown(n)\n  while n > 0\n    n -= 1\n  end\nend\n');
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('case/when', () => {
+    const r = analyze(
+      'def sw(x)\n  case x\n  when 1\n    "one"\n  when 2\n    "two"\n  else\n    "other"\n  end\nend\n',
+    );
+    expect(r.cognitive).toBe(2); // case + else
+    expect(r.cyclomatic).toBeGreaterThanOrEqual(3);
+  });
+
+  it('logical operators', () => {
+    const r = analyze('def check(a, b)\n  if a && b\n    return true\n  end\n  false\nend\n');
+    expect(r.cognitive).toBe(2);
+    expect(r.cyclomatic).toBe(3);
+  });
+
+  it('halstead: positive volume', () => {
+    const h = halstead('def add(a, b)\n  a + b\nend\n');
+    expect(h).not.toBeNull();
+    expect(h.volume).toBeGreaterThan(0);
+  });
+
+  it('LOC: # comments detected', () => {
+    const l = loc('def f()\n  # comment\n  1\nend\n');
+    expect(l.commentLines).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ─── PHP ─────────────────────────────────────────────────────────────────
+
+describe('PHP complexity', () => {
+  const { analyze, halstead, loc } = makeHelpers('php', sharedParsers());
+
+  it('simple function', () => {
+    const r = analyze('<?php\nfunction add($a, $b) {\n    return $a + $b;\n}\n');
+    expect(r).toEqual({ cognitive: 0, cyclomatic: 1, maxNesting: 0 });
+  });
+
+  it('single if', () => {
+    const r = analyze(
+      '<?php\nfunction check($x) {\n    if ($x > 0) {\n        return true;\n    }\n    return false;\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('if/elseif/else chain', () => {
+    const r = analyze(
+      '<?php\nfunction classify($x) {\n    if ($x > 0) {\n        return "pos";\n    } elseif ($x < 0) {\n        return "neg";\n    } else {\n        return "zero";\n    }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 1 });
+  });
+
+  it('nested if', () => {
+    const r = analyze(
+      '<?php\nfunction nested($x, $y) {\n    if ($x > 0) {\n        if ($y > 0) {\n            return true;\n        }\n    }\n    return false;\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('foreach with condition', () => {
+    const r = analyze(
+      '<?php\nfunction search($arr, $t) {\n    foreach ($arr as $v) {\n        if ($v == $t) {\n            return true;\n        }\n    }\n    return false;\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 3, cyclomatic: 3, maxNesting: 2 });
+  });
+
+  it('switch', () => {
+    const r = analyze(
+      '<?php\nfunction sw($x) {\n    switch ($x) {\n        case 1: return "one";\n        case 2: return "two";\n        default: return "other";\n    }\n}\n',
+    );
+    expect(r.cognitive).toBe(1);
+    expect(r.cyclomatic).toBeGreaterThanOrEqual(3);
+  });
+
+  it('try/catch', () => {
+    const r = analyze(
+      '<?php\nfunction safe($s) {\n    try {\n        return intval($s);\n    } catch (Exception $e) {\n        return 0;\n    }\n}\n',
+    );
+    expect(r).toEqual({ cognitive: 1, cyclomatic: 2, maxNesting: 1 });
+  });
+
+  it('logical operators', () => {
+    const r = analyze(
+      '<?php\nfunction check($a, $b) {\n    if ($a && $b) {\n        return true;\n    }\n    return false;\n}\n',
+    );
+    expect(r.cognitive).toBe(2);
+    expect(r.cyclomatic).toBe(3);
+  });
+
+  it('halstead: positive volume', () => {
+    const h = halstead('<?php\nfunction add($a, $b) {\n    return $a + $b;\n}\n');
+    expect(h).not.toBeNull();
+    expect(h.volume).toBeGreaterThan(0);
+  });
+
+  it('LOC: # and // comments detected', () => {
+    const l = loc(
+      '<?php\nfunction f() {\n    # hash comment\n    // slash comment\n    return 1;\n}\n',
+    );
+    expect(l.commentLines).toBeGreaterThanOrEqual(2);
   });
 });

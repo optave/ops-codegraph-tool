@@ -47,12 +47,251 @@ const JS_TS_RULES = {
     'generator_function',
     'generator_function_declaration',
   ]),
+  // If/else pattern detection
+  ifNodeType: 'if_statement',
+  elseNodeType: 'else_clause',
+  elifNodeType: null,
+  elseViaAlternative: false,
+  switchLikeNodes: new Set(['switch_statement']),
+};
+
+const PYTHON_RULES = {
+  branchNodes: new Set([
+    'if_statement',
+    'elif_clause',
+    'else_clause',
+    'for_statement',
+    'while_statement',
+    'except_clause',
+    'conditional_expression',
+    'match_statement',
+  ]),
+  caseNodes: new Set(['case_clause']),
+  logicalOperators: new Set(['and', 'or']),
+  logicalNodeType: 'boolean_operator',
+  optionalChainType: null,
+  nestingNodes: new Set([
+    'if_statement',
+    'for_statement',
+    'while_statement',
+    'except_clause',
+    'conditional_expression',
+  ]),
+  functionNodes: new Set(['function_definition', 'lambda']),
+  ifNodeType: 'if_statement',
+  elseNodeType: 'else_clause',
+  elifNodeType: 'elif_clause',
+  elseViaAlternative: false,
+  switchLikeNodes: new Set(['match_statement']),
+};
+
+const GO_RULES = {
+  branchNodes: new Set([
+    'if_statement',
+    'for_statement',
+    'expression_switch_statement',
+    'type_switch_statement',
+    'select_statement',
+  ]),
+  caseNodes: new Set(['expression_case', 'type_case', 'default_case', 'communication_case']),
+  logicalOperators: new Set(['&&', '||']),
+  logicalNodeType: 'binary_expression',
+  optionalChainType: null,
+  nestingNodes: new Set([
+    'if_statement',
+    'for_statement',
+    'expression_switch_statement',
+    'type_switch_statement',
+    'select_statement',
+  ]),
+  functionNodes: new Set(['function_declaration', 'method_declaration', 'func_literal']),
+  ifNodeType: 'if_statement',
+  elseNodeType: null,
+  elifNodeType: null,
+  elseViaAlternative: true,
+  switchLikeNodes: new Set(['expression_switch_statement', 'type_switch_statement']),
+};
+
+const RUST_RULES = {
+  branchNodes: new Set([
+    'if_expression',
+    'else_clause',
+    'for_expression',
+    'while_expression',
+    'loop_expression',
+    'if_let_expression',
+    'while_let_expression',
+    'match_expression',
+  ]),
+  caseNodes: new Set(['match_arm']),
+  logicalOperators: new Set(['&&', '||']),
+  logicalNodeType: 'binary_expression',
+  optionalChainType: null,
+  nestingNodes: new Set([
+    'if_expression',
+    'for_expression',
+    'while_expression',
+    'loop_expression',
+    'if_let_expression',
+    'while_let_expression',
+    'match_expression',
+  ]),
+  functionNodes: new Set(['function_item', 'closure_expression']),
+  ifNodeType: 'if_expression',
+  elseNodeType: 'else_clause',
+  elifNodeType: null,
+  elseViaAlternative: false,
+  switchLikeNodes: new Set(['match_expression']),
+};
+
+const JAVA_RULES = {
+  branchNodes: new Set([
+    'if_statement',
+    'for_statement',
+    'enhanced_for_statement',
+    'while_statement',
+    'do_statement',
+    'catch_clause',
+    'ternary_expression',
+    'switch_expression',
+  ]),
+  caseNodes: new Set(['switch_label']),
+  logicalOperators: new Set(['&&', '||']),
+  logicalNodeType: 'binary_expression',
+  optionalChainType: null,
+  nestingNodes: new Set([
+    'if_statement',
+    'for_statement',
+    'enhanced_for_statement',
+    'while_statement',
+    'do_statement',
+    'catch_clause',
+    'ternary_expression',
+  ]),
+  functionNodes: new Set(['method_declaration', 'constructor_declaration', 'lambda_expression']),
+  ifNodeType: 'if_statement',
+  elseNodeType: null,
+  elifNodeType: null,
+  elseViaAlternative: true,
+  switchLikeNodes: new Set(['switch_expression']),
+};
+
+const CSHARP_RULES = {
+  branchNodes: new Set([
+    'if_statement',
+    'else_clause',
+    'for_statement',
+    'for_each_statement',
+    'while_statement',
+    'do_statement',
+    'catch_clause',
+    'conditional_expression',
+    'switch_statement',
+  ]),
+  caseNodes: new Set(['switch_section']),
+  logicalOperators: new Set(['&&', '||', '??']),
+  logicalNodeType: 'binary_expression',
+  optionalChainType: 'conditional_access_expression',
+  nestingNodes: new Set([
+    'if_statement',
+    'for_statement',
+    'for_each_statement',
+    'while_statement',
+    'do_statement',
+    'catch_clause',
+    'conditional_expression',
+    'switch_statement',
+  ]),
+  functionNodes: new Set([
+    'method_declaration',
+    'constructor_declaration',
+    'lambda_expression',
+    'local_function_statement',
+  ]),
+  ifNodeType: 'if_statement',
+  elseNodeType: 'else_clause',
+  elifNodeType: null,
+  elseViaAlternative: false,
+  switchLikeNodes: new Set(['switch_statement']),
+};
+
+const RUBY_RULES = {
+  branchNodes: new Set([
+    'if',
+    'elsif',
+    'else',
+    'unless',
+    'case',
+    'for',
+    'while',
+    'until',
+    'rescue',
+    'conditional',
+  ]),
+  caseNodes: new Set(['when']),
+  logicalOperators: new Set(['and', 'or', '&&', '||']),
+  logicalNodeType: 'binary',
+  optionalChainType: null,
+  nestingNodes: new Set(['if', 'unless', 'case', 'for', 'while', 'until', 'rescue', 'conditional']),
+  functionNodes: new Set(['method', 'singleton_method', 'lambda', 'do_block']),
+  ifNodeType: 'if',
+  elseNodeType: 'else',
+  elifNodeType: 'elsif',
+  elseViaAlternative: false,
+  switchLikeNodes: new Set(['case']),
+};
+
+const PHP_RULES = {
+  branchNodes: new Set([
+    'if_statement',
+    'else_if_clause',
+    'else_clause',
+    'for_statement',
+    'foreach_statement',
+    'while_statement',
+    'do_statement',
+    'catch_clause',
+    'conditional_expression',
+    'switch_statement',
+  ]),
+  caseNodes: new Set(['case_statement', 'default_statement']),
+  logicalOperators: new Set(['&&', '||', 'and', 'or', '??']),
+  logicalNodeType: 'binary_expression',
+  optionalChainType: 'nullsafe_member_access_expression',
+  nestingNodes: new Set([
+    'if_statement',
+    'for_statement',
+    'foreach_statement',
+    'while_statement',
+    'do_statement',
+    'catch_clause',
+    'conditional_expression',
+    'switch_statement',
+  ]),
+  functionNodes: new Set([
+    'function_definition',
+    'method_declaration',
+    'anonymous_function_creation_expression',
+    'arrow_function',
+  ]),
+  ifNodeType: 'if_statement',
+  elseNodeType: 'else_clause',
+  elifNodeType: 'else_if_clause',
+  elseViaAlternative: false,
+  switchLikeNodes: new Set(['switch_statement']),
 };
 
 export const COMPLEXITY_RULES = new Map([
   ['javascript', JS_TS_RULES],
   ['typescript', JS_TS_RULES],
   ['tsx', JS_TS_RULES],
+  ['python', PYTHON_RULES],
+  ['go', GO_RULES],
+  ['rust', RUST_RULES],
+  ['java', JAVA_RULES],
+  ['c_sharp', CSHARP_RULES],
+  ['ruby', RUBY_RULES],
+  ['php', PHP_RULES],
 ]);
 
 // ─── Halstead Operator/Operand Classification ────────────────────────────
@@ -164,10 +403,622 @@ const JS_TS_HALSTEAD = {
   skipTypes: new Set(['type_annotation', 'type_parameters', 'return_type', 'implements_clause']),
 };
 
+const PYTHON_HALSTEAD = {
+  operatorLeafTypes: new Set([
+    '+',
+    '-',
+    '*',
+    '/',
+    '%',
+    '**',
+    '//',
+    '=',
+    '+=',
+    '-=',
+    '*=',
+    '/=',
+    '%=',
+    '**=',
+    '//=',
+    '&=',
+    '|=',
+    '^=',
+    '<<=',
+    '>>=',
+    '==',
+    '!=',
+    '<',
+    '>',
+    '<=',
+    '>=',
+    'and',
+    'or',
+    'not',
+    '&',
+    '|',
+    '^',
+    '~',
+    '<<',
+    '>>',
+    'if',
+    'else',
+    'elif',
+    'for',
+    'while',
+    'with',
+    'try',
+    'except',
+    'finally',
+    'raise',
+    'return',
+    'yield',
+    'await',
+    'pass',
+    'break',
+    'continue',
+    'import',
+    'from',
+    'as',
+    'in',
+    'is',
+    'lambda',
+    'del',
+    '.',
+    ',',
+    ':',
+    '@',
+    '->',
+  ]),
+  operandLeafTypes: new Set([
+    'identifier',
+    'integer',
+    'float',
+    'string_content',
+    'true',
+    'false',
+    'none',
+  ]),
+  compoundOperators: new Set(['call', 'subscript', 'attribute']),
+  skipTypes: new Set([]),
+};
+
+const GO_HALSTEAD = {
+  operatorLeafTypes: new Set([
+    '+',
+    '-',
+    '*',
+    '/',
+    '%',
+    '=',
+    ':=',
+    '+=',
+    '-=',
+    '*=',
+    '/=',
+    '%=',
+    '&=',
+    '|=',
+    '^=',
+    '<<=',
+    '>>=',
+    '==',
+    '!=',
+    '<',
+    '>',
+    '<=',
+    '>=',
+    '&&',
+    '||',
+    '!',
+    '&',
+    '|',
+    '^',
+    '~',
+    '<<',
+    '>>',
+    '&^',
+    '++',
+    '--',
+    'if',
+    'else',
+    'for',
+    'switch',
+    'select',
+    'case',
+    'default',
+    'return',
+    'break',
+    'continue',
+    'goto',
+    'fallthrough',
+    'go',
+    'defer',
+    'range',
+    'chan',
+    'func',
+    'var',
+    'const',
+    'type',
+    'struct',
+    'interface',
+    '.',
+    ',',
+    ';',
+    ':',
+    '<-',
+  ]),
+  operandLeafTypes: new Set([
+    'identifier',
+    'field_identifier',
+    'package_identifier',
+    'type_identifier',
+    'int_literal',
+    'float_literal',
+    'imaginary_literal',
+    'rune_literal',
+    'interpreted_string_literal',
+    'raw_string_literal',
+    'true',
+    'false',
+    'nil',
+    'iota',
+  ]),
+  compoundOperators: new Set(['call_expression', 'index_expression', 'selector_expression']),
+  skipTypes: new Set([]),
+};
+
+const RUST_HALSTEAD = {
+  operatorLeafTypes: new Set([
+    '+',
+    '-',
+    '*',
+    '/',
+    '%',
+    '=',
+    '+=',
+    '-=',
+    '*=',
+    '/=',
+    '%=',
+    '&=',
+    '|=',
+    '^=',
+    '<<=',
+    '>>=',
+    '==',
+    '!=',
+    '<',
+    '>',
+    '<=',
+    '>=',
+    '&&',
+    '||',
+    '!',
+    '&',
+    '|',
+    '^',
+    '<<',
+    '>>',
+    'if',
+    'else',
+    'for',
+    'while',
+    'loop',
+    'match',
+    'return',
+    'break',
+    'continue',
+    'let',
+    'mut',
+    'ref',
+    'as',
+    'in',
+    'move',
+    'fn',
+    'struct',
+    'enum',
+    'trait',
+    'impl',
+    'pub',
+    'mod',
+    'use',
+    '.',
+    ',',
+    ';',
+    ':',
+    '::',
+    '=>',
+    '->',
+    '?',
+  ]),
+  operandLeafTypes: new Set([
+    'identifier',
+    'field_identifier',
+    'type_identifier',
+    'integer_literal',
+    'float_literal',
+    'string_content',
+    'char_literal',
+    'true',
+    'false',
+    'self',
+    'Self',
+  ]),
+  compoundOperators: new Set(['call_expression', 'index_expression', 'field_expression']),
+  skipTypes: new Set([]),
+};
+
+const JAVA_HALSTEAD = {
+  operatorLeafTypes: new Set([
+    '+',
+    '-',
+    '*',
+    '/',
+    '%',
+    '=',
+    '+=',
+    '-=',
+    '*=',
+    '/=',
+    '%=',
+    '&=',
+    '|=',
+    '^=',
+    '<<=',
+    '>>=',
+    '>>>=',
+    '==',
+    '!=',
+    '<',
+    '>',
+    '<=',
+    '>=',
+    '&&',
+    '||',
+    '!',
+    '&',
+    '|',
+    '^',
+    '~',
+    '<<',
+    '>>',
+    '>>>',
+    '++',
+    '--',
+    'instanceof',
+    'new',
+    'if',
+    'else',
+    'for',
+    'while',
+    'do',
+    'switch',
+    'case',
+    'return',
+    'throw',
+    'break',
+    'continue',
+    'try',
+    'catch',
+    'finally',
+    '.',
+    ',',
+    ';',
+    ':',
+    '?',
+    '->',
+  ]),
+  operandLeafTypes: new Set([
+    'identifier',
+    'type_identifier',
+    'decimal_integer_literal',
+    'hex_integer_literal',
+    'octal_integer_literal',
+    'binary_integer_literal',
+    'decimal_floating_point_literal',
+    'hex_floating_point_literal',
+    'string_literal',
+    'character_literal',
+    'true',
+    'false',
+    'null',
+    'this',
+    'super',
+  ]),
+  compoundOperators: new Set(['method_invocation', 'array_access', 'object_creation_expression']),
+  skipTypes: new Set(['type_arguments', 'type_parameters']),
+};
+
+const CSHARP_HALSTEAD = {
+  operatorLeafTypes: new Set([
+    '+',
+    '-',
+    '*',
+    '/',
+    '%',
+    '=',
+    '+=',
+    '-=',
+    '*=',
+    '/=',
+    '%=',
+    '&=',
+    '|=',
+    '^=',
+    '<<=',
+    '>>=',
+    '==',
+    '!=',
+    '<',
+    '>',
+    '<=',
+    '>=',
+    '&&',
+    '||',
+    '!',
+    '??',
+    '??=',
+    '&',
+    '|',
+    '^',
+    '~',
+    '<<',
+    '>>',
+    '++',
+    '--',
+    'is',
+    'as',
+    'new',
+    'typeof',
+    'sizeof',
+    'nameof',
+    'if',
+    'else',
+    'for',
+    'foreach',
+    'while',
+    'do',
+    'switch',
+    'case',
+    'return',
+    'throw',
+    'break',
+    'continue',
+    'try',
+    'catch',
+    'finally',
+    'await',
+    'yield',
+    '.',
+    '?.',
+    ',',
+    ';',
+    ':',
+    '=>',
+    '->',
+  ]),
+  operandLeafTypes: new Set([
+    'identifier',
+    'integer_literal',
+    'real_literal',
+    'string_literal',
+    'character_literal',
+    'verbatim_string_literal',
+    'interpolated_string_text',
+    'true',
+    'false',
+    'null',
+    'this',
+    'base',
+  ]),
+  compoundOperators: new Set([
+    'invocation_expression',
+    'element_access_expression',
+    'object_creation_expression',
+  ]),
+  skipTypes: new Set(['type_argument_list', 'type_parameter_list']),
+};
+
+const RUBY_HALSTEAD = {
+  operatorLeafTypes: new Set([
+    '+',
+    '-',
+    '*',
+    '/',
+    '%',
+    '**',
+    '=',
+    '+=',
+    '-=',
+    '*=',
+    '/=',
+    '%=',
+    '**=',
+    '&=',
+    '|=',
+    '^=',
+    '<<=',
+    '>>=',
+    '==',
+    '!=',
+    '<',
+    '>',
+    '<=',
+    '>=',
+    '<=>',
+    '===',
+    '=~',
+    '!~',
+    '&&',
+    '||',
+    '!',
+    'and',
+    'or',
+    'not',
+    '&',
+    '|',
+    '^',
+    '~',
+    '<<',
+    '>>',
+    'if',
+    'else',
+    'elsif',
+    'unless',
+    'case',
+    'when',
+    'for',
+    'while',
+    'until',
+    'do',
+    'begin',
+    'end',
+    'return',
+    'raise',
+    'break',
+    'next',
+    'redo',
+    'retry',
+    'rescue',
+    'ensure',
+    'yield',
+    'def',
+    'class',
+    'module',
+    '.',
+    ',',
+    ':',
+    '::',
+    '=>',
+    '->',
+  ]),
+  operandLeafTypes: new Set([
+    'identifier',
+    'constant',
+    'instance_variable',
+    'class_variable',
+    'global_variable',
+    'integer',
+    'float',
+    'string_content',
+    'symbol',
+    'true',
+    'false',
+    'nil',
+    'self',
+  ]),
+  compoundOperators: new Set(['call', 'element_reference']),
+  skipTypes: new Set([]),
+};
+
+const PHP_HALSTEAD = {
+  operatorLeafTypes: new Set([
+    '+',
+    '-',
+    '*',
+    '/',
+    '%',
+    '**',
+    '=',
+    '+=',
+    '-=',
+    '*=',
+    '/=',
+    '%=',
+    '**=',
+    '.=',
+    '&=',
+    '|=',
+    '^=',
+    '<<=',
+    '>>=',
+    '==',
+    '===',
+    '!=',
+    '!==',
+    '<',
+    '>',
+    '<=',
+    '>=',
+    '<=>',
+    '&&',
+    '||',
+    '!',
+    'and',
+    'or',
+    'xor',
+    '??',
+    '&',
+    '|',
+    '^',
+    '~',
+    '<<',
+    '>>',
+    '++',
+    '--',
+    'instanceof',
+    'new',
+    'clone',
+    'if',
+    'else',
+    'elseif',
+    'for',
+    'foreach',
+    'while',
+    'do',
+    'switch',
+    'case',
+    'return',
+    'throw',
+    'break',
+    'continue',
+    'try',
+    'catch',
+    'finally',
+    'echo',
+    'print',
+    'yield',
+    '.',
+    '->',
+    '?->',
+    '::',
+    ',',
+    ';',
+    ':',
+    '?',
+    '=>',
+  ]),
+  operandLeafTypes: new Set([
+    'name',
+    'variable_name',
+    'integer',
+    'float',
+    'string_content',
+    'true',
+    'false',
+    'null',
+  ]),
+  compoundOperators: new Set([
+    'function_call_expression',
+    'member_call_expression',
+    'scoped_call_expression',
+    'subscript_expression',
+    'object_creation_expression',
+  ]),
+  skipTypes: new Set([]),
+};
+
 export const HALSTEAD_RULES = new Map([
   ['javascript', JS_TS_HALSTEAD],
   ['typescript', JS_TS_HALSTEAD],
   ['tsx', JS_TS_HALSTEAD],
+  ['python', PYTHON_HALSTEAD],
+  ['go', GO_HALSTEAD],
+  ['rust', RUST_HALSTEAD],
+  ['java', JAVA_HALSTEAD],
+  ['c_sharp', CSHARP_HALSTEAD],
+  ['ruby', RUBY_HALSTEAD],
+  ['php', PHP_HALSTEAD],
 ]);
 
 // ─── Halstead Metrics Computation ─────────────────────────────────────────
@@ -246,16 +1097,33 @@ export function computeHalsteadMetrics(functionNode, language) {
 
 // ─── LOC Metrics Computation ──────────────────────────────────────────────
 
+const C_STYLE_PREFIXES = ['//', '/*', '*', '*/'];
+
+const COMMENT_PREFIXES = new Map([
+  ['javascript', C_STYLE_PREFIXES],
+  ['typescript', C_STYLE_PREFIXES],
+  ['tsx', C_STYLE_PREFIXES],
+  ['go', C_STYLE_PREFIXES],
+  ['rust', C_STYLE_PREFIXES],
+  ['java', C_STYLE_PREFIXES],
+  ['c_sharp', C_STYLE_PREFIXES],
+  ['python', ['#']],
+  ['ruby', ['#']],
+  ['php', ['//', '#', '/*', '*', '*/']],
+]);
+
 /**
  * Compute LOC metrics from a function node's source text.
  *
  * @param {object} functionNode - tree-sitter node
+ * @param {string} [language] - Language ID (falls back to C-style prefixes)
  * @returns {{ loc: number, sloc: number, commentLines: number }}
  */
-export function computeLOCMetrics(functionNode) {
+export function computeLOCMetrics(functionNode, language) {
   const text = functionNode.text;
   const lines = text.split('\n');
   const loc = lines.length;
+  const prefixes = (language && COMMENT_PREFIXES.get(language)) || C_STYLE_PREFIXES;
 
   let commentLines = 0;
   let blankLines = 0;
@@ -264,12 +1132,7 @@ export function computeLOCMetrics(functionNode) {
     const trimmed = line.trim();
     if (trimmed === '') {
       blankLines++;
-    } else if (
-      trimmed.startsWith('//') ||
-      trimmed.startsWith('/*') ||
-      trimmed.startsWith('*') ||
-      trimmed.startsWith('*/')
-    ) {
+    } else if (prefixes.some((p) => trimmed.startsWith(p))) {
       commentLines++;
     }
   }
@@ -368,17 +1231,13 @@ export function computeFunctionComplexity(functionNode, language) {
       cyclomatic++;
     }
 
-    // Handle branch/control flow nodes
-    if (rules.branchNodes.has(type)) {
-      const isElseIf = type === 'if_statement' && node.parent && node.parent.type === 'else_clause';
-
-      if (type === 'else_clause') {
-        // else: +1 cognitive structural, no nesting increment, no cyclomatic
-        // But only if it's a plain else (not else-if)
+    // Handle branch/control flow nodes (skip keyword leaf tokens like Ruby's `if`)
+    if (rules.branchNodes.has(type) && node.childCount > 0) {
+      // Pattern A: else clause wraps if (JS/C#/Rust)
+      if (rules.elseNodeType && type === rules.elseNodeType) {
         const firstChild = node.namedChild(0);
-        if (firstChild && firstChild.type === 'if_statement') {
-          // This is else-if: the if_statement child will handle its own increment
-          // Just walk children without additional increment
+        if (firstChild && firstChild.type === rules.ifNodeType) {
+          // else-if: the if_statement child handles its own increment
           for (let i = 0; i < node.childCount; i++) {
             walk(node.child(i), nestingLevel, false);
           }
@@ -392,8 +1251,31 @@ export function computeFunctionComplexity(functionNode, language) {
         return;
       }
 
+      // Pattern B: explicit elif node (Python/Ruby/PHP)
+      if (rules.elifNodeType && type === rules.elifNodeType) {
+        cognitive++;
+        cyclomatic++;
+        for (let i = 0; i < node.childCount; i++) {
+          walk(node.child(i), nestingLevel, false);
+        }
+        return;
+      }
+
+      // Detect else-if via Pattern A or C
+      let isElseIf = false;
+      if (type === rules.ifNodeType) {
+        if (rules.elseViaAlternative) {
+          // Pattern C (Go/Java): if_statement is the alternative of parent if_statement
+          isElseIf =
+            node.parent?.type === rules.ifNodeType &&
+            node.parent.childForFieldName('alternative')?.id === node.id;
+        } else if (rules.elseNodeType) {
+          // Pattern A (JS/C#/Rust): if_statement inside else_clause
+          isElseIf = node.parent?.type === rules.elseNodeType;
+        }
+      }
+
       if (isElseIf) {
-        // else-if: +1 structural cognitive, +1 cyclomatic, NO nesting increment
         cognitive++;
         cyclomatic++;
         for (let i = 0; i < node.childCount; i++) {
@@ -406,8 +1288,8 @@ export function computeFunctionComplexity(functionNode, language) {
       cognitive += 1 + nestingLevel; // structural + nesting
       cyclomatic++;
 
-      // switch_statement doesn't add cyclomatic itself (cases do), but adds cognitive
-      if (type === 'switch_statement') {
+      // Switch-like nodes don't add cyclomatic themselves (cases do)
+      if (rules.switchLikeNodes?.has(type)) {
         cyclomatic--; // Undo the ++ above; cases handle cyclomatic
       }
 
@@ -419,8 +1301,22 @@ export function computeFunctionComplexity(functionNode, language) {
       }
     }
 
-    // Handle case nodes (cyclomatic only)
-    if (rules.caseNodes.has(type)) {
+    // Pattern C plain else: block that is the alternative of an if_statement (Go/Java)
+    if (
+      rules.elseViaAlternative &&
+      type !== rules.ifNodeType &&
+      node.parent?.type === rules.ifNodeType &&
+      node.parent.childForFieldName('alternative')?.id === node.id
+    ) {
+      cognitive++;
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i), nestingLevel, false);
+      }
+      return;
+    }
+
+    // Handle case nodes (cyclomatic only, skip keyword leaves)
+    if (rules.caseNodes.has(type) && node.childCount > 0) {
       cyclomatic++;
     }
 
@@ -611,7 +1507,7 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
         if (!result) continue;
 
         const halstead = computeHalsteadMetrics(funcNode, langId);
-        const loc = computeLOCMetrics(funcNode);
+        const loc = computeLOCMetrics(funcNode, langId);
 
         const volume = halstead ? halstead.volume : 0;
         const commentRatio = loc.loc > 0 ? loc.commentLines / loc.loc : 0;
