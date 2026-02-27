@@ -15,6 +15,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     permissions:
+      actions: read
       contents: write
       pull-requests: write
 
@@ -32,6 +33,27 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Download native addon from Publish
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: native-linux-x64
+          path: ${{ runner.temp }}/native-artifact
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Install native addon from Publish
+        if: github.event_name == 'workflow_run'
+        run: |
+          PKG_DIR="node_modules/@optave/codegraph-linux-x64-gnu"
+          mkdir -p "$PKG_DIR"
+          cp "${{ runner.temp }}/native-artifact"/*.node "$PKG_DIR/codegraph-core.node"
+          # Ensure package.json exists so require() resolves
+          if [ ! -f "$PKG_DIR/package.json" ]; then
+            echo '{"name":"@optave/codegraph-linux-x64-gnu","main":"codegraph-core.node"}' > "$PKG_DIR/package.json"
+          fi
+          echo "Installed native addon from Publish workflow run ${{ github.event.workflow_run.id }}"
 
       - name: Run build benchmark
         run: node scripts/benchmark.js 2>/dev/null > benchmark-result.json
@@ -85,6 +107,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     permissions:
+      actions: read
       contents: write
       pull-requests: write
 
@@ -102,6 +125,27 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Download native addon from Publish
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: native-linux-x64
+          path: ${{ runner.temp }}/native-artifact
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Install native addon from Publish
+        if: github.event_name == 'workflow_run'
+        run: |
+          PKG_DIR="node_modules/@optave/codegraph-linux-x64-gnu"
+          mkdir -p "$PKG_DIR"
+          cp "${{ runner.temp }}/native-artifact"/*.node "$PKG_DIR/codegraph-core.node"
+          # Ensure package.json exists so require() resolves
+          if [ ! -f "$PKG_DIR/package.json" ]; then
+            echo '{"name":"@optave/codegraph-linux-x64-gnu","main":"codegraph-core.node"}' > "$PKG_DIR/package.json"
+          fi
+          echo "Installed native addon from Publish workflow run ${{ github.event.workflow_run.id }}"
 
       - name: Cache HuggingFace models
         uses: actions/cache@v4
@@ -167,6 +211,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     permissions:
+      actions: read
       contents: write
       pull-requests: write
 
@@ -184,6 +229,27 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Download native addon from Publish
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: native-linux-x64
+          path: ${{ runner.temp }}/native-artifact
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Install native addon from Publish
+        if: github.event_name == 'workflow_run'
+        run: |
+          PKG_DIR="node_modules/@optave/codegraph-linux-x64-gnu"
+          mkdir -p "$PKG_DIR"
+          cp "${{ runner.temp }}/native-artifact"/*.node "$PKG_DIR/codegraph-core.node"
+          # Ensure package.json exists so require() resolves
+          if [ ! -f "$PKG_DIR/package.json" ]; then
+            echo '{"name":"@optave/codegraph-linux-x64-gnu","main":"codegraph-core.node"}' > "$PKG_DIR/package.json"
+          fi
+          echo "Installed native addon from Publish workflow run ${{ github.event.workflow_run.id }}"
 
       - name: Run query benchmark
         run: node scripts/query-benchmark.js 2>/dev/null > query-benchmark-result.json
@@ -237,6 +303,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     permissions:
+      actions: read
       contents: write
       pull-requests: write
 
@@ -254,6 +321,27 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
+
+      - name: Download native addon from Publish
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: native-linux-x64
+          path: ${{ runner.temp }}/native-artifact
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Install native addon from Publish
+        if: github.event_name == 'workflow_run'
+        run: |
+          PKG_DIR="node_modules/@optave/codegraph-linux-x64-gnu"
+          mkdir -p "$PKG_DIR"
+          cp "${{ runner.temp }}/native-artifact"/*.node "$PKG_DIR/codegraph-core.node"
+          # Ensure package.json exists so require() resolves
+          if [ ! -f "$PKG_DIR/package.json" ]; then
+            echo '{"name":"@optave/codegraph-linux-x64-gnu","main":"codegraph-core.node"}' > "$PKG_DIR/package.json"
+          fi
+          echo "Installed native addon from Publish workflow run ${{ github.event.workflow_run.id }}"
 
       - name: Run incremental benchmark
         run: node scripts/incremental-benchmark.js 2>/dev/null > incremental-benchmark-result.json
