@@ -28,7 +28,7 @@ export const MCP_MAX_LIMIT = 1000;
  * @returns {{ items: any[], pagination?: { total: number, offset: number, limit: number, hasMore: boolean, returned: number } }}
  */
 export function paginate(items, { limit, offset } = {}) {
-  if (limit === undefined && limit !== 0) {
+  if (limit === undefined) {
     return { items };
   }
   const total = items.length;
@@ -59,7 +59,7 @@ export function paginate(items, { limit, offset } = {}) {
  * @returns {object} - Result with paginated field + `_pagination` (if active)
  */
 export function paginateResult(result, field, { limit, offset } = {}) {
-  if (limit === undefined && limit !== 0) {
+  if (limit === undefined) {
     return result;
   }
   const arr = result[field];
