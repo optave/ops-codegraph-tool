@@ -46,14 +46,21 @@ jobs:
       - name: Install native addon from Publish
         if: github.event_name == 'workflow_run'
         run: |
+          ARTIFACT_DIR="${{ runner.temp }}/native-artifact"
+          NODE_FILE="$ARTIFACT_DIR/codegraph-core.node"
+          if [ ! -f "$NODE_FILE" ]; then
+            echo "::error::Native addon not found at $NODE_FILE"
+            ls -la "$ARTIFACT_DIR" || true
+            exit 1
+          fi
           PKG_DIR="node_modules/@optave/codegraph-linux-x64-gnu"
           mkdir -p "$PKG_DIR"
-          cp "${{ runner.temp }}/native-artifact"/*.node "$PKG_DIR/codegraph-core.node"
-          # Ensure package.json exists so require() resolves
+          cp "$NODE_FILE" "$PKG_DIR/codegraph-core.node"
           if [ ! -f "$PKG_DIR/package.json" ]; then
             echo '{"name":"@optave/codegraph-linux-x64-gnu","main":"codegraph-core.node"}' > "$PKG_DIR/package.json"
           fi
           echo "Installed native addon from Publish workflow run ${{ github.event.workflow_run.id }}"
+          echo "  sha256: $(sha256sum "$PKG_DIR/codegraph-core.node" | cut -d' ' -f1)"
 
       - name: Run build benchmark
         run: node scripts/benchmark.js 2>/dev/null > benchmark-result.json
@@ -138,14 +145,21 @@ jobs:
       - name: Install native addon from Publish
         if: github.event_name == 'workflow_run'
         run: |
+          ARTIFACT_DIR="${{ runner.temp }}/native-artifact"
+          NODE_FILE="$ARTIFACT_DIR/codegraph-core.node"
+          if [ ! -f "$NODE_FILE" ]; then
+            echo "::error::Native addon not found at $NODE_FILE"
+            ls -la "$ARTIFACT_DIR" || true
+            exit 1
+          fi
           PKG_DIR="node_modules/@optave/codegraph-linux-x64-gnu"
           mkdir -p "$PKG_DIR"
-          cp "${{ runner.temp }}/native-artifact"/*.node "$PKG_DIR/codegraph-core.node"
-          # Ensure package.json exists so require() resolves
+          cp "$NODE_FILE" "$PKG_DIR/codegraph-core.node"
           if [ ! -f "$PKG_DIR/package.json" ]; then
             echo '{"name":"@optave/codegraph-linux-x64-gnu","main":"codegraph-core.node"}' > "$PKG_DIR/package.json"
           fi
           echo "Installed native addon from Publish workflow run ${{ github.event.workflow_run.id }}"
+          echo "  sha256: $(sha256sum "$PKG_DIR/codegraph-core.node" | cut -d' ' -f1)"
 
       - name: Cache HuggingFace models
         uses: actions/cache@v4
@@ -242,14 +256,21 @@ jobs:
       - name: Install native addon from Publish
         if: github.event_name == 'workflow_run'
         run: |
+          ARTIFACT_DIR="${{ runner.temp }}/native-artifact"
+          NODE_FILE="$ARTIFACT_DIR/codegraph-core.node"
+          if [ ! -f "$NODE_FILE" ]; then
+            echo "::error::Native addon not found at $NODE_FILE"
+            ls -la "$ARTIFACT_DIR" || true
+            exit 1
+          fi
           PKG_DIR="node_modules/@optave/codegraph-linux-x64-gnu"
           mkdir -p "$PKG_DIR"
-          cp "${{ runner.temp }}/native-artifact"/*.node "$PKG_DIR/codegraph-core.node"
-          # Ensure package.json exists so require() resolves
+          cp "$NODE_FILE" "$PKG_DIR/codegraph-core.node"
           if [ ! -f "$PKG_DIR/package.json" ]; then
             echo '{"name":"@optave/codegraph-linux-x64-gnu","main":"codegraph-core.node"}' > "$PKG_DIR/package.json"
           fi
           echo "Installed native addon from Publish workflow run ${{ github.event.workflow_run.id }}"
+          echo "  sha256: $(sha256sum "$PKG_DIR/codegraph-core.node" | cut -d' ' -f1)"
 
       - name: Run query benchmark
         run: node scripts/query-benchmark.js 2>/dev/null > query-benchmark-result.json
@@ -334,14 +355,21 @@ jobs:
       - name: Install native addon from Publish
         if: github.event_name == 'workflow_run'
         run: |
+          ARTIFACT_DIR="${{ runner.temp }}/native-artifact"
+          NODE_FILE="$ARTIFACT_DIR/codegraph-core.node"
+          if [ ! -f "$NODE_FILE" ]; then
+            echo "::error::Native addon not found at $NODE_FILE"
+            ls -la "$ARTIFACT_DIR" || true
+            exit 1
+          fi
           PKG_DIR="node_modules/@optave/codegraph-linux-x64-gnu"
           mkdir -p "$PKG_DIR"
-          cp "${{ runner.temp }}/native-artifact"/*.node "$PKG_DIR/codegraph-core.node"
-          # Ensure package.json exists so require() resolves
+          cp "$NODE_FILE" "$PKG_DIR/codegraph-core.node"
           if [ ! -f "$PKG_DIR/package.json" ]; then
             echo '{"name":"@optave/codegraph-linux-x64-gnu","main":"codegraph-core.node"}' > "$PKG_DIR/package.json"
           fi
           echo "Installed native addon from Publish workflow run ${{ github.event.workflow_run.id }}"
+          echo "  sha256: $(sha256sum "$PKG_DIR/codegraph-core.node" | cut -d' ' -f1)"
 
       - name: Run incremental benchmark
         run: node scripts/incremental-benchmark.js 2>/dev/null > incremental-benchmark-result.json
