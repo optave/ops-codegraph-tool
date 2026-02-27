@@ -1,7 +1,7 @@
 import { loadConfig } from './config.js';
 import { findCycles } from './cycles.js';
 import { openReadonlyOrFail } from './db.js';
-import { isTestFile } from './queries.js';
+import { debug } from './logger.js';
 
 // ─── Rule Definitions ─────────────────────────────────────────────────
 
@@ -148,12 +148,9 @@ function evaluateFunctionRules(db, rules, opts, violations, ruleResults) {
          ${where}`,
       )
       .all(...params);
-  } catch {
+  } catch (err) {
+    debug('manifesto function query failed: %s', err.message);
     rows = [];
-  }
-
-  if (opts.noTests) {
-    rows = rows.filter((r) => !isTestFile(r.file));
   }
 
   // Track worst status per rule
@@ -225,12 +222,9 @@ function evaluateFileRules(db, rules, opts, violations, ruleResults) {
          ${where}`,
       )
       .all(...params);
-  } catch {
+  } catch (err) {
+    debug('manifesto file query failed: %s', err.message);
     rows = [];
-  }
-
-  if (opts.noTests) {
-    rows = rows.filter((r) => !isTestFile(r.file));
   }
 
   const worst = {};

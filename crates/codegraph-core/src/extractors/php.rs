@@ -121,6 +121,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                         line: start_line(&child),
                                         end_line: Some(end_line(&child)),
                                         decorators: None,
+                                        complexity: None,
                                     });
                                 }
                             }
