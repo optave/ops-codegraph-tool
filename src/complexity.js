@@ -581,7 +581,21 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
             row.id,
             def.complexity.cognitive,
             def.complexity.cyclomatic,
-            def.complexity.maxNesting ?? def.complexity.max_nesting ?? 0,
+            def.complexity.maxNesting ?? 0,
+            0,
+            0,
+            0, // loc, sloc, commentLines
+            0,
+            0,
+            0,
+            0, // halstead n1, n2, bigN1, bigN2
+            0,
+            0,
+            0, // vocabulary, length, volume
+            0,
+            0,
+            0, // difficulty, effort, bugs
+            0, // maintainabilityIndex
           );
           analyzed++;
           continue;

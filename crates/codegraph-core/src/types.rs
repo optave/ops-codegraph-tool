@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 pub struct ComplexityMetrics {
     pub cognitive: u32,
     pub cyclomatic: u32,
+    #[napi(js_name = "maxNesting")]
     pub max_nesting: u32,
 }
 

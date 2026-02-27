@@ -323,14 +323,7 @@ mod tests {
         let m = compute_js(
             "function f(x) { if (x > 0) { return 1; } else if (x < 0) { return -1; } else { return 0; } }",
         );
-        assert_eq!(m.cognitive, 4); // +1 if, +1 else-if, +1 else (from else-if's else_clause), +1 else-if cognitive
-        // Wait, let me recalculate:
-        // if: cognitive +1 (nesting 0), cyclomatic +1
-        // else-if: cognitive +1, cyclomatic +1 (no nesting)
-        // else: cognitive +1
-        // Total cognitive = 3, cyclomatic = 1 + 1 + 1 = 3
-        // Hmm, the else clause wrapping the else-if doesn't add anything (it's detected as else-if wrapper)
-        // So: if (+1 cog, +1 cyc), else-if (+1 cog, +1 cyc), plain else (+1 cog)
+        // if (+1 cog, +1 cyc), else-if (+1 cog, +1 cyc), plain else (+1 cog)
         // cognitive = 3, cyclomatic = 3
         assert_eq!(m.cognitive, 3);
         assert_eq!(m.cyclomatic, 3);
