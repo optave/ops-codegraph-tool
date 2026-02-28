@@ -26,7 +26,6 @@ import {
   fnImpact,
   impactAnalysis,
   moduleMap,
-  queryName,
   roles,
   stats,
   symbolPath,
@@ -95,8 +94,11 @@ program
 
 program
   .command('query <name>')
-  .description('Find a function/class, show callers and callees')
+  .description('Find a function/class — callers, callees, and transitive call chain')
   .option('-d, --db <path>', 'Path to graph.db')
+  .option('--depth <n>', 'Transitive caller depth', '3')
+  .option('-f, --file <path>', 'Scope search to functions in this file (partial match)')
+  .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
@@ -104,7 +106,14 @@ program
   .option('--offset <number>', 'Skip N results (default: 0)')
   .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
-    queryName(name, opts.db, {
+    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+      process.exit(1);
+    }
+    fnDeps(name, opts.db, {
+      depth: parseInt(opts.depth, 10),
+      file: opts.file,
+      kind: opts.kind,
       noTests: resolveNoTests(opts),
       json: opts.json,
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
@@ -159,30 +168,6 @@ program
   .option('-j, --json', 'Output as JSON')
   .action((file, opts) => {
     fileDeps(file, opts.db, { noTests: resolveNoTests(opts), json: opts.json });
-  });
-
-program
-  .command('fn <name>')
-  .description('Function-level dependencies: callers, callees, and transitive call chain')
-  .option('-d, --db <path>', 'Path to graph.db')
-  .option('--depth <n>', 'Transitive caller depth', '3')
-  .option('-f, --file <path>', 'Scope search to functions in this file (partial match)')
-  .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .action((name, opts) => {
-    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
-      process.exit(1);
-    }
-    fnDeps(name, opts.db, {
-      depth: parseInt(opts.depth, 10),
-      file: opts.file,
-      kind: opts.kind,
-      noTests: resolveNoTests(opts),
-      json: opts.json,
-    });
   });
 
 program
@@ -490,38 +475,36 @@ registry
 // ─── Embedding commands ─────────────────────────────────────────────────
 
 program
-  .command('models')
-  .description('List available embedding models')
-  .action(() => {
-    const defaultModel = config.embeddings?.model || DEFAULT_MODEL;
-    console.log('\nAvailable embedding models:\n');
-    for (const [key, cfg] of Object.entries(MODELS)) {
-      const def = key === defaultModel ? ' (default)' : '';
-      const ctx = cfg.contextWindow ? `${cfg.contextWindow} ctx` : '';
-      console.log(
-        `  ${key.padEnd(12)} ${String(cfg.dim).padStart(4)}d  ${ctx.padEnd(9)} ${cfg.desc}${def}`,
-      );
-    }
-    console.log('\nUsage: codegraph embed --model <name> --strategy <structured|source>');
-    console.log('       codegraph search "query" --model <name>\n');
-  });
-
-program
   .command('embed [dir]')
   .description(
     'Build semantic embeddings for all functions/methods/classes (requires prior `build`)',
   )
   .option(
     '-m, --model <name>',
-    'Embedding model (default from config or minilm). Run `codegraph models` for details',
+    'Embedding model (default from config or minilm). Use `--models` to list available models',
   )
   .option(
     '-s, --strategy <name>',
     `Embedding strategy: ${EMBEDDING_STRATEGIES.join(', ')}. "structured" uses graph context (callers/callees), "source" embeds raw code`,
     'structured',
   )
+  .option('--models', 'List available embedding models and exit')
   .option('-d, --db <path>', 'Path to graph.db')
   .action(async (dir, opts) => {
+    if (opts.models) {
+      const defaultModel = config.embeddings?.model || DEFAULT_MODEL;
+      console.log('\nAvailable embedding models:\n');
+      for (const [key, cfg] of Object.entries(MODELS)) {
+        const def = key === defaultModel ? ' (default)' : '';
+        const ctx = cfg.contextWindow ? `${cfg.contextWindow} ctx` : '';
+        console.log(
+          `  ${key.padEnd(12)} ${String(cfg.dim).padStart(4)}d  ${ctx.padEnd(9)} ${cfg.desc}${def}`,
+        );
+      }
+      console.log('\nUsage: codegraph embed --model <name> --strategy <structured|source>');
+      console.log('       codegraph search "query" --model <name>\n');
+      return;
+    }
     if (!EMBEDDING_STRATEGIES.includes(opts.strategy)) {
       console.error(
         `Unknown strategy: ${opts.strategy}. Available: ${EMBEDDING_STRATEGIES.join(', ')}`,

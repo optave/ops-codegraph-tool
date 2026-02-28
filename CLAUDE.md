@@ -119,7 +119,7 @@ Codegraph is **our own tool**. Use it to analyze this repository before making c
 node src/cli.js build .              # Build/update the graph (incremental)
 node src/cli.js map --limit 20       # Module overview & most-connected nodes
 node src/cli.js stats                # Graph health and quality score
-node src/cli.js fn <name> -T         # Function call chain (callers + callees)
+node src/cli.js query <name> -T      # Function call chain (callers + callees)
 node src/cli.js deps src/<file>.js   # File-level imports and importers
 node src/cli.js diff-impact main     # Impact of current branch vs main
 node src/cli.js complexity -T         # Per-function complexity metrics

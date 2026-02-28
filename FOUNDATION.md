@@ -62,7 +62,7 @@ LLM-powered features (richer embeddings, semantic search, AI-enhanced analysis) 
 
 This dual-mode approach is unique in the competitive landscape. Competitors either require cloud APIs for core functionality (code-graph-rag, autodev-codebase) or offer no AI enhancement at all (CKB, axon, arbor). Nobody else offers both modes in one tool.
 
-*Test: does every core command (`build`, `query`, `fn`, `deps`, `impact`, `diff-impact`, `cycles`, `map`) work with zero API keys? Are LLM features additive, never blocking?*
+*Test: does every core command (`build`, `query`, `deps`, `impact`, `diff-impact`, `cycles`, `map`) work with zero API keys? Are LLM features additive, never blocking?*
 
 ### 5. Embeddable first, CLI second
 

@@ -101,9 +101,9 @@ describe('CLI smoke tests', () => {
     expect(data).toHaveProperty('results');
   });
 
-  // ─── Fn ──────────────────────────────────────────────────────────────
-  test('fn --json returns valid JSON with results', () => {
-    const out = run('fn', 'add', '--db', dbPath, '--json');
+  // ─── Query (fn-level) ───────────────────────────────────────────────
+  test('query --json returns fn-level results with depth', () => {
+    const out = run('query', 'add', '--db', dbPath, '--json');
     const data = JSON.parse(out);
     expect(data).toHaveProperty('results');
   });

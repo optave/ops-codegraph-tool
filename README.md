@@ -217,8 +217,8 @@ codegraph explain <function>   # Function summary: signature, calls, callers, te
 
 ```bash
 codegraph impact <file>        # Transitive reverse dependency trace
-codegraph fn <name>            # Function-level: callers, callees, call chain
-codegraph fn <name> --no-tests --depth 5
+codegraph query <name> --no-tests  # Function-level: callers, callees, call chain
+codegraph query <name> --no-tests --depth 5
 codegraph fn-impact <name>     # What functions break if this one changes
 codegraph path <from> <to>     # Shortest path between two symbols (A calls...calls B)
 codegraph path <from> <to> --reverse  # Follow edges backward
@@ -287,7 +287,7 @@ codegraph embed                # Build embeddings (default: nomic-v1.5)
 codegraph embed --model nomic  # Use a different model
 codegraph search "handle authentication"
 codegraph search "parse config" --min-score 0.4 -n 10
-codegraph models               # List available models
+codegraph embed --models       # List available models
 ```
 
 #### Multi-query search
@@ -336,13 +336,13 @@ codegraph registry remove <name>  # Unregister
 | Flag | Description |
 |---|---|
 | `-d, --db <path>` | Custom path to `graph.db` |
-| `-T, --no-tests` | Exclude `.test.`, `.spec.`, `__test__` files (available on `fn`, `fn-impact`, `path`, `context`, `explain`, `where`, `diff-impact`, `search`, `map`, `hotspots`, `roles`, `co-change`, `deps`, `impact`, `complexity`, `communities`, `manifesto`) |
+| `-T, --no-tests` | Exclude `.test.`, `.spec.`, `__test__` files (available on `query`, `fn-impact`, `path`, `context`, `explain`, `where`, `diff-impact`, `search`, `map`, `hotspots`, `roles`, `co-change`, `deps`, `impact`, `complexity`, `communities`, `manifesto`) |
 | `--depth <n>` | Transitive trace depth (default varies by command) |
 | `-j, --json` | Output as JSON |
 | `-v, --verbose` | Enable debug output |
 | `--engine <engine>` | Parser engine: `native`, `wasm`, or `auto` (default: `auto`) |
-| `-k, --kind <kind>` | Filter by kind: `function`, `method`, `class`, `struct`, `enum`, `trait`, `record`, `module` (`fn`, `context`, `search`) |
-| `-f, --file <path>` | Scope to a specific file (`fn`, `context`, `where`) |
+| `-k, --kind <kind>` | Filter by kind: `function`, `method`, `class`, `struct`, `enum`, `trait`, `record`, `module` (`query`, `context`, `search`) |
+| `-f, --file <path>` | Scope to a specific file (`query`, `context`, `where`) |
 | `--rrf-k <n>` | RRF smoothing constant for multi-query search (default 60) |
 
 ## 🌐 Language Support
@@ -485,7 +485,7 @@ This project uses codegraph. The database is at `.codegraph/graph.db`.
 ### Other useful commands
 - `codegraph build .` — rebuild the graph (incremental by default)
 - `codegraph map` — module overview
-- `codegraph fn <name> -T` — function call chain
+- `codegraph query <name> -T` — function call chain
 - `codegraph path <from> <to> -T` — shortest call path between two symbols
 - `codegraph deps <file>` — file-level dependencies
 - `codegraph roles --role dead -T` — find dead code (unreferenced symbols)
