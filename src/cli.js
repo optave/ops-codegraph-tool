@@ -835,6 +835,25 @@ program
   });
 
 program
+  .command('branch-compare <base> <target>')
+  .description('Compare code structure between two branches/refs')
+  .option('--depth <n>', 'Max transitive caller depth', '3')
+  .option('-T, --no-tests', 'Exclude test/spec files')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .option('-f, --format <format>', 'Output format: text, mermaid, json', 'text')
+  .action(async (base, target, opts) => {
+    const { branchCompare } = await import('./branch-compare.js');
+    await branchCompare(base, target, {
+      engine: program.opts().engine,
+      depth: parseInt(opts.depth, 10),
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      format: opts.format,
+    });
+  });
+
+program
   .command('watch [dir]')
   .description('Watch project for file changes and incrementally update the graph')
   .action(async (dir) => {
