@@ -468,6 +468,7 @@ registry
   .description('Remove stale registry entries (missing directories or idle beyond TTL)')
   .option('--ttl <days>', 'Days of inactivity before pruning (default: 30)', '30')
   .option('--exclude <names>', 'Comma-separated repo names to preserve from pruning')
+  .option('--dry-run', 'Show what would be pruned without removing anything')
   .action((opts) => {
     const excludeNames = opts.exclude
       ? opts.exclude
@@ -475,15 +476,25 @@ registry
           .map((s) => s.trim())
           .filter((s) => s.length > 0)
       : [];
-    const pruned = pruneRegistry(undefined, parseInt(opts.ttl, 10), excludeNames);
+    const dryRun = !!opts.dryRun;
+    const pruned = pruneRegistry(undefined, parseInt(opts.ttl, 10), excludeNames, dryRun);
     if (pruned.length === 0) {
       console.log('No stale entries found.');
     } else {
+      const prefix = dryRun ? 'Would prune' : 'Pruned';
       for (const entry of pruned) {
         const tag = entry.reason === 'expired' ? 'expired' : 'missing';
-        console.log(`Pruned "${entry.name}" (${entry.path}) [${tag}]`);
+        console.log(`${prefix} "${entry.name}" (${entry.path}) [${tag}]`);
       }
-      console.log(`\nRemoved ${pruned.length} stale ${pruned.length === 1 ? 'entry' : 'entries'}.`);
+      if (dryRun) {
+        console.log(
+          `\nDry run: ${pruned.length} ${pruned.length === 1 ? 'entry' : 'entries'} would be removed.`,
+        );
+      } else {
+        console.log(
+          `\nRemoved ${pruned.length} stale ${pruned.length === 1 ? 'entry' : 'entries'}.`,
+        );
+      }
     }
   });
 

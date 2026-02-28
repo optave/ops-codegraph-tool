@@ -135,11 +135,14 @@ export function resolveRepoDbPath(name, registryPath = REGISTRY_PATH) {
  * Remove registry entries whose repo directory no longer exists on disk,
  * or that haven't been accessed within `ttlDays` days.
  * Returns an array of `{ name, path, reason }` for each pruned entry.
+ *
+ * When `dryRun` is true, entries are identified but not removed from disk.
  */
 export function pruneRegistry(
   registryPath = REGISTRY_PATH,
   ttlDays = DEFAULT_TTL_DAYS,
   excludeNames = [],
+  dryRun = false,
 ) {
   const registry = loadRegistry(registryPath);
   const pruned = [];
@@ -152,17 +155,17 @@ export function pruneRegistry(
     if (excludeSet.has(name)) continue;
     if (!fs.existsSync(entry.path)) {
       pruned.push({ name, path: entry.path, reason: 'missing' });
-      delete registry.repos[name];
+      if (!dryRun) delete registry.repos[name];
       continue;
     }
     const lastAccess = Date.parse(entry.lastAccessedAt || entry.addedAt);
     if (lastAccess < cutoff) {
       pruned.push({ name, path: entry.path, reason: 'expired' });
-      delete registry.repos[name];
+      if (!dryRun) delete registry.repos[name];
     }
   }
 
-  if (pruned.length > 0) {
+  if (!dryRun && pruned.length > 0) {
     saveRegistry(registry, registryPath);
   }
 

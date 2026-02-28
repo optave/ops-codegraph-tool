@@ -519,6 +519,47 @@ describe('pruneRegistry', () => {
     expect(pruned).toHaveLength(1);
     expect(pruned[0].name).toBe('stale');
   });
+
+  it('dryRun returns candidates without removing them', () => {
+    const dir = path.join(tmpDir, 'dry');
+    fs.mkdirSync(dir, { recursive: true });
+
+    const oldDate = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString();
+    const registry = {
+      repos: {
+        dry: {
+          path: dir,
+          dbPath: path.join(dir, '.codegraph', 'graph.db'),
+          addedAt: oldDate,
+          lastAccessedAt: oldDate,
+        },
+      },
+    };
+    saveRegistry(registry, registryPath);
+
+    const pruned = pruneRegistry(registryPath, 30, [], true);
+    expect(pruned).toHaveLength(1);
+    expect(pruned[0].name).toBe('dry');
+    expect(pruned[0].reason).toBe('expired');
+
+    // Entry should still exist on disk
+    const reg = loadRegistry(registryPath);
+    expect(reg.repos.dry).toBeDefined();
+  });
+
+  it('dryRun with missing directory reports but preserves entry', () => {
+    const dir = path.join(tmpDir, 'vanished');
+    fs.mkdirSync(dir, { recursive: true });
+    registerRepo(dir, 'vanished', registryPath);
+    fs.rmSync(dir, { recursive: true, force: true });
+
+    const pruned = pruneRegistry(registryPath, 30, [], true);
+    expect(pruned).toHaveLength(1);
+    expect(pruned[0].reason).toBe('missing');
+
+    const reg = loadRegistry(registryPath);
+    expect(reg.repos.vanished).toBeDefined();
+  });
 });
 
 // ─── DEFAULT_TTL_DAYS ──────────────────────────────────────────────
