@@ -15,21 +15,22 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
+import { resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
-const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const { version, srcDir, cleanup } = await resolveBenchmarkSource();
 const dbPath = path.join(root, '.codegraph', 'graph.db');
 
-const { buildGraph } = await import(pathToFileURL(path.join(root, 'src', 'builder.js')).href);
+const { buildGraph } = await import(srcImport(srcDir, 'builder.js'));
 const { fnDepsData, fnImpactData, diffImpactData, statsData } = await import(
-	pathToFileURL(path.join(root, 'src', 'queries.js')).href
+	srcImport(srcDir, 'queries.js')
 );
 const { isNativeAvailable } = await import(
-	pathToFileURL(path.join(root, 'src', 'native.js')).href
+	srcImport(srcDir, 'native.js')
 );
 
 // Redirect console.log to stderr so only JSON goes to stdout
@@ -177,7 +178,7 @@ if (isNativeAvailable()) {
 console.log = origLog;
 
 const result = {
-	version: pkg.version,
+	version,
 	date: new Date().toISOString().slice(0, 10),
 	wasm: {
 		targets: wasm.targets,
@@ -196,3 +197,5 @@ const result = {
 };
 
 console.log(JSON.stringify(result, null, 2));
+
+cleanup();
