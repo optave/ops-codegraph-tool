@@ -84,7 +84,7 @@ jobs:
         run: node scripts/update-benchmark-report.js benchmark-result.json
 
       - name: Upload build result
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-benchmark-result
           path: benchmark-result.json
@@ -204,7 +204,7 @@ jobs:
         run: node scripts/update-embedding-report.js embedding-benchmark-result.json
 
       - name: Upload embedding result
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: embedding-benchmark-result
           path: embedding-benchmark-result.json
@@ -312,7 +312,7 @@ jobs:
         run: node scripts/update-query-report.js query-benchmark-result.json
 
       - name: Upload query result
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: query-benchmark-result
           path: query-benchmark-result.json
@@ -420,7 +420,7 @@ jobs:
         run: node scripts/update-incremental-report.js incremental-benchmark-result.json
 
       - name: Upload incremental result
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: incremental-benchmark-result
           path: incremental-benchmark-result.json
