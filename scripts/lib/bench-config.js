@@ -13,6 +13,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+import { getBenchmarkVersion } from '../bench-version.js';
+
 /**
  * Parse `--version <v>` and `--npm` from process.argv.
  */
@@ -44,10 +46,11 @@ export async function resolveBenchmarkSource() {
 	const { version: cliVersion, npm } = parseArgs();
 
 	if (!npm) {
-		// Local mode — use repo src/, label as "dev" unless overridden
+		// Local mode — use repo src/, version derived from git state
 		const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')), '..', '..');
+		const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 		return {
-			version: cliVersion || 'dev',
+			version: cliVersion || getBenchmarkVersion(pkg.version, root),
 			srcDir: path.join(root, 'src'),
 			cleanup() {},
 		};
