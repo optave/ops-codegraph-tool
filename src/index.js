@@ -5,8 +5,6 @@
  *   import { buildGraph, queryNameData, findCycles, exportDOT } from 'codegraph';
  */
 
-// Branch comparison
-export { branchCompareData, branchCompareMermaid } from './branch-compare.js';
 // Graph building
 export { buildGraph, collectFiles, loadPathAliases, resolveImportPath } from './builder.js';
 // Co-change analysis
