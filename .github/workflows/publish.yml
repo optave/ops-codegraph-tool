@@ -67,20 +67,21 @@ jobs:
             NPM_TAG="latest"
             echo "Stable release (manual retry): $VERSION"
           else
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-            RELEASE_TAG="v${CURRENT}"
-            # Count commits since the last release tag for monotonic dev versions
-            # (previously hardcoded PATCH+1, so every dev build was e.g. 2.4.1)
-            if git rev-parse "$RELEASE_TAG" >/dev/null 2>&1; then
+            # Use git describe to find the nearest release tag — same strategy
+            # as scripts/bench-version.js so versions are always consistent.
+            RELEASE_TAG=$(git describe --tags --match "v*" --abbrev=0 2>/dev/null || echo "")
+            if [ -n "$RELEASE_TAG" ]; then
               COMMITS=$(git rev-list "${RELEASE_TAG}..HEAD" --count)
+              IFS='.' read -r MAJOR MINOR PATCH <<< "${RELEASE_TAG#v}"
             else
               COMMITS=1
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
             fi
             DEV_PATCH=$((PATCH + COMMITS))
             SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
             VERSION="${MAJOR}.${MINOR}.${DEV_PATCH}-dev.${SHORT_SHA}"
             NPM_TAG="dev"
-            echo "Dev release: $VERSION (${COMMITS} commits since ${RELEASE_TAG})"
+            echo "Dev release: $VERSION (${COMMITS} commits since ${RELEASE_TAG:-none})"
           fi
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"

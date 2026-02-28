@@ -1,8 +1,12 @@
 /**
  * Compute the benchmark version string from git state.
  *
- * - If HEAD is exactly a release tag (v*): returns pkg.version (e.g. "2.4.0")
- * - Otherwise: returns "pkg.version-dev.N+hash" (e.g. "2.4.0-dev.12+c50f7f5")
+ * Uses `git describe --tags --match "v*"` to find the nearest release tag
+ * and derive the version from it. This keeps the strategy aligned with
+ * publish.yml's compute-version job (both use git describe, not package.json).
+ *
+ * - If HEAD is exactly a release tag (v2.5.0): returns "2.5.0"
+ * - Otherwise: returns "2.5.N-dev.hash" (e.g. "2.5.3-dev.c50f7f5")
  *   where N = commits since last release tag, hash = short commit SHA
  *
  * This prevents dev/dogfood benchmark runs from overwriting release data
@@ -13,26 +17,28 @@ import { execFileSync } from 'node:child_process';
 
 export function getBenchmarkVersion(pkgVersion, cwd) {
 	try {
-		// Check if HEAD is exactly a release tag
-		execFileSync('git', ['describe', '--tags', '--exact-match', '--match', 'v*'], {
+		const desc = execFileSync('git', ['describe', '--tags', '--match', 'v*', '--always'], {
 			cwd,
+			encoding: 'utf8',
 			stdio: ['pipe', 'pipe', 'pipe'],
-		});
-		return pkgVersion;
-	} catch {
-		// Not on a release tag — compute dev version
-		try {
-			const desc = execFileSync('git', ['describe', '--tags', '--match', 'v*', '--always'], {
-				cwd,
-				encoding: 'utf8',
-				stdio: ['pipe', 'pipe', 'pipe'],
-			}).trim();
-			// desc is like "v2.4.0-12-gc50f7f5"
-			const m = desc.match(/^v.+-(\d+)-g([0-9a-f]+)$/);
-			if (m) return `${pkgVersion}-dev.${m[1]}+${m[2]}`;
-		} catch {
-			/* git not available or no tags */
+		}).trim();
+
+		// Exact tag match: "v2.5.0" → "2.5.0"
+		const exact = desc.match(/^v(\d+\.\d+\.\d+)$/);
+		if (exact) return exact[1];
+
+		// Dev build: "v2.5.0-3-gc50f7f5" → "2.5.3-dev.c50f7f5"
+		// Format matches publish.yml: MAJOR.MINOR.(PATCH+COMMITS)-dev.SHORT_SHA
+		const dev = desc.match(/^v(\d+)\.(\d+)\.(\d+)-(\d+)-g([0-9a-f]+)$/);
+		if (dev) {
+			const [, major, minor, patch, commits, hash] = dev;
+			const devPatch = Number(patch) + Number(commits);
+			return `${major}.${minor}.${devPatch}-dev.${hash}`;
 		}
-		return `${pkgVersion}-dev`;
+	} catch {
+		/* git not available or no tags */
 	}
+
+	// Fallback: no git or no tags — use package.json version with dev suffix
+	return `${pkgVersion}-dev`;
 }
