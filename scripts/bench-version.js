@@ -46,11 +46,16 @@ export function getBenchmarkVersion(pkgVersion, cwd) {
 		/* git not available or no tags */
 	}
 
-	// Fallback: no git or no tags — match publish.yml's no-tags behavior (PATCH+1)
+	// Fallback: no git or no tags — match publish.yml's no-tags behavior (PATCH+1-dev.SHA)
 	const parts = pkgVersion.split('.');
 	if (parts.length === 3) {
 		const [major, minor, patch] = parts;
-		return `${major}.${minor}.${Number(patch) + 1}-dev`;
+		try {
+			const hash = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd, ...GIT_OPTS }).trim();
+			return `${major}.${minor}.${Number(patch) + 1}-dev.${hash}`;
+		} catch {
+			return `${major}.${minor}.${Number(patch) + 1}-dev`;
+		}
 	}
 	return `${pkgVersion}-dev`;
 }
