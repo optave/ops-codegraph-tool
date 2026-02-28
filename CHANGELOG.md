@@ -2,6 +2,63 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [2.5.0](https://github.com/optave/codegraph/compare/v2.4.0...v2.5.0) (2026-02-27)
+
+**Complexity analysis, community detection, execution flow tracing, and manifesto rule engine.** This release adds a full code quality suite — cognitive, cyclomatic, Halstead, and Maintainability Index metrics for all 11 supported languages — with native Rust parity for maximum performance. Louvain community detection surfaces module boundaries and drift. A configurable manifesto rule engine enables CI-gated quality thresholds. Execution flow tracing lets you follow call paths through the codebase. Dev builds now publish as GitHub pre-releases instead of npm.
+
+### Features
+
+* **cli:** add cognitive & cyclomatic complexity metrics with per-function and file-level analysis ([35f6176](https://github.com/optave/codegraph/commit/35f6176))
+* **cli:** add Halstead metrics (volume, difficulty, effort, bugs) and Maintainability Index ([452d9e9](https://github.com/optave/codegraph/commit/452d9e9))
+* **cli:** add multi-language complexity analysis — extend metrics to all 11 supported languages ([b1166e0](https://github.com/optave/codegraph/commit/b1166e0))
+* **cli:** add execution flow tracing — `flow` command and MCP tools for tracing call paths ([bc33f3b](https://github.com/optave/codegraph/commit/bc33f3b))
+* **cli:** add `path` command for shortest-path queries between symbols ([ef0ea81](https://github.com/optave/codegraph/commit/ef0ea81))
+* **communities:** add Louvain community detection for module boundary analysis and drift detection ([f3e36ad](https://github.com/optave/codegraph/commit/f3e36ad))
+* **manifesto:** add configurable pass/fail rule engine with warn/fail thresholds for CI gates ([5a7d039](https://github.com/optave/codegraph/commit/5a7d039))
+* **native:** add Halstead, LOC, and MI metrics to Rust native engine — full metrics parity across all 8 extractors ([44fe899](https://github.com/optave/codegraph/commit/44fe899))
+* **embedder:** interactive install prompt for `@huggingface/transformers` when missing ([8e717b2](https://github.com/optave/codegraph/commit/8e717b2))
+* **builder:** add build metadata tracking and `excludeTests` config shorthand ([f65b364](https://github.com/optave/codegraph/commit/f65b364))
+* **structure:** add file limit to structure tool to reduce token usage ([2c565fa](https://github.com/optave/codegraph/commit/2c565fa))
+* **ci:** publish dev builds as GitHub pre-releases instead of npm ([70c7627](https://github.com/optave/codegraph/commit/70c7627))
+* **ci:** benchmark dev/release versioning and npm source resolution ([5d532a6](https://github.com/optave/codegraph/commit/5d532a6))
+
+### Performance
+
+* **native:** eliminate WASM re-parse for native complexity + build optimizations ([b8c8ca7](https://github.com/optave/codegraph/commit/b8c8ca7))
+* **native:** native complexity computation for all languages with phase breakdown benchmarks ([231e941](https://github.com/optave/codegraph/commit/231e941))
+
+### Bug Fixes
+
+* **builder:** incremental rebuild drops edges from unchanged files ([9c3e3ba](https://github.com/optave/codegraph/commit/9c3e3ba))
+* **queries:** scope-aware caller selection for nested functions ([72497dc](https://github.com/optave/codegraph/commit/72497dc))
+* **complexity:** sanitize threshold values in complexity SQL queries ([c5ca1f2](https://github.com/optave/codegraph/commit/c5ca1f2))
+* **builder:** upgrade build metadata failure log from debug to warn ([1c60b88](https://github.com/optave/codegraph/commit/1c60b88))
+* **cli:** embed `--db` flag, DB locking, prerelease check, build logging improvements ([6a700b2](https://github.com/optave/codegraph/commit/6a700b2))
+* **native:** add win32 native binary to optionalDependencies, fix embedder crashes ([f026c6a](https://github.com/optave/codegraph/commit/f026c6a))
+* **hooks:** hook resilience for git ops, regex bypass, and worktree isolation ([2459cfc](https://github.com/optave/codegraph/commit/2459cfc))
+* **ci:** benchmark uses stale native addon from npm ([83f2d4e](https://github.com/optave/codegraph/commit/83f2d4e))
+* **ci:** preserve hand-written notes in benchmark report regeneration ([2d79f18](https://github.com/optave/codegraph/commit/2d79f18))
+* **ci:** benchmark script regex + workflow branch naming ([53fc34f](https://github.com/optave/codegraph/commit/53fc34f))
+* **ci:** harden benchmark workflow against transient npm failures ([1b97fb9](https://github.com/optave/codegraph/commit/1b97fb9))
+* **ci:** isolate publish concurrency by event type ([529bf6f](https://github.com/optave/codegraph/commit/529bf6f))
+* **ci:** use npx for license-checker to avoid intermittent 403 errors ([84e8e38](https://github.com/optave/codegraph/commit/84e8e38))
+* **ci:** force-add gitignored DEPENDENCIES.json in release workflow ([fe22813](https://github.com/optave/codegraph/commit/fe22813))
+* **ci:** add error handling to dev release pruning step ([fe45512](https://github.com/optave/codegraph/commit/fe45512))
+
+### Refactoring
+
+* simplify redundant `unwrap_or` pattern in complexity.rs ([150c3eb](https://github.com/optave/codegraph/commit/150c3eb))
+
+### Testing
+
+* add unit tests for interactive install prompt ([cc7c3e1](https://github.com/optave/codegraph/commit/cc7c3e1))
+
+### Documentation
+
+* complexity, communities, manifesto across all docs ([8f12f66](https://github.com/optave/codegraph/commit/8f12f66))
+* correct engine parity section — 100% parity confirmed ([55c8ee3](https://github.com/optave/codegraph/commit/55c8ee3))
+* update build performance benchmarks ([550b3b5](https://github.com/optave/codegraph/commit/550b3b5), [ea6b050](https://github.com/optave/codegraph/commit/ea6b050), [15e893c](https://github.com/optave/codegraph/commit/15e893c))
+
 ## [2.4.0](https://github.com/optave/codegraph/compare/v2.3.0...v2.4.0) (2026-02-25)
 
 **Co-change analysis, node roles, faster parsing, and richer Mermaid output.** This release adds git co-change analysis to surface files that change together, classifies nodes by architectural role (entry/core/utility/adapter/dead/leaf), replaces the manual AST walk with tree-sitter's Query API for significantly faster JS/TS/TSX extraction, and enhances Mermaid export with subgraphs, edge labels, node shapes, and styling.
