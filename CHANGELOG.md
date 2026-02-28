@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [2.5.1](https://github.com/optave/codegraph/compare/v2.5.0...v2.5.1) (2026-02-28)
+
+**Critical fix: recover missing `branch-compare` command and broken programmatic API.** The `branch-compare` command and its implementation file were never committed in v2.5.0, causing `codegraph branch-compare` to crash and `import('@optave/codegraph')` to fail entirely due to a top-level re-export of the missing module. This patch recovers the full implementation (568 lines), adds an export guard test to prevent regressions, and introduces `--dry-run` for `registry prune`.
+
+### Bug Fixes
+
+* **cli:** recover `branch-compare` implementation — command was registered in cli.js and index.js but `src/branch-compare.js` was never committed, crashing both the CLI command and the entire programmatic API ([2ee10d4](https://github.com/optave/codegraph/commit/2ee10d4), [3d1224d](https://github.com/optave/codegraph/commit/3d1224d))
+* **registry:** add `--dry-run` flag to `registry prune` — preview what would be removed without deleting entries ([2ee10d4](https://github.com/optave/codegraph/commit/2ee10d4))
+* **bench:** remove unnecessary `shell: true` from `execFileSync` — minor security hardening ([14d03ce](https://github.com/optave/codegraph/commit/14d03ce))
+* **docs:** correct dogfood benchmark data from stale v2.4.0 native binary — native complexity was reported as 2.2x slower than WASM when it's actually 47x faster ([3d1224d](https://github.com/optave/codegraph/commit/3d1224d))
+* **skill:** add native binary version check to dogfood benchmark phase to prevent stale binary misreports ([3d1224d](https://github.com/optave/codegraph/commit/3d1224d))
+
+### Testing
+
+* add `index-exports` unit test — validates all re-exports in index.js resolve without `ERR_MODULE_NOT_FOUND` ([2ee10d4](https://github.com/optave/codegraph/commit/2ee10d4))
+* add `branch-compare` integration tests (7 tests, 192 lines) ([3d1224d](https://github.com/optave/codegraph/commit/3d1224d))
+* add `registry prune --dry-run` unit tests ([2ee10d4](https://github.com/optave/codegraph/commit/2ee10d4))
+
+### Documentation
+
+* update build performance benchmarks for 2.5.0 ([eb52074](https://github.com/optave/codegraph/commit/eb52074))
+* add dogfood report for v2.5.0 ([3d1224d](https://github.com/optave/codegraph/commit/3d1224d))
+* reframe Principle 5 from library-first to CLI-first identity ([3d1224d](https://github.com/optave/codegraph/commit/3d1224d))
+
 ## [2.5.0](https://github.com/optave/codegraph/compare/v2.4.0...v2.5.0) (2026-02-27)
 
 **Complexity analysis, community detection, execution flow tracing, and manifesto rule engine.** This release adds a full code quality suite — cognitive, cyclomatic, Halstead, and Maintainability Index metrics for all 11 supported languages — with native Rust parity for maximum performance. Louvain community detection surfaces module boundaries and drift. A configurable manifesto rule engine enables CI-gated quality thresholds. Execution flow tracing lets you follow call paths through the codebase. Dev builds now publish as GitHub pre-releases instead of npm.
