@@ -92,11 +92,16 @@ jobs:
       - name: Check for changes
         id: changes
         run: |
-          if git diff --quiet HEAD -- generated/BUILD-BENCHMARKS.md README.md; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+          CHANGED=false
+          # Detect modified tracked files
+          if ! git diff --quiet HEAD -- generated/BUILD-BENCHMARKS.md README.md 2>/dev/null; then
+            CHANGED=true
           fi
+          # Detect newly created (untracked) files
+          if [ -n "$(git ls-files --others --exclude-standard generated/BUILD-BENCHMARKS.md)" ]; then
+            CHANGED=true
+          fi
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push via PR
         if: steps.changes.outputs.changed == 'true'
@@ -212,11 +217,16 @@ jobs:
       - name: Check for changes
         id: changes
         run: |
-          if git diff --quiet HEAD -- generated/EMBEDDING-BENCHMARKS.md; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+          CHANGED=false
+          # Detect modified tracked files
+          if ! git diff --quiet HEAD -- generated/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
+            CHANGED=true
           fi
+          # Detect newly created (untracked) files
+          if [ -n "$(git ls-files --others --exclude-standard generated/EMBEDDING-BENCHMARKS.md)" ]; then
+            CHANGED=true
+          fi
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push via PR
         if: steps.changes.outputs.changed == 'true'
@@ -320,11 +330,16 @@ jobs:
       - name: Check for changes
         id: changes
         run: |
-          if git diff --quiet HEAD -- generated/QUERY-BENCHMARKS.md; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+          CHANGED=false
+          # Detect modified tracked files
+          if ! git diff --quiet HEAD -- generated/QUERY-BENCHMARKS.md 2>/dev/null; then
+            CHANGED=true
           fi
+          # Detect newly created (untracked) files
+          if [ -n "$(git ls-files --others --exclude-standard generated/QUERY-BENCHMARKS.md)" ]; then
+            CHANGED=true
+          fi
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push via PR
         if: steps.changes.outputs.changed == 'true'
@@ -428,11 +443,16 @@ jobs:
       - name: Check for changes
         id: changes
         run: |
-          if git diff --quiet HEAD -- generated/INCREMENTAL-BENCHMARKS.md; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+          CHANGED=false
+          # Detect modified tracked files
+          if ! git diff --quiet HEAD -- generated/INCREMENTAL-BENCHMARKS.md 2>/dev/null; then
+            CHANGED=true
           fi
+          # Detect newly created (untracked) files
+          if [ -n "$(git ls-files --others --exclude-standard generated/INCREMENTAL-BENCHMARKS.md)" ]; then
+            CHANGED=true
+          fi
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push via PR
         if: steps.changes.outputs.changed == 'true'
