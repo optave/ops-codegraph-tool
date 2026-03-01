@@ -824,6 +824,29 @@ program
   });
 
 program
+  .command('owners [target]')
+  .description('Show CODEOWNERS mapping for files and functions')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('--owner <owner>', 'Filter to a specific owner')
+  .option('--boundary', 'Show cross-owner boundary edges')
+  .option('-f, --file <path>', 'Scope to a specific file')
+  .option('-k, --kind <kind>', 'Filter by symbol kind')
+  .option('-T, --no-tests', 'Exclude test/spec files')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (target, opts) => {
+    const { owners } = await import('./owners.js');
+    owners(opts.db, {
+      owner: opts.owner,
+      boundary: opts.boundary,
+      file: opts.file || target,
+      kind: opts.kind,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+    });
+  });
+
+program
   .command('branch-compare <base> <target>')
   .description('Compare code structure between two branches/refs')
   .option('--depth <n>', 'Max transitive caller depth', '3')
