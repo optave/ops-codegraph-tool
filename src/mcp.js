@@ -491,6 +491,28 @@ const BASE_TOOLS = [
       },
     },
   },
+  {
+    name: 'code_owners',
+    description:
+      'Show CODEOWNERS mapping for files and functions. Shows ownership coverage, per-owner breakdown, and cross-owner boundary edges.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', description: 'Scope to a specific file (partial match)' },
+        owner: { type: 'string', description: 'Filter to a specific owner (e.g. @team-name)' },
+        boundary: {
+          type: 'boolean',
+          description: 'Show cross-owner boundary edges',
+          default: false,
+        },
+        kind: {
+          type: 'string',
+          description: 'Filter by symbol kind (function, method, class, etc.)',
+        },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+      },
+    },
+  },
 ];
 
 const LIST_REPOS_TOOL = {
@@ -855,6 +877,17 @@ export async function startMCPServer(customDbPath, options = {}) {
             functions: args.functions,
             resolution: args.resolution,
             drift: args.drift,
+            noTests: args.no_tests,
+          });
+          break;
+        }
+        case 'code_owners': {
+          const { ownersData } = await import('./owners.js');
+          result = ownersData(dbPath, {
+            file: args.file,
+            owner: args.owner,
+            boundary: args.boundary,
+            kind: args.kind,
             noTests: args.no_tests,
           });
           break;

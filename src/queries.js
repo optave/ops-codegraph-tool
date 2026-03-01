@@ -5,6 +5,7 @@ import { coChangeForFiles } from './cochange.js';
 import { findCycles } from './cycles.js';
 import { findDbPath, openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
+import { ownersForFiles } from './owners.js';
 import { paginateResult } from './paginate.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
 
@@ -998,6 +999,22 @@ export function diffImpactData(customDbPath, opts = {}) {
     /* co_changes table doesn't exist — skip silently */
   }
 
+  // Look up CODEOWNERS for changed + affected files
+  let ownership = null;
+  try {
+    const allFilePaths = [...new Set([...changedRanges.keys(), ...affectedFiles])];
+    const ownerResult = ownersForFiles(allFilePaths, repoRoot);
+    if (ownerResult.affectedOwners.length > 0) {
+      ownership = {
+        owners: Object.fromEntries(ownerResult.owners),
+        affectedOwners: ownerResult.affectedOwners,
+        suggestedReviewers: ownerResult.suggestedReviewers,
+      };
+    }
+  } catch {
+    /* CODEOWNERS missing or unreadable — skip silently */
+  }
+
   db.close();
   return {
     changedFiles: changedRanges.size,
@@ -1005,11 +1022,13 @@ export function diffImpactData(customDbPath, opts = {}) {
     affectedFunctions: functionResults,
     affectedFiles: [...affectedFiles],
     historicallyCoupled,
+    ownership,
     summary: {
       functionsChanged: affectedFunctions.length,
       callersAffected: allAffected.size,
       filesAffected: affectedFiles.size,
       historicallyCoupledCount: historicallyCoupled.length,
+      ownersAffected: ownership ? ownership.affectedOwners.length : 0,
     },
   };
 }
@@ -2845,10 +2864,17 @@ export function diffImpact(customDbPath, opts = {}) {
       );
     }
   }
+  if (data.ownership) {
+    console.log(`\n  Affected owners: ${data.ownership.affectedOwners.join(', ')}`);
+    console.log(`  Suggested reviewers: ${data.ownership.suggestedReviewers.join(', ')}`);
+  }
   if (data.summary) {
     let summaryLine = `\n  Summary: ${data.summary.functionsChanged} functions changed -> ${data.summary.callersAffected} callers affected across ${data.summary.filesAffected} files`;
     if (data.summary.historicallyCoupledCount > 0) {
       summaryLine += `, ${data.summary.historicallyCoupledCount} historically coupled`;
+    }
+    if (data.summary.ownersAffected > 0) {
+      summaryLine += `, ${data.summary.ownersAffected} owners affected`;
     }
     console.log(`${summaryLine}\n`);
   }
