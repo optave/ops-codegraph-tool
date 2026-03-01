@@ -556,8 +556,14 @@ program
   .option('-k, --kind <kind>', 'Filter by kind: function, method, class')
   .option('--file <pattern>', 'Filter by file path pattern')
   .option('--rrf-k <number>', 'RRF k parameter for multi-query ranking', '60')
+  .option('--mode <mode>', 'Search mode: hybrid, semantic, keyword (default: hybrid)')
   .option('-j, --json', 'Output as JSON')
   .action(async (query, opts) => {
+    const validModes = ['hybrid', 'semantic', 'keyword'];
+    if (opts.mode && !validModes.includes(opts.mode)) {
+      console.error(`Invalid mode "${opts.mode}". Valid: ${validModes.join(', ')}`);
+      process.exit(1);
+    }
     await search(query, opts.db, {
       limit: parseInt(opts.limit, 10),
       noTests: resolveNoTests(opts),
@@ -566,6 +572,7 @@ program
       kind: opts.kind,
       filePattern: opts.file,
       rrfK: parseInt(opts.rrfK, 10),
+      mode: opts.mode,
       json: opts.json,
     });
   });
@@ -829,6 +836,29 @@ program
       functions: opts.functions,
       resolution: parseFloat(opts.resolution),
       drift: opts.drift,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+    });
+  });
+
+program
+  .command('owners [target]')
+  .description('Show CODEOWNERS mapping for files and functions')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('--owner <owner>', 'Filter to a specific owner')
+  .option('--boundary', 'Show cross-owner boundary edges')
+  .option('-f, --file <path>', 'Scope to a specific file')
+  .option('-k, --kind <kind>', 'Filter by symbol kind')
+  .option('-T, --no-tests', 'Exclude test/spec files')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (target, opts) => {
+    const { owners } = await import('./owners.js');
+    owners(opts.db, {
+      owner: opts.owner,
+      boundary: opts.boundary,
+      file: opts.file || target,
+      kind: opts.kind,
       noTests: resolveNoTests(opts),
       json: opts.json,
     });

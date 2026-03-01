@@ -234,6 +234,61 @@ describe('buildEmbeddings defaults to structured', () => {
   });
 });
 
+describe('FTS5 index built alongside embeddings', () => {
+  test('full_text column is populated in embeddings table', async () => {
+    EMBEDDED_TEXTS.length = 0;
+    await buildEmbeddings(tmpDir, 'minilm', dbPath, { strategy: 'structured' });
+
+    const db = new Database(dbPath, { readonly: true });
+    const rows = db.prepare('SELECT full_text FROM embeddings WHERE full_text IS NOT NULL').all();
+    db.close();
+    expect(rows.length).toBeGreaterThan(0);
+    // Each full_text should contain structured text content
+    for (const row of rows) {
+      expect(row.full_text.length).toBeGreaterThan(0);
+    }
+  });
+
+  test('FTS5 row count matches embedding count', async () => {
+    const db = new Database(dbPath, { readonly: true });
+    const embCount = db.prepare('SELECT COUNT(*) as c FROM embeddings').get().c;
+    const ftsCount = db.prepare('SELECT COUNT(*) as c FROM fts_index').get().c;
+    db.close();
+    expect(ftsCount).toBe(embCount);
+  });
+
+  test('FTS5 content matches the structured/source text', async () => {
+    const db = new Database(dbPath, { readonly: true });
+    // FTS5 rowid matches embeddings.node_id
+    const emb = db.prepare('SELECT node_id, full_text FROM embeddings').all();
+    for (const row of emb) {
+      const fts = db.prepare('SELECT content FROM fts_index WHERE rowid = ?').get(row.node_id);
+      expect(fts).toBeDefined();
+      expect(fts.content).toBe(row.full_text);
+    }
+    db.close();
+  });
+
+  test('fts_count is stored in metadata', async () => {
+    const db = new Database(dbPath, { readonly: true });
+    const row = db.prepare("SELECT value FROM embedding_meta WHERE key = 'fts_count'").get();
+    db.close();
+    expect(row).toBeDefined();
+    expect(Number(row.value)).toBeGreaterThan(0);
+  });
+
+  test('FTS5 name column contains symbol names', async () => {
+    const db = new Database(dbPath, { readonly: true });
+    const results = db
+      .prepare("SELECT rowid, name FROM fts_index WHERE fts_index MATCH 'add'")
+      .all();
+    db.close();
+    expect(results.length).toBeGreaterThan(0);
+    const names = results.map((r) => r.name);
+    expect(names).toContain('add');
+  });
+});
+
 describe('context window overflow detection', () => {
   let bigDir, bigDbPath;
 
