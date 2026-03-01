@@ -110,6 +110,15 @@ export {
   saveRegistry,
   unregisterRepo,
 } from './registry.js';
+// Snapshot management
+export {
+  snapshotDelete,
+  snapshotList,
+  snapshotRestore,
+  snapshotSave,
+  snapshotsDir,
+  validateSnapshotName,
+} from './snapshot.js';
 // Structure analysis
 export {
   buildStructure,
