@@ -17,6 +17,26 @@ npm test                         # run the full test suite
 
 **Requirements:** Node.js >= 20
 
+## Contributor License Agreement (CLA)
+
+All contributors must sign the [Contributor License Agreement](CLA.md) before
+their pull requests can be merged. This is a one-time requirement that protects
+both you and Optave AI Solutions Inc.
+
+**How to sign:**
+
+1. Open a pull request
+2. The CLA Assistant bot will post a comment if you haven't signed yet
+3. Reply with the exact text:
+   ```
+   I have read the CLA Document and I hereby sign the CLA
+   ```
+4. The check will pass once all PR contributors have signed
+
+Your signature applies to all future contributions — you only need to sign once.
+
+## Development Environment
+
 After `npm install`, [Husky](https://typicode.github.io/husky/) automatically
 installs two git hooks:
 
