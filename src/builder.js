@@ -435,7 +435,7 @@ export async function buildGraph(rootDir, opts = {}) {
 
   if (isFullBuild) {
     const deletions =
-      'PRAGMA foreign_keys = OFF; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM nodes; PRAGMA foreign_keys = ON;';
+      'PRAGMA foreign_keys = OFF; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM function_complexity; DELETE FROM nodes; PRAGMA foreign_keys = ON;';
     db.exec(
       hasEmbeddings
         ? `${deletions.replace('PRAGMA foreign_keys = ON;', '')} DELETE FROM embeddings; PRAGMA foreign_keys = ON;`
