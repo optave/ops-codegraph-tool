@@ -656,6 +656,27 @@ const BASE_TOOLS = [
       required: ['base', 'target'],
     },
   },
+  {
+    name: 'check',
+    description:
+      'Run CI validation predicates against git changes. Checks for new cycles, blast radius violations, signature changes, and boundary violations. Returns pass/fail per predicate — ideal for CI gates.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        ref: { type: 'string', description: 'Git ref to diff against (default: HEAD)' },
+        staged: { type: 'boolean', description: 'Analyze staged changes instead of unstaged' },
+        cycles: { type: 'boolean', description: 'Enable cycles predicate (default: true)' },
+        blast_radius: {
+          type: 'number',
+          description: 'Max transitive callers threshold (null = disabled)',
+        },
+        signatures: { type: 'boolean', description: 'Enable signatures predicate (default: true)' },
+        boundaries: { type: 'boolean', description: 'Enable boundaries predicate (default: true)' },
+        depth: { type: 'number', description: 'Max BFS depth for blast radius (default: 3)' },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+      },
+    },
+  },
 ];
 
 const LIST_REPOS_TOOL = {
@@ -1150,6 +1171,20 @@ export async function startMCPServer(customDbPath, options = {}) {
             noTests: args.no_tests,
           });
           result = args.format === 'mermaid' ? branchCompareMermaid(bcData) : bcData;
+          break;
+        }
+        case 'check': {
+          const { checkData } = await import('./check.js');
+          result = checkData(dbPath, {
+            ref: args.ref,
+            staged: args.staged,
+            cycles: args.cycles,
+            blastRadius: args.blast_radius,
+            signatures: args.signatures,
+            boundaries: args.boundaries,
+            depth: args.depth,
+            noTests: args.no_tests,
+          });
           break;
         }
         case 'list_repos': {

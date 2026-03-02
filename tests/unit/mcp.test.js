@@ -38,6 +38,7 @@ const ALL_TOOL_NAMES = [
   'batch_query',
   'triage',
   'branch_compare',
+  'check',
   'list_repos',
 ];
 
@@ -137,6 +138,20 @@ describe('TOOLS', () => {
     expect(di.inputSchema.properties).toHaveProperty('staged');
     expect(di.inputSchema.properties).toHaveProperty('ref');
     expect(di.inputSchema.properties).toHaveProperty('depth');
+  });
+
+  it('check has no required parameters', () => {
+    const ch = TOOLS.find((t) => t.name === 'check');
+    expect(ch).toBeDefined();
+    expect(ch.inputSchema.required).toBeUndefined();
+    expect(ch.inputSchema.properties).toHaveProperty('ref');
+    expect(ch.inputSchema.properties).toHaveProperty('staged');
+    expect(ch.inputSchema.properties).toHaveProperty('cycles');
+    expect(ch.inputSchema.properties).toHaveProperty('blast_radius');
+    expect(ch.inputSchema.properties).toHaveProperty('signatures');
+    expect(ch.inputSchema.properties).toHaveProperty('boundaries');
+    expect(ch.inputSchema.properties).toHaveProperty('depth');
+    expect(ch.inputSchema.properties).toHaveProperty('no_tests');
   });
 
   it('semantic_search requires query parameter', () => {
