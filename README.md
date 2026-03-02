@@ -74,24 +74,24 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 | Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) | [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | [axon](https://github.com/harshkedia177/axon) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | Function-level analysis | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
-| Multi-language | **11** | **14** | **32** | Multi | **~10** | **9** | SCIP langs | Few |
-| Semantic search | **Yes** | — | **Yes** | **Yes** | — | **Yes** | — | — |
+| Multi-language | **11** | **14** | **32** | **11** | **~10** | **12** | **12** | **3** |
+| Semantic search | **Yes** | — | **Yes** | **Yes** | — | **Yes** | — | **Yes** |
 | Hybrid BM25 + semantic | **Yes** | — | — | — | — | **Yes** | — | **Yes** |
 | CODEOWNERS integration | **Yes** | — | — | — | — | — | — | — |
 | Graph snapshots | **Yes** | — | — | — | — | — | — | — |
-| MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | — |
-| Git diff impact | **Yes** | — | — | — | — | **Yes** | — | **Yes** |
+| MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
+| Git diff impact | **Yes** | — | — | — | — | **Yes** | **Yes** | **Yes** |
 | Branch structural diff | **Yes** | — | — | — | — | — | — | **Yes** |
-| Git co-change analysis | **Yes** | — | — | — | — | — | **Yes** | **Yes** |
-| Watch mode | **Yes** | — | **Yes** | — | — | — | — | — |
-| Dead code / role classification | **Yes** | — | **Yes** | — | — | — | — | **Yes** |
-| Cycle detection | **Yes** | — | **Yes** | — | — | — | — | **Yes** |
-| Incremental rebuilds | **O(changed)** | — | O(n) Merkle | — | — | — | — | — |
-| Zero config | **Yes** | — | **Yes** | — | — | — | — | — |
+| Git co-change analysis | **Yes** | — | — | — | — | — | — | **Yes** |
+| Watch mode | **Yes** | — | **Yes** | **Yes** | — | — | **Yes** | **Yes** |
+| Dead code / role classification | **Yes** | — | **Yes** | — | — | — | **Yes** | **Yes** |
+| Cycle detection | **Yes** | — | — | — | — | — | — | — |
+| Incremental rebuilds | **O(changed)** | — | O(n) Merkle | — | — | — | Go only | **Yes** |
+| Zero config | **Yes** | — | **Yes** | — | — | **Yes** | — | **Yes** |
 | Embeddable JS library (`npm install`) | **Yes** | — | — | — | — | — | — | — |
-| LLM-optional (works without API keys) | **Yes** | **Yes** | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** |
-| Commercial use allowed | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | — | — | — |
-| Open source | **Yes** | Yes | Yes | Yes | Yes | Yes | Custom | — |
+| LLM-optional (works without API keys) | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
+| Commercial use allowed | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | No | Paid | **Yes** |
+| Open source | **Yes** | Yes | Yes | Yes | Yes | No | No | Yes |
 
 ### What makes codegraph different
 
