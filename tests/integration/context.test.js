@@ -229,10 +229,18 @@ describe('contextData', () => {
     expect(pfResult).toBeDefined();
   });
 
-  test('limits results to 5', () => {
-    // We only have a few functions, so this mainly checks the cap logic doesn't crash
-    const data = contextData('', dbPath); // empty name matches everything via LIKE '%%'
-    expect(data.results.length).toBeLessThanOrEqual(5);
+  test('limits results with pagination', () => {
+    // Without limit, all matches are returned (no hardcoded cap)
+    const all = contextData('', dbPath); // empty name matches everything via LIKE '%%'
+    expect(all.results.length).toBeGreaterThan(0);
+
+    // With limit, results are capped and pagination metadata is present
+    const data = contextData('', dbPath, { limit: 2, offset: 0 });
+    expect(data.results.length).toBeLessThanOrEqual(2);
+    if (all.results.length > 2) {
+      expect(data._pagination).toBeDefined();
+      expect(data._pagination.hasMore).toBe(true);
+    }
   });
 
   test('includeTests includes test source', () => {

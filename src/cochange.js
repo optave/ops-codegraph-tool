@@ -11,6 +11,7 @@ import path from 'node:path';
 import { normalizePath } from './constants.js';
 import { closeDb, findDbPath, initSchema, openDb, openReadonlyOrFail } from './db.js';
 import { warn } from './logger.js';
+import { paginateResult } from './paginate.js';
 import { isTestFile } from './queries.js';
 
 /**
@@ -313,7 +314,8 @@ export function coChangeData(file, customDbPath, opts = {}) {
   const meta = getCoChangeMeta(db);
   closeDb(db);
 
-  return { file: resolvedFile, partners, meta };
+  const base = { file: resolvedFile, partners, meta };
+  return paginateResult(base, 'partners', { limit: opts.limit, offset: opts.offset });
 }
 
 /**
@@ -365,7 +367,8 @@ export function coChangeTopData(customDbPath, opts = {}) {
   const meta = getCoChangeMeta(db);
   closeDb(db);
 
-  return { pairs, meta };
+  const base = { pairs, meta };
+  return paginateResult(base, 'pairs', { limit: opts.limit, offset: opts.offset });
 }
 
 /**

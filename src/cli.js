@@ -16,6 +16,7 @@ import {
 } from './embedder.js';
 import { exportDOT, exportJSON, exportMermaid } from './export.js';
 import { setVerbose } from './logger.js';
+import { printNdjson } from './paginate.js';
 import {
   ALL_SYMBOL_KINDS,
   context,
@@ -120,8 +121,17 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((file, opts) => {
-    impactAnalysis(file, opts.db, { noTests: resolveNoTests(opts), json: opts.json });
+    impactAnalysis(file, opts.db, {
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
+    });
   });
 
 program
@@ -157,8 +167,17 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((file, opts) => {
-    fileDeps(file, opts.db, { noTests: resolveNoTests(opts), json: opts.json });
+    fileDeps(file, opts.db, {
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
+    });
   });
 
 program
@@ -171,6 +190,9 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
     if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
@@ -182,6 +204,9 @@ program
       kind: opts.kind,
       noTests: resolveNoTests(opts),
       json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -195,6 +220,9 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
     if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
@@ -206,6 +234,9 @@ program
       kind: opts.kind,
       noTests: resolveNoTests(opts),
       json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -251,6 +282,9 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
     if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
@@ -264,6 +298,9 @@ program
       noTests: resolveNoTests(opts),
       includeTests: opts.withTestSource,
       json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -275,11 +312,17 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((target, opts) => {
     explain(target, opts.db, {
       depth: parseInt(opts.depth, 10),
       noTests: resolveNoTests(opts),
       json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -320,6 +363,9 @@ program
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .option('-f, --format <format>', 'Output format: text, mermaid, json', 'text')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((ref, opts) => {
     diffImpact(opts.db, {
       ref,
@@ -328,6 +374,9 @@ program
       noTests: resolveNoTests(opts),
       json: opts.json,
       format: opts.format,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -558,6 +607,8 @@ program
   .option('--rrf-k <number>', 'RRF k parameter for multi-query ranking', '60')
   .option('--mode <mode>', 'Search mode: hybrid, semantic, keyword (default: hybrid)')
   .option('-j, --json', 'Output as JSON')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (query, opts) => {
     const validModes = ['hybrid', 'semantic', 'keyword'];
     if (opts.mode && !validModes.includes(opts.mode)) {
@@ -589,6 +640,9 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (dir, opts) => {
     const { structureData, formatStructure } = await import('./structure.js');
     const data = structureData(opts.db, {
@@ -597,8 +651,12 @@ program
       sort: opts.sort,
       full: opts.full,
       noTests: resolveNoTests(opts),
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
     });
-    if (opts.json) {
+    if (opts.ndjson) {
+      printNdjson(data, 'directories');
+    } else if (opts.json) {
       console.log(JSON.stringify(data, null, 2));
     } else {
       console.log(formatStructure(data));
@@ -617,15 +675,20 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (opts) => {
     const { hotspotsData, formatHotspots } = await import('./structure.js');
     const data = hotspotsData(opts.db, {
       metric: opts.metric,
       level: opts.level,
       limit: parseInt(opts.limit, 10),
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       noTests: resolveNoTests(opts),
     });
-    if (opts.json) {
+    if (opts.ndjson) {
+      printNdjson(data, 'hotspots');
+    } else if (opts.json) {
       console.log(JSON.stringify(data, null, 2));
     } else {
       console.log(formatHotspots(data));
@@ -675,6 +738,8 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (file, opts) => {
     const { analyzeCoChanges, coChangeData, coChangeTopData, formatCoChange, formatCoChangeTop } =
       await import('./cochange.js');
@@ -701,20 +766,25 @@ program
 
     const queryOpts = {
       limit: parseInt(opts.limit, 10),
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       minJaccard: opts.minJaccard ? parseFloat(opts.minJaccard) : config.coChange?.minJaccard,
       noTests: resolveNoTests(opts),
     };
 
     if (file) {
       const data = coChangeData(file, opts.db, queryOpts);
-      if (opts.json) {
+      if (opts.ndjson) {
+        printNdjson(data, 'partners');
+      } else if (opts.json) {
         console.log(JSON.stringify(data, null, 2));
       } else {
         console.log(formatCoChange(data));
       }
     } else {
       const data = coChangeTopData(opts.db, queryOpts);
-      if (opts.json) {
+      if (opts.ndjson) {
+        printNdjson(data, 'pairs');
+      } else if (opts.json) {
         console.log(JSON.stringify(data, null, 2));
       } else {
         console.log(formatCoChangeTop(data));
@@ -778,6 +848,8 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (target, opts) => {
     if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
@@ -787,6 +859,7 @@ program
     complexity(opts.db, {
       target,
       limit: parseInt(opts.limit, 10),
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       sort: opts.sort,
       aboveThreshold: opts.aboveThreshold,
       health: opts.health,
@@ -794,6 +867,7 @@ program
       kind: opts.kind,
       noTests: resolveNoTests(opts),
       json: opts.json,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -806,6 +880,9 @@ program
   .option('-f, --file <path>', 'Scope to file (partial match)')
   .option('-k, --kind <kind>', 'Filter by symbol kind')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (opts) => {
     if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
@@ -817,6 +894,9 @@ program
       kind: opts.kind,
       noTests: resolveNoTests(opts),
       json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -830,6 +910,9 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (opts) => {
     const { communities } = await import('./communities.js');
     communities(opts.db, {
@@ -838,6 +921,9 @@ program
       drift: opts.drift,
       noTests: resolveNoTests(opts),
       json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 

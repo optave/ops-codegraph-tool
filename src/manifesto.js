@@ -2,6 +2,7 @@ import { loadConfig } from './config.js';
 import { findCycles } from './cycles.js';
 import { openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
+import { paginateResult, printNdjson } from './paginate.js';
 
 // ─── Rule Definitions ─────────────────────────────────────────────────
 
@@ -354,12 +355,13 @@ export function manifestoData(customDbPath, opts = {}) {
       violationCount: violations.length,
     };
 
-    return {
+    const base = {
       rules: ruleResults,
       violations,
       summary,
       passed: failViolations.length === 0,
     };
+    return paginateResult(base, 'violations', { limit: opts.limit, offset: opts.offset });
   } finally {
     db.close();
   }
@@ -371,6 +373,11 @@ export function manifestoData(customDbPath, opts = {}) {
 export function manifesto(customDbPath, opts = {}) {
   const data = manifestoData(customDbPath, opts);
 
+  if (opts.ndjson) {
+    printNdjson(data, 'violations');
+    if (!data.passed) process.exit(1);
+    return;
+  }
   if (opts.json) {
     console.log(JSON.stringify(data, null, 2));
     if (!data.passed) process.exit(1);
