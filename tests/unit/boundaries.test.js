@@ -184,10 +184,11 @@ describe('validateBoundaryConfig', () => {
 // ─── PRESETS ─────────────────────────────────────────────────────────
 
 describe('PRESETS', () => {
-  test('all three presets defined', () => {
+  test('all four presets defined', () => {
     expect(PRESETS.hexagonal).toBeDefined();
     expect(PRESETS.layered).toBeDefined();
     expect(PRESETS.clean).toBeDefined();
+    expect(PRESETS.onion).toBeDefined();
   });
 
   test('each preset has layers array', () => {
