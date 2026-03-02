@@ -45,7 +45,7 @@ Your goal is to install the published package, exercise every feature, compare e
 
    > **Tip:** To find the latest dev version, run:
    > ```bash
-   > gh release list --repo optave/codegraph --limit 1 --json tagName --jq '.[0].tagName' | sed 's/^dev-v//'
+   > gh release list --repo optave/codegraph --json tagName,isPrerelease --jq '[.[] | select(.isPrerelease)][0].tagName' | sed 's/^dev-v//'
    > ```
 
 3. Verify the install: `npx codegraph --version` should print `$ARGUMENTS`.
