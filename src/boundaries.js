@@ -58,6 +58,10 @@ export const PRESETS = {
     layers: ['entities', 'usecases', 'interfaces', 'frameworks'],
     description: 'Inward-only dependency direction',
   },
+  onion: {
+    layers: ['domain-model', 'domain-services', 'application', 'infrastructure'],
+    description: 'Inward-only dependency direction',
+  },
 };
 
 // ─── Module Resolution ───────────────────────────────────────────────
