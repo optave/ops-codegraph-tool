@@ -64,15 +64,15 @@ This dual-mode approach is unique in the competitive landscape. Competitors eith
 
 *Test: does every core command (`build`, `query`, `fn`, `deps`, `impact`, `diff-impact`, `cycles`, `map`) work with zero API keys? Are LLM features additive, never blocking?*
 
-### 5. Embeddable first, CLI second
+### 5. Functional CLI, embeddable API
 
-**Codegraph is a library that happens to have a CLI, not the other way around.**
+**Codegraph is a CLI tool and MCP server that delivers code intelligence directly.**
 
-Every capability is available through the programmatic API (`src/index.js`). The CLI (`src/cli.js`) and MCP server (`src/mcp.js`) are thin wrappers. This means codegraph can be imported into VS Code extensions, Electron apps, CI pipelines, other MCP servers, and any JavaScript tooling.
+The CLI (`src/cli.js`) and MCP server (`src/mcp.js`) are the primary interfaces — the things we ship and the way people use codegraph. Every capability is also available through the programmatic API (`src/index.js`), so codegraph can be imported into VS Code extensions, CI pipelines, other MCP servers, and any JavaScript tooling.
 
-Most competitors are CLI-first or server-first. We are library-first. The API surface is the product; the CLI is a convenience.
+Most competitors are either library-only (requiring integration work) or server-only (requiring infrastructure). Codegraph works out of the box as a CLI, serves AI agents via MCP, and can be embedded when needed.
 
-*Test: can another npm package `import { buildGraph, queryFunction } from '@optave/codegraph'` and use the full feature set programmatically?*
+*Test: does every feature work from the CLI with zero integration effort? Can another npm package also `import { buildGraph, queryFunction } from '@optave/codegraph'` and use the full feature set programmatically?*
 
 ### 6. One registry, one schema, no magic
 
@@ -126,7 +126,7 @@ Staying in our lane means we can be embedded inside IDEs, AI agents, CI pipeline
 - Cloud API calls in the core pipeline — violates Principle 1 (the graph must always rebuild in under a second) and Principle 4 (zero-cost core)
 - AI-powered code generation or editing — violates Principle 8
 - Multi-agent orchestration — violates Principle 8
-- Native desktop GUI — outside our lane; we're a library
+- Native desktop GUI — outside our lane; we're a CLI tool and engine, not a desktop app
 - Features that require non-npm dependencies — keeps deployment simple
 
 ---

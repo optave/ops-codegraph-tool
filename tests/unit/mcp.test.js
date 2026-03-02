@@ -33,6 +33,8 @@ const ALL_TOOL_NAMES = [
   'complexity',
   'manifesto',
   'communities',
+  'code_owners',
+  'branch_compare',
   'list_repos',
 ];
 
@@ -338,6 +340,8 @@ describe('startMCPServer handler dispatch', () => {
       file: 'src/app.js',
       kind: 'function',
       noTests: true,
+      limit: 10,
+      offset: 0,
     });
 
     vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
@@ -390,7 +394,11 @@ describe('startMCPServer handler dispatch', () => {
     expect(result.isError).toBeUndefined();
     expect(fnImpactMock).toHaveBeenCalledWith('handleClick', '/tmp/test.db', {
       depth: undefined,
+      file: undefined,
+      kind: undefined,
       noTests: undefined,
+      limit: 5,
+      offset: 0,
     });
 
     vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
@@ -446,6 +454,8 @@ describe('startMCPServer handler dispatch', () => {
       ref: undefined,
       depth: undefined,
       noTests: undefined,
+      limit: 30,
+      offset: 0,
     });
 
     vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
@@ -1065,8 +1075,10 @@ describe('startMCPServer handler dispatch', () => {
       target: 'buildGraph',
       file: 'src/builder.js',
       limit: 10,
+      offset: 0,
       sort: 'cyclomatic',
       aboveThreshold: true,
+      health: undefined,
       noTests: true,
       kind: 'function',
     });

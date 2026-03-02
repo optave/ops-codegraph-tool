@@ -1,10 +1,14 @@
 name: Benchmark
-
 on:
   workflow_run:
     workflows: ["Publish"]
     types: [completed]
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to benchmark ("dev" for local, or semver like "2.4.0" for npm)'
+        required: false
+        default: "dev"
 
 permissions: {}
 
@@ -20,13 +24,13 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "npm"
@@ -34,79 +38,112 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
 
-      - name: Download native addon from Publish
-        if: github.event_name == 'workflow_run'
-        uses: actions/download-artifact@v4
-        with:
-          name: native-linux-x64
-          path: ${{ runner.temp }}/native-artifact
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
-
-      - name: Install native addon from Publish
-        if: github.event_name == 'workflow_run'
+      - name: Determine benchmark mode
+        id: mode
         run: |
-          ARTIFACT_DIR="${{ runner.temp }}/native-artifact"
-          NODE_FILE="$ARTIFACT_DIR/codegraph-core.node"
-          if [ ! -f "$NODE_FILE" ]; then
-            echo "::error::Native addon not found at $NODE_FILE"
-            ls -la "$ARTIFACT_DIR" || true
-            exit 1
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            # Release — find latest semver tag
+            TAG=$(git tag --sort=-version:refname --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -v dev | head -1)
+            VERSION="${TAG#v}"
+            echo "source=npm" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          elif [ "${{ inputs.version }}" = "dev" ] || [ -z "${{ inputs.version }}" ]; then
+            echo "source=local" >> "$GITHUB_OUTPUT"
+            echo "version=dev" >> "$GITHUB_OUTPUT"
+          else
+            echo "source=npm" >> "$GITHUB_OUTPUT"
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
-          PKG_DIR="node_modules/@optave/codegraph-linux-x64-gnu"
-          mkdir -p "$PKG_DIR"
-          cp "$NODE_FILE" "$PKG_DIR/codegraph-core.node"
-          if [ ! -f "$PKG_DIR/package.json" ]; then
-            echo '{"name":"@optave/codegraph-linux-x64-gnu","main":"codegraph-core.node"}' > "$PKG_DIR/package.json"
+
+      - name: Check for existing benchmark
+        id: existing
+        run: |
+          VERSION="${{ steps.mode.outputs.version }}"
+          VERSION_RE="${VERSION//./\\.}"
+          if [ "$VERSION" = "dev" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/BUILD-BENCHMARKS.md 2>/dev/null; then
+            echo "Benchmark for $VERSION already exists in BUILD-BENCHMARKS.md — skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "Installed native addon from Publish workflow run ${{ github.event.workflow_run.id }}"
-          echo "  sha256: $(sha256sum "$PKG_DIR/codegraph-core.node" | cut -d' ' -f1)"
+
+      - name: Wait for npm propagation
+        if: steps.existing.outputs.skip != 'true' && steps.mode.outputs.source == 'npm'
+        run: |
+          VERSION="${{ steps.mode.outputs.version }}"
+          echo "Waiting for @optave/codegraph@${VERSION} on npm..."
+          for i in $(seq 1 20); do
+            if npm view "@optave/codegraph@${VERSION}" version 2>/dev/null; then
+              echo "Package available on npm"
+              exit 0
+            fi
+            echo "  Attempt $i/20 — not yet available, waiting 30s..."
+            sleep 30
+          done
+          echo "::error::Package @optave/codegraph@${VERSION} not found on npm after 10 minutes"
+          exit 1
 
       - name: Run build benchmark
-        run: node scripts/benchmark.js 2>/dev/null > benchmark-result.json
+        if: steps.existing.outputs.skip != 'true'
+        run: |
+          ARGS="--version ${{ steps.mode.outputs.version }}"
+          if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
+            ARGS="$ARGS --npm"
+          fi
+          node scripts/benchmark.js $ARGS 2>/dev/null > benchmark-result.json
 
       - name: Update build report
+        if: steps.existing.outputs.skip != 'true'
         run: node scripts/update-benchmark-report.js benchmark-result.json
 
       - name: Upload build result
-        uses: actions/upload-artifact@v4
+        if: steps.existing.outputs.skip != 'true'
+        uses: actions/upload-artifact@v7
         with:
           name: build-benchmark-result
           path: benchmark-result.json
 
       - name: Check for changes
+        if: steps.existing.outputs.skip != 'true'
         id: changes
         run: |
-          if git diff --quiet HEAD -- generated/BUILD-BENCHMARKS.md README.md; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+          CHANGED=false
+          # Detect modified tracked files
+          if ! git diff --quiet HEAD -- generated/BUILD-BENCHMARKS.md README.md 2>/dev/null; then
+            CHANGED=true
           fi
-
-      - name: Extract version from result
-        id: version
-        run: echo "version=$(node -p "require('./benchmark-result.json').version")" >> "$GITHUB_OUTPUT"
+          # Detect newly created (untracked) files
+          if [ -n "$(git ls-files --others --exclude-standard generated/BUILD-BENCHMARKS.md)" ]; then
+            CHANGED=true
+          fi
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push via PR
-        if: steps.changes.outputs.changed == 'true'
+        if: steps.existing.outputs.skip != 'true' && steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.mode.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          BRANCH="benchmark/build-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
+          if [ "$VERSION" = "dev" ]; then
+            BRANCH="benchmark/build-dev-$(date +%Y%m%d-%H%M%S)"
+          else
+            BRANCH="benchmark/build-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
+          fi
           git checkout -b "$BRANCH"
           git add generated/BUILD-BENCHMARKS.md README.md
-          git commit -m "docs: update build performance benchmarks (v${VERSION})"
+          git commit -m "docs: update build performance benchmarks (${VERSION})"
           git push origin "$BRANCH"
 
           gh pr create \
             --base main \
             --head "$BRANCH" \
-            --title "docs: update build performance benchmarks (v${VERSION})" \
-            --body "Automated build benchmark update for **v${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+            --title "docs: update build performance benchmarks (${VERSION})" \
+            --body "Automated build benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
 
   embedding-benchmark:
     runs-on: ubuntu-latest
@@ -119,13 +156,13 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "npm"
@@ -133,91 +170,125 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
 
-      - name: Download native addon from Publish
-        if: github.event_name == 'workflow_run'
-        uses: actions/download-artifact@v4
-        with:
-          name: native-linux-x64
-          path: ${{ runner.temp }}/native-artifact
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
-
-      - name: Install native addon from Publish
-        if: github.event_name == 'workflow_run'
+      - name: Determine benchmark mode
+        id: mode
         run: |
-          ARTIFACT_DIR="${{ runner.temp }}/native-artifact"
-          NODE_FILE="$ARTIFACT_DIR/codegraph-core.node"
-          if [ ! -f "$NODE_FILE" ]; then
-            echo "::error::Native addon not found at $NODE_FILE"
-            ls -la "$ARTIFACT_DIR" || true
-            exit 1
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            TAG=$(git tag --sort=-version:refname --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -v dev | head -1)
+            VERSION="${TAG#v}"
+            echo "source=npm" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          elif [ "${{ inputs.version }}" = "dev" ] || [ -z "${{ inputs.version }}" ]; then
+            echo "source=local" >> "$GITHUB_OUTPUT"
+            echo "version=dev" >> "$GITHUB_OUTPUT"
+          else
+            echo "source=npm" >> "$GITHUB_OUTPUT"
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
-          PKG_DIR="node_modules/@optave/codegraph-linux-x64-gnu"
-          mkdir -p "$PKG_DIR"
-          cp "$NODE_FILE" "$PKG_DIR/codegraph-core.node"
-          if [ ! -f "$PKG_DIR/package.json" ]; then
-            echo '{"name":"@optave/codegraph-linux-x64-gnu","main":"codegraph-core.node"}' > "$PKG_DIR/package.json"
+
+      - name: Check for existing benchmark
+        id: existing
+        run: |
+          VERSION="${{ steps.mode.outputs.version }}"
+          VERSION_RE="${VERSION//./\\.}"
+          if [ "$VERSION" = "dev" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
+            echo "Benchmark for $VERSION already exists in EMBEDDING-BENCHMARKS.md — skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "Installed native addon from Publish workflow run ${{ github.event.workflow_run.id }}"
-          echo "  sha256: $(sha256sum "$PKG_DIR/codegraph-core.node" | cut -d' ' -f1)"
+
+      - name: Wait for npm propagation
+        if: steps.existing.outputs.skip != 'true' && steps.mode.outputs.source == 'npm'
+        run: |
+          VERSION="${{ steps.mode.outputs.version }}"
+          echo "Waiting for @optave/codegraph@${VERSION} on npm..."
+          for i in $(seq 1 20); do
+            if npm view "@optave/codegraph@${VERSION}" version 2>/dev/null; then
+              echo "Package available on npm"
+              exit 0
+            fi
+            echo "  Attempt $i/20 — not yet available, waiting 30s..."
+            sleep 30
+          done
+          echo "::error::Package @optave/codegraph@${VERSION} not found on npm after 10 minutes"
+          exit 1
 
       - name: Cache HuggingFace models
-        uses: actions/cache@v4
+        if: steps.existing.outputs.skip != 'true'
+        uses: actions/cache@v5
         with:
           path: ~/.cache/huggingface
           key: hf-models-${{ runner.os }}-${{ hashFiles('src/embedder.js') }}
           restore-keys: hf-models-${{ runner.os }}-
 
       - name: Build graph
+        if: steps.existing.outputs.skip != 'true'
         run: node src/cli.js build .
 
       - name: Run embedding benchmark
+        if: steps.existing.outputs.skip != 'true'
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: node scripts/embedding-benchmark.js 2>/dev/null > embedding-benchmark-result.json
+        run: |
+          ARGS="--version ${{ steps.mode.outputs.version }}"
+          if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
+            ARGS="$ARGS --npm"
+          fi
+          node scripts/embedding-benchmark.js $ARGS 2>/dev/null > embedding-benchmark-result.json
 
       - name: Update embedding report
+        if: steps.existing.outputs.skip != 'true'
         run: node scripts/update-embedding-report.js embedding-benchmark-result.json
 
       - name: Upload embedding result
-        uses: actions/upload-artifact@v4
+        if: steps.existing.outputs.skip != 'true'
+        uses: actions/upload-artifact@v7
         with:
           name: embedding-benchmark-result
           path: embedding-benchmark-result.json
 
       - name: Check for changes
+        if: steps.existing.outputs.skip != 'true'
         id: changes
         run: |
-          if git diff --quiet HEAD -- generated/EMBEDDING-BENCHMARKS.md; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+          CHANGED=false
+          # Detect modified tracked files
+          if ! git diff --quiet HEAD -- generated/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
+            CHANGED=true
           fi
-
-      - name: Extract version from result
-        id: version
-        run: echo "version=$(node -p "require('./embedding-benchmark-result.json').version")" >> "$GITHUB_OUTPUT"
+          # Detect newly created (untracked) files
+          if [ -n "$(git ls-files --others --exclude-standard generated/EMBEDDING-BENCHMARKS.md)" ]; then
+            CHANGED=true
+          fi
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push via PR
-        if: steps.changes.outputs.changed == 'true'
+        if: steps.existing.outputs.skip != 'true' && steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.mode.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          BRANCH="benchmark/embedding-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
+          if [ "$VERSION" = "dev" ]; then
+            BRANCH="benchmark/embedding-dev-$(date +%Y%m%d-%H%M%S)"
+          else
+            BRANCH="benchmark/embedding-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
+          fi
           git checkout -b "$BRANCH"
           git add generated/EMBEDDING-BENCHMARKS.md
-          git commit -m "docs: update embedding benchmarks (v${VERSION})"
+          git commit -m "docs: update embedding benchmarks (${VERSION})"
           git push origin "$BRANCH"
 
           gh pr create \
             --base main \
             --head "$BRANCH" \
-            --title "docs: update embedding benchmarks (v${VERSION})" \
-            --body "Automated embedding benchmark update for **v${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+            --title "docs: update embedding benchmarks (${VERSION})" \
+            --body "Automated embedding benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
 
   query-benchmark:
     runs-on: ubuntu-latest
@@ -230,13 +301,13 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "npm"
@@ -244,79 +315,111 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
 
-      - name: Download native addon from Publish
-        if: github.event_name == 'workflow_run'
-        uses: actions/download-artifact@v4
-        with:
-          name: native-linux-x64
-          path: ${{ runner.temp }}/native-artifact
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
-
-      - name: Install native addon from Publish
-        if: github.event_name == 'workflow_run'
+      - name: Determine benchmark mode
+        id: mode
         run: |
-          ARTIFACT_DIR="${{ runner.temp }}/native-artifact"
-          NODE_FILE="$ARTIFACT_DIR/codegraph-core.node"
-          if [ ! -f "$NODE_FILE" ]; then
-            echo "::error::Native addon not found at $NODE_FILE"
-            ls -la "$ARTIFACT_DIR" || true
-            exit 1
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            TAG=$(git tag --sort=-version:refname --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -v dev | head -1)
+            VERSION="${TAG#v}"
+            echo "source=npm" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          elif [ "${{ inputs.version }}" = "dev" ] || [ -z "${{ inputs.version }}" ]; then
+            echo "source=local" >> "$GITHUB_OUTPUT"
+            echo "version=dev" >> "$GITHUB_OUTPUT"
+          else
+            echo "source=npm" >> "$GITHUB_OUTPUT"
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
-          PKG_DIR="node_modules/@optave/codegraph-linux-x64-gnu"
-          mkdir -p "$PKG_DIR"
-          cp "$NODE_FILE" "$PKG_DIR/codegraph-core.node"
-          if [ ! -f "$PKG_DIR/package.json" ]; then
-            echo '{"name":"@optave/codegraph-linux-x64-gnu","main":"codegraph-core.node"}' > "$PKG_DIR/package.json"
+
+      - name: Check for existing benchmark
+        id: existing
+        run: |
+          VERSION="${{ steps.mode.outputs.version }}"
+          VERSION_RE="${VERSION//./\\.}"
+          if [ "$VERSION" = "dev" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/QUERY-BENCHMARKS.md 2>/dev/null; then
+            echo "Benchmark for $VERSION already exists in QUERY-BENCHMARKS.md — skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "Installed native addon from Publish workflow run ${{ github.event.workflow_run.id }}"
-          echo "  sha256: $(sha256sum "$PKG_DIR/codegraph-core.node" | cut -d' ' -f1)"
+
+      - name: Wait for npm propagation
+        if: steps.existing.outputs.skip != 'true' && steps.mode.outputs.source == 'npm'
+        run: |
+          VERSION="${{ steps.mode.outputs.version }}"
+          echo "Waiting for @optave/codegraph@${VERSION} on npm..."
+          for i in $(seq 1 20); do
+            if npm view "@optave/codegraph@${VERSION}" version 2>/dev/null; then
+              echo "Package available on npm"
+              exit 0
+            fi
+            echo "  Attempt $i/20 — not yet available, waiting 30s..."
+            sleep 30
+          done
+          echo "::error::Package @optave/codegraph@${VERSION} not found on npm after 10 minutes"
+          exit 1
 
       - name: Run query benchmark
-        run: node scripts/query-benchmark.js 2>/dev/null > query-benchmark-result.json
+        if: steps.existing.outputs.skip != 'true'
+        run: |
+          ARGS="--version ${{ steps.mode.outputs.version }}"
+          if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
+            ARGS="$ARGS --npm"
+          fi
+          node scripts/query-benchmark.js $ARGS 2>/dev/null > query-benchmark-result.json
 
       - name: Update query report
+        if: steps.existing.outputs.skip != 'true'
         run: node scripts/update-query-report.js query-benchmark-result.json
 
       - name: Upload query result
-        uses: actions/upload-artifact@v4
+        if: steps.existing.outputs.skip != 'true'
+        uses: actions/upload-artifact@v7
         with:
           name: query-benchmark-result
           path: query-benchmark-result.json
 
       - name: Check for changes
+        if: steps.existing.outputs.skip != 'true'
         id: changes
         run: |
-          if git diff --quiet HEAD -- generated/QUERY-BENCHMARKS.md; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+          CHANGED=false
+          # Detect modified tracked files
+          if ! git diff --quiet HEAD -- generated/QUERY-BENCHMARKS.md 2>/dev/null; then
+            CHANGED=true
           fi
-
-      - name: Extract version from result
-        id: version
-        run: echo "version=$(node -p "require('./query-benchmark-result.json').version")" >> "$GITHUB_OUTPUT"
+          # Detect newly created (untracked) files
+          if [ -n "$(git ls-files --others --exclude-standard generated/QUERY-BENCHMARKS.md)" ]; then
+            CHANGED=true
+          fi
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push via PR
-        if: steps.changes.outputs.changed == 'true'
+        if: steps.existing.outputs.skip != 'true' && steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.mode.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          BRANCH="benchmark/query-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
+          if [ "$VERSION" = "dev" ]; then
+            BRANCH="benchmark/query-dev-$(date +%Y%m%d-%H%M%S)"
+          else
+            BRANCH="benchmark/query-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
+          fi
           git checkout -b "$BRANCH"
           git add generated/QUERY-BENCHMARKS.md
-          git commit -m "docs: update query benchmarks (v${VERSION})"
+          git commit -m "docs: update query benchmarks (${VERSION})"
           git push origin "$BRANCH"
 
           gh pr create \
             --base main \
             --head "$BRANCH" \
-            --title "docs: update query benchmarks (v${VERSION})" \
-            --body "Automated query benchmark update for **v${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+            --title "docs: update query benchmarks (${VERSION})" \
+            --body "Automated query benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
 
   incremental-benchmark:
     runs-on: ubuntu-latest
@@ -329,13 +432,13 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: "npm"
@@ -343,76 +446,108 @@ jobs:
       - name: Install dependencies
         run: npm ci --prefer-offline --no-audit --no-fund
 
-      - name: Download native addon from Publish
-        if: github.event_name == 'workflow_run'
-        uses: actions/download-artifact@v4
-        with:
-          name: native-linux-x64
-          path: ${{ runner.temp }}/native-artifact
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ github.event.workflow_run.id }}
-
-      - name: Install native addon from Publish
-        if: github.event_name == 'workflow_run'
+      - name: Determine benchmark mode
+        id: mode
         run: |
-          ARTIFACT_DIR="${{ runner.temp }}/native-artifact"
-          NODE_FILE="$ARTIFACT_DIR/codegraph-core.node"
-          if [ ! -f "$NODE_FILE" ]; then
-            echo "::error::Native addon not found at $NODE_FILE"
-            ls -la "$ARTIFACT_DIR" || true
-            exit 1
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            TAG=$(git tag --sort=-version:refname --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -v dev | head -1)
+            VERSION="${TAG#v}"
+            echo "source=npm" >> "$GITHUB_OUTPUT"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          elif [ "${{ inputs.version }}" = "dev" ] || [ -z "${{ inputs.version }}" ]; then
+            echo "source=local" >> "$GITHUB_OUTPUT"
+            echo "version=dev" >> "$GITHUB_OUTPUT"
+          else
+            echo "source=npm" >> "$GITHUB_OUTPUT"
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
-          PKG_DIR="node_modules/@optave/codegraph-linux-x64-gnu"
-          mkdir -p "$PKG_DIR"
-          cp "$NODE_FILE" "$PKG_DIR/codegraph-core.node"
-          if [ ! -f "$PKG_DIR/package.json" ]; then
-            echo '{"name":"@optave/codegraph-linux-x64-gnu","main":"codegraph-core.node"}' > "$PKG_DIR/package.json"
+
+      - name: Check for existing benchmark
+        id: existing
+        run: |
+          VERSION="${{ steps.mode.outputs.version }}"
+          VERSION_RE="${VERSION//./\\.}"
+          if [ "$VERSION" = "dev" ]; then
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/INCREMENTAL-BENCHMARKS.md 2>/dev/null; then
+            echo "Benchmark for $VERSION already exists in INCREMENTAL-BENCHMARKS.md — skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
-          echo "Installed native addon from Publish workflow run ${{ github.event.workflow_run.id }}"
-          echo "  sha256: $(sha256sum "$PKG_DIR/codegraph-core.node" | cut -d' ' -f1)"
+
+      - name: Wait for npm propagation
+        if: steps.existing.outputs.skip != 'true' && steps.mode.outputs.source == 'npm'
+        run: |
+          VERSION="${{ steps.mode.outputs.version }}"
+          echo "Waiting for @optave/codegraph@${VERSION} on npm..."
+          for i in $(seq 1 20); do
+            if npm view "@optave/codegraph@${VERSION}" version 2>/dev/null; then
+              echo "Package available on npm"
+              exit 0
+            fi
+            echo "  Attempt $i/20 — not yet available, waiting 30s..."
+            sleep 30
+          done
+          echo "::error::Package @optave/codegraph@${VERSION} not found on npm after 10 minutes"
+          exit 1
 
       - name: Run incremental benchmark
-        run: node scripts/incremental-benchmark.js 2>/dev/null > incremental-benchmark-result.json
+        if: steps.existing.outputs.skip != 'true'
+        run: |
+          ARGS="--version ${{ steps.mode.outputs.version }}"
+          if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
+            ARGS="$ARGS --npm"
+          fi
+          node scripts/incremental-benchmark.js $ARGS 2>/dev/null > incremental-benchmark-result.json
 
       - name: Update incremental report
+        if: steps.existing.outputs.skip != 'true'
         run: node scripts/update-incremental-report.js incremental-benchmark-result.json
 
       - name: Upload incremental result
-        uses: actions/upload-artifact@v4
+        if: steps.existing.outputs.skip != 'true'
+        uses: actions/upload-artifact@v7
         with:
           name: incremental-benchmark-result
           path: incremental-benchmark-result.json
 
       - name: Check for changes
+        if: steps.existing.outputs.skip != 'true'
         id: changes
         run: |
-          if git diff --quiet HEAD -- generated/INCREMENTAL-BENCHMARKS.md; then
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
+          CHANGED=false
+          # Detect modified tracked files
+          if ! git diff --quiet HEAD -- generated/INCREMENTAL-BENCHMARKS.md 2>/dev/null; then
+            CHANGED=true
           fi
-
-      - name: Extract version from result
-        id: version
-        run: echo "version=$(node -p "require('./incremental-benchmark-result.json').version")" >> "$GITHUB_OUTPUT"
+          # Detect newly created (untracked) files
+          if [ -n "$(git ls-files --others --exclude-standard generated/INCREMENTAL-BENCHMARKS.md)" ]; then
+            CHANGED=true
+          fi
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push via PR
-        if: steps.changes.outputs.changed == 'true'
+        if: steps.existing.outputs.skip != 'true' && steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ steps.mode.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          BRANCH="benchmark/incremental-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
+          if [ "$VERSION" = "dev" ]; then
+            BRANCH="benchmark/incremental-dev-$(date +%Y%m%d-%H%M%S)"
+          else
+            BRANCH="benchmark/incremental-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
+          fi
           git checkout -b "$BRANCH"
           git add generated/INCREMENTAL-BENCHMARKS.md
-          git commit -m "docs: update incremental benchmarks (v${VERSION})"
+          git commit -m "docs: update incremental benchmarks (${VERSION})"
           git push origin "$BRANCH"
 
           gh pr create \
             --base main \
             --head "$BRANCH" \
-            --title "docs: update incremental benchmarks (v${VERSION})" \
-            --body "Automated incremental benchmark update for **v${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+            --title "docs: update incremental benchmarks (${VERSION})" \
+            --body "Automated incremental benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."

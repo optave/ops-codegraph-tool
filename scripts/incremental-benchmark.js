@@ -13,20 +13,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+import { resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
-const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const { version, srcDir, cleanup } = await resolveBenchmarkSource();
 const dbPath = path.join(root, '.codegraph', 'graph.db');
 
-const { buildGraph } = await import(pathToFileURL(path.join(root, 'src', 'builder.js')).href);
-const { statsData } = await import(pathToFileURL(path.join(root, 'src', 'queries.js')).href);
+const { buildGraph } = await import(srcImport(srcDir, 'builder.js'));
+const { statsData } = await import(srcImport(srcDir, 'queries.js'));
 const { resolveImportPath, resolveImportsBatch, resolveImportPathJS } = await import(
-	pathToFileURL(path.join(root, 'src', 'resolve.js')).href
+	srcImport(srcDir, 'resolve.js')
 );
 const { isNativeAvailable } = await import(
-	pathToFileURL(path.join(root, 'src', 'native.js')).href
+	srcImport(srcDir, 'native.js')
 );
 
 // Redirect console.log to stderr so only JSON goes to stdout
@@ -181,7 +183,7 @@ console.error(`  native=${resolve.nativeBatchMs}ms js=${resolve.jsFallbackMs}ms`
 console.log = origLog;
 
 const result = {
-	version: pkg.version,
+	version,
 	date: new Date().toISOString().slice(0, 10),
 	files,
 	wasm: {
@@ -200,3 +202,5 @@ const result = {
 };
 
 console.log(JSON.stringify(result, null, 2));
+
+cleanup();

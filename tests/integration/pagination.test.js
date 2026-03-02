@@ -21,8 +21,27 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { initSchema } from '../../src/db.js';
 import { exportDOT, exportJSON, exportMermaid } from '../../src/export.js';
 import { listEntryPointsData } from '../../src/flow.js';
-import { MCP_DEFAULTS, MCP_MAX_LIMIT, paginate, paginateResult } from '../../src/paginate.js';
-import { listFunctionsData, queryNameData, rolesData, whereData } from '../../src/queries.js';
+import {
+  MCP_DEFAULTS,
+  MCP_MAX_LIMIT,
+  paginate,
+  paginateResult,
+  printNdjson,
+} from '../../src/paginate.js';
+import {
+  contextData,
+  explainData,
+  fileDepsData,
+  fnDepsData,
+  fnImpactData,
+  iterListFunctions,
+  iterRoles,
+  iterWhere,
+  listFunctionsData,
+  queryNameData,
+  rolesData,
+  whereData,
+} from '../../src/queries.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
@@ -293,6 +312,259 @@ describe('listEntryPointsData with pagination', () => {
     expect(paginated.entries).toHaveLength(Math.min(1, full.entries.length));
     if (full.entries.length > 1) {
       expect(paginated._pagination.hasMore).toBe(true);
+    }
+  });
+});
+
+// ─── fileDepsData with pagination ─────────────────────────────────────
+
+describe('fileDepsData with pagination', () => {
+  test('backward compat: no limit returns all', () => {
+    const data = fileDepsData('a.js', dbPath);
+    expect(data._pagination).toBeUndefined();
+    expect(data.results.length).toBeGreaterThan(0);
+  });
+
+  test('paginated results', () => {
+    const full = fileDepsData('', dbPath);
+    if (full.results.length > 1) {
+      const paginated = fileDepsData('', dbPath, { limit: 1 });
+      expect(paginated.results).toHaveLength(1);
+      expect(paginated._pagination).toBeDefined();
+      expect(paginated._pagination.hasMore).toBe(true);
+    }
+  });
+});
+
+// ─── fnDepsData with pagination ──────────────────────────────────────
+
+describe('fnDepsData with pagination', () => {
+  test('backward compat: no limit returns all', () => {
+    const data = fnDepsData('alpha', dbPath);
+    expect(data._pagination).toBeUndefined();
+    expect(data.results.length).toBeGreaterThan(0);
+  });
+
+  test('paginated results', () => {
+    const full = fnDepsData('a', dbPath);
+    if (full.results.length > 1) {
+      const paginated = fnDepsData('a', dbPath, { limit: 1 });
+      expect(paginated.results).toHaveLength(1);
+      expect(paginated._pagination).toBeDefined();
+      expect(paginated._pagination.hasMore).toBe(true);
+    }
+  });
+});
+
+// ─── fnImpactData with pagination ────────────────────────────────────
+
+describe('fnImpactData with pagination', () => {
+  test('backward compat: no limit returns all', () => {
+    const data = fnImpactData('alpha', dbPath);
+    expect(data._pagination).toBeUndefined();
+    expect(data.results.length).toBeGreaterThan(0);
+  });
+
+  test('paginated results', () => {
+    const full = fnImpactData('a', dbPath);
+    if (full.results.length > 1) {
+      const paginated = fnImpactData('a', dbPath, { limit: 1 });
+      expect(paginated.results).toHaveLength(1);
+      expect(paginated._pagination).toBeDefined();
+    }
+  });
+});
+
+// ─── contextData with pagination ─────────────────────────────────────
+
+describe('contextData with pagination', () => {
+  test('backward compat: no limit returns all', () => {
+    const data = contextData('alpha', dbPath);
+    expect(data._pagination).toBeUndefined();
+    expect(data.results.length).toBeGreaterThan(0);
+  });
+
+  test('paginated results', () => {
+    const full = contextData('a', dbPath);
+    if (full.results.length > 1) {
+      const paginated = contextData('a', dbPath, { limit: 1 });
+      expect(paginated.results).toHaveLength(1);
+      expect(paginated._pagination).toBeDefined();
+    }
+  });
+});
+
+// ─── explainData with pagination ─────────────────────────────────────
+
+describe('explainData with pagination', () => {
+  test('backward compat: no limit returns all', () => {
+    const data = explainData('a.js', dbPath);
+    expect(data._pagination).toBeUndefined();
+    expect(data.results.length).toBeGreaterThan(0);
+  });
+
+  test('paginated results', () => {
+    const full = explainData('', dbPath);
+    if (full.results.length > 1) {
+      const paginated = explainData('', dbPath, { limit: 1 });
+      expect(paginated.results).toHaveLength(1);
+      expect(paginated._pagination).toBeDefined();
+    }
+  });
+});
+
+// ─── MCP new defaults ────────────────────────────────────────────────
+
+describe('MCP new defaults', () => {
+  test('MCP_DEFAULTS has new pagination keys', () => {
+    expect(MCP_DEFAULTS.fn_deps).toBe(10);
+    expect(MCP_DEFAULTS.fn_impact).toBe(5);
+    expect(MCP_DEFAULTS.context).toBe(5);
+    expect(MCP_DEFAULTS.explain).toBe(10);
+    expect(MCP_DEFAULTS.file_deps).toBe(20);
+    expect(MCP_DEFAULTS.diff_impact).toBe(30);
+    expect(MCP_DEFAULTS.semantic_search).toBe(20);
+    expect(MCP_DEFAULTS.execution_flow).toBe(50);
+    expect(MCP_DEFAULTS.hotspots).toBe(20);
+    expect(MCP_DEFAULTS.co_changes).toBe(20);
+    expect(MCP_DEFAULTS.complexity).toBe(30);
+    expect(MCP_DEFAULTS.manifesto).toBe(50);
+    expect(MCP_DEFAULTS.communities).toBe(20);
+    expect(MCP_DEFAULTS.structure).toBe(30);
+  });
+});
+
+// ─── Iterator/Generator APIs ─────────────────────────────────────────
+
+describe('iterListFunctions', () => {
+  test('yields all functions matching listFunctionsData', () => {
+    const full = listFunctionsData(dbPath);
+    const iter = [...iterListFunctions(dbPath)];
+    expect(iter.length).toBe(full.functions.length);
+    for (const item of iter) {
+      expect(item).toHaveProperty('name');
+      expect(item).toHaveProperty('kind');
+      expect(item).toHaveProperty('file');
+      expect(item).toHaveProperty('line');
+    }
+  });
+
+  test('early break closes DB (no leak)', () => {
+    let count = 0;
+    for (const _item of iterListFunctions(dbPath)) {
+      count++;
+      if (count >= 2) break;
+    }
+    expect(count).toBe(2);
+    // If the DB leaked, subsequent operations would fail
+    const data = listFunctionsData(dbPath);
+    expect(data.functions.length).toBeGreaterThan(0);
+  });
+
+  test('noTests filtering works', () => {
+    const all = [...iterListFunctions(dbPath)];
+    const noTests = [...iterListFunctions(dbPath, { noTests: true })];
+    // Should not include test files (fixture has none, so counts equal)
+    expect(noTests.length).toBeLessThanOrEqual(all.length);
+  });
+});
+
+describe('iterRoles', () => {
+  test('yields all role-classified symbols', () => {
+    const full = rolesData(dbPath);
+    const iter = [...iterRoles(dbPath)];
+    expect(iter.length).toBe(full.count);
+    for (const item of iter) {
+      expect(item.role).toBeTruthy();
+    }
+  });
+
+  test('role filter works', () => {
+    const coreOnly = [...iterRoles(dbPath, { role: 'core' })];
+    for (const item of coreOnly) {
+      expect(item.role).toBe('core');
+    }
+  });
+
+  test('early break closes DB (no leak)', () => {
+    let count = 0;
+    for (const _item of iterRoles(dbPath)) {
+      count++;
+      if (count >= 1) break;
+    }
+    expect(count).toBe(1);
+    const data = rolesData(dbPath);
+    expect(data.count).toBeGreaterThan(0);
+  });
+});
+
+describe('iterWhere', () => {
+  test('yields matching symbols with uses', () => {
+    const iter = [...iterWhere('alpha', dbPath)];
+    expect(iter.length).toBeGreaterThan(0);
+    const alpha = iter.find((r) => r.name === 'alpha');
+    expect(alpha).toBeDefined();
+    expect(alpha).toHaveProperty('exported');
+    expect(alpha).toHaveProperty('uses');
+    expect(Array.isArray(alpha.uses)).toBe(true);
+  });
+
+  test('early break closes DB (no leak)', () => {
+    let count = 0;
+    for (const _item of iterWhere('a', dbPath)) {
+      count++;
+      if (count >= 1) break;
+    }
+    expect(count).toBe(1);
+    const data = whereData('alpha', dbPath);
+    expect(data.results.length).toBeGreaterThan(0);
+  });
+});
+
+// ─── printNdjson utility ─────────────────────────────────────────────
+
+describe('printNdjson', () => {
+  test('outputs JSON lines for array field', () => {
+    const logs = [];
+    const origLog = console.log;
+    console.log = (...args) => logs.push(args.join(' '));
+    try {
+      printNdjson({ items: [{ a: 1 }, { b: 2 }] }, 'items');
+      expect(logs).toHaveLength(2);
+      expect(JSON.parse(logs[0])).toEqual({ a: 1 });
+      expect(JSON.parse(logs[1])).toEqual({ b: 2 });
+    } finally {
+      console.log = origLog;
+    }
+  });
+
+  test('emits _meta when _pagination exists', () => {
+    const logs = [];
+    const origLog = console.log;
+    console.log = (...args) => logs.push(args.join(' '));
+    try {
+      printNdjson(
+        { items: [{ x: 1 }], _pagination: { total: 10, offset: 0, limit: 1, hasMore: true } },
+        'items',
+      );
+      expect(logs).toHaveLength(2);
+      const meta = JSON.parse(logs[0]);
+      expect(meta._meta).toBeDefined();
+      expect(meta._meta.total).toBe(10);
+    } finally {
+      console.log = origLog;
+    }
+  });
+
+  test('handles empty array', () => {
+    const logs = [];
+    const origLog = console.log;
+    console.log = (...args) => logs.push(args.join(' '));
+    try {
+      printNdjson({ items: [] }, 'items');
+      expect(logs).toHaveLength(0);
+    } finally {
+      console.log = origLog;
     }
   });
 });

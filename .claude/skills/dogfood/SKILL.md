@@ -160,7 +160,7 @@ Test that incremental rebuilds, full rebuilds, and cross-feature state remain co
 
 ## Phase 4b — Performance Benchmarks
 
-Run all four benchmark scripts from the codegraph source repo (not the temp install dir) and record results. These detect performance regressions between releases.
+Run all four benchmark scripts from the codegraph source repo and record results. These detect performance regressions between releases.
 
 | Benchmark | Script | What it measures | When it matters |
 |-----------|--------|-----------------|-----------------|
@@ -168,6 +168,25 @@ Run all four benchmark scripts from the codegraph source repo (not the temp inst
 | Incremental | `node scripts/incremental-benchmark.js` | Incremental build tiers, import resolution throughput | Always |
 | Query | `node scripts/query-benchmark.js` | Query depth scaling, diff-impact latency | Always |
 | Embedding | `node scripts/embedding-benchmark.js` | Search recall (Hit@1/3/5/10) across models | Always |
+
+### Pre-flight: verify native binary version
+
+**Before running any benchmarks**, confirm the native binary in the source repo matches the version being dogfooded. A stale binary will produce misleading results (e.g., the Rust engine may lack features added in the release, causing silent WASM fallback during the complexity phase).
+
+```bash
+# In the codegraph source repo — adjust the platform package name as needed:
+node -e "const r=require('module').createRequire(require('url').pathToFileURL(__filename).href); const pkg=r.resolve('@optave/codegraph-win32-x64-msvc/package.json'); const p=require(pkg); console.log('Native binary version:', p.version)"
+```
+
+If the version does **not** match `$ARGUMENTS`:
+1. Update `optionalDependencies` in `package.json` to pin all `@optave/codegraph-*` packages to `$ARGUMENTS`.
+2. Run `npm install` to fetch the correct binaries.
+3. Verify with `npx codegraph info` that the native engine loads at the correct version.
+4. Revert the `package.json` / `package-lock.json` changes after benchmarking (do not commit them on the fix branch).
+
+**Why this matters:** The native engine computes complexity metrics during the Rust parse phase. If the binary is from an older release that lacks this, the complexity phase silently falls back to WASM — inflating native complexity time by 50-100x and making native appear slower than WASM.
+
+### Running benchmarks
 
 1. Run all four from the codegraph source repo directory.
 2. Record the JSON output from each.
@@ -177,7 +196,8 @@ Run all four benchmark scripts from the codegraph source repo (not the temp inst
    - Query latency >2x slower → investigate
    - Embedding recall (Hit@5) drops by >2% → investigate
    - Incremental no-op >10ms → investigate
-5. Include a **Performance Benchmarks** section in the report with tables for each benchmark.
+5. **Sanity-check the complexity phase:** If native `complexityMs` is higher than WASM `complexityMs`, the native binary is likely stale — go back to the pre-flight step.
+6. Include a **Performance Benchmarks** section in the report with tables for each benchmark.
 
 **Note:** The native engine may not be available in the dev repo (no prebuilt binary in `node_modules`). Record WASM results at minimum. If native is available, record both.
 

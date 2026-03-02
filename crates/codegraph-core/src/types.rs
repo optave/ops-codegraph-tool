@@ -3,11 +3,56 @@ use serde::{Deserialize, Serialize};
 
 #[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HalsteadMetrics {
+    pub n1: u32,
+    pub n2: u32,
+    #[napi(js_name = "bigN1")]
+    pub big_n1: u32,
+    #[napi(js_name = "bigN2")]
+    pub big_n2: u32,
+    pub vocabulary: u32,
+    pub length: u32,
+    pub volume: f64,
+    pub difficulty: f64,
+    pub effort: f64,
+    pub bugs: f64,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocMetrics {
+    pub loc: u32,
+    pub sloc: u32,
+    #[napi(js_name = "commentLines")]
+    pub comment_lines: u32,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComplexityMetrics {
     pub cognitive: u32,
     pub cyclomatic: u32,
     #[napi(js_name = "maxNesting")]
     pub max_nesting: u32,
+    pub halstead: Option<HalsteadMetrics>,
+    pub loc: Option<LocMetrics>,
+    #[napi(js_name = "maintainabilityIndex")]
+    pub maintainability_index: Option<f64>,
+}
+
+impl ComplexityMetrics {
+    /// Construct a basic metrics result with only cognitive/cyclomatic/maxNesting.
+    /// Used by `compute_function_complexity` and existing tests.
+    pub fn basic(cognitive: u32, cyclomatic: u32, max_nesting: u32) -> Self {
+        Self {
+            cognitive,
+            cyclomatic,
+            max_nesting,
+            halstead: None,
+            loc: None,
+            maintainability_index: None,
+        }
+    }
 }
 
 #[napi(object)]

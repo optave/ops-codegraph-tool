@@ -26,10 +26,12 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { ISSUES, extractAgentOutput, validateResult } from './token-benchmark-issues.js';
+import { getBenchmarkVersion } from './bench-version.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const benchVersion = getBenchmarkVersion(pkg.version, root);
 
 // Redirect console.log to stderr so only JSON goes to stdout
 const origLog = console.log;
@@ -590,7 +592,7 @@ async function main() {
 	console.log = origLog;
 
 	const output = {
-		version: pkg.version,
+		version: benchVersion,
 		date: new Date().toISOString().slice(0, 10),
 		model: MODEL,
 		runsPerIssue: RUNS,

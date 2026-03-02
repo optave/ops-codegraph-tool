@@ -12,24 +12,24 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
+import { resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
-// Read version from package.json
-const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const { version, srcDir, cleanup } = await resolveBenchmarkSource();
 
 const dbPath = path.join(root, '.codegraph', 'graph.db');
 
 // Import programmatic API (use file:// URLs for Windows compatibility)
-const { buildGraph } = await import(pathToFileURL(path.join(root, 'src', 'builder.js')).href);
+const { buildGraph } = await import(srcImport(srcDir, 'builder.js'));
 const { fnDepsData, fnImpactData, pathData, rolesData, statsData } = await import(
-	pathToFileURL(path.join(root, 'src', 'queries.js')).href
+	srcImport(srcDir, 'queries.js')
 );
 const { isNativeAvailable } = await import(
-	pathToFileURL(path.join(root, 'src', 'native.js')).href
+	srcImport(srcDir, 'native.js')
 );
 
 const INCREMENTAL_RUNS = 3;
@@ -133,10 +133,10 @@ async function benchmarkEngine(engine) {
 	}
 
 	const queries = {
-		fnDepsMs: benchQuery(fnDepsData, targets.hub, dbPath, { depth: 3, noTests: true }),
-		fnImpactMs: benchQuery(fnImpactData, targets.hub, dbPath, { depth: 3, noTests: true }),
-		pathMs: benchQuery(pathData, targets.hub, targets.leaf, dbPath, { noTests: true }),
-		rolesMs: benchQuery(rolesData, dbPath, { noTests: true }),
+		fnDepsMs: fnDepsData ? benchQuery(fnDepsData, targets.hub, dbPath, { depth: 3, noTests: true }) : null,
+		fnImpactMs: fnImpactData ? benchQuery(fnImpactData, targets.hub, dbPath, { depth: 3, noTests: true }) : null,
+		pathMs: pathData ? benchQuery(pathData, targets.hub, targets.leaf, dbPath, { noTests: true }) : null,
+		rolesMs: rolesData ? benchQuery(rolesData, dbPath, { noTests: true }) : null,
 	};
 
 	return {
@@ -173,7 +173,7 @@ if (isNativeAvailable()) {
 console.log = origLog;
 
 const result = {
-	version: pkg.version,
+	version,
 	date: new Date().toISOString().slice(0, 10),
 	files: wasm.files,
 	wasm: {
@@ -205,3 +205,5 @@ const result = {
 };
 
 console.log(JSON.stringify(result, null, 2));
+
+cleanup();

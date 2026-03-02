@@ -137,6 +137,9 @@ function normalizeNativeSymbols(result) {
             cognitive: d.complexity.cognitive,
             cyclomatic: d.complexity.cyclomatic,
             maxNesting: d.complexity.maxNesting,
+            halstead: d.complexity.halstead ?? null,
+            loc: d.complexity.loc ?? null,
+            maintainabilityIndex: d.complexity.maintainabilityIndex ?? null,
           }
         : null,
     })),

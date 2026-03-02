@@ -1,5 +1,5 @@
 use tree_sitter::{Node, Tree};
-use crate::complexity::{compute_function_complexity, RUBY_RULES};
+use crate::complexity::compute_all_metrics;
 use crate::types::*;
 use super::helpers::*;
 use super::SymbolExtractor;
@@ -77,7 +77,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
-                    complexity: Some(compute_function_complexity(node, &RUBY_RULES)),
+                    complexity: compute_all_metrics(node, source, "ruby"),
                 });
             }
         }
@@ -96,7 +96,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
-                    complexity: Some(compute_function_complexity(node, &RUBY_RULES)),
+                    complexity: compute_all_metrics(node, source, "ruby"),
                 });
             }
         }

@@ -50,6 +50,7 @@ const BASE_TOOLS = [
       properties: {
         file: { type: 'string', description: 'File path (partial match supported)' },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
       required: ['file'],
     },
@@ -62,6 +63,7 @@ const BASE_TOOLS = [
       properties: {
         file: { type: 'string', description: 'File path to analyze' },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
       required: ['file'],
     },
@@ -103,6 +105,7 @@ const BASE_TOOLS = [
           description: 'Filter to a specific symbol kind',
         },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
       required: ['name'],
     },
@@ -126,6 +129,7 @@ const BASE_TOOLS = [
           description: 'Filter to a specific symbol kind',
         },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
       required: ['name'],
     },
@@ -190,6 +194,7 @@ const BASE_TOOLS = [
           description: 'Include test file source code',
           default: false,
         },
+        ...PAGINATION_PROPS,
       },
       required: ['name'],
     },
@@ -203,6 +208,7 @@ const BASE_TOOLS = [
       properties: {
         target: { type: 'string', description: 'File path or function name' },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
       required: ['target'],
     },
@@ -241,19 +247,27 @@ const BASE_TOOLS = [
           enum: ['json', 'mermaid'],
           description: 'Output format (default: json)',
         },
+        ...PAGINATION_PROPS,
       },
     },
   },
   {
     name: 'semantic_search',
     description:
-      'Search code symbols by meaning using embeddings (requires prior `codegraph embed`)',
+      'Search code symbols by meaning using embeddings and/or keyword matching (requires prior `codegraph embed`). Default hybrid mode combines BM25 keyword + semantic search for best results.',
     inputSchema: {
       type: 'object',
       properties: {
         query: { type: 'string', description: 'Natural language search query' },
         limit: { type: 'number', description: 'Max results to return', default: 15 },
         min_score: { type: 'number', description: 'Minimum similarity score (0-1)', default: 0.2 },
+        mode: {
+          type: 'string',
+          enum: ['hybrid', 'semantic', 'keyword'],
+          description:
+            'Search mode: hybrid (BM25 + semantic, default), semantic (embeddings only), keyword (BM25 only)',
+        },
+        ...PAGINATION_PROPS,
       },
       required: ['query'],
     },
@@ -312,6 +326,7 @@ const BASE_TOOLS = [
           description: 'Return all files without limit',
           default: false,
         },
+        ...PAGINATION_PROPS,
       },
     },
   },
@@ -352,6 +367,7 @@ const BASE_TOOLS = [
         },
         limit: { type: 'number', description: 'Number of results to return', default: 10 },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        offset: { type: 'number', description: 'Skip this many results (pagination, default: 0)' },
       },
     },
   },
@@ -373,6 +389,7 @@ const BASE_TOOLS = [
           default: 0.3,
         },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        offset: { type: 'number', description: 'Skip this many results (pagination, default: 0)' },
       },
     },
   },
@@ -399,6 +416,7 @@ const BASE_TOOLS = [
           description: 'Filter to a specific symbol kind',
         },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
       required: ['name'],
     },
@@ -446,6 +464,7 @@ const BASE_TOOLS = [
           type: 'string',
           description: 'Filter by symbol kind (function, method, class, etc.)',
         },
+        offset: { type: 'number', description: 'Skip this many results (pagination, default: 0)' },
       },
     },
   },
@@ -462,6 +481,7 @@ const BASE_TOOLS = [
           type: 'string',
           description: 'Filter by symbol kind (function, method, class, etc.)',
         },
+        ...PAGINATION_PROPS,
       },
     },
   },
@@ -488,7 +508,50 @@ const BASE_TOOLS = [
           default: false,
         },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
+    },
+  },
+  {
+    name: 'code_owners',
+    description:
+      'Show CODEOWNERS mapping for files and functions. Shows ownership coverage, per-owner breakdown, and cross-owner boundary edges.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', description: 'Scope to a specific file (partial match)' },
+        owner: { type: 'string', description: 'Filter to a specific owner (e.g. @team-name)' },
+        boundary: {
+          type: 'boolean',
+          description: 'Show cross-owner boundary edges',
+          default: false,
+        },
+        kind: {
+          type: 'string',
+          description: 'Filter by symbol kind (function, method, class, etc.)',
+        },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+      },
+    },
+  },
+  {
+    name: 'branch_compare',
+    description:
+      'Compare code structure between two git refs (branches, tags, commits). Shows added/removed/changed symbols and transitive caller impact using temporary git worktrees.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        base: { type: 'string', description: 'Base git ref (branch, tag, or commit SHA)' },
+        target: { type: 'string', description: 'Target git ref to compare against base' },
+        depth: { type: 'number', description: 'Max transitive caller depth', default: 3 },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        format: {
+          type: 'string',
+          enum: ['json', 'mermaid'],
+          description: 'Output format (default: json)',
+        },
+      },
+      required: ['base', 'target'],
     },
   },
 ];
@@ -623,10 +686,18 @@ export async function startMCPServer(customDbPath, options = {}) {
           });
           break;
         case 'file_deps':
-          result = fileDepsData(args.file, dbPath, { noTests: args.no_tests });
+          result = fileDepsData(args.file, dbPath, {
+            noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.file_deps, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
+          });
           break;
         case 'impact_analysis':
-          result = impactAnalysisData(args.file, dbPath, { noTests: args.no_tests });
+          result = impactAnalysisData(args.file, dbPath, {
+            noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.impact_analysis, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
+          });
           break;
         case 'find_cycles': {
           const db = new Database(findDbPath(dbPath), { readonly: true });
@@ -644,6 +715,8 @@ export async function startMCPServer(customDbPath, options = {}) {
             file: args.file,
             kind: args.kind,
             noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.fn_deps, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
           });
           break;
         case 'fn_impact':
@@ -652,6 +725,8 @@ export async function startMCPServer(customDbPath, options = {}) {
             file: args.file,
             kind: args.kind,
             noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.fn_impact, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
           });
           break;
         case 'symbol_path':
@@ -673,10 +748,16 @@ export async function startMCPServer(customDbPath, options = {}) {
             noSource: args.no_source,
             noTests: args.no_tests,
             includeTests: args.include_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.context, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
           });
           break;
         case 'explain':
-          result = explainData(args.target, dbPath, { noTests: args.no_tests });
+          result = explainData(args.target, dbPath, {
+            noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.explain, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
+          });
           break;
         case 'where':
           result = whereData(args.target, dbPath, {
@@ -700,22 +781,65 @@ export async function startMCPServer(customDbPath, options = {}) {
               ref: args.ref,
               depth: args.depth,
               noTests: args.no_tests,
+              limit: Math.min(args.limit ?? MCP_DEFAULTS.diff_impact, MCP_MAX_LIMIT),
+              offset: args.offset ?? 0,
             });
           }
           break;
         case 'semantic_search': {
-          const { searchData } = await import('./embedder.js');
-          result = await searchData(args.query, dbPath, {
-            limit: args.limit,
+          const mode = args.mode || 'hybrid';
+          const searchOpts = {
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.semantic_search, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
             minScore: args.min_score,
-          });
-          if (result === null) {
-            return {
-              content: [
-                { type: 'text', text: 'Semantic search unavailable. Run `codegraph embed` first.' },
-              ],
-              isError: true,
-            };
+          };
+
+          if (mode === 'keyword') {
+            const { ftsSearchData } = await import('./embedder.js');
+            result = ftsSearchData(args.query, dbPath, searchOpts);
+            if (result === null) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: 'No FTS5 index found. Run `codegraph embed` to build the keyword index.',
+                  },
+                ],
+                isError: true,
+              };
+            }
+          } else if (mode === 'semantic') {
+            const { searchData } = await import('./embedder.js');
+            result = await searchData(args.query, dbPath, searchOpts);
+            if (result === null) {
+              return {
+                content: [
+                  {
+                    type: 'text',
+                    text: 'Semantic search unavailable. Run `codegraph embed` first.',
+                  },
+                ],
+                isError: true,
+              };
+            }
+          } else {
+            // hybrid (default) — falls back to semantic if no FTS5
+            const { hybridSearchData, searchData } = await import('./embedder.js');
+            result = await hybridSearchData(args.query, dbPath, searchOpts);
+            if (result === null) {
+              result = await searchData(args.query, dbPath, searchOpts);
+              if (result === null) {
+                return {
+                  content: [
+                    {
+                      type: 'text',
+                      text: 'Semantic search unavailable. Run `codegraph embed` first.',
+                    },
+                  ],
+                  isError: true,
+                };
+              }
+            }
           }
           break;
         }
@@ -779,6 +903,8 @@ export async function startMCPServer(customDbPath, options = {}) {
             depth: args.depth,
             sort: args.sort,
             full: args.full,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.structure, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
           });
           break;
         }
@@ -787,7 +913,8 @@ export async function startMCPServer(customDbPath, options = {}) {
           result = hotspotsData(dbPath, {
             metric: args.metric,
             level: args.level,
-            limit: args.limit,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.hotspots, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
             noTests: args.no_tests,
           });
           break;
@@ -796,12 +923,14 @@ export async function startMCPServer(customDbPath, options = {}) {
           const { coChangeData, coChangeTopData } = await import('./cochange.js');
           result = args.file
             ? coChangeData(args.file, dbPath, {
-                limit: args.limit,
+                limit: Math.min(args.limit ?? MCP_DEFAULTS.co_changes, MCP_MAX_LIMIT),
+                offset: args.offset ?? 0,
                 minJaccard: args.min_jaccard,
                 noTests: args.no_tests,
               })
             : coChangeTopData(dbPath, {
-                limit: args.limit,
+                limit: Math.min(args.limit ?? MCP_DEFAULTS.co_changes, MCP_MAX_LIMIT),
+                offset: args.offset ?? 0,
                 minJaccard: args.min_jaccard,
                 noTests: args.no_tests,
               });
@@ -814,6 +943,8 @@ export async function startMCPServer(customDbPath, options = {}) {
             file: args.file,
             kind: args.kind,
             noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.execution_flow, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
           });
           break;
         }
@@ -831,7 +962,8 @@ export async function startMCPServer(customDbPath, options = {}) {
           result = complexityData(dbPath, {
             target: args.name,
             file: args.file,
-            limit: args.limit,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.complexity, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
             sort: args.sort,
             aboveThreshold: args.above_threshold,
             health: args.health,
@@ -846,6 +978,8 @@ export async function startMCPServer(customDbPath, options = {}) {
             file: args.file,
             noTests: args.no_tests,
             kind: args.kind,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.manifesto, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
           });
           break;
         }
@@ -856,7 +990,29 @@ export async function startMCPServer(customDbPath, options = {}) {
             resolution: args.resolution,
             drift: args.drift,
             noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.communities, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
           });
+          break;
+        }
+        case 'code_owners': {
+          const { ownersData } = await import('./owners.js');
+          result = ownersData(dbPath, {
+            file: args.file,
+            owner: args.owner,
+            boundary: args.boundary,
+            kind: args.kind,
+            noTests: args.no_tests,
+          });
+          break;
+        }
+        case 'branch_compare': {
+          const { branchCompareData, branchCompareMermaid } = await import('./branch-compare.js');
+          const bcData = await branchCompareData(args.base, args.target, {
+            depth: args.depth,
+            noTests: args.no_tests,
+          });
+          result = args.format === 'mermaid' ? branchCompareMermaid(bcData) : bcData;
           break;
         }
         case 'list_repos': {

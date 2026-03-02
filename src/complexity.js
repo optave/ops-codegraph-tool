@@ -3,6 +3,7 @@ import path from 'node:path';
 import { loadConfig } from './config.js';
 import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
+import { paginateResult, printNdjson } from './paginate.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
 import { isTestFile } from './queries.js';
 
@@ -1348,6 +1349,226 @@ export function computeFunctionComplexity(functionNode, language) {
   return { cognitive, cyclomatic, maxNesting };
 }
 
+// ─── Merged Single-Pass Computation ───────────────────────────────────────
+
+/**
+ * Compute all metrics (complexity + Halstead + LOC + MI) in a single DFS walk.
+ * Merges computeFunctionComplexity and computeHalsteadMetrics into one tree
+ * traversal, avoiding two separate DFS walks per function node at build time.
+ * LOC is text-based (not tree-based) and computed separately (very cheap).
+ *
+ * @param {object} functionNode - tree-sitter node for the function
+ * @param {string} langId - Language ID (e.g. 'javascript', 'python')
+ * @returns {{ cognitive: number, cyclomatic: number, maxNesting: number, halstead: object|null, loc: object, mi: number } | null}
+ */
+export function computeAllMetrics(functionNode, langId) {
+  const cRules = COMPLEXITY_RULES.get(langId);
+  if (!cRules) return null;
+  const hRules = HALSTEAD_RULES.get(langId);
+
+  // ── Complexity state ──
+  let cognitive = 0;
+  let cyclomatic = 1; // McCabe starts at 1
+  let maxNesting = 0;
+
+  // ── Halstead state ──
+  const operators = hRules ? new Map() : null;
+  const operands = hRules ? new Map() : null;
+
+  function walk(node, nestingLevel, isTopFunction, halsteadSkip) {
+    if (!node) return;
+
+    const type = node.type;
+
+    // ── Halstead classification ──
+    // Propagate skip through type-annotation subtrees (e.g. TS generics, Java type params)
+    const skipH = halsteadSkip || (hRules ? hRules.skipTypes.has(type) : false);
+    if (hRules && !skipH) {
+      // Compound operators (non-leaf): count node type as operator
+      if (hRules.compoundOperators.has(type)) {
+        operators.set(type, (operators.get(type) || 0) + 1);
+      }
+      // Leaf nodes: classify as operator or operand
+      if (node.childCount === 0) {
+        if (hRules.operatorLeafTypes.has(type)) {
+          operators.set(type, (operators.get(type) || 0) + 1);
+        } else if (hRules.operandLeafTypes.has(type)) {
+          const text = node.text;
+          operands.set(text, (operands.get(text) || 0) + 1);
+        }
+      }
+    }
+
+    // ── Complexity: track nesting depth ──
+    if (nestingLevel > maxNesting) maxNesting = nestingLevel;
+
+    // Handle logical operators in binary expressions
+    if (type === cRules.logicalNodeType) {
+      const op = node.child(1)?.type;
+      if (op && cRules.logicalOperators.has(op)) {
+        cyclomatic++;
+        const parent = node.parent;
+        let sameSequence = false;
+        if (parent && parent.type === cRules.logicalNodeType) {
+          const parentOp = parent.child(1)?.type;
+          if (parentOp === op) sameSequence = true;
+        }
+        if (!sameSequence) cognitive++;
+        for (let i = 0; i < node.childCount; i++) {
+          walk(node.child(i), nestingLevel, false, skipH);
+        }
+        return;
+      }
+    }
+
+    // Handle optional chaining (cyclomatic only)
+    if (type === cRules.optionalChainType) {
+      cyclomatic++;
+    }
+
+    // Handle branch/control flow nodes (skip keyword leaf tokens like Ruby's `if`)
+    if (cRules.branchNodes.has(type) && node.childCount > 0) {
+      // Pattern A: else clause wraps if (JS/C#/Rust)
+      if (cRules.elseNodeType && type === cRules.elseNodeType) {
+        const firstChild = node.namedChild(0);
+        if (firstChild && firstChild.type === cRules.ifNodeType) {
+          for (let i = 0; i < node.childCount; i++) {
+            walk(node.child(i), nestingLevel, false, skipH);
+          }
+          return;
+        }
+        cognitive++;
+        for (let i = 0; i < node.childCount; i++) {
+          walk(node.child(i), nestingLevel, false, skipH);
+        }
+        return;
+      }
+
+      // Pattern B: explicit elif node (Python/Ruby/PHP)
+      if (cRules.elifNodeType && type === cRules.elifNodeType) {
+        cognitive++;
+        cyclomatic++;
+        for (let i = 0; i < node.childCount; i++) {
+          walk(node.child(i), nestingLevel, false, skipH);
+        }
+        return;
+      }
+
+      // Detect else-if via Pattern A or C
+      let isElseIf = false;
+      if (type === cRules.ifNodeType) {
+        if (cRules.elseViaAlternative) {
+          isElseIf =
+            node.parent?.type === cRules.ifNodeType &&
+            node.parent.childForFieldName('alternative')?.id === node.id;
+        } else if (cRules.elseNodeType) {
+          isElseIf = node.parent?.type === cRules.elseNodeType;
+        }
+      }
+
+      if (isElseIf) {
+        cognitive++;
+        cyclomatic++;
+        for (let i = 0; i < node.childCount; i++) {
+          walk(node.child(i), nestingLevel, false, skipH);
+        }
+        return;
+      }
+
+      // Regular branch node
+      cognitive += 1 + nestingLevel;
+      cyclomatic++;
+
+      // Switch-like nodes don't add cyclomatic themselves (cases do)
+      if (cRules.switchLikeNodes?.has(type)) {
+        cyclomatic--;
+      }
+
+      if (cRules.nestingNodes.has(type)) {
+        for (let i = 0; i < node.childCount; i++) {
+          walk(node.child(i), nestingLevel + 1, false, skipH);
+        }
+        return;
+      }
+    }
+
+    // Pattern C plain else: block that is the alternative of an if_statement (Go/Java)
+    if (
+      cRules.elseViaAlternative &&
+      type !== cRules.ifNodeType &&
+      node.parent?.type === cRules.ifNodeType &&
+      node.parent.childForFieldName('alternative')?.id === node.id
+    ) {
+      cognitive++;
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i), nestingLevel, false, skipH);
+      }
+      return;
+    }
+
+    // Handle case nodes (cyclomatic only, skip keyword leaves)
+    if (cRules.caseNodes.has(type) && node.childCount > 0) {
+      cyclomatic++;
+    }
+
+    // Handle nested function definitions (increase nesting)
+    if (!isTopFunction && cRules.functionNodes.has(type)) {
+      for (let i = 0; i < node.childCount; i++) {
+        walk(node.child(i), nestingLevel + 1, false, skipH);
+      }
+      return;
+    }
+
+    // Walk children
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i), nestingLevel, false, skipH);
+    }
+  }
+
+  walk(functionNode, 0, true, false);
+
+  // ── Compute Halstead derived metrics ──
+  let halstead = null;
+  if (hRules && operators && operands) {
+    const n1 = operators.size;
+    const n2 = operands.size;
+    let bigN1 = 0;
+    for (const c of operators.values()) bigN1 += c;
+    let bigN2 = 0;
+    for (const c of operands.values()) bigN2 += c;
+
+    const vocabulary = n1 + n2;
+    const length = bigN1 + bigN2;
+    const volume = vocabulary > 0 ? length * Math.log2(vocabulary) : 0;
+    const difficulty = n2 > 0 ? (n1 / 2) * (bigN2 / n2) : 0;
+    const effort = difficulty * volume;
+    const bugs = volume / 3000;
+
+    halstead = {
+      n1,
+      n2,
+      bigN1,
+      bigN2,
+      vocabulary,
+      length,
+      volume: +volume.toFixed(2),
+      difficulty: +difficulty.toFixed(2),
+      effort: +effort.toFixed(2),
+      bugs: +bugs.toFixed(4),
+    };
+  }
+
+  // ── LOC metrics (text-based, cheap) ──
+  const loc = computeLOCMetrics(functionNode, langId);
+
+  // ── Maintainability Index ──
+  const volume = halstead ? halstead.volume : 0;
+  const commentRatio = loc.loc > 0 ? loc.commentLines / loc.loc : 0;
+  const mi = computeMaintainabilityIndex(volume, cyclomatic, loc.sloc, commentRatio);
+
+  return { cognitive, cyclomatic, maxNesting, halstead, loc, mi };
+}
+
 // ─── Build-Time: Compute Metrics for Changed Files ────────────────────────
 
 /**
@@ -1486,25 +1707,27 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
         if (def.complexity) {
           const row = getNodeId.get(def.name, relPath, def.line);
           if (!row) continue;
+          const ch = def.complexity.halstead;
+          const cl = def.complexity.loc;
           upsert.run(
             row.id,
             def.complexity.cognitive,
             def.complexity.cyclomatic,
             def.complexity.maxNesting ?? 0,
-            0,
-            0,
-            0, // loc, sloc, commentLines
-            0,
-            0,
-            0,
-            0, // halstead n1, n2, bigN1, bigN2
-            0,
-            0,
-            0, // vocabulary, length, volume
-            0,
-            0,
-            0, // difficulty, effort, bugs
-            0, // maintainabilityIndex
+            cl ? cl.loc : 0,
+            cl ? cl.sloc : 0,
+            cl ? cl.commentLines : 0,
+            ch ? ch.n1 : 0,
+            ch ? ch.n2 : 0,
+            ch ? ch.bigN1 : 0,
+            ch ? ch.bigN2 : 0,
+            ch ? ch.vocabulary : 0,
+            ch ? ch.length : 0,
+            ch ? ch.volume : 0,
+            ch ? ch.difficulty : 0,
+            ch ? ch.effort : 0,
+            ch ? ch.bugs : 0,
+            def.complexity.maintainabilityIndex ?? 0,
           );
           analyzed++;
           continue;
@@ -1516,38 +1739,33 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
         const funcNode = findFunctionNode(tree.rootNode, def.line, def.endLine, rules);
         if (!funcNode) continue;
 
-        const result = computeFunctionComplexity(funcNode, langId);
-        if (!result) continue;
-
-        const halstead = computeHalsteadMetrics(funcNode, langId);
-        const loc = computeLOCMetrics(funcNode, langId);
-
-        const volume = halstead ? halstead.volume : 0;
-        const commentRatio = loc.loc > 0 ? loc.commentLines / loc.loc : 0;
-        const mi = computeMaintainabilityIndex(volume, result.cyclomatic, loc.sloc, commentRatio);
+        // Single-pass: complexity + Halstead + LOC + MI in one DFS walk
+        const metrics = computeAllMetrics(funcNode, langId);
+        if (!metrics) continue;
 
         const row = getNodeId.get(def.name, relPath, def.line);
         if (!row) continue;
 
+        const h = metrics.halstead;
         upsert.run(
           row.id,
-          result.cognitive,
-          result.cyclomatic,
-          result.maxNesting,
-          loc.loc,
-          loc.sloc,
-          loc.commentLines,
-          halstead ? halstead.n1 : 0,
-          halstead ? halstead.n2 : 0,
-          halstead ? halstead.bigN1 : 0,
-          halstead ? halstead.bigN2 : 0,
-          halstead ? halstead.vocabulary : 0,
-          halstead ? halstead.length : 0,
-          volume,
-          halstead ? halstead.difficulty : 0,
-          halstead ? halstead.effort : 0,
-          halstead ? halstead.bugs : 0,
-          mi,
+          metrics.cognitive,
+          metrics.cyclomatic,
+          metrics.maxNesting,
+          metrics.loc.loc,
+          metrics.loc.sloc,
+          metrics.loc.commentLines,
+          h ? h.n1 : 0,
+          h ? h.n2 : 0,
+          h ? h.bigN1 : 0,
+          h ? h.bigN2 : 0,
+          h ? h.vocabulary : 0,
+          h ? h.length : 0,
+          h ? h.volume : 0,
+          h ? h.difficulty : 0,
+          h ? h.effort : 0,
+          h ? h.bugs : 0,
+          metrics.mi,
         );
         analyzed++;
       }
@@ -1670,10 +1888,9 @@ export function complexityData(customDbPath, opts = {}) {
        FROM function_complexity fc
        JOIN nodes n ON fc.node_id = n.id
        ${where} ${having}
-       ORDER BY ${orderBy}
-       LIMIT ?`,
+       ORDER BY ${orderBy}`,
       )
-      .all(...params, limit);
+      .all(...params);
   } catch {
     db.close();
     return { functions: [], summary: null, thresholds };
@@ -1763,7 +1980,88 @@ export function complexityData(customDbPath, opts = {}) {
   }
 
   db.close();
-  return { functions, summary, thresholds };
+  const base = { functions, summary, thresholds };
+  return paginateResult(base, 'functions', { limit: opts.limit, offset: opts.offset });
+}
+
+/**
+ * Generator: stream complexity rows one-by-one using .iterate() for memory efficiency.
+ * @param {string} [customDbPath]
+ * @param {object} [opts]
+ * @param {boolean} [opts.noTests]
+ * @param {string} [opts.file]
+ * @param {string} [opts.target]
+ * @param {string} [opts.kind]
+ * @param {string} [opts.sort]
+ * @yields {{ name: string, kind: string, file: string, line: number, cognitive: number, cyclomatic: number, maxNesting: number, loc: number, sloc: number }}
+ */
+export function* iterComplexity(customDbPath, opts = {}) {
+  const db = openReadonlyOrFail(customDbPath);
+  try {
+    const noTests = opts.noTests || false;
+    const sort = opts.sort || 'cognitive';
+
+    let where = "WHERE n.kind IN ('function','method')";
+    const params = [];
+
+    if (noTests) {
+      where += ` AND n.file NOT LIKE '%.test.%'
+         AND n.file NOT LIKE '%.spec.%'
+         AND n.file NOT LIKE '%__test__%'
+         AND n.file NOT LIKE '%__tests__%'
+         AND n.file NOT LIKE '%.stories.%'`;
+    }
+    if (opts.target) {
+      where += ' AND n.name LIKE ?';
+      params.push(`%${opts.target}%`);
+    }
+    if (opts.file) {
+      where += ' AND n.file LIKE ?';
+      params.push(`%${opts.file}%`);
+    }
+    if (opts.kind) {
+      where += ' AND n.kind = ?';
+      params.push(opts.kind);
+    }
+
+    const orderMap = {
+      cognitive: 'fc.cognitive DESC',
+      cyclomatic: 'fc.cyclomatic DESC',
+      nesting: 'fc.max_nesting DESC',
+      mi: 'fc.maintainability_index ASC',
+      volume: 'fc.halstead_volume DESC',
+      effort: 'fc.halstead_effort DESC',
+      bugs: 'fc.halstead_bugs DESC',
+      loc: 'fc.loc DESC',
+    };
+    const orderBy = orderMap[sort] || 'fc.cognitive DESC';
+
+    const stmt = db.prepare(
+      `SELECT n.name, n.kind, n.file, n.line, n.end_line,
+              fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.loc, fc.sloc
+       FROM function_complexity fc
+       JOIN nodes n ON fc.node_id = n.id
+       ${where}
+       ORDER BY ${orderBy}`,
+    );
+    for (const r of stmt.iterate(...params)) {
+      if (noTests && isTestFile(r.file)) continue;
+      yield {
+        name: r.name,
+        kind: r.kind,
+        file: r.file,
+        line: r.line,
+        endLine: r.end_line || null,
+        cognitive: r.cognitive,
+        cyclomatic: r.cyclomatic,
+        maxNesting: r.max_nesting,
+        loc: r.loc || 0,
+        sloc: r.sloc || 0,
+      };
+    }
+  } finally {
+    db.close();
+  }
 }
 
 /**
@@ -1772,6 +2070,10 @@ export function complexityData(customDbPath, opts = {}) {
 export function complexity(customDbPath, opts = {}) {
   const data = complexityData(customDbPath, opts);
 
+  if (opts.ndjson) {
+    printNdjson(data, 'functions');
+    return;
+  }
   if (opts.json) {
     console.log(JSON.stringify(data, null, 2));
     return;

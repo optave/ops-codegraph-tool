@@ -1,5 +1,5 @@
 use tree_sitter::{Node, Tree};
-use crate::complexity::{compute_function_complexity, JS_TS_RULES};
+use crate::complexity::compute_all_metrics;
 use crate::types::*;
 use super::helpers::*;
 use super::SymbolExtractor;
@@ -24,7 +24,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
-                    complexity: Some(compute_function_complexity(node, &JS_TS_RULES)),
+                    complexity: compute_all_metrics(node, source, "javascript"),
                 });
             }
         }
@@ -80,7 +80,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
-                    complexity: Some(compute_function_complexity(node, &JS_TS_RULES)),
+                    complexity: compute_all_metrics(node, source, "javascript"),
                 });
             }
         }
@@ -138,7 +138,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     line: start_line(node),
                                     end_line: Some(end_line(&value_n)),
                                     decorators: None,
-                                    complexity: Some(compute_function_complexity(&value_n, &JS_TS_RULES)),
+                                    complexity: compute_all_metrics(&value_n, source, "javascript"),
                                 });
                             }
                         }
@@ -562,7 +562,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             line: start_line(&cb),
             end_line: Some(end_line(&cb)),
             decorators: None,
-            complexity: Some(compute_function_complexity(&cb, &JS_TS_RULES)),
+            complexity: compute_all_metrics(&cb, source, "javascript"),
         });
     }
 
@@ -579,7 +579,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             line: start_line(&cb),
             end_line: Some(end_line(&cb)),
             decorators: None,
-            complexity: Some(compute_function_complexity(&cb, &JS_TS_RULES)),
+            complexity: compute_all_metrics(&cb, source, "javascript"),
         });
     }
 
@@ -593,7 +593,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             line: start_line(&cb),
             end_line: Some(end_line(&cb)),
             decorators: None,
-            complexity: Some(compute_function_complexity(&cb, &JS_TS_RULES)),
+            complexity: compute_all_metrics(&cb, source, "javascript"),
         });
     }
 

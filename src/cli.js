@@ -16,6 +16,7 @@ import {
 } from './embedder.js';
 import { exportDOT, exportJSON, exportMermaid } from './export.js';
 import { setVerbose } from './logger.js';
+import { printNdjson } from './paginate.js';
 import {
   ALL_SYMBOL_KINDS,
   context,
@@ -40,6 +41,7 @@ import {
   registerRepo,
   unregisterRepo,
 } from './registry.js';
+import { snapshotDelete, snapshotList, snapshotRestore, snapshotSave } from './snapshot.js';
 import { checkForUpdates, printUpdateNotification } from './update-check.js';
 import { watchProject } from './watcher.js';
 
@@ -83,6 +85,12 @@ function resolveNoTests(opts) {
   return config.query?.excludeTests || false;
 }
 
+function formatSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 program
   .command('build [dir]')
   .description('Parse repo and build graph in .codegraph/graph.db')
@@ -120,8 +128,17 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((file, opts) => {
-    impactAnalysis(file, opts.db, { noTests: resolveNoTests(opts), json: opts.json });
+    impactAnalysis(file, opts.db, {
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
+    });
   });
 
 program
@@ -157,8 +174,17 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((file, opts) => {
-    fileDeps(file, opts.db, { noTests: resolveNoTests(opts), json: opts.json });
+    fileDeps(file, opts.db, {
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
+    });
   });
 
 program
@@ -171,6 +197,9 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
     if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
@@ -182,6 +211,9 @@ program
       kind: opts.kind,
       noTests: resolveNoTests(opts),
       json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -195,6 +227,9 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
     if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
@@ -206,6 +241,9 @@ program
       kind: opts.kind,
       noTests: resolveNoTests(opts),
       json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -251,6 +289,9 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
     if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
@@ -264,6 +305,9 @@ program
       noTests: resolveNoTests(opts),
       includeTests: opts.withTestSource,
       json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -275,11 +319,17 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((target, opts) => {
     explain(target, opts.db, {
       depth: parseInt(opts.depth, 10),
       noTests: resolveNoTests(opts),
       json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -320,6 +370,9 @@ program
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .option('-f, --format <format>', 'Output format: text, mermaid, json', 'text')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action((ref, opts) => {
     diffImpact(opts.db, {
       ref,
@@ -328,6 +381,9 @@ program
       noTests: resolveNoTests(opts),
       json: opts.json,
       format: opts.format,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -468,6 +524,7 @@ registry
   .description('Remove stale registry entries (missing directories or idle beyond TTL)')
   .option('--ttl <days>', 'Days of inactivity before pruning (default: 30)', '30')
   .option('--exclude <names>', 'Comma-separated repo names to preserve from pruning')
+  .option('--dry-run', 'Show what would be pruned without removing anything')
   .action((opts) => {
     const excludeNames = opts.exclude
       ? opts.exclude
@@ -475,15 +532,100 @@ registry
           .map((s) => s.trim())
           .filter((s) => s.length > 0)
       : [];
-    const pruned = pruneRegistry(undefined, parseInt(opts.ttl, 10), excludeNames);
+    const dryRun = !!opts.dryRun;
+    const pruned = pruneRegistry(undefined, parseInt(opts.ttl, 10), excludeNames, dryRun);
     if (pruned.length === 0) {
       console.log('No stale entries found.');
     } else {
+      const prefix = dryRun ? 'Would prune' : 'Pruned';
       for (const entry of pruned) {
         const tag = entry.reason === 'expired' ? 'expired' : 'missing';
-        console.log(`Pruned "${entry.name}" (${entry.path}) [${tag}]`);
+        console.log(`${prefix} "${entry.name}" (${entry.path}) [${tag}]`);
       }
-      console.log(`\nRemoved ${pruned.length} stale ${pruned.length === 1 ? 'entry' : 'entries'}.`);
+      if (dryRun) {
+        console.log(
+          `\nDry run: ${pruned.length} ${pruned.length === 1 ? 'entry' : 'entries'} would be removed.`,
+        );
+      } else {
+        console.log(
+          `\nRemoved ${pruned.length} stale ${pruned.length === 1 ? 'entry' : 'entries'}.`,
+        );
+      }
+    }
+  });
+
+// ─── Snapshot commands ──────────────────────────────────────────────────
+
+const snapshot = program
+  .command('snapshot')
+  .description('Save and restore graph database snapshots');
+
+snapshot
+  .command('save <name>')
+  .description('Save a snapshot of the current graph database')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('--force', 'Overwrite existing snapshot')
+  .action((name, opts) => {
+    try {
+      const result = snapshotSave(name, { dbPath: opts.db, force: opts.force });
+      console.log(`Snapshot saved: ${result.name} (${formatSize(result.size)})`);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+  });
+
+snapshot
+  .command('restore <name>')
+  .description('Restore a snapshot over the current graph database')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .action((name, opts) => {
+    try {
+      snapshotRestore(name, { dbPath: opts.db });
+      console.log(`Snapshot "${name}" restored.`);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+  });
+
+snapshot
+  .command('list')
+  .description('List all saved snapshots')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-j, --json', 'Output as JSON')
+  .action((opts) => {
+    try {
+      const snapshots = snapshotList({ dbPath: opts.db });
+      if (opts.json) {
+        console.log(JSON.stringify(snapshots, null, 2));
+      } else if (snapshots.length === 0) {
+        console.log('No snapshots found.');
+      } else {
+        console.log(`Snapshots (${snapshots.length}):\n`);
+        for (const s of snapshots) {
+          console.log(
+            `  ${s.name.padEnd(30)} ${formatSize(s.size).padStart(10)}  ${s.createdAt.toISOString()}`,
+          );
+        }
+      }
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
+    }
+  });
+
+snapshot
+  .command('delete <name>')
+  .description('Delete a saved snapshot')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .action((name, opts) => {
+    try {
+      snapshotDelete(name, { dbPath: opts.db });
+      console.log(`Snapshot "${name}" deleted.`);
+    } catch (err) {
+      console.error(err.message);
+      process.exit(1);
     }
   });
 
@@ -545,8 +687,16 @@ program
   .option('-k, --kind <kind>', 'Filter by kind: function, method, class')
   .option('--file <pattern>', 'Filter by file path pattern')
   .option('--rrf-k <number>', 'RRF k parameter for multi-query ranking', '60')
+  .option('--mode <mode>', 'Search mode: hybrid, semantic, keyword (default: hybrid)')
   .option('-j, --json', 'Output as JSON')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (query, opts) => {
+    const validModes = ['hybrid', 'semantic', 'keyword'];
+    if (opts.mode && !validModes.includes(opts.mode)) {
+      console.error(`Invalid mode "${opts.mode}". Valid: ${validModes.join(', ')}`);
+      process.exit(1);
+    }
     await search(query, opts.db, {
       limit: parseInt(opts.limit, 10),
       noTests: resolveNoTests(opts),
@@ -555,6 +705,7 @@ program
       kind: opts.kind,
       filePattern: opts.file,
       rrfK: parseInt(opts.rrfK, 10),
+      mode: opts.mode,
       json: opts.json,
     });
   });
@@ -571,6 +722,9 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (dir, opts) => {
     const { structureData, formatStructure } = await import('./structure.js');
     const data = structureData(opts.db, {
@@ -579,8 +733,12 @@ program
       sort: opts.sort,
       full: opts.full,
       noTests: resolveNoTests(opts),
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
     });
-    if (opts.json) {
+    if (opts.ndjson) {
+      printNdjson(data, 'directories');
+    } else if (opts.json) {
       console.log(JSON.stringify(data, null, 2));
     } else {
       console.log(formatStructure(data));
@@ -599,15 +757,20 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (opts) => {
     const { hotspotsData, formatHotspots } = await import('./structure.js');
     const data = hotspotsData(opts.db, {
       metric: opts.metric,
       level: opts.level,
       limit: parseInt(opts.limit, 10),
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       noTests: resolveNoTests(opts),
     });
-    if (opts.json) {
+    if (opts.ndjson) {
+      printNdjson(data, 'hotspots');
+    } else if (opts.json) {
       console.log(JSON.stringify(data, null, 2));
     } else {
       console.log(formatHotspots(data));
@@ -657,6 +820,8 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (file, opts) => {
     const { analyzeCoChanges, coChangeData, coChangeTopData, formatCoChange, formatCoChangeTop } =
       await import('./cochange.js');
@@ -683,20 +848,25 @@ program
 
     const queryOpts = {
       limit: parseInt(opts.limit, 10),
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       minJaccard: opts.minJaccard ? parseFloat(opts.minJaccard) : config.coChange?.minJaccard,
       noTests: resolveNoTests(opts),
     };
 
     if (file) {
       const data = coChangeData(file, opts.db, queryOpts);
-      if (opts.json) {
+      if (opts.ndjson) {
+        printNdjson(data, 'partners');
+      } else if (opts.json) {
         console.log(JSON.stringify(data, null, 2));
       } else {
         console.log(formatCoChange(data));
       }
     } else {
       const data = coChangeTopData(opts.db, queryOpts);
-      if (opts.json) {
+      if (opts.ndjson) {
+        printNdjson(data, 'pairs');
+      } else if (opts.json) {
         console.log(JSON.stringify(data, null, 2));
       } else {
         console.log(formatCoChangeTop(data));
@@ -760,6 +930,8 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (target, opts) => {
     if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
@@ -769,6 +941,7 @@ program
     complexity(opts.db, {
       target,
       limit: parseInt(opts.limit, 10),
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       sort: opts.sort,
       aboveThreshold: opts.aboveThreshold,
       health: opts.health,
@@ -776,6 +949,7 @@ program
       kind: opts.kind,
       noTests: resolveNoTests(opts),
       json: opts.json,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -788,6 +962,9 @@ program
   .option('-f, --file <path>', 'Scope to file (partial match)')
   .option('-k, --kind <kind>', 'Filter by symbol kind')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (opts) => {
     if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
@@ -799,6 +976,9 @@ program
       kind: opts.kind,
       noTests: resolveNoTests(opts),
       json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
     });
   });
 
@@ -812,12 +992,41 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (opts) => {
     const { communities } = await import('./communities.js');
     communities(opts.db, {
       functions: opts.functions,
       resolution: parseFloat(opts.resolution),
       drift: opts.drift,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
+    });
+  });
+
+program
+  .command('owners [target]')
+  .description('Show CODEOWNERS mapping for files and functions')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('--owner <owner>', 'Filter to a specific owner')
+  .option('--boundary', 'Show cross-owner boundary edges')
+  .option('-f, --file <path>', 'Scope to a specific file')
+  .option('-k, --kind <kind>', 'Filter by symbol kind')
+  .option('-T, --no-tests', 'Exclude test/spec files')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (target, opts) => {
+    const { owners } = await import('./owners.js');
+    owners(opts.db, {
+      owner: opts.owner,
+      boundary: opts.boundary,
+      file: opts.file || target,
+      kind: opts.kind,
       noTests: resolveNoTests(opts),
       json: opts.json,
     });

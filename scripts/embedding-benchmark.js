@@ -17,15 +17,16 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
+import { resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
-const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+const { version, srcDir, cleanup } = await resolveBenchmarkSource();
 const dbPath = path.join(root, '.codegraph', 'graph.db');
 
 const { buildEmbeddings, MODELS, searchData, disposeModel } = await import(
-	new URL('../src/embedder.js', import.meta.url).href
+	srcImport(srcDir, 'embedder.js')
 );
 
 // Redirect console.log to stderr so only JSON goes to stdout
@@ -136,7 +137,7 @@ for (const key of modelKeys) {
 console.log = origLog;
 
 const output = {
-	version: pkg.version,
+	version,
 	date: new Date().toISOString().slice(0, 10),
 	strategy: 'structured',
 	symbols: symbols.length,
@@ -144,3 +145,5 @@ const output = {
 };
 
 console.log(JSON.stringify(output, null, 2));
+
+cleanup();

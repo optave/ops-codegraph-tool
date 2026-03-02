@@ -27,8 +27,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
       - run: npm install
@@ -43,7 +43,9 @@ jobs:
       version: ${{ steps.compute.outputs.version }}
       npm_tag: ${{ steps.compute.outputs.npm_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Compute version
         id: compute
@@ -65,12 +67,21 @@ jobs:
             NPM_TAG="latest"
             echo "Stable release (manual retry): $VERSION"
           else
-            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
-            DEV_PATCH=$((PATCH + 1))
+            # Use git describe to find the nearest release tag — same strategy
+            # as scripts/bench-version.js so versions are always consistent.
+            RELEASE_TAG=$(git describe --tags --match "v*" --abbrev=0 2>/dev/null || echo "")
+            if [ -n "$RELEASE_TAG" ]; then
+              COMMITS=$(git rev-list "${RELEASE_TAG}..HEAD" --count)
+              IFS='.' read -r MAJOR MINOR PATCH <<< "${RELEASE_TAG#v}"
+            else
+              COMMITS=1
+              IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+            fi
+            DEV_PATCH=$((PATCH + COMMITS))
             SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
             VERSION="${MAJOR}.${MINOR}.${DEV_PATCH}-dev.${SHORT_SHA}"
             NPM_TAG="dev"
-            echo "Dev release: $VERSION"
+            echo "Dev release: $VERSION (${COMMITS} commits since ${RELEASE_TAG:-none})"
           fi
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
@@ -105,10 +116,10 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
 
@@ -130,7 +141,7 @@ jobs:
         run: napi build --release --target ${{ matrix.target }}
 
       - name: Upload native binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-${{ matrix.node_os }}-${{ matrix.node_arch }}
           path: crates/codegraph-core/*.node
@@ -146,9 +157,9 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
 
@@ -166,7 +177,7 @@ jobs:
         run: npm pkg delete scripts.prepublishOnly
 
       - name: Download native artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ${{ runner.temp }}/artifacts/
 
@@ -297,13 +308,13 @@ jobs:
       pull-requests: write
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
@@ -326,7 +337,7 @@ jobs:
         run: npm pkg delete scripts.prepublishOnly
 
       - name: Download native artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ${{ runner.temp }}/artifacts/
 

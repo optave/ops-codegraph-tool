@@ -45,12 +45,26 @@ if (fs.existsSync(benchmarkPath)) {
 	}
 }
 
-// Add new entry (deduplicate by version — replace if same version exists)
+// Add new entry — dev entries are rolling, releases replace dev
+const isDev = entry.version === 'dev';
 const idx = history.findIndex((h) => h.version === entry.version);
-if (idx >= 0) {
-	history[idx] = entry;
-} else {
-	history.unshift(entry);
+if (idx >= 0) history.splice(idx, 1);
+// If this is a release, also remove any "dev" entry
+if (!isDev) {
+	const devIdx = history.findIndex((h) => h.version === 'dev');
+	if (devIdx >= 0) history.splice(devIdx, 1);
+}
+history.unshift(entry);
+
+/**
+ * Find the next non-dev entry after index `idx` for trend comparison.
+ * Dev trends compare against the latest release; release trends skip dev.
+ */
+function findPrevRelease(hist, fromIdx) {
+	for (let i = fromIdx + 1; i < hist.length; i++) {
+		if (hist[i].version !== 'dev') return hist[i];
+	}
+	return null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -108,7 +122,7 @@ md +=
 
 for (let i = 0; i < history.length; i++) {
 	const h = history[i];
-	const prev = history[i + 1] || null;
+	const prev = findPrevRelease(history, i);
 
 	const nativeRow = engineRow(h, prev, 'native');
 	const wasmRow = engineRow(h, prev, 'wasm');
@@ -182,7 +196,7 @@ if (hasIncremental) {
 
 	for (let i = 0; i < history.length; i++) {
 		const h = history[i];
-		const prev = history[i + 1] || null;
+		const prev = findPrevRelease(history, i);
 
 		for (const engineKey of ['native', 'wasm']) {
 			const e = h[engineKey];
@@ -207,7 +221,7 @@ if (hasQueries) {
 
 	for (let i = 0; i < history.length; i++) {
 		const h = history[i];
-		const prev = history[i + 1] || null;
+		const prev = findPrevRelease(history, i);
 
 		for (const engineKey of ['native', 'wasm']) {
 			const e = h[engineKey];
@@ -246,7 +260,7 @@ console.error(`Updated ${path.relative(root, benchmarkPath)}`);
 
 // ── Regression detection ─────────────────────────────────────────────────
 const REGRESSION_THRESHOLD = 0.15; // 15% regression triggers a warning
-const prev = history[1] || null;
+const prev = findPrevRelease(history, 0);
 
 function checkRegression(label, current, previous) {
 	if (previous == null || previous === 0) return;
@@ -304,10 +318,10 @@ if (fs.existsSync(readmePath)) {
 		rows += `| 1-file rebuild${prefLabel} | **${formatMs(pref.oneFileRebuildMs)}** |\n`;
 	}
 
-	// Query latency rows (pick two representative queries)
+	// Query latency rows (pick two representative queries, skip if null)
 	if (pref.queries) {
-		rows += `| Query: fn-deps | **${pref.queries.fnDepsMs}ms** |\n`;
-		rows += `| Query: path | **${pref.queries.pathMs}ms** |\n`;
+		if (pref.queries.fnDepsMs != null) rows += `| Query: fn-deps | **${pref.queries.fnDepsMs}ms** |\n`;
+		if (pref.queries.pathMs != null) rows += `| Query: path | **${pref.queries.pathMs}ms** |\n`;
 	}
 
 	// 50k-file estimate

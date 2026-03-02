@@ -1,5 +1,5 @@
 use tree_sitter::{Node, Tree};
-use crate::complexity::{compute_function_complexity, PHP_RULES};
+use crate::complexity::compute_all_metrics;
 use crate::types::*;
 use super::helpers::*;
 use super::SymbolExtractor;
@@ -40,7 +40,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
-                    complexity: Some(compute_function_complexity(node, &PHP_RULES)),
+                    complexity: compute_all_metrics(node, source, "php"),
                 });
             }
         }
@@ -122,7 +122,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                         line: start_line(&child),
                                         end_line: Some(end_line(&child)),
                                         decorators: None,
-                                        complexity: Some(compute_function_complexity(&child, &PHP_RULES)),
+                                        complexity: compute_all_metrics(&child, source, "php"),
                                     });
                                 }
                             }
@@ -172,7 +172,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
-                    complexity: Some(compute_function_complexity(node, &PHP_RULES)),
+                    complexity: compute_all_metrics(node, source, "php"),
                 });
             }
         }

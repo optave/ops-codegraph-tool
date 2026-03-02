@@ -7,12 +7,29 @@
 
 /** Default limits applied by MCP tool handlers (not by the programmatic API). */
 export const MCP_DEFAULTS = {
+  // Existing
   list_functions: 100,
   query_function: 50,
   where: 50,
   node_roles: 100,
   list_entry_points: 100,
   export_graph: 500,
+  // Smaller defaults for rich/nested results
+  fn_deps: 10,
+  fn_impact: 5,
+  context: 5,
+  explain: 10,
+  file_deps: 20,
+  diff_impact: 30,
+  impact_analysis: 20,
+  semantic_search: 20,
+  execution_flow: 50,
+  hotspots: 20,
+  co_changes: 20,
+  complexity: 30,
+  manifesto: 50,
+  communities: 20,
+  structure: 30,
 };
 
 /** Hard cap to prevent abuse via MCP. */
@@ -67,4 +84,21 @@ export function paginateResult(result, field, { limit, offset } = {}) {
 
   const { items, pagination } = paginate(arr, { limit, offset });
   return { ...result, [field]: items, _pagination: pagination };
+}
+
+/**
+ * Print data as newline-delimited JSON (NDJSON).
+ *
+ * Emits a `_meta` line with pagination info (if present), then one JSON
+ * line per item in the named array field.
+ *
+ * @param {object} data   - Result object (may contain `_pagination`)
+ * @param {string} field  - Array field name to stream (e.g. `'results'`)
+ */
+export function printNdjson(data, field) {
+  if (data._pagination) console.log(JSON.stringify({ _meta: data._pagination }));
+  const items = data[field];
+  if (Array.isArray(items)) {
+    for (const item of items) console.log(JSON.stringify(item));
+  }
 }
