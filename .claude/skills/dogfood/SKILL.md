@@ -1,6 +1,6 @@
 ---
 name: dogfood
-description: Run a full dogfooding session against a published codegraph release — install from npm, test all commands, compare engines, find bugs, and write a report
+description: Run a full dogfooding session against a codegraph release (stable from npm, or dev from GitHub release tarballs) — install, test all commands, compare engines, find bugs, and write a report
 argument-hint: <version>
 allowed-tools: Bash, Read, Write, Glob, Grep, Task, Edit
 ---
@@ -17,7 +17,37 @@ Your goal is to install the published package, exercise every feature, compare e
 ## Phase 0 — Setup
 
 1. Create a **temporary working directory** (e.g., `/tmp/dogfood-$ARGUMENTS` or a system temp).
-2. Run `npm init -y` there, then `npm install @optave/codegraph@$ARGUMENTS`.
+2. **Install the package** — the method depends on whether this is a stable or dev version:
+
+   **Stable release** (version does NOT contain `-dev.`, e.g. `2.5.1`):
+   ```bash
+   npm init -y && npm install @optave/codegraph@$ARGUMENTS
+   ```
+
+   **Dev build** (version contains `-dev.`, e.g. `2.5.33-dev.3c36ef7`):
+   Dev builds are **not published to npm**. They are attached as tarballs to GitHub pre-releases. Install from the GitHub release:
+   ```bash
+   npm init -y
+
+   # Main package
+   npm install https://github.com/optave/codegraph/releases/download/dev-v$ARGUMENTS/optave-codegraph-$ARGUMENTS.tgz
+
+   # Platform-specific native binary (pick one for the current platform):
+   # Windows x64:
+   npm install https://github.com/optave/codegraph/releases/download/dev-v$ARGUMENTS/optave-codegraph-win32-x64-msvc-$ARGUMENTS.tgz
+   # macOS ARM:
+   npm install https://github.com/optave/codegraph/releases/download/dev-v$ARGUMENTS/optave-codegraph-darwin-arm64-$ARGUMENTS.tgz
+   # macOS x64:
+   npm install https://github.com/optave/codegraph/releases/download/dev-v$ARGUMENTS/optave-codegraph-darwin-x64-$ARGUMENTS.tgz
+   # Linux x64:
+   npm install https://github.com/optave/codegraph/releases/download/dev-v$ARGUMENTS/optave-codegraph-linux-x64-gnu-$ARGUMENTS.tgz
+   ```
+
+   > **Tip:** To find the latest dev version, run:
+   > ```bash
+   > gh release list --repo optave/codegraph --limit 1 --json tagName --jq '.[0].tagName' | sed 's/^dev-v//'
+   > ```
+
 3. Verify the install: `npx codegraph --version` should print `$ARGUMENTS`.
 4. **Verify the native binary installed.** The native Rust addon is delivered as a platform-specific optional dependency. Check that the correct one exists:
    ```bash
@@ -179,10 +209,22 @@ node -e "const r=require('module').createRequire(require('url').pathToFileURL(__
 ```
 
 If the version does **not** match `$ARGUMENTS`:
+
+**Stable release** (no `-dev.` in version):
 1. Update `optionalDependencies` in `package.json` to pin all `@optave/codegraph-*` packages to `$ARGUMENTS`.
 2. Run `npm install` to fetch the correct binaries.
 3. Verify with `npx codegraph info` that the native engine loads at the correct version.
 4. Revert the `package.json` / `package-lock.json` changes after benchmarking (do not commit them on the fix branch).
+
+**Dev build** (version contains `-dev.`):
+Native binaries for dev builds are not on npm — they are in the GitHub release tarballs. Install the platform binary directly:
+1. Download the platform tarball into the source repo:
+   ```bash
+   # Example for Windows x64 — adjust platform suffix as needed:
+   npm install https://github.com/optave/codegraph/releases/download/dev-v$ARGUMENTS/optave-codegraph-win32-x64-msvc-$ARGUMENTS.tgz
+   ```
+2. Verify with `npx codegraph info` that the native engine loads at the correct version.
+3. Revert the `package.json` / `package-lock.json` changes after benchmarking (do not commit them on the fix branch).
 
 **Why this matters:** The native engine computes complexity metrics during the Rust parse phase. If the binary is from an older release that lacks this, the complexity phase silently falls back to WASM — inflating native complexity time by 50-100x and making native appear slower than WASM.
 
