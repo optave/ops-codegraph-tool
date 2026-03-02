@@ -1800,7 +1800,6 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
  */
 export function complexityData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const limit = opts.limit || 20;
   const sort = opts.sort || 'cognitive';
   const noTests = opts.noTests || false;
   const aboveThreshold = opts.aboveThreshold || false;

@@ -47,13 +47,6 @@ export const DEFAULTS = {
     boundaries: true,
     depth: 3,
   },
-  check: {
-    cycles: true,
-    blastRadius: null,
-    signatures: true,
-    boundaries: true,
-    depth: 3,
-  },
   coChange: {
     since: '1 year ago',
     minSupport: 3,
