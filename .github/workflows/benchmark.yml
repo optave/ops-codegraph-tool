@@ -56,22 +56,8 @@ jobs:
             echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check for existing benchmark
-        id: existing
-        run: |
-          VERSION="${{ steps.mode.outputs.version }}"
-          VERSION_RE="${VERSION//./\\.}"
-          if [ "$VERSION" = "dev" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/BUILD-BENCHMARKS.md 2>/dev/null; then
-            echo "Benchmark for $VERSION already exists in BUILD-BENCHMARKS.md — skipping"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Wait for npm propagation
-        if: steps.existing.outputs.skip != 'true' && steps.mode.outputs.source == 'npm'
+        if: steps.mode.outputs.source == 'npm'
         run: |
           VERSION="${{ steps.mode.outputs.version }}"
           echo "Waiting for @optave/codegraph@${VERSION} on npm..."
@@ -87,7 +73,6 @@ jobs:
           exit 1
 
       - name: Run build benchmark
-        if: steps.existing.outputs.skip != 'true'
         run: |
           ARGS="--version ${{ steps.mode.outputs.version }}"
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
@@ -96,33 +81,25 @@ jobs:
           node scripts/benchmark.js $ARGS 2>/dev/null > benchmark-result.json
 
       - name: Update build report
-        if: steps.existing.outputs.skip != 'true'
         run: node scripts/update-benchmark-report.js benchmark-result.json
 
       - name: Upload build result
-        if: steps.existing.outputs.skip != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: build-benchmark-result
           path: benchmark-result.json
 
       - name: Check for changes
-        if: steps.existing.outputs.skip != 'true'
         id: changes
         run: |
-          CHANGED=false
-          # Detect modified tracked files
-          if ! git diff --quiet HEAD -- generated/BUILD-BENCHMARKS.md README.md 2>/dev/null; then
-            CHANGED=true
+          if git diff --quiet HEAD -- generated/BUILD-BENCHMARKS.md README.md; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
-          # Detect newly created (untracked) files
-          if [ -n "$(git ls-files --others --exclude-standard generated/BUILD-BENCHMARKS.md)" ]; then
-            CHANGED=true
-          fi
-          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push via PR
-        if: steps.existing.outputs.skip != 'true' && steps.changes.outputs.changed == 'true'
+        if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.mode.outputs.version }}
@@ -187,22 +164,8 @@ jobs:
             echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check for existing benchmark
-        id: existing
-        run: |
-          VERSION="${{ steps.mode.outputs.version }}"
-          VERSION_RE="${VERSION//./\\.}"
-          if [ "$VERSION" = "dev" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
-            echo "Benchmark for $VERSION already exists in EMBEDDING-BENCHMARKS.md — skipping"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Wait for npm propagation
-        if: steps.existing.outputs.skip != 'true' && steps.mode.outputs.source == 'npm'
+        if: steps.mode.outputs.source == 'npm'
         run: |
           VERSION="${{ steps.mode.outputs.version }}"
           echo "Waiting for @optave/codegraph@${VERSION} on npm..."
@@ -218,7 +181,6 @@ jobs:
           exit 1
 
       - name: Cache HuggingFace models
-        if: steps.existing.outputs.skip != 'true'
         uses: actions/cache@v5
         with:
           path: ~/.cache/huggingface
@@ -226,11 +188,9 @@ jobs:
           restore-keys: hf-models-${{ runner.os }}-
 
       - name: Build graph
-        if: steps.existing.outputs.skip != 'true'
         run: node src/cli.js build .
 
       - name: Run embedding benchmark
-        if: steps.existing.outputs.skip != 'true'
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
@@ -241,31 +201,25 @@ jobs:
           node scripts/embedding-benchmark.js $ARGS 2>/dev/null > embedding-benchmark-result.json
 
       - name: Update embedding report
-        if: steps.existing.outputs.skip != 'true'
         run: node scripts/update-embedding-report.js embedding-benchmark-result.json
 
       - name: Upload embedding result
-        if: steps.existing.outputs.skip != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: embedding-benchmark-result
           path: embedding-benchmark-result.json
 
       - name: Check for changes
-        if: steps.existing.outputs.skip != 'true'
         id: changes
         run: |
-          CHANGED=false
-          if ! git diff --quiet HEAD -- generated/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
-            CHANGED=true
+          if git diff --quiet HEAD -- generated/EMBEDDING-BENCHMARKS.md; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
-          if [ -n "$(git ls-files --others --exclude-standard generated/EMBEDDING-BENCHMARKS.md)" ]; then
-            CHANGED=true
-          fi
-          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push via PR
-        if: steps.existing.outputs.skip != 'true' && steps.changes.outputs.changed == 'true'
+        if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.mode.outputs.version }}
@@ -330,22 +284,8 @@ jobs:
             echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check for existing benchmark
-        id: existing
-        run: |
-          VERSION="${{ steps.mode.outputs.version }}"
-          VERSION_RE="${VERSION//./\\.}"
-          if [ "$VERSION" = "dev" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/QUERY-BENCHMARKS.md 2>/dev/null; then
-            echo "Benchmark for $VERSION already exists in QUERY-BENCHMARKS.md — skipping"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Wait for npm propagation
-        if: steps.existing.outputs.skip != 'true' && steps.mode.outputs.source == 'npm'
+        if: steps.mode.outputs.source == 'npm'
         run: |
           VERSION="${{ steps.mode.outputs.version }}"
           echo "Waiting for @optave/codegraph@${VERSION} on npm..."
@@ -361,7 +301,6 @@ jobs:
           exit 1
 
       - name: Run query benchmark
-        if: steps.existing.outputs.skip != 'true'
         run: |
           ARGS="--version ${{ steps.mode.outputs.version }}"
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
@@ -370,31 +309,25 @@ jobs:
           node scripts/query-benchmark.js $ARGS 2>/dev/null > query-benchmark-result.json
 
       - name: Update query report
-        if: steps.existing.outputs.skip != 'true'
         run: node scripts/update-query-report.js query-benchmark-result.json
 
       - name: Upload query result
-        if: steps.existing.outputs.skip != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: query-benchmark-result
           path: query-benchmark-result.json
 
       - name: Check for changes
-        if: steps.existing.outputs.skip != 'true'
         id: changes
         run: |
-          CHANGED=false
-          if ! git diff --quiet HEAD -- generated/QUERY-BENCHMARKS.md 2>/dev/null; then
-            CHANGED=true
+          if git diff --quiet HEAD -- generated/QUERY-BENCHMARKS.md; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
-          if [ -n "$(git ls-files --others --exclude-standard generated/QUERY-BENCHMARKS.md)" ]; then
-            CHANGED=true
-          fi
-          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push via PR
-        if: steps.existing.outputs.skip != 'true' && steps.changes.outputs.changed == 'true'
+        if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.mode.outputs.version }}
@@ -459,22 +392,8 @@ jobs:
             echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Check for existing benchmark
-        id: existing
-        run: |
-          VERSION="${{ steps.mode.outputs.version }}"
-          VERSION_RE="${VERSION//./\\.}"
-          if [ "$VERSION" = "dev" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/INCREMENTAL-BENCHMARKS.md 2>/dev/null; then
-            echo "Benchmark for $VERSION already exists in INCREMENTAL-BENCHMARKS.md — skipping"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Wait for npm propagation
-        if: steps.existing.outputs.skip != 'true' && steps.mode.outputs.source == 'npm'
+        if: steps.mode.outputs.source == 'npm'
         run: |
           VERSION="${{ steps.mode.outputs.version }}"
           echo "Waiting for @optave/codegraph@${VERSION} on npm..."
@@ -490,7 +409,6 @@ jobs:
           exit 1
 
       - name: Run incremental benchmark
-        if: steps.existing.outputs.skip != 'true'
         run: |
           ARGS="--version ${{ steps.mode.outputs.version }}"
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
@@ -499,31 +417,25 @@ jobs:
           node scripts/incremental-benchmark.js $ARGS 2>/dev/null > incremental-benchmark-result.json
 
       - name: Update incremental report
-        if: steps.existing.outputs.skip != 'true'
         run: node scripts/update-incremental-report.js incremental-benchmark-result.json
 
       - name: Upload incremental result
-        if: steps.existing.outputs.skip != 'true'
         uses: actions/upload-artifact@v7
         with:
           name: incremental-benchmark-result
           path: incremental-benchmark-result.json
 
       - name: Check for changes
-        if: steps.existing.outputs.skip != 'true'
         id: changes
         run: |
-          CHANGED=false
-          if ! git diff --quiet HEAD -- generated/INCREMENTAL-BENCHMARKS.md 2>/dev/null; then
-            CHANGED=true
+          if git diff --quiet HEAD -- generated/INCREMENTAL-BENCHMARKS.md; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
-          if [ -n "$(git ls-files --others --exclude-standard generated/INCREMENTAL-BENCHMARKS.md)" ]; then
-            CHANGED=true
-          fi
-          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push via PR
-        if: steps.existing.outputs.skip != 'true' && steps.changes.outputs.changed == 'true'
+        if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.mode.outputs.version }}
