@@ -1,7 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { findDbPath, openReadonlyOrFail } from './db.js';
-
 import { isTestFile } from './queries.js';
 
 // ─── CODEOWNERS Parsing ──────────────────────────────────────────────
