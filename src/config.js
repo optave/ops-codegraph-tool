@@ -36,7 +36,9 @@ export const DEFAULTS = {
       fanIn: { warn: null, fail: null },
       fanOut: { warn: null, fail: null },
       noCycles: { warn: null, fail: null },
+      boundaries: { warn: null, fail: null },
     },
+    boundaries: null,
   },
   coChange: {
     since: '1 year ago',

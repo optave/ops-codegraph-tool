@@ -9,6 +9,8 @@
 export { audit, auditData } from './audit.js';
 // Batch querying
 export { BATCH_COMMANDS, batch, batchData } from './batch.js';
+// Architecture boundary rules
+export { evaluateBoundaries, PRESETS, validateBoundaryConfig } from './boundaries.js';
 // Branch comparison
 export { branchCompareData, branchCompareMermaid } from './branch-compare.js';
 // Graph building

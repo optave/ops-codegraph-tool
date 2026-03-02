@@ -1,3 +1,4 @@
+import { evaluateBoundaries } from './boundaries.js';
 import { loadConfig } from './config.js';
 import { findCycles } from './cycles.js';
 import { openReadonlyOrFail } from './db.js';
@@ -55,6 +56,12 @@ export const RULE_DEFS = [
   { name: 'fanIn', level: 'file', metric: 'fan_in', defaults: { warn: null, fail: null } },
   { name: 'fanOut', level: 'file', metric: 'fan_out', defaults: { warn: null, fail: null } },
   { name: 'noCycles', level: 'graph', metric: 'noCycles', defaults: { warn: null, fail: null } },
+  {
+    name: 'boundaries',
+    level: 'graph',
+    metric: 'boundaries',
+    defaults: { warn: null, fail: null },
+  },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -319,6 +326,59 @@ function evaluateGraphRules(db, rules, opts, violations, ruleResults) {
   });
 }
 
+function evaluateBoundaryRules(db, rules, config, opts, violations, ruleResults) {
+  const thresholds = rules.boundaries;
+  const boundaryConfig = config.manifesto?.boundaries;
+
+  // Auto-enable at warn level when boundary config exists but threshold not set
+  const effectiveThresholds = { ...thresholds };
+  if (boundaryConfig && !isEnabled(thresholds)) {
+    effectiveThresholds.warn = true;
+  }
+
+  if (!isEnabled(effectiveThresholds) || !boundaryConfig) {
+    ruleResults.push({
+      name: 'boundaries',
+      level: 'graph',
+      status: 'pass',
+      thresholds: effectiveThresholds,
+      violationCount: 0,
+    });
+    return;
+  }
+
+  const result = evaluateBoundaries(db, boundaryConfig, { noTests: opts.noTests || false });
+  const hasBoundaryViolations = result.violationCount > 0;
+
+  if (!hasBoundaryViolations) {
+    ruleResults.push({
+      name: 'boundaries',
+      level: 'graph',
+      status: 'pass',
+      thresholds: effectiveThresholds,
+      violationCount: 0,
+    });
+    return;
+  }
+
+  const level = effectiveThresholds.fail != null ? 'fail' : 'warn';
+
+  for (const v of result.violations) {
+    violations.push({
+      ...v,
+      level,
+    });
+  }
+
+  ruleResults.push({
+    name: 'boundaries',
+    level: 'graph',
+    status: level,
+    thresholds: effectiveThresholds,
+    violationCount: result.violationCount,
+  });
+}
+
 // ─── Public API ───────────────────────────────────────────────────────
 
 /**
@@ -344,6 +404,7 @@ export function manifestoData(customDbPath, opts = {}) {
     evaluateFunctionRules(db, rules, opts, violations, ruleResults);
     evaluateFileRules(db, rules, opts, violations, ruleResults);
     evaluateGraphRules(db, rules, opts, violations, ruleResults);
+    evaluateBoundaryRules(db, rules, config, opts, violations, ruleResults);
 
     const failViolations = violations.filter((v) => v.level === 'fail');
 

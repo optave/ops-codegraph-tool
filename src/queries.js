@@ -1,7 +1,9 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { evaluateBoundaries } from './boundaries.js';
 import { coChangeForFiles } from './cochange.js';
+import { loadConfig } from './config.js';
 import { findCycles } from './cycles.js';
 import { findDbPath, openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
@@ -1018,6 +1020,24 @@ export function diffImpactData(customDbPath, opts = {}) {
     /* CODEOWNERS missing or unreadable — skip silently */
   }
 
+  // Check boundary violations scoped to changed files
+  let boundaryViolations = [];
+  let boundaryViolationCount = 0;
+  try {
+    const config = loadConfig(repoRoot);
+    const boundaryConfig = config.manifesto?.boundaries;
+    if (boundaryConfig) {
+      const result = evaluateBoundaries(db, boundaryConfig, {
+        scopeFiles: [...changedRanges.keys()],
+        noTests,
+      });
+      boundaryViolations = result.violations;
+      boundaryViolationCount = result.violationCount;
+    }
+  } catch {
+    /* boundary check failed — skip silently */
+  }
+
   db.close();
   const base = {
     changedFiles: changedRanges.size,
@@ -1026,12 +1046,15 @@ export function diffImpactData(customDbPath, opts = {}) {
     affectedFiles: [...affectedFiles],
     historicallyCoupled,
     ownership,
+    boundaryViolations,
+    boundaryViolationCount,
     summary: {
       functionsChanged: affectedFunctions.length,
       callersAffected: allAffected.size,
       filesAffected: affectedFiles.size,
       historicallyCoupledCount: historicallyCoupled.length,
       ownersAffected: ownership ? ownership.affectedOwners.length : 0,
+      boundaryViolationCount,
     },
   };
   return paginateResult(base, 'affectedFunctions', { limit: opts.limit, offset: opts.offset });
@@ -1997,7 +2020,7 @@ export function contextData(name, customDbPath, opts = {}) {
   const dbPath = findDbPath(customDbPath);
   const repoRoot = path.resolve(path.dirname(dbPath), '..');
 
-  let nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+  const nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
   if (nodes.length === 0) {
     db.close();
     return { name, results: [] };
@@ -3023,6 +3046,13 @@ export function diffImpact(customDbPath, opts = {}) {
     console.log(`\n  Affected owners: ${data.ownership.affectedOwners.join(', ')}`);
     console.log(`  Suggested reviewers: ${data.ownership.suggestedReviewers.join(', ')}`);
   }
+  if (data.boundaryViolations && data.boundaryViolations.length > 0) {
+    console.log(`\n  Boundary violations (${data.boundaryViolationCount}):\n`);
+    for (const v of data.boundaryViolations) {
+      console.log(`    [${v.name}] ${v.file} -> ${v.targetFile}`);
+      if (v.message) console.log(`      ${v.message}`);
+    }
+  }
   if (data.summary) {
     let summaryLine = `\n  Summary: ${data.summary.functionsChanged} functions changed -> ${data.summary.callersAffected} callers affected across ${data.summary.filesAffected} files`;
     if (data.summary.historicallyCoupledCount > 0) {
@@ -3030,6 +3060,9 @@ export function diffImpact(customDbPath, opts = {}) {
     }
     if (data.summary.ownersAffected > 0) {
       summaryLine += `, ${data.summary.ownersAffected} owners affected`;
+    }
+    if (data.summary.boundaryViolationCount > 0) {
+      summaryLine += `, ${data.summary.boundaryViolationCount} boundary violations`;
     }
     console.log(`${summaryLine}\n`);
   }
