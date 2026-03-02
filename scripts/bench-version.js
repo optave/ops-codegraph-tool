@@ -15,7 +15,7 @@
 
 import { execFileSync } from 'node:child_process';
 
-const GIT_OPTS = { encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] };
+const GIT_OPTS = { encoding: 'utf8', timeout: 10_000 };
 
 export function getBenchmarkVersion(pkgVersion, cwd) {
 	try {
