@@ -5,8 +5,8 @@ Metrics are normalized per file for cross-version comparability.
 
 | Version | Engine | Date | Files | Build (ms/file) | Query (ms) | Nodes/file | Edges/file | DB (bytes/file) |
 |---------|--------|------|------:|----------------:|-----------:|-----------:|-----------:|----------------:|
-| 2.5.1 | native | 2026-03-01 | 126 | 1.9 ↓5% | 2.1 ↓12% | 6.5 ~ | 11.1 ~ | 5526 ~ |
-| 2.5.1 | wasm | 2026-03-01 | 126 | 7.8 ↓7% | 3 ↓14% | 6.5 ~ | 11.1 ~ | 5526 ~ |
+| 2.5.1 | native | 2026-03-02 | 132 | 2 ~ | 2.7 ↑13% | 6.4 ~ | 11.1 ~ | 5399 ↓4% |
+| 2.5.1 | wasm | 2026-03-02 | 132 | 8.2 ↓2% | 3.6 ↑3% | 6.4 ~ | 11.1 ~ | 5399 ↓4% |
 | 2.5.0 | native | 2026-02-28 | 123 | 2 | 2.4 | 6.5 | 11.1 | 5595 |
 | 2.5.0 | wasm | 2026-02-28 | 123 | 8.4 ↑65% | 3.5 ↑59% | 6.5 ~ | 11.1 ↑4% | 5595 ↑19% |
 | 2.4.0 | wasm | 2026-02-28 | 123 | 5.1 ↓23% | 2.2 ↑5% | 6.5 ↑12% | 10.7 ↑18% | 4695 ↑22% |
@@ -23,35 +23,35 @@ Metrics are normalized per file for cross-version comparability.
 
 | Metric | Value |
 |--------|-------|
-| Build time | 236ms |
-| Query time | 2ms |
-| Nodes | 817 |
-| Edges | 1,393 |
-| DB size | 680 KB |
-| Files | 126 |
+| Build time | 267ms |
+| Query time | 3ms |
+| Nodes | 846 |
+| Edges | 1,463 |
+| DB size | 696 KB |
+| Files | 132 |
 
 #### WASM
 
 | Metric | Value |
 |--------|-------|
-| Build time | 979ms |
-| Query time | 3ms |
-| Nodes | 817 |
-| Edges | 1,393 |
-| DB size | 680 KB |
-| Files | 126 |
+| Build time | 1.1s |
+| Query time | 4ms |
+| Nodes | 846 |
+| Edges | 1,463 |
+| DB size | 696 KB |
+| Files | 132 |
 
 ### Build Phase Breakdown (latest)
 
 | Phase | Native | WASM |
 |-------|-------:|-----:|
-| Parse | 138.2 ms | 621.1 ms |
-| Insert nodes | 12.1 ms | 16.7 ms |
-| Resolve imports | 5.5 ms | 10.2 ms |
-| Build edges | 56.9 ms | 60.5 ms |
-| Structure | 3.6 ms | 7.2 ms |
-| Roles | 4.7 ms | 4.9 ms |
-| Complexity | 4.7 ms | 232.5 ms |
+| Parse | 150.7 ms | 676.4 ms |
+| Insert nodes | 14.3 ms | 16.3 ms |
+| Resolve imports | 10.7 ms | 14.1 ms |
+| Build edges | 62.3 ms | 65.3 ms |
+| Structure | 4 ms | 7.8 ms |
+| Roles | 5.7 ms | 5.7 ms |
+| Complexity | 5.5 ms | 263.9 ms |
 
 ### Estimated performance at 50,000 files
 
@@ -59,17 +59,17 @@ Extrapolated linearly from per-file metrics above.
 
 | Metric | Native (Rust) | WASM |
 |--------|---:|---:|
-| Build time | 95.0s | 390.0s |
-| DB size | 263.5 MB | 263.5 MB |
-| Nodes | 325,000 | 325,000 |
+| Build time | 100.0s | 410.0s |
+| DB size | 257.4 MB | 257.4 MB |
+| Nodes | 320,000 | 320,000 |
 | Edges | 555,000 | 555,000 |
 
 ### Incremental Rebuilds
 
 | Version | Engine | No-op (ms) | 1-file (ms) |
 |---------|--------|----------:|-----------:|
-| 2.5.1 | native | 3 ↓25% | 93 ↓4% |
-| 2.5.1 | wasm | 4 ~ | 324 ~ |
+| 2.5.1 | native | 4 ~ | 103 ↑6% |
+| 2.5.1 | wasm | 5 ↑25% | 345 ↑6% |
 | 2.5.0 | native | 4 | 97 |
 | 2.5.0 | wasm | 4 ↓20% | 324 ↑69% |
 | 2.4.0 | wasm | 5 | 192 |
@@ -78,8 +78,8 @@ Extrapolated linearly from per-file metrics above.
 
 | Version | Engine | fn-deps (ms) | fn-impact (ms) | path (ms) | roles (ms) |
 |---------|--------|------------:|--------------:|----------:|----------:|
-| 2.5.1 | native | 1.8 ↓14% | 1.3 ↓19% | 1 ↓17% | 1 ↓9% |
-| 2.5.1 | wasm | 1.8 ↓18% | 1.3 ↓19% | 1 ↓17% | 1.1 ~ |
+| 2.5.1 | native | 2.3 ↑10% | 1.7 ↑6% | 1.2 ~ | 1.1 ~ |
+| 2.5.1 | wasm | 2.4 ↑9% | 1.7 ↑6% | 1.3 ↑8% | 1.2 ↑9% |
 | 2.5.0 | native | 2.1 | 1.6 | 1.2 | 1.1 |
 | 2.5.0 | wasm | 2.2 ↑340% | 1.6 ↑220% | 1.2 | 1.1 ↑22% |
 | 2.4.0 | wasm | 0.5 | 0.5 | null | 0.9 |
@@ -108,66 +108,66 @@ extractor is needed to recover the regression.
 [
   {
     "version": "2.5.1",
-    "date": "2026-03-01",
-    "files": 126,
+    "date": "2026-03-02",
+    "files": 132,
     "wasm": {
-      "buildTimeMs": 979,
-      "queryTimeMs": 3,
-      "nodes": 817,
-      "edges": 1393,
-      "dbSizeBytes": 696320,
+      "buildTimeMs": 1078,
+      "queryTimeMs": 3.6,
+      "nodes": 846,
+      "edges": 1463,
+      "dbSizeBytes": 712704,
       "perFile": {
-        "buildTimeMs": 7.8,
-        "nodes": 6.5,
+        "buildTimeMs": 8.2,
+        "nodes": 6.4,
         "edges": 11.1,
-        "dbSizeBytes": 5526
+        "dbSizeBytes": 5399
       },
-      "noopRebuildMs": 4,
-      "oneFileRebuildMs": 324,
+      "noopRebuildMs": 5,
+      "oneFileRebuildMs": 345,
       "queries": {
-        "fnDepsMs": 1.8,
-        "fnImpactMs": 1.3,
-        "pathMs": 1,
-        "rolesMs": 1.1
+        "fnDepsMs": 2.4,
+        "fnImpactMs": 1.7,
+        "pathMs": 1.3,
+        "rolesMs": 1.2
       },
       "phases": {
-        "parseMs": 621.1,
-        "insertMs": 16.7,
-        "resolveMs": 10.2,
-        "edgesMs": 60.5,
-        "structureMs": 7.2,
-        "rolesMs": 4.9,
-        "complexityMs": 232.5
+        "parseMs": 676.4,
+        "insertMs": 16.3,
+        "resolveMs": 14.1,
+        "edgesMs": 65.3,
+        "structureMs": 7.8,
+        "rolesMs": 5.7,
+        "complexityMs": 263.9
       }
     },
     "native": {
-      "buildTimeMs": 236,
-      "queryTimeMs": 2.1,
-      "nodes": 817,
-      "edges": 1393,
-      "dbSizeBytes": 696320,
+      "buildTimeMs": 267,
+      "queryTimeMs": 2.7,
+      "nodes": 846,
+      "edges": 1463,
+      "dbSizeBytes": 712704,
       "perFile": {
-        "buildTimeMs": 1.9,
-        "nodes": 6.5,
+        "buildTimeMs": 2,
+        "nodes": 6.4,
         "edges": 11.1,
-        "dbSizeBytes": 5526
+        "dbSizeBytes": 5399
       },
-      "noopRebuildMs": 3,
-      "oneFileRebuildMs": 93,
+      "noopRebuildMs": 4,
+      "oneFileRebuildMs": 103,
       "queries": {
-        "fnDepsMs": 1.8,
-        "fnImpactMs": 1.3,
-        "pathMs": 1,
-        "rolesMs": 1
+        "fnDepsMs": 2.3,
+        "fnImpactMs": 1.7,
+        "pathMs": 1.2,
+        "rolesMs": 1.1
       },
       "phases": {
-        "parseMs": 138.2,
-        "insertMs": 12.1,
-        "resolveMs": 5.5,
-        "edgesMs": 56.9,
-        "structureMs": 3.6,
-        "rolesMs": 4.7,
-        "complexityMs": 4.7
+        "parseMs": 150.7,
+        "insertMs": 14.3,
+        "resolveMs": 10.7,
+        "edgesMs": 62.3,
+        "structureMs": 4,
+        "rolesMs": 5.7,
+        "complexityMs": 5.5
       }
     }
   },
