@@ -30,6 +30,7 @@ export const MCP_DEFAULTS = {
   manifesto: 50,
   communities: 20,
   structure: 30,
+  triage: 20,
 };
 
 /** Hard cap to prevent abuse via MCP. */

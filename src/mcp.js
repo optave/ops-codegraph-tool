@@ -600,6 +600,43 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'triage',
+    description:
+      'Ranked audit queue by composite risk score. Merges connectivity (fan-in), complexity (cognitive), churn (commit count), role classification, and maintainability index into a single weighted score.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sort: {
+          type: 'string',
+          enum: ['risk', 'complexity', 'churn', 'fan-in', 'mi'],
+          description: 'Sort metric (default: risk)',
+        },
+        min_score: {
+          type: 'number',
+          description: 'Only return symbols with risk score >= this threshold (0-1)',
+        },
+        role: {
+          type: 'string',
+          enum: VALID_ROLES,
+          description: 'Filter by role classification',
+        },
+        file: { type: 'string', description: 'Scope to file (partial match)' },
+        kind: {
+          type: 'string',
+          enum: ['function', 'method', 'class'],
+          description: 'Filter by symbol kind',
+        },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        weights: {
+          type: 'object',
+          description:
+            'Custom scoring weights (e.g. {"fanIn":1,"complexity":0,"churn":0,"role":0,"mi":0})',
+        },
+        ...PAGINATION_PROPS,
+      },
+    },
+  },
+  {
     name: 'branch_compare',
     description:
       'Compare code structure between two git refs (branches, tags, commits). Shows added/removed/changed symbols and transitive caller impact using temporary git worktrees.',
@@ -1088,6 +1125,21 @@ export async function startMCPServer(customDbPath, options = {}) {
             file: args.file,
             kind: args.kind,
             noTests: args.no_tests,
+          });
+          break;
+        }
+        case 'triage': {
+          const { triageData } = await import('./triage.js');
+          result = triageData(dbPath, {
+            sort: args.sort,
+            minScore: args.min_score,
+            role: args.role,
+            file: args.file,
+            kind: args.kind,
+            noTests: args.no_tests,
+            weights: args.weights,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.triage, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
           });
           break;
         }

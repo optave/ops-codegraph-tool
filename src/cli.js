@@ -1036,6 +1036,58 @@ program
   });
 
 program
+  .command('triage')
+  .description(
+    'Ranked audit queue by composite risk score (connectivity + complexity + churn + role)',
+  )
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-n, --limit <number>', 'Max results to return', '20')
+  .option('--sort <metric>', 'Sort metric: risk | complexity | churn | fan-in | mi', 'risk')
+  .option('--min-score <score>', 'Only show symbols with risk score >= threshold')
+  .option('--role <role>', 'Filter by role (entry, core, utility, adapter, leaf, dead)')
+  .option('-f, --file <path>', 'Scope to a specific file (partial match)')
+  .option('-k, --kind <kind>', 'Filter by symbol kind (function, method, class)')
+  .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
+  .option('--weights <json>', 'Custom weights JSON (e.g. \'{"fanIn":1,"complexity":0}\')')
+  .action(async (opts) => {
+    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+      process.exit(1);
+    }
+    if (opts.role && !VALID_ROLES.includes(opts.role)) {
+      console.error(`Invalid role "${opts.role}". Valid: ${VALID_ROLES.join(', ')}`);
+      process.exit(1);
+    }
+    let weights;
+    if (opts.weights) {
+      try {
+        weights = JSON.parse(opts.weights);
+      } catch {
+        console.error('Invalid --weights JSON');
+        process.exit(1);
+      }
+    }
+    const { triage } = await import('./triage.js');
+    triage(opts.db, {
+      limit: parseInt(opts.limit, 10),
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      sort: opts.sort,
+      minScore: opts.minScore,
+      role: opts.role,
+      file: opts.file,
+      kind: opts.kind,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      ndjson: opts.ndjson,
+      weights,
+    });
+  });
+
+program
   .command('owners [target]')
   .description('Show CODEOWNERS mapping for files and functions')
   .option('-d, --db <path>', 'Path to graph.db')

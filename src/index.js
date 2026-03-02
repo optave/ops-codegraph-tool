@@ -141,5 +141,7 @@ export {
   moduleBoundariesData,
   structureData,
 } from './structure.js';
+// Triage — composite risk audit
+export { triage, triageData } from './triage.js';
 // Watch mode
 export { watchProject } from './watcher.js';
