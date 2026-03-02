@@ -2,7 +2,7 @@
 
 /**
  * Update benchmark report — reads benchmark JSON and updates:
- *   1. generated/BUILD-BENCHMARKS.md  (historical table + raw JSON in HTML comment)
+ *   1. generated/benchmarks/BUILD-BENCHMARKS.md  (historical table + raw JSON in HTML comment)
  *   2. README.md                (performance section with latest numbers)
  *
  * Usage:
@@ -28,7 +28,7 @@ if (arg) {
 const entry = JSON.parse(jsonText);
 
 // ── Paths ────────────────────────────────────────────────────────────────
-const benchmarkPath = path.join(root, 'generated', 'BUILD-BENCHMARKS.md');
+const benchmarkPath = path.join(root, 'generated', 'benchmarks', 'BUILD-BENCHMARKS.md');
 const readmePath = path.join(root, 'README.md');
 
 // ── Load existing history from BUILD-BENCHMARKS.md ─────────────────────────────
@@ -332,7 +332,7 @@ if (fs.existsSync(readmePath)) {
 
 	const perfSection = `## 📊 Performance
 
-Self-measured on every release via CI ([build benchmarks](generated/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/EMBEDDING-BENCHMARKS.md)):
+Self-measured on every release via CI ([build benchmarks](generated/benchmarks/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/benchmarks/EMBEDDING-BENCHMARKS.md)):
 
 | Metric | Latest |
 |---|---|

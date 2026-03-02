@@ -2,7 +2,7 @@
 
 /**
  * Update embedding benchmark report — reads benchmark JSON and updates:
- *   generated/EMBEDDING-BENCHMARKS.md (historical table + raw JSON in HTML comment)
+ *   generated/benchmarks/EMBEDDING-BENCHMARKS.md (historical table + raw JSON in HTML comment)
  *
  * Usage:
  *   node scripts/update-embedding-report.js embedding-benchmark-result.json
@@ -27,7 +27,7 @@ if (arg) {
 const entry = JSON.parse(jsonText);
 
 // ── Paths ────────────────────────────────────────────────────────────────
-const reportPath = path.join(root, 'generated', 'EMBEDDING-BENCHMARKS.md');
+const reportPath = path.join(root, 'generated', 'benchmarks', 'EMBEDDING-BENCHMARKS.md');
 
 // ── Load existing history ────────────────────────────────────────────────
 let history = [];

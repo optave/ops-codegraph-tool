@@ -339,6 +339,192 @@ describe('manifestoData', () => {
     }
   });
 
+  test('boundaries rule passes when no boundary config exists', () => {
+    const data = manifestoData(dbPath);
+    const boundariesRule = data.rules.find((r) => r.name === 'boundaries');
+    expect(boundariesRule).toBeDefined();
+    expect(boundariesRule.status).toBe('pass');
+    expect(boundariesRule.violationCount).toBe(0);
+  });
+
+  test('boundaries rule detects violations with warn threshold', () => {
+    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-manifesto-boundaries-'));
+    fs.mkdirSync(path.join(configDir, '.codegraph'));
+    const bDbPath = path.join(configDir, '.codegraph', 'graph.db');
+
+    // Create a DB with cross-module imports
+    const bDb = new Database(bDbPath);
+    bDb.pragma('journal_mode = WAL');
+    initSchema(bDb);
+
+    const ctrl1 = insertNode(bDb, 'src/controllers/a.js', 'file', 'src/controllers/a.js', 1);
+    const ctrl2 = insertNode(bDb, 'src/controllers/b.js', 'file', 'src/controllers/b.js', 1);
+    const svc1 = insertNode(bDb, 'src/services/x.js', 'file', 'src/services/x.js', 1);
+    insertEdge(bDb, ctrl1, ctrl2, 'imports'); // controller -> controller violation
+    insertEdge(bDb, ctrl1, svc1, 'imports'); // controller -> service (allowed)
+    bDb.close();
+
+    fs.writeFileSync(
+      path.join(configDir, '.codegraphrc.json'),
+      JSON.stringify({
+        manifesto: {
+          boundaries: {
+            modules: {
+              controllers: 'src/controllers/**',
+              services: 'src/services/**',
+            },
+            rules: [{ from: 'controllers', notTo: ['controllers'] }],
+          },
+        },
+      }),
+    );
+
+    const origCwd = process.cwd();
+    try {
+      process.chdir(configDir);
+      const data = manifestoData(bDbPath);
+      const boundariesRule = data.rules.find((r) => r.name === 'boundaries');
+      expect(boundariesRule.status).toBe('warn');
+      expect(boundariesRule.violationCount).toBe(1);
+
+      const bViolations = data.violations.filter((v) => v.rule === 'boundaries');
+      expect(bViolations.length).toBe(1);
+      expect(bViolations[0].level).toBe('warn');
+      expect(bViolations[0].name).toBe('controllers -> controllers');
+    } finally {
+      process.chdir(origCwd);
+      fs.rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test('boundaries rule with fail threshold sets passed=false', () => {
+    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-manifesto-bfail-'));
+    fs.mkdirSync(path.join(configDir, '.codegraph'));
+    const bDbPath = path.join(configDir, '.codegraph', 'graph.db');
+
+    const bDb = new Database(bDbPath);
+    bDb.pragma('journal_mode = WAL');
+    initSchema(bDb);
+
+    const ctrl1 = insertNode(bDb, 'src/controllers/a.js', 'file', 'src/controllers/a.js', 1);
+    const ctrl2 = insertNode(bDb, 'src/controllers/b.js', 'file', 'src/controllers/b.js', 1);
+    insertEdge(bDb, ctrl1, ctrl2, 'imports');
+    bDb.close();
+
+    fs.writeFileSync(
+      path.join(configDir, '.codegraphrc.json'),
+      JSON.stringify({
+        manifesto: {
+          rules: { boundaries: { warn: null, fail: true } },
+          boundaries: {
+            modules: {
+              controllers: 'src/controllers/**',
+            },
+            rules: [{ from: 'controllers', notTo: ['controllers'] }],
+          },
+        },
+      }),
+    );
+
+    const origCwd = process.cwd();
+    try {
+      process.chdir(configDir);
+      const data = manifestoData(bDbPath);
+      expect(data.passed).toBe(false);
+
+      const boundariesRule = data.rules.find((r) => r.name === 'boundaries');
+      expect(boundariesRule.status).toBe('fail');
+    } finally {
+      process.chdir(origCwd);
+      fs.rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test('boundaries auto-enables at warn when boundary config exists without threshold', () => {
+    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-manifesto-bauto-'));
+    fs.mkdirSync(path.join(configDir, '.codegraph'));
+    const bDbPath = path.join(configDir, '.codegraph', 'graph.db');
+
+    const bDb = new Database(bDbPath);
+    bDb.pragma('journal_mode = WAL');
+    initSchema(bDb);
+
+    const ctrl1 = insertNode(bDb, 'src/controllers/a.js', 'file', 'src/controllers/a.js', 1);
+    const ctrl2 = insertNode(bDb, 'src/controllers/b.js', 'file', 'src/controllers/b.js', 1);
+    insertEdge(bDb, ctrl1, ctrl2, 'imports');
+    bDb.close();
+
+    // No explicit boundaries threshold — should auto-enable at warn
+    fs.writeFileSync(
+      path.join(configDir, '.codegraphrc.json'),
+      JSON.stringify({
+        manifesto: {
+          boundaries: {
+            modules: { controllers: 'src/controllers/**' },
+            rules: [{ from: 'controllers', notTo: ['controllers'] }],
+          },
+        },
+      }),
+    );
+
+    const origCwd = process.cwd();
+    try {
+      process.chdir(configDir);
+      const data = manifestoData(bDbPath);
+      const boundariesRule = data.rules.find((r) => r.name === 'boundaries');
+      expect(boundariesRule.status).toBe('warn');
+      expect(boundariesRule.violationCount).toBe(1);
+      // Auto-enabled should still pass (warn only)
+      expect(data.passed).toBe(true);
+    } finally {
+      process.chdir(origCwd);
+      fs.rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test('boundaries with preset evaluates layer rules', () => {
+    const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-manifesto-bpreset-'));
+    fs.mkdirSync(path.join(configDir, '.codegraph'));
+    const bDbPath = path.join(configDir, '.codegraph', 'graph.db');
+
+    const bDb = new Database(bDbPath);
+    bDb.pragma('journal_mode = WAL');
+    initSchema(bDb);
+
+    // domain imports from adapters — violation in hexagonal
+    const domFile = insertNode(bDb, 'src/domain/user.js', 'file', 'src/domain/user.js', 1);
+    const adapterFile = insertNode(bDb, 'src/api/handler.js', 'file', 'src/api/handler.js', 1);
+    insertEdge(bDb, domFile, adapterFile, 'imports');
+    bDb.close();
+
+    fs.writeFileSync(
+      path.join(configDir, '.codegraphrc.json'),
+      JSON.stringify({
+        manifesto: {
+          boundaries: {
+            modules: {
+              domain: { match: 'src/domain/**', layer: 'domain' },
+              api: { match: 'src/api/**', layer: 'adapters' },
+            },
+            preset: 'hexagonal',
+          },
+        },
+      }),
+    );
+
+    const origCwd = process.cwd();
+    try {
+      process.chdir(configDir);
+      const data = manifestoData(bDbPath);
+      const boundariesRule = data.rules.find((r) => r.name === 'boundaries');
+      expect(boundariesRule.violationCount).toBeGreaterThan(0);
+      expect(boundariesRule.status).toBe('warn');
+    } finally {
+      process.chdir(origCwd);
+      fs.rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
   test('noCycles rule with fail threshold sets passed=false', () => {
     const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-manifesto-fail-'));
     fs.mkdirSync(path.join(configDir, '.codegraph'));

@@ -2,7 +2,7 @@
 
 /**
  * Update incremental benchmark report — reads benchmark JSON and updates:
- *   generated/INCREMENTAL-BENCHMARKS.md (historical table + raw JSON in HTML comment)
+ *   generated/benchmarks/INCREMENTAL-BENCHMARKS.md (historical table + raw JSON in HTML comment)
  *
  * Usage:
  *   node scripts/update-incremental-report.js incremental-benchmark-result.json
@@ -27,7 +27,7 @@ if (arg) {
 const entry = JSON.parse(jsonText);
 
 // ── Paths ────────────────────────────────────────────────────────────────
-const reportPath = path.join(root, 'generated', 'INCREMENTAL-BENCHMARKS.md');
+const reportPath = path.join(root, 'generated', 'benchmarks', 'INCREMENTAL-BENCHMARKS.md');
 
 // ── Load existing history ────────────────────────────────────────────────
 let history = [];

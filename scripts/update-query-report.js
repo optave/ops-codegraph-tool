@@ -2,7 +2,7 @@
 
 /**
  * Update query benchmark report — reads benchmark JSON and updates:
- *   generated/QUERY-BENCHMARKS.md (historical table + raw JSON in HTML comment)
+ *   generated/benchmarks/QUERY-BENCHMARKS.md (historical table + raw JSON in HTML comment)
  *
  * Usage:
  *   node scripts/update-query-report.js query-benchmark-result.json
@@ -27,7 +27,7 @@ if (arg) {
 const entry = JSON.parse(jsonText);
 
 // ── Paths ────────────────────────────────────────────────────────────────
-const reportPath = path.join(root, 'generated', 'QUERY-BENCHMARKS.md');
+const reportPath = path.join(root, 'generated', 'benchmarks', 'QUERY-BENCHMARKS.md');
 
 // ── Load existing history ────────────────────────────────────────────────
 let history = [];

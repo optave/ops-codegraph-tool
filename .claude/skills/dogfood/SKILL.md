@@ -10,7 +10,7 @@ allowed-tools: Bash, Read, Write, Glob, Grep, Task, Edit
 You are running a comprehensive dogfooding session for codegraph **v$ARGUMENTS**.
 Your goal is to install the published package, exercise every feature, compare engines, find bugs, and produce a structured report.
 
-> **Reference:** Read `generated/DOGFOOD-REPORT-2.1.0.md` and `generated/DOGFOOD_REPORT_v2.2.0.md` (if present) for the format and depth expected. Match or exceed that quality.
+> **Reference:** Read `generated/dogfood/DOGFOOD-REPORT-2.1.0.md` and `generated/dogfood/DOGFOOD_REPORT_v2.2.0.md` (if present) for the format and depth expected. Match or exceed that quality.
 
 ---
 
@@ -190,7 +190,7 @@ If the version does **not** match `$ARGUMENTS`:
 
 1. Run all four from the codegraph source repo directory.
 2. Record the JSON output from each.
-3. Compare with the previous release's numbers in `generated/BUILD-BENCHMARKS.md` (build benchmark) and previous dogfood reports.
+3. Compare with the previous release's numbers in `generated/benchmarks/BUILD-BENCHMARKS.md` (build benchmark) and previous dogfood reports.
 4. Flag any regressions:
    - Build time per file >10% slower → investigate
    - Query latency >2x slower → investigate
@@ -361,7 +361,7 @@ This signals that v$ARGUMENTS has been manually verified end-to-end.
 
 ## Phase 9 — Report
 
-Write the report to `generated/DOGFOOD_REPORT_v$ARGUMENTS.md` with this structure:
+Write the report to `generated/dogfood/DOGFOOD_REPORT_v$ARGUMENTS.md` with this structure:
 
 ```markdown
 # Dogfooding Report: @optave/codegraph@$ARGUMENTS
@@ -450,7 +450,7 @@ The dogfood report **must** be committed to the repository — do not leave it a
 1. **If bug-fix PRs were created during Phase 7:** Add the report to the **first** PR's branch:
    ```bash
    git checkout <first-pr-branch>
-   git add generated/DOGFOOD_REPORT_v$ARGUMENTS.md
+   git add generated/dogfood/DOGFOOD_REPORT_v$ARGUMENTS.md
    git commit -m "docs: add dogfood report for v$ARGUMENTS"
    git push
    ```
@@ -458,12 +458,12 @@ The dogfood report **must** be committed to the repository — do not leave it a
 2. **If no PRs were created** (zero bugs / green path): Create a dedicated PR for the report:
    ```bash
    git checkout -b docs/dogfood-report-v$ARGUMENTS main
-   git add generated/DOGFOOD_REPORT_v$ARGUMENTS.md
+   git add generated/dogfood/DOGFOOD_REPORT_v$ARGUMENTS.md
    git commit -m "docs: add dogfood report for v$ARGUMENTS"
    git push -u origin docs/dogfood-report-v$ARGUMENTS
    gh pr create --base main \
      --title "docs: add dogfood report for v$ARGUMENTS" \
-     --body "Dogfooding report for v$ARGUMENTS. See generated/DOGFOOD_REPORT_v$ARGUMENTS.md for full details."
+     --body "Dogfooding report for v$ARGUMENTS. See generated/dogfood/DOGFOOD_REPORT_v$ARGUMENTS.md for full details."
    ```
 
 3. **Verify** the report file appears in the PR diff before moving on.

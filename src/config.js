@@ -36,7 +36,16 @@ export const DEFAULTS = {
       fanIn: { warn: null, fail: null },
       fanOut: { warn: null, fail: null },
       noCycles: { warn: null, fail: null },
+      boundaries: { warn: null, fail: null },
     },
+    boundaries: null,
+  },
+  check: {
+    cycles: true,
+    blastRadius: null,
+    signatures: true,
+    boundaries: true,
+    depth: 3,
   },
   check: {
     cycles: true,

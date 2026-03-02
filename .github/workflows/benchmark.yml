@@ -62,7 +62,7 @@ jobs:
           VERSION_RE="${VERSION//./\\.}"
           if [ "$VERSION" = "dev" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/BUILD-BENCHMARKS.md 2>/dev/null; then
+          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/benchmarks/BUILD-BENCHMARKS.md 2>/dev/null; then
             echo "Benchmark for $VERSION already exists in BUILD-BENCHMARKS.md — skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -111,11 +111,11 @@ jobs:
         run: |
           CHANGED=false
           # Detect modified tracked files
-          if ! git diff --quiet HEAD -- generated/BUILD-BENCHMARKS.md README.md 2>/dev/null; then
+          if ! git diff --quiet HEAD -- generated/benchmarks/BUILD-BENCHMARKS.md README.md 2>/dev/null; then
             CHANGED=true
           fi
           # Detect newly created (untracked) files
-          if [ -n "$(git ls-files --others --exclude-standard generated/BUILD-BENCHMARKS.md)" ]; then
+          if [ -n "$(git ls-files --others --exclude-standard generated/benchmarks/BUILD-BENCHMARKS.md)" ]; then
             CHANGED=true
           fi
           echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
@@ -135,7 +135,7 @@ jobs:
             BRANCH="benchmark/build-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
           fi
           git checkout -b "$BRANCH"
-          git add generated/BUILD-BENCHMARKS.md README.md
+          git add generated/benchmarks/BUILD-BENCHMARKS.md README.md
           git commit -m "docs: update build performance benchmarks (${VERSION})"
           git push origin "$BRANCH"
 
@@ -193,7 +193,7 @@ jobs:
           VERSION_RE="${VERSION//./\\.}"
           if [ "$VERSION" = "dev" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
+          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/benchmarks/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
             echo "Benchmark for $VERSION already exists in EMBEDDING-BENCHMARKS.md — skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -256,11 +256,11 @@ jobs:
         run: |
           CHANGED=false
           # Detect modified tracked files
-          if ! git diff --quiet HEAD -- generated/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
+          if ! git diff --quiet HEAD -- generated/benchmarks/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
             CHANGED=true
           fi
           # Detect newly created (untracked) files
-          if [ -n "$(git ls-files --others --exclude-standard generated/EMBEDDING-BENCHMARKS.md)" ]; then
+          if [ -n "$(git ls-files --others --exclude-standard generated/benchmarks/EMBEDDING-BENCHMARKS.md)" ]; then
             CHANGED=true
           fi
           echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
@@ -280,7 +280,7 @@ jobs:
             BRANCH="benchmark/embedding-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
           fi
           git checkout -b "$BRANCH"
-          git add generated/EMBEDDING-BENCHMARKS.md
+          git add generated/benchmarks/EMBEDDING-BENCHMARKS.md
           git commit -m "docs: update embedding benchmarks (${VERSION})"
           git push origin "$BRANCH"
 
@@ -338,7 +338,7 @@ jobs:
           VERSION_RE="${VERSION//./\\.}"
           if [ "$VERSION" = "dev" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/QUERY-BENCHMARKS.md 2>/dev/null; then
+          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/benchmarks/QUERY-BENCHMARKS.md 2>/dev/null; then
             echo "Benchmark for $VERSION already exists in QUERY-BENCHMARKS.md — skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -387,11 +387,11 @@ jobs:
         run: |
           CHANGED=false
           # Detect modified tracked files
-          if ! git diff --quiet HEAD -- generated/QUERY-BENCHMARKS.md 2>/dev/null; then
+          if ! git diff --quiet HEAD -- generated/benchmarks/QUERY-BENCHMARKS.md 2>/dev/null; then
             CHANGED=true
           fi
           # Detect newly created (untracked) files
-          if [ -n "$(git ls-files --others --exclude-standard generated/QUERY-BENCHMARKS.md)" ]; then
+          if [ -n "$(git ls-files --others --exclude-standard generated/benchmarks/QUERY-BENCHMARKS.md)" ]; then
             CHANGED=true
           fi
           echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
@@ -411,7 +411,7 @@ jobs:
             BRANCH="benchmark/query-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
           fi
           git checkout -b "$BRANCH"
-          git add generated/QUERY-BENCHMARKS.md
+          git add generated/benchmarks/QUERY-BENCHMARKS.md
           git commit -m "docs: update query benchmarks (${VERSION})"
           git push origin "$BRANCH"
 
@@ -469,7 +469,7 @@ jobs:
           VERSION_RE="${VERSION//./\\.}"
           if [ "$VERSION" = "dev" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/INCREMENTAL-BENCHMARKS.md 2>/dev/null; then
+          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/benchmarks/INCREMENTAL-BENCHMARKS.md 2>/dev/null; then
             echo "Benchmark for $VERSION already exists in INCREMENTAL-BENCHMARKS.md — skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -518,11 +518,11 @@ jobs:
         run: |
           CHANGED=false
           # Detect modified tracked files
-          if ! git diff --quiet HEAD -- generated/INCREMENTAL-BENCHMARKS.md 2>/dev/null; then
+          if ! git diff --quiet HEAD -- generated/benchmarks/INCREMENTAL-BENCHMARKS.md 2>/dev/null; then
             CHANGED=true
           fi
           # Detect newly created (untracked) files
-          if [ -n "$(git ls-files --others --exclude-standard generated/INCREMENTAL-BENCHMARKS.md)" ]; then
+          if [ -n "$(git ls-files --others --exclude-standard generated/benchmarks/INCREMENTAL-BENCHMARKS.md)" ]; then
             CHANGED=true
           fi
           echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
@@ -542,7 +542,7 @@ jobs:
             BRANCH="benchmark/incremental-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
           fi
           git checkout -b "$BRANCH"
-          git add generated/INCREMENTAL-BENCHMARKS.md
+          git add generated/benchmarks/INCREMENTAL-BENCHMARKS.md
           git commit -m "docs: update incremental benchmarks (${VERSION})"
           git push origin "$BRANCH"
 

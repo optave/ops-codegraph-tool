@@ -463,7 +463,7 @@ Codegraph also extracts symbols from common callback patterns: Commander `.comma
 
 ## 📊 Performance
 
-Self-measured on every release via CI ([build benchmarks](generated/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/EMBEDDING-BENCHMARKS.md)):
+Self-measured on every release via CI ([build benchmarks](generated/benchmarks/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/benchmarks/EMBEDDING-BENCHMARKS.md)):
 
 | Metric | Latest |
 |---|---|
