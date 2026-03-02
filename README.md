@@ -55,7 +55,7 @@ cd your-project
 codegraph build
 ```
 
-That's it. No config files, no Docker, no JVM, no API keys, no accounts. The graph is ready to query. Add `codegraph mcp` to your AI agent's config and it has full access to your dependency graph through 24 MCP tools (25 in multi-repo mode).
+That's it. No config files, no Docker, no JVM, no API keys, no accounts. The graph is ready to query. Add `codegraph mcp` to your AI agent's config and it has full access to your dependency graph through 26 MCP tools (27 in multi-repo mode).
 
 ### Why it matters
 
@@ -69,13 +69,16 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 
 ### Feature comparison
 
-<sub>Comparison last verified: February 2026</sub>
+<sub>Comparison last verified: March 2026</sub>
 
 | Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) | [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | [axon](https://github.com/harshkedia177/axon) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | Function-level analysis | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
 | Multi-language | **11** | **14** | **32** | Multi | **~10** | **9** | SCIP langs | Few |
 | Semantic search | **Yes** | — | **Yes** | **Yes** | — | **Yes** | — | — |
+| Hybrid BM25 + semantic | **Yes** | — | — | — | — | **Yes** | — | **Yes** |
+| CODEOWNERS integration | **Yes** | — | — | — | — | — | — | — |
+| Graph snapshots | **Yes** | — | — | — | — | — | — | — |
 | MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | — |
 | Git diff impact | **Yes** | — | — | — | — | **Yes** | — | **Yes** |
 | Git co-change analysis | **Yes** | — | — | — | — | — | **Yes** | **Yes** |
@@ -97,10 +100,10 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 | **🔓** | **Zero-cost core, LLM-enhanced when you want** | Full graph analysis with no API keys, no accounts, no cost. Optionally bring your own LLM provider — your code only goes where you choose |
 | **🔬** | **Function-level, not just files** | Traces `handleAuth()` → `validateToken()` → `decryptJWT()` and shows 14 callers across 9 files break if `decryptJWT` changes |
 | **🏷️** | **Role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` — agents instantly know what they're looking at |
-| **🤖** | **Built for AI agents** | 24-tool [MCP server](https://modelcontextprotocol.io/) — AI assistants query your graph directly. Single-repo by default |
+| **🤖** | **Built for AI agents** | 26-tool [MCP server](https://modelcontextprotocol.io/) — AI assistants query your graph directly. Single-repo by default |
 | **🌐** | **Multi-language, one CLI** | JS/TS + Python + Go + Rust + Java + C# + PHP + Ruby + HCL in a single graph |
 | **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — enriched with historically coupled files from git co-change analysis. Ships with a GitHub Actions workflow |
-| **🧠** | **Semantic search** | Local embeddings by default, LLM-powered when opted in — multi-query with RRF ranking via `"auth; token; JWT"` |
+| **🧠** | **Hybrid search** | BM25 keyword + semantic embeddings fused via RRF — `hybrid` (default), `semantic`, or `keyword` mode; multi-query via `"auth; token; JWT"` |
 
 ---
 
@@ -144,7 +147,7 @@ After modifying code:
 Or connect directly via MCP:
 
 ```bash
-codegraph mcp          # 24-tool MCP server — AI queries the graph directly
+codegraph mcp          # 26-tool MCP server — AI queries the graph directly
 ```
 
 Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAUDE.md template](docs/guides/ai-agent-guide.md#claudemd-template)
@@ -170,11 +173,15 @@ Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAU
 | 📤 | **Export** | DOT (Graphviz), Mermaid, and JSON graph export |
 | 🧠 | **Semantic search** | Embeddings-powered natural language search with multi-query RRF ranking |
 | 👀 | **Watch mode** | Incrementally update the graph as files change |
-| 🤖 | **MCP server** | 24-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
+| 🤖 | **MCP server** | 26-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
 | ⚡ | **Always fresh** | Three-tier incremental detection — sub-second rebuilds even on large codebases |
 | 🧮 | **Complexity metrics** | Cognitive, cyclomatic, nesting depth, Halstead, and Maintainability Index per function |
 | 🏘️ | **Community detection** | Louvain clustering to discover natural module boundaries and architectural drift |
 | 📜 | **Manifesto rule engine** | Configurable pass/fail rules with warn/fail thresholds for CI gates (exit code 1 on fail) |
+| 👥 | **CODEOWNERS integration** | Map graph nodes to CODEOWNERS entries — see who owns each function, ownership boundaries in `diff-impact` |
+| 💾 | **Graph snapshots** | `snapshot save`/`restore` for instant DB backup and rollback — checkpoint before refactoring, restore without rebuilding |
+| 🔎 | **Hybrid BM25 + semantic search** | FTS5 keyword search + embedding-based semantic search fused via Reciprocal Rank Fusion — `hybrid`, `semantic`, or `keyword` modes |
+| 📄 | **Pagination & NDJSON streaming** | Universal `--limit`/`--offset` pagination on all MCP tools and CLI commands; `--ndjson` for newline-delimited JSON streaming |
 
 See [docs/examples](docs/examples) for real-world CLI and MCP usage examples.
 
@@ -267,6 +274,30 @@ codegraph manifesto               # Pass/fail rule engine (exit code 1 on fail)
 codegraph manifesto -T            # Exclude test files from rule evaluation
 ```
 
+### CODEOWNERS
+
+Map graph symbols to CODEOWNERS entries. Shows who owns each function and surfaces ownership boundaries.
+
+```bash
+codegraph owners                   # Show ownership for all symbols
+codegraph owners src/queries.js    # Ownership for symbols in a specific file
+codegraph owners --boundary        # Show ownership boundaries between modules
+codegraph owners --owner @backend  # Filter by owner
+```
+
+Ownership data also enriches `diff-impact` — affected owners and suggested reviewers appear alongside the static dependency analysis.
+
+### Snapshots
+
+Lightweight SQLite DB backup and restore — checkpoint before refactoring, instantly rollback without rebuilding.
+
+```bash
+codegraph snapshot save before-refactor   # Save a named snapshot
+codegraph snapshot list                   # List all snapshots
+codegraph snapshot restore before-refactor  # Restore a snapshot
+codegraph snapshot delete before-refactor   # Delete a snapshot
+```
+
 ### Export & Visualization
 
 ```bash
@@ -287,6 +318,9 @@ codegraph embed                # Build embeddings (default: nomic-v1.5)
 codegraph embed --model nomic  # Use a different model
 codegraph search "handle authentication"
 codegraph search "parse config" --min-score 0.4 -n 10
+codegraph search "parseConfig" --mode keyword   # BM25 keyword-only (exact names)
+codegraph search "auth flow" --mode semantic    # Embedding-only (conceptual)
+codegraph search "auth flow" --mode hybrid      # BM25 + semantic RRF fusion (default)
 codegraph models               # List available models
 ```
 
@@ -343,6 +377,10 @@ codegraph registry remove <name>  # Unregister
 | `--engine <engine>` | Parser engine: `native`, `wasm`, or `auto` (default: `auto`) |
 | `-k, --kind <kind>` | Filter by kind: `function`, `method`, `class`, `struct`, `enum`, `trait`, `record`, `module` (`fn`, `context`, `search`) |
 | `-f, --file <path>` | Scope to a specific file (`fn`, `context`, `where`) |
+| `--mode <mode>` | Search mode: `hybrid` (default), `semantic`, or `keyword` (`search`) |
+| `--ndjson` | Output as newline-delimited JSON (one object per line) |
+| `--limit <n>` | Limit number of results |
+| `--offset <n>` | Skip first N results (pagination) |
 | `--rrf-k <n>` | RRF smoothing constant for multi-query search (default 60) |
 
 ## 🌐 Language Support
@@ -494,7 +532,10 @@ This project uses codegraph. The database is at `.codegraph/graph.db`.
 - `codegraph complexity -T` — per-function complexity metrics (cognitive, cyclomatic, MI)
 - `codegraph communities --drift -T` — module boundary drift analysis
 - `codegraph manifesto -T` — pass/fail rule check (CI gate, exit code 1 on fail)
-- `codegraph search "<query>"` — semantic search (requires `codegraph embed`)
+- `codegraph owners [target]` — CODEOWNERS mapping for symbols
+- `codegraph snapshot save <name>` — checkpoint the graph DB before refactoring
+- `codegraph search "<query>"` — hybrid search (requires `codegraph embed`)
+- `codegraph search "<query>" --mode keyword` — BM25 keyword search
 - `codegraph cycles` — check for circular dependencies
 
 ### Flags
@@ -662,7 +703,7 @@ const { results: fused } = await multiSearchData(
 
 ## 🔍 How Codegraph Compares
 
-<sub>Last verified: February 2026. Full analysis: <a href="generated/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
+<sub>Last verified: March 2026. Full analysis: <a href="generated/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
 
 | Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -674,6 +715,7 @@ const { results: fused } = await multiSearchData(
 | Git co-change analysis | **Yes** | — | — | — | — | — |
 | Dead code / role classification | **Yes** | — | **Yes** | — | — | — |
 | Semantic search | **Yes** | — | **Yes** | **Yes** | — | **Yes** |
+| Hybrid BM25 + semantic | **Yes** | — | — | — | — | **Yes** |
 | Watch mode | **Yes** | — | **Yes** | — | — | — |
 | Zero config, no Docker/JVM | **Yes** | — | **Yes** | — | — | — |
 | Works without API keys | **Yes** | **Yes** | **Yes** | — | **Yes** | **Yes** |
