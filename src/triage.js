@@ -1,4 +1,5 @@
 import { openReadonlyOrFail } from './db.js';
+import { warn } from './logger.js';
 import { paginateResult, printNdjson } from './paginate.js';
 import { isTestFile } from './queries.js';
 
@@ -97,7 +98,8 @@ export function triageData(customDbPath, opts = {}) {
        ORDER BY n.file, n.line`,
       )
       .all(...params);
-  } catch {
+  } catch (err) {
+    warn(`triage query failed: ${err.message}`);
     db.close();
     return {
       items: [],
