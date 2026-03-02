@@ -460,7 +460,7 @@ export async function buildGraph(rootDir, opts = {}) {
         SELECT DISTINCT n_src.file FROM edges e
         JOIN nodes n_src ON e.source_id = n_src.id
         JOIN nodes n_tgt ON e.target_id = n_tgt.id
-        WHERE n_tgt.file = ? AND n_src.file != n_tgt.file
+        WHERE n_tgt.file = ? AND n_src.file != n_tgt.file AND n_src.kind != 'directory'
       `);
       for (const relPath of changedRelPaths) {
         for (const row of findReverseDeps.all(relPath)) {
@@ -687,6 +687,46 @@ export async function buildGraph(rootDir, opts = {}) {
     }
   }
 
+  // For incremental builds, load unchanged barrel files into reexportMap
+  // so barrel-resolved import/call edges aren't dropped for reverse-dep files.
+  // These files are loaded only for resolution — they must NOT be iterated
+  // in the edge-building loop (their existing edges are still in the DB).
+  const barrelOnlyFiles = new Set();
+  if (!isFullBuild) {
+    const barrelCandidates = db
+      .prepare(
+        `SELECT DISTINCT n1.file FROM edges e
+         JOIN nodes n1 ON e.source_id = n1.id
+         WHERE e.kind = 'reexports' AND n1.kind = 'file'`,
+      )
+      .all();
+    for (const { file: relPath } of barrelCandidates) {
+      if (fileSymbols.has(relPath)) continue;
+      const absPath = path.join(rootDir, relPath);
+      try {
+        const symbols = await parseFilesAuto([absPath], rootDir, engineOpts);
+        const fileSym = symbols.get(relPath);
+        if (fileSym) {
+          fileSymbols.set(relPath, fileSym);
+          barrelOnlyFiles.add(relPath);
+          const reexports = fileSym.imports.filter((imp) => imp.reexport);
+          if (reexports.length > 0) {
+            reexportMap.set(
+              relPath,
+              reexports.map((imp) => ({
+                source: getResolved(absPath, imp.source),
+                names: imp.names,
+                wildcardReexport: imp.wildcardReexport || false,
+              })),
+            );
+          }
+        }
+      } catch {
+        /* skip if unreadable */
+      }
+    }
+  }
+
   function isBarrelFile(relPath) {
     const symbols = fileSymbols.get(relPath);
     if (!symbols) return false;
@@ -752,6 +792,8 @@ export async function buildGraph(rootDir, opts = {}) {
   let edgeCount = 0;
   const buildEdges = db.transaction(() => {
     for (const [relPath, symbols] of fileSymbols) {
+      // Skip barrel-only files — loaded for resolution, edges already in DB
+      if (barrelOnlyFiles.has(relPath)) continue;
       const fileNodeRow = getNodeId.get(relPath, 'file', relPath, 0);
       if (!fileNodeRow) continue;
       const fileNodeId = fileNodeRow.id;
@@ -1046,6 +1088,26 @@ export async function buildGraph(rootDir, opts = {}) {
   info(`Graph built: ${nodeCount} nodes, ${edgeCount} edges`);
   info(`Stored in ${dbPath}`);
 
+  // Verify incremental build didn't diverge significantly from previous counts
+  if (!isFullBuild) {
+    const prevNodes = getBuildMeta(db, 'node_count');
+    const prevEdges = getBuildMeta(db, 'edge_count');
+    if (prevNodes && prevEdges) {
+      const prevN = Number(prevNodes);
+      const prevE = Number(prevEdges);
+      if (prevN > 0) {
+        const nodeDrift = Math.abs(nodeCount - prevN) / prevN;
+        const edgeDrift = prevE > 0 ? Math.abs(edgeCount - prevE) / prevE : 0;
+        const driftThreshold = config.build?.driftThreshold ?? 0.2;
+        if (nodeDrift > driftThreshold || edgeDrift > driftThreshold) {
+          warn(
+            `Incremental build diverged significantly from previous counts (nodes: ${prevN}→${nodeCount} [${(nodeDrift * 100).toFixed(1)}%], edges: ${prevE}→${edgeCount} [${(edgeDrift * 100).toFixed(1)}%], threshold: ${(driftThreshold * 100).toFixed(0)}%). Consider rebuilding with --no-incremental.`,
+          );
+        }
+      }
+    }
+  }
+
   // Warn about orphaned embeddings that no longer match any node
   if (hasEmbeddings) {
     try {
@@ -1069,6 +1131,8 @@ export async function buildGraph(rootDir, opts = {}) {
       engine_version: engineVersion || '',
       codegraph_version: CODEGRAPH_VERSION,
       built_at: new Date().toISOString(),
+      node_count: nodeCount,
+      edge_count: edgeCount,
     });
   } catch (err) {
     warn(`Failed to write build metadata: ${err.message}`);

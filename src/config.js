@@ -14,6 +14,7 @@ export const DEFAULTS = {
   build: {
     incremental: true,
     dbPath: '.codegraph/graph.db',
+    driftThreshold: 0.2,
   },
   query: {
     defaultDepth: 3,

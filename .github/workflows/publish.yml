@@ -170,7 +170,7 @@ jobs:
           VERSION: ${{ needs.compute-version.outputs.version }}
         run: |
           npm version "$VERSION" --no-git-tag-version --allow-same-version
-          node scripts/sync-native-versions.js
+          node scripts/sync-native-versions.js --strip
           echo "Packaging version $VERSION"
 
       - name: Disable prepublishOnly

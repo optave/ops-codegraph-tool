@@ -135,6 +135,8 @@ git clone https://github.com/optave/codegraph.git
 cd codegraph && npm install && npm link
 ```
 
+> **Dev builds:** Pre-release tarballs are attached to [GitHub Releases](https://github.com/optave/codegraph/releases). Install with `npm install -g <path-to-tarball>`. Note that `npm install -g <tarball-url>` does not work because npm cannot resolve optional platform-specific dependencies from a URL — download the `.tgz` first, then install from the local file.
+
 ### For AI agents
 
 Add codegraph to your agent's instructions (e.g. `CLAUDE.md`):
