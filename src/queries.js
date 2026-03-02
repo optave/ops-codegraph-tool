@@ -6,7 +6,7 @@ import { findCycles } from './cycles.js';
 import { findDbPath, openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
 import { ownersForFiles } from './owners.js';
-import { paginateResult } from './paginate.js';
+import { paginateResult, printNdjson } from './paginate.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
 
 /**
@@ -392,7 +392,8 @@ export function fileDepsData(file, customDbPath, opts = {}) {
   });
 
   db.close();
-  return { file, results };
+  const base = { file, results };
+  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
 }
 
 export function fnDepsData(name, customDbPath, opts = {}) {
@@ -512,7 +513,8 @@ export function fnDepsData(name, customDbPath, opts = {}) {
   });
 
   db.close();
-  return { name, results };
+  const base = { name, results };
+  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
 }
 
 export function fnImpactData(name, customDbPath, opts = {}) {
@@ -526,7 +528,7 @@ export function fnImpactData(name, customDbPath, opts = {}) {
     return { name, results: [] };
   }
 
-  const results = nodes.slice(0, 3).map((node) => {
+  const results = nodes.map((node) => {
     const visited = new Set([node.id]);
     const levels = {};
     let frontier = [node.id];
@@ -565,7 +567,8 @@ export function fnImpactData(name, customDbPath, opts = {}) {
   });
 
   db.close();
-  return { name, results };
+  const base = { name, results };
+  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
 }
 
 export function pathData(from, to, customDbPath, opts = {}) {
@@ -1016,7 +1019,7 @@ export function diffImpactData(customDbPath, opts = {}) {
   }
 
   db.close();
-  return {
+  const base = {
     changedFiles: changedRanges.size,
     newFiles: [...newFiles],
     affectedFunctions: functionResults,
@@ -1031,6 +1034,7 @@ export function diffImpactData(customDbPath, opts = {}) {
       ownersAffected: ownership ? ownership.affectedOwners.length : 0,
     },
   };
+  return paginateResult(base, 'affectedFunctions', { limit: opts.limit, offset: opts.offset });
 }
 
 export function diffImpactMermaid(customDbPath, opts = {}) {
@@ -1176,6 +1180,131 @@ export function listFunctionsData(customDbPath, opts = {}) {
   db.close();
   const base = { count: rows.length, functions: rows };
   return paginateResult(base, 'functions', { limit: opts.limit, offset: opts.offset });
+}
+
+/**
+ * Generator: stream functions one-by-one using .iterate() for memory efficiency.
+ * @param {string} [customDbPath]
+ * @param {object} [opts]
+ * @param {boolean} [opts.noTests]
+ * @param {string} [opts.file]
+ * @param {string} [opts.pattern]
+ * @yields {{ name: string, kind: string, file: string, line: number, role: string|null }}
+ */
+export function* iterListFunctions(customDbPath, opts = {}) {
+  const db = openReadonlyOrFail(customDbPath);
+  try {
+    const noTests = opts.noTests || false;
+    const kinds = ['function', 'method', 'class'];
+    const placeholders = kinds.map(() => '?').join(', ');
+
+    const conditions = [`kind IN (${placeholders})`];
+    const params = [...kinds];
+
+    if (opts.file) {
+      conditions.push('file LIKE ?');
+      params.push(`%${opts.file}%`);
+    }
+    if (opts.pattern) {
+      conditions.push('name LIKE ?');
+      params.push(`%${opts.pattern}%`);
+    }
+
+    const stmt = db.prepare(
+      `SELECT name, kind, file, line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY file, line`,
+    );
+    for (const row of stmt.iterate(...params)) {
+      if (noTests && isTestFile(row.file)) continue;
+      yield { name: row.name, kind: row.kind, file: row.file, line: row.line, role: row.role };
+    }
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Generator: stream role-classified symbols one-by-one.
+ * @param {string} [customDbPath]
+ * @param {object} [opts]
+ * @param {boolean} [opts.noTests]
+ * @param {string} [opts.role]
+ * @param {string} [opts.file]
+ * @yields {{ name: string, kind: string, file: string, line: number, role: string }}
+ */
+export function* iterRoles(customDbPath, opts = {}) {
+  const db = openReadonlyOrFail(customDbPath);
+  try {
+    const noTests = opts.noTests || false;
+    const conditions = ['role IS NOT NULL'];
+    const params = [];
+
+    if (opts.role) {
+      conditions.push('role = ?');
+      params.push(opts.role);
+    }
+    if (opts.file) {
+      conditions.push('file LIKE ?');
+      params.push(`%${opts.file}%`);
+    }
+
+    const stmt = db.prepare(
+      `SELECT name, kind, file, line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY role, file, line`,
+    );
+    for (const row of stmt.iterate(...params)) {
+      if (noTests && isTestFile(row.file)) continue;
+      yield { name: row.name, kind: row.kind, file: row.file, line: row.line, role: row.role };
+    }
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Generator: stream symbol lookup results one-by-one.
+ * @param {string} target - Symbol name to search for (partial match)
+ * @param {string} [customDbPath]
+ * @param {object} [opts]
+ * @param {boolean} [opts.noTests]
+ * @yields {{ name: string, kind: string, file: string, line: number, role: string|null, exported: boolean, uses: object[] }}
+ */
+export function* iterWhere(target, customDbPath, opts = {}) {
+  const db = openReadonlyOrFail(customDbPath);
+  try {
+    const noTests = opts.noTests || false;
+    const placeholders = ALL_SYMBOL_KINDS.map(() => '?').join(', ');
+    const stmt = db.prepare(
+      `SELECT * FROM nodes WHERE name LIKE ? AND kind IN (${placeholders}) ORDER BY file, line`,
+    );
+    const crossFileCallersStmt = db.prepare(
+      `SELECT COUNT(*) as cnt FROM edges e JOIN nodes n ON e.source_id = n.id
+       WHERE e.target_id = ? AND e.kind = 'calls' AND n.file != ?`,
+    );
+    const usesStmt = db.prepare(
+      `SELECT n.name, n.file, n.line FROM edges e JOIN nodes n ON e.source_id = n.id
+       WHERE e.target_id = ? AND e.kind = 'calls'`,
+    );
+    for (const node of stmt.iterate(`%${target}%`, ...ALL_SYMBOL_KINDS)) {
+      if (noTests && isTestFile(node.file)) continue;
+
+      const crossFileCallers = crossFileCallersStmt.get(node.id, node.file);
+      const exported = crossFileCallers.cnt > 0;
+
+      let uses = usesStmt.all(node.id);
+      if (noTests) uses = uses.filter((u) => !isTestFile(u.file));
+
+      yield {
+        name: node.name,
+        kind: node.kind,
+        file: node.file,
+        line: node.line,
+        role: node.role || null,
+        exported,
+        uses: uses.map((u) => ({ name: u.name, file: u.file, line: u.line })),
+      };
+    }
+  } finally {
+    db.close();
+  }
 }
 
 export function statsData(customDbPath, opts = {}) {
@@ -1572,8 +1701,7 @@ export function queryName(name, customDbPath, opts = {}) {
     offset: opts.offset,
   });
   if (opts.ndjson) {
-    if (data._pagination) console.log(JSON.stringify({ _meta: data._pagination }));
-    for (const r of data.results) console.log(JSON.stringify(r));
+    printNdjson(data, 'results');
     return;
   }
   if (opts.json) {
@@ -1605,7 +1733,11 @@ export function queryName(name, customDbPath, opts = {}) {
 }
 
 export function impactAnalysis(file, customDbPath, opts = {}) {
-  const data = impactAnalysisData(file, customDbPath, { noTests: opts.noTests });
+  const data = impactAnalysisData(file, customDbPath, opts);
+  if (opts.ndjson) {
+    printNdjson(data, 'sources');
+    return;
+  }
   if (opts.json) {
     console.log(JSON.stringify(data, null, 2));
     return;
@@ -1664,7 +1796,11 @@ export function moduleMap(customDbPath, limit = 20, opts = {}) {
 }
 
 export function fileDeps(file, customDbPath, opts = {}) {
-  const data = fileDepsData(file, customDbPath, { noTests: opts.noTests });
+  const data = fileDepsData(file, customDbPath, opts);
+  if (opts.ndjson) {
+    printNdjson(data, 'results');
+    return;
+  }
   if (opts.json) {
     console.log(JSON.stringify(data, null, 2));
     return;
@@ -1695,6 +1831,10 @@ export function fileDeps(file, customDbPath, opts = {}) {
 
 export function fnDeps(name, customDbPath, opts = {}) {
   const data = fnDepsData(name, customDbPath, opts);
+  if (opts.ndjson) {
+    printNdjson(data, 'results');
+    return;
+  }
   if (opts.json) {
     console.log(JSON.stringify(data, null, 2));
     return;
@@ -1863,8 +2003,7 @@ export function contextData(name, customDbPath, opts = {}) {
     return { name, results: [] };
   }
 
-  // Limit to first 5 results
-  nodes = nodes.slice(0, 5);
+  // No hardcoded slice — pagination handles bounding via limit/offset
 
   // File-lines cache to avoid re-reading the same file
   const fileCache = new Map();
@@ -2069,11 +2208,16 @@ export function contextData(name, customDbPath, opts = {}) {
   });
 
   db.close();
-  return { name, results };
+  const base = { name, results };
+  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
 }
 
 export function context(name, customDbPath, opts = {}) {
   const data = contextData(name, customDbPath, opts);
+  if (opts.ndjson) {
+    printNdjson(data, 'results');
+    return;
+  }
   if (opts.json) {
     console.log(JSON.stringify(data, null, 2));
     return;
@@ -2429,11 +2573,16 @@ export function explainData(target, customDbPath, opts = {}) {
   }
 
   db.close();
-  return { target, kind, results };
+  const base = { target, kind, results };
+  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
 }
 
 export function explain(target, customDbPath, opts = {}) {
   const data = explainData(target, customDbPath, opts);
+  if (opts.ndjson) {
+    printNdjson(data, 'results');
+    return;
+  }
   if (opts.json) {
     console.log(JSON.stringify(data, null, 2));
     return;
@@ -2664,8 +2813,7 @@ export function whereData(target, customDbPath, opts = {}) {
 export function where(target, customDbPath, opts = {}) {
   const data = whereData(target, customDbPath, opts);
   if (opts.ndjson) {
-    if (data._pagination) console.log(JSON.stringify({ _meta: data._pagination }));
-    for (const r of data.results) console.log(JSON.stringify(r));
+    printNdjson(data, 'results');
     return;
   }
   if (opts.json) {
@@ -2756,8 +2904,7 @@ export function rolesData(customDbPath, opts = {}) {
 export function roles(customDbPath, opts = {}) {
   const data = rolesData(customDbPath, opts);
   if (opts.ndjson) {
-    if (data._pagination) console.log(JSON.stringify({ _meta: data._pagination }));
-    for (const s of data.symbols) console.log(JSON.stringify(s));
+    printNdjson(data, 'symbols');
     return;
   }
   if (opts.json) {
@@ -2798,6 +2945,10 @@ export function roles(customDbPath, opts = {}) {
 
 export function fnImpact(name, customDbPath, opts = {}) {
   const data = fnImpactData(name, customDbPath, opts);
+  if (opts.ndjson) {
+    printNdjson(data, 'results');
+    return;
+  }
   if (opts.json) {
     console.log(JSON.stringify(data, null, 2));
     return;
@@ -2830,6 +2981,10 @@ export function diffImpact(customDbPath, opts = {}) {
     return;
   }
   const data = diffImpactData(customDbPath, opts);
+  if (opts.ndjson) {
+    printNdjson(data, 'affectedFunctions');
+    return;
+  }
   if (opts.json || opts.format === 'json') {
     console.log(JSON.stringify(data, null, 2));
     return;

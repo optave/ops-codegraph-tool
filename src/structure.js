@@ -2,6 +2,7 @@ import path from 'node:path';
 import { normalizePath } from './constants.js';
 import { openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
+import { paginateResult } from './paginate.js';
 import { isTestFile } from './queries.js';
 
 // ─── Build-time: insert directory nodes, contains edges, and metrics ────
@@ -463,7 +464,8 @@ export function structureData(customDbPath, opts = {}) {
     }
   }
 
-  return { directories: result, count: result.length };
+  const base = { directories: result, count: result.length };
+  return paginateResult(base, 'directories', { limit: opts.limit, offset: opts.offset });
 }
 
 /**
@@ -534,7 +536,8 @@ export function hotspotsData(customDbPath, opts = {}) {
   }));
 
   db.close();
-  return { metric, level, limit, hotspots };
+  const base = { metric, level, limit, hotspots };
+  return paginateResult(base, 'hotspots', { limit: opts.limit, offset: opts.offset });
 }
 
 /**
