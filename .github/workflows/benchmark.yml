@@ -59,9 +59,10 @@ jobs:
         id: existing
         run: |
           VERSION="${{ steps.mode.outputs.version }}"
+          VERSION_RE="${VERSION//./\\.}"
           if [ "$VERSION" = "dev" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION"'"' generated/BUILD-BENCHMARKS.md 2>/dev/null; then
+          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/BUILD-BENCHMARKS.md 2>/dev/null; then
             echo "Benchmark for $VERSION already exists in BUILD-BENCHMARKS.md — skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -189,9 +190,10 @@ jobs:
         id: existing
         run: |
           VERSION="${{ steps.mode.outputs.version }}"
+          VERSION_RE="${VERSION//./\\.}"
           if [ "$VERSION" = "dev" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION"'"' generated/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
+          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/EMBEDDING-BENCHMARKS.md 2>/dev/null; then
             echo "Benchmark for $VERSION already exists in EMBEDDING-BENCHMARKS.md — skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -333,9 +335,10 @@ jobs:
         id: existing
         run: |
           VERSION="${{ steps.mode.outputs.version }}"
+          VERSION_RE="${VERSION//./\\.}"
           if [ "$VERSION" = "dev" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION"'"' generated/QUERY-BENCHMARKS.md 2>/dev/null; then
+          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/QUERY-BENCHMARKS.md 2>/dev/null; then
             echo "Benchmark for $VERSION already exists in QUERY-BENCHMARKS.md — skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
@@ -463,9 +466,10 @@ jobs:
         id: existing
         run: |
           VERSION="${{ steps.mode.outputs.version }}"
+          VERSION_RE="${VERSION//./\\.}"
           if [ "$VERSION" = "dev" ]; then
             echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION"'"' generated/INCREMENTAL-BENCHMARKS.md 2>/dev/null; then
+          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/INCREMENTAL-BENCHMARKS.md 2>/dev/null; then
             echo "Benchmark for $VERSION already exists in INCREMENTAL-BENCHMARKS.md — skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           else
