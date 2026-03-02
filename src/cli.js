@@ -413,6 +413,34 @@ program
     });
   });
 
+program
+  .command('check [ref]')
+  .description('Run validation predicates against git changes (CI gate)')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('--staged', 'Analyze staged changes')
+  .option('--cycles', 'Assert no dependency cycles involve changed files')
+  .option('--blast-radius <n>', 'Assert no function exceeds N transitive callers')
+  .option('--signatures', 'Assert no function declaration lines were modified')
+  .option('--boundaries', 'Assert no cross-owner boundary violations')
+  .option('--depth <n>', 'Max BFS depth for blast radius (default: 3)')
+  .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .action(async (ref, opts) => {
+    const { check } = await import('./check.js');
+    check(opts.db, {
+      ref,
+      staged: opts.staged,
+      cycles: opts.cycles || undefined,
+      blastRadius: opts.blastRadius ? parseInt(opts.blastRadius, 10) : undefined,
+      signatures: opts.signatures || undefined,
+      boundaries: opts.boundaries || undefined,
+      depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+    });
+  });
+
 // ─── New commands ────────────────────────────────────────────────────────
 
 program

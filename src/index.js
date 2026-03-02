@@ -7,6 +7,8 @@
 
 // Audit (composite report)
 export { audit, auditData } from './audit.js';
+// Check (CI validation predicates)
+export { check, checkData } from './check.js';
 // Batch querying
 export { BATCH_COMMANDS, batch, batchData } from './batch.js';
 // Branch comparison
