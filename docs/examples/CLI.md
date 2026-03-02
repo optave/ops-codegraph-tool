@@ -925,50 +925,227 @@ codegraph manifesto -T
 
 ---
 
-## path — Shortest path between two symbols
+## audit — Composite risk report
+
+Combines explain + fn-impact + complexity metrics into one structured report per function. One call instead of 3-4.
 
 ```bash
-codegraph path buildGraph resolveImports -T
+codegraph audit src/builder.js -T
 ```
 
 ```
-Path: buildGraph → resolveImports (1 hop)
+# Audit: src/builder.js
 
-  buildGraph  src/builder.js:335  →(calls)→  resolveImports  src/resolve.js:42
+## buildGraph (function) — src/builder.js:335
+  Parameters: (rootDir, opts = {})
+  Complexity: cognitive=495 cyclomatic=185 nesting=9 MI=0 ⚠
+  Impact: 1 transitive callers
+    ^ resolveNoTests  src/cli.js:59
+  Calls: openDb, initSchema, loadConfig, collectFiles, getChangedFiles, ...
 
-  Hops: 1 | Alternate paths: 0
+## collectFiles (function) — src/builder.js:45
+  Complexity: cognitive=12 cyclomatic=8 nesting=3 MI=45
+  Impact: 1 transitive callers
+    ^ buildGraph  src/builder.js:335
+  Calls: isTestFile, normalizePath
+
+  ... (8 more functions)
 ```
+
+Single function:
 
 ```bash
-codegraph path buildGraph isTestFile -T
+codegraph audit buildGraph -T
 ```
 
-```
-Path: buildGraph → isTestFile (2 hops)
+---
 
-  buildGraph      src/builder.js:335
-    →(calls)→  collectFiles  src/builder.js:45
-    →(calls)→  isTestFile    src/queries.js:21
+## triage — Risk-ranked audit queue
 
-  Hops: 2 | Alternate paths: 1
-```
+Merges connectivity, hotspots, node roles, and complexity into a prioritized audit queue.
 
 ```bash
-codegraph path buildGraph isTestFile -T --json
+codegraph triage -T --limit 5
+```
+
+```
+# Triage Queue (top 5)
+
+  Rank  Function                   File                      Role     Cog  Cyc   MI  Fan-in  Fan-out  Score
+  ───── ────────────────────────── ───────────────────────── ──────── ──── ──── ──── ─────── ──────── ──────
+     1  buildGraph                 src/builder.js            core      495  185    0      1       22   98.5
+     2  extractJavaSymbols         src/extractors/java.js    utility   208   64   14      1        3   87.2
+     3  extractSymbolsWalk         src/extractors/js.js      utility   197   72   11      1        5   85.1
+     4  walkJavaNode               src/extractors/java.js    utility   161   59   16      1        3   79.3
+     5  startMCPServer             src/mcp.js                core       45   20   32      1       18   72.8
+```
+
+---
+
+## batch — Multi-target batch querying
+
+Accept a list of targets and return all results in one JSON payload — designed for multi-agent dispatch.
+
+```bash
+codegraph batch buildGraph openDb parseFile -T --json
 ```
 
 ```json
 {
-  "from": "buildGraph",
-  "to": "isTestFile",
-  "hops": 2,
-  "path": [
-    { "name": "buildGraph", "file": "src/builder.js", "line": 335 },
-    { "name": "collectFiles", "file": "src/builder.js", "line": 45, "edgeKind": "calls" },
-    { "name": "isTestFile", "file": "src/queries.js", "line": 21, "edgeKind": "calls" }
+  "results": [
+    { "target": "buildGraph", "context": { ... }, "impact": { ... } },
+    { "target": "openDb", "context": { ... }, "impact": { ... } },
+    { "target": "parseFile", "context": { ... }, "impact": { ... } }
   ],
-  "alternatePaths": 1
+  "total": 3,
+  "errors": []
 }
+```
+
+---
+
+## check — CI validation predicates
+
+Configurable pass/fail gates. Exit code 0 = pass, 1 = fail.
+
+```bash
+codegraph check --staged --no-new-cycles --max-complexity 30
+```
+
+```
+# Check Results
+
+  ✓ no-new-cycles         — no new cycles introduced
+  ✗ max-complexity (30)   — 3 functions exceed threshold:
+      buildGraph (cognitive=495)  src/builder.js:335
+      extractJavaSymbols (cognitive=208)  src/extractors/java.js
+      extractSymbolsWalk (cognitive=197)  src/extractors/javascript.js
+
+  Result: FAIL (exit code 1)
+```
+
+```bash
+codegraph check --staged --max-blast-radius 50
+```
+
+```
+# Check Results
+
+  ✓ max-blast-radius (50) — max blast radius is 1
+
+  Result: PASS (exit code 0)
+```
+
+```bash
+codegraph check --no-boundary-violations -T
+```
+
+```
+# Check Results
+
+  ✓ no-boundary-violations — no architecture boundary violations
+
+  Result: PASS (exit code 0)
+```
+
+---
+
+## owners — CODEOWNERS integration
+
+```bash
+codegraph owners src/queries.js -T
+```
+
+```
+# Ownership: src/queries.js
+
+  Owner: @backend-team
+  Functions: 44
+
+  f safePath           src/queries.js:14     @backend-team
+  f isTestFile         src/queries.js:21     @backend-team
+  f findMatchingNodes  src/queries.js:127    @backend-team
+  ...
+```
+
+Ownership boundaries:
+
+```bash
+codegraph owners --boundary -T
+```
+
+```
+# Ownership Boundaries
+
+  @backend-team → @frontend-team: 3 cross-boundary edges
+    src/queries.js:findMatchingNodes → src/cli.js:resolveNoTests
+    ...
+
+  @backend-team → @infra-team: 1 cross-boundary edges
+    src/db.js:openDb → src/builder.js:buildGraph
+```
+
+---
+
+## snapshot — Graph DB backup and restore
+
+```bash
+codegraph snapshot save before-refactor
+```
+
+```
+Snapshot saved: before-refactor (2.1 MB)
+  Path: .codegraph/snapshots/before-refactor.db
+```
+
+```bash
+codegraph snapshot list
+```
+
+```
+Snapshots:
+  before-refactor  2.1 MB  2026-03-02 10:30:00
+  baseline         2.0 MB  2026-03-01 14:15:00
+```
+
+```bash
+codegraph snapshot restore before-refactor
+```
+
+```
+Snapshot restored: before-refactor → .codegraph/graph.db
+```
+
+---
+
+## branch-compare — Structural diff between refs
+
+```bash
+codegraph branch-compare main HEAD -T
+```
+
+```
+# Branch Comparison: main → HEAD
+
+  Added (3 symbols):
+    + f checkBoundaries     src/boundaries.js:45
+    + f validateBoundaryConfig  src/boundaries.js:120
+    + f onionPreset         src/boundaries.js:180
+
+  Changed (2 symbols):
+    ~ f manifestoData       src/manifesto.js:88  (signature changed)
+    ~ f startMCPServer      src/mcp.js:650       (body changed)
+
+  Removed (0 symbols)
+
+  Impact: 4 transitive callers affected
+    ^ resolveNoTests  src/cli.js:59
+    ^ manifestoTool   src/mcp.js:472
+    ...
+```
+
+```bash
+codegraph branch-compare main HEAD --format mermaid -T
 ```
 
 ---

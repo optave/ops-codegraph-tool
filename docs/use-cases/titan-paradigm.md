@@ -57,13 +57,14 @@ codegraph communities -T
 codegraph communities --drift -T
 ```
 
-An orchestrating agent can use `map`, `hotspots`, and `communities` to build a priority queue: audit the most-connected files first, because changes there have the highest blast radius. The `--json` flag on every command makes it trivial to feed results into a state file or orchestration script.
+Or skip the manual synthesis entirely — `triage` merges connectivity, hotspots, roles, and complexity into a single ranked priority queue:
 
 ```bash
-# JSON output for programmatic consumption
-codegraph map --limit 50 --no-tests --json > recon-priority.json
-codegraph hotspots --no-tests --json >> recon-priority.json
+# One call — the orchestrating agent gets a ranked audit queue
+codegraph triage -T --limit 50 --json > recon-priority.json
 ```
+
+The `--json` flag on every command makes it trivial to feed results into a state file or orchestration script.
 
 For deeper structural understanding before touching anything:
 
@@ -80,36 +81,37 @@ codegraph where resolveImports
 
 ### THE GAUNTLET: Audit every file against strict standards
 
-The Gauntlet needs each sub-agent to understand what a file does, what depends on it, and how risky changes are. Codegraph gives each agent full context without burning tokens on `grep`/`find`/`cat`:
+The Gauntlet needs each sub-agent to understand what a file does, what depends on it, and how risky changes are. The `audit` command gives each agent everything in one call:
 
 ```bash
-# For each file the sub-agent is auditing:
+# One call per file — explain + impact + complexity in one structured report
+codegraph audit src/parser.js -T
 
-# 1. What does this file export, import, and contain?
-codegraph explain src/parser.js
-
-# 2. For each function that might need decomposition:
-#    Full context — source, deps, callers, signature
-codegraph context wasmExtractSymbols -T
-
-# 3. How many callers? What's the blast radius if we refactor?
-codegraph fn-impact wasmExtractSymbols -T
-
-# 4. What's the full call chain?
-codegraph fn wasmExtractSymbols -T --depth 5
+# Or audit a single function
+codegraph audit wasmExtractSymbols -T
 ```
 
-Use `complexity` to get quantitative metrics for every function in the file, and `manifesto` to run the full rule engine:
+For a swarm of 20+ sub-agents auditing different files, `batch` returns all results in one JSON payload:
 
 ```bash
-# 5. Per-function complexity metrics — cognitive, cyclomatic, nesting, MI
+# Orchestrator sends one request, gets audit results for all targets
+codegraph batch src/parser.js src/builder.js src/queries.js -T --json > audit-results.json
+```
+
+For deeper analysis, individual commands are still available:
+
+```bash
+# Per-function complexity metrics — cognitive, cyclomatic, nesting, MI
 codegraph complexity --file src/parser.js -T
 
-# 6. Full Halstead health view — volume, effort, estimated bugs, MI
+# Full Halstead health view — volume, effort, estimated bugs, MI
 codegraph complexity --file src/parser.js --health -T
 
-# 7. Pass/fail rule check — does this file meet the manifesto?
+# Pass/fail rule check — does this file meet the manifesto?
 codegraph manifesto -T
+
+# Architecture boundary violations — are cross-module dependencies allowed?
+codegraph manifesto -T  # boundaries are enforced as manifesto rules
 ```
 
 When a sub-agent decides a function needs decomposition (complexity > 7, nesting > 3, 10+ mocks), it needs to know what breaks. `fn-impact` gives the complete blast radius **before** the agent writes a single line of code.
@@ -118,7 +120,7 @@ The `--json` flag lets the orchestrator aggregate results across all sub-agents:
 
 ```bash
 # Each sub-agent reports its audit findings as JSON
-codegraph fn-impact parseConfig -T --json > audit/parser.json
+codegraph audit parseConfig -T --json > audit/parser.json
 ```
 
 ### GLOBAL SYNC: Identify overlapping fixes, build shared abstractions
@@ -148,14 +150,24 @@ The lead agent can use `cycles` to identify dependency knots, `path` to understa
 
 ### STATE MACHINE: Track changes, verify impact, enable rollback
 
-The State Machine phase needs to validate that every change is safe. Codegraph's `diff-impact` is purpose-built for this:
+The State Machine phase needs yes/no answers: "Did this change introduce a cycle?" "Did blast radius exceed N?" "Did any boundary get violated?" The `check` command provides exactly this:
 
 ```bash
-# After a sub-agent makes changes and stages them:
-codegraph diff-impact --staged -T
+# Exit code 0 = pass, 1 = fail — perfect for CI gates and rollback triggers
+codegraph check --staged --no-new-cycles --max-blast-radius 20 --max-complexity 30
 
-# Output: which functions changed, which callers are affected,
-# full transitive blast radius — all in one call
+# Also enforce architecture boundary rules
+codegraph check --staged --no-boundary-violations
+
+# Or combine all predicates in one call
+codegraph check --staged --no-new-cycles --max-blast-radius 20 --no-boundary-violations -T
+```
+
+For detailed impact analysis, `diff-impact` provides the full picture:
+
+```bash
+# Which functions changed, which callers are affected, full blast radius
+codegraph diff-impact --staged -T
 
 # Compare current branch against main to see cumulative impact
 codegraph diff-impact main -T
@@ -167,14 +179,26 @@ codegraph diff-impact --staged --format mermaid -T
 codegraph diff-impact --staged -T --json > state/impact-check.json
 ```
 
-Use `manifesto` as a CI gate — it exits with code 1 when any function exceeds a fail-level threshold:
+Use `snapshot` to checkpoint before each refactoring pass and instantly rollback without rebuilding:
+
+```bash
+# Checkpoint before the Gauntlet starts
+codegraph snapshot save pre-gauntlet
+
+# ... agents make changes ...
+
+# If something goes wrong — instant rollback without rebuilding
+codegraph snapshot restore pre-gauntlet
+```
+
+Use `manifesto` as an additional CI gate — it exits with code 1 when any function exceeds a fail-level threshold:
 
 ```bash
 # Pass/fail rule check — exit code 1 = fail → rollback trigger
 codegraph manifesto -T
 ```
 
-The orchestrator can gate every commit: run `diff-impact --staged --json` to check blast radius, and `manifesto -T` to verify code health rules. Auto-rollback if either exceeds thresholds. Combined with `codegraph watch` for real-time graph updates, the state machine always has a current picture of the codebase.
+The orchestrator can gate every commit: run `check --staged` for pass/fail validation, `diff-impact --staged --json` for detailed blast radius, and `manifesto -T` to verify code health rules. Auto-rollback if any exceeds thresholds. Combined with `codegraph watch` for real-time graph updates, the state machine always has a current picture of the codebase.
 
 ```bash
 # Watch mode — graph updates automatically as agents edit files
@@ -210,7 +234,8 @@ Several planned features would make codegraph even more powerful for the Titan P
 
 | Feature | Status | How it helps |
 |---------|--------|-------------|
-| **Architecture boundary rules** ([Backlog #13](../../roadmap/BACKLOG.md)) | Planned | User-defined rules for allowed/forbidden dependencies between modules (e.g., "controllers must not import from other controllers"). The GLOBAL SYNC agent can enforce architectural standards automatically |
+| **Architecture boundary rules** ([Backlog #13](../../roadmap/BACKLOG.md)) | **Done** | `manifesto.boundaries` config defines allowed/forbidden dependencies between modules. Onion architecture preset available via `manifesto.boundaryPreset: "onion"`. Violations flagged in `manifesto` and enforceable via `check --no-boundary-violations`. PR #228 + #229 |
+| **CODEOWNERS integration** ([Backlog #18](../../roadmap/BACKLOG.md)) | **Done** | `codegraph owners` maps graph nodes to CODEOWNERS entries. Shows who owns each function, surfaces ownership boundaries in `diff-impact`. The GLOBAL SYNC agent can identify which teams need to coordinate. PR #195 |
 | **Refactoring analysis** ([Roadmap Phase 8.5](../../roadmap/ROADMAP.md#85--refactoring-analysis)) | Planned | `split_analysis`, `extraction_candidates`, `boundary_analysis` — LLM-powered structural analysis that identifies exactly where shared abstractions should be created |
 | **Dead code detection** ([Backlog #1](../../roadmap/BACKLOG.md)) | **Done** | `codegraph roles --role dead -T` lists all symbols with zero fan-in that aren't exported. Delivered as part of node classification |
 
@@ -218,79 +243,26 @@ Several planned features would make codegraph even more powerful for the Titan P
 
 | Feature | Status | How it helps |
 |---------|--------|-------------|
-| **Branch structural diff** ([Backlog #16](../../roadmap/BACKLOG.md)) | Planned | Compare code structure between two branches using git worktrees. Shows added/removed/changed symbols and their impact — perfect for validating that a refactoring branch hasn't broken the structural contract |
+| **Change validation predicates** ([Backlog #30](../../roadmap/BACKLOG.md)) | **Done** | `codegraph check --staged --no-new-cycles --max-blast-radius N --no-boundary-violations` with exit code 0/1. The STATE MACHINE gets first-class pass/fail signals without parsing JSON. PR #225 + #230 |
+| **Graph snapshots** ([Backlog #31](../../roadmap/BACKLOG.md)) | **Done** | `codegraph snapshot save/restore` for instant DB backup and rollback. Orchestrators checkpoint before each refactoring pass and restore on failure without rebuilding. PR #192 |
+| **Branch structural diff** ([Backlog #16](../../roadmap/BACKLOG.md)) | **Done** | `codegraph branch-compare main feature-branch` compares code structure between two refs — added/removed/changed symbols with transitive caller impact. PR in v2.5.1 |
+| **Streaming / chunked results** ([Backlog #20](../../roadmap/BACKLOG.md)) | **Done** | Universal pagination on all 30 MCP tools, NDJSON streaming on CLI commands, generator APIs for memory-efficient iteration. PR #207 |
 | **GitHub Action + CI integration** ([Roadmap Phase 7](../../roadmap/ROADMAP.md#phase-7--github-integration--ci)) | Planned | Reusable GitHub Action that runs `diff-impact` on every PR, posts visual impact graphs, and fails if thresholds are exceeded — the STATE MACHINE becomes a CI gate |
-| **Streaming / chunked results** ([Backlog #20](../../roadmap/BACKLOG.md)) | Planned | Large codebases don't blow up agent context windows; consumers process results as they arrive instead of waiting for the full payload |
 
 ---
 
-## Recommendations: Making Codegraph Even Better for This Use Case
+## What's Next
 
-The features above cover what codegraph can do today and what's already planned. Beyond those, the Titan Paradigm points to a class of enhancements that would naturally follow the [LLM integration work](../../roadmap/ROADMAP.md#phase-4--intelligent-embeddings) (Roadmap Phase 4) — combining codegraph's structural graph with LLM intelligence to serve multi-agent orchestration directly.
+All six recommendations from v2.5.0 — `audit`, `batch`, `triage`, `check`, `snapshot`, and MCP orchestration tools — shipped in v2.6.0. The remaining enhancements that would make codegraph even more powerful for the Titan Paradigm are in the LLM integration roadmap:
 
-### 1. `codegraph audit` — one-call file assessment
+### LLM-enhanced features (Roadmap Phase 4+)
 
-Once [build-time semantic metadata](../../roadmap/ROADMAP.md#44--build-time-semantic-metadata) (Phase 4.4) lands, codegraph will have `risk_score`, `complexity_notes`, and `side_effects` per function. A natural next step is a single `audit` command that combines these with `explain` and `fn-impact` into one structured report — exactly what each Gauntlet sub-agent needs.
-
-```bash
-# One call per file, everything a sub-agent needs to decide pass/fail
-codegraph audit src/parser.js --json
-# → { functions: [{ name, complexity, nesting_depth, fan_in, fan_out,
-#      risk_score, side_effects, callers_count, decomposition_hint }] }
-```
-
-With LLM-generated `complexity_notes`, the `decomposition_hint` could go beyond numbers ("complexity > 7") to actionable guidance ("3 responsibilities — split validation from persistence from notification").
-
-### 2. Batch querying for swarm agents
-
-Today, each query is a separate CLI invocation. For a swarm of 20+ sub-agents each auditing different files, a batch mode that accepts a list of targets and returns all results in one JSON payload would dramatically reduce overhead.
-
-```bash
-# Orchestrator sends one request, gets audit results for all targets
-codegraph audit --batch targets.json --json > audit-results.json
-```
-
-This becomes especially powerful after [module summaries](../../roadmap/ROADMAP.md#45--module-summaries) (Phase 4.5) — the batch output can include file-level narratives alongside function-level metrics, so sub-agents understand the module's role before diving into individual functions.
-
-### 3. `codegraph triage` — orchestrator-friendly priority queue
-
-`map` and `hotspots` give ranked lists, but the Titan Paradigm needs a single prioritized audit queue. After LLM integration, codegraph could combine graph centrality, `risk_score`, [git change coupling](../../roadmap/BACKLOG.md) (Backlog #9), and LLM-assessed complexity into one ranked list:
-
-```bash
-codegraph triage --limit 50 -T --json
-# → Ranked list: highest-risk, most-connected, most-churned files first
-# → Each entry includes: connectivity rank, risk_score, churn frequency,
-#    coupling cluster, estimated refactoring complexity
-```
-
-This replaces the RECON agent's synthesis work with a single call.
-
-### 4. `codegraph check` — change validation predicates
-
-The STATE MACHINE needs yes/no answers: "Did this change introduce a cycle?" "Did blast radius exceed N?" "Did any public API signature change?" Today this requires parsing JSON output. First-class exit codes or a `check` command with configurable predicates would make the state machine trivially scriptable:
-
-```bash
-# Exit code 1 if any predicate fails — perfect for CI gates and rollback triggers
-codegraph check --staged --no-new-cycles --max-blast-radius 20 --no-signature-changes
-```
-
-After [architecture boundary rules](../../roadmap/BACKLOG.md) (Backlog #13), this could also enforce "no new cross-boundary violations."
-
-### 5. Session-aware graph snapshots
-
-The STATE MACHINE tracks state across agent sessions. If codegraph could snapshot and restore graph states (lightweight — just the SQLite DB), the orchestrator could take a snapshot before each refactoring pass and restore on rollback, without rebuilding:
-
-```bash
-codegraph snapshot save pre-gauntlet
-# ... agents make changes ...
-codegraph snapshot restore pre-gauntlet   # instant rollback
-```
-
-After LLM integration, snapshots would also preserve embeddings, descriptions, and semantic metadata — so rolling back doesn't require re-running expensive LLM calls.
-
-### 6. MCP-native orchestration
-
-The Titan Paradigm's agents could run entirely through codegraph's [MCP server](../examples/MCP.md) instead of shelling out to the CLI. With 24 tools already exposed, the main gap is the `audit`/`triage`/`check` commands described above. After Phase 4, adding these as MCP tools — alongside [`ask_codebase`](../../roadmap/ROADMAP.md#53--mcp-integration) (Phase 5.3) for natural-language queries — would let orchestrators like Claude Code's agent teams query the graph with zero CLI overhead. The RECON agent asks the MCP server "what are the riskiest files?", each Gauntlet agent asks "should this function be decomposed?", and the STATE MACHINE asks "is this change safe?" — all through the same protocol.
+| Feature | How it helps the Titan Paradigm |
+|---------|-------------------------------|
+| **Build-time semantic metadata** ([Phase 4.4](../../roadmap/ROADMAP.md#44--build-time-semantic-metadata)) | LLM-generated `risk_score`, `complexity_notes`, and `side_effects` per function. The `audit` command could include "3 responsibilities — split validation from persistence from notification" instead of just numbers |
+| **Module summaries** ([Phase 4.5](../../roadmap/ROADMAP.md#45--module-summaries)) | File-level narratives alongside function-level metrics in `batch` output, so Gauntlet sub-agents understand the module's role before diving in |
+| **`ask_codebase`** ([Phase 5.3](../../roadmap/ROADMAP.md#53--mcp-integration)) | Natural-language queries over the graph via MCP. The RECON agent asks "what are the riskiest files?" and gets a ranked answer |
+| **Refactoring analysis** ([Phase 8.5](../../roadmap/ROADMAP.md#85--refactoring-analysis)) | `split_analysis`, `extraction_candidates`, `boundary_analysis` — identifies exactly where shared abstractions should be created for GLOBAL SYNC |
 
 ---
 
@@ -307,11 +279,10 @@ codegraph build
 Then wire your orchestrator's RECON phase to start with:
 
 ```bash
-codegraph map --limit 50 -T --json      # Priority queue
-codegraph hotspots -T --json             # Risk signals
+codegraph triage -T --limit 50 --json   # Ranked priority queue (one call)
 codegraph stats --json                   # Health baseline
 ```
 
-Feed the results to your sub-agents, give each one `codegraph context` and `codegraph fn-impact`, and gate every commit through `codegraph diff-impact --staged --json`.
+Feed the results to your sub-agents with `codegraph batch` and `codegraph audit`, and gate every commit through `codegraph check --staged`.
 
 For the full agent integration guide, see [AI Agent Guide](../ai-agent-guide.md). For MCP server setup, see [MCP Examples](../examples/MCP.md).

@@ -59,6 +59,13 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `complexity.js` | Cognitive, cyclomatic, Halstead, MI computation from AST; `complexity` CLI command |
 | `communities.js` | Louvain community detection, drift analysis |
 | `manifesto.js` | Configurable rule engine with warn/fail thresholds; CI gate |
+| `audit.js` | Composite audit command: explain + impact + health in one call |
+| `batch.js` | Batch querying for multi-agent dispatch |
+| `triage.js` | Risk-ranked audit priority queue |
+| `check.js` | CI validation predicates (cycles, complexity, blast radius, boundaries) |
+| `boundaries.js` | Architecture boundary rules with onion architecture preset |
+| `owners.js` | CODEOWNERS integration for ownership queries |
+| `snapshot.js` | SQLite DB backup and restore |
 | `paginate.js` | Pagination helpers for bounded query results |
 | `logger.js` | Structured logging (`warn`, `debug`, `info`, `error`) |
 
@@ -125,6 +132,12 @@ node src/cli.js diff-impact main     # Impact of current branch vs main
 node src/cli.js complexity -T         # Per-function complexity metrics
 node src/cli.js communities -T       # Community detection & drift analysis
 node src/cli.js manifesto -T         # Rule engine pass/fail check
+node src/cli.js audit <target> -T    # Combined explain + impact + health report
+node src/cli.js triage -T            # Ranked audit priority queue
+node src/cli.js check --staged       # CI validation predicates (exit code 0/1)
+node src/cli.js batch t1 t2 -T      # Batch query multiple targets
+node src/cli.js owners <target>      # CODEOWNERS mapping
+node src/cli.js snapshot save <name> # Checkpoint graph DB
 node src/cli.js cycles               # Check for circular dependencies
 node src/cli.js search "<query>"     # Semantic search (requires `embed` first)
 ```

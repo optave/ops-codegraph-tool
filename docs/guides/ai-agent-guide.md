@@ -358,6 +358,99 @@ codegraph cycles --functions
 | **When to use** | Verifying no new cycles were introduced |
 | **Output** | List of cycles, each shown as a chain of files/functions |
 
+### Risk & Orchestration Commands
+
+#### `audit` — Composite risk report
+
+Combines explain + impact + complexity metrics in one call per function or file.
+
+```bash
+codegraph audit src/parser.js -T        # Audit all functions in a file
+codegraph audit buildGraph -T           # Audit a single function
+```
+
+| | |
+|---|---|
+| **MCP tool** | `audit` |
+| **Key flags** | `-T` (no tests), `-j` (JSON) |
+| **When to use** | Getting everything needed to assess a function in one call instead of 3-4 |
+| **Output** | Per-function: explain summary, impact (callers), complexity metrics |
+
+#### `triage` — Risk-ranked audit queue
+
+Merges connectivity, hotspots, node roles, and complexity into a single prioritized list.
+
+```bash
+codegraph triage -T --limit 20
+```
+
+| | |
+|---|---|
+| **MCP tool** | `triage` |
+| **Key flags** | `--limit <n>`, `-T` (no tests), `-j` (JSON) |
+| **When to use** | Building a priority queue of what to audit first |
+| **Output** | Ranked list with role, complexity, fan-in/out, and risk score per function |
+
+#### `batch` — Multi-target batch querying
+
+Accept a list of targets and return all results in one JSON payload.
+
+```bash
+codegraph batch target1 target2 target3 -T --json
+```
+
+| | |
+|---|---|
+| **MCP tool** | `batch_query` |
+| **Key flags** | `-T` (no tests), `-j` (JSON) |
+| **When to use** | Multi-agent dispatch — one orchestrator call feeds N sub-agents |
+| **Output** | Array of results, one per target |
+
+#### `check` — CI validation predicates
+
+Configurable pass/fail gates with exit code 0 (pass) or 1 (fail).
+
+```bash
+codegraph check --staged --no-new-cycles --max-complexity 30
+codegraph check --staged --max-blast-radius 50 --no-boundary-violations
+```
+
+| | |
+|---|---|
+| **MCP tool** | `check` |
+| **Key flags** | `--staged`, `--no-new-cycles`, `--max-complexity <n>`, `--max-blast-radius <n>`, `--no-boundary-violations`, `-T` (no tests) |
+| **When to use** | CI gates, state machines, rollback triggers — anywhere you need a pass/fail signal |
+| **Output** | Per-predicate pass/fail results; exit code 0 or 1 |
+
+#### `owners` — CODEOWNERS integration
+
+Map graph symbols to CODEOWNERS entries.
+
+```bash
+codegraph owners src/queries.js -T
+codegraph owners --boundary -T         # Cross-team boundaries
+```
+
+| | |
+|---|---|
+| **MCP tool** | `code_owners` |
+| **Key flags** | `--owner <name>`, `--boundary`, `-T` (no tests), `-j` (JSON) |
+| **When to use** | Finding who owns code, identifying cross-team boundaries |
+| **Output** | Owner mapping per function, boundary crossings |
+
+#### `snapshot` — Graph DB backup and restore
+
+```bash
+codegraph snapshot save before-refactor
+codegraph snapshot restore before-refactor
+codegraph snapshot list
+```
+
+| | |
+|---|---|
+| **MCP tool** | (use via CLI) |
+| **When to use** | Checkpointing before refactoring, instant rollback without rebuilding |
+
 ### Utility Commands
 
 #### `build` — Build/update the graph
@@ -502,6 +595,19 @@ codegraph mcp --repos "myapp,lib"      # Restricted repo list
 | `list_functions` | *(MCP only)* | List/filter symbols |
 | `structure` | `structure [dir]` | Directory tree with metrics |
 | `hotspots` | `hotspots` | Structural hotspot detection |
+| `node_roles` | `roles` | Node role classification |
+| `co_changes` | `co-change` | Git co-change analysis |
+| `execution_flow` | `flow` | Execution flow tracing |
+| `list_entry_points` | `flow --entry-points` | Framework entry point detection |
+| `complexity` | `complexity` | Per-function complexity metrics |
+| `communities` | `communities` | Community detection & drift |
+| `manifesto` | `manifesto` | Rule engine pass/fail |
+| `code_owners` | `owners` | CODEOWNERS integration |
+| `audit` | `audit <target>` | Composite risk report |
+| `batch_query` | `batch <targets>` | Multi-target batch querying |
+| `triage` | `triage` | Risk-ranked audit queue |
+| `check` | `check` | CI validation predicates |
+| `branch_compare` | `branch-compare` | Structural diff between refs |
 | `list_repos` | `registry list` | List registered repos (multi-repo only) |
 
 ### Server Modes
@@ -693,10 +799,16 @@ This project uses codegraph for dependency analysis. The graph is at `.codegraph
 - `codegraph build .` — rebuild the graph (incremental by default)
 - `codegraph map` — module overview
 - `codegraph stats` — graph health and quality score
-- `codegraph search "<query>"` — semantic search (requires `codegraph embed`)
-- `codegraph cycles` — check for circular dependencies
+- `codegraph audit <target> -T` — combined explain + impact + health in one report
+- `codegraph triage -T` — ranked audit priority queue
+- `codegraph check --staged` — CI validation predicates (exit code 0/1)
+- `codegraph batch target1 target2` — batch query multiple targets at once
 - `codegraph fn <name> -T` — function call chain
 - `codegraph deps <file>` — file-level dependencies
+- `codegraph owners [target]` — CODEOWNERS mapping for symbols
+- `codegraph snapshot save <name>` — checkpoint the graph DB before refactoring
+- `codegraph search "<query>"` — semantic search (requires `codegraph embed`)
+- `codegraph cycles` — check for circular dependencies
 
 ### Flags
 - `-T` / `--no-tests` — exclude test files (use by default)
@@ -843,6 +955,14 @@ fi
 | Find hotspots | `codegraph hotspots --metric coupling` |
 | See project structure | `codegraph structure --depth 2` |
 | List symbols in a file | `codegraph where --file <path>` |
+| Get a full risk report for a function | `codegraph audit <name> -T` |
+| Get a ranked list of riskiest functions | `codegraph triage -T --limit 20` |
+| Batch query multiple targets at once | `codegraph batch t1 t2 t3 -T --json` |
+| Validate staged changes pass CI rules | `codegraph check --staged --no-new-cycles` |
+| Find who owns a piece of code | `codegraph owners <target>` |
+| Checkpoint the graph before refactoring | `codegraph snapshot save <name>` |
+| Restore graph after failed refactoring | `codegraph snapshot restore <name>` |
+| Compare structure between branches | `codegraph branch-compare main HEAD -T` |
 | Export graph for visualization | `codegraph export --format mermaid` |
 | Build/update the graph | `codegraph build .` |
 | Build semantic embeddings | `codegraph embed .` |
@@ -853,7 +973,7 @@ fi
 
 | Flag | Short | Description | Available on |
 |------|-------|-------------|-------------|
-| `--no-tests` | `-T` | Exclude test/spec files | All query commands (fn, fn-impact, context, explain, where, diff-impact, search, map, deps, impact, query, stats, hotspots, cycles, export, structure) |
+| `--no-tests` | `-T` | Exclude test/spec files | All query commands (fn, fn-impact, context, explain, where, diff-impact, search, map, deps, impact, query, stats, hotspots, cycles, export, structure, audit, triage, check, batch, owners, branch-compare) |
 | `--json` | `-j` | JSON output | Most commands |
 | `--file <path>` | `-f` | Scope to a file | fn, fn-impact, context, where |
 | `--kind <kind>` | `-k` | Filter by symbol kind | fn, fn-impact, context |

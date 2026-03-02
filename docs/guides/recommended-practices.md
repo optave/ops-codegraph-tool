@@ -121,6 +121,19 @@ Use `manifesto` to enforce code health rules in CI — it exits with code 1 when
     npx codegraph manifesto -T  # exits 1 on fail-level breach
 ```
 
+### Change validation gate
+
+Use `check` for pass/fail CI validation with configurable predicates:
+
+```yaml
+- name: Validate changes
+  run: |
+    npx codegraph build
+    npx codegraph check --staged --no-new-cycles --max-blast-radius 50 --no-boundary-violations -T
+```
+
+Combine multiple predicates — exit code 1 if any fails. Available predicates: `--no-new-cycles`, `--max-complexity <n>`, `--max-blast-radius <n>`, `--no-boundary-violations`.
+
 ### Caching the graph database
 
 Speed up CI by caching `.codegraph/`:
@@ -154,7 +167,7 @@ By default, the MCP server runs in **single-repo mode** — the AI agent can onl
 
 Enable `--multi-repo` to let the agent query any registered repository, or use `--repos` to restrict access to a specific set of repos.
 
-The server exposes 24 tools (25 in multi-repo mode): `query_function`, `file_deps`, `impact_analysis`, `find_cycles`, `module_map`, `fn_deps`, `fn_impact`, `symbol_path`, `context`, `explain`, `where`, `diff_impact`, `semantic_search`, `export_graph`, `list_functions`, `structure`, `hotspots`, `node_roles`, `co_changes`, `execution_flow`, `list_entry_points`, `complexity`, `communities`, `manifesto`, and `list_repos` (multi-repo only). See the [AI Agent Guide MCP reference](./ai-agent-guide.md#mcp-server-reference) for the full tool-to-CLI mapping table.
+The server exposes 30 tools (31 in multi-repo mode): `query_function`, `file_deps`, `impact_analysis`, `find_cycles`, `module_map`, `fn_deps`, `fn_impact`, `symbol_path`, `context`, `explain`, `where`, `diff_impact`, `semantic_search`, `export_graph`, `list_functions`, `structure`, `hotspots`, `node_roles`, `co_changes`, `execution_flow`, `list_entry_points`, `complexity`, `communities`, `manifesto`, `code_owners`, `audit`, `batch_query`, `triage`, `check`, `branch_compare`, and `list_repos` (multi-repo only). See the [AI Agent Guide MCP reference](./ai-agent-guide.md#mcp-server-reference) for the full tool-to-CLI mapping table.
 
 ### CLAUDE.md for your project
 
@@ -186,6 +199,13 @@ This project uses codegraph. The database is at `.codegraph/graph.db`.
 - `codegraph complexity -T` — per-function complexity metrics (cognitive, cyclomatic, MI)
 - `codegraph communities --drift -T` — module boundary drift analysis
 - `codegraph manifesto -T` — pass/fail rule check (CI gate, exit code 1 on fail)
+- `codegraph audit <target> -T` — combined explain + impact + health in one report
+- `codegraph triage -T` — ranked audit priority queue
+- `codegraph check --staged` — CI validation predicates (exit code 0/1)
+- `codegraph batch target1 target2` — batch query multiple targets at once
+- `codegraph owners [target]` — CODEOWNERS mapping for symbols
+- `codegraph snapshot save <name>` — checkpoint the graph DB before refactoring
+- `codegraph branch-compare main HEAD -T` — structural diff between two refs
 - `codegraph search "<query>"` — semantic search (requires `codegraph embed`)
 - `codegraph cycles` — check for circular dependencies
 
@@ -602,9 +622,12 @@ codegraph co-change --analyze
 # 7. (Optional) Verify code health rules pass
 codegraph manifesto -T
 
-# 8. (Optional) Build embeddings for semantic search
+# 8. (Optional) Set up CI validation gate
+# codegraph check --staged --no-new-cycles --max-blast-radius 50 -T
+
+# 9. (Optional) Build embeddings for semantic search
 codegraph embed
 
-# 9. (Optional) Add CLAUDE.md for AI agents
+# 10. (Optional) Add CLAUDE.md for AI agents
 # See docs/guides/ai-agent-guide.md for the full template
 ```

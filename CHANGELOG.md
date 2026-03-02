@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [2.6.0](https://github.com/optave/codegraph/compare/v2.5.1...v2.6.0) (2026-03-02)
+
+**CI validation, architecture boundaries, CODEOWNERS, and multi-agent support.** This release adds a `check` command for CI validation predicates (complexity, coverage, staleness gates), architecture boundary enforcement via manifesto rules with an onion-architecture preset, CODEOWNERS integration for ownership queries, `codegraph snapshot` for DB backup/restore, hybrid BM25 + semantic search via FTS5, composite `audit` and `triage` commands for risk-driven workflows, and batch querying for multi-agent dispatch.
+
+### Features
+
+* **cli:** add `check` command — CI validation predicates for complexity, coverage, staleness, and custom thresholds ([0a4c1bf](https://github.com/optave/codegraph/commit/0a4c1bf))
+* **cli:** add `audit` command — composite risk audit combining explain + impact + health in one call ([6530d27](https://github.com/optave/codegraph/commit/6530d27))
+* **cli:** add `triage` command — composite risk audit queue for prioritized review ([98b509f](https://github.com/optave/codegraph/commit/98b509f))
+* **cli:** add `codegraph snapshot` for DB backup and restore ([8d7416b](https://github.com/optave/codegraph/commit/8d7416b))
+* **cli:** add `codegraph owners` — CODEOWNERS integration for ownership queries ([36c6fdb](https://github.com/optave/codegraph/commit/36c6fdb))
+* **manifesto:** add architecture boundary rules to manifesto engine ([79b9f32](https://github.com/optave/codegraph/commit/79b9f32))
+* **boundaries:** add onion architecture preset to boundary rules ([c47ae76](https://github.com/optave/codegraph/commit/c47ae76))
+* **embedder:** add hybrid BM25 + semantic search via FTS5 for combined keyword and vector ranking ([db3d3a3](https://github.com/optave/codegraph/commit/db3d3a3))
+* **batch:** add batch querying for multi-agent dispatch ([850ef3e](https://github.com/optave/codegraph/commit/850ef3e))
+* **mcp:** expose `check` as MCP tool ([3c36ef7](https://github.com/optave/codegraph/commit/3c36ef7))
+
+### Bug Fixes
+
+* **owners:** add CODEOWNERS parse cache and tighten email validation ([f35c797](https://github.com/optave/codegraph/commit/f35c797))
+* **bench:** add timeout and remove redundant stdio option ([978b590](https://github.com/optave/codegraph/commit/978b590))
+* **ci:** save all benchmark reports and use git-based dev versioning ([267cabe](https://github.com/optave/codegraph/commit/267cabe))
+* **docs:** correct ~20 inaccurate cells in feature comparison tables ([572268d](https://github.com/optave/codegraph/commit/572268d))
+* **docs:** correct remaining MCP tool count in README (24/25 → 26/27) ([262874a](https://github.com/optave/codegraph/commit/262874a))
+
+### Refactoring
+
+* organize `generated/` into `benchmarks/` and `dogfood/` subdirs ([35bfa3c](https://github.com/optave/codegraph/commit/35bfa3c))
+
+### Dependencies
+
+* bump web-tree-sitter from 0.26.5 to 0.26.6 ([70f26c0](https://github.com/optave/codegraph/commit/70f26c0))
+* bump tree-sitter-cli from 0.26.5 to 0.26.6 ([161c2a0](https://github.com/optave/codegraph/commit/161c2a0))
+* bump @modelcontextprotocol/sdk from 1.26.0 to 1.27.1 ([1385207](https://github.com/optave/codegraph/commit/1385207))
+* consolidate Dependabot bumps (Actions + commitlint v20) ([d48be1a](https://github.com/optave/codegraph/commit/d48be1a))
+
 ## [2.5.1](https://github.com/optave/codegraph/compare/v2.5.0...v2.5.1) (2026-02-28)
 
 **Critical fix: recover missing `branch-compare` command and broken programmatic API.** The `branch-compare` command and its implementation file were never committed in v2.5.0, causing `codegraph branch-compare` to crash and `import('@optave/codegraph')` to fail entirely due to a top-level re-export of the missing module. This patch recovers the full implementation (568 lines), adds an export guard test to prevent regressions, and introduces `--dry-run` for `registry prune`.

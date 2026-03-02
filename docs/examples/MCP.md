@@ -884,6 +884,200 @@ Function-level community detection:
 
 ---
 
+## audit — Composite risk report
+
+Combines explain + impact + complexity metrics in one call — gives an agent everything it needs to assess a function.
+
+```json
+{
+  "tool": "audit",
+  "arguments": { "target": "buildGraph", "no_tests": true }
+}
+```
+
+```
+# Audit: buildGraph (function) — src/builder.js:335
+  Parameters: (rootDir, opts = {})
+  Complexity: cognitive=495 cyclomatic=185 nesting=9 MI=0 ⚠
+  Impact: 1 transitive callers
+    ^ resolveNoTests  src/cli.js:59
+  Calls: openDb, initSchema, loadConfig, collectFiles, getChangedFiles, ...
+```
+
+Audit an entire file:
+
+```json
+{
+  "tool": "audit",
+  "arguments": { "target": "src/builder.js", "no_tests": true }
+}
+```
+
+---
+
+## batch_query — Multi-target batch querying
+
+Accept a list of targets and return all results in one JSON payload — enables multi-agent parallel dispatch.
+
+```json
+{
+  "tool": "batch_query",
+  "arguments": { "targets": ["buildGraph", "openDb", "parseFile"], "no_tests": true }
+}
+```
+
+```json
+{
+  "results": [
+    { "target": "buildGraph", "context": { "..." }, "impact": { "..." } },
+    { "target": "openDb", "context": { "..." }, "impact": { "..." } },
+    { "target": "parseFile", "context": { "..." }, "impact": { "..." } }
+  ],
+  "total": 3,
+  "errors": []
+}
+```
+
+---
+
+## triage — Risk-ranked audit queue
+
+Merges connectivity, hotspots, node roles, and complexity into a prioritized queue.
+
+```json
+{
+  "tool": "triage",
+  "arguments": { "no_tests": true, "limit": 5 }
+}
+```
+
+```
+# Triage Queue (top 5)
+
+  Rank  Function                   File                      Role     Cog  Cyc   MI  Score
+  ───── ────────────────────────── ───────────────────────── ──────── ──── ──── ──── ──────
+     1  buildGraph                 src/builder.js            core      495  185    0   98.5
+     2  extractJavaSymbols         src/extractors/java.js    utility   208   64   14   87.2
+     3  extractSymbolsWalk         src/extractors/js.js      utility   197   72   11   85.1
+     4  walkJavaNode               src/extractors/java.js    utility   161   59   16   79.3
+     5  startMCPServer             src/mcp.js                core       45   20   32   72.8
+```
+
+---
+
+## check — CI validation predicates
+
+Configurable pass/fail gates. Returns structured results with exit status.
+
+```json
+{
+  "tool": "check",
+  "arguments": { "staged": true, "no_new_cycles": true, "max_complexity": 30 }
+}
+```
+
+```json
+{
+  "checks": [
+    { "name": "no-new-cycles", "passed": true, "detail": "no new cycles introduced" },
+    { "name": "max-complexity", "passed": false, "threshold": 30, "violations": [
+      { "name": "buildGraph", "file": "src/builder.js", "line": 335, "cognitive": 495 },
+      { "name": "extractJavaSymbols", "file": "src/extractors/java.js", "cognitive": 208 }
+    ]}
+  ],
+  "passed": false
+}
+```
+
+```json
+{
+  "tool": "check",
+  "arguments": { "staged": true, "max_blast_radius": 50, "no_boundary_violations": true }
+}
+```
+
+```json
+{
+  "checks": [
+    { "name": "max-blast-radius", "passed": true, "detail": "max blast radius is 1" },
+    { "name": "no-boundary-violations", "passed": true, "detail": "no violations" }
+  ],
+  "passed": true
+}
+```
+
+---
+
+## code_owners — CODEOWNERS integration
+
+```json
+{
+  "tool": "code_owners",
+  "arguments": { "target": "src/queries.js", "no_tests": true }
+}
+```
+
+```
+# Ownership: src/queries.js
+
+  Owner: @backend-team
+  Functions: 44
+
+  f safePath           src/queries.js:14     @backend-team
+  f isTestFile         src/queries.js:21     @backend-team
+  f findMatchingNodes  src/queries.js:127    @backend-team
+  ...
+```
+
+Ownership boundaries:
+
+```json
+{
+  "tool": "code_owners",
+  "arguments": { "boundary": true, "no_tests": true }
+}
+```
+
+---
+
+## branch_compare — Structural diff between refs
+
+```json
+{
+  "tool": "branch_compare",
+  "arguments": { "base": "main", "target": "HEAD", "no_tests": true }
+}
+```
+
+```json
+{
+  "added": [
+    { "name": "checkBoundaries", "kind": "function", "file": "src/boundaries.js", "line": 45 }
+  ],
+  "changed": [
+    { "name": "manifestoData", "kind": "function", "file": "src/manifesto.js", "line": 88, "changeType": "signature" }
+  ],
+  "removed": [],
+  "impact": {
+    "totalCallers": 4,
+    "callers": [
+      { "name": "resolveNoTests", "file": "src/cli.js", "line": 59 }
+    ]
+  }
+}
+```
+
+With Mermaid output:
+
+```json
+{
+  "tool": "branch_compare",
+  "arguments": { "base": "main", "target": "HEAD", "format": "mermaid", "no_tests": true }
+}
+```
+
+---
+
 ## list_repos — Multi-repo registry (multi-repo mode only)
 
 Only available when the MCP server is started with `--multi-repo`.
