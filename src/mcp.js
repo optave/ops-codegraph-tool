@@ -535,6 +535,25 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'audit',
+    description:
+      'Composite report combining explain, fn-impact, and health metrics for a file or function. Returns structure, blast radius, complexity, and threshold breaches in one call.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'File path or function name' },
+        depth: { type: 'number', description: 'Impact analysis depth (default: 3)', default: 3 },
+        file: { type: 'string', description: 'Scope to file (partial match)' },
+        kind: {
+          type: 'string',
+          description: 'Filter by symbol kind (function, method, class, etc.)',
+        },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+      },
+      required: ['target'],
+    },
+  },
+  {
     name: 'branch_compare',
     description:
       'Compare code structure between two git refs (branches, tags, commits). Shows added/removed/changed symbols and transitive caller impact using temporary git worktrees.',
@@ -1001,6 +1020,16 @@ export async function startMCPServer(customDbPath, options = {}) {
             file: args.file,
             owner: args.owner,
             boundary: args.boundary,
+            kind: args.kind,
+            noTests: args.no_tests,
+          });
+          break;
+        }
+        case 'audit': {
+          const { auditData } = await import('./audit.js');
+          result = auditData(args.target, dbPath, {
+            depth: args.depth,
+            file: args.file,
             kind: args.kind,
             noTests: args.no_tests,
           });

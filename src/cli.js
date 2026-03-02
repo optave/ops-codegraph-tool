@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Command } from 'commander';
+import { audit } from './audit.js';
 import { buildGraph } from './builder.js';
 import { loadConfig } from './config.js';
 import { findCycles, formatCycles } from './cycles.js';
@@ -330,6 +331,30 @@ program
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       ndjson: opts.ndjson,
+    });
+  });
+
+program
+  .command('audit <target>')
+  .description('Composite report: explain + impact + health metrics per function')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('--depth <n>', 'Impact analysis depth', '3')
+  .option('-f, --file <path>', 'Scope to file (partial match)')
+  .option('-k, --kind <kind>', 'Filter by symbol kind')
+  .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .action((target, opts) => {
+    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+      process.exit(1);
+    }
+    audit(target, opts.db, {
+      depth: parseInt(opts.depth, 10),
+      file: opts.file,
+      kind: opts.kind,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
     });
   });
 

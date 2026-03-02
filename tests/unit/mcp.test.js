@@ -34,6 +34,7 @@ const ALL_TOOL_NAMES = [
   'manifesto',
   'communities',
   'code_owners',
+  'audit',
   'branch_compare',
   'list_repos',
 ];

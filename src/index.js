@@ -5,6 +5,8 @@
  *   import { buildGraph, queryNameData, findCycles, exportDOT } from 'codegraph';
  */
 
+// Audit (composite report)
+export { audit, auditData } from './audit.js';
 // Branch comparison
 export { branchCompareData, branchCompareMermaid } from './branch-compare.js';
 // Graph building
