@@ -554,6 +554,52 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'batch_query',
+    description:
+      'Run a query command against multiple targets in one call. Returns all results in a single JSON payload — ideal for multi-agent dispatch.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        command: {
+          type: 'string',
+          enum: [
+            'fn-impact',
+            'context',
+            'explain',
+            'where',
+            'query',
+            'fn',
+            'impact',
+            'deps',
+            'flow',
+            'complexity',
+          ],
+          description: 'The query command to run for each target',
+        },
+        targets: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of target names (symbol names or file paths depending on command)',
+        },
+        depth: {
+          type: 'number',
+          description: 'Traversal depth (for fn-impact, context, fn, flow)',
+        },
+        file: {
+          type: 'string',
+          description: 'Scope to file (partial match)',
+        },
+        kind: {
+          type: 'string',
+          enum: ALL_SYMBOL_KINDS,
+          description: 'Filter symbol kind',
+        },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+      },
+      required: ['command', 'targets'],
+    },
+  },
+  {
     name: 'branch_compare',
     description:
       'Compare code structure between two git refs (branches, tags, commits). Shows added/removed/changed symbols and transitive caller impact using temporary git worktrees.',
@@ -1028,6 +1074,16 @@ export async function startMCPServer(customDbPath, options = {}) {
         case 'audit': {
           const { auditData } = await import('./audit.js');
           result = auditData(args.target, dbPath, {
+            depth: args.depth,
+            file: args.file,
+            kind: args.kind,
+            noTests: args.no_tests,
+          });
+          break;
+        }
+        case 'batch_query': {
+          const { batchData } = await import('./batch.js');
+          result = batchData(args.command, args.targets, dbPath, {
             depth: args.depth,
             file: args.file,
             kind: args.kind,

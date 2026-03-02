@@ -35,6 +35,7 @@ const ALL_TOOL_NAMES = [
   'communities',
   'code_owners',
   'audit',
+  'batch_query',
   'branch_compare',
   'list_repos',
 ];
