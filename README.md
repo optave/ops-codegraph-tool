@@ -69,7 +69,7 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 
 ### Feature comparison
 
-<sub>Comparison last verified: March 2026</sub>
+<sub>Comparison last verified: March 2026. Full analysis: <a href="generated/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
 
 | Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) | [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | [axon](https://github.com/harshkedia177/axon) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -700,26 +700,6 @@ const { results: fused } = await multiSearchData(
 - **No full type inference** — parses `.d.ts` interfaces but doesn't use TypeScript's type checker for overload resolution
 - **Dynamic calls are best-effort** — complex computed property access and `eval` patterns are not resolved
 - **Python imports** — resolves relative imports but doesn't follow `sys.path` or virtual environment packages
-
-## 🔍 How Codegraph Compares
-
-<sub>Last verified: March 2026. Full analysis: <a href="generated/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
-
-| Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Function-level analysis | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
-| Multi-language | **11** | **14** | **32** | Multi | **~10** | **9** |
-| Incremental rebuilds | **O(changed)** | — | O(n) Merkle | — | — | — |
-| MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** |
-| Git diff impact | **Yes** | — | — | — | — | **Yes** |
-| Git co-change analysis | **Yes** | — | — | — | — | — |
-| Dead code / role classification | **Yes** | — | **Yes** | — | — | — |
-| Semantic search | **Yes** | — | **Yes** | **Yes** | — | **Yes** |
-| Hybrid BM25 + semantic | **Yes** | — | — | — | — | **Yes** |
-| Watch mode | **Yes** | — | **Yes** | — | — | — |
-| Zero config, no Docker/JVM | **Yes** | — | **Yes** | — | — | — |
-| Works without API keys | **Yes** | **Yes** | **Yes** | — | **Yes** | **Yes** |
-| Commercial use (Apache/MIT) | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | — |
 
 ## 🗺️ Roadmap
 
