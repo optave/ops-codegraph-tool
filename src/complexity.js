@@ -3,6 +3,7 @@ import path from 'node:path';
 import { loadConfig } from './config.js';
 import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
+import { paginateResult, printNdjson } from './paginate.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
 import { isTestFile } from './queries.js';
 
@@ -1887,10 +1888,9 @@ export function complexityData(customDbPath, opts = {}) {
        FROM function_complexity fc
        JOIN nodes n ON fc.node_id = n.id
        ${where} ${having}
-       ORDER BY ${orderBy}
-       LIMIT ?`,
+       ORDER BY ${orderBy}`,
       )
-      .all(...params, limit);
+      .all(...params);
   } catch {
     db.close();
     return { functions: [], summary: null, thresholds };
@@ -1980,7 +1980,88 @@ export function complexityData(customDbPath, opts = {}) {
   }
 
   db.close();
-  return { functions, summary, thresholds };
+  const base = { functions, summary, thresholds };
+  return paginateResult(base, 'functions', { limit: opts.limit, offset: opts.offset });
+}
+
+/**
+ * Generator: stream complexity rows one-by-one using .iterate() for memory efficiency.
+ * @param {string} [customDbPath]
+ * @param {object} [opts]
+ * @param {boolean} [opts.noTests]
+ * @param {string} [opts.file]
+ * @param {string} [opts.target]
+ * @param {string} [opts.kind]
+ * @param {string} [opts.sort]
+ * @yields {{ name: string, kind: string, file: string, line: number, cognitive: number, cyclomatic: number, maxNesting: number, loc: number, sloc: number }}
+ */
+export function* iterComplexity(customDbPath, opts = {}) {
+  const db = openReadonlyOrFail(customDbPath);
+  try {
+    const noTests = opts.noTests || false;
+    const sort = opts.sort || 'cognitive';
+
+    let where = "WHERE n.kind IN ('function','method')";
+    const params = [];
+
+    if (noTests) {
+      where += ` AND n.file NOT LIKE '%.test.%'
+         AND n.file NOT LIKE '%.spec.%'
+         AND n.file NOT LIKE '%__test__%'
+         AND n.file NOT LIKE '%__tests__%'
+         AND n.file NOT LIKE '%.stories.%'`;
+    }
+    if (opts.target) {
+      where += ' AND n.name LIKE ?';
+      params.push(`%${opts.target}%`);
+    }
+    if (opts.file) {
+      where += ' AND n.file LIKE ?';
+      params.push(`%${opts.file}%`);
+    }
+    if (opts.kind) {
+      where += ' AND n.kind = ?';
+      params.push(opts.kind);
+    }
+
+    const orderMap = {
+      cognitive: 'fc.cognitive DESC',
+      cyclomatic: 'fc.cyclomatic DESC',
+      nesting: 'fc.max_nesting DESC',
+      mi: 'fc.maintainability_index ASC',
+      volume: 'fc.halstead_volume DESC',
+      effort: 'fc.halstead_effort DESC',
+      bugs: 'fc.halstead_bugs DESC',
+      loc: 'fc.loc DESC',
+    };
+    const orderBy = orderMap[sort] || 'fc.cognitive DESC';
+
+    const stmt = db.prepare(
+      `SELECT n.name, n.kind, n.file, n.line, n.end_line,
+              fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.loc, fc.sloc
+       FROM function_complexity fc
+       JOIN nodes n ON fc.node_id = n.id
+       ${where}
+       ORDER BY ${orderBy}`,
+    );
+    for (const r of stmt.iterate(...params)) {
+      if (noTests && isTestFile(r.file)) continue;
+      yield {
+        name: r.name,
+        kind: r.kind,
+        file: r.file,
+        line: r.line,
+        endLine: r.end_line || null,
+        cognitive: r.cognitive,
+        cyclomatic: r.cyclomatic,
+        maxNesting: r.max_nesting,
+        loc: r.loc || 0,
+        sloc: r.sloc || 0,
+      };
+    }
+  } finally {
+    db.close();
+  }
 }
 
 /**
@@ -1989,6 +2070,10 @@ export function complexityData(customDbPath, opts = {}) {
 export function complexity(customDbPath, opts = {}) {
   const data = complexityData(customDbPath, opts);
 
+  if (opts.ndjson) {
+    printNdjson(data, 'functions');
+    return;
+  }
   if (opts.json) {
     console.log(JSON.stringify(data, null, 2));
     return;

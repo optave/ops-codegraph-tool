@@ -6,7 +6,7 @@
  */
 
 import { openReadonlyOrFail } from './db.js';
-import { paginateResult } from './paginate.js';
+import { paginateResult, printNdjson } from './paginate.js';
 import { isTestFile, kindIcon } from './queries.js';
 import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
 
@@ -204,7 +204,7 @@ export function flowData(name, dbPath, opts = {}) {
   }
 
   db.close();
-  return {
+  const base = {
     entry,
     depth: maxDepth,
     steps,
@@ -213,6 +213,7 @@ export function flowData(name, dbPath, opts = {}) {
     totalReached: visited.size - 1, // exclude the entry node itself
     truncated,
   };
+  return paginateResult(base, 'steps', { limit: opts.limit, offset: opts.offset });
 }
 
 /**
@@ -293,8 +294,7 @@ export function flow(name, dbPath, opts = {}) {
       offset: opts.offset,
     });
     if (opts.ndjson) {
-      if (data._pagination) console.log(JSON.stringify({ _meta: data._pagination }));
-      for (const e of data.entries) console.log(JSON.stringify(e));
+      printNdjson(data, 'entries');
       return;
     }
     if (opts.json) {

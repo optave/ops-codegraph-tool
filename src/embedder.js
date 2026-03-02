@@ -384,6 +384,22 @@ function initEmbeddingsSchema(db) {
       value TEXT
     );
   `);
+
+  // Add full_text column (idempotent — ignore if already exists)
+  try {
+    db.exec('ALTER TABLE embeddings ADD COLUMN full_text TEXT');
+  } catch {
+    /* column already exists */
+  }
+
+  // FTS5 virtual table for BM25 keyword search
+  db.exec(`
+    CREATE VIRTUAL TABLE IF NOT EXISTS fts_index USING fts5(
+      name,
+      content,
+      tokenize='unicode61'
+    );
+  `);
 }
 
 /**
@@ -411,6 +427,7 @@ export async function buildEmbeddings(rootDir, modelKey, customDbPath, options =
 
   db.exec('DELETE FROM embeddings');
   db.exec('DELETE FROM embedding_meta');
+  db.exec('DELETE FROM fts_index');
 
   const nodes = db
     .prepare(
@@ -445,6 +462,7 @@ export async function buildEmbeddings(rootDir, modelKey, customDbPath, options =
 
   const texts = [];
   const nodeIds = [];
+  const nodeNames = [];
   const previews = [];
   const config = getModelConfig(modelKey);
   const contextWindow = config.contextWindow;
@@ -476,6 +494,7 @@ export async function buildEmbeddings(rootDir, modelKey, customDbPath, options =
 
       texts.push(text);
       nodeIds.push(node.id);
+      nodeNames.push(node.name);
       previews.push(`${node.name} (${node.kind}) -- ${file}:${node.line}`);
     }
   }
@@ -490,16 +509,19 @@ export async function buildEmbeddings(rootDir, modelKey, customDbPath, options =
   const { vectors, dim } = await embed(texts, modelKey);
 
   const insert = db.prepare(
-    'INSERT OR REPLACE INTO embeddings (node_id, vector, text_preview) VALUES (?, ?, ?)',
+    'INSERT OR REPLACE INTO embeddings (node_id, vector, text_preview, full_text) VALUES (?, ?, ?, ?)',
   );
+  const insertFts = db.prepare('INSERT INTO fts_index(rowid, name, content) VALUES (?, ?, ?)');
   const insertMeta = db.prepare('INSERT OR REPLACE INTO embedding_meta (key, value) VALUES (?, ?)');
   const insertAll = db.transaction(() => {
     for (let i = 0; i < vectors.length; i++) {
-      insert.run(nodeIds[i], Buffer.from(vectors[i].buffer), previews[i]);
+      insert.run(nodeIds[i], Buffer.from(vectors[i].buffer), previews[i], texts[i]);
+      insertFts.run(nodeIds[i], nodeNames[i], texts[i]);
     }
     insertMeta.run('model', config.name);
     insertMeta.run('dim', String(dim));
     insertMeta.run('count', String(vectors.length));
+    insertMeta.run('fts_count', String(vectors.length));
     insertMeta.run('strategy', strategy);
     insertMeta.run('built_at', new Date().toISOString());
     if (overflowCount > 0) {
@@ -731,71 +753,361 @@ export async function multiSearchData(queries, customDbPath, opts = {}) {
 }
 
 /**
- * Semantic search with pre-filter support — CLI wrapper with multi-query detection.
+ * Sanitize a user query for FTS5 MATCH syntax.
+ * Wraps each token as an implicit OR and escapes special FTS5 characters.
+ */
+function sanitizeFtsQuery(query) {
+  // Remove FTS5 special chars that could cause syntax errors
+  const cleaned = query.replace(/[*"():^{}~<>]/g, ' ').trim();
+  if (!cleaned) return null;
+  // Split into tokens, wrap with OR for multi-token queries
+  const tokens = cleaned.split(/\s+/).filter((t) => t.length > 0);
+  if (tokens.length === 0) return null;
+  if (tokens.length === 1) return `"${tokens[0]}"`;
+  return tokens.map((t) => `"${t}"`).join(' OR ');
+}
+
+/**
+ * Check if the FTS5 index exists in the database.
+ * Returns true if fts_index table exists and has rows, false otherwise.
+ */
+function hasFtsIndex(db) {
+  try {
+    const row = db.prepare('SELECT COUNT(*) as c FROM fts_index').get();
+    return row.c > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * BM25 keyword search via FTS5.
+ * Returns { results: [{ name, kind, file, line, bm25Score }] } or null if no FTS5 index.
+ */
+export function ftsSearchData(query, customDbPath, opts = {}) {
+  const limit = opts.limit || 15;
+  const noTests = opts.noTests || false;
+  const TEST_PATTERN = /\.(test|spec)\.|__test__|__tests__|\.stories\./;
+
+  const db = openReadonlyOrFail(customDbPath);
+
+  if (!hasFtsIndex(db)) {
+    db.close();
+    return null;
+  }
+
+  const ftsQuery = sanitizeFtsQuery(query);
+  if (!ftsQuery) {
+    db.close();
+    return { results: [] };
+  }
+
+  let sql = `
+    SELECT f.rowid AS node_id, rank AS bm25_score,
+           n.name, n.kind, n.file, n.line
+    FROM fts_index f
+    JOIN nodes n ON f.rowid = n.id
+    WHERE fts_index MATCH ?
+  `;
+  const params = [ftsQuery];
+
+  if (opts.kind) {
+    sql += ' AND n.kind = ?';
+    params.push(opts.kind);
+  }
+
+  const isGlob = opts.filePattern && /[*?[\]]/.test(opts.filePattern);
+  if (opts.filePattern && !isGlob) {
+    sql += ' AND n.file LIKE ?';
+    params.push(`%${opts.filePattern}%`);
+  }
+
+  sql += ' ORDER BY rank LIMIT ?';
+  params.push(limit * 5); // fetch generous set for post-filtering
+
+  let rows;
+  try {
+    rows = db.prepare(sql).all(...params);
+  } catch {
+    // Invalid FTS5 query syntax — return empty
+    db.close();
+    return { results: [] };
+  }
+
+  if (isGlob) {
+    rows = rows.filter((row) => globMatch(row.file, opts.filePattern));
+  }
+  if (noTests) {
+    rows = rows.filter((row) => !TEST_PATTERN.test(row.file));
+  }
+
+  db.close();
+
+  const results = rows.slice(0, limit).map((row) => ({
+    name: row.name,
+    kind: row.kind,
+    file: row.file,
+    line: row.line,
+    bm25Score: -row.bm25_score, // FTS5 rank is negative; negate for display
+  }));
+
+  return { results };
+}
+
+/**
+ * Hybrid BM25 + semantic search with RRF fusion.
+ * Returns { results: [{ name, kind, file, line, rrf, bm25Score, bm25Rank, similarity, semanticRank }] }
+ * or null if no FTS5 index (caller should fall back to semantic-only).
+ */
+export async function hybridSearchData(query, customDbPath, opts = {}) {
+  const limit = opts.limit || 15;
+  const k = opts.rrfK || 60;
+  const topK = (opts.limit || 15) * 5;
+
+  // Split semicolons for multi-query support
+  const queries =
+    typeof query === 'string'
+      ? query
+          .split(';')
+          .map((q) => q.trim())
+          .filter((q) => q.length > 0)
+      : [query];
+
+  // Check FTS5 availability first (sync, cheap)
+  const checkDb = openReadonlyOrFail(customDbPath);
+  const ftsAvailable = hasFtsIndex(checkDb);
+  checkDb.close();
+  if (!ftsAvailable) return null;
+
+  // Collect ranked lists: for each query, one BM25 list + one semantic list
+  const rankedLists = [];
+
+  for (const q of queries) {
+    // BM25 ranked list (sync)
+    const bm25Data = ftsSearchData(q, customDbPath, { ...opts, limit: topK });
+    if (bm25Data?.results) {
+      rankedLists.push(
+        bm25Data.results.map((r, idx) => ({
+          key: `${r.name}:${r.file}:${r.line}`,
+          rank: idx + 1,
+          source: 'bm25',
+          ...r,
+        })),
+      );
+    }
+
+    // Semantic ranked list (async)
+    const semData = await searchData(q, customDbPath, {
+      ...opts,
+      limit: topK,
+      minScore: opts.minScore || 0.2,
+    });
+    if (semData?.results) {
+      rankedLists.push(
+        semData.results.map((r, idx) => ({
+          key: `${r.name}:${r.file}:${r.line}`,
+          rank: idx + 1,
+          source: 'semantic',
+          ...r,
+        })),
+      );
+    }
+  }
+
+  // RRF fusion across all ranked lists
+  const fusionMap = new Map();
+  for (const list of rankedLists) {
+    for (const item of list) {
+      if (!fusionMap.has(item.key)) {
+        fusionMap.set(item.key, {
+          name: item.name,
+          kind: item.kind,
+          file: item.file,
+          line: item.line,
+          rrfScore: 0,
+          bm25Score: null,
+          bm25Rank: null,
+          similarity: null,
+          semanticRank: null,
+        });
+      }
+      const entry = fusionMap.get(item.key);
+      entry.rrfScore += 1 / (k + item.rank);
+      if (item.source === 'bm25') {
+        if (entry.bm25Rank === null || item.rank < entry.bm25Rank) {
+          entry.bm25Score = item.bm25Score;
+          entry.bm25Rank = item.rank;
+        }
+      } else {
+        if (entry.semanticRank === null || item.rank < entry.semanticRank) {
+          entry.similarity = item.similarity;
+          entry.semanticRank = item.rank;
+        }
+      }
+    }
+  }
+
+  const results = [...fusionMap.values()]
+    .sort((a, b) => b.rrfScore - a.rrfScore)
+    .slice(0, limit)
+    .map((e) => ({
+      name: e.name,
+      kind: e.kind,
+      file: e.file,
+      line: e.line,
+      rrf: e.rrfScore,
+      bm25Score: e.bm25Score,
+      bm25Rank: e.bm25Rank,
+      similarity: e.similarity,
+      semanticRank: e.semanticRank,
+    }));
+
+  return { results };
+}
+
+/**
+ * Search with mode support — CLI wrapper with multi-query detection.
+ * Modes: 'hybrid' (default), 'semantic', 'keyword'
  */
 export async function search(query, customDbPath, opts = {}) {
+  const mode = opts.mode || 'hybrid';
+
   // Split by semicolons, trim, filter empties
   const queries = query
     .split(';')
     .map((q) => q.trim())
     .filter((q) => q.length > 0);
 
-  if (queries.length <= 1) {
-    // Single-query path — preserve original output format
-    const singleQuery = queries[0] || query;
-    const data = await searchData(singleQuery, customDbPath, opts);
-    if (!data) return;
+  const kindIcon = (kind) => (kind === 'function' ? 'f' : kind === 'class' ? '*' : 'o');
+
+  // ─── Keyword-only mode ──────────────────────────────────────────────
+  if (mode === 'keyword') {
+    const singleQuery = queries.length === 1 ? queries[0] : query;
+    const data = ftsSearchData(singleQuery, customDbPath, opts);
+    if (!data) {
+      console.log('No FTS5 index found. Run `codegraph embed` to build the keyword index.');
+      return;
+    }
 
     if (opts.json) {
       console.log(JSON.stringify(data, null, 2));
       return;
     }
 
-    console.log(`\nSemantic search: "${singleQuery}"\n`);
-
+    console.log(`\nKeyword search: "${singleQuery}" (BM25)\n`);
     if (data.results.length === 0) {
-      console.log('  No results above threshold.');
+      console.log('  No results found.');
     } else {
       for (const r of data.results) {
-        const bar = '#'.repeat(Math.round(r.similarity * 20));
-        const kindIcon = r.kind === 'function' ? 'f' : r.kind === 'class' ? '*' : 'o';
-        console.log(`  ${(r.similarity * 100).toFixed(1)}% ${bar}`);
-        console.log(`    ${kindIcon} ${r.name} -- ${r.file}:${r.line}`);
+        console.log(
+          `  BM25 ${r.bm25Score.toFixed(2)}  ${kindIcon(r.kind)} ${r.name} -- ${r.file}:${r.line}`,
+        );
       }
     }
-
     console.log(`\n  ${data.results.length} results shown\n`);
-  } else {
-    // Multi-query path — RRF ranking
-    const data = await multiSearchData(queries, customDbPath, opts);
-    if (!data) return;
+    return;
+  }
 
-    if (opts.json) {
-      console.log(JSON.stringify(data, null, 2));
-      return;
-    }
+  // ─── Semantic-only mode ─────────────────────────────────────────────
+  if (mode === 'semantic') {
+    if (queries.length <= 1) {
+      const singleQuery = queries[0] || query;
+      const data = await searchData(singleQuery, customDbPath, opts);
+      if (!data) return;
 
-    console.log(`\nMulti-query semantic search (RRF, k=${opts.rrfK || 60}):`);
-    queries.forEach((q, i) => {
-      console.log(`  [${i + 1}] "${q}"`);
-    });
-    console.log();
+      if (opts.json) {
+        console.log(JSON.stringify(data, null, 2));
+        return;
+      }
 
-    if (data.results.length === 0) {
-      console.log('  No results above threshold.');
-    } else {
-      for (const r of data.results) {
-        const kindIcon = r.kind === 'function' ? 'f' : r.kind === 'class' ? '*' : 'o';
-        console.log(`  RRF ${r.rrf.toFixed(4)}  ${kindIcon} ${r.name} -- ${r.file}:${r.line}`);
-        for (const qs of r.queryScores) {
-          const bar = '#'.repeat(Math.round(qs.similarity * 20));
-          console.log(
-            `    [${queries.indexOf(qs.query) + 1}] ${(qs.similarity * 100).toFixed(1)}% ${bar} (rank ${qs.rank})`,
-          );
+      console.log(`\nSemantic search: "${singleQuery}"\n`);
+      if (data.results.length === 0) {
+        console.log('  No results above threshold.');
+      } else {
+        for (const r of data.results) {
+          const bar = '#'.repeat(Math.round(r.similarity * 20));
+          console.log(`  ${(r.similarity * 100).toFixed(1)}% ${bar}`);
+          console.log(`    ${kindIcon(r.kind)} ${r.name} -- ${r.file}:${r.line}`);
         }
       }
-    }
+      console.log(`\n  ${data.results.length} results shown\n`);
+    } else {
+      const data = await multiSearchData(queries, customDbPath, opts);
+      if (!data) return;
 
-    console.log(`\n  ${data.results.length} results shown\n`);
+      if (opts.json) {
+        console.log(JSON.stringify(data, null, 2));
+        return;
+      }
+
+      console.log(`\nMulti-query semantic search (RRF, k=${opts.rrfK || 60}):`);
+      for (let i = 0; i < queries.length; i++) console.log(`  [${i + 1}] "${queries[i]}"`);
+      console.log();
+      if (data.results.length === 0) {
+        console.log('  No results above threshold.');
+      } else {
+        for (const r of data.results) {
+          console.log(
+            `  RRF ${r.rrf.toFixed(4)}  ${kindIcon(r.kind)} ${r.name} -- ${r.file}:${r.line}`,
+          );
+          for (const qs of r.queryScores) {
+            const bar = '#'.repeat(Math.round(qs.similarity * 20));
+            console.log(
+              `    [${queries.indexOf(qs.query) + 1}] ${(qs.similarity * 100).toFixed(1)}% ${bar} (rank ${qs.rank})`,
+            );
+          }
+        }
+      }
+      console.log(`\n  ${data.results.length} results shown\n`);
+    }
+    return;
   }
+
+  // ─── Hybrid mode (default) ──────────────────────────────────────────
+  const data = await hybridSearchData(query, customDbPath, opts);
+
+  if (!data) {
+    // No FTS5 index — fall back to semantic-only
+    warn(
+      'FTS5 index not found — using semantic search only. Re-run `codegraph embed` to enable hybrid mode.',
+    );
+    return search(query, customDbPath, { ...opts, mode: 'semantic' });
+  }
+
+  if (opts.json) {
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  const rrfK = opts.rrfK || 60;
+  if (queries.length <= 1) {
+    const singleQuery = queries[0] || query;
+    console.log(`\nHybrid search: "${singleQuery}" (BM25 + semantic, RRF k=${rrfK})\n`);
+  } else {
+    console.log(`\nHybrid multi-query search (BM25 + semantic, RRF k=${rrfK}):`);
+    for (let i = 0; i < queries.length; i++) console.log(`  [${i + 1}] "${queries[i]}"`);
+    console.log();
+  }
+
+  if (data.results.length === 0) {
+    console.log('  No results found.');
+  } else {
+    for (const r of data.results) {
+      console.log(
+        `  RRF ${r.rrf.toFixed(4)}  ${kindIcon(r.kind)} ${r.name} -- ${r.file}:${r.line}`,
+      );
+      const parts = [];
+      if (r.bm25Rank != null) {
+        parts.push(`BM25: rank ${r.bm25Rank} (score ${r.bm25Score.toFixed(2)})`);
+      }
+      if (r.semanticRank != null) {
+        parts.push(`Semantic: rank ${r.semanticRank} (${(r.similarity * 100).toFixed(1)}%)`);
+      }
+      if (parts.length > 0) {
+        console.log(`    ${parts.join('  |  ')}`);
+      }
+    }
+  }
+
+  console.log(`\n  ${data.results.length} results shown\n`);
 }
