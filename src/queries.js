@@ -1256,23 +1256,21 @@ export function* iterWhere(target, customDbPath, opts = {}) {
     const stmt = db.prepare(
       `SELECT * FROM nodes WHERE name LIKE ? AND kind IN (${placeholders}) ORDER BY file, line`,
     );
+    const crossFileCallersStmt = db.prepare(
+      `SELECT COUNT(*) as cnt FROM edges e JOIN nodes n ON e.source_id = n.id
+       WHERE e.target_id = ? AND e.kind = 'calls' AND n.file != ?`,
+    );
+    const usesStmt = db.prepare(
+      `SELECT n.name, n.file, n.line FROM edges e JOIN nodes n ON e.source_id = n.id
+       WHERE e.target_id = ? AND e.kind = 'calls'`,
+    );
     for (const node of stmt.iterate(`%${target}%`, ...ALL_SYMBOL_KINDS)) {
       if (noTests && isTestFile(node.file)) continue;
 
-      const crossFileCallers = db
-        .prepare(
-          `SELECT COUNT(*) as cnt FROM edges e JOIN nodes n ON e.source_id = n.id
-           WHERE e.target_id = ? AND e.kind = 'calls' AND n.file != ?`,
-        )
-        .get(node.id, node.file);
+      const crossFileCallers = crossFileCallersStmt.get(node.id, node.file);
       const exported = crossFileCallers.cnt > 0;
 
-      let uses = db
-        .prepare(
-          `SELECT n.name, n.file, n.line FROM edges e JOIN nodes n ON e.source_id = n.id
-           WHERE e.target_id = ? AND e.kind = 'calls'`,
-        )
-        .all(node.id);
+      let uses = usesStmt.all(node.id);
       if (noTests) uses = uses.filter((u) => !isTestFile(u.file));
 
       yield {
