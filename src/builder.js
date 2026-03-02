@@ -1046,6 +1046,25 @@ export async function buildGraph(rootDir, opts = {}) {
   info(`Graph built: ${nodeCount} nodes, ${edgeCount} edges`);
   info(`Stored in ${dbPath}`);
 
+  // Verify incremental build didn't diverge significantly from previous counts
+  if (!isFullBuild) {
+    const prevNodes = getBuildMeta(db, 'node_count');
+    const prevEdges = getBuildMeta(db, 'edge_count');
+    if (prevNodes && prevEdges) {
+      const prevN = Number(prevNodes);
+      const prevE = Number(prevEdges);
+      if (prevN > 0) {
+        const nodeDrift = Math.abs(nodeCount - prevN) / prevN;
+        const edgeDrift = prevE > 0 ? Math.abs(edgeCount - prevE) / prevE : 0;
+        if (nodeDrift > 0.2 || edgeDrift > 0.2) {
+          warn(
+            `Incremental build diverged significantly from previous counts (nodes: ${prevN}→${nodeCount}, edges: ${prevE}→${edgeCount}). Consider rebuilding with --no-incremental.`,
+          );
+        }
+      }
+    }
+  }
+
   // Warn about orphaned embeddings that no longer match any node
   if (hasEmbeddings) {
     try {
@@ -1069,6 +1088,8 @@ export async function buildGraph(rootDir, opts = {}) {
       engine_version: engineVersion || '',
       codegraph_version: CODEGRAPH_VERSION,
       built_at: new Date().toISOString(),
+      node_count: nodeCount,
+      edge_count: edgeCount,
     });
   } catch (err) {
     warn(`Failed to write build metadata: ${err.message}`);

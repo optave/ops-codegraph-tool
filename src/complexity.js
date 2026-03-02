@@ -1891,8 +1891,15 @@ export function complexityData(customDbPath, opts = {}) {
       )
       .all(...params);
   } catch {
+    // Check if graph has nodes even though complexity table is missing/empty
+    let hasGraph = false;
+    try {
+      hasGraph = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c > 0;
+    } catch {
+      /* ignore */
+    }
     db.close();
-    return { functions: [], summary: null, thresholds };
+    return { functions: [], summary: null, thresholds, hasGraph };
   }
 
   // Post-filter test files if needed (belt-and-suspenders for isTestFile)
@@ -1978,8 +1985,18 @@ export function complexityData(customDbPath, opts = {}) {
     /* ignore */
   }
 
+  // When summary is null (no complexity rows), check if graph has nodes
+  let hasGraph = false;
+  if (summary === null) {
+    try {
+      hasGraph = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c > 0;
+    } catch {
+      /* ignore */
+    }
+  }
+
   db.close();
-  const base = { functions, summary, thresholds };
+  const base = { functions, summary, thresholds, hasGraph };
   return paginateResult(base, 'functions', { limit: opts.limit, offset: opts.offset });
 }
 
@@ -2080,9 +2097,15 @@ export function complexity(customDbPath, opts = {}) {
 
   if (data.functions.length === 0) {
     if (data.summary === null) {
-      console.log(
-        '\nNo complexity data found. Run "codegraph build" first to analyze your codebase.\n',
-      );
+      if (data.hasGraph) {
+        console.log(
+          '\nNo complexity data found, but a graph exists. Run "codegraph build --no-incremental" to populate complexity metrics.\n',
+        );
+      } else {
+        console.log(
+          '\nNo complexity data found. Run "codegraph build" first to analyze your codebase.\n',
+        );
+      }
     } else {
       console.log('\nNo functions match the given filters.\n');
     }

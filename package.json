@@ -78,6 +78,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",
+    "@huggingface/transformers": "^3.8.1",
     "@commitlint/cli": "^20.4",
     "@commitlint/config-conventional": "^20.0",
     "@tree-sitter-grammars/tree-sitter-hcl": "^1.2.0",
