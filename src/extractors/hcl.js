@@ -36,11 +36,33 @@ export function extractHCLSymbols(tree, _filePath) {
         }
 
         if (name) {
+          // Extract attributes as property children for variable/output blocks
+          let blockChildren;
+          if (blockType === 'variable' || blockType === 'output') {
+            blockChildren = [];
+            const body = children.find((c) => c.type === 'body');
+            if (body) {
+              for (let j = 0; j < body.childCount; j++) {
+                const attr = body.child(j);
+                if (attr && attr.type === 'attribute') {
+                  const key = attr.childForFieldName('key') || attr.child(0);
+                  if (key) {
+                    blockChildren.push({
+                      name: key.text,
+                      kind: 'property',
+                      line: attr.startPosition.row + 1,
+                    });
+                  }
+                }
+              }
+            }
+          }
           definitions.push({
             name,
             kind: blockType,
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: blockChildren?.length > 0 ? blockChildren : undefined,
           });
         }
 

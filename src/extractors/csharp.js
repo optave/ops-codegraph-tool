@@ -33,11 +33,13 @@ export function extractCSharpSymbols(tree, _filePath) {
       case 'class_declaration': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
+          const classChildren = extractCSharpClassFields(node);
           definitions.push({
             name: nameNode.text,
             kind: 'class',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: classChildren.length > 0 ? classChildren : undefined,
           });
           extractCSharpBaseTypes(node, nameNode.text, classes);
         }
@@ -47,11 +49,13 @@ export function extractCSharpSymbols(tree, _filePath) {
       case 'struct_declaration': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
+          const structChildren = extractCSharpClassFields(node);
           definitions.push({
             name: nameNode.text,
             kind: 'struct',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: structChildren.length > 0 ? structChildren : undefined,
           });
           extractCSharpBaseTypes(node, nameNode.text, classes);
         }
@@ -105,11 +109,13 @@ export function extractCSharpSymbols(tree, _filePath) {
       case 'enum_declaration': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
+          const enumChildren = extractCSharpEnumMembers(node);
           definitions.push({
             name: nameNode.text,
             kind: 'enum',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: enumChildren.length > 0 ? enumChildren : undefined,
           });
         }
         break;
@@ -120,11 +126,13 @@ export function extractCSharpSymbols(tree, _filePath) {
         if (nameNode) {
           const parentType = findCSharpParentType(node);
           const fullName = parentType ? `${parentType}.${nameNode.text}` : nameNode.text;
+          const params = extractCSharpParameters(node.childForFieldName('parameters'));
           definitions.push({
             name: fullName,
             kind: 'method',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: params.length > 0 ? params : undefined,
           });
         }
         break;
@@ -135,11 +143,13 @@ export function extractCSharpSymbols(tree, _filePath) {
         if (nameNode) {
           const parentType = findCSharpParentType(node);
           const fullName = parentType ? `${parentType}.${nameNode.text}` : nameNode.text;
+          const params = extractCSharpParameters(node.childForFieldName('parameters'));
           definitions.push({
             name: fullName,
             kind: 'method',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: params.length > 0 ? params : undefined,
           });
         }
         break;
@@ -152,7 +162,7 @@ export function extractCSharpSymbols(tree, _filePath) {
           const fullName = parentType ? `${parentType}.${nameNode.text}` : nameNode.text;
           definitions.push({
             name: fullName,
-            kind: 'method',
+            kind: 'property',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
           });
@@ -218,6 +228,59 @@ export function extractCSharpSymbols(tree, _filePath) {
 
   walkCSharpNode(tree.rootNode);
   return { definitions, calls, imports, classes, exports };
+}
+
+// ── Child extraction helpers ────────────────────────────────────────────────
+
+function extractCSharpParameters(paramListNode) {
+  const params = [];
+  if (!paramListNode) return params;
+  for (let i = 0; i < paramListNode.childCount; i++) {
+    const param = paramListNode.child(i);
+    if (!param || param.type !== 'parameter') continue;
+    const nameNode = param.childForFieldName('name');
+    if (nameNode) {
+      params.push({ name: nameNode.text, kind: 'parameter', line: param.startPosition.row + 1 });
+    }
+  }
+  return params;
+}
+
+function extractCSharpClassFields(classNode) {
+  const fields = [];
+  const body = classNode.childForFieldName('body') || findChild(classNode, 'declaration_list');
+  if (!body) return fields;
+  for (let i = 0; i < body.childCount; i++) {
+    const member = body.child(i);
+    if (!member || member.type !== 'field_declaration') continue;
+    const varDecl = findChild(member, 'variable_declaration');
+    if (!varDecl) continue;
+    for (let j = 0; j < varDecl.childCount; j++) {
+      const child = varDecl.child(j);
+      if (!child || child.type !== 'variable_declarator') continue;
+      const nameNode = child.childForFieldName('name');
+      if (nameNode) {
+        fields.push({ name: nameNode.text, kind: 'property', line: member.startPosition.row + 1 });
+      }
+    }
+  }
+  return fields;
+}
+
+function extractCSharpEnumMembers(enumNode) {
+  const constants = [];
+  const body =
+    enumNode.childForFieldName('body') || findChild(enumNode, 'enum_member_declaration_list');
+  if (!body) return constants;
+  for (let i = 0; i < body.childCount; i++) {
+    const member = body.child(i);
+    if (!member || member.type !== 'enum_member_declaration') continue;
+    const nameNode = member.childForFieldName('name');
+    if (nameNode) {
+      constants.push({ name: nameNode.text, kind: 'constant', line: member.startPosition.row + 1 });
+    }
+  }
+  return constants;
 }
 
 function extractCSharpBaseTypes(node, className, classes) {

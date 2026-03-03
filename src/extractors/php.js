@@ -1,5 +1,76 @@
 import { findChild, nodeEndLine } from './helpers.js';
 
+function extractPhpParameters(fnNode) {
+  const params = [];
+  const paramsNode =
+    fnNode.childForFieldName('parameters') || findChild(fnNode, 'formal_parameters');
+  if (!paramsNode) return params;
+  for (let i = 0; i < paramsNode.childCount; i++) {
+    const param = paramsNode.child(i);
+    if (!param) continue;
+    if (param.type === 'simple_parameter' || param.type === 'variadic_parameter') {
+      const nameNode = param.childForFieldName('name') || findChild(param, 'variable_name');
+      if (nameNode) {
+        params.push({ name: nameNode.text, kind: 'parameter', line: param.startPosition.row + 1 });
+      }
+    }
+  }
+  return params;
+}
+
+function extractPhpClassChildren(classNode) {
+  const children = [];
+  const body = classNode.childForFieldName('body') || findChild(classNode, 'declaration_list');
+  if (!body) return children;
+  for (let i = 0; i < body.childCount; i++) {
+    const member = body.child(i);
+    if (!member) continue;
+    if (member.type === 'property_declaration') {
+      for (let j = 0; j < member.childCount; j++) {
+        const el = member.child(j);
+        if (!el || el.type !== 'property_element') continue;
+        const varNode = findChild(el, 'variable_name');
+        if (varNode) {
+          children.push({
+            name: varNode.text,
+            kind: 'property',
+            line: member.startPosition.row + 1,
+          });
+        }
+      }
+    } else if (member.type === 'const_declaration') {
+      for (let j = 0; j < member.childCount; j++) {
+        const el = member.child(j);
+        if (!el || el.type !== 'const_element') continue;
+        const nameNode = el.childForFieldName('name') || findChild(el, 'name');
+        if (nameNode) {
+          children.push({
+            name: nameNode.text,
+            kind: 'constant',
+            line: member.startPosition.row + 1,
+          });
+        }
+      }
+    }
+  }
+  return children;
+}
+
+function extractPhpEnumCases(enumNode) {
+  const children = [];
+  const body = enumNode.childForFieldName('body') || findChild(enumNode, 'enum_declaration_list');
+  if (!body) return children;
+  for (let i = 0; i < body.childCount; i++) {
+    const member = body.child(i);
+    if (!member || member.type !== 'enum_case') continue;
+    const nameNode = member.childForFieldName('name');
+    if (nameNode) {
+      children.push({ name: nameNode.text, kind: 'constant', line: member.startPosition.row + 1 });
+    }
+  }
+  return children;
+}
+
 /**
  * Extract symbols from PHP files.
  */
@@ -31,11 +102,13 @@ export function extractPHPSymbols(tree, _filePath) {
       case 'function_definition': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
+          const params = extractPhpParameters(node);
           definitions.push({
             name: nameNode.text,
             kind: 'function',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: params.length > 0 ? params : undefined,
           });
         }
         break;
@@ -44,11 +117,13 @@ export function extractPHPSymbols(tree, _filePath) {
       case 'class_declaration': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
+          const classChildren = extractPhpClassChildren(node);
           definitions.push({
             name: nameNode.text,
             kind: 'class',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: classChildren.length > 0 ? classChildren : undefined,
           });
 
           // Check base clause (extends)
@@ -132,11 +207,13 @@ export function extractPHPSymbols(tree, _filePath) {
       case 'enum_declaration': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
+          const enumChildren = extractPhpEnumCases(node);
           definitions.push({
             name: nameNode.text,
             kind: 'enum',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: enumChildren.length > 0 ? enumChildren : undefined,
           });
         }
         break;
@@ -147,11 +224,13 @@ export function extractPHPSymbols(tree, _filePath) {
         if (nameNode) {
           const parentClass = findPHPParentClass(node);
           const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
+          const params = extractPhpParameters(node);
           definitions.push({
             name: fullName,
             kind: 'method',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: params.length > 0 ? params : undefined,
           });
         }
         break;

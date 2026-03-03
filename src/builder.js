@@ -543,7 +543,7 @@ export async function buildGraph(rootDir, opts = {}) {
   }
 
   const insertNode = db.prepare(
-    'INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
+    'INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line, parent_id) VALUES (?, ?, ?, ?, ?, ?)',
   );
   const getNodeId = db.prepare(
     'SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? AND line = ?',
@@ -597,12 +597,27 @@ export async function buildGraph(rootDir, opts = {}) {
     for (const [relPath, symbols] of allSymbols) {
       fileSymbols.set(relPath, symbols);
 
-      insertNode.run(relPath, 'file', relPath, 0, null);
+      insertNode.run(relPath, 'file', relPath, 0, null, null);
       for (const def of symbols.definitions) {
-        insertNode.run(def.name, def.kind, relPath, def.line, def.endLine || null);
+        insertNode.run(def.name, def.kind, relPath, def.line, def.endLine || null, null);
+        if (def.children?.length) {
+          const parentRow = getNodeId.get(def.name, def.kind, relPath, def.line);
+          if (parentRow) {
+            for (const child of def.children) {
+              insertNode.run(
+                child.name,
+                child.kind,
+                relPath,
+                child.line,
+                child.endLine || null,
+                parentRow.id,
+              );
+            }
+          }
+        }
       }
       for (const exp of symbols.exports) {
-        insertNode.run(exp.name, exp.kind, relPath, exp.line, null);
+        insertNode.run(exp.name, exp.kind, relPath, exp.line, null, null);
       }
 
       // Update file hash with real mtime+size for incremental builds

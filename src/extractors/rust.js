@@ -1,4 +1,4 @@
-import { nodeEndLine } from './helpers.js';
+import { findChild, nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from Rust files.
@@ -30,11 +30,13 @@ export function extractRustSymbols(tree, _filePath) {
           const implType = findCurrentImpl(node);
           const fullName = implType ? `${implType}.${nameNode.text}` : nameNode.text;
           const kind = implType ? 'method' : 'function';
+          const params = extractRustParameters(node.childForFieldName('parameters'));
           definitions.push({
             name: fullName,
             kind,
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: params.length > 0 ? params : undefined,
           });
         }
         break;
@@ -43,11 +45,13 @@ export function extractRustSymbols(tree, _filePath) {
       case 'struct_item': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
+          const fields = extractStructFields(node);
           definitions.push({
             name: nameNode.text,
             kind: 'struct',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: fields.length > 0 ? fields : undefined,
           });
         }
         break;
@@ -56,9 +60,24 @@ export function extractRustSymbols(tree, _filePath) {
       case 'enum_item': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
+          const variants = extractEnumVariants(node);
           definitions.push({
             name: nameNode.text,
             kind: 'enum',
+            line: node.startPosition.row + 1,
+            endLine: nodeEndLine(node),
+            children: variants.length > 0 ? variants : undefined,
+          });
+        }
+        break;
+      }
+
+      case 'const_item': {
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          definitions.push({
+            name: nameNode.text,
+            kind: 'constant',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
           });
@@ -168,6 +187,57 @@ export function extractRustSymbols(tree, _filePath) {
 
   walkRustNode(tree.rootNode);
   return { definitions, calls, imports, classes, exports };
+}
+
+// ── Child extraction helpers ────────────────────────────────────────────────
+
+function extractRustParameters(paramListNode) {
+  const params = [];
+  if (!paramListNode) return params;
+  for (let i = 0; i < paramListNode.childCount; i++) {
+    const param = paramListNode.child(i);
+    if (!param) continue;
+    if (param.type === 'self_parameter') {
+      params.push({ name: 'self', kind: 'parameter', line: param.startPosition.row + 1 });
+    } else if (param.type === 'parameter') {
+      const pattern = param.childForFieldName('pattern');
+      if (pattern) {
+        params.push({ name: pattern.text, kind: 'parameter', line: param.startPosition.row + 1 });
+      }
+    }
+  }
+  return params;
+}
+
+function extractStructFields(structNode) {
+  const fields = [];
+  const fieldList =
+    structNode.childForFieldName('body') || findChild(structNode, 'field_declaration_list');
+  if (!fieldList) return fields;
+  for (let i = 0; i < fieldList.childCount; i++) {
+    const field = fieldList.child(i);
+    if (!field || field.type !== 'field_declaration') continue;
+    const nameNode = field.childForFieldName('name');
+    if (nameNode) {
+      fields.push({ name: nameNode.text, kind: 'property', line: field.startPosition.row + 1 });
+    }
+  }
+  return fields;
+}
+
+function extractEnumVariants(enumNode) {
+  const variants = [];
+  const body = enumNode.childForFieldName('body') || findChild(enumNode, 'enum_variant_list');
+  if (!body) return variants;
+  for (let i = 0; i < body.childCount; i++) {
+    const variant = body.child(i);
+    if (!variant || variant.type !== 'enum_variant') continue;
+    const nameNode = variant.childForFieldName('name');
+    if (nameNode) {
+      variants.push({ name: nameNode.text, kind: 'constant', line: variant.startPosition.row + 1 });
+    }
+  }
+  return variants;
 }
 
 function extractRustUsePath(node) {

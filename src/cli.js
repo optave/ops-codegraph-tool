@@ -20,9 +20,10 @@ import { exportDOT, exportJSON, exportMermaid } from './export.js';
 import { setVerbose } from './logger.js';
 import { printNdjson } from './paginate.js';
 import {
-  ALL_SYMBOL_KINDS,
+  children,
   context,
   diffImpact,
+  EVERY_SYMBOL_KIND,
   explain,
   fileDeps,
   fnDeps,
@@ -122,8 +123,8 @@ program
   .option('--offset <number>', 'Skip N results (default: 0)')
   .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
-    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
     if (opts.path) {
@@ -231,8 +232,8 @@ program
   .option('--offset <number>', 'Skip N results (default: 0)')
   .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
-    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
     fnImpact(name, opts.db, {
@@ -263,8 +264,8 @@ program
   .option('--offset <number>', 'Skip N results (default: 0)')
   .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
-    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
     context(name, opts.db, {
@@ -278,6 +279,31 @@ program
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       ndjson: opts.ndjson,
+    });
+  });
+
+program
+  .command('children <name>')
+  .description('List parameters, properties, and constants of a symbol')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-f, --file <path>', 'Scope search to symbols in this file (partial match)')
+  .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
+  .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .action((name, opts) => {
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
+      process.exit(1);
+    }
+    children(name, opts.db, {
+      file: opts.file,
+      kind: opts.kind,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
     });
   });
 
@@ -314,8 +340,8 @@ program
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action((target, opts) => {
-    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
     audit(target, opts.db, {
@@ -917,8 +943,8 @@ program
       console.error('Provide a function/entry point name or use --list to see all entry points.');
       process.exit(1);
     }
-    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
     const { flow } = await import('./flow.js');
@@ -950,8 +976,8 @@ program
   .option('--impact', 'Show data-dependent blast radius')
   .option('--depth <n>', 'Max traversal depth', '5')
   .action(async (name, opts) => {
-    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
     const { dataflow } = await import('./dataflow.js');
@@ -988,8 +1014,8 @@ program
   .option('--offset <number>', 'Skip N results (default: 0)')
   .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (target, opts) => {
-    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
     const { complexity } = await import('./complexity.js');
@@ -1021,8 +1047,8 @@ program
   .option('--offset <number>', 'Skip N results (default: 0)')
   .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (opts) => {
-    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
     const { manifesto } = await import('./manifesto.js');
@@ -1083,8 +1109,8 @@ program
   .option('--ndjson', 'Newline-delimited JSON output')
   .option('--weights <json>', 'Custom weights JSON (e.g. \'{"fanIn":1,"complexity":0}\')')
   .action(async (opts) => {
-    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
     if (opts.role && !VALID_ROLES.includes(opts.role)) {
@@ -1246,8 +1272,8 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .action(async (command, positionalTargets, opts) => {
-    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
 
@@ -1310,8 +1336,8 @@ program
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .action(async (positionalTargets, opts) => {
-    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
 

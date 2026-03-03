@@ -1,4 +1,4 @@
-import { nodeEndLine } from './helpers.js';
+import { findChild, nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from Go files.
@@ -15,11 +15,13 @@ export function extractGoSymbols(tree, _filePath) {
       case 'function_declaration': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
+          const params = extractGoParameters(node.childForFieldName('parameters'));
           definitions.push({
             name: nameNode.text,
             kind: 'function',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: params.length > 0 ? params : undefined,
           });
         }
         break;
@@ -46,11 +48,13 @@ export function extractGoSymbols(tree, _filePath) {
             }
           }
           const fullName = receiverType ? `${receiverType}.${nameNode.text}` : nameNode.text;
+          const params = extractGoParameters(node.childForFieldName('parameters'));
           definitions.push({
             name: fullName,
             kind: 'method',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: params.length > 0 ? params : undefined,
           });
         }
         break;
@@ -64,11 +68,13 @@ export function extractGoSymbols(tree, _filePath) {
           const typeNode = spec.childForFieldName('type');
           if (nameNode && typeNode) {
             if (typeNode.type === 'struct_type') {
+              const fields = extractStructFields(typeNode);
               definitions.push({
                 name: nameNode.text,
                 kind: 'struct',
                 line: node.startPosition.row + 1,
                 endLine: nodeEndLine(node),
+                children: fields.length > 0 ? fields : undefined,
               });
             } else if (typeNode.type === 'interface_type') {
               definitions.push({
@@ -145,6 +151,23 @@ export function extractGoSymbols(tree, _filePath) {
         break;
       }
 
+      case 'const_declaration': {
+        for (let i = 0; i < node.childCount; i++) {
+          const spec = node.child(i);
+          if (!spec || spec.type !== 'const_spec') continue;
+          const constName = spec.childForFieldName('name');
+          if (constName) {
+            definitions.push({
+              name: constName.text,
+              kind: 'constant',
+              line: spec.startPosition.row + 1,
+              endLine: spec.endPosition.row + 1,
+            });
+          }
+        }
+        break;
+      }
+
       case 'call_expression': {
         const fn = node.childForFieldName('function');
         if (fn) {
@@ -169,4 +192,46 @@ export function extractGoSymbols(tree, _filePath) {
 
   walkGoNode(tree.rootNode);
   return { definitions, calls, imports, classes, exports };
+}
+
+// ── Child extraction helpers ────────────────────────────────────────────────
+
+function extractGoParameters(paramListNode) {
+  const params = [];
+  if (!paramListNode) return params;
+  for (let i = 0; i < paramListNode.childCount; i++) {
+    const param = paramListNode.child(i);
+    if (!param || param.type !== 'parameter_declaration') continue;
+    // A parameter_declaration may have multiple identifiers (e.g., `a, b int`)
+    for (let j = 0; j < param.childCount; j++) {
+      const child = param.child(j);
+      if (child && child.type === 'identifier') {
+        params.push({ name: child.text, kind: 'parameter', line: child.startPosition.row + 1 });
+      }
+    }
+  }
+  return params;
+}
+
+function extractStructFields(structTypeNode) {
+  const fields = [];
+  const fieldList = findChild(structTypeNode, 'field_declaration_list');
+  if (!fieldList) return fields;
+  for (let i = 0; i < fieldList.childCount; i++) {
+    const field = fieldList.child(i);
+    if (!field || field.type !== 'field_declaration') continue;
+    const nameNode = field.childForFieldName('name');
+    if (nameNode) {
+      fields.push({ name: nameNode.text, kind: 'property', line: field.startPosition.row + 1 });
+    } else {
+      // Struct fields may have multiple names or use first identifier child
+      for (let j = 0; j < field.childCount; j++) {
+        const child = field.child(j);
+        if (child && child.type === 'field_identifier') {
+          fields.push({ name: child.text, kind: 'property', line: field.startPosition.row + 1 });
+        }
+      }
+    }
+  }
+  return fields;
 }

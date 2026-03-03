@@ -142,6 +142,14 @@ function normalizeNativeSymbols(result) {
             maintainabilityIndex: d.complexity.maintainabilityIndex ?? null,
           }
         : null,
+      children: d.children?.length
+        ? d.children.map((c) => ({
+            name: c.name,
+            kind: c.kind,
+            line: c.line,
+            endLine: c.endLine ?? c.end_line ?? null,
+          }))
+        : undefined,
     })),
     calls: (result.calls || []).map((c) => ({
       name: c.name,

@@ -165,6 +165,14 @@ export const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_dataflow_source_kind ON dataflow(source_id, kind);
     `,
   },
+  {
+    version: 11,
+    up: `
+      ALTER TABLE nodes ADD COLUMN parent_id INTEGER REFERENCES nodes(id);
+      CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id);
+      CREATE INDEX IF NOT EXISTS idx_nodes_kind_parent ON nodes(kind, parent_id);
+    `,
+  },
 ];
 
 export function getBuildMeta(db, key) {
@@ -283,6 +291,21 @@ export function initSchema(db) {
   }
   try {
     db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_role ON nodes(role)');
+  } catch {
+    /* already exists */
+  }
+  try {
+    db.exec('ALTER TABLE nodes ADD COLUMN parent_id INTEGER REFERENCES nodes(id)');
+  } catch {
+    /* already exists */
+  }
+  try {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)');
+  } catch {
+    /* already exists */
+  }
+  try {
+    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_kind_parent ON nodes(kind, parent_id)');
   } catch {
     /* already exists */
   }

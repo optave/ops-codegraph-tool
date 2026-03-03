@@ -107,9 +107,13 @@ export { getActiveEngine, parseFileAuto, parseFilesAuto } from './parser.js';
 // Query functions (data-returning)
 export {
   ALL_SYMBOL_KINDS,
+  CORE_SYMBOL_KINDS,
+  childrenData,
   contextData,
   diffImpactData,
   diffImpactMermaid,
+  EVERY_SYMBOL_KIND,
+  EXTENDED_SYMBOL_KINDS,
   explainData,
   FALSE_POSITIVE_CALLER_THRESHOLD,
   FALSE_POSITIVE_NAMES,

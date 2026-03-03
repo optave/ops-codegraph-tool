@@ -31,11 +31,13 @@ export function extractRubySymbols(tree, _filePath) {
       case 'class': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
+          const classChildren = extractRubyClassChildren(node);
           definitions.push({
             name: nameNode.text,
             kind: 'class',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: classChildren.length > 0 ? classChildren : undefined,
           });
           const superclass = node.childForFieldName('superclass');
           if (superclass) {
@@ -73,11 +75,13 @@ export function extractRubySymbols(tree, _filePath) {
       case 'module': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
+          const moduleChildren = extractRubyBodyConstants(node);
           definitions.push({
             name: nameNode.text,
             kind: 'module',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: moduleChildren.length > 0 ? moduleChildren : undefined,
           });
         }
         break;
@@ -88,11 +92,13 @@ export function extractRubySymbols(tree, _filePath) {
         if (nameNode) {
           const parentClass = findRubyParentClass(node);
           const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
+          const params = extractRubyParameters(node);
           definitions.push({
             name: fullName,
             kind: 'method',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: params.length > 0 ? params : undefined,
           });
         }
         break;
@@ -103,12 +109,30 @@ export function extractRubySymbols(tree, _filePath) {
         if (nameNode) {
           const parentClass = findRubyParentClass(node);
           const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
+          const params = extractRubyParameters(node);
           definitions.push({
             name: fullName,
             kind: 'function',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: params.length > 0 ? params : undefined,
           });
+        }
+        break;
+      }
+
+      case 'assignment': {
+        // Top-level constant assignments (parent is program)
+        if (node.parent && node.parent.type === 'program') {
+          const left = node.childForFieldName('left');
+          if (left && left.type === 'constant') {
+            definitions.push({
+              name: left.text,
+              kind: 'constant',
+              line: node.startPosition.row + 1,
+              endLine: nodeEndLine(node),
+            });
+          }
         }
         break;
       }
@@ -185,4 +209,69 @@ export function extractRubySymbols(tree, _filePath) {
 
   walkRubyNode(tree.rootNode);
   return { definitions, calls, imports, classes, exports };
+}
+
+// ── Child extraction helpers ────────────────────────────────────────────────
+
+const RUBY_PARAM_TYPES = new Set([
+  'identifier',
+  'optional_parameter',
+  'splat_parameter',
+  'hash_splat_parameter',
+  'block_parameter',
+  'keyword_parameter',
+]);
+
+function extractRubyParameters(methodNode) {
+  const params = [];
+  const paramList =
+    methodNode.childForFieldName('parameters') || findChild(methodNode, 'method_parameters');
+  if (!paramList) return params;
+  for (let i = 0; i < paramList.childCount; i++) {
+    const param = paramList.child(i);
+    if (!param || !RUBY_PARAM_TYPES.has(param.type)) continue;
+    let name;
+    if (param.type === 'identifier') {
+      name = param.text;
+    } else {
+      // Compound parameter types have an identifier child for the name
+      const id = findChild(param, 'identifier');
+      name = id ? id.text : param.text;
+    }
+    params.push({ name, kind: 'parameter', line: param.startPosition.row + 1 });
+  }
+  return params;
+}
+
+function extractRubyBodyConstants(containerNode) {
+  const children = [];
+  const body = containerNode.childForFieldName('body') || findChild(containerNode, 'body');
+  if (!body) return children;
+  for (let i = 0; i < body.childCount; i++) {
+    const child = body.child(i);
+    if (!child || child.type !== 'assignment') continue;
+    const left = child.childForFieldName('left');
+    if (left && left.type === 'constant') {
+      children.push({ name: left.text, kind: 'constant', line: child.startPosition.row + 1 });
+    }
+  }
+  return children;
+}
+
+function extractRubyClassChildren(classNode) {
+  const children = [];
+  const body = classNode.childForFieldName('body') || findChild(classNode, 'body');
+  if (!body) return children;
+  for (let i = 0; i < body.childCount; i++) {
+    const child = body.child(i);
+    if (!child || child.type !== 'assignment') continue;
+    const left = child.childForFieldName('left');
+    if (!left) continue;
+    if (left.type === 'instance_variable') {
+      children.push({ name: left.text, kind: 'property', line: child.startPosition.row + 1 });
+    } else if (left.type === 'constant') {
+      children.push({ name: left.text, kind: 'constant', line: child.startPosition.row + 1 });
+    }
+  }
+  return children;
 }
