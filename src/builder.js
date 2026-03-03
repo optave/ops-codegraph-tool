@@ -396,6 +396,28 @@ export function purgeFilesFromGraph(db, files, options = {}) {
       deleteHashForFile = null;
     }
   }
+  let deleteAstNodesForFile;
+  try {
+    deleteAstNodesForFile = db.prepare('DELETE FROM ast_nodes WHERE file = ?');
+  } catch {
+    deleteAstNodesForFile = null;
+  }
+  let deleteCfgForFile;
+  try {
+    deleteCfgForFile = db.prepare(
+      'DELETE FROM cfg_edges WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?)',
+    );
+  } catch {
+    deleteCfgForFile = null;
+  }
+  let deleteCfgBlocksForFile;
+  try {
+    deleteCfgBlocksForFile = db.prepare(
+      'DELETE FROM cfg_blocks WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?)',
+    );
+  } catch {
+    deleteCfgBlocksForFile = null;
+  }
 
   for (const relPath of files) {
     deleteEmbeddingsForFile?.run(relPath);
@@ -403,6 +425,9 @@ export function purgeFilesFromGraph(db, files, options = {}) {
     deleteMetricsForFile.run(relPath);
     deleteComplexityForFile?.run(relPath);
     deleteDataflowForFile?.run(relPath, relPath);
+    deleteAstNodesForFile?.run(relPath);
+    deleteCfgForFile?.run(relPath);
+    deleteCfgBlocksForFile?.run(relPath);
     deleteNodesForFile.run(relPath);
     if (purgeHashes) deleteHashForFile?.run(relPath);
   }

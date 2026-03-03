@@ -15,7 +15,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**1**](#phase-1--rust-core) | Rust Core | Rust parsing engine via napi-rs, parallel parsing, incremental tree-sitter, JS orchestration layer | **Complete** (v1.3.0) |
 | [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Complete** (v1.4.0) |
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.6.0) |
-| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring | Command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, curated API, unified graph model | Planned |
+| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring | Command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, curated API, unified graph model, dead symbol cleanup, community drift reduction, break function cycles | Planned |
 | [**4**](#phase-4--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | Planned |
 | [**5**](#phase-5--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
 | [**6**](#phase-6--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
@@ -623,7 +623,62 @@ The repository pattern (3.2) enables true unit testing:
 
 **Current gap:** Many "unit" tests still hit SQLite because there's no repository abstraction.
 
-### 3.14 -- Remaining Items (Lower Priority)
+### 3.14 -- Dead Symbol Cleanup
+
+**Current state:** Role classification reports 221 dead symbols -- 27% of all classified code. Root causes: the dual-function pattern (every `*Data()` has an uncalled `*()` counterpart), 120+ speculative exports in `index.js`, and rapid feature addition without pruning.
+
+**Deliverables:**
+
+1. **Audit pass:** Categorize all dead symbols as truly dead (remove), entry points (annotate), or public API (keep or drop from `index.js`)
+2. **Manifesto rule:** Add `max-dead-ratio` with `warn: 0.15`, `fail: 0.25` to prevent regression
+3. **CI gate:** `codegraph check` fails if dead ratio exceeds threshold
+
+**Note:** Sections 3.1 (command/query separation) and 3.6 (curated API surface) eliminate the two biggest dead-code factories. This item captures the explicit cleanup and prevention gate.
+
+**Target:** Reduce dead symbol ratio from 27% to under 10%.
+
+**Affected files:** `src/manifesto.js`, `src/check.js`, dead code across all modules
+
+### 3.15 -- Community Drift Reduction
+
+**Current state:** Louvain community detection reports 40% drift -- files belong to a different logical community than their directory placement suggests. The flat `src/` layout with 35 modules gives no structural signal about which modules are coupled.
+
+**Deliverables:**
+
+1. **Directory restructuring:** Align file organization to detected communities (this happens naturally through 3.1-3.11):
+   ```
+   src/
+     analysis/       # Community: query/impact/context/explain/roles
+     commands/       # Community: CLI-specific formatting
+     health/         # Community: audit/triage/manifesto/check/complexity
+     graph/          # Community: structure/communities/cochange/cycles
+     infrastructure/ # Community: db/pagination/config/logger
+   ```
+2. **Track drift as a metric:** Add modularity score and drift percentage to `codegraph stats` output
+3. **Manifesto rule:** Add `max-community-drift` with `warn: 0.30`, `fail: 0.45`
+
+**Target:** Reduce drift from 40% to under 20%.
+
+**Affected files:** `src/communities.js`, `src/manifesto.js`, `src/queries.js` (stats), directory structure
+
+### 3.16 -- Break Function-Level Cycles
+
+**Current state:** 9 function-level circular dependencies. File-level imports are acyclic, but function call graphs contain mutual recursion and indirect loops. These make impact analysis unreliable and complicate module decomposition.
+
+**Deliverables:**
+
+1. **Classify each cycle:**
+   - **Intentional recursion** (tree walkers, AST visitors) -- document and exempt from CI gate
+   - **Accidental coupling** (A→B→C→A) -- refactor by extracting shared logic or inverting dependencies
+   - **Layering violations** (query→builder→query) -- break with parameter passing or interface boundaries
+2. **Break accidental cycles** through extraction, dependency inversion, or callback patterns
+3. **CI gate:** Add `no-new-cycles` predicate to `codegraph check` at function scope
+
+**Target:** 0 accidental cycles (intentional recursion documented and exempted).
+
+**Affected files:** `src/check.js`, functions involved in the 9 cycles
+
+### 3.17 -- Remaining Items (Lower Priority)
 
 These items from the original Phase 3 are still valid but less urgent:
 
