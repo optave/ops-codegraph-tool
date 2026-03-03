@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import { AST_NODE_KINDS } from './ast.js';
 import { findCycles } from './cycles.js';
 import { findDbPath } from './db.js';
 import { MCP_DEFAULTS, MCP_MAX_LIMIT } from './paginate.js';
@@ -703,6 +704,28 @@ const BASE_TOOLS = [
       },
     },
   },
+  {
+    name: 'ast_query',
+    description:
+      'Search stored AST nodes (calls, literals, new, throw, await) by pattern. Requires a prior build.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pattern: {
+          type: 'string',
+          description: 'GLOB pattern for node name (auto-wrapped in *..* for substring match)',
+        },
+        kind: {
+          type: 'string',
+          enum: AST_NODE_KINDS,
+          description: 'Filter by AST node kind',
+        },
+        file: { type: 'string', description: 'Scope to file (partial match)' },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
+      },
+    },
+  },
 ];
 
 const LIST_REPOS_TOOL = {
@@ -1265,6 +1288,17 @@ export async function startMCPServer(customDbPath, options = {}) {
             boundaries: args.boundaries,
             depth: args.depth,
             noTests: args.no_tests,
+          });
+          break;
+        }
+        case 'ast_query': {
+          const { astQueryData } = await import('./ast.js');
+          result = astQueryData(args.pattern, dbPath, {
+            kind: args.kind,
+            file: args.file,
+            noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.ast_query, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
           });
           break;
         }
