@@ -16,24 +16,64 @@ import { isTestFile } from './queries.js';
 
 // ─── CFG Node Type Rules (extends COMPLEXITY_RULES) ──────────────────────
 
-const JS_TS_CFG = {
-  ifNode: 'if_statement',
+const CFG_DEFAULTS = {
+  ifNode: null,
   ifNodes: null,
   elifNode: null,
-  elseClause: 'else_clause',
+  elseClause: null,
   elseViaAlternative: false,
   ifConsequentField: null,
-  forNodes: new Set(['for_statement', 'for_in_statement']),
-  whileNode: 'while_statement',
+  forNodes: new Set(),
+  whileNode: null,
   whileNodes: null,
-  doNode: 'do_statement',
+  doNode: null,
   infiniteLoopNode: null,
   unlessNode: null,
   untilNode: null,
-  switchNode: 'switch_statement',
+  switchNode: null,
   switchNodes: null,
-  caseNode: 'switch_case',
+  caseNode: null,
   caseNodes: null,
+  defaultNode: null,
+  tryNode: null,
+  catchNode: null,
+  finallyNode: null,
+  returnNode: null,
+  throwNode: null,
+  breakNode: null,
+  continueNode: null,
+  blockNode: null,
+  blockNodes: null,
+  labeledNode: null,
+  functionNodes: new Set(),
+};
+
+const CFG_RULE_KEYS = new Set(Object.keys(CFG_DEFAULTS));
+
+export function makeCfgRules(overrides) {
+  for (const key of Object.keys(overrides)) {
+    if (!CFG_RULE_KEYS.has(key)) {
+      throw new Error(`CFG rules: unknown key "${key}"`);
+    }
+  }
+  const rules = { ...CFG_DEFAULTS, ...overrides };
+  if (!(rules.functionNodes instanceof Set) || rules.functionNodes.size === 0) {
+    throw new Error('CFG rules: functionNodes must be a non-empty Set');
+  }
+  if (!(rules.forNodes instanceof Set)) {
+    throw new Error('CFG rules: forNodes must be a Set');
+  }
+  return rules;
+}
+
+const JS_TS_CFG = makeCfgRules({
+  ifNode: 'if_statement',
+  elseClause: 'else_clause',
+  forNodes: new Set(['for_statement', 'for_in_statement']),
+  whileNode: 'while_statement',
+  doNode: 'do_statement',
+  switchNode: 'switch_statement',
+  caseNode: 'switch_case',
   defaultNode: 'switch_default',
   tryNode: 'try_statement',
   catchNode: 'catch_clause',
@@ -43,7 +83,6 @@ const JS_TS_CFG = {
   breakNode: 'break_statement',
   continueNode: 'continue_statement',
   blockNode: 'statement_block',
-  blockNodes: null,
   labeledNode: 'labeled_statement',
   functionNodes: new Set([
     'function_declaration',
@@ -53,27 +92,16 @@ const JS_TS_CFG = {
     'generator_function',
     'generator_function_declaration',
   ]),
-};
+});
 
-const PYTHON_CFG = {
+const PYTHON_CFG = makeCfgRules({
   ifNode: 'if_statement',
-  ifNodes: null,
   elifNode: 'elif_clause',
   elseClause: 'else_clause',
-  elseViaAlternative: false,
-  ifConsequentField: null,
   forNodes: new Set(['for_statement']),
   whileNode: 'while_statement',
-  whileNodes: null,
-  doNode: null,
-  infiniteLoopNode: null,
-  unlessNode: null,
-  untilNode: null,
   switchNode: 'match_statement',
-  switchNodes: null,
   caseNode: 'case_clause',
-  caseNodes: null,
-  defaultNode: null,
   tryNode: 'try_statement',
   catchNode: 'except_clause',
   finallyNode: 'finally_clause',
@@ -82,26 +110,13 @@ const PYTHON_CFG = {
   breakNode: 'break_statement',
   continueNode: 'continue_statement',
   blockNode: 'block',
-  blockNodes: null,
-  labeledNode: null,
   functionNodes: new Set(['function_definition']),
-};
+});
 
-const GO_CFG = {
+const GO_CFG = makeCfgRules({
   ifNode: 'if_statement',
-  ifNodes: null,
-  elifNode: null,
-  elseClause: null,
   elseViaAlternative: true,
-  ifConsequentField: null,
   forNodes: new Set(['for_statement']),
-  whileNode: null,
-  whileNodes: null,
-  doNode: null,
-  infiniteLoopNode: null,
-  unlessNode: null,
-  untilNode: null,
-  switchNode: null,
   switchNodes: new Set([
     'expression_switch_statement',
     'type_switch_statement',
@@ -110,70 +125,40 @@ const GO_CFG = {
   caseNode: 'expression_case',
   caseNodes: new Set(['type_case', 'communication_case']),
   defaultNode: 'default_case',
-  tryNode: null,
-  catchNode: null,
-  finallyNode: null,
   returnNode: 'return_statement',
-  throwNode: null,
   breakNode: 'break_statement',
   continueNode: 'continue_statement',
   blockNode: 'block',
-  blockNodes: null,
   labeledNode: 'labeled_statement',
   functionNodes: new Set(['function_declaration', 'method_declaration', 'func_literal']),
-};
+});
 
-const RUST_CFG = {
+const RUST_CFG = makeCfgRules({
   ifNode: 'if_expression',
   ifNodes: new Set(['if_let_expression']),
-  elifNode: null,
   elseClause: 'else_clause',
-  elseViaAlternative: false,
-  ifConsequentField: null,
   forNodes: new Set(['for_expression']),
   whileNode: 'while_expression',
   whileNodes: new Set(['while_let_expression']),
-  doNode: null,
   infiniteLoopNode: 'loop_expression',
-  unlessNode: null,
-  untilNode: null,
   switchNode: 'match_expression',
-  switchNodes: null,
   caseNode: 'match_arm',
-  caseNodes: null,
-  defaultNode: null,
-  tryNode: null,
-  catchNode: null,
-  finallyNode: null,
   returnNode: 'return_expression',
-  throwNode: null,
   breakNode: 'break_expression',
   continueNode: 'continue_expression',
   blockNode: 'block',
-  blockNodes: null,
-  labeledNode: null,
   functionNodes: new Set(['function_item', 'closure_expression']),
-};
+});
 
-const JAVA_CFG = {
+const JAVA_CFG = makeCfgRules({
   ifNode: 'if_statement',
-  ifNodes: null,
-  elifNode: null,
-  elseClause: null,
   elseViaAlternative: true,
-  ifConsequentField: null,
   forNodes: new Set(['for_statement', 'enhanced_for_statement']),
   whileNode: 'while_statement',
-  whileNodes: null,
   doNode: 'do_statement',
-  infiniteLoopNode: null,
-  unlessNode: null,
-  untilNode: null,
   switchNode: 'switch_expression',
-  switchNodes: null,
   caseNode: 'switch_block_statement_group',
   caseNodes: new Set(['switch_rule']),
-  defaultNode: null,
   tryNode: 'try_statement',
   catchNode: 'catch_clause',
   finallyNode: 'finally_clause',
@@ -182,30 +167,18 @@ const JAVA_CFG = {
   breakNode: 'break_statement',
   continueNode: 'continue_statement',
   blockNode: 'block',
-  blockNodes: null,
   labeledNode: 'labeled_statement',
   functionNodes: new Set(['method_declaration', 'constructor_declaration', 'lambda_expression']),
-};
+});
 
-const CSHARP_CFG = {
+const CSHARP_CFG = makeCfgRules({
   ifNode: 'if_statement',
-  ifNodes: null,
-  elifNode: null,
-  elseClause: null,
   elseViaAlternative: true,
-  ifConsequentField: null,
   forNodes: new Set(['for_statement', 'foreach_statement']),
   whileNode: 'while_statement',
-  whileNodes: null,
   doNode: 'do_statement',
-  infiniteLoopNode: null,
-  unlessNode: null,
-  untilNode: null,
   switchNode: 'switch_statement',
-  switchNodes: null,
   caseNode: 'switch_section',
-  caseNodes: null,
-  defaultNode: null,
   tryNode: 'try_statement',
   catchNode: 'catch_clause',
   finallyNode: 'finally_clause',
@@ -214,7 +187,6 @@ const CSHARP_CFG = {
   breakNode: 'break_statement',
   continueNode: 'continue_statement',
   blockNode: 'block',
-  blockNodes: null,
   labeledNode: 'labeled_statement',
   functionNodes: new Set([
     'method_declaration',
@@ -222,58 +194,39 @@ const CSHARP_CFG = {
     'lambda_expression',
     'local_function_statement',
   ]),
-};
+});
 
-const RUBY_CFG = {
+const RUBY_CFG = makeCfgRules({
   ifNode: 'if',
-  ifNodes: null,
   elifNode: 'elsif',
   elseClause: 'else',
-  elseViaAlternative: false,
-  ifConsequentField: null,
   forNodes: new Set(['for']),
   whileNode: 'while',
-  whileNodes: null,
-  doNode: null,
-  infiniteLoopNode: null,
   unlessNode: 'unless',
   untilNode: 'until',
   switchNode: 'case',
-  switchNodes: null,
   caseNode: 'when',
-  caseNodes: null,
   defaultNode: 'else',
   tryNode: 'begin',
   catchNode: 'rescue',
   finallyNode: 'ensure',
   returnNode: 'return',
-  throwNode: null,
   breakNode: 'break',
   continueNode: 'next',
-  blockNode: null,
   blockNodes: new Set(['then', 'do', 'body_statement']),
-  labeledNode: null,
   functionNodes: new Set(['method', 'singleton_method']),
-};
+});
 
-const PHP_CFG = {
+const PHP_CFG = makeCfgRules({
   ifNode: 'if_statement',
-  ifNodes: null,
   elifNode: 'else_if_clause',
   elseClause: 'else_clause',
-  elseViaAlternative: false,
   ifConsequentField: 'body',
   forNodes: new Set(['for_statement', 'foreach_statement']),
   whileNode: 'while_statement',
-  whileNodes: null,
   doNode: 'do_statement',
-  infiniteLoopNode: null,
-  unlessNode: null,
-  untilNode: null,
   switchNode: 'switch_statement',
-  switchNodes: null,
   caseNode: 'case_statement',
-  caseNodes: null,
   defaultNode: 'default_statement',
   tryNode: 'try_statement',
   catchNode: 'catch_clause',
@@ -283,15 +236,13 @@ const PHP_CFG = {
   breakNode: 'break_statement',
   continueNode: 'continue_statement',
   blockNode: 'compound_statement',
-  blockNodes: null,
-  labeledNode: null,
   functionNodes: new Set([
     'function_definition',
     'method_declaration',
     'anonymous_function_creation_expression',
     'arrow_function',
   ]),
-};
+});
 
 export const CFG_RULES = new Map([
   ['javascript', JS_TS_CFG],
@@ -306,18 +257,7 @@ export const CFG_RULES = new Map([
   ['php', PHP_CFG],
 ]);
 
-const CFG_LANG_IDS = new Set([
-  'javascript',
-  'typescript',
-  'tsx',
-  'python',
-  'go',
-  'rust',
-  'java',
-  'csharp',
-  'ruby',
-  'php',
-]);
+const CFG_LANG_IDS = new Set(CFG_RULES.keys());
 
 // JS/TS extensions
 const CFG_EXTENSIONS = new Set();

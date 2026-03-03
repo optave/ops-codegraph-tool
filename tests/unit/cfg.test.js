@@ -6,7 +6,7 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { buildFunctionCFG } from '../../src/cfg.js';
+import { buildFunctionCFG, makeCfgRules } from '../../src/cfg.js';
 import { COMPLEXITY_RULES } from '../../src/complexity.js';
 import { createParsers } from '../../src/parser.js';
 
@@ -1224,5 +1224,59 @@ function brk() {
 `);
     expect(cfg.edges.some((e) => e.kind === 'break')).toBe(true);
     expect(cfg.edges.some((e) => e.kind === 'continue')).toBe(true);
+  });
+});
+
+// ─── makeCfgRules validation ─────────────────────────────────────────────
+
+describe('makeCfgRules', () => {
+  it('throws on unknown key', () => {
+    expect(() =>
+      makeCfgRules({
+        ifNode: 'if_statement',
+        forNodes: new Set(['for_statement']),
+        functionNodes: new Set(['function_declaration']),
+        bogusKey: 'oops',
+      }),
+    ).toThrow('CFG rules: unknown key "bogusKey"');
+  });
+
+  it('throws when functionNodes is missing', () => {
+    expect(() =>
+      makeCfgRules({
+        forNodes: new Set(['for_statement']),
+      }),
+    ).toThrow('CFG rules: functionNodes must be a non-empty Set');
+  });
+
+  it('throws when functionNodes is empty', () => {
+    expect(() =>
+      makeCfgRules({
+        forNodes: new Set(['for_statement']),
+        functionNodes: new Set(),
+      }),
+    ).toThrow('CFG rules: functionNodes must be a non-empty Set');
+  });
+
+  it('throws when forNodes is not a Set', () => {
+    expect(() =>
+      makeCfgRules({
+        forNodes: ['for_statement'],
+        functionNodes: new Set(['function_declaration']),
+      }),
+    ).toThrow('CFG rules: forNodes must be a Set');
+  });
+
+  it('returns valid rules with defaults filled in', () => {
+    const rules = makeCfgRules({
+      ifNode: 'if_statement',
+      forNodes: new Set(['for_statement']),
+      functionNodes: new Set(['function_declaration']),
+    });
+    expect(rules.ifNode).toBe('if_statement');
+    expect(rules.elifNode).toBeNull();
+    expect(rules.elseViaAlternative).toBe(false);
+    expect(rules.forNodes).toEqual(new Set(['for_statement']));
+    expect(rules.functionNodes).toEqual(new Set(['function_declaration']));
   });
 });
