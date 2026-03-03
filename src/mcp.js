@@ -83,6 +83,20 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'file_exports',
+    description:
+      'Show exported symbols of a file with per-symbol consumers — who calls each export and from where',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', description: 'File path (partial match supported)' },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
+      },
+      required: ['file'],
+    },
+  },
+  {
     name: 'impact_analysis',
     description: 'Show files affected by changes to a given file (transitive)',
     inputSchema: {
@@ -267,13 +281,14 @@ const BASE_TOOLS = [
   },
   {
     name: 'export_graph',
-    description: 'Export the dependency graph in DOT (Graphviz), Mermaid, or JSON format',
+    description:
+      'Export the dependency graph in DOT, Mermaid, JSON, GraphML, GraphSON, or Neo4j CSV format',
     inputSchema: {
       type: 'object',
       properties: {
         format: {
           type: 'string',
-          enum: ['dot', 'mermaid', 'json'],
+          enum: ['dot', 'mermaid', 'json', 'graphml', 'graphson', 'neo4j'],
           description: 'Export format',
         },
         file_level: {
@@ -757,6 +772,7 @@ export async function startMCPServer(customDbPath, options = {}) {
     pathData,
     contextData,
     childrenData,
+    exportsData,
     explainData,
     whereData,
     diffImpactData,
@@ -839,6 +855,13 @@ export async function startMCPServer(customDbPath, options = {}) {
           result = fileDepsData(args.file, dbPath, {
             noTests: args.no_tests,
             limit: Math.min(args.limit ?? MCP_DEFAULTS.file_deps, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
+          });
+          break;
+        case 'file_exports':
+          result = exportsData(args.file, dbPath, {
+            noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.file_exports, MCP_MAX_LIMIT),
             offset: args.offset ?? 0,
           });
           break;
@@ -982,7 +1005,14 @@ export async function startMCPServer(customDbPath, options = {}) {
           break;
         }
         case 'export_graph': {
-          const { exportDOT, exportMermaid, exportJSON } = await import('./export.js');
+          const {
+            exportDOT,
+            exportGraphML,
+            exportGraphSON,
+            exportJSON,
+            exportMermaid,
+            exportNeo4jCSV,
+          } = await import('./export.js');
           const db = new Database(findDbPath(dbPath), { readonly: true });
           const fileLevel = args.file_level !== false;
           const exportLimit = args.limit
@@ -1001,13 +1031,26 @@ export async function startMCPServer(customDbPath, options = {}) {
                 offset: args.offset ?? 0,
               });
               break;
+            case 'graphml':
+              result = exportGraphML(db, { fileLevel, limit: exportLimit });
+              break;
+            case 'graphson':
+              result = exportGraphSON(db, {
+                fileLevel,
+                limit: exportLimit,
+                offset: args.offset ?? 0,
+              });
+              break;
+            case 'neo4j':
+              result = exportNeo4jCSV(db, { fileLevel, limit: exportLimit });
+              break;
             default:
               db.close();
               return {
                 content: [
                   {
                     type: 'text',
-                    text: `Unknown format: ${args.format}. Use dot, mermaid, or json.`,
+                    text: `Unknown format: ${args.format}. Use dot, mermaid, json, graphml, graphson, or neo4j.`,
                   },
                 ],
                 isError: true,

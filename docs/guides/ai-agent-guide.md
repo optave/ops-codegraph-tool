@@ -659,6 +659,7 @@ Hooks automate codegraph integration so the agent gets structural context withou
 | `enrich-context.sh` | PreToolUse (Read, Grep) | Injects dependency info before file reads |
 | `remind-codegraph.sh` | PreToolUse (Edit, Write) | Reminds agent to check context/impact before editing |
 | `update-graph.sh` | PostToolUse (Edit, Write) | Rebuilds graph after code changes |
+| `check-readme.sh` | PreToolUse (Bash) | Blocks commits when source changes may need doc updates |
 | `guard-git.sh` | PreToolUse (Bash) | Blocks dangerous git ops, validates commits |
 | `track-edits.sh` | PostToolUse (Edit, Write) | Logs edits for commit validation |
 
@@ -702,6 +703,14 @@ Before editing, always: (1) where <name>, (2) explain src/parser.js,
 **What it does:** Runs `codegraph build` incrementally. Only source files trigger a rebuild (`.js`, `.ts`, `.tsx`, `.py`, `.go`, `.rs`, `.java`, `.cs`, `.php`, `.rb`, `.tf`, `.hcl`). Test fixtures are skipped.
 
 **Result:** The graph stays current as the agent edits code. Subsequent `context`, `fn-impact`, and `diff-impact` calls reflect the latest changes.
+
+### `check-readme.sh` — Enforce doc updates alongside source changes
+
+**Trigger:** Before any Bash command (PreToolUse).
+
+**What it does:** Intercepts `git commit` commands and checks whether source files are staged (anything under `src/`, `cli.js`, `constants.js`, `parser.js`, `package.json`, or `grammars/`). If so, it verifies that `README.md`, `CLAUDE.md`, and `ROADMAP.md` are also staged. Missing docs trigger a `deny` decision listing which files weren't staged and what to review in each — language support tables, architecture docs, feature lists, roadmap phases, etc.
+
+**Allows:** Commits that only touch non-source files (tests, docs, config) pass through without checks. Commits where all three docs are staged also pass through.
 
 ### `guard-git.sh` — Prevent unsafe git operations
 
@@ -749,6 +758,10 @@ Add to `.claude/settings.json`:
       {
         "matcher": "Bash",
         "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/check-readme.sh"
+          },
           {
             "type": "command",
             "command": "bash .claude/hooks/guard-git.sh"

@@ -28,6 +28,7 @@ import { initSchema } from '../../src/db.js';
 import {
   diffImpactData,
   explainData,
+  exportsData,
   fileDepsData,
   fnDepsData,
   fnImpactData,
@@ -817,5 +818,82 @@ describe('stable symbol schema', () => {
     const data = queryNameData('authenticate', dbPath);
     const fn = data.results.find((r) => r.name === 'authenticate' && r.kind === 'function');
     expect(fn.fileHash).toBe('hash_auth_js');
+  });
+});
+
+// ─── exportsData ──────────────────────────────────────────────────────
+
+describe('exportsData', () => {
+  test('returns exported symbols with consumers for auth.js', () => {
+    const data = exportsData('auth.js', dbPath);
+    expect(data.file).toBe('auth.js');
+    expect(data.totalExported).toBeGreaterThanOrEqual(2);
+
+    const names = data.results.map((r) => r.name);
+    expect(names).toContain('authenticate');
+    expect(names).toContain('validateToken');
+  });
+
+  test('consumers include cross-file callers', () => {
+    const data = exportsData('auth.js', dbPath);
+    const auth = data.results.find((r) => r.name === 'authenticate');
+    expect(auth).toBeDefined();
+    const consumerNames = auth.consumers.map((c) => c.name);
+    // authMiddleware calls authenticate from middleware.js (cross-file)
+    expect(consumerNames).toContain('authMiddleware');
+  });
+
+  test('noTests filters test file consumers', () => {
+    const all = exportsData('auth.js', dbPath);
+    const filtered = exportsData('auth.js', dbPath, { noTests: true });
+
+    const allAuth = all.results.find((r) => r.name === 'authenticate');
+    const filteredAuth = filtered.results.find((r) => r.name === 'authenticate');
+
+    const allConsumers = allAuth.consumers.map((c) => c.name);
+    const filteredConsumers = filteredAuth.consumers.map((c) => c.name);
+
+    // testAuthenticate should be in unfiltered consumers
+    expect(allConsumers).toContain('testAuthenticate');
+    // testAuthenticate should be excluded with noTests
+    expect(filteredConsumers).not.toContain('testAuthenticate');
+  });
+
+  test('returns empty results for unknown file', () => {
+    const data = exportsData('nonexistent.js', dbPath);
+    expect(data.results).toHaveLength(0);
+    expect(data.totalExported).toBe(0);
+    expect(data.totalInternal).toBe(0);
+  });
+
+  test('reexports field is present', () => {
+    const data = exportsData('auth.js', dbPath);
+    expect(data).toHaveProperty('reexports');
+    expect(Array.isArray(data.reexports)).toBe(true);
+  });
+
+  test('pagination limits results', () => {
+    const data = exportsData('auth.js', dbPath, { limit: 1, offset: 0 });
+    expect(data.results).toHaveLength(1);
+    expect(data._pagination).toBeDefined();
+    expect(data._pagination.total).toBeGreaterThanOrEqual(2);
+    expect(data._pagination.hasMore).toBe(true);
+  });
+
+  test('result shape has expected fields', () => {
+    const data = exportsData('auth.js', dbPath);
+    expect(data.results.length).toBeGreaterThan(0);
+    const sym = data.results[0];
+    expect(sym).toHaveProperty('name');
+    expect(sym).toHaveProperty('kind');
+    expect(sym).toHaveProperty('line');
+    expect(sym).toHaveProperty('consumers');
+    expect(sym).toHaveProperty('consumerCount');
+    expect(sym).toHaveProperty('role');
+    expect(sym).toHaveProperty('signature');
+    expect(sym).toHaveProperty('summary');
+    expect(sym).toHaveProperty('endLine');
+    expect(Array.isArray(sym.consumers)).toBe(true);
+    expect(typeof sym.consumerCount).toBe('number');
   });
 });

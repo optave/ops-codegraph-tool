@@ -338,6 +338,76 @@ function getChangedFiles(db, allFiles, rootDir) {
   return { changed, removed, isFullBuild: false };
 }
 
+/**
+ * Purge all graph data for the specified files.
+ * Deletes: embeddings → edges (in+out) → node_metrics → function_complexity → dataflow → nodes.
+ * Handles missing tables gracefully (embeddings, complexity, dataflow may not exist in older DBs).
+ *
+ * @param {import('better-sqlite3').Database} db - Open writable database
+ * @param {string[]} files - Relative file paths to purge
+ * @param {object} [options]
+ * @param {boolean} [options.purgeHashes=true] - Also delete file_hashes entries
+ */
+export function purgeFilesFromGraph(db, files, options = {}) {
+  const { purgeHashes = true } = options;
+  if (!files || files.length === 0) return;
+
+  // Check if embeddings table exists
+  let hasEmbeddings = false;
+  try {
+    db.prepare('SELECT 1 FROM embeddings LIMIT 1').get();
+    hasEmbeddings = true;
+  } catch {
+    /* table doesn't exist */
+  }
+
+  const deleteEmbeddingsForFile = hasEmbeddings
+    ? db.prepare('DELETE FROM embeddings WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)')
+    : null;
+  const deleteNodesForFile = db.prepare('DELETE FROM nodes WHERE file = ?');
+  const deleteEdgesForFile = db.prepare(`
+    DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = @f)
+    OR target_id IN (SELECT id FROM nodes WHERE file = @f)
+  `);
+  const deleteMetricsForFile = db.prepare(
+    'DELETE FROM node_metrics WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)',
+  );
+  let deleteComplexityForFile;
+  try {
+    deleteComplexityForFile = db.prepare(
+      'DELETE FROM function_complexity WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)',
+    );
+  } catch {
+    deleteComplexityForFile = null;
+  }
+  let deleteDataflowForFile;
+  try {
+    deleteDataflowForFile = db.prepare(
+      'DELETE FROM dataflow WHERE source_id IN (SELECT id FROM nodes WHERE file = ?) OR target_id IN (SELECT id FROM nodes WHERE file = ?)',
+    );
+  } catch {
+    deleteDataflowForFile = null;
+  }
+  let deleteHashForFile;
+  if (purgeHashes) {
+    try {
+      deleteHashForFile = db.prepare('DELETE FROM file_hashes WHERE file = ?');
+    } catch {
+      deleteHashForFile = null;
+    }
+  }
+
+  for (const relPath of files) {
+    deleteEmbeddingsForFile?.run(relPath);
+    deleteEdgesForFile.run({ f: relPath });
+    deleteMetricsForFile.run(relPath);
+    deleteComplexityForFile?.run(relPath);
+    deleteDataflowForFile?.run(relPath, relPath);
+    deleteNodesForFile.run(relPath);
+    if (purgeHashes) deleteHashForFile?.run(relPath);
+  }
+}
+
 export async function buildGraph(rootDir, opts = {}) {
   const dbPath = path.join(rootDir, '.codegraph', 'graph.db');
   const db = openDb(dbPath);
@@ -384,19 +454,46 @@ export async function buildGraph(rootDir, opts = {}) {
     );
   }
 
-  const collected = collectFiles(rootDir, [], config, new Set());
-  const files = collected.files;
-  const discoveredDirs = collected.directories;
-  info(`Found ${files.length} files to parse`);
+  // ── Scoped rebuild: rebuild only specified files ──────────────────
+  let files, discoveredDirs, parseChanges, metadataUpdates, removed, isFullBuild;
 
-  // Check for incremental build
-  const { changed, removed, isFullBuild } = incremental
-    ? getChangedFiles(db, files, rootDir)
-    : { changed: files.map((f) => ({ file: f })), removed: [], isFullBuild: true };
+  if (opts.scope) {
+    const scopedFiles = opts.scope.map((f) => normalizePath(f));
+    const existing = [];
+    const missing = [];
+    for (const rel of scopedFiles) {
+      const abs = path.join(rootDir, rel);
+      if (fs.existsSync(abs)) {
+        existing.push({ file: abs, relPath: rel });
+      } else {
+        missing.push(rel);
+      }
+    }
+    files = existing.map((e) => e.file);
+    // Derive discoveredDirs from scoped files' parent directories
+    discoveredDirs = new Set(existing.map((e) => path.dirname(e.file)));
+    parseChanges = existing;
+    metadataUpdates = [];
+    removed = missing;
+    isFullBuild = false;
+    info(`Scoped rebuild: ${existing.length} files to rebuild, ${missing.length} to purge`);
+  } else {
+    const collected = collectFiles(rootDir, [], config, new Set());
+    files = collected.files;
+    discoveredDirs = collected.directories;
+    info(`Found ${files.length} files to parse`);
 
-  // Separate metadata-only updates (mtime/size self-heal) from real changes
-  const parseChanges = changed.filter((c) => !c.metadataOnly);
-  const metadataUpdates = changed.filter((c) => c.metadataOnly);
+    // Check for incremental build
+    const increResult = incremental
+      ? getChangedFiles(db, files, rootDir)
+      : { changed: files.map((f) => ({ file: f })), removed: [], isFullBuild: true };
+    removed = increResult.removed;
+    isFullBuild = increResult.isFullBuild;
+
+    // Separate metadata-only updates (mtime/size self-heal) from real changes
+    parseChanges = increResult.changed.filter((c) => !c.metadataOnly);
+    metadataUpdates = increResult.changed.filter((c) => c.metadataOnly);
+  }
 
   if (!isFullBuild && parseChanges.length === 0 && removed.length === 0) {
     // Still update metadata for self-healing even when no real changes
@@ -446,29 +543,33 @@ export async function buildGraph(rootDir, opts = {}) {
     // Find files with edges pointing TO changed/removed files.
     // Their nodes stay intact (preserving IDs), but outgoing edges are
     // deleted so they can be rebuilt during the edge-building pass.
-    const changedRelPaths = new Set();
-    for (const item of parseChanges) {
-      changedRelPaths.add(item.relPath || normalizePath(path.relative(rootDir, item.file)));
-    }
-    for (const relPath of removed) {
-      changedRelPaths.add(relPath);
-    }
-
+    // When opts.noReverseDeps is true (e.g. agent rollback to same version),
+    // skip this cascade — the agent knows exports didn't change.
     const reverseDeps = new Set();
-    if (changedRelPaths.size > 0) {
-      const findReverseDeps = db.prepare(`
-        SELECT DISTINCT n_src.file FROM edges e
-        JOIN nodes n_src ON e.source_id = n_src.id
-        JOIN nodes n_tgt ON e.target_id = n_tgt.id
-        WHERE n_tgt.file = ? AND n_src.file != n_tgt.file AND n_src.kind != 'directory'
-      `);
-      for (const relPath of changedRelPaths) {
-        for (const row of findReverseDeps.all(relPath)) {
-          if (!changedRelPaths.has(row.file) && !reverseDeps.has(row.file)) {
-            // Verify the file still exists on disk
-            const absPath = path.join(rootDir, row.file);
-            if (fs.existsSync(absPath)) {
-              reverseDeps.add(row.file);
+    if (!opts.noReverseDeps) {
+      const changedRelPaths = new Set();
+      for (const item of parseChanges) {
+        changedRelPaths.add(item.relPath || normalizePath(path.relative(rootDir, item.file)));
+      }
+      for (const relPath of removed) {
+        changedRelPaths.add(relPath);
+      }
+
+      if (changedRelPaths.size > 0) {
+        const findReverseDeps = db.prepare(`
+          SELECT DISTINCT n_src.file FROM edges e
+          JOIN nodes n_src ON e.source_id = n_src.id
+          JOIN nodes n_tgt ON e.target_id = n_tgt.id
+          WHERE n_tgt.file = ? AND n_src.file != n_tgt.file AND n_src.kind != 'directory'
+        `);
+        for (const relPath of changedRelPaths) {
+          for (const row of findReverseDeps.all(relPath)) {
+            if (!changedRelPaths.has(row.file) && !reverseDeps.has(row.file)) {
+              // Verify the file still exists on disk
+              const absPath = path.join(rootDir, row.file);
+              if (fs.existsSync(absPath)) {
+                reverseDeps.add(row.file);
+              }
             }
           }
         }
@@ -482,57 +583,16 @@ export async function buildGraph(rootDir, opts = {}) {
       debug(`Changed files: ${parseChanges.map((c) => c.relPath).join(', ')}`);
     if (removed.length > 0) debug(`Removed files: ${removed.join(', ')}`);
     // Remove embeddings/metrics/edges/nodes for changed and removed files
-    // Embeddings must be deleted BEFORE nodes (we need node IDs to find them)
-    const deleteEmbeddingsForFile = hasEmbeddings
-      ? db.prepare('DELETE FROM embeddings WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)')
-      : null;
-    const deleteNodesForFile = db.prepare('DELETE FROM nodes WHERE file = ?');
-    const deleteEdgesForFile = db.prepare(`
-      DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = @f)
-      OR target_id IN (SELECT id FROM nodes WHERE file = @f)
-    `);
-    const deleteOutgoingEdgesForFile = db.prepare(
-      'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
+    const changePaths = parseChanges.map(
+      (item) => item.relPath || normalizePath(path.relative(rootDir, item.file)),
     );
-    const deleteMetricsForFile = db.prepare(
-      'DELETE FROM node_metrics WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)',
-    );
-    let deleteComplexityForFile;
-    try {
-      deleteComplexityForFile = db.prepare(
-        'DELETE FROM function_complexity WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)',
-      );
-    } catch {
-      deleteComplexityForFile = null;
-    }
-    let deleteDataflowForFile;
-    try {
-      deleteDataflowForFile = db.prepare(
-        'DELETE FROM dataflow WHERE source_id IN (SELECT id FROM nodes WHERE file = ?) OR target_id IN (SELECT id FROM nodes WHERE file = ?)',
-      );
-    } catch {
-      deleteDataflowForFile = null;
-    }
-    for (const relPath of removed) {
-      deleteEmbeddingsForFile?.run(relPath);
-      deleteEdgesForFile.run({ f: relPath });
-      deleteMetricsForFile.run(relPath);
-      deleteComplexityForFile?.run(relPath);
-      deleteDataflowForFile?.run(relPath, relPath);
-      deleteNodesForFile.run(relPath);
-    }
-    for (const item of parseChanges) {
-      const relPath = item.relPath || normalizePath(path.relative(rootDir, item.file));
-      deleteEmbeddingsForFile?.run(relPath);
-      deleteEdgesForFile.run({ f: relPath });
-      deleteMetricsForFile.run(relPath);
-      deleteComplexityForFile?.run(relPath);
-      deleteDataflowForFile?.run(relPath, relPath);
-      deleteNodesForFile.run(relPath);
-    }
+    purgeFilesFromGraph(db, [...removed, ...changePaths], { purgeHashes: false });
 
     // Process reverse deps: delete only outgoing edges (nodes/IDs preserved)
     // then add them to the parse list so they participate in edge building
+    const deleteOutgoingEdgesForFile = db.prepare(
+      'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
+    );
     for (const relPath of reverseDeps) {
       deleteOutgoingEdgesForFile.run(relPath);
     }

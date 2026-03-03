@@ -228,6 +228,16 @@ You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/check-readme.sh\"",
+            "timeout": 10
+          }
+        ]
+      },
+      {
         "matcher": "Read|Grep",
         "hooks": [
           {
@@ -288,6 +298,8 @@ You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-
 > }
 > ```
 
+**Doc check hook** (PreToolUse on Bash): when Claude runs `git commit` with source files staged (anything under `src/`, `cli.js`, `constants.js`, `parser.js`, `package.json`, or `grammars/`), the hook checks whether `README.md`, `CLAUDE.md`, and `ROADMAP.md` are also staged. If any are missing, it blocks the commit with a `deny` decision listing which docs weren't staged and what to review in each (language support tables, architecture docs, roadmap phases, etc.). Non-source-only commits (tests, docs, config) pass through without checks.
+
 **Edit reminder hook** (PreToolUse on Edit/Write): before the agent writes code, a reminder is injected via `additionalContext` prompting it to check `where`, `explain`, `context`, and `fn-impact` first. Only fires once per file per session (tracks in `.claude/codegraph-checked.log`, gitignored). Non-blocking — it nudges but never prevents the edit. Skips non-source files like `.md`, `.json`, `.yml`.
 
 **Graph update hook** (PostToolUse on Edit/Write): keeps the graph incrementally updated after each file edit. Only changed files are re-parsed.
@@ -301,6 +313,7 @@ You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-
 - `remind-codegraph.sh` — pre-edit reminder to check context/impact
 - `update-graph.sh` — incremental graph updates after edits
 - `post-git-ops.sh` — graph rebuild + edit tracking after rebase/revert/merge
+- `check-readme.sh` — blocks commits when source changes may require doc updates
 - `guard-git.sh` — blocks dangerous git commands + validates commits
 - `track-edits.sh` — logs edited files for commit validation
 - `track-moves.sh` — logs file moves/copies for commit validation
