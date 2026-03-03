@@ -200,10 +200,10 @@ codegraph context buildGraph -T
 
 ---
 
-## fn — Function call chain
+## query — Function call chain
 
 ```bash
-codegraph fn buildGraph -T
+codegraph query buildGraph -T
 ```
 
 ```
@@ -494,7 +494,7 @@ Found 1 file-level cycle:
 
 ---
 
-## export — Graph as DOT, Mermaid, or JSON
+## export — Graph as DOT, Mermaid, JSON, GraphML, GraphSON, or Neo4j CSV
 
 ### Mermaid (file-level)
 
@@ -560,6 +560,121 @@ digraph codegraph {
 }
 ```
 
+### GraphML
+
+```bash
+codegraph export -f graphml -T
+```
+
+### GraphSON (TinkerPop v3)
+
+```bash
+codegraph export -f graphson -T
+```
+
+### Neo4j CSV
+
+```bash
+codegraph export -f neo4j -T
+```
+
+Outputs separate `nodes.csv` and `relationships.csv` files for Neo4j bulk import.
+
+---
+
+## plot — Interactive HTML viewer
+
+```bash
+codegraph plot
+```
+
+Generates an interactive HTML viewer powered by vis-network. Open in a browser for:
+- Hierarchical, force, and radial layouts with physics toggle
+- Node coloring by kind, role, community, or complexity
+- Drill-down, clustering, and complexity overlays
+- Detail panel with metrics, callers, callees on node click
+
+```bash
+codegraph plot --functions --color-by complexity --cluster-by community
+```
+
+---
+
+## exports — Per-symbol consumer analysis
+
+```bash
+codegraph exports src/queries.js -T
+```
+
+Shows all exported symbols of a file with their consumers (who calls each export from other files), re-export detection, and counts.
+
+---
+
+## children — Sub-declaration symbols
+
+```bash
+codegraph children buildGraph -T
+```
+
+Lists parameters, properties, and constants of a symbol — structural queries without reading source.
+
+---
+
+## dataflow — Data flow analysis
+
+Requires `codegraph build --dataflow` first (JS/TS only).
+
+```bash
+codegraph dataflow buildGraph -T
+```
+
+Shows data flow edges: `flows_to` (parameter flow into callee), `returns` (return value captured by caller), `mutates` (parameter-derived mutation).
+
+```bash
+codegraph dataflow buildGraph --impact -T
+```
+
+Transitive data-dependent blast radius — follows return value consumers forward.
+
+---
+
+## cfg — Control flow graph
+
+Requires `codegraph build --cfg` first.
+
+```bash
+codegraph cfg buildGraph
+```
+
+Shows the intraprocedural control flow graph as text. Also available as DOT or Mermaid:
+
+```bash
+codegraph cfg buildGraph --format mermaid
+codegraph cfg buildGraph --format dot
+```
+
+---
+
+## ast — Stored AST node querying
+
+```bash
+codegraph ast -T
+```
+
+Lists all stored AST nodes (calls, `new`, string, regex, throw, await).
+
+```bash
+codegraph ast "openDb" -T
+```
+
+Search by pattern (SQL GLOB with auto-wrapping for substring match):
+
+```bash
+codegraph ast -k throw --file src/ -T
+```
+
+Filter by kind and file.
+
 ---
 
 ## search — Semantic search (requires `embed` first)
@@ -610,7 +725,7 @@ codegraph info
 ```
 Codegraph Diagnostics
 ====================
-  Version       : 2.3.0
+  Version       : 3.0.0
   Node.js       : v22.18.0
   Platform      : win32-x64
   Native engine : unavailable

@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 2.6.0 | **Status:** Active development | **Updated:** March 2026
+> **Current version:** 3.0.0 | **Status:** Active development | **Updated:** March 2026
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across ten phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -15,7 +15,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**1**](#phase-1--rust-core) | Rust Core | Rust parsing engine via napi-rs, parallel parsing, incremental tree-sitter, JS orchestration layer | **Complete** (v1.3.0) |
 | [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Complete** (v1.4.0) |
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.6.0) |
-| [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v2.7.0) |
+| [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
 | [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, curated API, unified graph model | Planned |
 | [**4**](#phase-4--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | Planned |
 | [**5**](#phase-5--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
@@ -359,7 +359,7 @@ MCP grew from 12 -> 25 tools, covering all new analysis capabilities.
 
 ## Phase 2.7 -- Deep Analysis & Graph Enrichment ✅
 
-> **Status:** Complete -- shipped across PRs #254-#285
+> **Status:** Complete -- shipped as v3.0.0 across PRs #254-#285
 
 **Goal:** Add deeper static analysis capabilities (dataflow, control flow graphs, AST querying), enrich the graph model with sub-declaration node types and structural edges, refactor extractors into per-language modules, consolidate the CLI surface area, and introduce interactive visualization. This phase emerged from competitive analysis against Joern and Narsil-MCP.
 
@@ -375,8 +375,8 @@ Define-use chain extraction tracking how data flows between functions.
 - ✅ Opt-in via `build --dataflow` (dynamic import, only loaded when flag passed)
 - ✅ DB migration v10: `dataflow` table with source, target, kind, param_index, expression, confidence
 - ✅ JS/TS/TSX only (MVP -- language-specific scope analysis)
-- ✅ CLI: `codegraph dataflow <name>`, `codegraph dataflow-path <from> <to>`, `codegraph dataflow-impact <name>`
-- ✅ MCP tools: `dataflow`, `dataflow_path`, `dataflow_impact`
+- ✅ CLI: `codegraph dataflow <name>` with `--impact` mode for transitive data-dependent blast radius
+- ✅ MCP tool: `dataflow` with `edges` and `impact` modes (path mode removed during CLI consolidation PR #263)
 
 **New file:** `src/dataflow.js` (1,187 lines)
 
@@ -510,19 +510,27 @@ First CLI surface area reduction -- 5 commands merged into existing ones.
 
 **Affected file:** `src/cli.js`
 
-### 2.7.12 -- MCP Tool Expansion ✅
+### 2.7.12 -- MCP Tool Consolidation & Expansion ✅
 
-MCP grew from 25 -> 34 tools, covering all new analysis capabilities.
+MCP tools were both consolidated and expanded, resulting in a net change from 25 → 30 tools (31 in multi-repo mode).
+
+**Added:**
 
 | New tool | Wraps |
 |----------|-------|
 | ✅ `cfg` | `cfgData` |
 | ✅ `ast_query` | `astQueryData` |
-| ✅ `dataflow` | `dataflowData` |
-| ✅ `dataflow_path` | `dataflowPathData` |
-| ✅ `dataflow_impact` | `dataflowImpactData` |
+| ✅ `dataflow` | `dataflowData` (edges + impact modes) |
 | ✅ `file_exports` | `exportsData` |
 | ✅ `symbol_children` | `childrenData` |
+
+**Removed (PR #263 consolidation):**
+
+| Removed tool | Replacement |
+|----------|-------|
+| `fn_deps` | `query` with `deps` mode |
+| `symbol_path` | `query` with `path` mode |
+| `list_entry_points` | `execution_flow` with `list` mode |
 
 Plus updated enums on existing tools (edge_kinds, symbol kinds).
 
@@ -530,14 +538,14 @@ Plus updated enums on existing tools (edge_kinds, symbol kinds).
 
 ### 2.7 Summary
 
-| Metric | Before (v2.6.0) | After (v2.7.0) | Delta |
+| Metric | Before (v2.6.0) | After (v3.0.0) | Delta |
 |--------|-----------------|-----------------|-------|
 | Source modules | 35 | 50 | +15 |
 | Total source lines | 17,830 | 26,277 | +47% |
 | DB tables | 9 | 13 | +4 |
 | DB migrations | v9 | v13 | +4 |
-| MCP tools | 25 | 34 | +9 |
-| CLI commands | 45 | 47 | +2 (net: +7 added, -5 consolidated) |
+| MCP tools | 25 | 30 | +5 (net: +8 added, -3 consolidated) |
+| CLI commands | 45 | 39 | -6 (net: +7 added, -5 consolidated, -8 merged) |
 | Node kinds | 10 | 13 | +3 |
 | Edge kinds | 6 | 9 | +3 |
 | Test files | 59 | 70 | +11 |
@@ -654,7 +662,7 @@ src/
 
 ### 3.5 -- Composable MCP Tool Registry
 
-Replace the monolithic 1,370-line `mcp.js` (34 tools in one switch dispatch) with self-contained tool modules.
+Replace the monolithic 1,370-line `mcp.js` (30 tools in one switch dispatch) with self-contained tool modules.
 
 ```
 src/
@@ -663,7 +671,7 @@ src/
     tool-registry.js           # Auto-discovery + dynamic registration
     middleware.js              # Pagination, error handling, repo resolution
     tools/
-      query-function.js        # { schema, handler } -- one per tool (34 files)
+      query-function.js        # { schema, handler } -- one per tool (30 files)
       ...
 ```
 
@@ -675,7 +683,7 @@ Adding a new MCP tool = adding a file. No other files change.
 
 Move from 1,557 lines of inline Commander chains to self-contained command modules.
 
-> **Note:** Phase 2.7.11 consolidated 5 commands — the first CLI surface area reduction. This item continues that direction by making each of the 47 remaining commands independently testable.
+> **Note:** Phase 2.7.11 consolidated 5 commands — the first CLI surface area reduction. This item continues that direction by making each of the 39 remaining commands independently testable.
 
 ```
 src/
@@ -684,7 +692,7 @@ src/
     shared/
       output.js                # --json, --ndjson, table, plain text
       options.js               # Shared options (--no-tests, --json, --db, etc.)
-    commands/                  # 47 files, one per command
+    commands/                  # 39 files, one per command
       build.js                 # { name, description, options, validate, execute }
       ...
 ```
@@ -1344,7 +1352,7 @@ Each phase includes targeted verification:
 | **1** | Benchmark native vs WASM parsing on a large repo, verify identical output from both engines |
 | **2** | `npm test`, manual MCP client test for all tools, config loading tests |
 | **2.5** | All 59 test files pass; integration tests for every new command; engine parity tests |
-| **2.7** | All 70 test files pass; CFG + AST + dataflow integration tests; extractors produce identical output to pre-refactoring inline extractors |
+| **2.7** | All 70 test files pass; CFG + AST + dataflow integration tests; extractors produce identical output to pre-refactoring inline extractors (shipped as v3.0.0) |
 | **3** | All existing tests pass; each refactored module produces identical output to the pre-refactoring version; unit tests for pure analysis modules; InMemoryRepository tests |
 | **4** | `tsc --noEmit` passes with zero errors; all existing tests pass after migration; no runtime behavior changes |
 | **5** | Compare `codegraph search` quality before/after descriptions; verify `side_effects` and `risk_score` populated for LLM-enriched builds |

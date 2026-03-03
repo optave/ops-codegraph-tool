@@ -1,7 +1,7 @@
 # Competitive Deep-Dive: Codegraph vs Narsil-MCP
 
 **Date:** 2026-03-02
-**Competitors:** `@optave/codegraph` v2.x (Apache-2.0) vs `postrv/narsil-mcp` v1.6 (Apache-2.0 OR MIT)
+**Competitors:** `@optave/codegraph` v3.0.0 (Apache-2.0) vs `postrv/narsil-mcp` v1.6 (Apache-2.0 OR MIT)
 **Context:** Both are Apache-2.0-licensed code analysis tools with MCP interfaces. Narsil-MCP is ranked #2 in our [competitive analysis](./COMPETITIVE_ANALYSIS.md) with a score of 4.5 vs codegraph's 4.0 at #8.
 
 ---
@@ -15,7 +15,7 @@ Narsil-MCP and codegraph share more DNA than any other pair in the competitive l
 | **Primary mission** | Maximum-breadth code intelligence in a single binary | Always-current structural intelligence with sub-second rebuilds |
 | **Target user** | AI agents needing comprehensive analysis (security, types, dataflow) | Developers, AI coding agents, CI pipelines needing fast feedback |
 | **Architecture** | MCP-first, no standalone CLI queries | Full CLI + MCP server + programmatic JS API |
-| **Core question answered** | "Tell me everything about this code" (90 tools) | "What breaks if I change this function?" (focused commands) |
+| **Core question answered** | "Tell me everything about this code" (90 tools) | "What breaks if I change this function?" (39 commands, 30 MCP tools) |
 | **Rebuild model** | In-memory index, opt-in persistence, file watcher | SQLite-persisted, incremental hash-based rebuilds |
 | **Runtime** | Single Rust binary (~30 MB) | Node.js + optional native Rust addon |
 
@@ -35,7 +35,7 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 | 2 | **Native speed, universal reach** — dual engine (Rust + WASM) | Native napi-rs with rayon parallelism + automatic WASM fallback. `npm install` on any platform | Pure Rust binary. Prebuilt for macOS/Linux/Windows. Also has WASM build (~3 MB) for browsers | **Tie.** Different approaches, both effective. Narsil is a single binary; codegraph is an npm package with native addon. Both have WASM stories |
 | 3 | **Confidence over noise** — scored results | 6-level import resolution with 0.0-1.0 confidence on every edge. Graph quality score. Relevance-ranked search | BM25 ranking on search. No confidence scores on call graph edges. No graph quality metric | **Codegraph wins.** Every edge has a trust score; narsil's call graph edges are unscored |
 | 4 | **Zero-cost core, LLM-enhanced when you choose** | Full pipeline local, zero API keys. Optional embeddings with user's LLM provider | Core is local. Neural search requires `--neural` flag + API key (Voyage AI/OpenAI) or local ONNX model | **Tie.** Both are local-first with optional AI enhancement. Narsil offers more backend choices (Voyage AI, OpenAI, ONNX); codegraph uses HuggingFace Transformers locally |
-| 5 | **Functional CLI, embeddable API** | 35+ CLI commands + 18-tool MCP server + full programmatic JS API | MCP-first with 90 tools. `narsil-mcp config/tools` management commands but no standalone query CLI. No programmatic library API | **Codegraph wins.** Full CLI experience + embeddable API. Narsil is MCP-only for queries — useless without an MCP client |
+| 5 | **Functional CLI, embeddable API** | 39 CLI commands + 30-tool MCP server + full programmatic JS API | MCP-first with 90 tools. `narsil-mcp config/tools` management commands but no standalone query CLI. No programmatic library API | **Codegraph wins.** Full CLI experience + embeddable API. Narsil is MCP-only for queries — useless without an MCP client |
 | 6 | **One registry, one schema, no magic** | `LANGUAGE_REGISTRY` — add a language in <100 lines, 2 files | Tree-sitter for all 32 languages. Unified parser, but extractors are in compiled Rust — harder to contribute | **Codegraph wins slightly.** Both use tree-sitter uniformly. Codegraph's JS extractors are more accessible to contributors than narsil's compiled Rust |
 | 7 | **Security-conscious defaults** — multi-repo opt-in | Single-repo MCP default. `apiKeyCommand` for secrets. `--multi-repo` opt-in | Multi-repo by default (`--repos` accepts multiple paths). `discover_repos` auto-finds repos. No sandboxing concept | **Codegraph wins.** Single-repo isolation by default vs. multi-repo by default |
 | 8 | **Honest about what we're not** | Code intelligence engine. Not an app, not a coding tool, not an agent | Code intelligence MCP server. Also not an agent — but the open-core model adds commercial cloud features (narsil-cloud) | **Tie.** Both are honest about scope. Narsil's commercial layer is a legitimate business model |
@@ -87,11 +87,11 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 | Feature | Codegraph | Narsil-MCP | Best Approach |
 |---------|-----------|------------|---------------|
 | **Graph type** | Structural dependency graph (symbols + edges) in SQLite | In-memory symbol/file caches (DashMap) + optional RDF knowledge graph | **Codegraph** for persistence; **Narsil** for RDF expressiveness |
-| **Node types** | 10 kinds: `function`, `method`, `class`, `interface`, `type`, `struct`, `enum`, `trait`, `record`, `module` | Functions, classes, methods, variables, imports, exports + more | **Narsil** — more granular |
-| **Edge types** | `calls`, `imports` (with confidence scores) | Calls, imports, data flow, control flow, type relationships | **Narsil** — fundamentally more edge types |
+| **Node types** | 13 kinds: `function`, `method`, `class`, `interface`, `type`, `struct`, `enum`, `trait`, `record`, `module`, `parameter`, `property`, `constant` | Functions, classes, methods, variables, imports, exports + more | **Narsil** — still more granular, but gap narrowed |
+| **Edge types** | `calls`, `imports`, `contains`, `parameter_of`, `receiver`, `flows_to`, `returns`, `mutates` (with confidence scores on call/import edges) | Calls, imports, data flow, control flow, type relationships | **Tie** — both now cover structural + dataflow relationships |
 | **Call graph** | Import-aware resolution with 6-level confidence scoring, qualified call filtering | `get_call_graph`, `get_callers`, `get_callees`, `find_call_path` | **Codegraph** for precision (confidence scoring); **Narsil** for completeness |
-| **Control flow graph** | Not available | `get_control_flow` — basic blocks + branch conditions | **Narsil** |
-| **Data flow analysis** | `flows_to`/`returns`/`mutates` edges (BACKLOG ID 14, recently shipped) | `get_data_flow`, `get_reaching_definitions`, `find_uninitialized`, `find_dead_stores` | **Narsil** — more mature with 4 dedicated tools |
+| **Control flow graph** | Intraprocedural CFG for all 11 languages via `cfg` command / `cfg` MCP tool | `get_control_flow` — basic blocks + branch conditions | **Tie** — both have intraprocedural CFG |
+| **Data flow analysis** | `flows_to`/`returns`/`mutates` edges via `dataflow` command / `dataflow` MCP tool (JS/TS only) | `get_data_flow`, `get_reaching_definitions`, `find_uninitialized`, `find_dead_stores` | **Narsil** — more mature with 4 dedicated tools; codegraph is JS/TS only |
 | **Type inference** | Not available | `infer_types`, `check_type_errors` for Python/JS/TS | **Narsil** |
 | **Dead code detection** | `roles --role dead` — unreferenced non-exported symbols | `find_dead_code` — unreachable code paths via CFG | **Both** — complementary approaches (structural vs. control-flow) |
 | **Complexity metrics** | Cognitive, cyclomatic, Halstead, MI, nesting depth per function | Cyclomatic complexity only | **Codegraph** — 5 metrics vs 1 |
@@ -149,17 +149,17 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 
 | Feature | Codegraph | Narsil-MCP | Best Approach |
 |---------|-----------|------------|---------------|
-| **Primary interface** | Full CLI with 35+ commands + MCP server | MCP server (primary) + config management CLI | **Codegraph** — usable without MCP client |
-| **Standalone CLI queries** | `where`, `fn`, `explain`, `context`, `deps`, `impact`, `map`, etc. | Not available — all queries via MCP tools | **Codegraph** — narsil requires an MCP client for any query |
-| **MCP tools count** | 21 purpose-built tools | 90 tools across 14 categories | **Narsil** — 4x more tools |
+| **Primary interface** | Full CLI with 39 commands + MCP server | MCP server (primary) + config management CLI | **Codegraph** — usable without MCP client |
+| **Standalone CLI queries** | `where`, `query`, `audit --quick`, `context`, `deps`, `exports`, `impact`, `map`, `dataflow`, `cfg`, `ast`, etc. | Not available — all queries via MCP tools | **Codegraph** — narsil requires an MCP client for any query |
+| **MCP tools count** | 30 purpose-built tools | 90 tools across 14 categories | **Narsil** — 3x more tools |
 | **Compound queries** | `context` (source + deps + callers + tests), `explain`, `audit` | No compound tools — each tool is atomic | **Codegraph** — purpose-built for agent token efficiency |
 | **Batch queries** | `batch` command for multi-target dispatch | No batch mechanism | **Codegraph** |
 | **JSON output** | `--json` flag on every command | MCP JSON responses | **Tie** |
 | **NDJSON streaming** | `--ndjson` with `--limit`/`--offset` on ~14 commands | `--streaming` flag for large results | **Tie** |
-| **Pagination** | Universal `limit`/`offset` on all 21 MCP tools with per-tool defaults | Not documented | **Codegraph** |
+| **Pagination** | Universal `limit`/`offset` on all 30 MCP tools with per-tool defaults | Not documented | **Codegraph** |
 | **SPARQL queries** | Not available | `sparql_query`, predefined templates | **Narsil** — unique expressiveness |
 | **Configuration presets** | Not available | Minimal (~26 tools), Balanced (~51), Full (75+), Security-focused | **Narsil** — manages token cost per preset |
-| **Visualization** | DOT, Mermaid, JSON export | Built-in web UI (Cytoscape.js) with interactive graphs | **Narsil** — interactive browser visualization |
+| **Visualization** | DOT, Mermaid, JSON, GraphML, GraphSON, Neo4j CSV export + interactive HTML viewer (`codegraph plot`) | Built-in web UI (Cytoscape.js) with interactive graphs | **Tie** — both have interactive visualization and rich export formats |
 | **Programmatic API** | Full JS API: `import { buildGraph, queryNameData } from '@optave/codegraph'` | No library API | **Codegraph** — embeddable in JS/TS projects |
 
 **Summary:** Codegraph is more accessible (full CLI + API + MCP). Narsil has more MCP tools (90 vs 21) but no standalone query interface — completely dependent on MCP clients. Codegraph's compound commands (`context`, `explain`, `audit`) reduce agent round-trips; narsil requires multiple atomic tool calls for equivalent context. Narsil's configuration presets are a smart approach to managing MCP tool token costs.
@@ -210,10 +210,10 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 
 | Feature | Codegraph | Narsil-MCP | Best Approach |
 |---------|-----------|------------|---------------|
-| **MCP tools** | 21 purpose-built tools | 90 tools across 14 categories | **Narsil** (4x more tools) |
+| **MCP tools** | 30 purpose-built tools | 90 tools across 14 categories | **Narsil** (3x more tools) |
 | **Token efficiency** | `context`/`explain`/`audit` compound commands reduce round-trips 50-80% | Atomic tools only. Forgemax integration collapses 90 → 2 tools (~1,000 vs ~12,000 tokens) | **Codegraph** natively; **Narsil** via Forgemax |
-| **Tool token cost** | ~4,000 tokens for 21 tool definitions | ~12,000 tokens for full set. Presets: Minimal ~4,600, Balanced ~8,900 | **Codegraph** — lower base cost. Narsil presets help |
-| **Pagination** | Universal `limit`/`offset` on all tools with per-tool defaults, hard cap 1,000 | `--streaming` for large results | **Codegraph** — structured pagination metadata |
+| **Tool token cost** | ~5,500 tokens for 30 tool definitions | ~12,000 tokens for full set. Presets: Minimal ~4,600, Balanced ~8,900 | **Codegraph** — lower base cost. Narsil presets help |
+| **Pagination** | Universal `limit`/`offset` on all 30 tools with per-tool defaults, hard cap 1,000 | `--streaming` for large results | **Codegraph** — structured pagination metadata |
 | **Multi-repo support** | Registry-based, opt-in via `--multi-repo` or `--repos` | Multi-repo by default, `discover_repos` auto-detection | **Narsil** for convenience; **Codegraph** for security |
 | **Single-repo isolation** | Default — tools have no `repo` property unless `--multi-repo` | Not default — multi-repo access is always available | **Codegraph** — security-conscious default |
 | **Programmatic embedding** | Full JS API for VS Code extensions, CI pipelines, other MCP servers | No library API | **Codegraph** |
@@ -249,7 +249,7 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 | **Node role classification** | `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` per symbol | Not available | **Codegraph** |
 | **Audit command** | `audit` — explain + impact + health in one call | Not available | **Codegraph** |
 | **Git integration** | `diff-impact`, `co-change`, `branch-compare` | `get_blame`, `get_file_history`, `get_recent_changes`, `get_symbol_history`, `get_contributors`, `get_hotspots` | **Narsil** for git data breadth; **Codegraph** for git-aware analysis |
-| **Export formats** | DOT, Mermaid, JSON | Cytoscape.js interactive UI, JSON-LD, N-Quads, RDF | **Narsil** — more formats + interactive visualization |
+| **Export formats** | DOT, Mermaid, JSON, GraphML, GraphSON, Neo4j CSV + interactive HTML viewer | Cytoscape.js interactive UI, JSON-LD, N-Quads, RDF | **Tie** — both have interactive visualization and rich export formats |
 
 **Summary:** Codegraph has 15+ purpose-built developer productivity commands that narsil lacks (impact analysis, manifesto, triage, boundaries, co-change, branch-compare, audit, structure, CODEOWNERS). Narsil has richer git integration tools (blame, contributors, symbol history) and interactive visualization. For the "what breaks if I change this?" workflow, codegraph is the clear choice.
 
@@ -290,9 +290,9 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 
 1. **You need security analysis** — taint tracking, OWASP/CWE compliance, SBOM, license scanning, 147 built-in rules. Codegraph has zero security features.
 2. **You need broad language coverage** — 32 languages vs 11. Critical for polyglot enterprises.
-3. **You need control flow or data flow analysis** — CFG, reaching definitions, dead stores, uninitialized variables. Codegraph's dataflow is nascent.
+3. **You need mature control flow or data flow analysis** — reaching definitions, dead stores, uninitialized variables. Codegraph now has basic CFG and intraprocedural dataflow (JS/TS), but narsil's analysis is more mature.
 4. **You need type inference** — infer types for untyped Python/JS/TS code. Codegraph has no type analysis.
-5. **You want interactive visualization** — built-in Cytoscape.js web UI with drill-down, overlays, and clustering. Codegraph exports static DOT/Mermaid.
+5. **You want richer interactive visualization** — built-in Cytoscape.js web UI with drill-down, overlays, and clustering. Codegraph now has `codegraph plot` with interactive HTML, but narsil's UI is more feature-rich.
 6. **You need a single binary with no runtime deps** — `brew install narsil-mcp` and done. No Node.js required.
 7. **You're building an MCP-first agent pipeline** — 90 tools cover nearly every code analysis need. One server, one config.
 8. **You want a browser-based analysis tool** — narsil's WASM build runs analysis in the browser.
@@ -315,16 +315,16 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 | Cold build speed | Seconds | Sub-seconds to seconds | Narsil |
 | Memory usage | <100 MB typical | Grows with codebase (in-memory) | Codegraph |
 | Install complexity | `npm install` (requires Node.js) | Single binary (brew/scoop/cargo) | Narsil |
-| Analysis depth (structural) | High (impact, complexity, roles) | High (CFG, DFG, type inference) | Tie |
+| Analysis depth (structural) | High (impact, complexity, roles, CFG, dataflow) | High (CFG, DFG, type inference) | Tie |
 | Analysis depth (security) | None | Best in class (147 rules, taint) | Narsil |
-| AI agent integration | 21-tool MCP + compound commands | 90-tool MCP + presets + CCG | Narsil for breadth; Codegraph for efficiency |
-| Developer productivity | 15+ purpose-built commands | Git tools only | Codegraph |
+| AI agent integration | 30-tool MCP + compound commands | 90-tool MCP + presets + CCG | Narsil for breadth; Codegraph for efficiency |
+| Developer productivity | 20+ purpose-built commands | Git tools only | Codegraph |
 | Language support | 11 | 32 | Narsil |
 | Standalone CLI | Full CLI experience | Config/tools management only | Codegraph |
 | Programmatic API | Full JS API | None | Codegraph |
 | Community & maturity | New | Newer (Dec 2025), growing fast | Tie |
 | CI/CD readiness | Yes (`check --staged`) | No CI tooling | Codegraph |
-| Visualization | DOT/Mermaid/JSON export | Interactive Cytoscape.js web UI | Narsil |
+| Visualization | DOT/Mermaid/JSON/GraphML/GraphSON/Neo4j CSV + interactive HTML | Interactive Cytoscape.js web UI | Tie |
 | Search backends | FTS5 + HuggingFace local | Tantivy + TF-IDF + Voyage/OpenAI/ONNX | Narsil |
 
 **Final score against FOUNDATION.md principles: Codegraph 4, Narsil 0, Tie 4.**
@@ -353,11 +353,11 @@ Non-breaking, ordered by problem-fit:
 | N9 | Bash language support | Add tree-sitter-bash to `LANGUAGE_REGISTRY`. 1 registry entry + 1 extractor. Bash scripts are ubiquitous in CI/CD and developer tooling. | A | Parsing | Covers CI scripts, Dockerfiles, and developer tooling — commonly co-located with source code | ✓ | ✓ | 2 | No |
 | N10 | Scala language support | Add tree-sitter-scala to `LANGUAGE_REGISTRY`. 1 registry entry + 1 extractor. Relevant for JVM ecosystem coverage. | A | Parsing | Closes language gap for JVM polyglot codebases | ✓ | ✓ | 2 | No |
 
-Breaking (penalized to end of tier):
+Breaking — **completed in v3.0.0:**
 
-| ID | Title | Description | Source | Category | Benefit | Zero-dep | Foundation-aligned | Problem-fit (1-5) | Breaking |
-|----|-------|-------------|--------|----------|---------|----------|-------------------|-------------------|----------|
-| N11 | Export map per module | Dedicated `exports <file>` command listing all exported symbols with types, roles, and consumers. Inspired by narsil's `get_export_map`. Currently inferable from `explain` but not first-class. | B | Navigation | Agents quickly understand a module's public API surface without reading source — useful for import resolution and interface discovery | ✓ | ✓ | 3 | Yes |
+| ID | Title | Status | Description |
+|----|-------|--------|-------------|
+| N11 | Export map per module | **DONE v3.0.0** | `codegraph exports <file>` command / `file_exports` MCP tool — lists all exported symbols with per-symbol consumers. |
 
 ### Tier 2 — Foundation-aligned, needs dependencies
 
@@ -365,7 +365,7 @@ Ordered by problem-fit:
 
 | ID | Title | Description | Source | Category | Benefit | Zero-dep | Foundation-aligned | Problem-fit (1-5) | Breaking |
 |----|-------|-------------|--------|----------|---------|----------|-------------------|-------------------|----------|
-| N12 | Interactive HTML visualization | `codegraph viz` opens a browser-based interactive graph (Cytoscape.js or vis.js) with drill-down, clustering, complexity overlays, and vulnerability highlighting. Inspired by narsil's built-in visualization frontend. Already on roadmap (BACKLOG ID 10). | E, J | Visualization | Developers and teams visually explore architecture — useful for onboarding, code reviews, and spotting structural problems | ✗ | ✓ | 1 | No |
+| N12 | Interactive HTML visualization | **DONE v3.0.0** | `codegraph plot` opens interactive HTML viewer. |
 | N13 | Multiple embedding backends | Support Voyage AI, OpenAI, and ONNX as alternative embedding providers alongside existing HuggingFace Transformers. Inspired by narsil's `--neural-backend api\|onnx` with model selection. Already partially on roadmap (BACKLOG ID 8). | C | Search | Users who already pay for an LLM provider get better embeddings at no extra cost — and local ONNX gives a lighter alternative to the 500MB transformer model | ✗ | ✓ | 3 | No |
 
 ### Tier 3 — Not foundation-aligned (needs deliberate exception)
@@ -386,7 +386,7 @@ These narsil-mcp features were evaluated and deliberately excluded:
 | **SPARQL / RDF knowledge graph** | B, E | Requires Oxigraph dependency. SQLite + existing query commands serve our use case. RDF/SPARQL is overkill for structural code intelligence — powerful but orthogonal to our goals |
 | **Code Context Graph (CCG) standard** | B, H | Interesting concept but tightly coupled to narsil's architecture and commercial model. Our MCP pagination + compound commands solve the progressive-disclosure problem differently |
 | **In-memory-first architecture** | F | Violates P1 (graph must survive restarts to stay always-current). SQLite persistence is a deliberate choice — narsil's opt-in persistence means state loss on every restart by default |
-| **90-tool MCP surface** | E, H | More tools = more token overhead per agent session. Our 21 purpose-built tools + compound commands are more token-efficient. Narsil compensates with presets; we compensate with fewer, smarter tools |
+| **90-tool MCP surface** | E, H | More tools = more token overhead per agent session. Our 30 purpose-built tools + compound commands are more token-efficient. Narsil compensates with presets; we compensate with fewer, smarter tools |
 | **Browser WASM build** | G, J | Different product category. We're a CLI/MCP engine, not a browser tool (P8). Narsil's WASM build is a legitimate capability, but building a browser runtime is outside our scope |
 | **Forgemax-style tool collapsing** | H | Collapses 90 tools to 2 (`search`/`execute`). We don't need this because we already have ~21 tools — small enough that collapsing adds complexity without meaningful savings |
 | **LSP integration** | B | Requires running language servers alongside codegraph. Violates zero-dependency goal. Tree-sitter + confidence scoring is our approach; LSP is a different architectural bet |
@@ -398,10 +398,10 @@ These narsil-inspired capabilities are already tracked in [BACKLOG.md](../../doc
 
 | BACKLOG ID | Title | Narsil Equivalent | Relationship |
 |------------|-------|-------------------|--------------|
-| 7 | OWASP/CWE pattern detection | `scan_security` with 147 rules | Lightweight AST-based alternative to narsil's full rule engine. N14 above. Already Tier 3 |
-| 8 | Optional LLM provider integration | `--neural-backend api\|onnx` | Multiple embedding providers. N13 above. Already Tier 2 |
-| 10 | Interactive HTML visualization | Built-in Cytoscape.js frontend | Browser-based interactive graph. N12 above. Already Tier 3 |
-| 14 | Dataflow analysis | `get_data_flow`, `get_reaching_definitions` | Lightweight def-use chains. Narsil has 4 dedicated dataflow tools. Already Tier 1 Breaking |
+| 7 | OWASP/CWE pattern detection | `scan_security` with 147 rules | Lightweight AST-based alternative to narsil's full rule engine. N14 above. Still Tier 3. Unblocked by stored AST (v3.0.0). |
+| 8 | Optional LLM provider integration | `--neural-backend api\|onnx` | Multiple embedding providers. N13 above. Still Tier 2. |
+| 10 | Interactive HTML visualization | Built-in Cytoscape.js frontend | **DONE v3.0.0.** `codegraph plot` opens interactive HTML viewer. N12 above. |
+| 14 | Dataflow analysis | `get_data_flow`, `get_reaching_definitions` | **DONE v3.0.0.** Intraprocedural dataflow with `flows_to`/`returns`/`mutates` edges. JS/TS only. CLI: `codegraph dataflow`. MCP: `dataflow` tool. |
 
 ### Cross-references to Joern-inspired candidates
 
@@ -411,5 +411,5 @@ Some features identified in this analysis overlap with [Joern-inspired candidate
 |----------|-------|-------------------|------|
 | J4 | Kotlin language support | Narsil's 32-language coverage | Same feature, dual motivation. Listed here as N7 |
 | J5 | Swift language support | Narsil's 32-language coverage | Same feature, dual motivation. Listed here as N8 |
-| J8 | Intraprocedural CFG | `get_control_flow` | Narsil has it; validates priority of J8 |
-| J9 | Stored queryable AST | AST-aware chunking + pattern matching | N2 (chunking) is a lighter alternative; J9 is the deeper version |
+| J8 | Intraprocedural CFG | `get_control_flow` | **DONE v3.0.0.** `codegraph cfg` / `cfg` MCP tool. All 11 languages. |
+| J9 | Stored queryable AST | AST-aware chunking + pattern matching | **DONE v3.0.0.** `codegraph ast` / `ast_query` MCP tool. Stored calls, new, string, regex, throw, await. |

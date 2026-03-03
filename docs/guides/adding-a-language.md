@@ -72,7 +72,7 @@ FileSymbols {
 | `ExportInfo` | `name`, `kind`, `line` | |
 
 **Symbol kinds:** `function`, `method`, `class`, `interface`, `type`, `struct`,
-`enum`, `trait`, `record`, `module`. Use the language's native kind (e.g. Go
+`enum`, `trait`, `record`, `module`, `parameter`, `property`, `constant`. Use the language's native kind (e.g. Go
 structs → `struct`, Rust traits → `trait`, Ruby modules → `module`).
 
 Methods inside a class use the `ClassName.methodName` naming convention.
@@ -430,7 +430,7 @@ npx vitest run tests/engines/parity.test.js
 # 5. Test on a real project
 codegraph build /path/to/a/<lang>/project
 codegraph map
-codegraph fn someFunction
+codegraph query someFunction
 ```
 
 ---

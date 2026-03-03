@@ -2,6 +2,62 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.0.0](https://github.com/optave/codegraph/compare/v2.6.0...v3.0.0) (2026-03-03)
+
+**Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, and a streamlined CLI surface.** This release introduces three new analysis dimensions — dataflow tracking (`flows_to`, `returns`, `mutates` edges), intraprocedural control flow graphs for all 11 supported languages, and stored queryable AST nodes (calls, `new`, string, regex, throw, await). The type system expands with `parameter`, `property`, and `constant` node kinds plus `contains`, `parameter_of`, and `receiver` edge kinds, enabling structural queries without reading source. Export gains GraphML, GraphSON, and Neo4j CSV formats plus an interactive HTML viewer (`codegraph plot`). A stable `normalizeSymbol` utility standardizes JSON output across all commands. The CLI surface is streamlined by consolidating redundant commands into fewer, more capable ones.
+
+### ⚠ BREAKING CHANGES
+
+* **mcp:** MCP tools `fn_deps`, `symbol_path`, and `list_entry_points` removed — use `query` with `deps`/`path` modes and `execution_flow` with `list` mode instead ([d874aa5](https://github.com/optave/codegraph/commit/d874aa5))
+* **cli:** commands `fn` and `path` removed — use `query` instead; `query --path` replaced by standalone `path <from> <to>` ([d874aa5](https://github.com/optave/codegraph/commit/d874aa5))
+* **cli:** commands `batch-query`, `hotspots`, `manifesto`, and `explain` removed — use `batch`, `triage --level`, `check`, and `audit --quick` respectively ([4f08082](https://github.com/optave/codegraph/commit/4f08082))
+
+### Features
+
+* **cli:** add dataflow analysis — `build --dataflow` extracts `flows_to`, `returns`, `mutates` edges tracking data movement through functions (JS/TS MVP), with `dataflow` command, MCP tool, and batch support ([#254](https://github.com/optave/codegraph/pull/254))
+* **cli:** add intraprocedural control flow graph (CFG) — `build --cfg` constructs basic-block CFGs from tree-sitter AST, `cfg` command with text/DOT/Mermaid output ([#274](https://github.com/optave/codegraph/pull/274))
+* **cli:** extend CFG to all supported languages — Python, Go, Rust, Java, C#, Ruby, PHP with per-language `CFG_RULES` and cross-language `processIf`/`processSwitch`/`processTryCatch` ([#283](https://github.com/optave/codegraph/pull/283))
+* **cli:** add stored queryable AST nodes — persist calls, `new`, string, regex, throw, await nodes in `ast_nodes` table, queryable via `ast` command with SQL GLOB pattern matching ([#279](https://github.com/optave/codegraph/pull/279))
+* **cli:** expand node types with `parameter`, `property`, `constant` kinds and `parent_id` column for sub-declaration queries across all 9 WASM extractors ([#270](https://github.com/optave/codegraph/pull/270))
+* **cli:** add expanded edge types — `contains` (file→definition, parent→child), `parameter_of` (inverse), `receiver` (method-call dispatch) ([#279](https://github.com/optave/codegraph/pull/279))
+* **cli:** add `exports <file>` command — per-symbol consumer analysis with re-export detection and counts ([#269](https://github.com/optave/codegraph/pull/269))
+* **export:** add GraphML, GraphSON, Neo4j CSV formats and interactive HTML viewer (`codegraph plot`) with hierarchical/force/radial layouts, complexity overlays, and drill-down ([#268](https://github.com/optave/codegraph/pull/268))
+* **cli:** add `normalizeSymbol` utility for stable 7-field JSON schema across all query and search commands ([#267](https://github.com/optave/codegraph/pull/267))
+* **cli:** add batch-query multi-command mode with `splitTargets()` for comma-separated expansion and `multiBatchData()` for mixed-command orchestration ([#256](https://github.com/optave/codegraph/pull/256))
+* **queries:** expose `fileHash` in `where` and `query` JSON output ([#257](https://github.com/optave/codegraph/pull/257))
+* **builder:** add scoped rebuild for parallel agents ([#269](https://github.com/optave/codegraph/pull/269))
+
+### Bug Fixes
+
+* **queries:** correct reexport query direction and add exports integration tests ([#276](https://github.com/optave/codegraph/pull/276))
+* **parser:** correct extractor line counts and duplicate section numbering ([fa7eee8](https://github.com/optave/codegraph/commit/fa7eee8))
+* **triage:** map triage sort values to valid hotspot metrics ([a1583cb](https://github.com/optave/codegraph/commit/a1583cb))
+* **complexity:** fix C# language ID mismatch (`c_sharp` → `csharp`) in `COMPLEXITY_RULES`, `HALSTEAD_RULES`, and `COMMENT_PREFIXES` ([#283](https://github.com/optave/codegraph/pull/283))
+* **dataflow:** handle spread args, optional chaining, and reassignment in dataflow extraction ([#254](https://github.com/optave/codegraph/pull/254))
+
+### Refactoring
+
+* consolidate MCP tools — reduce surface from 32 to 29 by merging `fn_deps`/`symbol_path`/`list_entry_points` into `query` and `execution_flow` ([#263](https://github.com/optave/codegraph/pull/263))
+* consolidate CLI — remove 5 redundant commands (`batch-query`, `hotspots`, `manifesto`, `explain`, `query --path`) in favor of unified alternatives ([#280](https://github.com/optave/codegraph/pull/280))
+* consolidate MCP tools to match CLI changes from PR #280 ([cbda266](https://github.com/optave/codegraph/commit/cbda266))
+* consolidate CFG rules with defaults factory and validation ([#284](https://github.com/optave/codegraph/pull/284))
+* align dataflow.js with `normalizeSymbol` and `ALL_SYMBOL_KINDS` ([#285](https://github.com/optave/codegraph/pull/285))
+
+### Documentation
+
+* add architecture audit and roadmap for v2.7.0 ([5fe0a82](https://github.com/optave/codegraph/commit/5fe0a82))
+* add competitive deep-dives for Joern and Narsil-MCP ([#260](https://github.com/optave/codegraph/pull/260), [#262](https://github.com/optave/codegraph/pull/262), [#264](https://github.com/optave/codegraph/pull/264), [#265](https://github.com/optave/codegraph/pull/265))
+* add one-PR-one-concern rule to git conventions ([#281](https://github.com/optave/codegraph/pull/281))
+* update references to consolidated CLI commands ([#282](https://github.com/optave/codegraph/pull/282))
+* add TypeScript migration as Phase 4 in roadmap ([#255](https://github.com/optave/codegraph/pull/255))
+* add Claude Code MCP registration to recommended practices ([#273](https://github.com/optave/codegraph/pull/273))
+
+### Chores
+
+* add CLA Assistant workflow ([#244](https://github.com/optave/codegraph/pull/244))
+* add pre-commit diff-impact hook ([#271](https://github.com/optave/codegraph/pull/271))
+* remove stale benchmark files from `generated/` ([#275](https://github.com/optave/codegraph/pull/275))
+
 ## [2.6.0](https://github.com/optave/codegraph/compare/v2.5.1...v2.6.0) (2026-03-02)
 
 **CI validation, architecture boundaries, CODEOWNERS, multi-agent support, and incremental build reliability.** This release adds a `check` command for CI validation predicates (complexity, coverage, staleness gates), architecture boundary enforcement via manifesto rules with an onion-architecture preset, CODEOWNERS integration for ownership queries, `codegraph snapshot` for DB backup/restore, hybrid BM25 + semantic search via FTS5, composite `audit` and `triage` commands for risk-driven workflows, and batch querying for multi-agent dispatch. It also fixes several incremental rebuild bugs — EISDIR crashes on directory nodes, dropped barrel-file edges, orphaned complexity rows — and adds configurable drift detection to warn when incremental results diverge from full rebuilds.

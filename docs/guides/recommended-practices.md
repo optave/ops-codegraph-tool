@@ -193,7 +193,7 @@ claude mcp list
 
 Enable `--multi-repo` to let the agent query any registered repository, or use `--repos` to restrict access to a specific set of repos.
 
-The server exposes 31 tools (32 in multi-repo mode): `query`, `file_deps`, `impact_analysis`, `find_cycles`, `module_map`, `fn_impact`, `context`, `explain`, `where`, `diff_impact`, `semantic_search`, `export_graph`, `list_functions`, `structure`, `hotspots`, `node_roles`, `co_changes`, `execution_flow`, `complexity`, `communities`, `manifesto`, `code_owners`, `audit`, `batch_query`, `triage`, `check`, `branch_compare`, `ast_query`, `cfg`, `dataflow`, `symbol_children`, and `list_repos` (multi-repo only). See the [AI Agent Guide MCP reference](./ai-agent-guide.md#mcp-server-reference) for the full tool-to-CLI mapping table.
+The server exposes 30 tools (31 in multi-repo mode): `query`, `path`, `file_deps`, `file_exports`, `impact_analysis`, `find_cycles`, `module_map`, `fn_impact`, `context`, `symbol_children`, `where`, `diff_impact`, `semantic_search`, `export_graph`, `list_functions`, `structure`, `node_roles`, `co_changes`, `execution_flow`, `complexity`, `communities`, `code_owners`, `audit`, `batch_query`, `triage`, `branch_compare`, `check`, `cfg`, `dataflow`, `ast_query`, and `list_repos` (multi-repo only). See the [AI Agent Guide MCP reference](./ai-agent-guide.md#mcp-server-reference) for the full tool-to-CLI mapping table.
 
 ### CLAUDE.md for your project
 
@@ -216,9 +216,14 @@ This project uses codegraph. The database is at `.codegraph/graph.db`.
 ### Other useful commands
 - `codegraph build .` — rebuild the graph (incremental by default)
 - `codegraph map` — module overview
-- `codegraph fn <name> -T` — function call chain
+- `codegraph query <name> -T` — function call chain
 - `codegraph path <from> <to> -T` — shortest call path between two symbols
 - `codegraph deps <file>` — file-level dependencies
+- `codegraph exports <file> -T` — per-symbol export consumers
+- `codegraph children <name> -T` — sub-declarations (parameters, properties, constants)
+- `codegraph dataflow <name> -T` — data flow edges (requires `build --dataflow`)
+- `codegraph cfg <name> -T` — control flow graph (requires `build --cfg`)
+- `codegraph ast --kind call <name> -T` — search stored AST nodes
 - `codegraph roles --role dead -T` — find dead code (unreferenced symbols)
 - `codegraph roles --role core -T` — find core symbols (high fan-in)
 - `codegraph co-change <file>` — files that historically change together
@@ -390,7 +395,7 @@ Before touching a function, understand its role and blast radius:
 ```bash
 codegraph where myFunction               # where it's defined and used
 codegraph roles --file src/utils/auth.ts # role of every symbol in the file (entry/core/utility/dead)
-codegraph fn myFunction --no-tests       # callers, callees, call chain
+codegraph query myFunction --no-tests    # callers, callees, call chain
 codegraph fn-impact myFunction --no-tests  # what breaks if this changes
 codegraph path myFunction otherFunction -T # how two symbols are connected
 ```

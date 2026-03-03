@@ -71,7 +71,7 @@ Pull everything needed to make the change — in one call.
 ```bash
 codegraph context <name> -T         # Source + deps + callers + tests (no test files)
 codegraph context <name> --depth 1  # Include callee source code too
-codegraph fn <name> -T              # Lighter: just callers/callees chain
+codegraph query <name> -T           # Lighter: just callers/callees chain
 ```
 
 **When to use:** You've decided what to change and need the full picture to write correct code.
@@ -155,13 +155,13 @@ codegraph deps src/builder.js
 | **When to use** | Understanding a file's position in the dependency graph |
 | **Output** | Imports list, importers list, symbols defined in the file |
 
-#### `fn` — Function-level dependency chain
+#### `query` — Function-level dependency chain
 
 Show what a function calls (callees) and what calls it (callers), with transitive depth.
 
 ```bash
-codegraph fn buildGraph -T          # Callers + callees, no test files
-codegraph fn resolve --file resolve.js --depth 5
+codegraph query buildGraph -T          # Callers + callees, no test files
+codegraph query resolve --file resolve.js --depth 5
 ```
 
 | | |
@@ -170,6 +170,36 @@ codegraph fn resolve --file resolve.js --depth 5
 | **Key flags** | `--depth <n>` (default: 3), `-f, --file` (scope to file), `-k, --kind` (filter kind), `-T` (no tests), `-j` (JSON) |
 | **When to use** | Tracing a call chain — "who calls this and what does it call?" |
 | **Output** | Direct callees, direct callers, transitive callers up to depth N |
+
+#### `exports` — Per-symbol export consumers
+
+Show exported symbols of a file and who calls each export.
+
+```bash
+codegraph exports src/db.js -T
+```
+
+| | |
+|---|---|
+| **MCP tool** | `file_exports` |
+| **Key flags** | `-T` (no tests), `-j` (JSON) |
+| **When to use** | Understanding how a file's public API is consumed |
+| **Output** | Each exported symbol with its consumer functions and locations |
+
+#### `children` — Sub-declarations of a symbol
+
+List parameters, properties, and constants declared inside a class or function — without reading source.
+
+```bash
+codegraph children GoExtractor -T
+```
+
+| | |
+|---|---|
+| **MCP tool** | `symbol_children` |
+| **Key flags** | `-f, --file` (scope to file), `-k, --kind` (filter kind), `-T` (no tests), `-j` (JSON) |
+| **When to use** | Inspecting a class/struct's fields without reading the full source file |
+| **Output** | Child symbols with kind, name, and line number |
 
 ### Context Commands
 
@@ -451,6 +481,58 @@ codegraph snapshot list
 | **MCP tool** | (use via CLI) |
 | **When to use** | Checkpointing before refactoring, instant rollback without rebuilding |
 
+### Deep Analysis Commands
+
+#### `dataflow` — Data flow edges and impact
+
+Show data flow edges (flows_to, returns, mutates) or data-dependent blast radius. Requires `codegraph build --dataflow`.
+
+```bash
+codegraph dataflow buildGraph -T          # Show data flow edges
+codegraph dataflow openDb --impact -T     # Transitive data-dependent blast radius
+```
+
+| | |
+|---|---|
+| **MCP tool** | `dataflow` |
+| **Key flags** | `--impact` (blast radius mode), `--depth <n>` (default: 5), `-f, --file` (scope), `-T` (no tests), `-j` (JSON) |
+| **When to use** | Understanding how data flows between functions, assessing data-dependent impact |
+| **Output** | Edge mode: data flow edges with types. Impact mode: transitive data-dependent callers |
+
+#### `cfg` — Intraprocedural control flow graph
+
+Show the control flow graph for a function. Requires `codegraph build --cfg`.
+
+```bash
+codegraph cfg openDb -T                   # JSON format (default)
+codegraph cfg openDb --format mermaid -T  # Mermaid flowchart
+codegraph cfg openDb --format dot -T      # Graphviz DOT
+```
+
+| | |
+|---|---|
+| **MCP tool** | `cfg` |
+| **Key flags** | `--format` (json, mermaid, dot), `-f, --file` (scope), `-T` (no tests), `-j` (JSON) |
+| **When to use** | Understanding branching logic within a function |
+| **Output** | Control flow graph with basic blocks, branches, and edges |
+
+#### `ast` — Search stored AST nodes
+
+Search calls, `new` expressions, string literals, regex patterns, throw statements, and await expressions by pattern.
+
+```bash
+codegraph ast openDb -T                   # Find all AST nodes matching "openDb"
+codegraph ast --kind call openDb -T       # Only call expressions
+codegraph ast --kind throw --file src/builder.js -T  # Throw statements in a file
+```
+
+| | |
+|---|---|
+| **MCP tool** | `ast_query` |
+| **Key flags** | `--kind` (call, new, string, regex, throw, await), `-f, --file` (scope), `-T` (no tests), `-j` (JSON) |
+| **When to use** | Finding all call sites, error throws, or string literals matching a pattern |
+| **Output** | Matching AST nodes with file, line, kind, and text |
+
 ### Utility Commands
 
 #### `build` — Build/update the graph
@@ -483,32 +565,20 @@ codegraph embed . --model jina-code
 | **Key flags** | `-m, --model` (minilm, jina-small, jina-base, jina-code, nomic, nomic-v1.5, bge-large) |
 | **When to use** | Initial setup, or after adding many new functions |
 
-#### `query` — Basic symbol query
-
-Find a function/class and show its direct callers and callees.
-
-```bash
-codegraph query buildGraph
-```
-
-| | |
-|---|---|
-| **MCP tool** | `query` |
-| **Key flags** | `-T` (no tests), `-j` (JSON) |
-| **When to use** | Quick one-off lookup (prefer `fn` or `context` for richer data) |
-
 #### `export` — Export graph
 
-Export the dependency graph as DOT (Graphviz), Mermaid, or JSON.
+Export the dependency graph as DOT (Graphviz), Mermaid, JSON, GraphML, GraphSON, or Neo4j CSV.
 
 ```bash
 codegraph export --format mermaid --functions -o graph.md
+codegraph export --format graphml -o graph.graphml
+codegraph export --format neo4j -o graph-export/
 ```
 
 | | |
 |---|---|
 | **MCP tool** | `export_graph` |
-| **Key flags** | `-f, --format` (dot, mermaid, json), `--functions` (function-level), `-T` (no tests), `-o, --output` (file) |
+| **Key flags** | `-f, --format` (dot, mermaid, json, graphml, graphson, neo4j), `--functions` (function-level), `-T` (no tests), `-o, --output` (file) |
 | **When to use** | Visualization, documentation, or external tool integration |
 
 #### `list_functions` (MCP only)
@@ -590,7 +660,9 @@ codegraph mcp --repos "myapp,lib"      # Restricted repo list
 | `where` | `where <name>` | Symbol definition and usage |
 | `diff_impact` | `diff-impact [ref]` | Git diff impact analysis |
 | `semantic_search` | `search <query>` | Natural language code search |
-| `export_graph` | `export` | Graph export (DOT/Mermaid/JSON) |
+| `file_exports` | `exports <file>` | Per-symbol export consumers |
+| `symbol_children` | `children <name>` | Sub-declaration children (parameters, properties, constants) |
+| `export_graph` | `export` | Graph export (DOT/Mermaid/JSON/GraphML/GraphSON/Neo4j CSV) |
 | `list_functions` | *(MCP only)* | List/filter symbols |
 | `structure` | `structure [dir]` | Directory tree with metrics |
 | `hotspots` | `triage --level file` | Structural hotspot detection |
@@ -606,9 +678,9 @@ codegraph mcp --repos "myapp,lib"      # Restricted repo list
 | `triage` | `triage` | Risk-ranked audit queue |
 | `check` | `check` | CI validation predicates |
 | `branch_compare` | `branch-compare` | Structural diff between refs |
-| `ast_query` | *(MCP only)* | Search stored AST nodes (calls, literals, new, throw, await) |
-| `cfg` | *(MCP only)* | Intraprocedural control flow graph for a function |
-| `dataflow` | *(MCP only)* | Data flow edges or data-dependent blast radius |
+| `ast_query` | `ast [pattern]` | Search stored AST nodes (calls, literals, new, throw, await) |
+| `cfg` | `cfg <name>` | Intraprocedural control flow graph for a function |
+| `dataflow` | `dataflow <name>` | Data flow edges or data-dependent blast radius |
 | `list_repos` | `registry list` | List registered repos (multi-repo only) |
 
 ### Server Modes
@@ -817,8 +889,13 @@ This project uses codegraph for dependency analysis. The graph is at `.codegraph
 - `codegraph triage -T` — ranked audit priority queue
 - `codegraph check --staged` — CI validation predicates (exit code 0/1)
 - `codegraph batch target1 target2` — batch query multiple targets at once
-- `codegraph fn <name> -T` — function call chain
+- `codegraph query <name> -T` — function call chain
 - `codegraph deps <file>` — file-level dependencies
+- `codegraph exports <file> -T` — per-symbol export consumers
+- `codegraph children <name> -T` — sub-declarations (parameters, properties, constants)
+- `codegraph dataflow <name> -T` — data flow edges (requires `build --dataflow`)
+- `codegraph cfg <name> -T` — control flow graph (requires `build --cfg`)
+- `codegraph ast --kind call <name> -T` — search stored AST nodes
 - `codegraph owners [target]` — CODEOWNERS mapping for symbols
 - `codegraph snapshot save <name>` — checkpoint the graph DB before refactoring
 - `codegraph search "<query>"` — semantic search (requires `codegraph embed`)
@@ -957,8 +1034,8 @@ fi
 | Find where a function is defined | `codegraph where <name>` |
 | See what a file does | `codegraph audit --quick <file>` |
 | Understand a function fully | `codegraph context <name> -T` |
-| See what calls a function | `codegraph fn <name> -T` |
-| See what a function calls | `codegraph fn <name> -T` |
+| See what calls a function | `codegraph query <name> -T` |
+| See what a function calls | `codegraph query <name> -T` |
 | Check impact before editing | `codegraph fn-impact <name> -T` |
 | Check impact of staged changes | `codegraph diff-impact --staged -T` |
 | Compare branch impact vs main | `codegraph diff-impact main -T` |
@@ -977,6 +1054,12 @@ fi
 | Checkpoint the graph before refactoring | `codegraph snapshot save <name>` |
 | Restore graph after failed refactoring | `codegraph snapshot restore <name>` |
 | Compare structure between branches | `codegraph branch-compare main HEAD -T` |
+| See what a file exports and who uses it | `codegraph exports <file> -T` |
+| See fields/properties of a class | `codegraph children <name> -T` |
+| Trace data flow for a function | `codegraph dataflow <name> -T` |
+| See control flow graph | `codegraph cfg <name> --format mermaid -T` |
+| Find all call sites of a function | `codegraph ast --kind call <name> -T` |
+| Visualize the graph interactively | `codegraph plot` |
 | Export graph for visualization | `codegraph export --format mermaid` |
 | Build/update the graph | `codegraph build .` |
 | Build semantic embeddings | `codegraph embed .` |
@@ -987,16 +1070,16 @@ fi
 
 | Flag | Short | Description | Available on |
 |------|-------|-------------|-------------|
-| `--no-tests` | `-T` | Exclude test/spec files | All query commands (fn, fn-impact, context, where, diff-impact, search, map, deps, impact, query, path, stats, cycles, export, structure, audit, triage, check, batch, owners, branch-compare) |
+| `--no-tests` | `-T` | Exclude test/spec files | All query commands (query, fn-impact, context, where, diff-impact, search, map, deps, exports, impact, path, stats, cycles, export, structure, audit, triage, check, batch, owners, branch-compare, dataflow, cfg, ast, children, flow, roles, communities, complexity) |
 | `--json` | `-j` | JSON output | Most commands |
-| `--file <path>` | `-f` | Scope to a file | fn, fn-impact, context, where |
-| `--kind <kind>` | `-k` | Filter by symbol kind | fn, fn-impact, context |
-| `--depth <n>` | | Traversal depth | fn (3), fn-impact (5), context (0), diff-impact (3) |
+| `--file <path>` | `-f` | Scope to a file | query, fn-impact, context, where, dataflow, cfg, ast, children |
+| `--kind <kind>` | `-k` | Filter by symbol kind | query, fn-impact, context, dataflow, cfg, ast, children |
+| `--depth <n>` | | Traversal depth | query (3), fn-impact (5), context (0), diff-impact (3), dataflow (5) |
 | `--db <path>` | `-d` | Custom database path | Most commands |
 
 ### Symbol Kinds
 
-`function`, `method`, `class`, `interface`, `type`, `struct`, `enum`, `trait`, `record`, `module`
+`function`, `method`, `class`, `interface`, `type`, `struct`, `enum`, `trait`, `record`, `module`, `parameter`, `property`, `constant`
 
 ---
 
@@ -1006,7 +1089,7 @@ fi
 
 2. **Prefer `context` over raw file reads.** One `context` call replaces 3–5 file reads and gives you structured, relevant data.
 
-3. **Use `--file` to disambiguate.** Many codebases have functions with the same name in different files. `codegraph fn parse --file parser.js` avoids ambiguity.
+3. **Use `--file` to disambiguate.** Many codebases have functions with the same name in different files. `codegraph query parse --file parser.js` avoids ambiguity.
 
 4. **Check impact before and after.** Run `fn-impact` before editing to know the blast radius. Run `diff-impact --staged` after to verify your changes.
 
@@ -1018,6 +1101,6 @@ fi
 
 8. **Check `stats` for quality.** The quality score (0–100) tells you if the graph is trustworthy. Low scores mean missing edges or unresolved imports — rebuild or investigate.
 
-9. **Scope with `--kind`.** If you only care about classes, `--kind class` filters out functions and methods. Valid kinds: function, method, class, interface, type, struct, enum, trait, record, module.
+9. **Scope with `--kind`.** If you only care about classes, `--kind class` filters out functions and methods. Valid kinds: function, method, class, interface, type, struct, enum, trait, record, module, parameter, property, constant.
 
 10. **JSON for programmatic use.** When chaining commands or processing results, always use `-j` for reliable machine-readable output.

@@ -100,6 +100,12 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 | Zero config | **Yes** | — | **Yes** | — | — | **Yes** | — | **Yes** |
 | Embeddable JS library (`npm install`) | **Yes** | — | — | — | — | — | — | — |
 | LLM-optional (works without API keys) | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
+| Dataflow analysis | **Yes** | **Yes** | — | — | **Yes** | — | — | — |
+| Control flow graph (CFG) | **Yes** | **Yes** | — | — | **Yes** | — | — | — |
+| AST node querying | **Yes** | **Yes** | — | — | **Yes** | — | — | — |
+| Expanded node/edge types | **Yes** | **Yes** | — | — | **Yes** | — | — | — |
+| GraphML / Neo4j export | **Yes** | **Yes** | — | — | — | — | — | — |
+| Interactive graph viewer | **Yes** | — | — | — | — | — | — | — |
 | Commercial use allowed | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | No | Paid | **Yes** |
 | Open source | **Yes** | Yes | Yes | Yes | Yes | No | No | Yes |
 
@@ -115,6 +121,7 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 | **🌐** | **Multi-language, one CLI** | JS/TS + Python + Go + Rust + Java + C# + PHP + Ruby + HCL in a single graph |
 | **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — enriched with historically coupled files from git co-change analysis. Ships with a GitHub Actions workflow |
 | **🧠** | **Hybrid search** | BM25 keyword + semantic embeddings fused via RRF — `hybrid` (default), `semantic`, or `keyword` mode; multi-query via `"auth; token; JWT"` |
+| **🔬** | **Dataflow + CFG** | Track how data flows through functions (`flows_to`, `returns`, `mutates`) and visualize intraprocedural control flow graphs for all 11 languages |
 
 ---
 
@@ -183,7 +190,7 @@ Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAU
 | 🏗️ | **Structure & hotspots** | Directory cohesion scores, fan-in/fan-out hotspot detection, module boundaries |
 | 🏷️ | **Node role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` based on connectivity patterns — agents instantly know architectural role |
 | 🔄 | **Cycle detection** | Find circular dependencies at file or function level |
-| 📤 | **Export** | DOT (Graphviz), Mermaid, and JSON graph export |
+| 📤 | **Export** | DOT, Mermaid, JSON, GraphML, GraphSON, and Neo4j CSV graph export |
 | 🧠 | **Semantic search** | Embeddings-powered natural language search with multi-query RRF ranking |
 | 👀 | **Watch mode** | Incrementally update the graph as files change |
 | 🤖 | **MCP server** | 30-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
@@ -201,6 +208,13 @@ Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAU
 | 📋 | **Composite audit** | Single `audit` command combining explain + impact + health metrics per function — one call instead of 3-4 |
 | 🚦 | **Triage queue** | `triage` merges connectivity, hotspots, roles, and complexity into a ranked audit priority queue |
 | 📦 | **Batch querying** | Accept a list of targets and return all results in one JSON payload — enables multi-agent parallel dispatch |
+| 🔬 | **Dataflow analysis** | Track how data moves through functions with `flows_to`, `returns`, and `mutates` edges — opt-in via `build --dataflow` (JS/TS) |
+| 🧩 | **Control flow graph** | Intraprocedural CFG construction for all 11 languages — `cfg` command with text/DOT/Mermaid output, opt-in via `build --cfg` |
+| 🔎 | **AST node querying** | Stored queryable AST nodes (calls, `new`, string, regex, throw, await) — `ast` command with SQL GLOB pattern matching |
+| 🧬 | **Expanded node/edge types** | `parameter`, `property`, `constant` node kinds with `parent_id` for sub-declaration queries; `contains`, `parameter_of`, `receiver` edge kinds |
+| 📊 | **Exports analysis** | `exports <file>` shows all exported symbols with per-symbol consumers, re-export detection, and counts |
+| 📈 | **Interactive viewer** | `codegraph plot` generates an interactive HTML graph viewer with hierarchical/force/radial layouts, complexity overlays, and drill-down |
+| 🏷️ | **Stable JSON schema** | `normalizeSymbol` utility ensures consistent 7-field output (name, kind, file, line, endLine, role, fileHash) across all commands |
 
 See [docs/examples](docs/examples) for real-world CLI and MCP usage examples.
 
@@ -228,6 +242,8 @@ codegraph stats                # Graph health: nodes, edges, languages, quality 
 codegraph roles                # Node role classification (entry, core, utility, adapter, dead, leaf)
 codegraph roles --role dead -T # Find dead code (unreferenced, non-exported symbols)
 codegraph roles --role core --file src/  # Core symbols in src/
+codegraph exports src/queries.js  # Per-symbol consumer analysis (who calls each export)
+codegraph children <name>         # List parameters, properties, constants of a symbol
 ```
 
 ### Deep Context (AI-Optimized)
@@ -297,6 +313,22 @@ codegraph check                   # Pass/fail rule engine (exit code 1 on fail)
 codegraph check -T                # Exclude test files from rule evaluation
 ```
 
+### Dataflow, CFG & AST
+
+```bash
+codegraph dataflow <name>             # Data flow edges for a function (flows_to, returns, mutates)
+codegraph dataflow <name> --impact    # Transitive data-dependent blast radius
+codegraph cfg <name>                  # Control flow graph (text format)
+codegraph cfg <name> --format dot     # CFG as Graphviz DOT
+codegraph cfg <name> --format mermaid # CFG as Mermaid diagram
+codegraph ast                         # List all stored AST nodes
+codegraph ast "handleAuth"            # Search AST nodes by pattern (GLOB)
+codegraph ast -k call                 # Filter by kind: call, new, string, regex, throw, await
+codegraph ast -k throw --file src/    # Combine kind and file filters
+```
+
+> **Note:** Dataflow requires `codegraph build --dataflow` (JS/TS only). CFG requires `codegraph build --cfg`. Both are opt-in to keep default builds fast.
+
 ### Audit, Triage & Batch
 
 Composite commands for risk-driven workflows and multi-agent dispatch.
@@ -358,7 +390,11 @@ codegraph snapshot delete before-refactor   # Delete a snapshot
 codegraph export -f dot        # Graphviz DOT format
 codegraph export -f mermaid    # Mermaid diagram
 codegraph export -f json       # JSON graph
+codegraph export -f graphml    # GraphML (XML standard)
+codegraph export -f graphson   # GraphSON (TinkerPop v3 / Gremlin)
+codegraph export -f neo4j      # Neo4j CSV (bulk import, separate nodes/relationships files)
 codegraph export --functions -o graph.dot  # Function-level, write to file
+codegraph plot                 # Interactive HTML viewer with force/hierarchical/radial layouts
 codegraph cycles               # Detect circular dependencies
 codegraph cycles --functions   # Function-level cycles
 ```
@@ -424,12 +460,12 @@ codegraph registry remove <name>  # Unregister
 | Flag | Description |
 |---|---|
 | `-d, --db <path>` | Custom path to `graph.db` |
-| `-T, --no-tests` | Exclude `.test.`, `.spec.`, `__test__` files (available on `fn`, `fn-impact`, `path`, `context`, `where`, `diff-impact`, `search`, `map`, `roles`, `co-change`, `deps`, `impact`, `complexity`, `communities`, `branch-compare`, `audit`, `triage`, `check`) |
+| `-T, --no-tests` | Exclude `.test.`, `.spec.`, `__test__` files (available on most query commands including `query`, `fn-impact`, `path`, `context`, `where`, `diff-impact`, `search`, `map`, `roles`, `co-change`, `deps`, `impact`, `complexity`, `communities`, `branch-compare`, `audit`, `triage`, `check`, `dataflow`, `cfg`, `ast`, `exports`, `children`) |
 | `--depth <n>` | Transitive trace depth (default varies by command) |
 | `-j, --json` | Output as JSON |
 | `-v, --verbose` | Enable debug output |
 | `--engine <engine>` | Parser engine: `native`, `wasm`, or `auto` (default: `auto`) |
-| `-k, --kind <kind>` | Filter by kind: `function`, `method`, `class`, `struct`, `enum`, `trait`, `record`, `module` (`fn`, `context`, `search`) |
+| `-k, --kind <kind>` | Filter by kind: `function`, `method`, `class`, `interface`, `type`, `struct`, `enum`, `trait`, `record`, `module`, `parameter`, `property`, `constant` |
 | `-f, --file <path>` | Scope to a specific file (`fn`, `context`, `where`) |
 | `--mode <mode>` | Search mode: `hybrid` (default), `semantic`, or `keyword` (`search`) |
 | `--ndjson` | Output as newline-delimited JSON (one object per line) |
@@ -467,10 +503,11 @@ codegraph registry remove <name>  # Unregister
 ```
 
 1. **Parse** — tree-sitter parses every source file into an AST (native Rust engine or WASM fallback)
-2. **Extract** — Functions, classes, methods, interfaces, imports, exports, and call sites are extracted
+2. **Extract** — Functions, classes, methods, interfaces, imports, exports, call sites, parameters, properties, and constants are extracted
 3. **Resolve** — Imports are resolved to actual files (handles ESM conventions, `tsconfig.json` path aliases, `baseUrl`)
-4. **Store** — Everything goes into SQLite as nodes + edges with tree-sitter node boundaries
-5. **Query** — All queries run locally against the SQLite DB — typically under 100ms
+4. **Store** — Everything goes into SQLite as nodes + edges with tree-sitter node boundaries, plus structural edges (`contains`, `parameter_of`, `receiver`)
+5. **Analyze** (opt-in) — Complexity metrics, control flow graphs (`--cfg`), dataflow edges (`--dataflow`), and AST node storage
+6. **Query** — All queries run locally against the SQLite DB — typically under 100ms
 
 ### Incremental Rebuilds
 
@@ -594,6 +631,12 @@ This project uses codegraph. The database is at `.codegraph/graph.db`.
 - `codegraph owners [target]` — CODEOWNERS mapping for symbols
 - `codegraph snapshot save <name>` — checkpoint the graph DB before refactoring
 - `codegraph branch-compare main HEAD -T` — structural diff between two refs (added/removed/changed symbols)
+- `codegraph exports <file>` — per-symbol consumer analysis (who calls each export)
+- `codegraph children <name>` — list parameters, properties, constants of a symbol
+- `codegraph dataflow <name>` — data flow edges (flows_to, returns, mutates)
+- `codegraph cfg <name>` — intraprocedural control flow graph
+- `codegraph ast <pattern>` — search stored AST nodes (calls, new, string, regex, throw, await)
+- `codegraph plot` — interactive HTML dependency graph viewer
 - `codegraph search "<query>"` — hybrid search (requires `codegraph embed`)
 - `codegraph search "<query>" --mode keyword` — BM25 keyword search
 - `codegraph cycles` — check for circular dependencies
@@ -717,13 +760,14 @@ Works with any secret manager: 1Password CLI (`op`), Bitwarden (`bw`), `pass`, H
 Codegraph also exports a full API for use in your own tools:
 
 ```js
-import { buildGraph, queryNameData, findCycles, exportDOT } from '@optave/codegraph';
+import { buildGraph, queryNameData, findCycles, exportDOT, normalizeSymbol } from '@optave/codegraph';
 
 // Build the graph
 buildGraph('/path/to/project');
 
 // Query programmatically
 const results = queryNameData('myFunction', '/path/to/.codegraph/graph.db');
+// All query results use normalizeSymbol for a stable 7-field schema
 ```
 
 ```js
@@ -760,6 +804,7 @@ const { results: fused } = await multiSearchData(
 - **No full type inference** — parses `.d.ts` interfaces but doesn't use TypeScript's type checker for overload resolution
 - **Dynamic calls are best-effort** — complex computed property access and `eval` patterns are not resolved
 - **Python imports** — resolves relative imports but doesn't follow `sys.path` or virtual environment packages
+- **Dataflow analysis** — currently JS/TS only; intraprocedural (single-function scope), not interprocedural
 
 ## 🗺️ Roadmap
 
@@ -767,12 +812,12 @@ See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap a
 
 1. ~~**Rust Core**~~ — **Complete** (v1.3.0) — native tree-sitter parsing via napi-rs, parallel multi-core parsing, incremental re-parsing, import resolution & cycle detection in Rust
 2. ~~**Foundation Hardening**~~ — **Complete** (v1.4.0) — parser registry, 12-tool MCP server with multi-repo support, test coverage 62%→75%, `apiKeyCommand` secret resolution, global repo registry
-3. ~~**Analysis Expansion**~~ — **Complete** (v2.6.0) — complexity metrics, community detection, co-change analysis, manifesto rule engine, architecture boundaries, CI `check` command, triage, audit, batch querying, hybrid BM25 + semantic search
-4. **Architectural Refactoring** — command/query separation, repository pattern, `queries.js` decomposition, domain errors, curated programmatic API
-5. **TypeScript Migration** — core type definitions, leaf-to-core module migration
-6. **Natural Language Queries** — `codegraph ask` command, conversational sessions
-7. **Expanded Language Support** — additional languages beyond the current 11
-8. **Visualization & Advanced** — web UI, monorepo support, agentic search
+3. ~~**Deep Analysis**~~ — **Complete** (v3.0.0) — dataflow analysis (flows_to, returns, mutates), intraprocedural CFG for all 11 languages, stored AST nodes, expanded node/edge types (parameter, property, constant, contains, parameter_of, receiver), GraphML/GraphSON/Neo4j CSV export, interactive HTML viewer, CLI consolidation, stable JSON schema
+4. **Architectural Refactoring** — parser plugin system, repository pattern, pipeline builder, engine strategy, domain errors, curated API
+5. **Natural Language Queries** — `codegraph ask` command, conversational sessions
+6. **Expanded Language Support** — 8 new languages (12 → 20)
+7. **GitHub Integration & CI** — reusable GitHub Action, PR review, SARIF output
+8. **TypeScript Migration** — gradual migration from JS to TypeScript
 
 ## 🤝 Contributing
 

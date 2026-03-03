@@ -85,11 +85,11 @@ f buildGraph  src/builder.js:335  (exported)
 
 ---
 
-## query_function — Callers and callees
+## query — Callers and callees
 
 ```json
 {
-  "tool": "query_function",
+  "tool": "query",
   "arguments": { "name": "buildGraph", "no_tests": true }
 }
 ```
@@ -196,37 +196,6 @@ Set `depth: 1` to also include source code for direct callees — useful when an
 
 ---
 
-## fn_deps — Function call chain
-
-```json
-{
-  "tool": "fn_deps",
-  "arguments": { "name": "buildGraph", "no_tests": true }
-}
-```
-
-```
-f buildGraph (function) -- src/builder.js:335
-
-  -> Calls (22):
-    -> f openDb  src/db.js:76
-    -> f initSchema  src/db.js:84
-    -> f loadConfig  src/config.js:33
-    -> f getActiveEngine  src/parser.js:316
-    -> f loadPathAliases  src/builder.js:101
-    -> f collectFiles  src/builder.js:45
-    -> f getChangedFiles  src/builder.js:176
-    -> f writeJournalHeader  src/journal.js:88
-    -> f parseFilesAuto  src/parser.js:277
-    -> f resolveImportsBatch  src/resolve.js:150
-    ...
-
-  <- Called by (1):
-    <- f resolveNoTests  src/cli.js:59
-```
-
----
-
 ## fn_impact — Function-level blast radius
 
 ```json
@@ -243,74 +212,6 @@ Function impact: f buildGraph -- src/builder.js:335
       ^ f resolveNoTests  src/cli.js:59
 
   Total: 1 functions transitively depend on buildGraph
-```
-
----
-
-## symbol_path — Shortest path between two symbols
-
-Find how one function reaches another through the call graph.
-
-```json
-{
-  "tool": "symbol_path",
-  "arguments": { "from": "resolveNoTests", "to": "openDb", "no_tests": true }
-}
-```
-
-```json
-{
-  "from": "resolveNoTests",
-  "to": "openDb",
-  "found": true,
-  "hops": 2,
-  "path": [
-    { "name": "resolveNoTests", "kind": "function", "file": "src/cli.js", "line": 59, "edgeKind": null },
-    { "name": "buildGraph", "kind": "function", "file": "src/builder.js", "line": 335, "edgeKind": "calls" },
-    { "name": "openDb", "kind": "function", "file": "src/db.js", "line": 76, "edgeKind": "calls" }
-  ],
-  "alternateCount": 0,
-  "edgeKinds": ["calls"],
-  "reverse": false,
-  "maxDepth": 10
-}
-```
-
-Reverse direction — follow edges backward:
-
-```json
-{
-  "tool": "symbol_path",
-  "arguments": { "from": "openDb", "to": "buildGraph", "reverse": true, "no_tests": true }
-}
-```
-
-```json
-{
-  "from": "openDb",
-  "to": "buildGraph",
-  "found": true,
-  "hops": 1,
-  "path": [
-    { "name": "openDb", "kind": "function", "file": "src/db.js", "line": 76, "edgeKind": null },
-    { "name": "buildGraph", "kind": "function", "file": "src/builder.js", "line": 335, "edgeKind": "calls" }
-  ],
-  "alternateCount": 0,
-  "reverse": true
-}
-```
-
-When no path exists, `found` is `false` and the path is empty:
-
-```json
-{
-  "from": "openDb",
-  "to": "buildGraph",
-  "found": false,
-  "hops": null,
-  "path": [],
-  "alternateCount": 0
-}
 ```
 
 ---
@@ -551,7 +452,7 @@ Results for "parse source files into AST" (top 5):
 
 ---
 
-## export_graph — Graph as DOT, Mermaid, or JSON
+## export_graph — Graph as DOT, Mermaid, JSON, GraphML, GraphSON, or Neo4j CSV
 
 ```json
 {
@@ -695,40 +596,6 @@ Co-change partners for src/queries.js:
 ```
 
 ---
-
-## symbol_path — Shortest path between two symbols
-
-```json
-{
-  "tool": "symbol_path",
-  "arguments": { "from": "buildGraph", "to": "resolveImports", "no_tests": true }
-}
-```
-
-```
-Path: buildGraph → resolveImports (1 hop)
-
-  buildGraph  src/builder.js:335  →(calls)→  resolveImports  src/resolve.js:42
-
-  Hops: 1 | Alternate paths: 0
-```
-
-```json
-{
-  "tool": "symbol_path",
-  "arguments": { "from": "buildGraph", "to": "isTestFile", "no_tests": true }
-}
-```
-
-```
-Path: buildGraph → isTestFile (2 hops)
-
-  buildGraph      src/builder.js:335
-    →(calls)→  collectFiles  src/builder.js:45
-    →(calls)→  isTestFile    src/queries.js:21
-
-  Hops: 2 | Alternate paths: 1
-```
 
 ---
 
@@ -1075,6 +942,172 @@ With Mermaid output:
   "arguments": { "base": "main", "target": "HEAD", "format": "mermaid", "no_tests": true }
 }
 ```
+
+---
+
+## file_exports — Per-symbol export consumers
+
+Show exported symbols of a file with per-symbol consumers — who calls each export and from where.
+
+```json
+{
+  "tool": "file_exports",
+  "arguments": { "file": "src/db.js", "no_tests": true }
+}
+```
+
+```
+# Exports: src/db.js
+
+  f openDb :76
+    <- src/builder.js (buildGraph:335)
+    <- src/cli.js (resolveNoTests:59)
+    <- src/embedder.js (embedFiles:42)
+    <- src/mcp.js (startMCPServer:45)
+
+  f initSchema :84
+    <- src/builder.js (buildGraph:335)
+
+  f findDbPath :120
+    <- src/cli.js (resolveNoTests:59)
+
+  f openReadonlyOrFail :136
+    <- src/queries.js (findMatchingNodes:127)
+```
+
+---
+
+## symbol_children — Sub-declarations of a symbol
+
+List parameters, properties, and constants declared inside a class or function — without reading source.
+
+```json
+{
+  "tool": "symbol_children",
+  "arguments": { "name": "GoExtractor", "no_tests": true }
+}
+```
+
+```
+# GoExtractor (class) — src/extractors/go.js:12
+
+  Children:
+    m extract       :15  (method)
+    p language       :13  (property)
+    p extensions     :14  (property)
+```
+
+---
+
+## dataflow — Data flow edges and impact
+
+Show data flow edges (flows_to, returns, mutates) or data-dependent blast radius. Requires `codegraph build --dataflow`.
+
+**Edge mode** (default) — show data flow edges for a function:
+
+```json
+{
+  "tool": "dataflow",
+  "arguments": { "name": "buildGraph", "no_tests": true }
+}
+```
+
+```
+# Dataflow edges for buildGraph
+
+  buildGraph →(flows_to)→ openDb
+  buildGraph →(flows_to)→ initSchema
+  buildGraph →(returns)→ db
+  buildGraph →(mutates)→ opts
+```
+
+**Impact mode** — transitive data-dependent blast radius:
+
+```json
+{
+  "tool": "dataflow",
+  "arguments": { "name": "openDb", "mode": "impact", "no_tests": true }
+}
+```
+
+```
+# Dataflow impact for openDb
+
+  -- Level 1:
+    ^ buildGraph  src/builder.js:335
+    ^ startMCPServer  src/mcp.js:45
+
+  Total: 2 functions transitively data-depend on openDb
+```
+
+---
+
+## cfg — Intraprocedural control flow graph
+
+Show the control flow graph for a function. Requires `codegraph build --cfg`.
+
+```json
+{
+  "tool": "cfg",
+  "arguments": { "name": "openDb", "format": "mermaid", "no_tests": true }
+}
+```
+
+```mermaid
+flowchart TB
+    entry["entry"]
+    if_exists["if (fs.existsSync(dbPath))"]
+    open_existing["db = new Database(dbPath)"]
+    create_new["mkdirSync + new Database"]
+    set_pragmas["db.pragma('journal_mode = WAL')"]
+    exit["return db"]
+    entry --> if_exists
+    if_exists -->|true| open_existing
+    if_exists -->|false| create_new
+    open_existing --> set_pragmas
+    create_new --> set_pragmas
+    set_pragmas --> exit
+```
+
+Available formats: `json` (default), `dot`, `mermaid`.
+
+---
+
+## ast_query — Search stored AST nodes
+
+Search calls, `new` expressions, string literals, regex patterns, throw statements, and await expressions by pattern.
+
+```json
+{
+  "tool": "ast_query",
+  "arguments": { "kind": "call", "pattern": "openDb", "no_tests": true }
+}
+```
+
+```
+# AST nodes matching "openDb" (kind: call)
+
+  src/builder.js:340  call  openDb(dbPath)
+  src/cli.js:62       call  openDb(dbPath)
+  src/mcp.js:48       call  openDb(dbPath)
+  src/embedder.js:45  call  openDb(dbPath)
+```
+
+```json
+{
+  "tool": "ast_query",
+  "arguments": { "kind": "throw", "file": "src/builder.js", "no_tests": true }
+}
+```
+
+```
+# AST nodes (kind: throw) in src/builder.js
+
+  src/builder.js:142  throw  new Error('File not found')
+  src/builder.js:580  throw  new Error('Circular barrel')
+```
+
+Available kinds: `call`, `new`, `string`, `regex`, `throw`, `await`.
 
 ---
 

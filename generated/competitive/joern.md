@@ -1,7 +1,7 @@
 # Competitive Deep-Dive: Codegraph vs Joern
 
 **Date:** 2026-03-02
-**Competitors:** `@optave/codegraph` v0.x (Apache-2.0) vs `joernio/joern` v4.x (Apache-2.0)
+**Competitors:** `@optave/codegraph` v3.0.0 (Apache-2.0) vs `joernio/joern` v4.x (Apache-2.0)
 **Context:** Both are Apache-2.0-licensed code analysis tools with CLI interfaces. Joern is ranked #1 in our [competitive analysis](./COMPETITIVE_ANALYSIS.md) with a score of 4.5 vs codegraph's 4.0 at #8.
 
 ---
@@ -14,7 +14,7 @@ Joern and codegraph solve fundamentally **different problems** using code graphs
 |-----------|-------|-----------|
 | **Primary mission** | Vulnerability discovery & security research | Always-current structural code intelligence for developers and AI agents |
 | **Target user** | Security researchers, pentesters, auditors | Developers, AI coding agents, CI pipelines |
-| **Graph model** | Code Property Graph (AST + CFG + PDG + DDG) | Structural dependency graph (symbols + call edges + imports) |
+| **Graph model** | Code Property Graph (AST + CFG + PDG + DDG) | Structural dependency graph (symbols + call/import/dataflow/CFG edges + stored AST) |
 | **Core question answered** | "Can attacker-controlled data reach this dangerous sink?" | "What breaks if I change this function?" |
 | **Rebuild model** | Full re-import on every change (minutes) | Incremental sub-second rebuilds (milliseconds) |
 | **Runtime** | JVM (Scala) — 4-100 GB heap | Node.js — <100 MB typical |
@@ -35,7 +35,7 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 | 2 | **Native speed, universal reach** — dual engine (Rust + WASM) | Native napi-rs with rayon parallelism + automatic WASM fallback. `npm install` on any platform | JVM/Scala. Requires JDK 19+. Pre-built binaries or Docker. No cross-platform auto-detection | **Codegraph wins.** Automatic platform detection with native performance + universal fallback vs. manual JVM setup |
 | 3 | **Confidence over noise** — scored results | 6-level import resolution with 0.0-1.0 confidence on every edge. False-positive filtering. Graph quality score | Overapproximation by default (assumes full taint propagation for unresolved methods). Requires manual semantic definitions to reduce false positives | **Codegraph wins.** Scored results by default vs. noise-by-default requiring manual tuning |
 | 4 | **Zero-cost core, LLM-enhanced when you choose** | Full pipeline local, zero API keys. Optional embeddings with user's LLM provider | Fully local, zero API keys. No LLM enhancement path | **Codegraph wins.** Both are local-first, but codegraph adds optional AI enhancement that Joern lacks entirely |
-| 5 | **Functional CLI, embeddable API** | 35+ CLI commands + 18-tool MCP server + full programmatic JS API | Interactive Scala REPL + server mode + script execution. No MCP. Python client library | **Codegraph wins.** Purpose-built MCP for AI agents + embeddable npm package vs. Scala REPL that requires JVM expertise |
+| 5 | **Functional CLI, embeddable API** | 39 CLI commands + 30-tool MCP server + full programmatic JS API | Interactive Scala REPL + server mode + script execution. No MCP. Python client library | **Codegraph wins.** Purpose-built MCP for AI agents + embeddable npm package vs. Scala REPL that requires JVM expertise |
 | 6 | **One registry, one schema, no magic** | `LANGUAGE_REGISTRY` — add a language in <100 lines, 2 files | Each language has a separate frontend (Eclipse CDT, JavaParser, GraalVM, etc.) — fundamentally different parsers per language | **Codegraph wins.** Uniform tree-sitter extraction vs. heterogeneous parser zoo |
 | 7 | **Security-conscious defaults** — multi-repo opt-in | Single-repo MCP default. `apiKeyCommand` for secrets. `--multi-repo` opt-in | Server mode has no sandboxing (docs explicitly warn: "raw interpreter access"). No MCP isolation concept | **Codegraph wins.** Security-by-default vs. "trust the user" |
 | 8 | **Honest about what we're not** | Code intelligence engine. Not an app, not a coding tool, not an agent | Code analysis platform for security research. Not a CI tool, not a developer productivity tool | **Tie.** Both are honest about scope. Different scopes |
@@ -81,11 +81,11 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 | Feature | Codegraph | Joern | Best Approach |
 |---------|-----------|-------|---------------|
 | **Graph type** | Structural dependency graph (symbols + edges) | Code Property Graph (AST + CFG + PDG merged) | **Joern** for depth; **Codegraph** for speed |
-| **Node types** | 10 kinds: `function`, `method`, `class`, `interface`, `type`, `struct`, `enum`, `trait`, `record`, `module` | 45+ node types across 18 layers (METHOD, CALL, IDENTIFIER, LITERAL, CONTROL_STRUCTURE, BLOCK, LOCAL, etc.) | **Joern** — 4x more granular |
-| **Edge types** | `calls`, `imports` (with confidence scores) | 20+ types: AST, CFG, CDG, REACHING_DEF, CALL, ARGUMENT, RECEIVER, CONTAINS, EVAL_TYPE, REF, BINDS, DOMINATE, POST_DOMINATE, etc. | **Joern** — 10x more edge types, representing fundamentally different relationships |
-| **Abstract Syntax Tree** | Extracted for complexity metrics, not stored in graph | Full AST stored and queryable | **Joern** |
-| **Control Flow Graph** | Not available | Full CFG with dominator/post-dominator trees | **Joern** |
-| **Data Dependence Graph** | Not available | Reaching definitions (def-use chains) across procedures | **Joern** |
+| **Node types** | 13 kinds: `function`, `method`, `class`, `interface`, `type`, `struct`, `enum`, `trait`, `record`, `module`, `parameter`, `property`, `constant` | 45+ node types across 18 layers (METHOD, CALL, IDENTIFIER, LITERAL, CONTROL_STRUCTURE, BLOCK, LOCAL, etc.) | **Joern** — still more granular, but gap narrowed from 4x to ~3x |
+| **Edge types** | `calls`, `imports`, `contains`, `parameter_of`, `receiver`, `flows_to`, `returns`, `mutates` (with confidence scores on call/import edges) | 20+ types: AST, CFG, CDG, REACHING_DEF, CALL, ARGUMENT, RECEIVER, CONTAINS, EVAL_TYPE, REF, BINDS, DOMINATE, POST_DOMINATE, etc. | **Joern** — still more edge types, but codegraph now covers structural containment, dataflow, and receiver relationships |
+| **Abstract Syntax Tree** | Stored AST nodes (calls, new, string, regex, throw, await) queryable via `ast` command/`ast_query` MCP tool | Full AST stored and queryable | **Joern** for completeness; **Codegraph** now has stored AST for the most useful node kinds |
+| **Control Flow Graph** | Intraprocedural CFG for all 11 languages via `cfg` command/MCP tool. Basic blocks + branches. No dominator trees | Full CFG with dominator/post-dominator trees | **Joern** for depth (dominator trees); **Codegraph** now has basic CFG |
+| **Data Dependence Graph** | Intraprocedural dataflow: `flows_to`, `returns`, `mutates` edges via `dataflow` command/MCP tool (JS/TS only) | Reaching definitions (def-use chains) across procedures | **Joern** — interprocedural vs. codegraph's intraprocedural. But codegraph now has lightweight dataflow |
 | **Program Dependence Graph** | Not available | Combined control + data dependence | **Joern** |
 | **Taint analysis** | Not available | Full interprocedural taint tracking (sources → sinks) | **Joern** — Joern's killer feature |
 | **Call graph** | Import-aware resolution with 6-level confidence scoring, qualified call filtering | Pre-computed CALL edges, caller/callee traversal | **Codegraph** for precision (confidence scoring, false-positive filtering); **Joern** for completeness (type-aware resolution) |
@@ -111,12 +111,12 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 | **Query interface** | Fixed CLI commands with flags + SQL under the hood | Interactive Scala REPL with tab completion + arbitrary graph traversals | **Depends on user.** Codegraph for instant answers; Joern for exploratory research |
 | **Query language** | CLI flags (`--kind`, `--file`, `--role`, `--json`) | CPGQL (Scala-based DSL): `cpg.method.name("foo").callee.name.l` | **Joern** for expressiveness; **Codegraph** for accessibility |
 | **Learning curve** | Zero — standard CLI with `--help` | Steep — requires Scala/FP knowledge + graph theory | **Codegraph** |
-| **AI agent interface** | 18-tool MCP server with structured JSON responses | Community MCP server (mcp-joern). REST/WebSocket server mode | **Codegraph** — first-party MCP vs. community add-on |
+| **AI agent interface** | 30-tool MCP server with structured JSON responses | Community MCP server (mcp-joern). REST/WebSocket server mode | **Codegraph** — first-party MCP vs. community add-on |
 | **Compound queries** | `context` (source + deps + callers + tests in 1 call), `explain` (structural summary), `audit` (explain + impact + health) | Must compose via CPGQL chaining | **Codegraph** — purpose-built for agent token efficiency |
 | **Batch queries** | `batch` command for multi-target dispatch | Script mode (`--script`) for batch execution | **Tie** — different approaches, both work |
 | **JSON output** | `--json` flag on every command | `.toJsonPretty` method on query results | **Tie** |
 | **Syntax-highlighted output** | Colored terminal output | `.dump` for syntax-highlighted code display | **Tie** |
-| **Visualization** | DOT, Mermaid, JSON export | DOT, GraphML, GraphSON, Neo4j CSV export + interactive `.plotDotCfg` | **Joern** — more formats + interactive plotting |
+| **Visualization** | DOT, Mermaid, JSON, GraphML, GraphSON, Neo4j CSV export + interactive HTML viewer (`codegraph plot`) | DOT, GraphML, GraphSON, Neo4j CSV export + interactive `.plotDotCfg` | **Tie** — both have interactive plotting and comparable export formats |
 | **Script execution** | Not available (but full programmatic JS API) | `--script test.sc` with params and imports | **Joern** for scripting; **Codegraph** for API embedding |
 | **Plugin system** | Not available | JVM plugins (ZIP/JAR), DiffGraph API, schema extension | **Joern** |
 | **Regex in queries** | Glob-style filtering on names | Full regex in all query steps + semantic definitions | **Joern** |
@@ -172,8 +172,8 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 
 | Feature | Codegraph | Joern | Best Approach |
 |---------|-----------|-------|---------------|
-| **MCP server** | First-party, 18 tools, single-repo default, `--multi-repo` opt-in | Community-built (mcp-joern), Python wrapper around Joern | **Codegraph** — first-party, security-conscious, production-ready |
-| **MCP tools count** | 18 purpose-built tools | ~10 tools (community MCP) | **Codegraph** |
+| **MCP server** | First-party, 30 tools, single-repo default, `--multi-repo` opt-in | Community-built (mcp-joern), Python wrapper around Joern | **Codegraph** — first-party, security-conscious, production-ready |
+| **MCP tools count** | 30 purpose-built tools | ~10 tools (community MCP) | **Codegraph** |
 | **Token efficiency** | `context`/`explain`/`audit` compound commands reduce agent round-trips by 50-80% | Raw query results, no compound optimization | **Codegraph** |
 | **Structured JSON output** | Every command supports `--json` | `.toJsonPretty` on query results | **Tie** |
 | **Pagination** | Built-in pagination helpers with configurable limits | Not built-in | **Codegraph** |
@@ -192,8 +192,8 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 |---------|-----------|-------|---------------|
 | **Taint analysis** | Not available | Full interprocedural source-to-sink tracking | **Joern** — this is Joern's raison d'etre |
 | **Vulnerability scanning** | Not available | `joern-scan` with predefined query bundles, tag-based selection | **Joern** |
-| **Data-flow tracking** | Not available | Reaching definitions, def-use chains across procedures | **Joern** |
-| **Control-flow analysis** | Not available | Full CFG with dominator trees | **Joern** |
+| **Data-flow tracking** | Intraprocedural dataflow (`flows_to`/`returns`/`mutates`), JS/TS only | Reaching definitions, def-use chains across procedures | **Joern** — interprocedural vs. intraprocedural |
+| **Control-flow analysis** | Intraprocedural CFG (basic blocks + branches, all 11 languages) | Full CFG with dominator trees | **Joern** — dominator trees and post-dominators; codegraph has basic CFG |
 | **Custom security rules** | Not available | CPGQL-based custom queries + data-flow semantics | **Joern** |
 | **Binary vulnerability analysis** | Not available | Ghidra integration for x86/x64 | **Joern** |
 | **OWASP/CWE detection** | Not available (roadmap) | Achievable via custom CPGQL queries | **Joern** |
@@ -225,7 +225,7 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 | **Execution flow tracing** | `flow` — traces from entry points through callees | Achievable via CFG traversals (more precise) | **Codegraph** for convenience; **Joern** for precision |
 | **Module overview** | `map` — high-level module map with most-connected nodes | Not purpose-built | **Codegraph** |
 | **Cycle detection** | `cycles` — circular dependency detection | Achievable via CPGQL | **Codegraph** — built-in command |
-| **Export formats** | DOT, Mermaid, JSON | DOT, GraphML, GraphSON, Neo4j CSV | **Joern** — more export formats |
+| **Export formats** | DOT, Mermaid, JSON, GraphML, GraphSON, Neo4j CSV + interactive HTML viewer | DOT, GraphML, GraphSON, Neo4j CSV | **Codegraph** — now matches Joern's formats plus Mermaid and interactive viewer |
 
 **Summary:** Codegraph has 15+ purpose-built developer productivity commands that Joern either lacks entirely or requires expert CPGQL queries to achieve. This is where codegraph's value proposition is strongest for its target audience.
 
@@ -289,8 +289,8 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 | Joern Feature | Adaptation for Codegraph | Effort | Priority |
 |---------------|--------------------------|--------|----------|
 | **CPG slicing** | Lightweight call-chain slicing — extract a subgraph around a function (callers + callees to depth N) as standalone JSON. Not full PDG slicing, but useful for AI context windows | Medium | High — directly serves AI agent use case |
-| **More export formats** | Add GraphML and Neo4j CSV to `export` command alongside existing DOT/Mermaid/JSON | Low | Medium |
-| **Interactive plotting** | `plotDotCfg`-style browser-based visualization from `export --format html` | Medium | Medium — on roadmap as "interactive HTML visualization" |
+| **More export formats** | ~~Add GraphML and Neo4j CSV to `export` command~~ | ~~Low~~ | **DONE in v3.0.0** — GraphML, GraphSON, Neo4j CSV added |
+| **Interactive plotting** | ~~`plotDotCfg`-style browser-based visualization~~ | ~~Medium~~ | **DONE in v3.0.0** — `codegraph plot` opens interactive HTML viewer |
 | **Script/batch automation** | Already have `batch` command. Could add a simple query script format for CI pipelines | Low | Low |
 | **Custom query language** | Not worth building a DSL. Instead, expand `--filter` expressions on existing commands (e.g. `where --filter "fanIn > 5 AND kind = function"`) | Medium | Medium |
 
@@ -327,8 +327,8 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 | Install complexity | `npm install` | JDK + shell script | Codegraph |
 | Analysis depth (structural) | High | Very High | Joern |
 | Analysis depth (security) | None | Best in class | Joern |
-| AI agent integration | 18-tool MCP (first-party) | Community MCP wrapper | Codegraph |
-| Developer productivity commands | 35+ built-in | ~5 built-in + custom CPGQL | Codegraph |
+| AI agent integration | 30-tool MCP (first-party) | Community MCP wrapper | Codegraph |
+| Developer productivity commands | 39 built-in | ~5 built-in + custom CPGQL | Codegraph |
 | Language support | 11 | 16 (incl. binary/bytecode) | Joern |
 | Query expressiveness | Fixed commands | Arbitrary graph traversals | Joern |
 | Community & maturity | New | 7 years, IEEE award, 2,968 stars | Joern |
@@ -357,14 +357,14 @@ Non-breaking, ordered by problem-fit:
 | J10 | Regex filtering in queries | Upgrade name filtering from glob-style to full regex on `where`, `list-functions`, `roles`, and other symbol-listing commands. Add `--regex` flag alongside existing glob behavior. Joern supports full regex in all CPGQL query steps. | Query | Agents and power users can express precise symbol patterns (e.g. `--regex "^(get\|set)[A-Z]"`) — reduces result noise and round-trips for targeted queries | ✓ | ✓ | 3 | No |
 | J11 | Query script execution | Simple `.codegraph` script format: a sequence of CLI commands executed in order, with variable substitution and JSON piping between steps. Not a DSL — just a thin automation layer over existing commands. Inspired by Joern's `--script test.sc` with params and imports. | Automation | CI pipelines and agent orchestrators can run multi-step analysis sequences in one invocation instead of chaining shell commands — reduces boilerplate and ensures consistent execution | ✓ | ✓ | 2 | No |
 
-Breaking (penalized to end of tier):
+Breaking — **all completed in v3.0.0:**
 
-| ID | Title | Description | Category | Benefit | Zero-dep | Foundation-aligned | Problem-fit (1-5) | Breaking |
-|----|-------|-------------|----------|---------|----------|-------------------|-------------------|----------|
-| J6 | Expanded node types | Extract parameters, local variables, return types, and control structures as first-class graph nodes. Expands from 10 `SYMBOL_KINDS` to ~20. Enables richer queries like "which functions take a `Request` parameter?" without reading source. Inspired by Joern's 45+ node types across 18 layers. | Graph Model | Agents can answer structural questions about function signatures and internal shape from the graph alone — fewer source-reading round-trips | ✓ | ✓ | 3 | Yes |
-| J7 | Expanded edge types | Add `contains`, `parameter_of`, `return_type`, `receiver`, `type_of` edges alongside existing `calls`/`imports`. Expands from 2 edge types to ~7. Enables structural queries across containment and type relationships. Inspired by Joern's 20+ edge types (AST, CDG, REACHING_DEF, ARGUMENT, RECEIVER, etc.). | Graph Model | Richer graph structure supports more precise impact analysis and enables queries that currently require source reading | ✓ | ✓ | 3 | Yes |
-| J8 | Intraprocedural control flow graph | Build lightweight CFG within functions from tree-sitter AST: basic blocks, branches, loops, early returns. Store as edges with type `cfg`. Does not require language-specific compiler frontends — tree-sitter control structure nodes are sufficient. Prerequisite for dataflow analysis ([BACKLOG ID 14](../../docs/roadmap/BACKLOG.md)). Inspired by Joern's full CFG with dominator/post-dominator trees. | Graph Model | Enables complexity-aware impact analysis and opens the path to lightweight dataflow — bridges the gap between structural-only and Joern's full CPG without violating P1 rebuild speed | ✓ | ✓ | 3 | Yes |
-| J9 | Stored queryable AST | Persist selected AST nodes (statements, expressions, literals) in a dedicated SQLite table alongside symbols. Queryable via CLI/MCP for pattern matching (e.g. "find all `eval()` calls", "find hardcoded strings"). Currently AST is extracted for complexity metrics but not stored in the graph. Inspired by Joern's full AST storage and queryability. | Graph Model | Enables lightweight AST-based pattern detection (security patterns, anti-patterns) without re-parsing source files — foundation for [BACKLOG ID 7](../../docs/roadmap/BACKLOG.md) (OWASP/CWE patterns) | ✓ | ✓ | 3 | Yes |
+| ID | Title | Status | Description |
+|----|-------|--------|-------------|
+| J6 | Expanded node types | **DONE v3.0.0** | Added `parameter`, `property`, `constant` to `SYMBOL_KINDS` (10 → 13). Queryable via `children` command / `symbol_children` MCP tool. |
+| J7 | Expanded edge types | **DONE v3.0.0** | Added `contains`, `parameter_of`, `receiver`, `flows_to`, `returns`, `mutates` edges (2 → 8 edge types). |
+| J8 | Intraprocedural control flow graph | **DONE v3.0.0** | CFG for all 11 languages via `cfg` command / `cfg` MCP tool. Basic blocks + branches from tree-sitter AST. |
+| J9 | Stored queryable AST | **DONE v3.0.0** | AST nodes (calls, new, string, regex, throw, await) stored in `ast_nodes` table. Queryable via `ast` command / `ast_query` MCP tool. |
 
 ### Not adopted (violates FOUNDATION.md)
 
@@ -388,5 +388,5 @@ These Joern-inspired capabilities are already tracked in [BACKLOG.md](../../docs
 
 | BACKLOG ID | Title | Joern Equivalent | Relationship |
 |------------|-------|------------------|--------------|
-| 14 | Dataflow analysis | Data Dependence Graph (def-use chains) | The lightweight codegraph equivalent of Joern's DDG — `flows_to`/`returns`/`mutates` edge types. Already Tier 1 Breaking. J8 (intraprocedural CFG) is a prerequisite |
-| 7 | OWASP/CWE pattern detection | Vulnerability scanning (`joern-scan`) | Lightweight AST-based security checks — the codegraph-appropriate alternative to Joern's taint-based vulnerability scanning. Already Tier 3. J9 (stored queryable AST) is a prerequisite |
+| 14 | Dataflow analysis | Data Dependence Graph (def-use chains) | **DONE v3.0.0.** Lightweight intraprocedural dataflow with `flows_to`/`returns`/`mutates` edges. JS/TS only. CLI: `codegraph dataflow`. MCP: `dataflow` tool. |
+| 7 | OWASP/CWE pattern detection | Vulnerability scanning (`joern-scan`) | Lightweight AST-based security checks — the codegraph-appropriate alternative to Joern's taint-based vulnerability scanning. Still Tier 3. J9 (stored AST) is now complete — this is unblocked. |
