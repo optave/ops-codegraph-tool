@@ -25,17 +25,44 @@ const PAGINATION_PROPS = {
 
 const BASE_TOOLS = [
   {
-    name: 'query_function',
-    description: 'Find callers and callees of a function by name',
+    name: 'query',
+    description:
+      'Query the call graph: find callers/callees with transitive chain, or find shortest path between two symbols',
     inputSchema: {
       type: 'object',
       properties: {
-        name: { type: 'string', description: 'Function name to query (supports partial match)' },
+        name: { type: 'string', description: 'Function/method/class name (partial match)' },
+        mode: {
+          type: 'string',
+          enum: ['deps', 'path'],
+          description: 'deps (default): dependency chain. path: shortest path to target',
+        },
         depth: {
           type: 'number',
-          description: 'Traversal depth for transitive callers',
-          default: 2,
+          description: 'Transitive depth (deps default: 3, path default: 10)',
         },
+        file: {
+          type: 'string',
+          description: 'Scope search to functions in this file (partial match)',
+        },
+        kind: {
+          type: 'string',
+          enum: ALL_SYMBOL_KINDS,
+          description: 'Filter by symbol kind',
+        },
+        to: { type: 'string', description: 'Target symbol for path mode (required in path mode)' },
+        edge_kinds: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Edge kinds to follow in path mode (default: ["calls"])',
+        },
+        reverse: {
+          type: 'boolean',
+          description: 'Follow edges backward in path mode',
+          default: false,
+        },
+        from_file: { type: 'string', description: 'Disambiguate source by file in path mode' },
+        to_file: { type: 'string', description: 'Disambiguate target by file in path mode' },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
         ...PAGINATION_PROPS,
       },
@@ -88,29 +115,6 @@ const BASE_TOOLS = [
     },
   },
   {
-    name: 'fn_deps',
-    description: 'Show function-level dependency chain: what a function calls and what calls it',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        name: { type: 'string', description: 'Function/method/class name (partial match)' },
-        depth: { type: 'number', description: 'Transitive caller depth', default: 3 },
-        file: {
-          type: 'string',
-          description: 'Scope search to functions in this file (partial match)',
-        },
-        kind: {
-          type: 'string',
-          enum: ALL_SYMBOL_KINDS,
-          description: 'Filter to a specific symbol kind',
-        },
-        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
-        ...PAGINATION_PROPS,
-      },
-      required: ['name'],
-    },
-  },
-  {
     name: 'fn_impact',
     description:
       'Show function-level blast radius: all functions transitively affected by changes to a function',
@@ -132,33 +136,6 @@ const BASE_TOOLS = [
         ...PAGINATION_PROPS,
       },
       required: ['name'],
-    },
-  },
-  {
-    name: 'symbol_path',
-    description: 'Find the shortest path between two symbols in the call graph (A calls...calls B)',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        from: { type: 'string', description: 'Source symbol name (partial match)' },
-        to: { type: 'string', description: 'Target symbol name (partial match)' },
-        max_depth: { type: 'number', description: 'Maximum BFS depth', default: 10 },
-        edge_kinds: {
-          type: 'array',
-          items: { type: 'string' },
-          description: 'Edge kinds to follow (default: ["calls"])',
-        },
-        reverse: { type: 'boolean', description: 'Follow edges backward', default: false },
-        from_file: { type: 'string', description: 'Disambiguate source by file (partial match)' },
-        to_file: { type: 'string', description: 'Disambiguate target by file (partial match)' },
-        kind: {
-          type: 'string',
-          enum: ALL_SYMBOL_KINDS,
-          description: 'Filter both symbols by kind',
-        },
-        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
-      },
-      required: ['from', 'to'],
     },
   },
   {
@@ -396,14 +373,19 @@ const BASE_TOOLS = [
   {
     name: 'execution_flow',
     description:
-      'Trace execution flow forward from an entry point (route, command, event) through callees to leaf functions. Answers "what happens when X is called?"',
+      'Trace execution flow forward from an entry point through callees to leaves, or list all entry points with list=true',
     inputSchema: {
       type: 'object',
       properties: {
         name: {
           type: 'string',
           description:
-            'Entry point or function name (e.g. "POST /login", "build"). Supports prefix-stripped matching.',
+            'Entry point or function name (required unless list=true). Supports prefix-stripped matching.',
+        },
+        list: {
+          type: 'boolean',
+          description: 'List all entry points grouped by type',
+          default: false,
         },
         depth: { type: 'number', description: 'Max forward traversal depth', default: 10 },
         file: {
@@ -415,19 +397,6 @@ const BASE_TOOLS = [
           enum: ALL_SYMBOL_KINDS,
           description: 'Filter to a specific symbol kind',
         },
-        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
-        ...PAGINATION_PROPS,
-      },
-      required: ['name'],
-    },
-  },
-  {
-    name: 'list_entry_points',
-    description:
-      'List all framework entry points (routes, commands, events) in the codebase, grouped by type',
-    inputSchema: {
-      type: 'object',
-      properties: {
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
         ...PAGINATION_PROPS,
       },
@@ -568,10 +537,10 @@ const BASE_TOOLS = [
             'explain',
             'where',
             'query',
-            'fn',
             'impact',
             'deps',
             'flow',
+            'dataflow',
             'complexity',
           ],
           description: 'The query command to run for each target',
@@ -658,18 +627,16 @@ const BASE_TOOLS = [
   },
   {
     name: 'dataflow',
-    description:
-      'Show data flow edges: what data flows in/out of a function, return value consumers, mutations. Requires build --dataflow.',
+    description: 'Show data flow edges or data-dependent blast radius. Requires build --dataflow.',
     inputSchema: {
       type: 'object',
       properties: {
         name: { type: 'string', description: 'Function/method name (partial match)' },
         mode: {
           type: 'string',
-          enum: ['edges', 'path', 'impact'],
-          description: 'edges (default), path, or impact',
+          enum: ['edges', 'impact'],
+          description: 'edges (default) or impact',
         },
-        target: { type: 'string', description: 'Target symbol for path mode' },
         depth: { type: 'number', description: 'Max depth for impact mode', default: 5 },
         file: { type: 'string', description: 'Scope to file (partial match)' },
         kind: { type: 'string', enum: ALL_SYMBOL_KINDS, description: 'Filter by symbol kind' },
@@ -766,7 +733,6 @@ export async function startMCPServer(customDbPath, options = {}) {
 
   // Lazy import query functions to avoid circular deps at module load
   const {
-    queryNameData,
     impactAnalysisData,
     moduleMapData,
     fileDepsData,
@@ -824,13 +790,34 @@ export async function startMCPServer(customDbPath, options = {}) {
 
       let result;
       switch (name) {
-        case 'query_function':
-          result = queryNameData(args.name, dbPath, {
-            noTests: args.no_tests,
-            limit: Math.min(args.limit ?? MCP_DEFAULTS.query_function, MCP_MAX_LIMIT),
-            offset: args.offset ?? 0,
-          });
+        case 'query': {
+          const qMode = args.mode || 'deps';
+          if (qMode === 'path') {
+            if (!args.to) {
+              result = { error: 'path mode requires a "to" argument' };
+              break;
+            }
+            result = pathData(args.name, args.to, dbPath, {
+              maxDepth: args.depth ?? 10,
+              edgeKinds: args.edge_kinds,
+              reverse: args.reverse,
+              fromFile: args.from_file,
+              toFile: args.to_file,
+              kind: args.kind,
+              noTests: args.no_tests,
+            });
+          } else {
+            result = fnDepsData(args.name, dbPath, {
+              depth: args.depth,
+              file: args.file,
+              kind: args.kind,
+              noTests: args.no_tests,
+              limit: Math.min(args.limit ?? MCP_DEFAULTS.query, MCP_MAX_LIMIT),
+              offset: args.offset ?? 0,
+            });
+          }
           break;
+        }
         case 'file_deps':
           result = fileDepsData(args.file, dbPath, {
             noTests: args.no_tests,
@@ -855,16 +842,6 @@ export async function startMCPServer(customDbPath, options = {}) {
         case 'module_map':
           result = moduleMapData(dbPath, args.limit || 20, { noTests: args.no_tests });
           break;
-        case 'fn_deps':
-          result = fnDepsData(args.name, dbPath, {
-            depth: args.depth,
-            file: args.file,
-            kind: args.kind,
-            noTests: args.no_tests,
-            limit: Math.min(args.limit ?? MCP_DEFAULTS.fn_deps, MCP_MAX_LIMIT),
-            offset: args.offset ?? 0,
-          });
-          break;
         case 'fn_impact':
           result = fnImpactData(args.name, dbPath, {
             depth: args.depth,
@@ -873,17 +850,6 @@ export async function startMCPServer(customDbPath, options = {}) {
             noTests: args.no_tests,
             limit: Math.min(args.limit ?? MCP_DEFAULTS.fn_impact, MCP_MAX_LIMIT),
             offset: args.offset ?? 0,
-          });
-          break;
-        case 'symbol_path':
-          result = pathData(args.from, args.to, dbPath, {
-            maxDepth: args.max_depth,
-            edgeKinds: args.edge_kinds,
-            reverse: args.reverse,
-            fromFile: args.from_file,
-            toFile: args.to_file,
-            kind: args.kind,
-            noTests: args.no_tests,
           });
           break;
         case 'context':
@@ -1083,24 +1049,28 @@ export async function startMCPServer(customDbPath, options = {}) {
           break;
         }
         case 'execution_flow': {
-          const { flowData } = await import('./flow.js');
-          result = flowData(args.name, dbPath, {
-            depth: args.depth,
-            file: args.file,
-            kind: args.kind,
-            noTests: args.no_tests,
-            limit: Math.min(args.limit ?? MCP_DEFAULTS.execution_flow, MCP_MAX_LIMIT),
-            offset: args.offset ?? 0,
-          });
-          break;
-        }
-        case 'list_entry_points': {
-          const { listEntryPointsData } = await import('./flow.js');
-          result = listEntryPointsData(dbPath, {
-            noTests: args.no_tests,
-            limit: Math.min(args.limit ?? MCP_DEFAULTS.list_entry_points, MCP_MAX_LIMIT),
-            offset: args.offset ?? 0,
-          });
+          if (args.list) {
+            const { listEntryPointsData } = await import('./flow.js');
+            result = listEntryPointsData(dbPath, {
+              noTests: args.no_tests,
+              limit: Math.min(args.limit ?? MCP_DEFAULTS.execution_flow, MCP_MAX_LIMIT),
+              offset: args.offset ?? 0,
+            });
+          } else {
+            if (!args.name) {
+              result = { error: 'Provide a name or set list=true' };
+              break;
+            }
+            const { flowData } = await import('./flow.js');
+            result = flowData(args.name, dbPath, {
+              depth: args.depth,
+              file: args.file,
+              kind: args.kind,
+              noTests: args.no_tests,
+              limit: Math.min(args.limit ?? MCP_DEFAULTS.execution_flow, MCP_MAX_LIMIT),
+              offset: args.offset ?? 0,
+            });
+          }
           break;
         }
         case 'complexity': {
@@ -1197,18 +1167,8 @@ export async function startMCPServer(customDbPath, options = {}) {
           break;
         }
         case 'dataflow': {
-          const mode = args.mode || 'edges';
-          if (mode === 'path') {
-            if (!args.target) {
-              result = { error: 'path mode requires a "target" argument' };
-              break;
-            }
-            const { dataflowPathData } = await import('./dataflow.js');
-            result = dataflowPathData(args.name, args.target, dbPath, {
-              noTests: args.no_tests,
-              maxDepth: args.depth ?? 10,
-            });
-          } else if (mode === 'impact') {
+          const dfMode = args.mode || 'edges';
+          if (dfMode === 'impact') {
             const { dataflowImpactData } = await import('./dataflow.js');
             result = dataflowImpactData(args.name, dbPath, {
               depth: args.depth,
@@ -1224,7 +1184,7 @@ export async function startMCPServer(customDbPath, options = {}) {
               file: args.file,
               kind: args.kind,
               noTests: args.no_tests,
-              limit: Math.min(args.limit ?? MCP_DEFAULTS.fn_deps, MCP_MAX_LIMIT),
+              limit: Math.min(args.limit ?? MCP_DEFAULTS.query, MCP_MAX_LIMIT),
               offset: args.offset ?? 0,
             });
           }

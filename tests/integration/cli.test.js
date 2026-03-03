@@ -101,9 +101,9 @@ describe('CLI smoke tests', () => {
     expect(data).toHaveProperty('results');
   });
 
-  // ─── Fn ──────────────────────────────────────────────────────────────
-  test('fn --json returns valid JSON with results', () => {
-    const out = run('fn', 'add', '--db', dbPath, '--json');
+  // ─── Query (deps mode, formerly fn) ──────────────────────────────────
+  test('query --json returns fnDeps-style results', () => {
+    const out = run('query', 'add', '--db', dbPath, '--json');
     const data = JSON.parse(out);
     expect(data).toHaveProperty('results');
   });
@@ -115,9 +115,9 @@ describe('CLI smoke tests', () => {
     expect(data).toHaveProperty('results');
   });
 
-  // ─── Path ───────────────────────────────────────────────────────────
-  test('path --json returns valid JSON with path info', () => {
-    const out = run('path', 'sumOfSquares', 'add', '--db', dbPath, '--json');
+  // ─── Query (path mode, formerly path) ────────────────────────────────
+  test('query --path --json returns valid JSON with path info', () => {
+    const out = run('query', 'sumOfSquares', '--path', 'add', '--db', dbPath, '--json');
     const data = JSON.parse(out);
     expect(data).toHaveProperty('found');
     expect(data).toHaveProperty('path');
