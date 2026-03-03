@@ -1,146 +1,287 @@
-# Codegraph Architectural Audit — Cold Analysis
+# Codegraph Architectural Audit — Revised Analysis
 
 > **Scope:** Unconstrained redesign proposals. No consideration for migration effort or backwards compatibility. What would the ideal architecture look like?
+>
+> **Revision context:** The original audit (Feb 22, 2026) analyzed v1.4.0 with ~12 source modules totaling ~5K lines. Since then, the codebase grew to v2.6.0 with 35 source modules totaling 17,830 lines — a 3.5x expansion. 18 new modules were added, MCP tools went from 12 to 25, CLI commands from ~20 to 45, and `index.js` exports from ~40 to 120+. This revision re-evaluates every recommendation against the actual codebase as it stands today.
 
 ---
 
-## 1. parser.js Is a Monolith — Split Into a Plugin System
+## What Changed Since the Original Audit
 
-**Current state:** `parser.js` is 2,215 lines containing 9 language extractors, the WASM/native engine abstraction, the language registry, tree walking helpers, and the unified parse API — all in one file.
+Before diving into recommendations, here's what happened:
 
-**Problem:** Adding or modifying a language extractor forces you to work inside a 2K-line file alongside unrelated extractors. The extractors share repetitive patterns (walk tree → switch on node type → push to arrays) but each reimplements the loop. Testing a single language requires importing the entire parser surface.
+| Metric | Feb 2026 (v1.4.0) | Mar 2026 (v2.6.0) | Growth |
+|--------|-------------------|-------------------|--------|
+| Source modules | ~12 | 35 | 2.9x |
+| Total source lines | ~5,000 | 17,830 | 3.5x |
+| `queries.js` | 823 lines | 3,110 lines | 3.8x |
+| `mcp.js` | 354 lines | 1,212 lines | 3.4x |
+| `cli.js` | -- | 1,285 lines | -- |
+| `builder.js` | 554 lines | 1,173 lines | 2.1x |
+| `embedder.js` | 525 lines | 1,113 lines | 2.1x |
+| `complexity.js` | -- | 2,163 lines | New |
+| MCP tools | 12 | 25 | 2.1x |
+| CLI commands | ~20 | 45 | 2.3x |
+| `index.js` exports | ~40 | 120+ | 3x |
+| Test files | ~15 | 59 | 3.9x |
+
+**Key pattern observed:** Every new feature (audit, batch, boundaries, check, cochange, communities, complexity, flow, manifesto, owners, structure, triage) was added as a standalone module following the same internal pattern: raw SQL + BFS/traversal logic + CLI formatting + JSON output + `*Data()` / `*()` dual functions. No shared abstractions were introduced. The original architectural debt wasn't addressed -- it was replicated 15 times.
+
+---
+
+## 1. The Dual-Function Anti-Pattern Is Now the Dominant Architecture Problem
+
+**Original analysis (S3):** `queries.js` mixes data access, graph algorithms, and presentation. The `*Data()` / `*()` dual-function pattern was identified as a workaround for coupling.
+
+**What happened:** Every new module adopted the same pattern. There are now **15+ modules** each implementing both data extraction AND CLI formatting:
+
+```
+queries.js      -> queryNameData() / queryName(), impactAnalysisData() / impactAnalysis(), ...
+audit.js        -> auditData() / audit()
+batch.js        -> batchData() / batch()
+check.js        -> checkData() / check()
+cochange.js     -> coChangeData() / coChange(), coChangeTopData() / coChangeTop()
+communities.js  -> communitiesData() / communities()
+complexity.js   -> complexityData() / complexity()
+flow.js         -> flowData() / flow()
+manifesto.js    -> manifestoData() / manifesto()
+owners.js       -> ownersData() / owners()
+structure.js    -> structureData() / structure(), hotspotsData() / hotspots()
+triage.js       -> triageData() / triage()
+branch-compare  -> branchCompareData() / branchCompare()
+```
+
+Each of these modules independently handles: DB opening, SQL execution, result shaping, pagination integration, CLI formatting, JSON output, and `--no-tests` filtering. The repetition is massive.
+
+**Ideal architecture -- Command + Query separation with shared infrastructure:**
+
+```
+src/
+  commands/                    # One file per command
+    query.js                   # { execute(args, ctx) -> data, format(data, opts) -> string }
+    impact.js
+    audit.js
+    check.js
+    ...
+
+  infrastructure/
+    command-runner.js          # Shared lifecycle: open DB -> validate -> execute -> format -> paginate
+    result-formatter.js        # Shared formatting: table, JSON, NDJSON, Mermaid
+    pagination.js              # Shared pagination with consistent interface
+    test-filter.js             # Shared --no-tests / isTestFile logic
+
+  analysis/                    # Pure algorithms -- no I/O, no formatting
+    bfs.js                     # Graph traversals (BFS, DFS, shortest path)
+    impact.js                  # Blast radius computation
+    confidence.js              # Import resolution scoring
+    clustering.js              # Community detection, coupling analysis
+    risk.js                    # Triage scoring, hotspot detection
+```
+
+The key insight: every command follows the same lifecycle -- `(args) -> open DB -> query -> analyze -> format -> output`. A shared `CommandRunner` handles the lifecycle. Each command only implements the unique query + analysis logic. Formatting is always separate and pluggable (CLI text, JSON, NDJSON, Mermaid).
+
+This eliminates the dual-function pattern entirely. `index.js` exports `auditData` (the command's execute function) -- the CLI formatter is internal to the CLI layer and never exported.
+
+---
+
+## 2. The Database Layer Needs a Repository -- Now More Than Ever
+
+**Original analysis (S2):** SQL scattered across `builder.js`, `queries.js`, `embedder.js`, `watcher.js`, `cycles.js`.
+
+**What happened:** SQL is now scattered across **20+ modules**: all of the above plus `audit.js`, `check.js`, `cochange.js`, `communities.js`, `complexity.js`, `flow.js`, `manifesto.js`, `owners.js`, `structure.js`, `triage.js`, `snapshot.js`, `branch-compare.js`. Each module opens the DB independently with `openDb()`, creates its own prepared statements, and writes raw SQL inline.
+
+The schema grew to 9 tables: `nodes`, `edges`, `node_metrics`, `file_hashes`, `co_changes`, `co_change_meta`, `file_commit_counts`, `build_meta`, `function_complexity`. Plus embeddings and FTS5 tables in `embedder.js`.
+
+**Ideal architecture** (unchanged from original, but now higher priority):
+
+```
+src/
+  db/
+    connection.js              # Open, WAL mode, pragma tuning, connection pooling
+    migrations.js              # Schema versions (currently 9 migrations)
+    repository.js              # ALL read/write operations across all 9+ tables
+    types.js                   # JSDoc type definitions for all entities
+```
+
+**New addition -- query builders for common patterns:**
+
+Many modules do the same filtered query: "find nodes WHERE kind IN (...) AND file NOT LIKE '%test%' AND name LIKE ? ORDER BY ... LIMIT ? OFFSET ?". A lightweight query builder eliminates this SQL duplication:
+
+```js
+repo.nodes()
+  .where({ kind: ['function', 'method'], file: { notLike: '%test%' } })
+  .matching(name)
+  .orderBy('name')
+  .paginate(opts)
+  .all()
+```
+
+Not an ORM -- a thin SQL builder that generates the same prepared statements but eliminates string construction across 20 modules.
+
+---
+
+## 3. queries.js at 3,110 Lines Must Be Decomposed
+
+**Original analysis (S3):** 823 lines mixing data access, algorithms, and presentation.
+
+**Current state:** 3,110 lines -- nearly 4x growth. Contains 15+ data functions, 15+ display functions, constants (`SYMBOL_KINDS`, `ALL_SYMBOL_KINDS`, `VALID_ROLES`, `FALSE_POSITIVE_NAMES`), icon helpers (`kindIcon`), normalization (`normalizeSymbol`), test filtering (`isTestFile`), and generator functions (`iterListFunctions`, `iterRoles`, `iterWhere`).
+
+This is now the second-largest file in the codebase (after `complexity.js` at 2,163 lines) and the most interconnected -- almost every other module imports from it.
+
+**Ideal decomposition:**
+
+```
+src/
+  analysis/
+    symbol-lookup.js           # queryNameData, whereData, listFunctionsData
+    impact.js                  # impactAnalysisData, fnImpactData, diffImpactData
+    dependencies.js            # fileDepsData, fnDepsData, pathData
+    module-map.js              # moduleMapData, statsData
+    context.js                 # contextData, explainData
+    roles.js                   # rolesData (currently delegates to structure.js)
+
+  shared/
+    constants.js               # SYMBOL_KINDS, ALL_SYMBOL_KINDS, VALID_ROLES, FALSE_POSITIVE_NAMES
+    filters.js                 # isTestFile, normalizeSymbol, kindIcon
+    generators.js              # iterListFunctions, iterRoles, iterWhere
+```
+
+Each analysis module is purely data -- no CLI output, no JSON formatting, no `console.log`. The `*Data()` suffix disappears because there's no `*()` counterpart. These are just functions that return data.
+
+---
+
+## 4. MCP at 1,212 Lines with 25 Tools Needs Composability
+
+**Original analysis (S10):** 354 lines, 12 tools, monolithic switch dispatch.
+
+**Current state:** 1,212 lines, 25 tools. The `buildToolList()` function dynamically builds tool definitions, and a large switch/dispatch handles all 25 tools. Adding a tool still requires editing the tool list, the dispatch block, and importing the handler -- three changes in one file.
+
+**Ideal architecture** (unchanged from original, now critical):
+
+```
+src/
+  mcp/
+    server.js                  # MCP server setup, transport, connection lifecycle
+    tool-registry.js           # Auto-discovery + dynamic registration
+    middleware.js              # Pagination, error handling, repo resolution
+    tools/
+      query-function.js        # { schema, handler }
+      file-deps.js
+      impact-analysis.js
+      check.js
+      audit.js
+      complexity.js
+      co-changes.js
+      structure.js
+      ... (25 files, one per tool)
+```
+
+Each tool is self-contained:
+
+```js
+export const schema = {
+  name: 'audit',
+  description: '...',
+  inputSchema: { ... }
+}
+
+export async function handler(args, context) {
+  return auditData(args.target, context.resolveDb(args.repo), args)
+}
+```
+
+The registry auto-discovers tools from the directory. Shared middleware handles pagination (the `MCP_DEFAULTS` logic currently in `paginate.js`), error wrapping, and multi-repo resolution. Adding a tool = adding a file.
+
+---
+
+## 5. CLI at 1,285 Lines with 45 Commands Needs Command Objects
+
+**Original analysis (S12):** CLI was mentioned as a future concern.
+
+**Current state:** 1,285 lines of inline Commander.js chains. 45 commands registered with `.command().description().option().action()` patterns. Each action handler directly calls module functions, handles `--json` output, and manages error display.
 
 **Ideal architecture:**
 
 ```
 src/
-  parser/
-    index.js              # Public API: parseFileAuto, parseFilesAuto, resolveEngine
-    registry.js            # LANGUAGE_REGISTRY + extension mapping
-    engine.js              # Native/WASM init, engine resolution, grammar loading
-    tree-utils.js          # findChild, findParentClass, walkTree helpers
-    base-extractor.js      # Shared extraction framework (the walk loop + accumulator)
-    extractors/
-      javascript.js        # JS/TS/TSX extractor
+  cli/
+    index.js                   # Commander setup, auto-discover commands
+    shared/
+      output.js                # --json, --ndjson, table, plain text output
+      options.js               # Shared options (--no-tests, --json, --db, --engine, --limit, --offset)
+      validation.js            # Argument validation, path resolution
+    commands/
+      build.js                 # { name, description, options, validate, execute }
+      query.js
+      impact.js
+      audit.js
+      check.js
+      ... (45 files)
+```
+
+Each command:
+
+```js
+export default {
+  name: 'audit',
+  description: 'Combined explain + impact + health report',
+  arguments: [{ name: 'target', required: true }],
+  options: [
+    { flags: '-T, --no-tests', description: 'Exclude test files' },
+    { flags: '-j, --json', description: 'JSON output' },
+    { flags: '--db <path>', description: 'Custom DB path' },
+  ],
+  async execute(args, opts) {
+    const data = await auditData(args.target, opts.db, opts)
+    return data  // CommandRunner handles formatting
+  },
+}
+```
+
+The CLI index auto-discovers commands. Shared options (`--no-tests`, `--json`, `--db`, `--engine`, `--limit`, `--offset`) are applied uniformly. The `CommandRunner` handles the open-DB -> execute -> format -> output lifecycle.
+
+---
+
+## 6. complexity.js at 2,163 Lines Is a Hidden Monolith
+
+**Not in original analysis** -- this module didn't exist in Feb 2026.
+
+**Current state:** 2,163 lines containing language-specific AST complexity rules for 8 languages (JS/TS, Python, Go, Rust, Java, C#, PHP, Ruby), plus Halstead metrics computation, maintainability index calculation, LOC/SLOC counting, and CLI formatting. It's the largest file in the codebase.
+
+**Problem:** The file is structured as a giant map of language to rules, but the rules for each language are deeply nested objects with inline AST traversal logic. Adding a new language or modifying a rule requires working inside a 2K-line file.
+
+**Ideal architecture:**
+
+```
+src/
+  complexity/
+    index.js                   # Public API: computeComplexity, complexityData
+    metrics.js                 # Halstead, MI, LOC/SLOC computation (language-agnostic)
+    engine.js                  # Walk AST + apply rules -> raw metric values
+    rules/
+      javascript.js            # JS/TS/TSX complexity rules
       python.js
       go.js
       rust.js
       java.js
       csharp.js
-      ruby.js
       php.js
-      hcl.js
+      ruby.js
 ```
 
-**Key design change:** Introduce a `BaseExtractor` that owns the tree walk loop and provides hook methods per node type. Each language extractor declares a node-type → handler map instead of reimplementing the traversal:
-
-```js
-// Conceptual — not real API
-export default {
-  language: 'python',
-  handlers: {
-    function_definition: (node, ctx) => { ctx.addDefinition(...) },
-    call:                (node, ctx) => { ctx.addCall(...) },
-    import_statement:    (node, ctx) => { ctx.addImport(...) },
-  }
-}
-```
-
-This eliminates the repeated walk-and-switch boilerplate across 9 extractors while keeping language-specific logic isolated. Each extractor becomes independently testable and the registration is declarative.
+Each rules file exports a declarative complexity rule set. The engine applies rules to AST nodes. Metrics computation is shared. This mirrors the parser plugin system concept -- same pattern, applied to complexity.
 
 ---
 
-## 2. The Database Layer Is Too Thin — Introduce a Repository Pattern
+## 7. builder.js at 1,173 Lines -- Pipeline Architecture
 
-**Current state:** `db.js` is 130 lines — it opens SQLite, runs migrations, and that's it. All actual SQL lives scattered across `builder.js`, `queries.js`, `embedder.js`, `watcher.js`, and `cycles.js`. Every consumer writes raw SQL inline.
+**Original analysis (S4):** 554 lines, mega-function that's hard to test in parts.
 
-**Problems:**
-- SQL duplication (similar node/edge lookups written multiple times in different modules)
-- No single place to understand or optimize the query surface
-- Schema knowledge leaks everywhere — if a column changes, you grep the entire codebase
-- No abstraction boundary for swapping storage engines (e.g., moving to DuckDB or an in-memory graph for tests)
+**Current state:** 1,173 lines -- doubled. Now includes change journal integration, structure building, role classification, incremental verification, and more complex edge building. The `buildGraph()` function is even more of a mega-function.
 
-**Ideal architecture:**
-
-```
-src/
-  db/
-    connection.js         # Open, WAL mode, pragma tuning
-    migrations.js         # Schema versions
-    repository.js         # ALL data access methods
-    types.js              # TS-style JSDoc type defs for Node, Edge, Embedding
-```
-
-`repository.js` would expose a complete data access API:
+**Ideal architecture** (unchanged, reinforced):
 
 ```js
-// Writes
-insertNode(node)
-insertEdge(edge)
-insertEmbeddings(batch)
-upsertFileHash(file, hash, mtime)
-deleteFileNodes(file)
-deleteFileEdges(file)
-
-// Reads
-findNodesByName(name, opts?)
-findNodesByFile(file, opts?)
-findEdgesFrom(nodeId, kind?)
-findEdgesTo(nodeId, kind?)
-getFileHash(file)
-getChangedFiles(allFiles)
-getAllEmbeddings()
-getEmbeddingMeta()
-
-// Graph traversals (currently in queries.js as raw SQL + BFS)
-getTransitiveCallers(nodeId, depth)
-getTransitiveDependents(file, depth)
-getClassHierarchy(classNodeId)
-```
-
-All prepared statements live here. All index tuning happens here. Consumers never see SQL.
-
-**Secondary benefit:** This enables an `InMemoryRepository` for tests — no temp file cleanup, instant setup, true unit isolation.
-
----
-
-## 3. queries.js Mixes Data Access, Graph Algorithms, and Presentation
-
-**Current state:** `queries.js` (823 lines) contains SQL queries, BFS traversal logic, formatting/printing, JSON serialization, and CLI output — all interleaved. Each "query command" exists as both a `*Data()` function (returns object) and a presentation function (prints to stdout).
-
-**Problem:** The presentation layer (stdout formatting, `kindIcon()`, table printing) is coupled to the analysis layer (BFS, impact scoring). You can't reuse the BFS logic in the MCP server without also pulling in the CLI formatting. The `*Data()`/`*()` dual-function pattern is a workaround for this coupling.
-
-**Ideal architecture — three layers:**
-
-```
-src/
-  analysis/
-    impact.js             # impactAnalysis: BFS over edges, returns typed result
-    call-chain.js         # fnDeps, fnImpact: transitive caller/callee traversal
-    diff-impact.js        # Git diff → affected functions → blast radius
-    module-map.js         # Connectivity ranking
-    class-hierarchy.js    # Inheritance resolution
-
-  formatters/
-    cli-formatter.js      # Human-readable stdout output
-    json-formatter.js     # --json flag handling
-    table-formatter.js    # Tabular output for module-map, list-functions
-```
-
-Analysis modules take a repository and return pure data. Formatters take data and produce strings. The CLI, MCP server, and programmatic API all consume analysis modules directly and pick their own formatter (or none).
-
----
-
-## 4. builder.js Orchestrates Too Many Concerns — Extract a Pipeline
-
-**Current state:** `builder.js` (554 lines) handles file collection, config loading, alias resolution, incremental change detection, parsing, node insertion, edge building, barrel file resolution, and statistics — all in `buildGraph()`.
-
-**Problem:** `buildGraph()` is a mega-function that's hard to test in parts. You can't test edge building without running the full parse phase. You can't test barrel resolution without a populated database.
-
-**Ideal architecture — explicit pipeline stages:**
-
-```js
-// Each stage is a pure-ish function: (input, config) => output
 const pipeline = [
   collectFiles,        // (rootDir, config) => filePaths[]
   detectChanges,       // (filePaths, db) => { changed, removed, isFullBuild }
@@ -151,372 +292,111 @@ const pipeline = [
   buildClassEdges,     // (symbolMap, nodeIndex) => classEdges[]
   resolveBarrels,      // (edges, symbolMap) => resolvedEdges[]
   insertEdges,         // (allEdges, db) => stats
+  buildStructure,      // (db, fileSymbols, rootDir) => structureStats
+  classifyRoles,       // (db) => roleStats
+  computeComplexity,   // (db, rootDir, engine) => complexityStats
+  emitChangeJournal,   // (rootDir, changes) => void
 ]
 ```
 
-Each stage is independently testable. The pipeline runner handles transactions, logging, and statistics. Stages can be composed differently for watch mode (skip collectFiles, skip detectChanges, run single-file variant).
+The pipeline grew -- four new stages since the original analysis. This reinforces the need: each stage is independently testable and the pipeline runner handles transactions, logging, progress, and statistics.
+
+**Watch mode** reuses the same stages triggered per-file, eliminating the `watcher.js` divergence. `change-journal.js` and `journal.js` integrate as pipeline hooks rather than separate code paths.
 
 ---
 
-## 5. Embedder Should Be a Standalone Subsystem
+## 8. embedder.js at 1,113 Lines -- Now Includes Three Search Engines
 
-**Current state:** `embedder.js` (525 lines) creates its own DB tables (`embeddings`, `embedding_meta`), manages its own model lifecycle, and implements both vector storage and search. It's effectively a mini vector database bolted onto the side of the graph database.
+**Original analysis (S5):** 525 lines, mini vector database bolted onto the graph DB.
 
-**Problem:** Embedding concerns bleed into the graph DB schema. The cosine similarity search is O(n) full scan — fine for thousands of symbols, will not scale. The model registry, embedding generation, and search are all tangled in one file.
+**Current state:** 1,113 lines. Now contains:
+- 8 embedding model definitions with batch sizes and dimensions
+- 2 embedding strategies (structured, source)
+- Vector storage in SQLite blobs
+- Cosine similarity search (O(n) linear scan)
+- **FTS5 full-text index with BM25 scoring** (new)
+- **Hybrid search with RRF fusion** (new)
+- Model lifecycle management (lazy loading, caching)
 
-**Ideal architecture:**
+Hybrid search (originally planned as Phase 5.3) is already implemented -- but inside the monolith.
+
+**Ideal architecture** (updated):
 
 ```
 src/
   embeddings/
-    index.js              # Public API
-    model-registry.js     # Model definitions, batch sizes, loading
-    generator.js          # Source → text preparation → batch embedding
-    store.js              # Vector storage (pluggable: SQLite blob, flat file, HNSW index)
-    search.js             # Similarity search, RRF multi-query fusion
+    index.js                   # Public API
+    models.js                  # Model definitions, batch sizes, loading
+    generator.js               # Source -> text preparation -> batch embedding
+    stores/
+      sqlite-blob.js           # Current O(n) cosine similarity
+      fts5.js                  # BM25 keyword search via FTS5
+    search/
+      semantic.js              # Vector similarity search
+      keyword.js               # FTS5 BM25 search
+      hybrid.js                # RRF fusion of semantic + keyword
+    strategies/
+      structured.js            # Structured text preparation
+      source.js                # Raw source preparation
 ```
 
-**Key design change:** Make the vector store pluggable. The current SQLite blob approach works but is a linear scan. A future `HNSWStore` (using `hnswlib-node` or similar) would give O(log n) approximate nearest neighbor search — critical when the symbol count reaches 50K+.
-
-The store interface would be:
-
-```js
-// Abstract store
-insert(nodeId, vector, preview)
-search(queryVector, topK, minScore) → results[]
-delete(nodeId)
-rebuild()
-```
-
-This also enables storing embeddings in a separate file from the graph DB, which avoids bloating `graph.db` with large binary blobs.
+The three search modes (semantic, keyword, hybrid) become composable search strategies rather than three code paths in one file. The store abstraction enables future pluggable backends (HNSW, DiskANN) without touching search logic.
 
 ---
 
-## 6. The Native/WASM Abstraction Leaks
+## 9. parser.js Is No Longer a Monolith -- Downgrade Priority
 
-**Current state:** `parser.js` has `resolveEngine()` that returns `{ name, native }`, then every call site branches on `engine.name === 'native'`. `resolve.js` has its own native check. `cycles.js` has its own native check. `builder.js` passes engine options through.
+**Original analysis (S1):** 2,215 lines, 9 language extractors in one file. Highest priority.
 
-**Problem:** The dual-engine strategy is a great idea but its implementation is scattered. Every consumer needs to know about native vs. WASM and handle both paths.
+**Current state:** 404 lines. The native Rust engine now handles the heavy parsing. `parser.js` is a thin WASM fallback with `LANGUAGE_REGISTRY`, engine resolution, and minimal extraction. The extractors still exist but are much smaller per-language.
 
-**Ideal architecture — unified engine interface:**
-
-```js
-// engine.js — returns an object with the same API regardless of backend
-export function createEngine(opts) {
-  const backend = resolveBackend(opts) // 'native' | 'wasm'
-
-  return {
-    name: backend,
-    parseFile(filePath, source) { ... },
-    parseFiles(filePaths, rootDir) { ... },
-    resolveImport(from, source, rootDir, aliases) { ... },
-    resolveImports(batch, rootDir, aliases) { ... },
-    detectCycles(db) { ... },
-    computeConfidence(caller, target, imported) { ... },
-    createCache() { ... },
-  }
-}
-```
-
-Consumers receive an engine object and call methods on it. They never branch on native vs. WASM. The engine internally dispatches to the right implementation. This is the Strategy pattern properly applied.
-
-**Bonus:** This makes it trivial to add a third engine backend (e.g., a remote parsing service for very large repos) without touching any consumer code.
+**Revised recommendation:** This is no longer urgent. The Rust engine already implements the plugin system concept natively. The WASM path in `parser.js` at 404 lines is manageable. If the parser ever grows again (new languages added to WASM fallback), revisit -- but for now, this is fine.
 
 ---
 
-## 7. No Streaming / Event Architecture — Everything Is Batch
+## 10. The Native/WASM Abstraction -- Less Critical Now
 
-**Current state:** The entire build pipeline is synchronous batch processing. Parse all files → insert all nodes → build all edges. The watcher does per-file updates but reimplements the pipeline in a simpler form.
+**Original analysis (S6):** Scattered `engine.name === 'native'` branching across multiple files.
 
-**Problem:** For large repos (10K+ files), the user waits for the entire pipeline to complete before seeing anything. There's no progress reporting during parsing. There's no way to cancel a build mid-flight. The watcher's simplified pipeline diverges from the main build path (different code, different edge cases). *(Note: two concrete edge cases — concurrent file edits causing EBUSY/EACCES during read, and symlink loops causing infinite recursion in `collectFiles` — have been fixed. `readFileSafe` retries on transient OS errors and is shared between `builder.js` and `watcher.js`. `collectFiles` tracks visited real paths to break symlink cycles.)*
+**Current state:** The native engine is the primary path. WASM is a fallback. The branching still exists but is less problematic because most users never hit the WASM path. The unified engine interface is still the right design but it's a polish item, not a structural problem.
 
-**Ideal architecture — event-driven pipeline:**
-
-```js
-const pipeline = createPipeline(config)
-
-pipeline.on('file:parsed',   (file, symbols) => { /* progress */ })
-pipeline.on('file:indexed',  (file, nodeCount) => { /* progress */ })
-pipeline.on('edge:built',    (edge) => { /* streaming insert */ })
-pipeline.on('build:complete', (stats) => { /* summary */ })
-pipeline.on('error',         (file, err) => { /* continue or abort */ })
-
-await pipeline.run(rootDir)
-// or for watch mode:
-await pipeline.watch(rootDir) // reuses same stages, different trigger
-```
-
-This unifies the build and watch code paths. Progress is naturally reported via events. Cancellation is a `pipeline.abort()`. Large builds can stream results to the DB incrementally instead of buffering everything in memory.
+**Revised priority:** Low-Medium. Do it when touching these files for other reasons.
 
 ---
 
-## 8. Configuration Is Fine but Should Support Project Profiles
+## 11. Qualified Names + Hierarchical Scoping -- Still Important
 
-**Current state:** Single `.codegraphrc.json` file, flat config, env var overrides. Clean and simple.
+**Original analysis (S13):** Flat node model with name collisions resolved by heuristics.
 
-**What's missing for real-world use:**
+**Current state:** Unchanged. The `nodes` table still has `(name, kind, file, line)` with no scope or qualified name. The `structure.js` module added `role` classification but not scoping. With the codebase now handling more complex analysis (communities, boundaries, flow tracing), the lack of qualified names creates more ambiguity in more places.
 
-**Profile-based configuration.** A monorepo with 3 services needs different settings per service (different `include`/`exclude`, different `ignoreDirs`, different `dbPath`). Currently you'd need 3 separate config files and run from 3 different directories.
-
-```json
-{
-  "profiles": {
-    "backend": {
-      "include": ["services/api/**"],
-      "build": { "dbPath": ".codegraph/api.db" }
-    },
-    "frontend": {
-      "include": ["apps/web/**"],
-      "extensions": [".ts", ".tsx"],
-      "build": { "dbPath": ".codegraph/web.db" }
-    }
-  }
-}
-```
-
-```bash
-codegraph build --profile backend
-codegraph build --profile frontend
-codegraph build  # default = all
-```
-
-This maps cleanly to the multi-repo registry concept already in the codebase, but works within a single repo.
-
----
-
-## 9. Import Resolution Confidence Scoring Is Heuristic — Add Import-Graph Awareness
-
-**Current state:** `computeConfidence()` uses file proximity (same dir = 0.7, parent dir = 0.5, fallback = 0.3) to disambiguate when multiple functions share a name.
-
-**Problem:** Proximity is a weak signal. If `src/utils/format.js` exports `format()` and `src/api/format.js` also exports `format()`, and the caller is in `src/api/handler.js`, proximity correctly scores `src/api/format.js` higher. But if the caller explicitly imports from `src/utils/format.js`, the import graph already tells us the answer with certainty — and the current code does use imports when available (score 1.0). The gap is in the fallback path where there's no import but there IS an import chain (A imports B which imports C which exports the function).
-
-**Ideal enhancement — transitive import awareness:**
-
-Before falling back to proximity, walk the import graph from the caller file. If there's any import path (even indirect through barrel files) that reaches one of the candidates, that candidate gets a 0.9 score. Only if no import path exists at all do we fall back to proximity heuristics.
-
-This is a targeted algorithmic improvement, not a structural change, but it significantly improves edge accuracy for large codebases with many same-named functions.
-
----
-
-## 10. The MCP Server Should Be Composable, Not Monolithic
-
-**Current state:** `mcp.js` (354 lines) has a hardcoded `TOOLS` array with 12 tool definitions, each with inline JSON schemas, and a `switch` statement dispatching to handler functions.
-
-**Problem:** Adding a new MCP tool requires editing the TOOLS array (schema), the switch statement (dispatch), and importing the handler — three changes in one file. The tool schemas are verbose JSON objects mixed with implementation logic.
-
-**Ideal architecture:**
-
-```
-src/
-  mcp/
-    server.js             # MCP server setup, transport, connection lifecycle
-    tool-registry.js      # Dynamic tool registration
-    tools/
-      query-function.js   # { schema, handler } per tool
-      file-deps.js
-      impact-analysis.js
-      find-cycles.js
-      semantic-search.js
-      ...
-```
-
-Each tool is a self-contained module:
-
-```js
-// tools/query-function.js
-export const schema = {
-  name: 'query_function',
-  description: '...',
-  inputSchema: { ... }
-}
-
-export async function handler(args, context) {
-  const dbPath = context.resolveDb(args.repo)
-  return queryNameData(args.name, dbPath)
-}
-```
-
-The registry auto-discovers tools from the `tools/` directory. Adding a tool = adding a file. No other files change.
-
----
-
-## 11. Testing Strategy Needs Layers
-
-**Current state:** Tests are a mix of integration tests (full pipeline through SQLite) and pseudo-unit tests that still often hit the filesystem or database. There's no clear boundary between "test the algorithm" and "test the integration."
-
-**Ideal testing pyramid:**
-
-```
-                    ╱╲
-                   ╱  ╲        E2E (2-3 tests)
-                  ╱ E2E╲       Full CLI invocation, real project, assert output
-                 ╱──────╲
-                ╱        ╲     Integration (current tests, refined)
-               ╱Integration╲   Build pipeline, query results, MCP responses
-              ╱────────────╲
-             ╱              ╲  Unit (new layer)
-            ╱     Unit       ╲ Extractors, algorithms, formatters — no I/O
-           ╱──────────────────╲
-```
-
-**What's missing:**
-- **Pure unit tests** for extractors (pass AST node, assert symbols — no file I/O)
-- **Pure unit tests** for BFS/Tarjan algorithms (pass adjacency list, assert result)
-- **Pure unit tests** for confidence scoring (pass parameters, assert score)
-- **Repository mock** for query tests (in-memory data, no SQLite)
-- **E2E tests** that invoke the CLI binary on a real (small) project and assert exit codes + stdout
-
-The repository pattern from point #2 directly enables this: unit tests use `InMemoryRepository`, integration tests use `SqliteRepository`.
-
----
-
-## 12. CLI Architecture — Move to Command Objects
-
-**Current state:** `cli.js` defines all commands inline with Commander.js. Each command is a `.command().description().option().action()` chain that directly calls functions.
-
-**Problem:** The CLI file grows linearly with every new command. Command logic (option parsing, validation, output formatting) is mixed with framework wiring. You can't test a command's behavior without invoking Commander.
-
-**Ideal architecture:**
-
-```
-src/
-  cli/
-    index.js              # Commander setup, command registration
-    commands/
-      build.js            # { name, description, options, validate, execute }
-      query.js
-      impact.js
-      deps.js
-      export.js
-      search.js
-      watch.js
-      registry.js
-      ...
-```
-
-Each command is a plain object:
-
-```js
-export default {
-  name: 'impact',
-  description: 'Show what depends on a file',
-  arguments: [{ name: 'file', required: true }],
-  options: [
-    { flags: '--depth <n>', description: 'Traversal depth', default: 3 },
-    { flags: '--json', description: 'JSON output' },
-  ],
-  validate(args, opts) { /* pre-flight checks */ },
-  async execute(args, opts) { /* the actual work */ },
-}
-```
-
-The CLI index auto-discovers commands and registers them with Commander. Each command is independently testable by calling `execute()` directly.
-
----
-
-## 13. Graph Model Is Flat — Consider Hierarchical Scoping
-
-**Current state:** The `nodes` table has `(name, kind, file, line)`. A function named `format` in `src/a.js` and a method named `format` on class `DateHelper` in `src/b.js` are both just nodes with `name=format`. The class membership is encoded as an edge, not as a structural property.
-
-**Problem:** Name collisions are resolved through the confidence scoring heuristic. But the graph has no concept of scope — there's no way to express "this `format` belongs to `DateHelper`" as a structural property of the node. This makes queries ambiguous: `codegraph query format` returns all `format` symbols across the entire graph.
-
-**Ideal enhancement — qualified names:**
+**Ideal enhancement** (unchanged):
 
 ```sql
-CREATE TABLE nodes (
-  id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL,           -- 'format'
-  qualified_name TEXT,          -- 'DateHelper.format' or 'utils/date::format'
-  kind TEXT NOT NULL,
-  file TEXT NOT NULL,
-  scope TEXT,                   -- 'DateHelper' (parent class/module/namespace)
-  line INTEGER,
-  end_line INTEGER,
-  visibility TEXT,              -- 'public' | 'private' | 'protected' | 'internal'
-  UNIQUE(qualified_name, kind, file)
-);
+ALTER TABLE nodes ADD COLUMN qualified_name TEXT;  -- 'DateHelper.format'
+ALTER TABLE nodes ADD COLUMN scope TEXT;            -- 'DateHelper'
+ALTER TABLE nodes ADD COLUMN visibility TEXT;       -- 'public' | 'private' | 'protected'
 ```
 
-The `qualified_name` gives every symbol a unique identity within its file. The `scope` field enables queries like "all methods of class X" without traversing edges. The `visibility` field enables filtering out private implementation details from impact analysis.
-
-This doesn't change the edge model — it enriches the node model to reduce ambiguity at the source.
-
 ---
 
-## 14. No Caching Layer Between DB and Queries
+## 12. Domain Error Hierarchy -- More Urgent with 35 Modules
 
-**Current state:** Every query function opens the DB, runs SQL, returns results, and closes. There's no caching of query results, no materialized views, no precomputed aggregates.
+**Original analysis (S17):** Inconsistent error handling across ~12 modules.
 
-**Fine for now.** SQLite is fast and the graph fits in memory. But as graphs grow (50K+ nodes), repeated queries (especially from MCP where an AI agent may query the same function multiple times in a conversation) will redundantly hit disk.
+**Current state:** 35 modules with inconsistent error handling. Some throw, some return null, some `logger.warn()` and continue, some `process.exit(1)`. The MCP server wraps everything in generic try-catch. The `check.js` module returns structured pass/fail objects but other modules don't.
 
-**Ideal enhancement — query result cache:**
-
-```js
-class QueryCache {
-  constructor(db, maxAge = 60_000) { ... }
-
-  // Cache key = query name + args hash
-  // Invalidated on DB write (build, watch update)
-  get(key) { ... }
-  set(key, value) { ... }
-  invalidate() { ... } // Called after any DB mutation
-}
-```
-
-This is a simple LRU or TTL cache that sits between the analysis layer and the repository. It's transparent to consumers. Particularly valuable for MCP where the same agent session may repeatedly query related symbols.
-
----
-
-## 15. Watcher and Builder Share Logic But Don't Share Code
-
-**Current state:** `watcher.js` reimplements parts of `builder.js` — node insertion, edge building, prepared statement setup — in a simplified single-file form. The two implementations can drift.
-
-**Problem:** Bug fixes to edge building in `builder.js` must be separately applied to `watcher.js`. The watcher's edge building is simpler (no barrel resolution, simpler confidence) which means watch-mode graphs are subtly different from full-build graphs.
-
-**Partial progress:** `readFileSafe` (exported from `builder.js`, imported by `watcher.js`) is the first shared utility between the two modules. It retries on transient OS errors (EBUSY/EACCES/EPERM) that occur when editors perform non-atomic saves, replacing bare `readFileSync` calls in both code paths. This is a small step toward the shared-stages goal.
-
-**Ideal fix:** The pipeline architecture from point #4 eliminates this entirely. Watch mode uses the same pipeline stages, just triggered per-file instead of per-project. The `insertNodes` and `buildEdges` stages are literally the same functions.
-
----
-
-## 16. Export Module Should Support Filtering and Subgraph Extraction
-
-**Current state:** `export.js` exports the entire graph or nothing. DOT/Mermaid/JSON always include all nodes and edges.
-
-**Problem:** For a 5K-node graph, the DOT output is unusable — Graphviz chokes, Mermaid renders an incomprehensible hairball.
-
-**Ideal enhancement:**
-
-```bash
-codegraph export --format dot --focus src/builder.js --depth 2
-# Exports only builder.js and its 2-hop neighborhood
-
-codegraph export --format mermaid --filter "src/api/**" --kind function
-# Only functions in the api directory
-
-codegraph export --format json --changed  # Only files changed since last commit
-```
-
-The export module receives a subgraph specification (focus node + depth, file pattern, kind filter) and extracts the relevant subgraph before formatting. This makes visualization actually useful for real projects.
-
----
-
-## 17. Error Handling Is Ad-Hoc — Introduce Domain Errors
-
-**Current state:** Errors are handled inconsistently:
-- Some functions throw generic `Error`
-- Some return null/undefined on failure
-- Some call `logger.warn()` and continue
-- Some call `process.exit(1)`
-
-**Problem:** Callers can't distinguish "file not found" from "parse failed" from "DB corrupt" without inspecting error message strings. The MCP server wraps everything in try-catch and returns generic error text.
-
-**Ideal architecture:**
+**`check.js` already demonstrates the right pattern** -- structured result objects with clear pass/fail semantics. This should be generalized:
 
 ```js
 // errors.js
 export class CodegraphError extends Error {
-  constructor(message, { code, file, cause } = {}) { ... }
+  constructor(message, { code, file, cause } = {}) {
+    super(message)
+    this.code = code
+    this.file = file
+    this.cause = cause
+  }
 }
 
 export class ParseError extends CodegraphError { code = 'PARSE_FAILED' }
@@ -524,32 +404,56 @@ export class DbError extends CodegraphError { code = 'DB_ERROR' }
 export class ConfigError extends CodegraphError { code = 'CONFIG_INVALID' }
 export class ResolutionError extends CodegraphError { code = 'RESOLUTION_FAILED' }
 export class EngineError extends CodegraphError { code = 'ENGINE_UNAVAILABLE' }
+export class AnalysisError extends CodegraphError { code = 'ANALYSIS_FAILED' }
+export class BoundaryError extends CodegraphError { code = 'BOUNDARY_VIOLATION' }
 ```
-
-The CLI catches domain errors and formats them for humans. The MCP server catches them and returns structured error responses. The programmatic API lets them propagate. No more `process.exit()` from library code.
 
 ---
 
-## 18. The Programmatic API (index.js) Exposes Too Much
+## 13. Public API Surface -- 120+ Exports Is Unsustainable
 
-**Current state:** `index.js` re-exports ~40 functions from every module — internal helpers, data functions, presentation functions, DB utilities, everything.
+**Original analysis (S18):** ~40 re-exports, no distinction between public and internal.
 
-**Problem:** There's no distinction between public API and internal implementation. A consumer importing `buildGraph` also sees `findChild` (a tree-sitter helper) and `openDb` (internal DB function). Any refactoring risks breaking unnamed consumers.
+**Current state:** 120+ exports from `index.js`. Every `*Data()` function, every CLI display function, every constant, every utility is exported. The public API is the entire internal surface.
 
-**Ideal architecture — explicit public surface:**
+**The problem is now 3x worse** and directly blocks any refactoring -- every internal rename could break an unnamed consumer.
+
+**Ideal architecture** (reinforced):
 
 ```js
-// index.js — curated public API only
+// index.js -- curated public API (~30 exports)
+// Build
 export { buildGraph } from './builder.js'
-export { queryFunction, impactAnalysis, fileDeps, fnDeps, diffImpact } from './analysis/index.js'
-export { search, multiSearch, embedSymbols } from './embeddings/index.js'
+
+// Analysis (data functions only -- no CLI formatters)
+export { queryNameData, impactAnalysisData, fileDepsData, fnDepsData,
+         fnImpactData, diffImpactData, moduleMapData, statsData,
+         contextData, explainData, whereData, listFunctionsData,
+         rolesData } from './analysis/index.js'
+
+// New analysis modules
+export { auditData } from './commands/audit.js'
+export { checkData } from './commands/check.js'
+export { complexityData } from './commands/complexity.js'
+export { manifestoData } from './commands/manifesto.js'
+export { triageData } from './commands/triage.js'
+export { flowData } from './commands/flow.js'
+export { communitiesData } from './commands/communities.js'
+
+// Search
+export { searchData, hybridSearchData, embedSymbols } from './embeddings/index.js'
+
+// Infrastructure
 export { detectCycles } from './analysis/cycles.js'
 export { exportGraph } from './export.js'
 export { startMcpServer } from './mcp/server.js'
 export { loadConfig } from './config.js'
+
+// Constants
+export { SYMBOL_KINDS, ALL_SYMBOL_KINDS } from './shared/constants.js'
 ```
 
-Everything else is internal. Use `package.json` `exports` field to enforce module boundaries:
+Lock it with `package.json` exports:
 
 ```json
 {
@@ -560,35 +464,143 @@ Everything else is internal. Use `package.json` `exports` field to enforce modul
 }
 ```
 
-Consumers can only import from the documented entry points. Internal modules are truly internal.
+---
+
+## 14. Structure + Cochange + Communities -- Parallel Graph Models Need Unification
+
+**Not in original analysis** -- these modules didn't exist.
+
+**Current state:** Three separate analytical subsystems each build their own graph representation:
+
+- **`structure.js`** (668 lines): Builds directory nodes, computes cohesion/density/coupling metrics, classifies roles (entry, core, utility, adapter, leaf, dead). Has its own BFS and metrics computation.
+- **`cochange.js`** (502 lines): Builds temporal coupling graph from git history. Stores in `co_changes` table with Jaccard coefficients. Independent of the dependency graph.
+- **`communities.js`** (310 lines): Uses graphology to build an in-memory graph from edges, runs Louvain community detection, computes modularity and drift.
+
+Each constructs its own graph representation independently. There's no shared graph abstraction they all operate on.
+
+**Ideal architecture -- unified graph model:**
+
+```
+src/
+  graph/
+    model.js                   # In-memory graph representation (nodes + edges + metadata)
+    builders/
+      dependency.js            # Build from SQLite edges (imports, calls, extends)
+      structure.js             # Build from file/directory hierarchy
+      temporal.js              # Build from git history (co-changes)
+    algorithms/
+      bfs.js                   # Breadth-first traversal (used by impact, flow, etc.)
+      shortest-path.js         # Path finding (used by path command)
+      tarjan.js                # Cycle detection (currently in cycles.js)
+      louvain.js               # Community detection (currently uses graphology)
+      centrality.js            # Fan-in/fan-out, betweenness (used by triage, hotspots)
+      clustering.js            # Cohesion, coupling, density metrics
+    classifiers/
+      roles.js                 # Node role classification
+      risk.js                  # Risk scoring (currently in triage.js)
+```
+
+The graph model is a shared in-memory structure that multiple builders can populate and multiple algorithms can query. This eliminates the repeated graph construction across modules and makes algorithms composable -- you can run community detection on the dependency graph, the temporal graph, or a merged graph.
 
 ---
 
-## Summary — Priority Ordering by Architectural Impact
+## 15. Pagination Pattern Needs Standardization
 
-| # | Change | Impact | Category |
-|---|--------|--------|----------|
-| 1 | Split parser.js into plugin system | High | Modularity |
-| 2 | Repository pattern for data access | High | Testability, maintainability |
-| 3 | Separate analysis / formatting layers | High | Separation of concerns |
-| 4 | Pipeline architecture for builder | High | Testability, reuse |
-| 6 | Unified engine interface (Strategy) | Medium-High | Abstraction |
-| 5 | Embedder as standalone subsystem | Medium | Extensibility |
-| 13 | Qualified names + scoping in graph model | Medium | Data model accuracy |
-| 7 | Event-driven pipeline for streaming | Medium | Scalability, UX |
-| 10 | Composable MCP tool registry | Medium | Extensibility |
-| 12 | CLI command objects | Medium | Maintainability |
-| 17 | Domain error hierarchy | Medium | Reliability |
-| 18 | Curated public API surface | Medium | API stability |
-| 11 | Testing pyramid with proper layers | Medium | Quality |
-| 16 | Subgraph export with filtering | Low-Medium | Usability |
-| 9 | Transitive import-aware confidence | Low-Medium | Accuracy |
-| 14 | Query result caching | Low | Performance |
-| 8 | Config profiles for monorepos | Low | Feature |
-| 15 | Unify watcher/builder code paths | Low | Falls out of #4 (partial: `readFileSafe` shared) |
+**Not in original analysis** -- paginate.js was just introduced.
 
-Items 1–4 and 6 are foundational — they restructure the core and everything else becomes easier after them. Items 13 and 7 are the most impactful feature-level changes. Items 14–15 are natural consequences of earlier changes.
+**Current state:** `paginate.js` (106 lines) provides `paginate()` and `paginateResult()` helpers plus `MCP_DEFAULTS` with per-command limits. But each module integrates pagination differently -- some pass `opts` to paginate, some manually slice arrays, some use `LIMIT/OFFSET` in SQL, some paginate in memory after fetching all results.
+
+**Ideal architecture:** Pagination belongs in the repository layer (SQL `LIMIT/OFFSET`) for data fetching and in the command runner for result shaping. The current pattern of fetching all data then slicing in memory doesn't scale. The repository should accept pagination parameters directly:
+
+```js
+// In repository
+findNodes(filters, { limit, offset, orderBy }) {
+  // Generates SQL with LIMIT/OFFSET -- never fetches more than needed
+}
+
+// In command runner (after execute)
+runner.paginate(result, 'functions', opts)  // Consistent shaping for all commands
+```
 
 ---
 
-*Generated 2026-02-22. Cold architectural analysis — no implementation constraints applied.*
+## 16. Testing -- Good Coverage, Wrong Distribution
+
+**Original analysis (S11):** Missing proper unit tests.
+
+**Current state:** 59 test files -- major improvement. Tests exist across:
+- `tests/unit/` -- 18 files
+- `tests/integration/` -- 18 files
+- `tests/parsers/` -- 8 files
+- `tests/engines/` -- 2 files (parity tests)
+- `tests/search/` -- 3 files
+- `tests/incremental/` -- 2 files
+
+**What's still missing:**
+- Unit tests for pure graph algorithms (BFS, Tarjan) in isolation
+- Unit tests for confidence scoring with various inputs
+- Unit tests for the triage risk scoring formula
+- Mock-based tests (the repository pattern would enable `InMemoryRepository`)
+- Many "unit" tests still hit SQLite -- they're integration tests in the unit directory
+
+The test count is adequate. The issue is that without the repository pattern, true unit testing is impossible for most modules -- they all need a real SQLite DB.
+
+---
+
+## 17. Event-Driven Pipeline -- Still Relevant for Scale
+
+**Original analysis (S7):** Batch pipeline with no progress reporting.
+
+**Current state:** Still batch. The `change-journal.js` module adds NDJSON event logging for watch mode, which is a step toward events -- but the build pipeline itself is still synchronous batch. For repos with 10K+ files, users still see no progress during builds.
+
+**Ideal architecture** (unchanged, lower priority than structural issues):
+
+```js
+pipeline.on('file:parsed',    (file, symbols) => { /* progress */ })
+pipeline.on('file:indexed',   (file, nodeCount) => { /* progress */ })
+pipeline.on('build:complete',  (stats) => { /* summary */ })
+await pipeline.run(rootDir)
+```
+
+---
+
+## Remaining Items (Unchanged from Original)
+
+- **Config profiles (S8):** Single flat config, no monorepo profiles. Still relevant but not blocking anything.
+- **Transitive import-aware confidence (S9):** Walk import graph before falling back to proximity heuristics. Targeted algorithmic improvement.
+- **Query result caching (S14):** LRU/TTL cache between analysis and repository. More valuable now with 25 MCP tools.
+- **Subgraph export filtering (S16):** Export the full graph or nothing. Still relevant for usability.
+
+---
+
+## Revised Summary -- Priority Ordering by Architectural Impact
+
+| # | Change | Impact | Category | Original # |
+|---|--------|--------|----------|------------|
+| **1** | **Command/Query separation -- eliminate dual-function pattern across 15 modules** | **Critical** | Separation of concerns | S3 (was High) |
+| **2** | **Repository pattern for data access -- SQL in 20+ modules** | **Critical** | Testability, maintainability | S2 (was High) |
+| **3** | **Decompose queries.js (3,110 lines) into analysis modules** | **Critical** | Modularity | S3 (was High) |
+| **4** | **Composable MCP tool registry (25 tools in 1,212 lines)** | **High** | Extensibility | S10 (was Medium) |
+| **5** | **CLI command objects (45 commands in 1,285 lines)** | **High** | Maintainability | S12 (was Medium) |
+| **6** | **Curated public API surface (120+ to ~30 exports)** | **High** | API stability | S18 (was Medium) |
+| **7** | **Domain error hierarchy (35 modules, inconsistent handling)** | **High** | Reliability | S17 (was Medium) |
+| **8** | **Decompose complexity.js (2,163 lines) into rules/engine** | **High** | Modularity | New |
+| **9** | **Builder pipeline architecture (1,173 lines)** | **High** | Testability, reuse | S4 (was High) |
+| **10** | **Embedder subsystem (1,113 lines, 3 search engines)** | **Medium-High** | Extensibility | S5 (was Medium) |
+| **11** | **Unified graph model for structure/cochange/communities** | **Medium-High** | Cohesion | New |
+| **12** | **Qualified names + hierarchical scoping** | **Medium** | Data model accuracy | S13 (unchanged) |
+| **13** | **Pagination standardization (SQL-level + command runner)** | **Medium** | Consistency | New |
+| **14** | **Testing pyramid with InMemoryRepository** | **Medium** | Quality | S11 (unchanged) |
+| **15** | **Event-driven pipeline for streaming** | **Medium** | Scalability, UX | S7 (unchanged) |
+| **16** | **Query result caching (25 MCP tools)** | **Low-Medium** | Performance | S14 (unchanged) |
+| **17** | **Unified engine interface (Strategy)** | **Low-Medium** | Abstraction | S6 (was Medium-High) |
+| **18** | **Subgraph export with filtering** | **Low-Medium** | Usability | S16 (unchanged) |
+| **19** | **Transitive import-aware confidence** | **Low** | Accuracy | S9 (unchanged) |
+| **20** | **Parser plugin system** | **Low** | Modularity | S1 (was High -- parser.js shrank to 404 lines) |
+| **21** | **Config profiles for monorepos** | **Low** | Feature | S8 (unchanged) |
+
+**The structural priority shifted.** In the original analysis, the parser monolith was #1 -- it's now #20 because the native engine solved it. The new #1 is the command/query separation: the dual-function anti-pattern replicated across 15 modules is the single biggest source of code duplication and coupling in the codebase. Items 1-3 are the foundation -- they restructure the core and everything else becomes easier. Items 4-7 are high-impact but can be done in parallel. Items 8-10 are large-file decompositions that follow naturally once the shared infrastructure exists.
+
+---
+
+*Revised 2026-03-02. Cold architectural analysis -- no implementation constraints applied.*
