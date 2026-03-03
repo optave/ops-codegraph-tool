@@ -564,6 +564,116 @@ await pipeline.run(rootDir)
 
 ---
 
+## 18. Dead Symbol Cleanup -- 27% of Classified Code Is Unused
+
+**Not in original analysis** -- the `roles` classification that surfaces dead symbols didn't exist yet.
+
+**Current state:** Codegraph's own role classification reports 221 dead symbols -- 27% of all classified code. In a project this young (~10 days old at time of measurement), a quarter of the symbols being unused signals systematic overproduction: speculative helpers, leftover refactoring artifacts, and the dual-function pattern generating display functions that nothing calls.
+
+**Root causes:**
+- The `*Data()` / `*()` dual-function pattern (Section 1) means every data function has a display counterpart. MCP and programmatic consumers only call `*Data()`, leaving many `*()` functions uncalled
+- `index.js` exports 120+ symbols (Section 13) with no consumer tracking -- functions are exported "just in case"
+- Rapid feature addition without pruning -- each new module adds helpers that may only be used during development
+
+**Ideal approach -- continuous dead code hygiene:**
+
+1. **Audit pass:** Run `codegraph roles --role dead -T` and categorize results:
+   - **Truly dead:** Remove immediately (unused helpers, orphaned formatters)
+   - **Entry points:** CLI handlers, MCP tool handlers, test utilities -- mark as `@entry` or add to a known-entries list so the classifier doesn't flag them
+   - **Public API:** Exported but uncalled internally -- decide if they're part of the supported API or remove from `index.js`
+
+2. **CI gate:** Add a dead-symbol threshold to `manifesto.js` rules:
+   ```json
+   {
+     "rule": "max-dead-ratio",
+     "warn": 0.15,
+     "fail": 0.25,
+     "message": "Dead symbol ratio exceeds {threshold}"
+   }
+   ```
+
+3. **Prevention:** The Command/Query separation (Section 1) and curated API surface (Section 13) eliminate the two biggest dead-code factories. Once display functions are internal to the CLI layer and exports are curated, new dead code becomes visible immediately.
+
+**Target:** Reduce dead symbol ratio from 27% to under 10%.
+
+---
+
+## 19. Community Drift -- 40% of Files Are in the Wrong Logical Module
+
+**Not in original analysis** -- `communities.js` didn't exist yet.
+
+**Current state:** Louvain community detection on the dependency graph finds that 40% of files belong to a different logical community than their directory suggests. This means the file organization actively misleads developers about which modules are coupled.
+
+**What drift means concretely:**
+- Files in `src/` root that should be grouped (e.g., `triage.js`, `audit.js`, `manifesto.js` form a "code health" community but live alongside unrelated modules)
+- Utility functions in domain modules that are actually shared infrastructure
+- Tight coupling between files in different conceptual areas (e.g., `structure.js` and `queries.js` are more coupled to each other than to their neighbors)
+
+**Ideal approach -- align directory structure to communities:**
+
+1. **Measure baseline:** `codegraph communities -T` to get current modularity score and drift percentage
+2. **Map communities to directories:** The restructuring proposed in Sections 1, 3, 4, 5 would naturally create directories that match logical communities:
+   ```
+   src/
+     analysis/       # Community: query/impact/context/explain/roles
+     commands/       # Community: CLI-specific formatting
+     health/         # Community: audit/triage/manifesto/check/complexity
+     graph/          # Community: structure/communities/cochange/cycles
+     infrastructure/ # Community: db/pagination/config/logger
+   ```
+3. **Track drift as a metric:** Add modularity score and drift percentage to `stats` output. Regressing drift should trigger a warning.
+4. **CI gate:** Add a drift threshold to `manifesto.js`:
+   ```json
+   {
+     "rule": "max-community-drift",
+     "warn": 0.30,
+     "fail": 0.45,
+     "message": "Community drift exceeds {threshold}"
+   }
+   ```
+
+**Target:** Reduce drift from 40% to under 20% through directory restructuring.
+
+---
+
+## 20. Function-Level Cycles -- 9 Circular Dependencies
+
+**Not in original analysis** -- cycle detection existed but function-level cycles weren't measured.
+
+**Current state:** `codegraph cycles` reports 9 function-level circular dependencies. While the codebase has no file-level cycles (imports are acyclic), function call graphs contain mutual recursion and indirect loops.
+
+**Why this matters:**
+- Circular call chains make impact analysis unreliable -- a change to any function in a cycle potentially affects all others
+- They complicate the proposed decomposition (Sections 1, 3) -- you can't cleanly split modules if their functions are mutually dependent
+- They indicate hidden coupling that the module structure doesn't reveal
+
+**Ideal approach:**
+
+1. **Identify and classify:** Run `codegraph cycles` and categorize each cycle:
+   - **Intentional recursion:** Mutual recursion in tree walkers, AST visitors -- document with comments, exclude from CI gates
+   - **Accidental coupling:** Function A calls B which calls C which calls A -- these need refactoring
+   - **Layering violations:** A query function calling a builder function that calls back into queries -- break by introducing an interface boundary
+
+2. **Break accidental cycles:**
+   - **Extract shared logic:** If A and B both need the same computation, extract it to a third function that both call
+   - **Invert dependencies:** If a low-level function calls a high-level one, pass the needed data as a parameter instead
+   - **Event/callback:** For unavoidable bidirectional communication, use callbacks or events instead of direct calls
+
+3. **CI gate:** Add to `check.js` predicates:
+   ```json
+   {
+     "rule": "no-new-cycles",
+     "scope": "function",
+     "message": "New function-level cycle introduced: {cycle}"
+   }
+   ```
+
+4. **Prevention:** The layered architecture proposed throughout this document (analysis → infrastructure → db) naturally prevents cycles -- lower layers never import from higher layers.
+
+**Target:** Reduce from 9 cycles to 0 accidental cycles (intentional recursion documented and exempted).
+
+---
+
 ## Remaining Items (Unchanged from Original)
 
 - **Config profiles (S8):** Single flat config, no monorepo profiles. Still relevant but not blocking anything.
@@ -593,13 +703,16 @@ await pipeline.run(rootDir)
 | **14** | **Testing pyramid with InMemoryRepository** | **Medium** | Quality | S11 (unchanged) |
 | **15** | **Event-driven pipeline for streaming** | **Medium** | Scalability, UX | S7 (unchanged) |
 | **16** | **Query result caching (25 MCP tools)** | **Low-Medium** | Performance | S14 (unchanged) |
-| **17** | **Unified engine interface (Strategy)** | **Low-Medium** | Abstraction | S6 (was Medium-High) |
-| **18** | **Subgraph export with filtering** | **Low-Medium** | Usability | S16 (unchanged) |
-| **19** | **Transitive import-aware confidence** | **Low** | Accuracy | S9 (unchanged) |
-| **20** | **Parser plugin system** | **Low** | Modularity | S1 (was High -- parser.js shrank to 404 lines) |
-| **21** | **Config profiles for monorepos** | **Low** | Feature | S8 (unchanged) |
+| **17** | **Dead symbol cleanup (27% dead code ratio)** | **Medium** | Code hygiene | New |
+| **18** | **Reduce community drift (40% misplaced files)** | **Medium** | Cohesion | New |
+| **19** | **Break function-level cycles (9 circular deps)** | **Medium** | Correctness | New |
+| **20** | **Unified engine interface (Strategy)** | **Low-Medium** | Abstraction | S6 (was Medium-High) |
+| **21** | **Subgraph export with filtering** | **Low-Medium** | Usability | S16 (unchanged) |
+| **22** | **Transitive import-aware confidence** | **Low** | Accuracy | S9 (unchanged) |
+| **23** | **Parser plugin system** | **Low** | Modularity | S1 (was High -- parser.js shrank to 404 lines) |
+| **24** | **Config profiles for monorepos** | **Low** | Feature | S8 (unchanged) |
 
-**The structural priority shifted.** In the original analysis, the parser monolith was #1 -- it's now #20 because the native engine solved it. The new #1 is the command/query separation: the dual-function anti-pattern replicated across 15 modules is the single biggest source of code duplication and coupling in the codebase. Items 1-3 are the foundation -- they restructure the core and everything else becomes easier. Items 4-7 are high-impact but can be done in parallel. Items 8-10 are large-file decompositions that follow naturally once the shared infrastructure exists.
+**The structural priority shifted.** In the original analysis, the parser monolith was #1 -- it's now #23 because the native engine solved it. The new #1 is the command/query separation: the dual-function anti-pattern replicated across 15 modules is the single biggest source of code duplication and coupling in the codebase. Items 1-3 are the foundation -- they restructure the core and everything else becomes easier. Items 4-7 are high-impact but can be done in parallel. Items 8-10 are large-file decompositions that follow naturally once the shared infrastructure exists. Items 17-19 (dead symbols, community drift, function cycles) are health metrics that improve naturally as the structural changes land -- but also benefit from explicit CI gates to prevent regression.
 
 ---
 
