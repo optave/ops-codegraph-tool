@@ -83,6 +83,20 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'file_exports',
+    description:
+      'Show exported symbols of a file with per-symbol consumers — who calls each export and from where',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', description: 'File path (partial match supported)' },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
+      },
+      required: ['file'],
+    },
+  },
+  {
     name: 'impact_analysis',
     description: 'Show files affected by changes to a given file (transitive)',
     inputSchema: {
@@ -667,6 +681,31 @@ const BASE_TOOLS = [
       },
     },
   },
+  // Write tool — intentional for multi-agent orchestration (Titan Paradigm).
+  // Allows an agent to surgically rebuild only its changed files without
+  // nuking every other agent's graph state.
+  {
+    name: 'scoped_rebuild',
+    description:
+      'Rebuild the graph for specific files only, leaving all other data untouched. Designed for agent-level rollback: revert source files via git, then call this to update the graph surgically.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        files: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Relative file paths to rebuild (deleted files are purged from graph)',
+        },
+        no_reverse_deps: {
+          type: 'boolean',
+          description:
+            'Skip reverse dependency cascade — use when exports did not change (e.g. reverting to the exact same version)',
+          default: false,
+        },
+      },
+      required: ['files'],
+    },
+  },
 ];
 
 const LIST_REPOS_TOOL = {
@@ -740,6 +779,7 @@ export async function startMCPServer(customDbPath, options = {}) {
     fnImpactData,
     pathData,
     contextData,
+    exportsData,
     explainData,
     whereData,
     diffImpactData,
@@ -822,6 +862,13 @@ export async function startMCPServer(customDbPath, options = {}) {
           result = fileDepsData(args.file, dbPath, {
             noTests: args.no_tests,
             limit: Math.min(args.limit ?? MCP_DEFAULTS.file_deps, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
+          });
+          break;
+        case 'file_exports':
+          result = exportsData(args.file, dbPath, {
+            noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.file_exports, MCP_MAX_LIMIT),
             offset: args.offset ?? 0,
           });
           break;
@@ -1202,6 +1249,26 @@ export async function startMCPServer(customDbPath, options = {}) {
             depth: args.depth,
             noTests: args.no_tests,
           });
+          break;
+        }
+        case 'scoped_rebuild': {
+          if (!args.files || args.files.length === 0) {
+            result = { error: 'files array is required and must not be empty' };
+            break;
+          }
+          const path = await import('node:path');
+          const rootDir = dbPath
+            ? path.dirname(path.dirname(dbPath))
+            : process.cwd();
+          const { buildGraph } = await import('./builder.js');
+          await buildGraph(rootDir, {
+            scope: args.files,
+            noReverseDeps: args.no_reverse_deps,
+          });
+          result = {
+            rebuilt: args.files,
+            noReverseDeps: !!args.no_reverse_deps,
+          };
           break;
         }
         case 'list_repos': {

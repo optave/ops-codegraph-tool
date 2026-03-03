@@ -3006,6 +3006,166 @@ export function roles(customDbPath, opts = {}) {
   }
 }
 
+// ─── exportsData ─────────────────────────────────────────────────────
+
+function exportsFileImpl(db, target, noTests, getFileLines) {
+  const fileNodes = db
+    .prepare(`SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'`)
+    .all(`%${target}%`);
+  if (fileNodes.length === 0) return [];
+
+  return fileNodes.map((fn) => {
+    const symbols = db
+      .prepare(`SELECT * FROM nodes WHERE file = ? AND kind != 'file' ORDER BY line`)
+      .all(fn.file);
+
+    // IDs of symbols that have incoming calls from other files (exported)
+    const exportedIds = new Set(
+      db
+        .prepare(
+          `SELECT DISTINCT e.target_id FROM edges e
+           JOIN nodes caller ON e.source_id = caller.id
+           JOIN nodes target ON e.target_id = target.id
+           WHERE target.file = ? AND caller.file != ? AND e.kind = 'calls'`,
+        )
+        .all(fn.file, fn.file)
+        .map((r) => r.target_id),
+    );
+
+    const exported = symbols.filter((s) => exportedIds.has(s.id));
+    const internalCount = symbols.length - exported.length;
+
+    const results = exported.map((s) => {
+      const fileLines = getFileLines(fn.file);
+
+      let consumers = db
+        .prepare(
+          `SELECT n.name, n.file, n.line FROM edges e JOIN nodes n ON e.source_id = n.id
+           WHERE e.target_id = ? AND e.kind = 'calls'`,
+        )
+        .all(s.id);
+      if (noTests) consumers = consumers.filter((c) => !isTestFile(c.file));
+
+      return {
+        name: s.name,
+        kind: s.kind,
+        line: s.line,
+        endLine: s.end_line ?? null,
+        role: s.role || null,
+        signature: fileLines ? extractSignature(fileLines, s.line) : null,
+        summary: fileLines ? extractSummary(fileLines, s.line) : null,
+        consumers: consumers.map((c) => ({ name: c.name, file: c.file, line: c.line })),
+        consumerCount: consumers.length,
+      };
+    });
+
+    // Reexport edges from this file node
+    const reexports = db
+      .prepare(
+        `SELECT n.file FROM edges e JOIN nodes n ON e.target_id = n.id
+         WHERE e.source_id = ? AND e.kind = 'reexports'`,
+      )
+      .all(fn.id)
+      .map((r) => ({ file: r.file }));
+
+    return {
+      file: fn.file,
+      results,
+      reexports,
+      totalExported: exported.length,
+      totalInternal: internalCount,
+    };
+  });
+}
+
+export function exportsData(file, customDbPath, opts = {}) {
+  const db = openReadonlyOrFail(customDbPath);
+  const noTests = opts.noTests || false;
+
+  const dbFilePath = findDbPath(customDbPath);
+  const repoRoot = path.resolve(path.dirname(dbFilePath), '..');
+
+  const fileCache = new Map();
+  function getFileLines(file) {
+    if (fileCache.has(file)) return fileCache.get(file);
+    try {
+      const absPath = safePath(repoRoot, file);
+      if (!absPath) {
+        fileCache.set(file, null);
+        return null;
+      }
+      const lines = fs.readFileSync(absPath, 'utf-8').split('\n');
+      fileCache.set(file, lines);
+      return lines;
+    } catch {
+      fileCache.set(file, null);
+      return null;
+    }
+  }
+
+  const fileResults = exportsFileImpl(db, file, noTests, getFileLines);
+  db.close();
+
+  if (fileResults.length === 0) {
+    return paginateResult(
+      { file, results: [], reexports: [], totalExported: 0, totalInternal: 0 },
+      'results',
+      { limit: opts.limit, offset: opts.offset },
+    );
+  }
+
+  // For single-file match return flat; for multi-match return first (like explainData)
+  const first = fileResults[0];
+  const base = {
+    file: first.file,
+    results: first.results,
+    reexports: first.reexports,
+    totalExported: first.totalExported,
+    totalInternal: first.totalInternal,
+  };
+  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+}
+
+export function fileExports(file, customDbPath, opts = {}) {
+  const data = exportsData(file, customDbPath, opts);
+  if (opts.ndjson) {
+    printNdjson(data, 'results');
+    return;
+  }
+  if (opts.json) {
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+
+  if (data.results.length === 0) {
+    console.log(`No exported symbols found for "${file}". Run "codegraph build" first.`);
+    return;
+  }
+
+  console.log(
+    `\n# ${data.file} — ${data.totalExported} exported, ${data.totalInternal} internal\n`,
+  );
+
+  for (const sym of data.results) {
+    const icon = kindIcon(sym.kind);
+    const sig = sym.signature?.params ? `(${sym.signature.params})` : '';
+    const role = sym.role ? ` [${sym.role}]` : '';
+    console.log(`  ${icon} ${sym.name}${sig}${role} :${sym.line}`);
+    if (sym.consumers.length === 0) {
+      console.log('    (no consumers)');
+    } else {
+      for (const c of sym.consumers) {
+        console.log(`    <- ${c.name} (${c.file}:${c.line})`);
+      }
+    }
+  }
+
+  if (data.reexports.length > 0) {
+    console.log(`\n  Re-exports: ${data.reexports.map((r) => r.file).join(', ')}`);
+  }
+  console.log();
+}
+
 export function fnImpact(name, customDbPath, opts = {}) {
   const data = fnImpactData(name, customDbPath, opts);
   if (opts.ndjson) {
