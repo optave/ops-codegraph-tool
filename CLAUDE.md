@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **Use codegraph before editing code.** This project has a pre-built dependency graph at `.codegraph/graph.db`. Before modifying any function or file, run `node src/cli.js where <name>` to locate it, `node src/cli.js explain <target>` to understand the structure, `node src/cli.js context <name> -T` to gather full context, and `node src/cli.js fn-impact <name> -T` to check blast radius. After staging changes, run `node src/cli.js diff-impact --staged -T` to verify impact. This saves tokens, prevents blind edits, and catches breakage before it happens. See the [Dogfooding](#dogfooding--codegraph-on-itself) section for the full command reference.
+> **Use codegraph before editing code.** This project has a pre-built dependency graph at `.codegraph/graph.db`. Before modifying any function or file, run `node src/cli.js where <name>` to locate it, `node src/cli.js audit <target> --quick` to understand the structure, `node src/cli.js context <name> -T` to gather full context, and `node src/cli.js fn-impact <name> -T` to check blast radius. After staging changes, run `node src/cli.js diff-impact --staged -T` to verify impact. This saves tokens, prevents blind edits, and catches breakage before it happens. See the [Dogfooding](#dogfooding--codegraph-on-itself) section for the full command reference.
 
 ## Project Overview
 
@@ -114,7 +114,7 @@ Codegraph is **our own tool**. Use it to analyze this repository before making c
 
 ### Before modifying code, always:
 1. `node src/cli.js where <name>` — find where the symbol lives
-2. `node src/cli.js explain <file-or-function>` — understand the structure
+2. `node src/cli.js audit <file-or-function> --quick` — understand the structure
 3. `node src/cli.js context <name> -T` — get full context (source, deps, callers)
 4. `node src/cli.js fn-impact <name> -T` — check blast radius before editing
 
@@ -127,13 +127,13 @@ node src/cli.js build .              # Build/update the graph (incremental)
 node src/cli.js map --limit 20       # Module overview & most-connected nodes
 node src/cli.js stats                # Graph health and quality score
 node src/cli.js query <name> -T       # Function call chain (callers + callees)
-node src/cli.js query <a> --path <b> -T  # Shortest path between two symbols
+node src/cli.js path <a> <b> -T          # Shortest path between two symbols
 node src/cli.js deps src/<file>.js   # File-level imports and importers
 node src/cli.js diff-impact main     # Impact of current branch vs main
 node src/cli.js complexity -T         # Per-function complexity metrics
 node src/cli.js communities -T       # Community detection & drift analysis
-node src/cli.js manifesto -T         # Rule engine pass/fail check
-node src/cli.js audit <target> -T    # Combined explain + impact + health report
+node src/cli.js check -T             # Rule engine pass/fail check
+node src/cli.js audit <target> -T    # Combined structural summary + impact + health report
 node src/cli.js triage -T            # Ranked audit priority queue
 node src/cli.js check --staged       # CI validation predicates (exit code 0/1)
 node src/cli.js batch t1 t2 -T      # Batch query multiple targets

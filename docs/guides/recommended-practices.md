@@ -112,13 +112,13 @@ Add a threshold check to your CI pipeline:
 
 ### Code health gate
 
-Use `manifesto` to enforce code health rules in CI — it exits with code 1 when any function exceeds a fail-level threshold:
+Use `check` to enforce code health rules in CI — it exits with code 1 when any function exceeds a fail-level threshold:
 
 ```yaml
 - name: Code health gate
   run: |
     npx codegraph build
-    npx codegraph manifesto -T  # exits 1 on fail-level breach
+    npx codegraph check -T  # exits 1 on fail-level breach (manifesto mode)
 ```
 
 ### Change validation gate
@@ -206,7 +206,7 @@ This project uses codegraph. The database is at `.codegraph/graph.db`.
 
 ### Before modifying code, always:
 1. `codegraph where <name>` — find where the symbol lives
-2. `codegraph explain <file-or-function>` — understand the structure
+2. `codegraph audit --quick <file-or-function>` — understand the structure
 3. `codegraph context <name> -T` — get full context (source, deps, callers)
 4. `codegraph fn-impact <name> -T` — check blast radius before editing
 
@@ -224,8 +224,8 @@ This project uses codegraph. The database is at `.codegraph/graph.db`.
 - `codegraph co-change <file>` — files that historically change together
 - `codegraph complexity -T` — per-function complexity metrics (cognitive, cyclomatic, MI)
 - `codegraph communities --drift -T` — module boundary drift analysis
-- `codegraph manifesto -T` — pass/fail rule check (CI gate, exit code 1 on fail)
-- `codegraph audit <target> -T` — combined explain + impact + health in one report
+- `codegraph check -T` — pass/fail rule check (CI gate, exit code 1 on fail)
+- `codegraph audit <target> -T` — combined structural summary + impact + health in one report
 - `codegraph triage -T` — ranked audit priority queue
 - `codegraph check --staged` — CI validation predicates (exit code 0/1)
 - `codegraph batch target1 target2` — batch query multiple targets at once
@@ -326,7 +326,7 @@ You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-
 
 **Doc check hook** (PreToolUse on Bash): when Claude runs `git commit` with source files staged (anything under `src/`, `cli.js`, `constants.js`, `parser.js`, `package.json`, or `grammars/`), the hook checks whether `README.md`, `CLAUDE.md`, and `ROADMAP.md` are also staged. If any are missing, it blocks the commit with a `deny` decision listing which docs weren't staged and what to review in each (language support tables, architecture docs, roadmap phases, etc.). Non-source-only commits (tests, docs, config) pass through without checks.
 
-**Edit reminder hook** (PreToolUse on Edit/Write): before the agent writes code, a reminder is injected via `additionalContext` prompting it to check `where`, `explain`, `context`, and `fn-impact` first. Only fires once per file per session (tracks in `.claude/codegraph-checked.log`, gitignored). Non-blocking — it nudges but never prevents the edit. Skips non-source files like `.md`, `.json`, `.yml`.
+**Edit reminder hook** (PreToolUse on Edit/Write): before the agent writes code, a reminder is injected via `additionalContext` prompting it to check `where`, `audit --quick`, `context`, and `fn-impact` first. Only fires once per file per session (tracks in `.claude/codegraph-checked.log`, gitignored). Non-blocking — it nudges but never prevents the edit. Skips non-source files like `.md`, `.json`, `.yml`.
 
 **Graph update hook** (PostToolUse on Edit/Write): keeps the graph incrementally updated after each file edit. Only changed files are re-parsed.
 
@@ -659,7 +659,7 @@ cp node_modules/@optave/codegraph/.github/workflows/codegraph-impact.yml .github
 codegraph co-change --analyze
 
 # 7. (Optional) Verify code health rules pass
-codegraph manifesto -T
+codegraph check -T
 
 # 8. (Optional) Set up CI validation gate
 # codegraph check --staged --no-new-cycles --max-blast-radius 50 -T

@@ -169,7 +169,7 @@ Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAU
 | 📁 | **File dependencies** | See what a file imports and what imports it |
 | 💥 | **Impact analysis** | Trace every file affected by a change (transitive) |
 | 🧬 | **Function-level tracing** | Call chains, caller trees, function-level impact, and A→B pathfinding with qualified call resolution |
-| 🎯 | **Deep context** | `context` gives AI agents source, deps, callers, signature, and tests for a function in one call; `explain` gives structural summaries of files or functions |
+| 🎯 | **Deep context** | `context` gives AI agents source, deps, callers, signature, and tests for a function in one call; `audit --quick` gives structural summaries of files or functions |
 | 📍 | **Fast lookup** | `where` shows exactly where a symbol is defined and used — minimal, fast |
 | 📊 | **Diff impact** | Parse `git diff`, find overlapping functions, trace their callers |
 | 🔗 | **Co-change analysis** | Analyze git history for files that always change together — surfaces hidden coupling the static graph can't see; enriches `diff-impact` with historically coupled files |
@@ -184,7 +184,7 @@ Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAU
 | ⚡ | **Always fresh** | Three-tier incremental detection — sub-second rebuilds even on large codebases |
 | 🧮 | **Complexity metrics** | Cognitive, cyclomatic, nesting depth, Halstead, and Maintainability Index per function |
 | 🏘️ | **Community detection** | Louvain clustering to discover natural module boundaries and architectural drift |
-| 📜 | **Manifesto rule engine** | Configurable pass/fail rules with warn/fail thresholds for CI gates (exit code 1 on fail) |
+| 📜 | **Manifesto rule engine** | Configurable pass/fail rules with warn/fail thresholds for CI gates via `check` (exit code 1 on fail) |
 | 👥 | **CODEOWNERS integration** | Map graph nodes to CODEOWNERS entries — see who owns each function, ownership boundaries in `diff-impact` |
 | 💾 | **Graph snapshots** | `snapshot save`/`restore` for instant DB backup and rollback — checkpoint before refactoring, restore without rebuilding |
 | 🔎 | **Hybrid BM25 + semantic search** | FTS5 keyword search + embedding-based semantic search fused via Reciprocal Rank Fusion — `hybrid`, `semantic`, or `keyword` modes |
@@ -229,8 +229,8 @@ codegraph roles --role core --file src/  # Core symbols in src/
 ```bash
 codegraph context <name>       # Full context: source, deps, callers, signature, tests
 codegraph context <name> --depth 2 --no-tests  # Include callee source 2 levels deep
-codegraph explain <file>       # Structural summary: public API, internals, data flow
-codegraph explain <function>   # Function summary: signature, calls, callers, tests
+codegraph audit <file> --quick    # Structural summary: public API, internals, data flow
+codegraph audit <function> --quick  # Function summary: signature, calls, callers, tests
 ```
 
 ### Impact Analysis
@@ -240,9 +240,9 @@ codegraph impact <file>        # Transitive reverse dependency trace
 codegraph query <name>         # Function-level: callers, callees, call chain
 codegraph query <name> --no-tests --depth 5
 codegraph fn-impact <name>     # What functions break if this one changes
-codegraph query <from> --path <to>     # Shortest path between two symbols (A calls...calls B)
-codegraph query <from> --path <to> --reverse  # Follow edges backward
-codegraph query <from> --path <to> --depth 5 --kinds calls,imports
+codegraph path <from> <to>            # Shortest path between two symbols (A calls...calls B)
+codegraph path <from> <to> --reverse  # Follow edges backward
+codegraph path <from> <to> --depth 5 --kinds calls,imports
 codegraph diff-impact          # Impact of unstaged git changes
 codegraph diff-impact --staged # Impact of staged changes
 codegraph diff-impact HEAD~3   # Impact vs a specific ref
@@ -273,8 +273,8 @@ Co-change data also enriches `diff-impact` — historically coupled files appear
 
 ```bash
 codegraph structure            # Directory overview with cohesion scores
-codegraph hotspots             # Files with extreme fan-in, fan-out, or density
-codegraph hotspots --metric coupling --level directory --no-tests
+codegraph triage --level file  # Files with extreme fan-in, fan-out, or density
+codegraph triage --level directory --sort coupling --no-tests
 ```
 
 ### Code Health & Architecture
@@ -287,8 +287,8 @@ codegraph complexity --above-threshold -T  # Only functions exceeding warn thres
 codegraph communities             # Louvain community detection — natural module boundaries
 codegraph communities --drift -T  # Drift analysis only — split/merge candidates
 codegraph communities --functions # Function-level community detection
-codegraph manifesto               # Pass/fail rule engine (exit code 1 on fail)
-codegraph manifesto -T            # Exclude test files from rule evaluation
+codegraph check                   # Pass/fail rule engine (exit code 1 on fail)
+codegraph check -T                # Exclude test files from rule evaluation
 ```
 
 ### Audit, Triage & Batch
@@ -296,10 +296,13 @@ codegraph manifesto -T            # Exclude test files from rule evaluation
 Composite commands for risk-driven workflows and multi-agent dispatch.
 
 ```bash
-codegraph audit <file-or-function>    # Combined explain + impact + health in one report
+codegraph audit <file-or-function>    # Combined structural summary + impact + health in one report
+codegraph audit <target> --quick      # Structural summary only (skip impact and health)
 codegraph audit src/queries.js -T     # Audit all functions in a file
 codegraph triage                      # Ranked audit priority queue (connectivity + hotspots + roles)
 codegraph triage -T --limit 20        # Top 20 riskiest functions, excluding tests
+codegraph triage --level file -T      # File-level hotspot analysis
+codegraph triage --level directory -T # Directory-level hotspot analysis
 codegraph batch target1 target2 ...   # Batch query multiple targets in one call
 codegraph batch --json targets.json   # Batch from a JSON file
 ```
@@ -309,7 +312,9 @@ codegraph batch --json targets.json   # Batch from a JSON file
 `codegraph check` provides configurable pass/fail predicates for CI gates and state machines. Exit code 0 = pass, 1 = fail.
 
 ```bash
-codegraph check --staged                    # Check staged changes
+codegraph check                             # Run manifesto rules on whole codebase
+codegraph check --staged                    # Check staged changes (diff predicates)
+codegraph check --staged --rules            # Run both diff predicates AND manifesto rules
 codegraph check --no-new-cycles             # Fail if staged changes introduce cycles
 codegraph check --max-complexity 30         # Fail if any function exceeds complexity threshold
 codegraph check --max-blast-radius 50       # Fail if blast radius exceeds limit
@@ -413,7 +418,7 @@ codegraph registry remove <name>  # Unregister
 | Flag | Description |
 |---|---|
 | `-d, --db <path>` | Custom path to `graph.db` |
-| `-T, --no-tests` | Exclude `.test.`, `.spec.`, `__test__` files (available on `fn`, `fn-impact`, `path`, `context`, `explain`, `where`, `diff-impact`, `search`, `map`, `hotspots`, `roles`, `co-change`, `deps`, `impact`, `complexity`, `communities`, `manifesto`, `branch-compare`, `audit`, `triage`, `check`) |
+| `-T, --no-tests` | Exclude `.test.`, `.spec.`, `__test__` files (available on `fn`, `fn-impact`, `path`, `context`, `where`, `diff-impact`, `search`, `map`, `roles`, `co-change`, `deps`, `impact`, `complexity`, `communities`, `branch-compare`, `audit`, `triage`, `check`) |
 | `--depth <n>` | Transitive trace depth (default varies by command) |
 | `-j, --json` | Output as JSON |
 | `-v, --verbose` | Enable debug output |
@@ -556,7 +561,7 @@ This project uses codegraph. The database is at `.codegraph/graph.db`.
 
 ### Before modifying code, always:
 1. `codegraph where <name>` — find where the symbol lives
-2. `codegraph explain <file-or-function>` — understand the structure
+2. `codegraph audit <file-or-function> --quick` — understand the structure
 3. `codegraph context <name> -T` — get full context (source, deps, callers)
 4. `codegraph fn-impact <name> -T` — check blast radius before editing
 
@@ -567,16 +572,17 @@ This project uses codegraph. The database is at `.codegraph/graph.db`.
 - `codegraph build .` — rebuild the graph (incremental by default)
 - `codegraph map` — module overview
 - `codegraph query <name> -T` — function call chain (callers + callees)
-- `codegraph query <from> --path <to> -T` — shortest call path between two symbols
+- `codegraph path <from> <to> -T` — shortest call path between two symbols
 - `codegraph deps <file>` — file-level dependencies
 - `codegraph roles --role dead -T` — find dead code (unreferenced symbols)
 - `codegraph roles --role core -T` — find core symbols (high fan-in)
 - `codegraph co-change <file>` — files that historically change together
 - `codegraph complexity -T` — per-function complexity metrics (cognitive, cyclomatic, MI)
 - `codegraph communities --drift -T` — module boundary drift analysis
-- `codegraph manifesto -T` — pass/fail rule check (CI gate, exit code 1 on fail)
-- `codegraph audit <target> -T` — combined explain + impact + health in one report
+- `codegraph check -T` — pass/fail rule check (CI gate, exit code 1 on fail)
+- `codegraph audit <target> -T` — combined structural summary + impact + health in one report
 - `codegraph triage -T` — ranked audit priority queue
+- `codegraph triage --level file -T` — file-level hotspot analysis
 - `codegraph check --staged` — CI validation predicates (exit code 0/1)
 - `codegraph batch target1 target2` — batch query multiple targets at once
 - `codegraph owners [target]` — CODEOWNERS mapping for symbols
@@ -665,7 +671,7 @@ Create a `.codegraphrc.json` in your project root to customize behavior:
 
 ### Manifesto rules
 
-Configure pass/fail thresholds for `codegraph manifesto`:
+Configure pass/fail thresholds for `codegraph check` (manifesto mode):
 
 ```json
 {
@@ -681,7 +687,7 @@ Configure pass/fail thresholds for `codegraph manifesto`:
 }
 ```
 
-When any function exceeds a `fail` threshold, `codegraph manifesto` exits with code 1 — perfect for CI gates.
+When any function exceeds a `fail` threshold, `codegraph check` exits with code 1 — perfect for CI gates.
 
 ### LLM credentials
 
