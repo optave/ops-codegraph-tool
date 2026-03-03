@@ -336,3 +336,57 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 
 **Final score against FOUNDATION.md principles: Codegraph 6, Joern 0, Tie 2.**
 Joern doesn't compete on codegraph's principles — it competes on analysis depth and security research, which are outside codegraph's stated scope.
+
+---
+
+## Joern-Inspired Feature Candidates
+
+Features extracted from sections **A. Parsing & Language Support**, **B. Graph Model & Analysis Depth**, and **C. Query Language & Interface** above, assessed using the [BACKLOG.md](../../docs/roadmap/BACKLOG.md) tier and grading system. See the [Scoring Guide](../../docs/roadmap/BACKLOG.md#scoring-guide) for column definitions.
+
+### Tier 1 — Zero-dep + Foundation-aligned (build these first)
+
+Non-breaking, ordered by problem-fit:
+
+| ID | Title | Description | Category | Benefit | Zero-dep | Foundation-aligned | Problem-fit (1-5) | Breaking |
+|----|-------|-------------|----------|---------|----------|-------------------|-------------------|----------|
+| J1 | Lightweight call-chain slicing | Extract a bounded subgraph around a function (callers + callees to depth N) as standalone JSON/DOT/Mermaid. Not full PDG slicing — structural BFS on existing edges, exported as a self-contained artifact. Inspired by Joern's `joern-slice`. | Navigation | Agents get precisely-scoped subgraphs that fit context windows instead of full graph dumps — directly reduces token waste | ✓ | ✓ | 4 | No |
+| J2 | Type-informed call resolution | Extract type annotations from tree-sitter AST (TypeScript types, Java types, Go types, Python type hints) and use them to disambiguate call targets during import resolution. Improves edge accuracy without full type inference. Inspired by Joern's type-aware language frontends. | Analysis | Call graphs become more precise — fewer false edges means less noise in `fn-impact` and agents don't chase phantom dependencies | ✓ | ✓ | 4 | No |
+| J3 | Error-tolerant partial parsing | Leverage tree-sitter's built-in error recovery to extract symbols from syntactically incomplete or broken files instead of skipping them entirely. Surface partial results with a quality indicator per file. Currently codegraph requires syntactically valid input; Joern's fuzzy parsing handles partial/broken code. | Parsing | Agents can analyze WIP branches, partial checkouts, and code mid-refactor — essential for real-world AI-agent loops where code is often in a broken state | ✓ | ✓ | 3 | No |
+| J4 | Kotlin language support | Add tree-sitter-kotlin to `LANGUAGE_REGISTRY`. 1 registry entry + 1 extractor function (<100 lines, 2 files). Covers functions, classes, interfaces, objects, data classes, companion objects, call sites. Kotlin is one of Joern's strongest languages (via IntelliJ PSI). | Parsing | Extends coverage to Android/KMP ecosystem — one of the most-requested missing languages and a gap vs. Joern | ✓ | ✓ | 2 | No |
+| J5 | Swift language support | Add tree-sitter-swift to `LANGUAGE_REGISTRY`. 1 registry entry + 1 extractor function (<100 lines, 2 files). Covers functions, classes, structs, protocols, enums, extensions, call sites. Joern supports Swift via SwiftSyntax. | Parsing | Extends coverage to Apple/iOS ecosystem — currently a gap vs. Joern. tree-sitter-swift is mature enough for production use | ✓ | ✓ | 2 | No |
+| J10 | Regex filtering in queries | Upgrade name filtering from glob-style to full regex on `where`, `list-functions`, `roles`, and other symbol-listing commands. Add `--regex` flag alongside existing glob behavior. Joern supports full regex in all CPGQL query steps. | Query | Agents and power users can express precise symbol patterns (e.g. `--regex "^(get\|set)[A-Z]"`) — reduces result noise and round-trips for targeted queries | ✓ | ✓ | 3 | No |
+| J11 | Query script execution | Simple `.codegraph` script format: a sequence of CLI commands executed in order, with variable substitution and JSON piping between steps. Not a DSL — just a thin automation layer over existing commands. Inspired by Joern's `--script test.sc` with params and imports. | Automation | CI pipelines and agent orchestrators can run multi-step analysis sequences in one invocation instead of chaining shell commands — reduces boilerplate and ensures consistent execution | ✓ | ✓ | 2 | No |
+
+Breaking (penalized to end of tier):
+
+| ID | Title | Description | Category | Benefit | Zero-dep | Foundation-aligned | Problem-fit (1-5) | Breaking |
+|----|-------|-------------|----------|---------|----------|-------------------|-------------------|----------|
+| J6 | Expanded node types | Extract parameters, local variables, return types, and control structures as first-class graph nodes. Expands from 10 `SYMBOL_KINDS` to ~20. Enables richer queries like "which functions take a `Request` parameter?" without reading source. Inspired by Joern's 45+ node types across 18 layers. | Graph Model | Agents can answer structural questions about function signatures and internal shape from the graph alone — fewer source-reading round-trips | ✓ | ✓ | 3 | Yes |
+| J7 | Expanded edge types | Add `contains`, `parameter_of`, `return_type`, `receiver`, `type_of` edges alongside existing `calls`/`imports`. Expands from 2 edge types to ~7. Enables structural queries across containment and type relationships. Inspired by Joern's 20+ edge types (AST, CDG, REACHING_DEF, ARGUMENT, RECEIVER, etc.). | Graph Model | Richer graph structure supports more precise impact analysis and enables queries that currently require source reading | ✓ | ✓ | 3 | Yes |
+| J8 | Intraprocedural control flow graph | Build lightweight CFG within functions from tree-sitter AST: basic blocks, branches, loops, early returns. Store as edges with type `cfg`. Does not require language-specific compiler frontends — tree-sitter control structure nodes are sufficient. Prerequisite for dataflow analysis ([BACKLOG ID 14](../../docs/roadmap/BACKLOG.md)). Inspired by Joern's full CFG with dominator/post-dominator trees. | Graph Model | Enables complexity-aware impact analysis and opens the path to lightweight dataflow — bridges the gap between structural-only and Joern's full CPG without violating P1 rebuild speed | ✓ | ✓ | 3 | Yes |
+| J9 | Stored queryable AST | Persist selected AST nodes (statements, expressions, literals) in a dedicated SQLite table alongside symbols. Queryable via CLI/MCP for pattern matching (e.g. "find all `eval()` calls", "find hardcoded strings"). Currently AST is extracted for complexity metrics but not stored in the graph. Inspired by Joern's full AST storage and queryability. | Graph Model | Enables lightweight AST-based pattern detection (security patterns, anti-patterns) without re-parsing source files — foundation for [BACKLOG ID 7](../../docs/roadmap/BACKLOG.md) (OWASP/CWE patterns) | ✓ | ✓ | 3 | Yes |
+
+### Not adopted (violates FOUNDATION.md)
+
+These Joern features were evaluated and deliberately excluded:
+
+| Joern Feature | Section | Why Not |
+|---------------|---------|---------|
+| **Full CPG (AST + CFG + PDG merged)** | B | Would require fundamentally different parsing — we'd be rebuilding Joern. Violates P1 (rebuild speed) and P6 (one registry). Tree-sitter + lightweight dataflow is the pragmatic path |
+| **Interprocedural taint analysis** | B | Requires control-flow and data-dependence graphs we don't have. Adding these would 10-100x build time, violating P1. Joern's killer feature, but outside our scope |
+| **Program Dependence Graph (PDG)** | B | Combined control + data dependence requires full CFG + DDG. The lightweight CFG in J8 is a deliberate subset — full PDG is Joern territory |
+| **Custom data-flow semantics** | B | User-defined taint propagation rules require the taint infrastructure we've chosen not to build. Joern's `Semantics` DSL is powerful but orthogonal to our goals |
+| **JVM bytecode analysis** | A | Violates P8 (honest about what we're not) — we're a source code tool. Requires Soot or equivalent JVM dependency |
+| **LLVM bitcode analysis** | A | Violates P8 — requires LLVM toolchain. We analyze source, not compiler intermediate representations |
+| **Binary analysis (x86/x64)** | A | Violates P8 — requires Ghidra or equivalent disassembler. Fundamentally different problem domain |
+| **Language-specific compiler frontends** | A | Violates P6 (one registry, one schema, no magic). Joern uses Eclipse CDT for C/C++, JavaParser for Java, Roslyn for C#, IntelliJ PSI for Kotlin — each is a separate, heavyweight parser. Tree-sitter uniformity is a deliberate advantage worth preserving |
+| **Plugin system (JVM plugins, DiffGraph API)** | C | Premature complexity. Programmatic JS API + MCP tools are sufficient extension interfaces today. JVM-style plugin architecture (ZIP/JAR, schema extension) adds maintenance burden without clear user demand. Revisit if extension points become a bottleneck |
+
+### Cross-references to existing BACKLOG items
+
+These Joern-inspired capabilities are already tracked in [BACKLOG.md](../../docs/roadmap/BACKLOG.md):
+
+| BACKLOG ID | Title | Joern Equivalent | Relationship |
+|------------|-------|------------------|--------------|
+| 14 | Dataflow analysis | Data Dependence Graph (def-use chains) | The lightweight codegraph equivalent of Joern's DDG — `flows_to`/`returns`/`mutates` edge types. Already Tier 1 Breaking. J8 (intraprocedural CFG) is a prerequisite |
+| 7 | OWASP/CWE pattern detection | Vulnerability scanning (`joern-scan`) | Lightweight AST-based security checks — the codegraph-appropriate alternative to Joern's taint-based vulnerability scanning. Already Tier 3. J9 (stored queryable AST) is a prerequisite |
