@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-02
 **Competitors:** `@optave/codegraph` v0.x (Apache-2.0) vs `postrv/narsil-mcp` v1.6.x (Apache-2.0 / MIT)
-**Context:** narsil-mcp is ranked #2 in our [competitive analysis](./COMPETITIVE_ANALYSIS.md) with a score of 4.5, tied with Joern at #1. Unlike Joern (which targets security researchers), narsil-mcp competes head-to-head with codegraph — same parsing technology (tree-sitter), same delivery mechanism (MCP), same target audience (AI agents), same local-first philosophy.
+**Context:** narsil-mcp is ranked #2 in our [competitive analysis](../COMPETITIVE_ANALYSIS.md) with a score of 4.5, tied with Joern at #1. Unlike Joern (which targets security researchers), narsil-mcp competes head-to-head with codegraph — same parsing technology (tree-sitter), same delivery mechanism (MCP), same target audience (AI agents), same local-first philosophy.
 
 ---
 
@@ -40,7 +40,7 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 | 7 | **Security-conscious defaults** — multi-repo opt-in | Single-repo MCP default. `apiKeyCommand` for secrets. `--multi-repo` opt-in | Multi-repo by default (`list_repos`, `discover_repos` always exposed). `--remote` flag enables cloning external repos. No credential isolation model | **Codegraph wins.** Single-repo default vs. multi-repo default. narsil-mcp's `discover_repos` and `add_remote_repo` tools are exposed without opt-in |
 | 8 | **Honest about what we're not** | Code intelligence engine. Not an app, not a coding tool, not an agent | "Comprehensive code intelligence" — tries to be everything: search engine, security scanner, type checker, SBOM generator, license auditor, knowledge graph, visualization server | **Codegraph wins.** Codegraph has a clear boundary. narsil-mcp's 90-tool surface area spans security, compliance, visualization, type checking, and more — a breadth that risks being shallow everywhere |
 
-**Score: Codegraph 6, narsil-mcp 0, Tie 2** — against codegraph's own principles, codegraph wins on every differentiating dimension. This is expected: the principles were designed around codegraph's value proposition. The feature comparison below examines where narsil-mcp's breadth creates genuine advantages.
+**Score: Codegraph 7, narsil-mcp 0, Tie 1** — against codegraph's own principles, codegraph wins on every differentiating dimension. This is expected: the principles were designed around codegraph's value proposition. The feature comparison below examines where narsil-mcp's breadth creates genuine advantages.
 
 ---
 
@@ -350,5 +350,5 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 | Interactive visualization | Export only (DOT/Mermaid) | Embedded web frontend | narsil-mcp |
 | Community maturity | Company-backed, small team | 3 contributors, 120 stars | Tie |
 
-**Final score against FOUNDATION.md principles: Codegraph 6, narsil-mcp 0, Tie 2.**
+**Final score against FOUNDATION.md principles: Codegraph 7, narsil-mcp 0, Tie 1.**
 narsil-mcp competes on breadth (more languages, more tools, more analysis types) rather than on the principles codegraph was built around. Its strengths — security scanning, language count, search variety — are real but orthogonal to codegraph's core value proposition of always-current, confidence-scored, developer-focused structural intelligence.
