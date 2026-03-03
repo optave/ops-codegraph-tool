@@ -170,6 +170,7 @@ Multiple Claude Code instances run concurrently in this repo. **Every session mu
 
 - Never add AI co-authorship lines (`Co-Authored-By` or similar) to commit messages.
 - Never add "Built with Claude Code", "Generated with Claude Code", or any variation referencing Claude Code or Anthropic to commit messages, PR descriptions, code comments, or any other output.
+- **One PR = one concern.** Each pull request should address a single feature, fix, or refactor. Do not pile unrelated changes into an existing PR — open a new branch and PR instead. If scope grows during implementation, split the work into separate PRs before pushing.
 
 ## PR Reviews (Greptile)
 
