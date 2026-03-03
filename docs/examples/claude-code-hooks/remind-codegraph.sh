@@ -61,7 +61,7 @@ cat <<HOOK_OUTPUT
   "hookSpecificOutput": {
     "hookEventName": "PreToolUse",
     "permissionDecision": "allow",
-    "additionalContext": "[codegraph reminder] You are about to edit ${REL_PATH}. Did you run codegraph first? Before editing, always: (1) 'codegraph where <name>' to locate the symbol, (2) 'codegraph explain ${REL_PATH}' to understand the file, (3) 'codegraph context <name> -T' for full context, (4) 'codegraph fn-impact <name> -T' to check blast radius. If you already did this, proceed."
+    "additionalContext": "[codegraph reminder] You are about to edit ${REL_PATH}. Did you run codegraph first? Before editing, always: (1) 'codegraph where <name>' to locate the symbol, (2) 'codegraph audit --quick ${REL_PATH}' to understand the file, (3) 'codegraph context <name> -T' for full context, (4) 'codegraph fn-impact <name> -T' to check blast radius. If you already did this, proceed."
   }
 }
 HOOK_OUTPUT
