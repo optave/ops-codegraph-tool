@@ -108,7 +108,7 @@ public class Foo {}`);
   public string Name { get; set; }
 }`);
     expect(symbols.definitions).toContainEqual(
-      expect.objectContaining({ name: 'User.Name', kind: 'method' }),
+      expect.objectContaining({ name: 'User.Name', kind: 'property' }),
     );
   });
 });

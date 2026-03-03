@@ -1,4 +1,4 @@
-import { nodeEndLine } from './helpers.js';
+import { findChild, nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from Java files.
@@ -31,11 +31,13 @@ export function extractJavaSymbols(tree, _filePath) {
       case 'class_declaration': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
+          const classChildren = extractClassFields(node);
           definitions.push({
             name: nameNode.text,
             kind: 'class',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: classChildren.length > 0 ? classChildren : undefined,
           });
 
           const superclass = node.childForFieldName('superclass');
@@ -139,11 +141,13 @@ export function extractJavaSymbols(tree, _filePath) {
       case 'enum_declaration': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
+          const enumChildren = extractEnumConstants(node);
           definitions.push({
             name: nameNode.text,
             kind: 'enum',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: enumChildren.length > 0 ? enumChildren : undefined,
           });
         }
         break;
@@ -154,11 +158,13 @@ export function extractJavaSymbols(tree, _filePath) {
         if (nameNode) {
           const parentClass = findJavaParentClass(node);
           const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
+          const params = extractJavaParameters(node.childForFieldName('parameters'));
           definitions.push({
             name: fullName,
             kind: 'method',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: params.length > 0 ? params : undefined,
           });
         }
         break;
@@ -169,11 +175,13 @@ export function extractJavaSymbols(tree, _filePath) {
         if (nameNode) {
           const parentClass = findJavaParentClass(node);
           const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
+          const params = extractJavaParameters(node.childForFieldName('parameters'));
           definitions.push({
             name: fullName,
             kind: 'method',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: params.length > 0 ? params : undefined,
           });
         }
         break;
@@ -227,4 +235,56 @@ export function extractJavaSymbols(tree, _filePath) {
 
   walkJavaNode(tree.rootNode);
   return { definitions, calls, imports, classes, exports };
+}
+
+// ── Child extraction helpers ────────────────────────────────────────────────
+
+function extractJavaParameters(paramListNode) {
+  const params = [];
+  if (!paramListNode) return params;
+  for (let i = 0; i < paramListNode.childCount; i++) {
+    const param = paramListNode.child(i);
+    if (!param) continue;
+    if (param.type === 'formal_parameter' || param.type === 'spread_parameter') {
+      const nameNode = param.childForFieldName('name');
+      if (nameNode) {
+        params.push({ name: nameNode.text, kind: 'parameter', line: param.startPosition.row + 1 });
+      }
+    }
+  }
+  return params;
+}
+
+function extractClassFields(classNode) {
+  const fields = [];
+  const body = classNode.childForFieldName('body') || findChild(classNode, 'class_body');
+  if (!body) return fields;
+  for (let i = 0; i < body.childCount; i++) {
+    const member = body.child(i);
+    if (!member || member.type !== 'field_declaration') continue;
+    for (let j = 0; j < member.childCount; j++) {
+      const child = member.child(j);
+      if (!child || child.type !== 'variable_declarator') continue;
+      const nameNode = child.childForFieldName('name');
+      if (nameNode) {
+        fields.push({ name: nameNode.text, kind: 'property', line: member.startPosition.row + 1 });
+      }
+    }
+  }
+  return fields;
+}
+
+function extractEnumConstants(enumNode) {
+  const constants = [];
+  const body = enumNode.childForFieldName('body') || findChild(enumNode, 'enum_body');
+  if (!body) return constants;
+  for (let i = 0; i < body.childCount; i++) {
+    const member = body.child(i);
+    if (!member || member.type !== 'enum_constant') continue;
+    const nameNode = member.childForFieldName('name');
+    if (nameNode) {
+      constants.push({ name: nameNode.text, kind: 'constant', line: member.startPosition.row + 1 });
+    }
+  }
+  return constants;
 }
