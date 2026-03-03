@@ -165,7 +165,7 @@ describe('TOOLS', () => {
   it('export_graph requires format parameter with enum', () => {
     const eg = TOOLS.find((t) => t.name === 'export_graph');
     expect(eg.inputSchema.required).toContain('format');
-    expect(eg.inputSchema.properties.format.enum).toEqual(['dot', 'mermaid', 'json']);
+    expect(eg.inputSchema.properties.format.enum).toEqual(['dot', 'mermaid', 'json', 'graphml', 'graphson', 'neo4j']);
     expect(eg.inputSchema.properties).toHaveProperty('file_level');
   });
 
