@@ -41,7 +41,7 @@ codegraph build .
 codegraph map --limit 30 --no-tests
 
 # Find structural hotspots — extreme fan-in, fan-out, coupling
-codegraph hotspots --no-tests
+codegraph triage --level file --no-tests
 
 # Graph health overview — node/edge counts, quality score
 codegraph stats
@@ -70,7 +70,7 @@ For deeper structural understanding before touching anything:
 
 ```bash
 # Structural summary of a high-traffic file — public API, internals, data flow
-codegraph explain src/builder.js
+codegraph audit --quick src/builder.js
 
 # Understand a specific function before auditing it
 codegraph context buildGraph -T
@@ -108,10 +108,10 @@ codegraph complexity --file src/parser.js -T
 codegraph complexity --file src/parser.js --health -T
 
 # Pass/fail rule check — does this file meet the manifesto?
-codegraph manifesto -T
+codegraph check -T
 
 # Architecture boundary violations — are cross-module dependencies allowed?
-codegraph manifesto -T  # boundaries are enforced as manifesto rules
+codegraph check -T  # boundaries are enforced as manifesto rules
 ```
 
 When a sub-agent decides a function needs decomposition (complexity > 7, nesting > 3, 10+ mocks), it needs to know what breaks. `fn-impact` gives the complete blast radius **before** the agent writes a single line of code.
@@ -191,14 +191,14 @@ codegraph snapshot save pre-gauntlet
 codegraph snapshot restore pre-gauntlet
 ```
 
-Use `manifesto` as an additional CI gate — it exits with code 1 when any function exceeds a fail-level threshold:
+Use `check` as an additional CI gate — it exits with code 1 when any function exceeds a fail-level threshold:
 
 ```bash
 # Pass/fail rule check — exit code 1 = fail → rollback trigger
-codegraph manifesto -T
+codegraph check -T
 ```
 
-The orchestrator can gate every commit: run `check --staged` for pass/fail validation, `diff-impact --staged --json` for detailed blast radius, and `manifesto -T` to verify code health rules. Auto-rollback if any exceeds thresholds. Combined with `codegraph watch` for real-time graph updates, the state machine always has a current picture of the codebase.
+The orchestrator can gate every commit: run `check --staged` for pass/fail validation, `diff-impact --staged --json` for detailed blast radius, and `check -T` to verify code health rules (or `check --staged --rules` for both at once). Auto-rollback if any exceeds thresholds. Combined with `codegraph watch` for real-time graph updates, the state machine always has a current picture of the codebase.
 
 ```bash
 # Watch mode — graph updates automatically as agents edit files
@@ -218,7 +218,7 @@ Several planned features would make codegraph even more powerful for the Titan P
 
 | Feature | Status | How it helps |
 |---------|--------|-------------|
-| **Node classification** ([Backlog #4](../../roadmap/BACKLOG.md)) | **Done** | Auto-tags every symbol as Entry Point, Core, Utility, or Adapter based on fan-in/fan-out. Available via `codegraph roles`, `where`, `explain`, `context`, and the `node_roles` MCP tool |
+| **Node classification** ([Backlog #4](../../roadmap/BACKLOG.md)) | **Done** | Auto-tags every symbol as Entry Point, Core, Utility, or Adapter based on fan-in/fan-out. Available via `codegraph roles`, `where`, `audit --quick`, `context`, and the `node_roles` MCP tool |
 | **Git change coupling** ([Backlog #9](../../roadmap/BACKLOG.md)) | **Done** | `codegraph co-change` analyzes git history for files that always change together. Integrated into `diff-impact` output via `historicallyCoupled` section. MCP tool `co_changes` |
 
 ### For THE GAUNTLET
@@ -226,7 +226,7 @@ Several planned features would make codegraph even more powerful for the Titan P
 | Feature | Status | How it helps |
 |---------|--------|-------------|
 | **Formal code health metrics** ([Backlog #6](../../roadmap/BACKLOG.md)) | **Done** | `codegraph complexity` provides cognitive, cyclomatic, nesting depth, Halstead (volume, effort, bugs), and Maintainability Index per function. `--health` for full view, `--sort mi` to rank by MI, `--above-threshold` for flagged functions. Maps directly to the Gauntlet's "complexity > 7 is a failure" rule. PR #130 + #139 |
-| **Manifesto-driven pass/fail** ([Backlog #22](../../roadmap/BACKLOG.md)) | **Done** | `codegraph manifesto` with 9 configurable rules and warn/fail thresholds. Exit code 1 on fail — the Gauntlet gets first-class pass/fail signals without parsing JSON. PR #138 |
+| **Manifesto-driven pass/fail** ([Backlog #22](../../roadmap/BACKLOG.md)) | **Done** | `codegraph check` (manifesto mode) with 9 configurable rules and warn/fail thresholds. Exit code 1 on fail — the Gauntlet gets first-class pass/fail signals without parsing JSON. PR #138 |
 | **Community detection** ([Backlog #11](../../roadmap/BACKLOG.md)) | **Done** | `codegraph communities` with Louvain algorithm discovers natural module boundaries vs actual file organization. `--drift` reveals which directories should be split or merged. `--functions` for function-level clustering. PR #133/#134 |
 | **Build-time semantic metadata** ([Roadmap Phase 4.4](../../roadmap/ROADMAP.md#44--build-time-semantic-metadata)) | Planned | LLM-generated `complexity_notes`, `risk_score`, and `side_effects` per function. A sub-agent could query `codegraph assess <name>` and get "3 responsibilities, low cohesion — consider splitting" without analyzing the code itself |
 
@@ -234,7 +234,7 @@ Several planned features would make codegraph even more powerful for the Titan P
 
 | Feature | Status | How it helps |
 |---------|--------|-------------|
-| **Architecture boundary rules** ([Backlog #13](../../roadmap/BACKLOG.md)) | **Done** | `manifesto.boundaries` config defines allowed/forbidden dependencies between modules. Onion architecture preset available via `manifesto.boundaryPreset: "onion"`. Violations flagged in `manifesto` and enforceable via `check --no-boundary-violations`. PR #228 + #229 |
+| **Architecture boundary rules** ([Backlog #13](../../roadmap/BACKLOG.md)) | **Done** | `manifesto.boundaries` config defines allowed/forbidden dependencies between modules. Onion architecture preset available via `manifesto.boundaryPreset: "onion"`. Violations flagged in `check` and enforceable via `check --no-boundary-violations`. PR #228 + #229 |
 | **CODEOWNERS integration** ([Backlog #18](../../roadmap/BACKLOG.md)) | **Done** | `codegraph owners` maps graph nodes to CODEOWNERS entries. Shows who owns each function, surfaces ownership boundaries in `diff-impact`. The GLOBAL SYNC agent can identify which teams need to coordinate. PR #195 |
 | **Refactoring analysis** ([Roadmap Phase 8.5](../../roadmap/ROADMAP.md#85--refactoring-analysis)) | Planned | `split_analysis`, `extraction_candidates`, `boundary_analysis` — LLM-powered structural analysis that identifies exactly where shared abstractions should be created |
 | **Dead code detection** ([Backlog #1](../../roadmap/BACKLOG.md)) | **Done** | `codegraph roles --role dead -T` lists all symbols with zero fan-in that aren't exported. Delivered as part of node classification |
