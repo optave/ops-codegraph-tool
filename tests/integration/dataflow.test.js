@@ -120,6 +120,19 @@ afterAll(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+// ─── Normalized symbol shape ────────────────────────────────────────────
+
+/** Assert that an object has the 7-field normalizeSymbol shape. */
+function expectNormalizedShape(obj) {
+  expect(obj).toHaveProperty('name');
+  expect(obj).toHaveProperty('kind');
+  expect(obj).toHaveProperty('file');
+  expect(obj).toHaveProperty('line');
+  expect(obj).toHaveProperty('endLine');
+  expect(obj).toHaveProperty('role');
+  expect(obj).toHaveProperty('fileHash');
+}
+
 // ─── dataflowData ──────────────────────────────────────────────────────
 
 describe('dataflowData', () => {
@@ -182,6 +195,14 @@ describe('dataflowData', () => {
     const data = dataflowData('processData', dbPath, { limit: 1, offset: 0 });
     expect(data.results).toHaveLength(1);
   });
+
+  test('results include normalized symbol fields (endLine, role, fileHash)', () => {
+    const data = dataflowData('processData', dbPath);
+    expect(data.results.length).toBeGreaterThan(0);
+    for (const r of data.results) {
+      expectNormalizedShape(r);
+    }
+  });
 });
 
 // ─── dataflowPathData ──────────────────────────────────────────────────
@@ -218,6 +239,14 @@ describe('dataflowPathData', () => {
     expect(data.found).toBe(false);
     expect(data.error).toBeDefined();
   });
+
+  test('path items include normalized symbol fields (endLine, role, fileHash)', () => {
+    const data = dataflowPathData('processData', 'format', dbPath);
+    expect(data.found).toBe(true);
+    for (const item of data.path) {
+      expectNormalizedShape(item);
+    }
+  });
 });
 
 // ─── dataflowImpactData ────────────────────────────────────────────────
@@ -253,6 +282,18 @@ describe('dataflowImpactData', () => {
     const data = dataflowImpactData('loadData', dbPath, { depth: 1 });
     const r = data.results[0];
     expect(r.levels[2]).toBeUndefined();
+  });
+
+  test('results and level items include normalized symbol fields', () => {
+    const data = dataflowImpactData('transform', dbPath);
+    expect(data.results.length).toBeGreaterThan(0);
+    const r = data.results[0];
+    expectNormalizedShape(r);
+    for (const items of Object.values(r.levels)) {
+      for (const item of items) {
+        expectNormalizedShape(item);
+      }
+    }
   });
 });
 

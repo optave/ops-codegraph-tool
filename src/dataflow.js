@@ -14,7 +14,7 @@ import path from 'node:path';
 import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
-import { isTestFile } from './queries.js';
+import { ALL_SYMBOL_KINDS, isTestFile, normalizeSymbol } from './queries.js';
 
 // Methods that mutate their receiver in-place
 const MUTATING_METHODS = new Set([
@@ -550,6 +550,9 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
 
+  // MVP scope: only resolve function/method nodes for dataflow edges.
+  // Future expansion: add 'parameter', 'property', 'constant' kinds to track
+  // data flow through property accessors or constant references.
   const getNodeByNameAndFile = db.prepare(
     `SELECT id, name, kind, file, line FROM nodes
      WHERE name = ? AND file = ? AND kind IN ('function', 'method')`,
@@ -681,20 +684,7 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
  * Similar to findMatchingNodes in queries.js but operates on the dataflow table.
  */
 function findNodes(db, name, opts = {}) {
-  const kinds = opts.kind
-    ? [opts.kind]
-    : [
-        'function',
-        'method',
-        'class',
-        'interface',
-        'type',
-        'struct',
-        'enum',
-        'trait',
-        'record',
-        'module',
-      ];
+  const kinds = opts.kind ? [opts.kind] : ALL_SYMBOL_KINDS;
   const placeholders = kinds.map(() => '?').join(', ');
   const params = [`%${name}%`, ...kinds];
 
@@ -706,7 +696,7 @@ function findNodes(db, name, opts = {}) {
 
   const rows = db
     .prepare(
-      `SELECT id, name, kind, file, line FROM nodes
+      `SELECT * FROM nodes
        WHERE name LIKE ? AND kind IN (${placeholders})${fileCondition}
        ORDER BY file, line`,
     )
@@ -785,7 +775,10 @@ export function dataflowData(name, customDbPath, opts = {}) {
      WHERE d.target_id = ? AND d.kind = 'mutates'`,
   );
 
+  const hc = new Map();
   const results = nodes.map((node) => {
+    const sym = normalizeSymbol(node, db, hc);
+
     const flowsTo = flowsToOut.all(node.id).map((r) => ({
       target: r.target_name,
       kind: r.target_kind,
@@ -837,10 +830,7 @@ export function dataflowData(name, customDbPath, opts = {}) {
     if (noTests) {
       const filter = (arr) => arr.filter((r) => !isTestFile(r.file));
       return {
-        name: node.name,
-        kind: node.kind,
-        file: node.file,
-        line: node.line,
+        ...sym,
         flowsTo: filter(flowsTo),
         flowsFrom: filter(flowsFrom),
         returns: returnConsumers.filter((r) => !isTestFile(r.file)),
@@ -851,10 +841,7 @@ export function dataflowData(name, customDbPath, opts = {}) {
     }
 
     return {
-      name: node.name,
-      kind: node.kind,
-      file: node.file,
-      line: node.line,
+      ...sym,
       flowsTo,
       flowsFrom,
       returns: returnConsumers,
@@ -909,21 +896,15 @@ export function dataflowPathData(from, to, customDbPath, opts = {}) {
   const targetNode = toNodes[0];
 
   if (sourceNode.id === targetNode.id) {
+    const hc = new Map();
+    const sym = normalizeSymbol(sourceNode, db, hc);
     db.close();
     return {
       from,
       to,
       found: true,
       hops: 0,
-      path: [
-        {
-          name: sourceNode.name,
-          kind: sourceNode.kind,
-          file: sourceNode.file,
-          line: sourceNode.line,
-          edgeKind: null,
-        },
-      ],
+      path: [{ ...sym, edgeKind: null }],
     };
   }
 
@@ -978,17 +959,15 @@ export function dataflowPathData(from, to, customDbPath, opts = {}) {
   }
 
   // Reconstruct path
-  const nodeById = db.prepare('SELECT id, name, kind, file, line FROM nodes WHERE id = ?');
+  const nodeById = db.prepare('SELECT * FROM nodes WHERE id = ?');
+  const hc = new Map();
   const pathItems = [];
   let cur = targetNode.id;
   while (cur !== undefined) {
     const nodeRow = nodeById.get(cur);
     const parentInfo = parent.get(cur);
     pathItems.unshift({
-      name: nodeRow.name,
-      kind: nodeRow.kind,
-      file: nodeRow.file,
-      line: nodeRow.line,
+      ...normalizeSymbol(nodeRow, db, hc),
       edgeKind: parentInfo?.edgeKind ?? null,
       expression: parentInfo?.expression ?? null,
     });
@@ -996,10 +975,7 @@ export function dataflowPathData(from, to, customDbPath, opts = {}) {
     if (cur === sourceNode.id) {
       const srcRow = nodeById.get(cur);
       pathItems.unshift({
-        name: srcRow.name,
-        kind: srcRow.kind,
-        file: srcRow.file,
-        line: srcRow.line,
+        ...normalizeSymbol(srcRow, db, hc),
         edgeKind: null,
         expression: null,
       });
@@ -1041,12 +1017,14 @@ export function dataflowImpactData(name, customDbPath, opts = {}) {
 
   // Forward BFS: who consumes this function's return value (directly or transitively)?
   const consumersStmt = db.prepare(
-    `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
+    `SELECT DISTINCT n.*
      FROM dataflow d JOIN nodes n ON d.target_id = n.id
      WHERE d.source_id = ? AND d.kind = 'returns'`,
   );
 
+  const hc = new Map();
   const results = nodes.map((node) => {
+    const sym = normalizeSymbol(node, db, hc);
     const visited = new Set([node.id]);
     const levels = {};
     let frontier = [node.id];
@@ -1060,7 +1038,7 @@ export function dataflowImpactData(name, customDbPath, opts = {}) {
             visited.add(c.id);
             nextFrontier.push(c.id);
             if (!levels[d]) levels[d] = [];
-            levels[d].push({ name: c.name, kind: c.kind, file: c.file, line: c.line });
+            levels[d].push(normalizeSymbol(c, db, hc));
           }
         }
       }
@@ -1069,10 +1047,7 @@ export function dataflowImpactData(name, customDbPath, opts = {}) {
     }
 
     return {
-      name: node.name,
-      kind: node.kind,
-      file: node.file,
-      line: node.line,
+      ...sym,
       levels,
       totalAffected: visited.size - 1,
     };
