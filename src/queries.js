@@ -234,6 +234,7 @@ export function queryNameData(name, customDbPath, opts = {}) {
       kind: node.kind,
       file: node.file,
       line: node.line,
+      fileHash: getFileHash(db, node.file),
       callees: callees.map((c) => ({
         name: c.name,
         kind: c.kind,
@@ -2732,6 +2733,11 @@ export function explain(target, customDbPath, opts = {}) {
 
 // ─── whereData ──────────────────────────────────────────────────────────
 
+function getFileHash(db, file) {
+  const row = db.prepare('SELECT hash FROM file_hashes WHERE file = ?').get(file);
+  return row ? row.hash : null;
+}
+
 function whereSymbolImpl(db, target, noTests) {
   const placeholders = ALL_SYMBOL_KINDS.map(() => '?').join(', ');
   let nodes = db
@@ -2763,6 +2769,7 @@ function whereSymbolImpl(db, target, noTests) {
       kind: node.kind,
       file: node.file,
       line: node.line,
+      fileHash: getFileHash(db, node.file),
       role: node.role || null,
       exported,
       uses: uses.map((u) => ({ name: u.name, file: u.file, line: u.line })),
@@ -2813,6 +2820,7 @@ function whereFileImpl(db, target) {
 
     return {
       file: fn.file,
+      fileHash: getFileHash(db, fn.file),
       symbols: symbols.map((s) => ({ name: s.name, kind: s.kind, line: s.line })),
       imports,
       importedBy,
