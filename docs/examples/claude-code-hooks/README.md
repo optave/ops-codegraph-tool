@@ -29,6 +29,12 @@ echo ".claude/codegraph-checked.log" >> .gitignore
 | `update-graph.sh` | PostToolUse on Edit/Write | Runs `codegraph build` incrementally after each source file edit to keep the graph fresh |
 | `post-git-ops.sh` | PostToolUse on Bash | Detects `git rebase/revert/cherry-pick/merge/pull` and rebuilds the graph, logs changed files, and resets the remind tracker |
 
+### Doc hygiene hooks
+
+| Hook | Trigger | What it does |
+|------|---------|-------------|
+| `check-readme.sh` | PreToolUse on Bash | Blocks `git commit` when source files are staged but `README.md`, `CLAUDE.md`, or `ROADMAP.md` aren't — prompts the agent to review whether docs need updating |
+
 ### Parallel session safety hooks (recommended for multi-agent workflows)
 
 | Hook | Trigger | What it does |
@@ -62,6 +68,7 @@ Without this fix, `CLAUDE_PROJECT_DIR` (which always points to the main project 
 
 - **Solo developer:** `enrich-context.sh` + `update-graph.sh` + `post-git-ops.sh`
 - **With reminders:** Add `remind-codegraph.sh`
+- **Doc hygiene:** Add `check-readme.sh` to catch source commits that may need doc updates
 - **Multi-agent / worktrees:** Add `guard-git.sh` + `track-edits.sh` + `track-moves.sh`
 
 **Branch name validation:** The `guard-git.sh` in this repo's `.claude/hooks/` validates branch names against conventional prefixes (`feat/`, `fix/`, etc.). The example version omits this — add your own validation if needed.
