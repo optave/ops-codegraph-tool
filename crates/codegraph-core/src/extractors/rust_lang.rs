@@ -37,6 +37,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     Some(t) => (format!("{}.{}", t, name), "method".to_string()),
                     None => (name.to_string(), "function".to_string()),
                 };
+                let children = extract_rust_parameters(node, source);
                 symbols.definitions.push(Definition {
                     name: full_name,
                     kind,
@@ -44,13 +45,14 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "rust"),
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
 
         "struct_item" => {
             if let Some(name_node) = node.child_by_field_name("name") {
+                let children = extract_rust_struct_fields(node, source);
                 symbols.definitions.push(Definition {
                     name: node_text(&name_node, source).to_string(),
                     kind: "struct".to_string(),
@@ -58,16 +60,31 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
 
         "enum_item" => {
             if let Some(name_node) = node.child_by_field_name("name") {
+                let children = extract_rust_enum_variants(node, source);
                 symbols.definitions.push(Definition {
                     name: node_text(&name_node, source).to_string(),
                     kind: "enum".to_string(),
+                    line: start_line(node),
+                    end_line: Some(end_line(node)),
+                    decorators: None,
+                    complexity: None,
+                    children: opt_children(children),
+                });
+            }
+        }
+
+        "const_item" => {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                symbols.definitions.push(Definition {
+                    name: node_text(&name_node, source).to_string(),
+                    kind: "constant".to_string(),
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
@@ -202,6 +219,79 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
+// ── Extended kinds helpers ──────────────────────────────────────────────────
+
+fn extract_rust_parameters(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut params = Vec::new();
+    let params_node = node.child_by_field_name("parameters");
+    if let Some(params_node) = params_node {
+        for i in 0..params_node.child_count() {
+            if let Some(child) = params_node.child(i) {
+                if child.kind() == "parameter" {
+                    if let Some(pattern) = child.child_by_field_name("pattern") {
+                        let name = node_text(&pattern, source);
+                        // Skip self parameters
+                        if name == "self" || name == "&self" || name == "&mut self" || name == "mut self" {
+                            continue;
+                        }
+                        params.push(child_def(name.to_string(), "parameter", start_line(&child)));
+                    }
+                } else if child.kind() == "self_parameter" {
+                    // Skip self
+                    continue;
+                }
+            }
+        }
+    }
+    params
+}
+
+fn extract_rust_struct_fields(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut fields = Vec::new();
+    let body = node.child_by_field_name("body")
+        .or_else(|| find_child(node, "field_declaration_list"));
+    if let Some(body) = body {
+        for i in 0..body.child_count() {
+            if let Some(child) = body.child(i) {
+                if child.kind() == "field_declaration" {
+                    if let Some(name_node) = child.child_by_field_name("name") {
+                        fields.push(child_def(
+                            node_text(&name_node, source).to_string(),
+                            "property",
+                            start_line(&child),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    fields
+}
+
+fn extract_rust_enum_variants(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut variants = Vec::new();
+    let body = node.child_by_field_name("body")
+        .or_else(|| find_child(node, "enum_variant_list"));
+    if let Some(body) = body {
+        for i in 0..body.child_count() {
+            if let Some(child) = body.child(i) {
+                if child.kind() == "enum_variant" {
+                    if let Some(name_node) = child.child_by_field_name("name") {
+                        variants.push(child_def(
+                            node_text(&name_node, source).to_string(),
+                            "constant",
+                            start_line(&child),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    variants
+}
+
+// ── Existing helpers ────────────────────────────────────────────────────────
+
 fn extract_rust_use_path(node: &Node, source: &[u8]) -> Vec<(String, Vec<String>)> {
     match node.kind() {
         "use_list" => {
@@ -273,5 +363,72 @@ fn extract_rust_use_path(node: &Node, source: &[u8]) -> Vec<(String, Vec<String>
         }
 
         _ => vec![],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tree_sitter::Parser;
+
+    fn parse_rust(code: &str) -> FileSymbols {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_rust::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(code.as_bytes(), None).unwrap();
+        RustExtractor.extract(&tree, code.as_bytes(), "test.rs")
+    }
+
+    // ── Extended kinds tests ────────────────────────────────────────────────
+
+    #[test]
+    fn extracts_function_parameters() {
+        let s = parse_rust("fn add(a: i32, b: i32) -> i32 { a + b }");
+        let add = s.definitions.iter().find(|d| d.name == "add").unwrap();
+        let children = add.children.as_ref().unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].name, "a");
+        assert_eq!(children[0].kind, "parameter");
+        assert_eq!(children[1].name, "b");
+    }
+
+    #[test]
+    fn extracts_struct_fields() {
+        let s = parse_rust("struct User { name: String, age: u32 }");
+        let user = s.definitions.iter().find(|d| d.name == "User").unwrap();
+        let children = user.children.as_ref().unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].name, "name");
+        assert_eq!(children[0].kind, "property");
+        assert_eq!(children[1].name, "age");
+    }
+
+    #[test]
+    fn extracts_const_item() {
+        let s = parse_rust("const MAX: i32 = 100;");
+        let c = s.definitions.iter().find(|d| d.name == "MAX").unwrap();
+        assert_eq!(c.kind, "constant");
+    }
+
+    #[test]
+    fn extracts_enum_variants() {
+        let s = parse_rust("enum Color { Red, Green, Blue }");
+        let color = s.definitions.iter().find(|d| d.name == "Color").unwrap();
+        let children = color.children.as_ref().unwrap();
+        assert_eq!(children.len(), 3);
+        assert_eq!(children[0].name, "Red");
+        assert_eq!(children[0].kind, "constant");
+        assert_eq!(children[1].name, "Green");
+        assert_eq!(children[2].name, "Blue");
+    }
+
+    #[test]
+    fn skips_self_parameter() {
+        let s = parse_rust("struct Foo {}\nimpl Foo {\n  fn bar(&self, x: i32) {}\n}");
+        let bar = s.definitions.iter().find(|d| d.name == "Foo.bar").unwrap();
+        let children = bar.children.as_ref().unwrap();
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name, "x");
     }
 }

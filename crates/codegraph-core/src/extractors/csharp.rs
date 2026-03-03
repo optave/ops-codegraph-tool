@@ -36,6 +36,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         "class_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 let class_name = node_text(&name_node, source).to_string();
+                let children = extract_csharp_class_fields(node, source);
                 symbols.definitions.push(Definition {
                     name: class_name.clone(),
                     kind: "class".to_string(),
@@ -43,7 +44,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
-                    children: None,
+                    children: opt_children(children),
                 });
                 extract_csharp_base_types(node, &class_name, source, symbols);
             }
@@ -121,14 +122,16 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
         "enum_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
+                let enum_name = node_text(&name_node, source).to_string();
+                let children = extract_csharp_enum_members(node, source);
                 symbols.definitions.push(Definition {
-                    name: node_text(&name_node, source).to_string(),
+                    name: enum_name,
                     kind: "enum".to_string(),
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -141,6 +144,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     Some(pt) => format!("{}.{}", pt, name),
                     None => name.to_string(),
                 };
+                let children = extract_csharp_parameters(node, source);
                 symbols.definitions.push(Definition {
                     name: full_name,
                     kind: "method".to_string(),
@@ -148,7 +152,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "c_sharp"),
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -161,6 +165,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     Some(pt) => format!("{}.{}", pt, name),
                     None => name.to_string(),
                 };
+                let children = extract_csharp_parameters(node, source);
                 symbols.definitions.push(Definition {
                     name: full_name,
                     kind: "method".to_string(),
@@ -168,7 +173,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "c_sharp"),
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -281,6 +286,97 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         }
     }
 }
+
+// ── Extended kinds helpers ──────────────────────────────────────────────────
+
+fn extract_csharp_parameters(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut params = Vec::new();
+    let params_node = node.child_by_field_name("parameters")
+        .or_else(|| find_child(node, "parameter_list"));
+    if let Some(params_node) = params_node {
+        for i in 0..params_node.child_count() {
+            if let Some(child) = params_node.child(i) {
+                if child.kind() == "parameter" {
+                    if let Some(name_node) = child.child_by_field_name("name") {
+                        params.push(child_def(
+                            node_text(&name_node, source).to_string(),
+                            "parameter",
+                            start_line(&child),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    params
+}
+
+fn extract_csharp_class_fields(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut fields = Vec::new();
+    let body = node.child_by_field_name("body")
+        .or_else(|| find_child(node, "declaration_list"));
+    if let Some(body) = body {
+        for i in 0..body.child_count() {
+            if let Some(child) = body.child(i) {
+                if child.kind() == "field_declaration" {
+                    // Walk variable_declaration inside
+                    for j in 0..child.child_count() {
+                        if let Some(decl) = child.child(j) {
+                            if decl.kind() == "variable_declaration" {
+                                for k in 0..decl.child_count() {
+                                    if let Some(declarator) = decl.child(k) {
+                                        if declarator.kind() == "variable_declarator" {
+                                            if let Some(name_node) = declarator.child_by_field_name("name")
+                                                .or_else(|| declarator.child(0))
+                                            {
+                                                if name_node.kind() == "identifier" {
+                                                    fields.push(child_def(
+                                                        node_text(&name_node, source).to_string(),
+                                                        "property",
+                                                        start_line(&child),
+                                                    ));
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    fields
+}
+
+fn extract_csharp_enum_members(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut members = Vec::new();
+    let body = node.child_by_field_name("body")
+        .or_else(|| find_child(node, "enum_member_declaration_list"));
+    if let Some(body) = body {
+        for i in 0..body.child_count() {
+            if let Some(child) = body.child(i) {
+                if child.kind() == "enum_member_declaration" {
+                    if let Some(name_node) = child.child_by_field_name("name")
+                        .or_else(|| child.child(0))
+                    {
+                        if name_node.kind() == "identifier" {
+                            members.push(child_def(
+                                node_text(&name_node, source).to_string(),
+                                "constant",
+                                start_line(&child),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    members
+}
+
+// ── Existing helpers ────────────────────────────────────────────────────────
 
 fn extract_csharp_base_types(
     node: &Node,

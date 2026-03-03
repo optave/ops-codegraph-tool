@@ -34,6 +34,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     match node.kind() {
         "function_definition" => {
             if let Some(name_node) = node.child_by_field_name("name") {
+                let children = extract_php_parameters(node, source);
                 symbols.definitions.push(Definition {
                     name: node_text(&name_node, source).to_string(),
                     kind: "function".to_string(),
@@ -41,7 +42,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "php"),
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -49,6 +50,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         "class_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 let class_name = node_text(&name_node, source).to_string();
+                let children = extract_php_class_properties(node, source);
                 symbols.definitions.push(Definition {
                     name: class_name.clone(),
                     kind: "class".to_string(),
@@ -56,7 +58,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
-                    children: None,
+                    children: opt_children(children),
                 });
 
                 // Extends
@@ -152,14 +154,16 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
         "enum_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
+                let enum_name = node_text(&name_node, source).to_string();
+                let children = extract_php_enum_cases(node, source);
                 symbols.definitions.push(Definition {
-                    name: node_text(&name_node, source).to_string(),
+                    name: enum_name,
                     kind: "enum".to_string(),
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -172,6 +176,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     Some(cls) => format!("{}.{}", cls, name),
                     None => name.to_string(),
                 };
+                let children = extract_php_parameters(node, source);
                 symbols.definitions.push(Definition {
                     name: full_name,
                     kind: "method".to_string(),
@@ -179,7 +184,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "php"),
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -295,4 +300,84 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             walk_node(&child, source, symbols);
         }
     }
+}
+
+// ── Extended kinds helpers ──────────────────────────────────────────────────
+
+fn extract_php_parameters(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut params = Vec::new();
+    let params_node = node.child_by_field_name("parameters")
+        .or_else(|| find_child(node, "formal_parameters"));
+    if let Some(params_node) = params_node {
+        for i in 0..params_node.child_count() {
+            if let Some(child) = params_node.child(i) {
+                if child.kind() == "simple_parameter"
+                    || child.kind() == "variadic_parameter"
+                    || child.kind() == "property_promotion_parameter"
+                {
+                    if let Some(name_node) = child.child_by_field_name("name") {
+                        params.push(child_def(
+                            node_text(&name_node, source).to_string(),
+                            "parameter",
+                            start_line(&child),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    params
+}
+
+fn extract_php_class_properties(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut props = Vec::new();
+    let body = node.child_by_field_name("body")
+        .or_else(|| find_child(node, "declaration_list"));
+    if let Some(body) = body {
+        for i in 0..body.child_count() {
+            if let Some(child) = body.child(i) {
+                if child.kind() == "property_declaration" {
+                    // Walk property_element children
+                    for j in 0..child.child_count() {
+                        if let Some(elem) = child.child(j) {
+                            if elem.kind() == "property_element" {
+                                if let Some(name_node) = elem.child(0) {
+                                    if name_node.kind() == "variable_name" {
+                                        props.push(child_def(
+                                            node_text(&name_node, source).to_string(),
+                                            "property",
+                                            start_line(&child),
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    props
+}
+
+fn extract_php_enum_cases(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut cases = Vec::new();
+    let body = node.child_by_field_name("body")
+        .or_else(|| find_child(node, "enum_declaration_list"));
+    if let Some(body) = body {
+        for i in 0..body.child_count() {
+            if let Some(child) = body.child(i) {
+                if child.kind() == "enum_case" {
+                    if let Some(name_node) = child.child_by_field_name("name") {
+                        cases.push(child_def(
+                            node_text(&name_node, source).to_string(),
+                            "constant",
+                            start_line(&child),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    cases
 }

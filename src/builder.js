@@ -434,6 +434,7 @@ export function purgeFilesFromGraph(db, files, options = {}) {
 }
 
 export async function buildGraph(rootDir, opts = {}) {
+  rootDir = path.resolve(rootDir);
   const dbPath = path.join(rootDir, '.codegraph', 'graph.db');
   const db = openDb(dbPath);
   initSchema(db);
@@ -447,19 +448,18 @@ export async function buildGraph(rootDir, opts = {}) {
   const { name: engineName, version: engineVersion } = getActiveEngine(engineOpts);
   info(`Using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
 
-  // Check for engine/version mismatch on incremental builds
+  // Check for engine/version mismatch — auto-promote to full rebuild
+  let forceFullRebuild = false;
   if (incremental) {
     const prevEngine = getBuildMeta(db, 'engine');
     const prevVersion = getBuildMeta(db, 'codegraph_version');
     if (prevEngine && prevEngine !== engineName) {
-      warn(
-        `Engine changed (${prevEngine} → ${engineName}). Consider rebuilding with --no-incremental for consistency.`,
-      );
+      info(`Engine changed (${prevEngine} → ${engineName}), promoting to full rebuild.`);
+      forceFullRebuild = true;
     }
     if (prevVersion && prevVersion !== CODEGRAPH_VERSION) {
-      warn(
-        `Codegraph version changed (${prevVersion} → ${CODEGRAPH_VERSION}). Consider rebuilding with --no-incremental for consistency.`,
-      );
+      info(`Version changed (${prevVersion} → ${CODEGRAPH_VERSION}), promoting to full rebuild.`);
+      forceFullRebuild = true;
     }
   }
 
@@ -509,9 +509,10 @@ export async function buildGraph(rootDir, opts = {}) {
     info(`Found ${files.length} files to parse`);
 
     // Check for incremental build
-    const increResult = incremental
-      ? getChangedFiles(db, files, rootDir)
-      : { changed: files.map((f) => ({ file: f })), removed: [], isFullBuild: true };
+    const increResult =
+      incremental && !forceFullRebuild
+        ? getChangedFiles(db, files, rootDir)
+        : { changed: files.map((f) => ({ file: f })), removed: [], isFullBuild: true };
     removed = increResult.removed;
     isFullBuild = increResult.isFullBuild;
 
@@ -521,6 +522,48 @@ export async function buildGraph(rootDir, opts = {}) {
   }
 
   if (!isFullBuild && parseChanges.length === 0 && removed.length === 0) {
+    // Check if optional analysis was requested but never computed
+    const needsCfg =
+      opts.cfg &&
+      (() => {
+        try {
+          return db.prepare('SELECT COUNT(*) as c FROM cfg_blocks').get().c === 0;
+        } catch {
+          return true;
+        }
+      })();
+    const needsDataflow =
+      opts.dataflow &&
+      (() => {
+        try {
+          return (
+            db
+              .prepare(
+                "SELECT COUNT(*) as c FROM edges WHERE kind IN ('flows_to','returns','mutates')",
+              )
+              .get().c === 0
+          );
+        } catch {
+          return true;
+        }
+      })();
+
+    if (needsCfg || needsDataflow) {
+      info('No file changes. Running pending analysis pass...');
+      const analysisSymbols = await parseFilesAuto(files, rootDir, engineOpts);
+      if (needsCfg) {
+        const { buildCFGData } = await import('./cfg.js');
+        await buildCFGData(db, analysisSymbols, rootDir, engineOpts);
+      }
+      if (needsDataflow) {
+        const { buildDataflowEdges } = await import('./dataflow.js');
+        await buildDataflowEdges(db, analysisSymbols, rootDir, engineOpts);
+      }
+      closeDb(db);
+      writeJournalHeader(rootDir, Date.now());
+      return;
+    }
+
     // Still update metadata for self-healing even when no real changes
     if (metadataUpdates.length > 0) {
       try {
@@ -911,7 +954,6 @@ export async function buildGraph(rootDir, opts = {}) {
 
   // Second pass: build edges
   _t.edges0 = performance.now();
-  let edgeCount = 0;
   const buildEdges = db.transaction(() => {
     for (const [relPath, symbols] of fileSymbols) {
       // Skip barrel-only files — loaded for resolution, edges already in DB
@@ -927,7 +969,6 @@ export async function buildGraph(rootDir, opts = {}) {
         if (targetRow) {
           const edgeKind = imp.reexport ? 'reexports' : imp.typeOnly ? 'imports-type' : 'imports';
           insertEdge.run(fileNodeId, targetRow.id, edgeKind, 1.0, 0);
-          edgeCount++;
 
           if (!imp.reexport && isBarrelFile(resolvedPath)) {
             const resolvedSources = new Set();
@@ -949,7 +990,6 @@ export async function buildGraph(rootDir, opts = {}) {
                     0.9,
                     0,
                   );
-                  edgeCount++;
                 }
               }
             }
@@ -1050,7 +1090,6 @@ export async function buildGraph(rootDir, opts = {}) {
             seenCallEdges.add(edgeKey);
             const confidence = computeConfidence(relPath, t.file, importedFrom);
             insertEdge.run(caller.id, t.id, 'calls', confidence, isDynamic);
-            edgeCount++;
           }
         }
 
@@ -1073,7 +1112,6 @@ export async function buildGraph(rootDir, opts = {}) {
             if (!seenCallEdges.has(recvKey)) {
               seenCallEdges.add(recvKey);
               insertEdge.run(caller.id, recvTarget.id, 'receiver', 0.7, 0);
-              edgeCount++;
             }
           }
         }
@@ -1090,7 +1128,6 @@ export async function buildGraph(rootDir, opts = {}) {
           if (sourceRow) {
             for (const t of targetRows) {
               insertEdge.run(sourceRow.id, t.id, 'extends', 1.0, 0);
-              edgeCount++;
             }
           }
         }
@@ -1106,7 +1143,6 @@ export async function buildGraph(rootDir, opts = {}) {
           if (sourceRow) {
             for (const t of targetRows) {
               insertEdge.run(sourceRow.id, t.id, 'implements', 1.0, 0);
-              edgeCount++;
             }
           }
         }
@@ -1266,7 +1302,8 @@ export async function buildGraph(rootDir, opts = {}) {
   }
 
   const nodeCount = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c;
-  info(`Graph built: ${nodeCount} nodes, ${edgeCount} edges`);
+  const actualEdgeCount = db.prepare('SELECT COUNT(*) as c FROM edges').get().c;
+  info(`Graph built: ${nodeCount} nodes, ${actualEdgeCount} edges`);
   info(`Stored in ${dbPath}`);
 
   // Verify incremental build didn't diverge significantly from previous counts
@@ -1278,11 +1315,11 @@ export async function buildGraph(rootDir, opts = {}) {
       const prevE = Number(prevEdges);
       if (prevN > 0) {
         const nodeDrift = Math.abs(nodeCount - prevN) / prevN;
-        const edgeDrift = prevE > 0 ? Math.abs(edgeCount - prevE) / prevE : 0;
+        const edgeDrift = prevE > 0 ? Math.abs(actualEdgeCount - prevE) / prevE : 0;
         const driftThreshold = config.build?.driftThreshold ?? 0.2;
         if (nodeDrift > driftThreshold || edgeDrift > driftThreshold) {
           warn(
-            `Incremental build diverged significantly from previous counts (nodes: ${prevN}→${nodeCount} [${(nodeDrift * 100).toFixed(1)}%], edges: ${prevE}→${edgeCount} [${(edgeDrift * 100).toFixed(1)}%], threshold: ${(driftThreshold * 100).toFixed(0)}%). Consider rebuilding with --no-incremental.`,
+            `Incremental build diverged significantly from previous counts (nodes: ${prevN}→${nodeCount} [${(nodeDrift * 100).toFixed(1)}%], edges: ${prevE}→${actualEdgeCount} [${(edgeDrift * 100).toFixed(1)}%], threshold: ${(driftThreshold * 100).toFixed(0)}%). Consider rebuilding with --no-incremental.`,
           );
         }
       }
@@ -1313,7 +1350,7 @@ export async function buildGraph(rootDir, opts = {}) {
       codegraph_version: CODEGRAPH_VERSION,
       built_at: new Date().toISOString(),
       node_count: nodeCount,
-      edge_count: edgeCount,
+      edge_count: actualEdgeCount,
     });
   } catch (err) {
     warn(`Failed to write build metadata: ${err.message}`);

@@ -9,6 +9,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { buildGraph } from '../../src/builder.js';
+import { closeDb, openDb, setBuildMeta } from '../../src/db.js';
 import { JOURNAL_FILENAME, writeJournalHeader } from '../../src/journal.js';
 
 // ES-module versions of the sample-project fixture so the parser
@@ -400,5 +401,79 @@ describe('nested function caller attribution', () => {
     expect(pairs).toContain('outer->inner');
     // Should NOT have inner->inner self-call (the old bug)
     expect(pairs).not.toContain('inner->inner');
+  });
+});
+
+describe('version/engine mismatch auto-promotes to full rebuild', () => {
+  let promoDir, promoDbPath;
+
+  beforeAll(async () => {
+    promoDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-promo-'));
+    for (const [name, content] of Object.entries(FIXTURE_FILES)) {
+      fs.writeFileSync(path.join(promoDir, name), content);
+    }
+    await buildGraph(promoDir, { skipRegistry: true });
+    promoDbPath = path.join(promoDir, '.codegraph', 'graph.db');
+  });
+
+  afterAll(() => {
+    if (promoDir) fs.rmSync(promoDir, { recursive: true, force: true });
+  });
+
+  test('version mismatch triggers full rebuild', async () => {
+    // Tamper the stored version to simulate an upgrade
+    const db = openDb(promoDbPath);
+    setBuildMeta(db, { codegraph_version: '0.0.0' });
+    closeDb(db);
+
+    const stderrSpy = [];
+    const origWrite = process.stderr.write;
+    process.stderr.write = (chunk) => {
+      stderrSpy.push(String(chunk));
+      return true;
+    };
+    try {
+      await buildGraph(promoDir, { skipRegistry: true });
+    } finally {
+      process.stderr.write = origWrite;
+    }
+    const output = stderrSpy.join('');
+
+    // Should promote to full rebuild, not just warn
+    expect(output).toContain('promoting to full rebuild');
+    // Should NOT say "No changes detected" (that would mean incremental ran)
+    expect(output).not.toContain('No changes detected');
+
+    // Verify the stored version is now updated
+    const db2 = new Database(promoDbPath, { readonly: true });
+    const version = db2
+      .prepare("SELECT value FROM build_meta WHERE key = 'codegraph_version'")
+      .get();
+    db2.close();
+    expect(version.value).not.toBe('0.0.0');
+  });
+
+  test('engine mismatch triggers full rebuild', async () => {
+    // Tamper the stored engine to simulate a switch
+    const db = openDb(promoDbPath);
+    setBuildMeta(db, { engine: 'fake-engine' });
+    closeDb(db);
+
+    const stderrSpy = [];
+    const origWrite = process.stderr.write;
+    process.stderr.write = (chunk) => {
+      stderrSpy.push(String(chunk));
+      return true;
+    };
+    try {
+      await buildGraph(promoDir, { skipRegistry: true });
+    } finally {
+      process.stderr.write = origWrite;
+    }
+    const output = stderrSpy.join('');
+
+    expect(output).toContain('Engine changed');
+    expect(output).toContain('promoting to full rebuild');
+    expect(output).not.toContain('No changes detected');
   });
 });

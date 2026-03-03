@@ -35,6 +35,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         "class_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 let class_name = node_text(&name_node, source).to_string();
+                let children = extract_java_class_fields(node, source);
                 symbols.definitions.push(Definition {
                     name: class_name.clone(),
                     kind: "class".to_string(),
@@ -42,7 +43,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
-                    children: None,
+                    children: opt_children(children),
                 });
 
                 // Superclass
@@ -125,14 +126,16 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
         "enum_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
+                let enum_name = node_text(&name_node, source).to_string();
+                let children = extract_java_enum_constants(node, source);
                 symbols.definitions.push(Definition {
-                    name: node_text(&name_node, source).to_string(),
+                    name: enum_name,
                     kind: "enum".to_string(),
                     line: start_line(node),
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -145,6 +148,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     Some(cls) => format!("{}.{}", cls, name),
                     None => name.to_string(),
                 };
+                let children = extract_java_parameters(node, source);
                 symbols.definitions.push(Definition {
                     name: full_name,
                     kind: "method".to_string(),
@@ -152,7 +156,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "java"),
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -165,6 +169,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     Some(cls) => format!("{}.{}", cls, name),
                     None => name.to_string(),
                 };
+                let children = extract_java_parameters(node, source);
                 symbols.definitions.push(Definition {
                     name: full_name,
                     kind: "method".to_string(),
@@ -172,7 +177,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "java"),
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -244,6 +249,81 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
+// ── Extended kinds helpers ──────────────────────────────────────────────────
+
+fn extract_java_parameters(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut params = Vec::new();
+    let params_node = node.child_by_field_name("parameters")
+        .or_else(|| find_child(node, "formal_parameters"));
+    if let Some(params_node) = params_node {
+        for i in 0..params_node.child_count() {
+            if let Some(child) = params_node.child(i) {
+                if child.kind() == "formal_parameter" || child.kind() == "spread_parameter" {
+                    if let Some(name_node) = child.child_by_field_name("name") {
+                        params.push(child_def(
+                            node_text(&name_node, source).to_string(),
+                            "parameter",
+                            start_line(&child),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    params
+}
+
+fn extract_java_class_fields(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut fields = Vec::new();
+    let body = node.child_by_field_name("body");
+    if let Some(body) = body {
+        for i in 0..body.child_count() {
+            if let Some(child) = body.child(i) {
+                if child.kind() == "field_declaration" {
+                    // Field declarators contain the names
+                    for j in 0..child.child_count() {
+                        if let Some(decl) = child.child(j) {
+                            if decl.kind() == "variable_declarator" {
+                                if let Some(name_node) = decl.child_by_field_name("name") {
+                                    fields.push(child_def(
+                                        node_text(&name_node, source).to_string(),
+                                        "property",
+                                        start_line(&child),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    fields
+}
+
+fn extract_java_enum_constants(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut constants = Vec::new();
+    let body = node.child_by_field_name("body");
+    if let Some(body) = body {
+        for i in 0..body.child_count() {
+            if let Some(child) = body.child(i) {
+                if child.kind() == "enum_constant" {
+                    if let Some(name_node) = child.child_by_field_name("name") {
+                        constants.push(child_def(
+                            node_text(&name_node, source).to_string(),
+                            "constant",
+                            start_line(&child),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    constants
+}
+
+// ── Existing helpers ────────────────────────────────────────────────────────
+
 fn extract_java_interfaces(
     interfaces: &Node,
     class_name: &str,
@@ -303,5 +383,55 @@ fn extract_java_interfaces(
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tree_sitter::Parser;
+
+    fn parse_java(code: &str) -> FileSymbols {
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_java::LANGUAGE.into())
+            .unwrap();
+        let tree = parser.parse(code.as_bytes(), None).unwrap();
+        JavaExtractor.extract(&tree, code.as_bytes(), "Test.java")
+    }
+
+    // ── Extended kinds tests ────────────────────────────────────────────────
+
+    #[test]
+    fn extracts_method_parameters() {
+        let s = parse_java("class Foo { void bar(int x, String y) {} }");
+        let bar = s.definitions.iter().find(|d| d.name == "Foo.bar").unwrap();
+        let children = bar.children.as_ref().unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].name, "x");
+        assert_eq!(children[0].kind, "parameter");
+        assert_eq!(children[1].name, "y");
+    }
+
+    #[test]
+    fn extracts_class_fields() {
+        let s = parse_java("class User { String name; int age; }");
+        let user = s.definitions.iter().find(|d| d.name == "User").unwrap();
+        let children = user.children.as_ref().unwrap();
+        let names: Vec<&str> = children.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"name"));
+        assert!(names.contains(&"age"));
+        assert!(children.iter().all(|c| c.kind == "property"));
+    }
+
+    #[test]
+    fn extracts_enum_constants() {
+        let s = parse_java("enum Status { ACTIVE, INACTIVE }");
+        let status = s.definitions.iter().find(|d| d.name == "Status").unwrap();
+        let children = status.children.as_ref().unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].name, "ACTIVE");
+        assert_eq!(children[0].kind, "constant");
+        assert_eq!(children[1].name, "INACTIVE");
     }
 }

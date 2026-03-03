@@ -70,6 +70,11 @@ function normalize(symbols) {
       kind: d.kind,
       line: d.line,
       endLine: d.endLine ?? d.end_line ?? null,
+      children: (d.children || []).map((c) => ({
+        name: c.name,
+        kind: c.kind,
+        line: c.line,
+      })),
     })),
     calls: (symbols.calls || []).map((c) => ({
       name: c.name,

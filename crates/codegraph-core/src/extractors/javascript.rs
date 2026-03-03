@@ -18,6 +18,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     match node.kind() {
         "function_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
+                let children = extract_js_parameters(node, source);
                 symbols.definitions.push(Definition {
                     name: node_text(&name_node, source).to_string(),
                     kind: "function".to_string(),
@@ -25,7 +26,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "javascript"),
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -33,6 +34,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         "class_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 let class_name = node_text(&name_node, source).to_string();
+                let children = extract_js_class_properties(node, source);
                 symbols.definitions.push(Definition {
                     name: class_name.clone(),
                     kind: "class".to_string(),
@@ -40,7 +42,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
-                    children: None,
+                    children: opt_children(children),
                 });
 
                 // Heritage: extends + implements
@@ -76,6 +78,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     Some(cls) => format!("{}.{}", cls, method_name),
                     None => method_name.to_string(),
                 };
+                let children = extract_js_parameters(node, source);
                 symbols.definitions.push(Definition {
                     name: full_name,
                     kind: "method".to_string(),
@@ -83,7 +86,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "javascript"),
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -125,7 +128,27 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             }
         }
 
+        "enum_declaration" => {
+            // TypeScript enum
+            if let Some(name_node) = node.child_by_field_name("name") {
+                let enum_name = node_text(&name_node, source).to_string();
+                let children = extract_ts_enum_members(node, source);
+                symbols.definitions.push(Definition {
+                    name: enum_name,
+                    kind: "enum".to_string(),
+                    line: start_line(node),
+                    end_line: Some(end_line(node)),
+                    decorators: None,
+                    complexity: None,
+                    children: opt_children(children),
+                });
+            }
+        }
+
         "lexical_declaration" | "variable_declaration" => {
+            let is_const = node.child(0)
+                .map(|c| node_text(&c, source) == "const")
+                .unwrap_or(false);
             for i in 0..node.child_count() {
                 if let Some(declarator) = node.child(i) {
                     if declarator.kind() == "variable_declarator" {
@@ -137,6 +160,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                 || vt == "function_expression"
                                 || vt == "function"
                             {
+                                let children = extract_js_parameters(&value_n, source);
                                 symbols.definitions.push(Definition {
                                     name: node_text(&name_n, source).to_string(),
                                     kind: "function".to_string(),
@@ -144,6 +168,16 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     end_line: Some(end_line(&value_n)),
                                     decorators: None,
                                     complexity: compute_all_metrics(&value_n, source, "javascript"),
+                                    children: opt_children(children),
+                                });
+                            } else if is_const && is_js_literal(&value_n) {
+                                symbols.definitions.push(Definition {
+                                    name: node_text(&name_n, source).to_string(),
+                                    kind: "constant".to_string(),
+                                    line: start_line(node),
+                                    end_line: Some(end_line(node)),
+                                    decorators: None,
+                                    complexity: None,
                                     children: None,
                                 });
                             }
@@ -336,6 +370,131 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         }
     }
 }
+
+// ── Extended kinds helpers ──────────────────────────────────────────────────
+
+fn extract_js_parameters(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut params = Vec::new();
+    let params_node = node.child_by_field_name("parameters")
+        .or_else(|| find_child(node, "formal_parameters"));
+    if let Some(params_node) = params_node {
+        for i in 0..params_node.child_count() {
+            if let Some(child) = params_node.child(i) {
+                match child.kind() {
+                    "identifier" => {
+                        params.push(child_def(
+                            node_text(&child, source).to_string(),
+                            "parameter",
+                            start_line(&child),
+                        ));
+                    }
+                    "required_parameter" | "optional_parameter" => {
+                        // TS parameters: pattern field holds the identifier
+                        if let Some(pattern) = child.child_by_field_name("pattern") {
+                            if pattern.kind() == "identifier" {
+                                params.push(child_def(
+                                    node_text(&pattern, source).to_string(),
+                                    "parameter",
+                                    start_line(&child),
+                                ));
+                            }
+                        }
+                    }
+                    "assignment_pattern" => {
+                        if let Some(left) = child.child_by_field_name("left") {
+                            if left.kind() == "identifier" {
+                                params.push(child_def(
+                                    node_text(&left, source).to_string(),
+                                    "parameter",
+                                    start_line(&child),
+                                ));
+                            }
+                        }
+                    }
+                    "rest_pattern" | "rest_element" => {
+                        for j in 0..child.child_count() {
+                            if let Some(inner) = child.child(j) {
+                                if inner.kind() == "identifier" {
+                                    params.push(child_def(
+                                        node_text(&inner, source).to_string(),
+                                        "parameter",
+                                        start_line(&child),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    params
+}
+
+fn extract_js_class_properties(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut props = Vec::new();
+    let body = node.child_by_field_name("body")
+        .or_else(|| find_child(node, "class_body"));
+    if let Some(body) = body {
+        for i in 0..body.child_count() {
+            if let Some(child) = body.child(i) {
+                match child.kind() {
+                    "field_definition" | "public_field_definition" | "property_definition" => {
+                        let prop = child.child_by_field_name("property")
+                            .or_else(|| child.child_by_field_name("name"))
+                            .or_else(|| find_child(&child, "property_identifier"));
+                        if let Some(prop) = prop {
+                            let kind = prop.kind();
+                            if kind == "property_identifier" || kind == "identifier"
+                                || kind == "private_property_identifier"
+                            {
+                                props.push(child_def(
+                                    node_text(&prop, source).to_string(),
+                                    "property",
+                                    start_line(&child),
+                                ));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    props
+}
+
+fn extract_ts_enum_members(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut members = Vec::new();
+    let body = node.child_by_field_name("body")
+        .or_else(|| find_child(node, "enum_body"));
+    if let Some(body) = body {
+        for i in 0..body.child_count() {
+            if let Some(child) = body.child(i) {
+                if child.kind() == "enum_assignment" || child.kind() == "property_identifier" {
+                    let name = child.child_by_field_name("name")
+                        .unwrap_or(child);
+                    members.push(child_def(
+                        node_text(&name, source).to_string(),
+                        "constant",
+                        start_line(&child),
+                    ));
+                }
+            }
+        }
+    }
+    members
+}
+
+fn is_js_literal(node: &Node) -> bool {
+    matches!(node.kind(),
+        "number" | "string" | "true" | "false" | "null" | "undefined"
+        | "template_string" | "regex"
+    )
+}
+
+// ── Existing helpers ────────────────────────────────────────────────────────
 
 fn extract_interface_methods(
     body: &Node,
@@ -825,5 +984,53 @@ mod tests {
         let s = parse_js("emitter.on('data', handleData);");
         let defs: Vec<_> = s.definitions.iter().filter(|d| d.name.starts_with("event:")).collect();
         assert!(defs.is_empty(), "should not extract when handler is a named reference");
+    }
+
+    // ── Extended kinds tests ────────────────────────────────────────────────
+
+    #[test]
+    fn extracts_function_parameters() {
+        let s = parse_js("function greet(name, age) { }");
+        let greet = s.definitions.iter().find(|d| d.name == "greet").unwrap();
+        let children = greet.children.as_ref().unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].name, "name");
+        assert_eq!(children[0].kind, "parameter");
+        assert_eq!(children[1].name, "age");
+    }
+
+    #[test]
+    fn extracts_arrow_function_parameters() {
+        let s = parse_js("const add = (a, b) => a + b;");
+        let add = s.definitions.iter().find(|d| d.name == "add").unwrap();
+        let children = add.children.as_ref().unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].name, "a");
+        assert_eq!(children[1].name, "b");
+    }
+
+    #[test]
+    fn extracts_class_properties() {
+        let s = parse_js("class User { name; age; greet() {} }");
+        let user = s.definitions.iter().find(|d| d.name == "User").unwrap();
+        let children = user.children.as_ref().unwrap();
+        let prop_names: Vec<&str> = children.iter().map(|c| c.name.as_str()).collect();
+        assert!(prop_names.contains(&"name"));
+        assert!(prop_names.contains(&"age"));
+        assert!(children.iter().all(|c| c.kind == "property"));
+    }
+
+    #[test]
+    fn extracts_const_literal_as_constant() {
+        let s = parse_js("const MAX = 100;");
+        let max = s.definitions.iter().find(|d| d.name == "MAX").unwrap();
+        assert_eq!(max.kind, "constant");
+    }
+
+    #[test]
+    fn skips_const_function_as_constant() {
+        let s = parse_js("const fn = () => {};");
+        let f = s.definitions.iter().find(|d| d.name == "fn").unwrap();
+        assert_eq!(f.kind, "function");
     }
 }

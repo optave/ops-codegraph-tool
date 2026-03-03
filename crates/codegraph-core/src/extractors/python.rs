@@ -30,6 +30,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     Some(cls) => (format!("{}.{}", cls, name_text), "method".to_string()),
                     None => (name_text.to_string(), "function".to_string()),
                 };
+                let children = extract_python_parameters(node, source, parent_class.is_some());
                 symbols.definitions.push(Definition {
                     name: full_name,
                     kind,
@@ -41,7 +42,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                         Some(decorators)
                     },
                     complexity: compute_all_metrics(node, source, "python"),
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -49,6 +50,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         "class_definition" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 let class_name = node_text(&name_node, source).to_string();
+                let children = extract_python_class_properties(node, source);
                 symbols.definitions.push(Definition {
                     name: class_name.clone(),
                     kind: "class".to_string(),
@@ -56,7 +58,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
-                    children: None,
+                    children: opt_children(children),
                 });
                 let superclasses = node
                     .child_by_field_name("superclasses")
@@ -86,6 +88,32 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 }
             }
             return;
+        }
+
+        "expression_statement" => {
+            // Module-level UPPER_CASE = literal → constant
+            if is_module_level(node) {
+                if let Some(expr) = node.child(0) {
+                    if expr.kind() == "assignment" {
+                        if let Some(left) = expr.child_by_field_name("left") {
+                            if left.kind() == "identifier" {
+                                let name = node_text(&left, source);
+                                if is_upper_snake_case(name) {
+                                    symbols.definitions.push(Definition {
+                                        name: name.to_string(),
+                                        kind: "constant".to_string(),
+                                        line: start_line(node),
+                                        end_line: Some(end_line(node)),
+                                        decorators: None,
+                                        complexity: None,
+                                        children: None,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         "call" => {
@@ -184,6 +212,123 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
+// ── Extended kinds helpers ──────────────────────────────────────────────────
+
+fn extract_python_parameters(node: &Node, source: &[u8], is_method: bool) -> Vec<Definition> {
+    let mut params = Vec::new();
+    let params_node = node.child_by_field_name("parameters");
+    if let Some(params_node) = params_node {
+        for i in 0..params_node.child_count() {
+            if let Some(child) = params_node.child(i) {
+                let name = match child.kind() {
+                    "identifier" => {
+                        let text = node_text(&child, source);
+                        Some(text.to_string())
+                    }
+                    "default_parameter" | "typed_default_parameter" => {
+                        child.child_by_field_name("name")
+                            .map(|n| node_text(&n, source).to_string())
+                    }
+                    "typed_parameter" => {
+                        // typed_parameter: first child is the identifier
+                        child.child(0)
+                            .filter(|c| c.kind() == "identifier")
+                            .map(|c| node_text(&c, source).to_string())
+                    }
+                    "list_splat_pattern" | "dictionary_splat_pattern" => {
+                        // *args, **kwargs
+                        child.child(0)
+                            .filter(|c| c.kind() == "identifier")
+                            .map(|c| node_text(&c, source).to_string())
+                    }
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    // Skip self/cls for methods
+                    if is_method && (name == "self" || name == "cls") {
+                        continue;
+                    }
+                    params.push(child_def(name, "parameter", start_line(&child)));
+                }
+            }
+        }
+    }
+    params
+}
+
+fn extract_python_class_properties(class_node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut props = Vec::new();
+    let body = class_node.child_by_field_name("body");
+    if let Some(body) = body {
+        // Look for __init__ method and scan for self.x = ... assignments
+        for i in 0..body.child_count() {
+            if let Some(child) = body.child(i) {
+                if child.kind() == "function_definition" {
+                    if let Some(name_node) = child.child_by_field_name("name") {
+                        if node_text(&name_node, source) == "__init__" {
+                            collect_self_assignments(&child, source, &mut props);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    props
+}
+
+fn collect_self_assignments(node: &Node, source: &[u8], props: &mut Vec<Definition>) {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if child.kind() == "expression_statement" {
+                if let Some(expr) = child.child(0) {
+                    if expr.kind() == "assignment" {
+                        if let Some(left) = expr.child_by_field_name("left") {
+                            if left.kind() == "attribute" {
+                                if let Some(obj) = left.child_by_field_name("object") {
+                                    if node_text(&obj, source) == "self" {
+                                        if let Some(attr) = left.child_by_field_name("attribute") {
+                                            let name = node_text(&attr, source);
+                                            // Avoid duplicates
+                                            if !props.iter().any(|p| p.name == name) {
+                                                props.push(child_def(
+                                                    name.to_string(),
+                                                    "property",
+                                                    start_line(&child),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            // Recurse into blocks (if/for/etc inside __init__)
+            if child.kind() == "block" || child.kind() == "if_statement"
+                || child.kind() == "for_statement" || child.kind() == "while_statement"
+            {
+                collect_self_assignments(&child, source, props);
+            }
+        }
+    }
+}
+
+fn is_module_level(node: &Node) -> bool {
+    if let Some(parent) = node.parent() {
+        return parent.kind() == "module";
+    }
+    false
+}
+
+fn is_upper_snake_case(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit())
+        && s.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false)
+}
+
+// ── Existing helpers ────────────────────────────────────────────────────────
+
 fn find_python_parent_class<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
     while let Some(parent) = current {
@@ -249,5 +394,46 @@ mod tests {
         assert_eq!(s.classes.len(), 1);
         assert_eq!(s.classes[0].name, "Dog");
         assert_eq!(s.classes[0].extends, Some("Animal".to_string()));
+    }
+
+    // ── Extended kinds tests ────────────────────────────────────────────────
+
+    #[test]
+    fn extracts_function_parameters() {
+        let s = parse_py("def greet(name, age=30):\n  pass");
+        let greet = s.definitions.iter().find(|d| d.name == "greet").unwrap();
+        let children = greet.children.as_ref().unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].name, "name");
+        assert_eq!(children[0].kind, "parameter");
+        assert_eq!(children[1].name, "age");
+    }
+
+    #[test]
+    fn extracts_method_parameters_skips_self() {
+        let s = parse_py("class Foo:\n    def bar(self, x, y):\n        pass\n");
+        let bar = s.definitions.iter().find(|d| d.name == "Foo.bar").unwrap();
+        let children = bar.children.as_ref().unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].name, "x");
+        assert_eq!(children[1].name, "y");
+    }
+
+    #[test]
+    fn extracts_class_properties_from_init() {
+        let s = parse_py("class User:\n  def __init__(self, x, y):\n    self.x = x\n    self.y = y\n");
+        let user = s.definitions.iter().find(|d| d.name == "User").unwrap();
+        let children = user.children.as_ref().unwrap();
+        let names: Vec<&str> = children.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"x"));
+        assert!(names.contains(&"y"));
+        assert!(children.iter().all(|c| c.kind == "property"));
+    }
+
+    #[test]
+    fn extracts_module_level_constant() {
+        let s = parse_py("MAX_RETRIES = 3");
+        let c = s.definitions.iter().find(|d| d.name == "MAX_RETRIES").unwrap();
+        assert_eq!(c.kind, "constant");
     }
 }

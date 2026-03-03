@@ -1,8 +1,27 @@
 use tree_sitter::Node;
+use crate::types::Definition;
 
 /// Get the text of a node from the source bytes.
 pub fn node_text<'a>(node: &Node, source: &'a [u8]) -> &'a str {
     node.utf8_text(source).unwrap_or("")
+}
+
+/// Wrap a children vec into Option — None if empty.
+pub fn opt_children(children: Vec<Definition>) -> Option<Vec<Definition>> {
+    if children.is_empty() { None } else { Some(children) }
+}
+
+/// Create a child Definition with the given kind (parameter, property, constant).
+pub fn child_def(name: String, kind: &str, line: u32) -> Definition {
+    Definition {
+        name,
+        kind: kind.to_string(),
+        line,
+        end_line: None,
+        decorators: None,
+        complexity: None,
+        children: None,
+    }
 }
 
 /// Find the first child of a given type.

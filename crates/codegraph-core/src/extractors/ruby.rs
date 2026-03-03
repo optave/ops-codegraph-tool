@@ -35,6 +35,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         "class" => {
             if let Some(name_node) = node.child_by_field_name("name") {
                 let class_name = node_text(&name_node, source).to_string();
+                let children = extract_ruby_class_children(node, source);
                 symbols.definitions.push(Definition {
                     name: class_name.clone(),
                     kind: "class".to_string(),
@@ -42,10 +43,9 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
-                    children: None,
+                    children: opt_children(children),
                 });
                 if let Some(superclass) = node.child_by_field_name("superclass") {
-                    // Walk superclass node to find the constant
                     extract_ruby_superclass(&superclass, &class_name, node, source, symbols);
                 }
             }
@@ -73,6 +73,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     Some(cls) => format!("{}.{}", cls, name),
                     None => name.to_string(),
                 };
+                let children = extract_ruby_parameters(node, source);
                 symbols.definitions.push(Definition {
                     name: full_name,
                     kind: "method".to_string(),
@@ -80,7 +81,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "ruby"),
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -173,6 +174,104 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         }
     }
 }
+
+// ── Extended kinds helpers ──────────────────────────────────────────────────
+
+fn extract_ruby_parameters(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut params = Vec::new();
+    let params_node = node.child_by_field_name("parameters")
+        .or_else(|| find_child(node, "method_parameters"));
+    if let Some(params_node) = params_node {
+        for i in 0..params_node.child_count() {
+            if let Some(child) = params_node.child(i) {
+                match child.kind() {
+                    "identifier" => {
+                        params.push(child_def(
+                            node_text(&child, source).to_string(),
+                            "parameter",
+                            start_line(&child),
+                        ));
+                    }
+                    "optional_parameter" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            params.push(child_def(
+                                node_text(&name_node, source).to_string(),
+                                "parameter",
+                                start_line(&child),
+                            ));
+                        }
+                    }
+                    "splat_parameter" | "hash_splat_parameter" | "block_parameter" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            params.push(child_def(
+                                node_text(&name_node, source).to_string(),
+                                "parameter",
+                                start_line(&child),
+                            ));
+                        }
+                    }
+                    "keyword_parameter" => {
+                        if let Some(name_node) = child.child_by_field_name("name") {
+                            params.push(child_def(
+                                node_text(&name_node, source).to_string(),
+                                "parameter",
+                                start_line(&child),
+                            ));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    params
+}
+
+fn extract_ruby_class_children(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut children = Vec::new();
+    // Walk class body looking for instance variable assignments and constants
+    let body = node.child_by_field_name("body");
+    if let Some(body) = body {
+        collect_ruby_class_children(&body, source, &mut children);
+    }
+    children
+}
+
+fn collect_ruby_class_children(node: &Node, source: &[u8], children: &mut Vec<Definition>) {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            match child.kind() {
+                // Instance variable assignment: @name = ...
+                "assignment" => {
+                    if let Some(left) = child.child_by_field_name("left") {
+                        if left.kind() == "instance_variable" {
+                            let name = node_text(&left, source);
+                            if !children.iter().any(|c| c.name == name) {
+                                children.push(child_def(
+                                    name.to_string(),
+                                    "property",
+                                    start_line(&child),
+                                ));
+                            }
+                        }
+                        // UPPER_CASE = value → constant
+                        if left.kind() == "constant" {
+                            let name = node_text(&left, source);
+                            children.push(child_def(
+                                name.to_string(),
+                                "constant",
+                                start_line(&child),
+                            ));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+// ── Existing helpers ────────────────────────────────────────────────────────
 
 fn extract_ruby_superclass(
     superclass: &Node,

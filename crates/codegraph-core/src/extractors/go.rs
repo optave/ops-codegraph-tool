@@ -18,6 +18,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     match node.kind() {
         "function_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
+                let children = extract_go_parameters(node, source);
                 symbols.definitions.push(Definition {
                     name: node_text(&name_node, source).to_string(),
                     kind: "function".to_string(),
@@ -25,7 +26,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "go"),
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -55,6 +56,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     Some(rt) => format!("{}.{}", rt, name),
                     None => name.to_string(),
                 };
+                let children = extract_go_parameters(node, source);
                 symbols.definitions.push(Definition {
                     name: full_name,
                     kind: "method".to_string(),
@@ -62,7 +64,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "go"),
-                    children: None,
+                    children: opt_children(children),
                 });
             }
         }
@@ -79,6 +81,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                         let name = node_text(&name_node, source).to_string();
                         match type_node.kind() {
                             "struct_type" => {
+                                let children = extract_go_struct_fields(&type_node, source);
                                 symbols.definitions.push(Definition {
                                     name,
                                     kind: "struct".to_string(),
@@ -86,7 +89,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     end_line: Some(end_line(node)),
                                     decorators: None,
                                     complexity: None,
-                                    children: None,
+                                    children: opt_children(children),
                                 });
                             }
                             "interface_type" => {
@@ -135,6 +138,26 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     children: None,
                                 });
                             }
+                        }
+                    }
+                }
+            }
+        }
+
+        "const_declaration" => {
+            for i in 0..node.child_count() {
+                if let Some(spec) = node.child(i) {
+                    if spec.kind() == "const_spec" {
+                        if let Some(name_node) = spec.child_by_field_name("name") {
+                            symbols.definitions.push(Definition {
+                                name: node_text(&name_node, source).to_string(),
+                                kind: "constant".to_string(),
+                                line: start_line(&spec),
+                                end_line: Some(end_line(&spec)),
+                                decorators: None,
+                                complexity: None,
+                                children: None,
+                            });
                         }
                     }
                 }
@@ -201,6 +224,62 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
+// ── Extended kinds helpers ──────────────────────────────────────────────────
+
+fn extract_go_parameters(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut params = Vec::new();
+    let params_node = node.child_by_field_name("parameters")
+        .or_else(|| find_child(node, "parameter_list"));
+    if let Some(params_node) = params_node {
+        for i in 0..params_node.child_count() {
+            if let Some(child) = params_node.child(i) {
+                if child.kind() == "parameter_declaration" {
+                    // Go parameter_declaration can have multiple names before the type
+                    for j in 0..child.child_count() {
+                        if let Some(inner) = child.child(j) {
+                            if inner.kind() == "identifier" {
+                                params.push(child_def(
+                                    node_text(&inner, source).to_string(),
+                                    "parameter",
+                                    start_line(&inner),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    params
+}
+
+fn extract_go_struct_fields(struct_type: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut fields = Vec::new();
+    let field_list = find_child(struct_type, "field_declaration_list");
+    let field_list = field_list.as_ref().unwrap_or(struct_type);
+    for i in 0..field_list.child_count() {
+        if let Some(child) = field_list.child(i) {
+            if child.kind() == "field_declaration" {
+                // Field names come before the type
+                for j in 0..child.child_count() {
+                    if let Some(inner) = child.child(j) {
+                        if inner.kind() == "field_identifier" {
+                            fields.push(child_def(
+                                node_text(&inner, source).to_string(),
+                                "property",
+                                start_line(&child),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    fields
+}
+
+// ── Existing helpers ────────────────────────────────────────────────────────
+
 fn extract_go_import_spec(spec: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(path_node) = spec.child_by_field_name("path") {
         let import_path = node_text(&path_node, source).replace('"', "");
@@ -259,5 +338,36 @@ mod tests {
         assert_eq!(s.imports.len(), 2);
         assert_eq!(s.imports[0].source, "fmt");
         assert_eq!(s.imports[1].source, "os");
+    }
+
+    // ── Extended kinds tests ────────────────────────────────────────────────
+
+    #[test]
+    fn extracts_function_parameters() {
+        let s = parse_go("package main\nfunc add(a int, b int) int { return a + b }");
+        let add = s.definitions.iter().find(|d| d.name == "add").unwrap();
+        let children = add.children.as_ref().unwrap();
+        assert_eq!(children.len(), 2);
+        assert_eq!(children[0].name, "a");
+        assert_eq!(children[0].kind, "parameter");
+        assert_eq!(children[1].name, "b");
+    }
+
+    #[test]
+    fn extracts_struct_fields() {
+        let s = parse_go("package main\ntype User struct {\n  Name string\n  Age int\n}");
+        let user = s.definitions.iter().find(|d| d.name == "User").unwrap();
+        let children = user.children.as_ref().unwrap();
+        let names: Vec<&str> = children.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"Name"));
+        assert!(names.contains(&"Age"));
+        assert!(children.iter().all(|c| c.kind == "property"));
+    }
+
+    #[test]
+    fn extracts_const_declarations() {
+        let s = parse_go("package main\nconst MaxRetries = 3");
+        let c = s.definitions.iter().find(|d| d.name == "MaxRetries").unwrap();
+        assert_eq!(c.kind, "constant");
     }
 }
