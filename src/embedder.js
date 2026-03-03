@@ -4,6 +4,7 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { closeDb, findDbPath, openDb, openReadonlyOrFail } from './db.js';
 import { info, warn } from './logger.js';
+import { normalizeSymbol } from './queries.js';
 
 /**
  * Split an identifier into readable words.
@@ -582,7 +583,7 @@ function _prepareSearch(customDbPath, opts = {}) {
   const noTests = opts.noTests || false;
   const TEST_PATTERN = /\.(test|spec)\.|__test__|__tests__|\.stories\./;
   let sql = `
-    SELECT e.node_id, e.vector, e.text_preview, n.name, n.kind, n.file, n.line
+    SELECT e.node_id, e.vector, e.text_preview, n.name, n.kind, n.file, n.line, n.end_line, n.role
     FROM embeddings e
     JOIN nodes n ON e.node_id = n.id
   `;
@@ -638,6 +639,7 @@ export async function searchData(query, customDbPath, opts = {}) {
     return null;
   }
 
+  const hc = new Map();
   const results = [];
   for (const row of rows) {
     const vec = new Float32Array(new Uint8Array(row.vector).buffer);
@@ -645,10 +647,7 @@ export async function searchData(query, customDbPath, opts = {}) {
 
     if (sim >= minScore) {
       results.push({
-        name: row.name,
-        kind: row.kind,
-        file: row.file,
-        line: row.line,
+        ...normalizeSymbol(row, db, hc),
         similarity: sim,
       });
     }
@@ -734,14 +733,12 @@ export async function multiSearchData(queries, customDbPath, opts = {}) {
   }
 
   // Build results sorted by RRF score
+  const hc = new Map();
   const results = [];
   for (const [rowIndex, entry] of fusionMap) {
     const row = rows[rowIndex];
     results.push({
-      name: row.name,
-      kind: row.kind,
-      file: row.file,
-      line: row.line,
+      ...normalizeSymbol(row, db, hc),
       rrf: entry.rrfScore,
       queryScores: entry.queryScores,
     });
@@ -804,7 +801,7 @@ export function ftsSearchData(query, customDbPath, opts = {}) {
 
   let sql = `
     SELECT f.rowid AS node_id, rank AS bm25_score,
-           n.name, n.kind, n.file, n.line
+           n.name, n.kind, n.file, n.line, n.end_line, n.role
     FROM fts_index f
     JOIN nodes n ON f.rowid = n.id
     WHERE fts_index MATCH ?
@@ -841,16 +838,13 @@ export function ftsSearchData(query, customDbPath, opts = {}) {
     rows = rows.filter((row) => !TEST_PATTERN.test(row.file));
   }
 
-  db.close();
-
+  const hc = new Map();
   const results = rows.slice(0, limit).map((row) => ({
-    name: row.name,
-    kind: row.kind,
-    file: row.file,
-    line: row.line,
+    ...normalizeSymbol(row, db, hc),
     bm25Score: -row.bm25_score, // FTS5 rank is negative; negate for display
   }));
 
+  db.close();
   return { results };
 }
 
@@ -924,6 +918,9 @@ export async function hybridSearchData(query, customDbPath, opts = {}) {
           kind: item.kind,
           file: item.file,
           line: item.line,
+          endLine: item.endLine ?? null,
+          role: item.role ?? null,
+          fileHash: item.fileHash ?? null,
           rrfScore: 0,
           bm25Score: null,
           bm25Rank: null,
@@ -955,6 +952,9 @@ export async function hybridSearchData(query, customDbPath, opts = {}) {
       kind: e.kind,
       file: e.file,
       line: e.line,
+      endLine: e.endLine,
+      role: e.role,
+      fileHash: e.fileHash,
       rrf: e.rrfScore,
       bm25Score: e.bm25Score,
       bm25Rank: e.bm25Rank,

@@ -207,6 +207,7 @@ export function queryNameData(name, customDbPath, opts = {}) {
     return { query: name, results: [] };
   }
 
+  const hc = new Map();
   const results = nodes.map((node) => {
     let callees = db
       .prepare(`
@@ -230,11 +231,7 @@ export function queryNameData(name, customDbPath, opts = {}) {
     }
 
     return {
-      name: node.name,
-      kind: node.kind,
-      file: node.file,
-      line: node.line,
-      fileHash: getFileHash(db, node.file),
+      ...normalizeSymbol(node, db, hc),
       callees: callees.map((c) => ({
         name: c.name,
         kind: c.kind,
@@ -403,6 +400,7 @@ export function fnDepsData(name, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   const depth = opts.depth || 3;
   const noTests = opts.noTests || false;
+  const hc = new Map();
 
   const nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
   if (nodes.length === 0) {
@@ -494,10 +492,7 @@ export function fnDepsData(name, customDbPath, opts = {}) {
     }
 
     return {
-      name: node.name,
-      kind: node.kind,
-      file: node.file,
-      line: node.line,
+      ...normalizeSymbol(node, db, hc),
       callees: filteredCallees.map((c) => ({
         name: c.name,
         kind: c.kind,
@@ -524,6 +519,7 @@ export function fnImpactData(name, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   const maxDepth = opts.depth || 5;
   const noTests = opts.noTests || false;
+  const hc = new Map();
 
   const nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
   if (nodes.length === 0) {
@@ -560,10 +556,7 @@ export function fnImpactData(name, customDbPath, opts = {}) {
     }
 
     return {
-      name: node.name,
-      kind: node.kind,
-      file: node.file,
-      line: node.line,
+      ...normalizeSymbol(node, db, hc),
       levels,
       totalDependents: visited.size - 1,
     };
@@ -1195,14 +1188,16 @@ export function listFunctionsData(customDbPath, opts = {}) {
 
   let rows = db
     .prepare(
-      `SELECT name, kind, file, line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY file, line`,
+      `SELECT name, kind, file, line, end_line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY file, line`,
     )
     .all(...params);
 
   if (noTests) rows = rows.filter((r) => !isTestFile(r.file));
 
+  const hc = new Map();
+  const functions = rows.map((r) => normalizeSymbol(r, db, hc));
   db.close();
-  const base = { count: rows.length, functions: rows };
+  const base = { count: functions.length, functions };
   return paginateResult(base, 'functions', { limit: opts.limit, offset: opts.offset });
 }
 
@@ -1235,11 +1230,18 @@ export function* iterListFunctions(customDbPath, opts = {}) {
     }
 
     const stmt = db.prepare(
-      `SELECT name, kind, file, line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY file, line`,
+      `SELECT name, kind, file, line, end_line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY file, line`,
     );
     for (const row of stmt.iterate(...params)) {
       if (noTests && isTestFile(row.file)) continue;
-      yield { name: row.name, kind: row.kind, file: row.file, line: row.line, role: row.role };
+      yield {
+        name: row.name,
+        kind: row.kind,
+        file: row.file,
+        line: row.line,
+        endLine: row.end_line ?? null,
+        role: row.role ?? null,
+      };
     }
   } finally {
     db.close();
@@ -1253,7 +1255,7 @@ export function* iterListFunctions(customDbPath, opts = {}) {
  * @param {boolean} [opts.noTests]
  * @param {string} [opts.role]
  * @param {string} [opts.file]
- * @yields {{ name: string, kind: string, file: string, line: number, role: string }}
+ * @yields {{ name: string, kind: string, file: string, line: number, endLine: number|null, role: string }}
  */
 export function* iterRoles(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
@@ -1272,11 +1274,18 @@ export function* iterRoles(customDbPath, opts = {}) {
     }
 
     const stmt = db.prepare(
-      `SELECT name, kind, file, line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY role, file, line`,
+      `SELECT name, kind, file, line, end_line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY role, file, line`,
     );
     for (const row of stmt.iterate(...params)) {
       if (noTests && isTestFile(row.file)) continue;
-      yield { name: row.name, kind: row.kind, file: row.file, line: row.line, role: row.role };
+      yield {
+        name: row.name,
+        kind: row.kind,
+        file: row.file,
+        line: row.line,
+        endLine: row.end_line ?? null,
+        role: row.role ?? null,
+      };
     }
   } finally {
     db.close();
@@ -2458,6 +2467,7 @@ function explainFunctionImpl(db, target, noTests, getFileLines) {
   if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
   if (nodes.length === 0) return [];
 
+  const hc = new Map();
   return nodes.slice(0, 10).map((node) => {
     const fileLines = getFileLines(node.file);
     const lineCount = node.end_line ? node.end_line - node.line + 1 : null;
@@ -2515,12 +2525,7 @@ function explainFunctionImpl(db, target, noTests, getFileLines) {
     }
 
     return {
-      name: node.name,
-      kind: node.kind,
-      file: node.file,
-      line: node.line,
-      role: node.role || null,
-      endLine: node.end_line || null,
+      ...normalizeSymbol(node, db, hc),
       lineCount,
       summary,
       signature,
@@ -2738,6 +2743,35 @@ function getFileHash(db, file) {
   return row ? row.hash : null;
 }
 
+/**
+ * Normalize a raw DB/query row into the stable 7-field symbol shape.
+ * @param {object} row    - Raw row (from SELECT * or explicit columns)
+ * @param {object} [db]   - Open DB handle; when null, fileHash will be null
+ * @param {Map}    [hashCache] - Optional per-file cache to avoid repeated getFileHash calls
+ * @returns {{ name: string, kind: string, file: string, line: number, endLine: number|null, role: string|null, fileHash: string|null }}
+ */
+export function normalizeSymbol(row, db, hashCache) {
+  let fileHash = null;
+  if (db) {
+    if (hashCache) {
+      if (!hashCache.has(row.file)) {
+        hashCache.set(row.file, getFileHash(db, row.file));
+      }
+      fileHash = hashCache.get(row.file);
+    } else {
+      fileHash = getFileHash(db, row.file);
+    }
+  }
+  return {
+    name: row.name,
+    kind: row.kind,
+    file: row.file,
+    line: row.line,
+    endLine: row.end_line ?? row.endLine ?? null,
+    role: row.role ?? null,
+    fileHash,
+  };
+}
 function whereSymbolImpl(db, target, noTests) {
   const placeholders = ALL_SYMBOL_KINDS.map(() => '?').join(', ');
   let nodes = db
@@ -2747,6 +2781,7 @@ function whereSymbolImpl(db, target, noTests) {
     .all(`%${target}%`, ...ALL_SYMBOL_KINDS);
   if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
 
+  const hc = new Map();
   return nodes.map((node) => {
     const crossFileCallers = db
       .prepare(
@@ -2765,12 +2800,7 @@ function whereSymbolImpl(db, target, noTests) {
     if (noTests) uses = uses.filter((u) => !isTestFile(u.file));
 
     return {
-      name: node.name,
-      kind: node.kind,
-      file: node.file,
-      line: node.line,
-      fileHash: getFileHash(db, node.file),
-      role: node.role || null,
+      ...normalizeSymbol(node, db, hc),
       exported,
       uses: uses.map((u) => ({ name: u.name, file: u.file, line: u.line })),
     };
@@ -2916,7 +2946,7 @@ export function rolesData(customDbPath, opts = {}) {
 
   let rows = db
     .prepare(
-      `SELECT name, kind, file, line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY role, file, line`,
+      `SELECT name, kind, file, line, end_line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY role, file, line`,
     )
     .all(...params);
 
@@ -2927,8 +2957,10 @@ export function rolesData(customDbPath, opts = {}) {
     summary[r.role] = (summary[r.role] || 0) + 1;
   }
 
+  const hc = new Map();
+  const symbols = rows.map((r) => normalizeSymbol(r, db, hc));
   db.close();
-  const base = { count: rows.length, summary, symbols: rows };
+  const base = { count: symbols.length, summary, symbols };
   return paginateResult(base, 'symbols', { limit: opts.limit, offset: opts.offset });
 }
 

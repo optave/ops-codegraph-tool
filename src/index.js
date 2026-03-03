@@ -122,6 +122,7 @@ export {
   iterWhere,
   kindIcon,
   moduleMapData,
+  normalizeSymbol,
   pathData,
   queryNameData,
   rolesData,
