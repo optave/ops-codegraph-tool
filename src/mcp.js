@@ -6,6 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
+import { AST_NODE_KINDS } from './ast.js';
 import { findCycles } from './cycles.js';
 import { findDbPath } from './db.js';
 import { MCP_DEFAULTS, MCP_MAX_LIMIT } from './paginate.js';
@@ -657,6 +658,26 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'cfg',
+    description: 'Show intraprocedural control flow graph for a function. Requires build --cfg.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Function/method name (partial match)' },
+        format: {
+          type: 'string',
+          enum: ['json', 'dot', 'mermaid'],
+          description: 'Output format (default: json)',
+        },
+        file: { type: 'string', description: 'Scope to file (partial match)' },
+        kind: { type: 'string', enum: EVERY_SYMBOL_KIND, description: 'Filter by symbol kind' },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
+      },
+      required: ['name'],
+    },
+  },
+  {
     name: 'dataflow',
     description: 'Show data flow edges or data-dependent blast radius. Requires build --dataflow.',
     inputSchema: {
@@ -695,6 +716,28 @@ const BASE_TOOLS = [
         boundaries: { type: 'boolean', description: 'Enable boundaries predicate (default: true)' },
         depth: { type: 'number', description: 'Max BFS depth for blast radius (default: 3)' },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+      },
+    },
+  },
+  {
+    name: 'ast_query',
+    description:
+      'Search stored AST nodes (calls, literals, new, throw, await) by pattern. Requires a prior build.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pattern: {
+          type: 'string',
+          description: 'GLOB pattern for node name (auto-wrapped in *..* for substring match)',
+        },
+        kind: {
+          type: 'string',
+          enum: AST_NODE_KINDS,
+          description: 'Filter by AST node kind',
+        },
+        file: { type: 'string', description: 'Scope to file (partial match)' },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
     },
   },
@@ -1235,6 +1278,24 @@ export async function startMCPServer(customDbPath, options = {}) {
           result = args.format === 'mermaid' ? branchCompareMermaid(bcData) : bcData;
           break;
         }
+        case 'cfg': {
+          const { cfgData, cfgToDOT, cfgToMermaid } = await import('./cfg.js');
+          const cfgResult = cfgData(args.name, dbPath, {
+            file: args.file,
+            kind: args.kind,
+            noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.query, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
+          });
+          if (args.format === 'dot') {
+            result = { text: cfgToDOT(cfgResult) };
+          } else if (args.format === 'mermaid') {
+            result = { text: cfgToMermaid(cfgResult) };
+          } else {
+            result = cfgResult;
+          }
+          break;
+        }
         case 'dataflow': {
           const dfMode = args.mode || 'edges';
           if (dfMode === 'impact') {
@@ -1270,6 +1331,17 @@ export async function startMCPServer(customDbPath, options = {}) {
             boundaries: args.boundaries,
             depth: args.depth,
             noTests: args.no_tests,
+          });
+          break;
+        }
+        case 'ast_query': {
+          const { astQueryData } = await import('./ast.js');
+          result = astQueryData(args.pattern, dbPath, {
+            kind: args.kind,
+            file: args.file,
+            noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.ast_query, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
           });
           break;
         }

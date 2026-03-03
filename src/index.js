@@ -5,6 +5,8 @@
  *   import { buildGraph, queryNameData, findCycles, exportDOT } from 'codegraph';
  */
 
+// AST node queries
+export { AST_NODE_KINDS, astQuery, astQueryData } from './ast.js';
 // Audit (composite report)
 export { audit, auditData } from './audit.js';
 // Batch querying
@@ -22,6 +24,16 @@ export { evaluateBoundaries, PRESETS, validateBoundaryConfig } from './boundarie
 export { branchCompareData, branchCompareMermaid } from './branch-compare.js';
 // Graph building
 export { buildGraph, collectFiles, loadPathAliases, resolveImportPath } from './builder.js';
+// Control flow graph (intraprocedural)
+export {
+  buildCFGData,
+  buildFunctionCFG,
+  CFG_RULES,
+  cfg,
+  cfgData,
+  cfgToDOT,
+  cfgToMermaid,
+} from './cfg.js';
 // Check (CI validation predicates)
 export { check, checkData } from './check.js';
 // Co-change analysis
@@ -44,6 +56,7 @@ export {
   computeHalsteadMetrics,
   computeLOCMetrics,
   computeMaintainabilityIndex,
+  findFunctionNode,
   HALSTEAD_RULES,
   iterComplexity,
 } from './complexity.js';

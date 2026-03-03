@@ -37,8 +37,10 @@ const ALL_TOOL_NAMES = [
   'batch_query',
   'triage',
   'branch_compare',
+  'cfg',
   'dataflow',
   'check',
+  'ast_query',
   'list_repos',
 ];
 
