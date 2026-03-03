@@ -38,7 +38,6 @@ const ALL_TOOL_NAMES = [
   'branch_compare',
   'dataflow',
   'check',
-  'scoped_rebuild',
   'list_repos',
 ];
 

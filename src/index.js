@@ -21,13 +21,7 @@ export { evaluateBoundaries, PRESETS, validateBoundaryConfig } from './boundarie
 // Branch comparison
 export { branchCompareData, branchCompareMermaid } from './branch-compare.js';
 // Graph building
-export {
-  buildGraph,
-  collectFiles,
-  loadPathAliases,
-  purgeFilesFromGraph,
-  resolveImportPath,
-} from './builder.js';
+export { buildGraph, collectFiles, loadPathAliases, resolveImportPath } from './builder.js';
 // Check (CI validation predicates)
 export { check, checkData } from './check.js';
 // Co-change analysis

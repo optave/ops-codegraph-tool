@@ -98,18 +98,10 @@ program
   .description('Parse repo and build graph in .codegraph/graph.db')
   .option('--no-incremental', 'Force full rebuild (ignore file hashes)')
   .option('--dataflow', 'Extract data flow edges (flows_to, returns, mutates)')
-  .option('--scope <files...>', 'Rebuild only specified files (for agent-level rollback)')
-  .option('--no-reverse-deps', 'Skip reverse dependency cascade (only meaningful with --scope)')
   .action(async (dir, opts) => {
     const root = path.resolve(dir || '.');
     const engine = program.opts().engine;
-    await buildGraph(root, {
-      incremental: opts.incremental,
-      engine,
-      dataflow: opts.dataflow,
-      scope: opts.scope,
-      noReverseDeps: opts.reverseDeps === false,
-    });
+    await buildGraph(root, { incremental: opts.incremental, engine, dataflow: opts.dataflow });
   });
 
 program
