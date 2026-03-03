@@ -41,6 +41,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                         Some(decorators)
                     },
                     complexity: compute_all_metrics(node, source, "python"),
+                    children: None,
                 });
             }
         }
@@ -55,6 +56,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
+                    children: None,
                 });
                 let superclasses = node
                     .child_by_field_name("superclasses")
