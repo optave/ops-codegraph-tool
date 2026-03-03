@@ -36,6 +36,7 @@ import {
   moduleMapData,
   pathData,
   queryNameData,
+  rolesData,
   statsData,
   whereData,
 } from '../../src/queries.js';
@@ -128,6 +129,7 @@ describe('queryNameData', () => {
     expect(fn).toBeDefined();
     expect(fn.callers.map((c) => c.name)).toContain('authMiddleware');
     expect(fn.callees.map((c) => c.name)).toContain('validateToken');
+    expect(fn.fileHash).toBe('hash_auth_js');
   });
 
   test('returns empty results for nonexistent name', () => {
@@ -527,6 +529,7 @@ describe('whereData', () => {
     expect(r.file).toBe('middleware.js');
     expect(r.line).toBe(5);
     expect(r.uses.map((u) => u.name)).toContain('handleRoute');
+    expect(r.fileHash).toBe('hash_middleware_js');
   });
 
   test('symbol: exported flag', () => {
@@ -558,6 +561,7 @@ describe('whereData', () => {
     expect(r.symbols.map((s) => s.name)).toContain('authMiddleware');
     expect(r.imports).toContain('auth.js');
     expect(r.importedBy).toContain('routes.js');
+    expect(r.fileHash).toBe('hash_middleware_js');
   });
 
   test('file: exported list', () => {

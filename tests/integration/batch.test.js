@@ -17,7 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { BATCH_COMMANDS, batchData } from '../../src/batch.js';
+import { BATCH_COMMANDS, batchData, multiBatchData, splitTargets } from '../../src/batch.js';
 import { initSchema } from '../../src/db.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
@@ -114,12 +114,6 @@ describe('batchData — success', () => {
     expect(data.results[0].data.name).toBe('authenticate');
   });
 
-  test('fn: returns dependency chain', () => {
-    const data = batchData('fn', ['handleRoute'], dbPath);
-    expect(data.succeeded).toBe(1);
-    expect(data.results[0].ok).toBe(true);
-  });
-
   test('context: with depth option', () => {
     const data = batchData('context', ['authenticate'], dbPath, { depth: 1 });
     expect(data.succeeded).toBe(1);
@@ -177,10 +171,10 @@ describe('batchData — edge cases', () => {
       'explain',
       'where',
       'query',
-      'fn',
       'impact',
       'deps',
       'flow',
+      'dataflow',
       'complexity',
     ];
     for (const cmd of expected) {
@@ -210,11 +204,12 @@ describe('batchData — complexity (dbOnly signature)', () => {
 // ─── CLI smoke test ──────────────────────────────────────────────────
 
 describe('batch CLI', () => {
+  const cliPath = path.resolve(
+    path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1')),
+    '../../src/cli.js',
+  );
+
   test('outputs valid JSON', () => {
-    const cliPath = path.resolve(
-      path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1')),
-      '../../src/cli.js',
-    );
     const out = execFileSync('node', [cliPath, 'batch', 'query', 'authenticate', '--db', dbPath], {
       encoding: 'utf-8',
       timeout: 30_000,
@@ -223,5 +218,149 @@ describe('batch CLI', () => {
     expect(parsed.command).toBe('query');
     expect(parsed.total).toBe(1);
     expect(parsed.results).toHaveLength(1);
+  });
+
+  test('batch accepts comma-separated positional targets', () => {
+    const out = execFileSync(
+      'node',
+      [cliPath, 'batch', 'where', 'authenticate,validateToken', '--db', dbPath],
+      { encoding: 'utf-8', timeout: 30_000 },
+    );
+    const parsed = JSON.parse(out);
+    expect(parsed.command).toBe('where');
+    expect(parsed.total).toBe(2);
+    expect(parsed.results).toHaveLength(2);
+    expect(parsed.results.map((r) => r.target)).toEqual(['authenticate', 'validateToken']);
+  });
+});
+
+// ─── splitTargets ─────────────────────────────────────────────────────
+
+describe('splitTargets', () => {
+  test('splits comma-separated strings', () => {
+    expect(splitTargets(['a,b', 'c'])).toEqual(['a', 'b', 'c']);
+  });
+
+  test('trims whitespace', () => {
+    expect(splitTargets([' a , b '])).toEqual(['a', 'b']);
+  });
+
+  test('filters empty segments', () => {
+    expect(splitTargets(['a,,b', '', 'c'])).toEqual(['a', 'b', 'c']);
+  });
+
+  test('passes through object items unchanged', () => {
+    const obj = { command: 'where', target: 'foo' };
+    expect(splitTargets([obj, 'a,b'])).toEqual([obj, 'a', 'b']);
+  });
+
+  test('handles empty input', () => {
+    expect(splitTargets([])).toEqual([]);
+  });
+});
+
+// ─── multiBatchData ───────────────────────────────────────────────────
+
+describe('multiBatchData', () => {
+  test('mixed commands all succeed', () => {
+    const items = [
+      { command: 'where', target: 'authenticate' },
+      { command: 'fn-impact', target: 'validateToken' },
+      { command: 'explain', target: 'src/auth.js' },
+    ];
+    const result = multiBatchData(items, dbPath);
+    expect(result.mode).toBe('multi');
+    expect(result.total).toBe(3);
+    expect(result.succeeded).toBe(3);
+    expect(result.failed).toBe(0);
+    for (const r of result.results) {
+      expect(r.ok).toBe(true);
+      expect(r.command).toBeDefined();
+      expect(r.data).toBeDefined();
+    }
+  });
+
+  test('invalid command captured per-item without breaking others', () => {
+    const items = [
+      { command: 'where', target: 'authenticate' },
+      { command: 'not-a-command', target: 'foo' },
+      { command: 'query', target: 'handleRoute' },
+    ];
+    const result = multiBatchData(items, dbPath);
+    expect(result.total).toBe(3);
+    expect(result.succeeded).toBe(2);
+    expect(result.failed).toBe(1);
+    expect(result.results[0].ok).toBe(true);
+    expect(result.results[1].ok).toBe(false);
+    expect(result.results[1].error).toMatch(/Unknown batch command/);
+    expect(result.results[2].ok).toBe(true);
+  });
+
+  test('per-item opts override shared opts', () => {
+    const items = [{ command: 'context', target: 'authenticate', opts: { depth: 1 } }];
+    const result = multiBatchData(items, dbPath, { depth: 5 });
+    expect(result.succeeded).toBe(1);
+    expect(result.results[0].ok).toBe(true);
+  });
+
+  test('empty items returns empty results', () => {
+    const result = multiBatchData([], dbPath);
+    expect(result.mode).toBe('multi');
+    expect(result.total).toBe(0);
+    expect(result.succeeded).toBe(0);
+    expect(result.failed).toBe(0);
+    expect(result.results).toEqual([]);
+  });
+
+  test('error from data function captured per-item', () => {
+    const badDb = path.join(tmpDir, '.codegraph', 'nonexistent.db');
+    const items = [
+      { command: 'query', target: 'authenticate' },
+      { command: 'where', target: 'foo' },
+    ];
+    const result = multiBatchData(items, badDb);
+    expect(result.total).toBe(2);
+    expect(result.failed).toBe(2);
+    for (const r of result.results) {
+      expect(r.ok).toBe(false);
+      expect(r.error).toBeDefined();
+    }
+  });
+});
+
+// ─── batch-query CLI ──────────────────────────────────────────────────
+
+describe('batch-query CLI', () => {
+  const cliPath = path.resolve(
+    path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1')),
+    '../../src/cli.js',
+  );
+
+  test('comma-separated targets default to where command', () => {
+    const out = execFileSync(
+      'node',
+      [cliPath, 'batch-query', 'authenticate,validateToken', '--db', dbPath],
+      { encoding: 'utf-8', timeout: 30_000 },
+    );
+    const parsed = JSON.parse(out);
+    expect(parsed.command).toBe('where');
+    expect(parsed.total).toBe(2);
+    expect(parsed.results).toHaveLength(2);
+    expect(parsed.results.map((r) => r.target)).toEqual(['authenticate', 'validateToken']);
+    for (const r of parsed.results) {
+      expect(r.ok).toBe(true);
+    }
+  });
+
+  test('--command override works', () => {
+    const out = execFileSync(
+      'node',
+      [cliPath, 'batch-query', 'authenticate', '--command', 'fn-impact', '--db', dbPath],
+      { encoding: 'utf-8', timeout: 30_000 },
+    );
+    const parsed = JSON.parse(out);
+    expect(parsed.command).toBe('fn-impact');
+    expect(parsed.total).toBe(1);
+    expect(parsed.results[0].ok).toBe(true);
   });
 });

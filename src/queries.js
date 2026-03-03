@@ -2772,6 +2772,7 @@ export function normalizeSymbol(row, db, hashCache) {
     fileHash,
   };
 }
+
 function whereSymbolImpl(db, target, noTests) {
   const placeholders = ALL_SYMBOL_KINDS.map(() => '?').join(', ');
   let nodes = db
@@ -2850,6 +2851,7 @@ function whereFileImpl(db, target) {
 
     return {
       file: fn.file,
+      fileHash: getFileHash(db, fn.file),
       symbols: symbols.map((s) => ({ name: s.name, kind: s.kind, line: s.line })),
       imports,
       importedBy,

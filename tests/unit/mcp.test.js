@@ -9,14 +9,12 @@ import { describe, expect, it, vi } from 'vitest';
 import { buildToolList, TOOLS } from '../../src/mcp.js';
 
 const ALL_TOOL_NAMES = [
-  'query_function',
+  'query',
   'file_deps',
   'impact_analysis',
   'find_cycles',
   'module_map',
-  'fn_deps',
   'fn_impact',
-  'symbol_path',
   'context',
   'explain',
   'where',
@@ -29,7 +27,6 @@ const ALL_TOOL_NAMES = [
   'co_changes',
   'node_roles',
   'execution_flow',
-  'list_entry_points',
   'complexity',
   'manifesto',
   'communities',
@@ -38,6 +35,7 @@ const ALL_TOOL_NAMES = [
   'batch_query',
   'triage',
   'branch_compare',
+  'dataflow',
   'check',
   'list_repos',
 ];
@@ -62,9 +60,15 @@ describe('TOOLS', () => {
     }
   });
 
-  it('query_function requires name parameter', () => {
-    const qf = TOOLS.find((t) => t.name === 'query_function');
-    expect(qf.inputSchema.required).toContain('name');
+  it('query requires name parameter and has mode enum', () => {
+    const q = TOOLS.find((t) => t.name === 'query');
+    expect(q.inputSchema.required).toContain('name');
+    expect(q.inputSchema.properties).toHaveProperty('mode');
+    expect(q.inputSchema.properties.mode.enum).toEqual(['deps', 'path']);
+    expect(q.inputSchema.properties).toHaveProperty('to');
+    expect(q.inputSchema.properties).toHaveProperty('file');
+    expect(q.inputSchema.properties).toHaveProperty('kind');
+    expect(q.inputSchema.properties.kind.enum).toBeDefined();
   });
 
   it('file_deps requires file parameter', () => {
@@ -88,16 +92,6 @@ describe('TOOLS', () => {
     expect(mm.inputSchema.required).toBeUndefined();
   });
 
-  it('fn_deps requires name parameter', () => {
-    const fd = TOOLS.find((t) => t.name === 'fn_deps');
-    expect(fd.inputSchema.required).toContain('name');
-    expect(fd.inputSchema.properties).toHaveProperty('depth');
-    expect(fd.inputSchema.properties).toHaveProperty('no_tests');
-    expect(fd.inputSchema.properties).toHaveProperty('file');
-    expect(fd.inputSchema.properties).toHaveProperty('kind');
-    expect(fd.inputSchema.properties.kind.enum).toBeDefined();
-  });
-
   it('fn_impact requires name parameter', () => {
     const fi = TOOLS.find((t) => t.name === 'fn_impact');
     expect(fi.inputSchema.required).toContain('name');
@@ -106,21 +100,6 @@ describe('TOOLS', () => {
     expect(fi.inputSchema.properties).toHaveProperty('file');
     expect(fi.inputSchema.properties).toHaveProperty('kind');
     expect(fi.inputSchema.properties.kind.enum).toBeDefined();
-  });
-
-  it('symbol_path requires from and to parameters', () => {
-    const sp = TOOLS.find((t) => t.name === 'symbol_path');
-    expect(sp).toBeDefined();
-    expect(sp.inputSchema.required).toContain('from');
-    expect(sp.inputSchema.required).toContain('to');
-    expect(sp.inputSchema.properties).toHaveProperty('max_depth');
-    expect(sp.inputSchema.properties).toHaveProperty('edge_kinds');
-    expect(sp.inputSchema.properties).toHaveProperty('reverse');
-    expect(sp.inputSchema.properties).toHaveProperty('from_file');
-    expect(sp.inputSchema.properties).toHaveProperty('to_file');
-    expect(sp.inputSchema.properties).toHaveProperty('kind');
-    expect(sp.inputSchema.properties.kind.enum).toBeDefined();
-    expect(sp.inputSchema.properties).toHaveProperty('no_tests');
   });
 
   it('where requires target parameter', () => {
@@ -242,7 +221,7 @@ describe('buildToolList', () => {
 describe('startMCPServer handler dispatch', () => {
   // We test the handler logic by mocking the SDK and capturing the registered handlers
 
-  it('dispatches query_function to queryNameData', async () => {
+  it('dispatches query to fnDepsData', async () => {
     const handlers = {};
 
     // Mock the SDK modules
@@ -264,7 +243,6 @@ describe('startMCPServer handler dispatch', () => {
 
     // Mock query functions
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: vi.fn(() => ({ query: 'test', results: [] })),
       impactAnalysisData: vi.fn(() => ({ file: 'test', sources: [] })),
       moduleMapData: vi.fn(() => ({ topNodes: [], stats: {} })),
       fileDepsData: vi.fn(() => ({ file: 'test', results: [] })),
@@ -288,9 +266,9 @@ describe('startMCPServer handler dispatch', () => {
     expect(toolsList.tools.length).toBe(ALL_TOOL_NAMES.length - 1);
     expect(toolsList.tools.map((t) => t.name)).not.toContain('list_repos');
 
-    // Test query_function dispatch
+    // Test query dispatch
     const result = await handlers['tools/call']({
-      params: { name: 'query_function', arguments: { name: 'test' } },
+      params: { name: 'query', arguments: { name: 'test' } },
     });
     expect(result.content[0].type).toBe('text');
     expect(result.isError).toBeUndefined();
@@ -307,7 +285,7 @@ describe('startMCPServer handler dispatch', () => {
     vi.doUnmock('../../src/queries.js');
   });
 
-  it('dispatches fn_deps to fnDepsData', async () => {
+  it('dispatches query deps mode to fnDepsData with options', async () => {
     const handlers = {};
 
     vi.doMock('@modelcontextprotocol/sdk/server/index.js', () => ({
@@ -328,7 +306,6 @@ describe('startMCPServer handler dispatch', () => {
 
     const fnDepsMock = vi.fn(() => ({ name: 'myFn', results: [{ callers: [] }] }));
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -348,7 +325,7 @@ describe('startMCPServer handler dispatch', () => {
 
     const result = await handlers['tools/call']({
       params: {
-        name: 'fn_deps',
+        name: 'query',
         arguments: { name: 'myFn', depth: 5, file: 'src/app.js', kind: 'function', no_tests: true },
       },
     });
@@ -388,7 +365,6 @@ describe('startMCPServer handler dispatch', () => {
 
     const fnImpactMock = vi.fn(() => ({ name: 'test', results: [] }));
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -445,7 +421,6 @@ describe('startMCPServer handler dispatch', () => {
 
     const diffImpactMock = vi.fn(() => ({ changedFiles: 2, affectedFunctions: [] }));
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -505,7 +480,6 @@ describe('startMCPServer handler dispatch', () => {
       functions: [{ name: 'a' }, { name: 'b' }, { name: 'c' }],
     }));
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -564,13 +538,12 @@ describe('startMCPServer handler dispatch', () => {
       ),
     }));
 
-    const queryMock = vi.fn(() => ({ query: 'test', results: [] }));
+    const fnDepsMock = vi.fn(() => ({ name: 'test', results: [] }));
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: queryMock,
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
-      fnDepsData: vi.fn(),
+      fnDepsData: fnDepsMock,
       fnImpactData: vi.fn(),
       contextData: vi.fn(),
       explainData: vi.fn(),
@@ -585,12 +558,15 @@ describe('startMCPServer handler dispatch', () => {
     await startMCPServer(undefined, { multiRepo: true });
 
     const result = await handlers['tools/call']({
-      params: { name: 'query_function', arguments: { name: 'test', repo: 'my-project' } },
+      params: { name: 'query', arguments: { name: 'test', repo: 'my-project' } },
     });
     expect(result.isError).toBeUndefined();
-    expect(queryMock).toHaveBeenCalledWith('test', '/resolved/path/.codegraph/graph.db', {
+    expect(fnDepsMock).toHaveBeenCalledWith('test', '/resolved/path/.codegraph/graph.db', {
+      depth: undefined,
+      file: undefined,
+      kind: undefined,
       noTests: undefined,
-      limit: 50,
+      limit: 10,
       offset: 0,
     });
 
@@ -622,7 +598,6 @@ describe('startMCPServer handler dispatch', () => {
       resolveRepoDbPath: vi.fn(() => undefined),
     }));
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -641,7 +616,7 @@ describe('startMCPServer handler dispatch', () => {
     await startMCPServer(undefined, { multiRepo: true });
 
     const result = await handlers['tools/call']({
-      params: { name: 'query_function', arguments: { name: 'test', repo: 'unknown-repo' } },
+      params: { name: 'query', arguments: { name: 'test', repo: 'unknown-repo' } },
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('unknown-repo');
@@ -675,7 +650,6 @@ describe('startMCPServer handler dispatch', () => {
       resolveRepoDbPath: vi.fn(() => '/some/path'),
     }));
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -694,7 +668,7 @@ describe('startMCPServer handler dispatch', () => {
     await startMCPServer(undefined, { allowedRepos: ['allowed-repo'] });
 
     const result = await handlers['tools/call']({
-      params: { name: 'query_function', arguments: { name: 'test', repo: 'blocked-repo' } },
+      params: { name: 'query', arguments: { name: 'test', repo: 'blocked-repo' } },
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('blocked-repo');
@@ -728,13 +702,12 @@ describe('startMCPServer handler dispatch', () => {
       resolveRepoDbPath: vi.fn(() => '/resolved/db'),
     }));
 
-    const queryMock = vi.fn(() => ({ query: 'test', results: [] }));
+    const fnDepsMock = vi.fn(() => ({ name: 'test', results: [] }));
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: queryMock,
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
-      fnDepsData: vi.fn(),
+      fnDepsData: fnDepsMock,
       fnImpactData: vi.fn(),
       contextData: vi.fn(),
       explainData: vi.fn(),
@@ -749,12 +722,15 @@ describe('startMCPServer handler dispatch', () => {
     await startMCPServer(undefined, { allowedRepos: ['my-repo'] });
 
     const result = await handlers['tools/call']({
-      params: { name: 'query_function', arguments: { name: 'test', repo: 'my-repo' } },
+      params: { name: 'query', arguments: { name: 'test', repo: 'my-repo' } },
     });
     expect(result.isError).toBeUndefined();
-    expect(queryMock).toHaveBeenCalledWith('test', '/resolved/db', {
+    expect(fnDepsMock).toHaveBeenCalledWith('test', '/resolved/db', {
+      depth: undefined,
+      file: undefined,
+      kind: undefined,
       noTests: undefined,
-      limit: 50,
+      limit: 10,
       offset: 0,
     });
 
@@ -792,7 +768,6 @@ describe('startMCPServer handler dispatch', () => {
       pruneRegistry: vi.fn(),
     }));
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -850,7 +825,6 @@ describe('startMCPServer handler dispatch', () => {
       pruneRegistry: vi.fn(),
     }));
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -899,7 +873,6 @@ describe('startMCPServer handler dispatch', () => {
       CallToolRequestSchema: 'tools/call',
     }));
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -918,7 +891,7 @@ describe('startMCPServer handler dispatch', () => {
     await startMCPServer('/tmp/test.db');
 
     const result = await handlers['tools/call']({
-      params: { name: 'query_function', arguments: { name: 'test', repo: 'some-repo' } },
+      params: { name: 'query', arguments: { name: 'test', repo: 'some-repo' } },
     });
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Multi-repo access is disabled');
@@ -948,7 +921,6 @@ describe('startMCPServer handler dispatch', () => {
       CallToolRequestSchema: 'tools/call',
     }));
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -997,7 +969,6 @@ describe('startMCPServer handler dispatch', () => {
       CallToolRequestSchema: 'tools/call',
     }));
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -1047,7 +1018,6 @@ describe('startMCPServer handler dispatch', () => {
     }));
 
     vi.doMock('../../src/queries.js', () => ({
-      queryNameData: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),

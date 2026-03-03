@@ -8,7 +8,14 @@
 // Audit (composite report)
 export { audit, auditData } from './audit.js';
 // Batch querying
-export { BATCH_COMMANDS, batch, batchData } from './batch.js';
+export {
+  BATCH_COMMANDS,
+  batch,
+  batchData,
+  batchQuery,
+  multiBatchData,
+  splitTargets,
+} from './batch.js';
 // Architecture boundary rules
 export { evaluateBoundaries, PRESETS, validateBoundaryConfig } from './boundaries.js';
 // Branch comparison
@@ -46,6 +53,15 @@ export { loadConfig } from './config.js';
 export { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
 // Circular dependency detection
 export { findCycles, formatCycles } from './cycles.js';
+// Dataflow analysis
+export {
+  buildDataflowEdges,
+  dataflow,
+  dataflowData,
+  dataflowImpactData,
+  dataflowPathData,
+  extractDataflow,
+} from './dataflow.js';
 // Database utilities
 export {
   findDbPath,

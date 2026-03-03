@@ -69,7 +69,7 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 
 ### Feature comparison
 
-<sub>Comparison last verified: March 2026. Full analysis: <a href="generated/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
+<sub>Comparison last verified: March 2026. Full analysis: <a href="generated/competitive/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
 
 | Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) | [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | [axon](https://github.com/harshkedia177/axon) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -237,12 +237,12 @@ codegraph explain <function>   # Function summary: signature, calls, callers, te
 
 ```bash
 codegraph impact <file>        # Transitive reverse dependency trace
-codegraph fn <name>            # Function-level: callers, callees, call chain
-codegraph fn <name> --no-tests --depth 5
+codegraph query <name>         # Function-level: callers, callees, call chain
+codegraph query <name> --no-tests --depth 5
 codegraph fn-impact <name>     # What functions break if this one changes
-codegraph path <from> <to>     # Shortest path between two symbols (A calls...calls B)
-codegraph path <from> <to> --reverse  # Follow edges backward
-codegraph path <from> <to> --max-depth 5 --kinds calls,imports
+codegraph query <from> --path <to>     # Shortest path between two symbols (A calls...calls B)
+codegraph query <from> --path <to> --reverse  # Follow edges backward
+codegraph query <from> --path <to> --depth 5 --kinds calls,imports
 codegraph diff-impact          # Impact of unstaged git changes
 codegraph diff-impact --staged # Impact of staged changes
 codegraph diff-impact HEAD~3   # Impact vs a specific ref
@@ -505,12 +505,12 @@ Self-measured on every release via CI ([build benchmarks](generated/benchmarks/B
 | Metric | Latest |
 |---|---|
 | Build speed (native) | **1.9 ms/file** |
-| Build speed (WASM) | **7.8 ms/file** |
-| Query time | **2ms** |
-| No-op rebuild (native) | **3ms** |
-| 1-file rebuild (native) | **93ms** |
-| Query: fn-deps | **1.8ms** |
-| Query: path | **1ms** |
+| Build speed (WASM) | **8.3 ms/file** |
+| Query time | **3ms** |
+| No-op rebuild (native) | **4ms** |
+| 1-file rebuild (native) | **124ms** |
+| Query: fn-deps | **1.4ms** |
+| Query: path | **1.4ms** |
 | ~50,000 files (est.) | **~95.0s build** |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
@@ -566,8 +566,8 @@ This project uses codegraph. The database is at `.codegraph/graph.db`.
 ### Other useful commands
 - `codegraph build .` — rebuild the graph (incremental by default)
 - `codegraph map` — module overview
-- `codegraph fn <name> -T` — function call chain
-- `codegraph path <from> <to> -T` — shortest call path between two symbols
+- `codegraph query <name> -T` — function call chain (callers + callees)
+- `codegraph query <from> --path <to> -T` — shortest call path between two symbols
 - `codegraph deps <file>` — file-level dependencies
 - `codegraph roles --role dead -T` — find dead code (unreferenced symbols)
 - `codegraph roles --role core -T` — find core symbols (high fan-in)

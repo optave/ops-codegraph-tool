@@ -32,10 +32,10 @@ jobs:
       - name: Check branch name
         run: |
           BRANCH="${{ github.head_ref }}"
-          PATTERN="^(feat|fix|docs|refactor|test|chore|ci|perf|build|release|dependabot|revert)/"
+          PATTERN="^(feat|fix|docs|refactor|test|chore|ci|perf|build|release|dependabot|revert|benchmark)/"
           if [[ ! "$BRANCH" =~ $PATTERN ]]; then
             echo "::error::Branch name '$BRANCH' does not match the required pattern."
-            echo "Branch names must start with one of: feat/, fix/, docs/, refactor/, test/, chore/, ci/, perf/, build/, release/, dependabot/, revert/"
+            echo "Branch names must start with one of: feat/, fix/, docs/, refactor/, test/, chore/, ci/, perf/, build/, release/, dependabot/, revert/, benchmark/"
             exit 1
           fi
           echo "Branch name '$BRANCH' is valid."

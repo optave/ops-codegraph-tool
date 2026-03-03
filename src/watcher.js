@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { readFileSafe } from './builder.js';
+import { appendChangeEvents, buildChangeEvent, diffSymbols } from './change-journal.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
 import { closeDb, initSchema, openDb } from './db.js';
 import { appendJournalEntries } from './journal.js';
@@ -25,13 +26,25 @@ async function updateFile(_db, rootDir, filePath, stmts, engineOpts, cache) {
 
   const oldNodes = stmts.countNodes.get(relPath)?.c || 0;
   const _oldEdges = stmts.countEdgesForFile.get(relPath)?.c || 0;
+  const oldSymbols = stmts.listSymbols.all(relPath);
 
   stmts.deleteEdgesForFile.run(relPath);
   stmts.deleteNodes.run(relPath);
 
   if (!fs.existsSync(filePath)) {
     if (cache) cache.remove(filePath);
-    return { file: relPath, nodesAdded: 0, nodesRemoved: oldNodes, edgesAdded: 0, deleted: true };
+    const symbolDiff = diffSymbols(oldSymbols, []);
+    return {
+      file: relPath,
+      nodesAdded: 0,
+      nodesRemoved: oldNodes,
+      edgesAdded: 0,
+      deleted: true,
+      event: 'deleted',
+      symbolDiff,
+      nodesBefore: oldNodes,
+      nodesAfter: 0,
+    };
   }
 
   let code;
@@ -55,6 +68,7 @@ async function updateFile(_db, rootDir, filePath, stmts, engineOpts, cache) {
   }
 
   const newNodes = stmts.countNodes.get(relPath)?.c || 0;
+  const newSymbols = stmts.listSymbols.all(relPath);
 
   let edgesAdded = 0;
   const fileNodeRow = stmts.getNodeId.get(relPath, 'file', relPath, 0);
@@ -129,12 +143,19 @@ async function updateFile(_db, rootDir, filePath, stmts, engineOpts, cache) {
     }
   }
 
+  const symbolDiff = diffSymbols(oldSymbols, newSymbols);
+  const event = oldNodes === 0 ? 'added' : 'modified';
+
   return {
     file: relPath,
     nodesAdded: newNodes,
     nodesRemoved: oldNodes,
     edgesAdded,
     deleted: false,
+    event,
+    symbolDiff,
+    nodesBefore: oldNodes,
+    nodesAfter: newNodes,
   };
 }
 
@@ -180,6 +201,7 @@ export async function watchProject(rootDir, opts = {}) {
     findNodeByName: db.prepare(
       "SELECT id, file FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module')",
     ),
+    listSymbols: db.prepare("SELECT name, kind, line FROM nodes WHERE file = ? AND kind != 'file'"),
   };
 
   // Use named params for statements needing the same value twice
@@ -217,6 +239,19 @@ export async function watchProject(rootDir, opts = {}) {
         appendJournalEntries(rootDir, entries);
       } catch {
         /* journal write failure is non-fatal */
+      }
+
+      const changeEvents = updates.map((r) =>
+        buildChangeEvent(r.file, r.event, r.symbolDiff, {
+          nodesBefore: r.nodesBefore,
+          nodesAfter: r.nodesAfter,
+          edgesAdded: r.edgesAdded,
+        }),
+      );
+      try {
+        appendChangeEvents(rootDir, changeEvents);
+      } catch {
+        /* change event write failure is non-fatal */
       }
     }
 
