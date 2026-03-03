@@ -10,6 +10,7 @@ import { buildToolList, TOOLS } from '../../src/mcp.js';
 
 const ALL_TOOL_NAMES = [
   'query',
+  'path',
   'file_deps',
   'file_exports',
   'impact_analysis',
@@ -18,19 +19,16 @@ const ALL_TOOL_NAMES = [
   'fn_impact',
   'context',
   'symbol_children',
-  'explain',
   'where',
   'diff_impact',
   'semantic_search',
   'export_graph',
   'list_functions',
   'structure',
-  'hotspots',
   'co_changes',
   'node_roles',
   'execution_flow',
   'complexity',
-  'manifesto',
   'communities',
   'code_owners',
   'audit',
@@ -73,6 +71,18 @@ describe('TOOLS', () => {
     expect(q.inputSchema.properties).toHaveProperty('file');
     expect(q.inputSchema.properties).toHaveProperty('kind');
     expect(q.inputSchema.properties.kind.enum).toBeDefined();
+  });
+
+  it('path requires from and to parameters', () => {
+    const p = TOOLS.find((t) => t.name === 'path');
+    expect(p).toBeDefined();
+    expect(p.inputSchema.required).toContain('from');
+    expect(p.inputSchema.required).toContain('to');
+    expect(p.inputSchema.properties).toHaveProperty('depth');
+    expect(p.inputSchema.properties).toHaveProperty('edge_kinds');
+    expect(p.inputSchema.properties).toHaveProperty('from_file');
+    expect(p.inputSchema.properties).toHaveProperty('to_file');
+    expect(p.inputSchema.properties).toHaveProperty('no_tests');
   });
 
   it('file_deps requires file parameter', () => {
@@ -123,18 +133,23 @@ describe('TOOLS', () => {
     expect(di.inputSchema.properties).toHaveProperty('depth');
   });
 
-  it('check has no required parameters', () => {
+  it('check has no required parameters and includes manifesto props', () => {
     const ch = TOOLS.find((t) => t.name === 'check');
     expect(ch).toBeDefined();
     expect(ch.inputSchema.required).toBeUndefined();
     expect(ch.inputSchema.properties).toHaveProperty('ref');
     expect(ch.inputSchema.properties).toHaveProperty('staged');
+    expect(ch.inputSchema.properties).toHaveProperty('rules');
     expect(ch.inputSchema.properties).toHaveProperty('cycles');
     expect(ch.inputSchema.properties).toHaveProperty('blast_radius');
     expect(ch.inputSchema.properties).toHaveProperty('signatures');
     expect(ch.inputSchema.properties).toHaveProperty('boundaries');
     expect(ch.inputSchema.properties).toHaveProperty('depth');
+    expect(ch.inputSchema.properties).toHaveProperty('file');
+    expect(ch.inputSchema.properties).toHaveProperty('kind');
     expect(ch.inputSchema.properties).toHaveProperty('no_tests');
+    expect(ch.inputSchema.properties).toHaveProperty('limit');
+    expect(ch.inputSchema.properties).toHaveProperty('offset');
   });
 
   it('semantic_search requires query parameter', () => {
@@ -175,13 +190,24 @@ describe('TOOLS', () => {
     expect(st.inputSchema.properties).toHaveProperty('sort');
   });
 
-  it('hotspots has no required parameters', () => {
-    const hs = TOOLS.find((t) => t.name === 'hotspots');
-    expect(hs).toBeDefined();
-    expect(hs.inputSchema.required).toBeUndefined();
-    expect(hs.inputSchema.properties).toHaveProperty('metric');
-    expect(hs.inputSchema.properties).toHaveProperty('level');
-    expect(hs.inputSchema.properties).toHaveProperty('limit');
+  it('audit requires target and has quick param', () => {
+    const a = TOOLS.find((t) => t.name === 'audit');
+    expect(a).toBeDefined();
+    expect(a.inputSchema.required).toContain('target');
+    expect(a.inputSchema.properties).toHaveProperty('quick');
+    expect(a.inputSchema.properties).toHaveProperty('depth');
+    expect(a.inputSchema.properties).toHaveProperty('limit');
+    expect(a.inputSchema.properties).toHaveProperty('offset');
+  });
+
+  it('triage has level param for hotspot routing', () => {
+    const tr = TOOLS.find((t) => t.name === 'triage');
+    expect(tr).toBeDefined();
+    expect(tr.inputSchema.required).toBeUndefined();
+    expect(tr.inputSchema.properties).toHaveProperty('level');
+    expect(tr.inputSchema.properties.level.enum).toEqual(['function', 'file', 'directory']);
+    expect(tr.inputSchema.properties).toHaveProperty('sort');
+    expect(tr.inputSchema.properties).toHaveProperty('weights');
   });
 
   it('every tool except list_repos has optional repo property', () => {

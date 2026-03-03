@@ -71,6 +71,27 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'path',
+    description: 'Find shortest path between two symbols in the dependency graph',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: 'Source symbol name' },
+        to: { type: 'string', description: 'Target symbol name' },
+        depth: { type: 'number', description: 'Max traversal depth (default: 10)' },
+        edge_kinds: {
+          type: 'array',
+          items: { type: 'string', enum: EVERY_EDGE_KIND },
+          description: 'Edge kinds to follow (default: ["calls"])',
+        },
+        from_file: { type: 'string', description: 'Disambiguate source by file' },
+        to_file: { type: 'string', description: 'Disambiguate target by file' },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+      },
+      required: ['from', 'to'],
+    },
+  },
+  {
     name: 'file_deps',
     description: 'Show what a file imports and what imports it',
     inputSchema: {
@@ -205,20 +226,6 @@ const BASE_TOOLS = [
         ...PAGINATION_PROPS,
       },
       required: ['name'],
-    },
-  },
-  {
-    name: 'explain',
-    description:
-      'Structural summary of a file or function: public/internal API, data flow, dependencies. No LLM needed.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        target: { type: 'string', description: 'File path or function name' },
-        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
-        ...PAGINATION_PROPS,
-      },
-      required: ['target'],
     },
   },
   {
@@ -358,29 +365,6 @@ const BASE_TOOLS = [
     },
   },
   {
-    name: 'hotspots',
-    description:
-      'Find structural hotspots: files or directories with extreme fan-in, fan-out, or symbol density',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        metric: {
-          type: 'string',
-          enum: ['fan-in', 'fan-out', 'density', 'coupling'],
-          description: 'Metric to rank by',
-        },
-        level: {
-          type: 'string',
-          enum: ['file', 'directory'],
-          description: 'Rank files or directories',
-        },
-        limit: { type: 'number', description: 'Number of results to return', default: 10 },
-        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
-        offset: { type: 'number', description: 'Skip this many results (pagination, default: 0)' },
-      },
-    },
-  },
-  {
     name: 'co_changes',
     description:
       'Find files that historically change together based on git commit history. Requires prior `codegraph co-change --analyze`.',
@@ -470,23 +454,6 @@ const BASE_TOOLS = [
     },
   },
   {
-    name: 'manifesto',
-    description:
-      'Evaluate manifesto rules and return pass/fail verdicts for code health. Checks function complexity, file metrics, and cycle rules against configured thresholds.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        file: { type: 'string', description: 'Scope to file (partial match)' },
-        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
-        kind: {
-          type: 'string',
-          description: 'Filter by symbol kind (function, method, class, etc.)',
-        },
-        ...PAGINATION_PROPS,
-      },
-    },
-  },
-  {
     name: 'communities',
     description:
       'Detect natural module boundaries using Louvain community detection. Compares discovered communities against directory structure and surfaces architectural drift.',
@@ -543,6 +510,11 @@ const BASE_TOOLS = [
       type: 'object',
       properties: {
         target: { type: 'string', description: 'File path or function name' },
+        quick: {
+          type: 'boolean',
+          description: 'Structural summary only (skip impact + health)',
+          default: false,
+        },
         depth: { type: 'number', description: 'Impact analysis depth (default: 3)', default: 3 },
         file: { type: 'string', description: 'Scope to file (partial match)' },
         kind: {
@@ -550,6 +522,7 @@ const BASE_TOOLS = [
           description: 'Filter by symbol kind (function, method, class, etc.)',
         },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
       required: ['target'],
     },
@@ -607,6 +580,12 @@ const BASE_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
+        level: {
+          type: 'string',
+          enum: ['function', 'file', 'directory'],
+          description:
+            'Granularity: function (default) | file | directory. File/directory shows hotspots',
+        },
         sort: {
           type: 'string',
           enum: ['risk', 'complexity', 'churn', 'fan-in', 'mi'],
@@ -701,12 +680,16 @@ const BASE_TOOLS = [
   {
     name: 'check',
     description:
-      'Run CI validation predicates against git changes. Checks for new cycles, blast radius violations, signature changes, and boundary violations. Returns pass/fail per predicate — ideal for CI gates.',
+      'CI gate: run manifesto rules (no args), diff predicates (with ref/staged), or both (with rules flag). Returns pass/fail verdicts.',
     inputSchema: {
       type: 'object',
       properties: {
         ref: { type: 'string', description: 'Git ref to diff against (default: HEAD)' },
         staged: { type: 'boolean', description: 'Analyze staged changes instead of unstaged' },
+        rules: {
+          type: 'boolean',
+          description: 'Also run manifesto rules alongside diff predicates',
+        },
         cycles: { type: 'boolean', description: 'Enable cycles predicate (default: true)' },
         blast_radius: {
           type: 'number',
@@ -715,7 +698,13 @@ const BASE_TOOLS = [
         signatures: { type: 'boolean', description: 'Enable signatures predicate (default: true)' },
         boundaries: { type: 'boolean', description: 'Enable boundaries predicate (default: true)' },
         depth: { type: 'number', description: 'Max BFS depth for blast radius (default: 3)' },
+        file: { type: 'string', description: 'Scope to file (partial match, manifesto mode)' },
+        kind: {
+          type: 'string',
+          description: 'Filter by symbol kind (manifesto mode)',
+        },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
       },
     },
   },
@@ -894,6 +883,15 @@ export async function startMCPServer(customDbPath, options = {}) {
           }
           break;
         }
+        case 'path':
+          result = pathData(args.from, args.to, dbPath, {
+            maxDepth: args.depth ?? 10,
+            edgeKinds: args.edge_kinds,
+            fromFile: args.from_file,
+            toFile: args.to_file,
+            noTests: args.no_tests,
+          });
+          break;
         case 'file_deps':
           result = fileDepsData(args.file, dbPath, {
             noTests: args.no_tests,
@@ -953,13 +951,6 @@ export async function startMCPServer(customDbPath, options = {}) {
             kind: args.kind,
             noTests: args.no_tests,
             limit: Math.min(args.limit ?? MCP_DEFAULTS.context, MCP_MAX_LIMIT),
-            offset: args.offset ?? 0,
-          });
-          break;
-        case 'explain':
-          result = explainData(args.target, dbPath, {
-            noTests: args.no_tests,
-            limit: Math.min(args.limit ?? MCP_DEFAULTS.explain, MCP_MAX_LIMIT),
             offset: args.offset ?? 0,
           });
           break;
@@ -1132,17 +1123,6 @@ export async function startMCPServer(customDbPath, options = {}) {
           });
           break;
         }
-        case 'hotspots': {
-          const { hotspotsData } = await import('./structure.js');
-          result = hotspotsData(dbPath, {
-            metric: args.metric,
-            level: args.level,
-            limit: Math.min(args.limit ?? MCP_DEFAULTS.hotspots, MCP_MAX_LIMIT),
-            offset: args.offset ?? 0,
-            noTests: args.no_tests,
-          });
-          break;
-        }
         case 'co_changes': {
           const { coChangeData, coChangeTopData } = await import('./cochange.js');
           result = args.file
@@ -1200,17 +1180,6 @@ export async function startMCPServer(customDbPath, options = {}) {
           });
           break;
         }
-        case 'manifesto': {
-          const { manifestoData } = await import('./manifesto.js');
-          result = manifestoData(dbPath, {
-            file: args.file,
-            noTests: args.no_tests,
-            kind: args.kind,
-            limit: Math.min(args.limit ?? MCP_DEFAULTS.manifesto, MCP_MAX_LIMIT),
-            offset: args.offset ?? 0,
-          });
-          break;
-        }
         case 'communities': {
           const { communitiesData } = await import('./communities.js');
           result = communitiesData(dbPath, {
@@ -1235,13 +1204,21 @@ export async function startMCPServer(customDbPath, options = {}) {
           break;
         }
         case 'audit': {
-          const { auditData } = await import('./audit.js');
-          result = auditData(args.target, dbPath, {
-            depth: args.depth,
-            file: args.file,
-            kind: args.kind,
-            noTests: args.no_tests,
-          });
+          if (args.quick) {
+            result = explainData(args.target, dbPath, {
+              noTests: args.no_tests,
+              limit: Math.min(args.limit ?? MCP_DEFAULTS.explain, MCP_MAX_LIMIT),
+              offset: args.offset ?? 0,
+            });
+          } else {
+            const { auditData } = await import('./audit.js');
+            result = auditData(args.target, dbPath, {
+              depth: args.depth,
+              file: args.file,
+              kind: args.kind,
+              noTests: args.no_tests,
+            });
+          }
           break;
         }
         case 'batch_query': {
@@ -1255,18 +1232,36 @@ export async function startMCPServer(customDbPath, options = {}) {
           break;
         }
         case 'triage': {
-          const { triageData } = await import('./triage.js');
-          result = triageData(dbPath, {
-            sort: args.sort,
-            minScore: args.min_score,
-            role: args.role,
-            file: args.file,
-            kind: args.kind,
-            noTests: args.no_tests,
-            weights: args.weights,
-            limit: Math.min(args.limit ?? MCP_DEFAULTS.triage, MCP_MAX_LIMIT),
-            offset: args.offset ?? 0,
-          });
+          if (args.level === 'file' || args.level === 'directory') {
+            const { hotspotsData } = await import('./structure.js');
+            const TRIAGE_TO_HOTSPOT = {
+              risk: 'fan-in',
+              complexity: 'density',
+              churn: 'coupling',
+              mi: 'fan-in',
+            };
+            const metric = TRIAGE_TO_HOTSPOT[args.sort] ?? args.sort;
+            result = hotspotsData(dbPath, {
+              metric,
+              level: args.level,
+              limit: Math.min(args.limit ?? MCP_DEFAULTS.hotspots, MCP_MAX_LIMIT),
+              offset: args.offset ?? 0,
+              noTests: args.no_tests,
+            });
+          } else {
+            const { triageData } = await import('./triage.js');
+            result = triageData(dbPath, {
+              sort: args.sort,
+              minScore: args.min_score,
+              role: args.role,
+              file: args.file,
+              kind: args.kind,
+              noTests: args.no_tests,
+              weights: args.weights,
+              limit: Math.min(args.limit ?? MCP_DEFAULTS.triage, MCP_MAX_LIMIT),
+              offset: args.offset ?? 0,
+            });
+          }
           break;
         }
         case 'branch_compare': {
@@ -1321,17 +1316,45 @@ export async function startMCPServer(customDbPath, options = {}) {
           break;
         }
         case 'check': {
-          const { checkData } = await import('./check.js');
-          result = checkData(dbPath, {
-            ref: args.ref,
-            staged: args.staged,
-            cycles: args.cycles,
-            blastRadius: args.blast_radius,
-            signatures: args.signatures,
-            boundaries: args.boundaries,
-            depth: args.depth,
-            noTests: args.no_tests,
-          });
+          const isDiffMode = args.ref || args.staged;
+
+          if (!isDiffMode && !args.rules) {
+            // No ref, no staged → run manifesto rules on whole codebase
+            const { manifestoData } = await import('./manifesto.js');
+            result = manifestoData(dbPath, {
+              file: args.file,
+              noTests: args.no_tests,
+              kind: args.kind,
+              limit: Math.min(args.limit ?? MCP_DEFAULTS.manifesto, MCP_MAX_LIMIT),
+              offset: args.offset ?? 0,
+            });
+          } else {
+            const { checkData } = await import('./check.js');
+            const checkResult = checkData(dbPath, {
+              ref: args.ref,
+              staged: args.staged,
+              cycles: args.cycles,
+              blastRadius: args.blast_radius,
+              signatures: args.signatures,
+              boundaries: args.boundaries,
+              depth: args.depth,
+              noTests: args.no_tests,
+            });
+
+            if (args.rules) {
+              const { manifestoData } = await import('./manifesto.js');
+              const manifestoResult = manifestoData(dbPath, {
+                file: args.file,
+                noTests: args.no_tests,
+                kind: args.kind,
+                limit: Math.min(args.limit ?? MCP_DEFAULTS.manifesto, MCP_MAX_LIMIT),
+                offset: args.offset ?? 0,
+              });
+              result = { check: checkResult, manifesto: manifestoResult };
+            } else {
+              result = checkResult;
+            }
+          }
           break;
         }
         case 'ast_query': {
