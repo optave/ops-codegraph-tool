@@ -15,7 +15,6 @@ import {
   fnDepsData,
   fnImpactData,
   impactAnalysisData,
-  queryNameData,
   whereData,
 } from './queries.js';
 
@@ -32,8 +31,7 @@ export const BATCH_COMMANDS = {
   context: { fn: contextData, sig: 'name' },
   explain: { fn: explainData, sig: 'target' },
   where: { fn: whereData, sig: 'target' },
-  query: { fn: queryNameData, sig: 'name' },
-  fn: { fn: fnDepsData, sig: 'name' },
+  query: { fn: fnDepsData, sig: 'name' },
   impact: { fn: impactAnalysisData, sig: 'file' },
   deps: { fn: fileDepsData, sig: 'file' },
   flow: { fn: flowData, sig: 'name' },

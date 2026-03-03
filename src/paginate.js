@@ -9,13 +9,11 @@
 export const MCP_DEFAULTS = {
   // Existing
   list_functions: 100,
-  query_function: 50,
+  query: 10,
   where: 50,
   node_roles: 100,
-  list_entry_points: 100,
   export_graph: 500,
   // Smaller defaults for rich/nested results
-  fn_deps: 10,
   fn_impact: 5,
   context: 5,
   explain: 10,

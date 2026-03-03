@@ -237,12 +237,12 @@ codegraph explain <function>   # Function summary: signature, calls, callers, te
 
 ```bash
 codegraph impact <file>        # Transitive reverse dependency trace
-codegraph fn <name>            # Function-level: callers, callees, call chain
-codegraph fn <name> --no-tests --depth 5
+codegraph query <name>         # Function-level: callers, callees, call chain
+codegraph query <name> --no-tests --depth 5
 codegraph fn-impact <name>     # What functions break if this one changes
-codegraph path <from> <to>     # Shortest path between two symbols (A calls...calls B)
-codegraph path <from> <to> --reverse  # Follow edges backward
-codegraph path <from> <to> --max-depth 5 --kinds calls,imports
+codegraph query <from> --path <to>     # Shortest path between two symbols (A calls...calls B)
+codegraph query <from> --path <to> --reverse  # Follow edges backward
+codegraph query <from> --path <to> --depth 5 --kinds calls,imports
 codegraph diff-impact          # Impact of unstaged git changes
 codegraph diff-impact --staged # Impact of staged changes
 codegraph diff-impact HEAD~3   # Impact vs a specific ref
@@ -566,8 +566,8 @@ This project uses codegraph. The database is at `.codegraph/graph.db`.
 ### Other useful commands
 - `codegraph build .` — rebuild the graph (incremental by default)
 - `codegraph map` — module overview
-- `codegraph fn <name> -T` — function call chain
-- `codegraph path <from> <to> -T` — shortest call path between two symbols
+- `codegraph query <name> -T` — function call chain (callers + callees)
+- `codegraph query <from> --path <to> -T` — shortest call path between two symbols
 - `codegraph deps <file>` — file-level dependencies
 - `codegraph roles --role dead -T` — find dead code (unreferenced symbols)
 - `codegraph roles --role core -T` — find core symbols (high fan-in)

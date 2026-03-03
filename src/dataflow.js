@@ -1089,9 +1089,6 @@ export function dataflowImpactData(name, customDbPath, opts = {}) {
  * CLI display for dataflow command.
  */
 export function dataflow(name, customDbPath, opts = {}) {
-  if (opts.path) {
-    return dataflowPath(name, opts.path, customDbPath, opts);
-  }
   if (opts.impact) {
     return dataflowImpact(name, customDbPath, opts);
   }
@@ -1165,40 +1162,6 @@ export function dataflow(name, customDbPath, opts = {}) {
         console.log(`    ✎ ${m.source} — ${m.expression}  (line ${m.line})`);
       }
     }
-  }
-}
-
-/**
- * CLI display for dataflow --path.
- */
-function dataflowPath(from, to, customDbPath, opts = {}) {
-  const data = dataflowPathData(from, to, customDbPath, {
-    noTests: opts.noTests,
-    maxDepth: opts.depth ? Number(opts.depth) : 10,
-  });
-
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
-
-  if (data.warning) {
-    console.log(`⚠  ${data.warning}`);
-    return;
-  }
-  if (!data.found) {
-    console.log(data.error || `No data flow path found from "${from}" to "${to}".`);
-    return;
-  }
-
-  console.log(
-    `\nData flow path: ${from} → ${to}  (${data.hops} hop${data.hops !== 1 ? 's' : ''})\n`,
-  );
-  for (let i = 0; i < data.path.length; i++) {
-    const p = data.path[i];
-    const prefix = i === 0 ? '  ●' : `  ${'│ '.repeat(i - 1)}├─`;
-    const edge = p.edgeKind ? ` [${p.edgeKind}]` : '';
-    console.log(`${prefix} ${p.name} (${p.file}:${p.line})${edge}`);
   }
 }
 

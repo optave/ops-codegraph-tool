@@ -29,7 +29,6 @@ import {
   fnImpact,
   impactAnalysis,
   moduleMap,
-  queryName,
   roles,
   stats,
   symbolPath,
@@ -106,8 +105,16 @@ program
 
 program
   .command('query <name>')
-  .description('Find a function/class, show callers and callees')
+  .description('Function-level dependency chain or shortest path between symbols')
   .option('-d, --db <path>', 'Path to graph.db')
+  .option('--depth <n>', 'Transitive caller depth', '3')
+  .option('-f, --file <path>', 'Scope search to functions in this file (partial match)')
+  .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
+  .option('--path <to>', 'Path mode: find shortest path to <to>')
+  .option('--kinds <kinds>', 'Path mode: comma-separated edge kinds to follow (default: calls)')
+  .option('--reverse', 'Path mode: follow edges backward')
+  .option('--from-file <path>', 'Path mode: disambiguate source symbol by file')
+  .option('--to-file <path>', 'Path mode: disambiguate target symbol by file')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
@@ -115,13 +122,33 @@ program
   .option('--offset <number>', 'Skip N results (default: 0)')
   .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
-    queryName(name, opts.db, {
-      noTests: resolveNoTests(opts),
-      json: opts.json,
-      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-      ndjson: opts.ndjson,
-    });
+    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+      process.exit(1);
+    }
+    if (opts.path) {
+      symbolPath(name, opts.path, opts.db, {
+        maxDepth: opts.depth ? parseInt(opts.depth, 10) : 10,
+        edgeKinds: opts.kinds ? opts.kinds.split(',').map((s) => s.trim()) : undefined,
+        reverse: opts.reverse,
+        fromFile: opts.fromFile,
+        toFile: opts.toFile,
+        kind: opts.kind,
+        noTests: resolveNoTests(opts),
+        json: opts.json,
+      });
+    } else {
+      fnDeps(name, opts.db, {
+        depth: parseInt(opts.depth, 10),
+        file: opts.file,
+        kind: opts.kind,
+        noTests: resolveNoTests(opts),
+        json: opts.json,
+        limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+        offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+        ndjson: opts.ndjson,
+      });
+    }
   });
 
 program
@@ -191,36 +218,6 @@ program
   });
 
 program
-  .command('fn <name>')
-  .description('Function-level dependencies: callers, callees, and transitive call chain')
-  .option('-d, --db <path>', 'Path to graph.db')
-  .option('--depth <n>', 'Transitive caller depth', '3')
-  .option('-f, --file <path>', 'Scope search to functions in this file (partial match)')
-  .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
-  .option('--ndjson', 'Newline-delimited JSON output')
-  .action((name, opts) => {
-    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
-      process.exit(1);
-    }
-    fnDeps(name, opts.db, {
-      depth: parseInt(opts.depth, 10),
-      file: opts.file,
-      kind: opts.kind,
-      noTests: resolveNoTests(opts),
-      json: opts.json,
-      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-      ndjson: opts.ndjson,
-    });
-  });
-
-program
   .command('fn-impact <name>')
   .description('Function-level impact: what functions break if this one changes')
   .option('-d, --db <path>', 'Path to graph.db')
@@ -247,36 +244,6 @@ program
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       ndjson: opts.ndjson,
-    });
-  });
-
-program
-  .command('path <from> <to>')
-  .description('Find shortest path between two symbols (A calls...calls B)')
-  .option('-d, --db <path>', 'Path to graph.db')
-  .option('--max-depth <n>', 'Maximum BFS depth', '10')
-  .option('--kinds <kinds>', 'Comma-separated edge kinds to follow (default: calls)')
-  .option('--reverse', 'Follow edges backward (B is called by...called by A)')
-  .option('--from-file <path>', 'Disambiguate source symbol by file (partial match)')
-  .option('--to-file <path>', 'Disambiguate target symbol by file (partial match)')
-  .option('-k, --kind <kind>', 'Filter both symbols by kind')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .action((from, to, opts) => {
-    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
-      process.exit(1);
-    }
-    symbolPath(from, to, opts.db, {
-      maxDepth: parseInt(opts.maxDepth, 10),
-      edgeKinds: opts.kinds ? opts.kinds.split(',').map((s) => s.trim()) : undefined,
-      reverse: opts.reverse,
-      fromFile: opts.fromFile,
-      toFile: opts.toFile,
-      kind: opts.kind,
-      noTests: resolveNoTests(opts),
-      json: opts.json,
     });
   });
 
@@ -980,7 +947,6 @@ program
   .option('--ndjson', 'Newline-delimited JSON output')
   .option('--limit <number>', 'Max results to return')
   .option('--offset <number>', 'Skip N results (default: 0)')
-  .option('--path <target>', 'Find data flow path to <target>')
   .option('--impact', 'Show data-dependent blast radius')
   .option('--depth <n>', 'Max traversal depth', '5')
   .action(async (name, opts) => {
@@ -997,7 +963,6 @@ program
       ndjson: opts.ndjson,
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-      path: opts.path,
       impact: opts.impact,
       depth: opts.depth,
     });

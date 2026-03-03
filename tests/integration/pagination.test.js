@@ -417,7 +417,7 @@ describe('explainData with pagination', () => {
 
 describe('MCP new defaults', () => {
   test('MCP_DEFAULTS has new pagination keys', () => {
-    expect(MCP_DEFAULTS.fn_deps).toBe(10);
+    expect(MCP_DEFAULTS.query).toBe(10);
     expect(MCP_DEFAULTS.fn_impact).toBe(5);
     expect(MCP_DEFAULTS.context).toBe(5);
     expect(MCP_DEFAULTS.explain).toBe(10);
@@ -574,10 +574,9 @@ describe('printNdjson', () => {
 describe('MCP defaults', () => {
   test('MCP_DEFAULTS has expected keys', () => {
     expect(MCP_DEFAULTS.list_functions).toBe(100);
-    expect(MCP_DEFAULTS.query_function).toBe(50);
+    expect(MCP_DEFAULTS.query).toBe(10);
     expect(MCP_DEFAULTS.where).toBe(50);
     expect(MCP_DEFAULTS.node_roles).toBe(100);
-    expect(MCP_DEFAULTS.list_entry_points).toBe(100);
     expect(MCP_DEFAULTS.export_graph).toBe(500);
   });
 

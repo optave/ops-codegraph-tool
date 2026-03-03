@@ -114,12 +114,6 @@ describe('batchData — success', () => {
     expect(data.results[0].data.name).toBe('authenticate');
   });
 
-  test('fn: returns dependency chain', () => {
-    const data = batchData('fn', ['handleRoute'], dbPath);
-    expect(data.succeeded).toBe(1);
-    expect(data.results[0].ok).toBe(true);
-  });
-
   test('context: with depth option', () => {
     const data = batchData('context', ['authenticate'], dbPath, { depth: 1 });
     expect(data.succeeded).toBe(1);
@@ -177,10 +171,10 @@ describe('batchData — edge cases', () => {
       'explain',
       'where',
       'query',
-      'fn',
       'impact',
       'deps',
       'flow',
+      'dataflow',
       'complexity',
     ];
     for (const cmd of expected) {
