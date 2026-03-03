@@ -577,9 +577,9 @@ export function buildFunctionCFG(functionNode, langId) {
   /**
    * Process an if/else-if/else chain.
    * Handles three patterns:
-   *   A) Wrapper: alternative → else_clause → nested if or block (JS/TS, C#, Rust)
+   *   A) Wrapper: alternative → else_clause → nested if or block (JS/TS, Rust)
    *   B) Siblings: elif/elsif/else_if as sibling children (Python, Ruby, PHP)
-   *   C) Direct: alternative → if_statement or block directly (Go, Java)
+   *   C) Direct: alternative → if_statement or block directly (Go, Java, C#)
    */
   function processIf(ifStmt, currentBlock) {
     // Terminate current block at condition
