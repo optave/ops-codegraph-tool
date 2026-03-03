@@ -166,7 +166,7 @@ codegraph fn resolve --file resolve.js --depth 5
 
 | | |
 |---|---|
-| **MCP tool** | `fn_deps` |
+| **MCP tool** | `query` |
 | **Key flags** | `--depth <n>` (default: 3), `-f, --file` (scope to file), `-k, --kind` (filter kind), `-T` (no tests), `-j` (JSON) |
 | **When to use** | Tracing a call chain — "who calls this and what does it call?" |
 | **Output** | Direct callees, direct callers, transitive callers up to depth N |
@@ -242,7 +242,7 @@ codegraph path parseConfig loadFile --max-depth 5
 
 | | |
 |---|---|
-| **MCP tool** | `symbol_path` |
+| **MCP tool** | `query` (with `--path`) |
 | **Key flags** | `--max-depth <n>` (default: 10), `--kinds <kinds>` (default: calls), `--reverse`, `--from-file`, `--to-file`, `-k, --kind`, `-T` (no tests), `-j` (JSON) |
 | **When to use** | Understanding how two functions are connected through the call chain |
 | **Output** | Ordered path with edge kinds, hop count, alternate path count |
@@ -493,7 +493,7 @@ codegraph query buildGraph
 
 | | |
 |---|---|
-| **MCP tool** | `query_function` |
+| **MCP tool** | `query` |
 | **Key flags** | `-T` (no tests), `-j` (JSON) |
 | **When to use** | Quick one-off lookup (prefer `fn` or `context` for richer data) |
 
@@ -578,15 +578,14 @@ codegraph mcp --repos "myapp,lib"      # Restricted repo list
 
 | MCP Tool | CLI Equivalent | Description |
 |----------|---------------|-------------|
-| `query_function` | `query <name>` | Find callers and callees |
+| `query` | `query <name>` | Find callers/callees, or shortest path between two symbols |
 | `file_deps` | `deps <file>` | File imports and importers |
 | `impact_analysis` | `impact <file>` | Transitive file-level impact |
 | `find_cycles` | `cycles` | Circular dependency detection |
 | `module_map` | `map` | Most-connected files overview |
-| `fn_deps` | `fn <name>` | Function-level call chain |
 | `fn_impact` | `fn-impact <name>` | Function-level blast radius |
-| `symbol_path` | `path <from> <to>` | Shortest path between two symbols |
 | `context` | `context <name>` | Full function context |
+| `symbol_children` | `children <name>` | Sub-declaration children (parameters, properties, constants) |
 | `explain` | `explain <target>` | Structural summary |
 | `where` | `where <name>` | Symbol definition and usage |
 | `diff_impact` | `diff-impact [ref]` | Git diff impact analysis |
@@ -597,8 +596,7 @@ codegraph mcp --repos "myapp,lib"      # Restricted repo list
 | `hotspots` | `hotspots` | Structural hotspot detection |
 | `node_roles` | `roles` | Node role classification |
 | `co_changes` | `co-change` | Git co-change analysis |
-| `execution_flow` | `flow` | Execution flow tracing |
-| `list_entry_points` | `flow --entry-points` | Framework entry point detection |
+| `execution_flow` | `flow` | Execution flow tracing and entry point detection |
 | `complexity` | `complexity` | Per-function complexity metrics |
 | `communities` | `communities` | Community detection & drift |
 | `manifesto` | `manifesto` | Rule engine pass/fail |
@@ -608,6 +606,9 @@ codegraph mcp --repos "myapp,lib"      # Restricted repo list
 | `triage` | `triage` | Risk-ranked audit queue |
 | `check` | `check` | CI validation predicates |
 | `branch_compare` | `branch-compare` | Structural diff between refs |
+| `ast_query` | *(MCP only)* | Search stored AST nodes (calls, literals, new, throw, await) |
+| `cfg` | *(MCP only)* | Intraprocedural control flow graph for a function |
+| `dataflow` | *(MCP only)* | Data flow edges or data-dependent blast radius |
 | `list_repos` | `registry list` | List registered repos (multi-repo only) |
 
 ### Server Modes
