@@ -1,3 +1,12 @@
 {
-   "signedContributors": []
+  "signedContributors": [
+    {
+      "name": "carlos-alm",
+      "id": 127798846,
+      "comment_id": 3987780034,
+      "created_at": "2026-03-03T00:13:08Z",
+      "repoId": 1163218957,
+      "pullRequestNo": 255
+    }
+  ]
 }
