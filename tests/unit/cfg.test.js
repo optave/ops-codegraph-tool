@@ -455,3 +455,774 @@ describe('buildFunctionCFG', () => {
     });
   });
 });
+
+// ─── Cross-language CFG tests ────────────────────────────────────────────
+
+function makeLangHelpers(langId, parsers) {
+  const parser = parsers.get(langId);
+  if (!parser) return null;
+  const langRules = COMPLEXITY_RULES.get(langId);
+  if (!langRules) return null;
+
+  function parseLang(code) {
+    return parser.parse(code).rootNode;
+  }
+
+  function findFunc(node) {
+    if (langRules.functionNodes.has(node.type)) return node;
+    for (let i = 0; i < node.childCount; i++) {
+      const result = findFunc(node.child(i));
+      if (result) return result;
+    }
+    return null;
+  }
+
+  function buildCFGLang(code) {
+    const root = parseLang(code);
+    const funcNode = findFunc(root);
+    if (!funcNode) throw new Error(`No function found for ${langId}`);
+    return buildFunctionCFG(funcNode, langId);
+  }
+
+  return { parseLang, findFunc, buildCFGLang };
+}
+
+// ── Python ───────────────────────────────────────────────────────────────
+
+describe('buildFunctionCFG — Python', () => {
+  let helpers;
+
+  beforeAll(async () => {
+    const parsers = await createParsers();
+    helpers = makeLangHelpers('python', parsers);
+  });
+
+  it('empty function: ENTRY → EXIT', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang('def empty():\n    pass');
+    const entry = cfg.blocks.find((b) => b.type === 'entry');
+    const exit = cfg.blocks.find((b) => b.type === 'exit');
+    expect(entry).toBeDefined();
+    expect(exit).toBeDefined();
+  });
+
+  it('if/elif/else chain (Pattern B)', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+def check(x):
+    if x > 10:
+        return "big"
+    elif x > 0:
+        return "small"
+    else:
+        return "negative"
+`);
+    const conditions = blockByType(cfg, 'condition');
+    expect(conditions.length).toBeGreaterThanOrEqual(2);
+    const trueBlocks = blockByType(cfg, 'branch_true');
+    expect(trueBlocks.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('for loop', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+def loop_fn():
+    for i in range(10):
+        print(i)
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(1);
+    expect(cfg.edges.some((e) => e.kind === 'loop_back')).toBe(true);
+    expect(cfg.edges.some((e) => e.kind === 'loop_exit')).toBe(true);
+  });
+
+  it('while loop with break', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+def while_fn():
+    while True:
+        x = 1
+        break
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(1);
+    expect(cfg.edges.some((e) => e.kind === 'break')).toBe(true);
+  });
+
+  it('try/except/finally', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+def safe():
+    try:
+        risky()
+    except Exception:
+        handle()
+    finally:
+        cleanup()
+`);
+    const catchBlocks = blockByType(cfg, 'catch');
+    const finallyBlocks = blockByType(cfg, 'finally');
+    expect(catchBlocks.length).toBe(1);
+    expect(finallyBlocks.length).toBe(1);
+    expect(cfg.edges.some((e) => e.kind === 'exception')).toBe(true);
+  });
+
+  it('return and raise', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+def guard(x):
+    if x < 0:
+        raise ValueError("negative")
+    return x
+`);
+    const exit = cfg.blocks.find((b) => b.type === 'exit');
+    expect(cfg.edges.some((e) => e.targetIndex === exit.index && e.kind === 'exception')).toBe(
+      true,
+    );
+    expect(cfg.edges.some((e) => e.targetIndex === exit.index && e.kind === 'return')).toBe(true);
+  });
+});
+
+// ── Go ───────────────────────────────────────────────────────────────────
+
+describe('buildFunctionCFG — Go', () => {
+  let helpers;
+
+  beforeAll(async () => {
+    const parsers = await createParsers();
+    helpers = makeLangHelpers('go', parsers);
+  });
+
+  it('empty function: ENTRY → EXIT', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang('package main\nfunc empty() {}');
+    const entry = cfg.blocks.find((b) => b.type === 'entry');
+    const exit = cfg.blocks.find((b) => b.type === 'exit');
+    expect(entry).toBeDefined();
+    expect(exit).toBeDefined();
+    expect(hasEdge(cfg, entry.index, exit.index, 'fallthrough')).toBe(true);
+  });
+
+  it('if/else if/else (Pattern C — direct alternative)', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+package main
+func check(x int) string {
+    if x > 10 {
+        return "big"
+    } else if x > 0 {
+        return "small"
+    } else {
+        return "negative"
+    }
+}
+`);
+    const conditions = blockByType(cfg, 'condition');
+    expect(conditions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('for loop (Go only has for)', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+package main
+func loop_fn() {
+    for i := 0; i < 10; i++ {
+        println(i)
+    }
+}
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(1);
+    expect(cfg.edges.some((e) => e.kind === 'loop_back')).toBe(true);
+    expect(cfg.edges.some((e) => e.kind === 'loop_exit')).toBe(true);
+  });
+
+  it('break and continue', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+package main
+func brk() {
+    for i := 0; i < 10; i++ {
+        if i == 5 {
+            break
+        }
+        if i == 3 {
+            continue
+        }
+    }
+}
+`);
+    expect(cfg.edges.some((e) => e.kind === 'break')).toBe(true);
+    expect(cfg.edges.some((e) => e.kind === 'continue')).toBe(true);
+  });
+
+  it('switch statement', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+package main
+func sw(x int) {
+    switch x {
+    case 1:
+        println("one")
+    case 2:
+        println("two")
+    default:
+        println("other")
+    }
+}
+`);
+    const switchHeaders = cfg.blocks.filter((b) => b.type === 'condition' && b.label === 'switch');
+    expect(switchHeaders.length).toBe(1);
+    const caseBlocks = blockByType(cfg, 'case');
+    expect(caseBlocks.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ── Rust ─────────────────────────────────────────────────────────────────
+
+describe('buildFunctionCFG — Rust', () => {
+  let helpers;
+
+  beforeAll(async () => {
+    const parsers = await createParsers();
+    helpers = makeLangHelpers('rust', parsers);
+  });
+
+  it('empty function: ENTRY → EXIT', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang('fn empty() {}');
+    const entry = cfg.blocks.find((b) => b.type === 'entry');
+    const exit = cfg.blocks.find((b) => b.type === 'exit');
+    expect(entry).toBeDefined();
+    expect(exit).toBeDefined();
+    expect(hasEdge(cfg, entry.index, exit.index, 'fallthrough')).toBe(true);
+  });
+
+  it('if/else', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+fn check(x: i32) -> &'static str {
+    if x > 0 {
+        return "positive";
+    } else {
+        return "non-positive";
+    }
+}
+`);
+    const conditions = blockByType(cfg, 'condition');
+    expect(conditions.length).toBe(1);
+    expect(blockByType(cfg, 'branch_true').length).toBe(1);
+    expect(blockByType(cfg, 'branch_false').length).toBe(1);
+  });
+
+  it('loop (infinite loop) with break', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+fn infinite() {
+    loop {
+        let x = 1;
+        break;
+    }
+}
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(1);
+    expect(headers[0].label).toBe('loop');
+    expect(cfg.edges.some((e) => e.kind === 'break')).toBe(true);
+    // Infinite loop should NOT have a loop_exit edge
+    const headerIdx = headers[0].index;
+    expect(cfg.edges.some((e) => e.sourceIndex === headerIdx && e.kind === 'loop_exit')).toBe(
+      false,
+    );
+  });
+
+  it('while loop', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+fn while_fn() {
+    let mut i = 0;
+    while i < 10 {
+        i += 1;
+    }
+}
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(1);
+    expect(cfg.edges.some((e) => e.kind === 'loop_back')).toBe(true);
+    expect(cfg.edges.some((e) => e.kind === 'loop_exit')).toBe(true);
+  });
+
+  it('for loop', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+fn for_fn() {
+    for i in 0..10 {
+        println!("{}", i);
+    }
+}
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(1);
+    expect(cfg.edges.some((e) => e.kind === 'loop_back')).toBe(true);
+  });
+
+  it('match expression', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+fn match_fn(x: i32) {
+    match x {
+        1 => println!("one"),
+        2 => println!("two"),
+        _ => println!("other"),
+    }
+}
+`);
+    const switchHeaders = cfg.blocks.filter((b) => b.type === 'condition' && b.label === 'switch');
+    expect(switchHeaders.length).toBe(1);
+    const caseBlocks = blockByType(cfg, 'case');
+    expect(caseBlocks.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ── Java ─────────────────────────────────────────────────────────────────
+
+describe('buildFunctionCFG — Java', () => {
+  let helpers;
+
+  beforeAll(async () => {
+    const parsers = await createParsers();
+    helpers = makeLangHelpers('java', parsers);
+  });
+
+  it('empty method: ENTRY → EXIT', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang('class A { void empty() {} }');
+    const entry = cfg.blocks.find((b) => b.type === 'entry');
+    const exit = cfg.blocks.find((b) => b.type === 'exit');
+    expect(entry).toBeDefined();
+    expect(exit).toBeDefined();
+    expect(hasEdge(cfg, entry.index, exit.index, 'fallthrough')).toBe(true);
+  });
+
+  it('if/else if/else (Pattern C)', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+class A {
+    String check(int x) {
+        if (x > 10) {
+            return "big";
+        } else if (x > 0) {
+            return "small";
+        } else {
+            return "negative";
+        }
+    }
+}
+`);
+    const conditions = blockByType(cfg, 'condition');
+    expect(conditions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('for loop', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+class A {
+    void loop_fn() {
+        for (int i = 0; i < 10; i++) {
+            System.out.println(i);
+        }
+    }
+}
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(1);
+    expect(cfg.edges.some((e) => e.kind === 'loop_back')).toBe(true);
+    expect(cfg.edges.some((e) => e.kind === 'loop_exit')).toBe(true);
+  });
+
+  it('enhanced for loop', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+class A {
+    void each(int[] arr) {
+        for (int x : arr) {
+            System.out.println(x);
+        }
+    }
+}
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(1);
+  });
+
+  it('while and do-while', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+class A {
+    void loops() {
+        int i = 0;
+        while (i < 5) { i++; }
+        do { i--; } while (i > 0);
+    }
+}
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(2);
+  });
+
+  it('try/catch/finally', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+class A {
+    void safe() {
+        try {
+            risky();
+        } catch (Exception e) {
+            handle();
+        } finally {
+            cleanup();
+        }
+    }
+}
+`);
+    expect(blockByType(cfg, 'catch').length).toBe(1);
+    expect(blockByType(cfg, 'finally').length).toBe(1);
+    expect(cfg.edges.some((e) => e.kind === 'exception')).toBe(true);
+  });
+
+  it('break and continue', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+class A {
+    void brk() {
+        for (int i = 0; i < 10; i++) {
+            if (i == 5) break;
+            if (i == 3) continue;
+        }
+    }
+}
+`);
+    expect(cfg.edges.some((e) => e.kind === 'break')).toBe(true);
+    expect(cfg.edges.some((e) => e.kind === 'continue')).toBe(true);
+  });
+});
+
+// ── C# ───────────────────────────────────────────────────────────────────
+
+describe('buildFunctionCFG — C#', () => {
+  let helpers;
+
+  beforeAll(async () => {
+    const parsers = await createParsers();
+    helpers = makeLangHelpers('csharp', parsers);
+  });
+
+  it('empty method: ENTRY → EXIT', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang('class A { void Empty() {} }');
+    const entry = cfg.blocks.find((b) => b.type === 'entry');
+    const exit = cfg.blocks.find((b) => b.type === 'exit');
+    expect(entry).toBeDefined();
+    expect(exit).toBeDefined();
+    expect(hasEdge(cfg, entry.index, exit.index, 'fallthrough')).toBe(true);
+  });
+
+  it('if/else', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+class A {
+    string Check(int x) {
+        if (x > 0) {
+            return "positive";
+        } else {
+            return "non-positive";
+        }
+    }
+}
+`);
+    expect(blockByType(cfg, 'condition').length).toBe(1);
+    expect(blockByType(cfg, 'branch_true').length).toBe(1);
+    expect(blockByType(cfg, 'branch_false').length).toBe(1);
+  });
+
+  it('for and foreach loops', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+class A {
+    void Loops() {
+        for (int i = 0; i < 10; i++) { Console.WriteLine(i); }
+        foreach (var x in new int[]{1,2,3}) { Console.WriteLine(x); }
+    }
+}
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(2);
+  });
+
+  it('try/catch/finally', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+class A {
+    void Safe() {
+        try {
+            Risky();
+        } catch (Exception e) {
+            Handle();
+        } finally {
+            Cleanup();
+        }
+    }
+}
+`);
+    expect(blockByType(cfg, 'catch').length).toBe(1);
+    expect(blockByType(cfg, 'finally').length).toBe(1);
+  });
+
+  it('do-while', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+class A {
+    void DoWhile() {
+        int i = 0;
+        do { i++; } while (i < 10);
+    }
+}
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(1);
+    expect(headers[0].label).toBe('do-while');
+  });
+});
+
+// ── Ruby ─────────────────────────────────────────────────────────────────
+
+describe('buildFunctionCFG — Ruby', () => {
+  let helpers;
+
+  beforeAll(async () => {
+    const parsers = await createParsers();
+    helpers = makeLangHelpers('ruby', parsers);
+  });
+
+  it('empty method: ENTRY → EXIT', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang('def empty; end');
+    const entry = cfg.blocks.find((b) => b.type === 'entry');
+    const exit = cfg.blocks.find((b) => b.type === 'exit');
+    expect(entry).toBeDefined();
+    expect(exit).toBeDefined();
+  });
+
+  it('if/elsif/else (Pattern B)', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+def check(x)
+  if x > 10
+    return "big"
+  elsif x > 0
+    return "small"
+  else
+    return "negative"
+  end
+end
+`);
+    const conditions = blockByType(cfg, 'condition');
+    expect(conditions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('while loop', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+def while_fn
+  i = 0
+  while i < 10
+    i += 1
+  end
+end
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(1);
+    expect(cfg.edges.some((e) => e.kind === 'loop_back')).toBe(true);
+    expect(cfg.edges.some((e) => e.kind === 'loop_exit')).toBe(true);
+  });
+
+  it('unless (inverse if)', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+def unless_fn(x)
+  unless x
+    return "falsy"
+  end
+  return "truthy"
+end
+`);
+    const conditions = blockByType(cfg, 'condition');
+    expect(conditions.length).toBe(1);
+  });
+
+  it('until loop (inverse while)', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+def until_fn
+  i = 0
+  until i >= 10
+    i += 1
+  end
+end
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(1);
+    expect(cfg.edges.some((e) => e.kind === 'loop_back')).toBe(true);
+  });
+
+  it('break and next (continue)', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`
+def brk
+  i = 0
+  while i < 10
+    if i == 5
+      break
+    end
+    if i == 3
+      next
+    end
+    i += 1
+  end
+end
+`);
+    expect(cfg.edges.some((e) => e.kind === 'break')).toBe(true);
+    expect(cfg.edges.some((e) => e.kind === 'continue')).toBe(true);
+  });
+});
+
+// ── PHP ──────────────────────────────────────────────────────────────────
+
+describe('buildFunctionCFG — PHP', () => {
+  let helpers;
+
+  beforeAll(async () => {
+    const parsers = await createParsers();
+    helpers = makeLangHelpers('php', parsers);
+  });
+
+  it('empty function: ENTRY → EXIT', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang('<?php function empty_fn() {}');
+    const entry = cfg.blocks.find((b) => b.type === 'entry');
+    const exit = cfg.blocks.find((b) => b.type === 'exit');
+    expect(entry).toBeDefined();
+    expect(exit).toBeDefined();
+    expect(hasEdge(cfg, entry.index, exit.index, 'fallthrough')).toBe(true);
+  });
+
+  it('if/elseif/else (Pattern B)', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`<?php
+function check($x) {
+    if ($x > 10) {
+        return "big";
+    } elseif ($x > 0) {
+        return "small";
+    } else {
+        return "negative";
+    }
+}
+`);
+    const conditions = blockByType(cfg, 'condition');
+    expect(conditions.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('for loop', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`<?php
+function loop_fn() {
+    for ($i = 0; $i < 10; $i++) {
+        echo $i;
+    }
+}
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(1);
+    expect(cfg.edges.some((e) => e.kind === 'loop_back')).toBe(true);
+    expect(cfg.edges.some((e) => e.kind === 'loop_exit')).toBe(true);
+  });
+
+  it('foreach loop', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`<?php
+function each_fn($arr) {
+    foreach ($arr as $x) {
+        echo $x;
+    }
+}
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(1);
+  });
+
+  it('while and do-while', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`<?php
+function loops() {
+    $i = 0;
+    while ($i < 5) { $i++; }
+    do { $i--; } while ($i > 0);
+}
+`);
+    const headers = blockByType(cfg, 'loop_header');
+    expect(headers.length).toBe(2);
+  });
+
+  it('try/catch/finally', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`<?php
+function safe() {
+    try {
+        risky();
+    } catch (Exception $e) {
+        handle();
+    } finally {
+        cleanup();
+    }
+}
+`);
+    expect(blockByType(cfg, 'catch').length).toBe(1);
+    expect(blockByType(cfg, 'finally').length).toBe(1);
+    expect(cfg.edges.some((e) => e.kind === 'exception')).toBe(true);
+  });
+
+  it('switch/case', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`<?php
+function sw($x) {
+    switch ($x) {
+        case 1:
+            return "one";
+        case 2:
+            return "two";
+        default:
+            return "other";
+    }
+}
+`);
+    const switchHeaders = cfg.blocks.filter((b) => b.type === 'condition' && b.label === 'switch');
+    expect(switchHeaders.length).toBe(1);
+    const caseBlocks = blockByType(cfg, 'case');
+    expect(caseBlocks.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('break and continue', () => {
+    if (!helpers) return;
+    const cfg = helpers.buildCFGLang(`<?php
+function brk() {
+    for ($i = 0; $i < 10; $i++) {
+        if ($i == 5) break;
+        if ($i == 3) continue;
+    }
+}
+`);
+    expect(cfg.edges.some((e) => e.kind === 'break')).toBe(true);
+    expect(cfg.edges.some((e) => e.kind === 'continue')).toBe(true);
+  });
+});

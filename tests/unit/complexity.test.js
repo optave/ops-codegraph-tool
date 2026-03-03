@@ -255,7 +255,7 @@ describe('COMPLEXITY_RULES', () => {
   });
 
   it('supports all 10 languages, not hcl', () => {
-    for (const lang of ['python', 'go', 'rust', 'java', 'c_sharp', 'ruby', 'php']) {
+    for (const lang of ['python', 'go', 'rust', 'java', 'csharp', 'ruby', 'php']) {
       expect(COMPLEXITY_RULES.has(lang)).toBe(true);
     }
     expect(COMPLEXITY_RULES.has('hcl')).toBe(false);
@@ -347,7 +347,7 @@ describe('HALSTEAD_RULES', () => {
   });
 
   it('supports all 10 languages, not hcl', () => {
-    for (const lang of ['python', 'go', 'rust', 'java', 'c_sharp', 'ruby', 'php']) {
+    for (const lang of ['python', 'go', 'rust', 'java', 'csharp', 'ruby', 'php']) {
       expect(HALSTEAD_RULES.has(lang)).toBe(true);
     }
     expect(HALSTEAD_RULES.has('hcl')).toBe(false);
@@ -756,7 +756,7 @@ describe('Java complexity', () => {
 // ─── C# ──────────────────────────────────────────────────────────────────
 
 describe('C# complexity', () => {
-  const { analyze, halstead } = makeHelpers('c_sharp', sharedParsers());
+  const { analyze, halstead } = makeHelpers('csharp', sharedParsers());
 
   it('simple method', () => {
     const r = analyze('class C {\n    int Add(int a, int b) {\n        return a + b;\n    }\n}\n');

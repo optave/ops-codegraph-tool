@@ -183,7 +183,7 @@ const CSHARP_RULES = {
     'if_statement',
     'else_clause',
     'for_statement',
-    'for_each_statement',
+    'foreach_statement',
     'while_statement',
     'do_statement',
     'catch_clause',
@@ -197,7 +197,7 @@ const CSHARP_RULES = {
   nestingNodes: new Set([
     'if_statement',
     'for_statement',
-    'for_each_statement',
+    'foreach_statement',
     'while_statement',
     'do_statement',
     'catch_clause',
@@ -211,9 +211,9 @@ const CSHARP_RULES = {
     'local_function_statement',
   ]),
   ifNodeType: 'if_statement',
-  elseNodeType: 'else_clause',
+  elseNodeType: null,
   elifNodeType: null,
-  elseViaAlternative: false,
+  elseViaAlternative: true,
   switchLikeNodes: new Set(['switch_statement']),
 };
 
@@ -291,7 +291,7 @@ export const COMPLEXITY_RULES = new Map([
   ['go', GO_RULES],
   ['rust', RUST_RULES],
   ['java', JAVA_RULES],
-  ['c_sharp', CSHARP_RULES],
+  ['csharp', CSHARP_RULES],
   ['ruby', RUBY_RULES],
   ['php', PHP_RULES],
 ]);
@@ -1026,7 +1026,7 @@ export const HALSTEAD_RULES = new Map([
   ['go', GO_HALSTEAD],
   ['rust', RUST_HALSTEAD],
   ['java', JAVA_HALSTEAD],
-  ['c_sharp', CSHARP_HALSTEAD],
+  ['csharp', CSHARP_HALSTEAD],
   ['ruby', RUBY_HALSTEAD],
   ['php', PHP_HALSTEAD],
 ]);
@@ -1116,7 +1116,7 @@ const COMMENT_PREFIXES = new Map([
   ['go', C_STYLE_PREFIXES],
   ['rust', C_STYLE_PREFIXES],
   ['java', C_STYLE_PREFIXES],
-  ['c_sharp', C_STYLE_PREFIXES],
+  ['csharp', C_STYLE_PREFIXES],
   ['python', ['#']],
   ['ruby', ['#']],
   ['php', ['//', '#', '/*', '*', '*/']],

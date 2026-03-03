@@ -2,7 +2,7 @@
  * Intraprocedural Control Flow Graph (CFG) construction from tree-sitter AST.
  *
  * Builds basic-block CFGs for individual functions, stored in cfg_blocks + cfg_edges tables.
- * Opt-in via `build --cfg`. JS/TS/TSX only for Phase 1.
+ * Opt-in via `build --cfg`. Supports JS/TS/TSX, Python, Go, Rust, Java, C#, Ruby, PHP.
  */
 
 import fs from 'node:fs';
@@ -18,12 +18,22 @@ import { isTestFile } from './queries.js';
 
 const JS_TS_CFG = {
   ifNode: 'if_statement',
+  ifNodes: null,
+  elifNode: null,
   elseClause: 'else_clause',
+  elseViaAlternative: false,
+  ifConsequentField: null,
   forNodes: new Set(['for_statement', 'for_in_statement']),
   whileNode: 'while_statement',
+  whileNodes: null,
   doNode: 'do_statement',
+  infiniteLoopNode: null,
+  unlessNode: null,
+  untilNode: null,
   switchNode: 'switch_statement',
+  switchNodes: null,
   caseNode: 'switch_case',
+  caseNodes: null,
   defaultNode: 'switch_default',
   tryNode: 'try_statement',
   catchNode: 'catch_clause',
@@ -33,6 +43,7 @@ const JS_TS_CFG = {
   breakNode: 'break_statement',
   continueNode: 'continue_statement',
   blockNode: 'statement_block',
+  blockNodes: null,
   labeledNode: 'labeled_statement',
   functionNodes: new Set([
     'function_declaration',
@@ -44,14 +55,269 @@ const JS_TS_CFG = {
   ]),
 };
 
+const PYTHON_CFG = {
+  ifNode: 'if_statement',
+  ifNodes: null,
+  elifNode: 'elif_clause',
+  elseClause: 'else_clause',
+  elseViaAlternative: false,
+  ifConsequentField: null,
+  forNodes: new Set(['for_statement']),
+  whileNode: 'while_statement',
+  whileNodes: null,
+  doNode: null,
+  infiniteLoopNode: null,
+  unlessNode: null,
+  untilNode: null,
+  switchNode: 'match_statement',
+  switchNodes: null,
+  caseNode: 'case_clause',
+  caseNodes: null,
+  defaultNode: null,
+  tryNode: 'try_statement',
+  catchNode: 'except_clause',
+  finallyNode: 'finally_clause',
+  returnNode: 'return_statement',
+  throwNode: 'raise_statement',
+  breakNode: 'break_statement',
+  continueNode: 'continue_statement',
+  blockNode: 'block',
+  blockNodes: null,
+  labeledNode: null,
+  functionNodes: new Set(['function_definition']),
+};
+
+const GO_CFG = {
+  ifNode: 'if_statement',
+  ifNodes: null,
+  elifNode: null,
+  elseClause: null,
+  elseViaAlternative: true,
+  ifConsequentField: null,
+  forNodes: new Set(['for_statement']),
+  whileNode: null,
+  whileNodes: null,
+  doNode: null,
+  infiniteLoopNode: null,
+  unlessNode: null,
+  untilNode: null,
+  switchNode: null,
+  switchNodes: new Set([
+    'expression_switch_statement',
+    'type_switch_statement',
+    'select_statement',
+  ]),
+  caseNode: 'expression_case',
+  caseNodes: new Set(['type_case', 'communication_case']),
+  defaultNode: 'default_case',
+  tryNode: null,
+  catchNode: null,
+  finallyNode: null,
+  returnNode: 'return_statement',
+  throwNode: null,
+  breakNode: 'break_statement',
+  continueNode: 'continue_statement',
+  blockNode: 'block',
+  blockNodes: null,
+  labeledNode: 'labeled_statement',
+  functionNodes: new Set(['function_declaration', 'method_declaration', 'func_literal']),
+};
+
+const RUST_CFG = {
+  ifNode: 'if_expression',
+  ifNodes: new Set(['if_let_expression']),
+  elifNode: null,
+  elseClause: 'else_clause',
+  elseViaAlternative: false,
+  ifConsequentField: null,
+  forNodes: new Set(['for_expression']),
+  whileNode: 'while_expression',
+  whileNodes: new Set(['while_let_expression']),
+  doNode: null,
+  infiniteLoopNode: 'loop_expression',
+  unlessNode: null,
+  untilNode: null,
+  switchNode: 'match_expression',
+  switchNodes: null,
+  caseNode: 'match_arm',
+  caseNodes: null,
+  defaultNode: null,
+  tryNode: null,
+  catchNode: null,
+  finallyNode: null,
+  returnNode: 'return_expression',
+  throwNode: null,
+  breakNode: 'break_expression',
+  continueNode: 'continue_expression',
+  blockNode: 'block',
+  blockNodes: null,
+  labeledNode: null,
+  functionNodes: new Set(['function_item', 'closure_expression']),
+};
+
+const JAVA_CFG = {
+  ifNode: 'if_statement',
+  ifNodes: null,
+  elifNode: null,
+  elseClause: null,
+  elseViaAlternative: true,
+  ifConsequentField: null,
+  forNodes: new Set(['for_statement', 'enhanced_for_statement']),
+  whileNode: 'while_statement',
+  whileNodes: null,
+  doNode: 'do_statement',
+  infiniteLoopNode: null,
+  unlessNode: null,
+  untilNode: null,
+  switchNode: 'switch_expression',
+  switchNodes: null,
+  caseNode: 'switch_block_statement_group',
+  caseNodes: new Set(['switch_rule']),
+  defaultNode: null,
+  tryNode: 'try_statement',
+  catchNode: 'catch_clause',
+  finallyNode: 'finally_clause',
+  returnNode: 'return_statement',
+  throwNode: 'throw_statement',
+  breakNode: 'break_statement',
+  continueNode: 'continue_statement',
+  blockNode: 'block',
+  blockNodes: null,
+  labeledNode: 'labeled_statement',
+  functionNodes: new Set(['method_declaration', 'constructor_declaration', 'lambda_expression']),
+};
+
+const CSHARP_CFG = {
+  ifNode: 'if_statement',
+  ifNodes: null,
+  elifNode: null,
+  elseClause: null,
+  elseViaAlternative: true,
+  ifConsequentField: null,
+  forNodes: new Set(['for_statement', 'foreach_statement']),
+  whileNode: 'while_statement',
+  whileNodes: null,
+  doNode: 'do_statement',
+  infiniteLoopNode: null,
+  unlessNode: null,
+  untilNode: null,
+  switchNode: 'switch_statement',
+  switchNodes: null,
+  caseNode: 'switch_section',
+  caseNodes: null,
+  defaultNode: null,
+  tryNode: 'try_statement',
+  catchNode: 'catch_clause',
+  finallyNode: 'finally_clause',
+  returnNode: 'return_statement',
+  throwNode: 'throw_statement',
+  breakNode: 'break_statement',
+  continueNode: 'continue_statement',
+  blockNode: 'block',
+  blockNodes: null,
+  labeledNode: 'labeled_statement',
+  functionNodes: new Set([
+    'method_declaration',
+    'constructor_declaration',
+    'lambda_expression',
+    'local_function_statement',
+  ]),
+};
+
+const RUBY_CFG = {
+  ifNode: 'if',
+  ifNodes: null,
+  elifNode: 'elsif',
+  elseClause: 'else',
+  elseViaAlternative: false,
+  ifConsequentField: null,
+  forNodes: new Set(['for']),
+  whileNode: 'while',
+  whileNodes: null,
+  doNode: null,
+  infiniteLoopNode: null,
+  unlessNode: 'unless',
+  untilNode: 'until',
+  switchNode: 'case',
+  switchNodes: null,
+  caseNode: 'when',
+  caseNodes: null,
+  defaultNode: 'else',
+  tryNode: 'begin',
+  catchNode: 'rescue',
+  finallyNode: 'ensure',
+  returnNode: 'return',
+  throwNode: null,
+  breakNode: 'break',
+  continueNode: 'next',
+  blockNode: null,
+  blockNodes: new Set(['then', 'do', 'body_statement']),
+  labeledNode: null,
+  functionNodes: new Set(['method', 'singleton_method']),
+};
+
+const PHP_CFG = {
+  ifNode: 'if_statement',
+  ifNodes: null,
+  elifNode: 'else_if_clause',
+  elseClause: 'else_clause',
+  elseViaAlternative: false,
+  ifConsequentField: 'body',
+  forNodes: new Set(['for_statement', 'foreach_statement']),
+  whileNode: 'while_statement',
+  whileNodes: null,
+  doNode: 'do_statement',
+  infiniteLoopNode: null,
+  unlessNode: null,
+  untilNode: null,
+  switchNode: 'switch_statement',
+  switchNodes: null,
+  caseNode: 'case_statement',
+  caseNodes: null,
+  defaultNode: 'default_statement',
+  tryNode: 'try_statement',
+  catchNode: 'catch_clause',
+  finallyNode: 'finally_clause',
+  returnNode: 'return_statement',
+  throwNode: 'throw_expression',
+  breakNode: 'break_statement',
+  continueNode: 'continue_statement',
+  blockNode: 'compound_statement',
+  blockNodes: null,
+  labeledNode: null,
+  functionNodes: new Set([
+    'function_definition',
+    'method_declaration',
+    'anonymous_function_creation_expression',
+    'arrow_function',
+  ]),
+};
+
 export const CFG_RULES = new Map([
   ['javascript', JS_TS_CFG],
   ['typescript', JS_TS_CFG],
   ['tsx', JS_TS_CFG],
+  ['python', PYTHON_CFG],
+  ['go', GO_CFG],
+  ['rust', RUST_CFG],
+  ['java', JAVA_CFG],
+  ['csharp', CSHARP_CFG],
+  ['ruby', RUBY_CFG],
+  ['php', PHP_CFG],
 ]);
 
-// Language IDs that support CFG (Phase 1: JS/TS/TSX only)
-const CFG_LANG_IDS = new Set(['javascript', 'typescript', 'tsx']);
+const CFG_LANG_IDS = new Set([
+  'javascript',
+  'typescript',
+  'tsx',
+  'python',
+  'go',
+  'rust',
+  'java',
+  'csharp',
+  'ruby',
+  'php',
+]);
 
 // JS/TS extensions
 const CFG_EXTENSIONS = new Set();
@@ -121,8 +387,8 @@ export function buildFunctionCFG(functionNode, langId) {
    */
   function getStatements(node) {
     if (!node) return [];
-    // statement_block: get named children
-    if (node.type === rules.blockNode) {
+    // Block-like nodes: extract named children
+    if (node.type === rules.blockNode || rules.blockNodes?.has(node.type)) {
       const stmts = [];
       for (let i = 0; i < node.namedChildCount; i++) {
         stmts.push(node.namedChild(i));
@@ -157,6 +423,31 @@ export function buildFunctionCFG(functionNode, langId) {
   function processStatement(stmt, currentBlock) {
     if (!stmt || !currentBlock) return currentBlock;
 
+    // Unwrap expression_statement (Rust uses expressions for control flow)
+    if (stmt.type === 'expression_statement' && stmt.namedChildCount === 1) {
+      const inner = stmt.namedChild(0);
+      const t = inner.type;
+      if (
+        t === rules.ifNode ||
+        rules.ifNodes?.has(t) ||
+        rules.forNodes?.has(t) ||
+        t === rules.whileNode ||
+        rules.whileNodes?.has(t) ||
+        t === rules.doNode ||
+        t === rules.infiniteLoopNode ||
+        t === rules.switchNode ||
+        rules.switchNodes?.has(t) ||
+        t === rules.returnNode ||
+        t === rules.throwNode ||
+        t === rules.breakNode ||
+        t === rules.continueNode ||
+        t === rules.unlessNode ||
+        t === rules.untilNode
+      ) {
+        return processStatement(inner, currentBlock);
+      }
+    }
+
     const type = stmt.type;
 
     // Labeled statement: register label then process inner statement
@@ -175,8 +466,13 @@ export function buildFunctionCFG(functionNode, langId) {
       return currentBlock;
     }
 
-    // If statement
-    if (type === rules.ifNode) {
+    // If statement (including language variants like if_let_expression)
+    if (type === rules.ifNode || rules.ifNodes?.has(type)) {
+      return processIf(stmt, currentBlock);
+    }
+
+    // Unless (Ruby) — same CFG shape as if
+    if (rules.unlessNode && type === rules.unlessNode) {
       return processIf(stmt, currentBlock);
     }
 
@@ -185,23 +481,33 @@ export function buildFunctionCFG(functionNode, langId) {
       return processForLoop(stmt, currentBlock);
     }
 
-    // While loop
-    if (type === rules.whileNode) {
+    // While loop (including language variants like while_let_expression)
+    if (type === rules.whileNode || rules.whileNodes?.has(type)) {
+      return processWhileLoop(stmt, currentBlock);
+    }
+
+    // Until (Ruby) — same CFG shape as while
+    if (rules.untilNode && type === rules.untilNode) {
       return processWhileLoop(stmt, currentBlock);
     }
 
     // Do-while loop
-    if (type === rules.doNode) {
+    if (rules.doNode && type === rules.doNode) {
       return processDoWhileLoop(stmt, currentBlock);
     }
 
-    // Switch statement
-    if (type === rules.switchNode) {
+    // Infinite loop (Rust's loop {})
+    if (rules.infiniteLoopNode && type === rules.infiniteLoopNode) {
+      return processInfiniteLoop(stmt, currentBlock);
+    }
+
+    // Switch / match statement
+    if (type === rules.switchNode || rules.switchNodes?.has(type)) {
       return processSwitch(stmt, currentBlock);
     }
 
     // Try/catch/finally
-    if (type === rules.tryNode) {
+    if (rules.tryNode && type === rules.tryNode) {
       return processTryCatch(stmt, currentBlock);
     }
 
@@ -270,6 +576,10 @@ export function buildFunctionCFG(functionNode, langId) {
 
   /**
    * Process an if/else-if/else chain.
+   * Handles three patterns:
+   *   A) Wrapper: alternative → else_clause → nested if or block (JS/TS, C#, Rust)
+   *   B) Siblings: elif/elsif/else_if as sibling children (Python, Ruby, PHP)
+   *   C) Direct: alternative → if_statement or block directly (Go, Java)
    */
   function processIf(ifStmt, currentBlock) {
     // Terminate current block at condition
@@ -286,7 +596,8 @@ export function buildFunctionCFG(functionNode, langId) {
     const joinBlock = makeBlock('body');
 
     // True branch (consequent)
-    const consequent = ifStmt.childForFieldName('consequence');
+    const consequentField = rules.ifConsequentField || 'consequence';
+    const consequent = ifStmt.childForFieldName(consequentField);
     const trueBlock = makeBlock('branch_true', null, null, 'then');
     addEdge(condBlock, trueBlock, 'branch_true');
     const trueStmts = getStatements(consequent);
@@ -295,39 +606,130 @@ export function buildFunctionCFG(functionNode, langId) {
       addEdge(trueEnd, joinBlock, 'fallthrough');
     }
 
-    // False branch (alternative / else / else-if)
-    const alternative = ifStmt.childForFieldName('alternative');
-    if (alternative) {
-      if (alternative.type === rules.elseClause) {
-        // else clause — may contain another if (else-if) or a block
-        const elseChildren = [];
-        for (let i = 0; i < alternative.namedChildCount; i++) {
-          elseChildren.push(alternative.namedChild(i));
-        }
-        if (elseChildren.length === 1 && elseChildren[0].type === rules.ifNode) {
-          // else-if: recurse
-          const falseBlock = makeBlock('branch_false', null, null, 'else-if');
-          addEdge(condBlock, falseBlock, 'branch_false');
-          const elseIfEnd = processIf(elseChildren[0], falseBlock);
-          if (elseIfEnd) {
-            addEdge(elseIfEnd, joinBlock, 'fallthrough');
-          }
-        } else {
-          // else block
-          const falseBlock = makeBlock('branch_false', null, null, 'else');
-          addEdge(condBlock, falseBlock, 'branch_false');
-          const falseEnd = processStatements(elseChildren, falseBlock);
-          if (falseEnd) {
-            addEdge(falseEnd, joinBlock, 'fallthrough');
-          }
-        }
-      }
+    // False branch — depends on language pattern
+    if (rules.elifNode) {
+      // Pattern B: elif/else as siblings of the if node
+      processElifSiblings(ifStmt, condBlock, joinBlock);
     } else {
-      // No else: condition-false goes directly to join
-      addEdge(condBlock, joinBlock, 'branch_false');
+      const alternative = ifStmt.childForFieldName('alternative');
+      if (alternative) {
+        if (rules.elseViaAlternative && alternative.type !== rules.elseClause) {
+          // Pattern C: alternative points directly to if or block
+          if (alternative.type === rules.ifNode || rules.ifNodes?.has(alternative.type)) {
+            // else-if: recurse
+            const falseBlock = makeBlock('branch_false', null, null, 'else-if');
+            addEdge(condBlock, falseBlock, 'branch_false');
+            const elseIfEnd = processIf(alternative, falseBlock);
+            if (elseIfEnd) {
+              addEdge(elseIfEnd, joinBlock, 'fallthrough');
+            }
+          } else {
+            // else block
+            const falseBlock = makeBlock('branch_false', null, null, 'else');
+            addEdge(condBlock, falseBlock, 'branch_false');
+            const falseStmts = getStatements(alternative);
+            const falseEnd = processStatements(falseStmts, falseBlock);
+            if (falseEnd) {
+              addEdge(falseEnd, joinBlock, 'fallthrough');
+            }
+          }
+        } else if (alternative.type === rules.elseClause) {
+          // Pattern A: else_clause wrapper — may contain another if (else-if) or a block
+          const elseChildren = [];
+          for (let i = 0; i < alternative.namedChildCount; i++) {
+            elseChildren.push(alternative.namedChild(i));
+          }
+          if (
+            elseChildren.length === 1 &&
+            (elseChildren[0].type === rules.ifNode || rules.ifNodes?.has(elseChildren[0].type))
+          ) {
+            // else-if: recurse
+            const falseBlock = makeBlock('branch_false', null, null, 'else-if');
+            addEdge(condBlock, falseBlock, 'branch_false');
+            const elseIfEnd = processIf(elseChildren[0], falseBlock);
+            if (elseIfEnd) {
+              addEdge(elseIfEnd, joinBlock, 'fallthrough');
+            }
+          } else {
+            // else block
+            const falseBlock = makeBlock('branch_false', null, null, 'else');
+            addEdge(condBlock, falseBlock, 'branch_false');
+            const falseEnd = processStatements(elseChildren, falseBlock);
+            if (falseEnd) {
+              addEdge(falseEnd, joinBlock, 'fallthrough');
+            }
+          }
+        }
+      } else {
+        // No else: condition-false goes directly to join
+        addEdge(condBlock, joinBlock, 'branch_false');
+      }
     }
 
     return joinBlock;
+  }
+
+  /**
+   * Handle Pattern B: elif/elsif/else_if as sibling children of the if node.
+   */
+  function processElifSiblings(ifStmt, firstCondBlock, joinBlock) {
+    let lastCondBlock = firstCondBlock;
+    let foundElse = false;
+
+    for (let i = 0; i < ifStmt.namedChildCount; i++) {
+      const child = ifStmt.namedChild(i);
+
+      if (child.type === rules.elifNode) {
+        // Create condition block for elif
+        const elifCondBlock = makeBlock(
+          'condition',
+          child.startPosition.row + 1,
+          child.startPosition.row + 1,
+          'else-if',
+        );
+        addEdge(lastCondBlock, elifCondBlock, 'branch_false');
+
+        // True branch of elif
+        const elifConsequentField = rules.ifConsequentField || 'consequence';
+        const elifConsequent = child.childForFieldName(elifConsequentField);
+        const elifTrueBlock = makeBlock('branch_true', null, null, 'then');
+        addEdge(elifCondBlock, elifTrueBlock, 'branch_true');
+        const elifTrueStmts = getStatements(elifConsequent);
+        const elifTrueEnd = processStatements(elifTrueStmts, elifTrueBlock);
+        if (elifTrueEnd) {
+          addEdge(elifTrueEnd, joinBlock, 'fallthrough');
+        }
+
+        lastCondBlock = elifCondBlock;
+      } else if (child.type === rules.elseClause) {
+        // Else body
+        const elseBlock = makeBlock('branch_false', null, null, 'else');
+        addEdge(lastCondBlock, elseBlock, 'branch_false');
+
+        // Try field access first, then collect children
+        const elseBody = child.childForFieldName('body');
+        let elseStmts;
+        if (elseBody) {
+          elseStmts = getStatements(elseBody);
+        } else {
+          elseStmts = [];
+          for (let j = 0; j < child.namedChildCount; j++) {
+            elseStmts.push(child.namedChild(j));
+          }
+        }
+        const elseEnd = processStatements(elseStmts, elseBlock);
+        if (elseEnd) {
+          addEdge(elseEnd, joinBlock, 'fallthrough');
+        }
+
+        foundElse = true;
+      }
+    }
+
+    // If no else clause, last condition's false goes to join
+    if (!foundElse) {
+      addEdge(lastCondBlock, joinBlock, 'branch_false');
+    }
   }
 
   /**
@@ -453,6 +855,48 @@ export function buildFunctionCFG(functionNode, langId) {
   }
 
   /**
+   * Process an infinite loop (Rust's `loop {}`).
+   * No condition — body always executes. Exit only via break.
+   */
+  function processInfiniteLoop(loopStmt, currentBlock) {
+    const headerBlock = makeBlock(
+      'loop_header',
+      loopStmt.startPosition.row + 1,
+      loopStmt.startPosition.row + 1,
+      'loop',
+    );
+    addEdge(currentBlock, headerBlock, 'fallthrough');
+
+    const loopExitBlock = makeBlock('body');
+
+    const loopCtx = { headerBlock, exitBlock: loopExitBlock };
+    loopStack.push(loopCtx);
+
+    for (const [, ctx] of labelMap) {
+      if (!ctx.headerBlock) {
+        ctx.headerBlock = headerBlock;
+        ctx.exitBlock = loopExitBlock;
+      }
+    }
+
+    const body = loopStmt.childForFieldName('body');
+    const bodyBlock = makeBlock('loop_body');
+    addEdge(headerBlock, bodyBlock, 'branch_true');
+
+    const bodyStmts = getStatements(body);
+    const bodyEnd = processStatements(bodyStmts, bodyBlock);
+
+    if (bodyEnd) {
+      addEdge(bodyEnd, headerBlock, 'loop_back');
+    }
+
+    // No loop_exit from header — can only exit via break
+
+    loopStack.pop();
+    return loopExitBlock;
+  }
+
+  /**
    * Process a switch statement.
    */
   function processSwitch(switchStmt, currentBlock) {
@@ -472,47 +916,52 @@ export function buildFunctionCFG(functionNode, langId) {
     const switchCtx = { headerBlock: switchHeader, exitBlock: joinBlock };
     loopStack.push(switchCtx);
 
-    // Collect case clauses from the switch body
+    // Get case children from body field or direct children
     const switchBody = switchStmt.childForFieldName('body');
-    if (switchBody) {
-      let hasDefault = false;
-      for (let i = 0; i < switchBody.namedChildCount; i++) {
-        const caseClause = switchBody.namedChild(i);
-        const isDefault =
-          caseClause.type === rules.defaultNode ||
-          (caseClause.type === rules.caseNode && !caseClause.childForFieldName('value'));
+    const container = switchBody || switchStmt;
 
-        const caseLabel = isDefault ? 'default' : 'case';
-        const caseBlock = makeBlock(
-          isDefault ? 'case' : 'case',
-          caseClause.startPosition.row + 1,
-          null,
-          caseLabel,
-        );
-        addEdge(switchHeader, caseBlock, isDefault ? 'branch_false' : 'branch_true');
-        if (isDefault) hasDefault = true;
+    let hasDefault = false;
+    for (let i = 0; i < container.namedChildCount; i++) {
+      const caseClause = container.namedChild(i);
 
-        // Process case body statements
-        const caseStmts = [];
+      const isDefault = caseClause.type === rules.defaultNode;
+      const isCase =
+        isDefault || caseClause.type === rules.caseNode || rules.caseNodes?.has(caseClause.type);
+
+      if (!isCase) continue;
+
+      const caseLabel = isDefault ? 'default' : 'case';
+      const caseBlock = makeBlock('case', caseClause.startPosition.row + 1, null, caseLabel);
+      addEdge(switchHeader, caseBlock, isDefault ? 'branch_false' : 'branch_true');
+      if (isDefault) hasDefault = true;
+
+      // Extract case body: try field access, then collect non-header children
+      const caseBodyNode =
+        caseClause.childForFieldName('body') || caseClause.childForFieldName('consequence');
+      let caseStmts;
+      if (caseBodyNode) {
+        caseStmts = getStatements(caseBodyNode);
+      } else {
+        caseStmts = [];
+        const valueNode = caseClause.childForFieldName('value');
+        const patternNode = caseClause.childForFieldName('pattern');
         for (let j = 0; j < caseClause.namedChildCount; j++) {
           const child = caseClause.namedChild(j);
-          // Skip the case value expression
-          if (child.type !== 'identifier' && child.type !== 'string' && child.type !== 'number') {
+          if (child !== valueNode && child !== patternNode && child.type !== 'switch_label') {
             caseStmts.push(child);
           }
         }
-
-        const caseEnd = processStatements(caseStmts, caseBlock);
-        if (caseEnd) {
-          // Fall-through to join (or next case, but we simplify to join)
-          addEdge(caseEnd, joinBlock, 'fallthrough');
-        }
       }
 
-      // If no default case, switch header can skip to join
-      if (!hasDefault) {
-        addEdge(switchHeader, joinBlock, 'branch_false');
+      const caseEnd = processStatements(caseStmts, caseBlock);
+      if (caseEnd) {
+        addEdge(caseEnd, joinBlock, 'fallthrough');
       }
+    }
+
+    // If no default case, switch header can skip to join
+    if (!hasDefault) {
+      addEdge(switchHeader, joinBlock, 'branch_false');
     }
 
     loopStack.pop();
@@ -527,12 +976,26 @@ export function buildFunctionCFG(functionNode, langId) {
 
     const joinBlock = makeBlock('body');
 
-    // Try body
+    // Try body — field access or collect non-handler children (e.g., Ruby's begin)
     const tryBody = tryStmt.childForFieldName('body');
-    const tryBlock = makeBlock('body', tryBody ? tryBody.startPosition.row + 1 : null, null, 'try');
-    addEdge(currentBlock, tryBlock, 'fallthrough');
+    let tryBodyStart;
+    let tryStmts;
+    if (tryBody) {
+      tryBodyStart = tryBody.startPosition.row + 1;
+      tryStmts = getStatements(tryBody);
+    } else {
+      tryBodyStart = tryStmt.startPosition.row + 1;
+      tryStmts = [];
+      for (let i = 0; i < tryStmt.namedChildCount; i++) {
+        const child = tryStmt.namedChild(i);
+        if (rules.catchNode && child.type === rules.catchNode) continue;
+        if (rules.finallyNode && child.type === rules.finallyNode) continue;
+        tryStmts.push(child);
+      }
+    }
 
-    const tryStmts = getStatements(tryBody);
+    const tryBlock = makeBlock('body', tryBodyStart, null, 'try');
+    addEdge(currentBlock, tryBlock, 'fallthrough');
     const tryEnd = processStatements(tryStmts, tryBlock);
 
     // Catch handler
@@ -540,8 +1003,8 @@ export function buildFunctionCFG(functionNode, langId) {
     let finallyHandler = null;
     for (let i = 0; i < tryStmt.namedChildCount; i++) {
       const child = tryStmt.namedChild(i);
-      if (child.type === rules.catchNode) catchHandler = child;
-      if (child.type === rules.finallyNode) finallyHandler = child;
+      if (rules.catchNode && child.type === rules.catchNode) catchHandler = child;
+      if (rules.finallyNode && child.type === rules.finallyNode) finallyHandler = child;
     }
 
     if (catchHandler) {
@@ -549,8 +1012,17 @@ export function buildFunctionCFG(functionNode, langId) {
       // Exception edge from try to catch
       addEdge(tryBlock, catchBlock, 'exception');
 
-      const catchBody = catchHandler.childForFieldName('body');
-      const catchStmts = getStatements(catchBody);
+      // Catch body — try field access, then collect children
+      const catchBodyNode = catchHandler.childForFieldName('body');
+      let catchStmts;
+      if (catchBodyNode) {
+        catchStmts = getStatements(catchBodyNode);
+      } else {
+        catchStmts = [];
+        for (let i = 0; i < catchHandler.namedChildCount; i++) {
+          catchStmts.push(catchHandler.namedChild(i));
+        }
+      }
       const catchEnd = processStatements(catchStmts, catchBlock);
 
       if (finallyHandler) {
@@ -563,8 +1035,10 @@ export function buildFunctionCFG(functionNode, langId) {
         if (tryEnd) addEdge(tryEnd, finallyBlock, 'fallthrough');
         if (catchEnd) addEdge(catchEnd, finallyBlock, 'fallthrough');
 
-        const finallyBody = finallyHandler.childForFieldName('body');
-        const finallyStmts = getStatements(finallyBody);
+        const finallyBodyNode = finallyHandler.childForFieldName('body');
+        const finallyStmts = finallyBodyNode
+          ? getStatements(finallyBodyNode)
+          : getStatements(finallyHandler);
         const finallyEnd = processStatements(finallyStmts, finallyBlock);
         if (finallyEnd) addEdge(finallyEnd, joinBlock, 'fallthrough');
       } else {
@@ -580,8 +1054,10 @@ export function buildFunctionCFG(functionNode, langId) {
       );
       if (tryEnd) addEdge(tryEnd, finallyBlock, 'fallthrough');
 
-      const finallyBody = finallyHandler.childForFieldName('body');
-      const finallyStmts = getStatements(finallyBody);
+      const finallyBodyNode = finallyHandler.childForFieldName('body');
+      const finallyStmts = finallyBodyNode
+        ? getStatements(finallyBodyNode)
+        : getStatements(finallyHandler);
       const finallyEnd = processStatements(finallyStmts, finallyBlock);
       if (finallyEnd) addEdge(finallyEnd, joinBlock, 'fallthrough');
     } else {
