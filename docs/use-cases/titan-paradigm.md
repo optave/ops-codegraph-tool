@@ -191,33 +191,6 @@ codegraph snapshot save pre-gauntlet
 codegraph snapshot restore pre-gauntlet
 ```
 
-For **agent-level rollback**, use scoped rebuild instead of full snapshot restore. This lets one agent revert its files without nuking every other agent's graph state:
-
-```bash
-# Agent reverts its own files via git
-git checkout -- src/parser.js src/resolve.js
-
-# Rebuild only those files in the graph — other agents' data is untouched
-codegraph build --scope src/parser.js src/resolve.js
-
-# If exports didn't change (exact same version), skip reverse-dep cascade
-codegraph build --scope src/parser.js src/resolve.js --no-reverse-deps
-```
-
-The MCP equivalent for AI agents:
-
-```json
-{
-  "tool": "scoped_rebuild",
-  "arguments": {
-    "files": ["src/parser.js", "src/resolve.js"],
-    "no_reverse_deps": false
-  }
-}
-```
-
-Use full `snapshot save/restore` for orchestrator-level checkpoints (before the Gauntlet starts), and scoped rebuild for per-agent rollback during the Gauntlet.
-
 Use `manifesto` as an additional CI gate — it exits with code 1 when any function exceeds a fail-level threshold:
 
 ```bash
