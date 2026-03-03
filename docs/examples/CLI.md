@@ -95,12 +95,12 @@ codegraph where -f src/db.js -T
 
 ---
 
-## explain — Structural summary (file or function)
+## audit --quick — Structural summary (file or function)
 
 ### On a file
 
 ```bash
-codegraph explain src/builder.js -T
+codegraph audit src/builder.js --quick -T
 ```
 
 ```
@@ -132,7 +132,7 @@ codegraph explain src/builder.js -T
 ### On a function
 
 ```bash
-codegraph explain buildGraph -T
+codegraph audit buildGraph --quick -T
 ```
 
 ```
@@ -450,10 +450,10 @@ tests/  (0 files, 32 symbols, <-0 ->6 cohesion=0.00)
 
 ---
 
-## hotspots — Find structural hotspots
+## triage --level — Find structural hotspots
 
 ```bash
-codegraph hotspots --metric fan-in -T
+codegraph triage --level file --sort fan-in -T
 ```
 
 ```
@@ -469,7 +469,7 @@ Hotspots by fan-in (file-level, top 10):
    8. src/cli.js  <-0 ->10  (570L, 1 symbols)
 ```
 
-Other metrics: `fan-out`, `density`, `coupling`.
+Other metrics: `fan-out`, `density`, `coupling`. Use `--level directory` for directory-level hotspots.
 
 ---
 
@@ -903,14 +903,16 @@ codegraph communities --drift -T
 
 ---
 
-## manifesto — Rule engine pass/fail
+## check — Rule engine pass/fail (manifesto mode)
+
+Running `check` with no ref or `--staged` runs manifesto rules on the whole codebase:
 
 ```bash
-codegraph manifesto -T
+codegraph check -T
 ```
 
 ```
-# Manifesto Results
+# Manifesto Rules
 
   Rule                      Status   Threshold         Violations
   ────────────────────────── ──────── ──────────────── ──────────
@@ -927,7 +929,7 @@ codegraph manifesto -T
 
 ## audit — Composite risk report
 
-Combines explain + fn-impact + complexity metrics into one structured report per function. One call instead of 3-4.
+Combines structural summary + fn-impact + complexity metrics into one structured report per function. Use `--quick` for structural summary only (skip impact and health metrics).
 
 ```bash
 codegraph audit src/builder.js -T
@@ -962,7 +964,7 @@ codegraph audit buildGraph -T
 
 ## triage — Risk-ranked audit queue
 
-Merges connectivity, hotspots, node roles, and complexity into a prioritized audit queue.
+Merges connectivity, hotspots, node roles, and complexity into a prioritized audit queue. Use `--level file` or `--level directory` for file/directory-level hotspot analysis.
 
 ```bash
 codegraph triage -T --limit 5
@@ -1007,6 +1009,10 @@ codegraph batch buildGraph openDb parseFile -T --json
 ## check — CI validation predicates
 
 Configurable pass/fail gates. Exit code 0 = pass, 1 = fail.
+
+- `check` (no args) — runs manifesto rules on whole codebase (see above)
+- `check --staged` / `check <ref>` — runs diff predicates against changes
+- `check --staged --rules` — runs both diff predicates AND manifesto rules
 
 ```bash
 codegraph check --staged --no-new-cycles --max-complexity 30
