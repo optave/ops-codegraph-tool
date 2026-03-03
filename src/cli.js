@@ -32,6 +32,7 @@ import {
   diffImpact,
   explain,
   fileDeps,
+  fileExports,
   fnDeps,
   fnImpact,
   impactAnalysis,
@@ -216,6 +217,26 @@ program
   .option('--ndjson', 'Newline-delimited JSON output')
   .action((file, opts) => {
     fileDeps(file, opts.db, {
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
+    });
+  });
+
+program
+  .command('exports <file>')
+  .description('Show exported symbols with per-symbol consumers (who calls each export)')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
+  .action((file, opts) => {
+    fileExports(file, opts.db, {
       noTests: resolveNoTests(opts),
       json: opts.json,
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,

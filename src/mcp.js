@@ -83,6 +83,20 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'file_exports',
+    description:
+      'Show exported symbols of a file with per-symbol consumers — who calls each export and from where',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', description: 'File path (partial match supported)' },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
+      },
+      required: ['file'],
+    },
+  },
+  {
     name: 'impact_analysis',
     description: 'Show files affected by changes to a given file (transitive)',
     inputSchema: {
@@ -741,6 +755,7 @@ export async function startMCPServer(customDbPath, options = {}) {
     fnImpactData,
     pathData,
     contextData,
+    exportsData,
     explainData,
     whereData,
     diffImpactData,
@@ -823,6 +838,13 @@ export async function startMCPServer(customDbPath, options = {}) {
           result = fileDepsData(args.file, dbPath, {
             noTests: args.no_tests,
             limit: Math.min(args.limit ?? MCP_DEFAULTS.file_deps, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
+          });
+          break;
+        case 'file_exports':
+          result = exportsData(args.file, dbPath, {
+            noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.file_exports, MCP_MAX_LIMIT),
             offset: args.offset ?? 0,
           });
           break;

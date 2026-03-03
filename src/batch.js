@@ -11,6 +11,7 @@ import { flowData } from './flow.js';
 import {
   contextData,
   explainData,
+  exportsData,
   fileDepsData,
   fnDepsData,
   fnImpactData,
@@ -34,6 +35,7 @@ export const BATCH_COMMANDS = {
   query: { fn: fnDepsData, sig: 'name' },
   impact: { fn: impactAnalysisData, sig: 'file' },
   deps: { fn: fileDepsData, sig: 'file' },
+  exports: { fn: exportsData, sig: 'file' },
   flow: { fn: flowData, sig: 'name' },
   dataflow: { fn: dataflowData, sig: 'name' },
   complexity: { fn: complexityData, sig: 'dbOnly' },

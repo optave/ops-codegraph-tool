@@ -18,6 +18,7 @@ export const MCP_DEFAULTS = {
   context: 5,
   explain: 10,
   file_deps: 20,
+  file_exports: 20,
   diff_impact: 30,
   impact_analysis: 20,
   semantic_search: 20,
