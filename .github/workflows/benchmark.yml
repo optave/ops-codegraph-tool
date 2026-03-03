@@ -17,7 +17,8 @@ jobs:
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event != 'push')
     permissions:
       actions: read
       contents: write
@@ -139,17 +140,23 @@ jobs:
           git commit -m "docs: update build performance benchmarks (${VERSION})"
           git push origin "$BRANCH"
 
-          gh pr create \
-            --base main \
-            --head "$BRANCH" \
-            --title "docs: update build performance benchmarks (${VERSION})" \
-            --body "Automated build benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+          TITLE="docs: update build performance benchmarks (${VERSION})"
+          if gh pr list --state open --json title --jq ".[].title" | grep -qF "$TITLE"; then
+            echo "::notice::PR already open for '$TITLE' — skipping"
+          else
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "$TITLE" \
+              --body "Automated build benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+          fi
 
   embedding-benchmark:
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event != 'push')
     permissions:
       actions: read
       contents: write
@@ -284,17 +291,23 @@ jobs:
           git commit -m "docs: update embedding benchmarks (${VERSION})"
           git push origin "$BRANCH"
 
-          gh pr create \
-            --base main \
-            --head "$BRANCH" \
-            --title "docs: update embedding benchmarks (${VERSION})" \
-            --body "Automated embedding benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+          TITLE="docs: update embedding benchmarks (${VERSION})"
+          if gh pr list --state open --json title --jq ".[].title" | grep -qF "$TITLE"; then
+            echo "::notice::PR already open for '$TITLE' — skipping"
+          else
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "$TITLE" \
+              --body "Automated embedding benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+          fi
 
   query-benchmark:
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event != 'push')
     permissions:
       actions: read
       contents: write
@@ -415,17 +428,23 @@ jobs:
           git commit -m "docs: update query benchmarks (${VERSION})"
           git push origin "$BRANCH"
 
-          gh pr create \
-            --base main \
-            --head "$BRANCH" \
-            --title "docs: update query benchmarks (${VERSION})" \
-            --body "Automated query benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+          TITLE="docs: update query benchmarks (${VERSION})"
+          if gh pr list --state open --json title --jq ".[].title" | grep -qF "$TITLE"; then
+            echo "::notice::PR already open for '$TITLE' — skipping"
+          else
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "$TITLE" \
+              --body "Automated query benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+          fi
 
   incremental-benchmark:
     runs-on: ubuntu-latest
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event != 'push')
     permissions:
       actions: read
       contents: write
@@ -546,8 +565,13 @@ jobs:
           git commit -m "docs: update incremental benchmarks (${VERSION})"
           git push origin "$BRANCH"
 
-          gh pr create \
-            --base main \
-            --head "$BRANCH" \
-            --title "docs: update incremental benchmarks (${VERSION})" \
-            --body "Automated incremental benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+          TITLE="docs: update incremental benchmarks (${VERSION})"
+          if gh pr list --state open --json title --jq ".[].title" | grep -qF "$TITLE"; then
+            echo "::notice::PR already open for '$TITLE' — skipping"
+          else
+            gh pr create \
+              --base main \
+              --head "$BRANCH" \
+              --title "$TITLE" \
+              --body "Automated incremental benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+          fi
