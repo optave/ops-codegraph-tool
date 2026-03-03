@@ -236,7 +236,7 @@ export function buildFunctionCFG(functionNode, langId) {
         addEdge(currentBlock, target, 'break');
         return null; // path terminated
       }
-      // break outside loop (switch case) — just continue
+      // break with no enclosing loop/switch — treat as no-op
       return currentBlock;
     }
 
