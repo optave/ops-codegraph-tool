@@ -133,7 +133,7 @@ Staying in our lane means we can be embedded inside IDEs, AI agents, CI pipeline
 
 ## Competitive Position
 
-As of February 2026, codegraph is **#7 out of 22** in the code intelligence tool space (see [COMPETITIVE_ANALYSIS.md](./COMPETITIVE_ANALYSIS.md)).
+As of February 2026, codegraph is **#7 out of 22** in the code intelligence tool space (see [COMPETITIVE_ANALYSIS.md](./generated/competitive/COMPETITIVE_ANALYSIS.md)).
 
 Six tools rank above us on feature breadth and community size. But none of them can answer yes to all three questions:
 
