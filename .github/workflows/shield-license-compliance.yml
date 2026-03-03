@@ -29,7 +29,18 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
-        run: npm ci --prefer-offline --no-audit --no-fund
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            npm ci --prefer-offline --no-audit --no-fund --ignore-scripts && break
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::npm ci attempt $attempt failed, retrying in 15s..."
+              sleep 15
+            else
+              echo "::error::npm ci failed after 3 attempts"
+              exit 1
+            fi
+          done
 
       - name: Create reports directory
         run: mkdir -p license-reports

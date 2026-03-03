@@ -22,7 +22,18 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
-        run: npm install
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            npm install && break
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::npm install attempt $attempt failed, retrying in 15s..."
+              sleep 15
+            else
+              echo "::error::npm install failed after 3 attempts"
+              exit 1
+            fi
+          done
 
       - name: Run Biome
         run: npx @biomejs/biome check src/ tests/
@@ -46,7 +57,18 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Install dependencies
-        run: npm install
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            npm install && break
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::npm install attempt $attempt failed, retrying in 15s..."
+              sleep 15
+            else
+              echo "::error::npm install failed after 3 attempts"
+              exit 1
+            fi
+          done
 
       - name: Run tests
         run: npm test
