@@ -207,7 +207,7 @@ describe('rotateIfNeeded', () => {
     const fp = eventsPath(root);
 
     // Write enough lines to exceed a small threshold
-    const line = JSON.stringify({ data: 'x'.repeat(50) }) + '\n';
+    const line = `${JSON.stringify({ data: 'x'.repeat(50) })}\n`;
     const content = line.repeat(20);
     fs.writeFileSync(fp, content);
 

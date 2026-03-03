@@ -82,7 +82,7 @@ export function appendChangeEvents(rootDir, events) {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    const lines = events.map((e) => JSON.stringify(e)).join('\n') + '\n';
+    const lines = `${events.map((e) => JSON.stringify(e)).join('\n')}\n`;
     fs.appendFileSync(filePath, lines);
   } catch (err) {
     warn(`Failed to append change events: ${err.message}`);
