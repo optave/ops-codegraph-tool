@@ -18,7 +18,7 @@ Codegraph solves these problems by providing a pre-built dependency graph that a
 | Task | Without codegraph | With codegraph | Savings |
 |------|------------------|----------------|---------|
 | Understand a function | Read 3–5 full files (~10K tokens) | `context <name>` (~400 tokens) | ~96% |
-| Find what a file does | Read the file + imports (~4K tokens) | `audit --quick <file>` (~300 tokens) | ~92% |
+| Find what a file does | Read the file + imports (~4K tokens) | `explain <file>` (~300 tokens) | ~92% |
 | Locate a symbol | Grep + read matches (~3K tokens) | `where <name>` (~60 tokens) | ~98% |
 | Assess change impact | Read callers manually (~5K tokens) | `fn-impact <name>` (~200 tokens) | ~96% |
 | Pre-commit check | Manual review (~8K tokens) | `diff-impact --staged` (~300 tokens) | ~96% |
@@ -58,8 +58,8 @@ codegraph search "error handling"   # Semantic search (requires prior `embed`)
 Get a structural summary without reading raw source.
 
 ```bash
-codegraph audit --quick <file>      # File summary: public API, internal API, data flow
-codegraph audit --quick <function>  # Function summary: signature, calls, callers, tests
+codegraph explain <file>            # File summary: public API, internal API, data flow
+codegraph explain <function>        # Function summary: signature, calls, callers, tests
 ```
 
 **When to use:** Before modifying anything. Understand the shape of the code first.
@@ -124,19 +124,19 @@ codegraph where --file <path>       # File overview: symbols, imports, exports
 | **When to use** | First step when you know a name but not where it lives |
 | **Output** | Definition location (file:line), usage sites, export status |
 
-#### `audit --quick` — Structural summary
+#### `explain` — Structural summary
 
-Get a human-readable summary of a file or function without reading raw source. (`audit --quick` replaces the former `explain` CLI command.)
+Get a human-readable summary of a file or function without reading raw source.
 
 ```bash
-codegraph audit --quick src/parser.js  # File: public API, internal functions, data flow
-codegraph audit --quick buildGraph     # Function: signature, what it calls, who calls it
+codegraph explain src/parser.js     # File: public API, internal functions, data flow
+codegraph explain buildGraph        # Function: signature, what it calls, who calls it
 ```
 
 | | |
 |---|---|
 | **MCP tool** | `explain` |
-| **Key flags** | `--quick`, `-T` (no tests), `-j` (JSON) |
+| **Key flags** | `-T` (no tests), `-j` (JSON) |
 | **When to use** | Before modifying code — understand structure first |
 | **Output** | For files: public/internal API, imports, dependents. For functions: signature, callees, callers, tests |
 
@@ -326,19 +326,19 @@ codegraph structure --depth 2 --sort cohesion
 | **When to use** | Understanding project layout and identifying well/poorly-cohesive modules |
 | **Output** | Tree with per-directory metrics |
 
-#### `triage --level` — Structural hotspots
+#### `hotspots` — Structural hotspots
 
-Find files or directories with extreme fan-in, fan-out, or symbol density. (`triage --level file|directory` replaces the former `hotspots` CLI command.)
+Find files or directories with extreme fan-in, fan-out, or symbol density.
 
 ```bash
-codegraph triage --level file --sort coupling --limit 5
-codegraph triage --level directory --sort fan-out
+codegraph hotspots --metric coupling --limit 5
+codegraph hotspots --level directory --metric fan-out
 ```
 
 | | |
 |---|---|
 | **MCP tool** | `hotspots` |
-| **Key flags** | `--level` (file, directory), `--sort` (fan-in, fan-out, density, coupling; default: fan-in), `-n, --limit` (default: 10), `-T` (no tests), `-j` (JSON) |
+| **Key flags** | `--metric` (fan-in, fan-out, density, coupling; default: fan-in), `--level` (file, directory), `-n, --limit` (default: 10), `-T` (no tests), `-j` (JSON) |
 | **When to use** | Finding the most critical or problematic parts of the codebase |
 | **Output** | Ranked list of files/directories by the chosen metric |
 
@@ -362,7 +362,7 @@ codegraph cycles --functions
 
 #### `audit` — Composite risk report
 
-Combines structural summary + impact + complexity metrics in one call per function or file. Use `--quick` for just the structural summary (no impact or health metrics).
+Combines explain + impact + complexity metrics in one call per function or file.
 
 ```bash
 codegraph audit src/parser.js -T        # Audit all functions in a file
@@ -586,20 +586,20 @@ codegraph mcp --repos "myapp,lib"      # Restricted repo list
 | `fn_impact` | `fn-impact <name>` | Function-level blast radius |
 | `context` | `context <name>` | Full function context |
 | `symbol_children` | `children <name>` | Sub-declaration children (parameters, properties, constants) |
-| `explain` | `audit --quick <target>` | Structural summary |
+| `explain` | `explain <target>` | Structural summary |
 | `where` | `where <name>` | Symbol definition and usage |
 | `diff_impact` | `diff-impact [ref]` | Git diff impact analysis |
 | `semantic_search` | `search <query>` | Natural language code search |
 | `export_graph` | `export` | Graph export (DOT/Mermaid/JSON) |
 | `list_functions` | *(MCP only)* | List/filter symbols |
 | `structure` | `structure [dir]` | Directory tree with metrics |
-| `hotspots` | `triage --level file` | Structural hotspot detection |
+| `hotspots` | `hotspots` | Structural hotspot detection |
 | `node_roles` | `roles` | Node role classification |
 | `co_changes` | `co-change` | Git co-change analysis |
 | `execution_flow` | `flow` | Execution flow tracing and entry point detection |
 | `complexity` | `complexity` | Per-function complexity metrics |
 | `communities` | `communities` | Community detection & drift |
-| `manifesto` | `check` (no args) | Rule engine pass/fail |
+| `manifesto` | `manifesto` | Rule engine pass/fail |
 | `code_owners` | `owners` | CODEOWNERS integration |
 | `audit` | `audit <target>` | Composite risk report |
 | `batch_query` | `batch <targets>` | Multi-target batch querying |
@@ -685,13 +685,13 @@ Hooks automate codegraph integration so the agent gets structural context withou
 
 **Trigger:** Before any Edit or Write operation (PreToolUse).
 
-**What it does:** The first time the agent edits a source file, the hook injects a reminder via `additionalContext` to run `where`, `audit --quick`, `context`, and `fn-impact` before proceeding. Subsequent edits to the same file in the same session are silently allowed (tracked in `.claude/codegraph-checked.log`).
+**What it does:** The first time the agent edits a source file, the hook injects a reminder via `additionalContext` to run `where`, `explain`, `context`, and `fn-impact` before proceeding. Subsequent edits to the same file in the same session are silently allowed (tracked in `.claude/codegraph-checked.log`).
 
 **Example output the agent sees:**
 
 ```
 [codegraph reminder] You are about to edit src/parser.js. Did you run codegraph first?
-Before editing, always: (1) where <name>, (2) audit --quick src/parser.js,
+Before editing, always: (1) where <name>, (2) explain src/parser.js,
 (3) context <name> -T, (4) fn-impact <name> -T. If you already did this, proceed.
 ```
 
@@ -802,7 +802,7 @@ This project uses codegraph for dependency analysis. The graph is at `.codegraph
 
 ### Before modifying code, always:
 1. `codegraph where <name>` — find where the symbol lives
-2. `codegraph audit --quick <file-or-function>` — understand the structure
+2. `codegraph explain <file-or-function>` — understand the structure
 3. `codegraph context <name> -T` — get full context (source, deps, callers)
 4. `codegraph fn-impact <name> -T` — check blast radius before editing
 
@@ -813,7 +813,7 @@ This project uses codegraph for dependency analysis. The graph is at `.codegraph
 - `codegraph build .` — rebuild the graph (incremental by default)
 - `codegraph map` — module overview
 - `codegraph stats` — graph health and quality score
-- `codegraph audit <target> -T` — combined structural summary + impact + health in one report
+- `codegraph audit <target> -T` — combined explain + impact + health in one report
 - `codegraph triage -T` — ranked audit priority queue
 - `codegraph check --staged` — CI validation predicates (exit code 0/1)
 - `codegraph batch target1 target2` — batch query multiple targets at once
@@ -955,7 +955,7 @@ fi
 | I want to... | Command |
 |---------------|---------|
 | Find where a function is defined | `codegraph where <name>` |
-| See what a file does | `codegraph audit --quick <file>` |
+| See what a file does | `codegraph explain <file>` |
 | Understand a function fully | `codegraph context <name> -T` |
 | See what calls a function | `codegraph fn <name> -T` |
 | See what a function calls | `codegraph fn <name> -T` |
@@ -966,7 +966,7 @@ fi
 | Get a codebase overview | `codegraph map` |
 | Check graph health | `codegraph stats` |
 | Find circular dependencies | `codegraph cycles` |
-| Find hotspots | `codegraph triage --level file --sort coupling` |
+| Find hotspots | `codegraph hotspots --metric coupling` |
 | See project structure | `codegraph structure --depth 2` |
 | List symbols in a file | `codegraph where --file <path>` |
 | Get a full risk report for a function | `codegraph audit <name> -T` |
@@ -987,7 +987,7 @@ fi
 
 | Flag | Short | Description | Available on |
 |------|-------|-------------|-------------|
-| `--no-tests` | `-T` | Exclude test/spec files | All query commands (fn, fn-impact, context, where, diff-impact, search, map, deps, impact, query, path, stats, cycles, export, structure, audit, triage, check, batch, owners, branch-compare) |
+| `--no-tests` | `-T` | Exclude test/spec files | All query commands (fn, fn-impact, context, explain, where, diff-impact, search, map, deps, impact, query, stats, hotspots, cycles, export, structure, audit, triage, check, batch, owners, branch-compare) |
 | `--json` | `-j` | JSON output | Most commands |
 | `--file <path>` | `-f` | Scope to a file | fn, fn-impact, context, where |
 | `--kind <kind>` | `-k` | Filter by symbol kind | fn, fn-impact, context |
@@ -1010,7 +1010,7 @@ fi
 
 4. **Check impact before and after.** Run `fn-impact` before editing to know the blast radius. Run `diff-impact --staged` after to verify your changes.
 
-5. **Use `audit --quick` for orientation, `context` for implementation.** `audit --quick` gives you the shape of the code. `context` gives you the actual source you need to write changes.
+5. **Use `explain` for orientation, `context` for implementation.** `explain` gives you the shape of the code. `context` gives you the actual source you need to write changes.
 
 6. **Multi-query semantic search.** When searching, phrase the same intent multiple ways: `codegraph search "parse imports, resolve require, extract dependencies"`. RRF ranking combines the results.
 
