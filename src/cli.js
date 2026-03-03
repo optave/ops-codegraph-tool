@@ -536,7 +536,6 @@ program
   .option('--color-by <mode>', 'Color nodes by: kind | role | community | complexity')
   .action(async (opts) => {
     const { generatePlotHTML, loadPlotConfig } = await import('./viewer.js');
-    const { exec } = await import('node:child_process');
     const os = await import('node:os');
     const db = openReadonlyOrFail(opts.db);
 
@@ -580,13 +579,14 @@ program
     console.log(`Plot written to ${outPath}`);
 
     if (opts.open !== false) {
-      const cmd =
+      const { execFile } = await import('node:child_process');
+      const args =
         process.platform === 'win32'
-          ? `start "" "${outPath}"`
+          ? ['cmd', ['/c', 'start', '', outPath]]
           : process.platform === 'darwin'
-            ? `open "${outPath}"`
-            : `xdg-open "${outPath}"`;
-      exec(cmd, (err) => {
+            ? ['open', [outPath]]
+            : ['xdg-open', [outPath]];
+      execFile(args[0], args[1], (err) => {
         if (err) console.error('Could not open browser:', err.message);
       });
     }

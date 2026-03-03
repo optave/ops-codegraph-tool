@@ -847,7 +847,7 @@ network.on('doubleClick', function(params) {
 document.getElementById('layoutSelect').addEventListener('change', function(e) {
   var val = e.target.value;
   if (val === 'hierarchical') {
-    network.setOptions({ layout: { hierarchical: { enabled: true, direction: '${cfg.layout.direction || 'LR'}' } }, physics: { enabled: document.getElementById('physicsToggle').checked } });
+    network.setOptions({ layout: { hierarchical: { enabled: true, direction: ${JSON.stringify(cfg.layout.direction || 'LR')} } }, physics: { enabled: document.getElementById('physicsToggle').checked } });
   } else if (val === 'radial') {
     network.setOptions({ layout: { hierarchical: false, improvedLayout: true }, physics: { enabled: true, solver: 'repulsion', repulsion: { nodeDistance: 200 } } });
   } else {
@@ -892,8 +892,8 @@ document.getElementById('detailClose').addEventListener('click', hideDetail);
 
 /* ── Init ──────────────────────────────────────────────────────────── */
 refreshNodeAppearance();
-updateLegend('${effectiveColorBy}');
-${(cfg.clusterBy || 'none') !== 'none' ? `applyClusterBy('${cfg.clusterBy}');` : ''}
+updateLegend(${JSON.stringify(effectiveColorBy)});
+${(cfg.clusterBy || 'none') !== 'none' ? `applyClusterBy(${JSON.stringify(cfg.clusterBy)});` : ''}
 </script>
 </body>
 </html>`;
