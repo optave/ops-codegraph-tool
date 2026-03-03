@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Command } from 'commander';
 import { audit } from './audit.js';
-import { BATCH_COMMANDS, batch, batchQuery, multiBatchData, splitTargets } from './batch.js';
+import { BATCH_COMMANDS, batch, multiBatchData, splitTargets } from './batch.js';
 import { buildGraph } from './builder.js';
 import { loadConfig } from './config.js';
 import { findCycles, formatCycles } from './cycles.js';
@@ -142,6 +142,7 @@ program
       process.exit(1);
     }
     if (opts.path) {
+      console.error('Note: "query --path" is deprecated, use "codegraph path <from> <to>" instead');
       symbolPath(name, opts.path, opts.db, {
         maxDepth: opts.depth ? parseInt(opts.depth, 10) : 10,
         edgeKinds: opts.kinds ? opts.kinds.split(',').map((s) => s.trim()) : undefined,
@@ -164,6 +165,36 @@ program
         ndjson: opts.ndjson,
       });
     }
+  });
+
+program
+  .command('path <from> <to>')
+  .description('Find shortest path between two symbols')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('--reverse', 'Follow edges backward')
+  .option('--kinds <kinds>', 'Comma-separated edge kinds to follow (default: calls)')
+  .option('--from-file <path>', 'Disambiguate source symbol by file')
+  .option('--to-file <path>', 'Disambiguate target symbol by file')
+  .option('--depth <n>', 'Max traversal depth', '10')
+  .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
+  .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .action((from, to, opts) => {
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
+      process.exit(1);
+    }
+    symbolPath(from, to, opts.db, {
+      maxDepth: opts.depth ? parseInt(opts.depth, 10) : 10,
+      edgeKinds: opts.kinds ? opts.kinds.split(',').map((s) => s.trim()) : undefined,
+      reverse: opts.reverse,
+      fromFile: opts.fromFile,
+      toFile: opts.toFile,
+      kind: opts.kind,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+    });
   });
 
 program
@@ -342,41 +373,34 @@ program
   });
 
 program
-  .command('explain <target>')
-  .description('Structural summary of a file or function (no LLM needed)')
-  .option('-d, --db <path>', 'Path to graph.db')
-  .option('--depth <n>', 'Recursively explain dependencies up to N levels deep', '0')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
-  .option('--ndjson', 'Newline-delimited JSON output')
-  .action((target, opts) => {
-    explain(target, opts.db, {
-      depth: parseInt(opts.depth, 10),
-      noTests: resolveNoTests(opts),
-      json: opts.json,
-      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-      ndjson: opts.ndjson,
-    });
-  });
-
-program
   .command('audit <target>')
   .description('Composite report: explain + impact + health metrics per function')
   .option('-d, --db <path>', 'Path to graph.db')
-  .option('--depth <n>', 'Impact analysis depth', '3')
+  .option('--quick', 'Structural summary only (skip impact analysis and health metrics)')
+  .option('--depth <n>', 'Impact/explain depth', '3')
   .option('-f, --file <path>', 'Scope to file (partial match)')
   .option('-k, --kind <kind>', 'Filter by symbol kind')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return (quick mode)')
+  .option('--offset <number>', 'Skip N results (quick mode)')
+  .option('--ndjson', 'Newline-delimited JSON output (quick mode)')
   .action((target, opts) => {
     if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
+    }
+    if (opts.quick) {
+      explain(target, opts.db, {
+        depth: parseInt(opts.depth, 10),
+        noTests: resolveNoTests(opts),
+        json: opts.json,
+        limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+        offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+        ndjson: opts.ndjson,
+      });
+      return;
     }
     audit(target, opts.db, {
       depth: parseInt(opts.depth, 10),
@@ -443,18 +467,48 @@ program
 
 program
   .command('check [ref]')
-  .description('Run validation predicates against git changes (CI gate)')
+  .description(
+    'CI gate: run manifesto rules (no args), diff predicates (with ref/--staged), or both (--rules)',
+  )
   .option('-d, --db <path>', 'Path to graph.db')
   .option('--staged', 'Analyze staged changes')
+  .option('--rules', 'Also run manifesto rules alongside diff predicates')
   .option('--cycles', 'Assert no dependency cycles involve changed files')
   .option('--blast-radius <n>', 'Assert no function exceeds N transitive callers')
   .option('--signatures', 'Assert no function declaration lines were modified')
   .option('--boundaries', 'Assert no cross-owner boundary violations')
   .option('--depth <n>', 'Max BFS depth for blast radius (default: 3)')
+  .option('-f, --file <path>', 'Scope to file (partial match, manifesto mode)')
+  .option('-k, --kind <kind>', 'Filter by symbol kind (manifesto mode)')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return (manifesto mode)')
+  .option('--offset <number>', 'Skip N results (manifesto mode)')
+  .option('--ndjson', 'Newline-delimited JSON output (manifesto mode)')
   .action(async (ref, opts) => {
+    const isDiffMode = ref || opts.staged;
+
+    if (!isDiffMode && !opts.rules) {
+      // No ref, no --staged → run manifesto rules on whole codebase
+      if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+        console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
+        process.exit(1);
+      }
+      const { manifesto } = await import('./manifesto.js');
+      manifesto(opts.db, {
+        file: opts.file,
+        kind: opts.kind,
+        noTests: resolveNoTests(opts),
+        json: opts.json,
+        limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+        offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+        ndjson: opts.ndjson,
+      });
+      return;
+    }
+
+    // Diff predicates mode
     const { check } = await import('./check.js');
     check(opts.db, {
       ref,
@@ -467,6 +521,24 @@ program
       noTests: resolveNoTests(opts),
       json: opts.json,
     });
+
+    // If --rules, also run manifesto after diff predicates
+    if (opts.rules) {
+      if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+        console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
+        process.exit(1);
+      }
+      const { manifesto } = await import('./manifesto.js');
+      manifesto(opts.db, {
+        file: opts.file,
+        kind: opts.kind,
+        noTests: resolveNoTests(opts),
+        json: opts.json,
+        limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+        offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+        ndjson: opts.ndjson,
+      });
+    }
   });
 
 // ─── New commands ────────────────────────────────────────────────────────
@@ -926,38 +998,6 @@ program
   });
 
 program
-  .command('hotspots')
-  .description(
-    'Find structural hotspots: files or directories with extreme fan-in, fan-out, or symbol density',
-  )
-  .option('-d, --db <path>', 'Path to graph.db')
-  .option('-n, --limit <number>', 'Number of results', '10')
-  .option('--metric <metric>', 'fan-in | fan-out | density | coupling', 'fan-in')
-  .option('--level <level>', 'file | directory', 'file')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--offset <number>', 'Skip N results (default: 0)')
-  .option('--ndjson', 'Newline-delimited JSON output')
-  .action(async (opts) => {
-    const { hotspotsData, formatHotspots } = await import('./structure.js');
-    const data = hotspotsData(opts.db, {
-      metric: opts.metric,
-      level: opts.level,
-      limit: parseInt(opts.limit, 10),
-      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-      noTests: resolveNoTests(opts),
-    });
-    if (opts.ndjson) {
-      printNdjson(data, 'hotspots');
-    } else if (opts.json) {
-      console.log(JSON.stringify(data, null, 2));
-    } else {
-      console.log(formatHotspots(data));
-    }
-  });
-
-program
   .command('roles')
   .description('Show node role classification: entry, core, utility, adapter, dead, leaf')
   .option('-d, --db <path>', 'Path to graph.db')
@@ -1227,35 +1267,6 @@ program
   });
 
 program
-  .command('manifesto')
-  .description('Evaluate manifesto rules (pass/fail verdicts for code health)')
-  .option('-d, --db <path>', 'Path to graph.db')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-f, --file <path>', 'Scope to file (partial match)')
-  .option('-k, --kind <kind>', 'Filter by symbol kind')
-  .option('-j, --json', 'Output as JSON')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
-  .option('--ndjson', 'Newline-delimited JSON output')
-  .action(async (opts) => {
-    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
-      process.exit(1);
-    }
-    const { manifesto } = await import('./manifesto.js');
-    manifesto(opts.db, {
-      file: opts.file,
-      kind: opts.kind,
-      noTests: resolveNoTests(opts),
-      json: opts.json,
-      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-      ndjson: opts.ndjson,
-    });
-  });
-
-program
   .command('communities')
   .description('Detect natural module boundaries using Louvain community detection')
   .option('--functions', 'Function-level instead of file-level')
@@ -1289,7 +1300,16 @@ program
   )
   .option('-d, --db <path>', 'Path to graph.db')
   .option('-n, --limit <number>', 'Max results to return', '20')
-  .option('--sort <metric>', 'Sort metric: risk | complexity | churn | fan-in | mi', 'risk')
+  .option(
+    '--level <level>',
+    'Granularity: function (default) | file | directory. File/directory level shows hotspots',
+    'function',
+  )
+  .option(
+    '--sort <metric>',
+    'Sort metric: risk | complexity | churn | fan-in | mi (function level); fan-in | fan-out | density | coupling (file/directory level)',
+    'risk',
+  )
   .option('--min-score <score>', 'Only show symbols with risk score >= threshold')
   .option('--role <role>', 'Filter by role (entry, core, utility, adapter, leaf, dead)')
   .option('-f, --file <path>', 'Scope to a specific file (partial match)')
@@ -1301,6 +1321,27 @@ program
   .option('--ndjson', 'Newline-delimited JSON output')
   .option('--weights <json>', 'Custom weights JSON (e.g. \'{"fanIn":1,"complexity":0}\')')
   .action(async (opts) => {
+    if (opts.level === 'file' || opts.level === 'directory') {
+      // Delegate to hotspots for file/directory level
+      const { hotspotsData, formatHotspots } = await import('./structure.js');
+      const metric = opts.sort === 'risk' ? 'fan-in' : opts.sort;
+      const data = hotspotsData(opts.db, {
+        metric,
+        level: opts.level,
+        limit: parseInt(opts.limit, 10),
+        offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+        noTests: resolveNoTests(opts),
+      });
+      if (opts.ndjson) {
+        printNdjson(data, 'hotspots');
+      } else if (opts.json) {
+        console.log(JSON.stringify(data, null, 2));
+      } else {
+        console.log(formatHotspots(data));
+      }
+      return;
+    }
+
     if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
@@ -1511,64 +1552,6 @@ program
     } else {
       batch(command, targets, opts.db, batchOpts);
     }
-  });
-
-program
-  .command('batch-query [targets...]')
-  .description(
-    `Batch symbol lookup — resolve multiple references in one call.\nDefaults to 'where' command. Accepts comma-separated targets.\nValid commands: ${Object.keys(BATCH_COMMANDS).join(', ')}`,
-  )
-  .option('-d, --db <path>', 'Path to graph.db')
-  .option('-c, --command <cmd>', 'Query command to run (default: where)', 'where')
-  .option('--from-file <path>', 'Read targets from file (JSON array or newline-delimited)')
-  .option('--stdin', 'Read targets from stdin (JSON array)')
-  .option('--depth <n>', 'Traversal depth passed to underlying command')
-  .option('-f, --file <path>', 'Scope to file (partial match)')
-  .option('-k, --kind <kind>', 'Filter by symbol kind')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .action(async (positionalTargets, opts) => {
-    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
-      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
-      process.exit(1);
-    }
-
-    let targets;
-    try {
-      if (opts.fromFile) {
-        const raw = fs.readFileSync(opts.fromFile, 'utf-8').trim();
-        if (raw.startsWith('[')) {
-          targets = JSON.parse(raw);
-        } else {
-          targets = raw.split(/\r?\n/).filter(Boolean);
-        }
-      } else if (opts.stdin) {
-        const chunks = [];
-        for await (const chunk of process.stdin) chunks.push(chunk);
-        const raw = Buffer.concat(chunks).toString('utf-8').trim();
-        targets = raw.startsWith('[') ? JSON.parse(raw) : raw.split(/\r?\n/).filter(Boolean);
-      } else {
-        targets = splitTargets(positionalTargets);
-      }
-    } catch (err) {
-      console.error(`Failed to parse targets: ${err.message}`);
-      process.exit(1);
-    }
-
-    if (!targets || targets.length === 0) {
-      console.error('No targets provided. Pass targets as arguments, --from-file, or --stdin.');
-      process.exit(1);
-    }
-
-    const batchOpts = {
-      command: opts.command,
-      depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
-      file: opts.file,
-      kind: opts.kind,
-      noTests: resolveNoTests(opts),
-    };
-
-    batchQuery(targets, opts.db, batchOpts);
   });
 
 program.parse();

@@ -160,19 +160,60 @@ describe('CLI smoke tests', () => {
     expect(data).toHaveProperty('count');
   });
 
-  // ─── Hotspots ──────────────────────────────────────────────────────
-  test('hotspots --json returns valid JSON with hotspots', () => {
-    const out = run('hotspots', '--db', dbPath, '--json');
+  // ─── Triage --level (formerly hotspots) ─────────────────────────────
+  test('triage --level file --json returns valid JSON with hotspots', () => {
+    const out = run('triage', '--level', 'file', '--db', dbPath, '--json');
     const data = JSON.parse(out);
     expect(data).toHaveProperty('hotspots');
     expect(data).toHaveProperty('metric');
     expect(data).toHaveProperty('level');
   });
 
-  test('hotspots --level directory returns directory hotspots', () => {
-    const out = run('hotspots', '--db', dbPath, '--level', 'directory', '--json');
+  test('triage --level directory --json returns directory hotspots', () => {
+    const out = run('triage', '--level', 'directory', '--db', dbPath, '--json');
     const data = JSON.parse(out);
     expect(data.level).toBe('directory');
+  });
+
+  // ─── Audit --quick (formerly explain) ──────────────────────────────
+  test('audit --quick --json returns structural summary', () => {
+    const out = run('audit', 'math.js', '--quick', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data).toHaveProperty('target');
+  });
+
+  // ─── Path (standalone) ─────────────────────────────────────────────
+  test('path --json returns valid JSON with path info', () => {
+    const out = run('path', 'sumOfSquares', 'add', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data).toHaveProperty('found');
+    expect(data).toHaveProperty('path');
+    expect(data).toHaveProperty('hops');
+  });
+
+  // ─── Query --path deprecation ──────────────────────────────────────
+  test('query --path prints deprecation warning to stderr', () => {
+    const { spawnSync } = require('node:child_process');
+    const result = spawnSync(
+      'node',
+      [CLI, 'query', 'sumOfSquares', '--path', 'add', '--db', dbPath, '--json'],
+      {
+        cwd: tmpDir,
+        encoding: 'utf-8',
+        timeout: 30_000,
+        env: { ...process.env, HOME: tmpHome, USERPROFILE: tmpHome },
+      },
+    );
+    expect(result.stderr).toContain('deprecated');
+  });
+
+  // ─── Check (manifesto mode) ────────────────────────────────────────
+  test('check --json with no ref/staged runs manifesto rules', () => {
+    const out = run('check', '--db', dbPath, '--json');
+    const data = JSON.parse(out);
+    expect(data).toHaveProperty('rules');
+    expect(data).toHaveProperty('summary');
+    expect(data).toHaveProperty('passed');
   });
 
   // ─── Info ────────────────────────────────────────────────────────────
