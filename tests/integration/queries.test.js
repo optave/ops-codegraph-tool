@@ -32,9 +32,11 @@ import {
   fnDepsData,
   fnImpactData,
   impactAnalysisData,
+  listFunctionsData,
   moduleMapData,
   pathData,
   queryNameData,
+  rolesData,
   statsData,
   whereData,
 } from '../../src/queries.js';
@@ -101,6 +103,16 @@ beforeAll(() => {
   // Low-confidence call edge for quality tests
   insertEdge(db, formatResponse, validateToken, 'calls', 0.3);
 
+  // File hashes (for fileHash exposure)
+  for (const f of ['auth.js', 'middleware.js', 'routes.js', 'utils.js', 'auth.test.js']) {
+    db.prepare('INSERT INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)').run(
+      f,
+      `hash_${f.replace('.', '_')}`,
+      Date.now(),
+      100,
+    );
+  }
+
   db.close();
 });
 
@@ -117,6 +129,7 @@ describe('queryNameData', () => {
     expect(fn).toBeDefined();
     expect(fn.callers.map((c) => c.name)).toContain('authMiddleware');
     expect(fn.callees.map((c) => c.name)).toContain('validateToken');
+    expect(fn.fileHash).toBe('hash_auth_js');
   });
 
   test('returns empty results for nonexistent name', () => {
@@ -516,6 +529,7 @@ describe('whereData', () => {
     expect(r.file).toBe('middleware.js');
     expect(r.line).toBe(5);
     expect(r.uses.map((u) => u.name)).toContain('handleRoute');
+    expect(r.fileHash).toBe('hash_middleware_js');
   });
 
   test('symbol: exported flag', () => {
@@ -547,6 +561,7 @@ describe('whereData', () => {
     expect(r.symbols.map((s) => s.name)).toContain('authMiddleware');
     expect(r.imports).toContain('auth.js');
     expect(r.importedBy).toContain('routes.js');
+    expect(r.fileHash).toBe('hash_middleware_js');
   });
 
   test('file: exported list', () => {
