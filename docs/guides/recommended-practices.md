@@ -165,6 +165,32 @@ codegraph mcp --repos a,b      # Multi-repo with allowlist
 
 By default, the MCP server runs in **single-repo mode** — the AI agent can only query the current project's graph. The `repo` parameter and `list_repos` tool are not exposed, preventing agents from silently accessing other codebases.
 
+#### Register with Claude Code
+
+To give Claude Code direct access to codegraph tools (no Bash needed), register the MCP server:
+
+```bash
+# Linux / macOS
+claude mcp add --transport stdio codegraph -- codegraph mcp
+
+# Windows
+claude mcp add --transport stdio codegraph -- cmd /c codegraph mcp
+```
+
+This saves the server to your local Claude Code config. Once registered, Claude can call codegraph tools (`where`, `explain`, `fn_impact`, `diff_impact`, etc.) natively — including from custom subagents.
+
+Use `--scope project` to check it into `.mcp.json` so the whole team gets it:
+
+```bash
+claude mcp add --transport stdio codegraph --scope project -- codegraph mcp
+```
+
+Verify with:
+
+```bash
+claude mcp list
+```
+
 Enable `--multi-repo` to let the agent query any registered repository, or use `--repos` to restrict access to a specific set of repos.
 
 The server exposes 30 tools (31 in multi-repo mode): `query_function`, `file_deps`, `impact_analysis`, `find_cycles`, `module_map`, `fn_deps`, `fn_impact`, `symbol_path`, `context`, `explain`, `where`, `diff_impact`, `semantic_search`, `export_graph`, `list_functions`, `structure`, `hotspots`, `node_roles`, `co_changes`, `execution_flow`, `list_entry_points`, `complexity`, `communities`, `manifesto`, `code_owners`, `audit`, `batch_query`, `triage`, `check`, `branch_compare`, and `list_repos` (multi-repo only). See the [AI Agent Guide MCP reference](./ai-agent-guide.md#mcp-server-reference) for the full tool-to-CLI mapping table.
@@ -641,6 +667,10 @@ codegraph manifesto -T
 # 9. (Optional) Build embeddings for semantic search
 codegraph embed
 
-# 10. (Optional) Add CLAUDE.md for AI agents
+# 10. (Optional) Register MCP server with Claude Code
+claude mcp add --transport stdio codegraph -- codegraph mcp
+# On Windows: claude mcp add --transport stdio codegraph -- cmd /c codegraph mcp
+
+# 11. (Optional) Add CLAUDE.md for AI agents
 # See docs/guides/ai-agent-guide.md for the full template
 ```
