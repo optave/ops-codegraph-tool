@@ -16,7 +16,14 @@ import {
   MODELS,
   search,
 } from './embedder.js';
-import { exportDOT, exportJSON, exportMermaid } from './export.js';
+import {
+  exportDOT,
+  exportGraphML,
+  exportGraphSON,
+  exportJSON,
+  exportMermaid,
+  exportNeo4jCSV,
+} from './export.js';
 import { setVerbose } from './logger.js';
 import { printNdjson } from './paginate.js';
 import {
@@ -446,9 +453,13 @@ program
 
 program
   .command('export')
-  .description('Export dependency graph as DOT (Graphviz), Mermaid, or JSON')
+  .description('Export dependency graph as DOT, Mermaid, JSON, GraphML, GraphSON, or Neo4j CSV')
   .option('-d, --db <path>', 'Path to graph.db')
-  .option('-f, --format <format>', 'Output format: dot, mermaid, json', 'dot')
+  .option(
+    '-f, --format <format>',
+    'Output format: dot, mermaid, json, graphml, graphson, neo4j',
+    'dot',
+  )
   .option('--functions', 'Function-level graph instead of file-level')
   .option('-T, --no-tests', 'Exclude test/spec files')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
@@ -472,6 +483,25 @@ program
       case 'json':
         output = JSON.stringify(exportJSON(db, exportOpts), null, 2);
         break;
+      case 'graphml':
+        output = exportGraphML(db, exportOpts);
+        break;
+      case 'graphson':
+        output = JSON.stringify(exportGraphSON(db, exportOpts), null, 2);
+        break;
+      case 'neo4j': {
+        const csv = exportNeo4jCSV(db, exportOpts);
+        if (opts.output) {
+          const base = opts.output.replace(/\.[^.]+$/, '') || opts.output;
+          fs.writeFileSync(`${base}-nodes.csv`, csv.nodes, 'utf-8');
+          fs.writeFileSync(`${base}-relationships.csv`, csv.relationships, 'utf-8');
+          db.close();
+          console.log(`Exported to ${base}-nodes.csv and ${base}-relationships.csv`);
+          return;
+        }
+        output = `--- nodes.csv ---\n${csv.nodes}\n\n--- relationships.csv ---\n${csv.relationships}`;
+        break;
+      }
       default:
         output = exportDOT(db, exportOpts);
         break;
@@ -484,6 +514,62 @@ program
       console.log(`Exported ${opts.format} to ${opts.output}`);
     } else {
       console.log(output);
+    }
+  });
+
+program
+  .command('plot')
+  .description('Generate an interactive HTML dependency graph viewer')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('--functions', 'Function-level graph instead of file-level')
+  .option('-T, --no-tests', 'Exclude test/spec files')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('--min-confidence <score>', 'Minimum edge confidence threshold (default: 0.5)', '0.5')
+  .option('-o, --output <file>', 'Write HTML to file')
+  .option('-c, --config <path>', 'Path to .plotDotCfg config file')
+  .option('--no-open', 'Do not open in browser')
+  .action(async (opts) => {
+    const { generatePlotHTML, loadPlotConfig } = await import('./viewer.js');
+    const { exec } = await import('node:child_process');
+    const os = await import('node:os');
+    const db = openReadonlyOrFail(opts.db);
+
+    let plotCfg;
+    if (opts.config) {
+      try {
+        plotCfg = JSON.parse(fs.readFileSync(opts.config, 'utf-8'));
+      } catch (e) {
+        console.error(`Failed to load config: ${e.message}`);
+        db.close();
+        process.exitCode = 1;
+        return;
+      }
+    } else {
+      plotCfg = loadPlotConfig(process.cwd());
+    }
+
+    const html = generatePlotHTML(db, {
+      fileLevel: !opts.functions,
+      noTests: resolveNoTests(opts),
+      minConfidence: parseFloat(opts.minConfidence),
+      config: plotCfg,
+    });
+    db.close();
+
+    const outPath = opts.output || path.join(os.tmpdir(), `codegraph-plot-${Date.now()}.html`);
+    fs.writeFileSync(outPath, html, 'utf-8');
+    console.log(`Plot written to ${outPath}`);
+
+    if (opts.open !== false) {
+      const cmd =
+        process.platform === 'win32'
+          ? `start "" "${outPath}"`
+          : process.platform === 'darwin'
+            ? `open "${outPath}"`
+            : `xdg-open "${outPath}"`;
+      exec(cmd, (err) => {
+        if (err) console.error('Could not open browser:', err.message);
+      });
     }
   });
 

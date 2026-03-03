@@ -4,6 +4,25 @@ import { isTestFile } from './queries.js';
 
 const DEFAULT_MIN_CONFIDENCE = 0.5;
 
+/** Escape special XML characters. */
+function escapeXml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/** RFC 4180 CSV field escaping — quote fields containing commas, quotes, or newlines. */
+function escapeCsv(s) {
+  const str = String(s);
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+}
+
 /**
  * Export the dependency graph in DOT (Graphviz) format.
  */
@@ -373,4 +392,290 @@ export function exportJSON(db, opts = {}) {
 
   const base = { nodes, edges };
   return paginateResult(base, 'edges', { limit: opts.limit, offset: opts.offset });
+}
+
+/**
+ * Export the dependency graph in GraphML (XML) format.
+ */
+export function exportGraphML(db, opts = {}) {
+  const fileLevel = opts.fileLevel !== false;
+  const noTests = opts.noTests || false;
+  const minConf = opts.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
+  const edgeLimit = opts.limit;
+
+  const lines = [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<graphml xmlns="http://graphml.graphstruct.net/graphml">',
+  ];
+
+  if (fileLevel) {
+    lines.push('  <key id="d0" for="node" attr.name="name" attr.type="string"/>');
+    lines.push('  <key id="d1" for="node" attr.name="file" attr.type="string"/>');
+    lines.push('  <key id="d2" for="edge" attr.name="kind" attr.type="string"/>');
+    lines.push('  <graph id="codegraph" edgedefault="directed">');
+
+    let edges = db
+      .prepare(`
+      SELECT DISTINCT n1.file AS source, n2.file AS target
+      FROM edges e
+      JOIN nodes n1 ON e.source_id = n1.id
+      JOIN nodes n2 ON e.target_id = n2.id
+      WHERE n1.file != n2.file AND e.kind IN ('imports', 'imports-type', 'calls')
+        AND e.confidence >= ?
+    `)
+      .all(minConf);
+    if (noTests) edges = edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target));
+    if (edgeLimit && edges.length > edgeLimit) edges = edges.slice(0, edgeLimit);
+
+    const files = new Set();
+    for (const { source, target } of edges) {
+      files.add(source);
+      files.add(target);
+    }
+
+    const fileIds = new Map();
+    let nIdx = 0;
+    for (const f of files) {
+      const id = `n${nIdx++}`;
+      fileIds.set(f, id);
+      lines.push(`    <node id="${id}">`);
+      lines.push(`      <data key="d0">${escapeXml(path.basename(f))}</data>`);
+      lines.push(`      <data key="d1">${escapeXml(f)}</data>`);
+      lines.push('    </node>');
+    }
+
+    let eIdx = 0;
+    for (const { source, target } of edges) {
+      lines.push(
+        `    <edge id="e${eIdx++}" source="${fileIds.get(source)}" target="${fileIds.get(target)}">`,
+      );
+      lines.push('      <data key="d2">imports</data>');
+      lines.push('    </edge>');
+    }
+  } else {
+    lines.push('  <key id="d0" for="node" attr.name="name" attr.type="string"/>');
+    lines.push('  <key id="d1" for="node" attr.name="kind" attr.type="string"/>');
+    lines.push('  <key id="d2" for="node" attr.name="file" attr.type="string"/>');
+    lines.push('  <key id="d3" for="node" attr.name="line" attr.type="int"/>');
+    lines.push('  <key id="d4" for="node" attr.name="role" attr.type="string"/>');
+    lines.push('  <key id="d5" for="edge" attr.name="kind" attr.type="string"/>');
+    lines.push('  <key id="d6" for="edge" attr.name="confidence" attr.type="double"/>');
+    lines.push('  <graph id="codegraph" edgedefault="directed">');
+
+    let edges = db
+      .prepare(`
+      SELECT n1.id AS source_id, n1.name AS source_name, n1.kind AS source_kind,
+             n1.file AS source_file, n1.line AS source_line, n1.role AS source_role,
+             n2.id AS target_id, n2.name AS target_name, n2.kind AS target_kind,
+             n2.file AS target_file, n2.line AS target_line, n2.role AS target_role,
+             e.kind AS edge_kind, e.confidence
+      FROM edges e
+      JOIN nodes n1 ON e.source_id = n1.id
+      JOIN nodes n2 ON e.target_id = n2.id
+      WHERE n1.kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module')
+        AND n2.kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module')
+        AND e.kind = 'calls'
+        AND e.confidence >= ?
+    `)
+      .all(minConf);
+    if (noTests)
+      edges = edges.filter((e) => !isTestFile(e.source_file) && !isTestFile(e.target_file));
+    if (edgeLimit && edges.length > edgeLimit) edges = edges.slice(0, edgeLimit);
+
+    const emittedNodes = new Set();
+    function emitNode(id, name, kind, file, line, role) {
+      if (emittedNodes.has(id)) return;
+      emittedNodes.add(id);
+      lines.push(`    <node id="n${id}">`);
+      lines.push(`      <data key="d0">${escapeXml(name)}</data>`);
+      lines.push(`      <data key="d1">${escapeXml(kind)}</data>`);
+      lines.push(`      <data key="d2">${escapeXml(file)}</data>`);
+      lines.push(`      <data key="d3">${line}</data>`);
+      if (role) lines.push(`      <data key="d4">${escapeXml(role)}</data>`);
+      lines.push('    </node>');
+    }
+
+    let eIdx = 0;
+    for (const e of edges) {
+      emitNode(
+        e.source_id,
+        e.source_name,
+        e.source_kind,
+        e.source_file,
+        e.source_line,
+        e.source_role,
+      );
+      emitNode(
+        e.target_id,
+        e.target_name,
+        e.target_kind,
+        e.target_file,
+        e.target_line,
+        e.target_role,
+      );
+      lines.push(`    <edge id="e${eIdx++}" source="n${e.source_id}" target="n${e.target_id}">`);
+      lines.push(`      <data key="d5">${escapeXml(e.edge_kind)}</data>`);
+      lines.push(`      <data key="d6">${e.confidence}</data>`);
+      lines.push('    </edge>');
+    }
+  }
+
+  lines.push('  </graph>');
+  lines.push('</graphml>');
+  return lines.join('\n');
+}
+
+/**
+ * Export the dependency graph in TinkerPop GraphSON v3 format.
+ */
+export function exportGraphSON(db, opts = {}) {
+  const noTests = opts.noTests || false;
+  const minConf = opts.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
+
+  let nodes = db
+    .prepare(`
+    SELECT id, name, kind, file, line, role FROM nodes
+    WHERE kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'file')
+  `)
+    .all();
+  if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
+
+  let edges = db
+    .prepare(`
+    SELECT e.rowid AS id, n1.id AS outV, n2.id AS inV, e.kind, e.confidence
+    FROM edges e
+    JOIN nodes n1 ON e.source_id = n1.id
+    JOIN nodes n2 ON e.target_id = n2.id
+    WHERE e.confidence >= ?
+  `)
+    .all(minConf);
+  if (noTests) {
+    const nodeIds = new Set(nodes.map((n) => n.id));
+    edges = edges.filter((e) => nodeIds.has(e.outV) && nodeIds.has(e.inV));
+  }
+
+  const vertices = nodes.map((n) => ({
+    id: n.id,
+    label: n.kind,
+    properties: {
+      name: [{ id: 0, value: n.name }],
+      file: [{ id: 0, value: n.file }],
+      ...(n.line != null ? { line: [{ id: 0, value: n.line }] } : {}),
+      ...(n.role ? { role: [{ id: 0, value: n.role }] } : {}),
+    },
+  }));
+
+  const gEdges = edges.map((e) => ({
+    id: e.id,
+    label: e.kind,
+    inV: e.inV,
+    outV: e.outV,
+    properties: {
+      confidence: e.confidence,
+    },
+  }));
+
+  const base = { vertices, edges: gEdges };
+  return paginateResult(base, 'edges', { limit: opts.limit, offset: opts.offset });
+}
+
+/**
+ * Export the dependency graph as Neo4j bulk-import CSV files.
+ * Returns { nodes: string, relationships: string }.
+ */
+export function exportNeo4jCSV(db, opts = {}) {
+  const fileLevel = opts.fileLevel !== false;
+  const noTests = opts.noTests || false;
+  const minConf = opts.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
+  const edgeLimit = opts.limit;
+
+  if (fileLevel) {
+    let edges = db
+      .prepare(`
+      SELECT DISTINCT n1.file AS source, n2.file AS target, e.kind, e.confidence
+      FROM edges e
+      JOIN nodes n1 ON e.source_id = n1.id
+      JOIN nodes n2 ON e.target_id = n2.id
+      WHERE n1.file != n2.file AND e.kind IN ('imports', 'imports-type', 'calls')
+        AND e.confidence >= ?
+    `)
+      .all(minConf);
+    if (noTests) edges = edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target));
+    if (edgeLimit && edges.length > edgeLimit) edges = edges.slice(0, edgeLimit);
+
+    const files = new Map();
+    let idx = 0;
+    for (const { source, target } of edges) {
+      if (!files.has(source)) files.set(source, idx++);
+      if (!files.has(target)) files.set(target, idx++);
+    }
+
+    const nodeLines = ['nodeId:ID,name,file:string,:LABEL'];
+    for (const [file, id] of files) {
+      nodeLines.push(`${id},${escapeCsv(path.basename(file))},${escapeCsv(file)},File`);
+    }
+
+    const relLines = [':START_ID,:END_ID,:TYPE,confidence:float'];
+    for (const e of edges) {
+      const edgeType = e.kind.toUpperCase().replace(/-/g, '_');
+      relLines.push(`${files.get(e.source)},${files.get(e.target)},${edgeType},${e.confidence}`);
+    }
+
+    return { nodes: nodeLines.join('\n'), relationships: relLines.join('\n') };
+  }
+
+  let edges = db
+    .prepare(`
+    SELECT n1.id AS source_id, n1.name AS source_name, n1.kind AS source_kind,
+           n1.file AS source_file, n1.line AS source_line, n1.role AS source_role,
+           n2.id AS target_id, n2.name AS target_name, n2.kind AS target_kind,
+           n2.file AS target_file, n2.line AS target_line, n2.role AS target_role,
+           e.kind AS edge_kind, e.confidence
+    FROM edges e
+    JOIN nodes n1 ON e.source_id = n1.id
+    JOIN nodes n2 ON e.target_id = n2.id
+    WHERE n1.kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module')
+      AND n2.kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module')
+      AND e.kind = 'calls'
+      AND e.confidence >= ?
+  `)
+    .all(minConf);
+  if (noTests)
+    edges = edges.filter((e) => !isTestFile(e.source_file) && !isTestFile(e.target_file));
+  if (edgeLimit && edges.length > edgeLimit) edges = edges.slice(0, edgeLimit);
+
+  const emitted = new Set();
+  const nodeLines = ['nodeId:ID,name,kind,file:string,line:int,role,:LABEL'];
+  function emitNode(id, name, kind, file, line, role) {
+    if (emitted.has(id)) return;
+    emitted.add(id);
+    const label = kind.charAt(0).toUpperCase() + kind.slice(1);
+    nodeLines.push(
+      `${id},${escapeCsv(name)},${escapeCsv(kind)},${escapeCsv(file)},${line},${escapeCsv(role || '')},${label}`,
+    );
+  }
+
+  const relLines = [':START_ID,:END_ID,:TYPE,confidence:float'];
+  for (const e of edges) {
+    emitNode(
+      e.source_id,
+      e.source_name,
+      e.source_kind,
+      e.source_file,
+      e.source_line,
+      e.source_role,
+    );
+    emitNode(
+      e.target_id,
+      e.target_name,
+      e.target_kind,
+      e.target_file,
+      e.target_line,
+      e.target_role,
+    );
+    const edgeType = e.edge_kind.toUpperCase().replace(/-/g, '_');
+    relLines.push(`${e.source_id},${e.target_id},${edgeType},${e.confidence}`);
+  }
+
+  return { nodes: nodeLines.join('\n'), relationships: relLines.join('\n') };
 }

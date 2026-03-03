@@ -87,8 +87,15 @@ export {
   search,
   searchData,
 } from './embedder.js';
-// Export (DOT/Mermaid/JSON)
-export { exportDOT, exportJSON, exportMermaid } from './export.js';
+// Export (DOT/Mermaid/JSON/GraphML/GraphSON/Neo4j CSV)
+export {
+  exportDOT,
+  exportGraphML,
+  exportGraphSON,
+  exportJSON,
+  exportMermaid,
+  exportNeo4jCSV,
+} from './export.js';
 // Execution flow tracing
 export { entryPointType, flowData, listEntryPointsData } from './flow.js';
 // Logger
@@ -163,5 +170,7 @@ export {
 } from './structure.js';
 // Triage — composite risk audit
 export { triage, triageData } from './triage.js';
+// Interactive HTML viewer
+export { generatePlotHTML, loadPlotConfig } from './viewer.js';
 // Watch mode
 export { watchProject } from './watcher.js';
