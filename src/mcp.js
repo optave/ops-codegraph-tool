@@ -657,6 +657,29 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'dataflow',
+    description:
+      'Show data flow edges: what data flows in/out of a function, return value consumers, mutations. Requires build --dataflow.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Function/method name (partial match)' },
+        mode: {
+          type: 'string',
+          enum: ['edges', 'path', 'impact'],
+          description: 'edges (default), path, or impact',
+        },
+        target: { type: 'string', description: 'Target symbol for path mode' },
+        depth: { type: 'number', description: 'Max depth for impact mode', default: 5 },
+        file: { type: 'string', description: 'Scope to file (partial match)' },
+        kind: { type: 'string', enum: ALL_SYMBOL_KINDS, description: 'Filter by symbol kind' },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
+      },
+      required: ['name'],
+    },
+  },
+  {
     name: 'check',
     description:
       'Run CI validation predicates against git changes. Checks for new cycles, blast radius violations, signature changes, and boundary violations. Returns pass/fail per predicate — ideal for CI gates.',
@@ -1171,6 +1194,40 @@ export async function startMCPServer(customDbPath, options = {}) {
             noTests: args.no_tests,
           });
           result = args.format === 'mermaid' ? branchCompareMermaid(bcData) : bcData;
+          break;
+        }
+        case 'dataflow': {
+          const mode = args.mode || 'edges';
+          if (mode === 'path') {
+            if (!args.target) {
+              result = { error: 'path mode requires a "target" argument' };
+              break;
+            }
+            const { dataflowPathData } = await import('./dataflow.js');
+            result = dataflowPathData(args.name, args.target, dbPath, {
+              noTests: args.no_tests,
+              maxDepth: args.depth ?? 10,
+            });
+          } else if (mode === 'impact') {
+            const { dataflowImpactData } = await import('./dataflow.js');
+            result = dataflowImpactData(args.name, dbPath, {
+              depth: args.depth,
+              file: args.file,
+              kind: args.kind,
+              noTests: args.no_tests,
+              limit: Math.min(args.limit ?? MCP_DEFAULTS.fn_impact, MCP_MAX_LIMIT),
+              offset: args.offset ?? 0,
+            });
+          } else {
+            const { dataflowData } = await import('./dataflow.js');
+            result = dataflowData(args.name, dbPath, {
+              file: args.file,
+              kind: args.kind,
+              noTests: args.no_tests,
+              limit: Math.min(args.limit ?? MCP_DEFAULTS.fn_deps, MCP_MAX_LIMIT),
+              offset: args.offset ?? 0,
+            });
+          }
           break;
         }
         case 'check': {

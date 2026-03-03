@@ -1,14 +1,10 @@
 {
-  "version": "2.5.1",
+  "version": "2.6.0",
   "name": "@optave/codegraph",
-  "problems": [
-    "invalid: @optave/codegraph-linux-x64-gnu@2.5.0 /home/runner/work/codegraph/codegraph/node_modules/@optave/codegraph-linux-x64-gnu"
-  ],
   "dependencies": {
-    "@huggingface/transformers": {},
     "@modelcontextprotocol/sdk": {
-      "version": "1.26.0",
-      "resolved": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.26.0.tgz",
+      "version": "1.27.1",
+      "resolved": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.27.1.tgz",
       "overridden": false,
       "dependencies": {
         "@cfworker/json-schema": {},
@@ -740,15 +736,7 @@
     },
     "@optave/codegraph-darwin-arm64": {},
     "@optave/codegraph-darwin-x64": {},
-    "@optave/codegraph-linux-x64-gnu": {
-      "version": "2.5.0",
-      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-2.4.0.tgz",
-      "overridden": false,
-      "invalid": "\"2.5.1\" from the root project",
-      "problems": [
-        "invalid: @optave/codegraph-linux-x64-gnu@2.5.0 /home/runner/work/codegraph/codegraph/node_modules/@optave/codegraph-linux-x64-gnu"
-      ]
-    },
+    "@optave/codegraph-linux-x64-gnu": {},
     "@optave/codegraph-win32-x64-msvc": {},
     "better-sqlite3": {
       "version": "12.6.2",
@@ -1077,14 +1065,9 @@
       }
     },
     "web-tree-sitter": {
-      "version": "0.26.5",
-      "resolved": "https://registry.npmjs.org/web-tree-sitter/-/web-tree-sitter-0.26.5.tgz",
+      "version": "0.26.6",
+      "resolved": "https://registry.npmjs.org/web-tree-sitter/-/web-tree-sitter-0.26.6.tgz",
       "overridden": false
     }
-  },
-  "error": {
-    "code": "ELSPROBLEMS",
-    "summary": "invalid: @optave/codegraph-linux-x64-gnu@2.5.0 /home/runner/work/codegraph/codegraph/node_modules/@optave/codegraph-linux-x64-gnu",
-    "detail": ""
   }
 }
