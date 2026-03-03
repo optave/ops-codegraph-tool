@@ -204,6 +204,27 @@ export const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_cfg_edges_tgt ON cfg_edges(target_block_id);
     `,
   },
+  {
+    version: 13,
+    up: `
+      CREATE TABLE IF NOT EXISTS ast_nodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        text TEXT,
+        receiver TEXT,
+        parent_node_id INTEGER,
+        FOREIGN KEY(parent_node_id) REFERENCES nodes(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_ast_kind ON ast_nodes(kind);
+      CREATE INDEX IF NOT EXISTS idx_ast_name ON ast_nodes(name);
+      CREATE INDEX IF NOT EXISTS idx_ast_file ON ast_nodes(file);
+      CREATE INDEX IF NOT EXISTS idx_ast_parent ON ast_nodes(parent_node_id);
+      CREATE INDEX IF NOT EXISTS idx_ast_kind_name ON ast_nodes(kind, name);
+    `,
+  },
 ];
 
 export function getBuildMeta(db, key) {

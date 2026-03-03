@@ -1072,6 +1072,35 @@ program
   });
 
 program
+  .command('ast [pattern]')
+  .description('Search stored AST nodes (calls, new, string, regex, throw, await) by pattern')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-k, --kind <kind>', 'Filter by AST node kind (call, new, string, regex, throw, await)')
+  .option('-f, --file <path>', 'Scope to file (partial match)')
+  .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .option('--ndjson', 'Newline-delimited JSON output')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .action(async (pattern, opts) => {
+    const { AST_NODE_KINDS, astQuery } = await import('./ast.js');
+    if (opts.kind && !AST_NODE_KINDS.includes(opts.kind)) {
+      console.error(`Invalid AST kind "${opts.kind}". Valid: ${AST_NODE_KINDS.join(', ')}`);
+      process.exit(1);
+    }
+    astQuery(pattern, opts.db, {
+      kind: opts.kind,
+      file: opts.file,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      ndjson: opts.ndjson,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+    });
+  });
+
+program
   .command('manifesto')
   .description('Evaluate manifesto rules (pass/fail verdicts for code health)')
   .option('-d, --db <path>', 'Path to graph.db')

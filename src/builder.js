@@ -435,7 +435,7 @@ export async function buildGraph(rootDir, opts = {}) {
 
   if (isFullBuild) {
     const deletions =
-      'PRAGMA foreign_keys = OFF; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM function_complexity; DELETE FROM dataflow; DELETE FROM nodes; PRAGMA foreign_keys = ON;';
+      'PRAGMA foreign_keys = OFF; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM function_complexity; DELETE FROM dataflow; DELETE FROM ast_nodes; DELETE FROM nodes; PRAGMA foreign_keys = ON;';
     db.exec(
       hasEmbeddings
         ? `${deletions.replace('PRAGMA foreign_keys = ON;', '')} DELETE FROM embeddings; PRAGMA foreign_keys = ON;`
@@ -513,12 +513,19 @@ export async function buildGraph(rootDir, opts = {}) {
     } catch {
       deleteDataflowForFile = null;
     }
+    let deleteAstNodesForFile;
+    try {
+      deleteAstNodesForFile = db.prepare('DELETE FROM ast_nodes WHERE file = ?');
+    } catch {
+      deleteAstNodesForFile = null;
+    }
     for (const relPath of removed) {
       deleteEmbeddingsForFile?.run(relPath);
       deleteEdgesForFile.run({ f: relPath });
       deleteMetricsForFile.run(relPath);
       deleteComplexityForFile?.run(relPath);
       deleteDataflowForFile?.run(relPath, relPath);
+      deleteAstNodesForFile?.run(relPath);
       deleteNodesForFile.run(relPath);
     }
     for (const item of parseChanges) {
@@ -528,6 +535,7 @@ export async function buildGraph(rootDir, opts = {}) {
       deleteMetricsForFile.run(relPath);
       deleteComplexityForFile?.run(relPath);
       deleteDataflowForFile?.run(relPath, relPath);
+      deleteAstNodesForFile?.run(relPath);
       deleteNodesForFile.run(relPath);
     }
 
@@ -1128,6 +1136,17 @@ export async function buildGraph(rootDir, opts = {}) {
     debug(`Role classification failed: ${err.message}`);
   }
   _t.rolesMs = performance.now() - _t.roles0;
+
+  // Always-on AST node extraction (calls, new, string, regex, throw, await)
+  // Must run before complexity which releases _tree references
+  _t.ast0 = performance.now();
+  try {
+    const { buildAstNodes } = await import('./ast.js');
+    await buildAstNodes(db, allSymbols, rootDir, engineOpts);
+  } catch (err) {
+    debug(`AST node extraction failed: ${err.message}`);
+  }
+  _t.astMs = performance.now() - _t.ast0;
 
   // Compute per-function complexity metrics (cognitive, cyclomatic, nesting)
   _t.complexity0 = performance.now();

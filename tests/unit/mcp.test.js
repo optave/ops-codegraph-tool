@@ -39,6 +39,7 @@ const ALL_TOOL_NAMES = [
   'cfg',
   'dataflow',
   'check',
+  'ast_query',
   'list_repos',
 ];
 

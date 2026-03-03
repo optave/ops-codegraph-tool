@@ -5,6 +5,8 @@
  *   import { buildGraph, queryNameData, findCycles, exportDOT } from 'codegraph';
  */
 
+// AST node queries
+export { AST_NODE_KINDS, astQuery, astQueryData } from './ast.js';
 // Audit (composite report)
 export { audit, auditData } from './audit.js';
 // Batch querying
