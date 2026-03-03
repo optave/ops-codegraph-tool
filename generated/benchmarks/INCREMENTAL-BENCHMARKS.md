@@ -6,6 +6,8 @@ Import resolution: native batch vs JS fallback throughput.
 
 | Version | Engine | Files | Full Build | No-op | 1-File | Resolve (native) | Resolve (JS) |
 |---------|--------|------:|-----------:|------:|-------:|------------------:|-------------:|
+| 3.0.0 | native | 164 | 721ms ↑152% | 5ms ↑25% | 325ms ↑141% | 4ms ↑21% | 4ms ↑30% |
+| 3.0.0 | wasm | 164 | 2.0s ↑128% | 5ms ↑25% | 1.1s ↑112% | 4ms ↑21% | 4ms ↑30% |
 | 2.6.0 | native | 146 | 286ms ↑3% | 4ms ↓33% | 135ms ↑5% | 3ms ~ | 3ms ↓3% |
 | 2.6.0 | wasm | 146 | 899ms ~ | 4ms ↓20% | 503ms ↑37% | 3ms ~ | 3ms ↓3% |
 | 2.5.1 | native | 142 | 277ms | 6ms | 129ms | 3ms | 3ms |
@@ -13,37 +15,59 @@ Import resolution: native batch vs JS fallback throughput.
 
 ### Latest results
 
-**Version:** 2.6.0 | **Files:** 146 | **Date:** 2026-03-02
+**Version:** 3.0.0 | **Files:** 164 | **Date:** 2026-03-03
 
 #### Native (Rust)
 
 | Metric | Value |
 |--------|------:|
-| Full build | 286ms |
-| No-op rebuild | 4ms |
-| 1-file rebuild | 135ms |
+| Full build | 721ms |
+| No-op rebuild | 5ms |
+| 1-file rebuild | 325ms |
 
 #### WASM
 
 | Metric | Value |
 |--------|------:|
-| Full build | 899ms |
-| No-op rebuild | 4ms |
-| 1-file rebuild | 503ms |
+| Full build | 2.0s |
+| No-op rebuild | 5ms |
+| 1-file rebuild | 1.1s |
 
 #### Import Resolution
 
 | Metric | Value |
 |--------|------:|
-| Import pairs | 171 |
-| Native batch | 3ms |
-| JS fallback | 3ms |
+| Import pairs | 201 |
+| Native batch | 4ms |
+| JS fallback | 4ms |
 | Per-import (native) | 0ms |
 | Per-import (JS) | 0ms |
-| Speedup ratio | 1.1x |
+| Speedup ratio | 1.2x |
 
 <!-- INCREMENTAL_BENCHMARK_DATA
 [
+  {
+    "version": "3.0.0",
+    "date": "2026-03-03",
+    "files": 164,
+    "wasm": {
+      "fullBuildMs": 2049,
+      "noopRebuildMs": 5,
+      "oneFileRebuildMs": 1064
+    },
+    "native": {
+      "fullBuildMs": 721,
+      "noopRebuildMs": 5,
+      "oneFileRebuildMs": 325
+    },
+    "resolve": {
+      "imports": 201,
+      "nativeBatchMs": 3.5,
+      "jsFallbackMs": 4.3,
+      "perImportNativeMs": 0,
+      "perImportJsMs": 0
+    }
+  },
   {
     "version": "2.6.0",
     "date": "2026-03-02",
