@@ -1251,20 +1251,25 @@ program
     }
 
     let targets;
-    if (opts.fromFile) {
-      const raw = fs.readFileSync(opts.fromFile, 'utf-8').trim();
-      if (raw.startsWith('[')) {
-        targets = JSON.parse(raw);
+    try {
+      if (opts.fromFile) {
+        const raw = fs.readFileSync(opts.fromFile, 'utf-8').trim();
+        if (raw.startsWith('[')) {
+          targets = JSON.parse(raw);
+        } else {
+          targets = raw.split(/\r?\n/).filter(Boolean);
+        }
+      } else if (opts.stdin) {
+        const chunks = [];
+        for await (const chunk of process.stdin) chunks.push(chunk);
+        const raw = Buffer.concat(chunks).toString('utf-8').trim();
+        targets = raw.startsWith('[') ? JSON.parse(raw) : raw.split(/\r?\n/).filter(Boolean);
       } else {
-        targets = raw.split(/\r?\n/).filter(Boolean);
+        targets = splitTargets(positionalTargets);
       }
-    } else if (opts.stdin) {
-      const chunks = [];
-      for await (const chunk of process.stdin) chunks.push(chunk);
-      const raw = Buffer.concat(chunks).toString('utf-8').trim();
-      targets = raw.startsWith('[') ? JSON.parse(raw) : raw.split(/\r?\n/).filter(Boolean);
-    } else {
-      targets = splitTargets(positionalTargets);
+    } catch (err) {
+      console.error(`Failed to parse targets: ${err.message}`);
+      process.exit(1);
     }
 
     if (!targets || targets.length === 0) {
@@ -1310,20 +1315,25 @@ program
     }
 
     let targets;
-    if (opts.fromFile) {
-      const raw = fs.readFileSync(opts.fromFile, 'utf-8').trim();
-      if (raw.startsWith('[')) {
-        targets = JSON.parse(raw);
+    try {
+      if (opts.fromFile) {
+        const raw = fs.readFileSync(opts.fromFile, 'utf-8').trim();
+        if (raw.startsWith('[')) {
+          targets = JSON.parse(raw);
+        } else {
+          targets = raw.split(/\r?\n/).filter(Boolean);
+        }
+      } else if (opts.stdin) {
+        const chunks = [];
+        for await (const chunk of process.stdin) chunks.push(chunk);
+        const raw = Buffer.concat(chunks).toString('utf-8').trim();
+        targets = raw.startsWith('[') ? JSON.parse(raw) : raw.split(/\r?\n/).filter(Boolean);
       } else {
-        targets = raw.split(/\r?\n/).filter(Boolean);
+        targets = splitTargets(positionalTargets);
       }
-    } else if (opts.stdin) {
-      const chunks = [];
-      for await (const chunk of process.stdin) chunks.push(chunk);
-      const raw = Buffer.concat(chunks).toString('utf-8').trim();
-      targets = raw.startsWith('[') ? JSON.parse(raw) : raw.split(/\r?\n/).filter(Boolean);
-    } else {
-      targets = splitTargets(positionalTargets);
+    } catch (err) {
+      console.error(`Failed to parse targets: ${err.message}`);
+      process.exit(1);
     }
 
     if (!targets || targets.length === 0) {
