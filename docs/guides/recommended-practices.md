@@ -177,7 +177,7 @@ claude mcp add --transport stdio codegraph -- codegraph mcp
 claude mcp add --transport stdio codegraph -- cmd /c codegraph mcp
 ```
 
-This saves the server to your local Claude Code config. Once registered, Claude can call codegraph tools (`where`, `explain`, `fn_impact`, `diff_impact`, etc.) natively — including from custom subagents like a [planner agent](#custom-planner-agent).
+This saves the server to your local Claude Code config. Once registered, Claude can call codegraph tools (`where`, `explain`, `fn_impact`, `diff_impact`, etc.) natively — including from custom subagents.
 
 Use `--scope project` to check it into `.mcp.json` so the whole team gets it:
 
