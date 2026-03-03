@@ -112,17 +112,18 @@ export function rotateIfNeeded(filePath, maxBytes = DEFAULT_MAX_BYTES) {
   if (stat.size <= maxBytes) return;
 
   try {
-    const content = fs.readFileSync(filePath, 'utf-8');
-    const mid = Math.floor(content.length / 2);
-    const newlineIdx = content.indexOf('\n', mid);
+    const buf = fs.readFileSync(filePath);
+    const mid = Math.floor(buf.length / 2);
+    const newlineIdx = buf.indexOf(0x0a, mid);
     if (newlineIdx === -1) {
       warn(
         `Change events file exceeds ${maxBytes} bytes but contains no line breaks; skipping rotation`,
       );
       return;
     }
-    fs.writeFileSync(filePath, content.slice(newlineIdx + 1));
-    debug(`Rotated change events: ${stat.size} → ${content.length - newlineIdx - 1} bytes`);
+    const kept = buf.slice(newlineIdx + 1);
+    fs.writeFileSync(filePath, kept);
+    debug(`Rotated change events: ${stat.size} → ${kept.length} bytes`);
   } catch (err) {
     warn(`Failed to rotate change events: ${err.message}`);
   }
