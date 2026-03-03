@@ -34,8 +34,11 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
   `);
 
   // Clean previous directory nodes/edges (idempotent rebuild)
+  // Scope contains-edge delete to directory-sourced edges only,
+  // preserving symbol-level contains edges (file→def, class→method, etc.)
   db.exec(`
-    DELETE FROM edges WHERE kind = 'contains';
+    DELETE FROM edges WHERE kind = 'contains'
+      AND source_id IN (SELECT id FROM nodes WHERE kind = 'directory');
     DELETE FROM node_metrics;
     DELETE FROM nodes WHERE kind = 'directory';
   `);

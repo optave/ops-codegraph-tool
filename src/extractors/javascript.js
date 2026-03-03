@@ -28,31 +28,37 @@ function extractSymbolsQuery(tree, query) {
 
     if (c.fn_node) {
       // function_declaration
+      const fnChildren = extractParameters(c.fn_node);
       definitions.push({
         name: c.fn_name.text,
         kind: 'function',
         line: c.fn_node.startPosition.row + 1,
         endLine: nodeEndLine(c.fn_node),
+        children: fnChildren.length > 0 ? fnChildren : undefined,
       });
     } else if (c.varfn_name) {
       // variable_declarator with arrow_function / function_expression
       const declNode = c.varfn_name.parent?.parent;
       const line = declNode ? declNode.startPosition.row + 1 : c.varfn_name.startPosition.row + 1;
+      const varFnChildren = extractParameters(c.varfn_value);
       definitions.push({
         name: c.varfn_name.text,
         kind: 'function',
         line,
         endLine: nodeEndLine(c.varfn_value),
+        children: varFnChildren.length > 0 ? varFnChildren : undefined,
       });
     } else if (c.cls_node) {
       // class_declaration
       const className = c.cls_name.text;
       const startLine = c.cls_node.startPosition.row + 1;
+      const clsChildren = extractClassProperties(c.cls_node);
       definitions.push({
         name: className,
         kind: 'class',
         line: startLine,
         endLine: nodeEndLine(c.cls_node),
+        children: clsChildren.length > 0 ? clsChildren : undefined,
       });
       const heritage =
         c.cls_node.childForFieldName('heritage') || findChild(c.cls_node, 'class_heritage');
@@ -69,11 +75,13 @@ function extractSymbolsQuery(tree, query) {
       const methName = c.meth_name.text;
       const parentClass = findParentClass(c.meth_node);
       const fullName = parentClass ? `${parentClass}.${methName}` : methName;
+      const methChildren = extractParameters(c.meth_node);
       definitions.push({
         name: fullName,
         kind: 'method',
         line: c.meth_node.startPosition.row + 1,
         endLine: nodeEndLine(c.meth_node),
+        children: methChildren.length > 0 ? methChildren : undefined,
       });
     } else if (c.iface_node) {
       // interface_declaration (TS/TSX only)
@@ -231,11 +239,13 @@ function extractSymbolsWalk(tree) {
       case 'function_declaration': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
+          const fnChildren = extractParameters(node);
           definitions.push({
             name: nameNode.text,
             kind: 'function',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: fnChildren.length > 0 ? fnChildren : undefined,
           });
         }
         break;
@@ -246,11 +256,13 @@ function extractSymbolsWalk(tree) {
         if (nameNode) {
           const className = nameNode.text;
           const startLine = node.startPosition.row + 1;
+          const clsChildren = extractClassProperties(node);
           definitions.push({
             name: className,
             kind: 'class',
             line: startLine,
             endLine: nodeEndLine(node),
+            children: clsChildren.length > 0 ? clsChildren : undefined,
           });
           const heritage = node.childForFieldName('heritage') || findChild(node, 'class_heritage');
           if (heritage) {
@@ -272,11 +284,13 @@ function extractSymbolsWalk(tree) {
         if (nameNode) {
           const parentClass = findParentClass(node);
           const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
+          const methChildren = extractParameters(node);
           definitions.push({
             name: fullName,
             kind: 'method',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
+            children: methChildren.length > 0 ? methChildren : undefined,
           });
         }
         break;
@@ -317,6 +331,7 @@ function extractSymbolsWalk(tree) {
 
       case 'lexical_declaration':
       case 'variable_declaration': {
+        const isConst = node.text.startsWith('const ');
         for (let i = 0; i < node.childCount; i++) {
           const declarator = node.child(i);
           if (declarator && declarator.type === 'variable_declarator') {
@@ -329,15 +344,59 @@ function extractSymbolsWalk(tree) {
                 valType === 'function_expression' ||
                 valType === 'function'
               ) {
+                const varFnChildren = extractParameters(valueN);
                 definitions.push({
                   name: nameN.text,
                   kind: 'function',
                   line: node.startPosition.row + 1,
                   endLine: nodeEndLine(valueN),
+                  children: varFnChildren.length > 0 ? varFnChildren : undefined,
                 });
+              } else if (isConst && nameN.type === 'identifier' && isConstantValue(valueN)) {
+                definitions.push({
+                  name: nameN.text,
+                  kind: 'constant',
+                  line: node.startPosition.row + 1,
+                  endLine: nodeEndLine(node),
+                });
+              }
+            } else if (isConst && nameN && nameN.type === 'identifier' && !valueN) {
+              // const with no value (shouldn't happen but be safe)
+            }
+          }
+        }
+        break;
+      }
+
+      case 'enum_declaration': {
+        // TypeScript enum
+        const nameNode = node.childForFieldName('name');
+        if (nameNode) {
+          const enumChildren = [];
+          const body = node.childForFieldName('body') || findChild(node, 'enum_body');
+          if (body) {
+            for (let i = 0; i < body.childCount; i++) {
+              const member = body.child(i);
+              if (!member) continue;
+              if (member.type === 'enum_assignment' || member.type === 'property_identifier') {
+                const mName = member.childForFieldName('name') || member.child(0);
+                if (mName) {
+                  enumChildren.push({
+                    name: mName.text,
+                    kind: 'constant',
+                    line: member.startPosition.row + 1,
+                  });
+                }
               }
             }
           }
+          definitions.push({
+            name: nameNode.text,
+            kind: 'enum',
+            line: node.startPosition.row + 1,
+            endLine: nodeEndLine(node),
+            children: enumChildren.length > 0 ? enumChildren : undefined,
+          });
         }
         break;
       }
@@ -469,6 +528,89 @@ function extractSymbolsWalk(tree) {
 
   walkJavaScriptNode(tree.rootNode);
   return { definitions, calls, imports, classes, exports };
+}
+
+// ── Child extraction helpers ────────────────────────────────────────────────
+
+function extractParameters(node) {
+  const params = [];
+  const paramsNode = node.childForFieldName('parameters') || findChild(node, 'formal_parameters');
+  if (!paramsNode) return params;
+  for (let i = 0; i < paramsNode.childCount; i++) {
+    const child = paramsNode.child(i);
+    if (!child) continue;
+    const t = child.type;
+    if (t === 'identifier') {
+      params.push({ name: child.text, kind: 'parameter', line: child.startPosition.row + 1 });
+    } else if (
+      t === 'required_parameter' ||
+      t === 'optional_parameter' ||
+      t === 'assignment_pattern'
+    ) {
+      const nameNode =
+        child.childForFieldName('pattern') || child.childForFieldName('left') || child.child(0);
+      if (
+        nameNode &&
+        (nameNode.type === 'identifier' ||
+          nameNode.type === 'shorthand_property_identifier_pattern')
+      ) {
+        params.push({ name: nameNode.text, kind: 'parameter', line: child.startPosition.row + 1 });
+      }
+    } else if (t === 'rest_pattern' || t === 'rest_element') {
+      const nameNode = child.child(1) || child.childForFieldName('name');
+      if (nameNode && nameNode.type === 'identifier') {
+        params.push({ name: nameNode.text, kind: 'parameter', line: child.startPosition.row + 1 });
+      }
+    }
+  }
+  return params;
+}
+
+function extractClassProperties(classNode) {
+  const props = [];
+  const body = classNode.childForFieldName('body') || findChild(classNode, 'class_body');
+  if (!body) return props;
+  for (let i = 0; i < body.childCount; i++) {
+    const child = body.child(i);
+    if (!child) continue;
+    if (
+      child.type === 'field_definition' ||
+      child.type === 'public_field_definition' ||
+      child.type === 'property_definition'
+    ) {
+      const nameNode =
+        child.childForFieldName('name') || child.childForFieldName('property') || child.child(0);
+      if (
+        nameNode &&
+        (nameNode.type === 'property_identifier' ||
+          nameNode.type === 'identifier' ||
+          nameNode.type === 'private_property_identifier')
+      ) {
+        props.push({ name: nameNode.text, kind: 'property', line: child.startPosition.row + 1 });
+      }
+    }
+  }
+  return props;
+}
+
+function isConstantValue(valueNode) {
+  if (!valueNode) return false;
+  const t = valueNode.type;
+  return (
+    t === 'number' ||
+    t === 'string' ||
+    t === 'template_string' ||
+    t === 'true' ||
+    t === 'false' ||
+    t === 'null' ||
+    t === 'undefined' ||
+    t === 'array' ||
+    t === 'object' ||
+    t === 'regex' ||
+    t === 'unary_expression' ||
+    t === 'binary_expression' ||
+    t === 'new_expression'
+  );
 }
 
 // ── Shared helpers ──────────────────────────────────────────────────────────

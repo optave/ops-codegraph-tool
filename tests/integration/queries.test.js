@@ -104,6 +104,24 @@ beforeAll(() => {
   // Low-confidence call edge for quality tests
   insertEdge(db, formatResponse, validateToken, 'calls', 0.3);
 
+  // ── Phase 2: expanded node/edge types ──────────────────────────────
+  // Class with method and property children
+  const userService = insertNode(db, 'UserService', 'class', 'auth.js', 40);
+  const getUser = insertNode(db, 'UserService.getUser', 'method', 'auth.js', 42);
+  const dbConn = insertNode(db, 'dbConn', 'property', 'auth.js', 41);
+  const userId = insertNode(db, 'userId', 'parameter', 'auth.js', 10);
+
+  // Symbol-level contains edges (file → class, class → method/property)
+  insertEdge(db, fAuth, userService, 'contains');
+  insertEdge(db, userService, getUser, 'contains');
+  insertEdge(db, userService, dbConn, 'contains');
+
+  // parameter_of edge (parameter → owning function)
+  insertEdge(db, userId, authenticate, 'parameter_of');
+
+  // receiver edge (caller → receiver type)
+  insertEdge(db, handleRoute, userService, 'receiver', 0.7);
+
   // File hashes (for fileHash exposure)
   for (const f of ['auth.js', 'middleware.js', 'routes.js', 'utils.js', 'auth.test.js']) {
     db.prepare('INSERT INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)').run(
@@ -449,7 +467,7 @@ describe('explainData', () => {
 
     const r = data.results[0];
     expect(r.file).toBe('auth.js');
-    expect(r.symbolCount).toBe(2);
+    expect(r.symbolCount).toBe(6);
     // Both authenticate and validateToken are called from middleware.js
     expect(r.publicApi.map((s) => s.name)).toContain('authenticate');
     expect(r.publicApi.map((s) => s.name)).toContain('validateToken');
@@ -659,6 +677,73 @@ describe('noTests filtering', () => {
 
     expect(allFiles).toContain('auth.test.js');
     expect(filteredFiles).not.toContain('auth.test.js');
+  });
+});
+
+// ─── Expanded edge types (Phase 2) ─────────────────────────────────────
+
+describe('expanded edge types', () => {
+  test('statsData counts new edge kinds', () => {
+    const data = statsData(dbPath);
+    expect(data.edges.byKind.contains).toBeGreaterThanOrEqual(3);
+    expect(data.edges.byKind.parameter_of).toBeGreaterThanOrEqual(1);
+    expect(data.edges.byKind.receiver).toBeGreaterThanOrEqual(1);
+  });
+
+  test('moduleMapData excludes structural edges from coupling', () => {
+    const data = moduleMapData(dbPath);
+    // auth.js has contains, parameter_of, receiver edges but they should
+    // not inflate coupling counts — only imports/calls/etc. count
+    const authNode = data.topNodes.find((n) => n.file === 'auth.js');
+    expect(authNode).toBeDefined();
+    // in_edges should not include contains/parameter_of/receiver
+    // auth.js is imported by middleware.js and auth.test.js → in_edges = 2
+    expect(authNode.inEdges).toBe(2);
+  });
+
+  test('queryNameData returns new edge kinds in callers/callees', () => {
+    // authenticate has a parameter_of edge from userId
+    const authData = queryNameData('authenticate', dbPath);
+    const fn = authData.results.find((r) => r.kind === 'function' && r.name === 'authenticate');
+    expect(fn).toBeDefined();
+    const paramCaller = fn.callers.find((c) => c.edgeKind === 'parameter_of');
+    expect(paramCaller).toBeDefined();
+    expect(paramCaller.name).toBe('userId');
+
+    // UserService has contains callees (method and property)
+    const usData = queryNameData('UserService', dbPath);
+    const cls = usData.results.find((r) => r.kind === 'class' && r.name === 'UserService');
+    expect(cls).toBeDefined();
+    const containsCallees = cls.callees.filter((c) => c.edgeKind === 'contains');
+    expect(containsCallees.length).toBeGreaterThanOrEqual(2);
+    const names = containsCallees.map((c) => c.name);
+    expect(names).toContain('UserService.getUser');
+    expect(names).toContain('dbConn');
+
+    // UserService has a receiver caller (handleRoute)
+    const receiverCaller = cls.callers.find((c) => c.edgeKind === 'receiver');
+    expect(receiverCaller).toBeDefined();
+    expect(receiverCaller.name).toBe('handleRoute');
+  });
+
+  test('pathData traverses contains edges', () => {
+    const data = pathData('UserService', 'UserService.getUser', dbPath, {
+      edgeKinds: ['contains'],
+    });
+    expect(data.found).toBe(true);
+    expect(data.hops).toBe(1);
+    expect(data.path[0].name).toBe('UserService');
+    expect(data.path[1].name).toBe('UserService.getUser');
+    expect(data.path[1].edgeKind).toBe('contains');
+  });
+
+  test('pathData traverses receiver edges', () => {
+    const data = pathData('handleRoute', 'UserService', dbPath, {
+      edgeKinds: ['receiver'],
+    });
+    expect(data.found).toBe(true);
+    expect(data.hops).toBe(1);
+    expect(data.path[1].edgeKind).toBe('receiver');
   });
 });
 

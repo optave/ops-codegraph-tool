@@ -44,6 +44,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "rust"),
+                    children: None,
                 });
             }
         }
@@ -57,6 +58,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
+                    children: None,
                 });
             }
         }
@@ -70,6 +72,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
+                    children: None,
                 });
             }
         }
@@ -84,6 +87,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
+                    children: None,
                 });
                 if let Some(body) = node.child_by_field_name("body") {
                     for i in 0..body.child_count() {
@@ -103,6 +107,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                         end_line: Some(end_line(&child)),
                                         decorators: None,
                                         complexity: compute_all_metrics(&child, source, "rust"),
+                                        children: None,
                                     });
                                 }
                             }

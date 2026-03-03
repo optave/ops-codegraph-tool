@@ -114,9 +114,15 @@ export { getActiveEngine, parseFileAuto, parseFilesAuto } from './parser.js';
 // Query functions (data-returning)
 export {
   ALL_SYMBOL_KINDS,
+  CORE_EDGE_KINDS,
+  CORE_SYMBOL_KINDS,
+  childrenData,
   contextData,
   diffImpactData,
   diffImpactMermaid,
+  EVERY_EDGE_KIND,
+  EVERY_SYMBOL_KIND,
+  EXTENDED_SYMBOL_KINDS,
   explainData,
   exportsData,
   FALSE_POSITIVE_CALLER_THRESHOLD,
@@ -135,6 +141,7 @@ export {
   pathData,
   queryNameData,
   rolesData,
+  STRUCTURAL_EDGE_KINDS,
   statsData,
   VALID_ROLES,
   whereData,

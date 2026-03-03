@@ -9,7 +9,7 @@ import { createRequire } from 'node:module';
 import { findCycles } from './cycles.js';
 import { findDbPath } from './db.js';
 import { MCP_DEFAULTS, MCP_MAX_LIMIT } from './paginate.js';
-import { ALL_SYMBOL_KINDS, diffImpactMermaid, VALID_ROLES } from './queries.js';
+import { diffImpactMermaid, EVERY_EDGE_KIND, EVERY_SYMBOL_KIND, VALID_ROLES } from './queries.js';
 
 const REPO_PROP = {
   repo: {
@@ -47,13 +47,13 @@ const BASE_TOOLS = [
         },
         kind: {
           type: 'string',
-          enum: ALL_SYMBOL_KINDS,
+          enum: EVERY_SYMBOL_KIND,
           description: 'Filter by symbol kind',
         },
         to: { type: 'string', description: 'Target symbol for path mode (required in path mode)' },
         edge_kinds: {
           type: 'array',
-          items: { type: 'string' },
+          items: { type: 'string', enum: EVERY_EDGE_KIND },
           description: 'Edge kinds to follow in path mode (default: ["calls"])',
         },
         reverse: {
@@ -143,7 +143,7 @@ const BASE_TOOLS = [
         },
         kind: {
           type: 'string',
-          enum: ALL_SYMBOL_KINDS,
+          enum: EVERY_SYMBOL_KIND,
           description: 'Filter to a specific symbol kind',
         },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
@@ -171,7 +171,7 @@ const BASE_TOOLS = [
         },
         kind: {
           type: 'string',
-          enum: ALL_SYMBOL_KINDS,
+          enum: EVERY_SYMBOL_KIND,
           description: 'Filter to a specific symbol kind',
         },
         no_source: {
@@ -185,6 +185,22 @@ const BASE_TOOLS = [
           description: 'Include test file source code',
           default: false,
         },
+        ...PAGINATION_PROPS,
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'symbol_children',
+    description:
+      'List sub-declaration children of a symbol: parameters, properties, constants. Answers "what fields does this class have?" without reading source.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Function/method/class name (partial match)' },
+        file: { type: 'string', description: 'Scope to file (partial match)' },
+        kind: { type: 'string', enum: EVERY_SYMBOL_KIND, description: 'Filter by symbol kind' },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
         ...PAGINATION_PROPS,
       },
       required: ['name'],
@@ -409,7 +425,7 @@ const BASE_TOOLS = [
         },
         kind: {
           type: 'string',
-          enum: ALL_SYMBOL_KINDS,
+          enum: EVERY_SYMBOL_KIND,
           description: 'Filter to a specific symbol kind',
         },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
@@ -575,7 +591,7 @@ const BASE_TOOLS = [
         },
         kind: {
           type: 'string',
-          enum: ALL_SYMBOL_KINDS,
+          enum: EVERY_SYMBOL_KIND,
           description: 'Filter symbol kind',
         },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
@@ -654,7 +670,7 @@ const BASE_TOOLS = [
         },
         depth: { type: 'number', description: 'Max depth for impact mode', default: 5 },
         file: { type: 'string', description: 'Scope to file (partial match)' },
-        kind: { type: 'string', enum: ALL_SYMBOL_KINDS, description: 'Filter by symbol kind' },
+        kind: { type: 'string', enum: EVERY_SYMBOL_KIND, description: 'Filter by symbol kind' },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
         ...PAGINATION_PROPS,
       },
@@ -755,6 +771,7 @@ export async function startMCPServer(customDbPath, options = {}) {
     fnImpactData,
     pathData,
     contextData,
+    childrenData,
     exportsData,
     explainData,
     whereData,
@@ -883,6 +900,15 @@ export async function startMCPServer(customDbPath, options = {}) {
             noSource: args.no_source,
             noTests: args.no_tests,
             includeTests: args.include_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.context, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
+          });
+          break;
+        case 'symbol_children':
+          result = childrenData(args.name, dbPath, {
+            file: args.file,
+            kind: args.kind,
+            noTests: args.no_tests,
             limit: Math.min(args.limit ?? MCP_DEFAULTS.context, MCP_MAX_LIMIT),
             offset: args.offset ?? 0,
           });

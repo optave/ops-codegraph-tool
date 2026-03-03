@@ -9,7 +9,7 @@ use crate::types::FileSymbols;
 /// Parse multiple files in parallel using rayon.
 /// Each thread creates its own Parser (cheap; Language objects are Send+Sync).
 /// Failed files are silently skipped (matches WASM behavior).
-pub fn parse_files_parallel(file_paths: &[String], root_dir: &str) -> Vec<FileSymbols> {
+pub fn parse_files_parallel(file_paths: &[String], _root_dir: &str) -> Vec<FileSymbols> {
     file_paths
         .par_iter()
         .filter_map(|file_path| {

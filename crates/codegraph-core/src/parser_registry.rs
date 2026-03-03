@@ -21,7 +21,7 @@ impl LanguageKind {
     pub fn from_extension(file_path: &str) -> Option<Self> {
         let path = Path::new(file_path);
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let _name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
         // .tsx must come before .ts check
         if file_path.ends_with(".tsx") {

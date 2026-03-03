@@ -25,6 +25,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "go"),
+                    children: None,
                 });
             }
         }
@@ -61,6 +62,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "go"),
+                    children: None,
                 });
             }
         }
@@ -84,6 +86,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     end_line: Some(end_line(node)),
                                     decorators: None,
                                     complexity: None,
+                                    children: None,
                                 });
                             }
                             "interface_type" => {
@@ -94,6 +97,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     end_line: Some(end_line(node)),
                                     decorators: None,
                                     complexity: None,
+                                    children: None,
                                 });
                                 // Extract interface methods
                                 for j in 0..type_node.child_count() {
@@ -113,6 +117,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                                     end_line: Some(end_line(&member)),
                                                     decorators: None,
                                                     complexity: None,
+                                                    children: None,
                                                 });
                                             }
                                         }
@@ -127,6 +132,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     end_line: Some(end_line(node)),
                                     decorators: None,
                                     complexity: None,
+                                    children: None,
                                 });
                             }
                         }

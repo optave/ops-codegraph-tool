@@ -65,6 +65,8 @@ pub struct Definition {
     #[napi(ts_type = "string[] | undefined")]
     pub decorators: Option<Vec<String>>,
     pub complexity: Option<ComplexityMetrics>,
+    #[napi(ts_type = "Definition[] | undefined")]
+    pub children: Option<Vec<Definition>>,
 }
 
 #[napi(object)]

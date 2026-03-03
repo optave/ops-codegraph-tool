@@ -25,6 +25,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "javascript"),
+                    children: None,
                 });
             }
         }
@@ -39,6 +40,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
+                    children: None,
                 });
 
                 // Heritage: extends + implements
@@ -81,6 +83,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "javascript"),
+                    children: None,
                 });
             }
         }
@@ -95,6 +98,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
+                    children: None,
                 });
                 // Extract interface methods
                 let body = node
@@ -116,6 +120,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
+                    children: None,
                 });
             }
         }
@@ -139,6 +144,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     end_line: Some(end_line(&value_n)),
                                     decorators: None,
                                     complexity: compute_all_metrics(&value_n, source, "javascript"),
+                                    children: None,
                                 });
                             }
                         }
@@ -348,6 +354,7 @@ fn extract_interface_methods(
                         end_line: Some(end_line(&child)),
                         decorators: None,
                         complexity: None,
+                        children: None,
                     });
                 }
             }
@@ -563,6 +570,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             end_line: Some(end_line(&cb)),
             decorators: None,
             complexity: compute_all_metrics(&cb, source, "javascript"),
+            children: None,
         });
     }
 
@@ -580,6 +588,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             end_line: Some(end_line(&cb)),
             decorators: None,
             complexity: compute_all_metrics(&cb, source, "javascript"),
+            children: None,
         });
     }
 
@@ -594,6 +603,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             end_line: Some(end_line(&cb)),
             decorators: None,
             complexity: compute_all_metrics(&cb, source, "javascript"),
+            children: None,
         });
     }
 

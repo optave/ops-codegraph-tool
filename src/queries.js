@@ -59,7 +59,9 @@ export const FALSE_POSITIVE_NAMES = new Set([
 export const FALSE_POSITIVE_CALLER_THRESHOLD = 20;
 
 const FUNCTION_KINDS = ['function', 'method', 'class'];
-export const ALL_SYMBOL_KINDS = [
+
+// Original 10 kinds — used as default query scope
+export const CORE_SYMBOL_KINDS = [
   'function',
   'method',
   'class',
@@ -71,6 +73,39 @@ export const ALL_SYMBOL_KINDS = [
   'record',
   'module',
 ];
+
+// Sub-declaration kinds (Phase 1)
+export const EXTENDED_SYMBOL_KINDS = [
+  'parameter',
+  'property',
+  'constant',
+  // Phase 2 (reserved, not yet extracted):
+  // 'constructor', 'namespace', 'decorator', 'getter', 'setter',
+];
+
+// Full set for --kind validation and MCP enum
+export const EVERY_SYMBOL_KIND = [...CORE_SYMBOL_KINDS, ...EXTENDED_SYMBOL_KINDS];
+
+// Backward compat: ALL_SYMBOL_KINDS stays as the core 10
+export const ALL_SYMBOL_KINDS = CORE_SYMBOL_KINDS;
+
+// ── Edge kind constants ─────────────────────────────────────────────
+// Core edge kinds — coupling and dependency relationships
+export const CORE_EDGE_KINDS = [
+  'imports',
+  'imports-type',
+  'reexports',
+  'calls',
+  'extends',
+  'implements',
+  'contains',
+];
+
+// Structural edge kinds — parent/child and type relationships
+export const STRUCTURAL_EDGE_KINDS = ['parameter_of', 'receiver'];
+
+// Full set for MCP enum and validation
+export const EVERY_EDGE_KIND = [...CORE_EDGE_KINDS, ...STRUCTURAL_EDGE_KINDS];
 
 export const VALID_ROLES = ['entry', 'core', 'utility', 'adapter', 'dead', 'leaf'];
 
@@ -190,6 +225,12 @@ export function kindIcon(kind) {
       return 'I';
     case 'type':
       return 'T';
+    case 'parameter':
+      return 'p';
+    case 'property':
+      return '.';
+    case 'constant':
+      return 'C';
     default:
       return '-';
   }
@@ -325,12 +366,12 @@ export function moduleMapData(customDbPath, limit = 20, opts = {}) {
   const nodes = db
     .prepare(`
     SELECT n.*,
-      (SELECT COUNT(*) FROM edges WHERE source_id = n.id AND kind != 'contains') as out_edges,
-      (SELECT COUNT(*) FROM edges WHERE target_id = n.id AND kind != 'contains') as in_edges
+      (SELECT COUNT(*) FROM edges WHERE source_id = n.id AND kind NOT IN ('contains', 'parameter_of', 'receiver')) as out_edges,
+      (SELECT COUNT(*) FROM edges WHERE target_id = n.id AND kind NOT IN ('contains', 'parameter_of', 'receiver')) as in_edges
     FROM nodes n
     WHERE n.kind = 'file'
       ${testFilter}
-    ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id AND kind != 'contains') DESC
+    ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id AND kind NOT IN ('contains', 'parameter_of', 'receiver')) DESC
     LIMIT ?
   `)
     .all(limit);
@@ -2224,6 +2265,17 @@ export function contextData(name, customDbPath, opts = {}) {
       /* table may not exist */
     }
 
+    // Children (parameters, properties, constants)
+    let nodeChildren = [];
+    try {
+      nodeChildren = db
+        .prepare('SELECT name, kind, line, end_line FROM nodes WHERE parent_id = ? ORDER BY line')
+        .all(node.id)
+        .map((c) => ({ name: c.name, kind: c.kind, line: c.line, endLine: c.end_line || null }));
+    } catch {
+      /* parent_id column may not exist */
+    }
+
     return {
       name: node.name,
       kind: node.kind,
@@ -2234,6 +2286,7 @@ export function contextData(name, customDbPath, opts = {}) {
       source,
       signature,
       complexity: complexityMetrics,
+      children: nodeChildren.length > 0 ? nodeChildren : undefined,
       callees,
       callers,
       relatedTests,
@@ -2270,6 +2323,15 @@ export function context(name, customDbPath, opts = {}) {
       console.log('## Type/Shape Info');
       if (r.signature.params != null) console.log(`  Parameters: (${r.signature.params})`);
       if (r.signature.returnType) console.log(`  Returns: ${r.signature.returnType}`);
+      console.log();
+    }
+
+    // Children
+    if (r.children && r.children.length > 0) {
+      console.log(`## Children (${r.children.length})`);
+      for (const c of r.children) {
+        console.log(`  ${kindIcon(c.kind)} ${c.name}  :${c.line}`);
+      }
       console.log();
     }
 
@@ -2341,6 +2403,69 @@ export function context(name, customDbPath, opts = {}) {
         '  (no call edges or tests found — may be invoked dynamically or via re-exports)',
       );
       console.log();
+    }
+  }
+}
+
+// ─── childrenData ───────────────────────────────────────────────────────
+
+export function childrenData(name, customDbPath, opts = {}) {
+  const db = openReadonlyOrFail(customDbPath);
+  const noTests = opts.noTests || false;
+
+  const nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+  if (nodes.length === 0) {
+    db.close();
+    return { name, results: [] };
+  }
+
+  const results = nodes.map((node) => {
+    let children;
+    try {
+      children = db
+        .prepare('SELECT name, kind, line, end_line FROM nodes WHERE parent_id = ? ORDER BY line')
+        .all(node.id);
+    } catch {
+      children = [];
+    }
+    if (noTests) children = children.filter((c) => !isTestFile(c.file || node.file));
+    return {
+      name: node.name,
+      kind: node.kind,
+      file: node.file,
+      line: node.line,
+      children: children.map((c) => ({
+        name: c.name,
+        kind: c.kind,
+        line: c.line,
+        endLine: c.end_line || null,
+      })),
+    };
+  });
+
+  db.close();
+  const base = { name, results };
+  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+}
+
+export function children(name, customDbPath, opts = {}) {
+  const data = childrenData(name, customDbPath, opts);
+  if (opts.json) {
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+  if (data.results.length === 0) {
+    console.log(`No symbol matching "${name}"`);
+    return;
+  }
+  for (const r of data.results) {
+    console.log(`\n${kindIcon(r.kind)} ${r.name}  ${r.file}:${r.line}`);
+    if (r.children.length === 0) {
+      console.log('  (no children)');
+    } else {
+      for (const c of r.children) {
+        console.log(`  ${kindIcon(c.kind)} ${c.name}  :${c.line}`);
+      }
     }
   }
 }
