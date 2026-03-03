@@ -3185,11 +3185,11 @@ function exportsFileImpl(db, target, noTests, getFileLines) {
       };
     });
 
-    // Reexport edges from this file node
+    // Files that re-export this file (barrel → this file)
     const reexports = db
       .prepare(
-        `SELECT n.file FROM edges e JOIN nodes n ON e.target_id = n.id
-         WHERE e.source_id = ? AND e.kind = 'reexports'`,
+        `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.source_id = n.id
+         WHERE e.target_id = ? AND e.kind = 'reexports'`,
       )
       .all(fn.id)
       .map((r) => ({ file: r.file }));
