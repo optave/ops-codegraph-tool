@@ -97,10 +97,11 @@ program
   .command('build [dir]')
   .description('Parse repo and build graph in .codegraph/graph.db')
   .option('--no-incremental', 'Force full rebuild (ignore file hashes)')
+  .option('--dataflow', 'Extract data flow edges (flows_to, returns, mutates)')
   .action(async (dir, opts) => {
     const root = path.resolve(dir || '.');
     const engine = program.opts().engine;
-    await buildGraph(root, { incremental: opts.incremental, engine });
+    await buildGraph(root, { incremental: opts.incremental, engine, dataflow: opts.dataflow });
   });
 
 program
@@ -964,6 +965,41 @@ program
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       ndjson: opts.ndjson,
+    });
+  });
+
+program
+  .command('dataflow <name>')
+  .description('Show data flow for a function: parameters, return consumers, mutations')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-f, --file <path>', 'Scope to file (partial match)')
+  .option('-k, --kind <kind>', 'Filter by symbol kind')
+  .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .option('--ndjson', 'Newline-delimited JSON output')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--path <target>', 'Find data flow path to <target>')
+  .option('--impact', 'Show data-dependent blast radius')
+  .option('--depth <n>', 'Max traversal depth', '5')
+  .action(async (name, opts) => {
+    if (opts.kind && !ALL_SYMBOL_KINDS.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${ALL_SYMBOL_KINDS.join(', ')}`);
+      process.exit(1);
+    }
+    const { dataflow } = await import('./dataflow.js');
+    dataflow(name, opts.db, {
+      file: opts.file,
+      kind: opts.kind,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      ndjson: opts.ndjson,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      path: opts.path,
+      impact: opts.impact,
+      depth: opts.depth,
     });
   });
 

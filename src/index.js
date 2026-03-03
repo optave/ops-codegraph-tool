@@ -46,6 +46,15 @@ export { loadConfig } from './config.js';
 export { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
 // Circular dependency detection
 export { findCycles, formatCycles } from './cycles.js';
+// Dataflow analysis
+export {
+  buildDataflowEdges,
+  dataflow,
+  dataflowData,
+  dataflowImpactData,
+  dataflowPathData,
+  extractDataflow,
+} from './dataflow.js';
 // Database utilities
 export {
   findDbPath,

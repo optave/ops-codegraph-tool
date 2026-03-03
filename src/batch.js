@@ -6,6 +6,7 @@
  */
 
 import { complexityData } from './complexity.js';
+import { dataflowData } from './dataflow.js';
 import { flowData } from './flow.js';
 import {
   contextData,
@@ -36,6 +37,7 @@ export const BATCH_COMMANDS = {
   impact: { fn: impactAnalysisData, sig: 'file' },
   deps: { fn: fileDepsData, sig: 'file' },
   flow: { fn: flowData, sig: 'name' },
+  dataflow: { fn: dataflowData, sig: 'name' },
   complexity: { fn: complexityData, sig: 'dbOnly' },
 };
 

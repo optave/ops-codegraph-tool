@@ -435,7 +435,7 @@ export async function buildGraph(rootDir, opts = {}) {
 
   if (isFullBuild) {
     const deletions =
-      'PRAGMA foreign_keys = OFF; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM function_complexity; DELETE FROM nodes; PRAGMA foreign_keys = ON;';
+      'PRAGMA foreign_keys = OFF; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM function_complexity; DELETE FROM dataflow; DELETE FROM nodes; PRAGMA foreign_keys = ON;';
     db.exec(
       hasEmbeddings
         ? `${deletions.replace('PRAGMA foreign_keys = ON;', '')} DELETE FROM embeddings; PRAGMA foreign_keys = ON;`
@@ -505,11 +505,20 @@ export async function buildGraph(rootDir, opts = {}) {
     } catch {
       deleteComplexityForFile = null;
     }
+    let deleteDataflowForFile;
+    try {
+      deleteDataflowForFile = db.prepare(
+        'DELETE FROM dataflow WHERE source_id IN (SELECT id FROM nodes WHERE file = ?) OR target_id IN (SELECT id FROM nodes WHERE file = ?)',
+      );
+    } catch {
+      deleteDataflowForFile = null;
+    }
     for (const relPath of removed) {
       deleteEmbeddingsForFile?.run(relPath);
       deleteEdgesForFile.run({ f: relPath });
       deleteMetricsForFile.run(relPath);
       deleteComplexityForFile?.run(relPath);
+      deleteDataflowForFile?.run(relPath, relPath);
       deleteNodesForFile.run(relPath);
     }
     for (const item of parseChanges) {
@@ -518,6 +527,7 @@ export async function buildGraph(rootDir, opts = {}) {
       deleteEdgesForFile.run({ f: relPath });
       deleteMetricsForFile.run(relPath);
       deleteComplexityForFile?.run(relPath);
+      deleteDataflowForFile?.run(relPath, relPath);
       deleteNodesForFile.run(relPath);
     }
 
@@ -1077,6 +1087,18 @@ export async function buildGraph(rootDir, opts = {}) {
     debug(`Complexity analysis failed: ${err.message}`);
   }
   _t.complexityMs = performance.now() - _t.complexity0;
+
+  // Opt-in dataflow analysis (--dataflow)
+  if (opts.dataflow) {
+    _t.dataflow0 = performance.now();
+    try {
+      const { buildDataflowEdges } = await import('./dataflow.js');
+      await buildDataflowEdges(db, allSymbols, rootDir, engineOpts);
+    } catch (err) {
+      debug(`Dataflow analysis failed: ${err.message}`);
+    }
+    _t.dataflowMs = performance.now() - _t.dataflow0;
+  }
 
   // Release any remaining cached WASM trees for GC
   for (const [, symbols] of allSymbols) {

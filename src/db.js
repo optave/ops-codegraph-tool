@@ -144,6 +144,27 @@ export const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_fc_mi ON function_complexity(maintainability_index ASC);
     `,
   },
+  {
+    version: 10,
+    up: `
+      CREATE TABLE IF NOT EXISTS dataflow (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id INTEGER NOT NULL,
+        target_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        param_index INTEGER,
+        expression TEXT,
+        line INTEGER,
+        confidence REAL DEFAULT 1.0,
+        FOREIGN KEY(source_id) REFERENCES nodes(id),
+        FOREIGN KEY(target_id) REFERENCES nodes(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_dataflow_source ON dataflow(source_id);
+      CREATE INDEX IF NOT EXISTS idx_dataflow_target ON dataflow(target_id);
+      CREATE INDEX IF NOT EXISTS idx_dataflow_kind ON dataflow(kind);
+      CREATE INDEX IF NOT EXISTS idx_dataflow_source_kind ON dataflow(source_id, kind);
+    `,
+  },
 ];
 
 export function getBuildMeta(db, key) {
