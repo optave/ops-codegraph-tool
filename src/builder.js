@@ -396,6 +396,28 @@ export function purgeFilesFromGraph(db, files, options = {}) {
       deleteHashForFile = null;
     }
   }
+  let deleteAstNodesForFile;
+  try {
+    deleteAstNodesForFile = db.prepare('DELETE FROM ast_nodes WHERE file = ?');
+  } catch {
+    deleteAstNodesForFile = null;
+  }
+  let deleteCfgForFile;
+  try {
+    deleteCfgForFile = db.prepare(
+      'DELETE FROM cfg_edges WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?)',
+    );
+  } catch {
+    deleteCfgForFile = null;
+  }
+  let deleteCfgBlocksForFile;
+  try {
+    deleteCfgBlocksForFile = db.prepare(
+      'DELETE FROM cfg_blocks WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?)',
+    );
+  } catch {
+    deleteCfgBlocksForFile = null;
+  }
 
   for (const relPath of files) {
     deleteEmbeddingsForFile?.run(relPath);
@@ -403,6 +425,9 @@ export function purgeFilesFromGraph(db, files, options = {}) {
     deleteMetricsForFile.run(relPath);
     deleteComplexityForFile?.run(relPath);
     deleteDataflowForFile?.run(relPath, relPath);
+    deleteAstNodesForFile?.run(relPath);
+    deleteCfgForFile?.run(relPath);
+    deleteCfgBlocksForFile?.run(relPath);
     deleteNodesForFile.run(relPath);
     if (purgeHashes) deleteHashForFile?.run(relPath);
   }
@@ -532,7 +557,7 @@ export async function buildGraph(rootDir, opts = {}) {
 
   if (isFullBuild) {
     const deletions =
-      'PRAGMA foreign_keys = OFF; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM function_complexity; DELETE FROM dataflow; DELETE FROM nodes; PRAGMA foreign_keys = ON;';
+      'PRAGMA foreign_keys = OFF; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM function_complexity; DELETE FROM dataflow; DELETE FROM ast_nodes; DELETE FROM nodes; PRAGMA foreign_keys = ON;';
     db.exec(
       hasEmbeddings
         ? `${deletions.replace('PRAGMA foreign_keys = ON;', '')} DELETE FROM embeddings; PRAGMA foreign_keys = ON;`
@@ -1189,6 +1214,17 @@ export async function buildGraph(rootDir, opts = {}) {
   }
   _t.rolesMs = performance.now() - _t.roles0;
 
+  // Always-on AST node extraction (calls, new, string, regex, throw, await)
+  // Must run before complexity which releases _tree references
+  _t.ast0 = performance.now();
+  try {
+    const { buildAstNodes } = await import('./ast.js');
+    await buildAstNodes(db, allSymbols, rootDir, engineOpts);
+  } catch (err) {
+    debug(`AST node extraction failed: ${err.message}`);
+  }
+  _t.astMs = performance.now() - _t.ast0;
+
   // Compute per-function complexity metrics (cognitive, cyclomatic, nesting)
   _t.complexity0 = performance.now();
   try {
@@ -1198,6 +1234,18 @@ export async function buildGraph(rootDir, opts = {}) {
     debug(`Complexity analysis failed: ${err.message}`);
   }
   _t.complexityMs = performance.now() - _t.complexity0;
+
+  // Opt-in CFG analysis (--cfg)
+  if (opts.cfg) {
+    _t.cfg0 = performance.now();
+    try {
+      const { buildCFGData } = await import('./cfg.js');
+      await buildCFGData(db, allSymbols, rootDir, engineOpts);
+    } catch (err) {
+      debug(`CFG analysis failed: ${err.message}`);
+    }
+    _t.cfgMs = performance.now() - _t.cfg0;
+  }
 
   // Opt-in dataflow analysis (--dataflow)
   if (opts.dataflow) {
@@ -1301,6 +1349,7 @@ export async function buildGraph(rootDir, opts = {}) {
       structureMs: +_t.structureMs.toFixed(1),
       rolesMs: +_t.rolesMs.toFixed(1),
       complexityMs: +_t.complexityMs.toFixed(1),
+      ...(_t.cfgMs != null && { cfgMs: +_t.cfgMs.toFixed(1) }),
     },
   };
 }

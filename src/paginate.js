@@ -30,6 +30,7 @@ export const MCP_DEFAULTS = {
   communities: 20,
   structure: 30,
   triage: 20,
+  ast_query: 50,
 };
 
 /** Hard cap to prevent abuse via MCP. */

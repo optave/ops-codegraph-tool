@@ -173,6 +173,58 @@ export const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_nodes_kind_parent ON nodes(kind, parent_id);
     `,
   },
+  {
+    version: 12,
+    up: `
+      CREATE TABLE IF NOT EXISTS cfg_blocks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        function_node_id INTEGER NOT NULL,
+        block_index INTEGER NOT NULL,
+        block_type TEXT NOT NULL,
+        start_line INTEGER,
+        end_line INTEGER,
+        label TEXT,
+        FOREIGN KEY(function_node_id) REFERENCES nodes(id),
+        UNIQUE(function_node_id, block_index)
+      );
+      CREATE INDEX IF NOT EXISTS idx_cfg_blocks_fn ON cfg_blocks(function_node_id);
+
+      CREATE TABLE IF NOT EXISTS cfg_edges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        function_node_id INTEGER NOT NULL,
+        source_block_id INTEGER NOT NULL,
+        target_block_id INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        FOREIGN KEY(function_node_id) REFERENCES nodes(id),
+        FOREIGN KEY(source_block_id) REFERENCES cfg_blocks(id),
+        FOREIGN KEY(target_block_id) REFERENCES cfg_blocks(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_cfg_edges_fn ON cfg_edges(function_node_id);
+      CREATE INDEX IF NOT EXISTS idx_cfg_edges_src ON cfg_edges(source_block_id);
+      CREATE INDEX IF NOT EXISTS idx_cfg_edges_tgt ON cfg_edges(target_block_id);
+    `,
+  },
+  {
+    version: 13,
+    up: `
+      CREATE TABLE IF NOT EXISTS ast_nodes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        file TEXT NOT NULL,
+        line INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        name TEXT NOT NULL,
+        text TEXT,
+        receiver TEXT,
+        parent_node_id INTEGER,
+        FOREIGN KEY(parent_node_id) REFERENCES nodes(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_ast_kind ON ast_nodes(kind);
+      CREATE INDEX IF NOT EXISTS idx_ast_name ON ast_nodes(name);
+      CREATE INDEX IF NOT EXISTS idx_ast_file ON ast_nodes(file);
+      CREATE INDEX IF NOT EXISTS idx_ast_parent ON ast_nodes(parent_node_id);
+      CREATE INDEX IF NOT EXISTS idx_ast_kind_name ON ast_nodes(kind, name);
+    `,
+  },
 ];
 
 export function getBuildMeta(db, key) {

@@ -1574,7 +1574,7 @@ export function computeAllMetrics(functionNode, langId) {
 /**
  * Find the function body node in a parse tree that matches a given line range.
  */
-function findFunctionNode(rootNode, startLine, _endLine, rules) {
+export function findFunctionNode(rootNode, startLine, _endLine, rules) {
   // tree-sitter lines are 0-indexed
   const targetStart = startLine - 1;
 

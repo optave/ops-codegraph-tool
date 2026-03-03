@@ -2897,6 +2897,7 @@ export function normalizeSymbol(row, db, hashCache) {
     fileHash,
   };
 }
+
 function whereSymbolImpl(db, target, noTests) {
   const placeholders = ALL_SYMBOL_KINDS.map(() => '?').join(', ');
   let nodes = db
