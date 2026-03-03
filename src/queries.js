@@ -3233,3 +3233,157 @@ export function diffImpact(customDbPath, opts = {}) {
     console.log(`${summaryLine}\n`);
   }
 }
+
+// ─── File Exports ───────────────────────────────────────────────────────
+
+function exportsFileImpl(db, file, noTests, getFileLines) {
+  const fileNodes = db
+    .prepare(`SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'`)
+    .all(`%${file}%`);
+  if (fileNodes.length === 0) return [];
+
+  return fileNodes.map((fn) => {
+    const symbols = db
+      .prepare(`SELECT * FROM nodes WHERE file = ? AND kind != 'file' ORDER BY line`)
+      .all(fn.file);
+
+    // IDs of symbols that have incoming calls from other files (exported)
+    const exportedIds = new Set(
+      db
+        .prepare(
+          `SELECT DISTINCT e.target_id FROM edges e
+           JOIN nodes caller ON e.source_id = caller.id
+           JOIN nodes target ON e.target_id = target.id
+           WHERE target.file = ? AND caller.file != ? AND e.kind = 'calls'`,
+        )
+        .all(fn.file, fn.file)
+        .map((r) => r.target_id),
+    );
+
+    const fileLines = getFileLines(fn.file);
+
+    const exported = symbols.filter((s) => exportedIds.has(s.id));
+    const internal = symbols.filter((s) => !exportedIds.has(s.id));
+
+    const results = exported.map((s) => {
+      let consumers = db
+        .prepare(
+          `SELECT n.name, n.kind, n.file, n.line FROM edges e
+           JOIN nodes n ON e.source_id = n.id
+           WHERE e.target_id = ? AND e.kind = 'calls' AND n.file != ?`,
+        )
+        .all(s.id, fn.file);
+      if (noTests) consumers = consumers.filter((c) => !isTestFile(c.file));
+
+      return {
+        name: s.name,
+        kind: s.kind,
+        line: s.line,
+        endLine: s.end_line || null,
+        role: s.role || null,
+        signature: fileLines ? extractSignature(fileLines, s.line) : null,
+        summary: fileLines ? extractSummary(fileLines, s.line) : null,
+        consumers: consumers.map((c) => ({
+          name: c.name,
+          kind: c.kind,
+          file: c.file,
+          line: c.line,
+        })),
+        consumerCount: consumers.length,
+      };
+    });
+
+    // Re-exports: files that re-export this file
+    const reexports = db
+      .prepare(
+        `SELECT DISTINCT n.file FROM edges e
+         JOIN nodes n ON e.source_id = n.id
+         WHERE e.target_id = ? AND e.kind = 'reexports'`,
+      )
+      .all(fn.id)
+      .map((r) => ({ file: r.file }));
+
+    return {
+      file: fn.file,
+      results,
+      reexports,
+      totalExported: exported.length,
+      totalInternal: internal.length,
+    };
+  });
+}
+
+export function exportsData(file, customDbPath, opts = {}) {
+  const db = openReadonlyOrFail(customDbPath);
+  const noTests = opts.noTests || false;
+
+  const dbPath = findDbPath(customDbPath);
+  const repoRoot = path.resolve(path.dirname(dbPath), '..');
+
+  const fileCache = new Map();
+  function getFileLines(f) {
+    if (fileCache.has(f)) return fileCache.get(f);
+    try {
+      const absPath = safePath(repoRoot, f);
+      if (!absPath) {
+        fileCache.set(f, null);
+        return null;
+      }
+      const lines = fs.readFileSync(absPath, 'utf-8').split('\n');
+      fileCache.set(f, lines);
+      return lines;
+    } catch (e) {
+      debug(`getFileLines failed for ${f}: ${e.message}`);
+      fileCache.set(f, null);
+      return null;
+    }
+  }
+
+  const all = exportsFileImpl(db, file, noTests, getFileLines);
+  db.close();
+
+  // Single-file command: take first match
+  const match =
+    all.length > 0
+      ? all[0]
+      : { file, results: [], reexports: [], totalExported: 0, totalInternal: 0 };
+  return paginateResult(match, 'results', { limit: opts.limit, offset: opts.offset });
+}
+
+export function fileExports(file, customDbPath, opts = {}) {
+  const data = exportsData(file, customDbPath, opts);
+  if (opts.ndjson) {
+    printNdjson(data, 'results');
+    return;
+  }
+  if (opts.json) {
+    console.log(JSON.stringify(data, null, 2));
+    return;
+  }
+  if (data.results.length === 0 && data.totalExported === 0 && data.totalInternal === 0) {
+    console.log(`No file matching "${file}" in graph`);
+    return;
+  }
+
+  console.log(
+    `\n# ${data.file} — ${data.totalExported} exported, ${data.totalInternal} internal\n`,
+  );
+
+  for (const s of data.results) {
+    const sig = s.signature?.params != null ? `(${s.signature.params})` : '';
+    const roleTag = s.role ? ` [${s.role}]` : '';
+    console.log(`  ${kindIcon(s.kind)} ${s.name}${sig}${roleTag} :${s.line}`);
+    if (s.consumers.length > 0) {
+      for (const c of s.consumers) {
+        console.log(`    <- ${c.name}  ${c.file}:${c.line}`);
+      }
+    } else {
+      console.log('    (no consumers)');
+    }
+  }
+
+  if (data.reexports.length > 0) {
+    console.log(`\n  Re-exports: ${data.reexports.map((r) => r.file).join(', ')}`);
+  }
+  console.log();
+}
