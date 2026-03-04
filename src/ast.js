@@ -165,13 +165,12 @@ export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
     }
   });
 
-  let totalInserted = 0;
+  const allRows = [];
 
   for (const [relPath, symbols] of fileSymbols) {
-    const rows = [];
     const defs = symbols.definitions || [];
 
-    // Pre-load all node IDs for this file into a map
+    // Pre-load all node IDs for this file into a map (read-only, fast)
     const nodeIdMap = new Map();
     for (const row of bulkGetNodeIds.all(relPath)) {
       nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
@@ -186,7 +185,7 @@ export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
           parentNodeId =
             nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
         }
-        rows.push({
+        allRows.push({
           file: relPath,
           line: call.line,
           kind: 'call',
@@ -205,7 +204,7 @@ export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
         // WASM path: walk the tree-sitter AST
         const astRows = [];
         walkAst(symbols._tree.rootNode, defs, relPath, astRows, nodeIdMap);
-        rows.push(...astRows);
+        allRows.push(...astRows);
       } else if (symbols.astNodes?.length) {
         // Native path: use pre-extracted AST nodes from Rust
         for (const n of symbols.astNodes) {
@@ -215,7 +214,7 @@ export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
             parentNodeId =
               nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
           }
-          rows.push({
+          allRows.push({
             file: relPath,
             line: n.line,
             kind: n.kind,
@@ -227,14 +226,13 @@ export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
         }
       }
     }
-
-    if (rows.length > 0) {
-      tx(rows);
-      totalInserted += rows.length;
-    }
   }
 
-  debug(`AST extraction: ${totalInserted} nodes stored`);
+  if (allRows.length > 0) {
+    tx(allRows);
+  }
+
+  debug(`AST extraction: ${allRows.length} nodes stored`);
 }
 
 /**
