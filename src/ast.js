@@ -197,33 +197,33 @@ export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
       }
     }
 
-    // 2. AST walk for JS/TS/TSX — extract new, throw, await, string, regex
-    const ext = path.extname(relPath).toLowerCase();
-    if (WALK_EXTENSIONS.has(ext)) {
-      if (symbols._tree) {
-        // WASM path: walk the tree-sitter AST
+    // 2. Non-call AST nodes (new, throw, await, string, regex)
+    if (symbols.astNodes?.length) {
+      // Native path: use pre-extracted AST nodes from Rust (all languages)
+      for (const n of symbols.astNodes) {
+        const parentDef = findParentDef(defs, n.line);
+        let parentNodeId = null;
+        if (parentDef) {
+          parentNodeId =
+            nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
+        }
+        allRows.push({
+          file: relPath,
+          line: n.line,
+          kind: n.kind,
+          name: n.name,
+          text: n.text || null,
+          receiver: n.receiver || null,
+          parentNodeId,
+        });
+      }
+    } else {
+      // WASM fallback: walk the tree-sitter AST (JS/TS/TSX only)
+      const ext = path.extname(relPath).toLowerCase();
+      if (WALK_EXTENSIONS.has(ext) && symbols._tree) {
         const astRows = [];
         walkAst(symbols._tree.rootNode, defs, relPath, astRows, nodeIdMap);
         allRows.push(...astRows);
-      } else if (symbols.astNodes?.length) {
-        // Native path: use pre-extracted AST nodes from Rust
-        for (const n of symbols.astNodes) {
-          const parentDef = findParentDef(defs, n.line);
-          let parentNodeId = null;
-          if (parentDef) {
-            parentNodeId =
-              nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
-          }
-          allRows.push({
-            file: relPath,
-            line: n.line,
-            kind: n.kind,
-            name: n.name,
-            text: n.text || null,
-            receiver: n.receiver || null,
-            parentNodeId,
-          });
-        }
       }
     }
   }
