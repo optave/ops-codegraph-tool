@@ -282,17 +282,19 @@ All exports verified present and correct type:
 
 ## 9. Suggestions for Improvement
 
-### 9.1 Add `--json` flag to `search` command
+### 9.1 Add `--json` flag to `search` command — RESOLVED in v2.4.0
 The `search` command lacks `--json` output. Every other query command supports it, so this inconsistency is surprising for programmatic users.
 
-### 9.2 Vitest should exclude worktree directories
+### 9.2 Vitest should exclude worktree directories — RESOLVED in v2.4.0
 `npm test` picks up test files from `.claude/worktrees/`, causing failures in worktree copies that lack WASM grammars. The vitest config should exclude `.claude/**` from test discovery.
 
-### 9.3 `search --file` should support glob patterns
+### 9.3 `search --file` should support glob patterns — RESOLVED in v2.4.0
 `search --file "src/*.js"` returned 0 results while `search --file "builder"` worked. The `--file` flag is substring-only, but glob patterns would be more intuitive and consistent with other tools.
 
-### 9.4 Consider adding `--exclude-worktrees` or similar to `registry prune`
+### 9.4 Consider adding `--exclude-worktrees` or similar to `registry prune` — RESOLVED in v2.4.0 / v2.5.1
 `registry prune --ttl 0` removes all entries including the main project, which can be surprising. A flag to preserve specific entries would help.
+
+> `--exclude` flag added in v2.4.0; `--dry-run` flag added in v2.5.1.
 
 ---
 
@@ -367,6 +369,6 @@ Positives:
 
 | Type | Number | Title | Status |
 |------|--------|-------|--------|
-| Issue | [#77](https://github.com/optave/codegraph/issues/77) | bug: cycles, export, embed crash without graph.db | Open — fix in PR #79 |
-| Issue | [#78](https://github.com/optave/codegraph/issues/78) | bug: package.json not in exports map | Open — fix in PR #79 |
-| PR | [#79](https://github.com/optave/codegraph/pull/79) | fix(cli): graceful error for cycles, export, embed when no graph.db exists | Open |
+| Issue | [#77](https://github.com/optave/codegraph/issues/77) | bug: cycles, export, embed crash without graph.db | Closed — fixed in v2.3.0 |
+| Issue | [#78](https://github.com/optave/codegraph/issues/78) | bug: package.json not in exports map | Closed — fixed in v2.3.0 |
+| PR | [#79](https://github.com/optave/codegraph/pull/79) | fix(cli): graceful error for cycles, export, embed when no graph.db exists | Merged |

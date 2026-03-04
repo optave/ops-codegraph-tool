@@ -316,8 +316,10 @@ The initial dogfood run flagged `branch-compare` as a missing-implementation bug
 
 ## 10. Suggestions for Improvement
 
-### 10.1 Guard against missing module imports in index.js
+### 10.1 Guard against missing module imports in index.js — RESOLVED in v2.5.1
 Add a CI check or test that validates all re-exports in `index.js` resolve to existing files. A simple `node --input-type=module -e "import('./src/index.js')"` in CI would catch missing modules before release. (The branch-compare issue was a lost stash, not a missing implementation, but the guard is still valuable.)
+
+> v2.5.1 added `index-exports` unit test that validates all re-exports in index.js resolve without `ERR_MODULE_NOT_FOUND`.
 
 ### 10.2 ~~Native complexity performance~~ (resolved)
 ~~Native complexity computation appeared slower than WASM.~~ This was caused by running benchmarks with a stale v2.4.0 native binary. With the correct v2.5.0 binary, native complexity is 47x faster (5.1ms vs 240.7ms) since Rust computes all metrics during parsing and the complexity phase is just DB inserts.
@@ -325,8 +327,10 @@ Add a CI check or test that validates all re-exports in `index.js` resolve to ex
 ### 10.3 Add a `--full` flag documentation hint to structure
 The structure command shows "N files omitted. Use --full to show all files" but `--full` is not listed in `--help`. Consider adding it to the help text.
 
-### 10.4 Registry prune UX
+### 10.4 Registry prune UX — RESOLVED in v2.5.1
 `registry prune --ttl 0` removes ALL entries including actively-used repos. Consider adding a `--dry-run` flag or confirmation prompt for aggressive TTL values.
+
+> v2.5.1 added `--dry-run` flag to `registry prune` — preview what would be removed without deleting entries.
 
 ---
 
@@ -390,5 +394,5 @@ All 28 commands work correctly in both cold-start and post-build scenarios. Edge
 
 | Type | Number | Title | Status |
 |------|--------|-------|--------|
-| Issue | [#166](https://github.com/optave/codegraph/issues/166) | bug: branch-compare command and programmatic API crash — missing branch-compare.js | resolved (recovered from stash) |
-| PR | (pending push) | fix: recover branch-compare implementation from lost stash | open |
+| Issue | [#166](https://github.com/optave/codegraph/issues/166) | bug: branch-compare command and programmatic API crash — missing branch-compare.js | Closed — fixed in v2.5.1 |
+| PR | [v2.5.1](https://github.com/optave/codegraph/releases/tag/v2.5.1) | fix: recover branch-compare implementation from lost stash | Merged |

@@ -281,31 +281,35 @@ Changes since v2.6.0 (12 non-doc commits):
 
 ## 9. Bugs Found
 
-### BUG 1: Forward-slash paths on Windows cause empty build (Medium)
+### BUG 1: Forward-slash paths on Windows cause empty build (Medium) — RESOLVED in v3.0.0
 - **Issue:** [#287](https://github.com/optave/codegraph/issues/287)
 - **Symptoms:** `codegraph build H:/path/to/repo` finds 0 files and creates graph.db in CWD instead of target repo. Backslash paths work correctly.
 - **Root cause:** Native engine doesn't normalize forward-slash POSIX-style paths on Windows.
-- **PR:** Not yet fixed — needs investigation in native engine path handling.
+- **PR:** [#293](https://github.com/optave/codegraph/pull/293) — fix: resolve three build bugs in builder.js (#287, #288, #289)
 
-### BUG 2: `--cfg` flag skipped on incremental no-op (Medium)
+### BUG 2: `--cfg` flag skipped on incremental no-op (Medium) — RESOLVED in v3.0.0
 - **Issue:** [#288](https://github.com/optave/codegraph/issues/288)
 - **Symptoms:** Running `build . --cfg` when no files changed produces no CFG data. All `cfg` queries return 0 blocks/edges. Requires `--no-incremental` to build CFG for the first time.
 - **Root cause:** Incremental build short-circuits before CFG computation when no file changes detected.
-- **PR:** Not yet fixed.
+- **PR:** [#293](https://github.com/optave/codegraph/pull/293) — fix: resolve three build bugs in builder.js (#287, #288, #289)
 
-### BUG 3: Incremental divergence warning false positive (Low)
+### BUG 3: Incremental divergence warning false positive (Low) — RESOLVED in v3.0.0
 - **Issue:** [#289](https://github.com/optave/codegraph/issues/289)
 - **Symptoms:** On every incremental rebuild (even 1 file change), warning shows "edges: 1936→792 [59.1%]" — comparing full previous count with per-batch count, not DB totals.
 - **Root cause:** Divergence check compares previous build's total with current batch's count.
-- **PR:** Not yet fixed.
+- **PR:** [#293](https://github.com/optave/codegraph/pull/293) — fix: resolve three build bugs in builder.js (#287, #288, #289)
 
 ## 10. Suggestions for Improvement
 
-### 10.1 Add `hotspots` as a CLI command
+### 10.1 Add `hotspots` as a CLI command — SUPERSEDED in v3.0.0
 Currently `hotspots` is only available as an MCP tool but not as a CLI command. The dogfood skill references it as a command to test, and users would expect it alongside `roles`, `triage`, etc.
 
-### 10.2 Auto-detect version changes for full rebuild
+> v3.0.0 consolidated `hotspots` into `triage --level` — the standalone command was intentionally removed.
+
+### 10.2 Auto-detect version changes for full rebuild — RESOLVED in v3.0.0
 When the build metadata version doesn't match the current CLI version, suggest or automatically trigger a full rebuild. The `info` command already shows this warning but `build` doesn't act on it.
+
+> v3.0.0 added `auto-promote full rebuild` feature (#294) — when build metadata version mismatches, automatically promotes to a full rebuild.
 
 ### 10.3 Extend native engine with parameter/property/constant support
 The native engine doesn't extract parameter, property, or constant nodes. While core function/method/class parity is perfect, these extended types are useful for the `children` command and containment analysis.
@@ -364,6 +368,6 @@ The three bugs found are all usability issues (not data corruption or crashes):
 
 | Type | Number | Title | Status |
 |------|--------|-------|--------|
-| Issue | [#287](https://github.com/optave/codegraph/issues/287) | bug(build): forward-slash paths on Windows cause 0 files parsed | open |
-| Issue | [#288](https://github.com/optave/codegraph/issues/288) | bug(build): --cfg flag skipped on incremental no-op | open |
-| Issue | [#289](https://github.com/optave/codegraph/issues/289) | bug(build): incremental divergence warning compares per-batch edges vs total | open |
+| Issue | [#287](https://github.com/optave/codegraph/issues/287) | bug(build): forward-slash paths on Windows cause 0 files parsed | Closed — fixed in v3.0.0 (#293) |
+| Issue | [#288](https://github.com/optave/codegraph/issues/288) | bug(build): --cfg flag skipped on incremental no-op | Closed — fixed in v3.0.0 (#293) |
+| Issue | [#289](https://github.com/optave/codegraph/issues/289) | bug(build): incremental divergence warning compares per-batch edges vs total | Closed — fixed in v3.0.0 (#293) |

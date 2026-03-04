@@ -342,8 +342,10 @@ Appended `// test comment` to `src/logger.js`:
 ### 9.3 ~~Incremental rebuild needs reverse-dep edge cascade~~ — DONE
 ~~The most impactful fix would be making incremental rebuilds re-resolve edges for files that import changed files.~~ Implemented at `builder.js:444` — reverse-dependency cascade detects files that import changed files and re-resolves their outgoing edges, fixing Bug #4.
 
-### 9.4 Update notification testing — Open (low priority)
+### 9.4 Update notification testing — RESOLVED in v2.5.0
 The update notification feature was not observable during testing. Consider adding a `--check-update` flag for manual testing, or document when the notification appears.
+
+> v2.5.0 moved dev builds to GitHub pre-releases, resolving false-positive notification issues. The notification works correctly on stable npm releases.
 
 ---
 

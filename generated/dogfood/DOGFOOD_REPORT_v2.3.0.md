@@ -314,7 +314,7 @@ MCP initializes via JSON-RPC, responds to `tools/list`, correct tool schemas.
 - **Root cause:** `buildStructure()` unconditionally clears ALL `contains` edges and directory nodes (`DELETE FROM edges WHERE kind = 'contains'`), then only rebuilds for files in `fileSymbols` — which during incremental builds only contains changed files.
 - **Fix applied:** Before calling `buildStructure`, load all existing file nodes from the DB into `fileSymbols` and `lineCountMap` so the complete file set is available for structure rebuild. 37 lines added to `builder.js`. All 491 tests pass.
 
-### Enhancement: `search` command missing `--json` flag (Low)
+### Enhancement: `search` command missing `--json` flag (Low) — RESOLVED in v2.4.0
 - **Issue:** [#90](https://github.com/optave/codegraph/issues/90)
 - **PR:** N/A — enhancement, not a bug fix
 - **Description:** All other query commands support `-j/--json` but `search` does not. Running `search -j` returns "unknown option '-j'".
@@ -323,19 +323,25 @@ MCP initializes via JSON-RPC, responds to `tools/list`, correct tool schemas.
 
 ## 9. Suggestions for Improvement
 
-### 9.1 Add `--json` to `search` command
+### 9.1 Add `--json` to `search` command — RESOLVED in v2.4.0
 Every other query command supports JSON output. `search` is the only holdout, which breaks automation workflows.
 
-### 9.2 Document `excludeTests` config nesting
+### 9.2 Document `excludeTests` config nesting — RESOLVED in v2.5.0
 The CHANGELOG and CLI help say "excludeTests config option" but don't mention it must be nested under `query`. A top-level `{ "excludeTests": true }` silently does nothing. Either:
 - Document as `query.excludeTests` in the README/CHANGELOG
 - Or accept it at both top-level and nested
 
-### 9.3 Warn on engine mismatch during incremental builds
+> v2.5.0 added `excludeTests` as a top-level config shorthand via `build.excludeTests`.
+
+### 9.3 Warn on engine mismatch during incremental builds — RESOLVED in v2.6.0
 Store the engine used for the last full build in DB metadata. When an incremental build uses a different engine, warn the user and suggest `--no-incremental`.
 
-### 9.4 Add `--no-incremental` recommendation after version upgrades
+> v2.5.0 added build metadata tracking; v2.6.0 added drift detection warnings.
+
+### 9.4 Add `--no-incremental` recommendation after version upgrades — RESOLVED in v2.6.0
 When `codegraph info` detects the installed version differs from the version that built the graph, suggest a full rebuild.
+
+> v2.6.0 drift detection warns when counts diverge >20% and suggests `--no-incremental`.
 
 ---
 
@@ -409,6 +415,6 @@ Deductions:
 
 | Type | Number | Title | Status |
 |------|--------|-------|--------|
-| Issue | [#89](https://github.com/optave/codegraph/issues/89) | bug: mixed-engine incremental build corrupts structure/contains edges | open |
-| Issue | [#90](https://github.com/optave/codegraph/issues/90) | enhancement: add --json flag to search command | open |
-| PR | [#91](https://github.com/optave/codegraph/pull/91) | fix(builder): preserve structure data during incremental builds | open |
+| Issue | [#89](https://github.com/optave/codegraph/issues/89) | bug: mixed-engine incremental build corrupts structure/contains edges | Closed — fixed in v2.4.0 |
+| Issue | [#90](https://github.com/optave/codegraph/issues/90) | enhancement: add --json flag to search command | Closed — resolved in v2.4.0 |
+| PR | [#91](https://github.com/optave/codegraph/pull/91) | fix(builder): preserve structure data during incremental builds | Merged |

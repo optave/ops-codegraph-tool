@@ -257,8 +257,10 @@ All 4 benchmark scripts crash if WASM grammars aren't built. They should either:
 - Fall back to native-only benchmarking
 - Or print a helpful error message instead of crashing
 
-### 9.4 `flow --list` should work after build
+### 9.4 `flow --list` should work after build — RESOLVED post-v3.0.0
 `flow --list` returns "No entry points found" after a standard build. Entry point classification happens during build (50 entry points detected in roles), but `flow --list` doesn't find them. These may need to be stored explicitly.
+
+> Fixed in commit `6681597` — `flow --list` now includes role-based entry points from the roles classification.
 
 ---
 

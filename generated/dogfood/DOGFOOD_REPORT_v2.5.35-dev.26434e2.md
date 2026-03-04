@@ -286,26 +286,32 @@ This dev build includes all v2.6.0 features.
 
 ## 8. Bugs Found
 
-### BUG 1: EISDIR warning during incremental rebuild (Medium)
+### BUG 1: EISDIR warning during incremental rebuild (Medium) — RESOLVED in v2.6.0
 - **Issue:** [#235](https://github.com/optave/codegraph/issues/235)
-- **PR:** Open — not fixed in this session
+- **PR:** [#241](https://github.com/optave/codegraph/pull/241)
 - **Symptoms:** `[codegraph WARN] Skipping src: EISDIR: illegal operation on a directory, read` during incremental rebuild after modifying a single source file
 - **Root cause:** The `src` directory node leaks into the re-parse file set during reverse-dep computation
 - **Impact:** Cosmetic warning; the directory is skipped and build completes. One fewer file is parsed than expected.
 
-### BUG 2: Incremental rebuild edge count mismatch (High)
+> Fixed in v2.6.0: filter directory nodes from reverse-deps query to prevent EISDIR on incremental rebuilds.
+
+### BUG 2: Incremental rebuild edge count mismatch (High) — RESOLVED in v2.6.0
 - **Issue:** [#236](https://github.com/optave/codegraph/issues/236)
-- **PR:** Open — needs investigation
+- **PR:** [#241](https://github.com/optave/codegraph/pull/241)
 - **Symptoms:** After a 1-file incremental rebuild, `stats` reports a different edge count than a full rebuild of the same codebase. Full build: 1671 edges. Incremental: varies (676 in one test, 2660 in another)
 - **Root cause:** The incremental path re-parses only changed files + reverse-deps. Edge cleanup/insertion may not preserve edges from unchanged files correctly.
 - **Impact:** Queries after incremental rebuilds may return incomplete results.
 
-### BUG 3: Dev build native binary tarball install fails via npm (Medium)
+> Fixed in v2.6.0: load unchanged barrel files into reexportMap, add drift detection, barrel-project fixture and incremental-parity test.
+
+### BUG 3: Dev build native binary tarball install fails via npm (Medium) — RESOLVED in v2.6.0
 - **Issue:** [#237](https://github.com/optave/codegraph/issues/237)
-- **PR:** Open — needs investigation
+- **PR:** [#241](https://github.com/optave/codegraph/pull/241)
 - **Symptoms:** `npm install <tarball-url>` fails with `TypeError: Invalid Version:` in npm's arborist
 - **Root cause:** npm's semver parser may not handle the `2.5.35-dev.26434e2` version format during deduplication
 - **Impact:** Dev build users must manually extract the native binary tarball
+
+> Fixed in v2.6.0: `--strip` flag in `sync-native-versions.js` removes platform optionalDependencies in dev builds.
 
 ### MINOR: Native addon version string is `0.1.0`
 - Not filed as issue — cosmetic. The Rust addon's internal version string hasn't been updated to match the package version. `codegraph info` shows `Native version: 0.1.0`.
@@ -314,17 +320,23 @@ This dev build includes all v2.6.0 features.
 
 ## 9. Suggestions for Improvement
 
-### 9.1 Incremental rebuild verification
+### 9.1 Incremental rebuild verification — RESOLVED in v2.6.0
 Add an assertion or warning in the build process that compares the post-incremental edge/node count against the previous full-build count. If they diverge significantly, suggest `--no-incremental`.
+
+> v2.6.0 added node/edge count drift detection after incremental builds — warns when counts drift >20% and suggests `--no-incremental`. Threshold is configurable via `build.driftThreshold`.
 
 ### 9.2 Embedding benchmark should declare `@huggingface/transformers` as a devDependency
 The embedding benchmark script fails because `@huggingface/transformers` is an optional dep that doesn't auto-install. Consider making it a devDependency so benchmark scripts work out of the box.
 
-### 9.3 `complexity` should warn when data is missing
+### 9.3 `complexity` should warn when data is missing — RESOLVED in v2.6.0
 When `complexity` returns "No complexity data found" but a graph exists, it should suggest `build --no-incremental` to populate the data, rather than implying no graph exists.
 
-### 9.4 Dev build install documentation
+> v2.6.0 improved the missing-data message — now suggests `--no-incremental` rebuild instead of implying no graph exists.
+
+### 9.4 Dev build install documentation — RESOLVED in v2.6.0
 The SKILL.md documents the manual tarball installation, but a note in the README or release notes about the `npm install <url>` failure would help users.
+
+> v2.6.0 fixed the underlying `npm install` failure with `--strip` flag in `sync-native-versions.js`, making manual extraction unnecessary.
 
 ---
 
@@ -392,9 +404,9 @@ The incremental edge count bug (#236) is the most impactful finding and should b
 
 | Type | Number | Title | Status |
 |------|--------|-------|--------|
-| Issue | [#235](https://github.com/optave/codegraph/issues/235) | bug: EISDIR warning during incremental rebuild | open |
-| Issue | [#236](https://github.com/optave/codegraph/issues/236) | bug: incremental rebuild produces different edge count than full rebuild | open |
-| Issue | [#237](https://github.com/optave/codegraph/issues/237) | bug: dev build native binary tarball cannot be installed via npm | open |
+| Issue | [#235](https://github.com/optave/codegraph/issues/235) | bug: EISDIR warning during incremental rebuild | Closed — fixed in v2.6.0 |
+| Issue | [#236](https://github.com/optave/codegraph/issues/236) | bug: incremental rebuild produces different edge count than full rebuild | Closed — fixed in v2.6.0 |
+| Issue | [#237](https://github.com/optave/codegraph/issues/237) | bug: dev build native binary tarball cannot be installed via npm | Closed — fixed in v2.6.0 |
 
 ## 13. Performance Benchmarks
 

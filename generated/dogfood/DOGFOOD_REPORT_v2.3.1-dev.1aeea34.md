@@ -347,14 +347,18 @@ The `roles --role dead` crash observed earlier was caused by querying a stale DB
 
 ## 10. Suggestions for Improvement
 
-### 10.1 Add --db flag to embed and search
+### 10.1 Add --db flag to embed and search — RESOLVED in v2.5.0
 The `embed` and `search` commands lack a `--db <path>` option, unlike most other query commands. This makes them harder to use from external directories. Users must `cd` into the repo or use `npx --prefix`.
+
+> `embed` gained `-d, --db <path>` in v2.5.0.
 
 ### 10.2 Warn on concurrent DB access
 The shared graph.db can cause FK constraint failures when concurrent sessions build/embed simultaneously. Consider adding advisory file locking or a warning when another process holds the DB.
 
-### 10.3 Update notification for dev versions
+### 10.3 Update notification for dev versions — RESOLVED in v2.5.0
 The update notification feature (`update-check.js`) should suppress notifications for dev/prerelease versions to avoid false positives.
+
+> v2.5.0 moved dev builds to GitHub pre-releases instead of npm, sidestepping the notification issue.
 
 ### 10.4 Consistent file counts across builds
 File counts fluctuated slightly (99-106) across builds due to concurrent repo modifications. While not a bug, logging which files were added/removed between builds would help diagnose discrepancies.
