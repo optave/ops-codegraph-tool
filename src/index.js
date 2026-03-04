@@ -123,7 +123,7 @@ export { matchOwners, owners, ownersData, ownersForFiles, parseCodeowners } from
 export { MCP_DEFAULTS, MCP_MAX_LIMIT, paginate, paginateResult, printNdjson } from './paginate.js';
 
 // Unified parser API
-export { getActiveEngine, parseFileAuto, parseFilesAuto } from './parser.js';
+export { getActiveEngine, isWasmAvailable, parseFileAuto, parseFilesAuto } from './parser.js';
 // Query functions (data-returning)
 export {
   ALL_SYMBOL_KINDS,

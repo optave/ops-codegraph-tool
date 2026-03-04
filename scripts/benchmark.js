@@ -31,6 +31,9 @@ const { fnDepsData, fnImpactData, pathData, rolesData, statsData } = await impor
 const { isNativeAvailable } = await import(
 	srcImport(srcDir, 'native.js')
 );
+const { isWasmAvailable } = await import(
+	srcImport(srcDir, 'parser.js')
+);
 
 const INCREMENTAL_RUNS = 3;
 const QUERY_RUNS = 5;
@@ -160,10 +163,24 @@ async function benchmarkEngine(engine) {
 }
 
 // ── Run benchmarks ───────────────────────────────────────────────────────
-const wasm = await benchmarkEngine('wasm');
+const hasWasm = isWasmAvailable();
+const hasNative = isNativeAvailable();
+
+if (!hasWasm && !hasNative) {
+	console.error('Error: Neither WASM grammars nor native engine are available.');
+	console.error('Run "npm run build:wasm" to build WASM grammars, or install the native platform package.');
+	process.exit(1);
+}
+
+let wasm = null;
+if (hasWasm) {
+	wasm = await benchmarkEngine('wasm');
+} else {
+	console.error('WASM grammars not built — skipping WASM benchmark');
+}
 
 let native = null;
-if (isNativeAvailable()) {
+if (hasNative) {
 	native = await benchmarkEngine('native');
 } else {
 	console.error('Native engine not available — skipping native benchmark');
@@ -172,22 +189,25 @@ if (isNativeAvailable()) {
 // Restore console.log for JSON output
 console.log = origLog;
 
+const primary = wasm || native;
 const result = {
 	version,
 	date: new Date().toISOString().slice(0, 10),
-	files: wasm.files,
-	wasm: {
-		buildTimeMs: wasm.buildTimeMs,
-		queryTimeMs: wasm.queryTimeMs,
-		nodes: wasm.nodes,
-		edges: wasm.edges,
-		dbSizeBytes: wasm.dbSizeBytes,
-		perFile: wasm.perFile,
-		noopRebuildMs: wasm.noopRebuildMs,
-		oneFileRebuildMs: wasm.oneFileRebuildMs,
-		queries: wasm.queries,
-		phases: wasm.phases,
-	},
+	files: primary.files,
+	wasm: wasm
+		? {
+				buildTimeMs: wasm.buildTimeMs,
+				queryTimeMs: wasm.queryTimeMs,
+				nodes: wasm.nodes,
+				edges: wasm.edges,
+				dbSizeBytes: wasm.dbSizeBytes,
+				perFile: wasm.perFile,
+				noopRebuildMs: wasm.noopRebuildMs,
+				oneFileRebuildMs: wasm.oneFileRebuildMs,
+				queries: wasm.queries,
+				phases: wasm.phases,
+			}
+		: null,
 	native: native
 		? {
 				buildTimeMs: native.buildTimeMs,

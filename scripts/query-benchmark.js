@@ -32,6 +32,9 @@ const { fnDepsData, fnImpactData, diffImpactData, statsData } = await import(
 const { isNativeAvailable } = await import(
 	srcImport(srcDir, 'native.js')
 );
+const { isWasmAvailable } = await import(
+	srcImport(srcDir, 'parser.js')
+);
 
 // Redirect console.log to stderr so only JSON goes to stdout
 const origLog = console.log;
@@ -155,20 +158,36 @@ function benchmarkQueries(targets) {
 }
 
 // ── Run benchmarks ───────────────────────────────────────────────────────
+const hasWasm = isWasmAvailable();
+const hasNative = isNativeAvailable();
 
-// Build with WASM engine
-if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
-await buildGraph(root, { engine: 'wasm', incremental: false });
+if (!hasWasm && !hasNative) {
+	console.error('Error: Neither WASM grammars nor native engine are available.');
+	console.error('Run "npm run build:wasm" to build WASM grammars, or install the native platform package.');
+	process.exit(1);
+}
 
-const targets = selectTargets();
-console.error(`Targets: hub=${targets.hub}, mid=${targets.mid}, leaf=${targets.leaf}`);
+let wasm = null;
+if (hasWasm) {
+	if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+	await buildGraph(root, { engine: 'wasm', incremental: false });
 
-const wasm = benchmarkQueries(targets);
+	const targets = selectTargets();
+	console.error(`Targets: hub=${targets.hub}, mid=${targets.mid}, leaf=${targets.leaf}`);
+	wasm = benchmarkQueries(targets);
+} else {
+	console.error('WASM grammars not built — skipping WASM benchmark');
+}
 
 let native = null;
-if (isNativeAvailable()) {
+if (hasNative) {
 	if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
 	await buildGraph(root, { engine: 'native', incremental: false });
+
+	const targets = selectTargets();
+	if (!hasWasm) {
+		console.error(`Targets: hub=${targets.hub}, mid=${targets.mid}, leaf=${targets.leaf}`);
+	}
 	native = benchmarkQueries(targets);
 } else {
 	console.error('Native engine not available — skipping native benchmark');
@@ -180,12 +199,14 @@ console.log = origLog;
 const result = {
 	version,
 	date: new Date().toISOString().slice(0, 10),
-	wasm: {
-		targets: wasm.targets,
-		fnDeps: wasm.fnDeps,
-		fnImpact: wasm.fnImpact,
-		diffImpact: wasm.diffImpact,
-	},
+	wasm: wasm
+		? {
+				targets: wasm.targets,
+				fnDeps: wasm.fnDeps,
+				fnImpact: wasm.fnImpact,
+				diffImpact: wasm.diffImpact,
+			}
+		: null,
 	native: native
 		? {
 				targets: native.targets,

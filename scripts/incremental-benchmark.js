@@ -30,6 +30,9 @@ const { resolveImportPath, resolveImportsBatch, resolveImportPathJS } = await im
 const { isNativeAvailable } = await import(
 	srcImport(srcDir, 'native.js')
 );
+const { isWasmAvailable } = await import(
+	srcImport(srcDir, 'parser.js')
+);
 
 // Redirect console.log to stderr so only JSON goes to stdout
 const origLog = console.log;
@@ -154,23 +157,36 @@ function benchmarkResolve(inputs) {
 }
 
 // ── Run benchmarks ───────────────────────────────────────────────────────
+const hasWasm = isWasmAvailable();
+const hasNative = isNativeAvailable();
 
-console.error('Benchmarking WASM engine...');
-const wasm = await benchmarkBuildTiers('wasm');
-console.error(`  full=${wasm.fullBuildMs}ms noop=${wasm.noopRebuildMs}ms 1-file=${wasm.oneFileRebuildMs}ms`);
+if (!hasWasm && !hasNative) {
+	console.error('Error: Neither WASM grammars nor native engine are available.');
+	console.error('Run "npm run build:wasm" to build WASM grammars, or install the native platform package.');
+	process.exit(1);
+}
 
-// Get file count from the WASM-built graph
-const stats = statsData(dbPath);
-const files = stats.files.total;
+let wasm = null;
+if (hasWasm) {
+	console.error('Benchmarking WASM engine...');
+	wasm = await benchmarkBuildTiers('wasm');
+	console.error(`  full=${wasm.fullBuildMs}ms noop=${wasm.noopRebuildMs}ms 1-file=${wasm.oneFileRebuildMs}ms`);
+} else {
+	console.error('WASM grammars not built — skipping WASM benchmark');
+}
 
 let native = null;
-if (isNativeAvailable()) {
+if (hasNative) {
 	console.error('Benchmarking native engine...');
 	native = await benchmarkBuildTiers('native');
 	console.error(`  full=${native.fullBuildMs}ms noop=${native.noopRebuildMs}ms 1-file=${native.oneFileRebuildMs}ms`);
 } else {
 	console.error('Native engine not available — skipping native build benchmark');
 }
+
+// Get file count from whichever graph was built last
+const stats = statsData(dbPath);
+const files = stats.files.total;
 
 // Import resolution benchmark (uses existing graph)
 console.error('Benchmarking import resolution...');
@@ -186,11 +202,13 @@ const result = {
 	version,
 	date: new Date().toISOString().slice(0, 10),
 	files,
-	wasm: {
-		fullBuildMs: wasm.fullBuildMs,
-		noopRebuildMs: wasm.noopRebuildMs,
-		oneFileRebuildMs: wasm.oneFileRebuildMs,
-	},
+	wasm: wasm
+		? {
+				fullBuildMs: wasm.fullBuildMs,
+				noopRebuildMs: wasm.noopRebuildMs,
+				oneFileRebuildMs: wasm.oneFileRebuildMs,
+			}
+		: null,
 	native: native
 		? {
 				fullBuildMs: native.fullBuildMs,
