@@ -248,10 +248,12 @@ Build: `npx codegraph build <repo> --no-incremental --verbose`
 
 ## 9. Suggestions for Improvement
 
-### 9.1 Default `--cfg` and `--dataflow` on full rebuilds
+### 9.1 Default `--cfg` and `--dataflow` on full rebuilds — RESOLVED post-v3.0.0
 Currently these are opt-in flags. Users discovering the `cfg` and `dataflow` commands will get empty results unless they know to rebuild with flags. Consider either:
 - Making them default (with `--no-cfg`/`--no-dataflow` to opt out)
 - Or showing a more prominent hint in the `cfg`/`dataflow` commands
+
+> Fixed in #312 — `--cfg` and `--dataflow` are now enabled by default on full rebuilds.
 
 ### 9.2 Document AST node kind limitations per engine — RESOLVED post-v3.0.0
 The `ast` command help should note that non-call kinds require the WASM engine, or the native engine should be extended for parity.
