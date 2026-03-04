@@ -6,7 +6,7 @@
  *   - returns:   a call's return value is captured and used in the caller
  *   - mutates:   a parameter-derived value is mutated (e.g. arr.push())
  *
- * Opt-in via `build --dataflow`. JS/TS only for MVP.
+ * Opt-in via `build --dataflow`. Supports all languages with DATAFLOW_RULES.
  */
 
 import fs from 'node:fs';
@@ -14,10 +14,91 @@ import path from 'node:path';
 import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
+import { LANGUAGE_REGISTRY } from './parser.js';
 import { ALL_SYMBOL_KINDS, isTestFile, normalizeSymbol } from './queries.js';
 
-// Methods that mutate their receiver in-place
-const MUTATING_METHODS = new Set([
+// ─── Language-Specific Dataflow Rules ────────────────────────────────────
+
+const DATAFLOW_DEFAULTS = {
+  // Scope entry
+  functionNodes: new Set(), // REQUIRED: non-empty
+
+  // Function name extraction
+  nameField: 'name',
+  varAssignedFnParent: null, // parent type for `const fn = ...` (JS only)
+  assignmentFnParent: null, // parent type for `x = function...` (JS only)
+  pairFnParent: null, // parent type for `{ key: function }` (JS only)
+
+  // Parameters
+  paramListField: 'parameters',
+  paramIdentifier: 'identifier',
+  paramWrapperTypes: new Set(),
+  defaultParamType: null,
+  restParamType: null,
+  objectDestructType: null,
+  arrayDestructType: null,
+  shorthandPropPattern: null,
+  pairPatternType: null,
+  extractParamName: null, // override: (node) => string[]
+
+  // Return
+  returnNode: null,
+
+  // Variable declarations
+  varDeclaratorNode: null,
+  varDeclaratorNodes: null,
+  varNameField: 'name',
+  varValueField: 'value',
+  assignmentNode: null,
+  assignLeftField: 'left',
+  assignRightField: 'right',
+
+  // Calls
+  callNode: null,
+  callNodes: null,
+  callFunctionField: 'function',
+  callArgsField: 'arguments',
+  spreadType: null,
+
+  // Member access
+  memberNode: null,
+  memberObjectField: 'object',
+  memberPropertyField: 'property',
+  optionalChainNode: null,
+
+  // Await
+  awaitNode: null,
+
+  // Mutation
+  mutatingMethods: new Set(),
+  expressionStmtNode: 'expression_statement',
+  callObjectField: null, // Java: combined call+member has [object] field on call node
+
+  // Structural wrappers
+  expressionListType: null, // Go: expression_list wraps LHS/RHS of short_var_declaration
+  equalsClauseType: null, // C#: equals_value_clause wraps variable initializer
+  argumentWrapperType: null, // PHP: individual args wrapped in 'argument' nodes
+  extraIdentifierTypes: null, // Set of additional identifier-like types (PHP: variable_name, name)
+};
+
+const DATAFLOW_RULE_KEYS = new Set(Object.keys(DATAFLOW_DEFAULTS));
+
+export function makeDataflowRules(overrides) {
+  for (const key of Object.keys(overrides)) {
+    if (!DATAFLOW_RULE_KEYS.has(key)) {
+      throw new Error(`Dataflow rules: unknown key "${key}"`);
+    }
+  }
+  const rules = { ...DATAFLOW_DEFAULTS, ...overrides };
+  if (!(rules.functionNodes instanceof Set) || rules.functionNodes.size === 0) {
+    throw new Error('Dataflow rules: functionNodes must be a non-empty Set');
+  }
+  return rules;
+}
+
+// ── JS / TS / TSX ────────────────────────────────────────────────────────
+
+const JS_TS_MUTATING = new Set([
   'push',
   'pop',
   'shift',
@@ -32,8 +113,325 @@ const MUTATING_METHODS = new Set([
   'clear',
 ]);
 
-// JS/TS language IDs that support dataflow extraction
-const DATAFLOW_LANG_IDS = new Set(['javascript', 'typescript', 'tsx']);
+const JS_TS_DATAFLOW = makeDataflowRules({
+  functionNodes: new Set([
+    'function_declaration',
+    'method_definition',
+    'arrow_function',
+    'function_expression',
+    'function',
+  ]),
+  varAssignedFnParent: 'variable_declarator',
+  assignmentFnParent: 'assignment_expression',
+  pairFnParent: 'pair',
+  paramWrapperTypes: new Set(['required_parameter', 'optional_parameter']),
+  defaultParamType: 'assignment_pattern',
+  restParamType: 'rest_pattern',
+  objectDestructType: 'object_pattern',
+  arrayDestructType: 'array_pattern',
+  shorthandPropPattern: 'shorthand_property_identifier_pattern',
+  pairPatternType: 'pair_pattern',
+  returnNode: 'return_statement',
+  varDeclaratorNode: 'variable_declarator',
+  assignmentNode: 'assignment_expression',
+  callNode: 'call_expression',
+  spreadType: 'spread_element',
+  memberNode: 'member_expression',
+  optionalChainNode: 'optional_chain_expression',
+  awaitNode: 'await_expression',
+  mutatingMethods: JS_TS_MUTATING,
+});
+
+// ── Python ───────────────────────────────────────────────────────────────
+
+const PYTHON_DATAFLOW = makeDataflowRules({
+  functionNodes: new Set(['function_definition', 'lambda']),
+  defaultParamType: 'default_parameter',
+  restParamType: 'list_splat_pattern',
+  returnNode: 'return_statement',
+  varDeclaratorNode: null,
+  assignmentNode: 'assignment',
+  assignLeftField: 'left',
+  assignRightField: 'right',
+  callNode: 'call',
+  callFunctionField: 'function',
+  callArgsField: 'arguments',
+  spreadType: 'list_splat',
+  memberNode: 'attribute',
+  memberObjectField: 'object',
+  memberPropertyField: 'attribute',
+  awaitNode: 'await',
+  mutatingMethods: new Set([
+    'append',
+    'extend',
+    'insert',
+    'pop',
+    'remove',
+    'clear',
+    'sort',
+    'reverse',
+    'add',
+    'discard',
+    'update',
+  ]),
+  extractParamName(node) {
+    // typed_parameter / typed_default_parameter: first identifier child is the name
+    if (node.type === 'typed_parameter' || node.type === 'typed_default_parameter') {
+      for (const c of node.namedChildren) {
+        if (c.type === 'identifier') return [c.text];
+      }
+      return null;
+    }
+    if (node.type === 'default_parameter') {
+      const nameNode = node.childForFieldName('name');
+      return nameNode ? [nameNode.text] : null;
+    }
+    if (node.type === 'list_splat_pattern' || node.type === 'dictionary_splat_pattern') {
+      for (const c of node.namedChildren) {
+        if (c.type === 'identifier') return [c.text];
+      }
+      return null;
+    }
+    return null;
+  },
+});
+
+// ── Go ───────────────────────────────────────────────────────────────────
+
+const GO_DATAFLOW = makeDataflowRules({
+  functionNodes: new Set(['function_declaration', 'method_declaration', 'func_literal']),
+  returnNode: 'return_statement',
+  varDeclaratorNodes: new Set(['short_var_declaration', 'var_declaration']),
+  varNameField: 'left',
+  varValueField: 'right',
+  assignmentNode: 'assignment_statement',
+  assignLeftField: 'left',
+  assignRightField: 'right',
+  callNode: 'call_expression',
+  callFunctionField: 'function',
+  callArgsField: 'arguments',
+  memberNode: 'selector_expression',
+  memberObjectField: 'operand',
+  memberPropertyField: 'field',
+  mutatingMethods: new Set(),
+  expressionListType: 'expression_list',
+  extractParamName(node) {
+    // Go: parameter_declaration has name(s) + type; e.g. `a, b int`
+    if (node.type === 'parameter_declaration') {
+      const names = [];
+      for (const c of node.namedChildren) {
+        if (c.type === 'identifier') names.push(c.text);
+      }
+      return names.length > 0 ? names : null;
+    }
+    if (node.type === 'variadic_parameter_declaration') {
+      const nameNode = node.childForFieldName('name');
+      return nameNode ? [nameNode.text] : null;
+    }
+    return null;
+  },
+});
+
+// ── Rust ─────────────────────────────────────────────────────────────────
+
+const RUST_DATAFLOW = makeDataflowRules({
+  functionNodes: new Set(['function_item', 'closure_expression']),
+  returnNode: 'return_expression',
+  varDeclaratorNode: 'let_declaration',
+  varNameField: 'pattern',
+  varValueField: 'value',
+  assignmentNode: 'assignment_expression',
+  callNode: 'call_expression',
+  callFunctionField: 'function',
+  callArgsField: 'arguments',
+  memberNode: 'field_expression',
+  memberObjectField: 'value',
+  memberPropertyField: 'field',
+  awaitNode: 'await_expression',
+  mutatingMethods: new Set(['push', 'pop', 'insert', 'remove', 'clear', 'sort', 'reverse']),
+  extractParamName(node) {
+    if (node.type === 'parameter') {
+      const pat = node.childForFieldName('pattern');
+      if (pat?.type === 'identifier') return [pat.text];
+      return null;
+    }
+    if (node.type === 'identifier') return [node.text];
+    return null;
+  },
+});
+
+// ── Java ─────────────────────────────────────────────────────────────────
+
+const JAVA_DATAFLOW = makeDataflowRules({
+  functionNodes: new Set(['method_declaration', 'constructor_declaration', 'lambda_expression']),
+  returnNode: 'return_statement',
+  varDeclaratorNode: 'variable_declarator',
+  assignmentNode: 'assignment_expression',
+  callNodes: new Set(['method_invocation', 'object_creation_expression']),
+  callFunctionField: 'name',
+  callArgsField: 'arguments',
+  memberNode: 'field_access',
+  memberObjectField: 'object',
+  memberPropertyField: 'field',
+  callObjectField: 'object',
+  argumentWrapperType: 'argument',
+  mutatingMethods: new Set(['add', 'remove', 'clear', 'put', 'set', 'push', 'pop', 'sort']),
+  extractParamName(node) {
+    if (node.type === 'formal_parameter' || node.type === 'spread_parameter') {
+      const nameNode = node.childForFieldName('name');
+      return nameNode ? [nameNode.text] : null;
+    }
+    if (node.type === 'identifier') return [node.text];
+    return null;
+  },
+});
+
+// ── C# ───────────────────────────────────────────────────────────────────
+
+const CSHARP_DATAFLOW = makeDataflowRules({
+  functionNodes: new Set([
+    'method_declaration',
+    'constructor_declaration',
+    'lambda_expression',
+    'local_function_statement',
+  ]),
+  returnNode: 'return_statement',
+  varDeclaratorNode: 'variable_declarator',
+  varNameField: 'name',
+  assignmentNode: 'assignment_expression',
+  callNode: 'invocation_expression',
+  callFunctionField: 'function',
+  callArgsField: 'arguments',
+  memberNode: 'member_access_expression',
+  memberObjectField: 'expression',
+  memberPropertyField: 'name',
+  awaitNode: 'await_expression',
+  argumentWrapperType: 'argument',
+  mutatingMethods: new Set(['Add', 'Remove', 'Clear', 'Insert', 'Sort', 'Reverse', 'Push', 'Pop']),
+  extractParamName(node) {
+    if (node.type === 'parameter') {
+      const nameNode = node.childForFieldName('name');
+      return nameNode ? [nameNode.text] : null;
+    }
+    if (node.type === 'identifier') return [node.text];
+    return null;
+  },
+});
+
+// ── PHP ──────────────────────────────────────────────────────────────────
+
+const PHP_DATAFLOW = makeDataflowRules({
+  functionNodes: new Set([
+    'function_definition',
+    'method_declaration',
+    'anonymous_function_creation_expression',
+    'arrow_function',
+  ]),
+  paramListField: 'parameters',
+  paramIdentifier: 'variable_name',
+  returnNode: 'return_statement',
+  varDeclaratorNode: null,
+  assignmentNode: 'assignment_expression',
+  assignLeftField: 'left',
+  assignRightField: 'right',
+  callNodes: new Set([
+    'function_call_expression',
+    'member_call_expression',
+    'scoped_call_expression',
+  ]),
+  callFunctionField: 'function',
+  callArgsField: 'arguments',
+  spreadType: 'spread_expression',
+  memberNode: 'member_access_expression',
+  memberObjectField: 'object',
+  memberPropertyField: 'name',
+  argumentWrapperType: 'argument',
+  extraIdentifierTypes: new Set(['variable_name', 'name']),
+  mutatingMethods: new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse']),
+  extractParamName(node) {
+    // PHP: simple_parameter → $name or &$name
+    if (node.type === 'simple_parameter' || node.type === 'variadic_parameter') {
+      const nameNode = node.childForFieldName('name');
+      return nameNode ? [nameNode.text] : null;
+    }
+    if (node.type === 'variable_name') return [node.text];
+    return null;
+  },
+});
+
+// ── Ruby ─────────────────────────────────────────────────────────────────
+
+const RUBY_DATAFLOW = makeDataflowRules({
+  functionNodes: new Set(['method', 'singleton_method', 'lambda']),
+  paramListField: 'parameters',
+  returnNode: 'return',
+  varDeclaratorNode: null,
+  assignmentNode: 'assignment',
+  assignLeftField: 'left',
+  assignRightField: 'right',
+  callNode: 'call',
+  callFunctionField: 'method',
+  callArgsField: 'arguments',
+  spreadType: 'splat_parameter',
+  memberNode: 'call',
+  memberObjectField: 'receiver',
+  memberPropertyField: 'method',
+  mutatingMethods: new Set([
+    'push',
+    'pop',
+    'shift',
+    'unshift',
+    'delete',
+    'clear',
+    'sort!',
+    'reverse!',
+    'map!',
+    'select!',
+    'reject!',
+    'compact!',
+    'flatten!',
+    'concat',
+    'replace',
+    'insert',
+  ]),
+  extractParamName(node) {
+    if (node.type === 'identifier') return [node.text];
+    if (
+      node.type === 'optional_parameter' ||
+      node.type === 'keyword_parameter' ||
+      node.type === 'splat_parameter' ||
+      node.type === 'hash_splat_parameter'
+    ) {
+      const nameNode = node.childForFieldName('name');
+      return nameNode ? [nameNode.text] : null;
+    }
+    return null;
+  },
+});
+
+// ── Rules Map + Extensions Set ───────────────────────────────────────────
+
+export const DATAFLOW_RULES = new Map([
+  ['javascript', JS_TS_DATAFLOW],
+  ['typescript', JS_TS_DATAFLOW],
+  ['tsx', JS_TS_DATAFLOW],
+  ['python', PYTHON_DATAFLOW],
+  ['go', GO_DATAFLOW],
+  ['rust', RUST_DATAFLOW],
+  ['java', JAVA_DATAFLOW],
+  ['csharp', CSHARP_DATAFLOW],
+  ['php', PHP_DATAFLOW],
+  ['ruby', RUBY_DATAFLOW],
+]);
+
+const DATAFLOW_LANG_IDS = new Set(DATAFLOW_RULES.keys());
+
+export const DATAFLOW_EXTENSIONS = new Set();
+for (const entry of LANGUAGE_REGISTRY) {
+  if (DATAFLOW_RULES.has(entry.id)) {
+    for (const ext of entry.extensions) DATAFLOW_EXTENSIONS.add(ext);
+  }
+}
 
 // ── AST helpers ──────────────────────────────────────────────────────────────
 
@@ -43,32 +441,27 @@ function truncate(str, max = 120) {
 }
 
 /**
- * Get the name of a function node from the AST.
+ * Get the name of a function node from the AST using rules.
  */
-function functionName(fnNode) {
+function functionName(fnNode, rules) {
   if (!fnNode) return null;
-  const t = fnNode.type;
-  if (t === 'function_declaration') {
-    const nameNode = fnNode.childForFieldName('name');
-    return nameNode ? nameNode.text : null;
-  }
-  if (t === 'method_definition') {
-    const nameNode = fnNode.childForFieldName('name');
-    return nameNode ? nameNode.text : null;
-  }
-  // arrow_function or function_expression assigned to a variable
-  if (t === 'arrow_function' || t === 'function_expression') {
-    const parent = fnNode.parent;
-    if (parent?.type === 'variable_declarator') {
-      const nameNode = parent.childForFieldName('name');
-      return nameNode ? nameNode.text : null;
+  // Try the standard name field first (works for most languages)
+  const nameNode = fnNode.childForFieldName(rules.nameField);
+  if (nameNode) return nameNode.text;
+
+  // JS-specific: arrow_function/function_expression assigned to variable, pair, or assignment
+  const parent = fnNode.parent;
+  if (parent) {
+    if (rules.varAssignedFnParent && parent.type === rules.varAssignedFnParent) {
+      const n = parent.childForFieldName('name');
+      return n ? n.text : null;
     }
-    if (parent?.type === 'pair') {
+    if (rules.pairFnParent && parent.type === rules.pairFnParent) {
       const keyNode = parent.childForFieldName('key');
       return keyNode ? keyNode.text : null;
     }
-    if (parent?.type === 'assignment_expression') {
-      const left = parent.childForFieldName('left');
+    if (rules.assignmentFnParent && parent.type === rules.assignmentFnParent) {
+      const left = parent.childForFieldName(rules.assignLeftField);
       return left ? left.text : null;
     }
   }
@@ -77,14 +470,13 @@ function functionName(fnNode) {
 
 /**
  * Extract parameter names and indices from a formal_parameters node.
- * Handles: simple identifiers, destructured objects/arrays, defaults, rest, TS typed params.
  */
-function extractParams(paramsNode) {
+function extractParams(paramsNode, rules) {
   if (!paramsNode) return [];
   const result = [];
   let index = 0;
   for (const child of paramsNode.namedChildren) {
-    const names = extractParamNames(child);
+    const names = extractParamNames(child, rules);
     for (const name of names) {
       result.push({ name, index });
     }
@@ -93,81 +485,113 @@ function extractParams(paramsNode) {
   return result;
 }
 
-function extractParamNames(node) {
+function extractParamNames(node, rules) {
   if (!node) return [];
   const t = node.type;
-  if (t === 'identifier') return [node.text];
-  // TS: required_parameter, optional_parameter
-  if (t === 'required_parameter' || t === 'optional_parameter') {
-    const pattern = node.childForFieldName('pattern');
-    return pattern ? extractParamNames(pattern) : [];
+
+  // Language-specific override (Go, Rust, Java, C#, PHP, Ruby)
+  if (rules.extractParamName) {
+    const result = rules.extractParamName(node);
+    if (result) return result;
   }
-  if (t === 'assignment_pattern') {
-    const left = node.childForFieldName('left');
-    return left ? extractParamNames(left) : [];
+
+  // Leaf identifier
+  if (t === rules.paramIdentifier) return [node.text];
+
+  // Wrapper types (TS required_parameter, Python typed_parameter, etc.)
+  if (rules.paramWrapperTypes.has(t)) {
+    const pattern = node.childForFieldName('pattern') || node.childForFieldName('name');
+    return pattern ? extractParamNames(pattern, rules) : [];
   }
-  if (t === 'rest_pattern') {
-    // rest_pattern → ...identifier
+
+  // Default parameter (assignment_pattern / default_parameter)
+  if (rules.defaultParamType && t === rules.defaultParamType) {
+    const left = node.childForFieldName('left') || node.childForFieldName('name');
+    return left ? extractParamNames(left, rules) : [];
+  }
+
+  // Rest / splat parameter
+  if (rules.restParamType && t === rules.restParamType) {
+    // Try name field first, then fall back to scanning children
+    const nameNode = node.childForFieldName('name');
+    if (nameNode) return [nameNode.text];
     for (const child of node.namedChildren) {
-      if (child.type === 'identifier') return [child.text];
+      if (child.type === rules.paramIdentifier) return [child.text];
     }
     return [];
   }
-  if (t === 'object_pattern') {
+
+  // Object destructuring (JS only)
+  if (rules.objectDestructType && t === rules.objectDestructType) {
     const names = [];
     for (const child of node.namedChildren) {
-      if (child.type === 'shorthand_property_identifier_pattern') {
+      if (rules.shorthandPropPattern && child.type === rules.shorthandPropPattern) {
         names.push(child.text);
-      } else if (child.type === 'pair_pattern') {
+      } else if (rules.pairPatternType && child.type === rules.pairPatternType) {
         const value = child.childForFieldName('value');
-        if (value) names.push(...extractParamNames(value));
-      } else if (child.type === 'rest_pattern') {
-        names.push(...extractParamNames(child));
+        if (value) names.push(...extractParamNames(value, rules));
+      } else if (rules.restParamType && child.type === rules.restParamType) {
+        names.push(...extractParamNames(child, rules));
       }
     }
     return names;
   }
-  if (t === 'array_pattern') {
+
+  // Array destructuring (JS only)
+  if (rules.arrayDestructType && t === rules.arrayDestructType) {
     const names = [];
     for (const child of node.namedChildren) {
-      names.push(...extractParamNames(child));
+      names.push(...extractParamNames(child, rules));
     }
     return names;
   }
+
   return [];
 }
 
+/** Check if a node type is identifier-like for this language. */
+function isIdent(nodeType, rules) {
+  if (nodeType === 'identifier' || nodeType === rules.paramIdentifier) return true;
+  return rules.extraIdentifierTypes ? rules.extraIdentifierTypes.has(nodeType) : false;
+}
+
 /**
- * Resolve the name a call expression is calling.
- * Handles: `foo()`, `obj.method()`, `obj.nested.method()`.
+ * Resolve the name a call expression is calling using rules.
  */
-function resolveCalleeName(callNode) {
-  const fn = callNode.childForFieldName('function');
-  if (!fn) return null;
-  if (fn.type === 'identifier') return fn.text;
-  if (fn.type === 'member_expression' || fn.type === 'optional_chain_expression') {
-    // Handle optional chaining: foo?.bar() or foo?.()
-    const target = fn.type === 'optional_chain_expression' ? fn.namedChildren[0] : fn;
+function resolveCalleeName(callNode, rules) {
+  const fn = callNode.childForFieldName(rules.callFunctionField);
+  if (!fn) {
+    // Some languages (Java method_invocation, Ruby call) use 'name' field directly
+    const nameNode = callNode.childForFieldName('name') || callNode.childForFieldName('method');
+    return nameNode ? nameNode.text : null;
+  }
+  if (isIdent(fn.type, rules)) return fn.text;
+  if (fn.type === rules.memberNode) {
+    const prop = fn.childForFieldName(rules.memberPropertyField);
+    return prop ? prop.text : null;
+  }
+  if (rules.optionalChainNode && fn.type === rules.optionalChainNode) {
+    const target = fn.namedChildren[0];
     if (!target) return null;
-    if (target.type === 'member_expression') {
-      const prop = target.childForFieldName('property');
+    if (target.type === rules.memberNode) {
+      const prop = target.childForFieldName(rules.memberPropertyField);
       return prop ? prop.text : null;
     }
     if (target.type === 'identifier') return target.text;
-    const prop = fn.childForFieldName('property');
+    const prop = fn.childForFieldName(rules.memberPropertyField);
     return prop ? prop.text : null;
   }
   return null;
 }
 
 /**
- * Get the receiver (object) of a member expression.
+ * Get the receiver (object) of a member expression using rules.
  */
-function memberReceiver(memberExpr) {
-  const obj = memberExpr.childForFieldName('object');
+function memberReceiver(memberExpr, rules) {
+  const obj = memberExpr.childForFieldName(rules.memberObjectField);
   if (!obj) return null;
-  if (obj.type === 'identifier') return obj.text;
-  if (obj.type === 'member_expression') return memberReceiver(obj);
+  if (isIdent(obj.type, rules)) return obj.text;
+  if (obj.type === rules.memberNode) return memberReceiver(obj, rules);
   return null;
 }
 
@@ -179,17 +603,21 @@ function memberReceiver(memberExpr) {
  * @param {object} tree - tree-sitter parse tree
  * @param {string} filePath - relative file path
  * @param {object[]} definitions - symbol definitions from the parser
+ * @param {string} [langId='javascript'] - language identifier for rules lookup
  * @returns {{ parameters, returns, assignments, argFlows, mutations }}
  */
-export function extractDataflow(tree, _filePath, _definitions) {
+export function extractDataflow(tree, _filePath, _definitions, langId = 'javascript') {
+  const rules = DATAFLOW_RULES.get(langId);
+  if (!rules) return { parameters: [], returns: [], assignments: [], argFlows: [], mutations: [] };
+
+  const isCallNode = rules.callNodes ? (t) => rules.callNodes.has(t) : (t) => t === rules.callNode;
+
   const parameters = [];
   const returns = [];
   const assignments = [];
   const argFlows = [];
   const mutations = [];
 
-  // Build a scope stack as we traverse
-  // Each scope: { funcName, funcNode, params: Map<name, index>, locals: Map<name, source> }
   const scopeStack = [];
 
   function currentScope() {
@@ -197,7 +625,6 @@ export function extractDataflow(tree, _filePath, _definitions) {
   }
 
   function findBinding(name) {
-    // Search from innermost scope outward
     for (let i = scopeStack.length - 1; i >= 0; i--) {
       const scope = scopeStack[i];
       if (scope.params.has(name))
@@ -209,9 +636,9 @@ export function extractDataflow(tree, _filePath, _definitions) {
   }
 
   function enterScope(fnNode) {
-    const name = functionName(fnNode);
-    const paramsNode = fnNode.childForFieldName('parameters');
-    const paramList = extractParams(paramsNode);
+    const name = functionName(fnNode, rules);
+    const paramsNode = fnNode.childForFieldName(rules.paramListField);
+    const paramList = extractParams(paramsNode, rules);
     const paramMap = new Map();
     for (const p of paramList) {
       paramMap.set(p.name, p.index);
@@ -231,19 +658,236 @@ export function extractDataflow(tree, _filePath, _definitions) {
     scopeStack.pop();
   }
 
-  /**
-   * Determine confidence for a variable binding flowing as an argument.
-   */
   function bindingConfidence(binding) {
     if (!binding) return 0.5;
     if (binding.type === 'param') return 1.0;
     if (binding.type === 'local') {
-      // Local from a call return → 0.9, from destructuring → 0.8
       if (binding.source?.type === 'call_return') return 0.9;
       if (binding.source?.type === 'destructured') return 0.8;
       return 0.9;
     }
     return 0.5;
+  }
+
+  /** Unwrap await if present, returning the inner expression. */
+  function unwrapAwait(node) {
+    if (rules.awaitNode && node.type === rules.awaitNode) {
+      return node.namedChildren[0] || node;
+    }
+    return node;
+  }
+
+  /** Check if a node is a call expression (single or multi-type). */
+  function isCall(node) {
+    return node && isCallNode(node.type);
+  }
+
+  /** Handle a variable declarator / short_var_declaration node. */
+  function handleVarDeclarator(node) {
+    let nameNode = node.childForFieldName(rules.varNameField);
+    let valueNode = rules.varValueField ? node.childForFieldName(rules.varValueField) : null;
+
+    // C#: initializer is inside equals_value_clause child
+    if (!valueNode && rules.equalsClauseType) {
+      for (const child of node.namedChildren) {
+        if (child.type === rules.equalsClauseType) {
+          valueNode = child.childForFieldName('value') || child.namedChildren[0];
+          break;
+        }
+      }
+    }
+
+    // Fallback: initializer is a direct unnamed child (C# variable_declarator)
+    if (!valueNode) {
+      for (const child of node.namedChildren) {
+        if (child !== nameNode && isCall(unwrapAwait(child))) {
+          valueNode = child;
+          break;
+        }
+      }
+    }
+
+    // Go: expression_list wraps LHS/RHS — unwrap to first named child
+    if (rules.expressionListType) {
+      if (nameNode?.type === rules.expressionListType) nameNode = nameNode.namedChildren[0];
+      if (valueNode?.type === rules.expressionListType) valueNode = valueNode.namedChildren[0];
+    }
+
+    const scope = currentScope();
+    if (!nameNode || !valueNode || !scope) return;
+
+    const unwrapped = unwrapAwait(valueNode);
+    const callExpr = isCall(unwrapped) ? unwrapped : null;
+
+    if (callExpr) {
+      const callee = resolveCalleeName(callExpr, rules);
+      if (callee && scope.funcName) {
+        // Destructuring: const { a, b } = foo()
+        if (
+          (rules.objectDestructType && nameNode.type === rules.objectDestructType) ||
+          (rules.arrayDestructType && nameNode.type === rules.arrayDestructType)
+        ) {
+          const names = extractParamNames(nameNode, rules);
+          for (const n of names) {
+            assignments.push({
+              varName: n,
+              callerFunc: scope.funcName,
+              sourceCallName: callee,
+              expression: truncate(node.text),
+              line: node.startPosition.row + 1,
+            });
+            scope.locals.set(n, { type: 'destructured', callee });
+          }
+        } else {
+          const varName =
+            nameNode.type === 'identifier' || nameNode.type === rules.paramIdentifier
+              ? nameNode.text
+              : nameNode.text;
+          assignments.push({
+            varName,
+            callerFunc: scope.funcName,
+            sourceCallName: callee,
+            expression: truncate(node.text),
+            line: node.startPosition.row + 1,
+          });
+          scope.locals.set(varName, { type: 'call_return', callee });
+        }
+      }
+    }
+  }
+
+  /** Handle assignment expressions (mutation detection + call captures). */
+  function handleAssignment(node) {
+    const left = node.childForFieldName(rules.assignLeftField);
+    const right = node.childForFieldName(rules.assignRightField);
+    const scope = currentScope();
+    if (!scope?.funcName) return;
+
+    // Mutation: obj.prop = value
+    if (left && rules.memberNode && left.type === rules.memberNode) {
+      const receiver = memberReceiver(left, rules);
+      if (receiver) {
+        const binding = findBinding(receiver);
+        if (binding) {
+          mutations.push({
+            funcName: scope.funcName,
+            receiverName: receiver,
+            binding,
+            mutatingExpr: truncate(node.text),
+            line: node.startPosition.row + 1,
+          });
+        }
+      }
+    }
+
+    // Non-declaration assignment: x = foo()
+    if (left && isIdent(left.type, rules) && right) {
+      const unwrapped = unwrapAwait(right);
+      const callExpr = isCall(unwrapped) ? unwrapped : null;
+      if (callExpr) {
+        const callee = resolveCalleeName(callExpr, rules);
+        if (callee) {
+          assignments.push({
+            varName: left.text,
+            callerFunc: scope.funcName,
+            sourceCallName: callee,
+            expression: truncate(node.text),
+            line: node.startPosition.row + 1,
+          });
+          scope.locals.set(left.text, { type: 'call_return', callee });
+        }
+      }
+    }
+  }
+
+  /** Handle call expressions: track argument flows. */
+  function handleCallExpr(node) {
+    const callee = resolveCalleeName(node, rules);
+    const argsNode = node.childForFieldName(rules.callArgsField);
+    const scope = currentScope();
+    if (!callee || !argsNode || !scope?.funcName) return;
+
+    let argIndex = 0;
+    for (let arg of argsNode.namedChildren) {
+      // PHP/Java: unwrap argument wrapper
+      if (rules.argumentWrapperType && arg.type === rules.argumentWrapperType) {
+        arg = arg.namedChildren[0] || arg;
+      }
+      const unwrapped =
+        rules.spreadType && arg.type === rules.spreadType ? arg.namedChildren[0] || arg : arg;
+      if (!unwrapped) {
+        argIndex++;
+        continue;
+      }
+
+      const argName = isIdent(unwrapped.type, rules) ? unwrapped.text : null;
+      const argMember =
+        rules.memberNode && unwrapped.type === rules.memberNode
+          ? memberReceiver(unwrapped, rules)
+          : null;
+      const trackedName = argName || argMember;
+
+      if (trackedName) {
+        const binding = findBinding(trackedName);
+        if (binding) {
+          argFlows.push({
+            callerFunc: scope.funcName,
+            calleeName: callee,
+            argIndex,
+            argName: trackedName,
+            binding,
+            confidence: bindingConfidence(binding),
+            expression: truncate(arg.text),
+            line: node.startPosition.row + 1,
+          });
+        }
+      }
+      argIndex++;
+    }
+  }
+
+  /** Detect mutating method calls in expression statements. */
+  function handleExprStmtMutation(node) {
+    if (rules.mutatingMethods.size === 0) return;
+    const expr = node.namedChildren[0];
+    if (!expr || !isCall(expr)) return;
+
+    let methodName = null;
+    let receiver = null;
+
+    // Standard pattern: call(fn: member(obj, prop))
+    const fn = expr.childForFieldName(rules.callFunctionField);
+    if (fn && fn.type === rules.memberNode) {
+      const prop = fn.childForFieldName(rules.memberPropertyField);
+      methodName = prop ? prop.text : null;
+      receiver = memberReceiver(fn, rules);
+    }
+
+    // Java/combined pattern: call node itself has object + name fields
+    if (!receiver && rules.callObjectField) {
+      const obj = expr.childForFieldName(rules.callObjectField);
+      const name = expr.childForFieldName(rules.callFunctionField);
+      if (obj && name) {
+        methodName = name.text;
+        receiver = isIdent(obj.type, rules) ? obj.text : null;
+      }
+    }
+
+    if (!methodName || !rules.mutatingMethods.has(methodName)) return;
+
+    const scope = currentScope();
+    if (!receiver || !scope?.funcName) return;
+
+    const binding = findBinding(receiver);
+    if (binding) {
+      mutations.push({
+        funcName: scope.funcName,
+        receiverName: receiver,
+        binding,
+        mutatingExpr: truncate(expr.text),
+        line: node.startPosition.row + 1,
+      });
+    }
   }
 
   // Recursive AST walk
@@ -252,15 +896,8 @@ export function extractDataflow(tree, _filePath, _definitions) {
     const t = node.type;
 
     // Enter function scopes
-    if (
-      t === 'function_declaration' ||
-      t === 'method_definition' ||
-      t === 'arrow_function' ||
-      t === 'function_expression' ||
-      t === 'function'
-    ) {
+    if (rules.functionNodes.has(t)) {
       enterScope(node);
-      // Visit body
       for (const child of node.namedChildren) {
         visit(child);
       }
@@ -269,7 +906,7 @@ export function extractDataflow(tree, _filePath, _definitions) {
     }
 
     // Return statements
-    if (t === 'return_statement') {
+    if (rules.returnNode && t === rules.returnNode) {
       const scope = currentScope();
       if (scope?.funcName) {
         const expr = node.namedChildren[0];
@@ -282,192 +919,49 @@ export function extractDataflow(tree, _filePath, _definitions) {
           line: node.startPosition.row + 1,
         });
       }
-      // Still visit children for nested expressions
       for (const child of node.namedChildren) {
         visit(child);
       }
       return;
     }
 
-    // Variable declarations: track assignments from calls
-    if (t === 'variable_declarator') {
-      const nameNode = node.childForFieldName('name');
-      const valueNode = node.childForFieldName('value');
-      const scope = currentScope();
-
-      if (nameNode && valueNode && scope) {
-        // Resolve the call expression from the value (handles await wrapping)
-        let callExpr = null;
-        if (valueNode.type === 'call_expression') {
-          callExpr = valueNode;
-        } else if (valueNode.type === 'await_expression') {
-          const awaitChild = valueNode.namedChildren[0];
-          if (awaitChild?.type === 'call_expression') callExpr = awaitChild;
-        }
-
-        if (callExpr) {
-          const callee = resolveCalleeName(callExpr);
-          if (callee && scope.funcName) {
-            // Destructuring: const { a, b } = foo()
-            if (nameNode.type === 'object_pattern' || nameNode.type === 'array_pattern') {
-              const names = extractParamNames(nameNode);
-              for (const n of names) {
-                assignments.push({
-                  varName: n,
-                  callerFunc: scope.funcName,
-                  sourceCallName: callee,
-                  expression: truncate(node.text),
-                  line: node.startPosition.row + 1,
-                });
-                scope.locals.set(n, { type: 'destructured', callee });
-              }
-            } else {
-              // Simple: const x = foo()
-              assignments.push({
-                varName: nameNode.text,
-                callerFunc: scope.funcName,
-                sourceCallName: callee,
-                expression: truncate(node.text),
-                line: node.startPosition.row + 1,
-              });
-              scope.locals.set(nameNode.text, { type: 'call_return', callee });
-            }
-          }
-        }
+    // Variable declarations
+    if (rules.varDeclaratorNode && t === rules.varDeclaratorNode) {
+      handleVarDeclarator(node);
+      for (const child of node.namedChildren) {
+        visit(child);
       }
-      // Visit children
+      return;
+    }
+    if (rules.varDeclaratorNodes?.has(t)) {
+      handleVarDeclarator(node);
       for (const child of node.namedChildren) {
         visit(child);
       }
       return;
     }
 
-    // Call expressions: track argument flows
-    if (t === 'call_expression') {
-      const callee = resolveCalleeName(node);
-      const argsNode = node.childForFieldName('arguments');
-      const scope = currentScope();
-
-      if (callee && argsNode && scope?.funcName) {
-        let argIndex = 0;
-        for (const arg of argsNode.namedChildren) {
-          // Handle spread arguments: foo(...args)
-          const unwrapped = arg.type === 'spread_element' ? arg.namedChildren[0] : arg;
-          if (!unwrapped) {
-            argIndex++;
-            continue;
-          }
-          const argName = unwrapped.type === 'identifier' ? unwrapped.text : null;
-          const argMember =
-            unwrapped.type === 'member_expression' ? memberReceiver(unwrapped) : null;
-          const trackedName = argName || argMember;
-
-          if (trackedName) {
-            const binding = findBinding(trackedName);
-            if (binding) {
-              argFlows.push({
-                callerFunc: scope.funcName,
-                calleeName: callee,
-                argIndex,
-                argName: trackedName,
-                binding,
-                confidence: bindingConfidence(binding),
-                expression: truncate(arg.text),
-                line: node.startPosition.row + 1,
-              });
-            }
-          }
-          argIndex++;
-        }
-      }
-      // Visit children (but not arguments again — we handled them)
+    // Call expressions
+    if (isCallNode(t)) {
+      handleCallExpr(node);
       for (const child of node.namedChildren) {
         visit(child);
       }
       return;
     }
 
-    // Assignment expressions: mutation detection + non-declaration call captures
-    if (t === 'assignment_expression') {
-      const left = node.childForFieldName('left');
-      const right = node.childForFieldName('right');
-      const scope = currentScope();
-
-      if (scope?.funcName) {
-        // Mutation: obj.prop = value
-        if (left?.type === 'member_expression') {
-          const receiver = memberReceiver(left);
-          if (receiver) {
-            const binding = findBinding(receiver);
-            if (binding) {
-              mutations.push({
-                funcName: scope.funcName,
-                receiverName: receiver,
-                binding,
-                mutatingExpr: truncate(node.text),
-                line: node.startPosition.row + 1,
-              });
-            }
-          }
-        }
-
-        // Non-declaration assignment: x = foo() (without const/let/var)
-        if (left?.type === 'identifier' && right) {
-          let callExpr = null;
-          if (right.type === 'call_expression') {
-            callExpr = right;
-          } else if (right.type === 'await_expression') {
-            const awaitChild = right.namedChildren[0];
-            if (awaitChild?.type === 'call_expression') callExpr = awaitChild;
-          }
-          if (callExpr) {
-            const callee = resolveCalleeName(callExpr);
-            if (callee) {
-              assignments.push({
-                varName: left.text,
-                callerFunc: scope.funcName,
-                sourceCallName: callee,
-                expression: truncate(node.text),
-                line: node.startPosition.row + 1,
-              });
-              scope.locals.set(left.text, { type: 'call_return', callee });
-            }
-          }
-        }
-      }
-
-      // Visit children
+    // Assignment expressions
+    if (rules.assignmentNode && t === rules.assignmentNode) {
+      handleAssignment(node);
       for (const child of node.namedChildren) {
         visit(child);
       }
       return;
     }
 
-    // Mutation detection: mutating method calls (push, pop, splice, etc.)
-    if (t === 'expression_statement') {
-      const expr = node.namedChildren[0];
-      if (expr?.type === 'call_expression') {
-        const fn = expr.childForFieldName('function');
-        if (fn?.type === 'member_expression') {
-          const prop = fn.childForFieldName('property');
-          if (prop && MUTATING_METHODS.has(prop.text)) {
-            const receiver = memberReceiver(fn);
-            const scope = currentScope();
-            if (receiver && scope?.funcName) {
-              const binding = findBinding(receiver);
-              if (binding) {
-                mutations.push({
-                  funcName: scope.funcName,
-                  receiverName: receiver,
-                  binding,
-                  mutatingExpr: truncate(expr.text),
-                  line: node.startPosition.row + 1,
-                });
-              }
-            }
-          }
-        }
-      }
+    // Mutation detection via expression_statement
+    if (rules.expressionStmtNode && t === rules.expressionStmtNode) {
+      handleExprStmtMutation(node);
     }
 
     // Default: visit all children
@@ -514,14 +1008,7 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
   for (const [relPath, symbols] of fileSymbols) {
     if (!symbols._tree) {
       const ext = path.extname(relPath).toLowerCase();
-      if (
-        ext === '.js' ||
-        ext === '.ts' ||
-        ext === '.tsx' ||
-        ext === '.jsx' ||
-        ext === '.mjs' ||
-        ext === '.cjs'
-      ) {
+      if (DATAFLOW_EXTENSIONS.has(ext)) {
         needsFallback = true;
         break;
       }
@@ -529,7 +1016,7 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
   }
 
   if (needsFallback) {
-    const { createParsers, LANGUAGE_REGISTRY } = await import('./parser.js');
+    const { createParsers } = await import('./parser.js');
     parsers = await createParsers();
     extToLang = new Map();
     for (const entry of LANGUAGE_REGISTRY) {
@@ -569,24 +1056,15 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
   const tx = db.transaction(() => {
     for (const [relPath, symbols] of fileSymbols) {
       const ext = path.extname(relPath).toLowerCase();
-      // Only JS/TS for MVP
-      if (
-        ext !== '.js' &&
-        ext !== '.ts' &&
-        ext !== '.tsx' &&
-        ext !== '.jsx' &&
-        ext !== '.mjs' &&
-        ext !== '.cjs'
-      ) {
-        continue;
-      }
+      if (!DATAFLOW_EXTENSIONS.has(ext)) continue;
 
       let tree = symbols._tree;
+      let langId = symbols._langId;
 
       // WASM fallback if no cached tree
       if (!tree) {
         if (!extToLang || !getParserFn) continue;
-        const langId = extToLang.get(ext);
+        langId = extToLang.get(ext);
         if (!langId || !DATAFLOW_LANG_IDS.has(langId)) continue;
 
         const absPath = path.join(rootDir, relPath);
@@ -607,7 +1085,14 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
         }
       }
 
-      const data = extractDataflow(tree, relPath, symbols.definitions);
+      if (!langId) {
+        langId = extToLang ? extToLang.get(ext) : null;
+        if (!langId) continue;
+      }
+
+      if (!DATAFLOW_RULES.has(langId)) continue;
+
+      const data = extractDataflow(tree, relPath, symbols.definitions, langId);
 
       // Resolve function names to node IDs in this file first, then globally
       function resolveNode(funcName) {

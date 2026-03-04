@@ -15,7 +15,7 @@ describe('extractDataflow — JavaScript', () => {
   function parseAndExtract(code) {
     const parser = parsers.get('javascript');
     const tree = parser.parse(code);
-    return extractDataflow(tree, 'test.js', []);
+    return extractDataflow(tree, 'test.js', [], 'javascript');
   }
 
   // ── Parameter extraction ──────────────────────────────────────────────
