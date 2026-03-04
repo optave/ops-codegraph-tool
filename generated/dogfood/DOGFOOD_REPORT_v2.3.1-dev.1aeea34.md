@@ -352,8 +352,10 @@ The `embed` and `search` commands lack a `--db <path>` option, unlike most other
 
 > `embed` gained `-d, --db <path>` in v2.5.0.
 
-### 10.2 Warn on concurrent DB access
+### 10.2 Warn on concurrent DB access — RESOLVED in v2.6.0
 The shared graph.db can cause FK constraint failures when concurrent sessions build/embed simultaneously. Consider adding advisory file locking or a warning when another process holds the DB.
+
+> Fixed: `src/db.js` now implements advisory lock files at `.codegraph/graph.db.lock` (stores PID) with `acquireAdvisoryLock()`/`releaseAdvisoryLock()` on every `openDb()`/`closeDb()` call, warning when another live process holds the lock.
 
 ### 10.3 Update notification for dev versions — RESOLVED in v2.5.0
 The update notification feature (`update-check.js`) should suppress notifications for dev/prerelease versions to avoid false positives.
