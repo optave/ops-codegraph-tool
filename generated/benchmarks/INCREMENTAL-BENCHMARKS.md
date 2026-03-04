@@ -6,6 +6,8 @@ Import resolution: native batch vs JS fallback throughput.
 
 | Version | Engine | Files | Full Build | No-op | 1-File | Resolve (native) | Resolve (JS) |
 |---------|--------|------:|-----------:|------:|-------:|------------------:|-------------:|
+| 3.0.1 | native | 165 | 2.3s ↑223% | 4ms ↓20% | 928ms ↑186% | 4ms ↑3% | 4ms ↓7% |
+| 3.0.1 | wasm | 165 | 3.3s ↑62% | 6ms ↑20% | 1.0s ↓4% | 4ms ↑3% | 4ms ↓7% |
 | 3.0.0 | native | 164 | 721ms ↑152% | 5ms ↑25% | 325ms ↑141% | 4ms ↑21% | 4ms ↑30% |
 | 3.0.0 | wasm | 164 | 2.0s ↑128% | 5ms ↑25% | 1.1s ↑112% | 4ms ↑21% | 4ms ↑30% |
 | 2.6.0 | native | 146 | 286ms ↑3% | 4ms ↓33% | 135ms ↑5% | 3ms ~ | 3ms ↓3% |
@@ -15,23 +17,23 @@ Import resolution: native batch vs JS fallback throughput.
 
 ### Latest results
 
-**Version:** 3.0.0 | **Files:** 164 | **Date:** 2026-03-03
+**Version:** 3.0.1 | **Files:** 165 | **Date:** 2026-03-04
 
 #### Native (Rust)
 
 | Metric | Value |
 |--------|------:|
-| Full build | 721ms |
-| No-op rebuild | 5ms |
-| 1-file rebuild | 325ms |
+| Full build | 2.3s |
+| No-op rebuild | 4ms |
+| 1-file rebuild | 928ms |
 
 #### WASM
 
 | Metric | Value |
 |--------|------:|
-| Full build | 2.0s |
-| No-op rebuild | 5ms |
-| 1-file rebuild | 1.1s |
+| Full build | 3.3s |
+| No-op rebuild | 6ms |
+| 1-file rebuild | 1.0s |
 
 #### Import Resolution
 
@@ -42,10 +44,32 @@ Import resolution: native batch vs JS fallback throughput.
 | JS fallback | 4ms |
 | Per-import (native) | 0ms |
 | Per-import (JS) | 0ms |
-| Speedup ratio | 1.2x |
+| Speedup ratio | 1.1x |
 
 <!-- INCREMENTAL_BENCHMARK_DATA
 [
+  {
+    "version": "3.0.1",
+    "date": "2026-03-04",
+    "files": 165,
+    "wasm": {
+      "fullBuildMs": 3313,
+      "noopRebuildMs": 6,
+      "oneFileRebuildMs": 1025
+    },
+    "native": {
+      "fullBuildMs": 2327,
+      "noopRebuildMs": 4,
+      "oneFileRebuildMs": 928
+    },
+    "resolve": {
+      "imports": 201,
+      "nativeBatchMs": 3.6,
+      "jsFallbackMs": 4,
+      "perImportNativeMs": 0,
+      "perImportJsMs": 0
+    }
+  },
   {
     "version": "3.0.0",
     "date": "2026-03-03",
