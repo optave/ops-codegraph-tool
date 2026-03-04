@@ -183,6 +183,13 @@ function normalizeNativeSymbols(result) {
       kind: e.kind,
       line: e.line,
     })),
+    astNodes: (result.astNodes ?? result.ast_nodes ?? []).map((n) => ({
+      kind: n.kind,
+      name: n.name,
+      line: n.line,
+      text: n.text ?? null,
+      receiver: n.receiver ?? null,
+    })),
   };
 }
 

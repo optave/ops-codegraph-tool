@@ -75,3 +75,16 @@ pub fn start_line(node: &Node) -> u32 {
 pub fn end_line(node: &Node) -> u32 {
     node.end_position().row as u32 + 1
 }
+
+/// Char-safe truncation with ellipsis, matching `ast.js:51-54`.
+pub fn truncate(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let mut end = max.saturating_sub(1);
+    // Ensure we don't split a multi-byte char
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\u{2026}", &s[..end])
+}

@@ -12,6 +12,7 @@ import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { buildAstNodes } from '../../src/ast.js';
 import { initSchema } from '../../src/db.js';
+import { loadNative } from '../../src/native.js';
 import { parseFilesAuto } from '../../src/parser.js';
 
 // ─── Fixture ──────────────────────────────────────────────────────────
@@ -181,5 +182,131 @@ describe('buildAstNodes — JS extraction', () => {
         expect(node.text.length).toBeLessThanOrEqual(201); // 200 + possible ellipsis char
       }
     }
+  });
+});
+
+// ─── Native engine AST node extraction ───────────────────────────────
+
+// Check if native addon is available AND supports ast_nodes.
+// Old prebuilt binaries return FileSymbols without the ast_nodes field.
+function nativeSupportsAstNodes() {
+  const native = loadNative();
+  if (!native) return false;
+  try {
+    const tmpCheck = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-ast-check-'));
+    const srcCheck = path.join(tmpCheck, 'src');
+    fs.mkdirSync(srcCheck, { recursive: true });
+    const checkPath = path.join(srcCheck, 'check.js');
+    fs.writeFileSync(checkPath, 'const x = new Map();');
+    const results = native.parseFiles([checkPath], tmpCheck);
+    const hasField = results?.[0]?.astNodes?.length > 0 || results?.[0]?.ast_nodes?.length > 0;
+    fs.rmSync(tmpCheck, { recursive: true, force: true });
+    return hasField;
+  } catch {
+    return false;
+  }
+}
+
+const canTestNative = nativeSupportsAstNodes();
+
+describe.skipIf(!canTestNative)('buildAstNodes — native engine', () => {
+  let nativeTmpDir, nativeDbPath, nativeDb;
+
+  function queryNativeAstNodes(kind) {
+    return nativeDb.prepare('SELECT * FROM ast_nodes WHERE kind = ? ORDER BY line').all(kind);
+  }
+
+  function queryAllNativeAstNodes() {
+    return nativeDb.prepare('SELECT * FROM ast_nodes ORDER BY line').all();
+  }
+
+  beforeAll(async () => {
+    nativeTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-ast-native-'));
+    const srcDir = path.join(nativeTmpDir, 'src');
+    fs.mkdirSync(srcDir, { recursive: true });
+    fs.mkdirSync(path.join(nativeTmpDir, '.codegraph'));
+
+    const fixturePath = path.join(srcDir, 'fixture.js');
+    fs.writeFileSync(fixturePath, FIXTURE_CODE);
+
+    const allSymbols = await parseFilesAuto([fixturePath], nativeTmpDir, { engine: 'native' });
+    const symbols = allSymbols.get('src/fixture.js');
+    if (!symbols) throw new Error('Failed to parse fixture file with native engine');
+
+    nativeDbPath = path.join(nativeTmpDir, '.codegraph', 'graph.db');
+    nativeDb = new Database(nativeDbPath);
+    nativeDb.pragma('journal_mode = WAL');
+    initSchema(nativeDb);
+
+    const insertNode = nativeDb.prepare(
+      'INSERT INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
+    );
+    for (const def of symbols.definitions) {
+      insertNode.run(def.name, def.kind, 'src/fixture.js', def.line, def.endLine);
+    }
+
+    await buildAstNodes(nativeDb, allSymbols, nativeTmpDir);
+  });
+
+  afterAll(() => {
+    if (nativeDb) nativeDb.close();
+    if (nativeTmpDir) fs.rmSync(nativeTmpDir, { recursive: true, force: true });
+  });
+
+  test('captures new_expression as kind:new', () => {
+    const nodes = queryNativeAstNodes('new');
+    expect(nodes.length).toBeGreaterThanOrEqual(1);
+    expect(nodes.map((n) => n.name)).toContain('Map');
+  });
+
+  test('captures throw as kind:throw', () => {
+    const nodes = queryNativeAstNodes('throw');
+    expect(nodes.length).toBeGreaterThanOrEqual(1);
+    expect(nodes.some((n) => n.name === 'Error')).toBe(true);
+  });
+
+  test('captures await as kind:await', () => {
+    const nodes = queryNativeAstNodes('await');
+    expect(nodes.length).toBeGreaterThanOrEqual(1);
+    expect(nodes.some((n) => n.name.includes('fetch'))).toBe(true);
+  });
+
+  test('captures string literals as kind:string', () => {
+    const nodes = queryNativeAstNodes('string');
+    expect(nodes.length).toBeGreaterThanOrEqual(1);
+    expect(nodes.some((n) => n.name.includes('hello world'))).toBe(true);
+  });
+
+  test('captures regex as kind:regex', () => {
+    const nodes = queryNativeAstNodes('regex');
+    expect(nodes.length).toBeGreaterThanOrEqual(1);
+    expect(nodes.some((n) => n.name.includes('[a-z]') || n.name.includes('\\d'))).toBe(true);
+  });
+
+  test('no double-count for throw new Error', () => {
+    const newNodes = queryNativeAstNodes('new');
+    // "Error" should NOT appear as a new node — it's captured under throw
+    expect(newNodes.every((n) => n.name !== 'Error')).toBe(true);
+  });
+
+  test('skips trivial strings', () => {
+    const nodes = queryNativeAstNodes('string');
+    for (const node of nodes) {
+      expect(node.name.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  test('all nodes have valid kinds', () => {
+    const all = queryAllNativeAstNodes();
+    const validKinds = new Set(['call', 'new', 'string', 'regex', 'throw', 'await']);
+    for (const node of all) {
+      expect(validKinds.has(node.kind)).toBe(true);
+    }
+  });
+
+  test('parent_node_id is resolved', () => {
+    const all = queryAllNativeAstNodes();
+    const withParent = all.filter((n) => n.parent_node_id != null);
+    expect(withParent.length).toBeGreaterThan(0);
   });
 });

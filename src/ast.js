@@ -195,10 +195,32 @@ export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
 
     // 2. AST walk for JS/TS/TSX — extract new, throw, await, string, regex
     const ext = path.extname(relPath).toLowerCase();
-    if (WALK_EXTENSIONS.has(ext) && symbols._tree) {
-      const astRows = [];
-      walkAst(symbols._tree.rootNode, defs, relPath, astRows, getNodeId);
-      rows.push(...astRows);
+    if (WALK_EXTENSIONS.has(ext)) {
+      if (symbols._tree) {
+        // WASM path: walk the tree-sitter AST
+        const astRows = [];
+        walkAst(symbols._tree.rootNode, defs, relPath, astRows, getNodeId);
+        rows.push(...astRows);
+      } else if (symbols.astNodes?.length) {
+        // Native path: use pre-extracted AST nodes from Rust
+        for (const n of symbols.astNodes) {
+          const parentDef = findParentDef(defs, n.line);
+          let parentNodeId = null;
+          if (parentDef) {
+            const row = getNodeId.get(parentDef.name, parentDef.kind, relPath, parentDef.line);
+            if (row) parentNodeId = row.id;
+          }
+          rows.push({
+            file: relPath,
+            line: n.line,
+            kind: n.kind,
+            name: n.name,
+            text: n.text || null,
+            receiver: n.receiver || null,
+            parentNodeId,
+          });
+        }
+      }
     }
 
     if (rows.length > 0) {
