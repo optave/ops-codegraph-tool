@@ -5,6 +5,8 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 | Version | Engine | fnDeps d1 | fnDeps d3 | fnDeps d5 | fnImpact d1 | fnImpact d3 | fnImpact d5 | diffImpact |
 |---------|--------|----------:|----------:|----------:|------------:|------------:|------------:|-----------:|
+| 3.0.0 | native | 0.8 ↓33% | 0.8 ↓38% | 0.8 ↓38% | 0.8 ↓33% | 0.8 ↓33% | 0.8 ↓33% | 7.7ms ↑24% |
+| 3.0.0 | wasm | 0.9 ↓31% | 0.9 ↓36% | 0.8 ↓38% | 0.9 ↓25% | 0.8 ↓33% | 0.8 ↓33% | 7.1ms ↑16% |
 | 2.6.0 | native | 1.2 ↑100% | 1.3 ↑117% | 1.3 ↑117% | 1.2 ↑100% | 1.2 ↑100% | 1.2 ↑100% | 6.2ms ↑5% |
 | 2.6.0 | wasm | 1.3 ↑86% | 1.4 ↑133% | 1.3 ↑117% | 1.2 ↑100% | 1.2 ↑100% | 1.2 ↑100% | 6.1ms ↑13% |
 | 2.5.1 | native | 0.6 | 0.6 | 0.6 | 0.6 | 0.6 | 0.6 | 5.9ms |
@@ -12,42 +14,90 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 ### Latest results
 
-**Version:** 2.6.0 | **Date:** 2026-03-02
+**Version:** 3.0.0 | **Date:** 2026-03-03
 
 #### Native (Rust)
 
-**Targets:** hub=`startMCPServer`, mid=`extract_implements_from_node`, leaf=`crates`
+**Targets:** hub=`src/queries.js`, mid=`source`, leaf=`crates`
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 1.2ms |
-| fnDeps depth 3 | 1.3ms |
-| fnDeps depth 5 | 1.3ms |
-| fnImpact depth 1 | 1.2ms |
-| fnImpact depth 3 | 1.2ms |
-| fnImpact depth 5 | 1.2ms |
-| diffImpact latency | 6.2ms |
+| fnDeps depth 1 | 0.8ms |
+| fnDeps depth 3 | 0.8ms |
+| fnDeps depth 5 | 0.8ms |
+| fnImpact depth 1 | 0.8ms |
+| fnImpact depth 3 | 0.8ms |
+| fnImpact depth 5 | 0.8ms |
+| diffImpact latency | 7.7ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
 #### WASM
 
-**Targets:** hub=`startMCPServer`, mid=`extract_implements_from_node`, leaf=`crates`
+**Targets:** hub=`src/queries.js`, mid=`source`, leaf=`crates`
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 1.3ms |
-| fnDeps depth 3 | 1.4ms |
-| fnDeps depth 5 | 1.3ms |
-| fnImpact depth 1 | 1.2ms |
-| fnImpact depth 3 | 1.2ms |
-| fnImpact depth 5 | 1.2ms |
-| diffImpact latency | 6.1ms |
+| fnDeps depth 1 | 0.9ms |
+| fnDeps depth 3 | 0.9ms |
+| fnDeps depth 5 | 0.8ms |
+| fnImpact depth 1 | 0.9ms |
+| fnImpact depth 3 | 0.8ms |
+| fnImpact depth 5 | 0.8ms |
+| diffImpact latency | 7.1ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
 <!-- QUERY_BENCHMARK_DATA
 [
+  {
+    "version": "3.0.0",
+    "date": "2026-03-03",
+    "wasm": {
+      "targets": {
+        "hub": "src/queries.js",
+        "mid": "source",
+        "leaf": "crates"
+      },
+      "fnDeps": {
+        "depth1Ms": 0.9,
+        "depth3Ms": 0.9,
+        "depth5Ms": 0.8
+      },
+      "fnImpact": {
+        "depth1Ms": 0.9,
+        "depth3Ms": 0.8,
+        "depth5Ms": 0.8
+      },
+      "diffImpact": {
+        "latencyMs": 7.1,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    },
+    "native": {
+      "targets": {
+        "hub": "src/queries.js",
+        "mid": "source",
+        "leaf": "crates"
+      },
+      "fnDeps": {
+        "depth1Ms": 0.8,
+        "depth3Ms": 0.8,
+        "depth5Ms": 0.8
+      },
+      "fnImpact": {
+        "depth1Ms": 0.8,
+        "depth3Ms": 0.8,
+        "depth5Ms": 0.8
+      },
+      "diffImpact": {
+        "latencyMs": 7.7,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    }
+  },
   {
     "version": "2.6.0",
     "date": "2026-03-02",
