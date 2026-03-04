@@ -2,36 +2,6 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
-## [3.0.1](https://github.com/optave/codegraph/compare/v3.0.0...v3.0.1) (2026-03-03)
-
-**Post-release fixes and dataflow multi-language expansion.** This patch extends dataflow analysis (`flows_to`, `returns`, `mutates` edges) from JS/TS-only to all 11 supported languages, enables `--cfg` and `--dataflow` by default on builds, closes several native/WASM engine parity gaps, and fixes miscellaneous issues found during v3.0.0 dogfooding.
-
-### Features
-
-* **dataflow:** extend dataflow analysis to all supported languages (Python, Go, Rust, Java, C#, PHP, Ruby, Terraform) ([221a791](https://github.com/optave/codegraph/commit/221a791))
-* **builder:** enable `--cfg` and `--dataflow` by default on builds ([#312](https://github.com/optave/codegraph/pull/312))
-
-### Bug Fixes
-
-* **native:** close engine parity gap between native and WASM ([#292](https://github.com/optave/codegraph/pull/292)) ([#309](https://github.com/optave/codegraph/pull/309))
-* **native:** extract new/throw/await/string/regex AST nodes in native engine ([#306](https://github.com/optave/codegraph/pull/306)) ([#314](https://github.com/optave/codegraph/pull/314))
-* **native:** bump native engine version to 3.0.0 ([#305](https://github.com/optave/codegraph/pull/305)) ([#310](https://github.com/optave/codegraph/pull/310))
-* **queries:** include role-based entry points in `flow --list` ([#313](https://github.com/optave/codegraph/pull/313))
-* **benchmark:** handle missing WASM grammars gracefully in benchmark scripts ([#311](https://github.com/optave/codegraph/pull/311))
-* **ci:** prevent duplicate benchmark PRs on stable releases ([#304](https://github.com/optave/codegraph/pull/304))
-
-### Documentation
-
-* document dataflow multi-language support in README ([851f060](https://github.com/optave/codegraph/commit/851f060))
-* mark resolved bugs and suggestions in dogfood reports ([#316](https://github.com/optave/codegraph/pull/316))
-* add dogfood report for v3.0.0 ([#307](https://github.com/optave/codegraph/pull/307))
-* update build performance, query, and incremental benchmarks for 3.0.0 ([#298](https://github.com/optave/codegraph/pull/298), [#299](https://github.com/optave/codegraph/pull/299), [#300](https://github.com/optave/codegraph/pull/300))
-
-### Chores
-
-* **ci:** include Cargo.toml in publish version bump commit ([#315](https://github.com/optave/codegraph/pull/315))
-* **ci:** replace `npm ci` with `npm install` in benchmark and license workflows ([#308](https://github.com/optave/codegraph/pull/308))
-
 ## [3.0.0](https://github.com/optave/codegraph/compare/v2.6.0...v3.0.0) (2026-03-03)
 
 **Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, and a streamlined CLI surface.** This release introduces three new analysis dimensions — dataflow tracking (`flows_to`, `returns`, `mutates` edges), intraprocedural control flow graphs for all 11 supported languages, and stored queryable AST nodes (calls, `new`, string, regex, throw, await). The type system expands with `parameter`, `property`, and `constant` node kinds plus `contains`, `parameter_of`, and `receiver` edge kinds, enabling structural queries without reading source. Export gains GraphML, GraphSON, and Neo4j CSV formats plus an interactive HTML viewer (`codegraph plot`). A stable `normalizeSymbol` utility standardizes JSON output across all commands. The CLI surface is streamlined by consolidating redundant commands into fewer, more capable ones.
