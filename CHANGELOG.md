@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.0.2](https://github.com/optave/codegraph/compare/v3.0.1...v3.0.2) (2026-03-04)
+
+**Dataflow goes multi-language, build performance recovery, and native engine parity fixes.** This patch extends dataflow analysis from JS/TS-only to all 11 supported languages, recovers build performance lost after CFG/dataflow became default-on, fixes language-aware identifier collection in dataflow, and closes a native engine scoping bug for constants.
+
+### Features
+
+* **dataflow:** extend dataflow analysis to all supported languages (Python, Go, Rust, Java, C#, PHP, Ruby) with per-language `DATAFLOW_RULES` and `makeDataflowRules()` factory ([#318](https://github.com/optave/codegraph/pull/318))
+
+### Bug Fixes
+
+* **dataflow:** use `isIdent` in `collectIdentifiers` for language-aware `referencedNames` — fixes PHP `variable_name` and other non-`identifier` node types being missed in return statements ([#324](https://github.com/optave/codegraph/pull/324))
+* **native:** skip local constants inside function bodies — the native JS extractor incorrectly extracted function-scoped `const` as top-level constants ([#327](https://github.com/optave/codegraph/pull/327))
+* **native:** enable extended kinds (parameters, properties, constants, receivers) in parity tests and update native binary to v3.0.1 ([#327](https://github.com/optave/codegraph/pull/327))
+
+### Performance
+
+* **builder:** fix v3.0.1 build performance regression (14.1 → ~5.8 ms/file) — eliminate redundant WASM parsing via `ensureWasmTrees()`, memoize `createParsers()`, filter CFG/dataflow to changed files only ([#325](https://github.com/optave/codegraph/pull/325))
+
+### Documentation
+
+* update build performance, query, and incremental benchmarks for 3.0.1 ([#321](https://github.com/optave/codegraph/pull/321), [#322](https://github.com/optave/codegraph/pull/322), [#323](https://github.com/optave/codegraph/pull/323))
+
 ## [3.0.1](https://github.com/optave/codegraph/compare/v3.0.0...v3.0.1) (2026-03-03)
 
 **Post-release fixes and dataflow multi-language expansion.** This patch extends dataflow analysis (`flows_to`, `returns`, `mutates` edges) from JS/TS-only to all 11 supported languages, enables `--cfg` and `--dataflow` by default on builds, closes several native/WASM engine parity gaps, and fixes miscellaneous issues found during v3.0.0 dogfooding.
