@@ -79,6 +79,10 @@ beforeAll(() => {
   // Orphan (no prefix, no callers)
   insertNode(db, 'orphanFn', 'function', 'orphan.js', 1);
 
+  // Non-prefixed entry point (simulates an exported function with no callers)
+  insertNode(db, 'init.js', 'file', 'init.js', 0);
+  insertNode(db, 'exportedInit', 'function', 'init.js', 1);
+
   // Import edges
   insertEdge(db, fRoutes, fAuth, 'imports');
   insertEdge(db, fRoutes, fUsers, 'imports');
@@ -101,6 +105,10 @@ beforeAll(() => {
 
   // Classify roles (so we can test the fix)
   classifyNodeRoles(db);
+
+  // Manually mark exportedInit as 'entry' (simulates a real exported function
+  // with fan_in=0 that the builder would classify as entry)
+  db.prepare("UPDATE nodes SET role = 'entry' WHERE name = 'exportedInit'").run();
 
   db.close();
 });
@@ -212,22 +220,38 @@ describe('flowData', () => {
 // ─── listEntryPointsData ──────────────────────────────────────────────
 
 describe('listEntryPointsData', () => {
-  test('finds all 3 framework entries, excludes orphanFn', () => {
+  test('finds all 3 framework entries plus role-based entry, excludes orphanFn', () => {
     const data = listEntryPointsData(dbPath);
-    expect(data.count).toBe(3);
+    expect(data.count).toBe(4);
     const names = data.entries.map((e) => e.name).sort();
-    expect(names).toEqual(['command:build', 'event:connection', 'route:GET /users']);
+    expect(names).toEqual([
+      'command:build',
+      'event:connection',
+      'exportedInit',
+      'route:GET /users',
+    ]);
     expect(names).not.toContain('orphanFn');
   });
 
-  test('groups by type correctly', () => {
+  test('groups by type correctly, including exported for role-based entries', () => {
     const data = listEntryPointsData(dbPath);
     expect(data.byType.route).toHaveLength(1);
     expect(data.byType.command).toHaveLength(1);
     expect(data.byType.event).toHaveLength(1);
+    expect(data.byType.exported).toHaveLength(1);
     expect(data.byType.route[0].name).toBe('route:GET /users');
     expect(data.byType.command[0].name).toBe('command:build');
     expect(data.byType.event[0].name).toBe('event:connection');
+    expect(data.byType.exported[0].name).toBe('exportedInit');
+  });
+
+  test('role-based entry points get type "exported"', () => {
+    const data = listEntryPointsData(dbPath);
+    const entry = data.entries.find((e) => e.name === 'exportedInit');
+    expect(entry).toBeDefined();
+    expect(entry.type).toBe('exported');
+    expect(entry.role).toBe('entry');
+    expect(entry.kind).toBe('function');
   });
 
   test('each entry includes type, kind, file, line', () => {
