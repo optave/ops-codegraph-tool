@@ -389,11 +389,17 @@ fn extract_js_parameters(node: &Node, source: &[u8]) -> Vec<Definition> {
                         ));
                     }
                     "required_parameter" | "optional_parameter" => {
-                        // TS parameters: pattern field holds the identifier
-                        if let Some(pattern) = child.child_by_field_name("pattern") {
-                            if pattern.kind() == "identifier" {
+                        // TS parameters: pattern field holds the identifier;
+                        // fall back to left field or first child for edge cases
+                        let name_node = child.child_by_field_name("pattern")
+                            .or_else(|| child.child_by_field_name("left"))
+                            .or_else(|| child.child(0));
+                        if let Some(name_node) = name_node {
+                            if name_node.kind() == "identifier"
+                                || name_node.kind() == "shorthand_property_identifier_pattern"
+                            {
                                 params.push(child_def(
-                                    node_text(&pattern, source).to_string(),
+                                    node_text(&name_node, source).to_string(),
                                     "parameter",
                                     start_line(&child),
                                 ));
@@ -490,7 +496,8 @@ fn extract_ts_enum_members(node: &Node, source: &[u8]) -> Vec<Definition> {
 fn is_js_literal(node: &Node) -> bool {
     matches!(node.kind(),
         "number" | "string" | "true" | "false" | "null" | "undefined"
-        | "template_string" | "regex"
+        | "template_string" | "regex" | "array" | "object"
+        | "unary_expression" | "binary_expression" | "new_expression"
     )
 }
 

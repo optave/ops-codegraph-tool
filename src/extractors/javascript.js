@@ -170,7 +170,58 @@ function extractSymbolsQuery(tree, query) {
     }
   }
 
+  // Extract top-level constants via targeted walk (query patterns don't cover these)
+  extractConstantsWalk(tree.rootNode, definitions);
+
   return { definitions, calls, imports, classes, exports: exps };
+}
+
+/**
+ * Walk program-level children to extract `const x = <literal>` as constants.
+ * The query-based fast path has no pattern for lexical_declaration/variable_declaration,
+ * so constants are missed. This targeted walk fills that gap without a full tree traversal.
+ */
+function extractConstantsWalk(rootNode, definitions) {
+  for (let i = 0; i < rootNode.childCount; i++) {
+    const node = rootNode.child(i);
+    if (!node) continue;
+
+    let declNode = node;
+    // Handle `export const …` — unwrap the export_statement to its declaration child
+    if (node.type === 'export_statement') {
+      const inner = node.childForFieldName('declaration');
+      if (!inner) continue;
+      declNode = inner;
+    }
+
+    const t = declNode.type;
+    if (t !== 'lexical_declaration' && t !== 'variable_declaration') continue;
+    if (!declNode.text.startsWith('const ')) continue;
+
+    for (let j = 0; j < declNode.childCount; j++) {
+      const declarator = declNode.child(j);
+      if (!declarator || declarator.type !== 'variable_declarator') continue;
+      const nameN = declarator.childForFieldName('name');
+      const valueN = declarator.childForFieldName('value');
+      if (!nameN || nameN.type !== 'identifier' || !valueN) continue;
+      // Skip functions — already captured by query patterns
+      const valType = valueN.type;
+      if (
+        valType === 'arrow_function' ||
+        valType === 'function_expression' ||
+        valType === 'function'
+      )
+        continue;
+      if (isConstantValue(valueN)) {
+        definitions.push({
+          name: nameN.text,
+          kind: 'constant',
+          line: declNode.startPosition.row + 1,
+          endLine: nodeEndLine(declNode),
+        });
+      }
+    }
+  }
 }
 
 function handleCommonJSAssignment(left, right, node, imports) {
