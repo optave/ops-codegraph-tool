@@ -55,6 +55,60 @@ Non-breaking, ordered by problem-fit:
 | 38 | ~~GraphML / GraphSON / Neo4j CSV export~~ | ~~Add GraphML (XML standard), GraphSON (TinkerPop v3), and Neo4j CSV (bulk import) export formats for graph database interoperability.~~ | Export | ~~Users can load codegraph data into Neo4j, JanusGraph, or any GraphML-compatible tool for advanced visualization and querying~~ | ✓ | ✓ | 2 | No | **DONE** — `codegraph export -f graphml|graphson|neo4j` with file-level and function-level modes. Neo4j outputs separate nodes/relationships CSV files. PR #268. |
 | 39 | ~~CLI consolidation~~ | ~~Streamline CLI by removing redundant commands: batch-query → batch, hotspots → triage --level, manifesto → check, explain → audit --quick. Reduce MCP tool surface from 32 to 30.~~ | Developer Experience | ~~Fewer commands to learn; each command is more capable; MCP tool surface is smaller and more consistent~~ | ✓ | ✓ | 3 | Yes | **DONE** — Removed `batch-query`, `hotspots`, `manifesto`, `explain`, and `query --path`. MCP tools `fn_deps`, `symbol_path`, `list_entry_points` merged into `query` and `execution_flow`. Standalone `path <from> <to>` added. PR #263, #280. |
 
+### Tier 1b — AST leverage (build on existing `ast_nodes` table)
+
+These features leverage the `ast_nodes` table that already exists and is populated during every build. All are zero-dep, non-breaking, and purely additive.
+
+| ID | Title | Description | Category | Benefit | Zero-dep | Foundation-aligned | Problem-fit (1-5) | Breaking |
+|----|-------|-------------|----------|---------|----------|-------------------|-------------------|----------|
+| 40 | Complexity from AST nodes | `complexity.js` currently re-walks the tree-sitter AST to count nesting, branches, operators. Supplement it by querying `ast_nodes` instead — count `throw`/`await` per function via `parent_node_id`, get call counts, derive async complexity scores. Won't replace the full complexity walk but adds cheap signal. | Analysis | Richer complexity metrics without additional parsing cost; `await` density and `throw` frequency are meaningful risk indicators that the current walker doesn't surface | ✓ | ✓ | 3 | No |
+| 41 | AST-based lint predicates in `check` | Add configurable `check` predicates like "no `new` of banned classes", "all `await` must be inside try/catch", or "no `throw` of raw strings". Implemented as SQL queries against `ast_nodes` + `cfg_blocks`, not a full linter. | CI | Pattern-based lint rules for CI gates without adding a linter dependency; agents get first-class pass/fail signals for anti-patterns | ✓ | ✓ | 3 | No |
+| 42 | AST density in triage risk scoring | Factor AST node density into `triage.js` risk scoring — a function with 15 `await` calls and 3 `throw` statements is objectively riskier than pure synchronous logic. Add `asyncDensity` and `throwCount` as scoring dimensions alongside fan-in, complexity, and churn. | Intelligence | Triage produces more accurate risk rankings; agents prioritize genuinely risky functions over merely complex ones | ✓ | ✓ | 4 | No |
+| 43 | Dead code detection via `new` cross-reference | Cross-reference `ast_nodes` `new ClassName()` calls against `nodes` table to find classes that are defined but never instantiated. Extend to string literals matching route patterns or config keys for unused-route / unused-config detection. | Analysis | Catches dead classes that the current role-based dead code detection misses (a class can have zero call edges but still be instantiated via `new`) | ✓ | ✓ | 4 | No |
+| 44 | Migration/refactoring pattern queries | Higher-level queries built on `ast_nodes`: "find all `new Promise()` that could be async/await", "find all `throw` of raw strings instead of Error objects", "find all regex patterns" for regex-to-library migration. Expose as `ast` subcommands or `check` predicates. | Refactoring | Agents can identify modernization opportunities and anti-patterns in one query instead of grep + manual classification | ✓ | ✓ | 3 | No |
+
+### Tier 1c — CFG leverage (build on existing `cfg_blocks`/`cfg_edges` tables)
+
+CFG is built for every function on every build (~100ms) but only consumed by the `cfg` display command. These features leverage the stored control flow graph data.
+
+| ID | Title | Description | Category | Benefit | Zero-dep | Foundation-aligned | Problem-fit (1-5) | Breaking |
+|----|-------|-------------|----------|---------|----------|-------------------|-------------------|----------|
+| 45 | Cyclomatic complexity from CFG | `complexity.js` re-walks the tree-sitter AST to compute cyclomatic complexity. The CFG already has the data — cyclomatic complexity is literally `edges - nodes + 2` on the stored graph. Replace or supplement the AST walk with a SQL query against `cfg_blocks`/`cfg_edges`. | Analysis | Eliminates redundant AST walking for the most common complexity metric; single source of truth for control flow | ✓ | ✓ | 3 | No |
+| 46 | Unreachable block detection in `check` | Query `cfg_blocks` for blocks with zero incoming edges (excluding entry blocks) to detect dead branches and unreachable code paths. Add as a `check` predicate: `--no-unreachable-blocks`. | CI | Catches dead code that static call-graph analysis misses — unreachable branches inside functions, not just unused functions | ✓ | ✓ | 3 | No |
+| 47 | CFG summary in `audit` | Include CFG structural summary in `audit` reports: block count, branch count, max path depth, try/catch coverage ratio. Agents get control flow complexity at a glance without running `cfg` separately. | Orchestration | Audit reports become more complete — agents understand control flow complexity alongside dependency and metric data in one call | ✓ | ✓ | 3 | No |
+| 48 | CFG metrics in triage risk scoring | Add CFG-derived dimensions to `triage.js`: branch density (edges/blocks), max nesting path length, exception handler ratio. Functions with complex control flow but low cyclomatic complexity (many small branches) get flagged. | Intelligence | Triage catches control-flow-heavy functions that cyclomatic complexity alone underweights | ✓ | ✓ | 3 | No |
+
+### Tier 1d — Dataflow leverage (build on existing `dataflow` table)
+
+Dataflow edges (`flows_to`, `returns`, `mutates`) are built on every build (~230ms) but only consumed by the `dataflow` command. These features integrate dataflow into core analysis.
+
+| ID | Title | Description | Category | Benefit | Zero-dep | Foundation-aligned | Problem-fit (1-5) | Breaking |
+|----|-------|-------------|----------|---------|----------|-------------------|-------------------|----------|
+| 49 | Data-dependent impact analysis | `fnImpactData()` only follows `kind='calls'` edges. Add an option (`--include-dataflow`) to also traverse `flows_to`, `returns`, `mutates` edges for data-dependent blast radius. A function's return type changing affects everyone who captures that return value — currently invisible to impact analysis. | Analysis | Impact analysis catches data-flow breakage, not just call-chain breakage — directly prevents the "missed blast radius" problem codegraph exists to solve | ✓ | ✓ | 5 | No |
+| 50 | Dataflow fan-out in triage | Functions with high dataflow fan-out (data spreads to many places) are riskier than their call-graph fan-out suggests. Add `dataflowFanOut` as a triage scoring dimension. | Intelligence | Triage surfaces data-spreading functions that call-graph analysis underweights — a function called once but whose return value flows to 15 consumers is high-risk | ✓ | ✓ | 4 | No |
+| 51 | Dataflow predicates in `check` | Add `check` predicates for dangerous data flows: "no unvalidated data flows to SQL/eval/exec", "return values from error-prone functions must be checked". Query `dataflow` table joined with `ast_nodes` for pattern matching. | CI | Lightweight taint-like analysis using existing data — catches data flow anti-patterns in CI without a dedicated security scanner | ✓ | ✓ | 3 | No |
+| 52 | Dataflow enrichment in `diff-impact` | When a function's signature or return type changes, use `dataflow` edges to identify who captures its return value (`returns` edges) and who passes data to it (`flows_to` edges). Show these as "data-dependent impact" alongside the existing call-dependent impact. | Analysis | `diff-impact` catches breakage from return type changes, parameter changes, and mutation patterns — not just call-chain reachability | ✓ | ✓ | 5 | No |
+
+### Tier 1e — Co-change leverage (build on existing `co_changes` table)
+
+Co-change data captures historical coupling from git history. Currently only used by `co-change` command and a small enrichment in `diff-impact`.
+
+| ID | Title | Description | Category | Benefit | Zero-dep | Foundation-aligned | Problem-fit (1-5) | Breaking |
+|----|-------|-------------|----------|---------|----------|-------------------|-------------------|----------|
+| 53 | Co-change coupling in triage | Files with high co-change Jaccard scores are maintenance risks — changing one always requires changing the other. Add `coChangeCoupling` as a triage scoring dimension using the max Jaccard score for each file. | Intelligence | Triage surfaces tightly coupled file pairs that static dependency analysis may miss — hidden coupling from shared business logic or implicit contracts | ✓ | ✓ | 4 | No |
+| 54 | Co-change communities vs dependency communities | Compare Louvain communities from the dependency graph with clusters from co-change data. Files that co-change frequently but live in different dependency communities indicate hidden coupling or architectural drift. | Architecture | Surfaces coupling that the static graph can't see — two modules may have no import relationship but always change together due to shared assumptions | ✓ | ✓ | 3 | No |
+| 55 | Missing co-change partner warning in `check` | When `--staged` changes touch file A but not its historical partner file B (high Jaccard), emit a warning: "file A historically co-changes with file B — did you forget to update it?" | CI | Catches incomplete changes in CI — the most common source of subtle bugs is changing one file in a coupled pair but forgetting the other | ✓ | ✓ | 4 | No |
+
+### Tier 1f — Embeddings leverage (build on existing `embeddings` table)
+
+Symbol embeddings and FTS index are populated via `codegraph embed`. Currently only consumed by the `search` command. The vectors and `cosineSim()` function already exist.
+
+| ID | Title | Description | Category | Benefit | Zero-dep | Foundation-aligned | Problem-fit (1-5) | Breaking |
+|----|-------|-------------|----------|---------|----------|-------------------|-------------------|----------|
+| 56 | Find similar functions | New `codegraph similar <name>` command that loads a function's embedding and scans all others for cosine similarity above a threshold (e.g., 0.85). Surfaces near-duplicates and copy-paste code without syntactic matching. | Analysis | Agents find duplicate logic and refactoring candidates in one query — reduces codebase entropy and catches copy-paste drift | ✓ | ✓ | 3 | No |
+| 57 | Similarity clusters in triage | Group functions with high embedding similarity (>0.9) as "duplicate clusters" in triage output. Multiple near-identical functions are a maintenance risk — changing one requires finding and updating all copies. | Intelligence | Triage flags copy-paste debt that no other metric catches — high similarity clusters are refactoring targets | ✓ | ✓ | 3 | No |
+| 58 | Similarity warning in `audit` | When auditing a function, check if any other function has >0.85 cosine similarity and include it in the audit report: "this function is 92% similar to X — consider extracting shared logic." | Orchestration | Audit reports surface code duplication without dedicated tools — agents get actionable refactoring suggestions alongside structural analysis | ✓ | ✓ | 2 | No |
+
 Breaking (penalized to end of tier):
 
 | ID | Title | Description | Category | Benefit | Zero-dep | Foundation-aligned | Problem-fit (1-5) | Breaking |
