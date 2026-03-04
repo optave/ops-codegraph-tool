@@ -1272,7 +1272,7 @@ export async function buildGraph(rootDir, opts = {}) {
   }
   _t.rolesMs = performance.now() - _t.roles0;
 
-  // For incremental builds, filter out reverse-dep-only files from AST/complexity
+  // For incremental builds, filter out reverse-dep-only files from AST/complexity/CFG/dataflow
   // — their content didn't change, so existing ast_nodes/function_complexity rows are valid.
   let astComplexitySymbols = allSymbols;
   if (!isFullBuild) {
@@ -1287,13 +1287,12 @@ export async function buildGraph(rootDir, opts = {}) {
         }
       }
       debug(
-        `AST/complexity: processing ${astComplexitySymbols.size} changed files (skipping ${reverseDepFiles.size} reverse-deps)`,
+        `AST/complexity/CFG/dataflow: processing ${astComplexitySymbols.size} changed files (skipping ${reverseDepFiles.size} reverse-deps)`,
       );
     }
   }
 
   // AST node extraction (calls, new, string, regex, throw, await)
-  // Must run before complexity which releases _tree references
   _t.ast0 = performance.now();
   if (opts.ast !== false) {
     try {
@@ -1317,12 +1316,25 @@ export async function buildGraph(rootDir, opts = {}) {
   }
   _t.complexityMs = performance.now() - _t.complexity0;
 
+  // Pre-parse files missing WASM trees (native builds) so CFG + dataflow
+  // share a single parse pass instead of each creating parsers independently
+  if (opts.cfg !== false || opts.dataflow !== false) {
+    _t.wasmPre0 = performance.now();
+    try {
+      const { ensureWasmTrees } = await import('./parser.js');
+      await ensureWasmTrees(astComplexitySymbols, rootDir);
+    } catch (err) {
+      debug(`WASM pre-parse failed: ${err.message}`);
+    }
+    _t.wasmPreMs = performance.now() - _t.wasmPre0;
+  }
+
   // CFG analysis (skip with --no-cfg)
   if (opts.cfg !== false) {
     _t.cfg0 = performance.now();
     try {
       const { buildCFGData } = await import('./cfg.js');
-      await buildCFGData(db, allSymbols, rootDir, engineOpts);
+      await buildCFGData(db, astComplexitySymbols, rootDir, engineOpts);
     } catch (err) {
       debug(`CFG analysis failed: ${err.message}`);
     }
@@ -1334,7 +1346,7 @@ export async function buildGraph(rootDir, opts = {}) {
     _t.dataflow0 = performance.now();
     try {
       const { buildDataflowEdges } = await import('./dataflow.js');
-      await buildDataflowEdges(db, allSymbols, rootDir, engineOpts);
+      await buildDataflowEdges(db, astComplexitySymbols, rootDir, engineOpts);
     } catch (err) {
       debug(`Dataflow analysis failed: ${err.message}`);
     }
@@ -1434,6 +1446,7 @@ export async function buildGraph(rootDir, opts = {}) {
       rolesMs: +_t.rolesMs.toFixed(1),
       astMs: +_t.astMs.toFixed(1),
       complexityMs: +_t.complexityMs.toFixed(1),
+      ...(_t.wasmPreMs != null && { wasmPreMs: +_t.wasmPreMs.toFixed(1) }),
       ...(_t.cfgMs != null && { cfgMs: +_t.cfgMs.toFixed(1) }),
       ...(_t.dataflowMs != null && { dataflowMs: +_t.dataflowMs.toFixed(1) }),
     },

@@ -1769,9 +1769,6 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
         );
         analyzed++;
       }
-
-      // Release cached tree for GC
-      symbols._tree = null;
     }
   });
 

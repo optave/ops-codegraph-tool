@@ -38,6 +38,9 @@ function grammarPath(name) {
 
 let _initialized = false;
 
+// Memoized parsers — avoids reloading WASM grammars on every createParsers() call
+let _cachedParsers = null;
+
 // Query cache for JS/TS/TSX extractors (populated during createParsers)
 const _queryCache = new Map();
 
@@ -66,6 +69,8 @@ const TS_EXTRA_PATTERNS = [
 ];
 
 export async function createParsers() {
+  if (_cachedParsers) return _cachedParsers;
+
   if (!_initialized) {
     await Parser.init();
     _initialized = true;
@@ -94,6 +99,7 @@ export async function createParsers() {
       parsers.set(entry.id, null);
     }
   }
+  _cachedParsers = parsers;
   return parsers;
 }
 
@@ -102,6 +108,54 @@ export function getParser(parsers, filePath) {
   const entry = _extToLang.get(ext);
   if (!entry) return null;
   return parsers.get(entry.id) || null;
+}
+
+/**
+ * Pre-parse files missing `_tree` via WASM so downstream phases (CFG, dataflow)
+ * don't each need to create parsers and re-parse independently.
+ * Only parses files whose extension is in SUPPORTED_EXTENSIONS.
+ *
+ * @param {Map<string, object>} fileSymbols - Map<relPath, { definitions, _tree, _langId, ... }>
+ * @param {string} rootDir - absolute project root
+ */
+export async function ensureWasmTrees(fileSymbols, rootDir) {
+  // Check if any file needs a tree
+  let needsParse = false;
+  for (const [relPath, symbols] of fileSymbols) {
+    if (!symbols._tree) {
+      const ext = path.extname(relPath).toLowerCase();
+      if (_extToLang.has(ext)) {
+        needsParse = true;
+        break;
+      }
+    }
+  }
+  if (!needsParse) return;
+
+  const parsers = await createParsers();
+
+  for (const [relPath, symbols] of fileSymbols) {
+    if (symbols._tree) continue;
+    const ext = path.extname(relPath).toLowerCase();
+    const entry = _extToLang.get(ext);
+    if (!entry) continue;
+    const parser = parsers.get(entry.id);
+    if (!parser) continue;
+
+    const absPath = path.join(rootDir, relPath);
+    let code;
+    try {
+      code = fs.readFileSync(absPath, 'utf-8');
+    } catch {
+      continue;
+    }
+    try {
+      symbols._tree = parser.parse(code);
+      symbols._langId = entry.id;
+    } catch {
+      // skip files that fail to parse
+    }
+  }
 }
 
 /**
