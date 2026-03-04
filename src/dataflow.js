@@ -734,7 +734,8 @@ export function dataflowData(name, customDbPath, opts = {}) {
     return {
       name,
       results: [],
-      warning: 'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
+      warning:
+        'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
     };
   }
 
@@ -876,7 +877,8 @@ export function dataflowPathData(from, to, customDbPath, opts = {}) {
       from,
       to,
       found: false,
-      warning: 'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
+      warning:
+        'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
     };
   }
 
@@ -1005,7 +1007,8 @@ export function dataflowImpactData(name, customDbPath, opts = {}) {
     return {
       name,
       results: [],
-      warning: 'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
+      warning:
+        'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
     };
   }
 
