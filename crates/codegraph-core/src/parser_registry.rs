@@ -17,6 +17,24 @@ pub enum LanguageKind {
 }
 
 impl LanguageKind {
+    /// Return the string ID used by dataflow/cfg rules lookup.
+    /// Matches the JS `DATAFLOW_RULES` map keys in `src/dataflow.js`.
+    pub fn lang_id_str(&self) -> &'static str {
+        match self {
+            Self::JavaScript => "javascript",
+            Self::TypeScript => "typescript",
+            Self::Tsx => "tsx",
+            Self::Python => "python",
+            Self::Go => "go",
+            Self::Rust => "rust",
+            Self::Java => "java",
+            Self::CSharp => "csharp",
+            Self::Ruby => "ruby",
+            Self::Php => "php",
+            Self::Hcl => "hcl",
+        }
+    }
+
     /// Determine language from file extension — mirrors `getParser()` in parser.js
     pub fn from_extension(file_path: &str) -> Option<Self> {
         let path = Path::new(file_path);

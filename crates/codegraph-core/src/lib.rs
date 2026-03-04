@@ -7,6 +7,7 @@ pub mod cycles;
 pub mod incremental;
 pub mod complexity;
 pub mod cfg;
+pub mod dataflow;
 
 use napi_derive::napi;
 use types::*;

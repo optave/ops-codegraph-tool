@@ -1009,7 +1009,7 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
   let needsFallback = false;
 
   for (const [relPath, symbols] of fileSymbols) {
-    if (!symbols._tree) {
+    if (!symbols._tree && !symbols.dataflow) {
       const ext = path.extname(relPath).toLowerCase();
       if (DATAFLOW_EXTENSIONS.has(ext)) {
         needsFallback = true;
@@ -1061,41 +1061,45 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
       const ext = path.extname(relPath).toLowerCase();
       if (!DATAFLOW_EXTENSIONS.has(ext)) continue;
 
-      let tree = symbols._tree;
-      let langId = symbols._langId;
+      // Use native dataflow data if available — skip WASM extraction
+      let data = symbols.dataflow;
+      if (!data) {
+        let tree = symbols._tree;
+        let langId = symbols._langId;
 
-      // WASM fallback if no cached tree
-      if (!tree) {
-        if (!extToLang || !getParserFn) continue;
-        langId = extToLang.get(ext);
-        if (!langId || !DATAFLOW_LANG_IDS.has(langId)) continue;
+        // WASM fallback if no cached tree
+        if (!tree) {
+          if (!extToLang || !getParserFn) continue;
+          langId = extToLang.get(ext);
+          if (!langId || !DATAFLOW_LANG_IDS.has(langId)) continue;
 
-        const absPath = path.join(rootDir, relPath);
-        let code;
-        try {
-          code = fs.readFileSync(absPath, 'utf-8');
-        } catch {
-          continue;
+          const absPath = path.join(rootDir, relPath);
+          let code;
+          try {
+            code = fs.readFileSync(absPath, 'utf-8');
+          } catch {
+            continue;
+          }
+
+          const parser = getParserFn(parsers, absPath);
+          if (!parser) continue;
+
+          try {
+            tree = parser.parse(code);
+          } catch {
+            continue;
+          }
         }
 
-        const parser = getParserFn(parsers, absPath);
-        if (!parser) continue;
-
-        try {
-          tree = parser.parse(code);
-        } catch {
-          continue;
+        if (!langId) {
+          langId = extToLang ? extToLang.get(ext) : null;
+          if (!langId) continue;
         }
+
+        if (!DATAFLOW_RULES.has(langId)) continue;
+
+        data = extractDataflow(tree, relPath, symbols.definitions, langId);
       }
-
-      if (!langId) {
-        langId = extToLang ? extToLang.get(ext) : null;
-        if (!langId) continue;
-      }
-
-      if (!DATAFLOW_RULES.has(langId)) continue;
-
-      const data = extractDataflow(tree, relPath, symbols.definitions, langId);
 
       // Resolve function names to node IDs in this file first, then globally
       function resolveNode(funcName) {

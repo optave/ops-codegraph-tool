@@ -269,6 +269,48 @@ function normalizeNativeSymbols(result) {
       text: n.text ?? null,
       receiver: n.receiver ?? null,
     })),
+    dataflow: result.dataflow
+      ? {
+          parameters: (result.dataflow.parameters || []).map((p) => ({
+            funcName: p.funcName ?? p.func_name,
+            paramName: p.paramName ?? p.param_name,
+            paramIndex: p.paramIndex ?? p.param_index,
+            line: p.line,
+          })),
+          returns: (result.dataflow.returns || []).map((r) => ({
+            funcName: r.funcName ?? r.func_name,
+            expression: r.expression ?? '',
+            referencedNames: r.referencedNames ?? r.referenced_names ?? [],
+            line: r.line,
+          })),
+          assignments: (result.dataflow.assignments || []).map((a) => ({
+            varName: a.varName ?? a.var_name,
+            callerFunc: a.callerFunc ?? a.caller_func ?? null,
+            sourceCallName: a.sourceCallName ?? a.source_call_name,
+            expression: a.expression ?? '',
+            line: a.line,
+          })),
+          argFlows: (result.dataflow.argFlows ?? result.dataflow.arg_flows ?? []).map((f) => ({
+            callerFunc: f.callerFunc ?? f.caller_func ?? null,
+            calleeName: f.calleeName ?? f.callee_name,
+            argIndex: f.argIndex ?? f.arg_index,
+            argName: f.argName ?? f.arg_name ?? null,
+            binding:
+              (f.bindingType ?? f.binding_type) ? { type: f.bindingType ?? f.binding_type } : null,
+            confidence: f.confidence,
+            expression: f.expression ?? '',
+            line: f.line,
+          })),
+          mutations: (result.dataflow.mutations || []).map((m) => ({
+            funcName: m.funcName ?? m.func_name ?? null,
+            receiverName: m.receiverName ?? m.receiver_name,
+            binding:
+              (m.bindingType ?? m.binding_type) ? { type: m.bindingType ?? m.binding_type } : null,
+            mutatingExpr: m.mutatingExpr ?? m.mutating_expr,
+            line: m.line,
+          })),
+        }
+      : null,
   };
 }
 

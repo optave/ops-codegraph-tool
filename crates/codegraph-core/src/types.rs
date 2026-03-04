@@ -175,6 +175,87 @@ pub struct AstNode {
     pub receiver: Option<String>,
 }
 
+// ─── Dataflow Types ──────────────────────────────────────────────────────
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataflowParam {
+    #[napi(js_name = "funcName")]
+    pub func_name: String,
+    #[napi(js_name = "paramName")]
+    pub param_name: String,
+    #[napi(js_name = "paramIndex")]
+    pub param_index: u32,
+    pub line: u32,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataflowReturn {
+    #[napi(js_name = "funcName")]
+    pub func_name: String,
+    pub expression: String,
+    #[napi(js_name = "referencedNames")]
+    pub referenced_names: Vec<String>,
+    pub line: u32,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataflowAssignment {
+    #[napi(js_name = "varName")]
+    pub var_name: String,
+    #[napi(js_name = "callerFunc")]
+    pub caller_func: Option<String>,
+    #[napi(js_name = "sourceCallName")]
+    pub source_call_name: String,
+    pub expression: String,
+    pub line: u32,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataflowArgFlow {
+    #[napi(js_name = "callerFunc")]
+    pub caller_func: Option<String>,
+    #[napi(js_name = "calleeName")]
+    pub callee_name: String,
+    #[napi(js_name = "argIndex")]
+    pub arg_index: u32,
+    #[napi(js_name = "argName")]
+    pub arg_name: Option<String>,
+    #[napi(js_name = "bindingType")]
+    pub binding_type: Option<String>,
+    pub confidence: f64,
+    pub expression: String,
+    pub line: u32,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataflowMutation {
+    #[napi(js_name = "funcName")]
+    pub func_name: Option<String>,
+    #[napi(js_name = "receiverName")]
+    pub receiver_name: String,
+    #[napi(js_name = "bindingType")]
+    pub binding_type: Option<String>,
+    #[napi(js_name = "mutatingExpr")]
+    pub mutating_expr: String,
+    pub line: u32,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataflowResult {
+    pub parameters: Vec<DataflowParam>,
+    pub returns: Vec<DataflowReturn>,
+    pub assignments: Vec<DataflowAssignment>,
+    #[napi(js_name = "argFlows")]
+    pub arg_flows: Vec<DataflowArgFlow>,
+    pub mutations: Vec<DataflowMutation>,
+}
+
 #[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileSymbols {
@@ -186,6 +267,7 @@ pub struct FileSymbols {
     pub exports: Vec<ExportInfo>,
     #[napi(js_name = "astNodes")]
     pub ast_nodes: Vec<AstNode>,
+    pub dataflow: Option<DataflowResult>,
     pub line_count: Option<u32>,
 }
 
@@ -199,6 +281,7 @@ impl FileSymbols {
             classes: Vec::new(),
             exports: Vec::new(),
             ast_nodes: Vec::new(),
+            dataflow: None,
             line_count: None,
         }
     }
