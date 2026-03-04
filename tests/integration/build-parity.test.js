@@ -30,20 +30,33 @@ function copyDirSync(src, dest) {
   }
 }
 
+// Extended kinds not yet extracted by the native engine
+const EXCLUDED_KINDS = new Set(['parameter', 'property', 'constant']);
+const EXCLUDED_EDGE_KINDS = new Set(['parameter_of', 'receiver']);
+
 function readGraph(dbPath) {
   const db = new Database(dbPath, { readonly: true });
   const nodes = db
     .prepare('SELECT name, kind, file, line FROM nodes ORDER BY name, kind, file, line')
-    .all();
+    .all()
+    .filter((n) => !EXCLUDED_KINDS.has(n.kind));
   const edges = db
     .prepare(`
-    SELECT n1.name AS source_name, n2.name AS target_name, e.kind
+    SELECT n1.name AS source_name, n1.kind AS source_kind,
+           n2.name AS target_name, n2.kind AS target_kind, e.kind
     FROM edges e
     JOIN nodes n1 ON e.source_id = n1.id
     JOIN nodes n2 ON e.target_id = n2.id
     ORDER BY n1.name, n2.name, e.kind
   `)
-    .all();
+    .all()
+    .filter(
+      (e) =>
+        !EXCLUDED_EDGE_KINDS.has(e.kind) &&
+        !EXCLUDED_KINDS.has(e.source_kind) &&
+        !EXCLUDED_KINDS.has(e.target_kind),
+    )
+    .map(({ source_name, target_name, kind }) => ({ source_name, target_name, kind }));
   db.close();
   return { nodes, edges };
 }

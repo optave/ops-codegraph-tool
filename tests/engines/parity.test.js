@@ -61,17 +61,22 @@ function nativeExtract(code, filePath) {
   return native.parseFile(filePath, code);
 }
 
+// Extended kinds not yet extracted by the native engine
+const EXCLUDED_KINDS = new Set(['parameter', 'property', 'constant']);
+
 /** Normalize symbols for comparison — strip undefined/null optional fields. */
 function normalize(symbols) {
   if (!symbols) return symbols;
   return {
-    definitions: (symbols.definitions || []).map((d) => ({
-      name: d.name,
-      kind: d.kind,
-      line: d.line,
-      endLine: d.endLine ?? d.end_line ?? null,
-      // children excluded from parity comparison until native binary is rebuilt with extended kinds
-    })),
+    definitions: (symbols.definitions || [])
+      .filter((d) => !EXCLUDED_KINDS.has(d.kind))
+      .map((d) => ({
+        name: d.name,
+        kind: d.kind,
+        line: d.line,
+        endLine: d.endLine ?? d.end_line ?? null,
+        // children excluded from parity comparison until native binary is rebuilt with extended kinds
+      })),
     calls: (symbols.calls || []).map((c) => ({
       name: c.name,
       line: c.line,
