@@ -171,7 +171,12 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     complexity: compute_all_metrics(&value_n, source, "javascript"),
                                     children: opt_children(children),
                                 });
-                            } else if is_const && is_js_literal(&value_n) {
+                            } else if is_const && is_js_literal(&value_n)
+                                && find_parent_of_types(node, &[
+                                    "function_declaration", "arrow_function",
+                                    "function_expression", "method_definition",
+                                ]).is_none()
+                            {
                                 symbols.definitions.push(Definition {
                                     name: node_text(&name_n, source).to_string(),
                                     kind: "constant".to_string(),
@@ -1217,6 +1222,14 @@ mod tests {
         let s = parse_js("const fn = () => {};");
         let f = s.definitions.iter().find(|d| d.name == "fn").unwrap();
         assert_eq!(f.kind, "function");
+    }
+
+    #[test]
+    fn skips_local_const_inside_function() {
+        let s = parse_js("function main() { const x = 42; const y = new Foo(); }");
+        // Only `main` should be extracted — local constants are not top-level symbols
+        assert_eq!(s.definitions.len(), 1);
+        assert_eq!(s.definitions[0].name, "main");
     }
 
     // ── AST node extraction tests ────────────────────────────────────────────
