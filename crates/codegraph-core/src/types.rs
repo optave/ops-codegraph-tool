@@ -136,6 +136,16 @@ pub struct ExportInfo {
 
 #[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AstNode {
+    pub kind: String,
+    pub name: String,
+    pub line: u32,
+    pub text: Option<String>,
+    pub receiver: Option<String>,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileSymbols {
     pub file: String,
     pub definitions: Vec<Definition>,
@@ -143,6 +153,8 @@ pub struct FileSymbols {
     pub imports: Vec<Import>,
     pub classes: Vec<ClassRelation>,
     pub exports: Vec<ExportInfo>,
+    #[napi(js_name = "astNodes")]
+    pub ast_nodes: Vec<AstNode>,
     pub line_count: Option<u32>,
 }
 
@@ -155,6 +167,7 @@ impl FileSymbols {
             imports: Vec::new(),
             classes: Vec::new(),
             exports: Vec::new(),
+            ast_nodes: Vec::new(),
             line_count: None,
         }
     }

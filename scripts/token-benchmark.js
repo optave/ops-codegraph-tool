@@ -280,14 +280,31 @@ async function runPerfBenchmarks(nextjsDir) {
 	const { isNativeAvailable } = await import(
 		pathToFileURL(path.join(root, 'src', 'native.js')).href
 	);
+	const { isWasmAvailable } = await import(
+		pathToFileURL(path.join(root, 'src', 'parser.js')).href
+	);
 
 	const dbPath = path.join(nextjsDir, '.codegraph', 'graph.db');
 
 	console.error('\n── Performance benchmarks ──');
 
 	// ── Build benchmarks ──────────────────────────────────────────────
+	const engines = [
+		...(isWasmAvailable() ? ['wasm'] : []),
+		...(isNativeAvailable() ? ['native'] : []),
+	];
+	if (engines.length === 0) {
+		console.error('  No engines available — skipping perf benchmarks');
+		return null;
+	}
+	if (!isWasmAvailable()) {
+		console.error('  WASM grammars not built — skipping WASM perf benchmark');
+	}
+	if (!isNativeAvailable()) {
+		console.error('  Native engine not available — skipping native perf benchmark');
+	}
 	const buildResults = {};
-	for (const engine of ['wasm', ...(isNativeAvailable() ? ['native'] : [])]) {
+	for (const engine of engines) {
 		console.error(`  Full build (${engine})...`);
 		const timings = [];
 		for (let i = 0; i < PERF_RUNS; i++) {
@@ -313,9 +330,9 @@ async function runPerfBenchmarks(nextjsDir) {
 	}
 
 	// ── Stats ─────────────────────────────────────────────────────────
-	// Ensure we have a graph (rebuild with wasm if needed)
+	// Ensure we have a graph (rebuild with first available engine if needed)
 	if (!fs.existsSync(dbPath)) {
-		await buildGraph(nextjsDir, { engine: 'wasm', incremental: false });
+		await buildGraph(nextjsDir, { engine: engines[0], incremental: false });
 	}
 	const stats = statsData(dbPath);
 	const graphStats = {

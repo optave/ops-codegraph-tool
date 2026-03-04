@@ -104,6 +104,15 @@ export function getParser(parsers, filePath) {
   return parsers.get(entry.id) || null;
 }
 
+/**
+ * Check whether the required WASM grammar files exist on disk.
+ */
+export function isWasmAvailable() {
+  return LANGUAGE_REGISTRY.filter((e) => e.required).every((e) =>
+    fs.existsSync(grammarPath(e.grammarFile)),
+  );
+}
+
 // ── Unified API ──────────────────────────────────────────────────────────────
 
 function resolveEngine(opts = {}) {
@@ -182,6 +191,13 @@ function normalizeNativeSymbols(result) {
       name: e.name,
       kind: e.kind,
       line: e.line,
+    })),
+    astNodes: (result.astNodes ?? result.ast_nodes ?? []).map((n) => ({
+      kind: n.kind,
+      name: n.name,
+      line: n.line,
+      text: n.text ?? null,
+      receiver: n.receiver ?? null,
     })),
   };
 }

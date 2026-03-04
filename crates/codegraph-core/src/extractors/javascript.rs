@@ -10,6 +10,7 @@ impl SymbolExtractor for JsExtractor {
     fn extract(&self, tree: &Tree, source: &[u8], file_path: &str) -> FileSymbols {
         let mut symbols = FileSymbols::new(file_path.to_string());
         walk_node(&tree.root_node(), source, &mut symbols);
+        walk_ast_nodes(&tree.root_node(), source, &mut symbols.ast_nodes);
         symbols
     }
 }
@@ -371,6 +372,183 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
+// ── AST node extraction (new / throw / await / string / regex) ──────────────
+
+const TEXT_MAX: usize = 200;
+
+/// Walk the tree collecting new/throw/await/string/regex AST nodes.
+/// Mirrors `walkAst()` in `ast.js:216-276`.
+fn walk_ast_nodes(node: &Node, source: &[u8], ast_nodes: &mut Vec<AstNode>) {
+    match node.kind() {
+        "new_expression" => {
+            let name = extract_new_name(node, source);
+            let text = truncate(node_text(node, source), TEXT_MAX);
+            ast_nodes.push(AstNode {
+                kind: "new".to_string(),
+                name,
+                line: start_line(node),
+                text: Some(text),
+                receiver: None,
+            });
+            // Don't recurse — we already captured this node
+            return;
+        }
+        "throw_statement" => {
+            let name = extract_throw_name(node, source);
+            let text = extract_expression_text(node, source);
+            ast_nodes.push(AstNode {
+                kind: "throw".to_string(),
+                name,
+                line: start_line(node),
+                text,
+                receiver: None,
+            });
+            // Don't recurse — prevents double-counting `throw new Error`
+            return;
+        }
+        "await_expression" => {
+            let name = extract_await_name(node, source);
+            let text = extract_expression_text(node, source);
+            ast_nodes.push(AstNode {
+                kind: "await".to_string(),
+                name,
+                line: start_line(node),
+                text,
+                receiver: None,
+            });
+            // Don't recurse
+            return;
+        }
+        "string" | "template_string" => {
+            let raw = node_text(node, source);
+            // Strip quotes to get content
+            let content = raw
+                .trim_start_matches(|c| c == '\'' || c == '"' || c == '`')
+                .trim_end_matches(|c| c == '\'' || c == '"' || c == '`');
+            if content.len() < 2 {
+                // Still recurse children (template_string may have nested expressions)
+                for i in 0..node.child_count() {
+                    if let Some(child) = node.child(i) {
+                        walk_ast_nodes(&child, source, ast_nodes);
+                    }
+                }
+                return;
+            }
+            let name = truncate(content, 100);
+            let text = truncate(raw, TEXT_MAX);
+            ast_nodes.push(AstNode {
+                kind: "string".to_string(),
+                name,
+                line: start_line(node),
+                text: Some(text),
+                receiver: None,
+            });
+            // Do recurse children for strings
+        }
+        "regex" => {
+            let raw = node_text(node, source);
+            let name = if raw.is_empty() { "?".to_string() } else { raw.to_string() };
+            let text = truncate(raw, TEXT_MAX);
+            ast_nodes.push(AstNode {
+                kind: "regex".to_string(),
+                name,
+                line: start_line(node),
+                text: Some(text),
+                receiver: None,
+            });
+            // Do recurse children for regex
+        }
+        _ => {}
+    }
+
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            walk_ast_nodes(&child, source, ast_nodes);
+        }
+    }
+}
+
+/// Extract constructor name from a `new_expression` node.
+/// Handles `new Foo()`, `new a.Foo()`, `new Foo.Bar()`.
+fn extract_new_name(node: &Node, source: &[u8]) -> String {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if child.kind() == "identifier" {
+                return node_text(&child, source).to_string();
+            }
+            if child.kind() == "member_expression" {
+                return node_text(&child, source).to_string();
+            }
+        }
+    }
+    // Fallback: text before '(' minus 'new '
+    let raw = node_text(node, source);
+    raw.split('(')
+        .next()
+        .unwrap_or(raw)
+        .replace("new ", "")
+        .trim()
+        .to_string()
+}
+
+/// Extract name from a `throw_statement`.
+/// `throw new Error(...)` → "Error"; `throw x` → "x"
+fn extract_throw_name(node: &Node, source: &[u8]) -> String {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            match child.kind() {
+                "new_expression" => return extract_new_name(&child, source),
+                "call_expression" => {
+                    if let Some(fn_node) = child.child_by_field_name("function") {
+                        return node_text(&fn_node, source).to_string();
+                    }
+                    let text = node_text(&child, source);
+                    return text.split('(').next().unwrap_or("?").to_string();
+                }
+                "identifier" => return node_text(&child, source).to_string(),
+                _ => {}
+            }
+        }
+    }
+    truncate(node_text(node, source), TEXT_MAX)
+}
+
+/// Extract name from an `await_expression`.
+/// `await fetch(...)` → "fetch"; `await this.foo()` → "this.foo"
+fn extract_await_name(node: &Node, source: &[u8]) -> String {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            match child.kind() {
+                "call_expression" => {
+                    if let Some(fn_node) = child.child_by_field_name("function") {
+                        return node_text(&fn_node, source).to_string();
+                    }
+                    let text = node_text(&child, source);
+                    return text.split('(').next().unwrap_or("?").to_string();
+                }
+                "identifier" | "member_expression" => {
+                    return node_text(&child, source).to_string();
+                }
+                _ => {}
+            }
+        }
+    }
+    truncate(node_text(node, source), TEXT_MAX)
+}
+
+/// Extract expression text from throw/await — skip the keyword child.
+fn extract_expression_text(node: &Node, source: &[u8]) -> Option<String> {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            // Skip the keyword token itself
+            if child.kind() != "throw" && child.kind() != "await" {
+                return Some(truncate(node_text(&child, source), TEXT_MAX));
+            }
+        }
+    }
+    Some(truncate(node_text(node, source), TEXT_MAX))
+}
+
 // ── Extended kinds helpers ──────────────────────────────────────────────────
 
 fn extract_js_parameters(node: &Node, source: &[u8]) -> Vec<Definition> {
@@ -389,11 +567,17 @@ fn extract_js_parameters(node: &Node, source: &[u8]) -> Vec<Definition> {
                         ));
                     }
                     "required_parameter" | "optional_parameter" => {
-                        // TS parameters: pattern field holds the identifier
-                        if let Some(pattern) = child.child_by_field_name("pattern") {
-                            if pattern.kind() == "identifier" {
+                        // TS parameters: pattern field holds the identifier;
+                        // fall back to left field or first child for edge cases
+                        let name_node = child.child_by_field_name("pattern")
+                            .or_else(|| child.child_by_field_name("left"))
+                            .or_else(|| child.child(0));
+                        if let Some(name_node) = name_node {
+                            if name_node.kind() == "identifier"
+                                || name_node.kind() == "shorthand_property_identifier_pattern"
+                            {
                                 params.push(child_def(
-                                    node_text(&pattern, source).to_string(),
+                                    node_text(&name_node, source).to_string(),
                                     "parameter",
                                     start_line(&child),
                                 ));
@@ -490,7 +674,8 @@ fn extract_ts_enum_members(node: &Node, source: &[u8]) -> Vec<Definition> {
 fn is_js_literal(node: &Node) -> bool {
     matches!(node.kind(),
         "number" | "string" | "true" | "false" | "null" | "undefined"
-        | "template_string" | "regex"
+        | "template_string" | "regex" | "array" | "object"
+        | "unary_expression" | "binary_expression" | "new_expression"
     )
 }
 
@@ -1032,5 +1217,95 @@ mod tests {
         let s = parse_js("const fn = () => {};");
         let f = s.definitions.iter().find(|d| d.name == "fn").unwrap();
         assert_eq!(f.kind, "function");
+    }
+
+    // ── AST node extraction tests ────────────────────────────────────────────
+
+    #[test]
+    fn ast_extracts_new_expression() {
+        let s = parse_js("function f() { const m = new Map(); const s = new Set(); }");
+        let new_nodes: Vec<_> = s.ast_nodes.iter().filter(|n| n.kind == "new").collect();
+        assert_eq!(new_nodes.len(), 2);
+        let names: Vec<&str> = new_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert!(names.contains(&"Map"));
+        assert!(names.contains(&"Set"));
+    }
+
+    #[test]
+    fn ast_extracts_new_member_expression() {
+        let s = parse_js("const e = new errors.NotFoundError();");
+        let new_nodes: Vec<_> = s.ast_nodes.iter().filter(|n| n.kind == "new").collect();
+        assert_eq!(new_nodes.len(), 1);
+        assert_eq!(new_nodes[0].name, "errors.NotFoundError");
+    }
+
+    #[test]
+    fn ast_extracts_throw_statement() {
+        let s = parse_js("function f() { throw new Error('bad'); }");
+        let throw_nodes: Vec<_> = s.ast_nodes.iter().filter(|n| n.kind == "throw").collect();
+        assert_eq!(throw_nodes.len(), 1);
+        assert_eq!(throw_nodes[0].name, "Error");
+    }
+
+    #[test]
+    fn ast_throw_no_double_count_new() {
+        // `throw new Error(...)` should produce one throw node, NOT also a new node
+        let s = parse_js("function f() { throw new Error('fail'); }");
+        let new_nodes: Vec<_> = s.ast_nodes.iter().filter(|n| n.kind == "new").collect();
+        let throw_nodes: Vec<_> = s.ast_nodes.iter().filter(|n| n.kind == "throw").collect();
+        assert_eq!(throw_nodes.len(), 1);
+        assert_eq!(new_nodes.len(), 0, "throw new Error should not also emit a new node");
+    }
+
+    #[test]
+    fn ast_extracts_await_expression() {
+        let s = parse_js("async function f() { const d = await fetch('/api'); }");
+        let await_nodes: Vec<_> = s.ast_nodes.iter().filter(|n| n.kind == "await").collect();
+        assert_eq!(await_nodes.len(), 1);
+        assert_eq!(await_nodes[0].name, "fetch");
+    }
+
+    #[test]
+    fn ast_extracts_await_member_expression() {
+        let s = parse_js("async function f() { await this.load(); }");
+        let await_nodes: Vec<_> = s.ast_nodes.iter().filter(|n| n.kind == "await").collect();
+        assert_eq!(await_nodes.len(), 1);
+        assert_eq!(await_nodes[0].name, "this.load");
+    }
+
+    #[test]
+    fn ast_extracts_string_literals() {
+        let s = parse_js("const x = 'hello world'; const y = \"foo bar\";");
+        let str_nodes: Vec<_> = s.ast_nodes.iter().filter(|n| n.kind == "string").collect();
+        assert_eq!(str_nodes.len(), 2);
+        let names: Vec<&str> = str_nodes.iter().map(|n| n.name.as_str()).collect();
+        assert!(names.contains(&"hello world"));
+        assert!(names.contains(&"foo bar"));
+    }
+
+    #[test]
+    fn ast_skips_trivial_strings() {
+        // Single char or empty strings should be skipped
+        let s = parse_js("const a = ''; const b = 'x'; const c = 'ok';");
+        let str_nodes: Vec<_> = s.ast_nodes.iter().filter(|n| n.kind == "string").collect();
+        // Only "ok" has content length >= 2
+        assert_eq!(str_nodes.len(), 1);
+        assert_eq!(str_nodes[0].name, "ok");
+    }
+
+    #[test]
+    fn ast_extracts_regex() {
+        let s = parse_js("const re = /^[a-z]+$/i;");
+        let regex_nodes: Vec<_> = s.ast_nodes.iter().filter(|n| n.kind == "regex").collect();
+        assert_eq!(regex_nodes.len(), 1);
+        assert!(regex_nodes[0].name.contains("[a-z]"));
+    }
+
+    #[test]
+    fn ast_extracts_template_string() {
+        let s = parse_js("const msg = `hello template`;");
+        let str_nodes: Vec<_> = s.ast_nodes.iter().filter(|n| n.kind == "string").collect();
+        assert_eq!(str_nodes.len(), 1);
+        assert!(str_nodes[0].name.contains("hello template"));
     }
 }
