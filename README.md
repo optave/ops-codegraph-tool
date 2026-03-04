@@ -195,6 +195,7 @@ Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAU
 | 👀 | **Watch mode** | Incrementally update the graph as files change |
 | 🤖 | **MCP server** | 30-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
 | ⚡ | **Always fresh** | Three-tier incremental detection — sub-second rebuilds even on large codebases |
+| 🔬 | **Data flow analysis** | Intraprocedural parameter tracking, return consumers, argument flows, and mutation detection — all 11 languages |
 | 🧮 | **Complexity metrics** | Cognitive, cyclomatic, nesting depth, Halstead, and Maintainability Index per function |
 | 🏘️ | **Community detection** | Louvain clustering to discover natural module boundaries and architectural drift |
 | 📜 | **Manifesto rule engine** | Configurable pass/fail rules with warn/fail thresholds for CI gates via `check` (exit code 1 on fail) |
@@ -208,7 +209,7 @@ Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAU
 | 📋 | **Composite audit** | Single `audit` command combining explain + impact + health metrics per function — one call instead of 3-4 |
 | 🚦 | **Triage queue** | `triage` merges connectivity, hotspots, roles, and complexity into a ranked audit priority queue |
 | 📦 | **Batch querying** | Accept a list of targets and return all results in one JSON payload — enables multi-agent parallel dispatch |
-| 🔬 | **Dataflow analysis** | Track how data moves through functions with `flows_to`, `returns`, and `mutates` edges — included by default (JS/TS), skip with `--no-dataflow` |
+| 🔬 | **Dataflow analysis** | Track how data moves through functions with `flows_to`, `returns`, and `mutates` edges — all 11 languages, included by default, skip with `--no-dataflow` |
 | 🧩 | **Control flow graph** | Intraprocedural CFG construction for all 11 languages — `cfg` command with text/DOT/Mermaid output, included by default, skip with `--no-cfg` |
 | 🔎 | **AST node querying** | Stored queryable AST nodes (calls, `new`, string, regex, throw, await) — `ast` command with SQL GLOB pattern matching |
 | 🧬 | **Expanded node/edge types** | `parameter`, `property`, `constant` node kinds with `parent_id` for sub-declaration queries; `contains`, `parameter_of`, `receiver` edge kinds |
@@ -225,6 +226,7 @@ See [docs/examples](docs/examples) for real-world CLI and MCP usage examples.
 ```bash
 codegraph build [dir]          # Parse and build the dependency graph
 codegraph build --no-incremental  # Force full rebuild
+codegraph build --dataflow     # Extract data flow edges (flows_to, returns, mutates)
 codegraph build --engine wasm  # Force WASM engine (skip native)
 codegraph watch [dir]          # Watch for changes, update graph incrementally
 ```
@@ -327,7 +329,8 @@ codegraph ast -k call                 # Filter by kind: call, new, string, regex
 codegraph ast -k throw --file src/    # Combine kind and file filters
 ```
 
-> **Note:** Dataflow (JS/TS only) and CFG are included by default. Use `--no-dataflow` / `--no-cfg` for faster builds.
+> **Note:** Dataflow and CFG are included by default for all 11 languages. Use `--no-dataflow` / `--no-cfg` for faster builds.
+
 
 ### Audit, Triage & Batch
 
@@ -477,15 +480,15 @@ codegraph registry remove <name>  # Unregister
 
 | Language | Extensions | Coverage |
 |---|---|---|
-| ![JavaScript](https://img.shields.io/badge/-JavaScript-F7DF1E?style=flat-square&logo=javascript&logoColor=black) | `.js`, `.jsx`, `.mjs`, `.cjs` | Full — functions, classes, imports, call sites |
-| ![TypeScript](https://img.shields.io/badge/-TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white) | `.ts`, `.tsx` | Full — interfaces, type aliases, `.d.ts` |
-| ![Python](https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white) | `.py` | Functions, classes, methods, imports, decorators |
-| ![Go](https://img.shields.io/badge/-Go-00ADD8?style=flat-square&logo=go&logoColor=white) | `.go` | Functions, methods, structs, interfaces, imports, call sites |
-| ![Rust](https://img.shields.io/badge/-Rust-000000?style=flat-square&logo=rust&logoColor=white) | `.rs` | Functions, methods, structs, traits, `use` imports, call sites |
-| ![Java](https://img.shields.io/badge/-Java-ED8B00?style=flat-square&logo=openjdk&logoColor=white) | `.java` | Classes, methods, constructors, interfaces, imports, call sites |
-| ![C#](https://img.shields.io/badge/-C%23-512BD4?style=flat-square&logo=dotnet&logoColor=white) | `.cs` | Classes, structs, records, interfaces, enums, methods, constructors, using directives, invocations |
-| ![PHP](https://img.shields.io/badge/-PHP-777BB4?style=flat-square&logo=php&logoColor=white) | `.php` | Functions, classes, interfaces, traits, enums, methods, namespace use, calls |
-| ![Ruby](https://img.shields.io/badge/-Ruby-CC342D?style=flat-square&logo=ruby&logoColor=white) | `.rb` | Classes, modules, methods, singleton methods, require/require_relative, include/extend |
+| ![JavaScript](https://img.shields.io/badge/-JavaScript-F7DF1E?style=flat-square&logo=javascript&logoColor=black) | `.js`, `.jsx`, `.mjs`, `.cjs` | Full — functions, classes, imports, call sites, dataflow |
+| ![TypeScript](https://img.shields.io/badge/-TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white) | `.ts`, `.tsx` | Full — interfaces, type aliases, `.d.ts`, dataflow |
+| ![Python](https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white) | `.py` | Functions, classes, methods, imports, decorators, dataflow |
+| ![Go](https://img.shields.io/badge/-Go-00ADD8?style=flat-square&logo=go&logoColor=white) | `.go` | Functions, methods, structs, interfaces, imports, call sites, dataflow |
+| ![Rust](https://img.shields.io/badge/-Rust-000000?style=flat-square&logo=rust&logoColor=white) | `.rs` | Functions, methods, structs, traits, `use` imports, call sites, dataflow |
+| ![Java](https://img.shields.io/badge/-Java-ED8B00?style=flat-square&logo=openjdk&logoColor=white) | `.java` | Classes, methods, constructors, interfaces, imports, call sites, dataflow |
+| ![C#](https://img.shields.io/badge/-C%23-512BD4?style=flat-square&logo=dotnet&logoColor=white) | `.cs` | Classes, structs, records, interfaces, enums, methods, constructors, using directives, invocations, dataflow |
+| ![PHP](https://img.shields.io/badge/-PHP-777BB4?style=flat-square&logo=php&logoColor=white) | `.php` | Functions, classes, interfaces, traits, enums, methods, namespace use, calls, dataflow |
+| ![Ruby](https://img.shields.io/badge/-Ruby-CC342D?style=flat-square&logo=ruby&logoColor=white) | `.rb` | Classes, modules, methods, singleton methods, require/require_relative, include/extend, dataflow |
 | ![Terraform](https://img.shields.io/badge/-Terraform-844FBA?style=flat-square&logo=terraform&logoColor=white) | `.tf`, `.hcl` | Resource, data, variable, module, output blocks |
 
 ## ⚙️ How It Works
@@ -804,7 +807,7 @@ const { results: fused } = await multiSearchData(
 - **No full type inference** — parses `.d.ts` interfaces but doesn't use TypeScript's type checker for overload resolution
 - **Dynamic calls are best-effort** — complex computed property access and `eval` patterns are not resolved
 - **Python imports** — resolves relative imports but doesn't follow `sys.path` or virtual environment packages
-- **Dataflow analysis** — currently JS/TS only; intraprocedural (single-function scope), not interprocedural
+- **Dataflow analysis** — intraprocedural (single-function scope), not interprocedural
 
 ## 🗺️ Roadmap
 
