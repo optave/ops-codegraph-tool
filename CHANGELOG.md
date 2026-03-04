@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.0.3](https://github.com/optave/codegraph/compare/v3.0.2...v3.0.3) (2026-03-04)
+
+### Performance
+
+* **ast:** use single transaction for AST node insertion — astMs drops from ~3600ms to ~350ms (native) and ~547ms (WASM), reducing overall native build from 24.9 to 8.5 ms/file ([#333](https://github.com/optave/codegraph/pull/333))
+
 ## [3.0.2](https://github.com/optave/codegraph/compare/v3.0.1...v3.0.2) (2026-03-04)
 
 **Dataflow goes multi-language, build performance recovery, and native engine parity fixes.** This patch extends dataflow analysis from JS/TS-only to all 11 supported languages, recovers build performance lost after CFG/dataflow became default-on, fixes language-aware identifier collection in dataflow, and closes a native engine scoping bug for constants.
