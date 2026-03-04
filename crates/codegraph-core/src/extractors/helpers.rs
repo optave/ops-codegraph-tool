@@ -154,7 +154,7 @@ pub const CSHARP_AST_CONFIG: LangAstConfig = LangAstConfig {
     await_types: &["await_expression"],
     string_types: &["string_literal", "verbatim_string_literal"],
     regex_types: &[],
-    quote_chars: &['"', '@'],
+    quote_chars: &['"'],
 };
 
 pub const RUBY_AST_CONFIG: LangAstConfig = LangAstConfig {
@@ -243,7 +243,9 @@ pub fn walk_ast_nodes_with_config(
 
     if config.string_types.contains(&kind) {
         let raw = node_text(node, source);
-        let content = raw
+        // Strip language prefix modifiers (e.g. C# verbatim `@"..."`) before quote chars
+        let without_prefix = raw.trim_start_matches('@');
+        let content = without_prefix
             .trim_start_matches(|c: char| config.quote_chars.contains(&c))
             .trim_end_matches(|c: char| config.quote_chars.contains(&c));
         if content.len() < 2 {
