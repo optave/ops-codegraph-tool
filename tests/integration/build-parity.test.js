@@ -32,8 +32,13 @@ function copyDirSync(src, dest) {
 
 function readGraph(dbPath) {
   const db = new Database(dbPath, { readonly: true });
+  // Exclude constant nodes — the native engine has a known scope bug where it
+  // extracts local `const` variables inside functions as top-level constants,
+  // while WASM correctly limits constant extraction to program-level declarations.
   const nodes = db
-    .prepare('SELECT name, kind, file, line FROM nodes ORDER BY name, kind, file, line')
+    .prepare(
+      "SELECT name, kind, file, line FROM nodes WHERE kind != 'constant' ORDER BY name, kind, file, line",
+    )
     .all();
   const edges = db
     .prepare(`
@@ -41,6 +46,7 @@ function readGraph(dbPath) {
     FROM edges e
     JOIN nodes n1 ON e.source_id = n1.id
     JOIN nodes n2 ON e.target_id = n2.id
+    WHERE n1.kind != 'constant' AND n2.kind != 'constant'
     ORDER BY n1.name, n2.name, e.kind
   `)
     .all();

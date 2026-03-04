@@ -70,13 +70,19 @@ function normalize(symbols) {
       kind: d.kind,
       line: d.line,
       endLine: d.endLine ?? d.end_line ?? null,
-      // children excluded from parity comparison until native binary is rebuilt with extended kinds
+      ...(() => {
+        // Native engine doesn't extract implicit `self`/`&self` parameters for Python/Rust
+        const filtered = (d.children || [])
+          .filter((c) => c.name !== 'self')
+          .map((c) => ({ name: c.name, kind: c.kind, line: c.line }));
+        return filtered.length ? { children: filtered } : {};
+      })(),
     })),
     calls: (symbols.calls || []).map((c) => ({
       name: c.name,
       line: c.line,
       ...(c.dynamic ? { dynamic: true } : {}),
-      // receiver excluded from parity comparison until native binary is rebuilt
+      ...(c.receiver ? { receiver: c.receiver } : {}),
     })),
     imports: (symbols.imports || []).map((i) => ({
       source: i.source,
