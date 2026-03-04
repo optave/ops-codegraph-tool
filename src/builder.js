@@ -536,13 +536,7 @@ export async function buildGraph(rootDir, opts = {}) {
       opts.dataflow !== false &&
       (() => {
         try {
-          return (
-            db
-              .prepare(
-                "SELECT COUNT(*) as c FROM edges WHERE kind IN ('flows_to','returns','mutates')",
-              )
-              .get().c === 0
-          );
+          return db.prepare('SELECT COUNT(*) as c FROM dataflow').get().c === 0;
         } catch {
           return true;
         }
