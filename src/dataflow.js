@@ -911,7 +911,7 @@ export function extractDataflow(tree, _filePath, _definitions, langId = 'javascr
       if (scope?.funcName) {
         const expr = node.namedChildren[0];
         const referencedNames = [];
-        if (expr) collectIdentifiers(expr, referencedNames);
+        if (expr) collectIdentifiers(expr, referencedNames, rules);
         returns.push({
           funcName: scope.funcName,
           expression: truncate(expr ? expr.text : ''),
@@ -977,14 +977,17 @@ export function extractDataflow(tree, _filePath, _definitions, langId = 'javascr
 
 /**
  * Collect all identifier names referenced within a node.
+ * Uses isIdent() to support language-specific identifier node types
+ * (e.g. PHP's `variable_name`).
  */
-function collectIdentifiers(node, out) {
-  if (node.type === 'identifier') {
+function collectIdentifiers(node, out, rules) {
+  if (!node) return;
+  if (isIdent(node.type, rules)) {
     out.push(node.text);
     return;
   }
   for (const child of node.namedChildren) {
-    collectIdentifiers(child, out);
+    collectIdentifiers(child, out, rules);
   }
 }
 
