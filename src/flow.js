@@ -45,7 +45,10 @@ export function listEntryPointsData(dbPath, opts = {}) {
     .prepare(
       `SELECT n.name, n.kind, n.file, n.line, n.role
        FROM nodes n
-       WHERE (${prefixConditions})
+       WHERE (
+         (${prefixConditions})
+         OR n.role = 'entry'
+       )
          AND n.kind NOT IN ('file', 'directory')
        ORDER BY n.name`,
     )
@@ -59,7 +62,7 @@ export function listEntryPointsData(dbPath, opts = {}) {
     file: r.file,
     line: r.line,
     role: r.role,
-    type: entryPointType(r.name),
+    type: entryPointType(r.name) || (r.role === 'entry' ? 'exported' : null),
   }));
 
   const byType = {};
