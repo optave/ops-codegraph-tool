@@ -1331,7 +1331,7 @@ export async function buildGraph(rootDir, opts = {}) {
         const fnDefs = (symbols.definitions || []).filter(
           (d) => (d.kind === 'function' || d.kind === 'method') && d.line,
         );
-        if (fnDefs.length > 0 && !fnDefs.every((d) => d.cfg?.blocks?.length)) {
+        if (fnDefs.length > 0 && !fnDefs.every((d) => d.cfg === null || Array.isArray(d.cfg?.blocks))) {
           needsWasmTrees = true;
           break;
         }
