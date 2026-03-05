@@ -85,8 +85,8 @@ describe('sequenceData', () => {
     expect(data.entry).not.toBeNull();
     expect(data.entry.name).toBe('buildGraph');
 
-    // Should have 4 files as participants (builder, parser, resolve, src/utils/helper)
-    // (test file excluded by noTests, lib/utils/helper reachable via helperA)
+    // Should have 5 files as participants (builder, parser, resolve, src/utils/helper, lib/utils/helper)
+    // (test file excluded by noTests)
     expect(data.participants.length).toBe(5);
 
     // Messages should be in BFS depth order
@@ -141,6 +141,11 @@ describe('sequenceData', () => {
     // IDs should be distinct
     const ids = helperParticipants.map((p) => p.id);
     expect(ids[0]).not.toBe(ids[1]);
+
+    // IDs must be valid Mermaid participant identifiers (no slashes, etc.)
+    for (const id of ids) {
+      expect(id).toMatch(/^[a-zA-Z0-9_-]+$/);
+    }
   });
 
   test('noTests filtering — test file nodes excluded', () => {

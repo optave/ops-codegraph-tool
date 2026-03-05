@@ -112,8 +112,8 @@ function buildAliases(files) {
           const parts = p.replace(/\.[^.]+$/, '').split('/');
           const alias = parts
             .slice(-depth)
-            .join('/')
-            .replace(/[^a-zA-Z0-9_/-]/g, '_');
+            .join('_')
+            .replace(/[^a-zA-Z0-9_-]/g, '_');
           trial.set(p, alias);
           if (seen.has(alias)) allUnique = false;
           seen.add(alias);
@@ -233,7 +233,9 @@ export function sequenceData(name, dbPath, opts = {}) {
     if (frontier.length === 0) break;
 
     if (d === maxDepth && frontier.length > 0) {
-      truncated = true;
+      // Only mark truncated if at least one frontier node has further callees
+      const hasMoreCalls = frontier.some((fid) => getCallees.all(fid).length > 0);
+      if (hasMoreCalls) truncated = true;
     }
   }
 
@@ -345,7 +347,12 @@ export function sequenceData(name, dbPath, opts = {}) {
     totalMessages: messages.length,
     truncated,
   };
-  return paginateResult(base, 'messages', { limit: opts.limit, offset: opts.offset });
+  const result = paginateResult(base, 'messages', { limit: opts.limit, offset: opts.offset });
+  if (opts.limit !== undefined || opts.offset !== undefined) {
+    const activeFiles = new Set(result.messages.flatMap((m) => [m.from, m.to]));
+    result.participants = result.participants.filter((p) => activeFiles.has(p.id));
+  }
+  return result;
 }
 
 // ─── Mermaid formatter ───────────────────────────────────────────────
@@ -354,7 +361,11 @@ export function sequenceData(name, dbPath, opts = {}) {
  * Escape special Mermaid characters in labels.
  */
 function escapeMermaid(str) {
-  return str.replace(/:/g, '#colon;').replace(/"/g, '#quot;');
+  return str
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/:/g, '#colon;')
+    .replace(/"/g, '#quot;');
 }
 
 /**
