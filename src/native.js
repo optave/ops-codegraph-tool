@@ -31,6 +31,7 @@ const PLATFORM_PACKAGES = {
   'linux-x64-gnu': '@optave/codegraph-linux-x64-gnu',
   'linux-x64-musl': '@optave/codegraph-linux-x64-musl',
   'linux-arm64-gnu': '@optave/codegraph-linux-arm64-gnu',
+  'linux-arm64-musl': '@optave/codegraph-linux-arm64-musl', // not yet published — placeholder for future CI target
   'darwin-arm64': '@optave/codegraph-darwin-arm64',
   'darwin-x64': '@optave/codegraph-darwin-x64',
   'win32-x64': '@optave/codegraph-win32-x64-msvc',
