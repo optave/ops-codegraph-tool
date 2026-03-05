@@ -71,19 +71,13 @@
   },
   "optionalDependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-<<<<<<< HEAD
     "@optave/codegraph-darwin-arm64": "3.0.3",
     "@optave/codegraph-darwin-x64": "3.0.3",
+    "@optave/codegraph-linux-arm64-gnu": "3.0.3",
+    "@optave/codegraph-linux-arm64-musl": "3.0.3",
     "@optave/codegraph-linux-x64-gnu": "3.0.3",
+    "@optave/codegraph-linux-x64-musl": "3.0.3",
     "@optave/codegraph-win32-x64-msvc": "3.0.3"
-=======
-    "@optave/codegraph-darwin-arm64": "3.0.2",
-    "@optave/codegraph-darwin-x64": "3.0.2",
-    "@optave/codegraph-linux-arm64-gnu": "3.0.2",
-    "@optave/codegraph-linux-x64-gnu": "3.0.2",
-    "@optave/codegraph-linux-x64-musl": "3.0.2",
-    "@optave/codegraph-win32-x64-msvc": "3.0.2"
->>>>>>> 1165472 (chore: release v3.0.2)
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",
