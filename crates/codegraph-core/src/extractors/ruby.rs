@@ -1,4 +1,5 @@
 use tree_sitter::{Node, Tree};
+use crate::cfg::build_function_cfg;
 use crate::complexity::compute_all_metrics;
 use crate::types::*;
 use super::helpers::*;
@@ -44,6 +45,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
+                    cfg: None,
                     children: opt_children(children),
                 });
                 if let Some(superclass) = node.child_by_field_name("superclass") {
@@ -61,6 +63,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
+                    cfg: None,
                     children: None,
                 });
             }
@@ -82,6 +85,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "ruby"),
+                    cfg: build_function_cfg(node, "ruby", source),
                     children: opt_children(children),
                 });
             }
@@ -102,6 +106,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "ruby"),
+                    cfg: build_function_cfg(node, "ruby", source),
                     children: None,
                 });
             }

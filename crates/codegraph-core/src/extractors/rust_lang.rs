@@ -1,4 +1,5 @@
 use tree_sitter::{Node, Tree};
+use crate::cfg::build_function_cfg;
 use crate::complexity::compute_all_metrics;
 use crate::types::*;
 use super::helpers::*;
@@ -46,6 +47,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "rust"),
+                    cfg: build_function_cfg(node, "rust", source),
                     children: opt_children(children),
                 });
             }
@@ -61,6 +63,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
+                    cfg: None,
                     children: opt_children(children),
                 });
             }
@@ -76,6 +79,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
+                    cfg: None,
                     children: opt_children(children),
                 });
             }
@@ -90,6 +94,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
+                    cfg: None,
                     children: None,
                 });
             }
@@ -105,6 +110,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: None,
+                    cfg: None,
                     children: None,
                 });
                 if let Some(body) = node.child_by_field_name("body") {
@@ -125,6 +131,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                         end_line: Some(end_line(&child)),
                                         decorators: None,
                                         complexity: compute_all_metrics(&child, source, "rust"),
+                                        cfg: build_function_cfg(&child, "rust", source),
                                         children: None,
                                     });
                                 }

@@ -1,4 +1,5 @@
 use tree_sitter::{Node, Tree};
+use crate::cfg::build_function_cfg;
 use crate::complexity::compute_all_metrics;
 use crate::types::*;
 use super::helpers::*;
@@ -27,6 +28,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "go"),
+                    cfg: build_function_cfg(node, "go", source),
                     children: opt_children(children),
                 });
             }
@@ -65,6 +67,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "go"),
+                    cfg: build_function_cfg(node, "go", source),
                     children: opt_children(children),
                 });
             }
@@ -90,6 +93,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     end_line: Some(end_line(node)),
                                     decorators: None,
                                     complexity: None,
+                                    cfg: None,
                                     children: opt_children(children),
                                 });
                             }
@@ -101,6 +105,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     end_line: Some(end_line(node)),
                                     decorators: None,
                                     complexity: None,
+                                    cfg: None,
                                     children: None,
                                 });
                                 // Extract interface methods
@@ -121,6 +126,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                                     end_line: Some(end_line(&member)),
                                                     decorators: None,
                                                     complexity: None,
+                                                    cfg: None,
                                                     children: None,
                                                 });
                                             }
@@ -136,6 +142,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     end_line: Some(end_line(node)),
                                     decorators: None,
                                     complexity: None,
+                                    cfg: None,
                                     children: None,
                                 });
                             }
@@ -157,6 +164,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                 end_line: Some(end_line(&spec)),
                                 decorators: None,
                                 complexity: None,
+                                cfg: None,
                                 children: None,
                             });
                         }

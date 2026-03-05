@@ -20,6 +20,7 @@ pub fn child_def(name: String, kind: &str, line: u32) -> Definition {
         end_line: None,
         decorators: None,
         complexity: None,
+        cfg: None,
         children: None,
     }
 }

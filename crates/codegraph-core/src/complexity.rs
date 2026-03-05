@@ -344,7 +344,7 @@ pub fn lang_rules(lang_id: &str) -> Option<&'static LangRules> {
         "go" => Some(&GO_RULES),
         "rust" => Some(&RUST_LANG_RULES),
         "java" => Some(&JAVA_RULES),
-        "c_sharp" => Some(&CSHARP_RULES),
+        "csharp" => Some(&CSHARP_RULES),
         "ruby" => Some(&RUBY_RULES),
         "php" => Some(&PHP_RULES),
         _ => None,
@@ -850,7 +850,7 @@ pub fn halstead_rules(lang_id: &str) -> Option<&'static HalsteadRules> {
         "go" => Some(&GO_HALSTEAD),
         "rust" => Some(&RUST_HALSTEAD),
         "java" => Some(&JAVA_HALSTEAD),
-        "c_sharp" => Some(&CSHARP_HALSTEAD),
+        "csharp" => Some(&CSHARP_HALSTEAD),
         "ruby" => Some(&RUBY_HALSTEAD),
         "php" => Some(&PHP_HALSTEAD),
         _ => None,
@@ -860,7 +860,7 @@ pub fn halstead_rules(lang_id: &str) -> Option<&'static HalsteadRules> {
 /// Comment line prefixes per language, used for LOC metrics.
 pub fn comment_prefixes(lang_id: &str) -> &'static [&'static str] {
     match lang_id {
-        "javascript" | "typescript" | "tsx" | "go" | "rust" | "java" | "c_sharp" => {
+        "javascript" | "typescript" | "tsx" | "go" | "rust" | "java" | "csharp" => {
             &["//", "/*", "*", "*/"]
         }
         "python" | "ruby" => &["#"],

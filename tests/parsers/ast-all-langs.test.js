@@ -201,6 +201,7 @@ public class Service {
     public async Task<string> FetchAsync() {
         var result = await GetDataAsync();
         string msg = "hello from csharp";
+        var ex = new ArgumentNullException("x");
         if (result == null) {
             throw new ArgumentNullException("result");
         }

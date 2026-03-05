@@ -6,20 +6,32 @@ pub mod import_resolution;
 pub mod cycles;
 pub mod incremental;
 pub mod complexity;
+pub mod cfg;
+pub mod dataflow;
 
 use napi_derive::napi;
 use types::*;
 
 /// Parse a single file and return extracted symbols.
+/// When `include_dataflow` is true, dataflow analysis is also extracted.
 #[napi]
-pub fn parse_file(file_path: String, source: String) -> Option<FileSymbols> {
-    parallel::parse_file(&file_path, &source)
+pub fn parse_file(
+    file_path: String,
+    source: String,
+    include_dataflow: Option<bool>,
+) -> Option<FileSymbols> {
+    parallel::parse_file(&file_path, &source, include_dataflow.unwrap_or(false))
 }
 
 /// Parse multiple files in parallel and return all extracted symbols.
+/// When `include_dataflow` is true, dataflow analysis is also extracted.
 #[napi]
-pub fn parse_files(file_paths: Vec<String>, root_dir: String) -> Vec<FileSymbols> {
-    parallel::parse_files_parallel(&file_paths, &root_dir)
+pub fn parse_files(
+    file_paths: Vec<String>,
+    root_dir: String,
+    include_dataflow: Option<bool>,
+) -> Vec<FileSymbols> {
+    parallel::parse_files_parallel(&file_paths, &root_dir, include_dataflow.unwrap_or(false))
 }
 
 /// Resolve a single import path.

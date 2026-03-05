@@ -1053,8 +1053,14 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
     if (!symbols._tree) {
       const ext = path.extname(relPath).toLowerCase();
       if (CFG_EXTENSIONS.has(ext)) {
-        needsFallback = true;
-        break;
+        // Check if all function/method defs already have native CFG data
+        const hasNativeCfg = symbols.definitions
+          .filter((d) => (d.kind === 'function' || d.kind === 'method') && d.line)
+          .every((d) => d.cfg === null || d.cfg?.blocks?.length);
+        if (!hasNativeCfg) {
+          needsFallback = true;
+          break;
+        }
       }
     }
   }
@@ -1102,8 +1108,13 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
       let tree = symbols._tree;
       let langId = symbols._langId;
 
-      // WASM fallback if no cached tree
-      if (!tree) {
+      // Check if all defs already have native CFG — skip WASM parse if so
+      const allNative = symbols.definitions
+        .filter((d) => (d.kind === 'function' || d.kind === 'method') && d.line)
+        .every((d) => d.cfg === null || d.cfg?.blocks?.length);
+
+      // WASM fallback if no cached tree and not all native
+      if (!tree && !allNative) {
         if (!extToLang || !getParserFn) continue;
         langId = extToLang.get(ext);
         if (!langId || !CFG_LANG_IDS.has(langId)) continue;
@@ -1135,7 +1146,7 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
       if (!cfgRules) continue;
 
       const complexityRules = COMPLEXITY_RULES.get(langId);
-      if (!complexityRules) continue;
+      // complexityRules only needed for WASM fallback path
 
       for (const def of symbols.definitions) {
         if (def.kind !== 'function' && def.kind !== 'method') continue;
@@ -1144,11 +1155,19 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
         const row = getNodeId.get(def.name, relPath, def.line);
         if (!row) continue;
 
-        const funcNode = findFunctionNode(tree.rootNode, def.line, def.endLine, complexityRules);
-        if (!funcNode) continue;
+        // Native path: use pre-computed CFG from Rust engine
+        let cfg = null;
+        if (def.cfg?.blocks?.length) {
+          cfg = def.cfg;
+        } else {
+          // WASM fallback: compute CFG from tree-sitter AST
+          if (!tree || !complexityRules) continue;
+          const funcNode = findFunctionNode(tree.rootNode, def.line, def.endLine, complexityRules);
+          if (!funcNode) continue;
+          cfg = buildFunctionCFG(funcNode, langId);
+        }
 
-        const cfg = buildFunctionCFG(funcNode, langId);
-        if (cfg.blocks.length === 0) continue;
+        if (!cfg || cfg.blocks.length === 0) continue;
 
         // Clear old CFG data for this function
         deleteEdges.run(row.id);
