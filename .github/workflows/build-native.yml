@@ -88,11 +88,16 @@ jobs:
           # Create linker script so -lgcc_s resolves to static libgcc
           MUSL_LIB_DIR="$(dirname "$(musl-gcc -print-libgcc-file-name)")"
           echo 'INPUT(-lgcc)' | sudo tee "${MUSL_LIB_DIR}/libgcc_s.so" > /dev/null
-          # Use target-specific env vars to avoid affecting host build scripts
           echo "CC_x86_64_unknown_linux_musl=musl-gcc" >> "$GITHUB_ENV"
-          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc" >> "$GITHUB_ENV"
-          # Ensure host build scripts don't fail with rust-lld (can't find libgcc_s)
-          echo "CARGO_HOST_RUSTFLAGS=-Clinker=gcc" >> "$GITHUB_ENV"
+          # Configure linkers via .cargo/config.toml (more reliable than env vars)
+          mkdir -p .cargo
+          cat >> .cargo/config.toml << 'TOML'
+          [target.x86_64-unknown-linux-musl]
+          linker = "musl-gcc"
+
+          [host]
+          rustflags = ["-C", "linker=gcc"]
+          TOML
 
       - name: Install napi-rs CLI
         run: npm install -g @napi-rs/cli@3
