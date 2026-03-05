@@ -214,6 +214,16 @@ class Greeter
   end
 end
 `,
+  'fixture.rs': `
+use std::collections::HashMap;
+
+async fn fetch_data(url: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let client = reqwest::get(url).await?;
+    let msg = "hello from rust";
+    let raw = r#"raw string content"#;
+    Ok(msg.to_string())
+}
+`,
   'fixture.php': `<?php
 class UserService {
     public function createUser(string $name): User {
@@ -409,6 +419,33 @@ describe.skipIf(!canTestMultiLang)('native AST nodes — multi-language', () => 
       .all();
     expect(regexes.length).toBeGreaterThanOrEqual(1);
     expect(regexes.some((n) => n.name.includes('[A-Z]'))).toBe(true);
+  });
+
+  // ── Rust ──
+
+  test('Rust: extracts await', () => {
+    const awaits = db
+      .prepare("SELECT * FROM ast_nodes WHERE kind = 'await' AND file LIKE '%fixture.rs'")
+      .all();
+    expect(awaits.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test('Rust: extracts string literals', () => {
+    const strings = db
+      .prepare("SELECT * FROM ast_nodes WHERE kind = 'string' AND file LIKE '%fixture.rs'")
+      .all();
+    expect(strings.length).toBeGreaterThanOrEqual(2);
+    expect(strings.some((n) => n.name.includes('hello from rust'))).toBe(true);
+  });
+
+  test('Rust: extracts raw string literals with trimmed name', () => {
+    const strings = db
+      .prepare("SELECT * FROM ast_nodes WHERE kind = 'string' AND file LIKE '%fixture.rs'")
+      .all();
+    const rawStr = strings.find((n) => n.name.includes('raw string content'));
+    expect(rawStr).toBeDefined();
+    // Name should not contain r, #, or quote prefixes
+    expect(rawStr.name).not.toMatch(/^[r#"]/);
   });
 
   // ── PHP ──

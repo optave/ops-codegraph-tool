@@ -212,10 +212,8 @@ pub fn walk_ast_nodes_with_config(
             text: Some(text),
             receiver: None,
         });
-        return;
-    }
-
-    if config.throw_types.contains(&kind) {
+        // Fall through to recurse children (e.g. string args inside `new`)
+    } else if config.throw_types.contains(&kind) {
         let name = extract_throw_target(node, source, config);
         let text = extract_child_expression_text(node, source);
         ast_nodes.push(AstNode {
@@ -225,10 +223,8 @@ pub fn walk_ast_nodes_with_config(
             text,
             receiver: None,
         });
-        return;
-    }
-
-    if config.await_types.contains(&kind) {
+        // Fall through to recurse children (e.g. `new` inside `throw new ...`)
+    } else if config.await_types.contains(&kind) {
         let name = extract_awaited_name(node, source);
         let text = extract_child_expression_text(node, source);
         ast_nodes.push(AstNode {
@@ -238,15 +234,18 @@ pub fn walk_ast_nodes_with_config(
             text,
             receiver: None,
         });
-        return;
-    }
-
-    if config.string_types.contains(&kind) {
+        // Fall through to recurse children
+    } else if config.string_types.contains(&kind) {
         let raw = node_text(node, source);
-        // Strip language prefix modifiers (e.g. C# verbatim `@"..."`) before quote chars
-        let without_prefix = raw.trim_start_matches('@');
+        // Strip language prefix modifiers before quote chars:
+        // - C# verbatim `@"..."`
+        // - Rust raw strings `r"..."`, `r#"..."#`
+        let without_prefix = raw.trim_start_matches('@')
+            .trim_start_matches('r')
+            .trim_start_matches('#');
         let content = without_prefix
             .trim_start_matches(|c: char| config.quote_chars.contains(&c))
+            .trim_end_matches('#')
             .trim_end_matches(|c: char| config.quote_chars.contains(&c));
         if content.len() < 2 {
             for i in 0..node.child_count() {
@@ -266,9 +265,7 @@ pub fn walk_ast_nodes_with_config(
             receiver: None,
         });
         // Fall through to recurse children (template strings may have nested expressions)
-    }
-
-    if config.regex_types.contains(&kind) {
+    } else if config.regex_types.contains(&kind) {
         let raw = node_text(node, source);
         let name = if raw.is_empty() { "?".to_string() } else { raw.to_string() };
         let text = truncate(raw, AST_TEXT_MAX);
