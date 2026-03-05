@@ -1,5 +1,5 @@
 /**
- * Sequence diagram generation — Mermaid sequenceDiagram from call graph edges.
+ * Sequence diagram generation – Mermaid sequenceDiagram from call graph edges.
  *
  * Participants are files (not individual functions). Calls within the same file
  * become self-messages. This keeps diagrams readable and matches typical
