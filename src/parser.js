@@ -269,6 +269,46 @@ function normalizeNativeSymbols(result) {
       text: n.text ?? null,
       receiver: n.receiver ?? null,
     })),
+    dataflow: result.dataflow
+      ? {
+          parameters: (result.dataflow.parameters || []).map((p) => ({
+            funcName: p.funcName,
+            paramName: p.paramName,
+            paramIndex: p.paramIndex,
+            line: p.line,
+          })),
+          returns: (result.dataflow.returns || []).map((r) => ({
+            funcName: r.funcName,
+            expression: r.expression ?? '',
+            referencedNames: r.referencedNames ?? [],
+            line: r.line,
+          })),
+          assignments: (result.dataflow.assignments || []).map((a) => ({
+            varName: a.varName,
+            callerFunc: a.callerFunc ?? null,
+            sourceCallName: a.sourceCallName,
+            expression: a.expression ?? '',
+            line: a.line,
+          })),
+          argFlows: (result.dataflow.argFlows ?? []).map((f) => ({
+            callerFunc: f.callerFunc ?? null,
+            calleeName: f.calleeName,
+            argIndex: f.argIndex,
+            argName: f.argName ?? null,
+            binding: f.bindingType ? { type: f.bindingType } : null,
+            confidence: f.confidence,
+            expression: f.expression ?? '',
+            line: f.line,
+          })),
+          mutations: (result.dataflow.mutations || []).map((m) => ({
+            funcName: m.funcName ?? null,
+            receiverName: m.receiverName,
+            binding: m.bindingType ? { type: m.bindingType } : null,
+            mutatingExpr: m.mutatingExpr,
+            line: m.line,
+          })),
+        }
+      : null,
   };
 }
 
@@ -400,7 +440,7 @@ export async function parseFileAuto(filePath, source, opts = {}) {
   const { native } = resolveEngine(opts);
 
   if (native) {
-    const result = native.parseFile(filePath, source);
+    const result = native.parseFile(filePath, source, !!opts.dataflow);
     return result ? normalizeNativeSymbols(result) : null;
   }
 
@@ -423,7 +463,7 @@ export async function parseFilesAuto(filePaths, rootDir, opts = {}) {
   const result = new Map();
 
   if (native) {
-    const nativeResults = native.parseFiles(filePaths, rootDir);
+    const nativeResults = native.parseFiles(filePaths, rootDir, !!opts.dataflow);
     for (const r of nativeResults) {
       if (!r) continue;
       const relPath = path.relative(rootDir, r.file).split(path.sep).join('/');
