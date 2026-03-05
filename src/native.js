@@ -18,9 +18,9 @@ let _loadError = null;
  */
 function detectLibc() {
   try {
-    const { readdirSync } = require('fs');
+    const { readdirSync } = require('node:fs');
     const files = readdirSync('/lib');
-    if (files.some(f => f.startsWith('ld-musl-') && f.endsWith('.so.1'))) {
+    if (files.some((f) => f.startsWith('ld-musl-') && f.endsWith('.so.1'))) {
       return 'musl';
     }
   } catch {}
