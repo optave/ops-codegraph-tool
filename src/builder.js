@@ -1328,7 +1328,7 @@ export async function buildGraph(rootDir, opts = {}) {
       if (symbols._tree) continue; // already has a tree
       // CFG: need tree if any function/method def lacks native CFG
       if (needsCfg) {
-        const fnDefs = symbols.definitions.filter(
+        const fnDefs = (symbols.definitions || []).filter(
           (d) => (d.kind === 'function' || d.kind === 'method') && d.line,
         );
         if (fnDefs.length > 0 && !fnDefs.every((d) => d.cfg?.blocks?.length)) {
