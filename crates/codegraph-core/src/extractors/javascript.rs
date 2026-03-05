@@ -28,7 +28,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "javascript"),
-                    cfg: build_function_cfg(node, "javascript"),
+                    cfg: build_function_cfg(node, "javascript", source),
                     children: opt_children(children),
                 });
             }
@@ -90,7 +90,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "javascript"),
-                    cfg: build_function_cfg(node, "javascript"),
+                    cfg: build_function_cfg(node, "javascript", source),
                     children: opt_children(children),
                 });
             }
@@ -176,7 +176,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                     end_line: Some(end_line(&value_n)),
                                     decorators: None,
                                     complexity: compute_all_metrics(&value_n, source, "javascript"),
-                                    cfg: build_function_cfg(&value_n, "javascript"),
+                                    cfg: build_function_cfg(&value_n, "javascript", source),
                                     children: opt_children(children),
                                 });
                             } else if is_const && is_js_literal(&value_n)
@@ -712,7 +712,7 @@ fn extract_interface_methods(
                         end_line: Some(end_line(&child)),
                         decorators: None,
                         complexity: None,
-                        cfg: build_function_cfg(&child, "javascript"),
+                        cfg: build_function_cfg(&child, "javascript", source),
                         children: None,
                     });
                 }
@@ -929,7 +929,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             end_line: Some(end_line(&cb)),
             decorators: None,
             complexity: compute_all_metrics(&cb, source, "javascript"),
-            cfg: build_function_cfg(&cb, "javascript"),
+            cfg: build_function_cfg(&cb, "javascript", source),
             children: None,
         });
     }
@@ -948,7 +948,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             end_line: Some(end_line(&cb)),
             decorators: None,
             complexity: compute_all_metrics(&cb, source, "javascript"),
-            cfg: build_function_cfg(&cb, "javascript"),
+            cfg: build_function_cfg(&cb, "javascript", source),
             children: None,
         });
     }
@@ -964,7 +964,7 @@ fn extract_callback_definition(call_node: &Node, source: &[u8]) -> Option<Defini
             end_line: Some(end_line(&cb)),
             decorators: None,
             complexity: compute_all_metrics(&cb, source, "javascript"),
-            cfg: build_function_cfg(&cb, "javascript"),
+            cfg: build_function_cfg(&cb, "javascript", source),
             children: None,
         });
     }

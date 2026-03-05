@@ -116,7 +116,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                         end_line: Some(end_line(&child)),
                                         decorators: None,
                                         complexity: compute_all_metrics(&child, source, "csharp"),
-                                        cfg: build_function_cfg(&child, "csharp"),
+                                        cfg: build_function_cfg(&child, "csharp", source),
                                         children: None,
                                     });
                                 }
@@ -160,7 +160,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "csharp"),
-                    cfg: build_function_cfg(node, "csharp"),
+                    cfg: build_function_cfg(node, "csharp", source),
                     children: opt_children(children),
                 });
             }
@@ -182,7 +182,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "csharp"),
-                    cfg: build_function_cfg(node, "csharp"),
+                    cfg: build_function_cfg(node, "csharp", source),
                     children: opt_children(children),
                 });
             }
@@ -203,7 +203,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "csharp"),
-                    cfg: build_function_cfg(node, "csharp"),
+                    cfg: build_function_cfg(node, "csharp", source),
                     children: None,
                 });
             }

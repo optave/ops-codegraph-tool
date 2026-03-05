@@ -47,7 +47,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "rust"),
-                    cfg: build_function_cfg(node, "rust"),
+                    cfg: build_function_cfg(node, "rust", source),
                     children: opt_children(children),
                 });
             }
@@ -131,7 +131,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                         end_line: Some(end_line(&child)),
                                         decorators: None,
                                         complexity: compute_all_metrics(&child, source, "rust"),
-                                        cfg: build_function_cfg(&child, "rust"),
+                                        cfg: build_function_cfg(&child, "rust", source),
                                         children: None,
                                     });
                                 }

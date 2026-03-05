@@ -28,7 +28,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "go"),
-                    cfg: build_function_cfg(node, "go"),
+                    cfg: build_function_cfg(node, "go", source),
                     children: opt_children(children),
                 });
             }
@@ -67,7 +67,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "go"),
-                    cfg: build_function_cfg(node, "go"),
+                    cfg: build_function_cfg(node, "go", source),
                     children: opt_children(children),
                 });
             }

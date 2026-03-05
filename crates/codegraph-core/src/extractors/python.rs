@@ -44,7 +44,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                         Some(decorators)
                     },
                     complexity: compute_all_metrics(node, source, "python"),
-                    cfg: build_function_cfg(node, "python"),
+                    cfg: build_function_cfg(node, "python", source),
                     children: opt_children(children),
                 });
             }

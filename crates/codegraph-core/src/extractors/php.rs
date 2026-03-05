@@ -44,7 +44,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "php"),
-                    cfg: build_function_cfg(node, "php"),
+                    cfg: build_function_cfg(node, "php", source),
                     children: opt_children(children),
                 });
             }
@@ -133,7 +133,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                         end_line: Some(end_line(&child)),
                                         decorators: None,
                                         complexity: compute_all_metrics(&child, source, "php"),
-                                        cfg: build_function_cfg(&child, "php"),
+                                        cfg: build_function_cfg(&child, "php", source),
                                         children: None,
                                     });
                                 }
@@ -192,7 +192,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "php"),
-                    cfg: build_function_cfg(node, "php"),
+                    cfg: build_function_cfg(node, "php", source),
                     children: opt_children(children),
                 });
             }

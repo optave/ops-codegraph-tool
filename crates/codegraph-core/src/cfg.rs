@@ -325,6 +325,7 @@ struct LabelCtx {
 /// CFG builder state.
 struct CfgBuilder<'a> {
     rules: &'a CfgRules,
+    source: &'a [u8],
     blocks: Vec<CfgBlock>,
     edges: Vec<CfgEdge>,
     next_index: u32,
@@ -334,9 +335,10 @@ struct CfgBuilder<'a> {
 }
 
 impl<'a> CfgBuilder<'a> {
-    fn new(rules: &'a CfgRules) -> Self {
+    fn new(rules: &'a CfgRules, source: &'a [u8]) -> Self {
         Self {
             rules,
+            source,
             blocks: Vec::new(),
             edges: Vec::new(),
             next_index: 0,
@@ -446,7 +448,7 @@ impl<'a> CfgBuilder<'a> {
             let label_node = stmt.child_by_field_name("label");
             let body = stmt.child_by_field_name("body");
             if let (Some(label_node), Some(body)) = (label_node, body) {
-                let label_name = label_node.utf8_text(&[]).unwrap_or("").to_string();
+                let label_name = label_node.utf8_text(self.source).unwrap_or("").to_string();
                 // We can't know the loop blocks yet — push a placeholder
                 self.label_map.push((label_name.clone(), LabelCtx { header_idx: None, exit_idx: None }));
                 let result = self.process_statement(&body, current);
@@ -518,7 +520,7 @@ impl<'a> CfgBuilder<'a> {
         // Break
         if matches_opt(kind, self.rules.break_node) {
             let label_name = stmt.child_by_field_name("label")
-                .map(|n| n.utf8_text(&[]).unwrap_or("").to_string());
+                .map(|n| n.utf8_text(self.source).unwrap_or("").to_string());
 
             let target = if let Some(ref name) = label_name {
                 self.label_map.iter().rev()
@@ -539,7 +541,7 @@ impl<'a> CfgBuilder<'a> {
         // Continue
         if matches_opt(kind, self.rules.continue_node) {
             let label_name = stmt.child_by_field_name("label")
-                .map(|n| n.utf8_text(&[]).unwrap_or("").to_string());
+                .map(|n| n.utf8_text(self.source).unwrap_or("").to_string());
 
             let target = if let Some(ref name) = label_name {
                 self.label_map.iter().rev()
@@ -809,7 +811,7 @@ impl<'a> CfgBuilder<'a> {
 
         let body = loop_stmt.child_by_field_name("body");
         let body_block = self.make_block("loop_body", None, None, None);
-        self.add_edge(header, body_block, "branch_true");
+        self.add_edge(header, body_block, "fallthrough");
 
         if let Some(body) = body {
             let stmts = self.get_statements(&body);
@@ -1009,10 +1011,10 @@ fn node_end_line(node: &Node) -> u32 {
 // ─── Public API ─────────────────────────────────────────────────────────
 
 /// Build a control flow graph for a single function AST node.
-pub fn build_function_cfg(function_node: &Node, lang_id: &str) -> Option<CfgData> {
+pub fn build_function_cfg(function_node: &Node, lang_id: &str, source: &[u8]) -> Option<CfgData> {
     let rules = get_cfg_rules(lang_id)?;
 
-    let mut builder = CfgBuilder::new(rules);
+    let mut builder = CfgBuilder::new(rules, source);
 
     let entry = builder.make_block("entry", None, None, None);
     let exit = builder.make_block("exit", None, None, None);

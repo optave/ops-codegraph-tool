@@ -118,7 +118,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                                         end_line: Some(end_line(&child)),
                                         decorators: None,
                                         complexity: compute_all_metrics(&child, source, "java"),
-                                        cfg: build_function_cfg(&child, "java"),
+                                        cfg: build_function_cfg(&child, "java", source),
                                         children: None,
                                     });
                                 }
@@ -162,7 +162,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "java"),
-                    cfg: build_function_cfg(node, "java"),
+                    cfg: build_function_cfg(node, "java", source),
                     children: opt_children(children),
                 });
             }
@@ -184,7 +184,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                     end_line: Some(end_line(node)),
                     decorators: None,
                     complexity: compute_all_metrics(node, source, "java"),
-                    cfg: build_function_cfg(node, "java"),
+                    cfg: build_function_cfg(node, "java", source),
                     children: opt_children(children),
                 });
             }
