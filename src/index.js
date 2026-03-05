@@ -121,7 +121,6 @@ export { isNativeAvailable } from './native.js';
 export { matchOwners, owners, ownersData, ownersForFiles, parseCodeowners } from './owners.js';
 // Pagination utilities
 export { MCP_DEFAULTS, MCP_MAX_LIMIT, paginate, paginateResult, printNdjson } from './paginate.js';
-
 // Unified parser API
 export { getActiveEngine, isWasmAvailable, parseFileAuto, parseFilesAuto } from './parser.js';
 // Query functions (data-returning)
@@ -170,6 +169,8 @@ export {
   saveRegistry,
   unregisterRepo,
 } from './registry.js';
+// Sequence diagram generation
+export { sequence, sequenceData, sequenceToMermaid } from './sequence.js';
 // Snapshot management
 export {
   snapshotDelete,

@@ -1,0 +1,192 @@
+/**
+ * Integration tests for sequence diagram generation.
+ *
+ * Uses a hand-crafted in-memory DB with known graph topology:
+ *
+ *   buildGraph() → parseFiles()       [src/builder.js → src/parser.js]
+ *                → resolveImports()   [src/builder.js → src/resolve.js]
+ *   parseFiles() → extractSymbols()   [src/parser.js  → src/parser.js, same-file]
+ *   extractSymbols()                  [leaf]
+ *   resolveImports()                  [leaf]
+ *
+ * For alias collision test:
+ *   helperA()  in  src/utils/helper.js
+ *   helperB()  in  lib/utils/helper.js
+ */
+
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import Database from 'better-sqlite3';
+import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { initSchema } from '../../src/db.js';
+import { sequenceData, sequenceToMermaid } from '../../src/sequence.js';
+
+// ─── Helpers ───────────────────────────────────────────────────────────
+
+function insertNode(db, name, kind, file, line) {
+  return db
+    .prepare('INSERT INTO nodes (name, kind, file, line) VALUES (?, ?, ?, ?)')
+    .run(name, kind, file, line).lastInsertRowid;
+}
+
+function insertEdge(db, sourceId, targetId, kind, confidence = 1.0) {
+  db.prepare(
+    'INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?, ?, ?, ?, 0)',
+  ).run(sourceId, targetId, kind, confidence);
+}
+
+// ─── Fixture DB ────────────────────────────────────────────────────────
+
+let tmpDir, dbPath;
+
+beforeAll(() => {
+  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-sequence-'));
+  fs.mkdirSync(path.join(tmpDir, '.codegraph'));
+  dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
+
+  const db = new Database(dbPath);
+  db.pragma('journal_mode = WAL');
+  initSchema(db);
+
+  // Core nodes
+  const buildGraph = insertNode(db, 'buildGraph', 'function', 'src/builder.js', 10);
+  const parseFiles = insertNode(db, 'parseFiles', 'function', 'src/parser.js', 5);
+  const extractSymbols = insertNode(db, 'extractSymbols', 'function', 'src/parser.js', 20);
+  const resolveImports = insertNode(db, 'resolveImports', 'function', 'src/resolve.js', 1);
+
+  // Call edges
+  insertEdge(db, buildGraph, parseFiles, 'calls');
+  insertEdge(db, buildGraph, resolveImports, 'calls');
+  insertEdge(db, parseFiles, extractSymbols, 'calls');
+
+  // Alias collision nodes (two different helper.js files)
+  const helperA = insertNode(db, 'helperA', 'function', 'src/utils/helper.js', 1);
+  const helperB = insertNode(db, 'helperB', 'function', 'lib/utils/helper.js', 1);
+  insertEdge(db, buildGraph, helperA, 'calls');
+  insertEdge(db, helperA, helperB, 'calls');
+
+  // Test file node (for noTests filtering)
+  const testFn = insertNode(db, 'testBuild', 'function', 'tests/builder.test.js', 1);
+  insertEdge(db, buildGraph, testFn, 'calls');
+
+  db.close();
+});
+
+afterAll(() => {
+  if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+// ─── sequenceData ──────────────────────────────────────────────────────
+
+describe('sequenceData', () => {
+  test('basic sequence — correct participants and messages in BFS order', () => {
+    const data = sequenceData('buildGraph', dbPath, { noTests: true });
+    expect(data.entry).not.toBeNull();
+    expect(data.entry.name).toBe('buildGraph');
+
+    // Should have 4 files as participants (builder, parser, resolve, src/utils/helper)
+    // (test file excluded by noTests, lib/utils/helper reachable via helperA)
+    expect(data.participants.length).toBe(5);
+
+    // Messages should be in BFS depth order
+    expect(data.messages.length).toBeGreaterThanOrEqual(4);
+    const depths = data.messages.map((m) => m.depth);
+    for (let i = 1; i < depths.length; i++) {
+      expect(depths[i]).toBeGreaterThanOrEqual(depths[i - 1]);
+    }
+  });
+
+  test('self-call — same-file call appears as self-message', () => {
+    const data = sequenceData('parseFiles', dbPath, { noTests: true });
+    expect(data.entry).not.toBeNull();
+
+    // parseFiles → extractSymbols are both in src/parser.js
+    const selfMessages = data.messages.filter((m) => m.from === m.to);
+    expect(selfMessages.length).toBe(1);
+    expect(selfMessages[0].label).toBe('extractSymbols');
+  });
+
+  test('depth limiting — depth:1 truncates', () => {
+    const data = sequenceData('buildGraph', dbPath, { depth: 1, noTests: true });
+    expect(data.truncated).toBe(true);
+    expect(data.depth).toBe(1);
+
+    // At depth 1, only direct callees of buildGraph
+    const msgDepths = data.messages.map((m) => m.depth);
+    expect(Math.max(...msgDepths)).toBe(1);
+  });
+
+  test('unknown name — entry is null', () => {
+    const data = sequenceData('nonExistentFunction', dbPath);
+    expect(data.entry).toBeNull();
+    expect(data.participants).toHaveLength(0);
+    expect(data.messages).toHaveLength(0);
+  });
+
+  test('leaf entry — entry exists, zero messages', () => {
+    const data = sequenceData('extractSymbols', dbPath);
+    expect(data.entry).not.toBeNull();
+    expect(data.entry.name).toBe('extractSymbols');
+    expect(data.messages).toHaveLength(0);
+    // Only the entry file as participant
+    expect(data.participants).toHaveLength(1);
+  });
+
+  test('participant alias collision — two helper.js files get distinct IDs', () => {
+    const data = sequenceData('buildGraph', dbPath, { noTests: true });
+    const helperParticipants = data.participants.filter((p) => p.label === 'helper.js');
+    expect(helperParticipants.length).toBe(2);
+
+    // IDs should be distinct
+    const ids = helperParticipants.map((p) => p.id);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  test('noTests filtering — test file nodes excluded', () => {
+    const withTests = sequenceData('buildGraph', dbPath, { noTests: false });
+    const withoutTests = sequenceData('buildGraph', dbPath, { noTests: true });
+
+    // With tests should have more messages (includes testBuild)
+    expect(withTests.totalMessages).toBeGreaterThan(withoutTests.totalMessages);
+
+    // testBuild should not appear when filtering
+    const testMsgs = withoutTests.messages.filter((m) => m.label === 'testBuild');
+    expect(testMsgs).toHaveLength(0);
+  });
+});
+
+// ─── sequenceToMermaid ──────────────────────────────────────────────────
+
+describe('sequenceToMermaid', () => {
+  test('starts with sequenceDiagram and has participant lines', () => {
+    const data = sequenceData('buildGraph', dbPath, { noTests: true });
+    const mermaid = sequenceToMermaid(data);
+
+    expect(mermaid).toMatch(/^sequenceDiagram/);
+    expect(mermaid).toContain('participant');
+  });
+
+  test('has ->> arrows for calls', () => {
+    const data = sequenceData('buildGraph', dbPath, { noTests: true });
+    const mermaid = sequenceToMermaid(data);
+    expect(mermaid).toContain('->>');
+  });
+
+  test('truncation note when truncated', () => {
+    const data = sequenceData('buildGraph', dbPath, { depth: 1, noTests: true });
+    const mermaid = sequenceToMermaid(data);
+    expect(mermaid).toContain('Truncated at depth');
+  });
+
+  test('escapes colons in labels', () => {
+    const mockData = {
+      participants: [{ id: 'a', label: 'a.js' }],
+      messages: [{ from: 'a', to: 'a', label: 'route:GET /users', type: 'call' }],
+      truncated: false,
+    };
+    const mermaid = sequenceToMermaid(mockData);
+    expect(mermaid).toContain('#colon;');
+    expect(mermaid).not.toContain('route:');
+  });
+});
