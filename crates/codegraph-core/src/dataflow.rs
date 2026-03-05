@@ -851,14 +851,17 @@ fn member_receiver(member_expr: &Node, rules: &DataflowRules, source: &[u8]) -> 
 }
 
 /// Collect all identifier names referenced within a node.
-fn collect_identifiers(node: &Node, out: &mut Vec<String>, rules: &DataflowRules, source: &[u8]) {
+fn collect_identifiers(node: &Node, out: &mut Vec<String>, rules: &DataflowRules, source: &[u8], depth: usize) {
+    if depth > MAX_VISIT_DEPTH {
+        return;
+    }
     if is_ident(rules, node.kind()) {
         out.push(node_text(node, source).to_string());
         return;
     }
     let cursor = &mut node.walk();
     for child in node.named_children(cursor) {
-        collect_identifiers(&child, out, rules, source);
+        collect_identifiers(&child, out, rules, source, depth + 1);
     }
 }
 
@@ -985,7 +988,7 @@ fn visit(
                 let expr = node.named_child(0);
                 let mut referenced_names = Vec::new();
                 if let Some(ref e) = expr {
-                    collect_identifiers(e, &mut referenced_names, rules, source);
+                    collect_identifiers(e, &mut referenced_names, rules, source, depth + 1);
                 }
                 returns.push(DataflowReturn {
                     func_name: func_name.clone(),
