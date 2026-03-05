@@ -20,18 +20,34 @@ jobs:
             target: x86_64-unknown-linux-gnu
             node_arch: x64
             node_os: linux
+            artifact_key: linux-x64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            node_arch: arm64
+            node_os: linux
+            artifact_key: linux-arm64
+            cross: true
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            node_arch: x64
+            node_os: linux
+            artifact_key: linux-x64-musl
+            cross: true
           - os: macos-latest
             target: aarch64-apple-darwin
             node_arch: arm64
             node_os: darwin
+            artifact_key: darwin-arm64
           - os: macos-14
             target: x86_64-apple-darwin
             node_arch: x64
             node_os: darwin
+            artifact_key: darwin-x64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             node_arch: x64
             node_os: win32
+            artifact_key: win32-x64
 
     runs-on: ${{ matrix.os }}
     name: Build ${{ matrix.target }}
@@ -56,6 +72,29 @@ jobs:
         with:
           workspaces: crates/codegraph-core
 
+      - name: Install cross-compilation tools (aarch64-gnu)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CC=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Install cross-compilation tools (x86_64-musl)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          # Create linker script so -lgcc_s resolves to static libgcc
+          MUSL_LIB_DIR="$(dirname "$(musl-gcc -print-libgcc-file-name)")"
+          echo 'INPUT(-lgcc)' | sudo tee "${MUSL_LIB_DIR}/libgcc_s.so" > /dev/null
+          echo "CC_x86_64_unknown_linux_musl=musl-gcc" >> "$GITHUB_ENV"
+          echo "CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc" >> "$GITHUB_ENV"
+          # Symlink libgcc_s into Rust sysroot so rust-lld can find it for host builds
+          GNU_LIB="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/lib"
+          sudo ln -sf /lib/x86_64-linux-gnu/libgcc_s.so.1 "${GNU_LIB}/libgcc_s.so"
+          sudo ln -sf /lib/x86_64-linux-gnu/libgcc_s.so.1 "${GNU_LIB}/libgcc_s.so.1"
+
       - name: Install napi-rs CLI
         run: npm install -g @napi-rs/cli@3
 
@@ -66,6 +105,6 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:
-          name: native-${{ matrix.node_os }}-${{ matrix.node_arch }}
+          name: native-${{ matrix.artifact_key }}
           path: crates/codegraph-core/*.node
           if-no-files-found: error
