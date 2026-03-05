@@ -272,41 +272,39 @@ function normalizeNativeSymbols(result) {
     dataflow: result.dataflow
       ? {
           parameters: (result.dataflow.parameters || []).map((p) => ({
-            funcName: p.funcName ?? p.func_name,
-            paramName: p.paramName ?? p.param_name,
-            paramIndex: p.paramIndex ?? p.param_index,
+            funcName: p.funcName,
+            paramName: p.paramName,
+            paramIndex: p.paramIndex,
             line: p.line,
           })),
           returns: (result.dataflow.returns || []).map((r) => ({
-            funcName: r.funcName ?? r.func_name,
+            funcName: r.funcName,
             expression: r.expression ?? '',
-            referencedNames: r.referencedNames ?? r.referenced_names ?? [],
+            referencedNames: r.referencedNames ?? [],
             line: r.line,
           })),
           assignments: (result.dataflow.assignments || []).map((a) => ({
-            varName: a.varName ?? a.var_name,
-            callerFunc: a.callerFunc ?? a.caller_func ?? null,
-            sourceCallName: a.sourceCallName ?? a.source_call_name,
+            varName: a.varName,
+            callerFunc: a.callerFunc ?? null,
+            sourceCallName: a.sourceCallName,
             expression: a.expression ?? '',
             line: a.line,
           })),
-          argFlows: (result.dataflow.argFlows ?? result.dataflow.arg_flows ?? []).map((f) => ({
-            callerFunc: f.callerFunc ?? f.caller_func ?? null,
-            calleeName: f.calleeName ?? f.callee_name,
-            argIndex: f.argIndex ?? f.arg_index,
-            argName: f.argName ?? f.arg_name ?? null,
-            binding:
-              (f.bindingType ?? f.binding_type) ? { type: f.bindingType ?? f.binding_type } : null,
+          argFlows: (result.dataflow.argFlows ?? []).map((f) => ({
+            callerFunc: f.callerFunc ?? null,
+            calleeName: f.calleeName,
+            argIndex: f.argIndex,
+            argName: f.argName ?? null,
+            binding: f.bindingType ? { type: f.bindingType } : null,
             confidence: f.confidence,
             expression: f.expression ?? '',
             line: f.line,
           })),
           mutations: (result.dataflow.mutations || []).map((m) => ({
-            funcName: m.funcName ?? m.func_name ?? null,
-            receiverName: m.receiverName ?? m.receiver_name,
-            binding:
-              (m.bindingType ?? m.binding_type) ? { type: m.bindingType ?? m.binding_type } : null,
-            mutatingExpr: m.mutatingExpr ?? m.mutating_expr,
+            funcName: m.funcName ?? null,
+            receiverName: m.receiverName,
+            binding: m.bindingType ? { type: m.bindingType } : null,
+            mutatingExpr: m.mutatingExpr,
             line: m.line,
           })),
         }

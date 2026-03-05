@@ -205,7 +205,9 @@ static GO_DATAFLOW: DataflowRules = DataflowRules {
     extract_param_strategy: ParamStrategy::Go,
     return_node: Some("return_statement"),
     var_declarator_node: None,
-    var_declarator_nodes: &["short_var_declaration", "var_declaration"],
+    // Only short_var_declaration uses left/right fields. var_declaration has
+    // var_spec children with name/type/value fields — not yet supported.
+    var_declarator_nodes: &["short_var_declaration"],
     var_name_field: "left",
     var_value_field: Some("right"),
     assignment_node: Some("assignment_statement"),
@@ -254,8 +256,8 @@ static RUST_DATAFLOW: DataflowRules = DataflowRules {
     assignment_node: Some("assignment_expression"),
     assign_left_field: "left",
     assign_right_field: "right",
-    call_node: Some("call_expression"),
-    call_nodes: &[],
+    call_node: None,
+    call_nodes: &["call_expression", "method_call_expression"],
     call_function_field: "function",
     call_args_field: "arguments",
     spread_type: None,
