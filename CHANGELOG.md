@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.0.4](https://github.com/optave/codegraph/compare/v3.0.3...v3.0.4) (2026-03-05)
+
+**Native engine goes full-stack: CFG, AST nodes, and WASM double-parse elimination.** This release completes the native engine migration — CFG computation and AST node extraction now run in Rust for all 11 languages, eliminating the redundant WASM pre-parse on native builds. Two new Linux platform packages add ARM64 (Graviton, Docker on Apple Silicon) and Alpine/musl support. A new `sequence` command generates Mermaid sequence diagrams from the call graph.
+
+### Features
+
+* **sequence:** add `codegraph sequence <name>` command for Mermaid sequence diagram generation from call graph edges — participants are files, BFS forward from entry point, optional `--dataflow` flag for parameter/return annotations; exposed via CLI, MCP tool, and programmatic API ([#345](https://github.com/optave/codegraph/pull/345))
+* **platform:** add `linux-arm64-gnu` and `linux-x64-musl` native binary packages with `detectLibc()` auto-selection and npm `libc` field support ([#341](https://github.com/optave/codegraph/pull/341))
+
+### Performance
+
+* **native:** compute CFG in Rust native engine for all 8 languages (JS/TS/TSX, Python, Go, Rust, Java, C#, Ruby, PHP) — ports `buildFunctionCFG` algorithm to Rust with per-language `CfgRules`, eliminates WASM re-parsing in CFG phase ([#342](https://github.com/optave/codegraph/pull/342))
+* **native:** extract AST nodes (call, new, throw, await, string, regex) for all non-JS languages in Rust via shared `walk_ast_nodes_with_config()` — astMs drops from ~651ms to ~50ms ([#340](https://github.com/optave/codegraph/pull/340))
+* **builder:** skip `ensureWasmTrees` entirely when native engine provides complete CFG + dataflow + AST data — wasmPreMs drops from ~388ms to 0 on native builds ([#344](https://github.com/optave/codegraph/pull/344))
+
+### Bug Fixes
+
+* **benchmark:** show all build phases (astMs, cfgMs, dataflowMs, wasmPreMs) in benchmark report and document v3.0.0→v3.0.3 native regression cause ([#339](https://github.com/optave/codegraph/pull/339))
+
 ## [3.0.3](https://github.com/optave/codegraph/compare/v3.0.2...v3.0.3) (2026-03-04)
 
 > **Note:** 3.0.2 was an internal/unpublished version used during development.
