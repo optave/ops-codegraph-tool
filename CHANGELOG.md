@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.0.4](https://github.com/optave/codegraph/compare/v3.0.3...v3.0.4) (2026-03-05)
+
+**Native engine goes full-stack: CFG, AST nodes, and WASM double-parse elimination.** This release completes the native engine migration — CFG computation and AST node extraction now run in Rust for 8 languages, eliminating the redundant WASM pre-parse on native builds.
+
+### Performance
+
+* **native:** compute CFG in Rust native engine for all 8 languages (JS/TS/TSX, Python, Go, Rust, Java, C#, Ruby, PHP) — ports `buildFunctionCFG` algorithm to Rust with per-language `CfgRules`, eliminates WASM re-parsing in CFG phase ([#342](https://github.com/optave/codegraph/pull/342))
+* **native:** extract AST nodes (call, new, throw, await, string, regex) for all non-JS languages in Rust via shared `walk_ast_nodes_with_config()` — astMs drops from ~651ms to ~50ms ([#340](https://github.com/optave/codegraph/pull/340))
+* **builder:** skip `ensureWasmTrees` entirely when native engine provides complete CFG + dataflow + AST data — wasmPreMs drops from ~388ms to 0 on native builds ([#344](https://github.com/optave/codegraph/pull/344))
+
+### Bug Fixes
+
+* **native:** fix function-scoped `const` declarations being incorrectly extracted as top-level constants ([#344](https://github.com/optave/codegraph/pull/344))
+* **benchmark:** show all build phases (astMs, cfgMs, dataflowMs, wasmPreMs) in benchmark report and document v3.0.0→v3.0.3 native regression cause ([#339](https://github.com/optave/codegraph/pull/339))
+
 ## [3.0.3](https://github.com/optave/codegraph/compare/v3.0.2...v3.0.3) (2026-03-04)
 
 > **Note:** 3.0.2 was an internal/unpublished version used during development.
@@ -9,12 +24,6 @@ All notable changes to this project will be documented in this file. See [commit
 ### Performance
 
 * **ast:** use single transaction for AST node insertion — astMs drops from ~3600ms to ~350ms (native) and ~547ms (WASM), reducing overall native build from 24.9 to 8.5 ms/file ([#333](https://github.com/optave/codegraph/pull/333))
-* **builder:** skip `ensureWasmTrees` when native engine provides complete CFG + dataflow data ([#344](https://github.com/optave/codegraph/pull/344))
-
-### Bug Fixes
-
-* **native:** fix function-scoped `const` declarations being incorrectly extracted as top-level constants ([#344](https://github.com/optave/codegraph/pull/344))
-
 
 ## [3.0.2](https://github.com/optave/codegraph/compare/v3.0.1...v3.0.2) (2026-03-04)
 
