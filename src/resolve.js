@@ -146,8 +146,12 @@ export function computeConfidence(callerFile, targetFile, importedFrom) {
 /**
  * Batch resolve multiple imports in a single native call.
  * Returns Map<"fromFile|importSource", resolvedPath> or null when native unavailable.
+ * @param {Array} inputs - Array of { fromFile, importSource }
+ * @param {string} rootDir - Project root
+ * @param {object} aliases - Path aliases
+ * @param {string[]} [knownFiles] - Optional file paths for FS cache (avoids syscalls)
  */
-export function resolveImportsBatch(inputs, rootDir, aliases) {
+export function resolveImportsBatch(inputs, rootDir, aliases, knownFiles) {
   const native = loadNative();
   if (!native) return null;
 
@@ -156,7 +160,12 @@ export function resolveImportsBatch(inputs, rootDir, aliases) {
       fromFile,
       importSource,
     }));
-    const results = native.resolveImports(nativeInputs, rootDir, convertAliasesForNative(aliases));
+    const results = native.resolveImports(
+      nativeInputs,
+      rootDir,
+      convertAliasesForNative(aliases),
+      knownFiles || null,
+    );
     const map = new Map();
     for (const r of results) {
       map.set(`${r.fromFile}|${r.importSource}`, normalizePath(path.normalize(r.resolvedPath)));

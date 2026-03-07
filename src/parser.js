@@ -183,133 +183,42 @@ function resolveEngine(opts = {}) {
 }
 
 /**
- * Normalize native engine output to match the camelCase convention
- * used by the WASM extractors.
+ * Patch native engine output in-place for the few remaining semantic transforms.
+ * With #[napi(js_name)] on Rust types, most fields already arrive as camelCase.
+ * This only handles:
+ *  - _lineCount compat for builder.js
+ *  - Backward compat for older native binaries missing js_name annotations
+ *  - dataflow argFlows/mutations bindingType → binding wrapper
  */
-function normalizeNativeSymbols(result) {
-  return {
-    _lineCount: result.lineCount ?? result.line_count ?? null,
-    definitions: (result.definitions || []).map((d) => ({
-      name: d.name,
-      kind: d.kind,
-      line: d.line,
-      endLine: d.endLine ?? d.end_line ?? null,
-      decorators: d.decorators,
-      complexity: d.complexity
-        ? {
-            cognitive: d.complexity.cognitive,
-            cyclomatic: d.complexity.cyclomatic,
-            maxNesting: d.complexity.maxNesting,
-            halstead: d.complexity.halstead ?? null,
-            loc: d.complexity.loc ?? null,
-            maintainabilityIndex: d.complexity.maintainabilityIndex ?? null,
-          }
-        : null,
-      cfg: d.cfg?.blocks?.length
-        ? {
-            blocks: d.cfg.blocks.map((b) => ({
-              index: b.index,
-              type: b.type,
-              startLine: b.startLine,
-              endLine: b.endLine,
-              label: b.label ?? null,
-            })),
-            edges: d.cfg.edges.map((e) => ({
-              sourceIndex: e.sourceIndex,
-              targetIndex: e.targetIndex,
-              kind: e.kind,
-            })),
-          }
-        : null,
-      children: d.children?.length
-        ? d.children.map((c) => ({
-            name: c.name,
-            kind: c.kind,
-            line: c.line,
-            endLine: c.endLine ?? c.end_line ?? null,
-          }))
-        : undefined,
-    })),
-    calls: (result.calls || []).map((c) => ({
-      name: c.name,
-      line: c.line,
-      dynamic: c.dynamic,
-      receiver: c.receiver,
-    })),
-    imports: (result.imports || []).map((i) => ({
-      source: i.source,
-      names: i.names || [],
-      line: i.line,
-      typeOnly: i.typeOnly ?? i.type_only,
-      reexport: i.reexport,
-      wildcardReexport: i.wildcardReexport ?? i.wildcard_reexport,
-      pythonImport: i.pythonImport ?? i.python_import,
-      goImport: i.goImport ?? i.go_import,
-      rustUse: i.rustUse ?? i.rust_use,
-      javaImport: i.javaImport ?? i.java_import,
-      csharpUsing: i.csharpUsing ?? i.csharp_using,
-      rubyRequire: i.rubyRequire ?? i.ruby_require,
-      phpUse: i.phpUse ?? i.php_use,
-    })),
-    classes: (result.classes || []).map((c) => ({
-      name: c.name,
-      extends: c.extends,
-      implements: c.implements,
-      line: c.line,
-    })),
-    exports: (result.exports || []).map((e) => ({
-      name: e.name,
-      kind: e.kind,
-      line: e.line,
-    })),
-    astNodes: (result.astNodes ?? result.ast_nodes ?? []).map((n) => ({
-      kind: n.kind,
-      name: n.name,
-      line: n.line,
-      text: n.text ?? null,
-      receiver: n.receiver ?? null,
-    })),
-    dataflow: result.dataflow
-      ? {
-          parameters: (result.dataflow.parameters || []).map((p) => ({
-            funcName: p.funcName,
-            paramName: p.paramName,
-            paramIndex: p.paramIndex,
-            line: p.line,
-          })),
-          returns: (result.dataflow.returns || []).map((r) => ({
-            funcName: r.funcName,
-            expression: r.expression ?? '',
-            referencedNames: r.referencedNames ?? [],
-            line: r.line,
-          })),
-          assignments: (result.dataflow.assignments || []).map((a) => ({
-            varName: a.varName,
-            callerFunc: a.callerFunc ?? null,
-            sourceCallName: a.sourceCallName,
-            expression: a.expression ?? '',
-            line: a.line,
-          })),
-          argFlows: (result.dataflow.argFlows ?? []).map((f) => ({
-            callerFunc: f.callerFunc ?? null,
-            calleeName: f.calleeName,
-            argIndex: f.argIndex,
-            argName: f.argName ?? null,
-            binding: f.bindingType ? { type: f.bindingType } : null,
-            confidence: f.confidence,
-            expression: f.expression ?? '',
-            line: f.line,
-          })),
-          mutations: (result.dataflow.mutations || []).map((m) => ({
-            funcName: m.funcName ?? null,
-            receiverName: m.receiverName,
-            binding: m.bindingType ? { type: m.bindingType } : null,
-            mutatingExpr: m.mutatingExpr,
-            line: m.line,
-          })),
-        }
-      : null,
-  };
+function patchNativeResult(r) {
+  // lineCount: napi(js_name) emits "lineCount"; older binaries may emit "line_count"
+  r.lineCount = r.lineCount ?? r.line_count ?? null;
+  r._lineCount = r.lineCount;
+
+  // Backward compat for older binaries missing endLine js_name on definitions
+  if (r.definitions) {
+    for (const d of r.definitions) {
+      if (d.endLine === undefined && d.end_line !== undefined) {
+        d.endLine = d.end_line;
+      }
+    }
+  }
+
+  // dataflow: wrap bindingType into binding object for argFlows and mutations
+  if (r.dataflow) {
+    if (r.dataflow.argFlows) {
+      for (const f of r.dataflow.argFlows) {
+        f.binding = f.bindingType ? { type: f.bindingType } : null;
+      }
+    }
+    if (r.dataflow.mutations) {
+      for (const m of r.dataflow.mutations) {
+        m.binding = m.bindingType ? { type: m.bindingType } : null;
+      }
+    }
+  }
+
+  return r;
 }
 
 /**
@@ -440,8 +349,8 @@ export async function parseFileAuto(filePath, source, opts = {}) {
   const { native } = resolveEngine(opts);
 
   if (native) {
-    const result = native.parseFile(filePath, source, !!opts.dataflow);
-    return result ? normalizeNativeSymbols(result) : null;
+    const result = native.parseFile(filePath, source, !!opts.dataflow, opts.ast !== false);
+    return result ? patchNativeResult(result) : null;
   }
 
   // WASM path
@@ -463,11 +372,16 @@ export async function parseFilesAuto(filePaths, rootDir, opts = {}) {
   const result = new Map();
 
   if (native) {
-    const nativeResults = native.parseFiles(filePaths, rootDir, !!opts.dataflow);
+    const nativeResults = native.parseFiles(
+      filePaths,
+      rootDir,
+      !!opts.dataflow,
+      opts.ast !== false,
+    );
     for (const r of nativeResults) {
       if (!r) continue;
       const relPath = path.relative(rootDir, r.file).split(path.sep).join('/');
-      result.set(relPath, normalizeNativeSymbols(r));
+      result.set(relPath, patchNativeResult(r));
     }
     return result;
   }
@@ -532,7 +446,7 @@ export function createParseTreeCache() {
 export async function parseFileIncremental(cache, filePath, source, opts = {}) {
   if (cache) {
     const result = cache.parseFile(filePath, source);
-    return result ? normalizeNativeSymbols(result) : null;
+    return result ? patchNativeResult(result) : null;
   }
   return parseFileAuto(filePath, source, opts);
 }
