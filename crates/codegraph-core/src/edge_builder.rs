@@ -135,9 +135,8 @@ pub fn build_call_edges(
             })
             .collect();
 
-        // Call edges
-        let mut seen_call_edges: HashSet<u64> = HashSet::new();
-        let mut seen_recv_edges: HashSet<u64> = HashSet::new();
+        // Call + receiver edge dedup (single set, matching JS seenCallEdges with recv| prefix)
+        let mut seen_edges: HashSet<u64> = HashSet::new();
 
         for call in &file_input.calls {
             if let Some(ref receiver) = call.receiver {
@@ -243,8 +242,8 @@ pub fn build_call_edges(
 
             for t in &targets {
                 let edge_key = ((caller_id as u64) << 32) | (t.id as u64);
-                if t.id != caller_id && !seen_call_edges.contains(&edge_key) {
-                    seen_call_edges.insert(edge_key);
+                if t.id != caller_id && !seen_edges.contains(&edge_key) {
+                    seen_edges.insert(edge_key);
                     let confidence =
                         import_resolution::compute_confidence(rel_path, &t.file, imported_from);
                     edges.push(ComputedEdge {
@@ -282,9 +281,11 @@ pub fn build_call_edges(
                         .collect();
 
                     if let Some(recv_target) = receiver_nodes.first() {
-                        let recv_key = ((caller_id as u64) << 32) | (recv_target.id as u64);
-                        if !seen_recv_edges.contains(&recv_key) {
-                            seen_recv_edges.insert(recv_key);
+                        // Use high bit to separate receiver keys from call keys (matches JS recv| prefix)
+                        let recv_key =
+                            (1u64 << 63) | ((caller_id as u64) << 32) | (recv_target.id as u64);
+                        if !seen_edges.contains(&recv_key) {
+                            seen_edges.insert(recv_key);
                             edges.push(ComputedEdge {
                                 source_id: caller_id,
                                 target_id: recv_target.id,
