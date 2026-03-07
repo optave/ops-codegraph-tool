@@ -277,6 +277,7 @@ program
   .option('--limit <number>', 'Max results to return')
   .option('--offset <number>', 'Skip N results (default: 0)')
   .option('--ndjson', 'Newline-delimited JSON output')
+  .option('--unused', 'Show only exports with zero consumers')
   .action((file, opts) => {
     fileExports(file, opts.db, {
       noTests: resolveNoTests(opts),
@@ -284,6 +285,7 @@ program
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       ndjson: opts.ndjson,
+      unused: opts.unused,
     });
   });
 

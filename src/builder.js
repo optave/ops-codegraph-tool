@@ -769,6 +769,16 @@ export async function buildGraph(rootDir, opts = {}) {
     }
     batchInsertNodes(phase1Rows);
 
+    // Phase 1b: Mark exported symbols
+    const markExported = db.prepare(
+      'UPDATE nodes SET exported = 1 WHERE name = ? AND kind = ? AND file = ? AND line = ?',
+    );
+    for (const [relPath, symbols] of allSymbols) {
+      for (const exp of symbols.exports) {
+        markExported.run(exp.name, exp.kind, relPath, exp.line);
+      }
+    }
+
     // Phase 3: Batch insert children (needs parent IDs from Phase 2)
     const childRows = [];
     for (const [relPath, symbols] of allSymbols) {
@@ -1525,6 +1535,29 @@ export async function buildGraph(rootDir, opts = {}) {
     } catch {
       /* ignore — embeddings table may have been dropped */
     }
+  }
+
+  // Warn about unused exports (exported but zero cross-file consumers)
+  try {
+    const unusedCount = db
+      .prepare(
+        `SELECT COUNT(*) as c FROM nodes
+       WHERE exported = 1 AND kind != 'file'
+         AND id NOT IN (
+           SELECT DISTINCT e.target_id FROM edges e
+           JOIN nodes caller ON e.source_id = caller.id
+           JOIN nodes target ON e.target_id = target.id
+           WHERE e.kind = 'calls' AND caller.file != target.file
+         )`,
+      )
+      .get().c;
+    if (unusedCount > 0) {
+      warn(
+        `${unusedCount} exported symbol${unusedCount > 1 ? 's have' : ' has'} zero cross-file consumers. Run "codegraph exports <file> --unused" to inspect.`,
+      );
+    }
+  } catch {
+    /* exported column may not exist on older DBs */
   }
 
   // Persist build metadata for mismatch detection

@@ -225,6 +225,13 @@ export const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_ast_kind_name ON ast_nodes(kind, name);
     `,
   },
+  {
+    version: 14,
+    up: `
+      ALTER TABLE nodes ADD COLUMN exported INTEGER DEFAULT 0;
+      CREATE INDEX IF NOT EXISTS idx_nodes_exported ON nodes(exported);
+    `,
+  },
 ];
 
 export function getBuildMeta(db, key) {
