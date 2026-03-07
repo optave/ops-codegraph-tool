@@ -1005,8 +1005,16 @@ function collectIdentifiers(node, out, rules) {
 export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) {
   // Lazily init WASM parsers if needed
   let parsers = null;
-  let extToLang = null;
   let needsFallback = false;
+
+  // Always build ext→langId map so native-only builds (where _langId is unset)
+  // can still derive the language from the file extension.
+  const extToLang = new Map();
+  for (const entry of LANGUAGE_REGISTRY) {
+    for (const ext of entry.extensions) {
+      extToLang.set(ext, entry.id);
+    }
+  }
 
   for (const [relPath, symbols] of fileSymbols) {
     if (!symbols._tree && !symbols.dataflow) {
@@ -1021,12 +1029,6 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
   if (needsFallback) {
     const { createParsers } = await import('./parser.js');
     parsers = await createParsers();
-    extToLang = new Map();
-    for (const entry of LANGUAGE_REGISTRY) {
-      for (const ext of entry.extensions) {
-        extToLang.set(ext, entry.id);
-      }
-    }
   }
 
   let getParserFn = null;
