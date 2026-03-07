@@ -2,6 +2,7 @@ pub mod cfg;
 pub mod complexity;
 pub mod cycles;
 pub mod dataflow;
+pub mod edge_builder;
 pub mod extractors;
 pub mod import_resolution;
 pub mod incremental;

@@ -739,7 +739,7 @@ export async function buildGraph(rootDir, opts = {}) {
   // ── Unified parse via parseFilesAuto ───────────────────────────────
   const filePaths = filesToParse.map((item) => item.file);
   _t.parse0 = performance.now();
-  const allSymbols = await parseFilesAuto(filePaths, rootDir, { ...engineOpts, ast: false });
+  const allSymbols = await parseFilesAuto(filePaths, rootDir, engineOpts);
   _t.parseMs = performance.now() - _t.parse0;
 
   // Build a lookup from incremental data (changed items may carry pre-computed hashes + stats)

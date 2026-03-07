@@ -195,12 +195,25 @@ function patchNativeResult(r) {
   r.lineCount = r.lineCount ?? r.line_count ?? null;
   r._lineCount = r.lineCount;
 
-  // Backward compat for older binaries missing endLine js_name on definitions
+  // Backward compat for older binaries missing js_name annotations
   if (r.definitions) {
     for (const d of r.definitions) {
       if (d.endLine === undefined && d.end_line !== undefined) {
         d.endLine = d.end_line;
       }
+    }
+  }
+  if (r.imports) {
+    for (const i of r.imports) {
+      if (i.typeOnly === undefined) i.typeOnly = i.type_only;
+      if (i.wildcardReexport === undefined) i.wildcardReexport = i.wildcard_reexport;
+      if (i.pythonImport === undefined) i.pythonImport = i.python_import;
+      if (i.goImport === undefined) i.goImport = i.go_import;
+      if (i.rustUse === undefined) i.rustUse = i.rust_use;
+      if (i.javaImport === undefined) i.javaImport = i.java_import;
+      if (i.csharpUsing === undefined) i.csharpUsing = i.csharp_using;
+      if (i.rubyRequire === undefined) i.rubyRequire = i.ruby_require;
+      if (i.phpUse === undefined) i.phpUse = i.php_use;
     }
   }
 
