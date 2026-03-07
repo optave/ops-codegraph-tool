@@ -1046,8 +1046,16 @@ export function buildFunctionCFG(functionNode, langId) {
 export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
   // Lazily init WASM parsers if needed
   let parsers = null;
-  let extToLang = null;
   let needsFallback = false;
+
+  // Always build ext→langId map so native-only builds (where _langId is unset)
+  // can still derive the language from the file extension.
+  const extToLang = new Map();
+  for (const entry of LANGUAGE_REGISTRY) {
+    for (const ext of entry.extensions) {
+      extToLang.set(ext, entry.id);
+    }
+  }
 
   for (const [relPath, symbols] of fileSymbols) {
     if (!symbols._tree) {
@@ -1068,12 +1076,6 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
   if (needsFallback) {
     const { createParsers } = await import('./parser.js');
     parsers = await createParsers();
-    extToLang = new Map();
-    for (const entry of LANGUAGE_REGISTRY) {
-      for (const ext of entry.extensions) {
-        extToLang.set(ext, entry.id);
-      }
-    }
   }
 
   let getParserFn = null;
@@ -1115,7 +1117,7 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
 
       // WASM fallback if no cached tree and not all native
       if (!tree && !allNative) {
-        if (!extToLang || !getParserFn) continue;
+        if (!getParserFn) continue;
         langId = extToLang.get(ext);
         if (!langId || !CFG_LANG_IDS.has(langId)) continue;
 
@@ -1138,7 +1140,7 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
       }
 
       if (!langId) {
-        langId = extToLang ? extToLang.get(ext) : null;
+        langId = extToLang.get(ext);
         if (!langId) continue;
       }
 
