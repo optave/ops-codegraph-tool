@@ -1071,7 +1071,7 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
 
         // WASM fallback if no cached tree
         if (!tree) {
-          if (!extToLang || !getParserFn) continue;
+          if (!getParserFn) continue;
           langId = extToLang.get(ext);
           if (!langId || !DATAFLOW_LANG_IDS.has(langId)) continue;
 
@@ -1094,7 +1094,7 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
         }
 
         if (!langId) {
-          langId = extToLang ? extToLang.get(ext) : null;
+          langId = extToLang.get(ext);
           if (!langId) continue;
         }
 

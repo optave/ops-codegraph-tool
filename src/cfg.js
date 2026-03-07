@@ -1117,7 +1117,7 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
 
       // WASM fallback if no cached tree and not all native
       if (!tree && !allNative) {
-        if (!extToLang || !getParserFn) continue;
+        if (!getParserFn) continue;
         langId = extToLang.get(ext);
         if (!langId || !CFG_LANG_IDS.has(langId)) continue;
 
@@ -1140,7 +1140,7 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
       }
 
       if (!langId) {
-        langId = extToLang ? extToLang.get(ext) : null;
+        langId = extToLang.get(ext);
         if (!langId) continue;
       }
 
