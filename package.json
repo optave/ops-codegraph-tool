@@ -1,6 +1,6 @@
 {
   "name": "@optave/codegraph",
-  "version": "3.0.3",
+  "version": "3.0.4",
   "description": "Local code graph CLI — parse codebases with tree-sitter, build dependency graphs, query them",
   "type": "module",
   "main": "src/index.js",
@@ -57,7 +57,7 @@
   "dependencies": {
     "better-sqlite3": "^12.6.2",
     "commander": "^14.0.3",
-    "graphology": "^0.25.4",
+    "graphology": "^0.26.0",
     "graphology-communities-louvain": "^2.0.2",
     "web-tree-sitter": "^0.26.5"
   },
@@ -71,13 +71,13 @@
   },
   "optionalDependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@optave/codegraph-darwin-arm64": "3.0.3",
-    "@optave/codegraph-darwin-x64": "3.0.3",
-    "@optave/codegraph-linux-arm64-gnu": "3.0.3",
-    "@optave/codegraph-linux-arm64-musl": "3.0.3",
-    "@optave/codegraph-linux-x64-gnu": "3.0.3",
-    "@optave/codegraph-linux-x64-musl": "3.0.3",
-    "@optave/codegraph-win32-x64-msvc": "3.0.3"
+    "@optave/codegraph-darwin-arm64": "3.0.4",
+    "@optave/codegraph-darwin-x64": "3.0.4",
+    "@optave/codegraph-linux-arm64-gnu": "3.0.4",
+    "@optave/codegraph-linux-arm64-musl": "3.0.4",
+    "@optave/codegraph-linux-x64-gnu": "3.0.4",
+    "@optave/codegraph-linux-x64-musl": "3.0.4",
+    "@optave/codegraph-win32-x64-msvc": "3.0.4"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",

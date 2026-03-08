@@ -5,9 +5,13 @@
  *
  *   Files: lib.js, app.js, barrel.js, lib.test.js
  *
- *   Symbols in lib.js: add (function, line 1), multiply (function, line 10), helper (function, line 20)
+ *   Symbols in lib.js: add (function, line 1), multiply (function, line 10),
+ *                       helper (function, line 20), unusedFn (function, line 30)
  *   Symbols in app.js: main (function, line 1)
  *   Symbols in lib.test.js: testAdd (function, line 1)
+ *
+ *   Exported (exported=1): add, multiply, unusedFn
+ *   Internal (not exported): helper
  *
  *   Call edges:
  *     main → add        (cross-file)
@@ -64,12 +68,19 @@ beforeAll(() => {
   const add = insertNode(db, 'add', 'function', 'lib.js', 1);
   const multiply = insertNode(db, 'multiply', 'function', 'lib.js', 10);
   const helper = insertNode(db, 'helper', 'function', 'lib.js', 20);
+  const unusedFn = insertNode(db, 'unusedFn', 'function', 'lib.js', 30);
 
   // Function nodes in app.js
   const main = insertNode(db, 'main', 'function', 'app.js', 1);
 
   // Function nodes in lib.test.js
   const testAdd = insertNode(db, 'testAdd', 'function', 'lib.test.js', 1);
+
+  // Mark exported symbols (add, multiply, unusedFn are exported; helper is not)
+  const markExported = db.prepare('UPDATE nodes SET exported = 1 WHERE id = ?');
+  markExported.run(add);
+  markExported.run(multiply);
+  markExported.run(unusedFn);
 
   // Import edges
   insertEdge(db, fApp, fLib, 'imports');
@@ -97,7 +108,7 @@ describe('exportsData', () => {
   test('returns exported symbols with consumers', () => {
     const data = exportsData('lib.js', dbPath);
     expect(data.file).toBe('lib.js');
-    expect(data.results.length).toBe(2); // add, multiply
+    expect(data.results.length).toBe(3); // add, multiply, unusedFn
 
     const addExport = data.results.find((r) => r.name === 'add');
     expect(addExport).toBeDefined();
@@ -112,14 +123,19 @@ describe('exportsData', () => {
     expect(mulExport.consumers.length).toBe(1);
     expect(mulExport.consumers[0].name).toBe('main');
 
-    // helper is internal (same-file caller only)
+    const unusedExport = data.results.find((r) => r.name === 'unusedFn');
+    expect(unusedExport).toBeDefined();
+    expect(unusedExport.consumers.length).toBe(0);
+    expect(unusedExport.consumerCount).toBe(0);
+
+    // helper is internal (not marked exported)
     const helperExport = data.results.find((r) => r.name === 'helper');
     expect(helperExport).toBeUndefined();
   });
 
   test('totalExported and totalInternal counts', () => {
     const data = exportsData('lib.js', dbPath);
-    expect(data.totalExported).toBe(2);
+    expect(data.totalExported).toBe(3); // add, multiply, unusedFn
     expect(data.totalInternal).toBe(1); // helper
   });
 
@@ -144,14 +160,43 @@ describe('exportsData', () => {
     expect(data.results).toEqual([]);
     expect(data.totalExported).toBe(0);
     expect(data.totalInternal).toBe(0);
+    expect(data.totalUnused).toBe(0);
   });
 
   test('pagination works', () => {
     const data = exportsData('lib.js', dbPath, { limit: 1 });
     expect(data.results.length).toBe(1);
     expect(data._pagination).toBeDefined();
-    expect(data._pagination.total).toBe(2);
+    expect(data._pagination.total).toBe(3);
     expect(data._pagination.hasMore).toBe(true);
     expect(data._pagination.returned).toBe(1);
+  });
+
+  test('totalUnused is always present', () => {
+    const data = exportsData('lib.js', dbPath);
+    expect(data.totalUnused).toBe(1); // unusedFn has zero consumers
+  });
+
+  test('--unused filters to zero-consumer exports', () => {
+    const data = exportsData('lib.js', dbPath, { unused: true });
+    expect(data.results.length).toBe(1);
+    expect(data.results[0].name).toBe('unusedFn');
+    expect(data.results[0].consumerCount).toBe(0);
+    // totalExported still reflects all exports
+    expect(data.totalExported).toBe(3);
+    expect(data.totalUnused).toBe(1);
+  });
+
+  test('--unused returns empty when all exports have consumers', () => {
+    const data = exportsData('app.js', dbPath, { unused: true });
+    expect(data.results).toEqual([]);
+  });
+
+  test('--unused with pagination', () => {
+    const data = exportsData('lib.js', dbPath, { unused: true, limit: 1 });
+    expect(data.results.length).toBe(1);
+    expect(data._pagination).toBeDefined();
+    expect(data._pagination.total).toBe(1);
+    expect(data._pagination.hasMore).toBe(false);
   });
 });

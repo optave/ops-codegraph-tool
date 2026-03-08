@@ -350,10 +350,11 @@ describe.skipIf(!canTestMultiLang)('native AST nodes — multi-language', () => 
     const fStr = strings.find((n) => n.name.includes('hello'));
     expect(fStr).toBeDefined();
     expect(fStr.name.startsWith('f')).toBe(false);
-    // rb"..." prefix should be stripped
+    // rb"..." prefix should be stripped — check for multi-char prefix remnant,
+    // not single 'r' since the content "raw bytes value" starts with 'r' naturally
     const rbStr = strings.find((n) => n.name.includes('raw bytes'));
     expect(rbStr).toBeDefined();
-    expect(rbStr.name.startsWith('r')).toBe(false);
+    expect(rbStr.name).not.toMatch(/^rb/);
     expect(rbStr.name.startsWith('b')).toBe(false);
   });
 
@@ -467,8 +468,10 @@ describe.skipIf(!canTestMultiLang)('native AST nodes — multi-language', () => 
       .all();
     const rawStr = strings.find((n) => n.name.includes('raw string content'));
     expect(rawStr).toBeDefined();
-    // Name should not contain r, #, or quote prefixes
-    expect(rawStr.name).not.toMatch(/^[r#"]/);
+    // Name should not have r# delimiter prefix or quote chars — but the content
+    // "raw string content" naturally starts with 'r', so check for delimiter patterns
+    expect(rawStr.name).not.toMatch(/^r#/);
+    expect(rawStr.name).not.toMatch(/^[#"]/);
   });
 
   // ── PHP ──

@@ -122,6 +122,12 @@ beforeAll(() => {
   // receiver edge (caller → receiver type)
   insertEdge(db, handleRoute, userService, 'receiver', 0.7);
 
+  // Mark exported symbols (those declared as exports in source)
+  const markExported = db.prepare('UPDATE nodes SET exported = 1 WHERE id = ?');
+  for (const id of [authenticate, validateToken, authMiddleware, formatResponse, preAuthenticate]) {
+    markExported.run(id);
+  }
+
   // File hashes (for fileHash exposure)
   for (const f of ['auth.js', 'middleware.js', 'routes.js', 'utils.js', 'auth.test.js']) {
     db.prepare('INSERT INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)').run(

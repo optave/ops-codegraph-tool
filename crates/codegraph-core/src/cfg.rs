@@ -781,10 +781,24 @@ impl<'a> CfgBuilder<'a> {
         self.loop_stack.push(LoopCtx { header_idx: header, exit_idx: exit, is_loop: true });
         self.update_label_map(header, exit);
 
-        // Check if this for loop has a condition — if not (e.g. Go `for {}`), treat as infinite loop
-        let has_condition = self.rules.condition_field
-            .and_then(|f| for_stmt.child_by_field_name(f))
-            .is_some();
+        // Determine if this for-loop is bounded.  C-style for loops have a `condition`
+        // field; iterator-style loops (for-in, foreach, enhanced-for, Rust for) have an
+        // iterable field (`right` or `value`) or a known iterator node kind.  Only Go's
+        // bare `for {}` has none of these and is truly infinite.
+        let has_condition = match self.rules.condition_field {
+            None => true, // Language has no C-style for (e.g. Rust) — all for-nodes are bounded
+            Some(field) => {
+                for_stmt.child_by_field_name(field).is_some()
+                    || for_stmt.child_by_field_name("right").is_some()
+                    || for_stmt.child_by_field_name("value").is_some()
+                    // Explicit iterator-style node kinds across supported languages:
+                    // JS: for_in_statement, Java: enhanced_for_statement,
+                    // C#/PHP: foreach_statement, Ruby: for
+                    || matches!(for_stmt.kind(),
+                        "for_in_statement" | "enhanced_for_statement" |
+                        "foreach_statement" | "for")
+            }
+        };
 
         let body = for_stmt.child_by_field_name("body");
         let body_block = self.make_block("loop_body", None, None, None);
