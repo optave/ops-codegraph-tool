@@ -424,6 +424,43 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'sequence',
+    description:
+      'Generate a Mermaid sequence diagram from call graph edges. Participants are files, messages are function calls between them.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: {
+          type: 'string',
+          description: 'Entry point or function name to trace from (partial match)',
+        },
+        depth: { type: 'number', description: 'Max forward traversal depth', default: 10 },
+        format: {
+          type: 'string',
+          enum: ['mermaid', 'json'],
+          description: 'Output format (default: mermaid)',
+        },
+        dataflow: {
+          type: 'boolean',
+          description: 'Annotate with parameter names and return arrows',
+          default: false,
+        },
+        file: {
+          type: 'string',
+          description: 'Scope search to functions in this file (partial match)',
+        },
+        kind: {
+          type: 'string',
+          enum: EVERY_SYMBOL_KIND,
+          description: 'Filter to a specific symbol kind',
+        },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
+      },
+      required: ['name'],
+    },
+  },
+  {
     name: 'complexity',
     description:
       'Show per-function complexity metrics (cognitive, cyclomatic, nesting, Halstead, Maintainability Index). Sorted by most complex first.',
@@ -1169,6 +1206,23 @@ export async function startMCPServer(customDbPath, options = {}) {
               offset: args.offset ?? 0,
             });
           }
+          break;
+        }
+        case 'sequence': {
+          const { sequenceData, sequenceToMermaid } = await import('./sequence.js');
+          const seqResult = sequenceData(args.name, dbPath, {
+            depth: args.depth,
+            file: args.file,
+            kind: args.kind,
+            dataflow: args.dataflow,
+            noTests: args.no_tests,
+            limit: Math.min(args.limit ?? MCP_DEFAULTS.execution_flow, MCP_MAX_LIMIT),
+            offset: args.offset ?? 0,
+          });
+          result =
+            args.format === 'json'
+              ? seqResult
+              : { text: sequenceToMermaid(seqResult), ...seqResult };
           break;
         }
         case 'complexity': {

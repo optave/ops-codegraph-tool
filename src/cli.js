@@ -1140,6 +1140,39 @@ program
   });
 
 program
+  .command('sequence <name>')
+  .description('Generate a Mermaid sequence diagram from call graph edges (participants = files)')
+  .option('--depth <n>', 'Max forward traversal depth', '10')
+  .option('--dataflow', 'Annotate with parameter names and return arrows from dataflow table')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-f, --file <path>', 'Scope to a specific file (partial match)')
+  .option('-k, --kind <kind>', 'Filter by symbol kind')
+  .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('-j, --json', 'Output as JSON')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
+  .action(async (name, opts) => {
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
+      process.exit(1);
+    }
+    const { sequence } = await import('./sequence.js');
+    sequence(name, opts.db, {
+      depth: parseInt(opts.depth, 10),
+      file: opts.file,
+      kind: opts.kind,
+      noTests: resolveNoTests(opts),
+      json: opts.json,
+      dataflow: opts.dataflow,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
+    });
+  });
+
+program
   .command('dataflow <name>')
   .description('Show data flow for a function: parameters, return consumers, mutations')
   .option('-d, --db <path>', 'Path to graph.db')

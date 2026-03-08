@@ -28,6 +28,7 @@ const ALL_TOOL_NAMES = [
   'co_changes',
   'node_roles',
   'execution_flow',
+  'sequence',
   'complexity',
   'communities',
   'code_owners',

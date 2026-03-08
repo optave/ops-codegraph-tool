@@ -163,7 +163,7 @@ function resolveMethodViaHierarchy(db, methodName) {
  * Find nodes matching a name query, ranked by relevance.
  * Scoring: exact=100, prefix=60, word-boundary=40, substring=10, plus fan-in tiebreaker.
  */
-function findMatchingNodes(db, name, opts = {}) {
+export function findMatchingNodes(db, name, opts = {}) {
   const kinds = opts.kind ? [opts.kind] : FUNCTION_KINDS;
   const placeholders = kinds.map(() => '?').join(', ');
   const params = [`%${name}%`, ...kinds];

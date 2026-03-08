@@ -7,7 +7,7 @@
 
 import { openReadonlyOrFail } from './db.js';
 import { paginateResult, printNdjson } from './paginate.js';
-import { isTestFile, kindIcon } from './queries.js';
+import { findMatchingNodes, isTestFile, kindIcon } from './queries.js';
 import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
 
 /**
@@ -95,12 +95,12 @@ export function flowData(name, dbPath, opts = {}) {
   const noTests = opts.noTests || false;
 
   // Phase 1: Direct LIKE match on full name
-  let matchNode = findBestMatch(db, name, opts);
+  let matchNode = findMatchingNodes(db, name, opts)[0] ?? null;
 
   // Phase 2: Prefix-stripped matching — try adding framework prefixes
   if (!matchNode) {
     for (const prefix of FRAMEWORK_ENTRY_PREFIXES) {
-      matchNode = findBestMatch(db, `${prefix}${name}`, opts);
+      matchNode = findMatchingNodes(db, `${prefix}${name}`, opts)[0] ?? null;
       if (matchNode) break;
     }
   }
@@ -217,73 +217,6 @@ export function flowData(name, dbPath, opts = {}) {
     truncated,
   };
   return paginateResult(base, 'steps', { limit: opts.limit, offset: opts.offset });
-}
-
-/**
- * Find the best matching node using the same relevance scoring as queries.js findMatchingNodes.
- */
-function findBestMatch(db, name, opts = {}) {
-  const kinds = opts.kind
-    ? [opts.kind]
-    : [
-        'function',
-        'method',
-        'class',
-        'interface',
-        'type',
-        'struct',
-        'enum',
-        'trait',
-        'record',
-        'module',
-      ];
-  const placeholders = kinds.map(() => '?').join(', ');
-  const params = [`%${name}%`, ...kinds];
-
-  let fileCondition = '';
-  if (opts.file) {
-    fileCondition = ' AND n.file LIKE ?';
-    params.push(`%${opts.file}%`);
-  }
-
-  const rows = db
-    .prepare(
-      `SELECT n.*, COALESCE(fi.cnt, 0) AS fan_in
-       FROM nodes n
-       LEFT JOIN (
-         SELECT target_id, COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY target_id
-       ) fi ON fi.target_id = n.id
-       WHERE n.name LIKE ? AND n.kind IN (${placeholders})${fileCondition}`,
-    )
-    .all(...params);
-
-  const noTests = opts.noTests || false;
-  const nodes = noTests ? rows.filter((n) => !isTestFile(n.file)) : rows;
-
-  if (nodes.length === 0) return null;
-
-  const lowerQuery = name.toLowerCase();
-  for (const node of nodes) {
-    const lowerName = node.name.toLowerCase();
-    const bareName = lowerName.includes('.') ? lowerName.split('.').pop() : lowerName;
-
-    let matchScore;
-    if (lowerName === lowerQuery || bareName === lowerQuery) {
-      matchScore = 100;
-    } else if (lowerName.startsWith(lowerQuery) || bareName.startsWith(lowerQuery)) {
-      matchScore = 60;
-    } else if (lowerName.includes(`.${lowerQuery}`) || lowerName.includes(`${lowerQuery}.`)) {
-      matchScore = 40;
-    } else {
-      matchScore = 10;
-    }
-
-    const fanInBonus = Math.min(Math.log2(node.fan_in + 1) * 5, 25);
-    node._relevance = matchScore + fanInBonus;
-  }
-
-  nodes.sort((a, b) => b._relevance - a._relevance);
-  return nodes[0];
 }
 
 /**

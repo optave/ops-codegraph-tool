@@ -66,6 +66,7 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `boundaries.js` | Architecture boundary rules with onion architecture preset |
 | `owners.js` | CODEOWNERS integration for ownership queries |
 | `snapshot.js` | SQLite DB backup and restore |
+| `sequence.js` | Mermaid sequence diagram generation from call graph edges |
 | `paginate.js` | Pagination helpers for bounded query results |
 | `logger.js` | Structured logging (`warn`, `debug`, `info`, `error`) |
 
@@ -132,6 +133,7 @@ node src/cli.js deps src/<file>.js   # File-level imports and importers
 node src/cli.js diff-impact main     # Impact of current branch vs main
 node src/cli.js complexity -T         # Per-function complexity metrics
 node src/cli.js communities -T       # Community detection & drift analysis
+node src/cli.js sequence <name> -T   # Mermaid sequence diagram from call edges
 node src/cli.js check -T             # Rule engine pass/fail check
 node src/cli.js audit <target> -T    # Combined structural summary + impact + health report
 node src/cli.js triage -T            # Ranked audit priority queue
