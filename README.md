@@ -33,7 +33,7 @@
 
 AI agents are the primary interface to large codebases — and they're flying blind.
 
-An agent burns half its token budget on `grep`, `find`, `cat` — re-discovering the same structure every session. It modifies `parseConfig()` without knowing 9 files import it. It hallucinates a function signature because it never saw the real one. Multiply that by every session, every developer, every repo.
+An agent burns a great portion of its token budget on `grep`, `find`, `cat` — re-discovering the same structure every session. It modifies `parseConfig()` without knowing 9 files import it. It hallucinates a function signature because it never saw the real one. Multiply that by every session, every developer, every repo.
 
 Developers aren't much better off. They inherit projects and spend days grepping to understand what calls what. Architects draw boundary rules that erode within weeks because nothing enforces them. CI catches test failures but can't tell you _"this change silently affects 14 callers across 9 files."_
 
