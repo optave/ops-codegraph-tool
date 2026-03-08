@@ -327,11 +327,23 @@ export function buildFunctionCFG(functionNode, langId) {
    */
   function getStatements(node) {
     if (!node) return [];
-    // Block-like nodes: extract named children
-    if (node.type === rules.blockNode || rules.blockNodes?.has(node.type)) {
+    // Block-like nodes (including statement_list wrappers from tree-sitter-go 0.25+)
+    if (
+      node.type === 'statement_list' ||
+      node.type === rules.blockNode ||
+      rules.blockNodes?.has(node.type)
+    ) {
       const stmts = [];
       for (let i = 0; i < node.namedChildCount; i++) {
-        stmts.push(node.namedChild(i));
+        const child = node.namedChild(i);
+        if (child.type === 'statement_list') {
+          // Unwrap nested statement_list (block → statement_list → stmts)
+          for (let j = 0; j < child.namedChildCount; j++) {
+            stmts.push(child.namedChild(j));
+          }
+        } else {
+          stmts.push(child);
+        }
       }
       return stmts;
     }
@@ -888,7 +900,14 @@ export function buildFunctionCFG(functionNode, langId) {
         for (let j = 0; j < caseClause.namedChildCount; j++) {
           const child = caseClause.namedChild(j);
           if (child !== valueNode && child !== patternNode && child.type !== 'switch_label') {
-            caseStmts.push(child);
+            if (child.type === 'statement_list') {
+              // Unwrap statement_list (tree-sitter-go 0.25+)
+              for (let k = 0; k < child.namedChildCount; k++) {
+                caseStmts.push(child.namedChild(k));
+              }
+            } else {
+              caseStmts.push(child);
+            }
           }
         }
       }
