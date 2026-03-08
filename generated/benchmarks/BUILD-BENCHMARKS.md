@@ -150,14 +150,11 @@ remains at 6.6 ms/file (vs 5.0 in v2.0.0). The WASM/Native ratio widened from
 extractor is needed to recover the regression.
 
 **Native build regression (v3.0.0 4.4 ms/file → v3.0.3 12.3 ms/file):** The regression is entirely
-from four new build phases added in v3.0.1 that are now default-on: AST node extraction (651ms),
-WASM pre-parse (388ms), dataflow analysis (367ms), and CFG construction (169ms) — totalling ~1,575ms
-of new work. The original seven phases (parse, insert, resolve, edges, structure, roles, complexity)
-actually got slightly faster (728ms → 542ms). The WASM pre-parse phase exists because CFG, dataflow,
-and complexity are implemented in JS and need tree-sitter AST trees to walk, but the native Rust engine
-only returns extracted symbols — not AST trees. So on native builds, all 172 files get parsed twice:
-once by Rust (85ms) and once by WASM (388ms). Eliminating this double-parse requires either implementing
-CFG/dataflow in Rust, or having the native engine expose tree-sitter trees to JS.
+from new build phases added in v3.0.1 that are now default-on: AST node extraction (651ms),
+dataflow analysis (367ms), and CFG construction (169ms) — totalling ~1,187ms of new work. The original
+seven phases (parse, insert, resolve, edges, structure, roles, complexity) actually got slightly faster
+(728ms → 542ms). As of v3.1.0, CFG and dataflow run natively in Rust, eliminating the redundant WASM
+pre-parse that previously added ~388ms on native builds.
 <!-- NOTES_END -->
 
 <!-- BENCHMARK_DATA

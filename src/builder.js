@@ -1448,16 +1448,12 @@ export async function buildGraph(rootDir, opts = {}) {
     }
 
     if (needsWasmTrees) {
-      _t.wasmPre0 = performance.now();
       try {
         const { ensureWasmTrees } = await import('./parser.js');
         await ensureWasmTrees(astComplexitySymbols, rootDir);
       } catch (err) {
         debug(`WASM pre-parse failed: ${err.message}`);
       }
-      _t.wasmPreMs = performance.now() - _t.wasmPre0;
-    } else {
-      _t.wasmPreMs = 0;
     }
   }
 
@@ -1601,7 +1597,6 @@ export async function buildGraph(rootDir, opts = {}) {
       rolesMs: +_t.rolesMs.toFixed(1),
       astMs: +_t.astMs.toFixed(1),
       complexityMs: +_t.complexityMs.toFixed(1),
-      ...(_t.wasmPreMs != null && { wasmPreMs: +_t.wasmPreMs.toFixed(1) }),
       ...(_t.cfgMs != null && { cfgMs: +_t.cfgMs.toFixed(1) }),
       ...(_t.dataflowMs != null && { dataflowMs: +_t.dataflowMs.toFixed(1) }),
     },

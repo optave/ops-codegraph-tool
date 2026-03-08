@@ -148,31 +148,46 @@ for (const engineKey of ['native', 'wasm']) {
 	md += `| Files | ${latest.files} |\n\n`;
 }
 
+// ── Shared phase definitions ──────────────────────────────────────────
+const PHASE_KEYS = ['parseMs', 'insertMs', 'resolveMs', 'edgesMs', 'structureMs', 'rolesMs', 'astMs', 'complexityMs', 'cfgMs', 'dataflowMs'];
+const PHASE_LABELS = {
+	parseMs: 'Parse',
+	insertMs: 'Insert nodes',
+	resolveMs: 'Resolve imports',
+	edgesMs: 'Build edges',
+	structureMs: 'Structure',
+	rolesMs: 'Roles',
+	astMs: 'AST nodes',
+	complexityMs: 'Complexity',
+	cfgMs: 'CFG',
+	dataflowMs: 'Dataflow',
+};
+
+function fmtPhase(val) {
+	return val != null ? val + ' ms' : 'n/a';
+}
+
 // ── Build Phase Breakdown (latest) ────────────────────────────────────
 const hasPhases = latest.native?.phases || latest.wasm?.phases;
+const hasOneFilePhases = latest.native?.oneFilePhases || latest.wasm?.oneFilePhases;
 if (hasPhases) {
 	md += '### Build Phase Breakdown (latest)\n\n';
-	const phaseKeys = ['parseMs', 'wasmPreMs', 'insertMs', 'resolveMs', 'edgesMs', 'structureMs', 'rolesMs', 'astMs', 'complexityMs', 'cfgMs', 'dataflowMs'];
-	const phaseLabels = {
-		parseMs: 'Parse',
-		wasmPreMs: 'WASM pre-parse',
-		insertMs: 'Insert nodes',
-		resolveMs: 'Resolve imports',
-		edgesMs: 'Build edges',
-		structureMs: 'Structure',
-		rolesMs: 'Roles',
-		astMs: 'AST nodes',
-		complexityMs: 'Complexity',
-		cfgMs: 'CFG',
-		dataflowMs: 'Dataflow',
-	};
-
-	md += '| Phase | Native | WASM |\n';
-	md += '|-------|-------:|-----:|\n';
-	for (const key of phaseKeys) {
-		const nVal = latest.native?.phases?.[key];
-		const wVal = latest.wasm?.phases?.[key];
-		md += `| ${phaseLabels[key]} | ${nVal != null ? nVal + ' ms' : 'n/a'} | ${wVal != null ? wVal + ' ms' : 'n/a'} |\n`;
+	if (hasOneFilePhases) {
+		md += '| Phase | Native (build) | WASM (build) | Native (1-file) | WASM (1-file) |\n';
+		md += '|-------|---------------:|-------------:|----------------:|--------------:|\n';
+		for (const key of PHASE_KEYS) {
+			const nb = fmtPhase(latest.native?.phases?.[key]);
+			const wb = fmtPhase(latest.wasm?.phases?.[key]);
+			const nr = fmtPhase(latest.native?.oneFilePhases?.[key]);
+			const wr = fmtPhase(latest.wasm?.oneFilePhases?.[key]);
+			md += `| ${PHASE_LABELS[key]} | ${nb} | ${wb} | ${nr} | ${wr} |\n`;
+		}
+	} else {
+		md += '| Phase | Native | WASM |\n';
+		md += '|-------|-------:|-----:|\n';
+		for (const key of PHASE_KEYS) {
+			md += `| ${PHASE_LABELS[key]} | ${fmtPhase(latest.native?.phases?.[key])} | ${fmtPhase(latest.wasm?.phases?.[key])} |\n`;
+		}
 	}
 	md += '\n';
 }
