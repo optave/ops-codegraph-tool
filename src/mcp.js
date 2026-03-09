@@ -836,26 +836,27 @@ export async function startMCPServer(customDbPath, options = {}) {
     process.exit(1);
   }
 
-  // Lazy import query functions to avoid circular deps at module load
-  const {
-    impactAnalysisData,
-    moduleMapData,
-    fileDepsData,
-    exportsData,
-    fnDepsData,
-    fnImpactData,
-    pathData,
-    contextData,
-    childrenData,
-    explainData,
-    whereData,
-    diffImpactData,
-    listFunctionsData,
-    rolesData,
-  } = await import('./queries.js');
+  // Connect transport FIRST so the server can receive the client's
+  // `initialize` request while heavy modules (queries, better-sqlite3)
+  // are still loading.  These are lazy-loaded on the first tool call
+  // and cached for subsequent calls.
+  let _queries;
+  let _Database;
 
-  const require = createRequire(import.meta.url);
-  const Database = require('better-sqlite3');
+  async function getQueries() {
+    if (!_queries) {
+      _queries = await import('./queries.js');
+    }
+    return _queries;
+  }
+
+  function getDatabase() {
+    if (!_Database) {
+      const require = createRequire(import.meta.url);
+      _Database = require('better-sqlite3');
+    }
+    return _Database;
+  }
 
   const server = new Server(
     { name: 'codegraph', version: '1.0.0' },
@@ -868,6 +869,23 @@ export async function startMCPServer(customDbPath, options = {}) {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    const {
+      impactAnalysisData,
+      moduleMapData,
+      fileDepsData,
+      exportsData,
+      fnDepsData,
+      fnImpactData,
+      pathData,
+      contextData,
+      childrenData,
+      explainData,
+      whereData,
+      diffImpactData,
+      listFunctionsData,
+      rolesData,
+    } = await getQueries();
+    const Database = getDatabase();
 
     try {
       if (!multiRepo && args.repo) {
