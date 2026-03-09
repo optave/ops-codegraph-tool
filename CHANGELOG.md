@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.1.0](https://github.com/optave/codegraph/compare/v3.0.4...v3.1.0) (2026-03-08)
+
+**Sequence diagrams, native engine performance leap, and unused export detection.** This release adds `codegraph sequence` for Mermaid sequence diagram generation from call graph edges, delivers major native engine build optimizations (deep-clone elimination, batched SQLite inserts, call edge building in Rust, FS caching, rayon-parallel import resolution), introduces `--unused` on the exports command to detect dead exports, and fixes an ~80x native no-op rebuild regression.
+
+### Features
+
+* **sequence:** add `codegraph sequence <name>` command for Mermaid sequence diagram generation from call graph edges — participants are files, BFS forward from entry point, optional `--dataflow` flag for parameter/return annotations; exposed via CLI, MCP tool, and programmatic API ([#345](https://github.com/optave/codegraph/pull/345))
+* **exports:** add `--unused` flag to `codegraph exports` — new `exported` column (migration v14) populated from parser export declarations, enabling detection of symbols declared as exports but with zero consumers ([#361](https://github.com/optave/codegraph/pull/361))
+
+### Performance
+
+* **native:** eliminate deep-clone in `normalizeNativeSymbols` — replace 125-line JS deep-clone with in-place `patchNativeResult` via `#[napi(js_name)]` annotations on Rust types ([#361](https://github.com/optave/codegraph/pull/361))
+* **native:** add `include_ast_nodes` flag to `parse_file`/`parse_files` — initial parse skips AST node walking, saving ~200ms ([#361](https://github.com/optave/codegraph/pull/361))
+* **native:** move call/receiver/extends edge building to Rust (`edge_builder.rs`) — narrowest-span caller resolution, confidence sorting, dedup via u64 edge keys ([#361](https://github.com/optave/codegraph/pull/361))
+* **native:** add `known_files` HashSet cache to `resolve_imports_batch` — avoids redundant FS syscalls during import resolution ([#361](https://github.com/optave/codegraph/pull/361))
+* **native:** parallelize `resolve_imports_batch` with rayon for concurrent import resolution ([#361](https://github.com/optave/codegraph/pull/361))
+* **builder:** batch SQLite multi-value INSERTs — accumulate node/edge rows and flush with chunked INSERT statements (200 rows per chunk) instead of individual prepared statement runs ([#361](https://github.com/optave/codegraph/pull/361))
+
+### Bug Fixes
+
+* **native:** fix no-op rebuild regression (~80x slower than WASM) — `extToLang` map was not built when native engine provided pre-computed CFG, causing `langId` lookup to return null and triggering full re-parse on every incremental build ([#360](https://github.com/optave/codegraph/pull/360))
+* **native:** pass full file list to `known_files` cache — on incremental builds only changed files were passed, causing valid import targets to be dropped ([#361](https://github.com/optave/codegraph/pull/361))
+* **benchmark:** install native package explicitly in npm benchmark mode ([#351](https://github.com/optave/codegraph/pull/351))
+
+### Documentation
+
+* reorder README to be AI-first throughout ([#362](https://github.com/optave/codegraph/pull/362))
+* add MCP tool surface optimization proposal ([#363](https://github.com/optave/codegraph/pull/363))
+* update build performance, query, and incremental benchmarks for 3.0.4 ([#352](https://github.com/optave/codegraph/pull/352), [#353](https://github.com/optave/codegraph/pull/353), [#354](https://github.com/optave/codegraph/pull/354))
+
+### Chores
+
+* **deps:** bump graphology from 0.25.4 to 0.26.0 ([#358](https://github.com/optave/codegraph/pull/358))
+* **deps-dev:** bump @biomejs/biome from 2.4.4 to 2.4.6 ([#359](https://github.com/optave/codegraph/pull/359))
+* **deps-dev:** bump @commitlint/cli from 20.4.2 to 20.4.3 ([#357](https://github.com/optave/codegraph/pull/357))
+* **deps-dev:** bump @commitlint/config-conventional ([#355](https://github.com/optave/codegraph/pull/355))
+
 ## [3.0.4](https://github.com/optave/codegraph/compare/v3.0.3...v3.0.4) (2026-03-05)
 
 **Native engine goes full-stack: CFG, AST nodes, and WASM double-parse elimination.** This release completes the native engine migration — CFG computation and AST node extraction now run in Rust for 8 languages, eliminating the redundant WASM pre-parse on native builds.

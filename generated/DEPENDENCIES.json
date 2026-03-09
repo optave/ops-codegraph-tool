@@ -1,6 +1,10 @@
 {
-  "version": "3.0.4",
+  "version": "3.1.0",
   "name": "@optave/codegraph",
+  "problems": [
+    "invalid: @optave/codegraph-linux-x64-gnu@3.0.4 /home/runner/work/codegraph/codegraph/node_modules/@optave/codegraph-linux-x64-gnu",
+    "invalid: @optave/codegraph-linux-x64-musl@3.0.4 /home/runner/work/codegraph/codegraph/node_modules/@optave/codegraph-linux-x64-musl"
+  ],
   "dependencies": {
     "@modelcontextprotocol/sdk": {
       "version": "1.27.1",
@@ -738,8 +742,24 @@
     "@optave/codegraph-darwin-x64": {},
     "@optave/codegraph-linux-arm64-gnu": {},
     "@optave/codegraph-linux-arm64-musl": {},
-    "@optave/codegraph-linux-x64-gnu": {},
-    "@optave/codegraph-linux-x64-musl": {},
+    "@optave/codegraph-linux-x64-gnu": {
+      "version": "3.0.4",
+      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-3.0.4.tgz",
+      "overridden": false,
+      "invalid": "\"3.1.0\" from the root project",
+      "problems": [
+        "invalid: @optave/codegraph-linux-x64-gnu@3.0.4 /home/runner/work/codegraph/codegraph/node_modules/@optave/codegraph-linux-x64-gnu"
+      ]
+    },
+    "@optave/codegraph-linux-x64-musl": {
+      "version": "3.0.4",
+      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-musl/-/codegraph-linux-x64-musl-3.0.4.tgz",
+      "overridden": false,
+      "invalid": "\"3.1.0\" from the root project",
+      "problems": [
+        "invalid: @optave/codegraph-linux-x64-musl@3.0.4 /home/runner/work/codegraph/codegraph/node_modules/@optave/codegraph-linux-x64-musl"
+      ]
+    },
     "@optave/codegraph-win32-x64-msvc": {},
     "better-sqlite3": {
       "version": "12.6.2",
@@ -1031,7 +1051,9 @@
           "overridden": false,
           "dependencies": {
             "obliterator": {
-              "version": "2.0.5"
+              "version": "2.0.5",
+              "resolved": "https://registry.npmjs.org/obliterator/-/obliterator-2.0.5.tgz",
+              "overridden": false
             }
           }
         },
@@ -1048,8 +1070,8 @@
       }
     },
     "graphology": {
-      "version": "0.25.4",
-      "resolved": "https://registry.npmjs.org/graphology/-/graphology-0.25.4.tgz",
+      "version": "0.26.0",
+      "resolved": "https://registry.npmjs.org/graphology/-/graphology-0.26.0.tgz",
       "overridden": false,
       "dependencies": {
         "events": {
@@ -1059,11 +1081,6 @@
         },
         "graphology-types": {
           "version": "0.24.8"
-        },
-        "obliterator": {
-          "version": "2.0.5",
-          "resolved": "https://registry.npmjs.org/obliterator/-/obliterator-2.0.5.tgz",
-          "overridden": false
         }
       }
     },
@@ -1072,5 +1089,10 @@
       "resolved": "https://registry.npmjs.org/web-tree-sitter/-/web-tree-sitter-0.26.6.tgz",
       "overridden": false
     }
+  },
+  "error": {
+    "code": "ELSPROBLEMS",
+    "summary": "invalid: @optave/codegraph-linux-x64-gnu@3.0.4 /home/runner/work/codegraph/codegraph/node_modules/@optave/codegraph-linux-x64-gnu\ninvalid: @optave/codegraph-linux-x64-musl@3.0.4 /home/runner/work/codegraph/codegraph/node_modules/@optave/codegraph-linux-x64-musl",
+    "detail": ""
   }
 }

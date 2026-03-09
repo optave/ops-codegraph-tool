@@ -33,7 +33,7 @@
 
 AI agents are the primary interface to large codebases — and they're flying blind.
 
-An agent burns half its token budget on `grep`, `find`, `cat` — re-discovering the same structure every session. It modifies `parseConfig()` without knowing 9 files import it. It hallucinates a function signature because it never saw the real one. Multiply that by every session, every developer, every repo.
+An agent burns a great portion of its token budget on `grep`, `find`, `cat` — re-discovering the same structure every session. It modifies `parseConfig()` without knowing 9 files import it. It hallucinates a function signature because it never saw the real one. Multiply that by every session, every developer, every repo.
 
 Developers aren't much better off. They inherit projects and spend days grepping to understand what calls what. Architects draw boundary rules that erode within weeks because nothing enforces them. CI catches test failures but can't tell you _"this change silently affects 14 callers across 9 files."_
 
@@ -562,14 +562,14 @@ Self-measured on every release via CI ([build benchmarks](generated/benchmarks/B
 
 | Metric | Latest |
 |---|---|
-| Build speed (native) | **6.2 ms/file** |
-| Build speed (WASM) | **19 ms/file** |
+| Build speed (native) | **6.1 ms/file** |
+| Build speed (WASM) | **16.5 ms/file** |
 | Query time | **3ms** |
-| No-op rebuild (native) | **329ms** |
-| 1-file rebuild (native) | **335ms** |
+| No-op rebuild (native) | **5ms** |
+| 1-file rebuild (native) | **332ms** |
 | Query: fn-deps | **0.8ms** |
 | Query: path | **0.8ms** |
-| ~50,000 files (est.) | **~310.0s build** |
+| ~50,000 files (est.) | **~305.0s build** |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 

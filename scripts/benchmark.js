@@ -106,15 +106,19 @@ async function benchmarkEngine(engine) {
 	console.error(`  [${engine}] Benchmarking 1-file rebuild...`);
 	const original = fs.readFileSync(PROBE_FILE, 'utf8');
 	let oneFileRebuildMs;
+	let oneFilePhases = null;
 	try {
-		const oneFileTimings = [];
+		const oneFileRuns = [];
 		for (let i = 0; i < INCREMENTAL_RUNS; i++) {
 			fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`);
 			const start = performance.now();
-			await buildGraph(root, { engine, incremental: true });
-			oneFileTimings.push(performance.now() - start);
+			const res = await buildGraph(root, { engine, incremental: true });
+			oneFileRuns.push({ ms: performance.now() - start, phases: res?.phases || null });
 		}
-		oneFileRebuildMs = Math.round(median(oneFileTimings));
+		oneFileRuns.sort((a, b) => a.ms - b.ms);
+		const medianRun = oneFileRuns[Math.floor(oneFileRuns.length / 2)];
+		oneFileRebuildMs = Math.round(medianRun.ms);
+		oneFilePhases = medianRun.phases;
 	} finally {
 		fs.writeFileSync(PROBE_FILE, original);
 		await buildGraph(root, { engine, incremental: true });
@@ -157,6 +161,7 @@ async function benchmarkEngine(engine) {
 		},
 		noopRebuildMs,
 		oneFileRebuildMs,
+		oneFilePhases,
 		queries,
 		phases: buildResult?.phases || null,
 	};
@@ -204,6 +209,7 @@ const result = {
 				perFile: wasm.perFile,
 				noopRebuildMs: wasm.noopRebuildMs,
 				oneFileRebuildMs: wasm.oneFileRebuildMs,
+				oneFilePhases: wasm.oneFilePhases,
 				queries: wasm.queries,
 				phases: wasm.phases,
 			}
@@ -218,6 +224,7 @@ const result = {
 				perFile: native.perFile,
 				noopRebuildMs: native.noopRebuildMs,
 				oneFileRebuildMs: native.oneFileRebuildMs,
+				oneFilePhases: native.oneFilePhases,
 				queries: native.queries,
 				phases: native.phases,
 			}

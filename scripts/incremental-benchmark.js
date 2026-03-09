@@ -77,22 +77,26 @@ async function benchmarkBuildTiers(engine) {
 	// 1-file change rebuild
 	const original = fs.readFileSync(PROBE_FILE, 'utf8');
 	let oneFileRebuildMs;
+	let oneFilePhases = null;
 	try {
-		const oneFileTimings = [];
+		const oneFileRuns = [];
 		for (let i = 0; i < RUNS; i++) {
 			fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`);
 			const start = performance.now();
-			await buildGraph(root, { engine, incremental: true });
-			oneFileTimings.push(performance.now() - start);
+			const res = await buildGraph(root, { engine, incremental: true });
+			oneFileRuns.push({ ms: performance.now() - start, phases: res?.phases || null });
 		}
-		oneFileRebuildMs = Math.round(median(oneFileTimings));
+		oneFileRuns.sort((a, b) => a.ms - b.ms);
+		const medianRun = oneFileRuns[Math.floor(oneFileRuns.length / 2)];
+		oneFileRebuildMs = Math.round(medianRun.ms);
+		oneFilePhases = medianRun.phases;
 	} finally {
 		fs.writeFileSync(PROBE_FILE, original);
 		// One final incremental build to restore DB state
 		await buildGraph(root, { engine, incremental: true });
 	}
 
-	return { fullBuildMs, noopRebuildMs, oneFileRebuildMs };
+	return { fullBuildMs, noopRebuildMs, oneFileRebuildMs, oneFilePhases };
 }
 
 /**
@@ -207,6 +211,7 @@ const result = {
 				fullBuildMs: wasm.fullBuildMs,
 				noopRebuildMs: wasm.noopRebuildMs,
 				oneFileRebuildMs: wasm.oneFileRebuildMs,
+				oneFilePhases: wasm.oneFilePhases,
 			}
 		: null,
 	native: native
@@ -214,6 +219,7 @@ const result = {
 				fullBuildMs: native.fullBuildMs,
 				noopRebuildMs: native.noopRebuildMs,
 				oneFileRebuildMs: native.oneFileRebuildMs,
+				oneFilePhases: native.oneFilePhases,
 			}
 		: null,
 	resolve,
