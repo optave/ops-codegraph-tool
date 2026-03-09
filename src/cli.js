@@ -278,7 +278,6 @@ program
   .option('--offset <number>', 'Skip N results (default: 0)')
   .option('--unused', 'Show only exports with zero consumers (dead exports)')
   .option('--ndjson', 'Newline-delimited JSON output')
-  .option('--unused', 'Show only exports with zero consumers')
   .action((file, opts) => {
     fileExports(file, opts.db, {
       noTests: resolveNoTests(opts),
