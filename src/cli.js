@@ -261,7 +261,7 @@ QUERY_OPTS(
     .command('exports <file>')
     .description('Show exported symbols with per-symbol consumers (who calls each export)'),
 )
-  .option('--unused', 'Show only exports with zero consumers')
+  .option('--unused', 'Show only exports with zero consumers (dead exports)')
   .action((file, opts) => {
     fileExports(file, opts.db, {
       noTests: resolveNoTests(opts),
@@ -269,7 +269,7 @@ QUERY_OPTS(
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       ndjson: opts.ndjson,
-      unused: opts.unused,
+      unused: opts.unused || false,
     });
   });
 
