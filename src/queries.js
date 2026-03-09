@@ -164,7 +164,7 @@ function resolveMethodViaHierarchy(db, methodName) {
  * Scoring: exact=100, prefix=60, word-boundary=40, substring=10, plus fan-in tiebreaker.
  */
 export function findMatchingNodes(db, name, opts = {}) {
-  const kinds = opts.kind ? [opts.kind] : (opts.kinds?.length ? opts.kinds : FUNCTION_KINDS);
+  const kinds = opts.kind ? [opts.kind] : opts.kinds?.length ? opts.kinds : FUNCTION_KINDS;
   const placeholders = kinds.map(() => '?').join(', ');
   const params = [`%${name}%`, ...kinds];
 
