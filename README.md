@@ -21,7 +21,7 @@
   <a href="#-quick-start">Quick Start</a> &middot;
   <a href="#-commands">Commands</a> &middot;
   <a href="#-language-support">Languages</a> &middot;
-  <a href="#-ai-agent-integration">AI Integration</a> &middot;
+  <a href="#-ai-agent-integration-core">AI Integration</a> &middot;
   <a href="#-how-it-works">How It Works</a> &middot;
   <a href="#-recommended-practices">Practices</a> &middot;
   <a href="#-roadmap">Roadmap</a>
@@ -31,28 +31,30 @@
 
 ## The Problem
 
-Large codebases are opaque. The structure lives in people's heads, not in tools.
+AI agents are the primary interface to large codebases — and they're flying blind.
 
-A developer inherits a project and spends days grepping to understand what calls what. An AI agent burns half its token budget on `grep`, `find`, `cat` — re-discovering the same structure every session. An architect draws boundary rules on a whiteboard that erode within weeks because nothing enforces them. A CI pipeline catches test failures but can't tell you _"this change silently affects 14 callers across 9 files."_
+An agent burns a great portion of its token budget on `grep`, `find`, `cat` — re-discovering the same structure every session. It modifies `parseConfig()` without knowing 9 files import it. It hallucinates a function signature because it never saw the real one. Multiply that by every session, every developer, every repo.
 
-The information exists — it's in the code itself. But without a structured map, everyone is navigating blind: developers guess, AI agents hallucinate, and architecture degrades one unreviewed change at a time.
+Developers aren't much better off. They inherit projects and spend days grepping to understand what calls what. Architects draw boundary rules that erode within weeks because nothing enforces them. CI catches test failures but can't tell you _"this change silently affects 14 callers across 9 files."_
+
+The information exists — it's in the code itself. But without a structured map, agents hallucinate, developers guess, and architecture degrades one unreviewed change at a time.
 
 ## What Codegraph Does
 
 Codegraph builds a function-level dependency graph of your entire codebase — every function, every caller, every dependency — and keeps it current with sub-second incremental rebuilds.
 
-It parses your code with [tree-sitter](https://tree-sitter.github.io/) (native Rust or WASM), stores the graph in SQLite, and gives you multiple ways to consume it:
+It parses your code with [tree-sitter](https://tree-sitter.github.io/) (native Rust or WASM), stores the graph in SQLite, and exposes it where it matters most:
 
-- **CLI** — developers explore, query, and audit their code from the terminal
-- **MCP server** — AI agents query the graph directly through 30 tools
+- **MCP server** — AI agents query the graph directly through 30 tools — one call instead of 30 `grep`/`find`/`cat` invocations
+- **CLI** — developers and agents explore, query, and audit code from the terminal
 - **CI gates** — `check` and `manifesto` commands enforce quality thresholds with exit codes
 - **Programmatic API** — embed codegraph in your own tools via `npm install`
 
-Instead of 30 tool calls to maybe discover half your dependencies, you get _"this function has 14 callers across 9 files"_ instantly. Instead of hoping architecture rules are followed, you enforce them. Instead of finding breakage in production, `diff-impact --staged` catches it before you commit.
+Instead of an agent burning 30 tool calls to maybe discover half your dependencies, it gets _"this function has 14 callers across 9 files"_ in one MCP call. Instead of hoping architecture rules are followed, you enforce them. Instead of finding breakage in production, `diff-impact --staged` catches it before you commit.
 
 **Free. Open source. Fully local.** Zero network calls, zero telemetry. Your code stays on your machine. When you want deeper intelligence, bring your own LLM provider — your code only goes where you choose to send it.
 
-**Three commands to get started:**
+**Three commands to a queryable graph:**
 
 ```bash
 npm install -g @optave/codegraph
@@ -60,7 +62,7 @@ cd your-project
 codegraph build
 ```
 
-That's it. No config files, no Docker, no JVM, no API keys, no accounts. The graph is ready to query.
+No config files, no Docker, no JVM, no API keys, no accounts. Point your agent at the MCP server and it has full structural awareness of your codebase.
 
 ### Why it matters
 
@@ -68,9 +70,10 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 |---|---|---|
 | **AI agents** | Spend 20+ tool calls per session re-discovering code structure | Get full dependency context in one MCP call |
 | **AI agents** | Modify `parseConfig()` without knowing 9 files import it | `fn-impact parseConfig` shows every caller before the edit |
-| **Developers** | Inherit a codebase and grep for hours to understand what calls what | `context handleAuth -T` gives source, deps, callers, and tests in one command |
-| **Developers** | Rename a function, break 14 call sites silently | `diff-impact --staged` catches breakage before you commit |
+| **AI agents** | Hallucinate function signatures and miss callers | `context <name> -T` returns source, deps, callers, and tests — no guessing |
 | **CI pipelines** | Catch test failures but miss structural degradation | `check --staged` fails the build when blast radius or complexity thresholds are exceeded |
+| **Developers** | Inherit a codebase and grep for hours to understand what calls what | `context handleAuth -T` gives the same structured view agents use |
+| **Developers** | Rename a function, break 14 call sites silently | `diff-impact --staged` catches breakage before you commit |
 | **Architects** | Draw boundary rules that erode within weeks | `manifesto` and `boundaries` enforce architecture rules on every commit |
 
 ### Feature comparison
@@ -79,6 +82,9 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 
 | Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) | [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | [axon](https://github.com/harshkedia177/axon) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
+| Batch querying | **Yes** | — | — | — | — | — | — | — |
+| Composite audit command | **Yes** | — | — | — | — | — | — | — |
 | Function-level analysis | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
 | Multi-language | **11** | **14** | **32** | **11** | **~10** | **12** | **12** | **3** |
 | Semantic search | **Yes** | — | **Yes** | **Yes** | — | **Yes** | — | **Yes** |
@@ -86,10 +92,7 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 | CODEOWNERS integration | **Yes** | — | — | — | — | — | — | — |
 | Architecture boundary rules | **Yes** | — | — | — | — | — | — | — |
 | CI validation predicates | **Yes** | — | — | — | — | — | — | — |
-| Composite audit command | **Yes** | — | — | — | — | — | — | — |
-| Batch querying | **Yes** | — | — | — | — | — | — | — |
 | Graph snapshots | **Yes** | — | — | — | — | — | — | — |
-| MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
 | Git diff impact | **Yes** | — | — | — | — | **Yes** | **Yes** | **Yes** |
 | Branch structural diff | **Yes** | — | — | — | — | — | — | **Yes** |
 | Git co-change analysis | **Yes** | — | — | — | — | — | — | **Yes** |
@@ -113,29 +116,55 @@ That's it. No config files, no Docker, no JVM, no API keys, no accounts. The gra
 
 | | Differentiator | In practice |
 |---|---|---|
-| **⚡** | **Always-fresh graph** | Three-tier change detection: journal (O(changed)) → mtime+size (O(n) stats) → hash (O(changed) reads). Sub-second rebuilds even on large codebases |
-| **🔓** | **Zero-cost core, LLM-enhanced when you want** | Full graph analysis with no API keys, no accounts, no cost. Optionally bring your own LLM provider — your code only goes where you choose |
+| **🤖** | **AI-first architecture** | 30-tool [MCP server](https://modelcontextprotocol.io/) — agents query the graph directly instead of scraping the filesystem. One call replaces 20+ grep/find/cat invocations |
+| **🏷️** | **Role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` — agents instantly know what they're looking at without reading the code |
 | **🔬** | **Function-level, not just files** | Traces `handleAuth()` → `validateToken()` → `decryptJWT()` and shows 14 callers across 9 files break if `decryptJWT` changes |
-| **🏷️** | **Role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` — agents instantly know what they're looking at |
-| **🤖** | **Built for AI agents** | 30-tool [MCP server](https://modelcontextprotocol.io/) — AI assistants query your graph directly. Single-repo by default |
-| **🌐** | **Multi-language, one CLI** | JS/TS + Python + Go + Rust + Java + C# + PHP + Ruby + HCL in a single graph |
+| **⚡** | **Always-fresh graph** | Three-tier change detection: journal (O(changed)) → mtime+size (O(n) stats) → hash (O(changed) reads). Sub-second rebuilds — agents always work with current data |
 | **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — enriched with historically coupled files from git co-change analysis. Ships with a GitHub Actions workflow |
+| **🌐** | **Multi-language, one graph** | JS/TS + Python + Go + Rust + Java + C# + PHP + Ruby + HCL in a single graph — agents don't need per-language tools |
 | **🧠** | **Hybrid search** | BM25 keyword + semantic embeddings fused via RRF — `hybrid` (default), `semantic`, or `keyword` mode; multi-query via `"auth; token; JWT"` |
 | **🔬** | **Dataflow + CFG** | Track how data flows through functions (`flows_to`, `returns`, `mutates`) and visualize intraprocedural control flow graphs for all 11 languages |
+| **🔓** | **Fully local, zero cost** | No API keys, no accounts, no network calls. Optionally bring your own LLM provider — your code only goes where you choose |
 
 ---
 
 ## 🚀 Quick Start
 
 ```bash
-# Install
 npm install -g @optave/codegraph
-
-# Build a graph for any project
 cd your-project
 codegraph build        # → .codegraph/graph.db created
+```
 
-# Start exploring
+That's it. The graph is ready. Now connect your AI agent.
+
+### For AI agents (primary use case)
+
+Connect directly via MCP — your agent gets 30 tools to query the graph:
+
+```bash
+codegraph mcp          # 30-tool MCP server — AI queries the graph directly
+```
+
+Or add codegraph to your agent's instructions (e.g. `CLAUDE.md`):
+
+```markdown
+Before modifying code, always:
+1. `codegraph where <name>` — find where the symbol lives
+2. `codegraph context <name> -T` — get full context (source, deps, callers)
+3. `codegraph fn-impact <name> -T` — check blast radius before editing
+
+After modifying code:
+4. `codegraph diff-impact --staged -T` — verify impact before committing
+```
+
+Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAUDE.md template](docs/guides/ai-agent-guide.md#claudemd-template)
+
+### For developers
+
+The same graph is available via CLI:
+
+```bash
 codegraph map          # see most-connected files
 codegraph query myFunc # find any function, see callers & callees
 codegraph deps src/index.ts  # file-level import/export map
@@ -150,50 +179,29 @@ cd codegraph && npm install && npm link
 
 > **Dev builds:** Pre-release tarballs are attached to [GitHub Releases](https://github.com/optave/codegraph/releases). Install with `npm install -g <path-to-tarball>`. Note that `npm install -g <tarball-url>` does not work because npm cannot resolve optional platform-specific dependencies from a URL — download the `.tgz` first, then install from the local file.
 
-### For AI agents
-
-Add codegraph to your agent's instructions (e.g. `CLAUDE.md`):
-
-```markdown
-Before modifying code, always:
-1. `codegraph where <name>` — find where the symbol lives
-2. `codegraph context <name> -T` — get full context (source, deps, callers)
-3. `codegraph fn-impact <name> -T` — check blast radius before editing
-
-After modifying code:
-4. `codegraph diff-impact --staged -T` — verify impact before committing
-```
-
-Or connect directly via MCP:
-
-```bash
-codegraph mcp          # 30-tool MCP server — AI queries the graph directly
-```
-
-Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAUDE.md template](docs/guides/ai-agent-guide.md#claudemd-template)
-
 ---
 
 ## ✨ Features
 
 | | Feature | Description |
 |---|---|---|
-| 🔍 | **Symbol search** | Find any function, class, or method by name — exact match priority, relevance scoring, `--file` and `--kind` filters |
-| 📁 | **File dependencies** | See what a file imports and what imports it |
+| 🤖 | **MCP server** | 30-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
+| 🎯 | **Deep context** | `context` gives agents source, deps, callers, signature, and tests for a function in one call; `audit --quick` gives structural summaries |
+| 🏷️ | **Node role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` based on connectivity — agents instantly know architectural role |
+| 📦 | **Batch querying** | Accept a list of targets and return all results in one JSON payload — enables multi-agent parallel dispatch |
 | 💥 | **Impact analysis** | Trace every file affected by a change (transitive) |
 | 🧬 | **Function-level tracing** | Call chains, caller trees, function-level impact, and A→B pathfinding with qualified call resolution |
-| 🎯 | **Deep context** | `context` gives AI agents source, deps, callers, signature, and tests for a function in one call; `audit --quick` gives structural summaries of files or functions |
 | 📍 | **Fast lookup** | `where` shows exactly where a symbol is defined and used — minimal, fast |
+| 🔍 | **Symbol search** | Find any function, class, or method by name — exact match priority, relevance scoring, `--file` and `--kind` filters |
+| 📁 | **File dependencies** | See what a file imports and what imports it |
 | 📊 | **Diff impact** | Parse `git diff`, find overlapping functions, trace their callers |
 | 🔗 | **Co-change analysis** | Analyze git history for files that always change together — surfaces hidden coupling the static graph can't see; enriches `diff-impact` with historically coupled files |
 | 🗺️ | **Module map** | Bird's-eye view of your most-connected files |
 | 🏗️ | **Structure & hotspots** | Directory cohesion scores, fan-in/fan-out hotspot detection, module boundaries |
-| 🏷️ | **Node role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` based on connectivity patterns — agents instantly know architectural role |
 | 🔄 | **Cycle detection** | Find circular dependencies at file or function level |
 | 📤 | **Export** | DOT, Mermaid, JSON, GraphML, GraphSON, and Neo4j CSV graph export |
 | 🧠 | **Semantic search** | Embeddings-powered natural language search with multi-query RRF ranking |
 | 👀 | **Watch mode** | Incrementally update the graph as files change |
-| 🤖 | **MCP server** | 30-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
 | ⚡ | **Always fresh** | Three-tier incremental detection — sub-second rebuilds even on large codebases |
 | 🔬 | **Data flow analysis** | Intraprocedural parameter tracking, return consumers, argument flows, and mutation detection — all 11 languages |
 | 🧮 | **Complexity metrics** | Cognitive, cyclomatic, nesting depth, Halstead, and Maintainability Index per function |
@@ -208,7 +216,6 @@ Full agent setup: [AI Agent Guide](docs/guides/ai-agent-guide.md) &middot; [CLAU
 | ✅ | **CI validation predicates** | `check` command with configurable gates: complexity, blast radius, cycles, boundary violations — exit code 0/1 for CI |
 | 📋 | **Composite audit** | Single `audit` command combining explain + impact + health metrics per function — one call instead of 3-4 |
 | 🚦 | **Triage queue** | `triage` merges connectivity, hotspots, roles, and complexity into a ranked audit priority queue |
-| 📦 | **Batch querying** | Accept a list of targets and return all results in one JSON payload — enables multi-agent parallel dispatch |
 | 🔬 | **Dataflow analysis** | Track how data moves through functions with `flows_to`, `returns`, and `mutates` edges — all 11 languages, included by default, skip with `--no-dataflow` |
 | 🧩 | **Control flow graph** | Intraprocedural CFG construction for all 11 languages — `cfg` command with text/DOT/Mermaid output, included by default, skip with `--no-cfg` |
 | 🔎 | **AST node querying** | Stored queryable AST nodes (calls, `new`, string, regex, throw, await) — `ast` command with SQL GLOB pattern matching |
@@ -248,7 +255,7 @@ codegraph exports src/queries.js  # Per-symbol consumer analysis (who calls each
 codegraph children <name>         # List parameters, properties, constants of a symbol
 ```
 
-### Deep Context (AI-Optimized)
+### Deep Context (designed for AI agents)
 
 ```bash
 codegraph context <name>       # Full context: source, deps, callers, signature, tests
@@ -555,14 +562,14 @@ Self-measured on every release via CI ([build benchmarks](generated/benchmarks/B
 
 | Metric | Latest |
 |---|---|
-| Build speed (native) | **12.3 ms/file** |
-| Build speed (WASM) | **16.3 ms/file** |
+| Build speed (native) | **6.1 ms/file** |
+| Build speed (WASM) | **16.5 ms/file** |
 | Query time | **3ms** |
 | No-op rebuild (native) | **5ms** |
-| 1-file rebuild (native) | **375ms** |
+| 1-file rebuild (native) | **332ms** |
 | Query: fn-deps | **0.8ms** |
 | Query: path | **0.8ms** |
-| ~50,000 files (est.) | **~615.0s build** |
+| ~50,000 files (est.) | **~305.0s build** |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 
@@ -580,11 +587,11 @@ Only **3 runtime dependencies** — everything else is optional or a devDependen
 
 Optional: `@huggingface/transformers` (semantic search), `@modelcontextprotocol/sdk` (MCP server) — lazy-loaded only when needed.
 
-## 🤖 AI Agent Integration
+## 🤖 AI Agent Integration (Core)
 
 ### MCP Server
 
-Codegraph includes a built-in [Model Context Protocol](https://modelcontextprotocol.io/) server with 30 tools (31 in multi-repo mode), so AI assistants can query your dependency graph directly:
+Codegraph is built around a [Model Context Protocol](https://modelcontextprotocol.io/) server with 30 tools (31 in multi-repo mode) — the primary way agents consume the graph:
 
 ```bash
 codegraph mcp                  # Single-repo mode (default) — only local project

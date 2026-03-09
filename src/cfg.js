@@ -10,9 +10,10 @@ import path from 'node:path';
 import { COMPLEXITY_RULES } from './complexity.js';
 import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
-import { paginateResult, printNdjson } from './paginate.js';
+import { paginateResult } from './paginate.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
-import { isTestFile } from './queries.js';
+import { outputResult } from './result-formatter.js';
+import { isTestFile } from './test-filter.js';
 
 // ─── CFG Node Type Rules (extends COMPLEXITY_RULES) ──────────────────────
 
@@ -327,11 +328,23 @@ export function buildFunctionCFG(functionNode, langId) {
    */
   function getStatements(node) {
     if (!node) return [];
-    // Block-like nodes: extract named children
-    if (node.type === rules.blockNode || rules.blockNodes?.has(node.type)) {
+    // Block-like nodes (including statement_list wrappers from tree-sitter-go 0.25+)
+    if (
+      node.type === 'statement_list' ||
+      node.type === rules.blockNode ||
+      rules.blockNodes?.has(node.type)
+    ) {
       const stmts = [];
       for (let i = 0; i < node.namedChildCount; i++) {
-        stmts.push(node.namedChild(i));
+        const child = node.namedChild(i);
+        if (child.type === 'statement_list') {
+          // Unwrap nested statement_list (block → statement_list → stmts)
+          for (let j = 0; j < child.namedChildCount; j++) {
+            stmts.push(child.namedChild(j));
+          }
+        } else {
+          stmts.push(child);
+        }
       }
       return stmts;
     }
@@ -888,7 +901,14 @@ export function buildFunctionCFG(functionNode, langId) {
         for (let j = 0; j < caseClause.namedChildCount; j++) {
           const child = caseClause.namedChild(j);
           if (child !== valueNode && child !== patternNode && child.type !== 'switch_label') {
-            caseStmts.push(child);
+            if (child.type === 'statement_list') {
+              // Unwrap statement_list (tree-sitter-go 0.25+)
+              for (let k = 0; k < child.namedChildCount; k++) {
+                caseStmts.push(child.namedChild(k));
+              }
+            } else {
+              caseStmts.push(child);
+            }
           }
         }
       }
@@ -1046,8 +1066,16 @@ export function buildFunctionCFG(functionNode, langId) {
 export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
   // Lazily init WASM parsers if needed
   let parsers = null;
-  let extToLang = null;
   let needsFallback = false;
+
+  // Always build ext→langId map so native-only builds (where _langId is unset)
+  // can still derive the language from the file extension.
+  const extToLang = new Map();
+  for (const entry of LANGUAGE_REGISTRY) {
+    for (const ext of entry.extensions) {
+      extToLang.set(ext, entry.id);
+    }
+  }
 
   for (const [relPath, symbols] of fileSymbols) {
     if (!symbols._tree) {
@@ -1068,12 +1096,6 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
   if (needsFallback) {
     const { createParsers } = await import('./parser.js');
     parsers = await createParsers();
-    extToLang = new Map();
-    for (const entry of LANGUAGE_REGISTRY) {
-      for (const ext of entry.extensions) {
-        extToLang.set(ext, entry.id);
-      }
-    }
   }
 
   let getParserFn = null;
@@ -1115,7 +1137,7 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
 
       // WASM fallback if no cached tree and not all native
       if (!tree && !allNative) {
-        if (!extToLang || !getParserFn) continue;
+        if (!getParserFn) continue;
         langId = extToLang.get(ext);
         if (!langId || !CFG_LANG_IDS.has(langId)) continue;
 
@@ -1138,7 +1160,7 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
       }
 
       if (!langId) {
-        langId = extToLang ? extToLang.get(ext) : null;
+        langId = extToLang.get(ext);
         if (!langId) continue;
       }
 
@@ -1416,14 +1438,7 @@ function edgeStyle(kind) {
 export function cfg(name, customDbPath, opts = {}) {
   const data = cfgData(name, customDbPath, opts);
 
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
-  if (opts.ndjson) {
-    printNdjson(data.results);
-    return;
-  }
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.warning) {
     console.log(`\u26A0  ${data.warning}`);

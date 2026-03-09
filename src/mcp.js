@@ -113,6 +113,11 @@ const BASE_TOOLS = [
       properties: {
         file: { type: 'string', description: 'File path (partial match supported)' },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        unused: {
+          type: 'boolean',
+          description: 'Show only exports with zero consumers',
+          default: false,
+        },
         ...PAGINATION_PROPS,
       },
       required: ['file'],
@@ -939,6 +944,7 @@ export async function startMCPServer(customDbPath, options = {}) {
         case 'file_exports':
           result = exportsData(args.file, dbPath, {
             noTests: args.no_tests,
+            unused: args.unused,
             limit: Math.min(args.limit ?? MCP_DEFAULTS.file_exports, MCP_MAX_LIMIT),
             offset: args.offset ?? 0,
           });

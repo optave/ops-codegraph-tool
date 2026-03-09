@@ -1,6 +1,14 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use rayon::prelude::*;
+
 use crate::types::{AliasMapping, ImportResolutionInput, PathAliases, ResolvedImport};
+
+/// Check file existence using known_files set when available, falling back to FS.
+fn file_exists(path: &str, known: Option<&HashSet<String>>) -> bool {
+    known.map_or_else(|| Path::new(path).exists(), |set| set.contains(path))
+}
 
 /// Normalize a path to use forward slashes and clean `.` / `..` segments
 /// (cross-platform consistency).
@@ -14,15 +22,24 @@ fn resolve_via_alias(
     import_source: &str,
     aliases: &PathAliases,
     _root_dir: &str,
+    known_files: Option<&HashSet<String>>,
 ) -> Option<String> {
     // baseUrl resolution
     if let Some(base_url) = &aliases.base_url {
         if !import_source.starts_with('.') && !import_source.starts_with('/') {
             let candidate = PathBuf::from(base_url).join(import_source);
-            for ext in &["", ".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx", "/index.js"]
-            {
+            for ext in &[
+                "",
+                ".ts",
+                ".tsx",
+                ".js",
+                ".jsx",
+                "/index.ts",
+                "/index.tsx",
+                "/index.js",
+            ] {
                 let full = format!("{}{}", candidate.display(), ext);
-                if Path::new(&full).exists() {
+                if file_exists(&full, known_files) {
                     return Some(full);
                 }
             }
@@ -38,10 +55,18 @@ fn resolve_via_alias(
         let rest = &import_source[prefix.len()..];
         for target in &mapping.targets {
             let resolved = target.replace('*', rest);
-            for ext in &["", ".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx", "/index.js"]
-            {
+            for ext in &[
+                "",
+                ".ts",
+                ".tsx",
+                ".js",
+                ".jsx",
+                "/index.ts",
+                "/index.tsx",
+                "/index.js",
+            ] {
                 let full = format!("{}{}", resolved, ext);
-                if Path::new(&full).exists() {
+                if file_exists(&full, known_files) {
                     return Some(full);
                 }
             }
@@ -58,9 +83,22 @@ pub fn resolve_import_path(
     root_dir: &str,
     aliases: &PathAliases,
 ) -> String {
+    resolve_import_path_inner(from_file, import_source, root_dir, aliases, None)
+}
+
+/// Inner implementation with optional known_files cache.
+fn resolve_import_path_inner(
+    from_file: &str,
+    import_source: &str,
+    root_dir: &str,
+    aliases: &PathAliases,
+    known_files: Option<&HashSet<String>>,
+) -> String {
     // Try alias resolution for non-relative imports
     if !import_source.starts_with('.') {
-        if let Some(alias_resolved) = resolve_via_alias(import_source, aliases, root_dir) {
+        if let Some(alias_resolved) =
+            resolve_via_alias(import_source, aliases, root_dir, known_files)
+        {
             let root = Path::new(root_dir);
             if let Ok(rel) = Path::new(&alias_resolved).strip_prefix(root) {
                 return normalize_path(&rel.display().to_string());
@@ -79,14 +117,14 @@ pub fn resolve_import_path(
     // .js → .ts remap
     if resolved_str.ends_with(".js") {
         let ts_candidate = resolved_str.replace(".js", ".ts");
-        if Path::new(&ts_candidate).exists() {
+        if file_exists(&ts_candidate, known_files) {
             let root = Path::new(root_dir);
             if let Ok(rel) = Path::new(&ts_candidate).strip_prefix(root) {
                 return normalize_path(&rel.display().to_string());
             }
         }
         let tsx_candidate = resolved_str.replace(".js", ".tsx");
-        if Path::new(&tsx_candidate).exists() {
+        if file_exists(&tsx_candidate, known_files) {
             let root = Path::new(root_dir);
             if let Ok(rel) = Path::new(&tsx_candidate).strip_prefix(root) {
                 return normalize_path(&rel.display().to_string());
@@ -96,12 +134,20 @@ pub fn resolve_import_path(
 
     // Extension probing
     let extensions = [
-        ".ts", ".tsx", ".js", ".jsx", ".mjs", ".py", "/index.ts", "/index.tsx", "/index.js",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".mjs",
+        ".py",
+        "/index.ts",
+        "/index.tsx",
+        "/index.js",
         "/__init__.py",
     ];
     for ext in &extensions {
         let candidate = format!("{}{}", resolved_str, ext);
-        if Path::new(&candidate).exists() {
+        if file_exists(&candidate, known_files) {
             let root = Path::new(root_dir);
             if let Ok(rel) = Path::new(&candidate).strip_prefix(root) {
                 return normalize_path(&rel.display().to_string());
@@ -110,7 +156,7 @@ pub fn resolve_import_path(
     }
 
     // Exact match
-    if Path::new(&resolved_str).exists() {
+    if file_exists(&resolved_str, known_files) {
         let root = Path::new(root_dir);
         if let Ok(rel) = Path::new(&resolved_str).strip_prefix(root) {
             return normalize_path(&rel.display().to_string());
@@ -174,20 +220,22 @@ pub fn compute_confidence(
     0.3
 }
 
-/// Batch resolve multiple imports.
+/// Batch resolve multiple imports (parallelized with rayon).
 pub fn resolve_imports_batch(
     inputs: &[ImportResolutionInput],
     root_dir: &str,
     aliases: &PathAliases,
+    known_files: Option<&HashSet<String>>,
 ) -> Vec<ResolvedImport> {
     inputs
-        .iter()
+        .par_iter()
         .map(|input| {
-            let resolved = resolve_import_path(
+            let resolved = resolve_import_path_inner(
                 &input.from_file,
                 &input.import_source,
                 root_dir,
                 aliases,
+                known_files,
             );
             ResolvedImport {
                 from_file: input.from_file.clone(),

@@ -9,8 +9,9 @@
 import path from 'node:path';
 import { openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
-import { paginateResult, printNdjson } from './paginate.js';
+import { paginateResult } from './paginate.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
+import { outputResult } from './result-formatter.js';
 
 // ─── Constants ────────────────────────────────────────────────────────
 
@@ -382,15 +383,7 @@ export function astQueryData(pattern, customDbPath, opts = {}) {
 export function astQuery(pattern, customDbPath, opts = {}) {
   const data = astQueryData(pattern, customDbPath, opts);
 
-  if (opts.ndjson) {
-    printNdjson(data, 'results');
-    return;
-  }
-
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
+  if (outputResult(data, 'results', opts)) return;
 
   // Human-readable output
   if (data.results.length === 0) {

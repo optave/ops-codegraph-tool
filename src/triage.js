@@ -1,7 +1,8 @@
 import { openReadonlyOrFail } from './db.js';
 import { warn } from './logger.js';
-import { paginateResult, printNdjson } from './paginate.js';
-import { isTestFile } from './queries.js';
+import { paginateResult } from './paginate.js';
+import { outputResult } from './result-formatter.js';
+import { isTestFile } from './test-filter.js';
 
 // ─── Constants ────────────────────────────────────────────────────────
 
@@ -218,14 +219,7 @@ export function triageData(customDbPath, opts = {}) {
 export function triage(customDbPath, opts = {}) {
   const data = triageData(customDbPath, opts);
 
-  if (opts.ndjson) {
-    printNdjson(data, 'items');
-    return;
-  }
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
+  if (outputResult(data, 'items', opts)) return;
 
   if (data.items.length === 0) {
     if (data.summary.total === 0) {

@@ -7,6 +7,7 @@ import { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
 import { closeDb, getBuildMeta, initSchema, MIGRATIONS, openDb, setBuildMeta } from './db.js';
 import { readJournal, writeJournalHeader } from './journal.js';
 import { debug, info, warn } from './logger.js';
+import { loadNative } from './native.js';
 import { getActiveEngine, parseFilesAuto } from './parser.js';
 import { computeConfidence, resolveImportPath, resolveImportsBatch } from './resolve.js';
 
@@ -444,7 +445,11 @@ export async function buildGraph(rootDir, opts = {}) {
     opts.incremental !== false && config.build && config.build.incremental !== false;
 
   // Engine selection: 'native', 'wasm', or 'auto' (default)
-  const engineOpts = { engine: opts.engine || 'auto', dataflow: opts.dataflow !== false };
+  const engineOpts = {
+    engine: opts.engine || 'auto',
+    dataflow: opts.dataflow !== false,
+    ast: opts.ast !== false,
+  };
   const { name: engineName, version: engineVersion } = getActiveEngine(engineOpts);
   info(`Using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
 
@@ -672,15 +677,38 @@ export async function buildGraph(rootDir, opts = {}) {
     }
   }
 
-  const insertNode = db.prepare(
-    'INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line, parent_id) VALUES (?, ?, ?, ?, ?, ?)',
-  );
   const getNodeId = db.prepare(
     'SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? AND line = ?',
   );
-  const insertEdge = db.prepare(
-    'INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?, ?, ?, ?, ?)',
-  );
+
+  // Batch INSERT helpers — multi-value INSERTs reduce SQLite round-trips
+  const BATCH_CHUNK = 200;
+  function batchInsertNodes(rows) {
+    if (!rows.length) return;
+    const ph = '(?,?,?,?,?,?)';
+    for (let i = 0; i < rows.length; i += BATCH_CHUNK) {
+      const chunk = rows.slice(i, i + BATCH_CHUNK);
+      const vals = [];
+      for (const r of chunk) vals.push(r[0], r[1], r[2], r[3], r[4], r[5]);
+      db.prepare(
+        'INSERT OR IGNORE INTO nodes (name,kind,file,line,end_line,parent_id) VALUES ' +
+          chunk.map(() => ph).join(','),
+      ).run(...vals);
+    }
+  }
+  function batchInsertEdges(rows) {
+    if (!rows.length) return;
+    const ph = '(?,?,?,?,?)';
+    for (let i = 0; i < rows.length; i += BATCH_CHUNK) {
+      const chunk = rows.slice(i, i + BATCH_CHUNK);
+      const vals = [];
+      for (const r of chunk) vals.push(r[0], r[1], r[2], r[3], r[4]);
+      db.prepare(
+        'INSERT INTO edges (source_id,target_id,kind,confidence,dynamic) VALUES ' +
+          chunk.map(() => ph).join(','),
+      ).run(...vals);
+    }
+  }
 
   // Prepare hash upsert (with size column from migration v4)
   let upsertHash;
@@ -727,57 +755,76 @@ export async function buildGraph(rootDir, opts = {}) {
   const bulkGetNodeIds = db.prepare('SELECT id, name, kind, line FROM nodes WHERE file = ?');
 
   const insertAll = db.transaction(() => {
+    // Phase 1: Batch insert all file nodes + definitions + exports
+    const phase1Rows = [];
     for (const [relPath, symbols] of allSymbols) {
       fileSymbols.set(relPath, symbols);
-
-      // Phase 1: Insert file node + definitions + exports (no children yet)
-      insertNode.run(relPath, 'file', relPath, 0, null, null);
+      phase1Rows.push([relPath, 'file', relPath, 0, null, null]);
       for (const def of symbols.definitions) {
-        insertNode.run(def.name, def.kind, relPath, def.line, def.endLine || null, null);
+        phase1Rows.push([def.name, def.kind, relPath, def.line, def.endLine || null, null]);
       }
       for (const exp of symbols.exports) {
-        insertNode.run(exp.name, exp.kind, relPath, exp.line, null, null);
+        phase1Rows.push([exp.name, exp.kind, relPath, exp.line, null, null]);
       }
+    }
+    batchInsertNodes(phase1Rows);
 
-      // Phase 2: Bulk-fetch IDs for file + definitions
+    // Phase 1b: Mark exported symbols
+    const markExported = db.prepare(
+      'UPDATE nodes SET exported = 1 WHERE name = ? AND kind = ? AND file = ? AND line = ?',
+    );
+    for (const [relPath, symbols] of allSymbols) {
+      for (const exp of symbols.exports) {
+        markExported.run(exp.name, exp.kind, relPath, exp.line);
+      }
+    }
+
+    // Phase 3: Batch insert children (needs parent IDs from Phase 2)
+    const childRows = [];
+    for (const [relPath, symbols] of allSymbols) {
       const nodeIdMap = new Map();
       for (const row of bulkGetNodeIds.all(relPath)) {
         nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
       }
-
-      // Phase 3: Insert children with parent_id from the map
       for (const def of symbols.definitions) {
         if (!def.children?.length) continue;
         const defId = nodeIdMap.get(`${def.name}|${def.kind}|${def.line}`);
         if (!defId) continue;
         for (const child of def.children) {
-          insertNode.run(child.name, child.kind, relPath, child.line, child.endLine || null, defId);
+          childRows.push([
+            child.name,
+            child.kind,
+            relPath,
+            child.line,
+            child.endLine || null,
+            defId,
+          ]);
         }
       }
+    }
+    batchInsertNodes(childRows);
 
-      // Phase 4: Re-fetch to include children IDs
-      nodeIdMap.clear();
+    // Phase 5: Batch insert contains/parameter_of edges
+    const edgeRows = [];
+    for (const [relPath, symbols] of allSymbols) {
+      // Re-fetch to include children IDs
+      const nodeIdMap = new Map();
       for (const row of bulkGetNodeIds.all(relPath)) {
         nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
       }
-
-      // Phase 5: Insert edges using the cached ID map
       const fileId = nodeIdMap.get(`${relPath}|file|0`);
       for (const def of symbols.definitions) {
         const defId = nodeIdMap.get(`${def.name}|${def.kind}|${def.line}`);
-        // File → top-level definition contains edge
         if (fileId && defId) {
-          insertEdge.run(fileId, defId, 'contains', 1.0, 0);
+          edgeRows.push([fileId, defId, 'contains', 1.0, 0]);
         }
         if (def.children?.length && defId) {
           for (const child of def.children) {
             const childId = nodeIdMap.get(`${child.name}|${child.kind}|${child.line}`);
             if (childId) {
-              // Parent → child contains edge
-              insertEdge.run(defId, childId, 'contains', 1.0, 0);
-              // Parameter → parent parameter_of edge (inverse direction)
+              edgeRows.push([defId, childId, 'contains', 1.0, 0]);
               if (child.kind === 'parameter') {
-                insertEdge.run(childId, defId, 'parameter_of', 1.0, 0);
+                edgeRows.push([childId, defId, 'parameter_of', 1.0, 0]);
               }
             }
           }
@@ -812,6 +859,7 @@ export async function buildGraph(rootDir, opts = {}) {
         }
       }
     }
+    batchInsertEdges(edgeRows);
 
     // Also update metadata-only entries (self-heal mtime/size without re-parse)
     if (upsertHash) {
@@ -848,7 +896,7 @@ export async function buildGraph(rootDir, opts = {}) {
       batchInputs.push({ fromFile: absFile, importSource: imp.source });
     }
   }
-  const batchResolved = resolveImportsBatch(batchInputs, rootDir, aliases);
+  const batchResolved = resolveImportsBatch(batchInputs, rootDir, aliases, files);
   _t.resolveMs = performance.now() - _t.resolve0;
 
   function getResolved(absFile, importSource) {
@@ -961,7 +1009,7 @@ export async function buildGraph(rootDir, opts = {}) {
   // N+1 optimization: pre-load all nodes into a lookup map for edge building
   const allNodes = db
     .prepare(
-      `SELECT id, name, kind, file FROM nodes WHERE kind IN ('function','method','class','interface','struct','type','module','enum','trait')`,
+      `SELECT id, name, kind, file, line FROM nodes WHERE kind IN ('function','method','class','interface','struct','type','module','enum','trait')`,
     )
     .all();
   const nodesByName = new Map();
@@ -976,9 +1024,11 @@ export async function buildGraph(rootDir, opts = {}) {
     nodesByNameAndFile.get(key).push(node);
   }
 
-  // Second pass: build edges
+  // Second pass: build edges (accumulated and batch-inserted)
   _t.edges0 = performance.now();
   const buildEdges = db.transaction(() => {
+    const allEdgeRows = [];
+
     for (const [relPath, symbols] of fileSymbols) {
       // Skip barrel-only files — loaded for resolution, edges already in DB
       if (barrelOnlyFiles.has(relPath)) continue;
@@ -992,7 +1042,7 @@ export async function buildGraph(rootDir, opts = {}) {
         const targetRow = getNodeId.get(resolvedPath, 'file', resolvedPath, 0);
         if (targetRow) {
           const edgeKind = imp.reexport ? 'reexports' : imp.typeOnly ? 'imports-type' : 'imports';
-          insertEdge.run(fileNodeId, targetRow.id, edgeKind, 1.0, 0);
+          allEdgeRows.push([fileNodeId, targetRow.id, edgeKind, 1.0, 0]);
 
           if (!imp.reexport && isBarrelFile(resolvedPath)) {
             const resolvedSources = new Set();
@@ -1007,171 +1057,218 @@ export async function buildGraph(rootDir, opts = {}) {
                 resolvedSources.add(actualSource);
                 const actualRow = getNodeId.get(actualSource, 'file', actualSource, 0);
                 if (actualRow) {
-                  insertEdge.run(
+                  allEdgeRows.push([
                     fileNodeId,
                     actualRow.id,
                     edgeKind === 'imports-type' ? 'imports-type' : 'imports',
                     0.9,
                     0,
-                  );
+                  ]);
                 }
               }
-            }
-          }
-        }
-      }
-
-      // Build import name -> target file mapping
-      const importedNames = new Map();
-      for (const imp of symbols.imports) {
-        const resolvedPath = getResolved(path.join(rootDir, relPath), imp.source);
-        for (const name of imp.names) {
-          const cleanName = name.replace(/^\*\s+as\s+/, '');
-          importedNames.set(cleanName, resolvedPath);
-        }
-      }
-
-      // Call edges with confidence scoring — using pre-loaded lookup maps (N+1 fix)
-      const seenCallEdges = new Set();
-      for (const call of symbols.calls) {
-        if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
-        let caller = null;
-        let callerSpan = Infinity;
-        for (const def of symbols.definitions) {
-          if (def.line <= call.line) {
-            const end = def.endLine || Infinity;
-            if (call.line <= end) {
-              // Call is inside this definition's range — pick narrowest
-              const span = end - def.line;
-              if (span < callerSpan) {
-                const row = getNodeId.get(def.name, def.kind, relPath, def.line);
-                if (row) {
-                  caller = row;
-                  callerSpan = span;
-                }
-              }
-            } else if (!caller) {
-              // Fallback: def starts before call but call is past end
-              // Only use if we haven't found an enclosing scope yet
-              const row = getNodeId.get(def.name, def.kind, relPath, def.line);
-              if (row) caller = row;
-            }
-          }
-        }
-        if (!caller) caller = fileNodeRow;
-
-        const isDynamic = call.dynamic ? 1 : 0;
-        let targets;
-        const importedFrom = importedNames.get(call.name);
-
-        if (importedFrom) {
-          // Use pre-loaded map instead of DB query
-          targets = nodesByNameAndFile.get(`${call.name}|${importedFrom}`) || [];
-
-          if (targets.length === 0 && isBarrelFile(importedFrom)) {
-            const actualSource = resolveBarrelExport(importedFrom, call.name);
-            if (actualSource) {
-              targets = nodesByNameAndFile.get(`${call.name}|${actualSource}`) || [];
-            }
-          }
-        }
-        if (!targets || targets.length === 0) {
-          // Same file
-          targets = nodesByNameAndFile.get(`${call.name}|${relPath}`) || [];
-          if (targets.length === 0) {
-            // Method name match (e.g. ClassName.methodName)
-            const methodCandidates = (nodesByName.get(call.name) || []).filter(
-              (n) => n.name.endsWith(`.${call.name}`) && n.kind === 'method',
-            );
-            if (methodCandidates.length > 0) {
-              targets = methodCandidates;
-            } else if (
-              !call.receiver ||
-              call.receiver === 'this' ||
-              call.receiver === 'self' ||
-              call.receiver === 'super'
-            ) {
-              // Scoped fallback — same-dir or parent-dir only, not global
-              targets = (nodesByName.get(call.name) || []).filter(
-                (n) => computeConfidence(relPath, n.file, null) >= 0.5,
-              );
-            }
-            // else: method call on a receiver — skip global fallback entirely
-          }
-        }
-
-        if (targets.length > 1) {
-          targets.sort((a, b) => {
-            const confA = computeConfidence(relPath, a.file, importedFrom);
-            const confB = computeConfidence(relPath, b.file, importedFrom);
-            return confB - confA;
-          });
-        }
-
-        for (const t of targets) {
-          const edgeKey = `${caller.id}|${t.id}`;
-          if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
-            seenCallEdges.add(edgeKey);
-            const confidence = computeConfidence(relPath, t.file, importedFrom);
-            insertEdge.run(caller.id, t.id, 'calls', confidence, isDynamic);
-          }
-        }
-
-        // Receiver edge: caller → receiver type node
-        if (
-          call.receiver &&
-          !BUILTIN_RECEIVERS.has(call.receiver) &&
-          call.receiver !== 'this' &&
-          call.receiver !== 'self' &&
-          call.receiver !== 'super'
-        ) {
-          const receiverKinds = new Set(['class', 'struct', 'interface', 'type', 'module']);
-          // Same-file first, then global
-          const samefile = nodesByNameAndFile.get(`${call.receiver}|${relPath}`) || [];
-          const candidates = samefile.length > 0 ? samefile : nodesByName.get(call.receiver) || [];
-          const receiverNodes = candidates.filter((n) => receiverKinds.has(n.kind));
-          if (receiverNodes.length > 0 && caller) {
-            const recvTarget = receiverNodes[0];
-            const recvKey = `recv|${caller.id}|${recvTarget.id}`;
-            if (!seenCallEdges.has(recvKey)) {
-              seenCallEdges.add(recvKey);
-              insertEdge.run(caller.id, recvTarget.id, 'receiver', 0.7, 0);
-            }
-          }
-        }
-      }
-
-      // Class extends edges (use pre-loaded maps instead of inline DB queries)
-      for (const cls of symbols.classes) {
-        if (cls.extends) {
-          const sourceRow = (nodesByNameAndFile.get(`${cls.name}|${relPath}`) || []).find(
-            (n) => n.kind === 'class',
-          );
-          const targetCandidates = nodesByName.get(cls.extends) || [];
-          const targetRows = targetCandidates.filter((n) => n.kind === 'class');
-          if (sourceRow) {
-            for (const t of targetRows) {
-              insertEdge.run(sourceRow.id, t.id, 'extends', 1.0, 0);
-            }
-          }
-        }
-
-        if (cls.implements) {
-          const sourceRow = (nodesByNameAndFile.get(`${cls.name}|${relPath}`) || []).find(
-            (n) => n.kind === 'class',
-          );
-          const targetCandidates = nodesByName.get(cls.implements) || [];
-          const targetRows = targetCandidates.filter(
-            (n) => n.kind === 'interface' || n.kind === 'class',
-          );
-          if (sourceRow) {
-            for (const t of targetRows) {
-              insertEdge.run(sourceRow.id, t.id, 'implements', 1.0, 0);
             }
           }
         }
       }
     }
+
+    // Call/receiver/extends/implements edges — native when available
+    const native = engineName === 'native' ? loadNative() : null;
+    if (native?.buildCallEdges) {
+      const nativeFiles = [];
+      for (const [relPath, symbols] of fileSymbols) {
+        if (barrelOnlyFiles.has(relPath)) continue;
+        const fileNodeRow = getNodeId.get(relPath, 'file', relPath, 0);
+        if (!fileNodeRow) continue;
+
+        // Pre-resolve imported names (including barrel resolution)
+        const importedNames = [];
+        for (const imp of symbols.imports) {
+          const resolvedPath = getResolved(path.join(rootDir, relPath), imp.source);
+          for (const name of imp.names) {
+            const cleanName = name.replace(/^\*\s+as\s+/, '');
+            let targetFile = resolvedPath;
+            if (isBarrelFile(resolvedPath)) {
+              const actual = resolveBarrelExport(resolvedPath, cleanName);
+              if (actual) targetFile = actual;
+            }
+            importedNames.push({ name: cleanName, file: targetFile });
+          }
+        }
+
+        nativeFiles.push({
+          file: relPath,
+          fileNodeId: fileNodeRow.id,
+          definitions: symbols.definitions.map((d) => ({
+            name: d.name,
+            kind: d.kind,
+            line: d.line,
+            endLine: d.endLine ?? null,
+          })),
+          calls: symbols.calls,
+          importedNames,
+          classes: symbols.classes,
+        });
+      }
+
+      const nativeEdges = native.buildCallEdges(nativeFiles, allNodes, [...BUILTIN_RECEIVERS]);
+
+      for (const e of nativeEdges) {
+        allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic]);
+      }
+    } else {
+      // JS fallback — call/receiver/extends/implements edges
+      for (const [relPath, symbols] of fileSymbols) {
+        if (barrelOnlyFiles.has(relPath)) continue;
+        const fileNodeRow = getNodeId.get(relPath, 'file', relPath, 0);
+        if (!fileNodeRow) continue;
+
+        // Build import name -> target file mapping
+        const importedNames = new Map();
+        for (const imp of symbols.imports) {
+          const resolvedPath = getResolved(path.join(rootDir, relPath), imp.source);
+          for (const name of imp.names) {
+            const cleanName = name.replace(/^\*\s+as\s+/, '');
+            importedNames.set(cleanName, resolvedPath);
+          }
+        }
+
+        // Call edges with confidence scoring — using pre-loaded lookup maps (N+1 fix)
+        const seenCallEdges = new Set();
+        for (const call of symbols.calls) {
+          if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
+          let caller = null;
+          let callerSpan = Infinity;
+          for (const def of symbols.definitions) {
+            if (def.line <= call.line) {
+              const end = def.endLine || Infinity;
+              if (call.line <= end) {
+                const span = end - def.line;
+                if (span < callerSpan) {
+                  const row = getNodeId.get(def.name, def.kind, relPath, def.line);
+                  if (row) {
+                    caller = row;
+                    callerSpan = span;
+                  }
+                }
+              } else if (!caller) {
+                const row = getNodeId.get(def.name, def.kind, relPath, def.line);
+                if (row) caller = row;
+              }
+            }
+          }
+          if (!caller) caller = fileNodeRow;
+
+          const isDynamic = call.dynamic ? 1 : 0;
+          let targets;
+          const importedFrom = importedNames.get(call.name);
+
+          if (importedFrom) {
+            targets = nodesByNameAndFile.get(`${call.name}|${importedFrom}`) || [];
+
+            if (targets.length === 0 && isBarrelFile(importedFrom)) {
+              const actualSource = resolveBarrelExport(importedFrom, call.name);
+              if (actualSource) {
+                targets = nodesByNameAndFile.get(`${call.name}|${actualSource}`) || [];
+              }
+            }
+          }
+          if (!targets || targets.length === 0) {
+            targets = nodesByNameAndFile.get(`${call.name}|${relPath}`) || [];
+            if (targets.length === 0) {
+              const methodCandidates = (nodesByName.get(call.name) || []).filter(
+                (n) => n.name.endsWith(`.${call.name}`) && n.kind === 'method',
+              );
+              if (methodCandidates.length > 0) {
+                targets = methodCandidates;
+              } else if (
+                !call.receiver ||
+                call.receiver === 'this' ||
+                call.receiver === 'self' ||
+                call.receiver === 'super'
+              ) {
+                targets = (nodesByName.get(call.name) || []).filter(
+                  (n) => computeConfidence(relPath, n.file, null) >= 0.5,
+                );
+              }
+            }
+          }
+
+          if (targets.length > 1) {
+            targets.sort((a, b) => {
+              const confA = computeConfidence(relPath, a.file, importedFrom);
+              const confB = computeConfidence(relPath, b.file, importedFrom);
+              return confB - confA;
+            });
+          }
+
+          for (const t of targets) {
+            const edgeKey = `${caller.id}|${t.id}`;
+            if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
+              seenCallEdges.add(edgeKey);
+              const confidence = computeConfidence(relPath, t.file, importedFrom);
+              allEdgeRows.push([caller.id, t.id, 'calls', confidence, isDynamic]);
+            }
+          }
+
+          // Receiver edge: caller → receiver type node
+          if (
+            call.receiver &&
+            !BUILTIN_RECEIVERS.has(call.receiver) &&
+            call.receiver !== 'this' &&
+            call.receiver !== 'self' &&
+            call.receiver !== 'super'
+          ) {
+            const receiverKinds = new Set(['class', 'struct', 'interface', 'type', 'module']);
+            const samefile = nodesByNameAndFile.get(`${call.receiver}|${relPath}`) || [];
+            const candidates =
+              samefile.length > 0 ? samefile : nodesByName.get(call.receiver) || [];
+            const receiverNodes = candidates.filter((n) => receiverKinds.has(n.kind));
+            if (receiverNodes.length > 0 && caller) {
+              const recvTarget = receiverNodes[0];
+              const recvKey = `recv|${caller.id}|${recvTarget.id}`;
+              if (!seenCallEdges.has(recvKey)) {
+                seenCallEdges.add(recvKey);
+                allEdgeRows.push([caller.id, recvTarget.id, 'receiver', 0.7, 0]);
+              }
+            }
+          }
+        }
+
+        // Class extends edges
+        for (const cls of symbols.classes) {
+          if (cls.extends) {
+            const sourceRow = (nodesByNameAndFile.get(`${cls.name}|${relPath}`) || []).find(
+              (n) => n.kind === 'class',
+            );
+            const targetCandidates = nodesByName.get(cls.extends) || [];
+            const targetRows = targetCandidates.filter((n) => n.kind === 'class');
+            if (sourceRow) {
+              for (const t of targetRows) {
+                allEdgeRows.push([sourceRow.id, t.id, 'extends', 1.0, 0]);
+              }
+            }
+          }
+
+          if (cls.implements) {
+            const sourceRow = (nodesByNameAndFile.get(`${cls.name}|${relPath}`) || []).find(
+              (n) => n.kind === 'class',
+            );
+            const targetCandidates = nodesByName.get(cls.implements) || [];
+            const targetRows = targetCandidates.filter(
+              (n) => n.kind === 'interface' || n.kind === 'class',
+            );
+            if (sourceRow) {
+              for (const t of targetRows) {
+                allEdgeRows.push([sourceRow.id, t.id, 'implements', 1.0, 0]);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    batchInsertEdges(allEdgeRows);
   });
   buildEdges();
   _t.edgesMs = performance.now() - _t.edges0;
@@ -1179,8 +1276,8 @@ export async function buildGraph(rootDir, opts = {}) {
   // Build line count map for structure metrics (prefer cached _lineCount from parser)
   const lineCountMap = new Map();
   for (const [relPath, symbols] of fileSymbols) {
-    if (symbols._lineCount) {
-      lineCountMap.set(relPath, symbols._lineCount);
+    if (symbols.lineCount ?? symbols._lineCount) {
+      lineCountMap.set(relPath, symbols.lineCount ?? symbols._lineCount);
     } else {
       const absPath = path.join(rootDir, relPath);
       try {
@@ -1351,16 +1448,12 @@ export async function buildGraph(rootDir, opts = {}) {
     }
 
     if (needsWasmTrees) {
-      _t.wasmPre0 = performance.now();
       try {
         const { ensureWasmTrees } = await import('./parser.js');
         await ensureWasmTrees(astComplexitySymbols, rootDir);
       } catch (err) {
         debug(`WASM pre-parse failed: ${err.message}`);
       }
-      _t.wasmPreMs = performance.now() - _t.wasmPre0;
-    } else {
-      _t.wasmPreMs = 0;
     }
   }
 
@@ -1435,6 +1528,29 @@ export async function buildGraph(rootDir, opts = {}) {
     }
   }
 
+  // Warn about unused exports (exported but zero cross-file consumers)
+  try {
+    const unusedCount = db
+      .prepare(
+        `SELECT COUNT(*) as c FROM nodes
+       WHERE exported = 1 AND kind != 'file'
+         AND id NOT IN (
+           SELECT DISTINCT e.target_id FROM edges e
+           JOIN nodes caller ON e.source_id = caller.id
+           JOIN nodes target ON e.target_id = target.id
+           WHERE e.kind = 'calls' AND caller.file != target.file
+         )`,
+      )
+      .get().c;
+    if (unusedCount > 0) {
+      warn(
+        `${unusedCount} exported symbol${unusedCount > 1 ? 's have' : ' has'} zero cross-file consumers. Run "codegraph exports <file> --unused" to inspect.`,
+      );
+    }
+  } catch {
+    /* exported column may not exist on older DBs */
+  }
+
   // Persist build metadata for mismatch detection
   try {
     setBuildMeta(db, {
@@ -1481,7 +1597,6 @@ export async function buildGraph(rootDir, opts = {}) {
       rolesMs: +_t.rolesMs.toFixed(1),
       astMs: +_t.astMs.toFixed(1),
       complexityMs: +_t.complexityMs.toFixed(1),
-      ...(_t.wasmPreMs != null && { wasmPreMs: +_t.wasmPreMs.toFixed(1) }),
       ...(_t.cfgMs != null && { cfgMs: +_t.cfgMs.toFixed(1) }),
       ...(_t.dataflowMs != null && { dataflowMs: +_t.dataflowMs.toFixed(1) }),
     },

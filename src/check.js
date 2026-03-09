@@ -5,7 +5,8 @@ import { loadConfig } from './config.js';
 import { findCycles } from './cycles.js';
 import { findDbPath, openReadonlyOrFail } from './db.js';
 import { matchOwners, parseCodeowners } from './owners.js';
-import { isTestFile } from './queries.js';
+import { outputResult } from './result-formatter.js';
+import { isTestFile } from './test-filter.js';
 
 // ─── Diff Parser ──────────────────────────────────────────────────────
 
@@ -361,8 +362,7 @@ export function check(customDbPath, opts = {}) {
     process.exit(1);
   }
 
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
+  if (outputResult(data, null, opts)) {
     if (!data.passed) process.exit(1);
     return;
   }

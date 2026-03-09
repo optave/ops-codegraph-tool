@@ -3,7 +3,7 @@ import { normalizePath } from './constants.js';
 import { openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
 import { paginateResult } from './paginate.js';
-import { isTestFile } from './queries.js';
+import { isTestFile } from './test-filter.js';
 
 // ─── Build-time: insert directory nodes, contains edges, and metrics ────
 

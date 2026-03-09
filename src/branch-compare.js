@@ -12,7 +12,9 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { buildGraph } from './builder.js';
-import { isTestFile, kindIcon } from './queries.js';
+import { kindIcon } from './queries.js';
+import { outputResult } from './result-formatter.js';
+import { isTestFile } from './test-filter.js';
 
 // ─── Git Helpers ────────────────────────────────────────────────────────
 
@@ -554,10 +556,8 @@ function formatText(data) {
 export async function branchCompare(baseRef, targetRef, opts = {}) {
   const data = await branchCompareData(baseRef, targetRef, opts);
 
-  if (opts.json || opts.format === 'json') {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
+  if (opts.format === 'json') opts = { ...opts, json: true };
+  if (outputResult(data, null, opts)) return;
 
   if (opts.format === 'mermaid') {
     console.log(branchCompareMermaid(data));

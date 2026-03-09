@@ -88,6 +88,52 @@ export async function resolveBenchmarkSource() {
 	}
 
 	const pkgDir = path.join(tmpDir, 'node_modules', '@optave', 'codegraph');
+
+	const installedPkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
+
+	// npm does not transitively install optionalDependencies of a dependency,
+	// so the platform-specific native binary is missing. Install it explicitly.
+	try {
+		const optDeps = installedPkg.optionalDependencies || {};
+		const platform = os.platform();
+		const arch = os.arch();
+		let libcSuffix = '';
+		if (platform === 'linux') {
+			try {
+				const files = fs.readdirSync('/lib');
+				libcSuffix = files.some((f) => f.startsWith('ld-musl-') && f.endsWith('.so.1')) ? '-musl' : '-gnu';
+			} catch {
+				libcSuffix = '-gnu';
+			}
+		}
+		const platformKey = `codegraph-${platform}-${arch}${libcSuffix}`;
+		const nativePkg = Object.keys(optDeps).find((name) => name.includes(platformKey));
+		if (nativePkg) {
+			const nativeVersion = optDeps[nativePkg];
+			console.error(`Installing native package ${nativePkg}@${nativeVersion}...`);
+			for (let attempt = 1; attempt <= maxRetries; attempt++) {
+				try {
+					execFileSync('npm', ['install', `${nativePkg}@${nativeVersion}`, '--no-audit', '--no-fund', '--no-save'], {
+						cwd: tmpDir,
+						stdio: 'pipe',
+						timeout: 120_000,
+					});
+					break;
+				} catch (innerErr) {
+					if (attempt === maxRetries) throw innerErr;
+					const delay = attempt * 15_000;
+					console.error(`  Native install attempt ${attempt} failed, retrying in ${delay / 1000}s...`);
+					await new Promise((resolve) => setTimeout(resolve, delay));
+				}
+			}
+			console.error(`Installed ${nativePkg}@${nativeVersion}`);
+		} else {
+			console.error(`No native package found for platform ${platform}-${arch}${libcSuffix}, skipping`);
+		}
+	} catch (err) {
+		console.error(`Warning: failed to install native package: ${err.message}`);
+	}
+
 	const srcDir = path.join(pkgDir, 'src');
 
 	if (!fs.existsSync(srcDir)) {
@@ -95,8 +141,6 @@ export async function resolveBenchmarkSource() {
 		throw new Error(`Installed package does not contain src/ at ${srcDir}`);
 	}
 
-	// Resolve the actual version from the installed package
-	const installedPkg = JSON.parse(fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf8'));
 	const resolvedVersion = cliVersion || installedPkg.version;
 
 	console.error(`Installed @optave/codegraph@${installedPkg.version}`);

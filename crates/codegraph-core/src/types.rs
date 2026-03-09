@@ -91,6 +91,7 @@ pub struct Definition {
     pub name: String,
     pub kind: String,
     pub line: u32,
+    #[napi(js_name = "endLine")]
     pub end_line: Option<u32>,
     #[napi(ts_type = "string[] | undefined")]
     pub decorators: Option<Vec<String>>,
@@ -115,16 +116,25 @@ pub struct Import {
     pub source: String,
     pub names: Vec<String>,
     pub line: u32,
+    #[napi(js_name = "typeOnly")]
     pub type_only: Option<bool>,
     pub reexport: Option<bool>,
+    #[napi(js_name = "wildcardReexport")]
     pub wildcard_reexport: Option<bool>,
     // Language-specific flags
+    #[napi(js_name = "pythonImport")]
     pub python_import: Option<bool>,
+    #[napi(js_name = "goImport")]
     pub go_import: Option<bool>,
+    #[napi(js_name = "rustUse")]
     pub rust_use: Option<bool>,
+    #[napi(js_name = "javaImport")]
     pub java_import: Option<bool>,
+    #[napi(js_name = "csharpUsing")]
     pub csharp_using: Option<bool>,
+    #[napi(js_name = "rubyRequire")]
     pub ruby_require: Option<bool>,
+    #[napi(js_name = "phpUse")]
     pub php_use: Option<bool>,
 }
 
@@ -268,6 +278,7 @@ pub struct FileSymbols {
     #[napi(js_name = "astNodes")]
     pub ast_nodes: Vec<AstNode>,
     pub dataflow: Option<DataflowResult>,
+    #[napi(js_name = "lineCount")]
     pub line_count: Option<u32>,
 }
 

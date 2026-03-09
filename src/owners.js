@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { findDbPath, openReadonlyOrFail } from './db.js';
-import { isTestFile } from './test-utils.js';
+import { outputResult } from './result-formatter.js';
+import { isTestFile } from './test-filter.js';
 
 // ─── CODEOWNERS Parsing ──────────────────────────────────────────────
 
@@ -310,10 +311,7 @@ export function ownersData(customDbPath, opts = {}) {
  */
 export function owners(customDbPath, opts = {}) {
   const data = ownersData(customDbPath, opts);
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
+  if (outputResult(data, null, opts)) return;
 
   if (!data.codeownersFile) {
     console.log('No CODEOWNERS file found.');

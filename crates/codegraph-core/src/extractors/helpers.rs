@@ -254,11 +254,13 @@ pub fn walk_ast_nodes_with_config(
         // - Rust raw strings `r"..."`, `r#"..."#`
         // - Python prefixes: r, b, f, u and combos like rb, fr
         let without_prefix = raw.trim_start_matches('@')
-            .trim_start_matches(|c: char| config.string_prefixes.contains(&c))
-            .trim_start_matches('r');
-        // Only strip `#` delimiters for raw string node types (e.g. Rust `r#"..."#`)
+            .trim_start_matches(|c: char| config.string_prefixes.contains(&c));
+        // For raw string node types (e.g. Rust `r#"..."#`), strip the `r` prefix
+        // and `#` delimiters.  This must be conditional — the unconditional
+        // `.trim_start_matches('r')` that was here before double-stripped 'r' for
+        // languages like Python where 'r' is already in string_prefixes.
         let without_prefix = if is_raw_string {
-            without_prefix.trim_start_matches('#')
+            without_prefix.trim_start_matches('r').trim_start_matches('#')
         } else {
             without_prefix
         };

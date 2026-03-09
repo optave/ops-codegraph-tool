@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Graph from 'graphology';
 import louvain from 'graphology-communities-louvain';
-import { isTestFile } from './queries.js';
+import { isTestFile } from './test-filter.js';
 
 const DEFAULT_MIN_CONFIDENCE = 0.5;
 

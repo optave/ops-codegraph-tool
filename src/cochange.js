@@ -12,7 +12,7 @@ import { normalizePath } from './constants.js';
 import { closeDb, findDbPath, initSchema, openDb, openReadonlyOrFail } from './db.js';
 import { warn } from './logger.js';
 import { paginateResult } from './paginate.js';
-import { isTestFile } from './test-utils.js';
+import { isTestFile } from './test-filter.js';
 
 /**
  * Scan git history and return parsed commit data.

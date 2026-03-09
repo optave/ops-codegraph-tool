@@ -5,6 +5,10 @@ Metrics are normalized per file for cross-version comparability.
 
 | Version | Engine | Date | Files | Build (ms/file) | Query (ms) | Nodes/file | Edges/file | DB (bytes/file) |
 |---------|--------|------|------:|----------------:|-----------:|-----------:|-----------:|----------------:|
+| 3.1.0 | native | 2026-03-08 | 180 | 6.1 ~ | 3.4 ↑3% | 20.8 ~ | 44.7 ~ | 80919 ↑14% |
+| 3.1.0 | wasm | 2026-03-08 | 180 | 16.5 ↓13% | 4.6 ↓4% | 20.9 ~ | 45 ~ | 77665 ~ |
+| 3.0.4 | native | 2026-03-06 | 177 | 6.2 ↓50% | 3.3 ↓3% | 20.6 ↑10% | 44.5 ↑7% | 70951 ↓4% |
+| 3.0.4 | wasm | 2026-03-06 | 177 | 19 ↑17% | 4.8 ↑4% | 20.6 ↑10% | 44.7 ↑7% | 77245 ↑4% |
 | 3.0.3 | native | 2026-03-04 | 172 | 12.3 ↑7% | 3.4 ↑3% | 18.8 ~ | 41.6 ~ | 74133 ~ |
 | 3.0.3 | wasm | 2026-03-04 | 172 | 16.3 ↓8% | 4.6 ↑5% | 18.7 ~ | 41.6 ~ | 74300 ~ |
 | 3.0.2 | native | 2026-03-04 | 172 | 11.5 ↓18% | 3.3 ↓3% | 18.8 ↓29% | 41.6 ↓17% | 74109 ↓5% |
@@ -33,35 +37,39 @@ Metrics are normalized per file for cross-version comparability.
 
 | Metric | Value |
 |--------|-------|
-| Build time | 2.1s |
+| Build time | 1.1s |
 | Query time | 3ms |
-| Nodes | 3,234 |
-| Edges | 7,158 |
-| DB size | 12.2 MB |
-| Files | 172 |
+| Nodes | 3,750 |
+| Edges | 8,045 |
+| DB size | 13.9 MB |
+| Files | 180 |
 
 #### WASM
 
 | Metric | Value |
 |--------|-------|
-| Build time | 2.8s |
+| Build time | 3.0s |
 | Query time | 5ms |
-| Nodes | 3,223 |
-| Edges | 7,161 |
-| DB size | 12.2 MB |
-| Files | 172 |
+| Nodes | 3,758 |
+| Edges | 8,093 |
+| DB size | 13.3 MB |
+| Files | 180 |
 
 ### Build Phase Breakdown (latest)
 
 | Phase | Native | WASM |
 |-------|-------:|-----:|
-| Parse | 266.8 ms | 991.6 ms |
-| Insert nodes | 68.5 ms | 73 ms |
-| Resolve imports | 14.8 ms | 18.8 ms |
-| Build edges | 125.5 ms | 138 ms |
-| Structure | 6.9 ms | 10.3 ms |
-| Roles | 28.8 ms | 29 ms |
-| Complexity | 8.9 ms | 342.7 ms |
+| Parse | 384.4 ms | 1002.3 ms |
+| WASM pre-parse | 0 ms | 0 ms |
+| Insert nodes | 86.2 ms | 86.3 ms |
+| Resolve imports | 3.3 ms | 5.9 ms |
+| Build edges | 61 ms | 133.5 ms |
+| Structure | 15.1 ms | 18.8 ms |
+| Roles | 18.6 ms | 20.9 ms |
+| AST nodes | 302.1 ms | 616.6 ms |
+| Complexity | 9.6 ms | 389.5 ms |
+| CFG | 110.5 ms | 198.9 ms |
+| Dataflow | 79.2 ms | 445.8 ms |
 
 ### Estimated performance at 50,000 files
 
@@ -69,15 +77,19 @@ Extrapolated linearly from per-file metrics above.
 
 | Metric | Native (Rust) | WASM |
 |--------|---:|---:|
-| Build time | 615.0s | 815.0s |
-| DB size | 3534.9 MB | 3542.9 MB |
-| Nodes | 940,000 | 935,000 |
-| Edges | 2,080,000 | 2,080,000 |
+| Build time | 305.0s | 825.0s |
+| DB size | 3858.5 MB | 3703.4 MB |
+| Nodes | 1,040,000 | 1,045,000 |
+| Edges | 2,235,000 | 2,250,000 |
 
 ### Incremental Rebuilds
 
 | Version | Engine | No-op (ms) | 1-file (ms) |
 |---------|--------|----------:|-----------:|
+| 3.1.0 | native | 5 ↓98% | 332 ~ |
+| 3.1.0 | wasm | 5 ↓29% | 570 ~ |
+| 3.0.4 | native | 329 ↑6480% | 335 ↓11% |
+| 3.0.4 | wasm | 7 ~ | 559 ~ |
 | 3.0.3 | native | 5 ~ | 375 ↓2% |
 | 3.0.3 | wasm | 7 ↑40% | 567 ↓3% |
 | 3.0.2 | native | 5 ~ | 384 ↓58% |
@@ -98,6 +110,10 @@ Extrapolated linearly from per-file metrics above.
 
 | Version | Engine | fn-deps (ms) | fn-impact (ms) | path (ms) | roles (ms) |
 |---------|--------|------------:|--------------:|----------:|----------:|
+| 3.1.0 | native | 0.8 ~ | 0.8 ~ | 0.8 ~ | 6.4 ↑7% |
+| 3.1.0 | wasm | 0.8 ↓11% | 0.8 ~ | 0.8 ~ | 6.5 ↓4% |
+| 3.0.4 | native | 0.8 ~ | 0.8 ~ | 0.8 ~ | 6 ↑9% |
+| 3.0.4 | wasm | 0.9 ↑12% | 0.8 ~ | 0.8 ~ | 6.8 ↑11% |
 | 3.0.3 | native | 0.8 ~ | 0.8 ~ | 0.8 ~ | 5.5 ↑6% |
 | 3.0.3 | wasm | 0.8 ~ | 0.8 ~ | 0.8 ~ | 6.1 ~ |
 | 3.0.2 | native | 0.8 ↓11% | 0.8 ~ | 0.8 ~ | 5.2 ↓26% |
@@ -134,18 +150,161 @@ remains at 6.6 ms/file (vs 5.0 in v2.0.0). The WASM/Native ratio widened from
 extractor is needed to recover the regression.
 
 **Native build regression (v3.0.0 4.4 ms/file → v3.0.3 12.3 ms/file):** The regression is entirely
-from four new build phases added in v3.0.1 that are now default-on: AST node extraction (651ms),
-WASM pre-parse (388ms), dataflow analysis (367ms), and CFG construction (169ms) — totalling ~1,575ms
-of new work. The original seven phases (parse, insert, resolve, edges, structure, roles, complexity)
-actually got slightly faster (728ms → 542ms). The WASM pre-parse phase exists because CFG, dataflow,
-and complexity are implemented in JS and need tree-sitter AST trees to walk, but the native Rust engine
-only returns extracted symbols — not AST trees. So on native builds, all 172 files get parsed twice:
-once by Rust (85ms) and once by WASM (388ms). Eliminating this double-parse requires either implementing
-CFG/dataflow in Rust, or having the native engine expose tree-sitter trees to JS.
+from new build phases added in v3.0.1 that are now default-on: AST node extraction (651ms),
+dataflow analysis (367ms), and CFG construction (169ms) — totalling ~1,187ms of new work. The original
+seven phases (parse, insert, resolve, edges, structure, roles, complexity) actually got slightly faster
+(728ms → 542ms). As of v3.1.0, CFG and dataflow run natively in Rust, eliminating the redundant WASM
+pre-parse that previously added ~388ms on native builds.
 <!-- NOTES_END -->
 
 <!-- BENCHMARK_DATA
 [
+  {
+    "version": "3.1.0",
+    "date": "2026-03-08",
+    "files": 180,
+    "wasm": {
+      "buildTimeMs": 2962,
+      "queryTimeMs": 4.6,
+      "nodes": 3758,
+      "edges": 8093,
+      "dbSizeBytes": 13979648,
+      "perFile": {
+        "buildTimeMs": 16.5,
+        "nodes": 20.9,
+        "edges": 45,
+        "dbSizeBytes": 77665
+      },
+      "noopRebuildMs": 5,
+      "oneFileRebuildMs": 570,
+      "queries": {
+        "fnDepsMs": 0.8,
+        "fnImpactMs": 0.8,
+        "pathMs": 0.8,
+        "rolesMs": 6.5
+      },
+      "phases": {
+        "parseMs": 1002.3,
+        "insertMs": 86.3,
+        "resolveMs": 5.9,
+        "edgesMs": 133.5,
+        "structureMs": 18.8,
+        "rolesMs": 20.9,
+        "astMs": 616.6,
+        "complexityMs": 389.5,
+        "wasmPreMs": 0,
+        "cfgMs": 198.9,
+        "dataflowMs": 445.8
+      }
+    },
+    "native": {
+      "buildTimeMs": 1093,
+      "queryTimeMs": 3.4,
+      "nodes": 3750,
+      "edges": 8045,
+      "dbSizeBytes": 14565376,
+      "perFile": {
+        "buildTimeMs": 6.1,
+        "nodes": 20.8,
+        "edges": 44.7,
+        "dbSizeBytes": 80919
+      },
+      "noopRebuildMs": 5,
+      "oneFileRebuildMs": 332,
+      "queries": {
+        "fnDepsMs": 0.8,
+        "fnImpactMs": 0.8,
+        "pathMs": 0.8,
+        "rolesMs": 6.4
+      },
+      "phases": {
+        "parseMs": 384.4,
+        "insertMs": 86.2,
+        "resolveMs": 3.3,
+        "edgesMs": 61,
+        "structureMs": 15.1,
+        "rolesMs": 18.6,
+        "astMs": 302.1,
+        "complexityMs": 9.6,
+        "wasmPreMs": 0,
+        "cfgMs": 110.5,
+        "dataflowMs": 79.2
+      }
+    }
+  },
+  {
+    "version": "3.0.4",
+    "date": "2026-03-06",
+    "files": 177,
+    "wasm": {
+      "buildTimeMs": 3367,
+      "queryTimeMs": 4.8,
+      "nodes": 3652,
+      "edges": 7907,
+      "dbSizeBytes": 13672448,
+      "perFile": {
+        "buildTimeMs": 19,
+        "nodes": 20.6,
+        "edges": 44.7,
+        "dbSizeBytes": 77245
+      },
+      "noopRebuildMs": 7,
+      "oneFileRebuildMs": 559,
+      "queries": {
+        "fnDepsMs": 0.9,
+        "fnImpactMs": 0.8,
+        "pathMs": 0.8,
+        "rolesMs": 6.8
+      },
+      "phases": {
+        "parseMs": 1019.3,
+        "insertMs": 86.1,
+        "resolveMs": 19.1,
+        "edgesMs": 145.4,
+        "structureMs": 477.7,
+        "rolesMs": 19.8,
+        "astMs": 589,
+        "complexityMs": 352.7,
+        "wasmPreMs": 0,
+        "cfgMs": 187.1,
+        "dataflowMs": 434.7
+      }
+    },
+    "native": {
+      "buildTimeMs": 1092,
+      "queryTimeMs": 3.3,
+      "nodes": 3645,
+      "edges": 7868,
+      "dbSizeBytes": 12558336,
+      "perFile": {
+        "buildTimeMs": 6.2,
+        "nodes": 20.6,
+        "edges": 44.5,
+        "dbSizeBytes": 70951
+      },
+      "noopRebuildMs": 329,
+      "oneFileRebuildMs": 335,
+      "queries": {
+        "fnDepsMs": 0.8,
+        "fnImpactMs": 0.8,
+        "pathMs": 0.8,
+        "rolesMs": 6
+      },
+      "phases": {
+        "parseMs": 413,
+        "insertMs": 80.3,
+        "resolveMs": 15.6,
+        "edgesMs": 143.2,
+        "structureMs": 13.2,
+        "rolesMs": 21.9,
+        "astMs": 300,
+        "complexityMs": 9.7,
+        "wasmPreMs": 0,
+        "cfgMs": 1.3,
+        "dataflowMs": 75.9
+      }
+    }
+  },
   {
     "version": "3.0.3",
     "date": "2026-03-04",

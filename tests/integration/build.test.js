@@ -161,8 +161,9 @@ describe('three-tier incremental builds', () => {
     for (const [name, content] of Object.entries(FIXTURE_FILES)) {
       fs.writeFileSync(path.join(incrDir, name), content);
     }
-    // First full build
-    await buildGraph(incrDir, { skipRegistry: true });
+    // First full build — disable cfg/dataflow so the no-change rebuild
+    // test doesn't trigger a pending analysis pass instead of "No changes detected"
+    await buildGraph(incrDir, { skipRegistry: true, cfg: false, dataflow: false });
     incrDbPath = path.join(incrDir, '.codegraph', 'graph.db');
   });
 
@@ -178,7 +179,7 @@ describe('three-tier incremental builds', () => {
       return true;
     };
     try {
-      await buildGraph(incrDir, { skipRegistry: true });
+      await buildGraph(incrDir, { skipRegistry: true, cfg: false, dataflow: false });
     } finally {
       process.stderr.write = origWrite;
     }
@@ -334,7 +335,7 @@ describe('three-tier incremental builds', () => {
   test('rebuild with corrupt journal falls back to Tier 1', async () => {
     // Reset utils.js
     fs.writeFileSync(path.join(incrDir, 'utils.js'), FIXTURE_FILES['utils.js']);
-    await buildGraph(incrDir, { skipRegistry: true });
+    await buildGraph(incrDir, { skipRegistry: true, cfg: false, dataflow: false });
 
     // Corrupt the journal
     fs.writeFileSync(
@@ -350,7 +351,7 @@ describe('three-tier incremental builds', () => {
       return true;
     };
     try {
-      await buildGraph(incrDir, { skipRegistry: true });
+      await buildGraph(incrDir, { skipRegistry: true, cfg: false, dataflow: false });
     } finally {
       process.stderr.write = origWrite;
     }

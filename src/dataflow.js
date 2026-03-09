@@ -15,7 +15,9 @@ import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
-import { ALL_SYMBOL_KINDS, isTestFile, normalizeSymbol } from './queries.js';
+import { ALL_SYMBOL_KINDS, normalizeSymbol } from './queries.js';
+import { outputResult } from './result-formatter.js';
+import { isTestFile } from './test-filter.js';
 
 // ─── Language-Specific Dataflow Rules ────────────────────────────────────
 
@@ -1005,8 +1007,16 @@ function collectIdentifiers(node, out, rules) {
 export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) {
   // Lazily init WASM parsers if needed
   let parsers = null;
-  let extToLang = null;
   let needsFallback = false;
+
+  // Always build ext→langId map so native-only builds (where _langId is unset)
+  // can still derive the language from the file extension.
+  const extToLang = new Map();
+  for (const entry of LANGUAGE_REGISTRY) {
+    for (const ext of entry.extensions) {
+      extToLang.set(ext, entry.id);
+    }
+  }
 
   for (const [relPath, symbols] of fileSymbols) {
     if (!symbols._tree && !symbols.dataflow) {
@@ -1021,12 +1031,6 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
   if (needsFallback) {
     const { createParsers } = await import('./parser.js');
     parsers = await createParsers();
-    extToLang = new Map();
-    for (const entry of LANGUAGE_REGISTRY) {
-      for (const ext of entry.extensions) {
-        extToLang.set(ext, entry.id);
-      }
-    }
   }
 
   let getParserFn = null;
@@ -1069,7 +1073,7 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
 
         // WASM fallback if no cached tree
         if (!tree) {
-          if (!extToLang || !getParserFn) continue;
+          if (!getParserFn) continue;
           langId = extToLang.get(ext);
           if (!langId || !DATAFLOW_LANG_IDS.has(langId)) continue;
 
@@ -1092,7 +1096,7 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
         }
 
         if (!langId) {
-          langId = extToLang ? extToLang.get(ext) : null;
+          langId = extToLang.get(ext);
           if (!langId) continue;
         }
 
@@ -1565,16 +1569,7 @@ export function dataflow(name, customDbPath, opts = {}) {
 
   const data = dataflowData(name, customDbPath, opts);
 
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
-  if (opts.ndjson) {
-    for (const r of data.results) {
-      console.log(JSON.stringify(r));
-    }
-    return;
-  }
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.warning) {
     console.log(`⚠  ${data.warning}`);
@@ -1648,16 +1643,7 @@ function dataflowImpact(name, customDbPath, opts = {}) {
     offset: opts.offset,
   });
 
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
-  if (opts.ndjson) {
-    for (const r of data.results) {
-      console.log(JSON.stringify(r));
-    }
-    return;
-  }
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.warning) {
     console.log(`⚠  ${data.warning}`);

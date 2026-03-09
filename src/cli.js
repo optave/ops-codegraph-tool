@@ -25,12 +25,11 @@ import {
   exportNeo4jCSV,
 } from './export.js';
 import { setVerbose } from './logger.js';
-import { printNdjson } from './paginate.js';
+import { EVERY_SYMBOL_KIND, VALID_ROLES } from './queries.js';
 import {
   children,
   context,
   diffImpact,
-  EVERY_SYMBOL_KIND,
   explain,
   fileDeps,
   fileExports,
@@ -41,9 +40,8 @@ import {
   roles,
   stats,
   symbolPath,
-  VALID_ROLES,
   where,
-} from './queries.js';
+} from './queries-cli.js';
 import {
   listRepos,
   pruneRegistry,
@@ -51,6 +49,7 @@ import {
   registerRepo,
   unregisterRepo,
 } from './registry.js';
+import { outputResult } from './result-formatter.js';
 import { snapshotDelete, snapshotList, snapshotRestore, snapshotSave } from './snapshot.js';
 import { checkForUpdates, printUpdateNotification } from './update-check.js';
 import { watchProject } from './watcher.js';
@@ -95,6 +94,17 @@ function resolveNoTests(opts) {
   return config.query?.excludeTests || false;
 }
 
+/** Attach the common query options shared by most analysis commands. */
+const QUERY_OPTS = (cmd) =>
+  cmd
+    .option('-d, --db <path>', 'Path to graph.db')
+    .option('-T, --no-tests', 'Exclude test/spec files from results')
+    .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+    .option('-j, --json', 'Output as JSON')
+    .option('--limit <number>', 'Max results to return')
+    .option('--offset <number>', 'Skip N results (default: 0)')
+    .option('--ndjson', 'Newline-delimited JSON output');
+
 function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -122,10 +132,11 @@ program
     });
   });
 
-program
-  .command('query <name>')
-  .description('Function-level dependency chain or shortest path between symbols')
-  .option('-d, --db <path>', 'Path to graph.db')
+QUERY_OPTS(
+  program
+    .command('query <name>')
+    .description('Function-level dependency chain or shortest path between symbols'),
+)
   .option('--depth <n>', 'Transitive caller depth', '3')
   .option('-f, --file <path>', 'Scope search to functions in this file (partial match)')
   .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
@@ -134,12 +145,6 @@ program
   .option('--reverse', 'Path mode: follow edges backward')
   .option('--from-file <path>', 'Path mode: disambiguate source symbol by file')
   .option('--to-file <path>', 'Path mode: disambiguate target symbol by file')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
-  .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
     if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
@@ -201,25 +206,17 @@ program
     });
   });
 
-program
-  .command('impact <file>')
-  .description('Show what depends on this file (transitive)')
-  .option('-d, --db <path>', 'Path to graph.db')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
-  .option('--ndjson', 'Newline-delimited JSON output')
-  .action((file, opts) => {
-    impactAnalysis(file, opts.db, {
-      noTests: resolveNoTests(opts),
-      json: opts.json,
-      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-      ndjson: opts.ndjson,
-    });
+QUERY_OPTS(
+  program.command('impact <file>').description('Show what depends on this file (transitive)'),
+).action((file, opts) => {
+  impactAnalysis(file, opts.db, {
+    noTests: resolveNoTests(opts),
+    json: opts.json,
+    limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+    offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+    ndjson: opts.ndjson,
   });
+});
 
 program
   .command('map')
@@ -247,37 +244,24 @@ program
     await stats(opts.db, { noTests: resolveNoTests(opts), json: opts.json });
   });
 
-program
-  .command('deps <file>')
-  .description('Show what this file imports and what imports it')
-  .option('-d, --db <path>', 'Path to graph.db')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
-  .option('--ndjson', 'Newline-delimited JSON output')
-  .action((file, opts) => {
-    fileDeps(file, opts.db, {
-      noTests: resolveNoTests(opts),
-      json: opts.json,
-      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-      ndjson: opts.ndjson,
-    });
+QUERY_OPTS(
+  program.command('deps <file>').description('Show what this file imports and what imports it'),
+).action((file, opts) => {
+  fileDeps(file, opts.db, {
+    noTests: resolveNoTests(opts),
+    json: opts.json,
+    limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+    offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+    ndjson: opts.ndjson,
   });
+});
 
-program
-  .command('exports <file>')
-  .description('Show exported symbols with per-symbol consumers (who calls each export)')
-  .option('-d, --db <path>', 'Path to graph.db')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
+QUERY_OPTS(
+  program
+    .command('exports <file>')
+    .description('Show exported symbols with per-symbol consumers (who calls each export)'),
+)
   .option('--unused', 'Show only exports with zero consumers (dead exports)')
-  .option('--ndjson', 'Newline-delimited JSON output')
   .action((file, opts) => {
     fileExports(file, opts.db, {
       noTests: resolveNoTests(opts),
@@ -289,19 +273,14 @@ program
     });
   });
 
-program
-  .command('fn-impact <name>')
-  .description('Function-level impact: what functions break if this one changes')
-  .option('-d, --db <path>', 'Path to graph.db')
+QUERY_OPTS(
+  program
+    .command('fn-impact <name>')
+    .description('Function-level impact: what functions break if this one changes'),
+)
   .option('--depth <n>', 'Max transitive depth', '5')
   .option('-f, --file <path>', 'Scope search to functions in this file (partial match)')
   .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
-  .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
     if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
@@ -319,21 +298,16 @@ program
     });
   });
 
-program
-  .command('context <name>')
-  .description('Full context for a function: source, deps, callers, tests, signature')
-  .option('-d, --db <path>', 'Path to graph.db')
+QUERY_OPTS(
+  program
+    .command('context <name>')
+    .description('Full context for a function: source, deps, callers, tests, signature'),
+)
   .option('--depth <n>', 'Include callee source up to N levels deep', '0')
   .option('-f, --file <path>', 'Scope search to functions in this file (partial match)')
   .option('-k, --kind <kind>', 'Filter to a specific symbol kind')
   .option('--no-source', 'Metadata only (skip source extraction)')
   .option('--with-test-source', 'Include test source code')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
-  .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
     if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
@@ -417,17 +391,12 @@ program
     });
   });
 
-program
-  .command('where [name]')
-  .description('Find where a symbol is defined and used (minimal, fast lookup)')
-  .option('-d, --db <path>', 'Path to graph.db')
+QUERY_OPTS(
+  program
+    .command('where [name]')
+    .description('Find where a symbol is defined and used (minimal, fast lookup)'),
+)
   .option('-f, --file <path>', 'File overview: list symbols, imports, exports')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
-  .option('--ndjson', 'Newline-delimited JSON output')
   .action((name, opts) => {
     if (!name && !opts.file) {
       console.error('Provide a symbol name or use --file <path>');
@@ -448,15 +417,14 @@ program
   .command('diff-impact [ref]')
   .description('Show impact of git changes (unstaged, staged, or vs a ref)')
   .option('-d, --db <path>', 'Path to graph.db')
-  .option('--staged', 'Analyze staged changes instead of unstaged')
-  .option('--depth <n>', 'Max transitive caller depth', '3')
   .option('-T, --no-tests', 'Exclude test/spec files from results')
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('-f, --format <format>', 'Output format: text, mermaid, json', 'text')
   .option('--limit <number>', 'Max results to return')
   .option('--offset <number>', 'Skip N results (default: 0)')
   .option('--ndjson', 'Newline-delimited JSON output')
+  .option('--staged', 'Analyze staged changes instead of unstaged')
+  .option('--depth <n>', 'Max transitive caller depth', '3')
+  .option('-f, --format <format>', 'Output format: text, mermaid, json', 'text')
   .action((ref, opts) => {
     diffImpact(opts.db, {
       ref,
@@ -994,11 +962,7 @@ program
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
     });
-    if (opts.ndjson) {
-      printNdjson(data, 'directories');
-    } else if (opts.json) {
-      console.log(JSON.stringify(data, null, 2));
-    } else {
+    if (!outputResult(data, 'directories', opts)) {
       console.log(formatStructure(data));
     }
   });
@@ -1081,41 +1045,28 @@ program
 
     if (file) {
       const data = coChangeData(file, opts.db, queryOpts);
-      if (opts.ndjson) {
-        printNdjson(data, 'partners');
-      } else if (opts.json) {
-        console.log(JSON.stringify(data, null, 2));
-      } else {
+      if (!outputResult(data, 'partners', opts)) {
         console.log(formatCoChange(data));
       }
     } else {
       const data = coChangeTopData(opts.db, queryOpts);
-      if (opts.ndjson) {
-        printNdjson(data, 'pairs');
-      } else if (opts.json) {
-        console.log(JSON.stringify(data, null, 2));
-      } else {
+      if (!outputResult(data, 'pairs', opts)) {
         console.log(formatCoChangeTop(data));
       }
     }
   });
 
-program
-  .command('flow [name]')
-  .description(
-    'Trace execution flow forward from an entry point (route, command, event) through callees to leaves',
-  )
+QUERY_OPTS(
+  program
+    .command('flow [name]')
+    .description(
+      'Trace execution flow forward from an entry point (route, command, event) through callees to leaves',
+    ),
+)
   .option('--list', 'List all entry points grouped by type')
   .option('--depth <n>', 'Max forward traversal depth', '10')
-  .option('-d, --db <path>', 'Path to graph.db')
   .option('-f, --file <path>', 'Scope to a specific file (partial match)')
   .option('-k, --kind <kind>', 'Filter by symbol kind')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
-  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (name, opts) => {
     if (!name && !opts.list) {
       console.error('Provide a function/entry point name or use --list to see all entry points.');
@@ -1139,20 +1090,17 @@ program
     });
   });
 
-program
-  .command('sequence <name>')
-  .description('Generate a Mermaid sequence diagram from call graph edges (participants = files)')
+QUERY_OPTS(
+  program
+    .command('sequence <name>')
+    .description(
+      'Generate a Mermaid sequence diagram from call graph edges (participants = files)',
+    ),
+)
   .option('--depth <n>', 'Max forward traversal depth', '10')
   .option('--dataflow', 'Annotate with parameter names and return arrows from dataflow table')
-  .option('-d, --db <path>', 'Path to graph.db')
   .option('-f, --file <path>', 'Scope to a specific file (partial match)')
   .option('-k, --kind <kind>', 'Filter by symbol kind')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
-  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (name, opts) => {
     if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
@@ -1172,18 +1120,13 @@ program
     });
   });
 
-program
-  .command('dataflow <name>')
-  .description('Show data flow for a function: parameters, return consumers, mutations')
-  .option('-d, --db <path>', 'Path to graph.db')
+QUERY_OPTS(
+  program
+    .command('dataflow <name>')
+    .description('Show data flow for a function: parameters, return consumers, mutations'),
+)
   .option('-f, --file <path>', 'Scope to file (partial match)')
   .option('-k, --kind <kind>', 'Filter by symbol kind')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--ndjson', 'Newline-delimited JSON output')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
   .option('--impact', 'Show data-dependent blast radius')
   .option('--depth <n>', 'Max traversal depth', '5')
   .action(async (name, opts) => {
@@ -1205,19 +1148,10 @@ program
     });
   });
 
-program
-  .command('cfg <name>')
-  .description('Show control flow graph for a function')
-  .option('-d, --db <path>', 'Path to graph.db')
+QUERY_OPTS(program.command('cfg <name>').description('Show control flow graph for a function'))
   .option('--format <fmt>', 'Output format: text, dot, mermaid', 'text')
   .option('-f, --file <path>', 'Scope to file (partial match)')
   .option('-k, --kind <kind>', 'Filter by symbol kind')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--ndjson', 'Newline-delimited JSON output')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
   .action(async (name, opts) => {
     if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
       console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
@@ -1276,18 +1210,13 @@ program
     });
   });
 
-program
-  .command('ast [pattern]')
-  .description('Search stored AST nodes (calls, new, string, regex, throw, await) by pattern')
-  .option('-d, --db <path>', 'Path to graph.db')
+QUERY_OPTS(
+  program
+    .command('ast [pattern]')
+    .description('Search stored AST nodes (calls, new, string, regex, throw, await) by pattern'),
+)
   .option('-k, --kind <kind>', 'Filter by AST node kind (call, new, string, regex, throw, await)')
   .option('-f, --file <path>', 'Scope to file (partial match)')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--ndjson', 'Newline-delimited JSON output')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
   .action(async (pattern, opts) => {
     const { AST_NODE_KINDS, astQuery } = await import('./ast.js');
     if (opts.kind && !AST_NODE_KINDS.includes(opts.kind)) {
@@ -1305,19 +1234,14 @@ program
     });
   });
 
-program
-  .command('communities')
-  .description('Detect natural module boundaries using Louvain community detection')
+QUERY_OPTS(
+  program
+    .command('communities')
+    .description('Detect natural module boundaries using Louvain community detection'),
+)
   .option('--functions', 'Function-level instead of file-level')
   .option('--resolution <n>', 'Louvain resolution parameter (default 1.0)', '1.0')
   .option('--drift', 'Show only drift analysis')
-  .option('-d, --db <path>', 'Path to graph.db')
-  .option('-T, --no-tests', 'Exclude test/spec files from results')
-  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
-  .option('-j, --json', 'Output as JSON')
-  .option('--limit <number>', 'Max results to return')
-  .option('--offset <number>', 'Skip N results (default: 0)')
-  .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (opts) => {
     const { communities } = await import('./communities.js');
     communities(opts.db, {
@@ -1371,11 +1295,7 @@ program
         offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
         noTests: resolveNoTests(opts),
       });
-      if (opts.ndjson) {
-        printNdjson(data, 'hotspots');
-      } else if (opts.json) {
-        console.log(JSON.stringify(data, null, 2));
-      } else {
+      if (!outputResult(data, 'hotspots', opts)) {
         console.log(formatHotspots(data));
       }
       return;
