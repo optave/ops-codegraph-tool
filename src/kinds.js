@@ -33,6 +33,7 @@ export const ALL_SYMBOL_KINDS = CORE_SYMBOL_KINDS;
 export const CORE_EDGE_KINDS = [
   'imports',
   'imports-type',
+  'dynamic-imports',
   'reexports',
   'calls',
   'extends',

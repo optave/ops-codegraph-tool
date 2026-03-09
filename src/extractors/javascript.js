@@ -173,6 +173,9 @@ function extractSymbolsQuery(tree, query) {
   // Extract top-level constants via targeted walk (query patterns don't cover these)
   extractConstantsWalk(tree.rootNode, definitions);
 
+  // Extract dynamic import() calls via targeted walk (query patterns don't match `import` function type)
+  extractDynamicImportsWalk(tree.rootNode, imports);
+
   return { definitions, calls, imports, classes, exports: exps };
 }
 
@@ -221,6 +224,37 @@ function extractConstantsWalk(rootNode, definitions) {
         });
       }
     }
+  }
+}
+
+/**
+ * Recursive walk to find dynamic import() calls.
+ * Query patterns match call_expression with identifier/member_expression/subscript_expression
+ * functions, but import() has function type `import` which none of those patterns cover.
+ */
+function extractDynamicImportsWalk(node, imports) {
+  if (node.type === 'call_expression') {
+    const fn = node.childForFieldName('function');
+    if (fn && fn.type === 'import') {
+      const args = node.childForFieldName('arguments') || findChild(node, 'arguments');
+      if (args) {
+        const strArg = findChild(args, 'string');
+        if (strArg) {
+          const modPath = strArg.text.replace(/['"]/g, '');
+          const names = extractDynamicImportNames(node);
+          imports.push({
+            source: modPath,
+            names,
+            line: node.startPosition.row + 1,
+            dynamicImport: true,
+          });
+        }
+      }
+      return; // no need to recurse into import() children
+    }
+  }
+  for (let i = 0; i < node.childCount; i++) {
+    extractDynamicImportsWalk(node.child(i), imports);
   }
 }
 
@@ -455,11 +489,32 @@ function extractSymbolsWalk(tree) {
       case 'call_expression': {
         const fn = node.childForFieldName('function');
         if (fn) {
-          const callInfo = extractCallInfo(fn, node);
-          if (callInfo) calls.push(callInfo);
-          if (fn.type === 'member_expression') {
-            const cbDef = extractCallbackDefinition(node, fn);
-            if (cbDef) definitions.push(cbDef);
+          // Dynamic import(): import('./foo.js') → extract as an import entry
+          if (fn.type === 'import') {
+            const args = node.childForFieldName('arguments') || findChild(node, 'arguments');
+            if (args) {
+              const strArg = findChild(args, 'string');
+              if (strArg) {
+                const modPath = strArg.text.replace(/['"]/g, '');
+                // Extract destructured names from parent context:
+                //   const { a, b } = await import('./foo.js')
+                //   import('./foo.js').then(({ a, b }) => ...)
+                const names = extractDynamicImportNames(node);
+                imports.push({
+                  source: modPath,
+                  names,
+                  line: node.startPosition.row + 1,
+                  dynamicImport: true,
+                });
+              }
+            }
+          } else {
+            const callInfo = extractCallInfo(fn, node);
+            if (callInfo) calls.push(callInfo);
+            if (fn.type === 'member_expression') {
+              const cbDef = extractCallbackDefinition(node, fn);
+              if (cbDef) definitions.push(cbDef);
+            }
           }
         }
         break;
@@ -940,4 +995,61 @@ function extractImportNames(node) {
   }
   scan(node);
   return names;
+}
+
+/**
+ * Extract destructured names from a dynamic import() call expression.
+ *
+ * Handles:
+ *   const { a, b } = await import('./foo.js')   → ['a', 'b']
+ *   const mod = await import('./foo.js')         → ['mod']
+ *   import('./foo.js')                           → [] (no names extractable)
+ *
+ * Walks up the AST from the call_expression to find the enclosing
+ * variable_declarator and reads the name/object_pattern.
+ */
+function extractDynamicImportNames(callNode) {
+  // Walk up: call_expression → await_expression → variable_declarator
+  let current = callNode.parent;
+  // Skip await_expression wrapper if present
+  if (current && current.type === 'await_expression') current = current.parent;
+  // We should now be at a variable_declarator (or not, if standalone import())
+  if (!current || current.type !== 'variable_declarator') return [];
+
+  const nameNode = current.childForFieldName('name');
+  if (!nameNode) return [];
+
+  // const { a, b } = await import(...)  →  object_pattern
+  if (nameNode.type === 'object_pattern') {
+    const names = [];
+    for (let i = 0; i < nameNode.childCount; i++) {
+      const child = nameNode.child(i);
+      if (child.type === 'shorthand_property_identifier_pattern') {
+        names.push(child.text);
+      } else if (child.type === 'pair_pattern') {
+        // { a: localName } → use localName (the alias) for the local binding,
+        // but use the key (original name) for import resolution
+        const key = child.childForFieldName('key');
+        if (key) names.push(key.text);
+      }
+    }
+    return names;
+  }
+
+  // const mod = await import(...)  →  identifier (namespace-like import)
+  if (nameNode.type === 'identifier') {
+    return [nameNode.text];
+  }
+
+  // const [a, b] = await import(...)  →  array_pattern (rare but possible)
+  if (nameNode.type === 'array_pattern') {
+    const names = [];
+    for (let i = 0; i < nameNode.childCount; i++) {
+      const child = nameNode.child(i);
+      if (child.type === 'identifier') names.push(child.text);
+    }
+    return names;
+  }
+
+  return [];
 }

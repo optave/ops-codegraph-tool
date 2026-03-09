@@ -1041,7 +1041,13 @@ export async function buildGraph(rootDir, opts = {}) {
         const resolvedPath = getResolved(path.join(rootDir, relPath), imp.source);
         const targetRow = getNodeId.get(resolvedPath, 'file', resolvedPath, 0);
         if (targetRow) {
-          const edgeKind = imp.reexport ? 'reexports' : imp.typeOnly ? 'imports-type' : 'imports';
+          const edgeKind = imp.reexport
+            ? 'reexports'
+            : imp.typeOnly
+              ? 'imports-type'
+              : imp.dynamicImport
+                ? 'dynamic-imports'
+                : 'imports';
           allEdgeRows.push([fileNodeId, targetRow.id, edgeKind, 1.0, 0]);
 
           if (!imp.reexport && isBarrelFile(resolvedPath)) {
@@ -1060,7 +1066,11 @@ export async function buildGraph(rootDir, opts = {}) {
                   allEdgeRows.push([
                     fileNodeId,
                     actualRow.id,
-                    edgeKind === 'imports-type' ? 'imports-type' : 'imports',
+                    edgeKind === 'imports-type'
+                      ? 'imports-type'
+                      : edgeKind === 'dynamic-imports'
+                        ? 'dynamic-imports'
+                        : 'imports',
                     0.9,
                     0,
                   ]);
