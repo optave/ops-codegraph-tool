@@ -352,8 +352,12 @@ export function astQueryData(pattern, customDbPath, opts = {}) {
     ORDER BY a.file, a.line
   `;
 
-  const rows = db.prepare(sql).all(...params);
-  db.close();
+  let rows;
+  try {
+    rows = db.prepare(sql).all(...params);
+  } finally {
+    db.close();
+  }
 
   const results = rows.map((r) => ({
     kind: r.kind,
