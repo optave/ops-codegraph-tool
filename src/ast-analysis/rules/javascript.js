@@ -1,0 +1,246 @@
+/**
+ * JavaScript / TypeScript / TSX — AST analysis rules.
+ *
+ * Shared across: javascript, typescript, tsx language IDs.
+ */
+
+import { makeCfgRules, makeDataflowRules } from '../shared.js';
+
+// ─── Complexity ───────────────────────────────────────────────────────────
+
+export const complexity = {
+  branchNodes: new Set([
+    'if_statement',
+    'else_clause',
+    'switch_statement',
+    'for_statement',
+    'for_in_statement',
+    'while_statement',
+    'do_statement',
+    'catch_clause',
+    'ternary_expression',
+  ]),
+  caseNodes: new Set(['switch_case']),
+  logicalOperators: new Set(['&&', '||', '??']),
+  logicalNodeType: 'binary_expression',
+  optionalChainType: 'optional_chain_expression',
+  nestingNodes: new Set([
+    'if_statement',
+    'switch_statement',
+    'for_statement',
+    'for_in_statement',
+    'while_statement',
+    'do_statement',
+    'catch_clause',
+    'ternary_expression',
+  ]),
+  functionNodes: new Set([
+    'function_declaration',
+    'function_expression',
+    'arrow_function',
+    'method_definition',
+    'generator_function',
+    'generator_function_declaration',
+  ]),
+  ifNodeType: 'if_statement',
+  elseNodeType: 'else_clause',
+  elifNodeType: null,
+  elseViaAlternative: false,
+  switchLikeNodes: new Set(['switch_statement']),
+};
+
+// ─── Halstead ─────────────────────────────────────────────────────────────
+
+export const halstead = {
+  operatorLeafTypes: new Set([
+    // Arithmetic
+    '+',
+    '-',
+    '*',
+    '/',
+    '%',
+    '**',
+    // Assignment
+    '=',
+    '+=',
+    '-=',
+    '*=',
+    '/=',
+    '%=',
+    '**=',
+    '<<=',
+    '>>=',
+    '>>>=',
+    '&=',
+    '|=',
+    '^=',
+    '&&=',
+    '||=',
+    '??=',
+    // Comparison
+    '==',
+    '===',
+    '!=',
+    '!==',
+    '<',
+    '>',
+    '<=',
+    '>=',
+    // Logical
+    '&&',
+    '||',
+    '!',
+    '??',
+    // Bitwise
+    '&',
+    '|',
+    '^',
+    '~',
+    '<<',
+    '>>',
+    '>>>',
+    // Unary
+    '++',
+    '--',
+    // Keywords as operators
+    'typeof',
+    'instanceof',
+    'new',
+    'return',
+    'throw',
+    'yield',
+    'await',
+    'if',
+    'else',
+    'for',
+    'while',
+    'do',
+    'switch',
+    'case',
+    'break',
+    'continue',
+    'try',
+    'catch',
+    'finally',
+    // Arrow, spread, ternary, access
+    '=>',
+    '...',
+    '?',
+    ':',
+    '.',
+    '?.',
+    // Delimiters counted as operators
+    ',',
+    ';',
+  ]),
+  operandLeafTypes: new Set([
+    'identifier',
+    'property_identifier',
+    'shorthand_property_identifier',
+    'shorthand_property_identifier_pattern',
+    'number',
+    'string_fragment',
+    'regex_pattern',
+    'true',
+    'false',
+    'null',
+    'undefined',
+    'this',
+    'super',
+    'private_property_identifier',
+  ]),
+  compoundOperators: new Set([
+    'call_expression',
+    'subscript_expression',
+    'new_expression',
+    'template_substitution',
+  ]),
+  skipTypes: new Set(['type_annotation', 'type_parameters', 'return_type', 'implements_clause']),
+};
+
+// ─── CFG ──────────────────────────────────────────────────────────────────
+
+export const cfg = makeCfgRules({
+  ifNode: 'if_statement',
+  elseClause: 'else_clause',
+  forNodes: new Set(['for_statement', 'for_in_statement']),
+  whileNode: 'while_statement',
+  doNode: 'do_statement',
+  switchNode: 'switch_statement',
+  caseNode: 'switch_case',
+  defaultNode: 'switch_default',
+  tryNode: 'try_statement',
+  catchNode: 'catch_clause',
+  finallyNode: 'finally_clause',
+  returnNode: 'return_statement',
+  throwNode: 'throw_statement',
+  breakNode: 'break_statement',
+  continueNode: 'continue_statement',
+  blockNode: 'statement_block',
+  labeledNode: 'labeled_statement',
+  functionNodes: new Set([
+    'function_declaration',
+    'function_expression',
+    'arrow_function',
+    'method_definition',
+    'generator_function',
+    'generator_function_declaration',
+  ]),
+});
+
+// ─── Dataflow ─────────────────────────────────────────────────────────────
+
+const JS_TS_MUTATING = new Set([
+  'push',
+  'pop',
+  'shift',
+  'unshift',
+  'splice',
+  'sort',
+  'reverse',
+  'fill',
+  'set',
+  'delete',
+  'add',
+  'clear',
+]);
+
+export const dataflow = makeDataflowRules({
+  functionNodes: new Set([
+    'function_declaration',
+    'method_definition',
+    'arrow_function',
+    'function_expression',
+    'function',
+  ]),
+  varAssignedFnParent: 'variable_declarator',
+  assignmentFnParent: 'assignment_expression',
+  pairFnParent: 'pair',
+  paramWrapperTypes: new Set(['required_parameter', 'optional_parameter']),
+  defaultParamType: 'assignment_pattern',
+  restParamType: 'rest_pattern',
+  objectDestructType: 'object_pattern',
+  arrayDestructType: 'array_pattern',
+  shorthandPropPattern: 'shorthand_property_identifier_pattern',
+  pairPatternType: 'pair_pattern',
+  returnNode: 'return_statement',
+  varDeclaratorNode: 'variable_declarator',
+  assignmentNode: 'assignment_expression',
+  callNode: 'call_expression',
+  spreadType: 'spread_element',
+  memberNode: 'member_expression',
+  optionalChainNode: 'optional_chain_expression',
+  awaitNode: 'await_expression',
+  mutatingMethods: JS_TS_MUTATING,
+});
+
+// ─── AST Node Types ───────────────────────────────────────────────────────
+
+export const astTypes = {
+  new_expression: 'new',
+  throw_statement: 'throw',
+  await_expression: 'await',
+  string: 'string',
+  template_string: 'string',
+  regex: 'regex',
+};

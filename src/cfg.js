@@ -7,7 +7,12 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { COMPLEXITY_RULES } from './complexity.js';
+import { CFG_RULES, COMPLEXITY_RULES } from './ast-analysis/rules/index.js';
+import {
+  makeCfgRules as _makeCfgRules,
+  buildExtensionSet,
+  findFunctionNode,
+} from './ast-analysis/shared.js';
 import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
@@ -15,258 +20,11 @@ import { LANGUAGE_REGISTRY } from './parser.js';
 import { outputResult } from './result-formatter.js';
 import { isTestFile } from './test-filter.js';
 
-// ─── CFG Node Type Rules (extends COMPLEXITY_RULES) ──────────────────────
+// Re-export for backward compatibility
+export { CFG_RULES };
+export { _makeCfgRules as makeCfgRules };
 
-const CFG_DEFAULTS = {
-  ifNode: null,
-  ifNodes: null,
-  elifNode: null,
-  elseClause: null,
-  elseViaAlternative: false,
-  ifConsequentField: null,
-  forNodes: new Set(),
-  whileNode: null,
-  whileNodes: null,
-  doNode: null,
-  infiniteLoopNode: null,
-  unlessNode: null,
-  untilNode: null,
-  switchNode: null,
-  switchNodes: null,
-  caseNode: null,
-  caseNodes: null,
-  defaultNode: null,
-  tryNode: null,
-  catchNode: null,
-  finallyNode: null,
-  returnNode: null,
-  throwNode: null,
-  breakNode: null,
-  continueNode: null,
-  blockNode: null,
-  blockNodes: null,
-  labeledNode: null,
-  functionNodes: new Set(),
-};
-
-const CFG_RULE_KEYS = new Set(Object.keys(CFG_DEFAULTS));
-
-export function makeCfgRules(overrides) {
-  for (const key of Object.keys(overrides)) {
-    if (!CFG_RULE_KEYS.has(key)) {
-      throw new Error(`CFG rules: unknown key "${key}"`);
-    }
-  }
-  const rules = { ...CFG_DEFAULTS, ...overrides };
-  if (!(rules.functionNodes instanceof Set) || rules.functionNodes.size === 0) {
-    throw new Error('CFG rules: functionNodes must be a non-empty Set');
-  }
-  if (!(rules.forNodes instanceof Set)) {
-    throw new Error('CFG rules: forNodes must be a Set');
-  }
-  return rules;
-}
-
-const JS_TS_CFG = makeCfgRules({
-  ifNode: 'if_statement',
-  elseClause: 'else_clause',
-  forNodes: new Set(['for_statement', 'for_in_statement']),
-  whileNode: 'while_statement',
-  doNode: 'do_statement',
-  switchNode: 'switch_statement',
-  caseNode: 'switch_case',
-  defaultNode: 'switch_default',
-  tryNode: 'try_statement',
-  catchNode: 'catch_clause',
-  finallyNode: 'finally_clause',
-  returnNode: 'return_statement',
-  throwNode: 'throw_statement',
-  breakNode: 'break_statement',
-  continueNode: 'continue_statement',
-  blockNode: 'statement_block',
-  labeledNode: 'labeled_statement',
-  functionNodes: new Set([
-    'function_declaration',
-    'function_expression',
-    'arrow_function',
-    'method_definition',
-    'generator_function',
-    'generator_function_declaration',
-  ]),
-});
-
-const PYTHON_CFG = makeCfgRules({
-  ifNode: 'if_statement',
-  elifNode: 'elif_clause',
-  elseClause: 'else_clause',
-  forNodes: new Set(['for_statement']),
-  whileNode: 'while_statement',
-  switchNode: 'match_statement',
-  caseNode: 'case_clause',
-  tryNode: 'try_statement',
-  catchNode: 'except_clause',
-  finallyNode: 'finally_clause',
-  returnNode: 'return_statement',
-  throwNode: 'raise_statement',
-  breakNode: 'break_statement',
-  continueNode: 'continue_statement',
-  blockNode: 'block',
-  functionNodes: new Set(['function_definition']),
-});
-
-const GO_CFG = makeCfgRules({
-  ifNode: 'if_statement',
-  elseViaAlternative: true,
-  forNodes: new Set(['for_statement']),
-  switchNodes: new Set([
-    'expression_switch_statement',
-    'type_switch_statement',
-    'select_statement',
-  ]),
-  caseNode: 'expression_case',
-  caseNodes: new Set(['type_case', 'communication_case']),
-  defaultNode: 'default_case',
-  returnNode: 'return_statement',
-  breakNode: 'break_statement',
-  continueNode: 'continue_statement',
-  blockNode: 'block',
-  labeledNode: 'labeled_statement',
-  functionNodes: new Set(['function_declaration', 'method_declaration', 'func_literal']),
-});
-
-const RUST_CFG = makeCfgRules({
-  ifNode: 'if_expression',
-  ifNodes: new Set(['if_let_expression']),
-  elseClause: 'else_clause',
-  forNodes: new Set(['for_expression']),
-  whileNode: 'while_expression',
-  whileNodes: new Set(['while_let_expression']),
-  infiniteLoopNode: 'loop_expression',
-  switchNode: 'match_expression',
-  caseNode: 'match_arm',
-  returnNode: 'return_expression',
-  breakNode: 'break_expression',
-  continueNode: 'continue_expression',
-  blockNode: 'block',
-  functionNodes: new Set(['function_item', 'closure_expression']),
-});
-
-const JAVA_CFG = makeCfgRules({
-  ifNode: 'if_statement',
-  elseViaAlternative: true,
-  forNodes: new Set(['for_statement', 'enhanced_for_statement']),
-  whileNode: 'while_statement',
-  doNode: 'do_statement',
-  switchNode: 'switch_expression',
-  caseNode: 'switch_block_statement_group',
-  caseNodes: new Set(['switch_rule']),
-  tryNode: 'try_statement',
-  catchNode: 'catch_clause',
-  finallyNode: 'finally_clause',
-  returnNode: 'return_statement',
-  throwNode: 'throw_statement',
-  breakNode: 'break_statement',
-  continueNode: 'continue_statement',
-  blockNode: 'block',
-  labeledNode: 'labeled_statement',
-  functionNodes: new Set(['method_declaration', 'constructor_declaration', 'lambda_expression']),
-});
-
-const CSHARP_CFG = makeCfgRules({
-  ifNode: 'if_statement',
-  elseViaAlternative: true,
-  forNodes: new Set(['for_statement', 'foreach_statement']),
-  whileNode: 'while_statement',
-  doNode: 'do_statement',
-  switchNode: 'switch_statement',
-  caseNode: 'switch_section',
-  tryNode: 'try_statement',
-  catchNode: 'catch_clause',
-  finallyNode: 'finally_clause',
-  returnNode: 'return_statement',
-  throwNode: 'throw_statement',
-  breakNode: 'break_statement',
-  continueNode: 'continue_statement',
-  blockNode: 'block',
-  labeledNode: 'labeled_statement',
-  functionNodes: new Set([
-    'method_declaration',
-    'constructor_declaration',
-    'lambda_expression',
-    'local_function_statement',
-  ]),
-});
-
-const RUBY_CFG = makeCfgRules({
-  ifNode: 'if',
-  elifNode: 'elsif',
-  elseClause: 'else',
-  forNodes: new Set(['for']),
-  whileNode: 'while',
-  unlessNode: 'unless',
-  untilNode: 'until',
-  switchNode: 'case',
-  caseNode: 'when',
-  defaultNode: 'else',
-  tryNode: 'begin',
-  catchNode: 'rescue',
-  finallyNode: 'ensure',
-  returnNode: 'return',
-  breakNode: 'break',
-  continueNode: 'next',
-  blockNodes: new Set(['then', 'do', 'body_statement']),
-  functionNodes: new Set(['method', 'singleton_method']),
-});
-
-const PHP_CFG = makeCfgRules({
-  ifNode: 'if_statement',
-  elifNode: 'else_if_clause',
-  elseClause: 'else_clause',
-  ifConsequentField: 'body',
-  forNodes: new Set(['for_statement', 'foreach_statement']),
-  whileNode: 'while_statement',
-  doNode: 'do_statement',
-  switchNode: 'switch_statement',
-  caseNode: 'case_statement',
-  defaultNode: 'default_statement',
-  tryNode: 'try_statement',
-  catchNode: 'catch_clause',
-  finallyNode: 'finally_clause',
-  returnNode: 'return_statement',
-  throwNode: 'throw_expression',
-  breakNode: 'break_statement',
-  continueNode: 'continue_statement',
-  blockNode: 'compound_statement',
-  functionNodes: new Set([
-    'function_definition',
-    'method_declaration',
-    'anonymous_function_creation_expression',
-    'arrow_function',
-  ]),
-});
-
-export const CFG_RULES = new Map([
-  ['javascript', JS_TS_CFG],
-  ['typescript', JS_TS_CFG],
-  ['tsx', JS_TS_CFG],
-  ['python', PYTHON_CFG],
-  ['go', GO_CFG],
-  ['rust', RUST_CFG],
-  ['java', JAVA_CFG],
-  ['csharp', CSHARP_CFG],
-  ['ruby', RUBY_CFG],
-  ['php', PHP_CFG],
-]);
-
-const CFG_LANG_IDS = new Set(CFG_RULES.keys());
-
-// JS/TS extensions
-const CFG_EXTENSIONS = new Set();
-for (const entry of LANGUAGE_REGISTRY) {
-  if (CFG_LANG_IDS.has(entry.id)) {
-    for (const ext of entry.extensions) CFG_EXTENSIONS.add(ext);
-  }
-}
+const CFG_EXTENSIONS = buildExtensionSet(CFG_RULES);
 
 // ─── Core Algorithm: AST → CFG ──────────────────────────────────────────
 
@@ -1104,7 +862,7 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
     getParserFn = mod.getParser;
   }
 
-  const { findFunctionNode } = await import('./complexity.js');
+  // findFunctionNode imported from ./ast-analysis/shared.js at module level
 
   const insertBlock = db.prepare(
     `INSERT INTO cfg_blocks (function_node_id, block_index, block_type, start_line, end_line, label)
@@ -1139,7 +897,7 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
       if (!tree && !allNative) {
         if (!getParserFn) continue;
         langId = extToLang.get(ext);
-        if (!langId || !CFG_LANG_IDS.has(langId)) continue;
+        if (!langId || !CFG_RULES.has(langId)) continue;
 
         const absPath = path.join(rootDir, relPath);
         let code;
