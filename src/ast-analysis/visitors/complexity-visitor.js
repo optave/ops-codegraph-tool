@@ -34,7 +34,7 @@ export function createComplexityVisitor(cRules, hRules, options = {}) {
   let maxNesting = 0;
   let operators = hRules ? new Map() : null;
   let operands = hRules ? new Map() : null;
-  let halsteadSkip = false;
+  let halsteadSkipDepth = 0;
 
   // In file-level mode, we only count when inside a function
   let activeFuncNode = null;
@@ -51,7 +51,7 @@ export function createComplexityVisitor(cRules, hRules, options = {}) {
     maxNesting = 0;
     operators = hRules ? new Map() : null;
     operands = hRules ? new Map() : null;
-    halsteadSkip = false;
+    halsteadSkipDepth = 0;
   }
 
   function collectResult(funcNode) {
@@ -110,8 +110,8 @@ export function createComplexityVisitor(cRules, hRules, options = {}) {
 
       // ── Halstead classification ──
       if (hRules) {
-        if (hRules.skipTypes.has(type)) halsteadSkip = true;
-        if (!halsteadSkip) {
+        if (hRules.skipTypes.has(type)) halsteadSkipDepth++;
+        if (halsteadSkipDepth === 0) {
           if (hRules.compoundOperators.has(type)) {
             operators.set(type, (operators.get(type) || 0) + 1);
           }
@@ -221,9 +221,9 @@ export function createComplexityVisitor(cRules, hRules, options = {}) {
     },
 
     exitNode(node) {
-      // Restore halsteadSkip when leaving a skip-type subtree
+      // Decrement skip depth when leaving a skip-type subtree
       if (hRules?.skipTypes.has(node.type)) {
-        halsteadSkip = false;
+        halsteadSkipDepth--;
       }
     },
 

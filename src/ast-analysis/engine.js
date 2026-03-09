@@ -18,6 +18,8 @@
  */
 
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
+import { debug } from '../logger.js';
 import { computeLOCMetrics, computeMaintainabilityIndex } from './metrics.js';
 import {
   AST_TYPE_MAPS,
@@ -100,8 +102,8 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, _engineOpts) {
       try {
         const { ensureWasmTrees } = await getParserModule();
         await ensureWasmTrees(fileSymbols, rootDir);
-      } catch {
-        // Non-fatal
+      } catch (err) {
+        debug(`ensureWasmTrees failed: ${err.message}`);
       }
     }
   }
@@ -258,8 +260,8 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, _engineOpts) {
     try {
       const { buildAstNodes } = await import('../ast.js');
       await buildAstNodes(db, fileSymbols, rootDir, _engineOpts);
-    } catch {
-      // Non-fatal
+    } catch (err) {
+      debug(`buildAstNodes failed: ${err.message}`);
     }
     timing.astMs = performance.now() - t0;
   }
@@ -269,8 +271,8 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, _engineOpts) {
     try {
       const { buildComplexityMetrics } = await import('../complexity.js');
       await buildComplexityMetrics(db, fileSymbols, rootDir, _engineOpts);
-    } catch {
-      // Non-fatal
+    } catch (err) {
+      debug(`buildComplexityMetrics failed: ${err.message}`);
     }
     timing.complexityMs = performance.now() - t0;
   }
@@ -280,8 +282,8 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, _engineOpts) {
     try {
       const { buildCFGData } = await import('../cfg.js');
       await buildCFGData(db, fileSymbols, rootDir, _engineOpts);
-    } catch {
-      // Non-fatal
+    } catch (err) {
+      debug(`buildCFGData failed: ${err.message}`);
     }
     timing.cfgMs = performance.now() - t0;
   }
@@ -291,8 +293,8 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, _engineOpts) {
     try {
       const { buildDataflowEdges } = await import('../dataflow.js');
       await buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts);
-    } catch {
-      // Non-fatal
+    } catch (err) {
+      debug(`buildDataflowEdges failed: ${err.message}`);
     }
     timing.dataflowMs = performance.now() - t0;
   }
