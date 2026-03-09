@@ -204,30 +204,26 @@ export class NodeQuery {
 
   /** Add fan-in LEFT JOIN subquery. */
   withFanIn(edgeKind = 'calls') {
-    this.#joins.push(fanInJoinSQL(edgeKind));
-    return this;
+    return this._join(fanInJoinSQL(edgeKind));
   }
 
   /** Add fan-out LEFT JOIN subquery. */
   withFanOut(edgeKind = 'calls') {
-    this.#joins.push(fanOutJoinSQL(edgeKind));
-    return this;
+    return this._join(fanOutJoinSQL(edgeKind));
   }
 
   /** LEFT JOIN function_complexity. */
   withComplexity() {
-    this.#joins.push('LEFT JOIN function_complexity fc ON fc.node_id = n.id');
-    return this;
+    return this._join('LEFT JOIN function_complexity fc ON fc.node_id = n.id');
   }
 
   /** LEFT JOIN file_commit_counts. */
   withChurn() {
-    this.#joins.push('LEFT JOIN file_commit_counts fcc ON n.file = fcc.file');
-    return this;
+    return this._join('LEFT JOIN file_commit_counts fcc ON n.file = fcc.file');
   }
 
-  /** Raw JOIN escape hatch. */
-  join(sql) {
+  /** @private Raw JOIN — internal use only; external callers should use withFanIn/withFanOut/withComplexity/withChurn. */
+  _join(sql) {
     this.#joins.push(sql);
     return this;
   }

@@ -198,9 +198,14 @@ describe('NodeQuery', () => {
     expect(sql).toContain('file_commit_counts');
   });
 
-  it('.join() adds raw join', () => {
-    const { sql } = new NodeQuery().join('JOIN node_metrics nm ON n.id = nm.node_id').build();
+  it('._join() adds raw join (internal API)', () => {
+    const { sql } = new NodeQuery()._join('JOIN node_metrics nm ON n.id = nm.node_id').build();
     expect(sql).toContain('JOIN node_metrics nm ON n.id = nm.node_id');
+  });
+
+  it('does not expose a public .join() method', () => {
+    const q = new NodeQuery();
+    expect(typeof q.join).toBe('undefined');
   });
 
   it('.orderBy() adds ORDER BY', () => {

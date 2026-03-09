@@ -102,6 +102,10 @@ describe('repository', () => {
       expect(rows.length).toBe(1);
       expect(rows[0].name).toBe('bar');
     });
+
+    it('throws on invalid role', () => {
+      expect(() => findNodesForTriage(db, { role: 'supervisor' })).toThrow('Invalid role');
+    });
   });
 
   describe('listFunctionNodes', () => {
@@ -120,6 +124,12 @@ describe('repository', () => {
       const rows = listFunctionNodes(db, { pattern: 'Baz' });
       expect(rows.length).toBe(1);
       expect(rows[0].name).toBe('Baz');
+    });
+
+    it('excludes test files when noTests is set', () => {
+      const rows = listFunctionNodes(db, { noTests: true });
+      expect(rows.every((r) => !r.file.includes('.test.'))).toBe(true);
+      expect(rows.length).toBe(3); // foo, bar, Baz — excludes testFn
     });
 
     it('orders by file, line', () => {
@@ -144,6 +154,12 @@ describe('repository', () => {
       const rows = [...iterateFunctionNodes(db, { file: 'foo', pattern: 'foo' })];
       expect(rows.length).toBeGreaterThan(0);
       expect(rows.every((r) => r.file.includes('foo'))).toBe(true);
+    });
+
+    it('excludes test files when noTests is set', () => {
+      const rows = [...iterateFunctionNodes(db, { noTests: true })];
+      expect(rows.every((r) => !r.file.includes('.test.'))).toBe(true);
+      expect(rows.length).toBe(3);
     });
   });
 

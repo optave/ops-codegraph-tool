@@ -1,4 +1,4 @@
-import { EVERY_SYMBOL_KIND } from '../kinds.js';
+import { EVERY_SYMBOL_KIND, VALID_ROLES } from '../kinds.js';
 import { NodeQuery } from './query-builder.js';
 
 /**
@@ -40,6 +40,9 @@ export function findNodesForTriage(db, opts = {}) {
   if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
     throw new Error(`Invalid kind: ${opts.kind} (expected one of ${EVERY_SYMBOL_KIND.join(', ')})`);
   }
+  if (opts.role && !VALID_ROLES.includes(opts.role)) {
+    throw new Error(`Invalid role: ${opts.role} (expected one of ${VALID_ROLES.join(', ')})`);
+  }
 
   const kindsToUse = opts.kind ? [opts.kind] : ['function', 'method', 'class'];
   const q = new NodeQuery()
@@ -75,6 +78,7 @@ function _functionNodeQuery(opts = {}) {
     .kinds(['function', 'method', 'class'])
     .fileFilter(opts.file)
     .nameLike(opts.pattern)
+    .excludeTests(opts.noTests)
     .orderBy('file, line');
 }
 
