@@ -18,6 +18,10 @@ import { debug } from './logger.js';
 import { ownersForFiles } from './owners.js';
 import { paginateResult } from './paginate.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
+import { isTestFile } from './test-filter.js';
+
+// Re-export from dedicated module for backward compat
+export { isTestFile, TEST_PATTERN } from './test-filter.js';
 
 /**
  * Resolve a file path relative to repoRoot, rejecting traversal outside the repo.
@@ -28,11 +32,6 @@ function safePath(repoRoot, file) {
   if (!resolved.startsWith(repoRoot + path.sep) && resolved !== repoRoot) return null;
   return resolved;
 }
-
-// Re-export from dedicated module for backward compat
-export { isTestFile, TEST_PATTERN } from './test-filter.js';
-
-import { isTestFile } from './test-filter.js';
 
 export const FALSE_POSITIVE_NAMES = new Set([
   'run',

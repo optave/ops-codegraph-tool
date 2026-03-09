@@ -99,10 +99,10 @@ export function flowData(name, dbPath, opts = {}) {
   try {
     const maxDepth = opts.depth || 10;
     const noTests = opts.noTests || false;
+    const flowOpts = { ...opts, kinds: opts.kind ? [opts.kind] : CORE_SYMBOL_KINDS };
 
     // Phase 1: Direct LIKE match on full name (use all 10 core symbol kinds,
     // not just FUNCTION_KINDS, so flow can trace from interfaces/types/structs/etc.)
-    const flowOpts = { ...opts, kinds: opts.kind ? [opts.kind] : CORE_SYMBOL_KINDS };
     let matchNode = findMatchingNodes(db, name, flowOpts)[0] ?? null;
 
     // Phase 2: Prefix-stripped matching — try adding framework prefixes

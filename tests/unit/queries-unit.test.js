@@ -23,7 +23,6 @@ import {
   fnImpact,
   impactAnalysis,
   moduleMap,
-  queryName,
 } from '../../src/queries-cli.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
@@ -379,34 +378,6 @@ describe('diffImpactMermaid', () => {
 });
 
 // ─── Display wrappers ─────────────────────────────────────────────────
-
-describe('queryName (display)', () => {
-  it('outputs JSON when opts.json is true', () => {
-    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    queryName('handleRequest', dbPath, { json: true });
-    expect(spy).toHaveBeenCalledTimes(1);
-    const output = JSON.parse(spy.mock.calls[0][0]);
-    expect(output).toHaveProperty('query', 'handleRequest');
-    expect(output).toHaveProperty('results');
-    spy.mockRestore();
-  });
-
-  it('outputs human-readable format', () => {
-    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    queryName('handleRequest', dbPath);
-    const allOutput = spy.mock.calls.map((c) => c[0]).join('\n');
-    expect(allOutput).toContain('handleRequest');
-    spy.mockRestore();
-  });
-
-  it('outputs "No results" for unknown name', () => {
-    const spy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    queryName('zzzzNotExist', dbPath);
-    const allOutput = spy.mock.calls.map((c) => c[0]).join('\n');
-    expect(allOutput).toContain('No results');
-    spy.mockRestore();
-  });
-});
 
 describe('impactAnalysis (display)', () => {
   it('outputs JSON when opts.json is true', () => {

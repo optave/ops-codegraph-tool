@@ -335,6 +335,12 @@ You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-
 
 **Graph update hook** (PostToolUse on Edit/Write): keeps the graph incrementally updated after each file edit. Only changed files are re-parsed.
 
+**Cycle check hook** (PreToolUse on Bash): when Claude runs `git commit`, the hook runs `codegraph check --staged --json -T` and checks if any circular dependencies involve files edited in this session. If found, blocks the commit with a `deny` decision listing the cycles. Uses the session edit log to scope checks — pre-existing cycles in untouched files don't trigger.
+
+**Dead export check hook** (PreToolUse on Bash): when Claude runs `git commit`, the hook runs `codegraph exports <file> --unused --json -T` for each staged `src/` file that was edited in this session. If any export has zero consumers (dead code), blocks the commit. This catches accidentally introduced dead exports before they reach a PR.
+
+**Signature change warning hook** (PreToolUse on Bash): when Claude runs `git commit`, the hook runs `codegraph check --staged` to detect modified function declaration lines, then enriches each violation with the symbol's role (`core`, `utility`, etc.) and transitive caller count from the graph. Injects a risk-rated summary via `additionalContext` — `HIGH` for core symbols, `MEDIUM` for utility, `low` for others. Non-blocking — the agent sees the warning and can decide whether the signature change is intentional.
+
 **Git operation hook** (PostToolUse on Bash): detects `git rebase`, `git revert`, `git cherry-pick`, `git merge`, and `git pull` commands and automatically: (1) rebuilds the codegraph so dependency context stays fresh, (2) logs all files changed by the operation to `session-edits.log` so commit validation doesn't block rebase-modified files, and (3) clears stale entries from `codegraph-checked.log` so the edit reminder re-fires for affected files. Uses `ORIG_HEAD` (set by all these git operations) to detect which files changed. If the operation failed (e.g. merge conflicts), the diff safely returns nothing.
 
 > **Windows note:** If your hooks use bash scripts, normalize backslashes inside `node -e` rather than bash (`${VAR//\\//}` fails on Git Bash). See this repo's `.claude/hooks/enrich-context.sh` for the pattern.

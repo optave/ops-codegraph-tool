@@ -266,10 +266,10 @@ QUERY_OPTS(
     fileExports(file, opts.db, {
       noTests: resolveNoTests(opts),
       json: opts.json,
+      unused: opts.unused || false,
       limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
       offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       ndjson: opts.ndjson,
-      unused: opts.unused || false,
     });
   });
 
