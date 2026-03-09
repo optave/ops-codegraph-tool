@@ -191,3 +191,10 @@ Requires Node >= 20.
 * If something goes sideways, STOP and re-plan immediately – don't keep pushing
 * Use plan mode for verification steps, not just building
 * Write detailed specs upfront to reduce ambiguity
+
+### 2. Never Ignore Lint Warnings
+
+* Never silently skip or dismiss linting/formatting warnings — always check whether they are relevant to the current change
+* If a warning fires on code you touched, fix it
+* If a warning fires on code you didn't touch, mention it to the user but don't fix it (per the "Do not clean up lint/format issues in files you aren't working on" rule in Parallel Sessions)
+* Run `npm run lint` after editing code and review the output — do not assume warnings are spurious
