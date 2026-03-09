@@ -1,1036 +1,24 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { COMPLEXITY_RULES, HALSTEAD_RULES } from './ast-analysis/rules/index.js';
+import {
+  findFunctionNode as _findFunctionNode,
+  buildExtensionSet,
+  buildExtToLangMap,
+} from './ast-analysis/shared.js';
 import { loadConfig } from './config.js';
 import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
-import { LANGUAGE_REGISTRY } from './parser.js';
+
 import { outputResult } from './result-formatter.js';
 import { isTestFile } from './test-filter.js';
 
-// ─── Language-Specific Node Type Registry ─────────────────────────────────
-
-const JS_TS_RULES = {
-  // Structural increments (cognitive +1, cyclomatic varies)
-  branchNodes: new Set([
-    'if_statement',
-    'else_clause',
-    'switch_statement',
-    'for_statement',
-    'for_in_statement',
-    'while_statement',
-    'do_statement',
-    'catch_clause',
-    'ternary_expression',
-  ]),
-  // Cyclomatic-only: each case adds a path
-  caseNodes: new Set(['switch_case']),
-  // Logical operators: cognitive +1 per sequence change, cyclomatic +1 each
-  logicalOperators: new Set(['&&', '||', '??']),
-  logicalNodeType: 'binary_expression',
-  // Optional chaining: cyclomatic only
-  optionalChainType: 'optional_chain_expression',
-  // Nesting-sensitive: these increment nesting depth
-  nestingNodes: new Set([
-    'if_statement',
-    'switch_statement',
-    'for_statement',
-    'for_in_statement',
-    'while_statement',
-    'do_statement',
-    'catch_clause',
-    'ternary_expression',
-  ]),
-  // Function-like nodes (increase nesting when nested)
-  functionNodes: new Set([
-    'function_declaration',
-    'function_expression',
-    'arrow_function',
-    'method_definition',
-    'generator_function',
-    'generator_function_declaration',
-  ]),
-  // If/else pattern detection
-  ifNodeType: 'if_statement',
-  elseNodeType: 'else_clause',
-  elifNodeType: null,
-  elseViaAlternative: false,
-  switchLikeNodes: new Set(['switch_statement']),
-};
-
-const PYTHON_RULES = {
-  branchNodes: new Set([
-    'if_statement',
-    'elif_clause',
-    'else_clause',
-    'for_statement',
-    'while_statement',
-    'except_clause',
-    'conditional_expression',
-    'match_statement',
-  ]),
-  caseNodes: new Set(['case_clause']),
-  logicalOperators: new Set(['and', 'or']),
-  logicalNodeType: 'boolean_operator',
-  optionalChainType: null,
-  nestingNodes: new Set([
-    'if_statement',
-    'for_statement',
-    'while_statement',
-    'except_clause',
-    'conditional_expression',
-  ]),
-  functionNodes: new Set(['function_definition', 'lambda']),
-  ifNodeType: 'if_statement',
-  elseNodeType: 'else_clause',
-  elifNodeType: 'elif_clause',
-  elseViaAlternative: false,
-  switchLikeNodes: new Set(['match_statement']),
-};
-
-const GO_RULES = {
-  branchNodes: new Set([
-    'if_statement',
-    'for_statement',
-    'expression_switch_statement',
-    'type_switch_statement',
-    'select_statement',
-  ]),
-  caseNodes: new Set(['expression_case', 'type_case', 'default_case', 'communication_case']),
-  logicalOperators: new Set(['&&', '||']),
-  logicalNodeType: 'binary_expression',
-  optionalChainType: null,
-  nestingNodes: new Set([
-    'if_statement',
-    'for_statement',
-    'expression_switch_statement',
-    'type_switch_statement',
-    'select_statement',
-  ]),
-  functionNodes: new Set(['function_declaration', 'method_declaration', 'func_literal']),
-  ifNodeType: 'if_statement',
-  elseNodeType: null,
-  elifNodeType: null,
-  elseViaAlternative: true,
-  switchLikeNodes: new Set(['expression_switch_statement', 'type_switch_statement']),
-};
-
-const RUST_RULES = {
-  branchNodes: new Set([
-    'if_expression',
-    'else_clause',
-    'for_expression',
-    'while_expression',
-    'loop_expression',
-    'if_let_expression',
-    'while_let_expression',
-    'match_expression',
-  ]),
-  caseNodes: new Set(['match_arm']),
-  logicalOperators: new Set(['&&', '||']),
-  logicalNodeType: 'binary_expression',
-  optionalChainType: null,
-  nestingNodes: new Set([
-    'if_expression',
-    'for_expression',
-    'while_expression',
-    'loop_expression',
-    'if_let_expression',
-    'while_let_expression',
-    'match_expression',
-  ]),
-  functionNodes: new Set(['function_item', 'closure_expression']),
-  ifNodeType: 'if_expression',
-  elseNodeType: 'else_clause',
-  elifNodeType: null,
-  elseViaAlternative: false,
-  switchLikeNodes: new Set(['match_expression']),
-};
-
-const JAVA_RULES = {
-  branchNodes: new Set([
-    'if_statement',
-    'for_statement',
-    'enhanced_for_statement',
-    'while_statement',
-    'do_statement',
-    'catch_clause',
-    'ternary_expression',
-    'switch_expression',
-  ]),
-  caseNodes: new Set(['switch_label']),
-  logicalOperators: new Set(['&&', '||']),
-  logicalNodeType: 'binary_expression',
-  optionalChainType: null,
-  nestingNodes: new Set([
-    'if_statement',
-    'for_statement',
-    'enhanced_for_statement',
-    'while_statement',
-    'do_statement',
-    'catch_clause',
-    'ternary_expression',
-  ]),
-  functionNodes: new Set(['method_declaration', 'constructor_declaration', 'lambda_expression']),
-  ifNodeType: 'if_statement',
-  elseNodeType: null,
-  elifNodeType: null,
-  elseViaAlternative: true,
-  switchLikeNodes: new Set(['switch_expression']),
-};
-
-const CSHARP_RULES = {
-  branchNodes: new Set([
-    'if_statement',
-    'else_clause',
-    'for_statement',
-    'foreach_statement',
-    'while_statement',
-    'do_statement',
-    'catch_clause',
-    'conditional_expression',
-    'switch_statement',
-  ]),
-  caseNodes: new Set(['switch_section']),
-  logicalOperators: new Set(['&&', '||', '??']),
-  logicalNodeType: 'binary_expression',
-  optionalChainType: 'conditional_access_expression',
-  nestingNodes: new Set([
-    'if_statement',
-    'for_statement',
-    'foreach_statement',
-    'while_statement',
-    'do_statement',
-    'catch_clause',
-    'conditional_expression',
-    'switch_statement',
-  ]),
-  functionNodes: new Set([
-    'method_declaration',
-    'constructor_declaration',
-    'lambda_expression',
-    'local_function_statement',
-  ]),
-  ifNodeType: 'if_statement',
-  elseNodeType: null,
-  elifNodeType: null,
-  elseViaAlternative: true,
-  switchLikeNodes: new Set(['switch_statement']),
-};
-
-const RUBY_RULES = {
-  branchNodes: new Set([
-    'if',
-    'elsif',
-    'else',
-    'unless',
-    'case',
-    'for',
-    'while',
-    'until',
-    'rescue',
-    'conditional',
-  ]),
-  caseNodes: new Set(['when']),
-  logicalOperators: new Set(['and', 'or', '&&', '||']),
-  logicalNodeType: 'binary',
-  optionalChainType: null,
-  nestingNodes: new Set(['if', 'unless', 'case', 'for', 'while', 'until', 'rescue', 'conditional']),
-  functionNodes: new Set(['method', 'singleton_method', 'lambda', 'do_block']),
-  ifNodeType: 'if',
-  elseNodeType: 'else',
-  elifNodeType: 'elsif',
-  elseViaAlternative: false,
-  switchLikeNodes: new Set(['case']),
-};
-
-const PHP_RULES = {
-  branchNodes: new Set([
-    'if_statement',
-    'else_if_clause',
-    'else_clause',
-    'for_statement',
-    'foreach_statement',
-    'while_statement',
-    'do_statement',
-    'catch_clause',
-    'conditional_expression',
-    'switch_statement',
-  ]),
-  caseNodes: new Set(['case_statement', 'default_statement']),
-  logicalOperators: new Set(['&&', '||', 'and', 'or', '??']),
-  logicalNodeType: 'binary_expression',
-  optionalChainType: 'nullsafe_member_access_expression',
-  nestingNodes: new Set([
-    'if_statement',
-    'for_statement',
-    'foreach_statement',
-    'while_statement',
-    'do_statement',
-    'catch_clause',
-    'conditional_expression',
-    'switch_statement',
-  ]),
-  functionNodes: new Set([
-    'function_definition',
-    'method_declaration',
-    'anonymous_function_creation_expression',
-    'arrow_function',
-  ]),
-  ifNodeType: 'if_statement',
-  elseNodeType: 'else_clause',
-  elifNodeType: 'else_if_clause',
-  elseViaAlternative: false,
-  switchLikeNodes: new Set(['switch_statement']),
-};
-
-export const COMPLEXITY_RULES = new Map([
-  ['javascript', JS_TS_RULES],
-  ['typescript', JS_TS_RULES],
-  ['tsx', JS_TS_RULES],
-  ['python', PYTHON_RULES],
-  ['go', GO_RULES],
-  ['rust', RUST_RULES],
-  ['java', JAVA_RULES],
-  ['csharp', CSHARP_RULES],
-  ['ruby', RUBY_RULES],
-  ['php', PHP_RULES],
-]);
+// Re-export rules for backward compatibility
+export { COMPLEXITY_RULES, HALSTEAD_RULES };
 
 // Extensions whose language has complexity rules — used to skip needless WASM init
-const COMPLEXITY_EXTENSIONS = new Set();
-for (const entry of LANGUAGE_REGISTRY) {
-  if (COMPLEXITY_RULES.has(entry.id)) {
-    for (const ext of entry.extensions) COMPLEXITY_EXTENSIONS.add(ext);
-  }
-}
-
-// ─── Halstead Operator/Operand Classification ────────────────────────────
-
-const JS_TS_HALSTEAD = {
-  operatorLeafTypes: new Set([
-    // Arithmetic
-    '+',
-    '-',
-    '*',
-    '/',
-    '%',
-    '**',
-    // Assignment
-    '=',
-    '+=',
-    '-=',
-    '*=',
-    '/=',
-    '%=',
-    '**=',
-    '<<=',
-    '>>=',
-    '>>>=',
-    '&=',
-    '|=',
-    '^=',
-    '&&=',
-    '||=',
-    '??=',
-    // Comparison
-    '==',
-    '===',
-    '!=',
-    '!==',
-    '<',
-    '>',
-    '<=',
-    '>=',
-    // Logical
-    '&&',
-    '||',
-    '!',
-    '??',
-    // Bitwise
-    '&',
-    '|',
-    '^',
-    '~',
-    '<<',
-    '>>',
-    '>>>',
-    // Unary
-    '++',
-    '--',
-    // Keywords as operators
-    'typeof',
-    'instanceof',
-    'new',
-    'return',
-    'throw',
-    'yield',
-    'await',
-    'if',
-    'else',
-    'for',
-    'while',
-    'do',
-    'switch',
-    'case',
-    'break',
-    'continue',
-    'try',
-    'catch',
-    'finally',
-    // Arrow, spread, ternary, access
-    '=>',
-    '...',
-    '?',
-    ':',
-    '.',
-    '?.',
-    // Delimiters counted as operators
-    ',',
-    ';',
-  ]),
-  operandLeafTypes: new Set([
-    'identifier',
-    'property_identifier',
-    'shorthand_property_identifier',
-    'shorthand_property_identifier_pattern',
-    'number',
-    'string_fragment',
-    'regex_pattern',
-    'true',
-    'false',
-    'null',
-    'undefined',
-    'this',
-    'super',
-    'private_property_identifier',
-  ]),
-  compoundOperators: new Set([
-    'call_expression',
-    'subscript_expression',
-    'new_expression',
-    'template_substitution',
-  ]),
-  skipTypes: new Set(['type_annotation', 'type_parameters', 'return_type', 'implements_clause']),
-};
-
-const PYTHON_HALSTEAD = {
-  operatorLeafTypes: new Set([
-    '+',
-    '-',
-    '*',
-    '/',
-    '%',
-    '**',
-    '//',
-    '=',
-    '+=',
-    '-=',
-    '*=',
-    '/=',
-    '%=',
-    '**=',
-    '//=',
-    '&=',
-    '|=',
-    '^=',
-    '<<=',
-    '>>=',
-    '==',
-    '!=',
-    '<',
-    '>',
-    '<=',
-    '>=',
-    'and',
-    'or',
-    'not',
-    '&',
-    '|',
-    '^',
-    '~',
-    '<<',
-    '>>',
-    'if',
-    'else',
-    'elif',
-    'for',
-    'while',
-    'with',
-    'try',
-    'except',
-    'finally',
-    'raise',
-    'return',
-    'yield',
-    'await',
-    'pass',
-    'break',
-    'continue',
-    'import',
-    'from',
-    'as',
-    'in',
-    'is',
-    'lambda',
-    'del',
-    '.',
-    ',',
-    ':',
-    '@',
-    '->',
-  ]),
-  operandLeafTypes: new Set([
-    'identifier',
-    'integer',
-    'float',
-    'string_content',
-    'true',
-    'false',
-    'none',
-  ]),
-  compoundOperators: new Set(['call', 'subscript', 'attribute']),
-  skipTypes: new Set([]),
-};
-
-const GO_HALSTEAD = {
-  operatorLeafTypes: new Set([
-    '+',
-    '-',
-    '*',
-    '/',
-    '%',
-    '=',
-    ':=',
-    '+=',
-    '-=',
-    '*=',
-    '/=',
-    '%=',
-    '&=',
-    '|=',
-    '^=',
-    '<<=',
-    '>>=',
-    '==',
-    '!=',
-    '<',
-    '>',
-    '<=',
-    '>=',
-    '&&',
-    '||',
-    '!',
-    '&',
-    '|',
-    '^',
-    '~',
-    '<<',
-    '>>',
-    '&^',
-    '++',
-    '--',
-    'if',
-    'else',
-    'for',
-    'switch',
-    'select',
-    'case',
-    'default',
-    'return',
-    'break',
-    'continue',
-    'goto',
-    'fallthrough',
-    'go',
-    'defer',
-    'range',
-    'chan',
-    'func',
-    'var',
-    'const',
-    'type',
-    'struct',
-    'interface',
-    '.',
-    ',',
-    ';',
-    ':',
-    '<-',
-  ]),
-  operandLeafTypes: new Set([
-    'identifier',
-    'field_identifier',
-    'package_identifier',
-    'type_identifier',
-    'int_literal',
-    'float_literal',
-    'imaginary_literal',
-    'rune_literal',
-    'interpreted_string_literal',
-    'raw_string_literal',
-    'true',
-    'false',
-    'nil',
-    'iota',
-  ]),
-  compoundOperators: new Set(['call_expression', 'index_expression', 'selector_expression']),
-  skipTypes: new Set([]),
-};
-
-const RUST_HALSTEAD = {
-  operatorLeafTypes: new Set([
-    '+',
-    '-',
-    '*',
-    '/',
-    '%',
-    '=',
-    '+=',
-    '-=',
-    '*=',
-    '/=',
-    '%=',
-    '&=',
-    '|=',
-    '^=',
-    '<<=',
-    '>>=',
-    '==',
-    '!=',
-    '<',
-    '>',
-    '<=',
-    '>=',
-    '&&',
-    '||',
-    '!',
-    '&',
-    '|',
-    '^',
-    '<<',
-    '>>',
-    'if',
-    'else',
-    'for',
-    'while',
-    'loop',
-    'match',
-    'return',
-    'break',
-    'continue',
-    'let',
-    'mut',
-    'ref',
-    'as',
-    'in',
-    'move',
-    'fn',
-    'struct',
-    'enum',
-    'trait',
-    'impl',
-    'pub',
-    'mod',
-    'use',
-    '.',
-    ',',
-    ';',
-    ':',
-    '::',
-    '=>',
-    '->',
-    '?',
-  ]),
-  operandLeafTypes: new Set([
-    'identifier',
-    'field_identifier',
-    'type_identifier',
-    'integer_literal',
-    'float_literal',
-    'string_content',
-    'char_literal',
-    'true',
-    'false',
-    'self',
-    'Self',
-  ]),
-  compoundOperators: new Set(['call_expression', 'index_expression', 'field_expression']),
-  skipTypes: new Set([]),
-};
-
-const JAVA_HALSTEAD = {
-  operatorLeafTypes: new Set([
-    '+',
-    '-',
-    '*',
-    '/',
-    '%',
-    '=',
-    '+=',
-    '-=',
-    '*=',
-    '/=',
-    '%=',
-    '&=',
-    '|=',
-    '^=',
-    '<<=',
-    '>>=',
-    '>>>=',
-    '==',
-    '!=',
-    '<',
-    '>',
-    '<=',
-    '>=',
-    '&&',
-    '||',
-    '!',
-    '&',
-    '|',
-    '^',
-    '~',
-    '<<',
-    '>>',
-    '>>>',
-    '++',
-    '--',
-    'instanceof',
-    'new',
-    'if',
-    'else',
-    'for',
-    'while',
-    'do',
-    'switch',
-    'case',
-    'return',
-    'throw',
-    'break',
-    'continue',
-    'try',
-    'catch',
-    'finally',
-    '.',
-    ',',
-    ';',
-    ':',
-    '?',
-    '->',
-  ]),
-  operandLeafTypes: new Set([
-    'identifier',
-    'type_identifier',
-    'decimal_integer_literal',
-    'hex_integer_literal',
-    'octal_integer_literal',
-    'binary_integer_literal',
-    'decimal_floating_point_literal',
-    'hex_floating_point_literal',
-    'string_literal',
-    'character_literal',
-    'true',
-    'false',
-    'null',
-    'this',
-    'super',
-  ]),
-  compoundOperators: new Set(['method_invocation', 'array_access', 'object_creation_expression']),
-  skipTypes: new Set(['type_arguments', 'type_parameters']),
-};
-
-const CSHARP_HALSTEAD = {
-  operatorLeafTypes: new Set([
-    '+',
-    '-',
-    '*',
-    '/',
-    '%',
-    '=',
-    '+=',
-    '-=',
-    '*=',
-    '/=',
-    '%=',
-    '&=',
-    '|=',
-    '^=',
-    '<<=',
-    '>>=',
-    '==',
-    '!=',
-    '<',
-    '>',
-    '<=',
-    '>=',
-    '&&',
-    '||',
-    '!',
-    '??',
-    '??=',
-    '&',
-    '|',
-    '^',
-    '~',
-    '<<',
-    '>>',
-    '++',
-    '--',
-    'is',
-    'as',
-    'new',
-    'typeof',
-    'sizeof',
-    'nameof',
-    'if',
-    'else',
-    'for',
-    'foreach',
-    'while',
-    'do',
-    'switch',
-    'case',
-    'return',
-    'throw',
-    'break',
-    'continue',
-    'try',
-    'catch',
-    'finally',
-    'await',
-    'yield',
-    '.',
-    '?.',
-    ',',
-    ';',
-    ':',
-    '=>',
-    '->',
-  ]),
-  operandLeafTypes: new Set([
-    'identifier',
-    'integer_literal',
-    'real_literal',
-    'string_literal',
-    'character_literal',
-    'verbatim_string_literal',
-    'interpolated_string_text',
-    'true',
-    'false',
-    'null',
-    'this',
-    'base',
-  ]),
-  compoundOperators: new Set([
-    'invocation_expression',
-    'element_access_expression',
-    'object_creation_expression',
-  ]),
-  skipTypes: new Set(['type_argument_list', 'type_parameter_list']),
-};
-
-const RUBY_HALSTEAD = {
-  operatorLeafTypes: new Set([
-    '+',
-    '-',
-    '*',
-    '/',
-    '%',
-    '**',
-    '=',
-    '+=',
-    '-=',
-    '*=',
-    '/=',
-    '%=',
-    '**=',
-    '&=',
-    '|=',
-    '^=',
-    '<<=',
-    '>>=',
-    '==',
-    '!=',
-    '<',
-    '>',
-    '<=',
-    '>=',
-    '<=>',
-    '===',
-    '=~',
-    '!~',
-    '&&',
-    '||',
-    '!',
-    'and',
-    'or',
-    'not',
-    '&',
-    '|',
-    '^',
-    '~',
-    '<<',
-    '>>',
-    'if',
-    'else',
-    'elsif',
-    'unless',
-    'case',
-    'when',
-    'for',
-    'while',
-    'until',
-    'do',
-    'begin',
-    'end',
-    'return',
-    'raise',
-    'break',
-    'next',
-    'redo',
-    'retry',
-    'rescue',
-    'ensure',
-    'yield',
-    'def',
-    'class',
-    'module',
-    '.',
-    ',',
-    ':',
-    '::',
-    '=>',
-    '->',
-  ]),
-  operandLeafTypes: new Set([
-    'identifier',
-    'constant',
-    'instance_variable',
-    'class_variable',
-    'global_variable',
-    'integer',
-    'float',
-    'string_content',
-    'symbol',
-    'true',
-    'false',
-    'nil',
-    'self',
-  ]),
-  compoundOperators: new Set(['call', 'element_reference']),
-  skipTypes: new Set([]),
-};
-
-const PHP_HALSTEAD = {
-  operatorLeafTypes: new Set([
-    '+',
-    '-',
-    '*',
-    '/',
-    '%',
-    '**',
-    '=',
-    '+=',
-    '-=',
-    '*=',
-    '/=',
-    '%=',
-    '**=',
-    '.=',
-    '&=',
-    '|=',
-    '^=',
-    '<<=',
-    '>>=',
-    '==',
-    '===',
-    '!=',
-    '!==',
-    '<',
-    '>',
-    '<=',
-    '>=',
-    '<=>',
-    '&&',
-    '||',
-    '!',
-    'and',
-    'or',
-    'xor',
-    '??',
-    '&',
-    '|',
-    '^',
-    '~',
-    '<<',
-    '>>',
-    '++',
-    '--',
-    'instanceof',
-    'new',
-    'clone',
-    'if',
-    'else',
-    'elseif',
-    'for',
-    'foreach',
-    'while',
-    'do',
-    'switch',
-    'case',
-    'return',
-    'throw',
-    'break',
-    'continue',
-    'try',
-    'catch',
-    'finally',
-    'echo',
-    'print',
-    'yield',
-    '.',
-    '->',
-    '?->',
-    '::',
-    ',',
-    ';',
-    ':',
-    '?',
-    '=>',
-  ]),
-  operandLeafTypes: new Set([
-    'name',
-    'variable_name',
-    'integer',
-    'float',
-    'string_content',
-    'true',
-    'false',
-    'null',
-  ]),
-  compoundOperators: new Set([
-    'function_call_expression',
-    'member_call_expression',
-    'scoped_call_expression',
-    'subscript_expression',
-    'object_creation_expression',
-  ]),
-  skipTypes: new Set([]),
-};
-
-export const HALSTEAD_RULES = new Map([
-  ['javascript', JS_TS_HALSTEAD],
-  ['typescript', JS_TS_HALSTEAD],
-  ['tsx', JS_TS_HALSTEAD],
-  ['python', PYTHON_HALSTEAD],
-  ['go', GO_HALSTEAD],
-  ['rust', RUST_HALSTEAD],
-  ['java', JAVA_HALSTEAD],
-  ['csharp', CSHARP_HALSTEAD],
-  ['ruby', RUBY_HALSTEAD],
-  ['php', PHP_HALSTEAD],
-]);
+const COMPLEXITY_EXTENSIONS = buildExtensionSet(COMPLEXITY_RULES);
 
 // ─── Halstead Metrics Computation ─────────────────────────────────────────
 
@@ -1575,34 +563,7 @@ export function computeAllMetrics(functionNode, langId) {
 /**
  * Find the function body node in a parse tree that matches a given line range.
  */
-export function findFunctionNode(rootNode, startLine, _endLine, rules) {
-  // tree-sitter lines are 0-indexed
-  const targetStart = startLine - 1;
-
-  let best = null;
-
-  function search(node) {
-    const nodeStart = node.startPosition.row;
-    const nodeEnd = node.endPosition.row;
-
-    // Prune branches outside range
-    if (nodeEnd < targetStart || nodeStart > targetStart + 1) return;
-
-    if (rules.functionNodes.has(node.type) && nodeStart === targetStart) {
-      // Found a function node at the right position — pick it
-      if (!best || nodeEnd - nodeStart < best.endPosition.row - best.startPosition.row) {
-        best = node;
-      }
-    }
-
-    for (let i = 0; i < node.childCount; i++) {
-      search(node.child(i));
-    }
-  }
-
-  search(rootNode);
-  return best;
-}
+export { _findFunctionNode as findFunctionNode };
 
 /**
  * Re-parse changed files with WASM tree-sitter, find function AST subtrees,
@@ -1636,12 +597,7 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
   if (needsFallback) {
     const { createParsers } = await import('./parser.js');
     parsers = await createParsers();
-    extToLang = new Map();
-    for (const entry of LANGUAGE_REGISTRY) {
-      for (const ext of entry.extensions) {
-        extToLang.set(ext, entry.id);
-      }
-    }
+    extToLang = buildExtToLangMap();
   }
 
   const { getParser } = await import('./parser.js');
@@ -1798,204 +754,211 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
  */
 export function complexityData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const sort = opts.sort || 'cognitive';
-  const noTests = opts.noTests || false;
-  const aboveThreshold = opts.aboveThreshold || false;
-  const target = opts.target || null;
-  const fileFilter = opts.file || null;
-  const kindFilter = opts.kind || null;
+  try {
+    const sort = opts.sort || 'cognitive';
+    const noTests = opts.noTests || false;
+    const aboveThreshold = opts.aboveThreshold || false;
+    const target = opts.target || null;
+    const fileFilter = opts.file || null;
+    const kindFilter = opts.kind || null;
 
-  // Load thresholds from config
-  const config = loadConfig(process.cwd());
-  const thresholds = config.manifesto?.rules || {
-    cognitive: { warn: 15, fail: null },
-    cyclomatic: { warn: 10, fail: null },
-    maxNesting: { warn: 4, fail: null },
-    maintainabilityIndex: { warn: 20, fail: null },
-  };
+    // Load thresholds from config
+    const config = loadConfig(process.cwd());
+    const thresholds = config.manifesto?.rules || {
+      cognitive: { warn: 15, fail: null },
+      cyclomatic: { warn: 10, fail: null },
+      maxNesting: { warn: 4, fail: null },
+      maintainabilityIndex: { warn: 20, fail: null },
+    };
 
-  // Build query
-  let where = "WHERE n.kind IN ('function','method')";
-  const params = [];
+    // Build query
+    let where = "WHERE n.kind IN ('function','method')";
+    const params = [];
 
-  if (noTests) {
-    where += ` AND n.file NOT LIKE '%.test.%'
+    if (noTests) {
+      where += ` AND n.file NOT LIKE '%.test.%'
        AND n.file NOT LIKE '%.spec.%'
        AND n.file NOT LIKE '%__test__%'
        AND n.file NOT LIKE '%__tests__%'
        AND n.file NOT LIKE '%.stories.%'`;
-  }
-  if (target) {
-    where += ' AND n.name LIKE ?';
-    params.push(`%${target}%`);
-  }
-  if (fileFilter) {
-    where += ' AND n.file LIKE ?';
-    params.push(`%${fileFilter}%`);
-  }
-  if (kindFilter) {
-    where += ' AND n.kind = ?';
-    params.push(kindFilter);
-  }
-
-  const isValidThreshold = (v) => typeof v === 'number' && Number.isFinite(v);
-
-  let having = '';
-  if (aboveThreshold) {
-    const conditions = [];
-    if (isValidThreshold(thresholds.cognitive?.warn)) {
-      conditions.push(`fc.cognitive >= ${thresholds.cognitive.warn}`);
     }
-    if (isValidThreshold(thresholds.cyclomatic?.warn)) {
-      conditions.push(`fc.cyclomatic >= ${thresholds.cyclomatic.warn}`);
+    if (target) {
+      where += ' AND n.name LIKE ?';
+      params.push(`%${target}%`);
     }
-    if (isValidThreshold(thresholds.maxNesting?.warn)) {
-      conditions.push(`fc.max_nesting >= ${thresholds.maxNesting.warn}`);
+    if (fileFilter) {
+      where += ' AND n.file LIKE ?';
+      params.push(`%${fileFilter}%`);
     }
-    if (isValidThreshold(thresholds.maintainabilityIndex?.warn)) {
-      conditions.push(
-        `fc.maintainability_index > 0 AND fc.maintainability_index <= ${thresholds.maintainabilityIndex.warn}`,
-      );
+    if (kindFilter) {
+      where += ' AND n.kind = ?';
+      params.push(kindFilter);
     }
-    if (conditions.length > 0) {
-      having = `AND (${conditions.join(' OR ')})`;
+
+    const isValidThreshold = (v) => typeof v === 'number' && Number.isFinite(v);
+
+    let having = '';
+    if (aboveThreshold) {
+      const conditions = [];
+      if (isValidThreshold(thresholds.cognitive?.warn)) {
+        conditions.push(`fc.cognitive >= ${thresholds.cognitive.warn}`);
+      }
+      if (isValidThreshold(thresholds.cyclomatic?.warn)) {
+        conditions.push(`fc.cyclomatic >= ${thresholds.cyclomatic.warn}`);
+      }
+      if (isValidThreshold(thresholds.maxNesting?.warn)) {
+        conditions.push(`fc.max_nesting >= ${thresholds.maxNesting.warn}`);
+      }
+      if (isValidThreshold(thresholds.maintainabilityIndex?.warn)) {
+        conditions.push(
+          `fc.maintainability_index > 0 AND fc.maintainability_index <= ${thresholds.maintainabilityIndex.warn}`,
+        );
+      }
+      if (conditions.length > 0) {
+        having = `AND (${conditions.join(' OR ')})`;
+      }
     }
-  }
 
-  const orderMap = {
-    cognitive: 'fc.cognitive DESC',
-    cyclomatic: 'fc.cyclomatic DESC',
-    nesting: 'fc.max_nesting DESC',
-    mi: 'fc.maintainability_index ASC',
-    volume: 'fc.halstead_volume DESC',
-    effort: 'fc.halstead_effort DESC',
-    bugs: 'fc.halstead_bugs DESC',
-    loc: 'fc.loc DESC',
-  };
-  const orderBy = orderMap[sort] || 'fc.cognitive DESC';
-
-  let rows;
-  try {
-    rows = db
-      .prepare(
-        `SELECT n.name, n.kind, n.file, n.line, n.end_line,
-              fc.cognitive, fc.cyclomatic, fc.max_nesting,
-              fc.loc, fc.sloc, fc.maintainability_index,
-              fc.halstead_volume, fc.halstead_difficulty, fc.halstead_effort, fc.halstead_bugs
-       FROM function_complexity fc
-       JOIN nodes n ON fc.node_id = n.id
-       ${where} ${having}
-       ORDER BY ${orderBy}`,
-      )
-      .all(...params);
-  } catch {
-    // Check if graph has nodes even though complexity table is missing/empty
-    let hasGraph = false;
-    try {
-      hasGraph = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c > 0;
-    } catch {
-      /* ignore */
-    }
-    db.close();
-    return { functions: [], summary: null, thresholds, hasGraph };
-  }
-
-  // Post-filter test files if needed (belt-and-suspenders for isTestFile)
-  const filtered = noTests ? rows.filter((r) => !isTestFile(r.file)) : rows;
-
-  const functions = filtered.map((r) => {
-    const exceeds = [];
-    if (isValidThreshold(thresholds.cognitive?.warn) && r.cognitive >= thresholds.cognitive.warn)
-      exceeds.push('cognitive');
-    if (isValidThreshold(thresholds.cyclomatic?.warn) && r.cyclomatic >= thresholds.cyclomatic.warn)
-      exceeds.push('cyclomatic');
-    if (
-      isValidThreshold(thresholds.maxNesting?.warn) &&
-      r.max_nesting >= thresholds.maxNesting.warn
-    )
-      exceeds.push('maxNesting');
-    if (
-      isValidThreshold(thresholds.maintainabilityIndex?.warn) &&
-      r.maintainability_index > 0 &&
-      r.maintainability_index <= thresholds.maintainabilityIndex.warn
-    )
-      exceeds.push('maintainabilityIndex');
-
-    return {
-      name: r.name,
-      kind: r.kind,
-      file: r.file,
-      line: r.line,
-      endLine: r.end_line || null,
-      cognitive: r.cognitive,
-      cyclomatic: r.cyclomatic,
-      maxNesting: r.max_nesting,
-      loc: r.loc || 0,
-      sloc: r.sloc || 0,
-      maintainabilityIndex: r.maintainability_index || 0,
-      halstead: {
-        volume: r.halstead_volume || 0,
-        difficulty: r.halstead_difficulty || 0,
-        effort: r.halstead_effort || 0,
-        bugs: r.halstead_bugs || 0,
-      },
-      exceeds: exceeds.length > 0 ? exceeds : undefined,
+    const orderMap = {
+      cognitive: 'fc.cognitive DESC',
+      cyclomatic: 'fc.cyclomatic DESC',
+      nesting: 'fc.max_nesting DESC',
+      mi: 'fc.maintainability_index ASC',
+      volume: 'fc.halstead_volume DESC',
+      effort: 'fc.halstead_effort DESC',
+      bugs: 'fc.halstead_bugs DESC',
+      loc: 'fc.loc DESC',
     };
-  });
+    const orderBy = orderMap[sort] || 'fc.cognitive DESC';
 
-  // Summary stats
-  let summary = null;
-  try {
-    const allRows = db
-      .prepare(
-        `SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.maintainability_index
-       FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
-       WHERE n.kind IN ('function','method')
-       ${noTests ? `AND n.file NOT LIKE '%.test.%' AND n.file NOT LIKE '%.spec.%' AND n.file NOT LIKE '%__test__%' AND n.file NOT LIKE '%__tests__%' AND n.file NOT LIKE '%.stories.%'` : ''}`,
-      )
-      .all();
-
-    if (allRows.length > 0) {
-      const miValues = allRows.map((r) => r.maintainability_index || 0);
-      summary = {
-        analyzed: allRows.length,
-        avgCognitive: +(allRows.reduce((s, r) => s + r.cognitive, 0) / allRows.length).toFixed(1),
-        avgCyclomatic: +(allRows.reduce((s, r) => s + r.cyclomatic, 0) / allRows.length).toFixed(1),
-        maxCognitive: Math.max(...allRows.map((r) => r.cognitive)),
-        maxCyclomatic: Math.max(...allRows.map((r) => r.cyclomatic)),
-        avgMI: +(miValues.reduce((s, v) => s + v, 0) / miValues.length).toFixed(1),
-        minMI: +Math.min(...miValues).toFixed(1),
-        aboveWarn: allRows.filter(
-          (r) =>
-            (isValidThreshold(thresholds.cognitive?.warn) &&
-              r.cognitive >= thresholds.cognitive.warn) ||
-            (isValidThreshold(thresholds.cyclomatic?.warn) &&
-              r.cyclomatic >= thresholds.cyclomatic.warn) ||
-            (isValidThreshold(thresholds.maxNesting?.warn) &&
-              r.max_nesting >= thresholds.maxNesting.warn) ||
-            (isValidThreshold(thresholds.maintainabilityIndex?.warn) &&
-              r.maintainability_index > 0 &&
-              r.maintainability_index <= thresholds.maintainabilityIndex.warn),
-        ).length,
-      };
-    }
-  } catch {
-    /* ignore */
-  }
-
-  // When summary is null (no complexity rows), check if graph has nodes
-  let hasGraph = false;
-  if (summary === null) {
+    let rows;
     try {
-      hasGraph = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c > 0;
+      rows = db
+        .prepare(
+          `SELECT n.name, n.kind, n.file, n.line, n.end_line,
+                fc.cognitive, fc.cyclomatic, fc.max_nesting,
+                fc.loc, fc.sloc, fc.maintainability_index,
+                fc.halstead_volume, fc.halstead_difficulty, fc.halstead_effort, fc.halstead_bugs
+         FROM function_complexity fc
+         JOIN nodes n ON fc.node_id = n.id
+         ${where} ${having}
+         ORDER BY ${orderBy}`,
+        )
+        .all(...params);
+    } catch {
+      // Check if graph has nodes even though complexity table is missing/empty
+      let hasGraph = false;
+      try {
+        hasGraph = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c > 0;
+      } catch {
+        /* ignore */
+      }
+      return { functions: [], summary: null, thresholds, hasGraph };
+    }
+
+    // Post-filter test files if needed (belt-and-suspenders for isTestFile)
+    const filtered = noTests ? rows.filter((r) => !isTestFile(r.file)) : rows;
+
+    const functions = filtered.map((r) => {
+      const exceeds = [];
+      if (isValidThreshold(thresholds.cognitive?.warn) && r.cognitive >= thresholds.cognitive.warn)
+        exceeds.push('cognitive');
+      if (
+        isValidThreshold(thresholds.cyclomatic?.warn) &&
+        r.cyclomatic >= thresholds.cyclomatic.warn
+      )
+        exceeds.push('cyclomatic');
+      if (
+        isValidThreshold(thresholds.maxNesting?.warn) &&
+        r.max_nesting >= thresholds.maxNesting.warn
+      )
+        exceeds.push('maxNesting');
+      if (
+        isValidThreshold(thresholds.maintainabilityIndex?.warn) &&
+        r.maintainability_index > 0 &&
+        r.maintainability_index <= thresholds.maintainabilityIndex.warn
+      )
+        exceeds.push('maintainabilityIndex');
+
+      return {
+        name: r.name,
+        kind: r.kind,
+        file: r.file,
+        line: r.line,
+        endLine: r.end_line || null,
+        cognitive: r.cognitive,
+        cyclomatic: r.cyclomatic,
+        maxNesting: r.max_nesting,
+        loc: r.loc || 0,
+        sloc: r.sloc || 0,
+        maintainabilityIndex: r.maintainability_index || 0,
+        halstead: {
+          volume: r.halstead_volume || 0,
+          difficulty: r.halstead_difficulty || 0,
+          effort: r.halstead_effort || 0,
+          bugs: r.halstead_bugs || 0,
+        },
+        exceeds: exceeds.length > 0 ? exceeds : undefined,
+      };
+    });
+
+    // Summary stats
+    let summary = null;
+    try {
+      const allRows = db
+        .prepare(
+          `SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.maintainability_index
+         FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
+         WHERE n.kind IN ('function','method')
+         ${noTests ? `AND n.file NOT LIKE '%.test.%' AND n.file NOT LIKE '%.spec.%' AND n.file NOT LIKE '%__test__%' AND n.file NOT LIKE '%__tests__%' AND n.file NOT LIKE '%.stories.%'` : ''}`,
+        )
+        .all();
+
+      if (allRows.length > 0) {
+        const miValues = allRows.map((r) => r.maintainability_index || 0);
+        summary = {
+          analyzed: allRows.length,
+          avgCognitive: +(allRows.reduce((s, r) => s + r.cognitive, 0) / allRows.length).toFixed(1),
+          avgCyclomatic: +(allRows.reduce((s, r) => s + r.cyclomatic, 0) / allRows.length).toFixed(
+            1,
+          ),
+          maxCognitive: Math.max(...allRows.map((r) => r.cognitive)),
+          maxCyclomatic: Math.max(...allRows.map((r) => r.cyclomatic)),
+          avgMI: +(miValues.reduce((s, v) => s + v, 0) / miValues.length).toFixed(1),
+          minMI: +Math.min(...miValues).toFixed(1),
+          aboveWarn: allRows.filter(
+            (r) =>
+              (isValidThreshold(thresholds.cognitive?.warn) &&
+                r.cognitive >= thresholds.cognitive.warn) ||
+              (isValidThreshold(thresholds.cyclomatic?.warn) &&
+                r.cyclomatic >= thresholds.cyclomatic.warn) ||
+              (isValidThreshold(thresholds.maxNesting?.warn) &&
+                r.max_nesting >= thresholds.maxNesting.warn) ||
+              (isValidThreshold(thresholds.maintainabilityIndex?.warn) &&
+                r.maintainability_index > 0 &&
+                r.maintainability_index <= thresholds.maintainabilityIndex.warn),
+          ).length,
+        };
+      }
     } catch {
       /* ignore */
     }
-  }
 
-  db.close();
-  const base = { functions, summary, thresholds, hasGraph };
-  return paginateResult(base, 'functions', { limit: opts.limit, offset: opts.offset });
+    // When summary is null (no complexity rows), check if graph has nodes
+    let hasGraph = false;
+    if (summary === null) {
+      try {
+        hasGraph = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c > 0;
+      } catch {
+        /* ignore */
+      }
+    }
+
+    const base = { functions, summary, thresholds, hasGraph };
+    return paginateResult(base, 'functions', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 /**

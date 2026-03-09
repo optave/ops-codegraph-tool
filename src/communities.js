@@ -97,12 +97,15 @@ function getDirectory(filePath) {
 export function communitiesData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   const resolution = opts.resolution ?? 1.0;
-
-  const graph = buildGraphologyGraph(db, {
-    functions: opts.functions,
-    noTests: opts.noTests,
-  });
-  db.close();
+  let graph;
+  try {
+    graph = buildGraphologyGraph(db, {
+      functions: opts.functions,
+      noTests: opts.noTests,
+    });
+  } finally {
+    db.close();
+  }
 
   // Handle empty or trivial graphs
   if (graph.order === 0 || graph.size === 0) {

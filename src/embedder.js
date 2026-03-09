@@ -625,37 +625,39 @@ export async function searchData(query, customDbPath, opts = {}) {
   if (!prepared) return null;
   const { db, rows, modelKey, storedDim } = prepared;
 
-  const {
-    vectors: [queryVec],
-    dim,
-  } = await embed([query], modelKey);
+  try {
+    const {
+      vectors: [queryVec],
+      dim,
+    } = await embed([query], modelKey);
 
-  if (storedDim && dim !== storedDim) {
-    console.log(
-      `Warning: query model dimension (${dim}) doesn't match stored embeddings (${storedDim}).`,
-    );
-    console.log(`  Re-run \`codegraph embed\` with the same model, or use --model to match.`);
-    db.close();
-    return null;
-  }
-
-  const hc = new Map();
-  const results = [];
-  for (const row of rows) {
-    const vec = new Float32Array(new Uint8Array(row.vector).buffer);
-    const sim = cosineSim(queryVec, vec);
-
-    if (sim >= minScore) {
-      results.push({
-        ...normalizeSymbol(row, db, hc),
-        similarity: sim,
-      });
+    if (storedDim && dim !== storedDim) {
+      console.log(
+        `Warning: query model dimension (${dim}) doesn't match stored embeddings (${storedDim}).`,
+      );
+      console.log(`  Re-run \`codegraph embed\` with the same model, or use --model to match.`);
+      return null;
     }
-  }
 
-  results.sort((a, b) => b.similarity - a.similarity);
-  db.close();
-  return { results: results.slice(0, limit) };
+    const hc = new Map();
+    const results = [];
+    for (const row of rows) {
+      const vec = new Float32Array(new Uint8Array(row.vector).buffer);
+      const sim = cosineSim(queryVec, vec);
+
+      if (sim >= minScore) {
+        results.push({
+          ...normalizeSymbol(row, db, hc),
+          similarity: sim,
+        });
+      }
+    }
+
+    results.sort((a, b) => b.similarity - a.similarity);
+    return { results: results.slice(0, limit) };
+  } finally {
+    db.close();
+  }
 }
 
 /**
@@ -671,82 +673,84 @@ export async function multiSearchData(queries, customDbPath, opts = {}) {
   if (!prepared) return null;
   const { db, rows, modelKey, storedDim } = prepared;
 
-  const { vectors: queryVecs, dim } = await embed(queries, modelKey);
+  try {
+    const { vectors: queryVecs, dim } = await embed(queries, modelKey);
 
-  // Warn about similar queries that may bias RRF results
-  const SIMILARITY_WARN_THRESHOLD = 0.85;
-  for (let i = 0; i < queryVecs.length; i++) {
-    for (let j = i + 1; j < queryVecs.length; j++) {
-      const sim = cosineSim(queryVecs[i], queryVecs[j]);
-      if (sim >= SIMILARITY_WARN_THRESHOLD) {
-        warn(
-          `Queries "${queries[i]}" and "${queries[j]}" are very similar ` +
-            `(${(sim * 100).toFixed(0)}% cosine similarity). ` +
-            `This may bias RRF results toward their shared matches. ` +
-            `Consider using more distinct queries.`,
-        );
+    // Warn about similar queries that may bias RRF results
+    const SIMILARITY_WARN_THRESHOLD = 0.85;
+    for (let i = 0; i < queryVecs.length; i++) {
+      for (let j = i + 1; j < queryVecs.length; j++) {
+        const sim = cosineSim(queryVecs[i], queryVecs[j]);
+        if (sim >= SIMILARITY_WARN_THRESHOLD) {
+          warn(
+            `Queries "${queries[i]}" and "${queries[j]}" are very similar ` +
+              `(${(sim * 100).toFixed(0)}% cosine similarity). ` +
+              `This may bias RRF results toward their shared matches. ` +
+              `Consider using more distinct queries.`,
+          );
+        }
       }
     }
-  }
 
-  if (storedDim && dim !== storedDim) {
-    console.log(
-      `Warning: query model dimension (${dim}) doesn't match stored embeddings (${storedDim}).`,
-    );
-    console.log(`  Re-run \`codegraph embed\` with the same model, or use --model to match.`);
-    db.close();
-    return null;
-  }
+    if (storedDim && dim !== storedDim) {
+      console.log(
+        `Warning: query model dimension (${dim}) doesn't match stored embeddings (${storedDim}).`,
+      );
+      console.log(`  Re-run \`codegraph embed\` with the same model, or use --model to match.`);
+      return null;
+    }
 
-  // Parse row vectors once
-  const rowVecs = rows.map((row) => new Float32Array(new Uint8Array(row.vector).buffer));
+    // Parse row vectors once
+    const rowVecs = rows.map((row) => new Float32Array(new Uint8Array(row.vector).buffer));
 
-  // For each query: compute similarities, filter by minScore, rank
-  const perQueryRanked = queries.map((_query, qi) => {
-    const scored = [];
-    for (let ri = 0; ri < rows.length; ri++) {
-      const sim = cosineSim(queryVecs[qi], rowVecs[ri]);
-      if (sim >= minScore) {
-        scored.push({ rowIndex: ri, similarity: sim });
+    // For each query: compute similarities, filter by minScore, rank
+    const perQueryRanked = queries.map((_query, qi) => {
+      const scored = [];
+      for (let ri = 0; ri < rows.length; ri++) {
+        const sim = cosineSim(queryVecs[qi], rowVecs[ri]);
+        if (sim >= minScore) {
+          scored.push({ rowIndex: ri, similarity: sim });
+        }
+      }
+      scored.sort((a, b) => b.similarity - a.similarity);
+      // Assign 1-indexed ranks
+      return scored.map((item, rank) => ({ ...item, rank: rank + 1 }));
+    });
+
+    // Fuse results using RRF: for each unique row, sum 1/(k + rank_i) across queries
+    const fusionMap = new Map(); // rowIndex -> { rrfScore, queryScores[] }
+    for (let qi = 0; qi < queries.length; qi++) {
+      for (const item of perQueryRanked[qi]) {
+        if (!fusionMap.has(item.rowIndex)) {
+          fusionMap.set(item.rowIndex, { rrfScore: 0, queryScores: [] });
+        }
+        const entry = fusionMap.get(item.rowIndex);
+        entry.rrfScore += 1 / (k + item.rank);
+        entry.queryScores.push({
+          query: queries[qi],
+          similarity: item.similarity,
+          rank: item.rank,
+        });
       }
     }
-    scored.sort((a, b) => b.similarity - a.similarity);
-    // Assign 1-indexed ranks
-    return scored.map((item, rank) => ({ ...item, rank: rank + 1 }));
-  });
 
-  // Fuse results using RRF: for each unique row, sum 1/(k + rank_i) across queries
-  const fusionMap = new Map(); // rowIndex -> { rrfScore, queryScores[] }
-  for (let qi = 0; qi < queries.length; qi++) {
-    for (const item of perQueryRanked[qi]) {
-      if (!fusionMap.has(item.rowIndex)) {
-        fusionMap.set(item.rowIndex, { rrfScore: 0, queryScores: [] });
-      }
-      const entry = fusionMap.get(item.rowIndex);
-      entry.rrfScore += 1 / (k + item.rank);
-      entry.queryScores.push({
-        query: queries[qi],
-        similarity: item.similarity,
-        rank: item.rank,
+    // Build results sorted by RRF score
+    const hc = new Map();
+    const results = [];
+    for (const [rowIndex, entry] of fusionMap) {
+      const row = rows[rowIndex];
+      results.push({
+        ...normalizeSymbol(row, db, hc),
+        rrf: entry.rrfScore,
+        queryScores: entry.queryScores,
       });
     }
-  }
 
-  // Build results sorted by RRF score
-  const hc = new Map();
-  const results = [];
-  for (const [rowIndex, entry] of fusionMap) {
-    const row = rows[rowIndex];
-    results.push({
-      ...normalizeSymbol(row, db, hc),
-      rrf: entry.rrfScore,
-      queryScores: entry.queryScores,
-    });
+    results.sort((a, b) => b.rrf - a.rrf);
+    return { results: results.slice(0, limit) };
+  } finally {
+    db.close();
   }
-
-  results.sort((a, b) => b.rrf - a.rrf);
-  db.close();
-  return { results: results.slice(0, limit) };
 }
 
 /**
@@ -788,64 +792,64 @@ export function ftsSearchData(query, customDbPath, opts = {}) {
 
   const db = openReadonlyOrFail(customDbPath);
 
-  if (!hasFtsIndex(db)) {
-    db.close();
-    return null;
-  }
-
-  const ftsQuery = sanitizeFtsQuery(query);
-  if (!ftsQuery) {
-    db.close();
-    return { results: [] };
-  }
-
-  let sql = `
-    SELECT f.rowid AS node_id, rank AS bm25_score,
-           n.name, n.kind, n.file, n.line, n.end_line, n.role
-    FROM fts_index f
-    JOIN nodes n ON f.rowid = n.id
-    WHERE fts_index MATCH ?
-  `;
-  const params = [ftsQuery];
-
-  if (opts.kind) {
-    sql += ' AND n.kind = ?';
-    params.push(opts.kind);
-  }
-
-  const isGlob = opts.filePattern && /[*?[\]]/.test(opts.filePattern);
-  if (opts.filePattern && !isGlob) {
-    sql += ' AND n.file LIKE ?';
-    params.push(`%${opts.filePattern}%`);
-  }
-
-  sql += ' ORDER BY rank LIMIT ?';
-  params.push(limit * 5); // fetch generous set for post-filtering
-
-  let rows;
   try {
-    rows = db.prepare(sql).all(...params);
-  } catch {
-    // Invalid FTS5 query syntax — return empty
+    if (!hasFtsIndex(db)) {
+      return null;
+    }
+
+    const ftsQuery = sanitizeFtsQuery(query);
+    if (!ftsQuery) {
+      return { results: [] };
+    }
+
+    let sql = `
+      SELECT f.rowid AS node_id, rank AS bm25_score,
+             n.name, n.kind, n.file, n.line, n.end_line, n.role
+      FROM fts_index f
+      JOIN nodes n ON f.rowid = n.id
+      WHERE fts_index MATCH ?
+    `;
+    const params = [ftsQuery];
+
+    if (opts.kind) {
+      sql += ' AND n.kind = ?';
+      params.push(opts.kind);
+    }
+
+    const isGlob = opts.filePattern && /[*?[\]]/.test(opts.filePattern);
+    if (opts.filePattern && !isGlob) {
+      sql += ' AND n.file LIKE ?';
+      params.push(`%${opts.filePattern}%`);
+    }
+
+    sql += ' ORDER BY rank LIMIT ?';
+    params.push(limit * 5); // fetch generous set for post-filtering
+
+    let rows;
+    try {
+      rows = db.prepare(sql).all(...params);
+    } catch {
+      // Invalid FTS5 query syntax — return empty
+      return { results: [] };
+    }
+
+    if (isGlob) {
+      rows = rows.filter((row) => globMatch(row.file, opts.filePattern));
+    }
+    if (noTests) {
+      rows = rows.filter((row) => !TEST_PATTERN.test(row.file));
+    }
+
+    const hc = new Map();
+    const results = rows.slice(0, limit).map((row) => ({
+      ...normalizeSymbol(row, db, hc),
+      bm25Score: -row.bm25_score, // FTS5 rank is negative; negate for display
+    }));
+
+    return { results };
+  } finally {
     db.close();
-    return { results: [] };
   }
-
-  if (isGlob) {
-    rows = rows.filter((row) => globMatch(row.file, opts.filePattern));
-  }
-  if (noTests) {
-    rows = rows.filter((row) => !TEST_PATTERN.test(row.file));
-  }
-
-  const hc = new Map();
-  const results = rows.slice(0, limit).map((row) => ({
-    ...normalizeSymbol(row, db, hc),
-    bm25Score: -row.bm25_score, // FTS5 rank is negative; negate for display
-  }));
-
-  db.close();
-  return { results };
 }
 
 /**

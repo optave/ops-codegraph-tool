@@ -11,429 +11,25 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { DATAFLOW_RULES } from './ast-analysis/rules/index.js';
+import {
+  makeDataflowRules as _makeDataflowRules,
+  buildExtensionSet,
+  buildExtToLangMap,
+} from './ast-analysis/shared.js';
 import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
-import { LANGUAGE_REGISTRY } from './parser.js';
+
 import { ALL_SYMBOL_KINDS, normalizeSymbol } from './queries.js';
 import { outputResult } from './result-formatter.js';
 import { isTestFile } from './test-filter.js';
 
-// ─── Language-Specific Dataflow Rules ────────────────────────────────────
+// Re-export for backward compatibility
+export { DATAFLOW_RULES };
+export { _makeDataflowRules as makeDataflowRules };
 
-const DATAFLOW_DEFAULTS = {
-  // Scope entry
-  functionNodes: new Set(), // REQUIRED: non-empty
-
-  // Function name extraction
-  nameField: 'name',
-  varAssignedFnParent: null, // parent type for `const fn = ...` (JS only)
-  assignmentFnParent: null, // parent type for `x = function...` (JS only)
-  pairFnParent: null, // parent type for `{ key: function }` (JS only)
-
-  // Parameters
-  paramListField: 'parameters',
-  paramIdentifier: 'identifier',
-  paramWrapperTypes: new Set(),
-  defaultParamType: null,
-  restParamType: null,
-  objectDestructType: null,
-  arrayDestructType: null,
-  shorthandPropPattern: null,
-  pairPatternType: null,
-  extractParamName: null, // override: (node) => string[]
-
-  // Return
-  returnNode: null,
-
-  // Variable declarations
-  varDeclaratorNode: null,
-  varDeclaratorNodes: null,
-  varNameField: 'name',
-  varValueField: 'value',
-  assignmentNode: null,
-  assignLeftField: 'left',
-  assignRightField: 'right',
-
-  // Calls
-  callNode: null,
-  callNodes: null,
-  callFunctionField: 'function',
-  callArgsField: 'arguments',
-  spreadType: null,
-
-  // Member access
-  memberNode: null,
-  memberObjectField: 'object',
-  memberPropertyField: 'property',
-  optionalChainNode: null,
-
-  // Await
-  awaitNode: null,
-
-  // Mutation
-  mutatingMethods: new Set(),
-  expressionStmtNode: 'expression_statement',
-  callObjectField: null, // Java: combined call+member has [object] field on call node
-
-  // Structural wrappers
-  expressionListType: null, // Go: expression_list wraps LHS/RHS of short_var_declaration
-  equalsClauseType: null, // C#: equals_value_clause wraps variable initializer
-  argumentWrapperType: null, // PHP: individual args wrapped in 'argument' nodes
-  extraIdentifierTypes: null, // Set of additional identifier-like types (PHP: variable_name, name)
-};
-
-const DATAFLOW_RULE_KEYS = new Set(Object.keys(DATAFLOW_DEFAULTS));
-
-export function makeDataflowRules(overrides) {
-  for (const key of Object.keys(overrides)) {
-    if (!DATAFLOW_RULE_KEYS.has(key)) {
-      throw new Error(`Dataflow rules: unknown key "${key}"`);
-    }
-  }
-  const rules = { ...DATAFLOW_DEFAULTS, ...overrides };
-  if (!(rules.functionNodes instanceof Set) || rules.functionNodes.size === 0) {
-    throw new Error('Dataflow rules: functionNodes must be a non-empty Set');
-  }
-  return rules;
-}
-
-// ── JS / TS / TSX ────────────────────────────────────────────────────────
-
-const JS_TS_MUTATING = new Set([
-  'push',
-  'pop',
-  'shift',
-  'unshift',
-  'splice',
-  'sort',
-  'reverse',
-  'fill',
-  'set',
-  'delete',
-  'add',
-  'clear',
-]);
-
-const JS_TS_DATAFLOW = makeDataflowRules({
-  functionNodes: new Set([
-    'function_declaration',
-    'method_definition',
-    'arrow_function',
-    'function_expression',
-    'function',
-  ]),
-  varAssignedFnParent: 'variable_declarator',
-  assignmentFnParent: 'assignment_expression',
-  pairFnParent: 'pair',
-  paramWrapperTypes: new Set(['required_parameter', 'optional_parameter']),
-  defaultParamType: 'assignment_pattern',
-  restParamType: 'rest_pattern',
-  objectDestructType: 'object_pattern',
-  arrayDestructType: 'array_pattern',
-  shorthandPropPattern: 'shorthand_property_identifier_pattern',
-  pairPatternType: 'pair_pattern',
-  returnNode: 'return_statement',
-  varDeclaratorNode: 'variable_declarator',
-  assignmentNode: 'assignment_expression',
-  callNode: 'call_expression',
-  spreadType: 'spread_element',
-  memberNode: 'member_expression',
-  optionalChainNode: 'optional_chain_expression',
-  awaitNode: 'await_expression',
-  mutatingMethods: JS_TS_MUTATING,
-});
-
-// ── Python ───────────────────────────────────────────────────────────────
-
-const PYTHON_DATAFLOW = makeDataflowRules({
-  functionNodes: new Set(['function_definition', 'lambda']),
-  defaultParamType: 'default_parameter',
-  restParamType: 'list_splat_pattern',
-  returnNode: 'return_statement',
-  varDeclaratorNode: null,
-  assignmentNode: 'assignment',
-  assignLeftField: 'left',
-  assignRightField: 'right',
-  callNode: 'call',
-  callFunctionField: 'function',
-  callArgsField: 'arguments',
-  spreadType: 'list_splat',
-  memberNode: 'attribute',
-  memberObjectField: 'object',
-  memberPropertyField: 'attribute',
-  awaitNode: 'await',
-  mutatingMethods: new Set([
-    'append',
-    'extend',
-    'insert',
-    'pop',
-    'remove',
-    'clear',
-    'sort',
-    'reverse',
-    'add',
-    'discard',
-    'update',
-  ]),
-  extractParamName(node) {
-    // typed_parameter / typed_default_parameter: first identifier child is the name
-    if (node.type === 'typed_parameter' || node.type === 'typed_default_parameter') {
-      for (const c of node.namedChildren) {
-        if (c.type === 'identifier') return [c.text];
-      }
-      return null;
-    }
-    if (node.type === 'default_parameter') {
-      const nameNode = node.childForFieldName('name');
-      return nameNode ? [nameNode.text] : null;
-    }
-    if (node.type === 'list_splat_pattern' || node.type === 'dictionary_splat_pattern') {
-      for (const c of node.namedChildren) {
-        if (c.type === 'identifier') return [c.text];
-      }
-      return null;
-    }
-    return null;
-  },
-});
-
-// ── Go ───────────────────────────────────────────────────────────────────
-
-const GO_DATAFLOW = makeDataflowRules({
-  functionNodes: new Set(['function_declaration', 'method_declaration', 'func_literal']),
-  returnNode: 'return_statement',
-  varDeclaratorNodes: new Set(['short_var_declaration', 'var_declaration']),
-  varNameField: 'left',
-  varValueField: 'right',
-  assignmentNode: 'assignment_statement',
-  assignLeftField: 'left',
-  assignRightField: 'right',
-  callNode: 'call_expression',
-  callFunctionField: 'function',
-  callArgsField: 'arguments',
-  memberNode: 'selector_expression',
-  memberObjectField: 'operand',
-  memberPropertyField: 'field',
-  mutatingMethods: new Set(),
-  expressionListType: 'expression_list',
-  extractParamName(node) {
-    // Go: parameter_declaration has name(s) + type; e.g. `a, b int`
-    if (node.type === 'parameter_declaration') {
-      const names = [];
-      for (const c of node.namedChildren) {
-        if (c.type === 'identifier') names.push(c.text);
-      }
-      return names.length > 0 ? names : null;
-    }
-    if (node.type === 'variadic_parameter_declaration') {
-      const nameNode = node.childForFieldName('name');
-      return nameNode ? [nameNode.text] : null;
-    }
-    return null;
-  },
-});
-
-// ── Rust ─────────────────────────────────────────────────────────────────
-
-const RUST_DATAFLOW = makeDataflowRules({
-  functionNodes: new Set(['function_item', 'closure_expression']),
-  returnNode: 'return_expression',
-  varDeclaratorNode: 'let_declaration',
-  varNameField: 'pattern',
-  varValueField: 'value',
-  assignmentNode: 'assignment_expression',
-  callNode: 'call_expression',
-  callFunctionField: 'function',
-  callArgsField: 'arguments',
-  memberNode: 'field_expression',
-  memberObjectField: 'value',
-  memberPropertyField: 'field',
-  awaitNode: 'await_expression',
-  mutatingMethods: new Set(['push', 'pop', 'insert', 'remove', 'clear', 'sort', 'reverse']),
-  extractParamName(node) {
-    if (node.type === 'parameter') {
-      const pat = node.childForFieldName('pattern');
-      if (pat?.type === 'identifier') return [pat.text];
-      return null;
-    }
-    if (node.type === 'identifier') return [node.text];
-    return null;
-  },
-});
-
-// ── Java ─────────────────────────────────────────────────────────────────
-
-const JAVA_DATAFLOW = makeDataflowRules({
-  functionNodes: new Set(['method_declaration', 'constructor_declaration', 'lambda_expression']),
-  returnNode: 'return_statement',
-  varDeclaratorNode: 'variable_declarator',
-  assignmentNode: 'assignment_expression',
-  callNodes: new Set(['method_invocation', 'object_creation_expression']),
-  callFunctionField: 'name',
-  callArgsField: 'arguments',
-  memberNode: 'field_access',
-  memberObjectField: 'object',
-  memberPropertyField: 'field',
-  callObjectField: 'object',
-  argumentWrapperType: 'argument',
-  mutatingMethods: new Set(['add', 'remove', 'clear', 'put', 'set', 'push', 'pop', 'sort']),
-  extractParamName(node) {
-    if (node.type === 'formal_parameter' || node.type === 'spread_parameter') {
-      const nameNode = node.childForFieldName('name');
-      return nameNode ? [nameNode.text] : null;
-    }
-    if (node.type === 'identifier') return [node.text];
-    return null;
-  },
-});
-
-// ── C# ───────────────────────────────────────────────────────────────────
-
-const CSHARP_DATAFLOW = makeDataflowRules({
-  functionNodes: new Set([
-    'method_declaration',
-    'constructor_declaration',
-    'lambda_expression',
-    'local_function_statement',
-  ]),
-  returnNode: 'return_statement',
-  varDeclaratorNode: 'variable_declarator',
-  varNameField: 'name',
-  assignmentNode: 'assignment_expression',
-  callNode: 'invocation_expression',
-  callFunctionField: 'function',
-  callArgsField: 'arguments',
-  memberNode: 'member_access_expression',
-  memberObjectField: 'expression',
-  memberPropertyField: 'name',
-  awaitNode: 'await_expression',
-  argumentWrapperType: 'argument',
-  mutatingMethods: new Set(['Add', 'Remove', 'Clear', 'Insert', 'Sort', 'Reverse', 'Push', 'Pop']),
-  extractParamName(node) {
-    if (node.type === 'parameter') {
-      const nameNode = node.childForFieldName('name');
-      return nameNode ? [nameNode.text] : null;
-    }
-    if (node.type === 'identifier') return [node.text];
-    return null;
-  },
-});
-
-// ── PHP ──────────────────────────────────────────────────────────────────
-
-const PHP_DATAFLOW = makeDataflowRules({
-  functionNodes: new Set([
-    'function_definition',
-    'method_declaration',
-    'anonymous_function_creation_expression',
-    'arrow_function',
-  ]),
-  paramListField: 'parameters',
-  paramIdentifier: 'variable_name',
-  returnNode: 'return_statement',
-  varDeclaratorNode: null,
-  assignmentNode: 'assignment_expression',
-  assignLeftField: 'left',
-  assignRightField: 'right',
-  callNodes: new Set([
-    'function_call_expression',
-    'member_call_expression',
-    'scoped_call_expression',
-  ]),
-  callFunctionField: 'function',
-  callArgsField: 'arguments',
-  spreadType: 'spread_expression',
-  memberNode: 'member_access_expression',
-  memberObjectField: 'object',
-  memberPropertyField: 'name',
-  argumentWrapperType: 'argument',
-  extraIdentifierTypes: new Set(['variable_name', 'name']),
-  mutatingMethods: new Set(['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse']),
-  extractParamName(node) {
-    // PHP: simple_parameter → $name or &$name
-    if (node.type === 'simple_parameter' || node.type === 'variadic_parameter') {
-      const nameNode = node.childForFieldName('name');
-      return nameNode ? [nameNode.text] : null;
-    }
-    if (node.type === 'variable_name') return [node.text];
-    return null;
-  },
-});
-
-// ── Ruby ─────────────────────────────────────────────────────────────────
-
-const RUBY_DATAFLOW = makeDataflowRules({
-  functionNodes: new Set(['method', 'singleton_method', 'lambda']),
-  paramListField: 'parameters',
-  returnNode: 'return',
-  varDeclaratorNode: null,
-  assignmentNode: 'assignment',
-  assignLeftField: 'left',
-  assignRightField: 'right',
-  callNode: 'call',
-  callFunctionField: 'method',
-  callArgsField: 'arguments',
-  spreadType: 'splat_parameter',
-  memberNode: 'call',
-  memberObjectField: 'receiver',
-  memberPropertyField: 'method',
-  mutatingMethods: new Set([
-    'push',
-    'pop',
-    'shift',
-    'unshift',
-    'delete',
-    'clear',
-    'sort!',
-    'reverse!',
-    'map!',
-    'select!',
-    'reject!',
-    'compact!',
-    'flatten!',
-    'concat',
-    'replace',
-    'insert',
-  ]),
-  extractParamName(node) {
-    if (node.type === 'identifier') return [node.text];
-    if (
-      node.type === 'optional_parameter' ||
-      node.type === 'keyword_parameter' ||
-      node.type === 'splat_parameter' ||
-      node.type === 'hash_splat_parameter'
-    ) {
-      const nameNode = node.childForFieldName('name');
-      return nameNode ? [nameNode.text] : null;
-    }
-    return null;
-  },
-});
-
-// ── Rules Map + Extensions Set ───────────────────────────────────────────
-
-export const DATAFLOW_RULES = new Map([
-  ['javascript', JS_TS_DATAFLOW],
-  ['typescript', JS_TS_DATAFLOW],
-  ['tsx', JS_TS_DATAFLOW],
-  ['python', PYTHON_DATAFLOW],
-  ['go', GO_DATAFLOW],
-  ['rust', RUST_DATAFLOW],
-  ['java', JAVA_DATAFLOW],
-  ['csharp', CSHARP_DATAFLOW],
-  ['php', PHP_DATAFLOW],
-  ['ruby', RUBY_DATAFLOW],
-]);
-
-const DATAFLOW_LANG_IDS = new Set(DATAFLOW_RULES.keys());
-
-export const DATAFLOW_EXTENSIONS = new Set();
-for (const entry of LANGUAGE_REGISTRY) {
-  if (DATAFLOW_RULES.has(entry.id)) {
-    for (const ext of entry.extensions) DATAFLOW_EXTENSIONS.add(ext);
-  }
-}
+export const DATAFLOW_EXTENSIONS = buildExtensionSet(DATAFLOW_RULES);
 
 // ── AST helpers ──────────────────────────────────────────────────────────────
 
@@ -1011,12 +607,7 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
 
   // Always build ext→langId map so native-only builds (where _langId is unset)
   // can still derive the language from the file extension.
-  const extToLang = new Map();
-  for (const entry of LANGUAGE_REGISTRY) {
-    for (const ext of entry.extensions) {
-      extToLang.set(ext, entry.id);
-    }
-  }
+  const extToLang = buildExtToLangMap();
 
   for (const [relPath, symbols] of fileSymbols) {
     if (!symbols._tree && !symbols.dataflow) {
@@ -1075,7 +666,7 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
         if (!tree) {
           if (!getParserFn) continue;
           langId = extToLang.get(ext);
-          if (!langId || !DATAFLOW_LANG_IDS.has(langId)) continue;
+          if (!langId || !DATAFLOW_RULES.has(langId)) continue;
 
           const absPath = path.join(rootDir, relPath);
           let code;
@@ -1223,134 +814,135 @@ function hasDataflowTable(db) {
  */
 export function dataflowData(name, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
+  try {
+    const noTests = opts.noTests || false;
 
-  if (!hasDataflowTable(db)) {
-    db.close();
-    return {
-      name,
-      results: [],
-      warning:
-        'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
-    };
-  }
-
-  const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
-  if (nodes.length === 0) {
-    db.close();
-    return { name, results: [] };
-  }
-
-  const flowsToOut = db.prepare(
-    `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
-     FROM dataflow d JOIN nodes n ON d.target_id = n.id
-     WHERE d.source_id = ? AND d.kind = 'flows_to'`,
-  );
-  const flowsToIn = db.prepare(
-    `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
-     FROM dataflow d JOIN nodes n ON d.source_id = n.id
-     WHERE d.target_id = ? AND d.kind = 'flows_to'`,
-  );
-  const returnsOut = db.prepare(
-    `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
-     FROM dataflow d JOIN nodes n ON d.target_id = n.id
-     WHERE d.source_id = ? AND d.kind = 'returns'`,
-  );
-  const returnsIn = db.prepare(
-    `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
-     FROM dataflow d JOIN nodes n ON d.source_id = n.id
-     WHERE d.target_id = ? AND d.kind = 'returns'`,
-  );
-  const mutatesOut = db.prepare(
-    `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
-     FROM dataflow d JOIN nodes n ON d.target_id = n.id
-     WHERE d.source_id = ? AND d.kind = 'mutates'`,
-  );
-  const mutatesIn = db.prepare(
-    `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
-     FROM dataflow d JOIN nodes n ON d.source_id = n.id
-     WHERE d.target_id = ? AND d.kind = 'mutates'`,
-  );
-
-  const hc = new Map();
-  const results = nodes.map((node) => {
-    const sym = normalizeSymbol(node, db, hc);
-
-    const flowsTo = flowsToOut.all(node.id).map((r) => ({
-      target: r.target_name,
-      kind: r.target_kind,
-      file: r.target_file,
-      line: r.line,
-      paramIndex: r.param_index,
-      expression: r.expression,
-      confidence: r.confidence,
-    }));
-
-    const flowsFrom = flowsToIn.all(node.id).map((r) => ({
-      source: r.source_name,
-      kind: r.source_kind,
-      file: r.source_file,
-      line: r.line,
-      paramIndex: r.param_index,
-      expression: r.expression,
-      confidence: r.confidence,
-    }));
-
-    const returnConsumers = returnsOut.all(node.id).map((r) => ({
-      consumer: r.target_name,
-      kind: r.target_kind,
-      file: r.target_file,
-      line: r.line,
-      expression: r.expression,
-    }));
-
-    const returnedBy = returnsIn.all(node.id).map((r) => ({
-      producer: r.source_name,
-      kind: r.source_kind,
-      file: r.source_file,
-      line: r.line,
-      expression: r.expression,
-    }));
-
-    const mutatesTargets = mutatesOut.all(node.id).map((r) => ({
-      target: r.target_name,
-      expression: r.expression,
-      line: r.line,
-    }));
-
-    const mutatedBy = mutatesIn.all(node.id).map((r) => ({
-      source: r.source_name,
-      expression: r.expression,
-      line: r.line,
-    }));
-
-    if (noTests) {
-      const filter = (arr) => arr.filter((r) => !isTestFile(r.file));
+    if (!hasDataflowTable(db)) {
       return {
-        ...sym,
-        flowsTo: filter(flowsTo),
-        flowsFrom: filter(flowsFrom),
-        returns: returnConsumers.filter((r) => !isTestFile(r.file)),
-        returnedBy: returnedBy.filter((r) => !isTestFile(r.file)),
-        mutates: mutatesTargets,
-        mutatedBy,
+        name,
+        results: [],
+        warning:
+          'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
       };
     }
 
-    return {
-      ...sym,
-      flowsTo,
-      flowsFrom,
-      returns: returnConsumers,
-      returnedBy,
-      mutates: mutatesTargets,
-      mutatedBy,
-    };
-  });
+    const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    if (nodes.length === 0) {
+      return { name, results: [] };
+    }
 
-  db.close();
-  const base = { name, results };
-  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    const flowsToOut = db.prepare(
+      `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
+     FROM dataflow d JOIN nodes n ON d.target_id = n.id
+     WHERE d.source_id = ? AND d.kind = 'flows_to'`,
+    );
+    const flowsToIn = db.prepare(
+      `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
+     FROM dataflow d JOIN nodes n ON d.source_id = n.id
+     WHERE d.target_id = ? AND d.kind = 'flows_to'`,
+    );
+    const returnsOut = db.prepare(
+      `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
+     FROM dataflow d JOIN nodes n ON d.target_id = n.id
+     WHERE d.source_id = ? AND d.kind = 'returns'`,
+    );
+    const returnsIn = db.prepare(
+      `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
+     FROM dataflow d JOIN nodes n ON d.source_id = n.id
+     WHERE d.target_id = ? AND d.kind = 'returns'`,
+    );
+    const mutatesOut = db.prepare(
+      `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
+     FROM dataflow d JOIN nodes n ON d.target_id = n.id
+     WHERE d.source_id = ? AND d.kind = 'mutates'`,
+    );
+    const mutatesIn = db.prepare(
+      `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
+     FROM dataflow d JOIN nodes n ON d.source_id = n.id
+     WHERE d.target_id = ? AND d.kind = 'mutates'`,
+    );
+
+    const hc = new Map();
+    const results = nodes.map((node) => {
+      const sym = normalizeSymbol(node, db, hc);
+
+      const flowsTo = flowsToOut.all(node.id).map((r) => ({
+        target: r.target_name,
+        kind: r.target_kind,
+        file: r.target_file,
+        line: r.line,
+        paramIndex: r.param_index,
+        expression: r.expression,
+        confidence: r.confidence,
+      }));
+
+      const flowsFrom = flowsToIn.all(node.id).map((r) => ({
+        source: r.source_name,
+        kind: r.source_kind,
+        file: r.source_file,
+        line: r.line,
+        paramIndex: r.param_index,
+        expression: r.expression,
+        confidence: r.confidence,
+      }));
+
+      const returnConsumers = returnsOut.all(node.id).map((r) => ({
+        consumer: r.target_name,
+        kind: r.target_kind,
+        file: r.target_file,
+        line: r.line,
+        expression: r.expression,
+      }));
+
+      const returnedBy = returnsIn.all(node.id).map((r) => ({
+        producer: r.source_name,
+        kind: r.source_kind,
+        file: r.source_file,
+        line: r.line,
+        expression: r.expression,
+      }));
+
+      const mutatesTargets = mutatesOut.all(node.id).map((r) => ({
+        target: r.target_name,
+        expression: r.expression,
+        line: r.line,
+      }));
+
+      const mutatedBy = mutatesIn.all(node.id).map((r) => ({
+        source: r.source_name,
+        expression: r.expression,
+        line: r.line,
+      }));
+
+      if (noTests) {
+        const filter = (arr) => arr.filter((r) => !isTestFile(r.file));
+        return {
+          ...sym,
+          flowsTo: filter(flowsTo),
+          flowsFrom: filter(flowsFrom),
+          returns: returnConsumers.filter((r) => !isTestFile(r.file)),
+          returnedBy: returnedBy.filter((r) => !isTestFile(r.file)),
+          mutates: mutatesTargets,
+          mutatedBy,
+        };
+      }
+
+      return {
+        ...sym,
+        flowsTo,
+        flowsFrom,
+        returns: returnConsumers,
+        returnedBy,
+        mutates: mutatesTargets,
+        mutatedBy,
+      };
+    });
+
+    const base = { name, results };
+    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 /**
@@ -1364,125 +956,123 @@ export function dataflowData(name, customDbPath, opts = {}) {
  */
 export function dataflowPathData(from, to, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
-  const maxDepth = opts.maxDepth || 10;
+  try {
+    const noTests = opts.noTests || false;
+    const maxDepth = opts.maxDepth || 10;
 
-  if (!hasDataflowTable(db)) {
-    db.close();
-    return {
-      from,
-      to,
-      found: false,
-      warning:
-        'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
-    };
-  }
+    if (!hasDataflowTable(db)) {
+      return {
+        from,
+        to,
+        found: false,
+        warning:
+          'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
+      };
+    }
 
-  const fromNodes = findNodes(db, from, { noTests, file: opts.fromFile, kind: opts.kind });
-  if (fromNodes.length === 0) {
-    db.close();
-    return { from, to, found: false, error: `No symbol matching "${from}"` };
-  }
+    const fromNodes = findNodes(db, from, { noTests, file: opts.fromFile, kind: opts.kind });
+    if (fromNodes.length === 0) {
+      return { from, to, found: false, error: `No symbol matching "${from}"` };
+    }
 
-  const toNodes = findNodes(db, to, { noTests, file: opts.toFile, kind: opts.kind });
-  if (toNodes.length === 0) {
-    db.close();
-    return { from, to, found: false, error: `No symbol matching "${to}"` };
-  }
+    const toNodes = findNodes(db, to, { noTests, file: opts.toFile, kind: opts.kind });
+    if (toNodes.length === 0) {
+      return { from, to, found: false, error: `No symbol matching "${to}"` };
+    }
 
-  const sourceNode = fromNodes[0];
-  const targetNode = toNodes[0];
+    const sourceNode = fromNodes[0];
+    const targetNode = toNodes[0];
 
-  if (sourceNode.id === targetNode.id) {
-    const hc = new Map();
-    const sym = normalizeSymbol(sourceNode, db, hc);
-    db.close();
-    return {
-      from,
-      to,
-      found: true,
-      hops: 0,
-      path: [{ ...sym, edgeKind: null }],
-    };
-  }
+    if (sourceNode.id === targetNode.id) {
+      const hc = new Map();
+      const sym = normalizeSymbol(sourceNode, db, hc);
+      return {
+        from,
+        to,
+        found: true,
+        hops: 0,
+        path: [{ ...sym, edgeKind: null }],
+      };
+    }
 
-  // BFS through flows_to and returns edges
-  const neighborStmt = db.prepare(
-    `SELECT n.id, n.name, n.kind, n.file, n.line, d.kind AS edge_kind, d.expression
+    // BFS through flows_to and returns edges
+    const neighborStmt = db.prepare(
+      `SELECT n.id, n.name, n.kind, n.file, n.line, d.kind AS edge_kind, d.expression
      FROM dataflow d JOIN nodes n ON d.target_id = n.id
      WHERE d.source_id = ? AND d.kind IN ('flows_to', 'returns')`,
-  );
+    );
 
-  const visited = new Set([sourceNode.id]);
-  const parent = new Map();
-  let queue = [sourceNode.id];
-  let found = false;
+    const visited = new Set([sourceNode.id]);
+    const parent = new Map();
+    let queue = [sourceNode.id];
+    let found = false;
 
-  for (let depth = 1; depth <= maxDepth; depth++) {
-    const nextQueue = [];
-    for (const currentId of queue) {
-      const neighbors = neighborStmt.all(currentId);
-      for (const n of neighbors) {
-        if (noTests && isTestFile(n.file)) continue;
-        if (n.id === targetNode.id) {
-          if (!found) {
-            found = true;
+    for (let depth = 1; depth <= maxDepth; depth++) {
+      const nextQueue = [];
+      for (const currentId of queue) {
+        const neighbors = neighborStmt.all(currentId);
+        for (const n of neighbors) {
+          if (noTests && isTestFile(n.file)) continue;
+          if (n.id === targetNode.id) {
+            if (!found) {
+              found = true;
+              parent.set(n.id, {
+                parentId: currentId,
+                edgeKind: n.edge_kind,
+                expression: n.expression,
+              });
+            }
+            continue;
+          }
+          if (!visited.has(n.id)) {
+            visited.add(n.id);
             parent.set(n.id, {
               parentId: currentId,
               edgeKind: n.edge_kind,
               expression: n.expression,
             });
+            nextQueue.push(n.id);
           }
-          continue;
-        }
-        if (!visited.has(n.id)) {
-          visited.add(n.id);
-          parent.set(n.id, {
-            parentId: currentId,
-            edgeKind: n.edge_kind,
-            expression: n.expression,
-          });
-          nextQueue.push(n.id);
         }
       }
+      if (found) break;
+      queue = nextQueue;
+      if (queue.length === 0) break;
     }
-    if (found) break;
-    queue = nextQueue;
-    if (queue.length === 0) break;
-  }
 
-  if (!found) {
-    db.close();
-    return { from, to, found: false };
-  }
+    if (!found) {
+      return { from, to, found: false };
+    }
 
-  // Reconstruct path
-  const nodeById = db.prepare('SELECT * FROM nodes WHERE id = ?');
-  const hc = new Map();
-  const pathItems = [];
-  let cur = targetNode.id;
-  while (cur !== undefined) {
-    const nodeRow = nodeById.get(cur);
-    const parentInfo = parent.get(cur);
-    pathItems.unshift({
-      ...normalizeSymbol(nodeRow, db, hc),
-      edgeKind: parentInfo?.edgeKind ?? null,
-      expression: parentInfo?.expression ?? null,
-    });
-    cur = parentInfo?.parentId;
-    if (cur === sourceNode.id) {
-      const srcRow = nodeById.get(cur);
+    // Reconstruct path
+    const nodeById = db.prepare('SELECT * FROM nodes WHERE id = ?');
+    const hc = new Map();
+    const pathItems = [];
+    let cur = targetNode.id;
+    while (cur !== undefined) {
+      const nodeRow = nodeById.get(cur);
+      const parentInfo = parent.get(cur);
       pathItems.unshift({
-        ...normalizeSymbol(srcRow, db, hc),
-        edgeKind: null,
-        expression: null,
+        ...normalizeSymbol(nodeRow, db, hc),
+        edgeKind: parentInfo?.edgeKind ?? null,
+        expression: parentInfo?.expression ?? null,
       });
-      break;
+      cur = parentInfo?.parentId;
+      if (cur === sourceNode.id) {
+        const srcRow = nodeById.get(cur);
+        pathItems.unshift({
+          ...normalizeSymbol(srcRow, db, hc),
+          edgeKind: null,
+          expression: null,
+        });
+        break;
+      }
     }
-  }
 
-  db.close();
-  return { from, to, found: true, hops: pathItems.length - 1, path: pathItems };
+    return { from, to, found: true, hops: pathItems.length - 1, path: pathItems };
+  } finally {
+    db.close();
+  }
 }
 
 /**
@@ -1495,66 +1085,67 @@ export function dataflowPathData(from, to, customDbPath, opts = {}) {
  */
 export function dataflowImpactData(name, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const maxDepth = opts.depth || 5;
-  const noTests = opts.noTests || false;
+  try {
+    const maxDepth = opts.depth || 5;
+    const noTests = opts.noTests || false;
 
-  if (!hasDataflowTable(db)) {
-    db.close();
-    return {
-      name,
-      results: [],
-      warning:
-        'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
-    };
-  }
-
-  const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
-  if (nodes.length === 0) {
-    db.close();
-    return { name, results: [] };
-  }
-
-  // Forward BFS: who consumes this function's return value (directly or transitively)?
-  const consumersStmt = db.prepare(
-    `SELECT DISTINCT n.*
-     FROM dataflow d JOIN nodes n ON d.target_id = n.id
-     WHERE d.source_id = ? AND d.kind = 'returns'`,
-  );
-
-  const hc = new Map();
-  const results = nodes.map((node) => {
-    const sym = normalizeSymbol(node, db, hc);
-    const visited = new Set([node.id]);
-    const levels = {};
-    let frontier = [node.id];
-
-    for (let d = 1; d <= maxDepth; d++) {
-      const nextFrontier = [];
-      for (const fid of frontier) {
-        const consumers = consumersStmt.all(fid);
-        for (const c of consumers) {
-          if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
-            visited.add(c.id);
-            nextFrontier.push(c.id);
-            if (!levels[d]) levels[d] = [];
-            levels[d].push(normalizeSymbol(c, db, hc));
-          }
-        }
-      }
-      frontier = nextFrontier;
-      if (frontier.length === 0) break;
+    if (!hasDataflowTable(db)) {
+      return {
+        name,
+        results: [],
+        warning:
+          'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
+      };
     }
 
-    return {
-      ...sym,
-      levels,
-      totalAffected: visited.size - 1,
-    };
-  });
+    const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    if (nodes.length === 0) {
+      return { name, results: [] };
+    }
 
-  db.close();
-  const base = { name, results };
-  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    // Forward BFS: who consumes this function's return value (directly or transitively)?
+    const consumersStmt = db.prepare(
+      `SELECT DISTINCT n.*
+     FROM dataflow d JOIN nodes n ON d.target_id = n.id
+     WHERE d.source_id = ? AND d.kind = 'returns'`,
+    );
+
+    const hc = new Map();
+    const results = nodes.map((node) => {
+      const sym = normalizeSymbol(node, db, hc);
+      const visited = new Set([node.id]);
+      const levels = {};
+      let frontier = [node.id];
+
+      for (let d = 1; d <= maxDepth; d++) {
+        const nextFrontier = [];
+        for (const fid of frontier) {
+          const consumers = consumersStmt.all(fid);
+          for (const c of consumers) {
+            if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
+              visited.add(c.id);
+              nextFrontier.push(c.id);
+              if (!levels[d]) levels[d] = [];
+              levels[d].push(normalizeSymbol(c, db, hc));
+            }
+          }
+        }
+        frontier = nextFrontier;
+        if (frontier.length === 0) break;
+      }
+
+      return {
+        ...sym,
+        levels,
+        totalAffected: visited.size - 1,
+      };
+    });
+
+    const base = { name, results };
+    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 // ── Display formatters ──────────────────────────────────────────────────────

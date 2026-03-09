@@ -491,6 +491,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Refresh node_modules after publish
+        run: npm install --ignore-scripts
+
       - name: Generate DEPENDENCIES.json
         run: mkdir -p generated && npm ls --json --all --omit=dev > generated/DEPENDENCIES.json 2>/dev/null || true
 

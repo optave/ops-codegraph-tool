@@ -83,55 +83,57 @@ function makeSymbolKey(kind, file, name) {
 
 function loadSymbolsFromDb(dbPath, changedFiles, noTests) {
   const db = new Database(dbPath, { readonly: true });
-  const symbols = new Map();
+  try {
+    const symbols = new Map();
 
-  if (changedFiles.length === 0) {
-    db.close();
+    if (changedFiles.length === 0) {
+      return symbols;
+    }
+
+    // Query nodes in changed files
+    const placeholders = changedFiles.map(() => '?').join(', ');
+    const rows = db
+      .prepare(
+        `SELECT n.id, n.name, n.kind, n.file, n.line, n.end_line
+         FROM nodes n
+         WHERE n.file IN (${placeholders})
+           AND n.kind NOT IN ('file', 'directory')
+         ORDER BY n.file, n.line`,
+      )
+      .all(...changedFiles);
+
+    // Compute fan_in and fan_out for each node
+    const fanInStmt = db.prepare(
+      `SELECT COUNT(*) AS cnt FROM edges WHERE target_id = ? AND kind = 'calls'`,
+    );
+    const fanOutStmt = db.prepare(
+      `SELECT COUNT(*) AS cnt FROM edges WHERE source_id = ? AND kind = 'calls'`,
+    );
+
+    for (const row of rows) {
+      if (noTests && isTestFile(row.file)) continue;
+
+      const lineCount = row.end_line ? row.end_line - row.line + 1 : 0;
+      const fanIn = fanInStmt.get(row.id).cnt;
+      const fanOut = fanOutStmt.get(row.id).cnt;
+      const key = makeSymbolKey(row.kind, row.file, row.name);
+
+      symbols.set(key, {
+        id: row.id,
+        name: row.name,
+        kind: row.kind,
+        file: row.file,
+        line: row.line,
+        lineCount,
+        fanIn,
+        fanOut,
+      });
+    }
+
     return symbols;
+  } finally {
+    db.close();
   }
-
-  // Query nodes in changed files
-  const placeholders = changedFiles.map(() => '?').join(', ');
-  const rows = db
-    .prepare(
-      `SELECT n.id, n.name, n.kind, n.file, n.line, n.end_line
-       FROM nodes n
-       WHERE n.file IN (${placeholders})
-         AND n.kind NOT IN ('file', 'directory')
-       ORDER BY n.file, n.line`,
-    )
-    .all(...changedFiles);
-
-  // Compute fan_in and fan_out for each node
-  const fanInStmt = db.prepare(
-    `SELECT COUNT(*) AS cnt FROM edges WHERE target_id = ? AND kind = 'calls'`,
-  );
-  const fanOutStmt = db.prepare(
-    `SELECT COUNT(*) AS cnt FROM edges WHERE source_id = ? AND kind = 'calls'`,
-  );
-
-  for (const row of rows) {
-    if (noTests && isTestFile(row.file)) continue;
-
-    const lineCount = row.end_line ? row.end_line - row.line + 1 : 0;
-    const fanIn = fanInStmt.get(row.id).cnt;
-    const fanOut = fanOutStmt.get(row.id).cnt;
-    const key = makeSymbolKey(row.kind, row.file, row.name);
-
-    symbols.set(key, {
-      id: row.id,
-      name: row.name,
-      kind: row.kind,
-      file: row.file,
-      line: row.line,
-      lineCount,
-      fanIn,
-      fanOut,
-    });
-  }
-
-  db.close();
-  return symbols;
 }
 
 // ─── Caller BFS ─────────────────────────────────────────────────────────
@@ -140,40 +142,43 @@ function loadCallersFromDb(dbPath, nodeIds, maxDepth, noTests) {
   if (nodeIds.length === 0) return [];
 
   const db = new Database(dbPath, { readonly: true });
-  const allCallers = new Set();
+  try {
+    const allCallers = new Set();
 
-  for (const startId of nodeIds) {
-    const visited = new Set([startId]);
-    let frontier = [startId];
+    for (const startId of nodeIds) {
+      const visited = new Set([startId]);
+      let frontier = [startId];
 
-    for (let d = 1; d <= maxDepth; d++) {
-      const nextFrontier = [];
-      for (const fid of frontier) {
-        const callers = db
-          .prepare(
-            `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
-             FROM edges e JOIN nodes n ON e.source_id = n.id
-             WHERE e.target_id = ? AND e.kind = 'calls'`,
-          )
-          .all(fid);
+      for (let d = 1; d <= maxDepth; d++) {
+        const nextFrontier = [];
+        for (const fid of frontier) {
+          const callers = db
+            .prepare(
+              `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
+               FROM edges e JOIN nodes n ON e.source_id = n.id
+               WHERE e.target_id = ? AND e.kind = 'calls'`,
+            )
+            .all(fid);
 
-        for (const c of callers) {
-          if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
-            visited.add(c.id);
-            nextFrontier.push(c.id);
-            allCallers.add(
-              JSON.stringify({ name: c.name, kind: c.kind, file: c.file, line: c.line }),
-            );
+          for (const c of callers) {
+            if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
+              visited.add(c.id);
+              nextFrontier.push(c.id);
+              allCallers.add(
+                JSON.stringify({ name: c.name, kind: c.kind, file: c.file, line: c.line }),
+              );
+            }
           }
         }
+        frontier = nextFrontier;
+        if (frontier.length === 0) break;
       }
-      frontier = nextFrontier;
-      if (frontier.length === 0) break;
     }
-  }
 
-  db.close();
-  return [...allCallers].map((s) => JSON.parse(s));
+    return [...allCallers].map((s) => JSON.parse(s));
+  } finally {
+    db.close();
+  }
 }
 
 // ─── Symbol Comparison ──────────────────────────────────────────────────
