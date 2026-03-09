@@ -1,5 +1,5 @@
-import { findChild, nodeEndLine } from './helpers.js';
 import { debug } from '../logger.js';
+import { findChild, nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from a JS/TS parsed AST.
@@ -250,7 +250,9 @@ function extractDynamicImportsWalk(node, imports) {
             dynamicImport: true,
           });
         } else {
-          debug(`Skipping non-static dynamic import() at line ${node.startPosition.row + 1} (template literal or variable)`);
+          debug(
+            `Skipping non-static dynamic import() at line ${node.startPosition.row + 1} (template literal or variable)`,
+          );
         }
       }
       return; // no need to recurse into import() children
@@ -510,7 +512,9 @@ function extractSymbolsWalk(tree) {
                   dynamicImport: true,
                 });
               } else {
-                debug(`Skipping non-static dynamic import() at line ${node.startPosition.row + 1} (template literal or variable)`);
+                debug(
+                  `Skipping non-static dynamic import() at line ${node.startPosition.row + 1} (template literal or variable)`,
+                );
               }
             }
           } else {
