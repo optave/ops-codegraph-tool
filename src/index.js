@@ -77,12 +77,24 @@ export {
 } from './dataflow.js';
 // Database utilities
 export {
+  countEdges,
+  countFiles,
+  countNodes,
+  fanInJoinSQL,
+  fanOutJoinSQL,
   findDbPath,
+  findNodesForTriage,
+  findNodesWithFanIn,
   getBuildMeta,
   initSchema,
+  iterateFunctionNodes,
+  kindInClause,
+  listFunctionNodes,
+  NodeQuery,
   openDb,
   openReadonlyOrFail,
   setBuildMeta,
+  testFilterSQL,
 } from './db.js';
 // Embeddings
 export {

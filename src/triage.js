@@ -1,4 +1,4 @@
-import { openReadonlyOrFail } from './db.js';
+import { findNodesForTriage, openReadonlyOrFail } from './db.js';
 import { warn } from './logger.js';
 import { paginateResult } from './paginate.js';
 import { outputResult } from './result-formatter.js';
@@ -55,50 +55,14 @@ export function triageData(customDbPath, opts = {}) {
   const sort = opts.sort || 'risk';
   const weights = { ...DEFAULT_WEIGHTS, ...(opts.weights || {}) };
 
-  // Build WHERE clause
-  let where = "WHERE n.kind IN ('function','method','class')";
-  const params = [];
-
-  if (noTests) {
-    where += ` AND n.file NOT LIKE '%.test.%'
-       AND n.file NOT LIKE '%.spec.%'
-       AND n.file NOT LIKE '%__test__%'
-       AND n.file NOT LIKE '%__tests__%'
-       AND n.file NOT LIKE '%.stories.%'`;
-  }
-  if (fileFilter) {
-    where += ' AND n.file LIKE ?';
-    params.push(`%${fileFilter}%`);
-  }
-  if (kindFilter) {
-    where += ' AND n.kind = ?';
-    params.push(kindFilter);
-  }
-  if (roleFilter) {
-    where += ' AND n.role = ?';
-    params.push(roleFilter);
-  }
-
   let rows;
   try {
-    rows = db
-      .prepare(
-        `SELECT n.id, n.name, n.kind, n.file, n.line, n.end_line, n.role,
-              COALESCE(fi.cnt, 0) AS fan_in,
-              COALESCE(fc.cognitive, 0) AS cognitive,
-              COALESCE(fc.maintainability_index, 0) AS mi,
-              COALESCE(fc.cyclomatic, 0) AS cyclomatic,
-              COALESCE(fc.max_nesting, 0) AS max_nesting,
-              COALESCE(fcc.commit_count, 0) AS churn
-       FROM nodes n
-       LEFT JOIN (SELECT target_id, COUNT(*) AS cnt FROM edges WHERE kind='calls' GROUP BY target_id) fi
-         ON n.id = fi.target_id
-       LEFT JOIN function_complexity fc ON fc.node_id = n.id
-       LEFT JOIN file_commit_counts fcc ON n.file = fcc.file
-       ${where}
-       ORDER BY n.file, n.line`,
-      )
-      .all(...params);
+    rows = findNodesForTriage(db, {
+      noTests,
+      file: fileFilter,
+      kind: kindFilter,
+      role: roleFilter,
+    });
   } catch (err) {
     warn(`triage query failed: ${err.message}`);
     db.close();
