@@ -291,7 +291,7 @@ export function impactAnalysis(file, customDbPath, opts = {}) {
 
 export function moduleMap(customDbPath, limit = 20, opts = {}) {
   const data = moduleMapData(customDbPath, limit, { noTests: opts.noTests });
-  if (outputResult(data, null, opts)) return;
+  if (outputResult(data, 'topNodes', opts)) return;
 
   console.log(`\nModule map (top ${limit} most-connected nodes):\n`);
   const dirs = new Map();
@@ -495,7 +495,7 @@ export function context(name, customDbPath, opts = {}) {
 
 export function children(name, customDbPath, opts = {}) {
   const data = childrenData(name, customDbPath, opts);
-  if (outputResult(data, null, opts)) return;
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.results.length === 0) {
     console.log(`No symbol matching "${name}"`);
