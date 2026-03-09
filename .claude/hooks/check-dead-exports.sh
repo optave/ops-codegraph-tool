@@ -60,7 +60,7 @@ while IFS= read -r file; do
     continue
   fi
 
-  RESULT=$(node "$WORK_ROOT/src/cli.js" exports "$file" --unused --json -T 2>/dev/null) || true
+  RESULT=$(node "$WORK_ROOT/src/cli.js" exports "$file" --unused --json 2>/dev/null) || true
   if [ -z "$RESULT" ]; then
     continue
   fi

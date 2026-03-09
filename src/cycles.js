@@ -1,5 +1,5 @@
 import { loadNative } from './native.js';
-import { isTestFile } from './queries.js';
+import { isTestFile } from './test-utils.js';
 
 /**
  * Detect circular dependencies in the codebase using Tarjan's SCC algorithm.

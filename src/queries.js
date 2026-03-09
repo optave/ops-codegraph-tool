@@ -10,6 +10,9 @@ import { debug } from './logger.js';
 import { ownersForFiles } from './owners.js';
 import { paginateResult, printNdjson } from './paginate.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
+import { isTestFile } from './test-utils.js';
+
+export { isTestFile };
 
 /**
  * Resolve a file path relative to repoRoot, rejecting traversal outside the repo.
@@ -19,11 +22,6 @@ function safePath(repoRoot, file) {
   const resolved = path.resolve(repoRoot, file);
   if (!resolved.startsWith(repoRoot + path.sep) && resolved !== repoRoot) return null;
   return resolved;
-}
-
-const TEST_PATTERN = /\.(test|spec)\.|__test__|__tests__|\.stories\./;
-export function isTestFile(filePath) {
-  return TEST_PATTERN.test(filePath);
 }
 
 export const FALSE_POSITIVE_NAMES = new Set([
@@ -1764,46 +1762,6 @@ export async function stats(customDbPath, opts = {}) {
   }
 
   console.log();
-}
-
-// ─── Human-readable output (original formatting) ───────────────────────
-
-export function queryName(name, customDbPath, opts = {}) {
-  const data = queryNameData(name, customDbPath, {
-    noTests: opts.noTests,
-    limit: opts.limit,
-    offset: opts.offset,
-  });
-  if (opts.ndjson) {
-    printNdjson(data, 'results');
-    return;
-  }
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
-  if (data.results.length === 0) {
-    console.log(`No results for "${name}"`);
-    return;
-  }
-
-  console.log(`\nResults for "${name}":\n`);
-  for (const r of data.results) {
-    console.log(`  ${kindIcon(r.kind)} ${r.name} (${r.kind}) -- ${r.file}:${r.line}`);
-    if (r.callees.length > 0) {
-      console.log(`    -> calls/uses:`);
-      for (const c of r.callees.slice(0, 15))
-        console.log(`      -> ${c.name} (${c.edgeKind}) ${c.file}:${c.line}`);
-      if (r.callees.length > 15) console.log(`      ... and ${r.callees.length - 15} more`);
-    }
-    if (r.callers.length > 0) {
-      console.log(`    <- called by:`);
-      for (const c of r.callers.slice(0, 15))
-        console.log(`      <- ${c.name} (${c.edgeKind}) ${c.file}:${c.line}`);
-      if (r.callers.length > 15) console.log(`      ... and ${r.callers.length - 15} more`);
-    }
-    console.log();
-  }
 }
 
 export function impactAnalysis(file, customDbPath, opts = {}) {
