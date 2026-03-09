@@ -11,12 +11,13 @@ import { CFG_RULES, COMPLEXITY_RULES } from './ast-analysis/rules/index.js';
 import {
   makeCfgRules as _makeCfgRules,
   buildExtensionSet,
+  buildExtToLangMap,
   findFunctionNode,
 } from './ast-analysis/shared.js';
 import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
-import { LANGUAGE_REGISTRY } from './parser.js';
+
 import { outputResult } from './result-formatter.js';
 import { isTestFile } from './test-filter.js';
 
@@ -828,12 +829,7 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
 
   // Always build ext→langId map so native-only builds (where _langId is unset)
   // can still derive the language from the file extension.
-  const extToLang = new Map();
-  for (const entry of LANGUAGE_REGISTRY) {
-    for (const ext of entry.extensions) {
-      extToLang.set(ext, entry.id);
-    }
-  }
+  const extToLang = buildExtToLangMap();
 
   for (const [relPath, symbols] of fileSymbols) {
     if (!symbols._tree) {

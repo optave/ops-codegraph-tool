@@ -1,12 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { COMPLEXITY_RULES, HALSTEAD_RULES } from './ast-analysis/rules/index.js';
-import { findFunctionNode as _findFunctionNode, buildExtensionSet } from './ast-analysis/shared.js';
+import {
+  findFunctionNode as _findFunctionNode,
+  buildExtensionSet,
+  buildExtToLangMap,
+} from './ast-analysis/shared.js';
 import { loadConfig } from './config.js';
 import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
-import { LANGUAGE_REGISTRY } from './parser.js';
+
 import { outputResult } from './result-formatter.js';
 import { isTestFile } from './test-filter.js';
 
@@ -593,12 +597,7 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
   if (needsFallback) {
     const { createParsers } = await import('./parser.js');
     parsers = await createParsers();
-    extToLang = new Map();
-    for (const entry of LANGUAGE_REGISTRY) {
-      for (const ext of entry.extensions) {
-        extToLang.set(ext, entry.id);
-      }
-    }
+    extToLang = buildExtToLangMap();
   }
 
   const { getParser } = await import('./parser.js');

@@ -12,7 +12,7 @@ import { buildExtensionSet } from './ast-analysis/shared.js';
 import { openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
 import { paginateResult } from './paginate.js';
-import { LANGUAGE_REGISTRY } from './parser.js';
+
 import { outputResult } from './result-formatter.js';
 
 // ─── Constants ────────────────────────────────────────────────────────
