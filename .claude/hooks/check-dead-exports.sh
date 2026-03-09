@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # check-dead-exports.sh — PreToolUse hook for Bash (git commit)
 # Blocks commits if any src/ file edited in THIS SESSION has exports with zero consumers.
-# Uses the session edit log to scope checks to files you actually touched.
+# Batches all files in a single Node.js invocation (one DB open) for speed.
 
 set -euo pipefail
 
@@ -45,44 +45,46 @@ if [ ! -f "$LOG_FILE" ] || [ ! -s "$LOG_FILE" ]; then
 fi
 EDITED_FILES=$(awk '{print $2}' "$LOG_FILE" | sort -u)
 
-# Check each staged source file that was edited in this session
-DEAD_EXPORTS=""
-
+# Filter staged files to src/*.js that were edited in this session
+FILES_TO_CHECK=""
 while IFS= read -r file; do
-  # Only check source files (regex crosses subdirectories unlike glob)
-  if [[ ! "$file" =~ ^src/.*\.(js|ts|tsx)$ ]]; then
+  if ! echo "$file" | grep -qE '^src/.*\.(js|ts|tsx)$'; then
     continue
   fi
-
-  # Only check files edited in this session
-  if ! echo "$EDITED_FILES" | grep -qxF "$file"; then
-    continue
-  fi
-
-  RESULT=$(node "$WORK_ROOT/src/cli.js" exports "$file" --unused --json 2>/dev/null) || true
-  if [ -z "$RESULT" ]; then
-    continue
-  fi
-
-  # Extract unused export names
-  UNUSED=$(echo "$RESULT" | node -e "
-    let d='';
-    process.stdin.on('data',c=>d+=c);
-    process.stdin.on('end',()=>{
-      try {
-        const data=JSON.parse(d);
-        const unused=data.results||[];
-        if(unused.length>0){
-          process.stdout.write(unused.map(u=>u.name+' ('+data.file+':'+u.line+')').join(', '));
-        }
-      }catch{}
-    });
-  " 2>/dev/null) || true
-
-  if [ -n "$UNUSED" ]; then
-    DEAD_EXPORTS="${DEAD_EXPORTS:+$DEAD_EXPORTS; }$UNUSED"
+  if echo "$EDITED_FILES" | grep -qxF "$file"; then
+    FILES_TO_CHECK="${FILES_TO_CHECK:+$FILES_TO_CHECK
+}$file"
   fi
 done <<< "$STAGED"
+
+if [ -z "$FILES_TO_CHECK" ]; then
+  exit 0
+fi
+
+# Single Node.js invocation: check all files in one process
+DEAD_EXPORTS=$(node -e "
+  const path = require('path');
+  const root = process.argv[1];
+  const files = process.argv[2].split('\n').filter(Boolean);
+
+  const { exportsData } = require(path.join(root, 'src/queries.js'));
+
+  const dead = [];
+  for (const file of files) {
+    try {
+      const data = exportsData(file, undefined, { noTests: true, unused: true });
+      if (data && data.results) {
+        for (const r of data.results) {
+          dead.push(r.name + ' (' + data.file + ':' + r.line + ')');
+        }
+      }
+    } catch {}
+  }
+
+  if (dead.length > 0) {
+    process.stdout.write(dead.join(', '));
+  }
+" "$WORK_ROOT" "$FILES_TO_CHECK" 2>/dev/null) || true
 
 if [ -n "$DEAD_EXPORTS" ]; then
   REASON="BLOCKED: Dead exports (zero consumers) detected in files you edited: $DEAD_EXPORTS. Either add consumers, remove the exports, or verify these are intentionally public API."

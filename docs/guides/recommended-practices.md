@@ -345,6 +345,10 @@ You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-
 
 > **Windows note:** If your hooks use bash scripts, normalize backslashes inside `node -e` rather than bash (`${VAR//\\//}` fails on Git Bash). See this repo's `.claude/hooks/enrich-context.sh` for the pattern.
 
+**Commit check hook** (PreToolUse on Bash): when Claude runs `git commit`, the hook runs `checkData()` once with cycles + signatures predicates enabled (boundaries skipped for speed). If circular dependencies involve files edited in this session, blocks the commit. If function signatures were modified, injects a risk-rated warning via `additionalContext` — `HIGH` for core symbols, `MEDIUM` for utility, `LOW` for others — with transitive caller counts. Non-blocking for signatures, blocking for cycles.
+
+**Dead export check hook** (PreToolUse on Bash): when Claude runs `git commit`, the hook batch-checks all staged `src/` files edited in this session for exports with zero consumers. Uses a single Node.js process for all files (not per-file CLI calls). If any export has zero consumers, blocks the commit.
+
 **Ready-to-use examples** are in [`docs/examples/claude-code-hooks/`](../examples/claude-code-hooks/) with a complete `settings.json` and setup instructions:
 - `enrich-context.sh` — dependency context injection
 - `remind-codegraph.sh` — pre-edit reminder to check context/impact
@@ -354,9 +358,9 @@ You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-
 - `guard-git.sh` — blocks dangerous git commands + validates commits
 - `track-edits.sh` — logs edited files for commit validation
 - `track-moves.sh` — logs file moves/copies for commit validation
-- `check-cycles.sh` — blocks commits if circular dependencies involve files you edited
+- `guard-pr-body.sh` — blocks PRs with "generated with" in the body
+- `check-commit.sh` — combined cycle detection (blocking) + signature change warning (informational)
 - `check-dead-exports.sh` — blocks commits if files you edited contain exports with zero consumers
-- `warn-signature-changes.sh` — warns (non-blocking) when staged changes modify function signatures, with risk level based on symbol role and transitive caller count
 
 #### Parallel session safety hooks
 
