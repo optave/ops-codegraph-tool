@@ -3,10 +3,17 @@ import { EVERY_EDGE_KIND } from '../queries.js';
 // ─── Validation Helpers ─────────────────────────────────────────────
 
 const SAFE_ALIAS_RE = /^[a-z_][a-z0-9_]*$/i;
+const SAFE_COLUMN_RE = /^[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?$/i;
 
 function validateAlias(alias) {
   if (!SAFE_ALIAS_RE.test(alias)) {
     throw new Error(`Invalid SQL alias: ${alias}`);
+  }
+}
+
+function validateColumn(column) {
+  if (!SAFE_COLUMN_RE.test(column)) {
+    throw new Error(`Invalid SQL column: ${column}`);
   }
 }
 
@@ -28,6 +35,7 @@ function validateEdgeKind(edgeKind) {
  */
 export function testFilterSQL(column = 'n.file', enabled = true) {
   if (!enabled) return '';
+  validateColumn(column);
   return `AND ${column} NOT LIKE '%.test.%'
        AND ${column} NOT LIKE '%.spec.%'
        AND ${column} NOT LIKE '%__test__%'

@@ -30,6 +30,11 @@ describe('testFilterSQL', () => {
   it('returns empty string when disabled', () => {
     expect(testFilterSQL('n.file', false)).toBe('');
   });
+
+  it('rejects malicious column names', () => {
+    expect(() => testFilterSQL("1; DROP TABLE nodes --")).toThrow('Invalid SQL column');
+    expect(() => testFilterSQL("n.file OR 1=1 --")).toThrow('Invalid SQL column');
+  });
 });
 
 // ─── kindInClause ────────────────────────────────────────────────────
