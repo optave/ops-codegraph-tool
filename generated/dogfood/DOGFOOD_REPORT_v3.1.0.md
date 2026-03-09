@@ -28,7 +28,7 @@ All 34 commands tested without a graph database present.
 
 | Command | Status | Message |
 |---------|--------|---------|
-| `query`, `map`, `stats`, `deps`, `fn-impact`, `context`, `where`, `impact`, `cycles`, `export`, `structure`, `roles`, `complexity`, `communities`, `triage`, `audit`, `search`, `diff-impact`, `check`, `path`, `exports`, `children`, `owners`, `co-change`, `dataflow`, `cfg`, `ast`, `sequence`, `batch` | PASS | "No codegraph database found. Run `codegraph build` first." |
+| `query`, `map`, `stats`, `deps`, `fn-impact`, `context`, `where`, `impact`, `cycles`, `export`, `structure`, `roles`, `complexity`, `communities`, `triage`, `audit`, `search`, `diff-impact`, `check`, `path`, `exports`, `children`, `owners`, `co-change`, `dataflow`, `cfg`, `ast`, `sequence`, `batch`, `branch-compare` | PASS | "No codegraph database found. Run `codegraph build` first." |
 | `flow` (no args) | PASS | "Provide a function/entry point name or use --list" |
 | `info` | PASS | Shows diagnostics without needing DB |
 | `models` | PASS | Lists 7 embedding models |
@@ -349,7 +349,7 @@ Note: Package is ESM-only (`"type": "module"`). CJS `require()` fails with `ERR_
 | No-op rebuild (ms) | 6 | 8 |
 | 1-file rebuild (ms) | 1111 | 1267 |
 | Nodes | 3673 | 3682 |
-| Edges | 7937 | 7978 |
+| Edges | 7930 | 7978 |
 | DB size | 14.4 MB | 13.8 MB |
 
 ### Incremental Benchmark
