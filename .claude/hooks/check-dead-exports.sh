@@ -72,7 +72,7 @@ while IFS= read -r file; do
     process.stdin.on('end',()=>{
       try {
         const data=JSON.parse(d);
-        const unused=(data.results||[]).filter(r=>r.consumerCount===0);
+        const unused=data.results||[];
         if(unused.length>0){
           process.stdout.write(unused.map(u=>u.name+' ('+data.file+':'+u.line+')').join(', '));
         }
