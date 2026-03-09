@@ -18,6 +18,7 @@ export default {
         "style",
         "revert",
         "release",
+        "merge",
       ],
     ],
     "header-max-length": [2, "always", 100],
