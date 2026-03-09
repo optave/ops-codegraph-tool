@@ -87,208 +87,209 @@ function buildAliases(files) {
  */
 export function sequenceData(name, dbPath, opts = {}) {
   const db = openReadonlyOrFail(dbPath);
-  const maxDepth = opts.depth || 10;
-  const noTests = opts.noTests || false;
-  const withDataflow = opts.dataflow || false;
+  try {
+    const maxDepth = opts.depth || 10;
+    const noTests = opts.noTests || false;
+    const withDataflow = opts.dataflow || false;
 
-  // Phase 1: Direct LIKE match
-  let matchNode = findMatchingNodes(db, name, opts)[0] ?? null;
+    // Phase 1: Direct LIKE match
+    let matchNode = findMatchingNodes(db, name, opts)[0] ?? null;
 
-  // Phase 2: Prefix-stripped matching
-  if (!matchNode) {
-    for (const prefix of FRAMEWORK_ENTRY_PREFIXES) {
-      matchNode = findMatchingNodes(db, `${prefix}${name}`, opts)[0] ?? null;
-      if (matchNode) break;
+    // Phase 2: Prefix-stripped matching
+    if (!matchNode) {
+      for (const prefix of FRAMEWORK_ENTRY_PREFIXES) {
+        matchNode = findMatchingNodes(db, `${prefix}${name}`, opts)[0] ?? null;
+        if (matchNode) break;
+      }
     }
-  }
 
-  if (!matchNode) {
-    db.close();
-    return {
-      entry: null,
-      participants: [],
-      messages: [],
-      depth: maxDepth,
-      totalMessages: 0,
-      truncated: false,
+    if (!matchNode) {
+      return {
+        entry: null,
+        participants: [],
+        messages: [],
+        depth: maxDepth,
+        totalMessages: 0,
+        truncated: false,
+      };
+    }
+
+    const entry = {
+      name: matchNode.name,
+      file: matchNode.file,
+      kind: matchNode.kind,
+      line: matchNode.line,
     };
-  }
 
-  const entry = {
-    name: matchNode.name,
-    file: matchNode.file,
-    kind: matchNode.kind,
-    line: matchNode.line,
-  };
+    // BFS forward — track edges, not just nodes
+    const visited = new Set([matchNode.id]);
+    let frontier = [matchNode.id];
+    const messages = [];
+    const fileSet = new Set([matchNode.file]);
+    const idToNode = new Map();
+    idToNode.set(matchNode.id, matchNode);
+    let truncated = false;
 
-  // BFS forward — track edges, not just nodes
-  const visited = new Set([matchNode.id]);
-  let frontier = [matchNode.id];
-  const messages = [];
-  const fileSet = new Set([matchNode.file]);
-  const idToNode = new Map();
-  idToNode.set(matchNode.id, matchNode);
-  let truncated = false;
-
-  const getCallees = db.prepare(
-    `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
+    const getCallees = db.prepare(
+      `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
      FROM edges e JOIN nodes n ON e.target_id = n.id
      WHERE e.source_id = ? AND e.kind = 'calls'`,
-  );
+    );
 
-  for (let d = 1; d <= maxDepth; d++) {
-    const nextFrontier = [];
+    for (let d = 1; d <= maxDepth; d++) {
+      const nextFrontier = [];
 
-    for (const fid of frontier) {
-      const callees = getCallees.all(fid);
+      for (const fid of frontier) {
+        const callees = getCallees.all(fid);
 
-      const caller = idToNode.get(fid);
+        const caller = idToNode.get(fid);
 
-      for (const c of callees) {
-        if (noTests && isTestFile(c.file)) continue;
+        for (const c of callees) {
+          if (noTests && isTestFile(c.file)) continue;
 
-        // Always record the message (even for visited nodes — different caller path)
-        fileSet.add(c.file);
-        messages.push({
-          from: caller.file,
-          to: c.file,
-          label: c.name,
-          type: 'call',
-          depth: d,
-        });
-
-        if (visited.has(c.id)) continue;
-
-        visited.add(c.id);
-        nextFrontier.push(c.id);
-        idToNode.set(c.id, c);
-      }
-    }
-
-    frontier = nextFrontier;
-    if (frontier.length === 0) break;
-
-    if (d === maxDepth && frontier.length > 0) {
-      // Only mark truncated if at least one frontier node has further callees
-      const hasMoreCalls = frontier.some((fid) => getCallees.all(fid).length > 0);
-      if (hasMoreCalls) truncated = true;
-    }
-  }
-
-  // Dataflow annotations: add return arrows
-  if (withDataflow && messages.length > 0) {
-    const hasTable = db
-      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='dataflow'")
-      .get();
-
-    if (hasTable) {
-      // Build name|file lookup for O(1) target node access
-      const nodeByNameFile = new Map();
-      for (const n of idToNode.values()) {
-        nodeByNameFile.set(`${n.name}|${n.file}`, n);
-      }
-
-      const getReturns = db.prepare(
-        `SELECT d.expression FROM dataflow d
-         WHERE d.source_id = ? AND d.kind = 'returns'`,
-      );
-      const getFlowsTo = db.prepare(
-        `SELECT d.expression FROM dataflow d
-         WHERE d.target_id = ? AND d.kind = 'flows_to'
-         ORDER BY d.param_index`,
-      );
-
-      // For each called function, check if it has return edges
-      const seenReturns = new Set();
-      for (const msg of [...messages]) {
-        if (msg.type !== 'call') continue;
-        const targetNode = nodeByNameFile.get(`${msg.label}|${msg.to}`);
-        if (!targetNode) continue;
-
-        const returnKey = `${msg.to}->${msg.from}:${msg.label}`;
-        if (seenReturns.has(returnKey)) continue;
-
-        const returns = getReturns.all(targetNode.id);
-
-        if (returns.length > 0) {
-          seenReturns.add(returnKey);
-          const expr = returns[0].expression || 'result';
+          // Always record the message (even for visited nodes — different caller path)
+          fileSet.add(c.file);
           messages.push({
-            from: msg.to,
-            to: msg.from,
-            label: expr,
-            type: 'return',
-            depth: msg.depth,
+            from: caller.file,
+            to: c.file,
+            label: c.name,
+            type: 'call',
+            depth: d,
           });
+
+          if (visited.has(c.id)) continue;
+
+          visited.add(c.id);
+          nextFrontier.push(c.id);
+          idToNode.set(c.id, c);
         }
       }
 
-      // Annotate call messages with parameter names
-      for (const msg of messages) {
-        if (msg.type !== 'call') continue;
-        const targetNode = nodeByNameFile.get(`${msg.label}|${msg.to}`);
-        if (!targetNode) continue;
+      frontier = nextFrontier;
+      if (frontier.length === 0) break;
 
-        const params = getFlowsTo.all(targetNode.id);
+      if (d === maxDepth && frontier.length > 0) {
+        // Only mark truncated if at least one frontier node has further callees
+        const hasMoreCalls = frontier.some((fid) => getCallees.all(fid).length > 0);
+        if (hasMoreCalls) truncated = true;
+      }
+    }
 
-        if (params.length > 0) {
-          const paramNames = params
-            .map((p) => p.expression)
-            .filter(Boolean)
-            .slice(0, 3);
-          if (paramNames.length > 0) {
-            msg.label = `${msg.label}(${paramNames.join(', ')})`;
+    // Dataflow annotations: add return arrows
+    if (withDataflow && messages.length > 0) {
+      const hasTable = db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='dataflow'")
+        .get();
+
+      if (hasTable) {
+        // Build name|file lookup for O(1) target node access
+        const nodeByNameFile = new Map();
+        for (const n of idToNode.values()) {
+          nodeByNameFile.set(`${n.name}|${n.file}`, n);
+        }
+
+        const getReturns = db.prepare(
+          `SELECT d.expression FROM dataflow d
+         WHERE d.source_id = ? AND d.kind = 'returns'`,
+        );
+        const getFlowsTo = db.prepare(
+          `SELECT d.expression FROM dataflow d
+         WHERE d.target_id = ? AND d.kind = 'flows_to'
+         ORDER BY d.param_index`,
+        );
+
+        // For each called function, check if it has return edges
+        const seenReturns = new Set();
+        for (const msg of [...messages]) {
+          if (msg.type !== 'call') continue;
+          const targetNode = nodeByNameFile.get(`${msg.label}|${msg.to}`);
+          if (!targetNode) continue;
+
+          const returnKey = `${msg.to}->${msg.from}:${msg.label}`;
+          if (seenReturns.has(returnKey)) continue;
+
+          const returns = getReturns.all(targetNode.id);
+
+          if (returns.length > 0) {
+            seenReturns.add(returnKey);
+            const expr = returns[0].expression || 'result';
+            messages.push({
+              from: msg.to,
+              to: msg.from,
+              label: expr,
+              type: 'return',
+              depth: msg.depth,
+            });
+          }
+        }
+
+        // Annotate call messages with parameter names
+        for (const msg of messages) {
+          if (msg.type !== 'call') continue;
+          const targetNode = nodeByNameFile.get(`${msg.label}|${msg.to}`);
+          if (!targetNode) continue;
+
+          const params = getFlowsTo.all(targetNode.id);
+
+          if (params.length > 0) {
+            const paramNames = params
+              .map((p) => p.expression)
+              .filter(Boolean)
+              .slice(0, 3);
+            if (paramNames.length > 0) {
+              msg.label = `${msg.label}(${paramNames.join(', ')})`;
+            }
           }
         }
       }
     }
+
+    // Sort messages by depth, then call before return
+    messages.sort((a, b) => {
+      if (a.depth !== b.depth) return a.depth - b.depth;
+      if (a.type === 'call' && b.type === 'return') return -1;
+      if (a.type === 'return' && b.type === 'call') return 1;
+      return 0;
+    });
+
+    // Build participant list from files
+    const aliases = buildAliases([...fileSet]);
+    const participants = [...fileSet].map((file) => ({
+      id: aliases.get(file),
+      label: file.split('/').pop(),
+      file,
+    }));
+
+    // Sort participants: entry file first, then alphabetically
+    participants.sort((a, b) => {
+      if (a.file === entry.file) return -1;
+      if (b.file === entry.file) return 1;
+      return a.file.localeCompare(b.file);
+    });
+
+    // Replace file paths with alias IDs in messages
+    for (const msg of messages) {
+      msg.from = aliases.get(msg.from);
+      msg.to = aliases.get(msg.to);
+    }
+
+    const base = {
+      entry,
+      participants,
+      messages,
+      depth: maxDepth,
+      totalMessages: messages.length,
+      truncated,
+    };
+    const result = paginateResult(base, 'messages', { limit: opts.limit, offset: opts.offset });
+    if (opts.limit !== undefined || opts.offset !== undefined) {
+      const activeFiles = new Set(result.messages.flatMap((m) => [m.from, m.to]));
+      result.participants = result.participants.filter((p) => activeFiles.has(p.id));
+    }
+    return result;
+  } finally {
+    db.close();
   }
-
-  // Sort messages by depth, then call before return
-  messages.sort((a, b) => {
-    if (a.depth !== b.depth) return a.depth - b.depth;
-    if (a.type === 'call' && b.type === 'return') return -1;
-    if (a.type === 'return' && b.type === 'call') return 1;
-    return 0;
-  });
-
-  // Build participant list from files
-  const aliases = buildAliases([...fileSet]);
-  const participants = [...fileSet].map((file) => ({
-    id: aliases.get(file),
-    label: file.split('/').pop(),
-    file,
-  }));
-
-  // Sort participants: entry file first, then alphabetically
-  participants.sort((a, b) => {
-    if (a.file === entry.file) return -1;
-    if (b.file === entry.file) return 1;
-    return a.file.localeCompare(b.file);
-  });
-
-  // Replace file paths with alias IDs in messages
-  for (const msg of messages) {
-    msg.from = aliases.get(msg.from);
-    msg.to = aliases.get(msg.to);
-  }
-
-  db.close();
-
-  const base = {
-    entry,
-    participants,
-    messages,
-    depth: maxDepth,
-    totalMessages: messages.length,
-    truncated,
-  };
-  const result = paginateResult(base, 'messages', { limit: opts.limit, offset: opts.offset });
-  if (opts.limit !== undefined || opts.offset !== undefined) {
-    const activeFiles = new Set(result.messages.flatMap((m) => [m.from, m.to]));
-    result.participants = result.participants.filter((p) => activeFiles.has(p.id));
-  }
-  return result;
 }
 
 // ─── Mermaid formatter ───────────────────────────────────────────────
