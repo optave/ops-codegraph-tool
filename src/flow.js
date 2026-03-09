@@ -7,7 +7,7 @@
 
 import { openReadonlyOrFail } from './db.js';
 import { paginateResult } from './paginate.js';
-import { findMatchingNodes, kindIcon } from './queries.js';
+import { CORE_SYMBOL_KINDS, findMatchingNodes, kindIcon } from './queries.js';
 import { outputResult } from './result-formatter.js';
 import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
 import { isTestFile } from './test-filter.js';
@@ -96,13 +96,15 @@ export function flowData(name, dbPath, opts = {}) {
   const maxDepth = opts.depth || 10;
   const noTests = opts.noTests || false;
 
-  // Phase 1: Direct LIKE match on full name
-  let matchNode = findMatchingNodes(db, name, opts)[0] ?? null;
+  // Phase 1: Direct LIKE match on full name (use all 10 core symbol kinds,
+  // not just FUNCTION_KINDS, so flow can trace from interfaces/types/structs/etc.)
+  const flowOpts = { ...opts, kinds: CORE_SYMBOL_KINDS };
+  let matchNode = findMatchingNodes(db, name, flowOpts)[0] ?? null;
 
   // Phase 2: Prefix-stripped matching — try adding framework prefixes
   if (!matchNode) {
     for (const prefix of FRAMEWORK_ENTRY_PREFIXES) {
-      matchNode = findMatchingNodes(db, `${prefix}${name}`, opts)[0] ?? null;
+      matchNode = findMatchingNodes(db, `${prefix}${name}`, flowOpts)[0] ?? null;
       if (matchNode) break;
     }
   }
