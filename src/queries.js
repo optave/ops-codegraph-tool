@@ -5,7 +5,15 @@ import { evaluateBoundaries } from './boundaries.js';
 import { coChangeForFiles } from './cochange.js';
 import { loadConfig } from './config.js';
 import { findCycles } from './cycles.js';
-import { findDbPath, openReadonlyOrFail } from './db.js';
+import {
+  findDbPath,
+  findNodesWithFanIn,
+  iterateFunctionNodes,
+  listFunctionNodes,
+  openReadonlyOrFail,
+  testFilterSQL,
+} from './db.js';
+import { ALL_SYMBOL_KINDS } from './kinds.js';
 import { debug } from './logger.js';
 import { ownersForFiles } from './owners.js';
 import { paginateResult } from './paginate.js';
@@ -60,54 +68,17 @@ export const FALSE_POSITIVE_CALLER_THRESHOLD = 20;
 
 const FUNCTION_KINDS = ['function', 'method', 'class'];
 
-// Original 10 kinds — used as default query scope
-export const CORE_SYMBOL_KINDS = [
-  'function',
-  'method',
-  'class',
-  'interface',
-  'type',
-  'struct',
-  'enum',
-  'trait',
-  'record',
-  'module',
-];
-
-// Sub-declaration kinds (Phase 1)
-export const EXTENDED_SYMBOL_KINDS = [
-  'parameter',
-  'property',
-  'constant',
-  // Phase 2 (reserved, not yet extracted):
-  // 'constructor', 'namespace', 'decorator', 'getter', 'setter',
-];
-
-// Full set for --kind validation and MCP enum
-export const EVERY_SYMBOL_KIND = [...CORE_SYMBOL_KINDS, ...EXTENDED_SYMBOL_KINDS];
-
-// Backward compat: ALL_SYMBOL_KINDS stays as the core 10
-export const ALL_SYMBOL_KINDS = CORE_SYMBOL_KINDS;
-
-// ── Edge kind constants ─────────────────────────────────────────────
-// Core edge kinds — coupling and dependency relationships
-export const CORE_EDGE_KINDS = [
-  'imports',
-  'imports-type',
-  'reexports',
-  'calls',
-  'extends',
-  'implements',
-  'contains',
-];
-
-// Structural edge kinds — parent/child and type relationships
-export const STRUCTURAL_EDGE_KINDS = ['parameter_of', 'receiver'];
-
-// Full set for MCP enum and validation
-export const EVERY_EDGE_KIND = [...CORE_EDGE_KINDS, ...STRUCTURAL_EDGE_KINDS];
-
-export const VALID_ROLES = ['entry', 'core', 'utility', 'adapter', 'dead', 'leaf'];
+// Re-export kind/edge constants from kinds.js (canonical source)
+export {
+  ALL_SYMBOL_KINDS,
+  CORE_EDGE_KINDS,
+  CORE_SYMBOL_KINDS,
+  EVERY_EDGE_KIND,
+  EVERY_SYMBOL_KIND,
+  EXTENDED_SYMBOL_KINDS,
+  STRUCTURAL_EDGE_KINDS,
+  VALID_ROLES,
+} from './kinds.js';
 
 /**
  * Get all ancestor class names for a given class using extends edges.
@@ -165,25 +136,8 @@ function resolveMethodViaHierarchy(db, methodName) {
  */
 export function findMatchingNodes(db, name, opts = {}) {
   const kinds = opts.kind ? [opts.kind] : opts.kinds?.length ? opts.kinds : FUNCTION_KINDS;
-  const placeholders = kinds.map(() => '?').join(', ');
-  const params = [`%${name}%`, ...kinds];
 
-  let fileCondition = '';
-  if (opts.file) {
-    fileCondition = ' AND n.file LIKE ?';
-    params.push(`%${opts.file}%`);
-  }
-
-  const rows = db
-    .prepare(`
-      SELECT n.*, COALESCE(fi.cnt, 0) AS fan_in
-      FROM nodes n
-      LEFT JOIN (
-        SELECT target_id, COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY target_id
-      ) fi ON fi.target_id = n.id
-      WHERE n.name LIKE ? AND n.kind IN (${placeholders})${fileCondition}
-    `)
-    .all(...params);
+  const rows = findNodesWithFanIn(db, `%${name}%`, { kinds, file: opts.file });
 
   const nodes = opts.noTests ? rows.filter((n) => !isTestFile(n.file)) : rows;
 
@@ -355,13 +309,7 @@ export function moduleMapData(customDbPath, limit = 20, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   const noTests = opts.noTests || false;
 
-  const testFilter = noTests
-    ? `AND n.file NOT LIKE '%.test.%'
-      AND n.file NOT LIKE '%.spec.%'
-      AND n.file NOT LIKE '%__test__%'
-      AND n.file NOT LIKE '%__tests__%'
-      AND n.file NOT LIKE '%.stories.%'`
-    : '';
+  const testFilter = testFilterSQL('n.file', noTests);
 
   const nodes = db
     .prepare(`
@@ -1153,26 +1101,8 @@ export function diffImpactMermaid(customDbPath, opts = {}) {
 export function listFunctionsData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   const noTests = opts.noTests || false;
-  const kinds = ['function', 'method', 'class'];
-  const placeholders = kinds.map(() => '?').join(', ');
 
-  const conditions = [`kind IN (${placeholders})`];
-  const params = [...kinds];
-
-  if (opts.file) {
-    conditions.push('file LIKE ?');
-    params.push(`%${opts.file}%`);
-  }
-  if (opts.pattern) {
-    conditions.push('name LIKE ?');
-    params.push(`%${opts.pattern}%`);
-  }
-
-  let rows = db
-    .prepare(
-      `SELECT name, kind, file, line, end_line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY file, line`,
-    )
-    .all(...params);
+  let rows = listFunctionNodes(db, { file: opts.file, pattern: opts.pattern });
 
   if (noTests) rows = rows.filter((r) => !isTestFile(r.file));
 
@@ -1196,25 +1126,8 @@ export function* iterListFunctions(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
-    const kinds = ['function', 'method', 'class'];
-    const placeholders = kinds.map(() => '?').join(', ');
 
-    const conditions = [`kind IN (${placeholders})`];
-    const params = [...kinds];
-
-    if (opts.file) {
-      conditions.push('file LIKE ?');
-      params.push(`%${opts.file}%`);
-    }
-    if (opts.pattern) {
-      conditions.push('name LIKE ?');
-      params.push(`%${opts.pattern}%`);
-    }
-
-    const stmt = db.prepare(
-      `SELECT name, kind, file, line, end_line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY file, line`,
-    );
-    for (const row of stmt.iterate(...params)) {
+    for (const row of iterateFunctionNodes(db, { file: opts.file, pattern: opts.pattern })) {
       if (noTests && isTestFile(row.file)) continue;
       yield {
         name: row.name,
@@ -1405,13 +1318,7 @@ export function statsData(customDbPath, opts = {}) {
   const fnCycles = findCycles(db, { fileLevel: false, noTests });
 
   // Top 5 coupling hotspots (fan-in + fan-out, file nodes)
-  const testFilter = noTests
-    ? `AND n.file NOT LIKE '%.test.%'
-       AND n.file NOT LIKE '%.spec.%'
-       AND n.file NOT LIKE '%__test__%'
-       AND n.file NOT LIKE '%__tests__%'
-       AND n.file NOT LIKE '%.stories.%'`
-    : '';
+  const testFilter = testFilterSQL('n.file', noTests);
   const hotspotRows = db
     .prepare(`
     SELECT n.file,

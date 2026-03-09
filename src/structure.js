@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { normalizePath } from './constants.js';
-import { openReadonlyOrFail } from './db.js';
+import { openReadonlyOrFail, testFilterSQL } from './db.js';
 import { debug } from './logger.js';
 import { paginateResult } from './paginate.js';
 import { isTestFile } from './test-filter.js';
@@ -536,14 +536,7 @@ export function hotspotsData(customDbPath, opts = {}) {
 
   const kind = level === 'directory' ? 'directory' : 'file';
 
-  const testFilter =
-    noTests && kind === 'file'
-      ? `AND n.name NOT LIKE '%.test.%'
-         AND n.name NOT LIKE '%.spec.%'
-         AND n.name NOT LIKE '%__test__%'
-         AND n.name NOT LIKE '%__tests__%'
-         AND n.name NOT LIKE '%.stories.%'`
-      : '';
+  const testFilter = testFilterSQL('n.name', noTests && kind === 'file');
 
   const HOTSPOT_QUERIES = {
     'fan-in': db.prepare(`
