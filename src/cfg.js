@@ -1029,72 +1029,73 @@ function findNodes(db, name, opts = {}) {
  */
 export function cfgData(name, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
+  try {
+    const noTests = opts.noTests || false;
 
-  if (!hasCfgTables(db)) {
+    if (!hasCfgTables(db)) {
+      return {
+        name,
+        results: [],
+        warning:
+          'No CFG data found. Rebuild with `codegraph build` (CFG is now included by default).',
+      };
+    }
+
+    const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    if (nodes.length === 0) {
+      return { name, results: [] };
+    }
+
+    const blockStmt = db.prepare(
+      `SELECT id, block_index, block_type, start_line, end_line, label
+       FROM cfg_blocks WHERE function_node_id = ?
+       ORDER BY block_index`,
+    );
+    const edgeStmt = db.prepare(
+      `SELECT e.kind,
+              sb.block_index AS source_index, sb.block_type AS source_type,
+              tb.block_index AS target_index, tb.block_type AS target_type
+       FROM cfg_edges e
+       JOIN cfg_blocks sb ON e.source_block_id = sb.id
+       JOIN cfg_blocks tb ON e.target_block_id = tb.id
+       WHERE e.function_node_id = ?
+       ORDER BY sb.block_index, tb.block_index`,
+    );
+
+    const results = nodes.map((node) => {
+      const cfgBlocks = blockStmt.all(node.id);
+      const cfgEdges = edgeStmt.all(node.id);
+
+      return {
+        name: node.name,
+        kind: node.kind,
+        file: node.file,
+        line: node.line,
+        blocks: cfgBlocks.map((b) => ({
+          index: b.block_index,
+          type: b.block_type,
+          startLine: b.start_line,
+          endLine: b.end_line,
+          label: b.label,
+        })),
+        edges: cfgEdges.map((e) => ({
+          source: e.source_index,
+          sourceType: e.source_type,
+          target: e.target_index,
+          targetType: e.target_type,
+          kind: e.kind,
+        })),
+        summary: {
+          blockCount: cfgBlocks.length,
+          edgeCount: cfgEdges.length,
+        },
+      };
+    });
+
+    return paginateResult({ name, results }, 'results', opts);
+  } finally {
     db.close();
-    return {
-      name,
-      results: [],
-      warning:
-        'No CFG data found. Rebuild with `codegraph build` (CFG is now included by default).',
-    };
   }
-
-  const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
-  if (nodes.length === 0) {
-    db.close();
-    return { name, results: [] };
-  }
-
-  const blockStmt = db.prepare(
-    `SELECT id, block_index, block_type, start_line, end_line, label
-     FROM cfg_blocks WHERE function_node_id = ?
-     ORDER BY block_index`,
-  );
-  const edgeStmt = db.prepare(
-    `SELECT e.kind,
-            sb.block_index AS source_index, sb.block_type AS source_type,
-            tb.block_index AS target_index, tb.block_type AS target_type
-     FROM cfg_edges e
-     JOIN cfg_blocks sb ON e.source_block_id = sb.id
-     JOIN cfg_blocks tb ON e.target_block_id = tb.id
-     WHERE e.function_node_id = ?
-     ORDER BY sb.block_index, tb.block_index`,
-  );
-
-  const results = nodes.map((node) => {
-    const cfgBlocks = blockStmt.all(node.id);
-    const cfgEdges = edgeStmt.all(node.id);
-
-    return {
-      name: node.name,
-      kind: node.kind,
-      file: node.file,
-      line: node.line,
-      blocks: cfgBlocks.map((b) => ({
-        index: b.block_index,
-        type: b.block_type,
-        startLine: b.start_line,
-        endLine: b.end_line,
-        label: b.label,
-      })),
-      edges: cfgEdges.map((e) => ({
-        source: e.source_index,
-        sourceType: e.source_type,
-        target: e.target_index,
-        targetType: e.target_type,
-        kind: e.kind,
-      })),
-      summary: {
-        blockCount: cfgBlocks.length,
-        edgeCount: cfgEdges.length,
-      },
-    };
-  });
-
-  db.close();
-  return paginateResult({ name, results }, 'results', opts);
 }
 
 // ─── Export Formats ─────────────────────────────────────────────────────

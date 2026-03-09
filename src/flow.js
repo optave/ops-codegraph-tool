@@ -37,46 +37,49 @@ export function entryPointType(name) {
  */
 export function listEntryPointsData(dbPath, opts = {}) {
   const db = openReadonlyOrFail(dbPath);
-  const noTests = opts.noTests || false;
+  try {
+    const noTests = opts.noTests || false;
 
-  // Find all framework-prefixed nodes
-  const prefixConditions = FRAMEWORK_ENTRY_PREFIXES.map(() => 'n.name LIKE ?').join(' OR ');
-  const prefixParams = FRAMEWORK_ENTRY_PREFIXES.map((p) => `${p}%`);
+    // Find all framework-prefixed nodes
+    const prefixConditions = FRAMEWORK_ENTRY_PREFIXES.map(() => 'n.name LIKE ?').join(' OR ');
+    const prefixParams = FRAMEWORK_ENTRY_PREFIXES.map((p) => `${p}%`);
 
-  let rows = db
-    .prepare(
-      `SELECT n.name, n.kind, n.file, n.line, n.role
-       FROM nodes n
-       WHERE (
-         (${prefixConditions})
-         OR n.role = 'entry'
-       )
-         AND n.kind NOT IN ('file', 'directory')
-       ORDER BY n.name`,
-    )
-    .all(...prefixParams);
+    let rows = db
+      .prepare(
+        `SELECT n.name, n.kind, n.file, n.line, n.role
+         FROM nodes n
+         WHERE (
+           (${prefixConditions})
+           OR n.role = 'entry'
+         )
+           AND n.kind NOT IN ('file', 'directory')
+         ORDER BY n.name`,
+      )
+      .all(...prefixParams);
 
-  if (noTests) rows = rows.filter((r) => !isTestFile(r.file));
+    if (noTests) rows = rows.filter((r) => !isTestFile(r.file));
 
-  const entries = rows.map((r) => ({
-    name: r.name,
-    kind: r.kind,
-    file: r.file,
-    line: r.line,
-    role: r.role,
-    type: entryPointType(r.name) || (r.role === 'entry' ? 'exported' : null),
-  }));
+    const entries = rows.map((r) => ({
+      name: r.name,
+      kind: r.kind,
+      file: r.file,
+      line: r.line,
+      role: r.role,
+      type: entryPointType(r.name) || (r.role === 'entry' ? 'exported' : null),
+    }));
 
-  const byType = {};
-  for (const e of entries) {
-    const t = e.type || 'other';
-    if (!byType[t]) byType[t] = [];
-    byType[t].push(e);
+    const byType = {};
+    for (const e of entries) {
+      const t = e.type || 'other';
+      if (!byType[t]) byType[t] = [];
+      byType[t].push(e);
+    }
+
+    const base = { entries, byType, count: entries.length };
+    return paginateResult(base, 'entries', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
   }
-
-  db.close();
-  const base = { entries, byType, count: entries.length };
-  return paginateResult(base, 'entries', { limit: opts.limit, offset: opts.offset });
 }
 
 /**
@@ -93,134 +96,136 @@ export function listEntryPointsData(dbPath, opts = {}) {
  */
 export function flowData(name, dbPath, opts = {}) {
   const db = openReadonlyOrFail(dbPath);
-  const maxDepth = opts.depth || 10;
-  const noTests = opts.noTests || false;
+  try {
+    const maxDepth = opts.depth || 10;
+    const noTests = opts.noTests || false;
 
-  // Phase 1: Direct LIKE match on full name (use all 10 core symbol kinds,
-  // not just FUNCTION_KINDS, so flow can trace from interfaces/types/structs/etc.)
-  const flowOpts = { ...opts, kinds: CORE_SYMBOL_KINDS };
-  let matchNode = findMatchingNodes(db, name, flowOpts)[0] ?? null;
+    // Phase 1: Direct LIKE match on full name (use all 10 core symbol kinds,
+    // not just FUNCTION_KINDS, so flow can trace from interfaces/types/structs/etc.)
+    const flowOpts = { ...opts, kinds: opts.kind ? [opts.kind] : CORE_SYMBOL_KINDS };
+    let matchNode = findMatchingNodes(db, name, flowOpts)[0] ?? null;
 
-  // Phase 2: Prefix-stripped matching — try adding framework prefixes
-  if (!matchNode) {
-    for (const prefix of FRAMEWORK_ENTRY_PREFIXES) {
-      matchNode = findMatchingNodes(db, `${prefix}${name}`, flowOpts)[0] ?? null;
-      if (matchNode) break;
+    // Phase 2: Prefix-stripped matching — try adding framework prefixes
+    if (!matchNode) {
+      for (const prefix of FRAMEWORK_ENTRY_PREFIXES) {
+        matchNode = findMatchingNodes(db, `${prefix}${name}`, flowOpts)[0] ?? null;
+        if (matchNode) break;
+      }
     }
-  }
 
-  if (!matchNode) {
-    db.close();
-    return {
-      entry: null,
-      depth: maxDepth,
-      steps: [],
-      leaves: [],
-      cycles: [],
-      totalReached: 0,
-      truncated: false,
+    if (!matchNode) {
+      return {
+        entry: null,
+        depth: maxDepth,
+        steps: [],
+        leaves: [],
+        cycles: [],
+        totalReached: 0,
+        truncated: false,
+      };
+    }
+
+    const epType = entryPointType(matchNode.name);
+    const entry = {
+      name: matchNode.name,
+      kind: matchNode.kind,
+      file: matchNode.file,
+      line: matchNode.line,
+      type: epType || 'exported',
+      role: matchNode.role,
     };
-  }
 
-  const epType = entryPointType(matchNode.name);
-  const entry = {
-    name: matchNode.name,
-    kind: matchNode.kind,
-    file: matchNode.file,
-    line: matchNode.line,
-    type: epType || 'exported',
-    role: matchNode.role,
-  };
+    // Forward BFS through callees
+    const visited = new Set([matchNode.id]);
+    let frontier = [matchNode.id];
+    const steps = [];
+    const cycles = [];
+    let truncated = false;
 
-  // Forward BFS through callees
-  const visited = new Set([matchNode.id]);
-  let frontier = [matchNode.id];
-  const steps = [];
-  const cycles = [];
-  let truncated = false;
+    // Track which nodes are at each depth and their depth for leaf detection
+    const nodeDepths = new Map();
+    const idToNode = new Map();
+    idToNode.set(matchNode.id, entry);
 
-  // Track which nodes are at each depth and their depth for leaf detection
-  const nodeDepths = new Map();
-  const idToNode = new Map();
-  idToNode.set(matchNode.id, entry);
+    for (let d = 1; d <= maxDepth; d++) {
+      const nextFrontier = [];
+      const levelNodes = [];
 
-  for (let d = 1; d <= maxDepth; d++) {
-    const nextFrontier = [];
-    const levelNodes = [];
+      for (const fid of frontier) {
+        const callees = db
+          .prepare(
+            `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line, n.role
+             FROM edges e JOIN nodes n ON e.target_id = n.id
+             WHERE e.source_id = ? AND e.kind = 'calls'`,
+          )
+          .all(fid);
 
-    for (const fid of frontier) {
-      const callees = db
+        for (const c of callees) {
+          if (noTests && isTestFile(c.file)) continue;
+
+          if (visited.has(c.id)) {
+            // Cycle detected
+            const fromNode = idToNode.get(fid);
+            if (fromNode) {
+              cycles.push({ from: fromNode.name, to: c.name, depth: d });
+            }
+            continue;
+          }
+
+          visited.add(c.id);
+          nextFrontier.push(c.id);
+          const nodeInfo = { name: c.name, kind: c.kind, file: c.file, line: c.line };
+          levelNodes.push(nodeInfo);
+          nodeDepths.set(c.id, d);
+          idToNode.set(c.id, nodeInfo);
+        }
+      }
+
+      if (levelNodes.length > 0) {
+        steps.push({ depth: d, nodes: levelNodes });
+      }
+
+      frontier = nextFrontier;
+      if (frontier.length === 0) break;
+
+      if (d === maxDepth && frontier.length > 0) {
+        truncated = true;
+      }
+    }
+
+    // Identify leaves: visited nodes that have no outgoing 'calls' edges to other visited nodes
+    // (or no outgoing calls at all)
+    const leaves = [];
+    for (const [id, depth] of nodeDepths) {
+      const outgoing = db
         .prepare(
-          `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line, n.role
+          `SELECT DISTINCT n.id
            FROM edges e JOIN nodes n ON e.target_id = n.id
            WHERE e.source_id = ? AND e.kind = 'calls'`,
         )
-        .all(fid);
+        .all(id);
 
-      for (const c of callees) {
-        if (noTests && isTestFile(c.file)) continue;
-
-        if (visited.has(c.id)) {
-          // Cycle detected
-          const fromNode = idToNode.get(fid);
-          if (fromNode) {
-            cycles.push({ from: fromNode.name, to: c.name, depth: d });
-          }
-          continue;
+      if (outgoing.length === 0) {
+        const node = idToNode.get(id);
+        if (node) {
+          leaves.push({ ...node, depth });
         }
-
-        visited.add(c.id);
-        nextFrontier.push(c.id);
-        const nodeInfo = { name: c.name, kind: c.kind, file: c.file, line: c.line };
-        levelNodes.push(nodeInfo);
-        nodeDepths.set(c.id, d);
-        idToNode.set(c.id, nodeInfo);
       }
     }
 
-    if (levelNodes.length > 0) {
-      steps.push({ depth: d, nodes: levelNodes });
-    }
-
-    frontier = nextFrontier;
-    if (frontier.length === 0) break;
-
-    if (d === maxDepth && frontier.length > 0) {
-      truncated = true;
-    }
+    const base = {
+      entry,
+      depth: maxDepth,
+      steps,
+      leaves,
+      cycles,
+      totalReached: visited.size - 1, // exclude the entry node itself
+      truncated,
+    };
+    return paginateResult(base, 'steps', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
   }
-
-  // Identify leaves: visited nodes that have no outgoing 'calls' edges to other visited nodes
-  // (or no outgoing calls at all)
-  const leaves = [];
-  for (const [id, depth] of nodeDepths) {
-    const outgoing = db
-      .prepare(
-        `SELECT DISTINCT n.id
-         FROM edges e JOIN nodes n ON e.target_id = n.id
-         WHERE e.source_id = ? AND e.kind = 'calls'`,
-      )
-      .all(id);
-
-    if (outgoing.length === 0) {
-      const node = idToNode.get(id);
-      if (node) {
-        leaves.push({ ...node, depth });
-      }
-    }
-  }
-
-  db.close();
-  const base = {
-    entry,
-    depth: maxDepth,
-    steps,
-    leaves,
-    cycles,
-    totalReached: visited.size - 1, // exclude the entry node itself
-    truncated,
-  };
-  return paginateResult(base, 'steps', { limit: opts.limit, offset: opts.offset });
 }
 
 /**

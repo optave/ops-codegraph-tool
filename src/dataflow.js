@@ -814,134 +814,135 @@ function hasDataflowTable(db) {
  */
 export function dataflowData(name, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
+  try {
+    const noTests = opts.noTests || false;
 
-  if (!hasDataflowTable(db)) {
-    db.close();
-    return {
-      name,
-      results: [],
-      warning:
-        'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
-    };
-  }
-
-  const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
-  if (nodes.length === 0) {
-    db.close();
-    return { name, results: [] };
-  }
-
-  const flowsToOut = db.prepare(
-    `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
-     FROM dataflow d JOIN nodes n ON d.target_id = n.id
-     WHERE d.source_id = ? AND d.kind = 'flows_to'`,
-  );
-  const flowsToIn = db.prepare(
-    `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
-     FROM dataflow d JOIN nodes n ON d.source_id = n.id
-     WHERE d.target_id = ? AND d.kind = 'flows_to'`,
-  );
-  const returnsOut = db.prepare(
-    `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
-     FROM dataflow d JOIN nodes n ON d.target_id = n.id
-     WHERE d.source_id = ? AND d.kind = 'returns'`,
-  );
-  const returnsIn = db.prepare(
-    `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
-     FROM dataflow d JOIN nodes n ON d.source_id = n.id
-     WHERE d.target_id = ? AND d.kind = 'returns'`,
-  );
-  const mutatesOut = db.prepare(
-    `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
-     FROM dataflow d JOIN nodes n ON d.target_id = n.id
-     WHERE d.source_id = ? AND d.kind = 'mutates'`,
-  );
-  const mutatesIn = db.prepare(
-    `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
-     FROM dataflow d JOIN nodes n ON d.source_id = n.id
-     WHERE d.target_id = ? AND d.kind = 'mutates'`,
-  );
-
-  const hc = new Map();
-  const results = nodes.map((node) => {
-    const sym = normalizeSymbol(node, db, hc);
-
-    const flowsTo = flowsToOut.all(node.id).map((r) => ({
-      target: r.target_name,
-      kind: r.target_kind,
-      file: r.target_file,
-      line: r.line,
-      paramIndex: r.param_index,
-      expression: r.expression,
-      confidence: r.confidence,
-    }));
-
-    const flowsFrom = flowsToIn.all(node.id).map((r) => ({
-      source: r.source_name,
-      kind: r.source_kind,
-      file: r.source_file,
-      line: r.line,
-      paramIndex: r.param_index,
-      expression: r.expression,
-      confidence: r.confidence,
-    }));
-
-    const returnConsumers = returnsOut.all(node.id).map((r) => ({
-      consumer: r.target_name,
-      kind: r.target_kind,
-      file: r.target_file,
-      line: r.line,
-      expression: r.expression,
-    }));
-
-    const returnedBy = returnsIn.all(node.id).map((r) => ({
-      producer: r.source_name,
-      kind: r.source_kind,
-      file: r.source_file,
-      line: r.line,
-      expression: r.expression,
-    }));
-
-    const mutatesTargets = mutatesOut.all(node.id).map((r) => ({
-      target: r.target_name,
-      expression: r.expression,
-      line: r.line,
-    }));
-
-    const mutatedBy = mutatesIn.all(node.id).map((r) => ({
-      source: r.source_name,
-      expression: r.expression,
-      line: r.line,
-    }));
-
-    if (noTests) {
-      const filter = (arr) => arr.filter((r) => !isTestFile(r.file));
+    if (!hasDataflowTable(db)) {
       return {
-        ...sym,
-        flowsTo: filter(flowsTo),
-        flowsFrom: filter(flowsFrom),
-        returns: returnConsumers.filter((r) => !isTestFile(r.file)),
-        returnedBy: returnedBy.filter((r) => !isTestFile(r.file)),
-        mutates: mutatesTargets,
-        mutatedBy,
+        name,
+        results: [],
+        warning:
+          'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
       };
     }
 
-    return {
-      ...sym,
-      flowsTo,
-      flowsFrom,
-      returns: returnConsumers,
-      returnedBy,
-      mutates: mutatesTargets,
-      mutatedBy,
-    };
-  });
+    const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    if (nodes.length === 0) {
+      return { name, results: [] };
+    }
 
-  db.close();
-  const base = { name, results };
-  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    const flowsToOut = db.prepare(
+      `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
+     FROM dataflow d JOIN nodes n ON d.target_id = n.id
+     WHERE d.source_id = ? AND d.kind = 'flows_to'`,
+    );
+    const flowsToIn = db.prepare(
+      `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
+     FROM dataflow d JOIN nodes n ON d.source_id = n.id
+     WHERE d.target_id = ? AND d.kind = 'flows_to'`,
+    );
+    const returnsOut = db.prepare(
+      `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
+     FROM dataflow d JOIN nodes n ON d.target_id = n.id
+     WHERE d.source_id = ? AND d.kind = 'returns'`,
+    );
+    const returnsIn = db.prepare(
+      `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
+     FROM dataflow d JOIN nodes n ON d.source_id = n.id
+     WHERE d.target_id = ? AND d.kind = 'returns'`,
+    );
+    const mutatesOut = db.prepare(
+      `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
+     FROM dataflow d JOIN nodes n ON d.target_id = n.id
+     WHERE d.source_id = ? AND d.kind = 'mutates'`,
+    );
+    const mutatesIn = db.prepare(
+      `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
+     FROM dataflow d JOIN nodes n ON d.source_id = n.id
+     WHERE d.target_id = ? AND d.kind = 'mutates'`,
+    );
+
+    const hc = new Map();
+    const results = nodes.map((node) => {
+      const sym = normalizeSymbol(node, db, hc);
+
+      const flowsTo = flowsToOut.all(node.id).map((r) => ({
+        target: r.target_name,
+        kind: r.target_kind,
+        file: r.target_file,
+        line: r.line,
+        paramIndex: r.param_index,
+        expression: r.expression,
+        confidence: r.confidence,
+      }));
+
+      const flowsFrom = flowsToIn.all(node.id).map((r) => ({
+        source: r.source_name,
+        kind: r.source_kind,
+        file: r.source_file,
+        line: r.line,
+        paramIndex: r.param_index,
+        expression: r.expression,
+        confidence: r.confidence,
+      }));
+
+      const returnConsumers = returnsOut.all(node.id).map((r) => ({
+        consumer: r.target_name,
+        kind: r.target_kind,
+        file: r.target_file,
+        line: r.line,
+        expression: r.expression,
+      }));
+
+      const returnedBy = returnsIn.all(node.id).map((r) => ({
+        producer: r.source_name,
+        kind: r.source_kind,
+        file: r.source_file,
+        line: r.line,
+        expression: r.expression,
+      }));
+
+      const mutatesTargets = mutatesOut.all(node.id).map((r) => ({
+        target: r.target_name,
+        expression: r.expression,
+        line: r.line,
+      }));
+
+      const mutatedBy = mutatesIn.all(node.id).map((r) => ({
+        source: r.source_name,
+        expression: r.expression,
+        line: r.line,
+      }));
+
+      if (noTests) {
+        const filter = (arr) => arr.filter((r) => !isTestFile(r.file));
+        return {
+          ...sym,
+          flowsTo: filter(flowsTo),
+          flowsFrom: filter(flowsFrom),
+          returns: returnConsumers.filter((r) => !isTestFile(r.file)),
+          returnedBy: returnedBy.filter((r) => !isTestFile(r.file)),
+          mutates: mutatesTargets,
+          mutatedBy,
+        };
+      }
+
+      return {
+        ...sym,
+        flowsTo,
+        flowsFrom,
+        returns: returnConsumers,
+        returnedBy,
+        mutates: mutatesTargets,
+        mutatedBy,
+      };
+    });
+
+    const base = { name, results };
+    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 /**
@@ -955,125 +956,123 @@ export function dataflowData(name, customDbPath, opts = {}) {
  */
 export function dataflowPathData(from, to, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
-  const maxDepth = opts.maxDepth || 10;
+  try {
+    const noTests = opts.noTests || false;
+    const maxDepth = opts.maxDepth || 10;
 
-  if (!hasDataflowTable(db)) {
-    db.close();
-    return {
-      from,
-      to,
-      found: false,
-      warning:
-        'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
-    };
-  }
+    if (!hasDataflowTable(db)) {
+      return {
+        from,
+        to,
+        found: false,
+        warning:
+          'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
+      };
+    }
 
-  const fromNodes = findNodes(db, from, { noTests, file: opts.fromFile, kind: opts.kind });
-  if (fromNodes.length === 0) {
-    db.close();
-    return { from, to, found: false, error: `No symbol matching "${from}"` };
-  }
+    const fromNodes = findNodes(db, from, { noTests, file: opts.fromFile, kind: opts.kind });
+    if (fromNodes.length === 0) {
+      return { from, to, found: false, error: `No symbol matching "${from}"` };
+    }
 
-  const toNodes = findNodes(db, to, { noTests, file: opts.toFile, kind: opts.kind });
-  if (toNodes.length === 0) {
-    db.close();
-    return { from, to, found: false, error: `No symbol matching "${to}"` };
-  }
+    const toNodes = findNodes(db, to, { noTests, file: opts.toFile, kind: opts.kind });
+    if (toNodes.length === 0) {
+      return { from, to, found: false, error: `No symbol matching "${to}"` };
+    }
 
-  const sourceNode = fromNodes[0];
-  const targetNode = toNodes[0];
+    const sourceNode = fromNodes[0];
+    const targetNode = toNodes[0];
 
-  if (sourceNode.id === targetNode.id) {
-    const hc = new Map();
-    const sym = normalizeSymbol(sourceNode, db, hc);
-    db.close();
-    return {
-      from,
-      to,
-      found: true,
-      hops: 0,
-      path: [{ ...sym, edgeKind: null }],
-    };
-  }
+    if (sourceNode.id === targetNode.id) {
+      const hc = new Map();
+      const sym = normalizeSymbol(sourceNode, db, hc);
+      return {
+        from,
+        to,
+        found: true,
+        hops: 0,
+        path: [{ ...sym, edgeKind: null }],
+      };
+    }
 
-  // BFS through flows_to and returns edges
-  const neighborStmt = db.prepare(
-    `SELECT n.id, n.name, n.kind, n.file, n.line, d.kind AS edge_kind, d.expression
+    // BFS through flows_to and returns edges
+    const neighborStmt = db.prepare(
+      `SELECT n.id, n.name, n.kind, n.file, n.line, d.kind AS edge_kind, d.expression
      FROM dataflow d JOIN nodes n ON d.target_id = n.id
      WHERE d.source_id = ? AND d.kind IN ('flows_to', 'returns')`,
-  );
+    );
 
-  const visited = new Set([sourceNode.id]);
-  const parent = new Map();
-  let queue = [sourceNode.id];
-  let found = false;
+    const visited = new Set([sourceNode.id]);
+    const parent = new Map();
+    let queue = [sourceNode.id];
+    let found = false;
 
-  for (let depth = 1; depth <= maxDepth; depth++) {
-    const nextQueue = [];
-    for (const currentId of queue) {
-      const neighbors = neighborStmt.all(currentId);
-      for (const n of neighbors) {
-        if (noTests && isTestFile(n.file)) continue;
-        if (n.id === targetNode.id) {
-          if (!found) {
-            found = true;
+    for (let depth = 1; depth <= maxDepth; depth++) {
+      const nextQueue = [];
+      for (const currentId of queue) {
+        const neighbors = neighborStmt.all(currentId);
+        for (const n of neighbors) {
+          if (noTests && isTestFile(n.file)) continue;
+          if (n.id === targetNode.id) {
+            if (!found) {
+              found = true;
+              parent.set(n.id, {
+                parentId: currentId,
+                edgeKind: n.edge_kind,
+                expression: n.expression,
+              });
+            }
+            continue;
+          }
+          if (!visited.has(n.id)) {
+            visited.add(n.id);
             parent.set(n.id, {
               parentId: currentId,
               edgeKind: n.edge_kind,
               expression: n.expression,
             });
+            nextQueue.push(n.id);
           }
-          continue;
-        }
-        if (!visited.has(n.id)) {
-          visited.add(n.id);
-          parent.set(n.id, {
-            parentId: currentId,
-            edgeKind: n.edge_kind,
-            expression: n.expression,
-          });
-          nextQueue.push(n.id);
         }
       }
+      if (found) break;
+      queue = nextQueue;
+      if (queue.length === 0) break;
     }
-    if (found) break;
-    queue = nextQueue;
-    if (queue.length === 0) break;
-  }
 
-  if (!found) {
-    db.close();
-    return { from, to, found: false };
-  }
+    if (!found) {
+      return { from, to, found: false };
+    }
 
-  // Reconstruct path
-  const nodeById = db.prepare('SELECT * FROM nodes WHERE id = ?');
-  const hc = new Map();
-  const pathItems = [];
-  let cur = targetNode.id;
-  while (cur !== undefined) {
-    const nodeRow = nodeById.get(cur);
-    const parentInfo = parent.get(cur);
-    pathItems.unshift({
-      ...normalizeSymbol(nodeRow, db, hc),
-      edgeKind: parentInfo?.edgeKind ?? null,
-      expression: parentInfo?.expression ?? null,
-    });
-    cur = parentInfo?.parentId;
-    if (cur === sourceNode.id) {
-      const srcRow = nodeById.get(cur);
+    // Reconstruct path
+    const nodeById = db.prepare('SELECT * FROM nodes WHERE id = ?');
+    const hc = new Map();
+    const pathItems = [];
+    let cur = targetNode.id;
+    while (cur !== undefined) {
+      const nodeRow = nodeById.get(cur);
+      const parentInfo = parent.get(cur);
       pathItems.unshift({
-        ...normalizeSymbol(srcRow, db, hc),
-        edgeKind: null,
-        expression: null,
+        ...normalizeSymbol(nodeRow, db, hc),
+        edgeKind: parentInfo?.edgeKind ?? null,
+        expression: parentInfo?.expression ?? null,
       });
-      break;
+      cur = parentInfo?.parentId;
+      if (cur === sourceNode.id) {
+        const srcRow = nodeById.get(cur);
+        pathItems.unshift({
+          ...normalizeSymbol(srcRow, db, hc),
+          edgeKind: null,
+          expression: null,
+        });
+        break;
+      }
     }
-  }
 
-  db.close();
-  return { from, to, found: true, hops: pathItems.length - 1, path: pathItems };
+    return { from, to, found: true, hops: pathItems.length - 1, path: pathItems };
+  } finally {
+    db.close();
+  }
 }
 
 /**
@@ -1086,66 +1085,67 @@ export function dataflowPathData(from, to, customDbPath, opts = {}) {
  */
 export function dataflowImpactData(name, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const maxDepth = opts.depth || 5;
-  const noTests = opts.noTests || false;
+  try {
+    const maxDepth = opts.depth || 5;
+    const noTests = opts.noTests || false;
 
-  if (!hasDataflowTable(db)) {
-    db.close();
-    return {
-      name,
-      results: [],
-      warning:
-        'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
-    };
-  }
-
-  const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
-  if (nodes.length === 0) {
-    db.close();
-    return { name, results: [] };
-  }
-
-  // Forward BFS: who consumes this function's return value (directly or transitively)?
-  const consumersStmt = db.prepare(
-    `SELECT DISTINCT n.*
-     FROM dataflow d JOIN nodes n ON d.target_id = n.id
-     WHERE d.source_id = ? AND d.kind = 'returns'`,
-  );
-
-  const hc = new Map();
-  const results = nodes.map((node) => {
-    const sym = normalizeSymbol(node, db, hc);
-    const visited = new Set([node.id]);
-    const levels = {};
-    let frontier = [node.id];
-
-    for (let d = 1; d <= maxDepth; d++) {
-      const nextFrontier = [];
-      for (const fid of frontier) {
-        const consumers = consumersStmt.all(fid);
-        for (const c of consumers) {
-          if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
-            visited.add(c.id);
-            nextFrontier.push(c.id);
-            if (!levels[d]) levels[d] = [];
-            levels[d].push(normalizeSymbol(c, db, hc));
-          }
-        }
-      }
-      frontier = nextFrontier;
-      if (frontier.length === 0) break;
+    if (!hasDataflowTable(db)) {
+      return {
+        name,
+        results: [],
+        warning:
+          'No dataflow data found. Rebuild with `codegraph build` (dataflow is now included by default).',
+      };
     }
 
-    return {
-      ...sym,
-      levels,
-      totalAffected: visited.size - 1,
-    };
-  });
+    const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    if (nodes.length === 0) {
+      return { name, results: [] };
+    }
 
-  db.close();
-  const base = { name, results };
-  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    // Forward BFS: who consumes this function's return value (directly or transitively)?
+    const consumersStmt = db.prepare(
+      `SELECT DISTINCT n.*
+     FROM dataflow d JOIN nodes n ON d.target_id = n.id
+     WHERE d.source_id = ? AND d.kind = 'returns'`,
+    );
+
+    const hc = new Map();
+    const results = nodes.map((node) => {
+      const sym = normalizeSymbol(node, db, hc);
+      const visited = new Set([node.id]);
+      const levels = {};
+      let frontier = [node.id];
+
+      for (let d = 1; d <= maxDepth; d++) {
+        const nextFrontier = [];
+        for (const fid of frontier) {
+          const consumers = consumersStmt.all(fid);
+          for (const c of consumers) {
+            if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
+              visited.add(c.id);
+              nextFrontier.push(c.id);
+              if (!levels[d]) levels[d] = [];
+              levels[d].push(normalizeSymbol(c, db, hc));
+            }
+          }
+        }
+        frontier = nextFrontier;
+        if (frontier.length === 0) break;
+      }
+
+      return {
+        ...sym,
+        levels,
+        totalAffected: visited.size - 1,
+      };
+    });
+
+    const base = { name, results };
+    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 // ── Display formatters ──────────────────────────────────────────────────────

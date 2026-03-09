@@ -164,142 +164,144 @@ export function ownersForFiles(filePaths, repoRoot) {
  */
 export function ownersData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const dbPath = findDbPath(customDbPath);
-  const repoRoot = path.resolve(path.dirname(dbPath), '..');
+  try {
+    const dbPath = findDbPath(customDbPath);
+    const repoRoot = path.resolve(path.dirname(dbPath), '..');
 
-  const parsed = parseCodeowners(repoRoot);
-  if (!parsed) {
-    db.close();
-    return {
-      codeownersFile: null,
-      files: [],
-      symbols: [],
-      boundaries: [],
-      summary: {
-        totalFiles: 0,
-        ownedFiles: 0,
-        unownedFiles: 0,
-        coveragePercent: 0,
-        ownerCount: 0,
-        byOwner: [],
-      },
-    };
-  }
-
-  // Get all distinct files from nodes
-  let allFiles = db
-    .prepare('SELECT DISTINCT file FROM nodes')
-    .all()
-    .map((r) => r.file);
-
-  if (opts.noTests) allFiles = allFiles.filter((f) => !isTestFile(f));
-  if (opts.file) {
-    const filter = opts.file;
-    allFiles = allFiles.filter((f) => f.includes(filter));
-  }
-
-  // Map files to owners
-  const fileOwners = allFiles.map((file) => ({
-    file,
-    owners: matchOwners(file, parsed.rules),
-  }));
-
-  // Build owner-to-files index
-  const ownerIndex = new Map();
-  let ownedCount = 0;
-  for (const fo of fileOwners) {
-    if (fo.owners.length > 0) ownedCount++;
-    for (const o of fo.owners) {
-      if (!ownerIndex.has(o)) ownerIndex.set(o, []);
-      ownerIndex.get(o).push(fo.file);
+    const parsed = parseCodeowners(repoRoot);
+    if (!parsed) {
+      return {
+        codeownersFile: null,
+        files: [],
+        symbols: [],
+        boundaries: [],
+        summary: {
+          totalFiles: 0,
+          ownedFiles: 0,
+          unownedFiles: 0,
+          coveragePercent: 0,
+          ownerCount: 0,
+          byOwner: [],
+        },
+      };
     }
-  }
 
-  // Filter files if --owner specified
-  let filteredFiles = fileOwners;
-  if (opts.owner) {
-    filteredFiles = fileOwners.filter((fo) => fo.owners.includes(opts.owner));
-  }
+    // Get all distinct files from nodes
+    let allFiles = db
+      .prepare('SELECT DISTINCT file FROM nodes')
+      .all()
+      .map((r) => r.file);
 
-  // Get symbols for filtered files
-  const fileSet = new Set(filteredFiles.map((fo) => fo.file));
-  let symbols = db
-    .prepare('SELECT name, kind, file, line FROM nodes')
-    .all()
-    .filter((n) => fileSet.has(n.file));
+    if (opts.noTests) allFiles = allFiles.filter((f) => !isTestFile(f));
+    if (opts.file) {
+      const filter = opts.file;
+      allFiles = allFiles.filter((f) => f.includes(filter));
+    }
 
-  if (opts.noTests) symbols = symbols.filter((s) => !isTestFile(s.file));
-  if (opts.kind) symbols = symbols.filter((s) => s.kind === opts.kind);
+    // Map files to owners
+    const fileOwners = allFiles.map((file) => ({
+      file,
+      owners: matchOwners(file, parsed.rules),
+    }));
 
-  const symbolsWithOwners = symbols.map((s) => ({
-    ...s,
-    owners: matchOwners(s.file, parsed.rules),
-  }));
-
-  // Boundary analysis — cross-owner call edges
-  const boundaries = [];
-  if (opts.boundary) {
-    const edges = db
-      .prepare(
-        `SELECT e.id, e.kind AS edgeKind,
-                s.name AS srcName, s.kind AS srcKind, s.file AS srcFile, s.line AS srcLine,
-                t.name AS tgtName, t.kind AS tgtKind, t.file AS tgtFile, t.line AS tgtLine
-         FROM edges e
-         JOIN nodes s ON e.source_id = s.id
-         JOIN nodes t ON e.target_id = t.id
-         WHERE e.kind = 'calls'`,
-      )
-      .all();
-
-    for (const e of edges) {
-      if (opts.noTests && (isTestFile(e.srcFile) || isTestFile(e.tgtFile))) continue;
-      const srcOwners = matchOwners(e.srcFile, parsed.rules);
-      const tgtOwners = matchOwners(e.tgtFile, parsed.rules);
-      // Cross-boundary: different owner sets
-      const srcKey = srcOwners.sort().join(',');
-      const tgtKey = tgtOwners.sort().join(',');
-      if (srcKey !== tgtKey) {
-        boundaries.push({
-          from: {
-            name: e.srcName,
-            kind: e.srcKind,
-            file: e.srcFile,
-            line: e.srcLine,
-            owners: srcOwners,
-          },
-          to: {
-            name: e.tgtName,
-            kind: e.tgtKind,
-            file: e.tgtFile,
-            line: e.tgtLine,
-            owners: tgtOwners,
-          },
-          edgeKind: e.edgeKind,
-        });
+    // Build owner-to-files index
+    const ownerIndex = new Map();
+    let ownedCount = 0;
+    for (const fo of fileOwners) {
+      if (fo.owners.length > 0) ownedCount++;
+      for (const o of fo.owners) {
+        if (!ownerIndex.has(o)) ownerIndex.set(o, []);
+        ownerIndex.get(o).push(fo.file);
       }
     }
+
+    // Filter files if --owner specified
+    let filteredFiles = fileOwners;
+    if (opts.owner) {
+      filteredFiles = fileOwners.filter((fo) => fo.owners.includes(opts.owner));
+    }
+
+    // Get symbols for filtered files
+    const fileSet = new Set(filteredFiles.map((fo) => fo.file));
+    let symbols = db
+      .prepare('SELECT name, kind, file, line FROM nodes')
+      .all()
+      .filter((n) => fileSet.has(n.file));
+
+    if (opts.noTests) symbols = symbols.filter((s) => !isTestFile(s.file));
+    if (opts.kind) symbols = symbols.filter((s) => s.kind === opts.kind);
+
+    const symbolsWithOwners = symbols.map((s) => ({
+      ...s,
+      owners: matchOwners(s.file, parsed.rules),
+    }));
+
+    // Boundary analysis — cross-owner call edges
+    const boundaries = [];
+    if (opts.boundary) {
+      const edges = db
+        .prepare(
+          `SELECT e.id, e.kind AS edgeKind,
+                  s.name AS srcName, s.kind AS srcKind, s.file AS srcFile, s.line AS srcLine,
+                  t.name AS tgtName, t.kind AS tgtKind, t.file AS tgtFile, t.line AS tgtLine
+           FROM edges e
+           JOIN nodes s ON e.source_id = s.id
+           JOIN nodes t ON e.target_id = t.id
+           WHERE e.kind = 'calls'`,
+        )
+        .all();
+
+      for (const e of edges) {
+        if (opts.noTests && (isTestFile(e.srcFile) || isTestFile(e.tgtFile))) continue;
+        const srcOwners = matchOwners(e.srcFile, parsed.rules);
+        const tgtOwners = matchOwners(e.tgtFile, parsed.rules);
+        // Cross-boundary: different owner sets
+        const srcKey = srcOwners.sort().join(',');
+        const tgtKey = tgtOwners.sort().join(',');
+        if (srcKey !== tgtKey) {
+          boundaries.push({
+            from: {
+              name: e.srcName,
+              kind: e.srcKind,
+              file: e.srcFile,
+              line: e.srcLine,
+              owners: srcOwners,
+            },
+            to: {
+              name: e.tgtName,
+              kind: e.tgtKind,
+              file: e.tgtFile,
+              line: e.tgtLine,
+              owners: tgtOwners,
+            },
+            edgeKind: e.edgeKind,
+          });
+        }
+      }
+    }
+
+    // Summary
+    const byOwner = [...ownerIndex.entries()]
+      .map(([owner, files]) => ({ owner, fileCount: files.length }))
+      .sort((a, b) => b.fileCount - a.fileCount);
+
+    return {
+      codeownersFile: parsed.path,
+      files: filteredFiles,
+      symbols: symbolsWithOwners,
+      boundaries,
+      summary: {
+        totalFiles: allFiles.length,
+        ownedFiles: ownedCount,
+        unownedFiles: allFiles.length - ownedCount,
+        coveragePercent: allFiles.length > 0 ? Math.round((ownedCount / allFiles.length) * 100) : 0,
+        ownerCount: ownerIndex.size,
+        byOwner,
+      },
+    };
+  } finally {
+    db.close();
   }
-
-  // Summary
-  const byOwner = [...ownerIndex.entries()]
-    .map(([owner, files]) => ({ owner, fileCount: files.length }))
-    .sort((a, b) => b.fileCount - a.fileCount);
-
-  db.close();
-  return {
-    codeownersFile: parsed.path,
-    files: filteredFiles,
-    symbols: symbolsWithOwners,
-    boundaries,
-    summary: {
-      totalFiles: allFiles.length,
-      ownedFiles: ownedCount,
-      unownedFiles: allFiles.length - ownedCount,
-      coveragePercent: allFiles.length > 0 ? Math.round((ownedCount / allFiles.length) * 100) : 0,
-      ownerCount: ownerIndex.size,
-      byOwner,
-    },
-  };
 }
 
 // ─── CLI Display ─────────────────────────────────────────────────────

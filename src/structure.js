@@ -413,115 +413,117 @@ export function classifyNodeRoles(db) {
  */
 export function structureData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const rawDir = opts.directory || null;
-  const filterDir = rawDir && normalizePath(rawDir) !== '.' ? rawDir : null;
-  const maxDepth = opts.depth || null;
-  const sortBy = opts.sort || 'files';
-  const noTests = opts.noTests || false;
-  const full = opts.full || false;
-  const fileLimit = opts.fileLimit || 25;
+  try {
+    const rawDir = opts.directory || null;
+    const filterDir = rawDir && normalizePath(rawDir) !== '.' ? rawDir : null;
+    const maxDepth = opts.depth || null;
+    const sortBy = opts.sort || 'files';
+    const noTests = opts.noTests || false;
+    const full = opts.full || false;
+    const fileLimit = opts.fileLimit || 25;
 
-  // Get all directory nodes with their metrics
-  let dirs = db
-    .prepare(`
-      SELECT n.id, n.name, n.file, nm.symbol_count, nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
-      FROM nodes n
-      LEFT JOIN node_metrics nm ON n.id = nm.node_id
-      WHERE n.kind = 'directory'
-    `)
-    .all();
-
-  if (filterDir) {
-    const norm = normalizePath(filterDir);
-    dirs = dirs.filter((d) => d.name === norm || d.name.startsWith(`${norm}/`));
-  }
-
-  if (maxDepth) {
-    const baseDepth = filterDir ? normalizePath(filterDir).split('/').length : 0;
-    dirs = dirs.filter((d) => {
-      const depth = d.name.split('/').length - baseDepth;
-      return depth <= maxDepth;
-    });
-  }
-
-  // Sort
-  const sortFn = getSortFn(sortBy);
-  dirs.sort(sortFn);
-
-  // Get file metrics for each directory
-  const result = dirs.map((d) => {
-    let files = db
+    // Get all directory nodes with their metrics
+    let dirs = db
       .prepare(`
-        SELECT n.name, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count, nm.fan_in, nm.fan_out
-        FROM edges e
-        JOIN nodes n ON e.target_id = n.id
+        SELECT n.id, n.name, n.file, nm.symbol_count, nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
+        FROM nodes n
         LEFT JOIN node_metrics nm ON n.id = nm.node_id
-        WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'file'
+        WHERE n.kind = 'directory'
       `)
-      .all(d.id);
-    if (noTests) files = files.filter((f) => !isTestFile(f.name));
+      .all();
 
-    const subdirs = db
-      .prepare(`
-        SELECT n.name
-        FROM edges e
-        JOIN nodes n ON e.target_id = n.id
-        WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'directory'
-      `)
-      .all(d.id);
-
-    const fileCount = noTests ? files.length : d.file_count || 0;
-    return {
-      directory: d.name,
-      fileCount,
-      symbolCount: d.symbol_count || 0,
-      fanIn: d.fan_in || 0,
-      fanOut: d.fan_out || 0,
-      cohesion: d.cohesion,
-      density: fileCount > 0 ? (d.symbol_count || 0) / fileCount : 0,
-      files: files.map((f) => ({
-        file: f.name,
-        lineCount: f.line_count || 0,
-        symbolCount: f.symbol_count || 0,
-        importCount: f.import_count || 0,
-        exportCount: f.export_count || 0,
-        fanIn: f.fan_in || 0,
-        fanOut: f.fan_out || 0,
-      })),
-      subdirectories: subdirs.map((s) => s.name),
-    };
-  });
-
-  db.close();
-
-  // Apply global file limit unless full mode
-  if (!full) {
-    const totalFiles = result.reduce((sum, d) => sum + d.files.length, 0);
-    if (totalFiles > fileLimit) {
-      let shown = 0;
-      for (const d of result) {
-        const remaining = fileLimit - shown;
-        if (remaining <= 0) {
-          d.files = [];
-        } else if (d.files.length > remaining) {
-          d.files = d.files.slice(0, remaining);
-          shown = fileLimit;
-        } else {
-          shown += d.files.length;
-        }
-      }
-      const suppressed = totalFiles - fileLimit;
-      return {
-        directories: result,
-        count: result.length,
-        suppressed,
-        warning: `${suppressed} files omitted (showing ${fileLimit}/${totalFiles}). Use --full to show all files, or narrow with --directory.`,
-      };
+    if (filterDir) {
+      const norm = normalizePath(filterDir);
+      dirs = dirs.filter((d) => d.name === norm || d.name.startsWith(`${norm}/`));
     }
-  }
 
-  const base = { directories: result, count: result.length };
-  return paginateResult(base, 'directories', { limit: opts.limit, offset: opts.offset });
+    if (maxDepth) {
+      const baseDepth = filterDir ? normalizePath(filterDir).split('/').length : 0;
+      dirs = dirs.filter((d) => {
+        const depth = d.name.split('/').length - baseDepth;
+        return depth <= maxDepth;
+      });
+    }
+
+    // Sort
+    const sortFn = getSortFn(sortBy);
+    dirs.sort(sortFn);
+
+    // Get file metrics for each directory
+    const result = dirs.map((d) => {
+      let files = db
+        .prepare(`
+          SELECT n.name, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count, nm.fan_in, nm.fan_out
+          FROM edges e
+          JOIN nodes n ON e.target_id = n.id
+          LEFT JOIN node_metrics nm ON n.id = nm.node_id
+          WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'file'
+        `)
+        .all(d.id);
+      if (noTests) files = files.filter((f) => !isTestFile(f.name));
+
+      const subdirs = db
+        .prepare(`
+          SELECT n.name
+          FROM edges e
+          JOIN nodes n ON e.target_id = n.id
+          WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'directory'
+        `)
+        .all(d.id);
+
+      const fileCount = noTests ? files.length : d.file_count || 0;
+      return {
+        directory: d.name,
+        fileCount,
+        symbolCount: d.symbol_count || 0,
+        fanIn: d.fan_in || 0,
+        fanOut: d.fan_out || 0,
+        cohesion: d.cohesion,
+        density: fileCount > 0 ? (d.symbol_count || 0) / fileCount : 0,
+        files: files.map((f) => ({
+          file: f.name,
+          lineCount: f.line_count || 0,
+          symbolCount: f.symbol_count || 0,
+          importCount: f.import_count || 0,
+          exportCount: f.export_count || 0,
+          fanIn: f.fan_in || 0,
+          fanOut: f.fan_out || 0,
+        })),
+        subdirectories: subdirs.map((s) => s.name),
+      };
+    });
+
+    // Apply global file limit unless full mode
+    if (!full) {
+      const totalFiles = result.reduce((sum, d) => sum + d.files.length, 0);
+      if (totalFiles > fileLimit) {
+        let shown = 0;
+        for (const d of result) {
+          const remaining = fileLimit - shown;
+          if (remaining <= 0) {
+            d.files = [];
+          } else if (d.files.length > remaining) {
+            d.files = d.files.slice(0, remaining);
+            shown = fileLimit;
+          } else {
+            shown += d.files.length;
+          }
+        }
+        const suppressed = totalFiles - fileLimit;
+        return {
+          directories: result,
+          count: result.length,
+          suppressed,
+          warning: `${suppressed} files omitted (showing ${fileLimit}/${totalFiles}). Use --full to show all files, or narrow with --directory.`,
+        };
+      }
+    }
+
+    const base = { directories: result, count: result.length };
+    return paginateResult(base, 'directories', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 /**
@@ -529,64 +531,67 @@ export function structureData(customDbPath, opts = {}) {
  */
 export function hotspotsData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const metric = opts.metric || 'fan-in';
-  const level = opts.level || 'file';
-  const limit = opts.limit || 10;
-  const noTests = opts.noTests || false;
+  try {
+    const metric = opts.metric || 'fan-in';
+    const level = opts.level || 'file';
+    const limit = opts.limit || 10;
+    const noTests = opts.noTests || false;
 
-  const kind = level === 'directory' ? 'directory' : 'file';
+    const kind = level === 'directory' ? 'directory' : 'file';
 
-  const testFilter = testFilterSQL('n.name', noTests && kind === 'file');
+    const testFilter = testFilterSQL('n.name', noTests && kind === 'file');
 
-  const HOTSPOT_QUERIES = {
-    'fan-in': db.prepare(`
-      SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
-             nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
-      FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
-      WHERE n.kind = ? ${testFilter} ORDER BY nm.fan_in DESC NULLS LAST LIMIT ?`),
-    'fan-out': db.prepare(`
-      SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
-             nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
-      FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
-      WHERE n.kind = ? ${testFilter} ORDER BY nm.fan_out DESC NULLS LAST LIMIT ?`),
-    density: db.prepare(`
-      SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
-             nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
-      FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
-      WHERE n.kind = ? ${testFilter} ORDER BY nm.symbol_count DESC NULLS LAST LIMIT ?`),
-    coupling: db.prepare(`
-      SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
-             nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
-      FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
-      WHERE n.kind = ? ${testFilter} ORDER BY (COALESCE(nm.fan_in, 0) + COALESCE(nm.fan_out, 0)) DESC NULLS LAST LIMIT ?`),
-  };
+    const HOTSPOT_QUERIES = {
+      'fan-in': db.prepare(`
+        SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
+               nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
+        FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
+        WHERE n.kind = ? ${testFilter} ORDER BY nm.fan_in DESC NULLS LAST LIMIT ?`),
+      'fan-out': db.prepare(`
+        SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
+               nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
+        FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
+        WHERE n.kind = ? ${testFilter} ORDER BY nm.fan_out DESC NULLS LAST LIMIT ?`),
+      density: db.prepare(`
+        SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
+               nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
+        FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
+        WHERE n.kind = ? ${testFilter} ORDER BY nm.symbol_count DESC NULLS LAST LIMIT ?`),
+      coupling: db.prepare(`
+        SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
+               nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
+        FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id
+        WHERE n.kind = ? ${testFilter} ORDER BY (COALESCE(nm.fan_in, 0) + COALESCE(nm.fan_out, 0)) DESC NULLS LAST LIMIT ?`),
+    };
 
-  const stmt = HOTSPOT_QUERIES[metric] || HOTSPOT_QUERIES['fan-in'];
-  const rows = stmt.all(kind, limit);
+    const stmt = HOTSPOT_QUERIES[metric] || HOTSPOT_QUERIES['fan-in'];
+    const rows = stmt.all(kind, limit);
 
-  const hotspots = rows.map((r) => ({
-    name: r.name,
-    kind: r.kind,
-    lineCount: r.line_count,
-    symbolCount: r.symbol_count,
-    importCount: r.import_count,
-    exportCount: r.export_count,
-    fanIn: r.fan_in,
-    fanOut: r.fan_out,
-    cohesion: r.cohesion,
-    fileCount: r.file_count,
-    density:
-      r.file_count > 0
-        ? (r.symbol_count || 0) / r.file_count
-        : r.line_count > 0
-          ? (r.symbol_count || 0) / r.line_count
-          : 0,
-    coupling: (r.fan_in || 0) + (r.fan_out || 0),
-  }));
+    const hotspots = rows.map((r) => ({
+      name: r.name,
+      kind: r.kind,
+      lineCount: r.line_count,
+      symbolCount: r.symbol_count,
+      importCount: r.import_count,
+      exportCount: r.export_count,
+      fanIn: r.fan_in,
+      fanOut: r.fan_out,
+      cohesion: r.cohesion,
+      fileCount: r.file_count,
+      density:
+        r.file_count > 0
+          ? (r.symbol_count || 0) / r.file_count
+          : r.line_count > 0
+            ? (r.symbol_count || 0) / r.line_count
+            : 0,
+      coupling: (r.fan_in || 0) + (r.fan_out || 0),
+    }));
 
-  db.close();
-  const base = { metric, level, limit, hotspots };
-  return paginateResult(base, 'hotspots', { limit: opts.limit, offset: opts.offset });
+    const base = { metric, level, limit, hotspots };
+    return paginateResult(base, 'hotspots', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 /**
@@ -594,42 +599,45 @@ export function hotspotsData(customDbPath, opts = {}) {
  */
 export function moduleBoundariesData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const threshold = opts.threshold || 0.3;
+  try {
+    const threshold = opts.threshold || 0.3;
 
-  const dirs = db
-    .prepare(`
-      SELECT n.id, n.name, nm.symbol_count, nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
-      FROM nodes n
-      JOIN node_metrics nm ON n.id = nm.node_id
-      WHERE n.kind = 'directory' AND nm.cohesion IS NOT NULL AND nm.cohesion >= ?
-      ORDER BY nm.cohesion DESC
-    `)
-    .all(threshold);
-
-  const modules = dirs.map((d) => {
-    // Get files inside this directory
-    const files = db
+    const dirs = db
       .prepare(`
-        SELECT n.name FROM edges e
-        JOIN nodes n ON e.target_id = n.id
-        WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'file'
+        SELECT n.id, n.name, nm.symbol_count, nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
+        FROM nodes n
+        JOIN node_metrics nm ON n.id = nm.node_id
+        WHERE n.kind = 'directory' AND nm.cohesion IS NOT NULL AND nm.cohesion >= ?
+        ORDER BY nm.cohesion DESC
       `)
-      .all(d.id)
-      .map((f) => f.name);
+      .all(threshold);
 
-    return {
-      directory: d.name,
-      cohesion: d.cohesion,
-      fileCount: d.file_count || 0,
-      symbolCount: d.symbol_count || 0,
-      fanIn: d.fan_in || 0,
-      fanOut: d.fan_out || 0,
-      files,
-    };
-  });
+    const modules = dirs.map((d) => {
+      // Get files inside this directory
+      const files = db
+        .prepare(`
+          SELECT n.name FROM edges e
+          JOIN nodes n ON e.target_id = n.id
+          WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'file'
+        `)
+        .all(d.id)
+        .map((f) => f.name);
 
-  db.close();
-  return { threshold, modules, count: modules.length };
+      return {
+        directory: d.name,
+        cohesion: d.cohesion,
+        fileCount: d.file_count || 0,
+        symbolCount: d.symbol_count || 0,
+        fanIn: d.fan_in || 0,
+        fanOut: d.fan_out || 0,
+        files,
+      };
+    });
+
+    return { threshold, modules, count: modules.length };
+  } finally {
+    db.close();
+  }
 }
 
 // ─── Formatters ───────────────────────────────────────────────────────

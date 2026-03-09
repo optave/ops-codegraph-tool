@@ -194,556 +194,570 @@ export function kindIcon(kind) {
 
 export function queryNameData(name, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
-  let nodes = db.prepare(`SELECT * FROM nodes WHERE name LIKE ?`).all(`%${name}%`);
-  if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
-  if (nodes.length === 0) {
-    db.close();
-    return { query: name, results: [] };
-  }
-
-  const hc = new Map();
-  const results = nodes.map((node) => {
-    let callees = db
-      .prepare(`
-      SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
-      FROM edges e JOIN nodes n ON e.target_id = n.id
-      WHERE e.source_id = ?
-    `)
-      .all(node.id);
-
-    let callers = db
-      .prepare(`
-      SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
-      FROM edges e JOIN nodes n ON e.source_id = n.id
-      WHERE e.target_id = ?
-    `)
-      .all(node.id);
-
-    if (noTests) {
-      callees = callees.filter((c) => !isTestFile(c.file));
-      callers = callers.filter((c) => !isTestFile(c.file));
+  try {
+    const noTests = opts.noTests || false;
+    let nodes = db.prepare(`SELECT * FROM nodes WHERE name LIKE ?`).all(`%${name}%`);
+    if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
+    if (nodes.length === 0) {
+      return { query: name, results: [] };
     }
 
-    return {
-      ...normalizeSymbol(node, db, hc),
-      callees: callees.map((c) => ({
-        name: c.name,
-        kind: c.kind,
-        file: c.file,
-        line: c.line,
-        edgeKind: c.edge_kind,
-      })),
-      callers: callers.map((c) => ({
-        name: c.name,
-        kind: c.kind,
-        file: c.file,
-        line: c.line,
-        edgeKind: c.edge_kind,
-      })),
-    };
-  });
+    const hc = new Map();
+    const results = nodes.map((node) => {
+      let callees = db
+        .prepare(`
+        SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
+        FROM edges e JOIN nodes n ON e.target_id = n.id
+        WHERE e.source_id = ?
+      `)
+        .all(node.id);
 
-  db.close();
-  const base = { query: name, results };
-  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+      let callers = db
+        .prepare(`
+        SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
+        FROM edges e JOIN nodes n ON e.source_id = n.id
+        WHERE e.target_id = ?
+      `)
+        .all(node.id);
+
+      if (noTests) {
+        callees = callees.filter((c) => !isTestFile(c.file));
+        callers = callers.filter((c) => !isTestFile(c.file));
+      }
+
+      return {
+        ...normalizeSymbol(node, db, hc),
+        callees: callees.map((c) => ({
+          name: c.name,
+          kind: c.kind,
+          file: c.file,
+          line: c.line,
+          edgeKind: c.edge_kind,
+        })),
+        callers: callers.map((c) => ({
+          name: c.name,
+          kind: c.kind,
+          file: c.file,
+          line: c.line,
+          edgeKind: c.edge_kind,
+        })),
+      };
+    });
+
+    const base = { query: name, results };
+    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 export function impactAnalysisData(file, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
-  const fileNodes = db
-    .prepare(`SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'`)
-    .all(`%${file}%`);
-  if (fileNodes.length === 0) {
-    db.close();
-    return { file, sources: [], levels: {}, totalDependents: 0 };
-  }
+  try {
+    const noTests = opts.noTests || false;
+    const fileNodes = db
+      .prepare(`SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'`)
+      .all(`%${file}%`);
+    if (fileNodes.length === 0) {
+      return { file, sources: [], levels: {}, totalDependents: 0 };
+    }
 
-  const visited = new Set();
-  const queue = [];
-  const levels = new Map();
+    const visited = new Set();
+    const queue = [];
+    const levels = new Map();
 
-  for (const fn of fileNodes) {
-    visited.add(fn.id);
-    queue.push(fn.id);
-    levels.set(fn.id, 0);
-  }
+    for (const fn of fileNodes) {
+      visited.add(fn.id);
+      queue.push(fn.id);
+      levels.set(fn.id, 0);
+    }
 
-  while (queue.length > 0) {
-    const current = queue.shift();
-    const level = levels.get(current);
-    const dependents = db
-      .prepare(`
-      SELECT n.* FROM edges e JOIN nodes n ON e.source_id = n.id
-      WHERE e.target_id = ? AND e.kind IN ('imports', 'imports-type')
-    `)
-      .all(current);
-    for (const dep of dependents) {
-      if (!visited.has(dep.id) && (!noTests || !isTestFile(dep.file))) {
-        visited.add(dep.id);
-        queue.push(dep.id);
-        levels.set(dep.id, level + 1);
+    while (queue.length > 0) {
+      const current = queue.shift();
+      const level = levels.get(current);
+      const dependents = db
+        .prepare(`
+        SELECT n.* FROM edges e JOIN nodes n ON e.source_id = n.id
+        WHERE e.target_id = ? AND e.kind IN ('imports', 'imports-type')
+      `)
+        .all(current);
+      for (const dep of dependents) {
+        if (!visited.has(dep.id) && (!noTests || !isTestFile(dep.file))) {
+          visited.add(dep.id);
+          queue.push(dep.id);
+          levels.set(dep.id, level + 1);
+        }
       }
     }
-  }
 
-  const byLevel = {};
-  for (const [id, level] of levels) {
-    if (level === 0) continue;
-    if (!byLevel[level]) byLevel[level] = [];
-    const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(id);
-    if (node) byLevel[level].push({ file: node.file });
-  }
+    const byLevel = {};
+    for (const [id, level] of levels) {
+      if (level === 0) continue;
+      if (!byLevel[level]) byLevel[level] = [];
+      const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(id);
+      if (node) byLevel[level].push({ file: node.file });
+    }
 
-  db.close();
-  return {
-    file,
-    sources: fileNodes.map((f) => f.file),
-    levels: byLevel,
-    totalDependents: visited.size - fileNodes.length,
-  };
+    return {
+      file,
+      sources: fileNodes.map((f) => f.file),
+      levels: byLevel,
+      totalDependents: visited.size - fileNodes.length,
+    };
+  } finally {
+    db.close();
+  }
 }
 
 export function moduleMapData(customDbPath, limit = 20, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
+  try {
+    const noTests = opts.noTests || false;
 
-  const testFilter = testFilterSQL('n.file', noTests);
+    const testFilter = testFilterSQL('n.file', noTests);
 
-  const nodes = db
-    .prepare(`
-    SELECT n.*,
-      (SELECT COUNT(*) FROM edges WHERE source_id = n.id AND kind NOT IN ('contains', 'parameter_of', 'receiver')) as out_edges,
-      (SELECT COUNT(*) FROM edges WHERE target_id = n.id AND kind NOT IN ('contains', 'parameter_of', 'receiver')) as in_edges
-    FROM nodes n
-    WHERE n.kind = 'file'
-      ${testFilter}
-    ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id AND kind NOT IN ('contains', 'parameter_of', 'receiver')) DESC
-    LIMIT ?
-  `)
-    .all(limit);
+    const nodes = db
+      .prepare(`
+      SELECT n.*,
+        (SELECT COUNT(*) FROM edges WHERE source_id = n.id AND kind NOT IN ('contains', 'parameter_of', 'receiver')) as out_edges,
+        (SELECT COUNT(*) FROM edges WHERE target_id = n.id AND kind NOT IN ('contains', 'parameter_of', 'receiver')) as in_edges
+      FROM nodes n
+      WHERE n.kind = 'file'
+        ${testFilter}
+      ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id AND kind NOT IN ('contains', 'parameter_of', 'receiver')) DESC
+      LIMIT ?
+    `)
+      .all(limit);
 
-  const topNodes = nodes.map((n) => ({
-    file: n.file,
-    dir: path.dirname(n.file) || '.',
-    inEdges: n.in_edges,
-    outEdges: n.out_edges,
-    coupling: n.in_edges + n.out_edges,
-  }));
+    const topNodes = nodes.map((n) => ({
+      file: n.file,
+      dir: path.dirname(n.file) || '.',
+      inEdges: n.in_edges,
+      outEdges: n.out_edges,
+      coupling: n.in_edges + n.out_edges,
+    }));
 
-  const totalNodes = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c;
-  const totalEdges = db.prepare('SELECT COUNT(*) as c FROM edges').get().c;
-  const totalFiles = db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'").get().c;
+    const totalNodes = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c;
+    const totalEdges = db.prepare('SELECT COUNT(*) as c FROM edges').get().c;
+    const totalFiles = db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'").get().c;
 
-  db.close();
-  return { limit, topNodes, stats: { totalFiles, totalNodes, totalEdges } };
+    return { limit, topNodes, stats: { totalFiles, totalNodes, totalEdges } };
+  } finally {
+    db.close();
+  }
 }
 
 export function fileDepsData(file, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
-  const fileNodes = db
-    .prepare(`SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'`)
-    .all(`%${file}%`);
-  if (fileNodes.length === 0) {
+  try {
+    const noTests = opts.noTests || false;
+    const fileNodes = db
+      .prepare(`SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'`)
+      .all(`%${file}%`);
+    if (fileNodes.length === 0) {
+      return { file, results: [] };
+    }
+
+    const results = fileNodes.map((fn) => {
+      let importsTo = db
+        .prepare(`
+        SELECT n.file, e.kind as edge_kind FROM edges e JOIN nodes n ON e.target_id = n.id
+        WHERE e.source_id = ? AND e.kind IN ('imports', 'imports-type')
+      `)
+        .all(fn.id);
+      if (noTests) importsTo = importsTo.filter((i) => !isTestFile(i.file));
+
+      let importedBy = db
+        .prepare(`
+        SELECT n.file, e.kind as edge_kind FROM edges e JOIN nodes n ON e.source_id = n.id
+        WHERE e.target_id = ? AND e.kind IN ('imports', 'imports-type')
+      `)
+        .all(fn.id);
+      if (noTests) importedBy = importedBy.filter((i) => !isTestFile(i.file));
+
+      const defs = db
+        .prepare(`SELECT * FROM nodes WHERE file = ? AND kind != 'file' ORDER BY line`)
+        .all(fn.file);
+
+      return {
+        file: fn.file,
+        imports: importsTo.map((i) => ({ file: i.file, typeOnly: i.edge_kind === 'imports-type' })),
+        importedBy: importedBy.map((i) => ({ file: i.file })),
+        definitions: defs.map((d) => ({ name: d.name, kind: d.kind, line: d.line })),
+      };
+    });
+
+    const base = { file, results };
+    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+  } finally {
     db.close();
-    return { file, results: [] };
   }
-
-  const results = fileNodes.map((fn) => {
-    let importsTo = db
-      .prepare(`
-      SELECT n.file, e.kind as edge_kind FROM edges e JOIN nodes n ON e.target_id = n.id
-      WHERE e.source_id = ? AND e.kind IN ('imports', 'imports-type')
-    `)
-      .all(fn.id);
-    if (noTests) importsTo = importsTo.filter((i) => !isTestFile(i.file));
-
-    let importedBy = db
-      .prepare(`
-      SELECT n.file, e.kind as edge_kind FROM edges e JOIN nodes n ON e.source_id = n.id
-      WHERE e.target_id = ? AND e.kind IN ('imports', 'imports-type')
-    `)
-      .all(fn.id);
-    if (noTests) importedBy = importedBy.filter((i) => !isTestFile(i.file));
-
-    const defs = db
-      .prepare(`SELECT * FROM nodes WHERE file = ? AND kind != 'file' ORDER BY line`)
-      .all(fn.file);
-
-    return {
-      file: fn.file,
-      imports: importsTo.map((i) => ({ file: i.file, typeOnly: i.edge_kind === 'imports-type' })),
-      importedBy: importedBy.map((i) => ({ file: i.file })),
-      definitions: defs.map((d) => ({ name: d.name, kind: d.kind, line: d.line })),
-    };
-  });
-
-  db.close();
-  const base = { file, results };
-  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
 }
 
 export function fnDepsData(name, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const depth = opts.depth || 3;
-  const noTests = opts.noTests || false;
-  const hc = new Map();
+  try {
+    const depth = opts.depth || 3;
+    const noTests = opts.noTests || false;
+    const hc = new Map();
 
-  const nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
-  if (nodes.length === 0) {
-    db.close();
-    return { name, results: [] };
-  }
-
-  const results = nodes.map((node) => {
-    const callees = db
-      .prepare(`
-      SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
-      FROM edges e JOIN nodes n ON e.target_id = n.id
-      WHERE e.source_id = ? AND e.kind = 'calls'
-    `)
-      .all(node.id);
-    const filteredCallees = noTests ? callees.filter((c) => !isTestFile(c.file)) : callees;
-
-    let callers = db
-      .prepare(`
-      SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
-      FROM edges e JOIN nodes n ON e.source_id = n.id
-      WHERE e.target_id = ? AND e.kind = 'calls'
-    `)
-      .all(node.id);
-
-    if (node.kind === 'method' && node.name.includes('.')) {
-      const methodName = node.name.split('.').pop();
-      const relatedMethods = resolveMethodViaHierarchy(db, methodName);
-      for (const rm of relatedMethods) {
-        if (rm.id === node.id) continue;
-        const extraCallers = db
-          .prepare(`
-          SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
-          FROM edges e JOIN nodes n ON e.source_id = n.id
-          WHERE e.target_id = ? AND e.kind = 'calls'
-        `)
-          .all(rm.id);
-        callers.push(...extraCallers.map((c) => ({ ...c, viaHierarchy: rm.name })));
-      }
+    const nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    if (nodes.length === 0) {
+      return { name, results: [] };
     }
-    if (noTests) callers = callers.filter((c) => !isTestFile(c.file));
 
-    // Transitive callers
-    const transitiveCallers = {};
-    if (depth > 1) {
-      const visited = new Set([node.id]);
-      let frontier = callers
-        .map((c) => {
-          const row = db
-            .prepare('SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? AND line = ?')
-            .get(c.name, c.kind, c.file, c.line);
-          return row ? { ...c, id: row.id } : null;
-        })
-        .filter(Boolean);
+    const results = nodes.map((node) => {
+      const callees = db
+        .prepare(`
+        SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
+        FROM edges e JOIN nodes n ON e.target_id = n.id
+        WHERE e.source_id = ? AND e.kind = 'calls'
+      `)
+        .all(node.id);
+      const filteredCallees = noTests ? callees.filter((c) => !isTestFile(c.file)) : callees;
 
-      for (let d = 2; d <= depth; d++) {
-        const nextFrontier = [];
-        for (const f of frontier) {
-          if (visited.has(f.id)) continue;
-          visited.add(f.id);
-          const upstream = db
+      let callers = db
+        .prepare(`
+        SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
+        FROM edges e JOIN nodes n ON e.source_id = n.id
+        WHERE e.target_id = ? AND e.kind = 'calls'
+      `)
+        .all(node.id);
+
+      if (node.kind === 'method' && node.name.includes('.')) {
+        const methodName = node.name.split('.').pop();
+        const relatedMethods = resolveMethodViaHierarchy(db, methodName);
+        for (const rm of relatedMethods) {
+          if (rm.id === node.id) continue;
+          const extraCallers = db
             .prepare(`
-            SELECT n.name, n.kind, n.file, n.line
+            SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
             FROM edges e JOIN nodes n ON e.source_id = n.id
             WHERE e.target_id = ? AND e.kind = 'calls'
           `)
-            .all(f.id);
-          for (const u of upstream) {
-            if (noTests && isTestFile(u.file)) continue;
-            const uid = db
+            .all(rm.id);
+          callers.push(...extraCallers.map((c) => ({ ...c, viaHierarchy: rm.name })));
+        }
+      }
+      if (noTests) callers = callers.filter((c) => !isTestFile(c.file));
+
+      // Transitive callers
+      const transitiveCallers = {};
+      if (depth > 1) {
+        const visited = new Set([node.id]);
+        let frontier = callers
+          .map((c) => {
+            const row = db
               .prepare('SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? AND line = ?')
-              .get(u.name, u.kind, u.file, u.line)?.id;
-            if (uid && !visited.has(uid)) {
-              nextFrontier.push({ ...u, id: uid });
+              .get(c.name, c.kind, c.file, c.line);
+            return row ? { ...c, id: row.id } : null;
+          })
+          .filter(Boolean);
+
+        for (let d = 2; d <= depth; d++) {
+          const nextFrontier = [];
+          for (const f of frontier) {
+            if (visited.has(f.id)) continue;
+            visited.add(f.id);
+            const upstream = db
+              .prepare(`
+              SELECT n.name, n.kind, n.file, n.line
+              FROM edges e JOIN nodes n ON e.source_id = n.id
+              WHERE e.target_id = ? AND e.kind = 'calls'
+            `)
+              .all(f.id);
+            for (const u of upstream) {
+              if (noTests && isTestFile(u.file)) continue;
+              const uid = db
+                .prepare(
+                  'SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? AND line = ?',
+                )
+                .get(u.name, u.kind, u.file, u.line)?.id;
+              if (uid && !visited.has(uid)) {
+                nextFrontier.push({ ...u, id: uid });
+              }
             }
           }
+          if (nextFrontier.length > 0) {
+            transitiveCallers[d] = nextFrontier.map((n) => ({
+              name: n.name,
+              kind: n.kind,
+              file: n.file,
+              line: n.line,
+            }));
+          }
+          frontier = nextFrontier;
+          if (frontier.length === 0) break;
         }
-        if (nextFrontier.length > 0) {
-          transitiveCallers[d] = nextFrontier.map((n) => ({
-            name: n.name,
-            kind: n.kind,
-            file: n.file,
-            line: n.line,
-          }));
-        }
-        frontier = nextFrontier;
-        if (frontier.length === 0) break;
       }
-    }
 
-    return {
-      ...normalizeSymbol(node, db, hc),
-      callees: filteredCallees.map((c) => ({
-        name: c.name,
-        kind: c.kind,
-        file: c.file,
-        line: c.line,
-      })),
-      callers: callers.map((c) => ({
-        name: c.name,
-        kind: c.kind,
-        file: c.file,
-        line: c.line,
-        viaHierarchy: c.viaHierarchy || undefined,
-      })),
-      transitiveCallers,
-    };
-  });
+      return {
+        ...normalizeSymbol(node, db, hc),
+        callees: filteredCallees.map((c) => ({
+          name: c.name,
+          kind: c.kind,
+          file: c.file,
+          line: c.line,
+        })),
+        callers: callers.map((c) => ({
+          name: c.name,
+          kind: c.kind,
+          file: c.file,
+          line: c.line,
+          viaHierarchy: c.viaHierarchy || undefined,
+        })),
+        transitiveCallers,
+      };
+    });
 
-  db.close();
-  const base = { name, results };
-  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    const base = { name, results };
+    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 export function fnImpactData(name, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const maxDepth = opts.depth || 5;
-  const noTests = opts.noTests || false;
-  const hc = new Map();
+  try {
+    const maxDepth = opts.depth || 5;
+    const noTests = opts.noTests || false;
+    const hc = new Map();
 
-  const nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
-  if (nodes.length === 0) {
-    db.close();
-    return { name, results: [] };
-  }
-
-  const results = nodes.map((node) => {
-    const visited = new Set([node.id]);
-    const levels = {};
-    let frontier = [node.id];
-
-    for (let d = 1; d <= maxDepth; d++) {
-      const nextFrontier = [];
-      for (const fid of frontier) {
-        const callers = db
-          .prepare(`
-          SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
-          FROM edges e JOIN nodes n ON e.source_id = n.id
-          WHERE e.target_id = ? AND e.kind = 'calls'
-        `)
-          .all(fid);
-        for (const c of callers) {
-          if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
-            visited.add(c.id);
-            nextFrontier.push(c.id);
-            if (!levels[d]) levels[d] = [];
-            levels[d].push({ name: c.name, kind: c.kind, file: c.file, line: c.line });
-          }
-        }
-      }
-      frontier = nextFrontier;
-      if (frontier.length === 0) break;
+    const nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    if (nodes.length === 0) {
+      return { name, results: [] };
     }
 
-    return {
-      ...normalizeSymbol(node, db, hc),
-      levels,
-      totalDependents: visited.size - 1,
-    };
-  });
+    const results = nodes.map((node) => {
+      const visited = new Set([node.id]);
+      const levels = {};
+      let frontier = [node.id];
 
-  db.close();
-  const base = { name, results };
-  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+      for (let d = 1; d <= maxDepth; d++) {
+        const nextFrontier = [];
+        for (const fid of frontier) {
+          const callers = db
+            .prepare(`
+            SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
+            FROM edges e JOIN nodes n ON e.source_id = n.id
+            WHERE e.target_id = ? AND e.kind = 'calls'
+          `)
+            .all(fid);
+          for (const c of callers) {
+            if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
+              visited.add(c.id);
+              nextFrontier.push(c.id);
+              if (!levels[d]) levels[d] = [];
+              levels[d].push({ name: c.name, kind: c.kind, file: c.file, line: c.line });
+            }
+          }
+        }
+        frontier = nextFrontier;
+        if (frontier.length === 0) break;
+      }
+
+      return {
+        ...normalizeSymbol(node, db, hc),
+        levels,
+        totalDependents: visited.size - 1,
+      };
+    });
+
+    const base = { name, results };
+    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 export function pathData(from, to, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
-  const maxDepth = opts.maxDepth || 10;
-  const edgeKinds = opts.edgeKinds || ['calls'];
-  const reverse = opts.reverse || false;
+  try {
+    const noTests = opts.noTests || false;
+    const maxDepth = opts.maxDepth || 10;
+    const edgeKinds = opts.edgeKinds || ['calls'];
+    const reverse = opts.reverse || false;
 
-  const fromNodes = findMatchingNodes(db, from, {
-    noTests,
-    file: opts.fromFile,
-    kind: opts.kind,
-  });
-  if (fromNodes.length === 0) {
-    db.close();
-    return {
-      from,
-      to,
-      found: false,
-      error: `No symbol matching "${from}"`,
-      fromCandidates: [],
-      toCandidates: [],
+    const fromNodes = findMatchingNodes(db, from, {
+      noTests,
+      file: opts.fromFile,
+      kind: opts.kind,
+    });
+    if (fromNodes.length === 0) {
+      return {
+        from,
+        to,
+        found: false,
+        error: `No symbol matching "${from}"`,
+        fromCandidates: [],
+        toCandidates: [],
+      };
+    }
+
+    const toNodes = findMatchingNodes(db, to, {
+      noTests,
+      file: opts.toFile,
+      kind: opts.kind,
+    });
+    if (toNodes.length === 0) {
+      return {
+        from,
+        to,
+        found: false,
+        error: `No symbol matching "${to}"`,
+        fromCandidates: fromNodes
+          .slice(0, 5)
+          .map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line })),
+        toCandidates: [],
+      };
+    }
+
+    const sourceNode = fromNodes[0];
+    const targetNode = toNodes[0];
+
+    const fromCandidates = fromNodes
+      .slice(0, 5)
+      .map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line }));
+    const toCandidates = toNodes
+      .slice(0, 5)
+      .map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line }));
+
+    // Self-path
+    if (sourceNode.id === targetNode.id) {
+      return {
+        from,
+        to,
+        fromCandidates,
+        toCandidates,
+        found: true,
+        hops: 0,
+        path: [
+          {
+            name: sourceNode.name,
+            kind: sourceNode.kind,
+            file: sourceNode.file,
+            line: sourceNode.line,
+            edgeKind: null,
+          },
+        ],
+        alternateCount: 0,
+        edgeKinds,
+        reverse,
+        maxDepth,
+      };
+    }
+
+    // Build edge kind filter
+    const kindPlaceholders = edgeKinds.map(() => '?').join(', ');
+
+    // BFS — direction depends on `reverse` flag
+    // Forward: source_id → target_id (A calls... calls B)
+    // Reverse: target_id → source_id (B is called by... called by A)
+    const neighborQuery = reverse
+      ? `SELECT n.id, n.name, n.kind, n.file, n.line, e.kind AS edge_kind
+         FROM edges e JOIN nodes n ON e.source_id = n.id
+         WHERE e.target_id = ? AND e.kind IN (${kindPlaceholders})`
+      : `SELECT n.id, n.name, n.kind, n.file, n.line, e.kind AS edge_kind
+         FROM edges e JOIN nodes n ON e.target_id = n.id
+         WHERE e.source_id = ? AND e.kind IN (${kindPlaceholders})`;
+    const neighborStmt = db.prepare(neighborQuery);
+
+    const visited = new Set([sourceNode.id]);
+    // parent map: nodeId → { parentId, edgeKind }
+    const parent = new Map();
+    let queue = [sourceNode.id];
+    let found = false;
+    let alternateCount = 0;
+    let foundDepth = -1;
+
+    for (let depth = 1; depth <= maxDepth; depth++) {
+      const nextQueue = [];
+      for (const currentId of queue) {
+        const neighbors = neighborStmt.all(currentId, ...edgeKinds);
+        for (const n of neighbors) {
+          if (noTests && isTestFile(n.file)) continue;
+          if (n.id === targetNode.id) {
+            if (!found) {
+              found = true;
+              foundDepth = depth;
+              parent.set(n.id, { parentId: currentId, edgeKind: n.edge_kind });
+            }
+            alternateCount++;
+            continue;
+          }
+          if (!visited.has(n.id)) {
+            visited.add(n.id);
+            parent.set(n.id, { parentId: currentId, edgeKind: n.edge_kind });
+            nextQueue.push(n.id);
+          }
+        }
+      }
+      if (found) break;
+      queue = nextQueue;
+      if (queue.length === 0) break;
+    }
+
+    if (!found) {
+      return {
+        from,
+        to,
+        fromCandidates,
+        toCandidates,
+        found: false,
+        hops: null,
+        path: [],
+        alternateCount: 0,
+        edgeKinds,
+        reverse,
+        maxDepth,
+      };
+    }
+
+    // alternateCount includes the one we kept; subtract 1 for "alternates"
+    alternateCount = Math.max(0, alternateCount - 1);
+
+    // Reconstruct path from target back to source
+    const pathIds = [targetNode.id];
+    let cur = targetNode.id;
+    while (cur !== sourceNode.id) {
+      const p = parent.get(cur);
+      pathIds.push(p.parentId);
+      cur = p.parentId;
+    }
+    pathIds.reverse();
+
+    // Build path with node info
+    const nodeCache = new Map();
+    const getNode = (id) => {
+      if (nodeCache.has(id)) return nodeCache.get(id);
+      const row = db.prepare('SELECT name, kind, file, line FROM nodes WHERE id = ?').get(id);
+      nodeCache.set(id, row);
+      return row;
     };
-  }
 
-  const toNodes = findMatchingNodes(db, to, {
-    noTests,
-    file: opts.toFile,
-    kind: opts.kind,
-  });
-  if (toNodes.length === 0) {
-    db.close();
-    return {
-      from,
-      to,
-      found: false,
-      error: `No symbol matching "${to}"`,
-      fromCandidates: fromNodes
-        .slice(0, 5)
-        .map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line })),
-      toCandidates: [],
-    };
-  }
+    const resultPath = pathIds.map((id, idx) => {
+      const node = getNode(id);
+      const edgeKind = idx === 0 ? null : parent.get(id).edgeKind;
+      return { name: node.name, kind: node.kind, file: node.file, line: node.line, edgeKind };
+    });
 
-  const sourceNode = fromNodes[0];
-  const targetNode = toNodes[0];
-
-  const fromCandidates = fromNodes
-    .slice(0, 5)
-    .map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line }));
-  const toCandidates = toNodes
-    .slice(0, 5)
-    .map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line }));
-
-  // Self-path
-  if (sourceNode.id === targetNode.id) {
-    db.close();
     return {
       from,
       to,
       fromCandidates,
       toCandidates,
       found: true,
-      hops: 0,
-      path: [
-        {
-          name: sourceNode.name,
-          kind: sourceNode.kind,
-          file: sourceNode.file,
-          line: sourceNode.line,
-          edgeKind: null,
-        },
-      ],
-      alternateCount: 0,
+      hops: foundDepth,
+      path: resultPath,
+      alternateCount,
       edgeKinds,
       reverse,
       maxDepth,
     };
-  }
-
-  // Build edge kind filter
-  const kindPlaceholders = edgeKinds.map(() => '?').join(', ');
-
-  // BFS — direction depends on `reverse` flag
-  // Forward: source_id → target_id (A calls... calls B)
-  // Reverse: target_id → source_id (B is called by... called by A)
-  const neighborQuery = reverse
-    ? `SELECT n.id, n.name, n.kind, n.file, n.line, e.kind AS edge_kind
-       FROM edges e JOIN nodes n ON e.source_id = n.id
-       WHERE e.target_id = ? AND e.kind IN (${kindPlaceholders})`
-    : `SELECT n.id, n.name, n.kind, n.file, n.line, e.kind AS edge_kind
-       FROM edges e JOIN nodes n ON e.target_id = n.id
-       WHERE e.source_id = ? AND e.kind IN (${kindPlaceholders})`;
-  const neighborStmt = db.prepare(neighborQuery);
-
-  const visited = new Set([sourceNode.id]);
-  // parent map: nodeId → { parentId, edgeKind }
-  const parent = new Map();
-  let queue = [sourceNode.id];
-  let found = false;
-  let alternateCount = 0;
-  let foundDepth = -1;
-
-  for (let depth = 1; depth <= maxDepth; depth++) {
-    const nextQueue = [];
-    for (const currentId of queue) {
-      const neighbors = neighborStmt.all(currentId, ...edgeKinds);
-      for (const n of neighbors) {
-        if (noTests && isTestFile(n.file)) continue;
-        if (n.id === targetNode.id) {
-          if (!found) {
-            found = true;
-            foundDepth = depth;
-            parent.set(n.id, { parentId: currentId, edgeKind: n.edge_kind });
-          }
-          alternateCount++;
-          continue;
-        }
-        if (!visited.has(n.id)) {
-          visited.add(n.id);
-          parent.set(n.id, { parentId: currentId, edgeKind: n.edge_kind });
-          nextQueue.push(n.id);
-        }
-      }
-    }
-    if (found) break;
-    queue = nextQueue;
-    if (queue.length === 0) break;
-  }
-
-  if (!found) {
+  } finally {
     db.close();
-    return {
-      from,
-      to,
-      fromCandidates,
-      toCandidates,
-      found: false,
-      hops: null,
-      path: [],
-      alternateCount: 0,
-      edgeKinds,
-      reverse,
-      maxDepth,
-    };
   }
-
-  // alternateCount includes the one we kept; subtract 1 for "alternates"
-  alternateCount = Math.max(0, alternateCount - 1);
-
-  // Reconstruct path from target back to source
-  const pathIds = [targetNode.id];
-  let cur = targetNode.id;
-  while (cur !== sourceNode.id) {
-    const p = parent.get(cur);
-    pathIds.push(p.parentId);
-    cur = p.parentId;
-  }
-  pathIds.reverse();
-
-  // Build path with node info
-  const nodeCache = new Map();
-  const getNode = (id) => {
-    if (nodeCache.has(id)) return nodeCache.get(id);
-    const row = db.prepare('SELECT name, kind, file, line FROM nodes WHERE id = ?').get(id);
-    nodeCache.set(id, row);
-    return row;
-  };
-
-  const resultPath = pathIds.map((id, idx) => {
-    const node = getNode(id);
-    const edgeKind = idx === 0 ? null : parent.get(id).edgeKind;
-    return { name: node.name, kind: node.kind, file: node.file, line: node.line, edgeKind };
-  });
-
-  db.close();
-  return {
-    from,
-    to,
-    fromCandidates,
-    toCandidates,
-    found: true,
-    hops: foundDepth,
-    path: resultPath,
-    alternateCount,
-    edgeKinds,
-    reverse,
-    maxDepth,
-  };
 }
 
 /**
@@ -752,236 +766,235 @@ export function pathData(from, to, customDbPath, opts = {}) {
  */
 export function diffImpactData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
-  const maxDepth = opts.depth || 3;
-
-  const dbPath = findDbPath(customDbPath);
-  const repoRoot = path.resolve(path.dirname(dbPath), '..');
-
-  // Verify we're in a git repository before running git diff
-  let checkDir = repoRoot;
-  let isGitRepo = false;
-  while (checkDir) {
-    if (fs.existsSync(path.join(checkDir, '.git'))) {
-      isGitRepo = true;
-      break;
-    }
-    const parent = path.dirname(checkDir);
-    if (parent === checkDir) break;
-    checkDir = parent;
-  }
-  if (!isGitRepo) {
-    db.close();
-    return { error: `Not a git repository: ${repoRoot}` };
-  }
-
-  let diffOutput;
   try {
-    const args = opts.staged
-      ? ['diff', '--cached', '--unified=0', '--no-color']
-      : ['diff', opts.ref || 'HEAD', '--unified=0', '--no-color'];
-    diffOutput = execFileSync('git', args, {
-      cwd: repoRoot,
-      encoding: 'utf-8',
-      maxBuffer: 10 * 1024 * 1024,
-      stdio: ['pipe', 'pipe', 'pipe'],
-    });
-  } catch (e) {
-    db.close();
-    return { error: `Failed to run git diff: ${e.message}` };
-  }
+    const noTests = opts.noTests || false;
+    const maxDepth = opts.depth || 3;
 
-  if (!diffOutput.trim()) {
-    db.close();
-    return {
-      changedFiles: 0,
-      newFiles: [],
-      affectedFunctions: [],
-      affectedFiles: [],
-      summary: null,
-    };
-  }
+    const dbPath = findDbPath(customDbPath);
+    const repoRoot = path.resolve(path.dirname(dbPath), '..');
 
-  const changedRanges = new Map();
-  const newFiles = new Set();
-  let currentFile = null;
-  let prevIsDevNull = false;
-  for (const line of diffOutput.split('\n')) {
-    if (line.startsWith('--- /dev/null')) {
-      prevIsDevNull = true;
-      continue;
+    // Verify we're in a git repository before running git diff
+    let checkDir = repoRoot;
+    let isGitRepo = false;
+    while (checkDir) {
+      if (fs.existsSync(path.join(checkDir, '.git'))) {
+        isGitRepo = true;
+        break;
+      }
+      const parent = path.dirname(checkDir);
+      if (parent === checkDir) break;
+      checkDir = parent;
     }
-    if (line.startsWith('--- ')) {
-      prevIsDevNull = false;
-      continue;
+    if (!isGitRepo) {
+      return { error: `Not a git repository: ${repoRoot}` };
     }
-    const fileMatch = line.match(/^\+\+\+ b\/(.+)/);
-    if (fileMatch) {
-      currentFile = fileMatch[1];
-      if (!changedRanges.has(currentFile)) changedRanges.set(currentFile, []);
-      if (prevIsDevNull) newFiles.add(currentFile);
-      prevIsDevNull = false;
-      continue;
-    }
-    const hunkMatch = line.match(/^@@ .+ \+(\d+)(?:,(\d+))? @@/);
-    if (hunkMatch && currentFile) {
-      const start = parseInt(hunkMatch[1], 10);
-      const count = parseInt(hunkMatch[2] || '1', 10);
-      changedRanges.get(currentFile).push({ start, end: start + count - 1 });
-    }
-  }
 
-  if (changedRanges.size === 0) {
-    db.close();
-    return {
-      changedFiles: 0,
-      newFiles: [],
-      affectedFunctions: [],
-      affectedFiles: [],
-      summary: null,
-    };
-  }
+    let diffOutput;
+    try {
+      const args = opts.staged
+        ? ['diff', '--cached', '--unified=0', '--no-color']
+        : ['diff', opts.ref || 'HEAD', '--unified=0', '--no-color'];
+      diffOutput = execFileSync('git', args, {
+        cwd: repoRoot,
+        encoding: 'utf-8',
+        maxBuffer: 10 * 1024 * 1024,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+    } catch (e) {
+      return { error: `Failed to run git diff: ${e.message}` };
+    }
 
-  const affectedFunctions = [];
-  for (const [file, ranges] of changedRanges) {
-    if (noTests && isTestFile(file)) continue;
-    const defs = db
-      .prepare(
-        `SELECT * FROM nodes WHERE file = ? AND kind IN ('function', 'method', 'class') ORDER BY line`,
-      )
-      .all(file);
-    for (let i = 0; i < defs.length; i++) {
-      const def = defs[i];
-      const endLine = def.end_line || (defs[i + 1] ? defs[i + 1].line - 1 : 999999);
-      for (const range of ranges) {
-        if (range.start <= endLine && range.end >= def.line) {
-          affectedFunctions.push(def);
-          break;
-        }
+    if (!diffOutput.trim()) {
+      return {
+        changedFiles: 0,
+        newFiles: [],
+        affectedFunctions: [],
+        affectedFiles: [],
+        summary: null,
+      };
+    }
+
+    const changedRanges = new Map();
+    const newFiles = new Set();
+    let currentFile = null;
+    let prevIsDevNull = false;
+    for (const line of diffOutput.split('\n')) {
+      if (line.startsWith('--- /dev/null')) {
+        prevIsDevNull = true;
+        continue;
+      }
+      if (line.startsWith('--- ')) {
+        prevIsDevNull = false;
+        continue;
+      }
+      const fileMatch = line.match(/^\+\+\+ b\/(.+)/);
+      if (fileMatch) {
+        currentFile = fileMatch[1];
+        if (!changedRanges.has(currentFile)) changedRanges.set(currentFile, []);
+        if (prevIsDevNull) newFiles.add(currentFile);
+        prevIsDevNull = false;
+        continue;
+      }
+      const hunkMatch = line.match(/^@@ .+ \+(\d+)(?:,(\d+))? @@/);
+      if (hunkMatch && currentFile) {
+        const start = parseInt(hunkMatch[1], 10);
+        const count = parseInt(hunkMatch[2] || '1', 10);
+        changedRanges.get(currentFile).push({ start, end: start + count - 1 });
       }
     }
-  }
 
-  const allAffected = new Set();
-  const functionResults = affectedFunctions.map((fn) => {
-    const visited = new Set([fn.id]);
-    let frontier = [fn.id];
-    let totalCallers = 0;
-    const levels = {};
-    const edges = [];
-    const idToKey = new Map();
-    idToKey.set(fn.id, `${fn.file}::${fn.name}:${fn.line}`);
-    for (let d = 1; d <= maxDepth; d++) {
-      const nextFrontier = [];
-      for (const fid of frontier) {
-        const callers = db
-          .prepare(`
-          SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
-          FROM edges e JOIN nodes n ON e.source_id = n.id
-          WHERE e.target_id = ? AND e.kind = 'calls'
-        `)
-          .all(fid);
-        for (const c of callers) {
-          if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
-            visited.add(c.id);
-            nextFrontier.push(c.id);
-            allAffected.add(`${c.file}:${c.name}`);
-            const callerKey = `${c.file}::${c.name}:${c.line}`;
-            idToKey.set(c.id, callerKey);
-            if (!levels[d]) levels[d] = [];
-            levels[d].push({ name: c.name, kind: c.kind, file: c.file, line: c.line });
-            edges.push({ from: idToKey.get(fid), to: callerKey });
-            totalCallers++;
+    if (changedRanges.size === 0) {
+      return {
+        changedFiles: 0,
+        newFiles: [],
+        affectedFunctions: [],
+        affectedFiles: [],
+        summary: null,
+      };
+    }
+
+    const affectedFunctions = [];
+    for (const [file, ranges] of changedRanges) {
+      if (noTests && isTestFile(file)) continue;
+      const defs = db
+        .prepare(
+          `SELECT * FROM nodes WHERE file = ? AND kind IN ('function', 'method', 'class') ORDER BY line`,
+        )
+        .all(file);
+      for (let i = 0; i < defs.length; i++) {
+        const def = defs[i];
+        const endLine = def.end_line || (defs[i + 1] ? defs[i + 1].line - 1 : 999999);
+        for (const range of ranges) {
+          if (range.start <= endLine && range.end >= def.line) {
+            affectedFunctions.push(def);
+            break;
           }
         }
       }
-      frontier = nextFrontier;
-      if (frontier.length === 0) break;
     }
-    return {
-      name: fn.name,
-      kind: fn.kind,
-      file: fn.file,
-      line: fn.line,
-      transitiveCallers: totalCallers,
-      levels,
-      edges,
-    };
-  });
 
-  const affectedFiles = new Set();
-  for (const key of allAffected) affectedFiles.add(key.split(':')[0]);
-
-  // Look up historically coupled files from co-change data
-  let historicallyCoupled = [];
-  try {
-    db.prepare('SELECT 1 FROM co_changes LIMIT 1').get();
-    const changedFilesList = [...changedRanges.keys()];
-    const coResults = coChangeForFiles(changedFilesList, db, {
-      minJaccard: 0.3,
-      limit: 20,
-      noTests,
-    });
-    // Exclude files already found via static analysis
-    historicallyCoupled = coResults.filter((r) => !affectedFiles.has(r.file));
-  } catch {
-    /* co_changes table doesn't exist — skip silently */
-  }
-
-  // Look up CODEOWNERS for changed + affected files
-  let ownership = null;
-  try {
-    const allFilePaths = [...new Set([...changedRanges.keys(), ...affectedFiles])];
-    const ownerResult = ownersForFiles(allFilePaths, repoRoot);
-    if (ownerResult.affectedOwners.length > 0) {
-      ownership = {
-        owners: Object.fromEntries(ownerResult.owners),
-        affectedOwners: ownerResult.affectedOwners,
-        suggestedReviewers: ownerResult.suggestedReviewers,
+    const allAffected = new Set();
+    const functionResults = affectedFunctions.map((fn) => {
+      const visited = new Set([fn.id]);
+      let frontier = [fn.id];
+      let totalCallers = 0;
+      const levels = {};
+      const edges = [];
+      const idToKey = new Map();
+      idToKey.set(fn.id, `${fn.file}::${fn.name}:${fn.line}`);
+      for (let d = 1; d <= maxDepth; d++) {
+        const nextFrontier = [];
+        for (const fid of frontier) {
+          const callers = db
+            .prepare(`
+            SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
+            FROM edges e JOIN nodes n ON e.source_id = n.id
+            WHERE e.target_id = ? AND e.kind = 'calls'
+          `)
+            .all(fid);
+          for (const c of callers) {
+            if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
+              visited.add(c.id);
+              nextFrontier.push(c.id);
+              allAffected.add(`${c.file}:${c.name}`);
+              const callerKey = `${c.file}::${c.name}:${c.line}`;
+              idToKey.set(c.id, callerKey);
+              if (!levels[d]) levels[d] = [];
+              levels[d].push({ name: c.name, kind: c.kind, file: c.file, line: c.line });
+              edges.push({ from: idToKey.get(fid), to: callerKey });
+              totalCallers++;
+            }
+          }
+        }
+        frontier = nextFrontier;
+        if (frontier.length === 0) break;
+      }
+      return {
+        name: fn.name,
+        kind: fn.kind,
+        file: fn.file,
+        line: fn.line,
+        transitiveCallers: totalCallers,
+        levels,
+        edges,
       };
-    }
-  } catch {
-    /* CODEOWNERS missing or unreadable — skip silently */
-  }
+    });
 
-  // Check boundary violations scoped to changed files
-  let boundaryViolations = [];
-  let boundaryViolationCount = 0;
-  try {
-    const config = loadConfig(repoRoot);
-    const boundaryConfig = config.manifesto?.boundaries;
-    if (boundaryConfig) {
-      const result = evaluateBoundaries(db, boundaryConfig, {
-        scopeFiles: [...changedRanges.keys()],
+    const affectedFiles = new Set();
+    for (const key of allAffected) affectedFiles.add(key.split(':')[0]);
+
+    // Look up historically coupled files from co-change data
+    let historicallyCoupled = [];
+    try {
+      db.prepare('SELECT 1 FROM co_changes LIMIT 1').get();
+      const changedFilesList = [...changedRanges.keys()];
+      const coResults = coChangeForFiles(changedFilesList, db, {
+        minJaccard: 0.3,
+        limit: 20,
         noTests,
       });
-      boundaryViolations = result.violations;
-      boundaryViolationCount = result.violationCount;
+      // Exclude files already found via static analysis
+      historicallyCoupled = coResults.filter((r) => !affectedFiles.has(r.file));
+    } catch {
+      /* co_changes table doesn't exist — skip silently */
     }
-  } catch {
-    /* boundary check failed — skip silently */
-  }
 
-  db.close();
-  const base = {
-    changedFiles: changedRanges.size,
-    newFiles: [...newFiles],
-    affectedFunctions: functionResults,
-    affectedFiles: [...affectedFiles],
-    historicallyCoupled,
-    ownership,
-    boundaryViolations,
-    boundaryViolationCount,
-    summary: {
-      functionsChanged: affectedFunctions.length,
-      callersAffected: allAffected.size,
-      filesAffected: affectedFiles.size,
-      historicallyCoupledCount: historicallyCoupled.length,
-      ownersAffected: ownership ? ownership.affectedOwners.length : 0,
+    // Look up CODEOWNERS for changed + affected files
+    let ownership = null;
+    try {
+      const allFilePaths = [...new Set([...changedRanges.keys(), ...affectedFiles])];
+      const ownerResult = ownersForFiles(allFilePaths, repoRoot);
+      if (ownerResult.affectedOwners.length > 0) {
+        ownership = {
+          owners: Object.fromEntries(ownerResult.owners),
+          affectedOwners: ownerResult.affectedOwners,
+          suggestedReviewers: ownerResult.suggestedReviewers,
+        };
+      }
+    } catch {
+      /* CODEOWNERS missing or unreadable — skip silently */
+    }
+
+    // Check boundary violations scoped to changed files
+    let boundaryViolations = [];
+    let boundaryViolationCount = 0;
+    try {
+      const config = loadConfig(repoRoot);
+      const boundaryConfig = config.manifesto?.boundaries;
+      if (boundaryConfig) {
+        const result = evaluateBoundaries(db, boundaryConfig, {
+          scopeFiles: [...changedRanges.keys()],
+          noTests,
+        });
+        boundaryViolations = result.violations;
+        boundaryViolationCount = result.violationCount;
+      }
+    } catch {
+      /* boundary check failed — skip silently */
+    }
+
+    const base = {
+      changedFiles: changedRanges.size,
+      newFiles: [...newFiles],
+      affectedFunctions: functionResults,
+      affectedFiles: [...affectedFiles],
+      historicallyCoupled,
+      ownership,
+      boundaryViolations,
       boundaryViolationCount,
-    },
-  };
-  return paginateResult(base, 'affectedFunctions', { limit: opts.limit, offset: opts.offset });
+      summary: {
+        functionsChanged: affectedFunctions.length,
+        callersAffected: allAffected.size,
+        filesAffected: affectedFiles.size,
+        historicallyCoupledCount: historicallyCoupled.length,
+        ownersAffected: ownership ? ownership.affectedOwners.length : 0,
+        boundaryViolationCount,
+      },
+    };
+    return paginateResult(base, 'affectedFunctions', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 export function diffImpactMermaid(customDbPath, opts = {}) {
@@ -1100,17 +1113,20 @@ export function diffImpactMermaid(customDbPath, opts = {}) {
 
 export function listFunctionsData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
+  try {
+    const noTests = opts.noTests || false;
 
-  let rows = listFunctionNodes(db, { file: opts.file, pattern: opts.pattern });
+    let rows = listFunctionNodes(db, { file: opts.file, pattern: opts.pattern });
 
-  if (noTests) rows = rows.filter((r) => !isTestFile(r.file));
+    if (noTests) rows = rows.filter((r) => !isTestFile(r.file));
 
-  const hc = new Map();
-  const functions = rows.map((r) => normalizeSymbol(r, db, hc));
-  db.close();
-  const base = { count: functions.length, functions };
-  return paginateResult(base, 'functions', { limit: opts.limit, offset: opts.offset });
+    const hc = new Map();
+    const functions = rows.map((r) => normalizeSymbol(r, db, hc));
+    const base = { count: functions.length, functions };
+    return paginateResult(base, 'functions', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 /**
@@ -1237,243 +1253,248 @@ export function* iterWhere(target, customDbPath, opts = {}) {
 
 export function statsData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
+  try {
+    const noTests = opts.noTests || false;
 
-  // Build set of test file IDs for filtering nodes and edges
-  let testFileIds = null;
-  if (noTests) {
-    const allFileNodes = db.prepare("SELECT id, file FROM nodes WHERE kind = 'file'").all();
-    testFileIds = new Set();
-    const testFiles = new Set();
-    for (const n of allFileNodes) {
-      if (isTestFile(n.file)) {
-        testFileIds.add(n.id);
-        testFiles.add(n.file);
+    // Build set of test file IDs for filtering nodes and edges
+    let testFileIds = null;
+    if (noTests) {
+      const allFileNodes = db.prepare("SELECT id, file FROM nodes WHERE kind = 'file'").all();
+      testFileIds = new Set();
+      const testFiles = new Set();
+      for (const n of allFileNodes) {
+        if (isTestFile(n.file)) {
+          testFileIds.add(n.id);
+          testFiles.add(n.file);
+        }
+      }
+      // Also collect non-file node IDs that belong to test files
+      const allNodes = db.prepare('SELECT id, file FROM nodes').all();
+      for (const n of allNodes) {
+        if (testFiles.has(n.file)) testFileIds.add(n.id);
       }
     }
-    // Also collect non-file node IDs that belong to test files
-    const allNodes = db.prepare('SELECT id, file FROM nodes').all();
-    for (const n of allNodes) {
-      if (testFiles.has(n.file)) testFileIds.add(n.id);
+
+    // Node breakdown by kind
+    let nodeRows;
+    if (noTests) {
+      const allNodes = db.prepare('SELECT id, kind, file FROM nodes').all();
+      const filtered = allNodes.filter((n) => !testFileIds.has(n.id));
+      const counts = {};
+      for (const n of filtered) counts[n.kind] = (counts[n.kind] || 0) + 1;
+      nodeRows = Object.entries(counts).map(([kind, c]) => ({ kind, c }));
+    } else {
+      nodeRows = db.prepare('SELECT kind, COUNT(*) as c FROM nodes GROUP BY kind').all();
     }
-  }
-
-  // Node breakdown by kind
-  let nodeRows;
-  if (noTests) {
-    const allNodes = db.prepare('SELECT id, kind, file FROM nodes').all();
-    const filtered = allNodes.filter((n) => !testFileIds.has(n.id));
-    const counts = {};
-    for (const n of filtered) counts[n.kind] = (counts[n.kind] || 0) + 1;
-    nodeRows = Object.entries(counts).map(([kind, c]) => ({ kind, c }));
-  } else {
-    nodeRows = db.prepare('SELECT kind, COUNT(*) as c FROM nodes GROUP BY kind').all();
-  }
-  const nodesByKind = {};
-  let totalNodes = 0;
-  for (const r of nodeRows) {
-    nodesByKind[r.kind] = r.c;
-    totalNodes += r.c;
-  }
-
-  // Edge breakdown by kind
-  let edgeRows;
-  if (noTests) {
-    const allEdges = db.prepare('SELECT source_id, target_id, kind FROM edges').all();
-    const filtered = allEdges.filter(
-      (e) => !testFileIds.has(e.source_id) && !testFileIds.has(e.target_id),
-    );
-    const counts = {};
-    for (const e of filtered) counts[e.kind] = (counts[e.kind] || 0) + 1;
-    edgeRows = Object.entries(counts).map(([kind, c]) => ({ kind, c }));
-  } else {
-    edgeRows = db.prepare('SELECT kind, COUNT(*) as c FROM edges GROUP BY kind').all();
-  }
-  const edgesByKind = {};
-  let totalEdges = 0;
-  for (const r of edgeRows) {
-    edgesByKind[r.kind] = r.c;
-    totalEdges += r.c;
-  }
-
-  // File/language distribution — map extensions via LANGUAGE_REGISTRY
-  const extToLang = new Map();
-  for (const entry of LANGUAGE_REGISTRY) {
-    for (const ext of entry.extensions) {
-      extToLang.set(ext, entry.id);
+    const nodesByKind = {};
+    let totalNodes = 0;
+    for (const r of nodeRows) {
+      nodesByKind[r.kind] = r.c;
+      totalNodes += r.c;
     }
-  }
-  let fileNodes = db.prepare("SELECT file FROM nodes WHERE kind = 'file'").all();
-  if (noTests) fileNodes = fileNodes.filter((n) => !isTestFile(n.file));
-  const byLanguage = {};
-  for (const row of fileNodes) {
-    const ext = path.extname(row.file).toLowerCase();
-    const lang = extToLang.get(ext) || 'other';
-    byLanguage[lang] = (byLanguage[lang] || 0) + 1;
-  }
-  const langCount = Object.keys(byLanguage).length;
 
-  // Cycles
-  const fileCycles = findCycles(db, { fileLevel: true, noTests });
-  const fnCycles = findCycles(db, { fileLevel: false, noTests });
-
-  // Top 5 coupling hotspots (fan-in + fan-out, file nodes)
-  const testFilter = testFilterSQL('n.file', noTests);
-  const hotspotRows = db
-    .prepare(`
-    SELECT n.file,
-      (SELECT COUNT(*) FROM edges WHERE target_id = n.id) as fan_in,
-      (SELECT COUNT(*) FROM edges WHERE source_id = n.id) as fan_out
-    FROM nodes n
-    WHERE n.kind = 'file' ${testFilter}
-    ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id)
-           + (SELECT COUNT(*) FROM edges WHERE source_id = n.id) DESC
-  `)
-    .all();
-  const filteredHotspots = noTests ? hotspotRows.filter((r) => !isTestFile(r.file)) : hotspotRows;
-  const hotspots = filteredHotspots.slice(0, 5).map((r) => ({
-    file: r.file,
-    fanIn: r.fan_in,
-    fanOut: r.fan_out,
-  }));
-
-  // Embeddings metadata
-  let embeddings = null;
-  try {
-    const count = db.prepare('SELECT COUNT(*) as c FROM embeddings').get();
-    if (count && count.c > 0) {
-      const meta = {};
-      const metaRows = db.prepare('SELECT key, value FROM embedding_meta').all();
-      for (const r of metaRows) meta[r.key] = r.value;
-      embeddings = {
-        count: count.c,
-        model: meta.model || null,
-        dim: meta.dim ? parseInt(meta.dim, 10) : null,
-        builtAt: meta.built_at || null,
-      };
+    // Edge breakdown by kind
+    let edgeRows;
+    if (noTests) {
+      const allEdges = db.prepare('SELECT source_id, target_id, kind FROM edges').all();
+      const filtered = allEdges.filter(
+        (e) => !testFileIds.has(e.source_id) && !testFileIds.has(e.target_id),
+      );
+      const counts = {};
+      for (const e of filtered) counts[e.kind] = (counts[e.kind] || 0) + 1;
+      edgeRows = Object.entries(counts).map(([kind, c]) => ({ kind, c }));
+    } else {
+      edgeRows = db.prepare('SELECT kind, COUNT(*) as c FROM edges GROUP BY kind').all();
     }
-  } catch {
-    /* embeddings table may not exist */
-  }
+    const edgesByKind = {};
+    let totalEdges = 0;
+    for (const r of edgeRows) {
+      edgesByKind[r.kind] = r.c;
+      totalEdges += r.c;
+    }
 
-  // Graph quality metrics
-  const qualityTestFilter = testFilter.replace(/n\.file/g, 'file');
-  const totalCallable = db
-    .prepare(
-      `SELECT COUNT(*) as c FROM nodes WHERE kind IN ('function', 'method') ${qualityTestFilter}`,
-    )
-    .get().c;
-  const callableWithCallers = db
-    .prepare(`
-      SELECT COUNT(DISTINCT e.target_id) as c FROM edges e
-      JOIN nodes n ON e.target_id = n.id
-      WHERE e.kind = 'calls' AND n.kind IN ('function', 'method') ${testFilter}
-    `)
-    .get().c;
-  const callerCoverage = totalCallable > 0 ? callableWithCallers / totalCallable : 0;
+    // File/language distribution — map extensions via LANGUAGE_REGISTRY
+    const extToLang = new Map();
+    for (const entry of LANGUAGE_REGISTRY) {
+      for (const ext of entry.extensions) {
+        extToLang.set(ext, entry.id);
+      }
+    }
+    let fileNodes = db.prepare("SELECT file FROM nodes WHERE kind = 'file'").all();
+    if (noTests) fileNodes = fileNodes.filter((n) => !isTestFile(n.file));
+    const byLanguage = {};
+    for (const row of fileNodes) {
+      const ext = path.extname(row.file).toLowerCase();
+      const lang = extToLang.get(ext) || 'other';
+      byLanguage[lang] = (byLanguage[lang] || 0) + 1;
+    }
+    const langCount = Object.keys(byLanguage).length;
 
-  const totalCallEdges = db.prepare("SELECT COUNT(*) as c FROM edges WHERE kind = 'calls'").get().c;
-  const highConfCallEdges = db
-    .prepare("SELECT COUNT(*) as c FROM edges WHERE kind = 'calls' AND confidence >= 0.7")
-    .get().c;
-  const callConfidence = totalCallEdges > 0 ? highConfCallEdges / totalCallEdges : 0;
+    // Cycles
+    const fileCycles = findCycles(db, { fileLevel: true, noTests });
+    const fnCycles = findCycles(db, { fileLevel: false, noTests });
 
-  // False-positive warnings: generic names with > threshold callers
-  const fpRows = db
-    .prepare(`
-      SELECT n.name, n.file, n.line, COUNT(e.source_id) as caller_count
+    // Top 5 coupling hotspots (fan-in + fan-out, file nodes)
+    const testFilter = testFilterSQL('n.file', noTests);
+    const hotspotRows = db
+      .prepare(`
+      SELECT n.file,
+        (SELECT COUNT(*) FROM edges WHERE target_id = n.id) as fan_in,
+        (SELECT COUNT(*) FROM edges WHERE source_id = n.id) as fan_out
       FROM nodes n
-      LEFT JOIN edges e ON n.id = e.target_id AND e.kind = 'calls'
-      WHERE n.kind IN ('function', 'method')
-      GROUP BY n.id
-      HAVING caller_count > ?
-      ORDER BY caller_count DESC
+      WHERE n.kind = 'file' ${testFilter}
+      ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id)
+             + (SELECT COUNT(*) FROM edges WHERE source_id = n.id) DESC
     `)
-    .all(FALSE_POSITIVE_CALLER_THRESHOLD);
-  const falsePositiveWarnings = fpRows
-    .filter((r) =>
-      FALSE_POSITIVE_NAMES.has(r.name.includes('.') ? r.name.split('.').pop() : r.name),
-    )
-    .map((r) => ({ name: r.name, file: r.file, line: r.line, callerCount: r.caller_count }));
-
-  // Edges from suspicious nodes
-  let fpEdgeCount = 0;
-  for (const fp of falsePositiveWarnings) fpEdgeCount += fp.callerCount;
-  const falsePositiveRatio = totalCallEdges > 0 ? fpEdgeCount / totalCallEdges : 0;
-
-  const score = Math.round(
-    callerCoverage * 40 + callConfidence * 40 + (1 - falsePositiveRatio) * 20,
-  );
-
-  const quality = {
-    score,
-    callerCoverage: {
-      ratio: callerCoverage,
-      covered: callableWithCallers,
-      total: totalCallable,
-    },
-    callConfidence: {
-      ratio: callConfidence,
-      highConf: highConfCallEdges,
-      total: totalCallEdges,
-    },
-    falsePositiveWarnings,
-  };
-
-  // Role distribution
-  let roleRows;
-  if (noTests) {
-    const allRoleNodes = db.prepare('SELECT role, file FROM nodes WHERE role IS NOT NULL').all();
-    const filtered = allRoleNodes.filter((n) => !isTestFile(n.file));
-    const counts = {};
-    for (const n of filtered) counts[n.role] = (counts[n.role] || 0) + 1;
-    roleRows = Object.entries(counts).map(([role, c]) => ({ role, c }));
-  } else {
-    roleRows = db
-      .prepare('SELECT role, COUNT(*) as c FROM nodes WHERE role IS NOT NULL GROUP BY role')
       .all();
-  }
-  const roles = {};
-  for (const r of roleRows) roles[r.role] = r.c;
+    const filteredHotspots = noTests ? hotspotRows.filter((r) => !isTestFile(r.file)) : hotspotRows;
+    const hotspots = filteredHotspots.slice(0, 5).map((r) => ({
+      file: r.file,
+      fanIn: r.fan_in,
+      fanOut: r.fan_out,
+    }));
 
-  // Complexity summary
-  let complexity = null;
-  try {
-    const cRows = db
-      .prepare(
-        `SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.maintainability_index
-       FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
-       WHERE n.kind IN ('function','method') ${testFilter}`,
-      )
-      .all();
-    if (cRows.length > 0) {
-      const miValues = cRows.map((r) => r.maintainability_index || 0);
-      complexity = {
-        analyzed: cRows.length,
-        avgCognitive: +(cRows.reduce((s, r) => s + r.cognitive, 0) / cRows.length).toFixed(1),
-        avgCyclomatic: +(cRows.reduce((s, r) => s + r.cyclomatic, 0) / cRows.length).toFixed(1),
-        maxCognitive: Math.max(...cRows.map((r) => r.cognitive)),
-        maxCyclomatic: Math.max(...cRows.map((r) => r.cyclomatic)),
-        avgMI: +(miValues.reduce((s, v) => s + v, 0) / miValues.length).toFixed(1),
-        minMI: +Math.min(...miValues).toFixed(1),
-      };
+    // Embeddings metadata
+    let embeddings = null;
+    try {
+      const count = db.prepare('SELECT COUNT(*) as c FROM embeddings').get();
+      if (count && count.c > 0) {
+        const meta = {};
+        const metaRows = db.prepare('SELECT key, value FROM embedding_meta').all();
+        for (const r of metaRows) meta[r.key] = r.value;
+        embeddings = {
+          count: count.c,
+          model: meta.model || null,
+          dim: meta.dim ? parseInt(meta.dim, 10) : null,
+          builtAt: meta.built_at || null,
+        };
+      }
+    } catch {
+      /* embeddings table may not exist */
     }
-  } catch {
-    /* table may not exist in older DBs */
-  }
 
-  db.close();
-  return {
-    nodes: { total: totalNodes, byKind: nodesByKind },
-    edges: { total: totalEdges, byKind: edgesByKind },
-    files: { total: fileNodes.length, languages: langCount, byLanguage },
-    cycles: { fileLevel: fileCycles.length, functionLevel: fnCycles.length },
-    hotspots,
-    embeddings,
-    quality,
-    roles,
-    complexity,
-  };
+    // Graph quality metrics
+    const qualityTestFilter = testFilter.replace(/n\.file/g, 'file');
+    const totalCallable = db
+      .prepare(
+        `SELECT COUNT(*) as c FROM nodes WHERE kind IN ('function', 'method') ${qualityTestFilter}`,
+      )
+      .get().c;
+    const callableWithCallers = db
+      .prepare(`
+        SELECT COUNT(DISTINCT e.target_id) as c FROM edges e
+        JOIN nodes n ON e.target_id = n.id
+        WHERE e.kind = 'calls' AND n.kind IN ('function', 'method') ${testFilter}
+      `)
+      .get().c;
+    const callerCoverage = totalCallable > 0 ? callableWithCallers / totalCallable : 0;
+
+    const totalCallEdges = db
+      .prepare("SELECT COUNT(*) as c FROM edges WHERE kind = 'calls'")
+      .get().c;
+    const highConfCallEdges = db
+      .prepare("SELECT COUNT(*) as c FROM edges WHERE kind = 'calls' AND confidence >= 0.7")
+      .get().c;
+    const callConfidence = totalCallEdges > 0 ? highConfCallEdges / totalCallEdges : 0;
+
+    // False-positive warnings: generic names with > threshold callers
+    const fpRows = db
+      .prepare(`
+        SELECT n.name, n.file, n.line, COUNT(e.source_id) as caller_count
+        FROM nodes n
+        LEFT JOIN edges e ON n.id = e.target_id AND e.kind = 'calls'
+        WHERE n.kind IN ('function', 'method')
+        GROUP BY n.id
+        HAVING caller_count > ?
+        ORDER BY caller_count DESC
+      `)
+      .all(FALSE_POSITIVE_CALLER_THRESHOLD);
+    const falsePositiveWarnings = fpRows
+      .filter((r) =>
+        FALSE_POSITIVE_NAMES.has(r.name.includes('.') ? r.name.split('.').pop() : r.name),
+      )
+      .map((r) => ({ name: r.name, file: r.file, line: r.line, callerCount: r.caller_count }));
+
+    // Edges from suspicious nodes
+    let fpEdgeCount = 0;
+    for (const fp of falsePositiveWarnings) fpEdgeCount += fp.callerCount;
+    const falsePositiveRatio = totalCallEdges > 0 ? fpEdgeCount / totalCallEdges : 0;
+
+    const score = Math.round(
+      callerCoverage * 40 + callConfidence * 40 + (1 - falsePositiveRatio) * 20,
+    );
+
+    const quality = {
+      score,
+      callerCoverage: {
+        ratio: callerCoverage,
+        covered: callableWithCallers,
+        total: totalCallable,
+      },
+      callConfidence: {
+        ratio: callConfidence,
+        highConf: highConfCallEdges,
+        total: totalCallEdges,
+      },
+      falsePositiveWarnings,
+    };
+
+    // Role distribution
+    let roleRows;
+    if (noTests) {
+      const allRoleNodes = db.prepare('SELECT role, file FROM nodes WHERE role IS NOT NULL').all();
+      const filtered = allRoleNodes.filter((n) => !isTestFile(n.file));
+      const counts = {};
+      for (const n of filtered) counts[n.role] = (counts[n.role] || 0) + 1;
+      roleRows = Object.entries(counts).map(([role, c]) => ({ role, c }));
+    } else {
+      roleRows = db
+        .prepare('SELECT role, COUNT(*) as c FROM nodes WHERE role IS NOT NULL GROUP BY role')
+        .all();
+    }
+    const roles = {};
+    for (const r of roleRows) roles[r.role] = r.c;
+
+    // Complexity summary
+    let complexity = null;
+    try {
+      const cRows = db
+        .prepare(
+          `SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.maintainability_index
+         FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
+         WHERE n.kind IN ('function','method') ${testFilter}`,
+        )
+        .all();
+      if (cRows.length > 0) {
+        const miValues = cRows.map((r) => r.maintainability_index || 0);
+        complexity = {
+          analyzed: cRows.length,
+          avgCognitive: +(cRows.reduce((s, r) => s + r.cognitive, 0) / cRows.length).toFixed(1),
+          avgCyclomatic: +(cRows.reduce((s, r) => s + r.cyclomatic, 0) / cRows.length).toFixed(1),
+          maxCognitive: Math.max(...cRows.map((r) => r.cognitive)),
+          maxCyclomatic: Math.max(...cRows.map((r) => r.cyclomatic)),
+          avgMI: +(miValues.reduce((s, v) => s + v, 0) / miValues.length).toFixed(1),
+          minMI: +Math.min(...miValues).toFixed(1),
+        };
+      }
+    } catch {
+      /* table may not exist in older DBs */
+    }
+
+    return {
+      nodes: { total: totalNodes, byKind: nodesByKind },
+      edges: { total: totalEdges, byKind: edgesByKind },
+      files: { total: fileNodes.length, languages: langCount, byLanguage },
+      cycles: { fileLevel: fileCycles.length, functionLevel: fnCycles.length },
+      hotspots,
+      embeddings,
+      quality,
+      roles,
+      complexity,
+    };
+  } finally {
+    db.close();
+  }
 }
 
 // ─── Context helpers (private) ──────────────────────────────────────────
@@ -1590,280 +1611,286 @@ function extractSignature(fileLines, line) {
 
 export function contextData(name, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const depth = opts.depth || 0;
-  const noSource = opts.noSource || false;
-  const noTests = opts.noTests || false;
-  const includeTests = opts.includeTests || false;
+  try {
+    const depth = opts.depth || 0;
+    const noSource = opts.noSource || false;
+    const noTests = opts.noTests || false;
+    const includeTests = opts.includeTests || false;
 
-  const dbPath = findDbPath(customDbPath);
-  const repoRoot = path.resolve(path.dirname(dbPath), '..');
+    const dbPath = findDbPath(customDbPath);
+    const repoRoot = path.resolve(path.dirname(dbPath), '..');
 
-  const nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
-  if (nodes.length === 0) {
-    db.close();
-    return { name, results: [] };
-  }
+    const nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    if (nodes.length === 0) {
+      return { name, results: [] };
+    }
 
-  // No hardcoded slice — pagination handles bounding via limit/offset
+    // No hardcoded slice — pagination handles bounding via limit/offset
 
-  // File-lines cache to avoid re-reading the same file
-  const fileCache = new Map();
-  function getFileLines(file) {
-    if (fileCache.has(file)) return fileCache.get(file);
-    try {
-      const absPath = safePath(repoRoot, file);
-      if (!absPath) {
+    // File-lines cache to avoid re-reading the same file
+    const fileCache = new Map();
+    function getFileLines(file) {
+      if (fileCache.has(file)) return fileCache.get(file);
+      try {
+        const absPath = safePath(repoRoot, file);
+        if (!absPath) {
+          fileCache.set(file, null);
+          return null;
+        }
+        const lines = fs.readFileSync(absPath, 'utf-8').split('\n');
+        fileCache.set(file, lines);
+        return lines;
+      } catch (e) {
+        debug(`getFileLines failed for ${file}: ${e.message}`);
         fileCache.set(file, null);
         return null;
       }
-      const lines = fs.readFileSync(absPath, 'utf-8').split('\n');
-      fileCache.set(file, lines);
-      return lines;
-    } catch (e) {
-      debug(`getFileLines failed for ${file}: ${e.message}`);
-      fileCache.set(file, null);
-      return null;
     }
-  }
 
-  const results = nodes.map((node) => {
-    const fileLines = getFileLines(node.file);
+    const results = nodes.map((node) => {
+      const fileLines = getFileLines(node.file);
 
-    // Source
-    const source = noSource ? null : readSourceRange(repoRoot, node.file, node.line, node.end_line);
+      // Source
+      const source = noSource
+        ? null
+        : readSourceRange(repoRoot, node.file, node.line, node.end_line);
 
-    // Signature
-    const signature = fileLines ? extractSignature(fileLines, node.line) : null;
+      // Signature
+      const signature = fileLines ? extractSignature(fileLines, node.line) : null;
 
-    // Callees
-    const calleeRows = db
-      .prepare(
-        `SELECT n.id, n.name, n.kind, n.file, n.line, n.end_line
-       FROM edges e JOIN nodes n ON e.target_id = n.id
-       WHERE e.source_id = ? AND e.kind = 'calls'`,
-      )
-      .all(node.id);
-    const filteredCallees = noTests ? calleeRows.filter((c) => !isTestFile(c.file)) : calleeRows;
+      // Callees
+      const calleeRows = db
+        .prepare(
+          `SELECT n.id, n.name, n.kind, n.file, n.line, n.end_line
+         FROM edges e JOIN nodes n ON e.target_id = n.id
+         WHERE e.source_id = ? AND e.kind = 'calls'`,
+        )
+        .all(node.id);
+      const filteredCallees = noTests ? calleeRows.filter((c) => !isTestFile(c.file)) : calleeRows;
 
-    const callees = filteredCallees.map((c) => {
-      const cLines = getFileLines(c.file);
-      const summary = cLines ? extractSummary(cLines, c.line) : null;
-      let calleeSource = null;
-      if (depth >= 1) {
-        calleeSource = readSourceRange(repoRoot, c.file, c.line, c.end_line);
+      const callees = filteredCallees.map((c) => {
+        const cLines = getFileLines(c.file);
+        const summary = cLines ? extractSummary(cLines, c.line) : null;
+        let calleeSource = null;
+        if (depth >= 1) {
+          calleeSource = readSourceRange(repoRoot, c.file, c.line, c.end_line);
+        }
+        return {
+          name: c.name,
+          kind: c.kind,
+          file: c.file,
+          line: c.line,
+          endLine: c.end_line || null,
+          summary,
+          source: calleeSource,
+        };
+      });
+
+      // Deep callee expansion via BFS (depth > 1, capped at 5)
+      if (depth > 1) {
+        const visited = new Set(filteredCallees.map((c) => c.id));
+        visited.add(node.id);
+        let frontier = filteredCallees.map((c) => c.id);
+        const maxDepth = Math.min(depth, 5);
+        for (let d = 2; d <= maxDepth; d++) {
+          const nextFrontier = [];
+          for (const fid of frontier) {
+            const deeper = db
+              .prepare(
+                `SELECT n.id, n.name, n.kind, n.file, n.line, n.end_line
+               FROM edges e JOIN nodes n ON e.target_id = n.id
+               WHERE e.source_id = ? AND e.kind = 'calls'`,
+              )
+              .all(fid);
+            for (const c of deeper) {
+              if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
+                visited.add(c.id);
+                nextFrontier.push(c.id);
+                const cLines = getFileLines(c.file);
+                callees.push({
+                  name: c.name,
+                  kind: c.kind,
+                  file: c.file,
+                  line: c.line,
+                  endLine: c.end_line || null,
+                  summary: cLines ? extractSummary(cLines, c.line) : null,
+                  source: readSourceRange(repoRoot, c.file, c.line, c.end_line),
+                });
+              }
+            }
+          }
+          frontier = nextFrontier;
+          if (frontier.length === 0) break;
+        }
       }
-      return {
+
+      // Callers
+      let callerRows = db
+        .prepare(
+          `SELECT n.name, n.kind, n.file, n.line
+         FROM edges e JOIN nodes n ON e.source_id = n.id
+         WHERE e.target_id = ? AND e.kind = 'calls'`,
+        )
+        .all(node.id);
+
+      // Method hierarchy resolution
+      if (node.kind === 'method' && node.name.includes('.')) {
+        const methodName = node.name.split('.').pop();
+        const relatedMethods = resolveMethodViaHierarchy(db, methodName);
+        for (const rm of relatedMethods) {
+          if (rm.id === node.id) continue;
+          const extraCallers = db
+            .prepare(
+              `SELECT n.name, n.kind, n.file, n.line
+             FROM edges e JOIN nodes n ON e.source_id = n.id
+             WHERE e.target_id = ? AND e.kind = 'calls'`,
+            )
+            .all(rm.id);
+          callerRows.push(...extraCallers.map((c) => ({ ...c, viaHierarchy: rm.name })));
+        }
+      }
+      if (noTests) callerRows = callerRows.filter((c) => !isTestFile(c.file));
+
+      const callers = callerRows.map((c) => ({
         name: c.name,
         kind: c.kind,
         file: c.file,
         line: c.line,
-        endLine: c.end_line || null,
-        summary,
-        source: calleeSource,
+        viaHierarchy: c.viaHierarchy || undefined,
+      }));
+
+      // Related tests: callers that live in test files
+      const testCallerRows = db
+        .prepare(
+          `SELECT n.name, n.kind, n.file, n.line
+         FROM edges e JOIN nodes n ON e.source_id = n.id
+         WHERE e.target_id = ? AND e.kind = 'calls'`,
+        )
+        .all(node.id);
+      const testCallers = testCallerRows.filter((c) => isTestFile(c.file));
+
+      const testsByFile = new Map();
+      for (const tc of testCallers) {
+        if (!testsByFile.has(tc.file)) testsByFile.set(tc.file, []);
+        testsByFile.get(tc.file).push(tc);
+      }
+
+      const relatedTests = [];
+      for (const [file] of testsByFile) {
+        const tLines = getFileLines(file);
+        const testNames = [];
+        if (tLines) {
+          for (const tl of tLines) {
+            const tm = tl.match(/(?:it|test|describe)\s*\(\s*['"`]([^'"`]+)['"`]/);
+            if (tm) testNames.push(tm[1]);
+          }
+        }
+        const testSource = includeTests && tLines ? tLines.join('\n') : undefined;
+        relatedTests.push({
+          file,
+          testCount: testNames.length,
+          testNames,
+          source: testSource,
+        });
+      }
+
+      // Complexity metrics
+      let complexityMetrics = null;
+      try {
+        const cRow = db
+          .prepare(
+            'SELECT cognitive, cyclomatic, max_nesting, maintainability_index, halstead_volume FROM function_complexity WHERE node_id = ?',
+          )
+          .get(node.id);
+        if (cRow) {
+          complexityMetrics = {
+            cognitive: cRow.cognitive,
+            cyclomatic: cRow.cyclomatic,
+            maxNesting: cRow.max_nesting,
+            maintainabilityIndex: cRow.maintainability_index || 0,
+            halsteadVolume: cRow.halstead_volume || 0,
+          };
+        }
+      } catch {
+        /* table may not exist */
+      }
+
+      // Children (parameters, properties, constants)
+      let nodeChildren = [];
+      try {
+        nodeChildren = db
+          .prepare('SELECT name, kind, line, end_line FROM nodes WHERE parent_id = ? ORDER BY line')
+          .all(node.id)
+          .map((c) => ({ name: c.name, kind: c.kind, line: c.line, endLine: c.end_line || null }));
+      } catch {
+        /* parent_id column may not exist */
+      }
+
+      return {
+        name: node.name,
+        kind: node.kind,
+        file: node.file,
+        line: node.line,
+        role: node.role || null,
+        endLine: node.end_line || null,
+        source,
+        signature,
+        complexity: complexityMetrics,
+        children: nodeChildren.length > 0 ? nodeChildren : undefined,
+        callees,
+        callers,
+        relatedTests,
       };
     });
 
-    // Deep callee expansion via BFS (depth > 1, capped at 5)
-    if (depth > 1) {
-      const visited = new Set(filteredCallees.map((c) => c.id));
-      visited.add(node.id);
-      let frontier = filteredCallees.map((c) => c.id);
-      const maxDepth = Math.min(depth, 5);
-      for (let d = 2; d <= maxDepth; d++) {
-        const nextFrontier = [];
-        for (const fid of frontier) {
-          const deeper = db
-            .prepare(
-              `SELECT n.id, n.name, n.kind, n.file, n.line, n.end_line
-             FROM edges e JOIN nodes n ON e.target_id = n.id
-             WHERE e.source_id = ? AND e.kind = 'calls'`,
-            )
-            .all(fid);
-          for (const c of deeper) {
-            if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
-              visited.add(c.id);
-              nextFrontier.push(c.id);
-              const cLines = getFileLines(c.file);
-              callees.push({
-                name: c.name,
-                kind: c.kind,
-                file: c.file,
-                line: c.line,
-                endLine: c.end_line || null,
-                summary: cLines ? extractSummary(cLines, c.line) : null,
-                source: readSourceRange(repoRoot, c.file, c.line, c.end_line),
-              });
-            }
-          }
-        }
-        frontier = nextFrontier;
-        if (frontier.length === 0) break;
-      }
-    }
-
-    // Callers
-    let callerRows = db
-      .prepare(
-        `SELECT n.name, n.kind, n.file, n.line
-       FROM edges e JOIN nodes n ON e.source_id = n.id
-       WHERE e.target_id = ? AND e.kind = 'calls'`,
-      )
-      .all(node.id);
-
-    // Method hierarchy resolution
-    if (node.kind === 'method' && node.name.includes('.')) {
-      const methodName = node.name.split('.').pop();
-      const relatedMethods = resolveMethodViaHierarchy(db, methodName);
-      for (const rm of relatedMethods) {
-        if (rm.id === node.id) continue;
-        const extraCallers = db
-          .prepare(
-            `SELECT n.name, n.kind, n.file, n.line
-           FROM edges e JOIN nodes n ON e.source_id = n.id
-           WHERE e.target_id = ? AND e.kind = 'calls'`,
-          )
-          .all(rm.id);
-        callerRows.push(...extraCallers.map((c) => ({ ...c, viaHierarchy: rm.name })));
-      }
-    }
-    if (noTests) callerRows = callerRows.filter((c) => !isTestFile(c.file));
-
-    const callers = callerRows.map((c) => ({
-      name: c.name,
-      kind: c.kind,
-      file: c.file,
-      line: c.line,
-      viaHierarchy: c.viaHierarchy || undefined,
-    }));
-
-    // Related tests: callers that live in test files
-    const testCallerRows = db
-      .prepare(
-        `SELECT n.name, n.kind, n.file, n.line
-       FROM edges e JOIN nodes n ON e.source_id = n.id
-       WHERE e.target_id = ? AND e.kind = 'calls'`,
-      )
-      .all(node.id);
-    const testCallers = testCallerRows.filter((c) => isTestFile(c.file));
-
-    const testsByFile = new Map();
-    for (const tc of testCallers) {
-      if (!testsByFile.has(tc.file)) testsByFile.set(tc.file, []);
-      testsByFile.get(tc.file).push(tc);
-    }
-
-    const relatedTests = [];
-    for (const [file] of testsByFile) {
-      const tLines = getFileLines(file);
-      const testNames = [];
-      if (tLines) {
-        for (const tl of tLines) {
-          const tm = tl.match(/(?:it|test|describe)\s*\(\s*['"`]([^'"`]+)['"`]/);
-          if (tm) testNames.push(tm[1]);
-        }
-      }
-      const testSource = includeTests && tLines ? tLines.join('\n') : undefined;
-      relatedTests.push({
-        file,
-        testCount: testNames.length,
-        testNames,
-        source: testSource,
-      });
-    }
-
-    // Complexity metrics
-    let complexityMetrics = null;
-    try {
-      const cRow = db
-        .prepare(
-          'SELECT cognitive, cyclomatic, max_nesting, maintainability_index, halstead_volume FROM function_complexity WHERE node_id = ?',
-        )
-        .get(node.id);
-      if (cRow) {
-        complexityMetrics = {
-          cognitive: cRow.cognitive,
-          cyclomatic: cRow.cyclomatic,
-          maxNesting: cRow.max_nesting,
-          maintainabilityIndex: cRow.maintainability_index || 0,
-          halsteadVolume: cRow.halstead_volume || 0,
-        };
-      }
-    } catch {
-      /* table may not exist */
-    }
-
-    // Children (parameters, properties, constants)
-    let nodeChildren = [];
-    try {
-      nodeChildren = db
-        .prepare('SELECT name, kind, line, end_line FROM nodes WHERE parent_id = ? ORDER BY line')
-        .all(node.id)
-        .map((c) => ({ name: c.name, kind: c.kind, line: c.line, endLine: c.end_line || null }));
-    } catch {
-      /* parent_id column may not exist */
-    }
-
-    return {
-      name: node.name,
-      kind: node.kind,
-      file: node.file,
-      line: node.line,
-      role: node.role || null,
-      endLine: node.end_line || null,
-      source,
-      signature,
-      complexity: complexityMetrics,
-      children: nodeChildren.length > 0 ? nodeChildren : undefined,
-      callees,
-      callers,
-      relatedTests,
-    };
-  });
-
-  db.close();
-  const base = { name, results };
-  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    const base = { name, results };
+    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 // ─── childrenData ───────────────────────────────────────────────────────
 
 export function childrenData(name, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
+  try {
+    const noTests = opts.noTests || false;
 
-  const nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
-  if (nodes.length === 0) {
-    db.close();
-    return { name, results: [] };
-  }
-
-  const results = nodes.map((node) => {
-    let children;
-    try {
-      children = db
-        .prepare('SELECT name, kind, line, end_line FROM nodes WHERE parent_id = ? ORDER BY line')
-        .all(node.id);
-    } catch {
-      children = [];
+    const nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    if (nodes.length === 0) {
+      return { name, results: [] };
     }
-    if (noTests) children = children.filter((c) => !isTestFile(c.file || node.file));
-    return {
-      name: node.name,
-      kind: node.kind,
-      file: node.file,
-      line: node.line,
-      children: children.map((c) => ({
-        name: c.name,
-        kind: c.kind,
-        line: c.line,
-        endLine: c.end_line || null,
-      })),
-    };
-  });
 
-  db.close();
-  const base = { name, results };
-  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    const results = nodes.map((node) => {
+      let children;
+      try {
+        children = db
+          .prepare('SELECT name, kind, line, end_line FROM nodes WHERE parent_id = ? ORDER BY line')
+          .all(node.id);
+      } catch {
+        children = [];
+      }
+      if (noTests) children = children.filter((c) => !isTestFile(c.file || node.file));
+      return {
+        name: node.name,
+        kind: node.kind,
+        file: node.file,
+        line: node.line,
+        children: children.map((c) => ({
+          name: c.name,
+          kind: c.kind,
+          line: c.line,
+          endLine: c.end_line || null,
+        })),
+      };
+    });
+
+    const base = { name, results };
+    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 // ─── explainData ────────────────────────────────────────────────────────
@@ -2060,71 +2087,74 @@ function explainFunctionImpl(db, target, noTests, getFileLines) {
 
 export function explainData(target, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
-  const depth = opts.depth || 0;
-  const kind = isFileLikeTarget(target) ? 'file' : 'function';
+  try {
+    const noTests = opts.noTests || false;
+    const depth = opts.depth || 0;
+    const kind = isFileLikeTarget(target) ? 'file' : 'function';
 
-  const dbPath = findDbPath(customDbPath);
-  const repoRoot = path.resolve(path.dirname(dbPath), '..');
+    const dbPath = findDbPath(customDbPath);
+    const repoRoot = path.resolve(path.dirname(dbPath), '..');
 
-  const fileCache = new Map();
-  function getFileLines(file) {
-    if (fileCache.has(file)) return fileCache.get(file);
-    try {
-      const absPath = safePath(repoRoot, file);
-      if (!absPath) {
+    const fileCache = new Map();
+    function getFileLines(file) {
+      if (fileCache.has(file)) return fileCache.get(file);
+      try {
+        const absPath = safePath(repoRoot, file);
+        if (!absPath) {
+          fileCache.set(file, null);
+          return null;
+        }
+        const lines = fs.readFileSync(absPath, 'utf-8').split('\n');
+        fileCache.set(file, lines);
+        return lines;
+      } catch (e) {
+        debug(`getFileLines failed for ${file}: ${e.message}`);
         fileCache.set(file, null);
         return null;
       }
-      const lines = fs.readFileSync(absPath, 'utf-8').split('\n');
-      fileCache.set(file, lines);
-      return lines;
-    } catch (e) {
-      debug(`getFileLines failed for ${file}: ${e.message}`);
-      fileCache.set(file, null);
-      return null;
     }
-  }
 
-  const results =
-    kind === 'file'
-      ? explainFileImpl(db, target, getFileLines)
-      : explainFunctionImpl(db, target, noTests, getFileLines);
+    const results =
+      kind === 'file'
+        ? explainFileImpl(db, target, getFileLines)
+        : explainFunctionImpl(db, target, noTests, getFileLines);
 
-  // Recursive dependency explanation for function targets
-  if (kind === 'function' && depth > 0 && results.length > 0) {
-    const visited = new Set(results.map((r) => `${r.name}:${r.file}:${r.line}`));
+    // Recursive dependency explanation for function targets
+    if (kind === 'function' && depth > 0 && results.length > 0) {
+      const visited = new Set(results.map((r) => `${r.name}:${r.file}:${r.line}`));
 
-    function explainCallees(parentResults, currentDepth) {
-      if (currentDepth <= 0) return;
-      for (const r of parentResults) {
-        const newCallees = [];
-        for (const callee of r.callees) {
-          const key = `${callee.name}:${callee.file}:${callee.line}`;
-          if (visited.has(key)) continue;
-          visited.add(key);
-          const calleeResults = explainFunctionImpl(db, callee.name, noTests, getFileLines);
-          const exact = calleeResults.find(
-            (cr) => cr.file === callee.file && cr.line === callee.line,
-          );
-          if (exact) {
-            exact._depth = (r._depth || 0) + 1;
-            newCallees.push(exact);
+      function explainCallees(parentResults, currentDepth) {
+        if (currentDepth <= 0) return;
+        for (const r of parentResults) {
+          const newCallees = [];
+          for (const callee of r.callees) {
+            const key = `${callee.name}:${callee.file}:${callee.line}`;
+            if (visited.has(key)) continue;
+            visited.add(key);
+            const calleeResults = explainFunctionImpl(db, callee.name, noTests, getFileLines);
+            const exact = calleeResults.find(
+              (cr) => cr.file === callee.file && cr.line === callee.line,
+            );
+            if (exact) {
+              exact._depth = (r._depth || 0) + 1;
+              newCallees.push(exact);
+            }
+          }
+          if (newCallees.length > 0) {
+            r.depDetails = newCallees;
+            explainCallees(newCallees, currentDepth - 1);
           }
         }
-        if (newCallees.length > 0) {
-          r.depDetails = newCallees;
-          explainCallees(newCallees, currentDepth - 1);
-        }
       }
+
+      explainCallees(results, depth);
     }
 
-    explainCallees(results, depth);
+    const base = { target, kind, results };
+    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
   }
-
-  db.close();
-  const base = { target, kind, results };
-  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
 }
 
 // ─── whereData ──────────────────────────────────────────────────────────
@@ -2253,54 +2283,60 @@ function whereFileImpl(db, target) {
 
 export function whereData(target, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
-  const fileMode = opts.file || false;
+  try {
+    const noTests = opts.noTests || false;
+    const fileMode = opts.file || false;
 
-  const results = fileMode ? whereFileImpl(db, target) : whereSymbolImpl(db, target, noTests);
+    const results = fileMode ? whereFileImpl(db, target) : whereSymbolImpl(db, target, noTests);
 
-  db.close();
-  const base = { target, mode: fileMode ? 'file' : 'symbol', results };
-  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    const base = { target, mode: fileMode ? 'file' : 'symbol', results };
+    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
+  }
 }
 
 // ─── rolesData ──────────────────────────────────────────────────────────
 
 export function rolesData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
-  const filterRole = opts.role || null;
-  const filterFile = opts.file || null;
+  try {
+    const noTests = opts.noTests || false;
+    const filterRole = opts.role || null;
+    const filterFile = opts.file || null;
 
-  const conditions = ['role IS NOT NULL'];
-  const params = [];
+    const conditions = ['role IS NOT NULL'];
+    const params = [];
 
-  if (filterRole) {
-    conditions.push('role = ?');
-    params.push(filterRole);
+    if (filterRole) {
+      conditions.push('role = ?');
+      params.push(filterRole);
+    }
+    if (filterFile) {
+      conditions.push('file LIKE ?');
+      params.push(`%${filterFile}%`);
+    }
+
+    let rows = db
+      .prepare(
+        `SELECT name, kind, file, line, end_line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY role, file, line`,
+      )
+      .all(...params);
+
+    if (noTests) rows = rows.filter((r) => !isTestFile(r.file));
+
+    const summary = {};
+    for (const r of rows) {
+      summary[r.role] = (summary[r.role] || 0) + 1;
+    }
+
+    const hc = new Map();
+    const symbols = rows.map((r) => normalizeSymbol(r, db, hc));
+    const base = { count: symbols.length, summary, symbols };
+    return paginateResult(base, 'symbols', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
   }
-  if (filterFile) {
-    conditions.push('file LIKE ?');
-    params.push(`%${filterFile}%`);
-  }
-
-  let rows = db
-    .prepare(
-      `SELECT name, kind, file, line, end_line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY role, file, line`,
-    )
-    .all(...params);
-
-  if (noTests) rows = rows.filter((r) => !isTestFile(r.file));
-
-  const summary = {};
-  for (const r of rows) {
-    summary[r.role] = (summary[r.role] || 0) + 1;
-  }
-
-  const hc = new Map();
-  const symbols = rows.map((r) => normalizeSymbol(r, db, hc));
-  db.close();
-  const base = { count: symbols.length, summary, symbols };
-  return paginateResult(base, 'symbols', { limit: opts.limit, offset: opts.offset });
 }
 
 // ─── exportsData ─────────────────────────────────────────────────────
@@ -2403,50 +2439,53 @@ function exportsFileImpl(db, target, noTests, getFileLines, unused) {
 
 export function exportsData(file, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const noTests = opts.noTests || false;
+  try {
+    const noTests = opts.noTests || false;
 
-  const dbFilePath = findDbPath(customDbPath);
-  const repoRoot = path.resolve(path.dirname(dbFilePath), '..');
+    const dbFilePath = findDbPath(customDbPath);
+    const repoRoot = path.resolve(path.dirname(dbFilePath), '..');
 
-  const fileCache = new Map();
-  function getFileLines(file) {
-    if (fileCache.has(file)) return fileCache.get(file);
-    try {
-      const absPath = safePath(repoRoot, file);
-      if (!absPath) {
+    const fileCache = new Map();
+    function getFileLines(file) {
+      if (fileCache.has(file)) return fileCache.get(file);
+      try {
+        const absPath = safePath(repoRoot, file);
+        if (!absPath) {
+          fileCache.set(file, null);
+          return null;
+        }
+        const lines = fs.readFileSync(absPath, 'utf-8').split('\n');
+        fileCache.set(file, lines);
+        return lines;
+      } catch {
         fileCache.set(file, null);
         return null;
       }
-      const lines = fs.readFileSync(absPath, 'utf-8').split('\n');
-      fileCache.set(file, lines);
-      return lines;
-    } catch {
-      fileCache.set(file, null);
-      return null;
     }
+
+    const unused = opts.unused || false;
+    const fileResults = exportsFileImpl(db, file, noTests, getFileLines, unused);
+
+    if (fileResults.length === 0) {
+      return paginateResult(
+        { file, results: [], reexports: [], totalExported: 0, totalInternal: 0, totalUnused: 0 },
+        'results',
+        { limit: opts.limit, offset: opts.offset },
+      );
+    }
+
+    // For single-file match return flat; for multi-match return first (like explainData)
+    const first = fileResults[0];
+    const base = {
+      file: first.file,
+      results: first.results,
+      reexports: first.reexports,
+      totalExported: first.totalExported,
+      totalInternal: first.totalInternal,
+      totalUnused: first.totalUnused,
+    };
+    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+  } finally {
+    db.close();
   }
-
-  const unused = opts.unused || false;
-  const fileResults = exportsFileImpl(db, file, noTests, getFileLines, unused);
-  db.close();
-
-  if (fileResults.length === 0) {
-    return paginateResult(
-      { file, results: [], reexports: [], totalExported: 0, totalInternal: 0, totalUnused: 0 },
-      'results',
-      { limit: opts.limit, offset: opts.offset },
-    );
-  }
-
-  // For single-file match return flat; for multi-match return first (like explainData)
-  const first = fileResults[0];
-  const base = {
-    file: first.file,
-    results: first.results,
-    reexports: first.reexports,
-    totalExported: first.totalExported,
-    totalInternal: first.totalInternal,
-    totalUnused: first.totalUnused,
-  };
-  return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
 }
