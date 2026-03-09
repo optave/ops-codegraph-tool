@@ -7,10 +7,12 @@
  */
 
 import path from 'node:path';
+import { AST_TYPE_MAPS } from './ast-analysis/rules/index.js';
+import { buildExtensionSet } from './ast-analysis/shared.js';
 import { openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
 import { paginateResult } from './paginate.js';
-import { LANGUAGE_REGISTRY } from './parser.js';
+
 import { outputResult } from './result-formatter.js';
 
 // ─── Constants ────────────────────────────────────────────────────────
@@ -29,23 +31,11 @@ const KIND_ICONS = {
 /** Max length for the `text` column. */
 const TEXT_MAX = 200;
 
-/** tree-sitter node types that map to our AST node kinds (JS/TS/TSX). */
-const JS_TS_AST_TYPES = {
-  new_expression: 'new',
-  throw_statement: 'throw',
-  await_expression: 'await',
-  string: 'string',
-  template_string: 'string',
-  regex: 'regex',
-};
+/** tree-sitter node types that map to our AST node kinds — imported from rules. */
+const JS_TS_AST_TYPES = AST_TYPE_MAPS.get('javascript');
 
 /** Extensions that support full AST walk (new/throw/await/string/regex). */
-const WALK_EXTENSIONS = new Set();
-for (const lang of Object.values(LANGUAGE_REGISTRY)) {
-  if (['javascript', 'typescript', 'tsx'].includes(lang.id)) {
-    for (const ext of lang.extensions) WALK_EXTENSIONS.add(ext);
-  }
-}
+const WALK_EXTENSIONS = buildExtensionSet(AST_TYPE_MAPS);
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
