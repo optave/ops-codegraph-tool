@@ -1,7 +1,7 @@
 # Competitive Analysis — Code Graph / Code Intelligence Tools
 
 **Date:** 2026-02-25
-**Scope:** 136+ code analysis tools evaluated, 81+ ranked against `@optave/codegraph`
+**Scope:** 137+ code analysis tools evaluated, 82+ ranked against `@optave/codegraph`
 
 ---
 
@@ -55,27 +55,28 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | # | Score | Project | Stars | Lang | License | Summary |
 |---|-------|---------|-------|------|---------|---------|
 | 37 | 2.9 | [rahulvgmail/CodeInteliMCP](https://github.com/rahulvgmail/CodeInteliMCP) | 8 | Python | None | DuckDB + ChromaDB (zero Docker), multi-repo, lightweight embedded DBs |
-| 38 | 2.8 | [scottrogowski/code2flow](https://github.com/scottrogowski/code2flow) | 4,528 | Python | MIT | Call graphs for Python/JS/Ruby/PHP via AST, DOT output, 100% test coverage |
-| 39 | 2.8 | [ysk8hori/typescript-graph](https://github.com/ysk8hori/typescript-graph) | 200 | TypeScript | None | TypeScript file-level dependency Mermaid diagrams, code metrics (MI, CC), watch mode |
-| 40 | 2.8 | [nuanced-dev/nuanced-py](https://github.com/nuanced-dev/nuanced-py) | 126 | Python | MIT | Python call graph enrichment designed for AI agent consumption |
-| 41 | 2.8 | [Bikach/codeGraph](https://github.com/Bikach/codeGraph) | 6 | TypeScript | MIT | Neo4j graph, Claude Code slash commands, Kotlin support, 40-50% cost reduction |
-| 42 | 2.8 | [ChrisRoyse/CodeGraph](https://github.com/ChrisRoyse/CodeGraph) | 65 | TypeScript | None | Neo4j + MCP, multi-language, framework detection (React, Tailwind, Supabase) |
-| 43 | 2.8 | [Symbolk/Code2Graph](https://github.com/Symbolk/Code2Graph) | 48 | Java | None | Multilingual code → language-agnostic graph representation |
-| 44 | 2.7 | [yumeiriowl/repo-graphrag-mcp](https://github.com/yumeiriowl/repo-graphrag-mcp) | 3 | Python | MIT | LightRAG + tree-sitter, entity merge (code ↔ docs), implementation planning tool |
-| 45 | 2.7 | [davidfraser/pyan](https://github.com/davidfraser/pyan) | 712 | Python | GPL-2.0 | Python call graph generator (stable fork), DOT/SVG/HTML output, Sphinx integration |
-| 46 | 2.7 | [mamuz/PhpDependencyAnalysis](https://github.com/mamuz/PhpDependencyAnalysis) | 572 | PHP | MIT | PHP dependency graphs, cycle detection, architecture verification against defined layers |
-| 47 | 2.7 | [faraazahmad/graphsense](https://github.com/faraazahmad/graphsense) | 35 | TypeScript | MIT | MCP server providing code intelligence via static analysis |
-| 48 | 2.7 | [JonnoC/CodeRAG](https://github.com/JonnoC/CodeRAG) | 14 | TypeScript | MIT | Enterprise code intelligence with CK metrics, Neo4j, 23 analysis tools, MCP server |
-| 49 | 2.6 | [0xjcf/MCP_CodeAnalysis](https://github.com/0xjcf/MCP_CodeAnalysis) | 7 | Python/TS | None | Stateful tools (XState), Redis sessions, socio-technical analysis, dual language impl |
-| 50 | 2.5 | [koknat/callGraph](https://github.com/koknat/callGraph) | 325 | Perl | GPL-3.0 | Multi-language (22+) call graph generator via regex, GraphViz output |
-| 51 | 2.5 | [RaheesAhmed/code-context-mcp](https://github.com/RaheesAhmed/code-context-mcp) | 0 | Python | MIT | Security pattern detection, auto architecture diagrams, code flow tracing |
-| 52 | 2.5 | [league1991/CodeAtlasVsix](https://github.com/league1991/CodeAtlasVsix) | 265 | C# | GPL-2.0 | Visual Studio plugin, Doxygen-based call graph navigation (VS 2010-2015 era) |
-| 53 | 2.5 | [beicause/call-graph](https://github.com/beicause/call-graph) | 105 | TypeScript | Apache-2.0 | VS Code extension generating call graphs via LSP call hierarchy API |
-| 54 | 2.5 | [Thibault-Knobloch/codebase-intelligence](https://github.com/Thibault-Knobloch/codebase-intelligence) | 44 | Python | None | Code indexing + call graph + vector DB + natural language queries (requires OpenAI) |
-| 55 | 2.5 | [darkmacheken/wasmati](https://github.com/darkmacheken/wasmati) | 31 | C++ | Apache-2.0 | CPG infrastructure for scanning vulnerabilities in WebAssembly |
-| 56 | 2.5 | [sutragraph/sutracli](https://github.com/sutragraph/sutracli) | 28 | Python | GPL-3.0 | AI-powered cross-repo dependency graphs for coding agents |
-| 57 | 2.5 | [julianjensen/ast-flow-graph](https://github.com/julianjensen/ast-flow-graph) | 69 | JavaScript | Other | JavaScript control flow graphs from AST analysis |
-| 58 | 2.5 | [yoanbernabeu/grepai-skills](https://github.com/yoanbernabeu/grepai-skills) | 14 | — | MIT | 27 AI agent skills for semantic code search and call graph analysis |
+| 38 | 2.8 | [paul-gauthier/aider](https://github.com/paul-gauthier/aider) | 41,664 | Python | Apache-2.0 | AI pair programming CLI; tree-sitter repo map with PageRank-style graph ranking for LLM context selection, 100+ languages, multi-provider LLM support, git-integrated auto-commits |
+| 39 | 2.8 | [scottrogowski/code2flow](https://github.com/scottrogowski/code2flow) | 4,528 | Python | MIT | Call graphs for Python/JS/Ruby/PHP via AST, DOT output, 100% test coverage |
+| 40 | 2.8 | [ysk8hori/typescript-graph](https://github.com/ysk8hori/typescript-graph) | 200 | TypeScript | None | TypeScript file-level dependency Mermaid diagrams, code metrics (MI, CC), watch mode |
+| 41 | 2.8 | [nuanced-dev/nuanced-py](https://github.com/nuanced-dev/nuanced-py) | 126 | Python | MIT | Python call graph enrichment designed for AI agent consumption |
+| 42 | 2.8 | [Bikach/codeGraph](https://github.com/Bikach/codeGraph) | 6 | TypeScript | MIT | Neo4j graph, Claude Code slash commands, Kotlin support, 40-50% cost reduction |
+| 43 | 2.8 | [ChrisRoyse/CodeGraph](https://github.com/ChrisRoyse/CodeGraph) | 65 | TypeScript | None | Neo4j + MCP, multi-language, framework detection (React, Tailwind, Supabase) |
+| 44 | 2.8 | [Symbolk/Code2Graph](https://github.com/Symbolk/Code2Graph) | 48 | Java | None | Multilingual code → language-agnostic graph representation |
+| 45 | 2.7 | [yumeiriowl/repo-graphrag-mcp](https://github.com/yumeiriowl/repo-graphrag-mcp) | 3 | Python | MIT | LightRAG + tree-sitter, entity merge (code ↔ docs), implementation planning tool |
+| 46 | 2.7 | [davidfraser/pyan](https://github.com/davidfraser/pyan) | 712 | Python | GPL-2.0 | Python call graph generator (stable fork), DOT/SVG/HTML output, Sphinx integration |
+| 47 | 2.7 | [mamuz/PhpDependencyAnalysis](https://github.com/mamuz/PhpDependencyAnalysis) | 572 | PHP | MIT | PHP dependency graphs, cycle detection, architecture verification against defined layers |
+| 48 | 2.7 | [faraazahmad/graphsense](https://github.com/faraazahmad/graphsense) | 35 | TypeScript | MIT | MCP server providing code intelligence via static analysis |
+| 49 | 2.7 | [JonnoC/CodeRAG](https://github.com/JonnoC/CodeRAG) | 14 | TypeScript | MIT | Enterprise code intelligence with CK metrics, Neo4j, 23 analysis tools, MCP server |
+| 50 | 2.6 | [0xjcf/MCP_CodeAnalysis](https://github.com/0xjcf/MCP_CodeAnalysis) | 7 | Python/TS | None | Stateful tools (XState), Redis sessions, socio-technical analysis, dual language impl |
+| 51 | 2.5 | [koknat/callGraph](https://github.com/koknat/callGraph) | 325 | Perl | GPL-3.0 | Multi-language (22+) call graph generator via regex, GraphViz output |
+| 52 | 2.5 | [RaheesAhmed/code-context-mcp](https://github.com/RaheesAhmed/code-context-mcp) | 0 | Python | MIT | Security pattern detection, auto architecture diagrams, code flow tracing |
+| 53 | 2.5 | [league1991/CodeAtlasVsix](https://github.com/league1991/CodeAtlasVsix) | 265 | C# | GPL-2.0 | Visual Studio plugin, Doxygen-based call graph navigation (VS 2010-2015 era) |
+| 54 | 2.5 | [beicause/call-graph](https://github.com/beicause/call-graph) | 105 | TypeScript | Apache-2.0 | VS Code extension generating call graphs via LSP call hierarchy API |
+| 55 | 2.5 | [Thibault-Knobloch/codebase-intelligence](https://github.com/Thibault-Knobloch/codebase-intelligence) | 44 | Python | None | Code indexing + call graph + vector DB + natural language queries (requires OpenAI) |
+| 56 | 2.5 | [darkmacheken/wasmati](https://github.com/darkmacheken/wasmati) | 31 | C++ | Apache-2.0 | CPG infrastructure for scanning vulnerabilities in WebAssembly |
+| 57 | 2.5 | [sutragraph/sutracli](https://github.com/sutragraph/sutracli) | 28 | Python | GPL-3.0 | AI-powered cross-repo dependency graphs for coding agents |
+| 58 | 2.5 | [julianjensen/ast-flow-graph](https://github.com/julianjensen/ast-flow-graph) | 69 | JavaScript | Other | JavaScript control flow graphs from AST analysis |
+| 59 | 2.5 | [yoanbernabeu/grepai-skills](https://github.com/yoanbernabeu/grepai-skills) | 14 | — | MIT | 27 AI agent skills for semantic code search and call graph analysis |
 | 60 | 2.4 | [shantham/codegraph](https://github.com/shantham/codegraph) | 0 | TypeScript | MIT | Polished `npx` one-command installer, sqlite-vss, 7 MCP tools |
 | 61 | 2.3 | [ozyyshr/RepoGraph](https://github.com/ozyyshr/RepoGraph) | 251 | Python | Apache-2.0 | SWE-bench code graph research (ctags + networkx for LLM context) |
 | 62 | 2.3 | [emad-elsaid/rubrowser](https://github.com/emad-elsaid/rubrowser) | 644 | Ruby | MIT | Ruby-only interactive D3 force-directed dependency graph |
@@ -257,6 +258,14 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 - **Academic rigor**: 5 published papers backing the methodology (Aarhus University)
 - **Vulnerability exposure analysis**: library usage pattern matching specific to the JS/TS ecosystem
 
+### vs aider (#38, 41,664 stars)
+- **Different product category**: Aider is an AI pair programming CLI, not a code graph tool — but its tree-sitter repo map with PageRank-style graph ranking is a lightweight alternative to our full graph for LLM context selection
+- **Massive community**: 41,664 stars, 3,984 forks — orders of magnitude more traction than any tool in this space. Aider *is* the category leader for AI-assisted coding in the terminal
+- **100+ languages**: tree-sitter parsing covers far more languages than our 11, though only for identifier extraction (not full symbol/call resolution)
+- **Multi-provider LLM**: works with Claude, GPT-4, Gemini, DeepSeek, Ollama, and virtually any LLM out of the box
+- **Built-in code editing**: Aider's core loop is "understand code → edit code → commit." We provide the understanding layer but don't edit
+- **Where we win**: Aider's repo map is shallow — file-level dependency graph with identifier ranking, no function-level call resolution, no impact analysis, no dead code detection, no complexity metrics, no MCP server, no standalone queryable graph. It answers "what's relevant?" but not "what breaks if I change this?" Our graph is deeper and persistent; Aider rebuilds its map per-request
+
 ### vs colbymchenry/codegraph (#20, 165 stars)
 - **No role classification**: they lack node role classification or dead code detection — we now have both
 - **Naming competitor**: same name, same tech stack (tree-sitter + SQLite + MCP + Node.js) — marketplace confusion risk
@@ -295,6 +304,53 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | **Execution flow tracing** | axon, GitNexus, code-context-mcp | Framework-aware entry point detection + BFS flow tracing | TODO |
 | **Dataflow analysis** | codegraph-rust | Define/use chains and flows_to/returns/mutates edges — major analysis depth increase | TODO |
 | **Architecture boundary rules** | codegraph-rust, stratify | User-defined rules for allowed/forbidden dependencies between modules | TODO |
+
+### Paid Solutions
+
+#### Sourcegraph (sourcegraph.com)
+
+**What it is:** Enterprise code intelligence platform. Cloud-hosted and self-hosted. Proprietary, paid per user (free tier for individuals).
+
+**Core features:**
+
+| Feature | Description | Codegraph equivalent | Gap |
+|---------|-------------|---------------------|-----|
+| **Code Search** | Full-text regex search across all repos, branches, commits, and diffs. RE2 engine with boolean operators (`AND`/`OR`/`NOT`), compound filters (`repo:`, `file:`, `lang:`, `author:`, `before:`/`after:`), output shaping (`select:repo`, `select:symbol.function`, `select:file.owners`), and `rev:at.time()` for historical point-in-time search. Search Contexts define reusable named scopes | `codegraph search` (hybrid BM25+semantic), `where`, `list-functions` with `-f`/`-k`/`-T` filters | **Partial** — we have semantic+keyword search but lack boolean compound queries, diff/commit content search, output reshaping, and named search contexts. Backlog IDs 75, 79 |
+| **Deep Search** | Agentic natural-language search: an AI agent iteratively uses Code Search + Code Navigation tools, refining its understanding each loop until confident. Returns markdown answers with source citations. Conversational follow-ups | `codegraph search` (semantic mode) finds conceptual matches but returns raw results, not synthesized answers | **Yes** — we do semantic search but not agentic iterative search with synthesized answers. This is an LLM-layer feature — could be built on top of our MCP tools by an orchestrating agent rather than built into codegraph itself |
+| **Code Navigation** | Go-to-definition, find-references, find-implementations across repositories. Two tiers: search-based (heuristic, instant) and precise (SCIP compiler-accurate indexers). Popover type signatures and docs inline | `codegraph where` (search-based), `codegraph query` (callers/callees), `codegraph context` (full context). No find-implementations | **Partial** — we have search-based navigation and caller/callee chains. We lack interface→implementation tracking (backlog ID 74) and cross-repo reference resolution (backlog ID 78) |
+| **Code Monitoring** | Persistent watch rules on `type:diff`/`type:commit` queries. Fires email, Slack webhook, or custom HTTP webhook when new commits match. No limit on monitor count or monitored code volume | `codegraph build --watch` (incremental rebuild), `codegraph check --staged` (CI predicates) | **Partial** — we have watch-mode rebuilds and CI predicates but no persistent query-based commit monitors with notification actions. Backlog ID 76 |
+| **Code Ownership** | CODEOWNERS as a first-class search dimension: `file:has.owner()`, `select:file.owners`, owner-scoped queries. Resolves CODEOWNERS entries against user profiles | `codegraph owners` with `--owner`, `--boundary` filters. Integrated into `diff-impact` (affected owners + suggested reviewers). `code_owners` MCP tool | **No gap** — feature parity. We parse CODEOWNERS, match patterns, integrate into impact analysis, and expose via CLI + MCP. They have richer owner-as-search-filter syntax; our backlog ID 79 (advanced query language) would close this |
+| **Code Insights** | Track any search query as a time-series metric on dashboards. Automatic historical backfill from git history — years of data immediately. Migration progress, tech debt trends, codebase composition over time | `codegraph stats` (point-in-time), `codegraph snapshot` (manual checkpoints) | **Yes** — we have point-in-time metrics and manual snapshots but no automated historical trend tracking. Backlog ID 77 |
+| **Batch Changes** | Declarative YAML spec → automated code changes across hundreds of repos. Creates PRs on all affected repos, tracks merge status, CI checks, review approvals. Burndown charts for migration progress | None — codegraph is read-only by design (Foundation P8: we don't edit code or make decisions) | **By design** — we're a graph query tool, not a code modification tool. This is out of scope per Foundation principles |
+| **CLI (`src`)** | Terminal search, batch change creation, SBOM generation, repo/user/team admin, code intelligence ops, CODEOWNERS management | `codegraph` CLI with 25+ commands, MCP server | **Partial** — our CLI is richer for graph queries; theirs is richer for admin/batch/SBOM operations. Different focus areas |
+
+**Where Sourcegraph wins over codegraph:**
+
+| Advantage | Details |
+|-----------|---------|
+| **Scale** | Designed for 100,000+ repo enterprises. Indexed search across all repos, branches, and history simultaneously. Our multi-repo mode works but is designed for tens of repos, not thousands |
+| **Precise navigation (SCIP)** | Compiler-accurate go-to-definition and find-references via language-specific SCIP indexers. Our tree-sitter resolution is heuristic — good enough for most cases but fundamentally less accurate for typed languages |
+| **Diff/commit content search** | First-class search within git diffs and commit messages with author/date filters. We have `co-change` (statistical correlation) but can't search actual diff content |
+| **Code monitoring** | Persistent query-based alerts on new commits with webhook/Slack/email actions. Our `--watch` mode rebuilds the graph but doesn't evaluate persistent query triggers |
+| **Historical insights** | Automatic time-series tracking of any metric over git history with dashboard visualization. We have manual snapshots but no automated trend tracking |
+| **Enterprise ecosystem** | SSO, RBAC, audit logs, IDE extensions (VS Code, JetBrains, Neovim), browser extension for GitHub/GitLab code review. We're a CLI + MCP tool |
+| **Boolean query language** | Rich boolean operators, compound filters, output reshaping, and named search contexts. Our search is either semantic (fuzzy) or exact-name (`where`) |
+
+**Where codegraph wins over Sourcegraph:**
+
+| Advantage | Details |
+|-----------|---------|
+| **Zero infrastructure** | `npm install` and done. No server, no Docker, no cloud, no accounts. Sourcegraph requires either a cloud subscription or a self-hosted instance (Kubernetes/Docker Compose) |
+| **Function-level graph** | We build and query at function/method/class granularity with call edges, dataflow, CFG, and impact analysis. Sourcegraph operates at file/symbol level — search finds symbols but doesn't build a persistent dependency graph with blast radius analysis |
+| **Impact analysis** | `diff-impact`, `fn-impact`, `branch-compare` trace transitive blast radius through the call graph. Sourcegraph's `find-references` shows direct references but not transitive impact chains |
+| **Complexity & health metrics** | Cognitive, cyclomatic, Halstead, MI per function with CI gates. Sourcegraph has no built-in code health metrics |
+| **Community detection & drift** | Louvain clustering reveals architectural drift between directory structure and actual dependencies. Sourcegraph has no equivalent |
+| **Dataflow analysis** | `flows_to`/`returns`/`mutates` edges track how data moves through functions. Sourcegraph doesn't do dataflow analysis |
+| **Control flow graphs** | Per-function CFG with basic blocks stored in the graph. Sourcegraph doesn't build CFGs |
+| **Node role classification** | Every symbol auto-tagged as entry/core/utility/adapter/dead/leaf. Sourcegraph has no architectural role concept |
+| **Cost** | Completely free and open source (Apache-2.0). Sourcegraph's paid plans start at $49/user/month for enterprise features |
+| **Privacy** | Your code never leaves your machine (unless you choose to connect an LLM). Sourcegraph Cloud processes your code on their infrastructure; self-hosted requires significant ops investment |
+| **AI-optimized output** | `context`, `audit`, `triage`, `batch` commands are purpose-built for AI agent consumption with structured JSON. Sourcegraph's output is designed for human developers in a web UI |
 
 ### Not worth copying
 | Feature | Why skip |
