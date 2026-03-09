@@ -413,11 +413,15 @@ QUERY_OPTS(
     });
   });
 
-QUERY_OPTS(
-  program
-    .command('diff-impact [ref]')
-    .description('Show impact of git changes (unstaged, staged, or vs a ref)'),
-)
+program
+  .command('diff-impact [ref]')
+  .description('Show impact of git changes (unstaged, staged, or vs a ref)')
+  .option('-d, --db <path>', 'Path to graph.db')
+  .option('-T, --no-tests', 'Exclude test/spec files from results')
+  .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
+  .option('--limit <number>', 'Max results to return')
+  .option('--offset <number>', 'Skip N results (default: 0)')
+  .option('--ndjson', 'Newline-delimited JSON output')
   .option('--staged', 'Analyze staged changes instead of unstaged')
   .option('--depth <n>', 'Max transitive caller depth', '3')
   .option('-f, --format <format>', 'Output format: text, mermaid, json', 'text')
