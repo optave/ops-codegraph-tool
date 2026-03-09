@@ -147,7 +147,6 @@ export function sequenceData(name, dbPath, opts = {}) {
         for (const c of callees) {
           if (noTests && isTestFile(c.file)) continue;
 
-
           // Always record the message (even for visited nodes — different caller path)
           fileSet.add(c.file);
           messages.push({
