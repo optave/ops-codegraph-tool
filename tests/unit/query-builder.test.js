@@ -32,8 +32,8 @@ describe('testFilterSQL', () => {
   });
 
   it('rejects malicious column names', () => {
-    expect(() => testFilterSQL("1; DROP TABLE nodes --")).toThrow('Invalid SQL column');
-    expect(() => testFilterSQL("n.file OR 1=1 --")).toThrow('Invalid SQL column');
+    expect(() => testFilterSQL('1; DROP TABLE nodes --')).toThrow('Invalid SQL column');
+    expect(() => testFilterSQL('n.file OR 1=1 --')).toThrow('Invalid SQL column');
   });
 });
 
