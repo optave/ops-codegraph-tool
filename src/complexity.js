@@ -3,9 +3,10 @@ import path from 'node:path';
 import { loadConfig } from './config.js';
 import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
-import { paginateResult, printNdjson } from './paginate.js';
+import { paginateResult } from './paginate.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
-import { isTestFile } from './queries.js';
+import { outputResult } from './result-formatter.js';
+import { isTestFile } from './test-filter.js';
 
 // ─── Language-Specific Node Type Registry ─────────────────────────────────
 
@@ -2083,14 +2084,7 @@ export function* iterComplexity(customDbPath, opts = {}) {
 export function complexity(customDbPath, opts = {}) {
   const data = complexityData(customDbPath, opts);
 
-  if (opts.ndjson) {
-    printNdjson(data, 'functions');
-    return;
-  }
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
+  if (outputResult(data, 'functions', opts)) return;
 
   if (data.functions.length === 0) {
     if (data.summary === null) {

@@ -15,7 +15,9 @@ import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
-import { ALL_SYMBOL_KINDS, isTestFile, normalizeSymbol } from './queries.js';
+import { ALL_SYMBOL_KINDS, normalizeSymbol } from './queries.js';
+import { outputResult } from './result-formatter.js';
+import { isTestFile } from './test-filter.js';
 
 // ─── Language-Specific Dataflow Rules ────────────────────────────────────
 
@@ -1567,16 +1569,7 @@ export function dataflow(name, customDbPath, opts = {}) {
 
   const data = dataflowData(name, customDbPath, opts);
 
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
-  if (opts.ndjson) {
-    for (const r of data.results) {
-      console.log(JSON.stringify(r));
-    }
-    return;
-  }
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.warning) {
     console.log(`⚠  ${data.warning}`);
@@ -1650,16 +1643,7 @@ function dataflowImpact(name, customDbPath, opts = {}) {
     offset: opts.offset,
   });
 
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
-  if (opts.ndjson) {
-    for (const r of data.results) {
-      console.log(JSON.stringify(r));
-    }
-    return;
-  }
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.warning) {
     console.log(`⚠  ${data.warning}`);

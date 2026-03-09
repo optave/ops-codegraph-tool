@@ -10,9 +10,10 @@ import path from 'node:path';
 import { COMPLEXITY_RULES } from './complexity.js';
 import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
-import { paginateResult, printNdjson } from './paginate.js';
+import { paginateResult } from './paginate.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
-import { isTestFile } from './queries.js';
+import { outputResult } from './result-formatter.js';
+import { isTestFile } from './test-filter.js';
 
 // ─── CFG Node Type Rules (extends COMPLEXITY_RULES) ──────────────────────
 
@@ -1437,14 +1438,7 @@ function edgeStyle(kind) {
 export function cfg(name, customDbPath, opts = {}) {
   const data = cfgData(name, customDbPath, opts);
 
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
-  if (opts.ndjson) {
-    printNdjson(data.results);
-    return;
-  }
+  if (outputResult(data, 'results', opts)) return;
 
   if (data.warning) {
     console.log(`\u26A0  ${data.warning}`);

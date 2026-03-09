@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { paginateResult } from './paginate.js';
-import { isTestFile } from './queries.js';
+import { isTestFile } from './test-filter.js';
 
 const DEFAULT_MIN_CONFIDENCE = 0.5;
 

@@ -140,7 +140,6 @@ export {
   FALSE_POSITIVE_CALLER_THRESHOLD,
   FALSE_POSITIVE_NAMES,
   fileDepsData,
-  fileExports,
   fnDepsData,
   fnImpactData,
   impactAnalysisData,
@@ -158,6 +157,24 @@ export {
   VALID_ROLES,
   whereData,
 } from './queries.js';
+// Query CLI display wrappers
+export {
+  children,
+  context,
+  diffImpact,
+  explain,
+  fileDeps,
+  fileExports,
+  fnDeps,
+  fnImpact,
+  impactAnalysis,
+  moduleMap,
+  queryName,
+  roles,
+  stats,
+  symbolPath,
+  where,
+} from './queries-cli.js';
 // Registry (multi-repo)
 export {
   listRepos,
@@ -169,6 +186,8 @@ export {
   saveRegistry,
   unregisterRepo,
 } from './registry.js';
+// Result formatting
+export { outputResult } from './result-formatter.js';
 // Sequence diagram generation
 export { sequence, sequenceData, sequenceToMermaid } from './sequence.js';
 // Snapshot management
@@ -192,6 +211,8 @@ export {
   moduleBoundariesData,
   structureData,
 } from './structure.js';
+// Test file detection
+export { isTestFile, TEST_PATTERN } from './test-filter.js';
 // Triage — composite risk audit
 export { triage, triageData } from './triage.js';
 // Interactive HTML viewer

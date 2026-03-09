@@ -2,8 +2,9 @@ import path from 'node:path';
 import Graph from 'graphology';
 import louvain from 'graphology-communities-louvain';
 import { openReadonlyOrFail } from './db.js';
-import { paginateResult, printNdjson } from './paginate.js';
-import { isTestFile } from './queries.js';
+import { paginateResult } from './paginate.js';
+import { outputResult } from './result-formatter.js';
+import { isTestFile } from './test-filter.js';
 
 // ─── Graph Construction ───────────────────────────────────────────────
 
@@ -240,14 +241,7 @@ export function communitySummaryForStats(customDbPath, opts = {}) {
 export function communities(customDbPath, opts = {}) {
   const data = communitiesData(customDbPath, opts);
 
-  if (opts.ndjson) {
-    printNdjson(data, 'communities');
-    return;
-  }
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
+  if (outputResult(data, 'communities', opts)) return;
 
   if (data.summary.communityCount === 0) {
     console.log(

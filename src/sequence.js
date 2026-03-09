@@ -7,9 +7,11 @@
  */
 
 import { openReadonlyOrFail } from './db.js';
-import { paginateResult, printNdjson } from './paginate.js';
-import { findMatchingNodes, isTestFile, kindIcon } from './queries.js';
+import { paginateResult } from './paginate.js';
+import { findMatchingNodes, kindIcon } from './queries.js';
+import { outputResult } from './result-formatter.js';
 import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
+import { isTestFile } from './test-filter.js';
 
 // ─── Alias generation ────────────────────────────────────────────────
 
@@ -336,15 +338,7 @@ export function sequenceToMermaid(seqResult) {
 export function sequence(name, dbPath, opts = {}) {
   const data = sequenceData(name, dbPath, opts);
 
-  if (opts.ndjson) {
-    printNdjson(data, 'messages');
-    return;
-  }
-
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
+  if (outputResult(data, 'messages', opts)) return;
 
   // Default: mermaid format
   if (!data.entry) {

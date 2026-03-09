@@ -1,5 +1,5 @@
 import { debug } from './logger.js';
-import { isTestFile } from './queries.js';
+import { isTestFile } from './test-filter.js';
 
 // ─── Glob-to-Regex ───────────────────────────────────────────────────
 

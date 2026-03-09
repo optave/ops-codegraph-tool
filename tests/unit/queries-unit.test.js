@@ -15,19 +15,16 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { initSchema } from '../../src/db.js';
+import { diffImpactData, diffImpactMermaid, fnDepsData, fnImpactData } from '../../src/queries.js';
 import {
   diffImpact,
-  diffImpactData,
-  diffImpactMermaid,
   fileDeps,
   fnDeps,
-  fnDepsData,
   fnImpact,
-  fnImpactData,
   impactAnalysis,
   moduleMap,
   queryName,
-} from '../../src/queries.js';
+} from '../../src/queries-cli.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

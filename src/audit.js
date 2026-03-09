@@ -10,7 +10,9 @@ import path from 'node:path';
 import { loadConfig } from './config.js';
 import { openReadonlyOrFail } from './db.js';
 import { RULE_DEFS } from './manifesto.js';
-import { explainData, isTestFile, kindIcon } from './queries.js';
+import { explainData, kindIcon } from './queries.js';
+import { outputResult } from './result-formatter.js';
+import { isTestFile } from './test-filter.js';
 
 // ─── Threshold resolution ───────────────────────────────────────────
 
@@ -340,10 +342,7 @@ function defaultHealth() {
 export function audit(target, customDbPath, opts = {}) {
   const data = auditData(target, customDbPath, opts);
 
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
+  if (outputResult(data, null, opts)) return;
 
   if (data.functions.length === 0) {
     console.log(`No ${data.kind === 'file' ? 'file' : 'function/symbol'} matching "${target}"`);

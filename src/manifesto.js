@@ -3,7 +3,8 @@ import { loadConfig } from './config.js';
 import { findCycles } from './cycles.js';
 import { openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
-import { paginateResult, printNdjson } from './paginate.js';
+import { paginateResult } from './paginate.js';
+import { outputResult } from './result-formatter.js';
 
 // ─── Rule Definitions ─────────────────────────────────────────────────
 
@@ -434,13 +435,7 @@ export function manifestoData(customDbPath, opts = {}) {
 export function manifesto(customDbPath, opts = {}) {
   const data = manifestoData(customDbPath, opts);
 
-  if (opts.ndjson) {
-    printNdjson(data, 'violations');
-    if (!data.passed) process.exit(1);
-    return;
-  }
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
+  if (outputResult(data, 'violations', opts)) {
     if (!data.passed) process.exit(1);
     return;
   }

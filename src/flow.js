@@ -6,9 +6,11 @@
  */
 
 import { openReadonlyOrFail } from './db.js';
-import { paginateResult, printNdjson } from './paginate.js';
-import { findMatchingNodes, isTestFile, kindIcon } from './queries.js';
+import { paginateResult } from './paginate.js';
+import { findMatchingNodes, kindIcon } from './queries.js';
+import { outputResult } from './result-formatter.js';
 import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
+import { isTestFile } from './test-filter.js';
 
 /**
  * Determine the entry point type from a node name based on framework prefixes.
@@ -229,14 +231,7 @@ export function flow(name, dbPath, opts = {}) {
       limit: opts.limit,
       offset: opts.offset,
     });
-    if (opts.ndjson) {
-      printNdjson(data, 'entries');
-      return;
-    }
-    if (opts.json) {
-      console.log(JSON.stringify(data, null, 2));
-      return;
-    }
+    if (outputResult(data, 'entries', opts)) return;
     if (data.count === 0) {
       console.log('No entry points found. Run "codegraph build" first.');
       return;
@@ -253,10 +248,7 @@ export function flow(name, dbPath, opts = {}) {
   }
 
   const data = flowData(name, dbPath, opts);
-  if (opts.json) {
-    console.log(JSON.stringify(data, null, 2));
-    return;
-  }
+  if (outputResult(data, 'steps', opts)) return;
 
   if (!data.entry) {
     console.log(`No matching entry point or function found for "${name}".`);
