@@ -37,7 +37,6 @@ import {
   moduleMapData,
   pathData,
   queryNameData,
-  rolesData,
   statsData,
   whereData,
 } from '../../src/queries.js';
