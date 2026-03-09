@@ -62,12 +62,38 @@ if [ -z "$FILES_TO_CHECK" ]; then
 fi
 
 # Single Node.js invocation: check all files in one process
+# Excludes exports that are re-exported from index.js (public API) or consumed
+# via dynamic import() — codegraph's static graph doesn't track those edges.
 DEAD_EXPORTS=$(node -e "
+  const fs = require('fs');
   const path = require('path');
   const root = process.argv[1];
   const files = process.argv[2].split('\n').filter(Boolean);
 
   const { exportsData } = require(path.join(root, 'src/queries.js'));
+
+  // Build set of names exported from index.js (public API surface)
+  const indexSrc = fs.readFileSync(path.join(root, 'src/index.js'), 'utf8');
+  const publicAPI = new Set();
+  for (const m of indexSrc.matchAll(/\b(\w+)\b/g)) publicAPI.add(m[1]);
+
+  // Scan all src/ files for dynamic import() consumers
+  const srcDir = path.join(root, 'src');
+  function scanDynamic(dir) {
+    for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
+      if (ent.isDirectory()) { scanDynamic(path.join(dir, ent.name)); continue; }
+      if (!ent.name.endsWith('.js')) continue;
+      try {
+        const src = fs.readFileSync(path.join(dir, ent.name), 'utf8');
+        for (const m of src.matchAll(/import\(['\"]([^'\"]+)['\"]\)/g)) {
+          // Extract imported names from destructuring: const { X } = await import(...)
+          const line = src.substring(Math.max(0, src.lastIndexOf('\n', src.indexOf(m[0])) + 1), src.indexOf('\n', src.indexOf(m[0]) + m[0].length));
+          for (const n of line.matchAll(/\b(\w+)\b/g)) publicAPI.add(n[1]);
+        }
+      } catch {}
+    }
+  }
+  scanDynamic(srcDir);
 
   const dead = [];
   for (const file of files) {
@@ -75,6 +101,7 @@ DEAD_EXPORTS=$(node -e "
       const data = exportsData(file, undefined, { noTests: true, unused: true });
       if (data && data.results) {
         for (const r of data.results) {
+          if (publicAPI.has(r.name)) continue; // public API or dynamic import consumer
           dead.push(r.name + ' (' + data.file + ':' + r.line + ')');
         }
       }

@@ -135,6 +135,14 @@ Six commands already produce Mermaid/DOT output: `export`, `diff-impact -f merma
 | 69 | Node annotations in `diff-impact` / `branch-compare` / `communities` | Use 61's annotation formatter to show top exports on file nodes in `diff-impact -f mermaid`, `branch-compare --format mermaid`, and `communities` output. | Visualization | All visual tools show file API surfaces inline, not just in `export` | ✓ | ✓ | 3 | No | 61 |
 | 70 | Drift/risk subgraph labels in `communities` and `triage` | Use 62's semantic label system to annotate `communities` subgraphs with drift status (`**(drifted)**` / `**(cohesive)**`) and add a new `--format mermaid` to `triage` with risk-severity group labels. | Intelligence | Community and triage diagrams communicate structural health directly in the layout | ✓ | ✓ | 3 | No | 62 |
 
+### Tier 1h — Core accuracy improvements (resolve known analysis gaps)
+
+These address fundamental limitations in the parsing and resolution pipeline that reduce graph accuracy for real-world codebases. All are zero-dep (tree-sitter AST + existing resolution infrastructure), non-breaking (purely additive — more edges, better resolution), and high problem-fit (directly prevent hallucinated or missing dependencies).
+
+| ID | Title | Description | Category | Benefit | Zero-dep | Foundation-aligned | Problem-fit (1-5) | Breaking | Depends on |
+|----|-------|-------------|----------|---------|----------|-------------------|-------------------|----------|------------|
+| 71 | Track dynamic `import()` and re-exports as graph edges | Codegraph's static graph does not create edges for dynamic `import()` expressions (e.g. `const { buildAstNodes } = await import('../ast.js')`). Exports consumed exclusively via dynamic import appear as "zero consumers" in `exports --unused`, `check`, and dead-code detection — false positives that erode trust in the graph. Parse `import()` call expressions during the symbol extraction phase, resolve the target module, and create `kind='dynamic_import'` edges in the `edges` table. Similarly, re-exports from barrel files (`index.js`) that re-export symbols without calling them don't create consumer edges — the graph sees the barrel as the only consumer. Track re-export chains so the original module's export shows the true downstream consumers, not just `index.js`. | Resolution | Eliminates a class of false positives in `exports --unused`, `check --no-dead-code`, and audit dead-code reports. Currently any export consumed only via dynamic import or re-exported through a barrel file is incorrectly flagged as dead code. Also enables impact analysis to trace through lazy-loaded and barrel-file boundaries — critical for codebases that use dynamic imports for code splitting or conditional loading | ✓ | ✓ | 5 | No | — |
+
 ### Tier 2 — Foundation-aligned, needs dependencies
 
 Ordered by problem-fit:

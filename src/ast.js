@@ -9,6 +9,8 @@
 import path from 'node:path';
 import { AST_TYPE_MAPS } from './ast-analysis/rules/index.js';
 import { buildExtensionSet } from './ast-analysis/shared.js';
+import { walkWithVisitors } from './ast-analysis/visitor.js';
+import { createAstStoreVisitor } from './ast-analysis/visitors/ast-store-visitor.js';
 import { openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
 import { paginateResult } from './paginate.js';
@@ -28,9 +30,6 @@ const KIND_ICONS = {
   await: '\u22B3', // ⊳
 };
 
-/** Max length for the `text` column. */
-const TEXT_MAX = 200;
-
 /** tree-sitter node types that map to our AST node kinds — imported from rules. */
 const JS_TS_AST_TYPES = AST_TYPE_MAPS.get('javascript');
 
@@ -38,77 +37,8 @@ const JS_TS_AST_TYPES = AST_TYPE_MAPS.get('javascript');
 const WALK_EXTENSIONS = buildExtensionSet(AST_TYPE_MAPS);
 
 // ─── Helpers ──────────────────────────────────────────────────────────
-
-function truncate(s, max = TEXT_MAX) {
-  if (!s) return null;
-  return s.length <= max ? s : `${s.slice(0, max - 1)}\u2026`;
-}
-
-/**
- * Extract the constructor name from a `new_expression` node.
- * Handles `new Foo()`, `new a.Foo()`, `new Foo.Bar()`.
- */
-function extractNewName(node) {
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (child.type === 'identifier') return child.text;
-    if (child.type === 'member_expression') {
-      // e.g. new a.Foo() → "a.Foo"
-      return child.text;
-    }
-  }
-  return node.text?.split('(')[0]?.replace('new ', '').trim() || '?';
-}
-
-/**
- * Extract the expression text from a throw/await node.
- */
-function extractExpressionText(node) {
-  // Skip keyword child, take the rest
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (child.type !== 'throw' && child.type !== 'await') {
-      return truncate(child.text);
-    }
-  }
-  return truncate(node.text);
-}
-
-/**
- * Extract a meaningful name from throw/await nodes.
- * For throw: the constructor or expression type.
- * For await: the called function name.
- */
-function extractName(kind, node) {
-  if (kind === 'throw') {
-    // throw new Error(...) → "Error"; throw x → "x"
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i);
-      if (child.type === 'new_expression') return extractNewName(child);
-      if (child.type === 'call_expression') {
-        const fn = child.childForFieldName('function');
-        return fn ? fn.text : child.text?.split('(')[0] || '?';
-      }
-      if (child.type === 'identifier') return child.text;
-    }
-    return truncate(node.text);
-  }
-  if (kind === 'await') {
-    // await fetch(...) → "fetch"; await this.foo() → "this.foo"
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i);
-      if (child.type === 'call_expression') {
-        const fn = child.childForFieldName('function');
-        return fn ? fn.text : child.text?.split('(')[0] || '?';
-      }
-      if (child.type === 'identifier' || child.type === 'member_expression') {
-        return child.text;
-      }
-    }
-    return truncate(node.text);
-  }
-  return truncate(node.text);
-}
+// Node extraction helpers (extractNewName, extractName, etc.) moved to
+// ast-analysis/visitors/ast-store-visitor.js as part of the visitor framework.
 
 /**
  * Find the narrowest enclosing definition for a given line.
@@ -228,66 +158,13 @@ export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
 
 /**
  * Walk a tree-sitter AST and collect new/throw/await/string/regex nodes.
+ * Delegates to the ast-store visitor via the unified walker.
  */
-function walkAst(node, defs, relPath, rows, nodeIdMap) {
-  const kind = JS_TS_AST_TYPES[node.type];
-  if (kind) {
-    // tree-sitter lines are 0-indexed, our DB uses 1-indexed
-    const line = node.startPosition.row + 1;
-
-    let name;
-    let text = null;
-
-    if (kind === 'new') {
-      name = extractNewName(node);
-      text = truncate(node.text);
-    } else if (kind === 'throw') {
-      name = extractName('throw', node);
-      text = extractExpressionText(node);
-    } else if (kind === 'await') {
-      name = extractName('await', node);
-      text = extractExpressionText(node);
-    } else if (kind === 'string') {
-      // Skip trivial strings (length < 2 after removing quotes)
-      const content = node.text?.replace(/^['"`]|['"`]$/g, '') || '';
-      if (content.length < 2) {
-        // Still recurse children
-        for (let i = 0; i < node.childCount; i++) {
-          walkAst(node.child(i), defs, relPath, rows, nodeIdMap);
-        }
-        return;
-      }
-      name = truncate(content, 100);
-      text = truncate(node.text);
-    } else if (kind === 'regex') {
-      name = node.text || '?';
-      text = truncate(node.text);
-    }
-
-    const parentDef = findParentDef(defs, line);
-    let parentNodeId = null;
-    if (parentDef) {
-      parentNodeId = nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
-    }
-
-    rows.push({
-      file: relPath,
-      line,
-      kind,
-      name,
-      text,
-      receiver: null,
-      parentNodeId,
-    });
-
-    // Don't recurse into the children of matched nodes for new/throw/await
-    // (we already extracted what we need, and nested strings inside them are noise)
-    if (kind !== 'string' && kind !== 'regex') return;
-  }
-
-  for (let i = 0; i < node.childCount; i++) {
-    walkAst(node.child(i), defs, relPath, rows, nodeIdMap);
-  }
+function walkAst(rootNode, defs, relPath, rows, nodeIdMap) {
+  const visitor = createAstStoreVisitor(JS_TS_AST_TYPES, defs, relPath, nodeIdMap);
+  const results = walkWithVisitors(rootNode, [visitor], 'javascript');
+  const collected = results['ast-store'] || [];
+  rows.push(...collected);
 }
 
 // ─── Query ────────────────────────────────────────────────────────────

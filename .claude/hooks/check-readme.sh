@@ -1,6 +1,11 @@
 #!/bin/bash
 # Hook: block git commit if README.md, CLAUDE.md, or ROADMAP.md might need updating but aren't staged.
 # Runs as a PreToolUse hook on Bash tool calls.
+#
+# Policy:
+#   - If NO docs are staged but source files changed → deny (docs weren't considered)
+#   - If SOME docs are staged → allow (developer reviewed and chose which to update)
+#   - If commit message contains "docs check acknowledged" → allow (explicit bypass)
 
 INPUT=$(cat)
 COMMAND=$(echo "$INPUT" | node -e "
@@ -17,11 +22,16 @@ if ! echo "$COMMAND" | grep -qE '^\s*git\s+commit'; then
   exit 0
 fi
 
+# Allow explicit bypass via commit message
+if echo "$COMMAND" | grep -q 'docs check acknowledged'; then
+  exit 0
+fi
+
 # Check which docs are staged
 STAGED_FILES=$(git diff --cached --name-only 2>/dev/null)
 README_STAGED=$(echo "$STAGED_FILES" | grep -c '^README.md$' || true)
 CLAUDE_STAGED=$(echo "$STAGED_FILES" | grep -c '^CLAUDE.md$' || true)
-ROADMAP_STAGED=$(echo "$STAGED_FILES" | grep -c '^ROADMAP.md$' || true)
+ROADMAP_STAGED=$(echo "$STAGED_FILES" | grep -c 'ROADMAP.md$' || true)
 
 # If all three are staged, all good
 if [ "$README_STAGED" -gt 0 ] && [ "$CLAUDE_STAGED" -gt 0 ] && [ "$ROADMAP_STAGED" -gt 0 ]; then
@@ -32,6 +42,14 @@ fi
 NEEDS_CHECK=$(echo "$STAGED_FILES" | grep -cE '(src/|cli\.js|constants\.js|parser\.js|package\.json|grammars/)' || true)
 
 if [ "$NEEDS_CHECK" -gt 0 ]; then
+  DOCS_STAGED=$((README_STAGED + CLAUDE_STAGED + ROADMAP_STAGED))
+
+  # If at least one doc is staged, developer considered docs — allow with info
+  if [ "$DOCS_STAGED" -gt 0 ]; then
+    exit 0
+  fi
+
+  # No docs staged at all — block
   MISSING=""
   [ "$README_STAGED" -eq 0 ] && MISSING="README.md"
   [ "$CLAUDE_STAGED" -eq 0 ] && MISSING="${MISSING:+$MISSING, }CLAUDE.md"

@@ -1,11 +1,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  computeLOCMetrics as _computeLOCMetrics,
+  computeMaintainabilityIndex as _computeMaintainabilityIndex,
+} from './ast-analysis/metrics.js';
 import { COMPLEXITY_RULES, HALSTEAD_RULES } from './ast-analysis/rules/index.js';
 import {
   findFunctionNode as _findFunctionNode,
   buildExtensionSet,
   buildExtToLangMap,
 } from './ast-analysis/shared.js';
+import { walkWithVisitors } from './ast-analysis/visitor.js';
+import { createComplexityVisitor } from './ast-analysis/visitors/complexity-visitor.js';
 import { loadConfig } from './config.js';
 import { openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
@@ -95,80 +101,12 @@ export function computeHalsteadMetrics(functionNode, language) {
 }
 
 // ─── LOC Metrics Computation ──────────────────────────────────────────────
-
-const C_STYLE_PREFIXES = ['//', '/*', '*', '*/'];
-
-const COMMENT_PREFIXES = new Map([
-  ['javascript', C_STYLE_PREFIXES],
-  ['typescript', C_STYLE_PREFIXES],
-  ['tsx', C_STYLE_PREFIXES],
-  ['go', C_STYLE_PREFIXES],
-  ['rust', C_STYLE_PREFIXES],
-  ['java', C_STYLE_PREFIXES],
-  ['csharp', C_STYLE_PREFIXES],
-  ['python', ['#']],
-  ['ruby', ['#']],
-  ['php', ['//', '#', '/*', '*', '*/']],
-]);
-
-/**
- * Compute LOC metrics from a function node's source text.
- *
- * @param {object} functionNode - tree-sitter node
- * @param {string} [language] - Language ID (falls back to C-style prefixes)
- * @returns {{ loc: number, sloc: number, commentLines: number }}
- */
-export function computeLOCMetrics(functionNode, language) {
-  const text = functionNode.text;
-  const lines = text.split('\n');
-  const loc = lines.length;
-  const prefixes = (language && COMMENT_PREFIXES.get(language)) || C_STYLE_PREFIXES;
-
-  let commentLines = 0;
-  let blankLines = 0;
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed === '') {
-      blankLines++;
-    } else if (prefixes.some((p) => trimmed.startsWith(p))) {
-      commentLines++;
-    }
-  }
-
-  const sloc = Math.max(1, loc - blankLines - commentLines);
-  return { loc, sloc, commentLines };
-}
+// Delegated to ast-analysis/metrics.js; re-exported for backward compatibility.
+export const computeLOCMetrics = _computeLOCMetrics;
 
 // ─── Maintainability Index ────────────────────────────────────────────────
-
-/**
- * Compute normalized Maintainability Index (0-100 scale).
- *
- * Original SEI formula: MI = 171 - 5.2*ln(V) - 0.23*G - 16.2*ln(LOC) + 50*sin(sqrt(2.4*CM))
- * Microsoft normalization: max(0, min(100, MI * 100/171))
- *
- * @param {number} volume - Halstead volume
- * @param {number} cyclomatic - Cyclomatic complexity
- * @param {number} sloc - Source lines of code
- * @param {number} [commentRatio] - Comment ratio (0-1), optional
- * @returns {number} Normalized MI (0-100)
- */
-export function computeMaintainabilityIndex(volume, cyclomatic, sloc, commentRatio) {
-  // Guard against zero/negative values in logarithms
-  const safeVolume = Math.max(volume, 1);
-  const safeSLOC = Math.max(sloc, 1);
-
-  let mi = 171 - 5.2 * Math.log(safeVolume) - 0.23 * cyclomatic - 16.2 * Math.log(safeSLOC);
-
-  if (commentRatio != null && commentRatio > 0) {
-    mi += 50 * Math.sin(Math.sqrt(2.4 * commentRatio));
-  }
-
-  // Microsoft normalization: 0-100 scale
-  const normalized = Math.max(0, Math.min(100, (mi * 100) / 171));
-  return +normalized.toFixed(1);
-}
+// Delegated to ast-analysis/metrics.js; re-exported for backward compatibility.
+export const computeMaintainabilityIndex = _computeMaintainabilityIndex;
 
 // ─── Algorithm: Single-Traversal DFS ──────────────────────────────────────
 
@@ -346,6 +284,8 @@ export function computeFunctionComplexity(functionNode, language) {
  * traversal, avoiding two separate DFS walks per function node at build time.
  * LOC is text-based (not tree-based) and computed separately (very cheap).
  *
+ * Now delegates to the complexity visitor via the unified walker.
+ *
  * @param {object} functionNode - tree-sitter node for the function
  * @param {string} langId - Language ID (e.g. 'javascript', 'python')
  * @returns {{ cognitive: number, cyclomatic: number, maxNesting: number, halstead: object|null, loc: object, mi: number } | null}
@@ -355,207 +295,33 @@ export function computeAllMetrics(functionNode, langId) {
   if (!cRules) return null;
   const hRules = HALSTEAD_RULES.get(langId);
 
-  // ── Complexity state ──
-  let cognitive = 0;
-  let cyclomatic = 1; // McCabe starts at 1
-  let maxNesting = 0;
+  const visitor = createComplexityVisitor(cRules, hRules);
 
-  // ── Halstead state ──
-  const operators = hRules ? new Map() : null;
-  const operands = hRules ? new Map() : null;
+  const nestingNodes = new Set(cRules.nestingNodes);
+  // Add function nodes as nesting nodes (nested functions increase nesting)
+  for (const t of cRules.functionNodes) nestingNodes.add(t);
 
-  function walk(node, nestingLevel, isTopFunction, halsteadSkip) {
-    if (!node) return;
+  const results = walkWithVisitors(functionNode, [visitor], langId, {
+    nestingNodeTypes: nestingNodes,
+  });
 
-    const type = node.type;
+  const rawResult = results.complexity;
 
-    // ── Halstead classification ──
-    // Propagate skip through type-annotation subtrees (e.g. TS generics, Java type params)
-    const skipH = halsteadSkip || (hRules ? hRules.skipTypes.has(type) : false);
-    if (hRules && !skipH) {
-      // Compound operators (non-leaf): count node type as operator
-      if (hRules.compoundOperators.has(type)) {
-        operators.set(type, (operators.get(type) || 0) + 1);
-      }
-      // Leaf nodes: classify as operator or operand
-      if (node.childCount === 0) {
-        if (hRules.operatorLeafTypes.has(type)) {
-          operators.set(type, (operators.get(type) || 0) + 1);
-        } else if (hRules.operandLeafTypes.has(type)) {
-          const text = node.text;
-          operands.set(text, (operands.get(text) || 0) + 1);
-        }
-      }
-    }
-
-    // ── Complexity: track nesting depth ──
-    if (nestingLevel > maxNesting) maxNesting = nestingLevel;
-
-    // Handle logical operators in binary expressions
-    if (type === cRules.logicalNodeType) {
-      const op = node.child(1)?.type;
-      if (op && cRules.logicalOperators.has(op)) {
-        cyclomatic++;
-        const parent = node.parent;
-        let sameSequence = false;
-        if (parent && parent.type === cRules.logicalNodeType) {
-          const parentOp = parent.child(1)?.type;
-          if (parentOp === op) sameSequence = true;
-        }
-        if (!sameSequence) cognitive++;
-        for (let i = 0; i < node.childCount; i++) {
-          walk(node.child(i), nestingLevel, false, skipH);
-        }
-        return;
-      }
-    }
-
-    // Handle optional chaining (cyclomatic only)
-    if (type === cRules.optionalChainType) {
-      cyclomatic++;
-    }
-
-    // Handle branch/control flow nodes (skip keyword leaf tokens like Ruby's `if`)
-    if (cRules.branchNodes.has(type) && node.childCount > 0) {
-      // Pattern A: else clause wraps if (JS/C#/Rust)
-      if (cRules.elseNodeType && type === cRules.elseNodeType) {
-        const firstChild = node.namedChild(0);
-        if (firstChild && firstChild.type === cRules.ifNodeType) {
-          for (let i = 0; i < node.childCount; i++) {
-            walk(node.child(i), nestingLevel, false, skipH);
-          }
-          return;
-        }
-        cognitive++;
-        for (let i = 0; i < node.childCount; i++) {
-          walk(node.child(i), nestingLevel, false, skipH);
-        }
-        return;
-      }
-
-      // Pattern B: explicit elif node (Python/Ruby/PHP)
-      if (cRules.elifNodeType && type === cRules.elifNodeType) {
-        cognitive++;
-        cyclomatic++;
-        for (let i = 0; i < node.childCount; i++) {
-          walk(node.child(i), nestingLevel, false, skipH);
-        }
-        return;
-      }
-
-      // Detect else-if via Pattern A or C
-      let isElseIf = false;
-      if (type === cRules.ifNodeType) {
-        if (cRules.elseViaAlternative) {
-          isElseIf =
-            node.parent?.type === cRules.ifNodeType &&
-            node.parent.childForFieldName('alternative')?.id === node.id;
-        } else if (cRules.elseNodeType) {
-          isElseIf = node.parent?.type === cRules.elseNodeType;
-        }
-      }
-
-      if (isElseIf) {
-        cognitive++;
-        cyclomatic++;
-        for (let i = 0; i < node.childCount; i++) {
-          walk(node.child(i), nestingLevel, false, skipH);
-        }
-        return;
-      }
-
-      // Regular branch node
-      cognitive += 1 + nestingLevel;
-      cyclomatic++;
-
-      // Switch-like nodes don't add cyclomatic themselves (cases do)
-      if (cRules.switchLikeNodes?.has(type)) {
-        cyclomatic--;
-      }
-
-      if (cRules.nestingNodes.has(type)) {
-        for (let i = 0; i < node.childCount; i++) {
-          walk(node.child(i), nestingLevel + 1, false, skipH);
-        }
-        return;
-      }
-    }
-
-    // Pattern C plain else: block that is the alternative of an if_statement (Go/Java)
-    if (
-      cRules.elseViaAlternative &&
-      type !== cRules.ifNodeType &&
-      node.parent?.type === cRules.ifNodeType &&
-      node.parent.childForFieldName('alternative')?.id === node.id
-    ) {
-      cognitive++;
-      for (let i = 0; i < node.childCount; i++) {
-        walk(node.child(i), nestingLevel, false, skipH);
-      }
-      return;
-    }
-
-    // Handle case nodes (cyclomatic only, skip keyword leaves)
-    if (cRules.caseNodes.has(type) && node.childCount > 0) {
-      cyclomatic++;
-    }
-
-    // Handle nested function definitions (increase nesting)
-    if (!isTopFunction && cRules.functionNodes.has(type)) {
-      for (let i = 0; i < node.childCount; i++) {
-        walk(node.child(i), nestingLevel + 1, false, skipH);
-      }
-      return;
-    }
-
-    // Walk children
-    for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i), nestingLevel, false, skipH);
-    }
-  }
-
-  walk(functionNode, 0, true, false);
-
-  // ── Compute Halstead derived metrics ──
-  let halstead = null;
-  if (hRules && operators && operands) {
-    const n1 = operators.size;
-    const n2 = operands.size;
-    let bigN1 = 0;
-    for (const c of operators.values()) bigN1 += c;
-    let bigN2 = 0;
-    for (const c of operands.values()) bigN2 += c;
-
-    const vocabulary = n1 + n2;
-    const length = bigN1 + bigN2;
-    const volume = vocabulary > 0 ? length * Math.log2(vocabulary) : 0;
-    const difficulty = n2 > 0 ? (n1 / 2) * (bigN2 / n2) : 0;
-    const effort = difficulty * volume;
-    const bugs = volume / 3000;
-
-    halstead = {
-      n1,
-      n2,
-      bigN1,
-      bigN2,
-      vocabulary,
-      length,
-      volume: +volume.toFixed(2),
-      difficulty: +difficulty.toFixed(2),
-      effort: +effort.toFixed(2),
-      bugs: +bugs.toFixed(4),
-    };
-  }
-
-  // ── LOC metrics (text-based, cheap) ──
-  const loc = computeLOCMetrics(functionNode, langId);
-
-  // ── Maintainability Index ──
-  const volume = halstead ? halstead.volume : 0;
+  // The visitor's finish() in function-level mode returns the raw metrics
+  // but without LOC (needs the functionNode text). Compute LOC + MI here.
+  const loc = _computeLOCMetrics(functionNode, langId);
+  const volume = rawResult.halstead ? rawResult.halstead.volume : 0;
   const commentRatio = loc.loc > 0 ? loc.commentLines / loc.loc : 0;
-  const mi = computeMaintainabilityIndex(volume, cyclomatic, loc.sloc, commentRatio);
+  const mi = _computeMaintainabilityIndex(volume, rawResult.cyclomatic, loc.sloc, commentRatio);
 
-  return { cognitive, cyclomatic, maxNesting, halstead, loc, mi };
+  return {
+    cognitive: rawResult.cognitive,
+    cyclomatic: rawResult.cyclomatic,
+    maxNesting: rawResult.maxNesting,
+    halstead: rawResult.halstead,
+    loc,
+    mi,
+  };
 }
 
 // ─── Build-Time: Compute Metrics for Changed Files ────────────────────────

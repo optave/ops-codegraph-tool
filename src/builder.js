@@ -1393,92 +1393,15 @@ export async function buildGraph(rootDir, opts = {}) {
     }
   }
 
-  // AST node extraction (calls, new, string, regex, throw, await)
-  _t.ast0 = performance.now();
-  if (opts.ast !== false) {
-    try {
-      const { buildAstNodes } = await import('./ast.js');
-      await buildAstNodes(db, astComplexitySymbols, rootDir, engineOpts);
-    } catch (err) {
-      debug(`AST node extraction failed: ${err.message}`);
-    }
-  }
-  _t.astMs = performance.now() - _t.ast0;
-
-  // Compute per-function complexity metrics (cognitive, cyclomatic, nesting)
-  _t.complexity0 = performance.now();
-  if (opts.complexity !== false) {
-    try {
-      const { buildComplexityMetrics } = await import('./complexity.js');
-      await buildComplexityMetrics(db, astComplexitySymbols, rootDir, engineOpts);
-    } catch (err) {
-      debug(`Complexity analysis failed: ${err.message}`);
-    }
-  }
-  _t.complexityMs = performance.now() - _t.complexity0;
-
-  // Pre-parse files missing WASM trees (native builds) so CFG + dataflow
-  // share a single parse pass instead of each creating parsers independently.
-  // Skip entirely when native engine already provides CFG + dataflow data.
-  if (opts.cfg !== false || opts.dataflow !== false) {
-    const needsCfg = opts.cfg !== false;
-    const needsDataflow = opts.dataflow !== false;
-
-    let needsWasmTrees = false;
-    for (const [, symbols] of astComplexitySymbols) {
-      if (symbols._tree) continue; // already has a tree
-      // CFG: need tree if any function/method def lacks native CFG
-      if (needsCfg) {
-        const fnDefs = (symbols.definitions || []).filter(
-          (d) => (d.kind === 'function' || d.kind === 'method') && d.line,
-        );
-        if (
-          fnDefs.length > 0 &&
-          !fnDefs.every((d) => d.cfg === null || Array.isArray(d.cfg?.blocks))
-        ) {
-          needsWasmTrees = true;
-          break;
-        }
-      }
-      // Dataflow: need tree if file lacks native dataflow
-      if (needsDataflow && !symbols.dataflow) {
-        needsWasmTrees = true;
-        break;
-      }
-    }
-
-    if (needsWasmTrees) {
-      try {
-        const { ensureWasmTrees } = await import('./parser.js');
-        await ensureWasmTrees(astComplexitySymbols, rootDir);
-      } catch (err) {
-        debug(`WASM pre-parse failed: ${err.message}`);
-      }
-    }
-  }
-
-  // CFG analysis (skip with --no-cfg)
-  if (opts.cfg !== false) {
-    _t.cfg0 = performance.now();
-    try {
-      const { buildCFGData } = await import('./cfg.js');
-      await buildCFGData(db, astComplexitySymbols, rootDir, engineOpts);
-    } catch (err) {
-      debug(`CFG analysis failed: ${err.message}`);
-    }
-    _t.cfgMs = performance.now() - _t.cfg0;
-  }
-
-  // Dataflow analysis (skip with --no-dataflow)
-  if (opts.dataflow !== false) {
-    _t.dataflow0 = performance.now();
-    try {
-      const { buildDataflowEdges } = await import('./dataflow.js');
-      await buildDataflowEdges(db, astComplexitySymbols, rootDir, engineOpts);
-    } catch (err) {
-      debug(`Dataflow analysis failed: ${err.message}`);
-    }
-    _t.dataflowMs = performance.now() - _t.dataflow0;
+  // ── Unified AST analysis engine ──────────────────────────────────────
+  // Replaces 4 sequential buildXxx calls with one coordinated pass.
+  {
+    const { runAnalyses } = await import('./ast-analysis/engine.js');
+    const analysisTiming = await runAnalyses(db, astComplexitySymbols, rootDir, opts, engineOpts);
+    _t.astMs = analysisTiming.astMs;
+    _t.complexityMs = analysisTiming.complexityMs;
+    _t.cfgMs = analysisTiming.cfgMs;
+    _t.dataflowMs = analysisTiming.dataflowMs;
   }
 
   // Release any remaining cached WASM trees for GC
