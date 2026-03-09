@@ -40,10 +40,11 @@ if [ -z "$STAGED" ]; then
 fi
 
 # Run check --staged to get signature violations, then enrich with role + caller count
-WARNING=$(node -e "
-  const path = require('path');
-  const { checkData } = require(path.join(process.argv[1], 'src/check.js'));
-  const { openReadonlyOrFail } = require(path.join(process.argv[1], 'src/db.js'));
+WARNING=$(echo "" | node --input-type=module -e "
+  import path from 'path';
+  const workRoot = process.argv[2];
+  const { checkData } = await import(path.join(workRoot, 'src/check.js'));
+  const { openReadonlyOrFail } = await import(path.join(workRoot, 'src/db.js'));
 
   const result = checkData(undefined, { staged: true, noTests: true });
   if (!result || result.error) process.exit(0);
@@ -98,7 +99,7 @@ WARNING=$(node -e "
   if (lines.length > 0) {
     process.stdout.write(lines.join('\\n'));
   }
-" "$WORK_ROOT" 2>/dev/null) || true
+" -- "$WORK_ROOT" 2>/dev/null) || true
 
 if [ -z "$WARNING" ]; then
   exit 0

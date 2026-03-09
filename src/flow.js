@@ -95,7 +95,7 @@ export function flowData(name, dbPath, opts = {}) {
   const db = openReadonlyOrFail(dbPath);
   const maxDepth = opts.depth || 10;
   const noTests = opts.noTests || false;
-  const flowOpts = { ...opts, kinds: CORE_SYMBOL_KINDS };
+  const flowOpts = { ...opts, kinds: opts.kind ? [opts.kind] : CORE_SYMBOL_KINDS };
 
   // Phase 1: Direct LIKE match on full name
   let matchNode = findMatchingNodes(db, name, flowOpts)[0] ?? null;
