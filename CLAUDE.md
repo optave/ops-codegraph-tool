@@ -56,6 +56,7 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `native.js` | Native napi-rs addon loader with WASM fallback |
 | `registry.js` | Global repo registry (`~/.codegraph/registry.json`) for multi-repo MCP |
 | `resolve.js` | Import resolution (supports native batch mode) |
+| `ast-analysis/` | Unified AST analysis framework: shared DFS walker (`visitor.js`), engine orchestrator (`engine.js`), extracted metrics (`metrics.js`), and pluggable visitors for complexity, dataflow, and AST-store |
 | `complexity.js` | Cognitive, cyclomatic, Halstead, MI computation from AST; `complexity` CLI command |
 | `communities.js` | Louvain community detection, drift analysis |
 | `manifesto.js` | Configurable rule engine with warn/fail thresholds; CI gate |
