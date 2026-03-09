@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.0.0 | **Status:** Active development | **Updated:** March 2026
+> **Current version:** 3.1.1 | **Status:** Active development | **Updated:** March 2026
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across ten phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -16,7 +16,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Complete** (v1.4.0) |
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.6.0) |
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
-| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, curated API, unified graph model | Planned |
+| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, curated API, unified graph model | **In Progress** (v3.1.1) |
 | [**4**](#phase-4--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | Planned |
 | [**5**](#phase-5--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
 | [**6**](#phase-6--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
@@ -552,7 +552,9 @@ Plus updated enums on existing tools (edge_kinds, symbol kinds).
 
 ---
 
-## Phase 3 -- Architectural Refactoring
+## Phase 3 -- Architectural Refactoring 🔄
+
+> **Status:** In Progress -- started in v3.1.1
 
 **Goal:** Restructure the codebase for modularity, testability, and long-term maintainability. These are internal improvements -- no new user-facing features, but they make every subsequent phase easier to build and maintain.
 
@@ -591,7 +593,16 @@ A single AST walk with pluggable visitors eliminates 3 redundant tree traversals
 
 **Affected files:** `src/complexity.js`, `src/cfg.js`, `src/dataflow.js`, `src/ast.js` -> split into `src/ast-analysis/`
 
-### 3.2 -- Command/Query Separation ★ Critical
+### 3.2 -- Command/Query Separation ★ Critical 🔄
+
+> **v3.1.1 progress:** CLI display wrappers for all query commands extracted to `queries-cli.js` (866 lines, 15 functions). Shared `result-formatter.js` (`outputResult()` for JSON/NDJSON) and `test-filter.js` created. `queries.js` reduced from 3,395 → 2,490 lines — all `*Data()` functions remain, CLI formatting fully separated ([#373](https://github.com/optave/codegraph/pull/373)).
+
+- ✅ `queries.js` CLI wrappers → `queries-cli.js` (15 functions)
+- ✅ Shared `result-formatter.js` (`outputResult` for JSON/NDJSON dispatch)
+- ✅ Shared `test-filter.js` (`isTestFile` predicate)
+- 🔲 Extract CLI wrappers from remaining modules (audit, batch, check, cochange, communities, complexity, cfg, dataflow, flow, manifesto, owners, structure, triage, branch-compare)
+- 🔲 Introduce `CommandRunner` shared lifecycle
+- 🔲 Per-command `src/commands/` directory structure
 
 Eliminate the `*Data()` / `*()` dual-function pattern replicated across 19 modules. Every analysis module (queries, audit, batch, check, cochange, communities, complexity, cfg, dataflow, ast, flow, manifesto, owners, structure, triage, branch-compare, viewer) currently implements both data extraction AND CLI formatting.
 
@@ -616,7 +627,17 @@ src/
 
 **Affected files:** All 19 modules with dual-function pattern, `src/cli.js`, `src/mcp.js`
 
-### 3.3 -- Repository Pattern for Data Access ★ Critical
+### 3.3 -- Repository Pattern for Data Access ★ Critical 🔄
+
+> **v3.1.1 progress:** `src/db/` directory created with `repository.js` (134 lines), `query-builder.js` (280 lines), and `migrations.js` (312 lines). All db usage across the codebase wrapped in try/finally for reliable `db.close()` ([#371](https://github.com/optave/codegraph/pull/371), [#384](https://github.com/optave/codegraph/pull/384), [#383](https://github.com/optave/codegraph/pull/383)).
+
+- ✅ `src/db/` directory structure created
+- ✅ `repository.js` — initial Repository class
+- ✅ `query-builder.js` — lightweight SQL builder (280 lines)
+- ✅ `migrations.js` — schema migrations extracted (312 lines)
+- ✅ All db usage wrapped in try/finally for reliable `db.close()`
+- 🔲 Migrate remaining raw SQL from 25+ modules into Repository
+- 🔲 `connection.js` — extract connection setup (open, WAL mode, pragma tuning)
 
 Consolidate all SQL into a single `Repository` class. Currently SQL is scattered across 25+ modules that each independently open the DB and write raw SQL inline across 13 tables.
 
@@ -633,7 +654,14 @@ Add a query builder for the common pattern "find nodes WHERE kind IN (...) AND f
 
 **Affected files:** `src/db.js` -> split into `src/db/`, SQL extracted from all modules
 
-### 3.4 -- Decompose queries.js (3,395 Lines)
+### 3.4 -- Decompose queries.js (3,395 Lines) 🔄
+
+> **v3.1.1 progress:** `queries.js` reduced from 3,395 → 2,490 lines by extracting all CLI formatting to `queries-cli.js` (3.2). Symbol kind constants extracted to `kinds.js` (49 lines) ([#378](https://github.com/optave/codegraph/pull/378)).
+
+- ✅ CLI formatting separated → `queries-cli.js` (via 3.2)
+- ✅ `kinds.js` — symbol kind constants extracted
+- 🔲 Split remaining `queries.js` data functions into `src/analysis/` modules
+- 🔲 Extract `shared/normalize.js`, `shared/generators.js`
 
 Split into pure analysis modules that return data and share no formatting concerns.
 

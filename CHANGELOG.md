@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.1.1](https://github.com/optave/codegraph/compare/v3.1.0...v3.1.1) (2026-03-08)
+
+**Reliability, architecture, and MCP cold-start fixes.** This patch breaks a circular dependency cycle, fixes MCP server first-connect reliability by deferring heavy imports, corrects flow matching to use core symbol kinds, and refactors all database access to use try/finally for reliable `db.close()`. Internal architecture improves with repository pattern for data access and command/query separation.
+
+### Features
+
+* **hooks:** add pre-commit hooks for cycles, dead exports, signature warnings ([#381](https://github.com/optave/codegraph/pull/381))
+* **benchmark:** add 1-file rebuild phase breakdown to build benchmarks ([#370](https://github.com/optave/codegraph/pull/370))
+
+### Bug Fixes
+
+* **cycles:** break circular dependency cycle and remove dead `queryName` export ([#378](https://github.com/optave/codegraph/pull/378))
+* **queries:** use `CORE_SYMBOL_KINDS` in flow matching ([#382](https://github.com/optave/codegraph/pull/382))
+* **mcp:** defer heavy imports in MCP server for first-connect reliability ([#380](https://github.com/optave/codegraph/pull/380))
+
+### Refactors
+
+* wrap all db usage in try/finally for reliable `db.close()` ([#384](https://github.com/optave/codegraph/pull/384), [#383](https://github.com/optave/codegraph/pull/383))
+* repository pattern for data access ([#371](https://github.com/optave/codegraph/pull/371))
+* command/query separation — extract CLI wrappers, shared output helper ([#373](https://github.com/optave/codegraph/pull/373))
+
+### Chores
+
+* **ci:** allow `merge` type in commitlint config ([#385](https://github.com/optave/codegraph/pull/385))
+* **deps-dev:** bump tree-sitter-go from 0.23.4 to 0.25.0 ([#356](https://github.com/optave/codegraph/pull/356))
+
 ## [3.1.0](https://github.com/optave/codegraph/compare/v3.0.4...v3.1.0) (2026-03-08)
 
 **Sequence diagrams, native engine performance leap, and unused export detection.** This release adds `codegraph sequence` for Mermaid sequence diagram generation from call graph edges, delivers major native engine build optimizations (deep-clone elimination, batched SQLite inserts, call edge building in Rust, FS caching, rayon-parallel import resolution), introduces `--unused` on the exports command to detect dead exports, and fixes an ~80x native no-op rebuild regression.
