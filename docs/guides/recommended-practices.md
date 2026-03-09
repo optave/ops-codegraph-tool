@@ -339,9 +339,9 @@ You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-
 
 > **Windows note:** If your hooks use bash scripts, normalize backslashes inside `node -e` rather than bash (`${VAR//\\//}` fails on Git Bash). See this repo's `.claude/hooks/enrich-context.sh` for the pattern.
 
-**Commit check hook** (PreToolUse on Bash): when Claude runs `git commit`, the hook runs `checkData()` once with cycles + signatures predicates enabled (boundaries skipped for speed). If circular dependencies involve files edited in this session, blocks the commit. If function signatures were modified, injects a risk-rated warning via `additionalContext` — `HIGH` for core symbols, `MEDIUM` for utility, `low` for others — with transitive caller counts. Non-blocking for signatures, blocking for cycles.
+**Commit check hook** (PreToolUse on Bash): when Claude runs `git commit`, the hook runs `checkData()` once with cycles + signatures predicates enabled (boundaries skipped for speed). If circular dependencies involve files edited in this session, blocks the commit. If function signatures were modified, injects a risk-rated warning via `additionalContext` — `HIGH` for core symbols, `MEDIUM` for utility, `LOW` for others — with transitive caller counts. Non-blocking for signatures, blocking for cycles.
 
-**Dead export check hook** (PreToolUse on Bash): when Claude runs `git commit`, the hook batch-checks all staged `src/` files edited in this session for exports with zero consumers. Uses a single Node.js invocation with one DB connection for all files (not per-file CLI calls). If any export has zero consumers, blocks the commit.
+**Dead export check hook** (PreToolUse on Bash): when Claude runs `git commit`, the hook batch-checks all staged `src/` files edited in this session for exports with zero consumers. Uses a single Node.js process for all files (not per-file CLI calls). If any export has zero consumers, blocks the commit.
 
 **Ready-to-use examples** are in [`docs/examples/claude-code-hooks/`](../examples/claude-code-hooks/) with a complete `settings.json` and setup instructions:
 - `enrich-context.sh` — dependency context injection

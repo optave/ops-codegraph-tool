@@ -61,7 +61,7 @@ if [ -z "$FILES_TO_CHECK" ]; then
   exit 0
 fi
 
-# Single Node.js invocation: check all files with one DB connection
+# Single Node.js invocation: check all files in one process
 DEAD_EXPORTS=$(node -e "
   const path = require('path');
   const root = process.argv[1];
