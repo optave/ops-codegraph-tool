@@ -869,25 +869,24 @@ export async function startMCPServer(customDbPath, options = {}) {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    const {
-      impactAnalysisData,
-      moduleMapData,
-      fileDepsData,
-      exportsData,
-      fnDepsData,
-      fnImpactData,
-      pathData,
-      contextData,
-      childrenData,
-      explainData,
-      whereData,
-      diffImpactData,
-      listFunctionsData,
-      rolesData,
-    } = await getQueries();
-    const Database = getDatabase();
-
     try {
+      const {
+        impactAnalysisData,
+        moduleMapData,
+        fileDepsData,
+        exportsData,
+        fnDepsData,
+        fnImpactData,
+        pathData,
+        contextData,
+        childrenData,
+        explainData,
+        whereData,
+        diffImpactData,
+        listFunctionsData,
+        rolesData,
+      } = await getQueries();
+      const Database = getDatabase();
       if (!multiRepo && args.repo) {
         throw new Error(
           'Multi-repo access is disabled. Restart with `codegraph mcp --multi-repo` to access other repositories.',
