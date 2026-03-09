@@ -230,9 +230,7 @@ describe('NodeQuery', () => {
   });
 
   it('.select() accepts COALESCE expressions', () => {
-    const { sql } = new NodeQuery()
-      .select('n.name, COALESCE(fi.cnt, 0) AS fan_in')
-      .build();
+    const { sql } = new NodeQuery().select('n.name, COALESCE(fi.cnt, 0) AS fan_in').build();
     expect(sql).toContain('SELECT n.name, COALESCE(fi.cnt, 0) AS fan_in');
   });
 
