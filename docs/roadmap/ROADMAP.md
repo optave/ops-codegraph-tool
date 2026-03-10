@@ -562,11 +562,11 @@ Plus updated enums on existing tools (edge_kinds, symbol kinds).
 
 **Context:** Phases 2.5 and 2.7 added 38 modules and grew the codebase from 5K to 26,277 lines without introducing shared abstractions. The dual-function anti-pattern was replicated across 19 modules. Three independent AST analysis engines (complexity, CFG, dataflow) totaling 4,801 lines share the same fundamental pattern but no infrastructure. Raw SQL is scattered across 25+ modules touching 13 tables. The priority ordering has been revised based on actual growth patterns -- the new #1 priority is the unified AST analysis framework.
 
-### 3.1 -- Unified AST Analysis Framework ★ Critical 🔄
+### 3.1 -- Unified AST Analysis Framework ★ Critical ✅
 
 Unify the independent AST analysis engines (complexity, CFG, dataflow) plus AST node storage into a shared visitor framework. These four modules independently implement the same pattern: per-language rules map → AST walk → collect data → write to DB → query → format.
 
-**Completed:** Phases 1-7 implemented a pluggable visitor framework with a shared DFS walker (`walkWithVisitors`), an analysis engine orchestrator (`runAnalyses`), and three visitors (complexity, dataflow, AST-store) that share a single tree traversal per file. `builder.js` collapsed from 4 sequential `buildXxx` blocks into one `runAnalyses` call.
+**Completed:** All 4 analyses (complexity, CFG, dataflow, AST-store) now run in a single DFS walk via `walkWithVisitors`. The CFG visitor rewrite ([#392](https://github.com/optave/codegraph/pull/392)) eliminated the Mode A/B split, replaced the 813-line `buildFunctionCFG` with a node-level visitor, and derives cyclomatic complexity directly from CFG structure (`E - N + 2`). `cfg.js` reduced from 1,242 → 518 lines.
 
 ```
 src/
@@ -577,6 +577,7 @@ src/
     visitor-utils.js           # Shared helpers (functionName, extractParams, etc.)
     visitors/
       complexity-visitor.js    # Cognitive/cyclomatic/nesting + Halstead
+      cfg-visitor.js           # Basic-block + edge construction via DFS hooks
       ast-store-visitor.js     # new/throw/await/string/regex extraction
       dataflow-visitor.js      # Scope stack + define-use chains
     shared.js                  # findFunctionNode, rule factories, ext mapping
@@ -591,76 +592,71 @@ src/
 - ✅ `builder.js` → single `runAnalyses` call replaces 4 sequential blocks + WASM pre-parse
 - ✅ Extracted pure computations to `metrics.js` (Halstead derived math, LOC, MI)
 - ✅ Extracted shared helpers to `visitor-utils.js` (from dataflow.js)
-- 🔲 **CFG visitor rewrite** (see below)
-
-**Remaining: CFG visitor rewrite.** `buildFunctionCFG` (813 lines) uses a statement-level traversal (`getStatements` + `processStatement` with `loopStack`, `labelMap`, `blockIndex`) that is fundamentally incompatible with the node-level DFS used by `walkWithVisitors`. This is why the engine runs CFG as a separate Mode B pass — the only analysis that can't participate in the shared single-DFS walk.
-
-Rewrite the CFG algorithm as a node-level visitor that builds basic blocks and edges incrementally via `enterNode`/`exitNode` hooks, tracking block boundaries at branch/loop/return nodes the same way the complexity visitor tracks nesting. This eliminates the last redundant tree traversal during build and lets CFG share the exact same DFS pass as complexity, dataflow, and AST extraction. The statement-level `getStatements` helper and per-language `CFG_RULES.statementTypes` can be replaced by detecting block-terminating node types in `enterNode`. Also simplifies `engine.js` by removing the Mode A/B split and WASM pre-parse special-casing for CFG.
-
-**Remaining: Derive cyclomatic complexity from CFG.** Once CFG participates in the unified walk, cyclomatic complexity can be derived directly from CFG edge/block counts (`edges - nodes + 2`) rather than independently computed by the complexity visitor. This creates a single source of truth for control flow metrics and eliminates redundant computation. Can also be done as a simpler SQL-only approach against stored `cfg_blocks`/`cfg_edges` tables (see backlog ID 45).
+- ✅ CFG visitor rewrite — node-level DFS visitor replaces statement-level `buildFunctionCFG`, Mode A/B split eliminated ([#392](https://github.com/optave/codegraph/pull/392))
+- ✅ Cyclomatic complexity derived from CFG (`E - N + 2`) — single source of truth for control flow metrics ([#392](https://github.com/optave/codegraph/pull/392))
 
 **Affected files:** `src/complexity.js`, `src/cfg.js`, `src/dataflow.js`, `src/ast.js` → split into `src/ast-analysis/`
 
-### 3.2 -- Command/Query Separation ★ Critical 🔄
+### 3.2 -- Command/Query Separation ★ Critical ✅
 
-> **v3.1.1 progress:** CLI display wrappers for all query commands extracted to `queries-cli.js` (866 lines, 15 functions). Shared `result-formatter.js` (`outputResult()` for JSON/NDJSON) and `test-filter.js` created. `queries.js` reduced from 3,395 → 2,490 lines — all `*Data()` functions remain, CLI formatting fully separated ([#373](https://github.com/optave/codegraph/pull/373)).
+CLI display wrappers extracted from all 19 analysis modules into dedicated `src/commands/` files. Shared infrastructure (`result-formatter.js`, `test-filter.js`) moved to `src/infrastructure/`. `*Data()` functions remain in original modules — MCP dynamic imports unchanged. ~1,059 lines of CLI formatting code separated from analysis logic ([#373](https://github.com/optave/codegraph/pull/373), [#393](https://github.com/optave/codegraph/pull/393)).
+
+```
+src/
+  commands/                    # One file per command (16 files)
+    audit.js, batch.js, cfg.js, check.js, cochange.js, communities.js,
+    complexity.js, dataflow.js, flow.js, branch-compare.js, manifesto.js,
+    owners.js, sequence.js, structure.js, triage.js, query.js (barrel re-export)
+
+  infrastructure/
+    result-formatter.js         # Shared formatting: JSON, NDJSON dispatch
+    test-filter.js              # Shared --no-tests / isTestFile logic
+```
 
 - ✅ `queries.js` CLI wrappers → `queries-cli.js` (15 functions)
 - ✅ Shared `result-formatter.js` (`outputResult` for JSON/NDJSON dispatch)
 - ✅ Shared `test-filter.js` (`isTestFile` predicate)
-- 🔲 Extract CLI wrappers from remaining modules (audit, batch, check, cochange, communities, complexity, cfg, dataflow, flow, manifesto, owners, structure, triage, branch-compare)
-- 🔲 Introduce `CommandRunner` shared lifecycle
-- 🔲 Per-command `src/commands/` directory structure
-
-Eliminate the `*Data()` / `*()` dual-function pattern replicated across 19 modules. Every analysis module (queries, audit, batch, check, cochange, communities, complexity, cfg, dataflow, ast, flow, manifesto, owners, structure, triage, branch-compare, viewer) currently implements both data extraction AND CLI formatting.
-
-Introduce a shared `CommandRunner` that handles the open-DB -> validate -> execute -> format -> paginate -> output lifecycle. Each command only implements unique query + analysis logic. Formatting is always separate and pluggable (CLI text, JSON, NDJSON, Mermaid, DOT).
-
-```
-src/
-  commands/                    # One file per command
-    query.js                   # { execute(args, ctx) -> data, format(data, opts) -> string }
-    impact.js
-    audit.js
-    check.js
-    cfg.js
-    dataflow.js
-    ...
-
-  infrastructure/
-    command-runner.js           # Shared lifecycle
-    result-formatter.js         # Shared formatting: table, JSON, NDJSON, Mermaid, DOT
-    test-filter.js              # Shared --no-tests / isTestFile logic
-```
+- ✅ CLI wrappers extracted from remaining 15 modules into `src/commands/` ([#393](https://github.com/optave/codegraph/pull/393))
+- ✅ Per-command `src/commands/` directory structure ([#393](https://github.com/optave/codegraph/pull/393))
+- ✅ `src/infrastructure/` directory for shared utilities ([#393](https://github.com/optave/codegraph/pull/393))
+- ⏭️ `CommandRunner` shared lifecycle — deferred (command files vary too much for a single pattern today)
 
 **Affected files:** All 19 modules with dual-function pattern, `src/cli.js`, `src/mcp.js`
 
-### 3.3 -- Repository Pattern for Data Access ★ Critical 🔄
+### 3.3 -- Repository Pattern for Data Access ★ Critical ✅
 
 > **v3.1.1 progress:** `src/db/` directory created with `repository.js` (134 lines), `query-builder.js` (280 lines), and `migrations.js` (312 lines). All db usage across the codebase wrapped in try/finally for reliable `db.close()` ([#371](https://github.com/optave/codegraph/pull/371), [#384](https://github.com/optave/codegraph/pull/384), [#383](https://github.com/optave/codegraph/pull/383)).
+>
+> **v3.1.2 progress:** `repository.js` split into `src/db/repository/` directory with 10 domain files (nodes, edges, build-stmts, complexity, cfg, dataflow, cochange, embeddings, graph-read, barrel). Raw SQL migrated from 14 src/ modules into repository layer. `connection.js` already complete (89 lines handling open/close/WAL/pragma/locks/readonly).
 
 - ✅ `src/db/` directory structure created
-- ✅ `repository.js` — initial Repository class
+- ✅ `repository/` — domain-split repository (nodes, edges, build-stmts, complexity, cfg, dataflow, cochange, embeddings, graph-read)
 - ✅ `query-builder.js` — lightweight SQL builder (280 lines)
 - ✅ `migrations.js` — schema migrations extracted (312 lines)
+- ✅ `connection.js` — connection setup (open, WAL mode, pragma tuning, readonly, locks)
 - ✅ All db usage wrapped in try/finally for reliable `db.close()`
-- 🔲 Migrate remaining raw SQL from 25+ modules into Repository
-- 🔲 `connection.js` — extract connection setup (open, WAL mode, pragma tuning)
-
-Consolidate all SQL into a single `Repository` class. Currently SQL is scattered across 25+ modules that each independently open the DB and write raw SQL inline across 13 tables.
+- ✅ Migrate remaining raw SQL from 14 modules into Repository
 
 ```
 src/
   db/
     connection.js              # Open, WAL mode, pragma tuning
     migrations.js              # Schema versions (currently 13 migrations)
-    repository.js              # ALL data access methods across all 13 tables
     query-builder.js           # Lightweight SQL builder for common filtered queries
+    repository/
+      index.js                 # Barrel re-export
+      nodes.js                 # Node lookups: getNodeId, findFileNodes, bulkNodeIdsByFile, etc.
+      edges.js                 # Edge queries: findCallees, findCallers, import/hierarchy edges
+      build-stmts.js           # Cascade purge: purgeFileData, purgeFilesData
+      complexity.js            # function_complexity table reads
+      cfg.js                   # cfg_blocks/cfg_edges reads + deletes
+      dataflow.js              # dataflow table checks
+      cochange.js              # co_changes/co_change_meta reads
+      embeddings.js            # embeddings/embedding_meta reads
+      graph-read.js            # Cross-table reads for export/communities
 ```
 
-Add a query builder for the common pattern "find nodes WHERE kind IN (...) AND file NOT LIKE '%test%' ORDER BY ... LIMIT ? OFFSET ?". Not an ORM -- a thin SQL builder that eliminates string construction across 25 modules.
-
-**Affected files:** `src/db.js` -> split into `src/db/`, SQL extracted from all modules
+**Affected files:** `src/db.js` barrel updated, raw SQL extracted from `queries.js`, `builder.js`, `watcher.js`, `structure.js`, `complexity.js`, `cfg.js`, `dataflow.js`, `ast.js`, `ast-analysis/engine.js`, `embedder.js`, `sequence.js`, `communities.js`
 
 ### 3.4 -- Decompose queries.js (3,395 Lines) 🔄
 

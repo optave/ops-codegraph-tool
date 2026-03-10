@@ -6,8 +6,25 @@ import { coChangeForFiles } from './cochange.js';
 import { loadConfig } from './config.js';
 import { findCycles } from './cycles.js';
 import {
+  countCrossFileCallers,
+  findAllIncomingEdges,
+  findAllOutgoingEdges,
+  findCallees,
+  findCallers,
+  findCrossFileCallTargets,
   findDbPath,
+  findDistinctCallers,
+  findFileNodes,
+  findImportDependents,
+  findImportSources,
+  findImportTargets,
+  findIntraFileCallEdges,
+  findNodeById,
+  findNodeChildren,
+  findNodesByFile,
   findNodesWithFanIn,
+  getClassHierarchy,
+  getComplexityForNode,
   iterateFunctionNodes,
   listFunctionNodes,
   openReadonlyOrFail,
@@ -78,30 +95,6 @@ export {
   STRUCTURAL_EDGE_KINDS,
   VALID_ROLES,
 } from './kinds.js';
-
-/**
- * Get all ancestor class names for a given class using extends edges.
- */
-function getClassHierarchy(db, classNodeId) {
-  const ancestors = new Set();
-  const queue = [classNodeId];
-  while (queue.length > 0) {
-    const current = queue.shift();
-    const parents = db
-      .prepare(`
-      SELECT n.id, n.name FROM edges e JOIN nodes n ON e.target_id = n.id
-      WHERE e.source_id = ? AND e.kind = 'extends'
-    `)
-      .all(current);
-    for (const p of parents) {
-      if (!ancestors.has(p.id)) {
-        ancestors.add(p.id);
-        queue.push(p.id);
-      }
-    }
-  }
-  return ancestors;
-}
 
 function resolveMethodViaHierarchy(db, methodName) {
   const methods = db
@@ -203,21 +196,9 @@ export function queryNameData(name, customDbPath, opts = {}) {
 
     const hc = new Map();
     const results = nodes.map((node) => {
-      let callees = db
-        .prepare(`
-        SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
-        FROM edges e JOIN nodes n ON e.target_id = n.id
-        WHERE e.source_id = ?
-      `)
-        .all(node.id);
+      let callees = findAllOutgoingEdges(db, node.id);
 
-      let callers = db
-        .prepare(`
-        SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
-        FROM edges e JOIN nodes n ON e.source_id = n.id
-        WHERE e.target_id = ?
-      `)
-        .all(node.id);
+      let callers = findAllIncomingEdges(db, node.id);
 
       if (noTests) {
         callees = callees.filter((c) => !isTestFile(c.file));
@@ -254,9 +235,7 @@ export function impactAnalysisData(file, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
-    const fileNodes = db
-      .prepare(`SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'`)
-      .all(`%${file}%`);
+    const fileNodes = findFileNodes(db, `%${file}%`);
     if (fileNodes.length === 0) {
       return { file, sources: [], levels: {}, totalDependents: 0 };
     }
@@ -274,12 +253,7 @@ export function impactAnalysisData(file, customDbPath, opts = {}) {
     while (queue.length > 0) {
       const current = queue.shift();
       const level = levels.get(current);
-      const dependents = db
-        .prepare(`
-        SELECT n.* FROM edges e JOIN nodes n ON e.source_id = n.id
-        WHERE e.target_id = ? AND e.kind IN ('imports', 'imports-type')
-      `)
-        .all(current);
+      const dependents = findImportDependents(db, current);
       for (const dep of dependents) {
         if (!visited.has(dep.id) && (!noTests || !isTestFile(dep.file))) {
           visited.add(dep.id);
@@ -293,7 +267,7 @@ export function impactAnalysisData(file, customDbPath, opts = {}) {
     for (const [id, level] of levels) {
       if (level === 0) continue;
       if (!byLevel[level]) byLevel[level] = [];
-      const node = db.prepare('SELECT * FROM nodes WHERE id = ?').get(id);
+      const node = findNodeById(db, id);
       if (node) byLevel[level].push({ file: node.file });
     }
 
@@ -350,33 +324,19 @@ export function fileDepsData(file, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
-    const fileNodes = db
-      .prepare(`SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'`)
-      .all(`%${file}%`);
+    const fileNodes = findFileNodes(db, `%${file}%`);
     if (fileNodes.length === 0) {
       return { file, results: [] };
     }
 
     const results = fileNodes.map((fn) => {
-      let importsTo = db
-        .prepare(`
-        SELECT n.file, e.kind as edge_kind FROM edges e JOIN nodes n ON e.target_id = n.id
-        WHERE e.source_id = ? AND e.kind IN ('imports', 'imports-type')
-      `)
-        .all(fn.id);
+      let importsTo = findImportTargets(db, fn.id);
       if (noTests) importsTo = importsTo.filter((i) => !isTestFile(i.file));
 
-      let importedBy = db
-        .prepare(`
-        SELECT n.file, e.kind as edge_kind FROM edges e JOIN nodes n ON e.source_id = n.id
-        WHERE e.target_id = ? AND e.kind IN ('imports', 'imports-type')
-      `)
-        .all(fn.id);
+      let importedBy = findImportSources(db, fn.id);
       if (noTests) importedBy = importedBy.filter((i) => !isTestFile(i.file));
 
-      const defs = db
-        .prepare(`SELECT * FROM nodes WHERE file = ? AND kind != 'file' ORDER BY line`)
-        .all(fn.file);
+      const defs = findNodesByFile(db, fn.file);
 
       return {
         file: fn.file,
@@ -406,35 +366,17 @@ export function fnDepsData(name, customDbPath, opts = {}) {
     }
 
     const results = nodes.map((node) => {
-      const callees = db
-        .prepare(`
-        SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
-        FROM edges e JOIN nodes n ON e.target_id = n.id
-        WHERE e.source_id = ? AND e.kind = 'calls'
-      `)
-        .all(node.id);
+      const callees = findCallees(db, node.id);
       const filteredCallees = noTests ? callees.filter((c) => !isTestFile(c.file)) : callees;
 
-      let callers = db
-        .prepare(`
-        SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
-        FROM edges e JOIN nodes n ON e.source_id = n.id
-        WHERE e.target_id = ? AND e.kind = 'calls'
-      `)
-        .all(node.id);
+      let callers = findCallers(db, node.id);
 
       if (node.kind === 'method' && node.name.includes('.')) {
         const methodName = node.name.split('.').pop();
         const relatedMethods = resolveMethodViaHierarchy(db, methodName);
         for (const rm of relatedMethods) {
           if (rm.id === node.id) continue;
-          const extraCallers = db
-            .prepare(`
-            SELECT n.name, n.kind, n.file, n.line, e.kind as edge_kind
-            FROM edges e JOIN nodes n ON e.source_id = n.id
-            WHERE e.target_id = ? AND e.kind = 'calls'
-          `)
-            .all(rm.id);
+          const extraCallers = findCallers(db, rm.id);
           callers.push(...extraCallers.map((c) => ({ ...c, viaHierarchy: rm.name })));
         }
       }
@@ -536,13 +478,7 @@ export function fnImpactData(name, customDbPath, opts = {}) {
       for (let d = 1; d <= maxDepth; d++) {
         const nextFrontier = [];
         for (const fid of frontier) {
-          const callers = db
-            .prepare(`
-            SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
-            FROM edges e JOIN nodes n ON e.source_id = n.id
-            WHERE e.target_id = ? AND e.kind = 'calls'
-          `)
-            .all(fid);
+          const callers = findDistinctCallers(db, fid);
           for (const c of callers) {
             if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
               visited.add(c.id);
@@ -884,13 +820,7 @@ export function diffImpactData(customDbPath, opts = {}) {
       for (let d = 1; d <= maxDepth; d++) {
         const nextFrontier = [];
         for (const fid of frontier) {
-          const callers = db
-            .prepare(`
-            SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
-            FROM edges e JOIN nodes n ON e.source_id = n.id
-            WHERE e.target_id = ? AND e.kind = 'calls'
-          `)
-            .all(fid);
+          const callers = findDistinctCallers(db, fid);
           for (const c of callers) {
             if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
               visited.add(c.id);
@@ -1658,13 +1588,7 @@ export function contextData(name, customDbPath, opts = {}) {
       const signature = fileLines ? extractSignature(fileLines, node.line) : null;
 
       // Callees
-      const calleeRows = db
-        .prepare(
-          `SELECT n.id, n.name, n.kind, n.file, n.line, n.end_line
-         FROM edges e JOIN nodes n ON e.target_id = n.id
-         WHERE e.source_id = ? AND e.kind = 'calls'`,
-        )
-        .all(node.id);
+      const calleeRows = findCallees(db, node.id);
       const filteredCallees = noTests ? calleeRows.filter((c) => !isTestFile(c.file)) : calleeRows;
 
       const callees = filteredCallees.map((c) => {
@@ -1694,13 +1618,7 @@ export function contextData(name, customDbPath, opts = {}) {
         for (let d = 2; d <= maxDepth; d++) {
           const nextFrontier = [];
           for (const fid of frontier) {
-            const deeper = db
-              .prepare(
-                `SELECT n.id, n.name, n.kind, n.file, n.line, n.end_line
-               FROM edges e JOIN nodes n ON e.target_id = n.id
-               WHERE e.source_id = ? AND e.kind = 'calls'`,
-              )
-              .all(fid);
+            const deeper = findCallees(db, fid);
             for (const c of deeper) {
               if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
                 visited.add(c.id);
@@ -1724,13 +1642,7 @@ export function contextData(name, customDbPath, opts = {}) {
       }
 
       // Callers
-      let callerRows = db
-        .prepare(
-          `SELECT n.name, n.kind, n.file, n.line
-         FROM edges e JOIN nodes n ON e.source_id = n.id
-         WHERE e.target_id = ? AND e.kind = 'calls'`,
-        )
-        .all(node.id);
+      let callerRows = findCallers(db, node.id);
 
       // Method hierarchy resolution
       if (node.kind === 'method' && node.name.includes('.')) {
@@ -1738,13 +1650,7 @@ export function contextData(name, customDbPath, opts = {}) {
         const relatedMethods = resolveMethodViaHierarchy(db, methodName);
         for (const rm of relatedMethods) {
           if (rm.id === node.id) continue;
-          const extraCallers = db
-            .prepare(
-              `SELECT n.name, n.kind, n.file, n.line
-             FROM edges e JOIN nodes n ON e.source_id = n.id
-             WHERE e.target_id = ? AND e.kind = 'calls'`,
-            )
-            .all(rm.id);
+          const extraCallers = findCallers(db, rm.id);
           callerRows.push(...extraCallers.map((c) => ({ ...c, viaHierarchy: rm.name })));
         }
       }
@@ -1759,13 +1665,7 @@ export function contextData(name, customDbPath, opts = {}) {
       }));
 
       // Related tests: callers that live in test files
-      const testCallerRows = db
-        .prepare(
-          `SELECT n.name, n.kind, n.file, n.line
-         FROM edges e JOIN nodes n ON e.source_id = n.id
-         WHERE e.target_id = ? AND e.kind = 'calls'`,
-        )
-        .all(node.id);
+      const testCallerRows = findCallers(db, node.id);
       const testCallers = testCallerRows.filter((c) => isTestFile(c.file));
 
       const testsByFile = new Map();
@@ -1796,11 +1696,7 @@ export function contextData(name, customDbPath, opts = {}) {
       // Complexity metrics
       let complexityMetrics = null;
       try {
-        const cRow = db
-          .prepare(
-            'SELECT cognitive, cyclomatic, max_nesting, maintainability_index, halstead_volume FROM function_complexity WHERE node_id = ?',
-          )
-          .get(node.id);
+        const cRow = getComplexityForNode(db, node.id);
         if (cRow) {
           complexityMetrics = {
             cognitive: cRow.cognitive,
@@ -1817,10 +1713,12 @@ export function contextData(name, customDbPath, opts = {}) {
       // Children (parameters, properties, constants)
       let nodeChildren = [];
       try {
-        nodeChildren = db
-          .prepare('SELECT name, kind, line, end_line FROM nodes WHERE parent_id = ? ORDER BY line')
-          .all(node.id)
-          .map((c) => ({ name: c.name, kind: c.kind, line: c.line, endLine: c.end_line || null }));
+        nodeChildren = findNodeChildren(db, node.id).map((c) => ({
+          name: c.name,
+          kind: c.kind,
+          line: c.line,
+          endLine: c.end_line || null,
+        }));
       } catch {
         /* parent_id column may not exist */
       }
@@ -1864,9 +1762,7 @@ export function childrenData(name, customDbPath, opts = {}) {
     const results = nodes.map((node) => {
       let children;
       try {
-        children = db
-          .prepare('SELECT name, kind, line, end_line FROM nodes WHERE parent_id = ? ORDER BY line')
-          .all(node.id);
+        children = findNodeChildren(db, node.id);
       } catch {
         children = [];
       }
@@ -1905,28 +1801,14 @@ function isFileLikeTarget(target) {
 }
 
 function explainFileImpl(db, target, getFileLines) {
-  const fileNodes = db
-    .prepare(`SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'`)
-    .all(`%${target}%`);
+  const fileNodes = findFileNodes(db, `%${target}%`);
   if (fileNodes.length === 0) return [];
 
   return fileNodes.map((fn) => {
-    const symbols = db
-      .prepare(`SELECT * FROM nodes WHERE file = ? AND kind != 'file' ORDER BY line`)
-      .all(fn.file);
+    const symbols = findNodesByFile(db, fn.file);
 
     // IDs of symbols that have incoming calls from other files (public)
-    const publicIds = new Set(
-      db
-        .prepare(
-          `SELECT DISTINCT e.target_id FROM edges e
-           JOIN nodes caller ON e.source_id = caller.id
-           JOIN nodes target ON e.target_id = target.id
-           WHERE target.file = ? AND caller.file != ? AND e.kind = 'calls'`,
-        )
-        .all(fn.file, fn.file)
-        .map((r) => r.target_id),
-    );
+    const publicIds = findCrossFileCallTargets(db, fn.file);
 
     const fileLines = getFileLines(fn.file);
     const mapSymbol = (s) => ({
@@ -1942,33 +1824,12 @@ function explainFileImpl(db, target, getFileLines) {
     const internal = symbols.filter((s) => !publicIds.has(s.id)).map(mapSymbol);
 
     // Imports / importedBy
-    const imports = db
-      .prepare(
-        `SELECT n.file FROM edges e JOIN nodes n ON e.target_id = n.id
-         WHERE e.source_id = ? AND e.kind IN ('imports', 'imports-type')`,
-      )
-      .all(fn.id)
-      .map((r) => ({ file: r.file }));
+    const imports = findImportTargets(db, fn.id).map((r) => ({ file: r.file }));
 
-    const importedBy = db
-      .prepare(
-        `SELECT n.file FROM edges e JOIN nodes n ON e.source_id = n.id
-         WHERE e.target_id = ? AND e.kind IN ('imports', 'imports-type')`,
-      )
-      .all(fn.id)
-      .map((r) => ({ file: r.file }));
+    const importedBy = findImportSources(db, fn.id).map((r) => ({ file: r.file }));
 
     // Intra-file data flow
-    const intraEdges = db
-      .prepare(
-        `SELECT caller.name as caller_name, callee.name as callee_name
-         FROM edges e
-         JOIN nodes caller ON e.source_id = caller.id
-         JOIN nodes callee ON e.target_id = callee.id
-         WHERE caller.file = ? AND callee.file = ? AND e.kind = 'calls'
-         ORDER BY caller.line`,
-      )
-      .all(fn.file, fn.file);
+    const intraEdges = findIntraFileCallEdges(db, fn.file);
 
     const dataFlowMap = new Map();
     for (const edge of intraEdges) {
@@ -2021,31 +1882,22 @@ function explainFunctionImpl(db, target, noTests, getFileLines) {
     const summary = fileLines ? extractSummary(fileLines, node.line) : null;
     const signature = fileLines ? extractSignature(fileLines, node.line) : null;
 
-    const callees = db
-      .prepare(
-        `SELECT n.name, n.kind, n.file, n.line
-         FROM edges e JOIN nodes n ON e.target_id = n.id
-         WHERE e.source_id = ? AND e.kind = 'calls'`,
-      )
-      .all(node.id)
-      .map((c) => ({ name: c.name, kind: c.kind, file: c.file, line: c.line }));
+    const callees = findCallees(db, node.id).map((c) => ({
+      name: c.name,
+      kind: c.kind,
+      file: c.file,
+      line: c.line,
+    }));
 
-    let callers = db
-      .prepare(
-        `SELECT n.name, n.kind, n.file, n.line
-         FROM edges e JOIN nodes n ON e.source_id = n.id
-         WHERE e.target_id = ? AND e.kind = 'calls'`,
-      )
-      .all(node.id)
-      .map((c) => ({ name: c.name, kind: c.kind, file: c.file, line: c.line }));
+    let callers = findCallers(db, node.id).map((c) => ({
+      name: c.name,
+      kind: c.kind,
+      file: c.file,
+      line: c.line,
+    }));
     if (noTests) callers = callers.filter((c) => !isTestFile(c.file));
 
-    const testCallerRows = db
-      .prepare(
-        `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.source_id = n.id
-         WHERE e.target_id = ? AND e.kind = 'calls'`,
-      )
-      .all(node.id);
+    const testCallerRows = findCallers(db, node.id);
     const relatedTests = testCallerRows
       .filter((r) => isTestFile(r.file))
       .map((r) => ({ file: r.file }));
@@ -2053,11 +1905,7 @@ function explainFunctionImpl(db, target, noTests, getFileLines) {
     // Complexity metrics
     let complexityMetrics = null;
     try {
-      const cRow = db
-        .prepare(
-          'SELECT cognitive, cyclomatic, max_nesting, maintainability_index, halstead_volume FROM function_complexity WHERE node_id = ?',
-        )
-        .get(node.id);
+      const cRow = getComplexityForNode(db, node.id);
       if (cRow) {
         complexityMetrics = {
           cognitive: cRow.cognitive,
@@ -2204,20 +2052,10 @@ function whereSymbolImpl(db, target, noTests) {
 
   const hc = new Map();
   return nodes.map((node) => {
-    const crossFileCallers = db
-      .prepare(
-        `SELECT COUNT(*) as cnt FROM edges e JOIN nodes n ON e.source_id = n.id
-         WHERE e.target_id = ? AND e.kind = 'calls' AND n.file != ?`,
-      )
-      .get(node.id, node.file);
-    const exported = crossFileCallers.cnt > 0;
+    const crossCount = countCrossFileCallers(db, node.id, node.file);
+    const exported = crossCount > 0;
 
-    let uses = db
-      .prepare(
-        `SELECT n.name, n.file, n.line FROM edges e JOIN nodes n ON e.source_id = n.id
-         WHERE e.target_id = ? AND e.kind = 'calls'`,
-      )
-      .all(node.id);
+    let uses = findCallers(db, node.id);
     if (noTests) uses = uses.filter((u) => !isTestFile(u.file));
 
     return {
@@ -2229,43 +2067,17 @@ function whereSymbolImpl(db, target, noTests) {
 }
 
 function whereFileImpl(db, target) {
-  const fileNodes = db
-    .prepare(`SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'`)
-    .all(`%${target}%`);
+  const fileNodes = findFileNodes(db, `%${target}%`);
   if (fileNodes.length === 0) return [];
 
   return fileNodes.map((fn) => {
-    const symbols = db
-      .prepare(`SELECT * FROM nodes WHERE file = ? AND kind != 'file' ORDER BY line`)
-      .all(fn.file);
+    const symbols = findNodesByFile(db, fn.file);
 
-    const imports = db
-      .prepare(
-        `SELECT n.file FROM edges e JOIN nodes n ON e.target_id = n.id
-         WHERE e.source_id = ? AND e.kind IN ('imports', 'imports-type')`,
-      )
-      .all(fn.id)
-      .map((r) => r.file);
+    const imports = findImportTargets(db, fn.id).map((r) => r.file);
 
-    const importedBy = db
-      .prepare(
-        `SELECT n.file FROM edges e JOIN nodes n ON e.source_id = n.id
-         WHERE e.target_id = ? AND e.kind IN ('imports', 'imports-type')`,
-      )
-      .all(fn.id)
-      .map((r) => r.file);
+    const importedBy = findImportSources(db, fn.id).map((r) => r.file);
 
-    const exportedIds = new Set(
-      db
-        .prepare(
-          `SELECT DISTINCT e.target_id FROM edges e
-           JOIN nodes caller ON e.source_id = caller.id
-           JOIN nodes target ON e.target_id = target.id
-           WHERE target.file = ? AND caller.file != ? AND e.kind = 'calls'`,
-        )
-        .all(fn.file, fn.file)
-        .map((r) => r.target_id),
-    );
+    const exportedIds = findCrossFileCallTargets(db, fn.file);
 
     const exported = symbols.filter((s) => exportedIds.has(s.id)).map((s) => s.name);
 
@@ -2341,9 +2153,7 @@ export function rolesData(customDbPath, opts = {}) {
 // ─── exportsData ─────────────────────────────────────────────────────
 
 function exportsFileImpl(db, target, noTests, getFileLines, unused) {
-  const fileNodes = db
-    .prepare(`SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'`)
-    .all(`%${target}%`);
+  const fileNodes = findFileNodes(db, `%${target}%`);
   if (fileNodes.length === 0) return [];
 
   // Detect whether exported column exists
@@ -2356,9 +2166,7 @@ function exportsFileImpl(db, target, noTests, getFileLines, unused) {
   }
 
   return fileNodes.map((fn) => {
-    const symbols = db
-      .prepare(`SELECT * FROM nodes WHERE file = ? AND kind != 'file' ORDER BY line`)
-      .all(fn.file);
+    const symbols = findNodesByFile(db, fn.file);
 
     let exported;
     if (hasExportedCol) {
@@ -2370,17 +2178,7 @@ function exportsFileImpl(db, target, noTests, getFileLines, unused) {
         .all(fn.file);
     } else {
       // Fallback: symbols that have incoming calls from other files
-      const exportedIds = new Set(
-        db
-          .prepare(
-            `SELECT DISTINCT e.target_id FROM edges e
-             JOIN nodes caller ON e.source_id = caller.id
-             JOIN nodes target ON e.target_id = target.id
-             WHERE target.file = ? AND caller.file != ? AND e.kind = 'calls'`,
-          )
-          .all(fn.file, fn.file)
-          .map((r) => r.target_id),
-      );
+      const exportedIds = findCrossFileCallTargets(db, fn.file);
       exported = symbols.filter((s) => exportedIds.has(s.id));
     }
     const internalCount = symbols.length - exported.length;

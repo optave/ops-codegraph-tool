@@ -2,7 +2,14 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
-import { closeDb, findDbPath, openDb, openReadonlyOrFail } from './db.js';
+import {
+  closeDb,
+  findCalleeNames,
+  findCallerNames,
+  findDbPath,
+  openDb,
+  openReadonlyOrFail,
+} from './db.js';
 import { info, warn } from './logger.js';
 import { normalizeSymbol } from './queries.js';
 
@@ -166,7 +173,7 @@ function extractLeadingComment(lines, fnLineIndex) {
  * Build graph-enriched text for a symbol using dependency context.
  * Produces compact, semantic text (~100 tokens) instead of full source code.
  */
-function buildStructuredText(node, file, lines, calleesStmt, callersStmt) {
+function buildStructuredText(node, file, lines, db) {
   const readable = splitIdentifier(node.name);
   const parts = [`${node.kind} ${node.name} (${readable}) in ${file}`];
   const startLine = Math.max(0, node.line - 1);
@@ -179,25 +186,15 @@ function buildStructuredText(node, file, lines, calleesStmt, callersStmt) {
   }
 
   // Graph context: callees (capped at 10)
-  const callees = calleesStmt.all(node.id);
+  const callees = findCalleeNames(db, node.id);
   if (callees.length > 0) {
-    parts.push(
-      `Calls: ${callees
-        .slice(0, 10)
-        .map((c) => c.name)
-        .join(', ')}`,
-    );
+    parts.push(`Calls: ${callees.slice(0, 10).join(', ')}`);
   }
 
   // Graph context: callers (capped at 10)
-  const callers = callersStmt.all(node.id);
+  const callers = findCallerNames(db, node.id);
   if (callers.length > 0) {
-    parts.push(
-      `Called by: ${callers
-        .slice(0, 10)
-        .map((c) => c.name)
-        .join(', ')}`,
-    );
+    parts.push(`Called by: ${callers.slice(0, 10).join(', ')}`);
   }
 
   // Leading comment (high semantic value) or first few lines of code
@@ -438,23 +435,6 @@ export async function buildEmbeddings(rootDir, modelKey, customDbPath, options =
 
   console.log(`Building embeddings for ${nodes.length} symbols (strategy: ${strategy})...`);
 
-  // Prepare graph-context queries for structured strategy
-  let calleesStmt, callersStmt;
-  if (strategy === 'structured') {
-    calleesStmt = db.prepare(`
-      SELECT DISTINCT n.name FROM edges e
-      JOIN nodes n ON e.target_id = n.id
-      WHERE e.source_id = ? AND e.kind = 'calls'
-      ORDER BY n.name
-    `);
-    callersStmt = db.prepare(`
-      SELECT DISTINCT n.name FROM edges e
-      JOIN nodes n ON e.source_id = n.id
-      WHERE e.target_id = ? AND e.kind = 'calls'
-      ORDER BY n.name
-    `);
-  }
-
   const byFile = new Map();
   for (const node of nodes) {
     if (!byFile.has(node.file)) byFile.set(node.file, []);
@@ -482,7 +462,7 @@ export async function buildEmbeddings(rootDir, modelKey, customDbPath, options =
     for (const node of fileNodes) {
       let text =
         strategy === 'structured'
-          ? buildStructuredText(node, file, lines, calleesStmt, callersStmt)
+          ? buildStructuredText(node, file, lines, db)
           : buildSourceText(node, file, lines);
 
       // Detect and handle context window overflow

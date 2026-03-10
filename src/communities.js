@@ -1,7 +1,13 @@
 import path from 'node:path';
 import Graph from 'graphology';
 import louvain from 'graphology-communities-louvain';
-import { openReadonlyOrFail } from './db.js';
+import {
+  getCallableNodes,
+  getCallEdges,
+  getFileNodesAll,
+  getImportEdges,
+  openReadonlyOrFail,
+} from './db.js';
 import { paginateResult } from './paginate.js';
 import { outputResult } from './result-formatter.js';
 import { isTestFile } from './test-filter.js';
@@ -22,9 +28,7 @@ function buildGraphologyGraph(db, opts = {}) {
 
   if (opts.functions) {
     // Function-level: nodes = function/method/class symbols, edges = calls
-    let nodes = db
-      .prepare("SELECT id, name, kind, file FROM nodes WHERE kind IN ('function','method','class')")
-      .all();
+    let nodes = getCallableNodes(db);
     if (opts.noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
 
     const nodeIds = new Set();
@@ -34,7 +38,7 @@ function buildGraphologyGraph(db, opts = {}) {
       nodeIds.add(n.id);
     }
 
-    const edges = db.prepare("SELECT source_id, target_id FROM edges WHERE kind = 'calls'").all();
+    const edges = getCallEdges(db);
     for (const e of edges) {
       if (!nodeIds.has(e.source_id) || !nodeIds.has(e.target_id)) continue;
       const src = String(e.source_id);
@@ -46,7 +50,7 @@ function buildGraphologyGraph(db, opts = {}) {
     }
   } else {
     // File-level: nodes = files, edges = imports + imports-type (deduplicated, cross-file)
-    let nodes = db.prepare("SELECT id, name, file FROM nodes WHERE kind = 'file'").all();
+    let nodes = getFileNodesAll(db);
     if (opts.noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
 
     const nodeIds = new Set();
@@ -56,9 +60,7 @@ function buildGraphologyGraph(db, opts = {}) {
       nodeIds.add(n.id);
     }
 
-    const edges = db
-      .prepare("SELECT source_id, target_id FROM edges WHERE kind IN ('imports','imports-type')")
-      .all();
+    const edges = getImportEdges(db);
     for (const e of edges) {
       if (!nodeIds.has(e.source_id) || !nodeIds.has(e.target_id)) continue;
       const src = String(e.source_id);

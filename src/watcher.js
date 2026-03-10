@@ -3,7 +3,7 @@ import path from 'node:path';
 import { readFileSafe } from './builder.js';
 import { appendChangeEvents, buildChangeEvent, diffSymbols } from './change-journal.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
-import { closeDb, initSchema, openDb } from './db.js';
+import { closeDb, getNodeId as getNodeIdQuery, initSchema, openDb } from './db.js';
 import { appendJournalEntries } from './journal.js';
 import { info, warn } from './logger.js';
 import { createParseTreeCache, getActiveEngine, parseFileIncremental } from './parser.js';
@@ -185,9 +185,12 @@ export async function watchProject(rootDir, opts = {}) {
     insertNode: db.prepare(
       'INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
     ),
-    getNodeId: db.prepare(
-      'SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? AND line = ?',
-    ),
+    getNodeId: {
+      get: (name, kind, file, line) => {
+        const id = getNodeIdQuery(db, name, kind, file, line);
+        return id != null ? { id } : undefined;
+      },
+    },
     insertEdge: db.prepare(
       'INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?, ?, ?, ?, ?)',
     ),

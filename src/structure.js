@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { normalizePath } from './constants.js';
-import { openReadonlyOrFail, testFilterSQL } from './db.js';
+import { getNodeId, openReadonlyOrFail, testFilterSQL } from './db.js';
 import { debug } from './logger.js';
 import { paginateResult } from './paginate.js';
 import { isTestFile } from './test-filter.js';
@@ -21,9 +21,12 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
   const insertNode = db.prepare(
     'INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
   );
-  const getNodeId = db.prepare(
-    'SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? AND line = ?',
-  );
+  const getNodeIdStmt = {
+    get: (name, kind, file, line) => {
+      const id = getNodeId(db, name, kind, file, line);
+      return id != null ? { id } : undefined;
+    },
+  };
   const insertEdge = db.prepare(
     'INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?, ?, ?, ?, ?)',
   );
@@ -56,12 +59,12 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
       }
       // Delete metrics for changed files
       for (const f of changedFiles) {
-        const fileRow = getNodeId.get(f, 'file', f, 0);
+        const fileRow = getNodeIdStmt.get(f, 'file', f, 0);
         if (fileRow) deleteMetricForNode.run(fileRow.id);
       }
       // Delete metrics for affected directories
       for (const dir of affectedDirs) {
-        const dirRow = getNodeId.get(dir, 'directory', dir, 0);
+        const dirRow = getNodeIdStmt.get(dir, 'directory', dir, 0);
         if (dirRow) deleteMetricForNode.run(dirRow.id);
       }
     })();
@@ -126,8 +129,8 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
       if (!dir || dir === '.') continue;
       // On incremental, skip dirs whose contains edges are intact
       if (affectedDirs && !affectedDirs.has(dir)) continue;
-      const dirRow = getNodeId.get(dir, 'directory', dir, 0);
-      const fileRow = getNodeId.get(relPath, 'file', relPath, 0);
+      const dirRow = getNodeIdStmt.get(dir, 'directory', dir, 0);
+      const fileRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
       if (dirRow && fileRow) {
         insertEdge.run(dirRow.id, fileRow.id, 'contains', 1.0, 0);
       }
@@ -138,8 +141,8 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
       if (!parent || parent === '.' || parent === dir) continue;
       // On incremental, skip parent dirs whose contains edges are intact
       if (affectedDirs && !affectedDirs.has(parent)) continue;
-      const parentRow = getNodeId.get(parent, 'directory', parent, 0);
-      const childRow = getNodeId.get(dir, 'directory', dir, 0);
+      const parentRow = getNodeIdStmt.get(parent, 'directory', parent, 0);
+      const childRow = getNodeIdStmt.get(dir, 'directory', dir, 0);
       if (parentRow && childRow) {
         insertEdge.run(parentRow.id, childRow.id, 'contains', 1.0, 0);
       }
@@ -169,7 +172,7 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
 
   const computeFileMetrics = db.transaction(() => {
     for (const [relPath, symbols] of fileSymbols) {
-      const fileRow = getNodeId.get(relPath, 'file', relPath, 0);
+      const fileRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
       if (!fileRow) continue;
 
       const lineCount = lineCountMap.get(relPath) || 0;
@@ -263,7 +266,7 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
 
   const computeDirMetrics = db.transaction(() => {
     for (const [dir, files] of dirFiles) {
-      const dirRow = getNodeId.get(dir, 'directory', dir, 0);
+      const dirRow = getNodeIdStmt.get(dir, 'directory', dir, 0);
       if (!dirRow) continue;
 
       const fileCount = files.length;

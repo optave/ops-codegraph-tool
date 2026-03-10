@@ -9,7 +9,7 @@ import {
   findNodesWithFanIn,
   iterateFunctionNodes,
   listFunctionNodes,
-} from '../../src/db/repository.js';
+} from '../../src/db/repository/nodes.js';
 
 describe('repository', () => {
   let db;

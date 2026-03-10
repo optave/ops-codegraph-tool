@@ -14,7 +14,14 @@ import {
   buildExtToLangMap,
   findFunctionNode,
 } from './ast-analysis/shared.js';
-import { openReadonlyOrFail } from './db.js';
+import {
+  deleteCfgForNode,
+  getCfgBlocks,
+  getCfgEdges,
+  getFunctionNodeId,
+  hasCfgTables,
+  openReadonlyOrFail,
+} from './db.js';
 import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
 
@@ -868,12 +875,6 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
     `INSERT INTO cfg_edges (function_node_id, source_block_id, target_block_id, kind)
      VALUES (?, ?, ?, ?)`,
   );
-  const deleteBlocks = db.prepare('DELETE FROM cfg_blocks WHERE function_node_id = ?');
-  const deleteEdges = db.prepare('DELETE FROM cfg_edges WHERE function_node_id = ?');
-  const getNodeId = db.prepare(
-    "SELECT id FROM nodes WHERE name = ? AND kind IN ('function','method') AND file = ? AND line = ?",
-  );
-
   let analyzed = 0;
 
   const tx = db.transaction(() => {
@@ -928,8 +929,8 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
         if (def.kind !== 'function' && def.kind !== 'method') continue;
         if (!def.line) continue;
 
-        const row = getNodeId.get(def.name, relPath, def.line);
-        if (!row) continue;
+        const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
+        if (!nodeId) continue;
 
         // Native path: use pre-computed CFG from Rust engine
         let cfg = null;
@@ -946,14 +947,13 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
         if (!cfg || cfg.blocks.length === 0) continue;
 
         // Clear old CFG data for this function
-        deleteEdges.run(row.id);
-        deleteBlocks.run(row.id);
+        deleteCfgForNode(db, nodeId);
 
         // Insert blocks and build index→dbId mapping
         const blockDbIds = new Map();
         for (const block of cfg.blocks) {
           const result = insertBlock.run(
-            row.id,
+            nodeId,
             block.index,
             block.type,
             block.startLine,
@@ -968,7 +968,7 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
           const sourceDbId = blockDbIds.get(edge.sourceIndex);
           const targetDbId = blockDbIds.get(edge.targetIndex);
           if (sourceDbId && targetDbId) {
-            insertEdge.run(row.id, sourceDbId, targetDbId, edge.kind);
+            insertEdge.run(nodeId, sourceDbId, targetDbId, edge.kind);
           }
         }
 
@@ -987,15 +987,6 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
 }
 
 // ─── Query-Time Functions ───────────────────────────────────────────────
-
-function hasCfgTables(db) {
-  try {
-    db.prepare('SELECT 1 FROM cfg_blocks LIMIT 0').get();
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function findNodes(db, name, opts = {}) {
   const kinds = opts.kind ? [opts.kind] : ['function', 'method'];
@@ -1046,25 +1037,9 @@ export function cfgData(name, customDbPath, opts = {}) {
       return { name, results: [] };
     }
 
-    const blockStmt = db.prepare(
-      `SELECT id, block_index, block_type, start_line, end_line, label
-       FROM cfg_blocks WHERE function_node_id = ?
-       ORDER BY block_index`,
-    );
-    const edgeStmt = db.prepare(
-      `SELECT e.kind,
-              sb.block_index AS source_index, sb.block_type AS source_type,
-              tb.block_index AS target_index, tb.block_type AS target_type
-       FROM cfg_edges e
-       JOIN cfg_blocks sb ON e.source_block_id = sb.id
-       JOIN cfg_blocks tb ON e.target_block_id = tb.id
-       WHERE e.function_node_id = ?
-       ORDER BY sb.block_index, tb.block_index`,
-    );
-
     const results = nodes.map((node) => {
-      const cfgBlocks = blockStmt.all(node.id);
-      const cfgEdges = edgeStmt.all(node.id);
+      const cfgBlocks = getCfgBlocks(db, node.id);
+      const cfgEdges = getCfgEdges(db, node.id);
 
       return {
         name: node.name,

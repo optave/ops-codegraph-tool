@@ -4,7 +4,17 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { loadConfig } from './config.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from './constants.js';
-import { closeDb, getBuildMeta, initSchema, MIGRATIONS, openDb, setBuildMeta } from './db.js';
+import {
+  bulkNodeIdsByFile,
+  closeDb,
+  getBuildMeta,
+  getNodeId,
+  initSchema,
+  MIGRATIONS,
+  openDb,
+  purgeFilesData,
+  setBuildMeta,
+} from './db.js';
 import { readJournal, writeJournalHeader } from './journal.js';
 import { debug, info, warn } from './logger.js';
 import { loadNative } from './native.js';
@@ -350,88 +360,7 @@ function getChangedFiles(db, allFiles, rootDir) {
  * @param {boolean} [options.purgeHashes=true] - Also delete file_hashes entries
  */
 export function purgeFilesFromGraph(db, files, options = {}) {
-  const { purgeHashes = true } = options;
-  if (!files || files.length === 0) return;
-
-  // Check if embeddings table exists
-  let hasEmbeddings = false;
-  try {
-    db.prepare('SELECT 1 FROM embeddings LIMIT 1').get();
-    hasEmbeddings = true;
-  } catch {
-    /* table doesn't exist */
-  }
-
-  const deleteEmbeddingsForFile = hasEmbeddings
-    ? db.prepare('DELETE FROM embeddings WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)')
-    : null;
-  const deleteNodesForFile = db.prepare('DELETE FROM nodes WHERE file = ?');
-  const deleteEdgesForFile = db.prepare(`
-    DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = @f)
-    OR target_id IN (SELECT id FROM nodes WHERE file = @f)
-  `);
-  const deleteMetricsForFile = db.prepare(
-    'DELETE FROM node_metrics WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)',
-  );
-  let deleteComplexityForFile;
-  try {
-    deleteComplexityForFile = db.prepare(
-      'DELETE FROM function_complexity WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)',
-    );
-  } catch {
-    deleteComplexityForFile = null;
-  }
-  let deleteDataflowForFile;
-  try {
-    deleteDataflowForFile = db.prepare(
-      'DELETE FROM dataflow WHERE source_id IN (SELECT id FROM nodes WHERE file = ?) OR target_id IN (SELECT id FROM nodes WHERE file = ?)',
-    );
-  } catch {
-    deleteDataflowForFile = null;
-  }
-  let deleteHashForFile;
-  if (purgeHashes) {
-    try {
-      deleteHashForFile = db.prepare('DELETE FROM file_hashes WHERE file = ?');
-    } catch {
-      deleteHashForFile = null;
-    }
-  }
-  let deleteAstNodesForFile;
-  try {
-    deleteAstNodesForFile = db.prepare('DELETE FROM ast_nodes WHERE file = ?');
-  } catch {
-    deleteAstNodesForFile = null;
-  }
-  let deleteCfgForFile;
-  try {
-    deleteCfgForFile = db.prepare(
-      'DELETE FROM cfg_edges WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?)',
-    );
-  } catch {
-    deleteCfgForFile = null;
-  }
-  let deleteCfgBlocksForFile;
-  try {
-    deleteCfgBlocksForFile = db.prepare(
-      'DELETE FROM cfg_blocks WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?)',
-    );
-  } catch {
-    deleteCfgBlocksForFile = null;
-  }
-
-  for (const relPath of files) {
-    deleteEmbeddingsForFile?.run(relPath);
-    deleteEdgesForFile.run({ f: relPath });
-    deleteMetricsForFile.run(relPath);
-    deleteComplexityForFile?.run(relPath);
-    deleteDataflowForFile?.run(relPath, relPath);
-    deleteAstNodesForFile?.run(relPath);
-    deleteCfgForFile?.run(relPath);
-    deleteCfgBlocksForFile?.run(relPath);
-    deleteNodesForFile.run(relPath);
-    if (purgeHashes) deleteHashForFile?.run(relPath);
-  }
+  purgeFilesData(db, files, options);
 }
 
 export async function buildGraph(rootDir, opts = {}) {
@@ -677,9 +606,12 @@ export async function buildGraph(rootDir, opts = {}) {
     }
   }
 
-  const getNodeId = db.prepare(
-    'SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? AND line = ?',
-  );
+  const getNodeIdStmt = {
+    get: (name, kind, file, line) => {
+      const id = getNodeId(db, name, kind, file, line);
+      return id != null ? { id } : undefined;
+    },
+  };
 
   // Batch INSERT helpers — multi-value INSERTs reduce SQLite round-trips
   const BATCH_CHUNK = 200;
@@ -752,7 +684,7 @@ export async function buildGraph(rootDir, opts = {}) {
   }
 
   // Bulk-fetch all node IDs for a file in one query (replaces per-node getNodeId calls)
-  const bulkGetNodeIds = db.prepare('SELECT id, name, kind, line FROM nodes WHERE file = ?');
+  const bulkGetNodeIds = { all: (file) => bulkNodeIdsByFile(db, file) };
 
   const insertAll = db.transaction(() => {
     // Phase 1: Batch insert all file nodes + definitions + exports
@@ -1032,14 +964,14 @@ export async function buildGraph(rootDir, opts = {}) {
     for (const [relPath, symbols] of fileSymbols) {
       // Skip barrel-only files — loaded for resolution, edges already in DB
       if (barrelOnlyFiles.has(relPath)) continue;
-      const fileNodeRow = getNodeId.get(relPath, 'file', relPath, 0);
+      const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
       if (!fileNodeRow) continue;
       const fileNodeId = fileNodeRow.id;
 
       // Import edges
       for (const imp of symbols.imports) {
         const resolvedPath = getResolved(path.join(rootDir, relPath), imp.source);
-        const targetRow = getNodeId.get(resolvedPath, 'file', resolvedPath, 0);
+        const targetRow = getNodeIdStmt.get(resolvedPath, 'file', resolvedPath, 0);
         if (targetRow) {
           const edgeKind = imp.reexport
             ? 'reexports'
@@ -1061,7 +993,7 @@ export async function buildGraph(rootDir, opts = {}) {
                 !resolvedSources.has(actualSource)
               ) {
                 resolvedSources.add(actualSource);
-                const actualRow = getNodeId.get(actualSource, 'file', actualSource, 0);
+                const actualRow = getNodeIdStmt.get(actualSource, 'file', actualSource, 0);
                 if (actualRow) {
                   allEdgeRows.push([
                     fileNodeId,
@@ -1088,7 +1020,7 @@ export async function buildGraph(rootDir, opts = {}) {
       const nativeFiles = [];
       for (const [relPath, symbols] of fileSymbols) {
         if (barrelOnlyFiles.has(relPath)) continue;
-        const fileNodeRow = getNodeId.get(relPath, 'file', relPath, 0);
+        const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
         if (!fileNodeRow) continue;
 
         // Pre-resolve imported names (including barrel resolution)
@@ -1130,7 +1062,7 @@ export async function buildGraph(rootDir, opts = {}) {
       // JS fallback — call/receiver/extends/implements edges
       for (const [relPath, symbols] of fileSymbols) {
         if (barrelOnlyFiles.has(relPath)) continue;
-        const fileNodeRow = getNodeId.get(relPath, 'file', relPath, 0);
+        const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
         if (!fileNodeRow) continue;
 
         // Build import name -> target file mapping
@@ -1155,14 +1087,14 @@ export async function buildGraph(rootDir, opts = {}) {
               if (call.line <= end) {
                 const span = end - def.line;
                 if (span < callerSpan) {
-                  const row = getNodeId.get(def.name, def.kind, relPath, def.line);
+                  const row = getNodeIdStmt.get(def.name, def.kind, relPath, def.line);
                   if (row) {
                     caller = row;
                     callerSpan = span;
                   }
                 }
               } else if (!caller) {
-                const row = getNodeId.get(def.name, def.kind, relPath, def.line);
+                const row = getNodeIdStmt.get(def.name, def.kind, relPath, def.line);
                 if (row) caller = row;
               }
             }

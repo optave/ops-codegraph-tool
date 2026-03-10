@@ -19,7 +19,7 @@ import {
 } from './ast-analysis/shared.js';
 import { walkWithVisitors } from './ast-analysis/visitor.js';
 import { createDataflowVisitor } from './ast-analysis/visitors/dataflow-visitor.js';
-import { openReadonlyOrFail } from './db.js';
+import { hasDataflowTable, openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
 
@@ -261,18 +261,6 @@ function findNodes(db, name, opts = {}) {
     .all(...params);
 
   return opts.noTests ? rows.filter((n) => !isTestFile(n.file)) : rows;
-}
-
-/**
- * Check if the dataflow table exists and has data.
- */
-function hasDataflowTable(db) {
-  try {
-    const row = db.prepare('SELECT COUNT(*) as c FROM dataflow').get();
-    return row.c > 0;
-  } catch {
-    return false;
-  }
 }
 
 /**

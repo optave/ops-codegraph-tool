@@ -11,7 +11,7 @@ import { AST_TYPE_MAPS } from './ast-analysis/rules/index.js';
 import { buildExtensionSet } from './ast-analysis/shared.js';
 import { walkWithVisitors } from './ast-analysis/visitor.js';
 import { createAstStoreVisitor } from './ast-analysis/visitors/ast-store-visitor.js';
-import { openReadonlyOrFail } from './db.js';
+import { bulkNodeIdsByFile, openReadonlyOrFail } from './db.js';
 import { debug } from './logger.js';
 import { paginateResult } from './paginate.js';
 
@@ -77,9 +77,6 @@ export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
     return;
   }
 
-  // Bulk-fetch all node IDs per file (replaces per-def getNodeId calls)
-  const bulkGetNodeIds = db.prepare('SELECT id, name, kind, line FROM nodes WHERE file = ?');
-
   const tx = db.transaction((rows) => {
     for (const r of rows) {
       insertStmt.run(r.file, r.line, r.kind, r.name, r.text, r.receiver, r.parentNodeId);
@@ -93,7 +90,7 @@ export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
 
     // Pre-load all node IDs for this file into a map (read-only, fast)
     const nodeIdMap = new Map();
-    for (const row of bulkGetNodeIds.all(relPath)) {
+    for (const row of bulkNodeIdsByFile(db, relPath)) {
       nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
     }
 

@@ -19,6 +19,7 @@
 
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { bulkNodeIdsByFile } from '../db.js';
 import { debug } from '../logger.js';
 import { computeLOCMetrics, computeMaintainabilityIndex } from './metrics.js';
 import {
@@ -115,11 +116,6 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, engineOpts) {
   // engine output). This eliminates ~3 redundant tree traversals per file.
   const t0walk = performance.now();
 
-  // Pre-load node ID map for AST parent resolution
-  const bulkGetNodeIds = doAst
-    ? db.prepare('SELECT id, name, kind, line FROM nodes WHERE file = ?')
-    : null;
-
   for (const [relPath, symbols] of fileSymbols) {
     if (!symbols._tree) continue; // No WASM tree — native path handles it
 
@@ -140,10 +136,8 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, engineOpts) {
     let astVisitor = null;
     if (doAst && astTypeMap && WALK_EXTENSIONS.has(ext) && !symbols.astNodes?.length) {
       const nodeIdMap = new Map();
-      if (bulkGetNodeIds) {
-        for (const row of bulkGetNodeIds.all(relPath)) {
-          nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
-        }
+      for (const row of bulkNodeIdsByFile(db, relPath)) {
+        nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
       }
       astVisitor = createAstStoreVisitor(astTypeMap, defs, relPath, nodeIdMap);
       visitors.push(astVisitor);

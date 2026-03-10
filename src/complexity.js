@@ -13,7 +13,7 @@ import {
 import { walkWithVisitors } from './ast-analysis/visitor.js';
 import { createComplexityVisitor } from './ast-analysis/visitors/complexity-visitor.js';
 import { loadConfig } from './config.js';
-import { openReadonlyOrFail } from './db.js';
+import { getFunctionNodeId, openReadonlyOrFail } from './db.js';
 import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
 
@@ -379,10 +379,6 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
       maintainability_index)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
-  const getNodeId = db.prepare(
-    "SELECT id FROM nodes WHERE name = ? AND kind IN ('function','method') AND file = ? AND line = ?",
-  );
-
   let analyzed = 0;
 
   const tx = db.transaction(() => {
@@ -429,12 +425,12 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
 
         // Use pre-computed complexity from native engine if available
         if (def.complexity) {
-          const row = getNodeId.get(def.name, relPath, def.line);
-          if (!row) continue;
+          const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
+          if (!nodeId) continue;
           const ch = def.complexity.halstead;
           const cl = def.complexity.loc;
           upsert.run(
-            row.id,
+            nodeId,
             def.complexity.cognitive,
             def.complexity.cyclomatic,
             def.complexity.maxNesting ?? 0,
@@ -467,12 +463,12 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
         const metrics = computeAllMetrics(funcNode, langId);
         if (!metrics) continue;
 
-        const row = getNodeId.get(def.name, relPath, def.line);
-        if (!row) continue;
+        const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
+        if (!nodeId) continue;
 
         const h = metrics.halstead;
         upsert.run(
-          row.id,
+          nodeId,
           metrics.cognitive,
           metrics.cyclomatic,
           metrics.maxNesting,
