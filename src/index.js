@@ -8,13 +8,11 @@
 // AST node queries
 export { AST_NODE_KINDS, astQuery, astQueryData } from './ast.js';
 // Audit (composite report)
-export { audit, auditData } from './audit.js';
+export { auditData } from './audit.js';
 // Batch querying
 export {
   BATCH_COMMANDS,
-  batch,
   batchData,
-  batchQuery,
   multiBatchData,
   splitTargets,
 } from './batch.js';
@@ -29,13 +27,12 @@ export {
   buildCFGData,
   buildFunctionCFG,
   CFG_RULES,
-  cfg,
   cfgData,
   cfgToDOT,
   cfgToMermaid,
 } from './cfg.js';
 // Check (CI validation predicates)
-export { check, checkData } from './check.js';
+export { checkData } from './check.js';
 // Co-change analysis
 export {
   analyzeCoChanges,
@@ -45,12 +42,23 @@ export {
   computeCoChanges,
   scanGitHistory,
 } from './cochange.js';
+export { audit } from './commands/audit.js';
+export { batch, batchQuery } from './commands/batch.js';
+export { cfg } from './commands/cfg.js';
+export { check } from './commands/check.js';
+export { communities } from './commands/communities.js';
+export { complexity } from './commands/complexity.js';
+export { dataflow } from './commands/dataflow.js';
+export { manifesto } from './commands/manifesto.js';
+export { owners } from './commands/owners.js';
+export { sequence } from './commands/sequence.js';
+export { formatHotspots, formatModuleBoundaries, formatStructure } from './commands/structure.js';
+export { triage } from './commands/triage.js';
 // Community detection
-export { communities, communitiesData, communitySummaryForStats } from './communities.js';
+export { communitiesData, communitySummaryForStats } from './communities.js';
 // Complexity metrics
 export {
   COMPLEXITY_RULES,
-  complexity,
   complexityData,
   computeFunctionComplexity,
   computeHalsteadMetrics,
@@ -69,7 +77,6 @@ export { findCycles, formatCycles } from './cycles.js';
 // Dataflow analysis
 export {
   buildDataflowEdges,
-  dataflow,
   dataflowData,
   dataflowImpactData,
   dataflowPathData,
@@ -123,14 +130,18 @@ export {
 } from './export.js';
 // Execution flow tracing
 export { entryPointType, flowData, listEntryPointsData } from './flow.js';
+// Result formatting
+export { outputResult } from './infrastructure/result-formatter.js';
+// Test file detection
+export { isTestFile, TEST_PATTERN } from './infrastructure/test-filter.js';
 // Logger
 export { setVerbose } from './logger.js';
 // Manifesto rule engine
-export { manifesto, manifestoData, RULE_DEFS } from './manifesto.js';
+export { manifestoData, RULE_DEFS } from './manifesto.js';
 // Native engine
 export { isNativeAvailable } from './native.js';
 // Ownership (CODEOWNERS)
-export { matchOwners, owners, ownersData, ownersForFiles, parseCodeowners } from './owners.js';
+export { matchOwners, ownersData, ownersForFiles, parseCodeowners } from './owners.js';
 // Pagination utilities
 export { MCP_DEFAULTS, MCP_MAX_LIMIT, paginate, paginateResult, printNdjson } from './paginate.js';
 // Unified parser API
@@ -198,10 +209,8 @@ export {
   saveRegistry,
   unregisterRepo,
 } from './registry.js';
-// Result formatting
-export { outputResult } from './result-formatter.js';
 // Sequence diagram generation
-export { sequence, sequenceData, sequenceToMermaid } from './sequence.js';
+export { sequenceData, sequenceToMermaid } from './sequence.js';
 // Snapshot management
 export {
   snapshotDelete,
@@ -216,17 +225,12 @@ export {
   buildStructure,
   classifyNodeRoles,
   FRAMEWORK_ENTRY_PREFIXES,
-  formatHotspots,
-  formatModuleBoundaries,
-  formatStructure,
   hotspotsData,
   moduleBoundariesData,
   structureData,
 } from './structure.js';
-// Test file detection
-export { isTestFile, TEST_PATTERN } from './test-filter.js';
 // Triage — composite risk audit
-export { triage, triageData } from './triage.js';
+export { triageData } from './triage.js';
 // Interactive HTML viewer
 export { generatePlotHTML, loadPlotConfig } from './viewer.js';
 // Watch mode

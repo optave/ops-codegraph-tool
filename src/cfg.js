@@ -16,11 +16,9 @@ import {
 import { walkWithVisitors } from './ast-analysis/visitor.js';
 import { createCfgVisitor } from './ast-analysis/visitors/cfg-visitor.js';
 import { openReadonlyOrFail } from './db.js';
+import { isTestFile } from './infrastructure/test-filter.js';
 import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
-
-import { outputResult } from './result-formatter.js';
-import { isTestFile } from './test-filter.js';
 
 // Re-export for backward compatibility
 export { CFG_RULES };
@@ -471,59 +469,4 @@ function edgeStyle(kind) {
   if (kind === 'break') return ', color=orange, style=dashed';
   if (kind === 'continue') return ', color=blue, style=dashed';
   return '';
-}
-
-// ─── CLI Printer ────────────────────────────────────────────────────────
-
-/**
- * CLI display for cfg command.
- */
-export function cfg(name, customDbPath, opts = {}) {
-  const data = cfgData(name, customDbPath, opts);
-
-  if (outputResult(data, 'results', opts)) return;
-
-  if (data.warning) {
-    console.log(`\u26A0  ${data.warning}`);
-    return;
-  }
-  if (data.results.length === 0) {
-    console.log(`No symbols matching "${name}".`);
-    return;
-  }
-
-  const format = opts.format || 'text';
-  if (format === 'dot') {
-    console.log(cfgToDOT(data));
-    return;
-  }
-  if (format === 'mermaid') {
-    console.log(cfgToMermaid(data));
-    return;
-  }
-
-  // Text format
-  for (const r of data.results) {
-    console.log(`\n${r.kind} ${r.name}  (${r.file}:${r.line})`);
-    console.log('\u2500'.repeat(60));
-    console.log(`  Blocks: ${r.summary.blockCount}  Edges: ${r.summary.edgeCount}`);
-
-    if (r.blocks.length > 0) {
-      console.log('\n  Blocks:');
-      for (const b of r.blocks) {
-        const loc = b.startLine
-          ? ` L${b.startLine}${b.endLine && b.endLine !== b.startLine ? `-${b.endLine}` : ''}`
-          : '';
-        const label = b.label ? ` (${b.label})` : '';
-        console.log(`    [${b.index}] ${b.type}${label}${loc}`);
-      }
-    }
-
-    if (r.edges.length > 0) {
-      console.log('\n  Edges:');
-      for (const e of r.edges) {
-        console.log(`    B${e.source} \u2192 B${e.target}  [${e.kind}]`);
-      }
-    }
-  }
 }

@@ -10,9 +10,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { normalizePath } from './constants.js';
 import { closeDb, findDbPath, initSchema, openDb, openReadonlyOrFail } from './db.js';
+import { isTestFile } from './infrastructure/test-filter.js';
 import { warn } from './logger.js';
 import { paginateResult } from './paginate.js';
-import { isTestFile } from './test-filter.js';
 
 /**
  * Scan git history and return parsed commit data.
@@ -417,44 +417,6 @@ export function coChangeForFiles(files, db, opts = {}) {
   }
 
   return results;
-}
-
-/**
- * Format co-change data for CLI output (single file).
- */
-export function formatCoChange(data) {
-  if (data.error) return data.error;
-  if (data.partners.length === 0) return `No co-change partners found for ${data.file}`;
-
-  const lines = [`\nCo-change partners for ${data.file}:\n`];
-  for (const p of data.partners) {
-    const pct = `${(p.jaccard * 100).toFixed(0)}%`.padStart(4);
-    const commits = `${p.commitCount} commits`.padStart(12);
-    lines.push(`  ${pct}  ${commits}  ${p.file}`);
-  }
-  if (data.meta?.analyzedAt) {
-    lines.push(`\n  Analyzed: ${data.meta.analyzedAt} | Window: ${data.meta.since || 'all'}`);
-  }
-  return lines.join('\n');
-}
-
-/**
- * Format top co-change pairs for CLI output (global view).
- */
-export function formatCoChangeTop(data) {
-  if (data.error) return data.error;
-  if (data.pairs.length === 0) return 'No co-change pairs found.';
-
-  const lines = ['\nTop co-change pairs:\n'];
-  for (const p of data.pairs) {
-    const pct = `${(p.jaccard * 100).toFixed(0)}%`.padStart(4);
-    const commits = `${p.commitCount} commits`.padStart(12);
-    lines.push(`  ${pct}  ${commits}  ${p.fileA}  <->  ${p.fileB}`);
-  }
-  if (data.meta?.analyzedAt) {
-    lines.push(`\n  Analyzed: ${data.meta.analyzedAt} | Window: ${data.meta.since || 'all'}`);
-  }
-  return lines.join('\n');
 }
 
 // ─── Internal Helpers ────────────────────────────────────────────────────

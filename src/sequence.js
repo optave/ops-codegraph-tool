@@ -7,11 +7,10 @@
  */
 
 import { openReadonlyOrFail } from './db.js';
+import { isTestFile } from './infrastructure/test-filter.js';
 import { paginateResult } from './paginate.js';
-import { findMatchingNodes, kindIcon } from './queries.js';
-import { outputResult } from './result-formatter.js';
+import { findMatchingNodes } from './queries.js';
 import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
-import { isTestFile } from './test-filter.js';
 
 // ─── Alias generation ────────────────────────────────────────────────
 
@@ -329,36 +328,4 @@ export function sequenceToMermaid(seqResult) {
   }
 
   return lines.join('\n');
-}
-
-// ─── CLI formatter ───────────────────────────────────────────────────
-
-/**
- * CLI entry point — format sequence data as mermaid, JSON, or ndjson.
- */
-export function sequence(name, dbPath, opts = {}) {
-  const data = sequenceData(name, dbPath, opts);
-
-  if (outputResult(data, 'messages', opts)) return;
-
-  // Default: mermaid format
-  if (!data.entry) {
-    console.log(`No matching function found for "${name}".`);
-    return;
-  }
-
-  const e = data.entry;
-  console.log(`\nSequence from: [${kindIcon(e.kind)}] ${e.name}  ${e.file}:${e.line}`);
-  console.log(`Participants: ${data.participants.length}  Messages: ${data.totalMessages}`);
-  if (data.truncated) {
-    console.log(`  (truncated at depth ${data.depth})`);
-  }
-  console.log();
-
-  if (data.messages.length === 0) {
-    console.log('  (leaf node — no callees)');
-    return;
-  }
-
-  console.log(sequenceToMermaid(data));
 }
