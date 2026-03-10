@@ -591,13 +591,17 @@ src/
 - ✅ `builder.js` → single `runAnalyses` call replaces 4 sequential blocks + WASM pre-parse
 - ✅ Extracted pure computations to `metrics.js` (Halstead derived math, LOC, MI)
 - ✅ Extracted shared helpers to `visitor-utils.js` (from dataflow.js)
-- 🔲 **CFG visitor rewrite** (see below)
+- ✅ **CFG visitor rewrite** — `createCfgVisitor` in `ast-analysis/visitors/cfg-visitor.js`, integrated into engine.js unified walk, Mode A/B split eliminated
 
 **Remaining: CFG visitor rewrite.** `buildFunctionCFG` (813 lines) uses a statement-level traversal (`getStatements` + `processStatement` with `loopStack`, `labelMap`, `blockIndex`) that is fundamentally incompatible with the node-level DFS used by `walkWithVisitors`. This is why the engine runs CFG as a separate Mode B pass — the only analysis that can't participate in the shared single-DFS walk.
 
 Rewrite the CFG algorithm as a node-level visitor that builds basic blocks and edges incrementally via `enterNode`/`exitNode` hooks, tracking block boundaries at branch/loop/return nodes the same way the complexity visitor tracks nesting. This eliminates the last redundant tree traversal during build and lets CFG share the exact same DFS pass as complexity, dataflow, and AST extraction. The statement-level `getStatements` helper and per-language `CFG_RULES.statementTypes` can be replaced by detecting block-terminating node types in `enterNode`. Also simplifies `engine.js` by removing the Mode A/B split and WASM pre-parse special-casing for CFG.
 
 **Remaining: Derive cyclomatic complexity from CFG.** Once CFG participates in the unified walk, cyclomatic complexity can be derived directly from CFG edge/block counts (`edges - nodes + 2`) rather than independently computed by the complexity visitor. This creates a single source of truth for control flow metrics and eliminates redundant computation. Can also be done as a simpler SQL-only approach against stored `cfg_blocks`/`cfg_edges` tables (see backlog ID 45).
+
+**Follow-up tasks (post CFG visitor rewrite):**
+- ✅ **Derive cyclomatic complexity from CFG** — CFG visitor computes `E - N + 2` per function; engine.js overrides complexity visitor's cyclomatic with CFG-derived value (single source of truth)
+- ✅ **Remove `buildFunctionCFG` implementation** — 813-line standalone implementation replaced with thin visitor wrapper (~15 lines); `buildCFGData` WASM fallback uses file-level visitor walk instead of per-function `findFunctionNode` calls
 
 **Affected files:** `src/complexity.js`, `src/cfg.js`, `src/dataflow.js`, `src/ast.js` → split into `src/ast-analysis/`
 

@@ -6,6 +6,9 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
+import { CFG_RULES } from '../../src/ast-analysis/rules/index.js';
+import { walkWithVisitors } from '../../src/ast-analysis/visitor.js';
+import { createCfgVisitor } from '../../src/ast-analysis/visitors/cfg-visitor.js';
 import { buildFunctionCFG, makeCfgRules } from '../../src/cfg.js';
 import { COMPLEXITY_RULES } from '../../src/complexity.js';
 import { createParsers } from '../../src/parser.js';
@@ -1278,5 +1281,380 @@ describe('makeCfgRules', () => {
     expect(rules.elseViaAlternative).toBe(false);
     expect(rules.forNodes).toEqual(new Set(['for_statement']));
     expect(rules.functionNodes).toEqual(new Set(['function_declaration']));
+  });
+});
+
+// ─── CFG Visitor Parity Tests ─────────────────────────────────────────
+
+/**
+ * Run the CFG visitor on a code snippet and return the CFG for the first function.
+ */
+function buildCFGViaVisitor(code, langId = 'javascript') {
+  const parser = langId === 'javascript' ? jsParser : null;
+  if (!parser) throw new Error(`No parser for ${langId} in parity tests`);
+
+  const tree = parser.parse(code);
+  const cfgRules = CFG_RULES.get(langId);
+  const visitor = createCfgVisitor(cfgRules);
+
+  const walkerOpts = {
+    functionNodeTypes: new Set(cfgRules.functionNodes),
+    nestingNodeTypes: new Set(),
+    getFunctionName: (node) => {
+      const nameNode = node.childForFieldName('name');
+      return nameNode ? nameNode.text : null;
+    },
+  };
+
+  const results = walkWithVisitors(tree.rootNode, [visitor], langId, walkerOpts);
+  const cfgResults = results.cfg || [];
+  if (cfgResults.length === 0) return { blocks: [], edges: [] };
+
+  return { blocks: cfgResults[0].blocks, edges: cfgResults[0].edges };
+}
+
+/**
+ * Compare two CFGs structurally: same block types/labels and same edge kinds/connectivity.
+ */
+function assertCfgParity(original, visitor, label) {
+  // Same number of blocks and edges
+  expect(visitor.blocks.length, `${label}: block count`).toBe(original.blocks.length);
+  expect(visitor.edges.length, `${label}: edge count`).toBe(original.edges.length);
+
+  // Same block types and labels (in order)
+  const origBlockSig = original.blocks.map((b) => `${b.type}:${b.label}`);
+  const visBlockSig = visitor.blocks.map((b) => `${b.type}:${b.label}`);
+  expect(visBlockSig, `${label}: block signatures`).toEqual(origBlockSig);
+
+  // Same edge connectivity (source→target:kind)
+  const origEdgeSig = original.edges
+    .map((e) => `${e.sourceIndex}->${e.targetIndex}:${e.kind}`)
+    .sort();
+  const visEdgeSig = visitor.edges
+    .map((e) => `${e.sourceIndex}->${e.targetIndex}:${e.kind}`)
+    .sort();
+  expect(visEdgeSig, `${label}: edge signatures`).toEqual(origEdgeSig);
+}
+
+describe('CFG visitor parity with buildFunctionCFG', () => {
+  const cases = [
+    ['empty function', 'function empty() {}'],
+    [
+      'simple return',
+      `function simple() {
+        const a = 1;
+        return a;
+      }`,
+    ],
+    [
+      'no return (fallthrough)',
+      `function noReturn() {
+        const x = 1;
+        console.log(x);
+      }`,
+    ],
+    [
+      'single if (no else)',
+      `function singleIf(x) {
+        if (x > 0) {
+          console.log('positive');
+        }
+        return x;
+      }`,
+    ],
+    [
+      'if/else',
+      `function ifElse(x) {
+        if (x > 0) {
+          return 'positive';
+        } else {
+          return 'non-positive';
+        }
+      }`,
+    ],
+    [
+      'if/else-if/else chain',
+      `function chain(x) {
+        if (x > 10) {
+          return 'big';
+        } else if (x > 0) {
+          return 'small';
+        } else {
+          return 'negative';
+        }
+      }`,
+    ],
+    [
+      'while loop',
+      `function whileLoop(n) {
+        let i = 0;
+        while (i < n) {
+          i++;
+        }
+        return i;
+      }`,
+    ],
+    [
+      'for loop',
+      `function forLoop() {
+        for (let i = 0; i < 10; i++) {
+          console.log(i);
+        }
+      }`,
+    ],
+    [
+      'for-in loop',
+      `function forIn(obj) {
+        for (const key in obj) {
+          console.log(key);
+        }
+      }`,
+    ],
+    [
+      'do-while loop',
+      `function doWhile() {
+        let i = 0;
+        do {
+          i++;
+        } while (i < 10);
+        return i;
+      }`,
+    ],
+    [
+      'break in loop',
+      `function withBreak() {
+        for (let i = 0; i < 10; i++) {
+          if (i === 5) break;
+          console.log(i);
+        }
+      }`,
+    ],
+    [
+      'continue in loop',
+      `function withContinue() {
+        for (let i = 0; i < 10; i++) {
+          if (i % 2 === 0) continue;
+          console.log(i);
+        }
+      }`,
+    ],
+    [
+      'switch/case',
+      `function switchCase(x) {
+        switch (x) {
+          case 1:
+            return 'one';
+          case 2:
+            return 'two';
+          default:
+            return 'other';
+        }
+      }`,
+    ],
+    [
+      'try/catch',
+      `function tryCatch() {
+        try {
+          riskyCall();
+        } catch (e) {
+          console.error(e);
+        }
+      }`,
+    ],
+    [
+      'try/catch/finally',
+      `function tryCatchFinally() {
+        try {
+          riskyCall();
+        } catch (e) {
+          console.error(e);
+        } finally {
+          cleanup();
+        }
+      }`,
+    ],
+    [
+      'try/finally (no catch)',
+      `function tryFinally() {
+        try {
+          riskyCall();
+        } finally {
+          cleanup();
+        }
+      }`,
+    ],
+    [
+      'early return',
+      `function earlyReturn(x) {
+        if (x < 0) {
+          return -1;
+        }
+        return x * 2;
+      }`,
+    ],
+    [
+      'throw',
+      `function throwError(x) {
+        if (x < 0) {
+          throw new Error('negative');
+        }
+        return x;
+      }`,
+    ],
+    [
+      'nested loops with break',
+      `function nested() {
+        for (let i = 0; i < 10; i++) {
+          for (let j = 0; j < 10; j++) {
+            if (j === 5) break;
+          }
+        }
+      }`,
+    ],
+    [
+      'if inside loop',
+      `function ifInLoop() {
+        for (let i = 0; i < 10; i++) {
+          if (i > 5) {
+            console.log('big');
+          } else {
+            console.log('small');
+          }
+        }
+      }`,
+    ],
+    [
+      'arrow function with block body',
+      `const fn = (x) => {
+        if (x) return 1;
+        return 0;
+      };`,
+    ],
+    ['arrow function with expression body', `const fn = (x) => x + 1;`],
+    [
+      'complex function',
+      `function complex(arr) {
+        if (!arr) return null;
+        const result = [];
+        for (const item of arr) {
+          if (item.skip) continue;
+          try {
+            result.push(transform(item));
+          } catch (e) {
+            console.error(e);
+          }
+        }
+        return result;
+      }`,
+    ],
+  ];
+
+  for (const [label, code] of cases) {
+    it(`parity: ${label}`, () => {
+      const original = buildCFG(code);
+      const visitor = buildCFGViaVisitor(code);
+      assertCfgParity(original, visitor, label);
+    });
+  }
+});
+
+// ─── CFG-derived Cyclomatic Complexity Tests ──────────────────────────
+
+describe('CFG-derived cyclomatic complexity', () => {
+  it('empty function: cyclomatic = 1', () => {
+    const cfg = buildCFG('function empty() {}');
+    expect(cfg.cyclomatic).toBe(1);
+  });
+
+  it('single if: cyclomatic = 2', () => {
+    const cfg = buildCFG(`
+      function singleIf(x) {
+        if (x > 0) {
+          console.log('positive');
+        }
+        return x;
+      }
+    `);
+    expect(cfg.cyclomatic).toBe(2);
+  });
+
+  it('if/else: cyclomatic = 2', () => {
+    const cfg = buildCFG(`
+      function ifElse(x) {
+        if (x > 0) {
+          return 'positive';
+        } else {
+          return 'non-positive';
+        }
+      }
+    `);
+    expect(cfg.cyclomatic).toBe(2);
+  });
+
+  it('if/else-if/else: cyclomatic = 3', () => {
+    const cfg = buildCFG(`
+      function chain(x) {
+        if (x > 10) {
+          return 'big';
+        } else if (x > 0) {
+          return 'small';
+        } else {
+          return 'negative';
+        }
+      }
+    `);
+    expect(cfg.cyclomatic).toBe(3);
+  });
+
+  it('while loop: cyclomatic = 2', () => {
+    const cfg = buildCFG(`
+      function whileLoop(n) {
+        while (n > 0) {
+          n--;
+        }
+      }
+    `);
+    expect(cfg.cyclomatic).toBe(2);
+  });
+
+  it('for loop with break: cyclomatic = 3', () => {
+    const cfg = buildCFG(`
+      function withBreak() {
+        for (let i = 0; i < 10; i++) {
+          if (i === 5) break;
+        }
+      }
+    `);
+    expect(cfg.cyclomatic).toBe(3);
+  });
+
+  it('switch with 3 cases + default: cyclomatic = 4', () => {
+    const cfg = buildCFG(`
+      function sw(x) {
+        switch (x) {
+          case 1: return 'one';
+          case 2: return 'two';
+          case 3: return 'three';
+          default: return 'other';
+        }
+      }
+    `);
+    expect(cfg.cyclomatic).toBe(4);
+  });
+
+  it('formula is E - N + 2', () => {
+    const cfg = buildCFG(`
+      function complex(x) {
+        if (x > 0) {
+          for (let i = 0; i < x; i++) {
+            console.log(i);
+          }
+        }
+        return x;
+      }
+    `);
+    const expected = cfg.edges.length - cfg.blocks.length + 2;
+    expect(cfg.cyclomatic).toBe(expected);
+    expect(cfg.cyclomatic).toBeGreaterThanOrEqual(1);
   });
 });

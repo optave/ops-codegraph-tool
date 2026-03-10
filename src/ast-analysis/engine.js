@@ -7,14 +7,12 @@
  *   - CFG construction (basic blocks + edges)
  *   - Dataflow analysis (define-use chains, arg flows, mutations)
  *
- * Two modes:
- *   Mode A (node-level visitor): AST + complexity + dataflow — single DFS per file
- *   Mode B (statement-level): CFG keeps its own traversal via buildFunctionCFG
+ * All 4 analyses run as visitors in a single DFS walk via walkWithVisitors.
  *
  * Optimization strategy: for files with WASM trees, run all applicable visitors
- * in a single walkWithVisitors call, then store results in the format that the
- * existing buildXxx functions expect as pre-computed data. This eliminates ~3
- * redundant tree traversals per file.
+ * in a single walkWithVisitors call. Store results in the format that buildXxx
+ * functions already expect as pre-computed data (same fields as native engine
+ * output). This eliminates redundant tree traversals per file.
  */
 
 import path from 'node:path';
@@ -32,6 +30,7 @@ import { buildExtensionSet, buildExtToLangMap } from './shared.js';
 import { walkWithVisitors } from './visitor.js';
 import { functionName as getFuncName } from './visitor-utils.js';
 import { createAstStoreVisitor } from './visitors/ast-store-visitor.js';
+import { createCfgVisitor } from './visitors/cfg-visitor.js';
 import { createComplexityVisitor } from './visitors/complexity-visitor.js';
 import { createDataflowVisitor } from './visitors/dataflow-visitor.js';
 
@@ -74,25 +73,15 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, engineOpts) {
   const extToLang = buildExtToLangMap();
 
   // ── WASM pre-parse for files that need it ───────────────────────────
-  if (doCfg || doDataflow) {
+  // CFG now runs as a visitor in the unified walk, so only dataflow
+  // triggers WASM pre-parse when no tree exists.
+  if (doDataflow) {
     let needsWasmTrees = false;
     for (const [relPath, symbols] of fileSymbols) {
       if (symbols._tree) continue;
       const ext = path.extname(relPath).toLowerCase();
 
-      if (doCfg && CFG_EXTENSIONS.has(ext)) {
-        const fnDefs = (symbols.definitions || []).filter(
-          (d) => (d.kind === 'function' || d.kind === 'method') && d.line,
-        );
-        if (
-          fnDefs.length > 0 &&
-          !fnDefs.every((d) => d.cfg === null || Array.isArray(d.cfg?.blocks))
-        ) {
-          needsWasmTrees = true;
-          break;
-        }
-      }
-      if (doDataflow && !symbols.dataflow && DATAFLOW_EXTENSIONS.has(ext)) {
+      if (!symbols.dataflow && DATAFLOW_EXTENSIONS.has(ext)) {
         needsWasmTrees = true;
         break;
       }
@@ -185,6 +174,24 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, engineOpts) {
       }
     }
 
+    // ─ CFG visitor ─
+    const cfgRulesForLang = CFG_RULES.get(langId);
+    let cfgVisitor = null;
+    if (doCfg && cfgRulesForLang && CFG_EXTENSIONS.has(ext)) {
+      // Only use visitor if some functions lack pre-computed CFG
+      const needsWasmCfg = defs.some(
+        (d) =>
+          (d.kind === 'function' || d.kind === 'method') &&
+          d.line &&
+          d.cfg !== null &&
+          !Array.isArray(d.cfg?.blocks),
+      );
+      if (needsWasmCfg) {
+        cfgVisitor = createCfgVisitor(cfgRulesForLang);
+        visitors.push(cfgVisitor);
+      }
+    }
+
     // ─ Dataflow visitor ─
     const dfRules = DATAFLOW_RULES.get(langId);
     let dataflowVisitor = null;
@@ -242,6 +249,35 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, engineOpts) {
               loc,
               maintainabilityIndex: mi,
             };
+          }
+        }
+      }
+    }
+
+    // ─ Store CFG results on definitions (buildCFGData will find def.cfg and skip its walk) ─
+    if (cfgVisitor) {
+      const cfgResults = results.cfg || [];
+      const cfgByLine = new Map();
+      for (const r of cfgResults) {
+        if (r.funcNode) {
+          const line = r.funcNode.startPosition.row + 1;
+          cfgByLine.set(line, r);
+        }
+      }
+      for (const def of defs) {
+        if (
+          (def.kind === 'function' || def.kind === 'method') &&
+          def.line &&
+          !def.cfg?.blocks?.length
+        ) {
+          const cfgResult = cfgByLine.get(def.line);
+          if (cfgResult) {
+            def.cfg = { blocks: cfgResult.blocks, edges: cfgResult.edges };
+
+            // Override complexity's cyclomatic with CFG-derived value (single source of truth)
+            if (def.complexity && cfgResult.cyclomatic != null) {
+              def.complexity.cyclomatic = cfgResult.cyclomatic;
+            }
           }
         }
       }
