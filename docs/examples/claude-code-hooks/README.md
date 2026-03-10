@@ -35,6 +35,12 @@ echo ".claude/codegraph-checked.log" >> .gitignore
 |------|---------|-------------|
 | `check-readme.sh` | PreToolUse on Bash | Blocks `git commit` when source files are staged but `README.md`, `CLAUDE.md`, or `ROADMAP.md` aren't — prompts the agent to review whether docs need updating |
 
+### Code quality hooks
+
+| Hook | Trigger | What it does |
+|------|---------|-------------|
+| `check-dead-exports.sh` | PreToolUse on Bash | Blocks `git commit` when any edited `src/` file has exports with zero consumers — catches dead code before it's committed |
+
 ### Parallel session safety hooks (recommended for multi-agent workflows)
 
 | Hook | Trigger | What it does |
@@ -69,6 +75,7 @@ Without this fix, `CLAUDE_PROJECT_DIR` (which always points to the main project 
 - **Solo developer:** `enrich-context.sh` + `update-graph.sh` + `post-git-ops.sh`
 - **With reminders:** Add `remind-codegraph.sh`
 - **Doc hygiene:** Add `check-readme.sh` to catch source commits that may need doc updates
+- **Code quality:** Add `check-dead-exports.sh` to block dead exports at commit time
 - **Multi-agent / worktrees:** Add `guard-git.sh` + `track-edits.sh` + `track-moves.sh`
 
 **Branch name validation:** The `guard-git.sh` in this repo's `.claude/hooks/` validates branch names against conventional prefixes (`feat/`, `fix/`, etc.). The example version omits this — add your own validation if needed.
