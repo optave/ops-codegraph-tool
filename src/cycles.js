@@ -1,5 +1,5 @@
+import { isTestFile } from './infrastructure/test-filter.js';
 import { loadNative } from './native.js';
-import { isTestFile } from './test-filter.js';
 
 /**
  * Detect circular dependencies in the codebase using Tarjan's SCC algorithm.

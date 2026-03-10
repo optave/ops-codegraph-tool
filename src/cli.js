@@ -3,9 +3,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Command } from 'commander';
-import { audit } from './audit.js';
-import { BATCH_COMMANDS, batch, multiBatchData, splitTargets } from './batch.js';
+import { BATCH_COMMANDS, multiBatchData, splitTargets } from './batch.js';
 import { buildGraph } from './builder.js';
+import { audit } from './commands/audit.js';
+import { batch } from './commands/batch.js';
 import { loadConfig } from './config.js';
 import { findCycles, formatCycles } from './cycles.js';
 import { openReadonlyOrFail } from './db.js';
@@ -24,6 +25,7 @@ import {
   exportMermaid,
   exportNeo4jCSV,
 } from './export.js';
+import { outputResult } from './infrastructure/result-formatter.js';
 import { setVerbose } from './logger.js';
 import { EVERY_SYMBOL_KIND, VALID_ROLES } from './queries.js';
 import {
@@ -49,7 +51,6 @@ import {
   registerRepo,
   unregisterRepo,
 } from './registry.js';
-import { outputResult } from './result-formatter.js';
 import { snapshotDelete, snapshotList, snapshotRestore, snapshotSave } from './snapshot.js';
 import { checkForUpdates, printUpdateNotification } from './update-check.js';
 import { watchProject } from './watcher.js';
@@ -469,7 +470,7 @@ program
         console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
         process.exit(1);
       }
-      const { manifesto } = await import('./manifesto.js');
+      const { manifesto } = await import('./commands/manifesto.js');
       manifesto(opts.db, {
         file: opts.file,
         kind: opts.kind,
@@ -483,7 +484,7 @@ program
     }
 
     // Diff predicates mode
-    const { check } = await import('./check.js');
+    const { check } = await import('./commands/check.js');
     check(opts.db, {
       ref,
       staged: opts.staged,
@@ -502,7 +503,7 @@ program
         console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
         process.exit(1);
       }
-      const { manifesto } = await import('./manifesto.js');
+      const { manifesto } = await import('./commands/manifesto.js');
       manifesto(opts.db, {
         file: opts.file,
         kind: opts.kind,
@@ -952,7 +953,7 @@ program
   .option('--offset <number>', 'Skip N results (default: 0)')
   .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (dir, opts) => {
-    const { structureData, formatStructure } = await import('./structure.js');
+    const { structureData, formatStructure } = await import('./commands/structure.js');
     const data = structureData(opts.db, {
       directory: dir,
       depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
@@ -1013,8 +1014,8 @@ program
   .option('--offset <number>', 'Skip N results (default: 0)')
   .option('--ndjson', 'Newline-delimited JSON output')
   .action(async (file, opts) => {
-    const { analyzeCoChanges, coChangeData, coChangeTopData, formatCoChange, formatCoChangeTop } =
-      await import('./cochange.js');
+    const { analyzeCoChanges, coChangeData, coChangeTopData } = await import('./cochange.js');
+    const { formatCoChange, formatCoChangeTop } = await import('./commands/cochange.js');
 
     if (opts.analyze) {
       const result = analyzeCoChanges(opts.db, {
@@ -1076,7 +1077,7 @@ QUERY_OPTS(
       console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
-    const { flow } = await import('./flow.js');
+    const { flow } = await import('./commands/flow.js');
     flow(name, opts.db, {
       list: opts.list,
       depth: parseInt(opts.depth, 10),
@@ -1106,7 +1107,7 @@ QUERY_OPTS(
       console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
-    const { sequence } = await import('./sequence.js');
+    const { sequence } = await import('./commands/sequence.js');
     sequence(name, opts.db, {
       depth: parseInt(opts.depth, 10),
       file: opts.file,
@@ -1134,7 +1135,7 @@ QUERY_OPTS(
       console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
-    const { dataflow } = await import('./dataflow.js');
+    const { dataflow } = await import('./commands/dataflow.js');
     dataflow(name, opts.db, {
       file: opts.file,
       kind: opts.kind,
@@ -1157,7 +1158,7 @@ QUERY_OPTS(program.command('cfg <name>').description('Show control flow graph fo
       console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
-    const { cfg } = await import('./cfg.js');
+    const { cfg } = await import('./commands/cfg.js');
     cfg(name, opts.db, {
       format: opts.format,
       file: opts.file,
@@ -1194,7 +1195,7 @@ program
       console.error(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
       process.exit(1);
     }
-    const { complexity } = await import('./complexity.js');
+    const { complexity } = await import('./commands/complexity.js');
     complexity(opts.db, {
       target,
       limit: parseInt(opts.limit, 10),
@@ -1243,7 +1244,7 @@ QUERY_OPTS(
   .option('--resolution <n>', 'Louvain resolution parameter (default 1.0)', '1.0')
   .option('--drift', 'Show only drift analysis')
   .action(async (opts) => {
-    const { communities } = await import('./communities.js');
+    const { communities } = await import('./commands/communities.js');
     communities(opts.db, {
       functions: opts.functions,
       resolution: parseFloat(opts.resolution),
@@ -1286,7 +1287,7 @@ program
   .action(async (opts) => {
     if (opts.level === 'file' || opts.level === 'directory') {
       // Delegate to hotspots for file/directory level
-      const { hotspotsData, formatHotspots } = await import('./structure.js');
+      const { hotspotsData, formatHotspots } = await import('./commands/structure.js');
       const metric = opts.sort === 'risk' ? 'fan-in' : opts.sort;
       const data = hotspotsData(opts.db, {
         metric,
@@ -1318,7 +1319,7 @@ program
         process.exit(1);
       }
     }
-    const { triage } = await import('./triage.js');
+    const { triage } = await import('./commands/triage.js');
     triage(opts.db, {
       limit: parseInt(opts.limit, 10),
       offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
@@ -1346,7 +1347,7 @@ program
   .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
   .option('-j, --json', 'Output as JSON')
   .action(async (target, opts) => {
-    const { owners } = await import('./owners.js');
+    const { owners } = await import('./commands/owners.js');
     owners(opts.db, {
       owner: opts.owner,
       boundary: opts.boundary,
@@ -1366,7 +1367,7 @@ program
   .option('-j, --json', 'Output as JSON')
   .option('-f, --format <format>', 'Output format: text, mermaid, json', 'text')
   .action(async (base, target, opts) => {
-    const { branchCompare } = await import('./branch-compare.js');
+    const { branchCompare } = await import('./commands/branch-compare.js');
     await branchCompare(base, target, {
       engine: program.opts().engine,
       depth: parseInt(opts.depth, 10),

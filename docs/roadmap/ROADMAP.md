@@ -612,9 +612,10 @@ Rewrite the CFG algorithm as a node-level visitor that builds basic blocks and e
 - ✅ `queries.js` CLI wrappers → `queries-cli.js` (15 functions)
 - ✅ Shared `result-formatter.js` (`outputResult` for JSON/NDJSON dispatch)
 - ✅ Shared `test-filter.js` (`isTestFile` predicate)
-- 🔲 Extract CLI wrappers from remaining modules (audit, batch, check, cochange, communities, complexity, cfg, dataflow, flow, manifesto, owners, structure, triage, branch-compare)
-- 🔲 Introduce `CommandRunner` shared lifecycle
-- 🔲 Per-command `src/commands/` directory structure
+- ✅ Extract CLI wrappers from remaining modules (audit, batch, check, cochange, communities, complexity, cfg, dataflow, flow, manifesto, owners, structure, triage, branch-compare, sequence)
+- ✅ Introduce `CommandRunner` shared lifecycle (`src/infrastructure/command-runner.js`)
+- ✅ Per-command `src/commands/` directory structure (16 command files)
+- ✅ Move shared utilities to `src/infrastructure/` (result-formatter.js, test-filter.js)
 
 Eliminate the `*Data()` / `*()` dual-function pattern replicated across 19 modules. Every analysis module (queries, audit, batch, check, cochange, communities, complexity, cfg, dataflow, ast, flow, manifesto, owners, structure, triage, branch-compare, viewer) currently implements both data extraction AND CLI formatting.
 
