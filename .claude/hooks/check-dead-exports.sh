@@ -137,7 +137,7 @@ if [ -n "$DEAD_EXPORTS" ]; then
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason: process.argv[1]
+        permissionDecisionReason: process.argv[2]
       }
     }));
   " "$REASON"
