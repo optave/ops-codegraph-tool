@@ -12,10 +12,9 @@ import { buildExtensionSet } from './ast-analysis/shared.js';
 import { walkWithVisitors } from './ast-analysis/visitor.js';
 import { createAstStoreVisitor } from './ast-analysis/visitors/ast-store-visitor.js';
 import { openReadonlyOrFail } from './db.js';
+import { outputResult } from './infrastructure/result-formatter.js';
 import { debug } from './logger.js';
 import { paginateResult } from './paginate.js';
-
-import { outputResult } from './result-formatter.js';
 
 // ─── Constants ────────────────────────────────────────────────────────
 

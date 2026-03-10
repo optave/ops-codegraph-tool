@@ -13,15 +13,15 @@ import {
   openReadonlyOrFail,
   testFilterSQL,
 } from './db.js';
+import { isTestFile } from './infrastructure/test-filter.js';
 import { ALL_SYMBOL_KINDS } from './kinds.js';
 import { debug } from './logger.js';
 import { ownersForFiles } from './owners.js';
 import { paginateResult } from './paginate.js';
 import { LANGUAGE_REGISTRY } from './parser.js';
-import { isTestFile } from './test-filter.js';
 
 // Re-export from dedicated module for backward compat
-export { isTestFile, TEST_PATTERN } from './test-filter.js';
+export { isTestFile, TEST_PATTERN } from './infrastructure/test-filter.js';
 
 /**
  * Resolve a file path relative to repoRoot, rejecting traversal outside the repo.
