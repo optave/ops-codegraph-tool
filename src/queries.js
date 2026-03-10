@@ -1898,8 +1898,9 @@ function explainFunctionImpl(db, target, noTests, getFileLines) {
     if (noTests) callers = callers.filter((c) => !isTestFile(c.file));
 
     const testCallerRows = findCallers(db, node.id);
+    const seenFiles = new Set();
     const relatedTests = testCallerRows
-      .filter((r) => isTestFile(r.file))
+      .filter((r) => isTestFile(r.file) && !seenFiles.has(r.file) && seenFiles.add(r.file))
       .map((r) => ({ file: r.file }));
 
     // Complexity metrics

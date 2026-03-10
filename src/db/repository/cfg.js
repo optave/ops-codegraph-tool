@@ -5,7 +5,7 @@
  */
 export function hasCfgTables(db) {
   try {
-    db.prepare('SELECT 1 FROM cfg_blocks LIMIT 0').raw();
+    db.prepare('SELECT 1 FROM cfg_blocks LIMIT 0').get();
     return true;
   } catch {
     return false;
