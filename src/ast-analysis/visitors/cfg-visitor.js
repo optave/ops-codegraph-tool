@@ -774,12 +774,11 @@ export function createCfgVisitor(cfgRules) {
     },
 
     enterNode(_node, _context) {
-      // All CFG construction is done in enterFunction via processStatements.
-      // We use skipChildren to prevent the walker from recursing into
-      // function bodies (which we've already fully processed).
-      if (S?.funcNode && _node === S.funcNode) {
-        return { skipChildren: true };
-      }
+      // No-op — all CFG construction is done in enterFunction via
+      // processStatements.  We intentionally do NOT return skipChildren here
+      // so that the walker still recurses into children, allowing nested
+      // function definitions to trigger enterFunction/exitFunction and get
+      // their own CFG computed via the funcStateStack.
     },
 
     exitNode(_node, _context) {

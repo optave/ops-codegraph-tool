@@ -275,8 +275,18 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, engineOpts) {
             def.cfg = { blocks: cfgResult.blocks, edges: cfgResult.edges };
 
             // Override complexity's cyclomatic with CFG-derived value (single source of truth)
+            // and recompute maintainability index to stay consistent
             if (def.complexity && cfgResult.cyclomatic != null) {
               def.complexity.cyclomatic = cfgResult.cyclomatic;
+              const { loc, halstead } = def.complexity;
+              const volume = halstead ? halstead.volume : 0;
+              const commentRatio = loc?.loc > 0 ? loc.commentLines / loc.loc : 0;
+              def.complexity.maintainabilityIndex = computeMaintainabilityIndex(
+                volume,
+                cfgResult.cyclomatic,
+                loc?.sloc ?? 0,
+                commentRatio,
+              );
             }
           }
         }
