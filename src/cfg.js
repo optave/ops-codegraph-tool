@@ -200,7 +200,9 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
         visitorCfgByLine = new Map();
         for (const r of cfgResults) {
           if (r.funcNode) {
-            visitorCfgByLine.set(r.funcNode.startPosition.row + 1, r);
+            const line = r.funcNode.startPosition.row + 1;
+            if (!visitorCfgByLine.has(line)) visitorCfgByLine.set(line, []);
+            visitorCfgByLine.get(line).push(r);
           }
         }
       }
@@ -217,7 +219,15 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
         if (def.cfg?.blocks?.length) {
           cfg = def.cfg;
         } else if (visitorCfgByLine) {
-          const r = visitorCfgByLine.get(def.line);
+          const candidates = visitorCfgByLine.get(def.line);
+          const r = !candidates
+            ? undefined
+            : candidates.length === 1
+              ? candidates[0]
+              : (candidates.find((c) => {
+                  const n = c.funcNode.childForFieldName('name');
+                  return n && n.text === def.name;
+                }) ?? candidates[0]);
           if (r) cfg = { blocks: r.blocks, edges: r.edges };
         }
 
