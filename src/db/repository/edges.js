@@ -10,7 +10,7 @@
 export function findCallees(db, nodeId) {
   return db
     .prepare(
-      `SELECT n.id, n.name, n.kind, n.file, n.line, n.end_line
+      `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line, n.end_line
        FROM edges e JOIN nodes n ON e.target_id = n.id
        WHERE e.source_id = ? AND e.kind = 'calls'`,
     )
