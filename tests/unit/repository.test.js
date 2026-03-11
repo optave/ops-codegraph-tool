@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { initSchema } from '../../src/db/migrations.js';
+import { getClassHierarchy } from '../../src/db/repository/edges.js';
 import {
   countEdges,
   countFiles,
@@ -160,6 +161,88 @@ describe('repository', () => {
       const rows = [...iterateFunctionNodes(db, { noTests: true })];
       expect(rows.every((r) => !r.file.includes('.test.'))).toBe(true);
       expect(rows.length).toBe(3);
+    });
+  });
+
+  describe('getClassHierarchy', () => {
+    it('returns empty set for node with no extends edges', () => {
+      const fooId = db.prepare("SELECT id FROM nodes WHERE name = 'foo'").get().id;
+      const ancestors = getClassHierarchy(db, fooId);
+      expect(ancestors.size).toBe(0);
+    });
+
+    it('resolves single-level class hierarchy', () => {
+      // Create Parent class and extends edge: Baz -> Parent
+      const insertNode = db.prepare(
+        'INSERT INTO nodes (name, kind, file, line, role) VALUES (?, ?, ?, ?, ?)',
+      );
+      insertNode.run('Parent', 'class', 'src/parent.js', 1, null);
+
+      const bazId = db.prepare("SELECT id FROM nodes WHERE name = 'Baz'").get().id;
+      const parentId = db.prepare("SELECT id FROM nodes WHERE name = 'Parent'").get().id;
+      db.prepare('INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, ?)').run(
+        bazId,
+        parentId,
+        'extends',
+      );
+
+      const ancestors = getClassHierarchy(db, bazId);
+      expect(ancestors.size).toBe(1);
+      expect(ancestors.has(parentId)).toBe(true);
+    });
+
+    it('resolves multi-level class hierarchy', () => {
+      const insertNode = db.prepare(
+        'INSERT INTO nodes (name, kind, file, line, role) VALUES (?, ?, ?, ?, ?)',
+      );
+      insertNode.run('Parent', 'class', 'src/parent.js', 1, null);
+      insertNode.run('Grandparent', 'class', 'src/grandparent.js', 1, null);
+
+      const bazId = db.prepare("SELECT id FROM nodes WHERE name = 'Baz'").get().id;
+      const parentId = db.prepare("SELECT id FROM nodes WHERE name = 'Parent'").get().id;
+      const grandparentId = db
+        .prepare("SELECT id FROM nodes WHERE name = 'Grandparent'")
+        .get().id;
+
+      const insertEdge = db.prepare(
+        'INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, ?)',
+      );
+      insertEdge.run(bazId, parentId, 'extends');
+      insertEdge.run(parentId, grandparentId, 'extends');
+
+      const ancestors = getClassHierarchy(db, bazId);
+      expect(ancestors.size).toBe(2);
+      expect(ancestors.has(parentId)).toBe(true);
+      expect(ancestors.has(grandparentId)).toBe(true);
+    });
+
+    it('handles diamond inheritance without infinite loops', () => {
+      const insertNode = db.prepare(
+        'INSERT INTO nodes (name, kind, file, line, role) VALUES (?, ?, ?, ?, ?)',
+      );
+      insertNode.run('A', 'class', 'src/a.js', 1, null);
+      insertNode.run('B', 'class', 'src/b.js', 1, null);
+      insertNode.run('Top', 'class', 'src/top.js', 1, null);
+
+      const bazId = db.prepare("SELECT id FROM nodes WHERE name = 'Baz'").get().id;
+      const aId = db.prepare("SELECT id FROM nodes WHERE name = 'A'").get().id;
+      const bId = db.prepare("SELECT id FROM nodes WHERE name = 'B'").get().id;
+      const topId = db.prepare("SELECT id FROM nodes WHERE name = 'Top'").get().id;
+
+      const insertEdge = db.prepare(
+        'INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, ?)',
+      );
+      // Baz -> A, Baz -> B, A -> Top, B -> Top
+      insertEdge.run(bazId, aId, 'extends');
+      insertEdge.run(bazId, bId, 'extends');
+      insertEdge.run(aId, topId, 'extends');
+      insertEdge.run(bId, topId, 'extends');
+
+      const ancestors = getClassHierarchy(db, bazId);
+      expect(ancestors.size).toBe(3); // A, B, Top
+      expect(ancestors.has(aId)).toBe(true);
+      expect(ancestors.has(bId)).toBe(true);
+      expect(ancestors.has(topId)).toBe(true);
     });
   });
 
