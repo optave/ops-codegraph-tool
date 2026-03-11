@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.1.1 | **Status:** Active development | **Updated:** March 2026
+> **Current version:** 3.1.2 | **Status:** Active development | **Updated:** March 2026
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across ten phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -16,7 +16,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Complete** (v1.4.0) |
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.6.0) |
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
-| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, presentation layer, domain grouping, curated API, unified graph model | **In Progress** (v3.1.1) |
+| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, presentation layer, domain grouping, curated API, unified graph model | **In Progress** (v3.1.2) |
 | [**4**](#phase-4--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | Planned |
 | [**5**](#phase-5--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
 | [**6**](#phase-6--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
