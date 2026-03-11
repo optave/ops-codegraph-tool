@@ -42,18 +42,18 @@ fi
 EDITED_FILES=$(awk '{print $2}' "$LOG_FILE" | sort -u)
 
 # Filter staged files to src/ and tests/ that were edited in this session
-FILES_TO_LINT=""
+declare -a FILES_TO_LINT=()
 while IFS= read -r file; do
   case "$file" in
     src/*.js|src/*.ts|src/*.tsx|tests/*.js|tests/*.ts|tests/*.tsx) ;;
     *) continue ;;
   esac
   if echo "$EDITED_FILES" | grep -qxF "$file"; then
-    FILES_TO_LINT="${FILES_TO_LINT:+$FILES_TO_LINT }$file"
+    FILES_TO_LINT+=("$file")
   fi
 done <<< "$STAGED"
 
-if [ -z "$FILES_TO_LINT" ]; then
+if [ "${#FILES_TO_LINT[@]}" -eq 0 ]; then
   exit 0
 fi
 
@@ -61,8 +61,7 @@ fi
 # Intentional fail-open: if biome crashes or OOMs (non-zero exit with no output),
 # the commit is allowed through. We only block when there is actionable lint output.
 cd "$WORK_ROOT" || exit 0
-# shellcheck disable=SC2086
-LINT_OUTPUT=$(npx biome check --no-errors-on-unmatched $FILES_TO_LINT 2>&1) || LINT_EXIT=$?
+LINT_OUTPUT=$(npx biome check --no-errors-on-unmatched "${FILES_TO_LINT[@]}" 2>&1) || LINT_EXIT=$?
 
 if [ "${LINT_EXIT:-0}" -ne 0 ] && [ -n "$LINT_OUTPUT" ]; then
   # Truncate output to first 30 lines to keep denial message readable
