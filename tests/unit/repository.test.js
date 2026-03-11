@@ -200,9 +200,7 @@ describe('repository', () => {
 
       const bazId = db.prepare("SELECT id FROM nodes WHERE name = 'Baz'").get().id;
       const parentId = db.prepare("SELECT id FROM nodes WHERE name = 'Parent'").get().id;
-      const grandparentId = db
-        .prepare("SELECT id FROM nodes WHERE name = 'Grandparent'")
-        .get().id;
+      const grandparentId = db.prepare("SELECT id FROM nodes WHERE name = 'Grandparent'").get().id;
 
       const insertEdge = db.prepare(
         'INSERT INTO edges (source_id, target_id, kind) VALUES (?, ?, ?)',
