@@ -127,6 +127,7 @@ export function disposeParsers() {
     }
   }
   _queryCache.clear();
+  _initialized = false;
 }
 
 export function getParser(parsers, filePath) {
@@ -463,7 +464,7 @@ export function getActiveEngine(opts = {}) {
     : null;
   // Prefer platform package.json version over binary-embedded version
   // to handle stale binaries that weren't recompiled during a release
-  if (native && version) {
+  if (native) {
     try {
       version = getNativePackageVersion() ?? version;
     } catch {}

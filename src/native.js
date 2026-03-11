@@ -11,6 +11,7 @@ import os from 'node:os';
 
 let _cached; // undefined = not yet tried, null = failed, object = module
 let _loadError = null;
+const _require = createRequire(import.meta.url);
 
 /**
  * Detect whether the current Linux environment uses glibc or musl.
@@ -18,7 +19,7 @@ let _loadError = null;
  */
 function detectLibc() {
   try {
-    const { readdirSync } = require('node:fs');
+    const { readdirSync } = _require('node:fs');
     const files = readdirSync('/lib');
     if (files.some((f) => f.startsWith('ld-musl-') && f.endsWith('.so.1'))) {
       return 'musl';
@@ -45,15 +46,13 @@ const PLATFORM_PACKAGES = {
 export function loadNative() {
   if (_cached !== undefined) return _cached;
 
-  const require = createRequire(import.meta.url);
-
   const platform = os.platform();
   const arch = os.arch();
   const key = platform === 'linux' ? `${platform}-${arch}-${detectLibc()}` : `${platform}-${arch}`;
   const pkg = PLATFORM_PACKAGES[key];
   if (pkg) {
     try {
-      _cached = require(pkg);
+      _cached = _require(pkg);
       return _cached;
     } catch (err) {
       _loadError = err;
@@ -78,14 +77,13 @@ export function isNativeAvailable() {
  * Returns null if the package is not installed or has no version.
  */
 export function getNativePackageVersion() {
-  const require = createRequire(import.meta.url);
   const platform = os.platform();
   const arch = os.arch();
   const key = platform === 'linux' ? `${platform}-${arch}-${detectLibc()}` : `${platform}-${arch}`;
   const pkg = PLATFORM_PACKAGES[key];
   if (!pkg) return null;
   try {
-    const pkgJson = require(`${pkg}/package.json`);
+    const pkgJson = _require(`${pkg}/package.json`);
     return pkgJson.version || null;
   } catch {
     return null;
