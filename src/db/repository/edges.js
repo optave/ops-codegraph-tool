@@ -1,3 +1,6 @@
+// ─── Prepared-statement caches (one per db instance) ────────────────────
+const _getClassAncestorsStmt = new WeakMap();
+
 // ─── Call-edge queries ──────────────────────────────────────────────────
 
 /**
@@ -222,12 +225,15 @@ export function getClassHierarchy(db, classNodeId) {
   const queue = [classNodeId];
   while (queue.length > 0) {
     const current = queue.shift();
-    const parents = db
-      .prepare(
+    let stmt = _getClassAncestorsStmt.get(db);
+    if (!stmt) {
+      stmt = db.prepare(
         `SELECT n.id, n.name FROM edges e JOIN nodes n ON e.target_id = n.id
          WHERE e.source_id = ? AND e.kind = 'extends'`,
-      )
-      .all(current);
+      );
+      _getClassAncestorsStmt.set(db, stmt);
+    }
+    const parents = stmt.all(current);
     for (const p of parents) {
       if (!ancestors.has(p.id)) {
         ancestors.add(p.id);
