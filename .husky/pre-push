@@ -1,5 +1,5 @@
 #!/bin/sh
-IMPACT=$(codegraph diff-impact origin/main --json -T 2>/dev/null || node src/cli.js diff-impact origin/main --json -T 2>/dev/null)
+IMPACT=$(codegraph diff-impact origin/main --json -T 2>/dev/null || node src/cli.js diff-impact origin/main --json -T 2>/dev/null || true)
 if [ -n "$IMPACT" ]; then
   AFFECTED=$(echo "$IMPACT" | node -e "
     let d=''; process.stdin.on('data',c=>d+=c);
@@ -7,8 +7,8 @@ if [ -n "$IMPACT" ]; then
       try { console.log(JSON.parse(d).summary?.totalAffected||0); }
       catch { console.log(0); }
     });
-  ")
-  if [ "$AFFECTED" -gt 50 ]; then
+  " 2>/dev/null || true)
+  if [ -n "$AFFECTED" ] && [ "$AFFECTED" -gt 50 ]; then
     echo "Warning: pushing changes that affect $AFFECTED functions"
     echo "Run 'codegraph diff-impact origin/main -T' to review"
   fi

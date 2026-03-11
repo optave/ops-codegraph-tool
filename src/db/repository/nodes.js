@@ -161,6 +161,12 @@ export function findFileNodes(db, fileLike) {
   return db.prepare("SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'").all(fileLike);
 }
 
+// ─── Statement caches (one prepared statement per db instance) ────────────
+// WeakMap keys on the db object so statements are GC'd when the db closes.
+const _getNodeIdStmt = new WeakMap();
+const _getFunctionNodeIdStmt = new WeakMap();
+const _bulkNodeIdsByFileStmt = new WeakMap();
+
 /**
  * Look up a node's ID by its unique (name, kind, file, line) tuple.
  * Shared by builder, watcher, structure, complexity, cfg, engine.
@@ -172,10 +178,12 @@ export function findFileNodes(db, fileLike) {
  * @returns {number|undefined}
  */
 export function getNodeId(db, name, kind, file, line) {
-  const row = db
-    .prepare('SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? AND line = ?')
-    .get(name, kind, file, line);
-  return row?.id;
+  let stmt = _getNodeIdStmt.get(db);
+  if (!stmt) {
+    stmt = db.prepare('SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? AND line = ?');
+    _getNodeIdStmt.set(db, stmt);
+  }
+  return stmt.get(name, kind, file, line)?.id;
 }
 
 /**
@@ -188,12 +196,14 @@ export function getNodeId(db, name, kind, file, line) {
  * @returns {number|undefined}
  */
 export function getFunctionNodeId(db, name, file, line) {
-  const row = db
-    .prepare(
+  let stmt = _getFunctionNodeIdStmt.get(db);
+  if (!stmt) {
+    stmt = db.prepare(
       "SELECT id FROM nodes WHERE name = ? AND kind IN ('function','method') AND file = ? AND line = ?",
-    )
-    .get(name, file, line);
-  return row?.id;
+    );
+    _getFunctionNodeIdStmt.set(db, stmt);
+  }
+  return stmt.get(name, file, line)?.id;
 }
 
 /**
@@ -205,7 +215,12 @@ export function getFunctionNodeId(db, name, file, line) {
  * @returns {{ id: number, name: string, kind: string, line: number }[]}
  */
 export function bulkNodeIdsByFile(db, file) {
-  return db.prepare('SELECT id, name, kind, line FROM nodes WHERE file = ?').all(file);
+  let stmt = _bulkNodeIdsByFileStmt.get(db);
+  if (!stmt) {
+    stmt = db.prepare('SELECT id, name, kind, line FROM nodes WHERE file = ?');
+    _bulkNodeIdsByFileStmt.set(db, stmt);
+  }
+  return stmt.all(file);
 }
 
 /**

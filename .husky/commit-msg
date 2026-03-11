@@ -2,7 +2,7 @@
 npx --no -- commitlint --edit $1
 
 # Append codegraph impact summary if available
-IMPACT=$(codegraph diff-impact --staged --json -T 2>/dev/null || node src/cli.js diff-impact --staged --json -T 2>/dev/null)
+IMPACT=$(codegraph diff-impact --staged --json -T 2>/dev/null || node src/cli.js diff-impact --staged --json -T 2>/dev/null || true)
 if [ -n "$IMPACT" ]; then
   SUMMARY=$(echo "$IMPACT" | node -e "
     let d=''; process.stdin.on('data',c=>d+=c);
@@ -13,7 +13,7 @@ if [ -n "$IMPACT" ]; then
           console.log('Impact: '+j.summary.functionsChanged+' functions changed, '+(j.summary.totalAffected||j.summary.callersAffected||0)+' affected');
       } catch {}
     });
-  " 2>/dev/null)
+  " 2>/dev/null || true)
   if [ -n "$SUMMARY" ]; then
     echo "" >> "$1"
     echo "$SUMMARY" >> "$1"

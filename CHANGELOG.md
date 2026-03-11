@@ -2,6 +2,35 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.1.2](https://github.com/optave/codegraph/compare/v3.1.1...v3.1.2) (2026-03-11)
+
+**Phase 3 architectural refactoring reaches substantial completion.** This release finishes the unified AST analysis framework (Phase 3.1) — all four analyses (complexity, CFG, dataflow, AST-store) now run in a single DFS walk via pluggable visitors, with `cfg.js` shrinking from 1,242 to 518 lines and cyclomatic complexity derived directly from CFG structure. CLI command/query separation (Phase 3.2) moves ~1,059 lines of formatting code into a dedicated `src/commands/` directory. Repository pattern migration (Phase 3.3) extracts raw SQL from 14 source modules. Dynamic `import()` expressions are now tracked as `dynamic-imports` graph edges, fixing false positives in dead-export analysis and impact tracing. Prepared statement caching cuts hot-path DB overhead in the repository layer.
+
+### Features
+
+* **ast-analysis:** unified AST analysis framework — shared DFS walker with pluggable `enterNode`/`exitNode`/`enterFunction`/`exitFunction` hooks; complexity, CFG, AST-store, and dataflow visitors in a single coordinated pass ([#388](https://github.com/optave/codegraph/pull/388))
+* **cfg:** CFG visitor rewrite — node-level DFS visitor replaces statement-level `buildFunctionCFG`, Mode A/B split eliminated; cyclomatic complexity now derived from CFG (`E - N + 2`); `cfg.js` reduced from 1,242 → 518 lines ([#392](https://github.com/optave/codegraph/pull/392))
+* **commands:** extract CLI wrappers into `src/commands/` directory (Phase 3.2) — command/query separation complete across all 19 analysis modules; `src/infrastructure/` added for shared `result-formatter.js` and `test-filter.js` ([#393](https://github.com/optave/codegraph/pull/393))
+* **builder:** track dynamic `import()` expressions as `dynamic-imports` graph edges — destructured names feed into call resolution, fixing false "zero consumers" in dead-export analysis ([#389](https://github.com/optave/codegraph/pull/389))
+
+### Bug Fixes
+
+* **hooks:** fix `check-dead-exports` hook silently no-ops on ESM codebases ([#394](https://github.com/optave/codegraph/pull/394))
+* **hooks:** guard pre-push hook against `sh -e` failure when `diff-impact` is unavailable
+* **complexity:** remove function nodes from `nestingNodeTypes` and eliminate O(n²) lookup
+* **complexity:** remove function nesting inflation in `computeAllMetrics` and pass `langId` to LOC
+* **ast-analysis:** guard `runAnalyses` call, fix nested function nesting, rename `_engineOpts`
+* **ast-analysis:** fix Halstead skip depth counter, debug logging, perf import
+
+### Performance
+
+* **db:** cache prepared statements in hot-path repository functions — avoids repeated statement compilation on incremental builds
+
+### Refactors
+
+* migrate raw SQL from 14 source modules into repository pattern (Phase 3.3) — `src/db/repository/` split into 10 domain files (nodes, edges, build-stmts, complexity, cfg, dataflow, cochange, embeddings, graph-read, barrel)
+* address Greptile review — deduplicate `relatedTests`, hoist prepared stmts, fix `.raw()` no-op
+
 ## [3.1.1](https://github.com/optave/codegraph/compare/v3.1.0...v3.1.1) (2026-03-08)
 
 **Reliability, architecture, and MCP cold-start fixes.** This patch breaks a circular dependency cycle, fixes MCP server first-connect reliability by deferring heavy imports, corrects flow matching to use core symbol kinds, and refactors all database access to use try/finally for reliable `db.close()`. Internal architecture improves with repository pattern for data access and command/query separation.

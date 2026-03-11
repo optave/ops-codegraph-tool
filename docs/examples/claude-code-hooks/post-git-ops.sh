@@ -4,7 +4,6 @@
 # merge, pull) and:
 #   1. Rebuilds the codegraph incrementally (fixes stale dependency context)
 #   2. Logs changed files to session-edits.log (so commit validation works)
-#   3. Clears stale entries from codegraph-checked.log (so remind hook re-fires)
 # Always exits 0 (informational only, never blocks).
 
 set -euo pipefail
@@ -58,18 +57,6 @@ if [ -n "$CHANGED_FILES" ]; then
       echo "$TS $rel_path" >> "$LOG_FILE"
     fi
   done <<< "$CHANGED_FILES"
-fi
-
-# --- 3. Clear stale entries from codegraph-checked.log ---
-# After a git op that changes files, the remind-codegraph hook should
-# re-fire for those files so the agent re-checks context/impact.
-CHECKED_LOG="$PROJECT_DIR/.claude/codegraph-checked.log"
-if [ -n "$CHANGED_FILES" ] && [ -f "$CHECKED_LOG" ]; then
-  PATTERNS_FILE=$(mktemp)
-  echo "$CHANGED_FILES" > "$PATTERNS_FILE"
-  grep -vFf "$PATTERNS_FILE" "$CHECKED_LOG" > "${CHECKED_LOG}.tmp" 2>/dev/null || true
-  mv "${CHECKED_LOG}.tmp" "$CHECKED_LOG"
-  rm -f "$PATTERNS_FILE"
 fi
 
 exit 0

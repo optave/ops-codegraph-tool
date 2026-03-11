@@ -64,13 +64,15 @@ fi
 # Single Node.js invocation: check all files in one process
 # Excludes exports that are re-exported from index.js (public API) or consumed
 # via dynamic import() — codegraph's static graph doesn't track those edges.
-DEAD_EXPORTS=$(node -e "
-  const fs = require('fs');
-  const path = require('path');
-  const root = process.argv[1];
-  const files = process.argv[2].split('\n').filter(Boolean);
+DEAD_EXPORTS=$(node --input-type=module -e "
+  import fs from 'node:fs';
+  import path from 'node:path';
+  import { pathToFileURL } from 'node:url';
+  const root = process.argv[2];
+  const files = process.argv[3].split('\n').filter(Boolean);
 
-  const { exportsData } = require(path.join(root, 'src/queries.js'));
+  const fileUrl = pathToFileURL(path.join(root, 'src/queries.js')).href;
+  const { exportsData } = await import(fileUrl);
 
   // Build set of names exported from index.js (public API surface)
   const indexSrc = fs.readFileSync(path.join(root, 'src/index.js'), 'utf8');
@@ -94,14 +96,14 @@ DEAD_EXPORTS=$(node -e "
       try {
         const src = fs.readFileSync(path.join(dir, ent.name), 'utf8');
         // Multi-line-safe: match const { ... } = [await] import('...')
-        for (const m of src.matchAll(/const\s*\{([^}]+)\}\s*=\s*(?:await\s+)?import\s*\(['"]/gs)) {
+        for (const m of src.matchAll(/const\s*\{([^}]+)\}\s*=\s*(?:await\s+)?import\s*\([\u0022']/gs)) {
           for (const part of m[1].split(',')) {
             const name = part.trim().split(/\s+as\s+/).pop().trim().split('\n').pop().trim();
             if (name && /^\w+$/.test(name)) publicAPI.add(name);
           }
         }
         // Also match single-binding: const X = [await] import('...')  (default import)
-        for (const m of src.matchAll(/const\s+(\w+)\s*=\s*(?:await\s+)?import\s*\(['"]/g)) {
+        for (const m of src.matchAll(/const\s+(\w+)\s*=\s*(?:await\s+)?import\s*\([\u0022']/g)) {
           publicAPI.add(m[1]);
         }
       } catch {}
@@ -135,7 +137,7 @@ if [ -n "$DEAD_EXPORTS" ]; then
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'deny',
-        permissionDecisionReason: process.argv[1]
+        permissionDecisionReason: process.argv[2]
       }
     }));
   " "$REASON"
