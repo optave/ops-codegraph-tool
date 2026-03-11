@@ -127,7 +127,7 @@ try {
         function scanDynamic(dir) {
           for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
             if (ent.isDirectory()) { scanDynamic(path.join(dir, ent.name)); continue; }
-            if (!ent.name.endsWith('.js')) continue;
+            if (!/\.(js|ts|tsx)$/.test(ent.name)) continue;
             try {
               const src = fs.readFileSync(path.join(dir, ent.name), 'utf8');
               for (const m of src.matchAll(/const\s*\{([^}]+)\}\s*=\s*(?:await\s+)?import\s*\(['"]/gs)) {
