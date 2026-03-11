@@ -831,7 +831,7 @@ Add to `.claude/settings.json`:
           {
             "type": "command",
             "command": "bash .claude/hooks/pre-commit.sh",
-            "timeout": 30
+            "timeout": 60
           },
           {
             "type": "command",
