@@ -108,7 +108,7 @@ Build: `codegraph build <repo> --engine native --no-incremental`
 | Parameters | 2158 | 2198 | +40 |
 | Calls | 2129 | 2163 | +34 |
 | Dynamic imports | 0 | 99 | +99 (BUG #410) |
-| Complexity | 1193 functions | 0 (BUG #413) | -1193 |
+| Complexity | 1193 functions | 1192 post-fix (BUG #413) | -1 (see parity gap #5) |
 | Quality score | 88 | 88 | 0 |
 | Full build time | 1335ms | 2500ms | Native 1.87x faster |
 | No-op rebuild | 8ms | 8ms | Parity |
@@ -121,6 +121,7 @@ Build: `codegraph build <repo> --engine native --no-incremental`
 2. **Constants:** Native extracts 36 more constants than WASM — likely better coverage of top-level const declarations.
 3. **Parameters:** WASM extracts 40 more parameters than native.
 4. **WASM complexity failure (#413):** WASM builds produce 0 complexity rows due to a `ReferenceError: findFunctionNode is not defined` in `src/complexity.js:457`. The import aliases the function as `_findFunctionNode` but the callsite uses the bare name. Native builds skip this code path because complexity is pre-computed in Rust. **Fix in PR #414** — one-line change, 120 tests pass.
+5. **Residual complexity gap (1192 vs 1193):** After the #413 fix, WASM produces 1192 complexity rows vs native's 1193. The missing function is `SymbolExtractor.extract` — a Rust `impl` method at `crates/codegraph-core/src/extractors/mod.rs:18`. The WASM parser's `_findFunctionNode` cannot locate the AST node for Rust `impl` method blocks, so the JS complexity fallback silently skips it. This is a minor WASM parser limitation, not a regression.
 
 ---
 
@@ -302,7 +303,7 @@ All 15 key exports verified via ESM import:
 - **PR:** Included in this PR — one-line fix in `src/complexity.js:457`
 - **Symptoms:** WASM builds produce 0 complexity rows. `--verbose` shows: `buildComplexityMetrics failed: findFunctionNode is not defined`. The `complexity` command reports "No complexity data found" after a WASM build.
 - **Root cause:** `src/complexity.js` line 9 imports `findFunctionNode as _findFunctionNode`, but line 457 calls the bare `findFunctionNode` which is only a re-export name, not a local binding. Native builds never hit this path because `def.complexity` is pre-computed in Rust (line 425).
-- **Fix applied:** Changed `findFunctionNode(...)` to `_findFunctionNode(...)` at line 457. Verified: WASM now produces 1192 complexity rows. 120 tests pass (94 unit + 26 integration).
+- **Fix applied:** Changed `findFunctionNode(...)` to `_findFunctionNode(...)` at line 457. Verified: WASM now produces 1192 complexity rows (vs native's 1193). The 1-function gap is `SymbolExtractor.extract` (Rust `impl` method at `crates/codegraph-core/src/extractors/mod.rs:18`) — the WASM parser's `_findFunctionNode` can't locate the AST node for Rust `impl` method blocks. See parity gap #5. 120 tests pass (94 unit + 26 integration).
 
 ---
 
