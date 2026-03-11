@@ -1068,6 +1068,22 @@ fn extract_dynamic_import_names(call_node: &Node, source: &[u8]) -> Vec<String> 
         }
         // const mod = await import(...)
         "identifier" => vec![node_text(&name_node, source).to_string()],
+        // const [first, second] = await import(...)
+        "array_pattern" => {
+            let mut names = Vec::new();
+            for i in 0..name_node.child_count() {
+                if let Some(child) = name_node.child(i) {
+                    if child.kind() == "identifier" {
+                        names.push(node_text(&child, source).to_string());
+                    } else if child.kind() == "assignment_pattern" {
+                        if let Some(left) = child.child_by_field_name("left") {
+                            names.push(node_text(&left, source).to_string());
+                        }
+                    }
+                }
+            }
+            names
+        }
         _ => Vec::new(),
     }
 }
