@@ -730,9 +730,9 @@ Hooks automate codegraph integration so the agent gets structural context withou
 | Hook | Event | Purpose |
 |------|-------|---------|
 | `enrich-context.sh` | PreToolUse (Read, Grep) | Injects dependency info before file reads |
-| `remind-codegraph.sh` | PreToolUse (Edit, Write) | Reminds agent to check context/impact before editing |
+| `pre-commit.sh` | PreToolUse (Bash) | Blocks commits with cycles/dead exports; warns on signatures + diff-impact |
+| `lint-staged.sh` | PreToolUse (Bash) | Blocks commits with lint errors in session-edited files |
 | `update-graph.sh` | PostToolUse (Edit, Write) | Rebuilds graph after code changes |
-| `check-readme.sh` | PreToolUse (Bash) | Blocks commits when source changes may need doc updates |
 | `guard-git.sh` | PreToolUse (Bash) | Blocks dangerous git ops, validates commits |
 | `track-edits.sh` | PostToolUse (Edit, Write) | Logs edits for commit validation |
 
@@ -753,21 +753,23 @@ Hooks automate codegraph integration so the agent gets structural context withou
 
 **Requirements:** `.codegraph/graph.db` must exist (run `codegraph build` first). Fails gracefully if missing.
 
-### `remind-codegraph.sh` — Nudge the agent to check before editing
+### `pre-commit.sh` — Consolidated pre-commit checks
 
-**Trigger:** Before any Edit or Write operation (PreToolUse).
+**Trigger:** Before any Bash command containing `git commit` (PreToolUse).
 
-**What it does:** The first time the agent edits a source file, the hook injects a reminder via `additionalContext` to run `where`, `audit --quick`, `context`, and `fn-impact` before proceeding. Subsequent edits to the same file in the same session are silently allowed (tracked in `.claude/codegraph-checked.log`).
+**What it does:** Runs all codegraph pre-commit checks in a single Node.js process (`pre-commit-checks.js`):
+1. **Cycle detection** (blocking) — blocks if circular dependencies involve files edited in this session
+2. **Dead export detection** (blocking) — blocks if edited src/ files have exports with zero consumers
+3. **Signature change warnings** (informational) — warns with risk level (`HIGH`/`MEDIUM`/`LOW` based on symbol role) and transitive caller count
+4. **Diff-impact** (informational) — shows blast radius of staged changes
 
-**Example output the agent sees:**
+**Design:** Consolidates what were previously 3 separate hooks (`show-diff-impact.sh`, `check-commit.sh`, `check-dead-exports.sh`) into one Node.js invocation — single DB connection, single `checkData()` call.
 
-```
-[codegraph reminder] You are about to edit src/parser.js. Did you run codegraph first?
-Before editing, always: (1) where <name>, (2) audit --quick src/parser.js,
-(3) context <name> -T, (4) fn-impact <name> -T. If you already did this, proceed.
-```
+### `lint-staged.sh` — Lint gate for commits
 
-**Design:** Non-blocking (always allows the edit), skips non-source files (`.md`, `.json`, `.yml`, etc.), and only fires once per file per session to avoid noise. The checked log is gitignored.
+**Trigger:** Before any Bash command containing `git commit` (PreToolUse).
+
+**What it does:** Runs the project linter (biome) on staged files that were edited in this session. Blocks the commit if lint errors are found. Only checks `src/` and `tests/` files.
 
 ### `update-graph.sh` — Keep the graph fresh
 
@@ -820,24 +822,21 @@ Add to `.claude/settings.json`:
         ]
       },
       {
-        "matcher": "Edit|Write",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash .claude/hooks/remind-codegraph.sh"
-          }
-        ]
-      },
-      {
         "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
-            "command": "bash .claude/hooks/check-readme.sh"
+            "command": "bash .claude/hooks/guard-git.sh"
           },
           {
             "type": "command",
-            "command": "bash .claude/hooks/guard-git.sh"
+            "command": "bash .claude/hooks/pre-commit.sh",
+            "timeout": 60
+          },
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/lint-staged.sh",
+            "timeout": 15
           }
         ]
       }
@@ -871,15 +870,9 @@ Add this to your project's `CLAUDE.md` to teach Claude Code about codegraph:
 ## Codegraph
 
 This project uses codegraph for dependency analysis. The graph is at `.codegraph/graph.db`.
-
-### Before modifying code, always:
-1. `codegraph where <name>` — find where the symbol lives
-2. `codegraph audit --quick <file-or-function>` — understand the structure
-3. `codegraph context <name> -T` — get full context (source, deps, callers)
-4. `codegraph fn-impact <name> -T` — check blast radius before editing
-
-### After modifying code:
-5. `codegraph diff-impact --staged -T` — verify impact before committing
+Hooks in `.claude/hooks/` automatically inject dependency context on reads, block commits
+with cycles or dead exports, run lint on staged files, and show diff-impact before commits.
+See `docs/examples/claude-code-hooks/` for setup.
 
 ### Commands
 - `codegraph build .` — rebuild the graph (incremental by default)

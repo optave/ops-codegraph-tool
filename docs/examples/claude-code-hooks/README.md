@@ -1,6 +1,6 @@
 # Claude Code Hooks for Codegraph
 
-Ready-to-use [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) that keep the codegraph database fresh and provide automatic dependency context as Claude edits your codebase.
+Ready-to-use [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/hooks) that enforce code quality through codegraph analysis. These hooks exist because **Claude ignores CLAUDE.md instructions** — it won't voluntarily run `codegraph context`, `fn-impact`, or `diff-impact` before editing. Hooks compensate by injecting context passively and blocking bad commits automatically.
 
 ## Quick setup
 
@@ -8,6 +8,7 @@ Ready-to-use [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-code/
 # 1. Copy hooks into your project
 mkdir -p .claude/hooks
 cp docs/examples/claude-code-hooks/*.sh .claude/hooks/
+cp docs/examples/claude-code-hooks/*.js .claude/hooks/
 chmod +x .claude/hooks/*.sh
 
 # 2. Copy settings (or merge into your existing .claude/settings.json)
@@ -15,67 +16,66 @@ cp docs/examples/claude-code-hooks/settings.json .claude/settings.json
 
 # 3. Add session logs to .gitignore
 echo ".claude/session-edits.log" >> .gitignore
-echo ".claude/codegraph-checked.log" >> .gitignore
 ```
+
+## Design philosophy
+
+Hooks fall into two categories:
+
+- **Blocking hooks** (`permissionDecision: "deny"`) — actually work. Claude cannot bypass these.
+- **Informational hooks** (`additionalContext`) — inject context Claude would otherwise skip. Partially effective.
+
+If an instruction matters, make it a blocking hook. If it's in CLAUDE.md but not enforced, Claude will ignore it.
 
 ## Hooks
 
-### Core hooks (recommended for all projects)
+### Passive context injection
 
 | Hook | Trigger | What it does |
 |------|---------|-------------|
-| `enrich-context.sh` | PreToolUse on Read/Grep | Injects `codegraph deps` output (imports, importers, definitions) into Claude's context when it reads a file |
-| `remind-codegraph.sh` | PreToolUse on Edit/Write | Reminds Claude to run `codegraph where`, `explain`, `context`, and `fn-impact` before editing a file. Fires once per file per session |
-| `update-graph.sh` | PostToolUse on Edit/Write | Runs `codegraph build` incrementally after each source file edit to keep the graph fresh |
-| `post-git-ops.sh` | PostToolUse on Bash | Detects `git rebase/revert/cherry-pick/merge/pull` and rebuilds the graph, logs changed files, and resets the remind tracker |
+| `enrich-context.sh` | PreToolUse on Read/Grep | Injects `codegraph deps` output (imports, importers, definitions) into Claude's context when it reads a file. This is the only codegraph context Claude actually sees since it won't run the commands itself |
 
-### Doc hygiene hooks
+### Pre-commit gates (blocking)
 
 | Hook | Trigger | What it does |
 |------|---------|-------------|
-| `check-readme.sh` | PreToolUse on Bash | Blocks `git commit` when source files are staged but `README.md`, `CLAUDE.md`, or `ROADMAP.md` aren't — prompts the agent to review whether docs need updating |
+| `pre-commit.sh` + `pre-commit-checks.js` | PreToolUse on Bash (git commit) | **Single Node.js process** that runs all codegraph checks: cycle detection (blocks), dead export detection (blocks), signature change warnings (informational), and diff-impact blast radius (informational) |
+| `lint-staged.sh` | PreToolUse on Bash (git commit) | Blocks commits if staged files have lint errors (runs biome on session-edited files only) |
 
-### Code quality hooks
-
-| Hook | Trigger | What it does |
-|------|---------|-------------|
-| `check-dead-exports.sh` | PreToolUse on Bash | Blocks `git commit` when any edited `src/` file has exports with zero consumers — catches dead code before it's committed |
-
-### Parallel session safety hooks (recommended for multi-agent workflows)
+### Parallel session safety (blocking)
 
 | Hook | Trigger | What it does |
 |------|---------|-------------|
 | `guard-git.sh` | PreToolUse on Bash | Blocks `git add .`, `git reset`, `git restore`, `git clean`, `git stash`; validates commits only include files the session actually edited |
-| `track-edits.sh` | PostToolUse on Edit/Write | Logs every file edited via Edit/Write to `.claude/session-edits.log` |
-| `track-moves.sh` | PostToolUse on Bash | Logs files affected by `mv`/`git mv`/`cp` commands to `.claude/session-edits.log` |
+| `track-edits.sh` | PostToolUse on Edit/Write | Logs every file edited to `.claude/session-edits.log` — required by guard-git.sh and pre-commit.sh |
+| `track-moves.sh` | PostToolUse on Bash | Logs files affected by `mv`/`git mv`/`cp` to the edit log |
 
-## Git operation resilience
+### Graph maintenance (passive)
 
-Git operations like `rebase`, `revert`, `cherry-pick`, `merge`, and `pull` change file contents without going through Edit/Write tools. Without `post-git-ops.sh`, this causes three problems:
+| Hook | Trigger | What it does |
+|------|---------|-------------|
+| `update-graph.sh` | PostToolUse on Edit/Write | Runs `codegraph build` incrementally after source file edits to keep the graph fresh |
+| `post-git-ops.sh` | PostToolUse on Bash | Detects `git rebase/revert/cherry-pick/merge/pull` and rebuilds the graph + logs changed files to the edit log |
 
-1. **Stale graph** — `enrich-context.sh` provides outdated dependency info
-2. **Blocked commits** — `guard-git.sh` rejects commits with rebase-modified files not in the edit log
-3. **Stale reminders** — `remind-codegraph.sh` won't re-fire for files changed by the git operation
+## Pre-commit consolidation
 
-`post-git-ops.sh` fixes all three by detecting these git commands after they run and:
-- Rebuilding the codegraph (`codegraph build`)
-- Appending changed files (via `git diff --name-only ORIG_HEAD HEAD`) to the session edit log
-- Removing changed files from the remind tracker so the agent re-checks context
+Previous versions used 3 separate hooks (`show-diff-impact.sh`, `check-commit.sh`, `check-dead-exports.sh`) that each spawned their own Node.js process on every commit. These are now consolidated into `pre-commit.sh` + `pre-commit-checks.js` — a single Node.js invocation that runs all codegraph checks:
+
+1. **Cycles** (blocking) — blocks if circular dependencies involve files you edited
+2. **Dead exports** (blocking) — blocks if edited src/ files have exports with zero consumers
+3. **Signature changes** (informational) — warns with risk level and transitive caller count
+4. **Diff-impact** (informational) — shows blast radius of staged changes
 
 ## Worktree isolation
 
-All session-local state files (`session-edits.log`, `codegraph-checked.log`) use `git rev-parse --show-toplevel` to resolve the working tree root, rather than `CLAUDE_PROJECT_DIR`. This ensures each git worktree gets its own isolated state — session A's edit log doesn't leak into session B's commit validation.
-
-Without this fix, `CLAUDE_PROJECT_DIR` (which always points to the main project root) causes all worktree sessions to share a single edit log, defeating the parallel session safety model.
+All session-local state files (`session-edits.log`) use `git rev-parse --show-toplevel` to resolve the working tree root, rather than `CLAUDE_PROJECT_DIR`. This ensures each git worktree gets its own isolated state — session A's edit log doesn't leak into session B's commit validation.
 
 ## Customization
 
-**Subset installation:** You don't need all hooks. The core hooks work independently of the parallel session hooks. Pick what fits your workflow:
+**Subset installation:** Pick what fits your workflow:
 
 - **Solo developer:** `enrich-context.sh` + `update-graph.sh` + `post-git-ops.sh`
-- **With reminders:** Add `remind-codegraph.sh`
-- **Doc hygiene:** Add `check-readme.sh` to catch source commits that may need doc updates
-- **Code quality:** Add `check-dead-exports.sh` to block dead exports at commit time
+- **With pre-commit checks:** Add `pre-commit.sh` + `pre-commit-checks.js` + `lint-staged.sh`
 - **Multi-agent / worktrees:** Add `guard-git.sh` + `track-edits.sh` + `track-moves.sh`
 
 **Branch name validation:** The `guard-git.sh` in this repo's `.claude/hooks/` validates branch names against conventional prefixes (`feat/`, `fix/`, etc.). The example version omits this — add your own validation if needed.
@@ -85,3 +85,4 @@ Without this fix, `CLAUDE_PROJECT_DIR` (which always points to the main project 
 - Node.js >= 20
 - `codegraph` installed globally or available via `npx`
 - Graph built at least once (`codegraph build`)
+- For `lint-staged.sh`: [Biome](https://biomejs.dev/) (or replace `npx biome check` with your linter)

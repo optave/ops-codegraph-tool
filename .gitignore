@@ -5,7 +5,6 @@ coverage/
 .env
 grammars/*.wasm
 .claude/session-edits.log
-.claude/codegraph-checked.log
 generated/DEPENDENCIES.md
 generated/DEPENDENCIES.json
 artifacts/
