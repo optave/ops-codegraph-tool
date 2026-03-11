@@ -1,3 +1,10 @@
+import { cachedStmt } from './cached-stmt.js';
+
+// ─── Statement caches (one prepared statement per db instance) ────────────
+const _hasCoChangesStmt = new WeakMap();
+const _getCoChangeMetaStmt = new WeakMap();
+const _upsertCoChangeMetaStmt = new WeakMap();
+
 /**
  * Check whether the co_changes table has data.
  * @param {object} db
@@ -5,7 +12,7 @@
  */
 export function hasCoChanges(db) {
   try {
-    return !!db.prepare('SELECT 1 FROM co_changes LIMIT 1').get();
+    return !!cachedStmt(_hasCoChangesStmt, db, 'SELECT 1 FROM co_changes LIMIT 1').get();
   } catch {
     return false;
   }
@@ -19,7 +26,11 @@ export function hasCoChanges(db) {
 export function getCoChangeMeta(db) {
   const meta = {};
   try {
-    for (const row of db.prepare('SELECT key, value FROM co_change_meta').all()) {
+    for (const row of cachedStmt(
+      _getCoChangeMetaStmt,
+      db,
+      'SELECT key, value FROM co_change_meta',
+    ).all()) {
       meta[row.key] = row.value;
     }
   } catch {
@@ -35,7 +46,9 @@ export function getCoChangeMeta(db) {
  * @param {string} value
  */
 export function upsertCoChangeMeta(db, key, value) {
-  db.prepare(
+  cachedStmt(
+    _upsertCoChangeMetaStmt,
+    db,
     'INSERT INTO co_change_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
   ).run(key, value);
 }

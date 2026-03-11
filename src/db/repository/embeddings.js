@@ -1,3 +1,10 @@
+import { cachedStmt } from './cached-stmt.js';
+
+// ─── Statement caches (one prepared statement per db instance) ────────────
+const _hasEmbeddingsStmt = new WeakMap();
+const _getEmbeddingCountStmt = new WeakMap();
+const _getEmbeddingMetaStmt = new WeakMap();
+
 /**
  * Check whether the embeddings table has data.
  * @param {object} db
@@ -5,7 +12,7 @@
  */
 export function hasEmbeddings(db) {
   try {
-    return !!db.prepare('SELECT 1 FROM embeddings LIMIT 1').get();
+    return !!cachedStmt(_hasEmbeddingsStmt, db, 'SELECT 1 FROM embeddings LIMIT 1').get();
   } catch {
     return false;
   }
@@ -18,7 +25,7 @@ export function hasEmbeddings(db) {
  */
 export function getEmbeddingCount(db) {
   try {
-    return db.prepare('SELECT COUNT(*) AS c FROM embeddings').get().c;
+    return cachedStmt(_getEmbeddingCountStmt, db, 'SELECT COUNT(*) AS c FROM embeddings').get().c;
   } catch {
     return 0;
   }
@@ -32,7 +39,11 @@ export function getEmbeddingCount(db) {
  */
 export function getEmbeddingMeta(db, key) {
   try {
-    const row = db.prepare('SELECT value FROM embedding_meta WHERE key = ?').get(key);
+    const row = cachedStmt(
+      _getEmbeddingMetaStmt,
+      db,
+      'SELECT value FROM embedding_meta WHERE key = ?',
+    ).get(key);
     return row?.value;
   } catch {
     return undefined;
