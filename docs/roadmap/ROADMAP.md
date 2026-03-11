@@ -16,7 +16,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Complete** (v1.4.0) |
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.6.0) |
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
-| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, curated API, unified graph model | **In Progress** (v3.1.1) |
+| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, presentation layer, domain grouping, curated API, unified graph model | **In Progress** (v3.1.1) |
 | [**4**](#phase-4--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | Planned |
 | [**5**](#phase-5--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
 | [**6**](#phase-6--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
@@ -560,6 +560,30 @@ Plus updated enums on existing tools (edge_kinds, symbol kinds).
 
 > Reference: [generated/architecture.md](../../generated/architecture.md) -- full analysis with code examples and rationale.
 
+**Architecture pattern: Vertical Slice Architecture.** Each CLI command is a natural vertical slice — thin command entry point → domain logic → data access → formatted output. This avoids the overhead of layered patterns (Hexagonal, Clean Architecture) that would create abstractions with only one implementation, while giving clear boundaries and independent testability per feature. The target end-state directory structure:
+
+```
+src/
+  commands/              # Thin CLI entry points (one per command)
+  domain/                # Core logic grouped by feature
+    graph/               # builder, resolve, cycles, watcher
+    analysis/            # symbol-lookup, impact, dependencies, module-map, context, exports, roles
+    search/              # embedder, semantic search, hybrid
+  ast-analysis/          # Unified visitor framework (already in place)
+  db/                    # Repository, migrations, query-builder, connection
+  extractors/            # Per-language tree-sitter extractors (already in place)
+  mcp/                   # MCP server, tool registry, per-tool handlers
+  presentation/          # Output formatting: viewer, export (DOT/Mermaid/JSON), result-formatter, table, sequence-renderer
+  infrastructure/        # Config, logger, native loader, pagination, test-filter, errors
+  shared/                # Constants, normalize, generators
+```
+
+Key principles:
+- **Commands are thin** — parse args, call domain, format output. No business logic in CLI layer
+- **Domain modules don't import presentation** — they return data, callers decide format
+- **Shared kernel stays flat** — `db/`, `infrastructure/`, `shared/` are cross-cutting
+- **No premature abstractions** — no interfaces/ports for single implementations
+
 **Context:** Phases 2.5 and 2.7 added 38 modules and grew the codebase from 5K to 26,277 lines without introducing shared abstractions. The dual-function anti-pattern was replicated across 19 modules. Three independent AST analysis engines (complexity, CFG, dataflow) totaling 4,801 lines share the same fundamental pattern but no infrastructure. Raw SQL is scattered across 25+ modules touching 13 tables. The priority ordering has been revised based on actual growth patterns -- the new #1 priority is the unified AST analysis framework.
 
 ### 3.1 -- Unified AST Analysis Framework ★ Critical 🔄
@@ -888,7 +912,51 @@ The repository pattern (3.3) enables true unit testing:
 
 **Current gap:** Many "unit" tests still hit SQLite because there's no repository abstraction.
 
-### 3.14 -- Remaining Items (Lower Priority)
+### 3.14 -- Presentation Layer Extraction
+
+Separate all output formatting from domain logic into a dedicated `src/presentation/` directory. Currently `viewer.js` (948 lines) and `export.js` (681 lines) mix graph traversal with rendering. `result-formatter.js` already exists in `infrastructure/` as a first step.
+
+```
+src/
+  presentation/
+    viewer.js              # Interactive terminal viewer (tree rendering, color, layout)
+    export.js              # DOT, Mermaid, JSON, SVG graph serialization
+    table.js               # Tabular CLI output (used by complexity, stats, etc.)
+    sequence-renderer.js   # Mermaid sequence diagram formatting (from sequence.js)
+    result-formatter.js    # Structured result formatting (moved from infrastructure/)
+```
+
+- 🔲 Extract rendering logic from `viewer.js` — keep graph data loading in domain, move formatting to presentation
+- 🔲 Extract serialization from `export.js` — DOT/Mermaid/JSON writers become pure data → string transforms
+- 🔲 Extract table formatting helpers used across `queries-cli.js`, `complexity`, `stats`
+- 🔲 Move `result-formatter.js` from `infrastructure/` to `presentation/` (it's output formatting, not infrastructure)
+- 🔲 Extract Mermaid rendering from `sequence.js` into `sequence-renderer.js`
+
+**Principle:** Domain functions return plain data objects. Presentation functions are pure transforms: `data → formatted string`. Commands wire the two together.
+
+**Affected files:** `src/viewer.js`, `src/export.js`, `src/sequence.js`, `src/infrastructure/result-formatter.js`
+
+### 3.15 -- Domain Directory Grouping
+
+Once 3.2-3.4 are complete and analysis modules are standalone, group them under `src/domain/` by feature area. This is a move-only refactor — no logic changes, just directory organization to match the vertical slice target structure.
+
+```
+src/domain/
+  graph/                 # builder.js, resolve.js, cycles.js, watcher.js
+  analysis/              # symbol-lookup.js, impact.js, dependencies.js, module-map.js,
+                         # context.js, exports.js, roles.js (from 3.4 decomposition)
+  search/                # embedder.js subsystem (from 3.10)
+```
+
+- 🔲 Move builder pipeline modules to `domain/graph/`
+- 🔲 Move decomposed query modules (from 3.4) to `domain/analysis/`
+- 🔲 Move embedder subsystem (from 3.10) to `domain/search/`
+- 🔲 Update all import paths across codebase
+- 🔲 Update `package.json` exports map (from 3.7)
+
+**Prerequisite:** 3.2, 3.4, 3.9, 3.10 should be complete before this step — it organizes the results of those decompositions.
+
+### 3.16 -- Remaining Items (Lower Priority)
 
 These items from the original Phase 3 are still valid but less urgent:
 
