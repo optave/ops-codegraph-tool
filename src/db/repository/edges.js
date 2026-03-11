@@ -1,8 +1,21 @@
-// ─── Statement caches (one prepared statement per db instance) ────────────
+// ─── Prepared-statement caches (one per db instance) ────────────────────
 // WeakMap keys on the db object so statements are GC'd when the db closes.
 const _findCalleesStmt = new WeakMap();
 const _findCallersStmt = new WeakMap();
 const _findDistinctCallersStmt = new WeakMap();
+const _findCalleeNamesStmt = new WeakMap();
+const _findCallerNamesStmt = new WeakMap();
+const _getClassAncestorsStmt = new WeakMap();
+
+/** Resolve a cached prepared statement, compiling on first use per db. */
+function _cached(cache, db, sql) {
+  let stmt = cache.get(db);
+  if (!stmt) {
+    stmt = db.prepare(sql);
+    cache.set(db, stmt);
+  }
+  return stmt;
+}
 
 // ─── Call-edge queries ──────────────────────────────────────────────────
 
@@ -14,16 +27,13 @@ const _findDistinctCallersStmt = new WeakMap();
  * @returns {{ id: number, name: string, kind: string, file: string, line: number, end_line: number|null }[]}
  */
 export function findCallees(db, nodeId) {
-  let stmt = _findCalleesStmt.get(db);
-  if (!stmt) {
-    stmt = db.prepare(
-      `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line, n.end_line
-       FROM edges e JOIN nodes n ON e.target_id = n.id
-       WHERE e.source_id = ? AND e.kind = 'calls'`,
-    );
-    _findCalleesStmt.set(db, stmt);
-  }
-  return stmt.all(nodeId);
+  return _cached(
+    _findCalleesStmt,
+    db,
+    `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line, n.end_line
+     FROM edges e JOIN nodes n ON e.target_id = n.id
+     WHERE e.source_id = ? AND e.kind = 'calls'`,
+  ).all(nodeId);
 }
 
 /**
@@ -33,16 +43,13 @@ export function findCallees(db, nodeId) {
  * @returns {{ id: number, name: string, kind: string, file: string, line: number }[]}
  */
 export function findCallers(db, nodeId) {
-  let stmt = _findCallersStmt.get(db);
-  if (!stmt) {
-    stmt = db.prepare(
-      `SELECT n.id, n.name, n.kind, n.file, n.line
-       FROM edges e JOIN nodes n ON e.source_id = n.id
-       WHERE e.target_id = ? AND e.kind = 'calls'`,
-    );
-    _findCallersStmt.set(db, stmt);
-  }
-  return stmt.all(nodeId);
+  return _cached(
+    _findCallersStmt,
+    db,
+    `SELECT n.id, n.name, n.kind, n.file, n.line
+     FROM edges e JOIN nodes n ON e.source_id = n.id
+     WHERE e.target_id = ? AND e.kind = 'calls'`,
+  ).all(nodeId);
 }
 
 /**
@@ -52,16 +59,13 @@ export function findCallers(db, nodeId) {
  * @returns {{ id: number, name: string, kind: string, file: string, line: number }[]}
  */
 export function findDistinctCallers(db, nodeId) {
-  let stmt = _findDistinctCallersStmt.get(db);
-  if (!stmt) {
-    stmt = db.prepare(
-      `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
-       FROM edges e JOIN nodes n ON e.source_id = n.id
-       WHERE e.target_id = ? AND e.kind = 'calls'`,
-    );
-    _findDistinctCallersStmt.set(db, stmt);
-  }
-  return stmt.all(nodeId);
+  return _cached(
+    _findDistinctCallersStmt,
+    db,
+    `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
+     FROM edges e JOIN nodes n ON e.source_id = n.id
+     WHERE e.target_id = ? AND e.kind = 'calls'`,
+  ).all(nodeId);
 }
 
 // ─── All-edge queries (no kind filter) ─────────────────────────────────
@@ -107,13 +111,14 @@ export function findAllIncomingEdges(db, nodeId) {
  * @returns {string[]}
  */
 export function findCalleeNames(db, nodeId) {
-  return db
-    .prepare(
-      `SELECT DISTINCT n.name
-       FROM edges e JOIN nodes n ON e.target_id = n.id
-       WHERE e.source_id = ? AND e.kind = 'calls'
-       ORDER BY n.name`,
-    )
+  return _cached(
+    _findCalleeNamesStmt,
+    db,
+    `SELECT DISTINCT n.name
+     FROM edges e JOIN nodes n ON e.target_id = n.id
+     WHERE e.source_id = ? AND e.kind = 'calls'
+     ORDER BY n.name`,
+  )
     .all(nodeId)
     .map((r) => r.name);
 }
@@ -125,13 +130,14 @@ export function findCalleeNames(db, nodeId) {
  * @returns {string[]}
  */
 export function findCallerNames(db, nodeId) {
-  return db
-    .prepare(
-      `SELECT DISTINCT n.name
-       FROM edges e JOIN nodes n ON e.source_id = n.id
-       WHERE e.target_id = ? AND e.kind = 'calls'
-       ORDER BY n.name`,
-    )
+  return _cached(
+    _findCallerNamesStmt,
+    db,
+    `SELECT DISTINCT n.name
+     FROM edges e JOIN nodes n ON e.source_id = n.id
+     WHERE e.target_id = ? AND e.kind = 'calls'
+     ORDER BY n.name`,
+  )
     .all(nodeId)
     .map((r) => r.name);
 }
@@ -233,16 +239,17 @@ export function countCrossFileCallers(db, nodeId, file) {
  * @returns {Set<number>}
  */
 export function getClassHierarchy(db, classNodeId) {
+  const stmt = _cached(
+    _getClassAncestorsStmt,
+    db,
+    `SELECT n.id, n.name FROM edges e JOIN nodes n ON e.target_id = n.id
+     WHERE e.source_id = ? AND e.kind = 'extends'`,
+  );
   const ancestors = new Set();
   const queue = [classNodeId];
   while (queue.length > 0) {
     const current = queue.shift();
-    const parents = db
-      .prepare(
-        `SELECT n.id, n.name FROM edges e JOIN nodes n ON e.target_id = n.id
-         WHERE e.source_id = ? AND e.kind = 'extends'`,
-      )
-      .all(current);
+    const parents = stmt.all(current);
     for (const p of parents) {
       if (!ancestors.has(p.id)) {
         ancestors.add(p.id);
