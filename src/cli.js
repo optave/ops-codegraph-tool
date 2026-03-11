@@ -1390,7 +1390,7 @@ program
   .command('info')
   .description('Show codegraph engine info and diagnostics')
   .action(async () => {
-    const { isNativeAvailable, loadNative } = await import('./native.js');
+    const { getNativePackageVersion, isNativeAvailable, loadNative } = await import('./native.js');
     const { getActiveEngine } = await import('./parser.js');
 
     const engine = program.opts().engine;
@@ -1404,7 +1404,6 @@ program
     console.log(`  Platform      : ${process.platform}-${process.arch}`);
     console.log(`  Native engine : ${nativeAvailable ? 'available' : 'unavailable'}`);
     if (nativeAvailable) {
-      const { getNativePackageVersion } = await import('./native.js');
       const native = loadNative();
       const binaryVersion =
         typeof native.engineVersion === 'function' ? native.engineVersion() : 'unknown';
