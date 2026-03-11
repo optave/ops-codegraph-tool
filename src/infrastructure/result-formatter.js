@@ -1,4 +1,4 @@
-import { printNdjson } from './paginate.js';
+import { printNdjson } from '../paginate.js';
 
 /**
  * Shared JSON / NDJSON output dispatch for CLI wrappers.

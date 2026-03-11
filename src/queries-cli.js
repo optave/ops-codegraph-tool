@@ -7,6 +7,7 @@
  */
 
 import path from 'node:path';
+import { outputResult } from './infrastructure/result-formatter.js';
 import {
   childrenData,
   contextData,
@@ -26,7 +27,6 @@ import {
   statsData,
   whereData,
 } from './queries.js';
-import { outputResult } from './result-formatter.js';
 
 // ─── symbolPath ─────────────────────────────────────────────────────────
 

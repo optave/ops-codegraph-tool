@@ -7,13 +7,14 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { CFG_RULES, COMPLEXITY_RULES } from './ast-analysis/rules/index.js';
+import { CFG_RULES } from './ast-analysis/rules/index.js';
 import {
   makeCfgRules as _makeCfgRules,
   buildExtensionSet,
   buildExtToLangMap,
-  findFunctionNode,
 } from './ast-analysis/shared.js';
+import { walkWithVisitors } from './ast-analysis/visitor.js';
+import { createCfgVisitor } from './ast-analysis/visitors/cfg-visitor.js';
 import {
   deleteCfgForNode,
   getCfgBlocks,
@@ -22,11 +23,9 @@ import {
   hasCfgTables,
   openReadonlyOrFail,
 } from './db.js';
+import { isTestFile } from './infrastructure/test-filter.js';
 import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
-
-import { outputResult } from './result-formatter.js';
-import { isTestFile } from './test-filter.js';
 
 // Re-export for backward compatibility
 export { CFG_RULES };
@@ -39,784 +38,35 @@ const CFG_EXTENSIONS = buildExtensionSet(CFG_RULES);
 /**
  * Build a control flow graph for a single function AST node.
  *
+ * Thin wrapper around the CFG visitor — runs walkWithVisitors on the function
+ * node and returns the first result. All CFG construction logic lives in
+ * `ast-analysis/visitors/cfg-visitor.js`.
+ *
  * @param {object} functionNode - tree-sitter function AST node
- * @param {string} langId - language identifier (javascript, typescript, tsx)
- * @returns {{ blocks: object[], edges: object[] }} - CFG blocks and edges
+ * @param {string} langId - language identifier
+ * @returns {{ blocks: object[], edges: object[], cyclomatic: number }} - CFG blocks, edges, and derived cyclomatic
  */
 export function buildFunctionCFG(functionNode, langId) {
   const rules = CFG_RULES.get(langId);
-  if (!rules) return { blocks: [], edges: [] };
-
-  const blocks = [];
-  const edges = [];
-  let nextIndex = 0;
-
-  function makeBlock(type, startLine = null, endLine = null, label = null) {
-    const block = {
-      index: nextIndex++,
-      type,
-      startLine,
-      endLine,
-      label,
-    };
-    blocks.push(block);
-    return block;
-  }
-
-  function addEdge(source, target, kind) {
-    edges.push({
-      sourceIndex: source.index,
-      targetIndex: target.index,
-      kind,
-    });
-  }
-
-  const entryBlock = makeBlock('entry');
-  const exitBlock = makeBlock('exit');
-
-  // Loop context stack for break/continue resolution
-  const loopStack = [];
-
-  // Label map for labeled break/continue
-  const labelMap = new Map();
-
-  /**
-   * Get the body node of a function (handles arrow functions with expression bodies).
-   */
-  function getFunctionBody(fnNode) {
-    const body = fnNode.childForFieldName('body');
-    if (!body) return null;
-    return body;
-  }
-
-  /**
-   * Get statement children from a block or statement list.
-   */
-  function getStatements(node) {
-    if (!node) return [];
-    // Block-like nodes (including statement_list wrappers from tree-sitter-go 0.25+)
-    if (
-      node.type === 'statement_list' ||
-      node.type === rules.blockNode ||
-      rules.blockNodes?.has(node.type)
-    ) {
-      const stmts = [];
-      for (let i = 0; i < node.namedChildCount; i++) {
-        const child = node.namedChild(i);
-        if (child.type === 'statement_list') {
-          // Unwrap nested statement_list (block → statement_list → stmts)
-          for (let j = 0; j < child.namedChildCount; j++) {
-            stmts.push(child.namedChild(j));
-          }
-        } else {
-          stmts.push(child);
-        }
-      }
-      return stmts;
-    }
-    // Single statement (e.g., arrow fn with expression body, or unbraced if body)
-    return [node];
-  }
-
-  /**
-   * Process a list of statements, creating blocks and edges.
-   * Returns the last "current" block after processing, or null if all paths terminated.
-   */
-  function processStatements(stmts, currentBlock) {
-    let cur = currentBlock;
-
-    for (const stmt of stmts) {
-      if (!cur) {
-        // Dead code after return/break/continue/throw — skip remaining
-        break;
-      }
-      cur = processStatement(stmt, cur);
-    }
-
-    return cur;
-  }
-
-  /**
-   * Process a single statement, returns the new current block or null if terminated.
-   */
-  function processStatement(stmt, currentBlock) {
-    if (!stmt || !currentBlock) return currentBlock;
-
-    // Unwrap expression_statement (Rust uses expressions for control flow)
-    if (stmt.type === 'expression_statement' && stmt.namedChildCount === 1) {
-      const inner = stmt.namedChild(0);
-      const t = inner.type;
-      if (
-        t === rules.ifNode ||
-        rules.ifNodes?.has(t) ||
-        rules.forNodes?.has(t) ||
-        t === rules.whileNode ||
-        rules.whileNodes?.has(t) ||
-        t === rules.doNode ||
-        t === rules.infiniteLoopNode ||
-        t === rules.switchNode ||
-        rules.switchNodes?.has(t) ||
-        t === rules.returnNode ||
-        t === rules.throwNode ||
-        t === rules.breakNode ||
-        t === rules.continueNode ||
-        t === rules.unlessNode ||
-        t === rules.untilNode
-      ) {
-        return processStatement(inner, currentBlock);
-      }
-    }
-
-    const type = stmt.type;
-
-    // Labeled statement: register label then process inner statement
-    if (type === rules.labeledNode) {
-      const labelNode = stmt.childForFieldName('label');
-      const labelName = labelNode ? labelNode.text : null;
-      const body = stmt.childForFieldName('body');
-      if (body && labelName) {
-        // Will be filled when we encounter the loop
-        const labelCtx = { headerBlock: null, exitBlock: null };
-        labelMap.set(labelName, labelCtx);
-        const result = processStatement(body, currentBlock);
-        labelMap.delete(labelName);
-        return result;
-      }
-      return currentBlock;
-    }
-
-    // If statement (including language variants like if_let_expression)
-    if (type === rules.ifNode || rules.ifNodes?.has(type)) {
-      return processIf(stmt, currentBlock);
-    }
-
-    // Unless (Ruby) — same CFG shape as if
-    if (rules.unlessNode && type === rules.unlessNode) {
-      return processIf(stmt, currentBlock);
-    }
-
-    // For / for-in loops
-    if (rules.forNodes.has(type)) {
-      return processForLoop(stmt, currentBlock);
-    }
-
-    // While loop (including language variants like while_let_expression)
-    if (type === rules.whileNode || rules.whileNodes?.has(type)) {
-      return processWhileLoop(stmt, currentBlock);
-    }
-
-    // Until (Ruby) — same CFG shape as while
-    if (rules.untilNode && type === rules.untilNode) {
-      return processWhileLoop(stmt, currentBlock);
-    }
-
-    // Do-while loop
-    if (rules.doNode && type === rules.doNode) {
-      return processDoWhileLoop(stmt, currentBlock);
-    }
-
-    // Infinite loop (Rust's loop {})
-    if (rules.infiniteLoopNode && type === rules.infiniteLoopNode) {
-      return processInfiniteLoop(stmt, currentBlock);
-    }
-
-    // Switch / match statement
-    if (type === rules.switchNode || rules.switchNodes?.has(type)) {
-      return processSwitch(stmt, currentBlock);
-    }
-
-    // Try/catch/finally
-    if (rules.tryNode && type === rules.tryNode) {
-      return processTryCatch(stmt, currentBlock);
-    }
-
-    // Return statement
-    if (type === rules.returnNode) {
-      currentBlock.endLine = stmt.startPosition.row + 1;
-      addEdge(currentBlock, exitBlock, 'return');
-      return null; // path terminated
-    }
-
-    // Throw statement
-    if (type === rules.throwNode) {
-      currentBlock.endLine = stmt.startPosition.row + 1;
-      addEdge(currentBlock, exitBlock, 'exception');
-      return null; // path terminated
-    }
-
-    // Break statement
-    if (type === rules.breakNode) {
-      const labelNode = stmt.childForFieldName('label');
-      const labelName = labelNode ? labelNode.text : null;
-
-      let target = null;
-      if (labelName && labelMap.has(labelName)) {
-        target = labelMap.get(labelName).exitBlock;
-      } else if (loopStack.length > 0) {
-        target = loopStack[loopStack.length - 1].exitBlock;
-      }
-
-      if (target) {
-        currentBlock.endLine = stmt.startPosition.row + 1;
-        addEdge(currentBlock, target, 'break');
-        return null; // path terminated
-      }
-      // break with no enclosing loop/switch — treat as no-op
-      return currentBlock;
-    }
-
-    // Continue statement
-    if (type === rules.continueNode) {
-      const labelNode = stmt.childForFieldName('label');
-      const labelName = labelNode ? labelNode.text : null;
-
-      let target = null;
-      if (labelName && labelMap.has(labelName)) {
-        target = labelMap.get(labelName).headerBlock;
-      } else if (loopStack.length > 0) {
-        target = loopStack[loopStack.length - 1].headerBlock;
-      }
-
-      if (target) {
-        currentBlock.endLine = stmt.startPosition.row + 1;
-        addEdge(currentBlock, target, 'continue');
-        return null; // path terminated
-      }
-      return currentBlock;
-    }
-
-    // Regular statement — extend current block
-    if (!currentBlock.startLine) {
-      currentBlock.startLine = stmt.startPosition.row + 1;
-    }
-    currentBlock.endLine = stmt.endPosition.row + 1;
-    return currentBlock;
-  }
-
-  /**
-   * Process an if/else-if/else chain.
-   * Handles three patterns:
-   *   A) Wrapper: alternative → else_clause → nested if or block (JS/TS, Rust)
-   *   B) Siblings: elif/elsif/else_if as sibling children (Python, Ruby, PHP)
-   *   C) Direct: alternative → if_statement or block directly (Go, Java, C#)
-   */
-  function processIf(ifStmt, currentBlock) {
-    // Terminate current block at condition
-    currentBlock.endLine = ifStmt.startPosition.row + 1;
-
-    const condBlock = makeBlock(
-      'condition',
-      ifStmt.startPosition.row + 1,
-      ifStmt.startPosition.row + 1,
-      'if',
-    );
-    addEdge(currentBlock, condBlock, 'fallthrough');
-
-    const joinBlock = makeBlock('body');
-
-    // True branch (consequent)
-    const consequentField = rules.ifConsequentField || 'consequence';
-    const consequent = ifStmt.childForFieldName(consequentField);
-    const trueBlock = makeBlock('branch_true', null, null, 'then');
-    addEdge(condBlock, trueBlock, 'branch_true');
-    const trueStmts = getStatements(consequent);
-    const trueEnd = processStatements(trueStmts, trueBlock);
-    if (trueEnd) {
-      addEdge(trueEnd, joinBlock, 'fallthrough');
-    }
-
-    // False branch — depends on language pattern
-    if (rules.elifNode) {
-      // Pattern B: elif/else as siblings of the if node
-      processElifSiblings(ifStmt, condBlock, joinBlock);
-    } else {
-      const alternative = ifStmt.childForFieldName('alternative');
-      if (alternative) {
-        if (rules.elseViaAlternative && alternative.type !== rules.elseClause) {
-          // Pattern C: alternative points directly to if or block
-          if (alternative.type === rules.ifNode || rules.ifNodes?.has(alternative.type)) {
-            // else-if: recurse
-            const falseBlock = makeBlock('branch_false', null, null, 'else-if');
-            addEdge(condBlock, falseBlock, 'branch_false');
-            const elseIfEnd = processIf(alternative, falseBlock);
-            if (elseIfEnd) {
-              addEdge(elseIfEnd, joinBlock, 'fallthrough');
-            }
-          } else {
-            // else block
-            const falseBlock = makeBlock('branch_false', null, null, 'else');
-            addEdge(condBlock, falseBlock, 'branch_false');
-            const falseStmts = getStatements(alternative);
-            const falseEnd = processStatements(falseStmts, falseBlock);
-            if (falseEnd) {
-              addEdge(falseEnd, joinBlock, 'fallthrough');
-            }
-          }
-        } else if (alternative.type === rules.elseClause) {
-          // Pattern A: else_clause wrapper — may contain another if (else-if) or a block
-          const elseChildren = [];
-          for (let i = 0; i < alternative.namedChildCount; i++) {
-            elseChildren.push(alternative.namedChild(i));
-          }
-          if (
-            elseChildren.length === 1 &&
-            (elseChildren[0].type === rules.ifNode || rules.ifNodes?.has(elseChildren[0].type))
-          ) {
-            // else-if: recurse
-            const falseBlock = makeBlock('branch_false', null, null, 'else-if');
-            addEdge(condBlock, falseBlock, 'branch_false');
-            const elseIfEnd = processIf(elseChildren[0], falseBlock);
-            if (elseIfEnd) {
-              addEdge(elseIfEnd, joinBlock, 'fallthrough');
-            }
-          } else {
-            // else block
-            const falseBlock = makeBlock('branch_false', null, null, 'else');
-            addEdge(condBlock, falseBlock, 'branch_false');
-            const falseEnd = processStatements(elseChildren, falseBlock);
-            if (falseEnd) {
-              addEdge(falseEnd, joinBlock, 'fallthrough');
-            }
-          }
-        }
-      } else {
-        // No else: condition-false goes directly to join
-        addEdge(condBlock, joinBlock, 'branch_false');
-      }
-    }
-
-    return joinBlock;
-  }
-
-  /**
-   * Handle Pattern B: elif/elsif/else_if as sibling children of the if node.
-   */
-  function processElifSiblings(ifStmt, firstCondBlock, joinBlock) {
-    let lastCondBlock = firstCondBlock;
-    let foundElse = false;
-
-    for (let i = 0; i < ifStmt.namedChildCount; i++) {
-      const child = ifStmt.namedChild(i);
-
-      if (child.type === rules.elifNode) {
-        // Create condition block for elif
-        const elifCondBlock = makeBlock(
-          'condition',
-          child.startPosition.row + 1,
-          child.startPosition.row + 1,
-          'else-if',
-        );
-        addEdge(lastCondBlock, elifCondBlock, 'branch_false');
-
-        // True branch of elif
-        const elifConsequentField = rules.ifConsequentField || 'consequence';
-        const elifConsequent = child.childForFieldName(elifConsequentField);
-        const elifTrueBlock = makeBlock('branch_true', null, null, 'then');
-        addEdge(elifCondBlock, elifTrueBlock, 'branch_true');
-        const elifTrueStmts = getStatements(elifConsequent);
-        const elifTrueEnd = processStatements(elifTrueStmts, elifTrueBlock);
-        if (elifTrueEnd) {
-          addEdge(elifTrueEnd, joinBlock, 'fallthrough');
-        }
-
-        lastCondBlock = elifCondBlock;
-      } else if (child.type === rules.elseClause) {
-        // Else body
-        const elseBlock = makeBlock('branch_false', null, null, 'else');
-        addEdge(lastCondBlock, elseBlock, 'branch_false');
-
-        // Try field access first, then collect children
-        const elseBody = child.childForFieldName('body');
-        let elseStmts;
-        if (elseBody) {
-          elseStmts = getStatements(elseBody);
-        } else {
-          elseStmts = [];
-          for (let j = 0; j < child.namedChildCount; j++) {
-            elseStmts.push(child.namedChild(j));
-          }
-        }
-        const elseEnd = processStatements(elseStmts, elseBlock);
-        if (elseEnd) {
-          addEdge(elseEnd, joinBlock, 'fallthrough');
-        }
-
-        foundElse = true;
-      }
-    }
-
-    // If no else clause, last condition's false goes to join
-    if (!foundElse) {
-      addEdge(lastCondBlock, joinBlock, 'branch_false');
-    }
-  }
-
-  /**
-   * Process a for/for-in loop.
-   */
-  function processForLoop(forStmt, currentBlock) {
-    const headerBlock = makeBlock(
-      'loop_header',
-      forStmt.startPosition.row + 1,
-      forStmt.startPosition.row + 1,
-      'for',
-    );
-    addEdge(currentBlock, headerBlock, 'fallthrough');
-
-    const loopExitBlock = makeBlock('body');
-
-    // Register loop context
-    const loopCtx = { headerBlock, exitBlock: loopExitBlock };
-    loopStack.push(loopCtx);
-
-    // Update label map if this is inside a labeled statement
-    for (const [, ctx] of labelMap) {
-      if (!ctx.headerBlock) {
-        ctx.headerBlock = headerBlock;
-        ctx.exitBlock = loopExitBlock;
-      }
-    }
-
-    // Loop body
-    const body = forStmt.childForFieldName('body');
-    const bodyBlock = makeBlock('loop_body');
-    addEdge(headerBlock, bodyBlock, 'branch_true');
-
-    const bodyStmts = getStatements(body);
-    const bodyEnd = processStatements(bodyStmts, bodyBlock);
-
-    if (bodyEnd) {
-      addEdge(bodyEnd, headerBlock, 'loop_back');
-    }
-
-    // Loop exit
-    addEdge(headerBlock, loopExitBlock, 'loop_exit');
-
-    loopStack.pop();
-    return loopExitBlock;
-  }
-
-  /**
-   * Process a while loop.
-   */
-  function processWhileLoop(whileStmt, currentBlock) {
-    const headerBlock = makeBlock(
-      'loop_header',
-      whileStmt.startPosition.row + 1,
-      whileStmt.startPosition.row + 1,
-      'while',
-    );
-    addEdge(currentBlock, headerBlock, 'fallthrough');
-
-    const loopExitBlock = makeBlock('body');
-
-    const loopCtx = { headerBlock, exitBlock: loopExitBlock };
-    loopStack.push(loopCtx);
-
-    for (const [, ctx] of labelMap) {
-      if (!ctx.headerBlock) {
-        ctx.headerBlock = headerBlock;
-        ctx.exitBlock = loopExitBlock;
-      }
-    }
-
-    const body = whileStmt.childForFieldName('body');
-    const bodyBlock = makeBlock('loop_body');
-    addEdge(headerBlock, bodyBlock, 'branch_true');
-
-    const bodyStmts = getStatements(body);
-    const bodyEnd = processStatements(bodyStmts, bodyBlock);
-
-    if (bodyEnd) {
-      addEdge(bodyEnd, headerBlock, 'loop_back');
-    }
-
-    addEdge(headerBlock, loopExitBlock, 'loop_exit');
-
-    loopStack.pop();
-    return loopExitBlock;
-  }
-
-  /**
-   * Process a do-while loop.
-   */
-  function processDoWhileLoop(doStmt, currentBlock) {
-    const bodyBlock = makeBlock('loop_body', doStmt.startPosition.row + 1, null, 'do');
-    addEdge(currentBlock, bodyBlock, 'fallthrough');
-
-    const condBlock = makeBlock('loop_header', null, null, 'do-while');
-    const loopExitBlock = makeBlock('body');
-
-    const loopCtx = { headerBlock: condBlock, exitBlock: loopExitBlock };
-    loopStack.push(loopCtx);
-
-    for (const [, ctx] of labelMap) {
-      if (!ctx.headerBlock) {
-        ctx.headerBlock = condBlock;
-        ctx.exitBlock = loopExitBlock;
-      }
-    }
-
-    const body = doStmt.childForFieldName('body');
-    const bodyStmts = getStatements(body);
-    const bodyEnd = processStatements(bodyStmts, bodyBlock);
-
-    if (bodyEnd) {
-      addEdge(bodyEnd, condBlock, 'fallthrough');
-    }
-
-    // Condition: loop_back or exit
-    addEdge(condBlock, bodyBlock, 'loop_back');
-    addEdge(condBlock, loopExitBlock, 'loop_exit');
-
-    loopStack.pop();
-    return loopExitBlock;
-  }
-
-  /**
-   * Process an infinite loop (Rust's `loop {}`).
-   * No condition — body always executes. Exit only via break.
-   */
-  function processInfiniteLoop(loopStmt, currentBlock) {
-    const headerBlock = makeBlock(
-      'loop_header',
-      loopStmt.startPosition.row + 1,
-      loopStmt.startPosition.row + 1,
-      'loop',
-    );
-    addEdge(currentBlock, headerBlock, 'fallthrough');
-
-    const loopExitBlock = makeBlock('body');
-
-    const loopCtx = { headerBlock, exitBlock: loopExitBlock };
-    loopStack.push(loopCtx);
-
-    for (const [, ctx] of labelMap) {
-      if (!ctx.headerBlock) {
-        ctx.headerBlock = headerBlock;
-        ctx.exitBlock = loopExitBlock;
-      }
-    }
-
-    const body = loopStmt.childForFieldName('body');
-    const bodyBlock = makeBlock('loop_body');
-    addEdge(headerBlock, bodyBlock, 'branch_true');
-
-    const bodyStmts = getStatements(body);
-    const bodyEnd = processStatements(bodyStmts, bodyBlock);
-
-    if (bodyEnd) {
-      addEdge(bodyEnd, headerBlock, 'loop_back');
-    }
-
-    // No loop_exit from header — can only exit via break
-
-    loopStack.pop();
-    return loopExitBlock;
-  }
-
-  /**
-   * Process a switch statement.
-   */
-  function processSwitch(switchStmt, currentBlock) {
-    currentBlock.endLine = switchStmt.startPosition.row + 1;
-
-    const switchHeader = makeBlock(
-      'condition',
-      switchStmt.startPosition.row + 1,
-      switchStmt.startPosition.row + 1,
-      'switch',
-    );
-    addEdge(currentBlock, switchHeader, 'fallthrough');
-
-    const joinBlock = makeBlock('body');
-
-    // Switch acts like a break target for contained break statements
-    const switchCtx = { headerBlock: switchHeader, exitBlock: joinBlock };
-    loopStack.push(switchCtx);
-
-    // Get case children from body field or direct children
-    const switchBody = switchStmt.childForFieldName('body');
-    const container = switchBody || switchStmt;
-
-    let hasDefault = false;
-    for (let i = 0; i < container.namedChildCount; i++) {
-      const caseClause = container.namedChild(i);
-
-      const isDefault = caseClause.type === rules.defaultNode;
-      const isCase =
-        isDefault || caseClause.type === rules.caseNode || rules.caseNodes?.has(caseClause.type);
-
-      if (!isCase) continue;
-
-      const caseLabel = isDefault ? 'default' : 'case';
-      const caseBlock = makeBlock('case', caseClause.startPosition.row + 1, null, caseLabel);
-      addEdge(switchHeader, caseBlock, isDefault ? 'branch_false' : 'branch_true');
-      if (isDefault) hasDefault = true;
-
-      // Extract case body: try field access, then collect non-header children
-      const caseBodyNode =
-        caseClause.childForFieldName('body') || caseClause.childForFieldName('consequence');
-      let caseStmts;
-      if (caseBodyNode) {
-        caseStmts = getStatements(caseBodyNode);
-      } else {
-        caseStmts = [];
-        const valueNode = caseClause.childForFieldName('value');
-        const patternNode = caseClause.childForFieldName('pattern');
-        for (let j = 0; j < caseClause.namedChildCount; j++) {
-          const child = caseClause.namedChild(j);
-          if (child !== valueNode && child !== patternNode && child.type !== 'switch_label') {
-            if (child.type === 'statement_list') {
-              // Unwrap statement_list (tree-sitter-go 0.25+)
-              for (let k = 0; k < child.namedChildCount; k++) {
-                caseStmts.push(child.namedChild(k));
-              }
-            } else {
-              caseStmts.push(child);
-            }
-          }
-        }
-      }
-
-      const caseEnd = processStatements(caseStmts, caseBlock);
-      if (caseEnd) {
-        addEdge(caseEnd, joinBlock, 'fallthrough');
-      }
-    }
-
-    // If no default case, switch header can skip to join
-    if (!hasDefault) {
-      addEdge(switchHeader, joinBlock, 'branch_false');
-    }
-
-    loopStack.pop();
-    return joinBlock;
-  }
-
-  /**
-   * Process try/catch/finally.
-   */
-  function processTryCatch(tryStmt, currentBlock) {
-    currentBlock.endLine = tryStmt.startPosition.row + 1;
-
-    const joinBlock = makeBlock('body');
-
-    // Try body — field access or collect non-handler children (e.g., Ruby's begin)
-    const tryBody = tryStmt.childForFieldName('body');
-    let tryBodyStart;
-    let tryStmts;
-    if (tryBody) {
-      tryBodyStart = tryBody.startPosition.row + 1;
-      tryStmts = getStatements(tryBody);
-    } else {
-      tryBodyStart = tryStmt.startPosition.row + 1;
-      tryStmts = [];
-      for (let i = 0; i < tryStmt.namedChildCount; i++) {
-        const child = tryStmt.namedChild(i);
-        if (rules.catchNode && child.type === rules.catchNode) continue;
-        if (rules.finallyNode && child.type === rules.finallyNode) continue;
-        tryStmts.push(child);
-      }
-    }
-
-    const tryBlock = makeBlock('body', tryBodyStart, null, 'try');
-    addEdge(currentBlock, tryBlock, 'fallthrough');
-    const tryEnd = processStatements(tryStmts, tryBlock);
-
-    // Catch handler
-    let catchHandler = null;
-    let finallyHandler = null;
-    for (let i = 0; i < tryStmt.namedChildCount; i++) {
-      const child = tryStmt.namedChild(i);
-      if (rules.catchNode && child.type === rules.catchNode) catchHandler = child;
-      if (rules.finallyNode && child.type === rules.finallyNode) finallyHandler = child;
-    }
-
-    if (catchHandler) {
-      const catchBlock = makeBlock('catch', catchHandler.startPosition.row + 1, null, 'catch');
-      // Exception edge from try to catch
-      addEdge(tryBlock, catchBlock, 'exception');
-
-      // Catch body — try field access, then collect children
-      const catchBodyNode = catchHandler.childForFieldName('body');
-      let catchStmts;
-      if (catchBodyNode) {
-        catchStmts = getStatements(catchBodyNode);
-      } else {
-        catchStmts = [];
-        for (let i = 0; i < catchHandler.namedChildCount; i++) {
-          catchStmts.push(catchHandler.namedChild(i));
-        }
-      }
-      const catchEnd = processStatements(catchStmts, catchBlock);
-
-      if (finallyHandler) {
-        const finallyBlock = makeBlock(
-          'finally',
-          finallyHandler.startPosition.row + 1,
-          null,
-          'finally',
-        );
-        if (tryEnd) addEdge(tryEnd, finallyBlock, 'fallthrough');
-        if (catchEnd) addEdge(catchEnd, finallyBlock, 'fallthrough');
-
-        const finallyBodyNode = finallyHandler.childForFieldName('body');
-        const finallyStmts = finallyBodyNode
-          ? getStatements(finallyBodyNode)
-          : getStatements(finallyHandler);
-        const finallyEnd = processStatements(finallyStmts, finallyBlock);
-        if (finallyEnd) addEdge(finallyEnd, joinBlock, 'fallthrough');
-      } else {
-        if (tryEnd) addEdge(tryEnd, joinBlock, 'fallthrough');
-        if (catchEnd) addEdge(catchEnd, joinBlock, 'fallthrough');
-      }
-    } else if (finallyHandler) {
-      const finallyBlock = makeBlock(
-        'finally',
-        finallyHandler.startPosition.row + 1,
-        null,
-        'finally',
-      );
-      if (tryEnd) addEdge(tryEnd, finallyBlock, 'fallthrough');
-
-      const finallyBodyNode = finallyHandler.childForFieldName('body');
-      const finallyStmts = finallyBodyNode
-        ? getStatements(finallyBodyNode)
-        : getStatements(finallyHandler);
-      const finallyEnd = processStatements(finallyStmts, finallyBlock);
-      if (finallyEnd) addEdge(finallyEnd, joinBlock, 'fallthrough');
-    } else {
-      if (tryEnd) addEdge(tryEnd, joinBlock, 'fallthrough');
-    }
-
-    return joinBlock;
-  }
-
-  // ── Main entry point ──────────────────────────────────────────────────
-
-  const body = getFunctionBody(functionNode);
-  if (!body) {
-    // Empty function or expression body
-    addEdge(entryBlock, exitBlock, 'fallthrough');
-    return { blocks, edges };
-  }
-
-  const stmts = getStatements(body);
-  if (stmts.length === 0) {
-    addEdge(entryBlock, exitBlock, 'fallthrough');
-    return { blocks, edges };
-  }
-
-  const firstBlock = makeBlock('body');
-  addEdge(entryBlock, firstBlock, 'fallthrough');
-
-  const lastBlock = processStatements(stmts, firstBlock);
-  if (lastBlock) {
-    addEdge(lastBlock, exitBlock, 'fallthrough');
-  }
-
-  return { blocks, edges };
+  if (!rules) return { blocks: [], edges: [], cyclomatic: 0 };
+
+  const visitor = createCfgVisitor(rules);
+  const walkerOpts = {
+    functionNodeTypes: new Set(rules.functionNodes),
+    nestingNodeTypes: new Set(),
+    getFunctionName: (node) => {
+      const nameNode = node.childForFieldName('name');
+      return nameNode ? nameNode.text : null;
+    },
+  };
+
+  const results = walkWithVisitors(functionNode, [visitor], langId, walkerOpts);
+  const cfgResults = results.cfg || [];
+  if (cfgResults.length === 0) return { blocks: [], edges: [], cyclomatic: 0 };
+
+  const r = cfgResults.find((result) => result.funcNode === functionNode);
+  if (!r) return { blocks: [], edges: [], cyclomatic: 0 };
+  return { blocks: r.blocks, edges: r.edges, cyclomatic: r.cyclomatic };
 }
 
 // ─── Build-Time: Compute CFG for Changed Files ─────────────────────────
@@ -922,8 +172,39 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
       const cfgRules = CFG_RULES.get(langId);
       if (!cfgRules) continue;
 
-      const complexityRules = COMPLEXITY_RULES.get(langId);
-      // complexityRules only needed for WASM fallback path
+      // WASM fallback: run file-level visitor walk to compute CFG for all functions
+      // that don't already have pre-computed data (from native engine or unified walk)
+      let visitorCfgByLine = null;
+      const needsVisitor =
+        tree &&
+        symbols.definitions.some(
+          (d) =>
+            (d.kind === 'function' || d.kind === 'method') &&
+            d.line &&
+            d.cfg !== null &&
+            !d.cfg?.blocks?.length,
+        );
+      if (needsVisitor) {
+        const visitor = createCfgVisitor(cfgRules);
+        const walkerOpts = {
+          functionNodeTypes: new Set(cfgRules.functionNodes),
+          nestingNodeTypes: new Set(),
+          getFunctionName: (node) => {
+            const nameNode = node.childForFieldName('name');
+            return nameNode ? nameNode.text : null;
+          },
+        };
+        const walkResults = walkWithVisitors(tree.rootNode, [visitor], langId, walkerOpts);
+        const cfgResults = walkResults.cfg || [];
+        visitorCfgByLine = new Map();
+        for (const r of cfgResults) {
+          if (r.funcNode) {
+            const line = r.funcNode.startPosition.row + 1;
+            if (!visitorCfgByLine.has(line)) visitorCfgByLine.set(line, []);
+            visitorCfgByLine.get(line).push(r);
+          }
+        }
+      }
 
       for (const def of symbols.definitions) {
         if (def.kind !== 'function' && def.kind !== 'method') continue;
@@ -932,16 +213,21 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
         const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
         if (!nodeId) continue;
 
-        // Native path: use pre-computed CFG from Rust engine
+        // Use pre-computed CFG (native engine or unified walk), then visitor fallback
         let cfg = null;
         if (def.cfg?.blocks?.length) {
           cfg = def.cfg;
-        } else {
-          // WASM fallback: compute CFG from tree-sitter AST
-          if (!tree || !complexityRules) continue;
-          const funcNode = findFunctionNode(tree.rootNode, def.line, def.endLine, complexityRules);
-          if (!funcNode) continue;
-          cfg = buildFunctionCFG(funcNode, langId);
+        } else if (visitorCfgByLine) {
+          const candidates = visitorCfgByLine.get(def.line);
+          const r = !candidates
+            ? undefined
+            : candidates.length === 1
+              ? candidates[0]
+              : (candidates.find((c) => {
+                  const n = c.funcNode.childForFieldName('name');
+                  return n && n.text === def.name;
+                }) ?? candidates[0]);
+          if (r) cfg = { blocks: r.blocks, edges: r.edges };
         }
 
         if (!cfg || cfg.blocks.length === 0) continue;
@@ -1158,59 +444,4 @@ function edgeStyle(kind) {
   if (kind === 'break') return ', color=orange, style=dashed';
   if (kind === 'continue') return ', color=blue, style=dashed';
   return '';
-}
-
-// ─── CLI Printer ────────────────────────────────────────────────────────
-
-/**
- * CLI display for cfg command.
- */
-export function cfg(name, customDbPath, opts = {}) {
-  const data = cfgData(name, customDbPath, opts);
-
-  if (outputResult(data, 'results', opts)) return;
-
-  if (data.warning) {
-    console.log(`\u26A0  ${data.warning}`);
-    return;
-  }
-  if (data.results.length === 0) {
-    console.log(`No symbols matching "${name}".`);
-    return;
-  }
-
-  const format = opts.format || 'text';
-  if (format === 'dot') {
-    console.log(cfgToDOT(data));
-    return;
-  }
-  if (format === 'mermaid') {
-    console.log(cfgToMermaid(data));
-    return;
-  }
-
-  // Text format
-  for (const r of data.results) {
-    console.log(`\n${r.kind} ${r.name}  (${r.file}:${r.line})`);
-    console.log('\u2500'.repeat(60));
-    console.log(`  Blocks: ${r.summary.blockCount}  Edges: ${r.summary.edgeCount}`);
-
-    if (r.blocks.length > 0) {
-      console.log('\n  Blocks:');
-      for (const b of r.blocks) {
-        const loc = b.startLine
-          ? ` L${b.startLine}${b.endLine && b.endLine !== b.startLine ? `-${b.endLine}` : ''}`
-          : '';
-        const label = b.label ? ` (${b.label})` : '';
-        console.log(`    [${b.index}] ${b.type}${label}${loc}`);
-      }
-    }
-
-    if (r.edges.length > 0) {
-      console.log('\n  Edges:');
-      for (const e of r.edges) {
-        console.log(`    B${e.source} \u2192 B${e.target}  [${e.kind}]`);
-      }
-    }
-  }
 }
