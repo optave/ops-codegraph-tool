@@ -6,6 +6,8 @@ Import resolution: native batch vs JS fallback throughput.
 
 | Version | Engine | Files | Full Build | No-op | 1-File | Resolve (native) | Resolve (JS) |
 |---------|--------|------:|-----------:|------:|-------:|------------------:|-------------:|
+| 3.1.2 | native | 235 | 1.2s ↑6% | 5ms ~ | 264ms ↓20% | 2ms ↓9% | 5ms ↑12% |
+| 3.1.2 | wasm | 235 | 2.9s ~ | 6ms ~ | 488ms ↓9% | 2ms ↓9% | 5ms ↑12% |
 | 3.1.0 | native | 180 | 1.1s ↑7% | 5ms ↓98% | 329ms ↓3% | 2ms ↓39% | 4ms ↑5% |
 | 3.1.0 | wasm | 180 | 2.9s ↑13% | 6ms ↑20% | 536ms ↓6% | 2ms ↓39% | 4ms ↑5% |
 | 3.0.4 | native | 177 | 1.0s ↓41% | 319ms ↑7875% | 338ms ↓2% | 4ms ↑6% | 4ms ~ |
@@ -25,15 +27,15 @@ Import resolution: native batch vs JS fallback throughput.
 
 ### Latest results
 
-**Version:** 3.1.0 | **Files:** 180 | **Date:** 2026-03-08
+**Version:** 3.1.2 | **Files:** 235 | **Date:** 2026-03-11
 
 #### Native (Rust)
 
 | Metric | Value |
 |--------|------:|
-| Full build | 1.1s |
+| Full build | 1.2s |
 | No-op rebuild | 5ms |
-| 1-file rebuild | 329ms |
+| 1-file rebuild | 264ms |
 
 #### WASM
 
@@ -41,21 +43,67 @@ Import resolution: native batch vs JS fallback throughput.
 |--------|------:|
 | Full build | 2.9s |
 | No-op rebuild | 6ms |
-| 1-file rebuild | 536ms |
+| 1-file rebuild | 488ms |
 
 #### Import Resolution
 
 | Metric | Value |
 |--------|------:|
-| Import pairs | 207 |
+| Import pairs | 218 |
 | Native batch | 2ms |
-| JS fallback | 4ms |
+| JS fallback | 5ms |
 | Per-import (native) | 0ms |
 | Per-import (JS) | 0ms |
-| Speedup ratio | 1.9x |
+| Speedup ratio | 2.4x |
 
 <!-- INCREMENTAL_BENCHMARK_DATA
 [
+  {
+    "version": "3.1.2",
+    "date": "2026-03-11",
+    "files": 235,
+    "wasm": {
+      "fullBuildMs": 2906,
+      "noopRebuildMs": 6,
+      "oneFileRebuildMs": 488,
+      "oneFilePhases": {
+        "parseMs": 223.6,
+        "insertMs": 13.4,
+        "resolveMs": 1.5,
+        "edgesMs": 35.6,
+        "structureMs": 11.6,
+        "rolesMs": 25.6,
+        "astMs": 14.9,
+        "complexityMs": 0.4,
+        "cfgMs": 5.7,
+        "dataflowMs": 5
+      }
+    },
+    "native": {
+      "fullBuildMs": 1168,
+      "noopRebuildMs": 5,
+      "oneFileRebuildMs": 264,
+      "oneFilePhases": {
+        "parseMs": 85,
+        "insertMs": 10,
+        "resolveMs": 1.2,
+        "edgesMs": 15.9,
+        "structureMs": 7.7,
+        "rolesMs": 29.2,
+        "astMs": 14.6,
+        "complexityMs": 1,
+        "cfgMs": 5.5,
+        "dataflowMs": 4.2
+      }
+    },
+    "resolve": {
+      "imports": 218,
+      "nativeBatchMs": 2,
+      "jsFallbackMs": 4.7,
+      "perImportNativeMs": 0,
+      "perImportJsMs": 0
+    }
+  },
   {
     "version": "3.1.0",
     "date": "2026-03-08",
