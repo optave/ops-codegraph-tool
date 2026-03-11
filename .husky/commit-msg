@@ -13,7 +13,7 @@ if [ -n "$IMPACT" ]; then
           console.log('Impact: '+j.summary.functionsChanged+' functions changed, '+(j.summary.totalAffected||j.summary.callersAffected||0)+' affected');
       } catch {}
     });
-  " 2>/dev/null)
+  " 2>/dev/null || true)
   if [ -n "$SUMMARY" ]; then
     echo "" >> "$1"
     echo "$SUMMARY" >> "$1"
