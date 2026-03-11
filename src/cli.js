@@ -1404,10 +1404,16 @@ program
     console.log(`  Platform      : ${process.platform}-${process.arch}`);
     console.log(`  Native engine : ${nativeAvailable ? 'available' : 'unavailable'}`);
     if (nativeAvailable) {
+      const { getNativePackageVersion } = await import('./native.js');
       const native = loadNative();
-      const nativeVersion =
+      const binaryVersion =
         typeof native.engineVersion === 'function' ? native.engineVersion() : 'unknown';
-      console.log(`  Native version: ${nativeVersion}`);
+      const pkgVersion = getNativePackageVersion();
+      if (pkgVersion && pkgVersion !== binaryVersion) {
+        console.log(`  Native version: ${pkgVersion} (binary reports ${binaryVersion} — stale)`);
+      } else {
+        console.log(`  Native version: ${binaryVersion}`);
+      }
     }
     console.log(`  Engine flag   : --engine ${engine}`);
     console.log(`  Active engine : ${activeName}${activeVersion ? ` (v${activeVersion})` : ''}`);

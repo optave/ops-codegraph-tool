@@ -74,6 +74,25 @@ export function isNativeAvailable() {
 }
 
 /**
+ * Read the version from the platform-specific npm package.json.
+ * Returns null if the package is not installed or has no version.
+ */
+export function getNativePackageVersion() {
+  const require = createRequire(import.meta.url);
+  const platform = os.platform();
+  const arch = os.arch();
+  const key = platform === 'linux' ? `${platform}-${arch}-${detectLibc()}` : `${platform}-${arch}`;
+  const pkg = PLATFORM_PACKAGES[key];
+  if (!pkg) return null;
+  try {
+    const pkgJson = require(`${pkg}/package.json`);
+    return pkgJson.version || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Return the native module or throw if not available.
  */
 export function getNative() {
