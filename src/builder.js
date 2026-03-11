@@ -1354,8 +1354,13 @@ export async function buildGraph(rootDir, opts = {}) {
 
   _t.finalize0 = performance.now();
 
-  // Release any remaining cached WASM trees for GC
+  // Release any remaining cached WASM trees — call .delete() to free WASM memory
   for (const [, symbols] of allSymbols) {
+    if (symbols._tree && typeof symbols._tree.delete === 'function') {
+      try {
+        symbols._tree.delete();
+      } catch {}
+    }
     symbols._tree = null;
     symbols._langId = null;
   }

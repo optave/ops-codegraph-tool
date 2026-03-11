@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Language, Parser, Query } from 'web-tree-sitter';
 import { warn } from './logger.js';
-import { getNative, loadNative } from './native.js';
+import { getNative, getNativePackageVersion, loadNative } from './native.js';
 
 // Re-export all extractors for backward compatibility
 export {
@@ -101,6 +101,32 @@ export async function createParsers() {
   }
   _cachedParsers = parsers;
   return parsers;
+}
+
+/**
+ * Dispose all cached WASM parsers and queries to free WASM linear memory.
+ * Call this between repeated builds in the same process (e.g. benchmarks)
+ * to prevent memory accumulation that can cause segfaults.
+ */
+export function disposeParsers() {
+  if (_cachedParsers) {
+    for (const [, parser] of _cachedParsers) {
+      if (parser && typeof parser.delete === 'function') {
+        try {
+          parser.delete();
+        } catch {}
+      }
+    }
+    _cachedParsers = null;
+  }
+  for (const [, query] of _queryCache) {
+    if (query && typeof query.delete === 'function') {
+      try {
+        query.delete();
+      } catch {}
+    }
+  }
+  _queryCache.clear();
 }
 
 export function getParser(parsers, filePath) {
@@ -214,6 +240,7 @@ function patchNativeResult(r) {
       if (i.csharpUsing === undefined) i.csharpUsing = i.csharp_using;
       if (i.rubyRequire === undefined) i.rubyRequire = i.ruby_require;
       if (i.phpUse === undefined) i.phpUse = i.php_use;
+      if (i.dynamicImport === undefined) i.dynamicImport = i.dynamic_import;
     }
   }
 
@@ -429,11 +456,18 @@ export async function parseFilesAuto(filePaths, rootDir, opts = {}) {
  */
 export function getActiveEngine(opts = {}) {
   const { name, native } = resolveEngine(opts);
-  const version = native
+  let version = native
     ? typeof native.engineVersion === 'function'
       ? native.engineVersion()
       : null
     : null;
+  // Prefer platform package.json version over binary-embedded version
+  // to handle stale binaries that weren't recompiled during a release
+  if (native && version) {
+    try {
+      version = getNativePackageVersion() ?? version;
+    } catch {}
+  }
   return { name, version };
 }
 
