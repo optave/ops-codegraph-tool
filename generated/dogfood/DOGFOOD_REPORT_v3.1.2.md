@@ -367,7 +367,7 @@ The AST phase (~265ms) dominates 1-file rebuilds for both engines. Profiling thi
 
 v3.1.2 is a solid architectural release. The Phase 3 refactoring (unified AST analysis, command/query separation, repository pattern) is well-executed — all commands work correctly through the new layers with no regressions from the restructuring. Build performance is good (5.7 ms/file native, 10.6 ms/file WASM) with sub-millisecond query latency.
 
-The main gaps are engine parity: the native engine doesn't track dynamic imports (inflating unused export warnings), and the WASM engine had completely broken complexity metrics due to a variable naming bug (#413, fixed in this PR). The benchmark resilience issues are low-impact but should be fixed to prevent data loss during future dogfooding. The stale native version display is cosmetic but signals a publish workflow gap.
+The main gaps are engine parity: the native engine doesn't track dynamic imports (inflating unused export warnings), and the WASM engine had completely broken complexity metrics due to a variable naming bug (#413, fixed in PR #414). The benchmark resilience issues are low-impact but should be fixed to prevent data loss during future dogfooding. The stale native version display is cosmetic but signals a publish workflow gap.
 
 **Rating: 7/10**
 
@@ -376,7 +376,7 @@ The main gaps are engine parity: the native engine doesn't track dynamic imports
 - (+) MCP server works in both modes (31/32 tools)
 - (+) Programmatic API exports all verified
 - (+) nomic embedding recall at 99.1% Hit@5
-- (-) WASM complexity completely broken since unified AST refactor — zero rows produced (#413, fixed here)
+- (-) WASM complexity completely broken since unified AST refactor — zero rows produced (#413, fixed in PR #414)
 - (-) Native engine missing dynamic imports (177 edge gap, #410)
 - (-) Benchmark segfaults lose partial results (#408/#409)
 - (-) Native version display stale (#411)
@@ -391,4 +391,4 @@ The main gaps are engine parity: the native engine doesn't track dynamic imports
 | Issue | [#409](https://github.com/optave/codegraph/issues/409) | bug: WASM engine segfaults after repeated builds in same process | open |
 | Issue | [#410](https://github.com/optave/codegraph/issues/410) | bug: native engine does not track dynamic import() expressions | open |
 | Issue | [#411](https://github.com/optave/codegraph/issues/411) | bug: info command reports stale native engine version (3.1.0 instead of 3.1.2) | open |
-| Issue | [#413](https://github.com/optave/codegraph/issues/413) | bug: WASM complexity fails — findFunctionNode is not defined | fixed in this PR |
+| Issue | [#413](https://github.com/optave/codegraph/issues/413) | bug: WASM complexity fails — findFunctionNode is not defined | fixed in PR #414 |
