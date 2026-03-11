@@ -364,6 +364,7 @@ export function purgeFilesFromGraph(db, files, options = {}) {
 }
 
 export async function buildGraph(rootDir, opts = {}) {
+  const _t_buildStart = performance.now();
   rootDir = path.resolve(rootDir);
   const dbPath = path.join(rootDir, '.codegraph', 'graph.db');
   const db = openDb(dbPath);
@@ -668,6 +669,7 @@ export async function buildGraph(rootDir, opts = {}) {
 
   // ── Phase timing ────────────────────────────────────────────────────
   const _t = {};
+  _t.setupMs = performance.now() - _t_buildStart;
 
   // ── Unified parse via parseFilesAuto ───────────────────────────────
   const filePaths = filesToParse.map((item) => item.file);
@@ -1350,6 +1352,8 @@ export async function buildGraph(rootDir, opts = {}) {
     }
   }
 
+  _t.finalize0 = performance.now();
+
   // Release any remaining cached WASM trees for GC
   for (const [, symbols] of allSymbols) {
     symbols._tree = null;
@@ -1456,8 +1460,11 @@ export async function buildGraph(rootDir, opts = {}) {
     }
   }
 
+  _t.finalizeMs = performance.now() - _t.finalize0;
+
   return {
     phases: {
+      setupMs: +_t.setupMs.toFixed(1),
       parseMs: +_t.parseMs.toFixed(1),
       insertMs: +_t.insertMs.toFixed(1),
       resolveMs: +_t.resolveMs.toFixed(1),
@@ -1468,6 +1475,7 @@ export async function buildGraph(rootDir, opts = {}) {
       complexityMs: +_t.complexityMs.toFixed(1),
       ...(_t.cfgMs != null && { cfgMs: +_t.cfgMs.toFixed(1) }),
       ...(_t.dataflowMs != null && { dataflowMs: +_t.dataflowMs.toFixed(1) }),
+      finalizeMs: +_t.finalizeMs.toFixed(1),
     },
   };
 }
