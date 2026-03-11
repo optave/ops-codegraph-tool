@@ -108,7 +108,7 @@ Build: `codegraph build <repo> --engine native --no-incremental`
 | Parameters | 2158 | 2198 | +40 |
 | Calls | 2129 | 2163 | +34 |
 | Dynamic imports | 0 | 99 | +99 (BUG #410) |
-| Complexity | 1193 functions | FAILED | BUG |
+| Complexity | 1193 functions | 0 (BUG #413) | -1193 |
 | Quality score | 88 | 88 | 0 |
 | Full build time | 1335ms | 2500ms | Native 1.87x faster |
 | No-op rebuild | 8ms | 8ms | Parity |
@@ -120,7 +120,7 @@ Build: `codegraph build <repo> --engine native --no-incremental`
 1. **Dynamic imports (#410):** Native engine does not track `import()` expressions, resulting in 0 dynamic-imports edges vs WASM's 99. This inflates native's unused export warnings (43 vs 25).
 2. **Constants:** Native extracts 36 more constants than WASM — likely better coverage of top-level const declarations.
 3. **Parameters:** WASM extracts 40 more parameters than native.
-4. **WASM complexity failure:** WASM engine did not produce complexity metrics (native handles complexity in Rust). This is expected behavior, not a bug — complexity requires the native engine.
+4. **WASM complexity failure (#413):** WASM builds produce 0 complexity rows due to a `ReferenceError: findFunctionNode is not defined` in `src/complexity.js:457`. The import aliases the function as `_findFunctionNode` but the callsite uses the bare name. Native builds skip this code path because complexity is pre-computed in Rust. **Fix applied in this PR** — one-line change, 120 tests pass.
 
 ---
 
@@ -154,7 +154,9 @@ Results collected from `incremental-benchmark.js` which completed successfully:
 | CFG | 4.0 | 24.8 |
 | Dataflow | 3.7 | 4.4 |
 
-**Notes:** Native is 3.4x faster at parsing, 5.3x faster at edge building, 6.2x faster at CFG. AST phase dominates both engines (~263-279ms). Native complexity is 23.7ms vs WASM's 0.4ms (WASM skips Halstead/MI computation).
+**Phase sum vs total:** The listed phases sum to ~377ms (native) and ~529ms (WASM), but reported totals are 766ms and 959ms — leaving ~389ms and ~430ms unaccounted (~45-51%). The untracked overhead includes: file discovery (`collectFiles`), change detection (`getChangedFiles` — journal read + hash/mtime/size comparison), `purgeFilesFromGraph` (delete stale nodes/edges/embeddings), reverse-dep edge deletion, DB open/close/migrations, `writeJournalHeader`, and registry auto-registration. These phases are not instrumented in `buildGraph`'s `_t` timing object (lines 670-1470 of `builder.js`).
+
+**Notes:** Native is 3.4x faster at parsing, 5.3x faster at edge building, 6.2x faster at CFG. AST phase dominates both engines (~263-279ms). WASM complexity shows 0.4ms because the computation silently fails (BUG #413) — it should be ~24ms when fixed.
 
 ### Query Benchmark (`scripts/query-benchmark.js`)
 
@@ -293,6 +295,13 @@ All 15 key exports verified via ESM import:
 - **Root cause:** Version string in the Rust binary (`Cargo.toml` or constant) was not bumped for 3.1.2 release.
 - **Fix:** Ensure publish workflow bumps the Rust binary version to match npm version.
 
+### BUG 5: WASM complexity fails — findFunctionNode is not defined (High)
+- **Issue:** [#413](https://github.com/optave/codegraph/issues/413)
+- **PR:** Included in this PR — one-line fix in `src/complexity.js:457`
+- **Symptoms:** WASM builds produce 0 complexity rows. `--verbose` shows: `buildComplexityMetrics failed: findFunctionNode is not defined`. The `complexity` command reports "No complexity data found" after a WASM build.
+- **Root cause:** `src/complexity.js` line 9 imports `findFunctionNode as _findFunctionNode`, but line 457 calls the bare `findFunctionNode` which is only a re-export name, not a local binding. Native builds never hit this path because `def.complexity` is pre-computed in Rust (line 425).
+- **Fix applied:** Changed `findFunctionNode(...)` to `_findFunctionNode(...)` at line 457. Verified: WASM now produces 1192 complexity rows. 120 tests pass (94 unit + 26 integration).
+
 ---
 
 ## 10. Suggestions for Improvement
@@ -356,19 +365,19 @@ The AST phase (~265ms) dominates 1-file rebuilds for both engines. Profiling thi
 
 v3.1.2 is a solid architectural release. The Phase 3 refactoring (unified AST analysis, command/query separation, repository pattern) is well-executed — all commands work correctly through the new layers with no regressions from the restructuring. Build performance is good (5.7 ms/file native, 10.6 ms/file WASM) with sub-millisecond query latency.
 
-The main gaps are engine parity: the native engine doesn't track dynamic imports (inflating unused export warnings), and the WASM engine can't compute complexity metrics. The benchmark resilience issues are low-impact but should be fixed to prevent data loss during future dogfooding. The stale native version display is cosmetic but signals a publish workflow gap.
+The main gaps are engine parity: the native engine doesn't track dynamic imports (inflating unused export warnings), and the WASM engine had completely broken complexity metrics due to a variable naming bug (#413, fixed in this PR). The benchmark resilience issues are low-impact but should be fixed to prevent data loss during future dogfooding. The stale native version display is cosmetic but signals a publish workflow gap.
 
-**Rating: 7.5/10**
+**Rating: 7/10**
 
 - (+) Clean architecture refactoring with no functional regressions
 - (+) Strong query performance (sub-ms at all depths)
 - (+) MCP server works in both modes (31/32 tools)
 - (+) Programmatic API exports all verified
 - (+) nomic embedding recall at 99.1% Hit@5
-- (-) Native engine missing dynamic imports (177 edge gap)
-- (-) Benchmark segfaults lose partial results
-- (-) Native version display stale
-- (-) WASM stability issues under repeated builds
+- (-) WASM complexity completely broken since unified AST refactor — zero rows produced (#413, fixed here)
+- (-) Native engine missing dynamic imports (177 edge gap, #410)
+- (-) Benchmark segfaults lose partial results (#408/#409)
+- (-) Native version display stale (#411)
 
 ---
 
@@ -380,3 +389,4 @@ The main gaps are engine parity: the native engine doesn't track dynamic imports
 | Issue | [#409](https://github.com/optave/codegraph/issues/409) | bug: WASM engine segfaults after repeated builds in same process | open |
 | Issue | [#410](https://github.com/optave/codegraph/issues/410) | bug: native engine does not track dynamic import() expressions | open |
 | Issue | [#411](https://github.com/optave/codegraph/issues/411) | bug: info command reports stale native engine version (3.1.0 instead of 3.1.2) | open |
+| Issue | [#413](https://github.com/optave/codegraph/issues/413) | bug: WASM complexity fails — findFunctionNode is not defined | fixed in this PR |

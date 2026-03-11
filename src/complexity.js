@@ -454,7 +454,7 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
         // Fallback: compute from AST tree
         if (!tree || !rules) continue;
 
-        const funcNode = findFunctionNode(tree.rootNode, def.line, def.endLine, rules);
+        const funcNode = _findFunctionNode(tree.rootNode, def.line, def.endLine, rules);
         if (!funcNode) continue;
 
         // Single-pass: complexity + Halstead + LOC + MI in one DFS walk
