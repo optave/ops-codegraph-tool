@@ -101,13 +101,26 @@ export function iterateFunctionNodes(db, opts = {}) {
   return _functionNodeQuery(opts).iterate(db);
 }
 
+// ─── Statement caches (one prepared statement per db instance) ────────────
+// WeakMap keys on the db object so statements are GC'd when the db closes.
+const _countNodesStmt = new WeakMap();
+const _countEdgesStmt = new WeakMap();
+const _countFilesStmt = new WeakMap();
+const _findNodeByIdStmt = new WeakMap();
+const _findNodesByFileStmt = new WeakMap();
+const _findFileNodesStmt = new WeakMap();
+const _getNodeIdStmt = new WeakMap();
+const _getFunctionNodeIdStmt = new WeakMap();
+const _bulkNodeIdsByFileStmt = new WeakMap();
+const _findNodeChildrenStmt = new WeakMap();
+
 /**
  * Count total nodes.
  * @param {object} db
  * @returns {number}
  */
 export function countNodes(db) {
-  return db.prepare('SELECT COUNT(*) AS cnt FROM nodes').get().cnt;
+  return cachedStmt(_countNodesStmt, db, 'SELECT COUNT(*) AS cnt FROM nodes').get().cnt;
 }
 
 /**
@@ -116,7 +129,7 @@ export function countNodes(db) {
  * @returns {number}
  */
 export function countEdges(db) {
-  return db.prepare('SELECT COUNT(*) AS cnt FROM edges').get().cnt;
+  return cachedStmt(_countEdgesStmt, db, 'SELECT COUNT(*) AS cnt FROM edges').get().cnt;
 }
 
 /**
@@ -125,7 +138,7 @@ export function countEdges(db) {
  * @returns {number}
  */
 export function countFiles(db) {
-  return db.prepare('SELECT COUNT(DISTINCT file) AS cnt FROM nodes').get().cnt;
+  return cachedStmt(_countFilesStmt, db, 'SELECT COUNT(DISTINCT file) AS cnt FROM nodes').get().cnt;
 }
 
 // ─── Shared node lookups ───────────────────────────────────────────────
@@ -137,7 +150,7 @@ export function countFiles(db) {
  * @returns {object|undefined}
  */
 export function findNodeById(db, id) {
-  return db.prepare('SELECT * FROM nodes WHERE id = ?').get(id);
+  return cachedStmt(_findNodeByIdStmt, db, 'SELECT * FROM nodes WHERE id = ?').get(id);
 }
 
 /**
@@ -147,9 +160,11 @@ export function findNodeById(db, id) {
  * @returns {object[]}
  */
 export function findNodesByFile(db, file) {
-  return db
-    .prepare("SELECT * FROM nodes WHERE file = ? AND kind != 'file' ORDER BY line")
-    .all(file);
+  return cachedStmt(
+    _findNodesByFileStmt,
+    db,
+    "SELECT * FROM nodes WHERE file = ? AND kind != 'file' ORDER BY line",
+  ).all(file);
 }
 
 /**
@@ -159,14 +174,12 @@ export function findNodesByFile(db, file) {
  * @returns {object[]}
  */
 export function findFileNodes(db, fileLike) {
-  return db.prepare("SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'").all(fileLike);
+  return cachedStmt(
+    _findFileNodesStmt,
+    db,
+    "SELECT * FROM nodes WHERE file LIKE ? AND kind = 'file'",
+  ).all(fileLike);
 }
-
-// ─── Statement caches (one prepared statement per db instance) ────────────
-// WeakMap keys on the db object so statements are GC'd when the db closes.
-const _getNodeIdStmt = new WeakMap();
-const _getFunctionNodeIdStmt = new WeakMap();
-const _bulkNodeIdsByFileStmt = new WeakMap();
 
 /**
  * Look up a node's ID by its unique (name, kind, file, line) tuple.
@@ -226,7 +239,9 @@ export function bulkNodeIdsByFile(db, file) {
  * @returns {{ name: string, kind: string, line: number, end_line: number|null }[]}
  */
 export function findNodeChildren(db, parentId) {
-  return db
-    .prepare('SELECT name, kind, line, end_line FROM nodes WHERE parent_id = ? ORDER BY line')
-    .all(parentId);
+  return cachedStmt(
+    _findNodeChildrenStmt,
+    db,
+    'SELECT name, kind, line, end_line FROM nodes WHERE parent_id = ? ORDER BY line',
+  ).all(parentId);
 }
