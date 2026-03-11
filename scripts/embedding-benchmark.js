@@ -129,8 +129,13 @@ for (const key of modelKeys) {
 		);
 	} catch (err) {
 		console.error(`  FAILED: ${err.message}`);
+	} finally {
+		try {
+			await disposeModel();
+		} catch (disposeErr) {
+			console.error(`  disposeModel failed: ${disposeErr.message}`);
+		}
 	}
-	await disposeModel();
 }
 
 // Restore console.log for JSON output

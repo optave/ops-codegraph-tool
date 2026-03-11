@@ -179,14 +179,22 @@ if (!hasWasm && !hasNative) {
 
 let wasm = null;
 if (hasWasm) {
-	wasm = await benchmarkEngine('wasm');
+	try {
+		wasm = await benchmarkEngine('wasm');
+	} catch (err) {
+		console.error(`WASM benchmark failed: ${err.message}`);
+	}
 } else {
 	console.error('WASM grammars not built — skipping WASM benchmark');
 }
 
 let native = null;
 if (hasNative) {
-	native = await benchmarkEngine('native');
+	try {
+		native = await benchmarkEngine('native');
+	} catch (err) {
+		console.error(`Native benchmark failed: ${err.message}`);
+	}
 } else {
 	console.error('Native engine not available — skipping native benchmark');
 }
@@ -195,6 +203,11 @@ if (hasNative) {
 console.log = origLog;
 
 const primary = wasm || native;
+if (!primary) {
+	console.error('Error: Both engines failed. No results to report.');
+	cleanup();
+	process.exit(1);
+}
 const result = {
 	version,
 	date: new Date().toISOString().slice(0, 10),
