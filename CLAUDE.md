@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **Use codegraph before editing code.** This project has a pre-built dependency graph at `.codegraph/graph.db`. Before modifying any function or file, run `node src/cli.js where <name>` to locate it, `node src/cli.js audit <target> --quick` to understand the structure, `node src/cli.js context <name> -T` to gather full context, and `node src/cli.js fn-impact <name> -T` to check blast radius. After staging changes, run `node src/cli.js diff-impact --staged -T` to verify impact. This saves tokens, prevents blind edits, and catches breakage before it happens. See the [Dogfooding](#dogfooding--codegraph-on-itself) section for the full command reference.
+> **Hooks enforce code quality.** This project uses Claude Code hooks (`.claude/hooks/`) to automatically inject codegraph dependency context on reads, block commits with cycles or dead exports, run lint on staged files, and show diff-impact before commits. You don't need to run codegraph commands manually — the hooks handle it. If codegraph reports an error or produces wrong results when analyzing itself, **fix the bug in the codebase**.
 
 ## Project Overview
 
@@ -110,57 +110,25 @@ Releases are triggered via the `publish.yml` workflow (`workflow_dispatch`). By 
 
 The workflow can be overridden with a specific version via the `version-override` input. Locally, `npm run release:dry-run` previews the bump and changelog.
 
-## Dogfooding — codegraph on itself
+## Hooks
 
-Codegraph is **our own tool**. Use it to analyze this repository before making changes. If codegraph reports an error, crashes, or produces wrong results when analyzing itself, **fix the bug in the codebase** — don't just work around it.
+Codegraph is **our own tool** — hooks in `.claude/hooks/` use it to enforce quality automatically:
 
-### Before modifying code, always:
-1. `node src/cli.js where <name>` — find where the symbol lives
-2. `node src/cli.js audit <file-or-function> --quick` — understand the structure
-3. `node src/cli.js context <name> -T` — get full context (source, deps, callers)
-4. `node src/cli.js fn-impact <name> -T` — check blast radius before editing
+| Hook | What it does |
+|------|-------------|
+| `enrich-context.sh` | Injects file deps on every Read/Grep (passive context) |
+| `pre-commit.sh` | Blocks commits with cycles or dead exports; warns on signature changes; shows diff-impact |
+| `lint-staged.sh` | Blocks commits with lint errors in session-edited files |
+| `guard-git.sh` | Blocks dangerous git commands; validates commits against edit log |
+| `update-graph.sh` | Rebuilds graph after edits |
 
-### After modifying code:
-5. `node src/cli.js diff-impact --staged -T` — verify impact before committing
-
-### Other useful commands
-```bash
-node src/cli.js build .              # Build/update the graph (incremental)
-node src/cli.js map --limit 20       # Module overview & most-connected nodes
-node src/cli.js stats                # Graph health and quality score
-node src/cli.js query <name> -T       # Function call chain (callers + callees)
-node src/cli.js path <a> <b> -T          # Shortest path between two symbols
-node src/cli.js deps src/<file>.js   # File-level imports and importers
-node src/cli.js diff-impact main     # Impact of current branch vs main
-node src/cli.js complexity -T         # Per-function complexity metrics
-node src/cli.js communities -T       # Community detection & drift analysis
-node src/cli.js sequence <name> -T   # Mermaid sequence diagram from call edges
-node src/cli.js check -T             # Rule engine pass/fail check
-node src/cli.js audit <target> -T    # Combined structural summary + impact + health report
-node src/cli.js triage -T            # Ranked audit priority queue
-node src/cli.js check --staged       # CI validation predicates (exit code 0/1)
-node src/cli.js batch t1 t2 -T      # Batch query multiple targets
-node src/cli.js owners <target>      # CODEOWNERS mapping
-node src/cli.js snapshot save <name> # Checkpoint graph DB
-node src/cli.js cycles               # Check for circular dependencies
-node src/cli.js search "<query>"     # Semantic search (requires `embed` first)
-```
-
-### Flags
-- `-T` / `--no-tests` — exclude test files (use by default)
-- `-j` / `--json` — JSON output for programmatic use
-- `-f, --file <path>` — scope to a specific file (partial match)
-- `-k, --kind <kind>` — filter by symbol kind (function, method, class, etc.)
+See `docs/examples/claude-code-hooks/README.md` for details.
 
 ## Parallel Sessions
 
 Multiple Claude Code instances run concurrently in this repo. **Every session must start with `/worktree`** to get an isolated copy of the repo before making any changes. This prevents cross-session interference entirely.
 
-**Safety hooks** (`.claude/hooks/guard-git.sh` and `track-edits.sh`) enforce these rules automatically:
-
-- `guard-git.sh` (PreToolUse on Bash) **blocks**: `git add .`, `git add -A`, `git reset`, `git checkout -- <file>`, `git restore <file>`, `git clean`, `git stash`. It allows `git restore --staged <file>` for safe unstaging.
-- `guard-git.sh` also **validates commits**: compares staged files against the session edit log and blocks commits that include files you didn't edit.
-- `track-edits.sh` (PostToolUse on Edit/Write) logs every file you touch to `.claude/session-edits.log` (gitignored, per-worktree).
+**Safety hooks** enforce these rules automatically — see the Hooks section above.
 
 **Rules:**
 - Run `/worktree` before starting work
@@ -182,19 +150,3 @@ This repo uses [Greptile](https://greptile.com) for automated PR reviews. After 
 ## Node Version
 
 Requires Node >= 20.
-
-## Working Principles
-
-### 1. Plan Mode Default
-
-* Enter plan mode for ANY non-trivial task (3+ steps or architectural decisions)
-* If something goes sideways, STOP and re-plan immediately – don't keep pushing
-* Use plan mode for verification steps, not just building
-* Write detailed specs upfront to reduce ambiguity
-
-### 2. Never Ignore Lint Warnings
-
-* Never silently skip or dismiss linting/formatting warnings — always check whether they are relevant to the current change
-* If a warning fires on code you touched, fix it
-* If a warning fires on code you didn't touch, mention it to the user but don't fix it (per the "Do not clean up lint/format issues in files you aren't working on" rule in Parallel Sessions)
-* Run `npm run lint` after editing code and review the output — do not assume warnings are spurious

@@ -331,36 +331,25 @@ You can configure [Claude Code hooks](https://docs.anthropic.com/en/docs/claude-
 
 **Doc check hook** (PreToolUse on Bash): when Claude runs `git commit` with source files staged (anything under `src/`, `cli.js`, `constants.js`, `parser.js`, `package.json`, or `grammars/`), the hook checks whether `README.md`, `CLAUDE.md`, and `ROADMAP.md` are also staged. If any are missing, it blocks the commit with a `deny` decision listing which docs weren't staged and what to review in each (language support tables, architecture docs, roadmap phases, etc.). Non-source-only commits (tests, docs, config) pass through without checks.
 
-**Edit reminder hook** (PreToolUse on Edit/Write): before the agent writes code, a reminder is injected via `additionalContext` prompting it to check `where`, `audit --quick`, `context`, and `fn-impact` first. Only fires once per file per session (tracks in `.claude/codegraph-checked.log`, gitignored). Non-blocking — it nudges but never prevents the edit. Skips non-source files like `.md`, `.json`, `.yml`.
-
 **Graph update hook** (PostToolUse on Edit/Write): keeps the graph incrementally updated after each file edit. Only changed files are re-parsed.
 
-**Cycle check hook** (PreToolUse on Bash): when Claude runs `git commit`, the hook runs `codegraph check --staged --json -T` and checks if any circular dependencies involve files edited in this session. If found, blocks the commit with a `deny` decision listing the cycles. Uses the session edit log to scope checks — pre-existing cycles in untouched files don't trigger.
+**Pre-commit hook** (PreToolUse on Bash): when Claude runs `git commit`, a single Node.js process (`pre-commit-checks.js`) runs all codegraph checks: cycle detection (blocks if cycles involve session-edited files), dead export detection (blocks if edited src/ files have unused exports), signature change warnings (informational, risk-rated by role and transitive caller count), and diff-impact blast radius (informational). Consolidates what were previously 3 separate hooks into one process.
 
-**Dead export check hook** (PreToolUse on Bash): when Claude runs `git commit`, the hook runs `codegraph exports <file> --unused --json -T` for each staged `src/` file that was edited in this session. If any export has zero consumers (dead code), blocks the commit. This catches accidentally introduced dead exports before they reach a PR.
+**Lint gate hook** (PreToolUse on Bash): when Claude runs `git commit`, runs the linter (biome) on staged files edited in this session. Blocks the commit if lint errors are found.
 
-**Signature change warning hook** (PreToolUse on Bash): when Claude runs `git commit`, the hook runs `codegraph check --staged` to detect modified function declaration lines, then enriches each violation with the symbol's role (`core`, `utility`, etc.) and transitive caller count from the graph. Injects a risk-rated summary via `additionalContext` — `HIGH` for core symbols, `MEDIUM` for utility, `low` for others. Non-blocking — the agent sees the warning and can decide whether the signature change is intentional.
-
-**Git operation hook** (PostToolUse on Bash): detects `git rebase`, `git revert`, `git cherry-pick`, `git merge`, and `git pull` commands and automatically: (1) rebuilds the codegraph so dependency context stays fresh, (2) logs all files changed by the operation to `session-edits.log` so commit validation doesn't block rebase-modified files, and (3) clears stale entries from `codegraph-checked.log` so the edit reminder re-fires for affected files. Uses `ORIG_HEAD` (set by all these git operations) to detect which files changed. If the operation failed (e.g. merge conflicts), the diff safely returns nothing.
+**Git operation hook** (PostToolUse on Bash): detects `git rebase`, `git revert`, `git cherry-pick`, `git merge`, and `git pull` commands and automatically: (1) rebuilds the codegraph so dependency context stays fresh, (2) logs all files changed by the operation to `session-edits.log` so commit validation doesn't block rebase-modified files. Uses `ORIG_HEAD` (set by all these git operations) to detect which files changed. If the operation failed (e.g. merge conflicts), the diff safely returns nothing.
 
 > **Windows note:** If your hooks use bash scripts, normalize backslashes inside `node -e` rather than bash (`${VAR//\\//}` fails on Git Bash). See this repo's `.claude/hooks/enrich-context.sh` for the pattern.
 
-**Commit check hook** (PreToolUse on Bash): when Claude runs `git commit`, the hook runs `checkData()` once with cycles + signatures predicates enabled (boundaries skipped for speed). If circular dependencies involve files edited in this session, blocks the commit. If function signatures were modified, injects a risk-rated warning via `additionalContext` — `HIGH` for core symbols, `MEDIUM` for utility, `LOW` for others — with transitive caller counts. Non-blocking for signatures, blocking for cycles.
-
-**Dead export check hook** (PreToolUse on Bash): when Claude runs `git commit`, the hook batch-checks all staged `src/` files edited in this session for exports with zero consumers. Uses a single Node.js process for all files (not per-file CLI calls). If any export has zero consumers, blocks the commit.
-
 **Ready-to-use examples** are in [`docs/examples/claude-code-hooks/`](../examples/claude-code-hooks/) with a complete `settings.json` and setup instructions:
-- `enrich-context.sh` — dependency context injection
-- `remind-codegraph.sh` — pre-edit reminder to check context/impact
+- `enrich-context.sh` — dependency context injection on every Read/Grep
+- `pre-commit.sh` + `pre-commit-checks.js` — consolidated pre-commit checks (cycles, dead exports, signatures, diff-impact)
+- `lint-staged.sh` — lint gate for staged files
 - `update-graph.sh` — incremental graph updates after edits
 - `post-git-ops.sh` — graph rebuild + edit tracking after rebase/revert/merge
-- `check-readme.sh` — blocks commits when source changes may require doc updates
 - `guard-git.sh` — blocks dangerous git commands + validates commits
 - `track-edits.sh` — logs edited files for commit validation
 - `track-moves.sh` — logs file moves/copies for commit validation
-- `guard-pr-body.sh` — blocks PRs with "generated with" in the body
-- `check-commit.sh` — combined cycle detection (blocking) + signature change warning (informational)
-- `check-dead-exports.sh` — blocks commits if files you edited contain exports with zero consumers
 
 #### Parallel session safety hooks
 
@@ -375,17 +364,16 @@ Pair with the `/worktree` command so each session gets an isolated copy of the r
 
 Git operations like `rebase`, `revert`, `cherry-pick`, `merge`, and `pull` change file contents without going through the Edit/Write tools. Without special handling, this leaves the codegraph database stale, the edit tracker unaware of changed files, and the edit reminder not re-firing for modified files.
 
-The **`post-git-ops.sh`** hook (PostToolUse on Bash) detects these operations and fixes all three problems:
+The **`post-git-ops.sh`** hook (PostToolUse on Bash) detects these operations and fixes both problems:
 
 1. **Graph rebuild** — runs `codegraph build` so that dependency context from `enrich-context.sh` reflects the post-operation state
 2. **Edit log update** — uses `git diff --name-only ORIG_HEAD HEAD` to find files changed by the operation and appends them to `session-edits.log`, so `guard-git.sh` won't block commits that include rebase-modified files
-3. **Reminder reset** — removes changed files from `codegraph-checked.log` so the agent is prompted to re-check context and impact before editing those files again
 
 The codegraph incremental build itself is naturally resilient to git operations — it uses content hashing (not timestamps alone) to detect changes, and its reverse-dependency cascade ensures all affected import edges are rebuilt. The hook simply ensures the rebuild is triggered automatically rather than requiring a manual `codegraph build`.
 
 #### Worktree isolation
 
-All session-local state files (`session-edits.log`, `codegraph-checked.log`) use `git rev-parse --show-toplevel` to resolve the working tree root, rather than `CLAUDE_PROJECT_DIR`. This ensures each worktree gets its own isolated state — session A's edit log doesn't leak into session B's commit validation. Without this, `CLAUDE_PROJECT_DIR` (which points to the main project root) would cause all sessions to share a single edit log, defeating the parallel session safety model.
+All session-local state files (`session-edits.log`) use `git rev-parse --show-toplevel` to resolve the working tree root, rather than `CLAUDE_PROJECT_DIR`. This ensures each worktree gets its own isolated state — session A's edit log doesn't leak into session B's commit validation. Without this, `CLAUDE_PROJECT_DIR` (which points to the main project root) would cause all sessions to share a single edit log, defeating the parallel session safety model.
 
 ---
 
