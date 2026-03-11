@@ -143,18 +143,20 @@ Results collected from `incremental-benchmark.js` which completed successfully:
 
 | Phase | Native (ms) | WASM (ms) |
 |-------|-------------|-----------|
-| Parse | 37.3 | 125.3 |
-| Insert | 8.2 | 8.2 |
-| Resolve | 1.0 | 2.3 |
-| Edges | 12.0 | 63.0 |
-| Structure | 10.4 | 8.8 |
-| Roles | 13.4 | 13.3 |
-| AST | 263.1 | 278.7 |
-| Complexity | 23.7 | 0.4 |
-| CFG | 4.0 | 24.8 |
-| Dataflow | 3.7 | 4.4 |
+| **Setup** | — | — |
+| **Parse** | 37.3 | 125.3 |
+| **Insert** | 8.2 | 8.2 |
+| **Resolve** | 1.0 | 2.3 |
+| **Edges** | 12.0 | 63.0 |
+| **Structure** | 10.4 | 8.8 |
+| **Roles** | 13.4 | 13.3 |
+| **AST** | 263.1 | 278.7 |
+| **Complexity** | 23.7 | 0.4 |
+| **CFG** | 4.0 | 24.8 |
+| **Dataflow** | 3.7 | 4.4 |
+| **Finalize** | — | — |
 
-**Phase sum vs total:** The listed phases sum to ~377ms (native) and ~529ms (WASM), but reported totals are 766ms and 959ms — leaving ~389ms and ~430ms unaccounted (~45-51%). The untracked overhead includes: file discovery (`collectFiles`), change detection (`getChangedFiles` — journal read + hash/mtime/size comparison), `purgeFilesFromGraph` (delete stale nodes/edges/embeddings), reverse-dep edge deletion, DB open/close/migrations, `writeJournalHeader`, and registry auto-registration. These phases are not instrumented in `buildGraph`'s `_t` timing object (lines 670-1470 of `builder.js`).
+> **Note:** The pre-existing benchmark data above was collected before `setupMs` and `finalizeMs` were added to `buildGraph`. A fresh full-build run with the fix shows: setupMs=29.6, finalizeMs=180.3 — these two phases account for the ~45-51% gap between the old phase sums and reported totals. Setup covers DB open/init, config, file discovery, and change detection. Finalize covers count queries, drift checks, orphan/unused-export warnings, metadata writes, DB close, journal, and registry.
 
 **Notes:** Native is 3.4x faster at parsing, 5.3x faster at edge building, 6.2x faster at CFG. AST phase dominates both engines (~263-279ms). WASM complexity shows 0.4ms because the computation silently fails (BUG #413) — it should be ~24ms when fixed.
 
