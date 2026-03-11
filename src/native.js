@@ -40,16 +40,24 @@ const PLATFORM_PACKAGES = {
 };
 
 /**
+ * Resolve the platform-specific npm package name for the native addon.
+ * Returns null if the current platform is not supported.
+ */
+function resolvePlatformPackage() {
+  const platform = os.platform();
+  const arch = os.arch();
+  const key = platform === 'linux' ? `${platform}-${arch}-${detectLibc()}` : `${platform}-${arch}`;
+  return PLATFORM_PACKAGES[key] || null;
+}
+
+/**
  * Try to load the native napi addon.
  * Returns the module on success, null on failure.
  */
 export function loadNative() {
   if (_cached !== undefined) return _cached;
 
-  const platform = os.platform();
-  const arch = os.arch();
-  const key = platform === 'linux' ? `${platform}-${arch}-${detectLibc()}` : `${platform}-${arch}`;
-  const pkg = PLATFORM_PACKAGES[key];
+  const pkg = resolvePlatformPackage();
   if (pkg) {
     try {
       _cached = _require(pkg);
@@ -58,7 +66,7 @@ export function loadNative() {
       _loadError = err;
     }
   } else {
-    _loadError = new Error(`Unsupported platform: ${key}`);
+    _loadError = new Error(`Unsupported platform: ${os.platform()}-${os.arch()}`);
   }
 
   _cached = null;
@@ -77,10 +85,7 @@ export function isNativeAvailable() {
  * Returns null if the package is not installed or has no version.
  */
 export function getNativePackageVersion() {
-  const platform = os.platform();
-  const arch = os.arch();
-  const key = platform === 'linux' ? `${platform}-${arch}-${detectLibc()}` : `${platform}-${arch}`;
-  const pkg = PLATFORM_PACKAGES[key];
+  const pkg = resolvePlatformPackage();
   if (!pkg) return null;
   try {
     const pkgJson = _require(`${pkg}/package.json`);

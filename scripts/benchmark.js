@@ -182,7 +182,7 @@ if (hasWasm) {
 	try {
 		wasm = await benchmarkEngine('wasm');
 	} catch (err) {
-		console.error(`WASM benchmark failed: ${err.message}`);
+		console.error(`WASM benchmark failed: ${err?.message ?? String(err)}`);
 	}
 } else {
 	console.error('WASM grammars not built — skipping WASM benchmark');
@@ -193,7 +193,7 @@ if (hasNative) {
 	try {
 		native = await benchmarkEngine('native');
 	} catch (err) {
-		console.error(`Native benchmark failed: ${err.message}`);
+		console.error(`Native benchmark failed: ${err?.message ?? String(err)}`);
 	}
 } else {
 	console.error('Native engine not available — skipping native benchmark');
