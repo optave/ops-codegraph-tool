@@ -5,6 +5,10 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 | Version | Engine | fnDeps d1 | fnDeps d3 | fnDeps d5 | fnImpact d1 | fnImpact d3 | fnImpact d5 | diffImpact |
 |---------|--------|----------:|----------:|----------:|------------:|------------:|------------:|-----------:|
+| 3.1.3 | native | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.8 ~ | 8.3ms ↓2% |
+| 3.1.3 | wasm | 0.9 ~ | 0.8 ↓11% | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.8 ~ | 7.8ms ~ |
+| 3.1.2 | native | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.8 ↑14% | 0.8 ↑14% | 8.5ms ↑6% |
+| 3.1.2 | wasm | 0.9 ↑12% | 0.9 ↑12% | 0.8 ~ | 0.8 ↑14% | 0.8 ↑14% | 0.8 ↑14% | 7.9ms ↑10% |
 | 3.1.0 | native | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.7 ↓13% | 0.7 ↓13% | 8ms ~ |
 | 3.1.0 | wasm | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.7 ↓13% | 0.7 ↓13% | 0.7 ↓13% | 7.2ms ↑3% |
 | 3.0.4 | native | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.8 ~ | 7.9ms ↑5% |
@@ -24,11 +28,11 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 ### Latest results
 
-**Version:** 3.1.0 | **Date:** 2026-03-08
+**Version:** 3.1.3 | **Date:** 2026-03-12
 
 #### Native (Rust)
 
-**Targets:** hub=`src/queries.js`, mid=`include_ast_nodes`, leaf=`crates`
+**Targets:** hub=`src/queries.js`, mid=`modelKey`, leaf=`docs`
 
 | Metric | Value |
 |--------|------:|
@@ -36,30 +40,126 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 | fnDeps depth 3 | 0.8ms |
 | fnDeps depth 5 | 0.8ms |
 | fnImpact depth 1 | 0.8ms |
-| fnImpact depth 3 | 0.7ms |
-| fnImpact depth 5 | 0.7ms |
-| diffImpact latency | 8ms |
+| fnImpact depth 3 | 0.8ms |
+| fnImpact depth 5 | 0.8ms |
+| diffImpact latency | 8.3ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
 #### WASM
 
-**Targets:** hub=`src/queries.js`, mid=`include_ast_nodes`, leaf=`crates`
+**Targets:** hub=`src/queries.js`, mid=`modelKey`, leaf=`docs`
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 0.8ms |
+| fnDeps depth 1 | 0.9ms |
 | fnDeps depth 3 | 0.8ms |
 | fnDeps depth 5 | 0.8ms |
-| fnImpact depth 1 | 0.7ms |
-| fnImpact depth 3 | 0.7ms |
-| fnImpact depth 5 | 0.7ms |
-| diffImpact latency | 7.2ms |
+| fnImpact depth 1 | 0.8ms |
+| fnImpact depth 3 | 0.8ms |
+| fnImpact depth 5 | 0.8ms |
+| diffImpact latency | 7.8ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
 <!-- QUERY_BENCHMARK_DATA
 [
+  {
+    "version": "3.1.3",
+    "date": "2026-03-12",
+    "wasm": {
+      "targets": {
+        "hub": "src/queries.js",
+        "mid": "modelKey",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 0.9,
+        "depth3Ms": 0.8,
+        "depth5Ms": 0.8
+      },
+      "fnImpact": {
+        "depth1Ms": 0.8,
+        "depth3Ms": 0.8,
+        "depth5Ms": 0.8
+      },
+      "diffImpact": {
+        "latencyMs": 7.8,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    },
+    "native": {
+      "targets": {
+        "hub": "src/queries.js",
+        "mid": "modelKey",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 0.8,
+        "depth3Ms": 0.8,
+        "depth5Ms": 0.8
+      },
+      "fnImpact": {
+        "depth1Ms": 0.8,
+        "depth3Ms": 0.8,
+        "depth5Ms": 0.8
+      },
+      "diffImpact": {
+        "latencyMs": 8.3,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    }
+  },
+  {
+    "version": "3.1.2",
+    "date": "2026-03-11",
+    "wasm": {
+      "targets": {
+        "hub": "src/queries.js",
+        "mid": "cyclomatic",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 0.9,
+        "depth3Ms": 0.9,
+        "depth5Ms": 0.8
+      },
+      "fnImpact": {
+        "depth1Ms": 0.8,
+        "depth3Ms": 0.8,
+        "depth5Ms": 0.8
+      },
+      "diffImpact": {
+        "latencyMs": 7.9,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    },
+    "native": {
+      "targets": {
+        "hub": "src/queries.js",
+        "mid": "cyclomatic",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 0.8,
+        "depth3Ms": 0.8,
+        "depth5Ms": 0.8
+      },
+      "fnImpact": {
+        "depth1Ms": 0.8,
+        "depth3Ms": 0.8,
+        "depth5Ms": 0.8
+      },
+      "diffImpact": {
+        "latencyMs": 8.5,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    }
+  },
   {
     "version": "3.1.0",
     "date": "2026-03-08",

@@ -11,172 +11,22 @@ import {
   findIntraFileCallEdges,
   findNodeChildren,
   findNodesByFile,
-  getClassHierarchy,
   getComplexityForNode,
   openReadonlyOrFail,
 } from '../db.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { debug } from '../logger.js';
 import { paginateResult } from '../paginate.js';
-import { LANGUAGE_REGISTRY } from '../parser.js';
+import {
+  extractSignature,
+  extractSummary,
+  isFileLikeTarget,
+  readSourceRange,
+  safePath,
+} from '../shared/file-utils.js';
+import { resolveMethodViaHierarchy } from '../shared/hierarchy.js';
 import { normalizeSymbol } from '../shared/normalize.js';
 import { findMatchingNodes } from './symbol-lookup.js';
-
-// ─── Helpers (exported for use by exports.js) ────────────────────────────
-
-/**
- * Resolve a file path relative to repoRoot, rejecting traversal outside the repo.
- * Returns null if the resolved path escapes repoRoot.
- */
-export function safePath(repoRoot, file) {
-  const resolved = path.resolve(repoRoot, file);
-  if (!resolved.startsWith(repoRoot + path.sep) && resolved !== repoRoot) return null;
-  return resolved;
-}
-
-export function readSourceRange(repoRoot, file, startLine, endLine) {
-  try {
-    const absPath = safePath(repoRoot, file);
-    if (!absPath) return null;
-    const content = fs.readFileSync(absPath, 'utf-8');
-    const lines = content.split('\n');
-    const start = Math.max(0, (startLine || 1) - 1);
-    const end = Math.min(lines.length, endLine || startLine + 50);
-    return lines.slice(start, end).join('\n');
-  } catch (e) {
-    debug(`readSourceRange failed for ${file}: ${e.message}`);
-    return null;
-  }
-}
-
-export function extractSummary(fileLines, line) {
-  if (!fileLines || !line || line <= 1) return null;
-  const idx = line - 2; // line above the definition (0-indexed)
-  // Scan up to 10 lines above for JSDoc or comment
-  let jsdocEnd = -1;
-  for (let i = idx; i >= Math.max(0, idx - 10); i--) {
-    const trimmed = fileLines[i].trim();
-    if (trimmed.endsWith('*/')) {
-      jsdocEnd = i;
-      break;
-    }
-    if (trimmed.startsWith('//') || trimmed.startsWith('#')) {
-      // Single-line comment immediately above
-      const text = trimmed
-        .replace(/^\/\/\s*/, '')
-        .replace(/^#\s*/, '')
-        .trim();
-      return text.length > 100 ? `${text.slice(0, 100)}...` : text;
-    }
-    if (trimmed !== '' && !trimmed.startsWith('*') && !trimmed.startsWith('/*')) break;
-  }
-  if (jsdocEnd >= 0) {
-    // Find opening /**
-    for (let i = jsdocEnd; i >= Math.max(0, jsdocEnd - 20); i--) {
-      if (fileLines[i].trim().startsWith('/**')) {
-        // Extract first non-tag, non-empty line
-        for (let j = i + 1; j <= jsdocEnd; j++) {
-          const docLine = fileLines[j]
-            .trim()
-            .replace(/^\*\s?/, '')
-            .trim();
-          if (docLine && !docLine.startsWith('@') && docLine !== '/' && docLine !== '*/') {
-            return docLine.length > 100 ? `${docLine.slice(0, 100)}...` : docLine;
-          }
-        }
-        break;
-      }
-    }
-  }
-  return null;
-}
-
-export function extractSignature(fileLines, line) {
-  if (!fileLines || !line) return null;
-  const idx = line - 1;
-  // Gather up to 5 lines to handle multi-line params
-  const chunk = fileLines.slice(idx, Math.min(fileLines.length, idx + 5)).join('\n');
-
-  // JS/TS: function name(params) or (params) => or async function
-  let m = chunk.match(
-    /(?:export\s+)?(?:async\s+)?function\s*\*?\s*\w*\s*\(([^)]*)\)\s*(?::\s*([^\n{]+))?/,
-  );
-  if (m) {
-    return {
-      params: m[1].trim() || null,
-      returnType: m[2] ? m[2].trim().replace(/\s*\{$/, '') : null,
-    };
-  }
-  // Arrow: const name = (params) => or (params):ReturnType =>
-  m = chunk.match(/=\s*(?:async\s+)?\(([^)]*)\)\s*(?::\s*([^=>\n{]+))?\s*=>/);
-  if (m) {
-    return {
-      params: m[1].trim() || null,
-      returnType: m[2] ? m[2].trim() : null,
-    };
-  }
-  // Python: def name(params) -> return:
-  m = chunk.match(/def\s+\w+\s*\(([^)]*)\)\s*(?:->\s*([^:\n]+))?/);
-  if (m) {
-    return {
-      params: m[1].trim() || null,
-      returnType: m[2] ? m[2].trim() : null,
-    };
-  }
-  // Go: func (recv) name(params) (returns)
-  m = chunk.match(/func\s+(?:\([^)]*\)\s+)?\w+\s*\(([^)]*)\)\s*(?:\(([^)]+)\)|(\w[^\n{]*))?/);
-  if (m) {
-    return {
-      params: m[1].trim() || null,
-      returnType: (m[2] || m[3] || '').trim() || null,
-    };
-  }
-  // Rust: fn name(params) -> ReturnType
-  m = chunk.match(/fn\s+\w+\s*\(([^)]*)\)\s*(?:->\s*([^\n{]+))?/);
-  if (m) {
-    return {
-      params: m[1].trim() || null,
-      returnType: m[2] ? m[2].trim() : null,
-    };
-  }
-  return null;
-}
-
-function isFileLikeTarget(target) {
-  if (target.includes('/') || target.includes('\\')) return true;
-  const ext = path.extname(target).toLowerCase();
-  if (!ext) return false;
-  for (const entry of LANGUAGE_REGISTRY) {
-    if (entry.extensions.includes(ext)) return true;
-  }
-  return false;
-}
-
-function resolveMethodViaHierarchy(db, methodName) {
-  const methods = db
-    .prepare(`SELECT * FROM nodes WHERE kind = 'method' AND name LIKE ?`)
-    .all(`%.${methodName}`);
-
-  const results = [...methods];
-  for (const m of methods) {
-    const className = m.name.split('.')[0];
-    const classNode = db
-      .prepare(`SELECT * FROM nodes WHERE name = ? AND kind = 'class' AND file = ?`)
-      .get(className, m.file);
-    if (!classNode) continue;
-
-    const ancestors = getClassHierarchy(db, classNode.id);
-    for (const ancestorId of ancestors) {
-      const ancestor = db.prepare('SELECT name FROM nodes WHERE id = ?').get(ancestorId);
-      if (!ancestor) continue;
-      const parentMethods = db
-        .prepare(`SELECT * FROM nodes WHERE name = ? AND kind = 'method'`)
-        .all(`${ancestor.name}.${methodName}`);
-      results.push(...parentMethods);
-    }
-  }
-  return results;
-}
 
 function explainFileImpl(db, target, getFileLines) {
   const fileNodes = findFileNodes(db, `%${target}%`);

@@ -145,7 +145,13 @@ export { matchOwners, ownersData, ownersForFiles, parseCodeowners } from './owne
 // Pagination utilities
 export { MCP_DEFAULTS, MCP_MAX_LIMIT, paginate, paginateResult, printNdjson } from './paginate.js';
 // Unified parser API
-export { getActiveEngine, isWasmAvailable, parseFileAuto, parseFilesAuto } from './parser.js';
+export {
+  disposeParsers,
+  getActiveEngine,
+  isWasmAvailable,
+  parseFileAuto,
+  parseFilesAuto,
+} from './parser.js';
 // Query functions (data-returning)
 export {
   ALL_SYMBOL_KINDS,

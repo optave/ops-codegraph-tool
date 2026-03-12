@@ -204,7 +204,23 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
         "call_expression" => {
             if let Some(fn_node) = node.child_by_field_name("function") {
-                if let Some(call_info) = extract_call_info(&fn_node, node, source) {
+                // Detect dynamic import() expressions
+                if fn_node.kind() == "import" {
+                    if let Some(args) = node.child_by_field_name("arguments")
+                        .or_else(|| find_child(node, "arguments"))
+                    {
+                        if let Some(str_node) = find_child(&args, "string")
+                            .or_else(|| find_child(&args, "template_string"))
+                        {
+                            let mod_path = node_text(&str_node, source)
+                                .replace(&['\'', '"', '`'][..], "");
+                            let names = extract_dynamic_import_names(node, source);
+                            let mut imp = Import::new(mod_path, names, start_line(node));
+                            imp.dynamic_import = Some(true);
+                            symbols.imports.push(imp);
+                        }
+                    }
+                } else if let Some(call_info) = extract_call_info(&fn_node, node, source) {
                     symbols.calls.push(call_info);
                 }
             }
@@ -1000,6 +1016,96 @@ fn find_parent_class<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> {
     None
 }
 
+/// Extract named bindings from a dynamic `import()` call expression.
+/// Handles: `const { a, b } = await import(...)` and `const mod = await import(...)`
+fn extract_dynamic_import_names(call_node: &Node, source: &[u8]) -> Vec<String> {
+    // Walk up: call_expression → await_expression? → variable_declarator
+    let mut current = call_node.parent();
+    if let Some(parent) = current {
+        if parent.kind() == "await_expression" {
+            current = parent.parent();
+        }
+    }
+    let declarator = match current {
+        Some(n) if n.kind() == "variable_declarator" => n,
+        _ => return Vec::new(),
+    };
+    let name_node = match declarator.child_by_field_name("name") {
+        Some(n) => n,
+        None => return Vec::new(),
+    };
+    match name_node.kind() {
+        // const { a, b } = await import(...)
+        "object_pattern" => {
+            let mut names = Vec::new();
+            for i in 0..name_node.child_count() {
+                if let Some(child) = name_node.child(i) {
+                    if child.kind() == "shorthand_property_identifier_pattern"
+                        || child.kind() == "shorthand_property_identifier"
+                    {
+                        names.push(node_text(&child, source).to_string());
+                    } else if child.kind() == "pair_pattern" || child.kind() == "pair" {
+                        if let Some(val) = child.child_by_field_name("value") {
+                            // Handle `{ foo: bar = 'default' }` — extract the left-hand binding
+                            let binding = if val.kind() == "assignment_pattern" {
+                                val.child_by_field_name("left").unwrap_or(val)
+                            } else if val.kind() == "identifier" {
+                                val
+                            } else {
+                                // Nested pattern (e.g. `{ foo: { bar } }`) — skip;
+                                // full nested support requires recursive extraction.
+                                continue;
+                            };
+                            names.push(node_text(&binding, source).to_string());
+                        } else if let Some(key) = child.child_by_field_name("key") {
+                            names.push(node_text(&key, source).to_string());
+                        }
+                    } else if child.kind() == "object_assignment_pattern" {
+                        // Handle `{ a = 'default' }` — extract the left-hand binding
+                        if let Some(left) = child.child_by_field_name("left") {
+                            names.push(node_text(&left, source).to_string());
+                        }
+                    } else if child.kind() == "rest_pattern" || child.kind() == "rest_element" {
+                        // Handle `{ a, ...rest }` — extract the identifier inside the spread
+                        if let Some(inner) = child.child(0) {
+                            if inner.kind() == "identifier" {
+                                names.push(node_text(&inner, source).to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            names
+        }
+        // const mod = await import(...)
+        "identifier" => vec![node_text(&name_node, source).to_string()],
+        // const [first, second] = await import(...)
+        "array_pattern" => {
+            let mut names = Vec::new();
+            for i in 0..name_node.child_count() {
+                if let Some(child) = name_node.child(i) {
+                    if child.kind() == "identifier" {
+                        names.push(node_text(&child, source).to_string());
+                    } else if child.kind() == "assignment_pattern" {
+                        if let Some(left) = child.child_by_field_name("left") {
+                            names.push(node_text(&left, source).to_string());
+                        }
+                    } else if child.kind() == "rest_pattern" || child.kind() == "rest_element" {
+                        // Handle `[a, ...rest]` — extract the identifier inside the spread
+                        if let Some(inner) = child.child(0) {
+                            if inner.kind() == "identifier" {
+                                names.push(node_text(&inner, source).to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            names
+        }
+        _ => Vec::new(),
+    }
+}
+
 fn extract_import_names(node: &Node, source: &[u8]) -> Vec<String> {
     let mut names = Vec::new();
     scan_import_names(node, source, &mut names);
@@ -1333,5 +1439,23 @@ mod tests {
         let str_nodes: Vec<_> = s.ast_nodes.iter().filter(|n| n.kind == "string").collect();
         assert_eq!(str_nodes.len(), 1);
         assert!(str_nodes[0].name.contains("hello template"));
+    }
+
+    #[test]
+    fn finds_dynamic_import() {
+        let s = parse_js("const mod = import('./foo.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].source, "./foo.js");
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_destructuring() {
+        let s = parse_js("const { a, b } = await import('./bar.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].source, "./bar.js");
+        assert!(dyn_imports[0].names.contains(&"a".to_string()));
+        assert!(dyn_imports[0].names.contains(&"b".to_string()));
     }
 }

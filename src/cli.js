@@ -1390,7 +1390,7 @@ program
   .command('info')
   .description('Show codegraph engine info and diagnostics')
   .action(async () => {
-    const { isNativeAvailable, loadNative } = await import('./native.js');
+    const { getNativePackageVersion, isNativeAvailable, loadNative } = await import('./native.js');
     const { getActiveEngine } = await import('./parser.js');
 
     const engine = program.opts().engine;
@@ -1405,9 +1405,17 @@ program
     console.log(`  Native engine : ${nativeAvailable ? 'available' : 'unavailable'}`);
     if (nativeAvailable) {
       const native = loadNative();
-      const nativeVersion =
+      const binaryVersion =
         typeof native.engineVersion === 'function' ? native.engineVersion() : 'unknown';
-      console.log(`  Native version: ${nativeVersion}`);
+      const pkgVersion = getNativePackageVersion();
+      const knownBinaryVersion = binaryVersion !== 'unknown' ? binaryVersion : null;
+      if (pkgVersion && knownBinaryVersion && pkgVersion !== knownBinaryVersion) {
+        console.log(
+          `  Native version: ${pkgVersion} (binary reports ${knownBinaryVersion} — stale)`,
+        );
+      } else {
+        console.log(`  Native version: ${pkgVersion ?? binaryVersion}`);
+      }
     }
     console.log(`  Engine flag   : --engine ${engine}`);
     console.log(`  Active engine : ${activeName}${activeVersion ? ` (v${activeVersion})` : ''}`);

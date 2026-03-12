@@ -128,9 +128,14 @@ for (const key of modelKeys) {
 			`  Hit@1=${r.hits1}/${r.total} Hit@3=${r.hits3}/${r.total} Hit@5=${r.hits5}/${r.total} misses=${r.misses}`,
 		);
 	} catch (err) {
-		console.error(`  FAILED: ${err.message}`);
+		console.error(`  FAILED: ${err?.message ?? String(err)}`);
+	} finally {
+		try {
+			await disposeModel();
+		} catch (disposeErr) {
+			console.error(`  disposeModel failed: ${disposeErr?.message ?? String(disposeErr)}`);
+		}
 	}
-	await disposeModel();
 }
 
 // Restore console.log for JSON output

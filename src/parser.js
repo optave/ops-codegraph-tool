@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Language, Parser, Query } from 'web-tree-sitter';
 import { warn } from './logger.js';
-import { getNative, loadNative } from './native.js';
+import { getNative, getNativePackageVersion, loadNative } from './native.js';
 
 // Re-export all extractors for backward compatibility
 export {
@@ -41,6 +41,9 @@ let _initialized = false;
 // Memoized parsers — avoids reloading WASM grammars on every createParsers() call
 let _cachedParsers = null;
 
+// Cached Language objects — WASM-backed, must be .delete()'d explicitly
+let _cachedLanguages = null;
+
 // Query cache for JS/TS/TSX extractors (populated during createParsers)
 const _queryCache = new Map();
 
@@ -77,12 +80,14 @@ export async function createParsers() {
   }
 
   const parsers = new Map();
+  const languages = new Map();
   for (const entry of LANGUAGE_REGISTRY) {
     try {
       const lang = await Language.load(grammarPath(entry.grammarFile));
       const parser = new Parser();
       parser.setLanguage(lang);
       parsers.set(entry.id, parser);
+      languages.set(entry.id, lang);
       // Compile and cache tree-sitter Query for JS/TS/TSX extractors
       if (entry.extractor === extractSymbols && !_queryCache.has(entry.id)) {
         const isTS = entry.id === 'typescript' || entry.id === 'tsx';
@@ -100,7 +105,45 @@ export async function createParsers() {
     }
   }
   _cachedParsers = parsers;
+  _cachedLanguages = languages;
   return parsers;
+}
+
+/**
+ * Dispose all cached WASM parsers and queries to free WASM linear memory.
+ * Call this between repeated builds in the same process (e.g. benchmarks)
+ * to prevent memory accumulation that can cause segfaults.
+ */
+export function disposeParsers() {
+  if (_cachedParsers) {
+    for (const [, parser] of _cachedParsers) {
+      if (parser && typeof parser.delete === 'function') {
+        try {
+          parser.delete();
+        } catch {}
+      }
+    }
+    _cachedParsers = null;
+  }
+  for (const [, query] of _queryCache) {
+    if (query && typeof query.delete === 'function') {
+      try {
+        query.delete();
+      } catch {}
+    }
+  }
+  _queryCache.clear();
+  if (_cachedLanguages) {
+    for (const [, lang] of _cachedLanguages) {
+      if (lang && typeof lang.delete === 'function') {
+        try {
+          lang.delete();
+        } catch {}
+      }
+    }
+    _cachedLanguages = null;
+  }
+  _initialized = false;
 }
 
 export function getParser(parsers, filePath) {
@@ -214,6 +257,7 @@ function patchNativeResult(r) {
       if (i.csharpUsing === undefined) i.csharpUsing = i.csharp_using;
       if (i.rubyRequire === undefined) i.rubyRequire = i.ruby_require;
       if (i.phpUse === undefined) i.phpUse = i.php_use;
+      if (i.dynamicImport === undefined) i.dynamicImport = i.dynamic_import;
     }
   }
 
@@ -429,11 +473,18 @@ export async function parseFilesAuto(filePaths, rootDir, opts = {}) {
  */
 export function getActiveEngine(opts = {}) {
   const { name, native } = resolveEngine(opts);
-  const version = native
+  let version = native
     ? typeof native.engineVersion === 'function'
       ? native.engineVersion()
       : null
     : null;
+  // Prefer platform package.json version over binary-embedded version
+  // to handle stale binaries that weren't recompiled during a release
+  if (native) {
+    try {
+      version = getNativePackageVersion() ?? version;
+    } catch {}
+  }
   return { name, version };
 }
 

@@ -11,6 +11,7 @@ import os from 'node:os';
 
 let _cached; // undefined = not yet tried, null = failed, object = module
 let _loadError = null;
+const _require = createRequire(import.meta.url);
 
 /**
  * Detect whether the current Linux environment uses glibc or musl.
@@ -18,7 +19,7 @@ let _loadError = null;
  */
 function detectLibc() {
   try {
-    const { readdirSync } = require('node:fs');
+    const { readdirSync } = _require('node:fs');
     const files = readdirSync('/lib');
     if (files.some((f) => f.startsWith('ld-musl-') && f.endsWith('.so.1'))) {
       return 'musl';
@@ -39,27 +40,33 @@ const PLATFORM_PACKAGES = {
 };
 
 /**
+ * Resolve the platform-specific npm package name for the native addon.
+ * Returns null if the current platform is not supported.
+ */
+function resolvePlatformPackage() {
+  const platform = os.platform();
+  const arch = os.arch();
+  const key = platform === 'linux' ? `${platform}-${arch}-${detectLibc()}` : `${platform}-${arch}`;
+  return PLATFORM_PACKAGES[key] || null;
+}
+
+/**
  * Try to load the native napi addon.
  * Returns the module on success, null on failure.
  */
 export function loadNative() {
   if (_cached !== undefined) return _cached;
 
-  const require = createRequire(import.meta.url);
-
-  const platform = os.platform();
-  const arch = os.arch();
-  const key = platform === 'linux' ? `${platform}-${arch}-${detectLibc()}` : `${platform}-${arch}`;
-  const pkg = PLATFORM_PACKAGES[key];
+  const pkg = resolvePlatformPackage();
   if (pkg) {
     try {
-      _cached = require(pkg);
+      _cached = _require(pkg);
       return _cached;
     } catch (err) {
       _loadError = err;
     }
   } else {
-    _loadError = new Error(`Unsupported platform: ${key}`);
+    _loadError = new Error(`Unsupported platform: ${os.platform()}-${os.arch()}`);
   }
 
   _cached = null;
@@ -71,6 +78,21 @@ export function loadNative() {
  */
 export function isNativeAvailable() {
   return loadNative() !== null;
+}
+
+/**
+ * Read the version from the platform-specific npm package.json.
+ * Returns null if the package is not installed or has no version.
+ */
+export function getNativePackageVersion() {
+  const pkg = resolvePlatformPackage();
+  if (!pkg) return null;
+  try {
+    const pkgJson = _require(`${pkg}/package.json`);
+    return pkgJson.version || null;
+  } catch {
+    return null;
+  }
 }
 
 /**

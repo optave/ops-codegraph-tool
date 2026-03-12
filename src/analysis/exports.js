@@ -9,7 +9,7 @@ import {
 } from '../db.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../paginate.js';
-import { extractSignature, extractSummary, safePath } from './context.js';
+import { extractSignature, extractSummary, safePath } from '../shared/file-utils.js';
 
 export function exportsData(file, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);

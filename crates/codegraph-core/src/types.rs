@@ -136,6 +136,8 @@ pub struct Import {
     pub ruby_require: Option<bool>,
     #[napi(js_name = "phpUse")]
     pub php_use: Option<bool>,
+    #[napi(js_name = "dynamicImport")]
+    pub dynamic_import: Option<bool>,
 }
 
 impl Import {
@@ -154,6 +156,7 @@ impl Import {
             csharp_using: None,
             ruby_require: None,
             php_use: None,
+            dynamic_import: None,
         }
     }
 }

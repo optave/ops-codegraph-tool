@@ -1,6 +1,7 @@
 // Barrel re-export for repository/ modules.
 
 export { purgeFileData, purgeFilesData } from './build-stmts.js';
+export { cachedStmt } from './cached-stmt.js';
 export { deleteCfgForNode, getCfgBlocks, getCfgEdges, hasCfgTables } from './cfg.js';
 export { getCoChangeMeta, hasCoChanges, upsertCoChangeMeta } from './cochange.js';
 

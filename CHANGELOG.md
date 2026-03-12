@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.1.3](https://github.com/optave/codegraph/compare/v3.1.2...v3.1.3) (2026-03-11)
+
+**Bug fixes and build instrumentation.** This patch fixes WASM builds silently producing zero complexity rows, resolves four dogfood-reported issues (benchmark crash resilience, WASM parser memory cleanup, native dynamic import tracking, stale native version reporting), and adds missing build phase timers so `setupMs` and `finalizeMs` now account for the previously untracked ~45% of total build time. Prepared statement caching is extracted into a reusable `cachedStmt` utility.
+
+### Features
+
+* **builder:** add `setupMs` and `finalizeMs` phase timers to `buildGraph` — closes the ~45% gap in phase breakdown accounting ([#415](https://github.com/optave/codegraph/pull/415))
+
+### Bug Fixes
+
+* **complexity:** fix WASM builds producing zero `function_complexity` rows — incorrect import alias caused `findFunctionNode` to be undefined in WASM-only path ([#414](https://github.com/optave/codegraph/pull/414))
+* **native:** track `import()` expressions in Rust extractor — adds `dynamicImport` field to `Import` struct, matching WASM behavior for dead-export analysis ([#418](https://github.com/optave/codegraph/pull/418))
+* **native:** report correct native package version in `codegraph info` — reads from platform npm package.json instead of binary-embedded version ([#418](https://github.com/optave/codegraph/pull/418))
+* **benchmark:** wrap engine calls in try/catch so one engine failure doesn't prevent the other from running; fix embedding benchmark `disposeModel` leak ([#418](https://github.com/optave/codegraph/pull/418))
+* **parser:** add `disposeParsers()` to release cached WASM parsers/queries; call `tree.delete()` after AST analysis to prevent segfaults on repeated builds ([#418](https://github.com/optave/codegraph/pull/418))
+* **queries:** hoist prepared statement out of BFS loop in `getClassHierarchy` ([#403](https://github.com/optave/codegraph/pull/403))
+* **ci:** only trigger Claude automated review on PR open, not every push ([#419](https://github.com/optave/codegraph/pull/419))
+
+### Performance
+
+* **db:** extract `cachedStmt` utility into `src/db/repository/cached-stmt.js` — reusable prepared statement caching for hot-path repository functions ([#417](https://github.com/optave/codegraph/pull/417), [#402](https://github.com/optave/codegraph/pull/402))
+
 ## [3.1.2](https://github.com/optave/codegraph/compare/v3.1.1...v3.1.2) (2026-03-11)
 
 **Phase 3 architectural refactoring reaches substantial completion.** This release finishes the unified AST analysis framework (Phase 3.1) — all four analyses (complexity, CFG, dataflow, AST-store) now run in a single DFS walk via pluggable visitors, with `cfg.js` shrinking from 1,242 to 518 lines and cyclomatic complexity derived directly from CFG structure. CLI command/query separation (Phase 3.2) moves ~1,059 lines of formatting code into a dedicated `src/commands/` directory. Repository pattern migration (Phase 3.3) extracts raw SQL from 14 source modules. Dynamic `import()` expressions are now tracked as `dynamic-imports` graph edges, fixing false positives in dead-export analysis and impact tracing. Prepared statement caching cuts hot-path DB overhead in the repository layer.
