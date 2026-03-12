@@ -718,22 +718,24 @@ src/
 
 **Affected files:** `src/queries.js` -> split into `src/analysis/` + `src/shared/`
 
-### 3.5 -- Composable MCP Tool Registry
+### 3.5 -- Composable MCP Tool Registry ✅
 
-Replace the monolithic 1,370-line `mcp.js` (30 tools in one switch dispatch) with self-contained tool modules.
+Replaced the monolithic 1,470-line `mcp.js` (31 tools in one switch dispatch) with self-contained tool modules.
 
 ```
 src/
+  mcp.js                       # 2-line re-export shim (preserves public API)
   mcp/
-    server.js                  # MCP server setup, transport, lifecycle
-    tool-registry.js           # Auto-discovery + dynamic registration
-    middleware.js              # Pagination, error handling, repo resolution
+    index.js                   # Re-exports: TOOLS, buildToolList, startMCPServer
+    server.js                  # MCP server setup, transport, lifecycle, dispatch
+    tool-registry.js           # BASE_TOOLS schemas, buildToolList(), TOOLS constant
+    middleware.js              # effectiveLimit/effectiveOffset pagination helpers
     tools/
-      query-function.js        # { schema, handler } -- one per tool (30 files)
-      ...
+      index.js                 # Barrel: Map<name, { name, handler }> for all 31 tools
+      query.js ... ast-query.js  # { name, handler } -- one per tool (31 files)
 ```
 
-Adding a new MCP tool = adding a file. No other files change.
+Adding a new MCP tool = adding a file + one line in the barrel. No other files change.
 
 **Affected files:** `src/mcp.js` -> split into `src/mcp/`
 
