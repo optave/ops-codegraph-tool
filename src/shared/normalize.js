@@ -3,7 +3,7 @@ import { ALL_SYMBOL_KINDS } from '../kinds.js';
 // Re-export for consumers that import ALL_SYMBOL_KINDS from this module
 export { ALL_SYMBOL_KINDS };
 
-function getFileHash(db, file) {
+export function getFileHash(db, file) {
   const row = db.prepare('SELECT hash FROM file_hashes WHERE file = ?').get(file);
   return row ? row.hash : null;
 }

@@ -16,7 +16,7 @@ import {
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { ALL_SYMBOL_KINDS } from '../kinds.js';
 import { paginateResult } from '../paginate.js';
-import { normalizeSymbol } from '../shared/normalize.js';
+import { getFileHash, normalizeSymbol } from '../shared/normalize.js';
 
 const FUNCTION_KINDS = ['function', 'method', 'class'];
 
@@ -102,11 +102,6 @@ export function queryNameData(name, customDbPath, opts = {}) {
   }
 }
 
-function _getFileHash(db, file) {
-  const row = db.prepare('SELECT hash FROM file_hashes WHERE file = ?').get(file);
-  return row ? row.hash : null;
-}
-
 function whereSymbolImpl(db, target, noTests) {
   const placeholders = ALL_SYMBOL_KINDS.map(() => '?').join(', ');
   let nodes = db
@@ -149,7 +144,7 @@ function whereFileImpl(db, target) {
 
     return {
       file: fn.file,
-      fileHash: _getFileHash(db, fn.file),
+      fileHash: getFileHash(db, fn.file),
       symbols: symbols.map((s) => ({ name: s.name, kind: s.kind, line: s.line })),
       imports,
       importedBy,
