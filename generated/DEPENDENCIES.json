@@ -1,5 +1,5 @@
 {
-  "version": "3.1.2",
+  "version": "3.1.3",
   "name": "@optave/codegraph",
   "dependencies": {
     "@modelcontextprotocol/sdk": {
@@ -738,8 +738,8 @@
     "@optave/codegraph-darwin-x64": {},
     "@optave/codegraph-linux-arm64-gnu": {},
     "@optave/codegraph-linux-x64-gnu": {
-      "version": "3.1.2",
-      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-3.1.2.tgz",
+      "version": "3.1.3",
+      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-3.1.3.tgz",
       "overridden": false
     },
     "@optave/codegraph-linux-x64-musl": {},
