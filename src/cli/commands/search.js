@@ -27,6 +27,7 @@ export const command = {
   async execute([query], opts, ctx) {
     await search(query, opts.db, {
       limit: parseInt(opts.limit, 10),
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       noTests: ctx.resolveNoTests(opts),
       minScore: parseFloat(opts.minScore),
       model: opts.model,
@@ -35,6 +36,7 @@ export const command = {
       rrfK: parseInt(opts.rrfK, 10),
       mode: opts.mode,
       json: opts.json,
+      ndjson: opts.ndjson,
     });
   },
 };

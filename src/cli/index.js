@@ -92,7 +92,7 @@ function registerCommand(parent, def) {
  */
 async function discoverCommands() {
   const commandsDir = path.join(__cliDir, 'commands');
-  const files = fs.readdirSync(commandsDir).filter((f) => f.endsWith('.js'));
+  const files = fs.readdirSync(commandsDir).filter((f) => f.endsWith('.js')).sort();
 
   for (const file of files) {
     const mod = await import(pathToFileURL(path.join(commandsDir, file)).href);
