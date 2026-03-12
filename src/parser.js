@@ -41,6 +41,9 @@ let _initialized = false;
 // Memoized parsers — avoids reloading WASM grammars on every createParsers() call
 let _cachedParsers = null;
 
+// Cached Language objects — WASM-backed, must be .delete()'d explicitly
+let _cachedLanguages = null;
+
 // Query cache for JS/TS/TSX extractors (populated during createParsers)
 const _queryCache = new Map();
 
@@ -77,12 +80,14 @@ export async function createParsers() {
   }
 
   const parsers = new Map();
+  const languages = new Map();
   for (const entry of LANGUAGE_REGISTRY) {
     try {
       const lang = await Language.load(grammarPath(entry.grammarFile));
       const parser = new Parser();
       parser.setLanguage(lang);
       parsers.set(entry.id, parser);
+      languages.set(entry.id, lang);
       // Compile and cache tree-sitter Query for JS/TS/TSX extractors
       if (entry.extractor === extractSymbols && !_queryCache.has(entry.id)) {
         const isTS = entry.id === 'typescript' || entry.id === 'tsx';
@@ -100,6 +105,7 @@ export async function createParsers() {
     }
   }
   _cachedParsers = parsers;
+  _cachedLanguages = languages;
   return parsers;
 }
 
@@ -127,6 +133,16 @@ export function disposeParsers() {
     }
   }
   _queryCache.clear();
+  if (_cachedLanguages) {
+    for (const [, lang] of _cachedLanguages) {
+      if (lang && typeof lang.delete === 'function') {
+        try {
+          lang.delete();
+        } catch {}
+      }
+    }
+    _cachedLanguages = null;
+  }
   _initialized = false;
 }
 
