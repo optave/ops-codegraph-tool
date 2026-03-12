@@ -1049,8 +1049,12 @@ fn extract_dynamic_import_names(call_node: &Node, source: &[u8]) -> Vec<String> 
                             // Handle `{ foo: bar = 'default' }` — extract the left-hand binding
                             let binding = if val.kind() == "assignment_pattern" {
                                 val.child_by_field_name("left").unwrap_or(val)
-                            } else {
+                            } else if val.kind() == "identifier" {
                                 val
+                            } else {
+                                // Nested pattern (e.g. `{ foo: { bar } }`) — skip;
+                                // full nested support requires recursive extraction.
+                                continue;
                             };
                             names.push(node_text(&binding, source).to_string());
                         } else if let Some(key) = child.child_by_field_name("key") {
@@ -1060,6 +1064,13 @@ fn extract_dynamic_import_names(call_node: &Node, source: &[u8]) -> Vec<String> 
                         // Handle `{ a = 'default' }` — extract the left-hand binding
                         if let Some(left) = child.child_by_field_name("left") {
                             names.push(node_text(&left, source).to_string());
+                        }
+                    } else if child.kind() == "rest_pattern" || child.kind() == "rest_element" {
+                        // Handle `{ a, ...rest }` — extract the identifier inside the spread
+                        if let Some(inner) = child.child(0) {
+                            if inner.kind() == "identifier" {
+                                names.push(node_text(&inner, source).to_string());
+                            }
                         }
                     }
                 }
