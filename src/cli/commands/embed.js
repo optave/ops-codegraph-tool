@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { buildEmbeddings, EMBEDDING_STRATEGIES } from '../../embedder.js';
+import { buildEmbeddings, DEFAULT_MODEL, EMBEDDING_STRATEGIES } from '../../embedder.js';
 
 export const command = {
   name: 'embed [dir]',
@@ -24,7 +24,7 @@ export const command = {
   },
   async execute([dir], opts, ctx) {
     const root = path.resolve(dir || '.');
-    const model = opts.model || ctx.config.embeddings?.model;
+    const model = opts.model || ctx.config.embeddings?.model || DEFAULT_MODEL;
     await buildEmbeddings(root, model, opts.db, { strategy: opts.strategy });
   },
 };
