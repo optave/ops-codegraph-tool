@@ -45,7 +45,7 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `builder.js` | Graph building: file collection, parsing, import resolution, incremental hashing |
 | `parser.js` | tree-sitter WASM wrapper; `LANGUAGE_REGISTRY` + per-language extractors for functions, classes, methods, imports, exports, call sites |
 | `queries.js` | Query functions: symbol search, file deps, impact analysis, diff-impact; `SYMBOL_KINDS` constant defines all node kinds |
-| `embedder.js` | Semantic search with `@huggingface/transformers`; multi-query RRF ranking |
+| `embeddings/` | Embedding subsystem: model management, vector generation, semantic/keyword/hybrid search, CLI formatting |
 | `db.js` | SQLite schema and operations (`better-sqlite3`) |
 | `mcp.js` | MCP server exposing graph queries to AI agents; single-repo by default, `--multi-repo` to enable cross-repo access |
 | `cycles.js` | Circular dependency detection |

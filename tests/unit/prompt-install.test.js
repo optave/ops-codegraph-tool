@@ -1,5 +1,5 @@
 /**
- * Unit tests for the interactive install prompt in src/embedder.js.
+ * Unit tests for the interactive install prompt in src/embeddings/models.js.
  *
  * Tests the promptInstall() + loadTransformers() flow when
  * @huggingface/transformers is missing.

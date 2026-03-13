@@ -5,7 +5,6 @@ import { info } from '../logger.js';
 
 // Lazy-load transformers (heavy, optional module)
 let pipeline = null;
-let _cos_sim = null;
 let extractor = null;
 let activeModel = null;
 
@@ -157,7 +156,6 @@ async function loadModel(modelKey) {
 
   const transformers = await loadTransformers();
   pipeline = transformers.pipeline;
-  _cos_sim = transformers.cos_sim;
 
   info(`Loading embedding model: ${config.name} (${config.dim}d)...`);
   const pipelineOpts = config.quantized ? { quantized: true } : {};
