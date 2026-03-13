@@ -41,59 +41,59 @@ export async function buildGraph(rootDir, opts = {}) {
   ctx.rootDir = path.resolve(rootDir);
   ctx.dbPath = path.join(ctx.rootDir, '.codegraph', 'graph.db');
   ctx.db = openDb(ctx.dbPath);
-  initSchema(ctx.db);
-
-  ctx.config = loadConfig(ctx.rootDir);
-  ctx.incremental =
-    opts.incremental !== false && ctx.config.build && ctx.config.build.incremental !== false;
-
-  ctx.engineOpts = {
-    engine: opts.engine || 'auto',
-    dataflow: opts.dataflow !== false,
-    ast: opts.ast !== false,
-  };
-  const { name: engineName, version: engineVersion } = getActiveEngine(ctx.engineOpts);
-  ctx.engineName = engineName;
-  ctx.engineVersion = engineVersion;
-  info(`Using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
-
-  // Engine/schema mismatch detection
-  ctx.schemaVersion = MIGRATIONS[MIGRATIONS.length - 1].version;
-  ctx.forceFullRebuild = false;
-  if (ctx.incremental) {
-    const prevEngine = getBuildMeta(ctx.db, 'engine');
-    if (prevEngine && prevEngine !== engineName) {
-      info(`Engine changed (${prevEngine} → ${engineName}), promoting to full rebuild.`);
-      ctx.forceFullRebuild = true;
-    }
-    const prevSchema = getBuildMeta(ctx.db, 'schema_version');
-    if (prevSchema && Number(prevSchema) !== ctx.schemaVersion) {
-      info(
-        `Schema version changed (${prevSchema} → ${ctx.schemaVersion}), promoting to full rebuild.`,
-      );
-      ctx.forceFullRebuild = true;
-    }
-  }
-
-  // Path aliases
-  ctx.aliases = loadPathAliases(ctx.rootDir);
-  if (ctx.config.aliases) {
-    for (const [key, value] of Object.entries(ctx.config.aliases)) {
-      const pattern = key.endsWith('/') ? `${key}*` : key;
-      const target = path.resolve(ctx.rootDir, value);
-      ctx.aliases.paths[pattern] = [target.endsWith('/') ? `${target}*` : `${target}/*`];
-    }
-  }
-  if (ctx.aliases.baseUrl || Object.keys(ctx.aliases.paths).length > 0) {
-    info(
-      `Loaded path aliases: baseUrl=${ctx.aliases.baseUrl || 'none'}, ${Object.keys(ctx.aliases.paths).length} path mappings`,
-    );
-  }
-
-  ctx.timing.setupMs = performance.now() - ctx.buildStart;
-
-  // ── Pipeline stages ───────────────────────────────────────────────
   try {
+    initSchema(ctx.db);
+
+    ctx.config = loadConfig(ctx.rootDir);
+    ctx.incremental =
+      opts.incremental !== false && ctx.config.build && ctx.config.build.incremental !== false;
+
+    ctx.engineOpts = {
+      engine: opts.engine || 'auto',
+      dataflow: opts.dataflow !== false,
+      ast: opts.ast !== false,
+    };
+    const { name: engineName, version: engineVersion } = getActiveEngine(ctx.engineOpts);
+    ctx.engineName = engineName;
+    ctx.engineVersion = engineVersion;
+    info(`Using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
+
+    // Engine/schema mismatch detection
+    ctx.schemaVersion = MIGRATIONS[MIGRATIONS.length - 1].version;
+    ctx.forceFullRebuild = false;
+    if (ctx.incremental) {
+      const prevEngine = getBuildMeta(ctx.db, 'engine');
+      if (prevEngine && prevEngine !== engineName) {
+        info(`Engine changed (${prevEngine} → ${engineName}), promoting to full rebuild.`);
+        ctx.forceFullRebuild = true;
+      }
+      const prevSchema = getBuildMeta(ctx.db, 'schema_version');
+      if (prevSchema && Number(prevSchema) !== ctx.schemaVersion) {
+        info(
+          `Schema version changed (${prevSchema} → ${ctx.schemaVersion}), promoting to full rebuild.`,
+        );
+        ctx.forceFullRebuild = true;
+      }
+    }
+
+    // Path aliases
+    ctx.aliases = loadPathAliases(ctx.rootDir);
+    if (ctx.config.aliases) {
+      for (const [key, value] of Object.entries(ctx.config.aliases)) {
+        const pattern = key.endsWith('/') ? `${key}*` : key;
+        const target = path.resolve(ctx.rootDir, value);
+        ctx.aliases.paths[pattern] = [target.endsWith('/') ? `${target}*` : `${target}/*`];
+      }
+    }
+    if (ctx.aliases.baseUrl || Object.keys(ctx.aliases.paths).length > 0) {
+      info(
+        `Loaded path aliases: baseUrl=${ctx.aliases.baseUrl || 'none'}, ${Object.keys(ctx.aliases.paths).length} path mappings`,
+      );
+    }
+
+    ctx.timing.setupMs = performance.now() - ctx.buildStart;
+
+    // ── Pipeline stages ─────────────────────────────────────────────
     await collectFiles(ctx);
     await detectChanges(ctx);
 

@@ -3,11 +3,11 @@
  *
  * Builds directory structure, containment edges, metrics, and classifies node roles.
  */
-import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { normalizePath } from '../../constants.js';
 import { debug } from '../../logger.js';
+import { readFileSafe } from '../helpers.js';
 
 /**
  * @param {import('../context.js').PipelineContext} ctx
@@ -23,7 +23,7 @@ export async function buildStructure(ctx) {
     } else {
       const absPath = path.join(rootDir, relPath);
       try {
-        const content = fs.readFileSync(absPath, 'utf-8');
+        const content = readFileSafe(absPath);
         ctx.lineCountMap.set(relPath, content.split('\n').length);
       } catch {
         ctx.lineCountMap.set(relPath, 0);
@@ -70,7 +70,7 @@ export async function buildStructure(ctx) {
         } else {
           const absPath = path.join(rootDir, relPath);
           try {
-            const content = fs.readFileSync(absPath, 'utf-8');
+            const content = readFileSafe(absPath);
             ctx.lineCountMap.set(relPath, content.split('\n').length);
           } catch {
             ctx.lineCountMap.set(relPath, 0);

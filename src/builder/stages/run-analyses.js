@@ -4,7 +4,7 @@
  * Dispatches to the unified AST analysis engine (AST nodes, complexity, CFG, dataflow).
  * Filters out reverse-dep files for incremental builds.
  */
-import { debug } from '../../logger.js';
+import { debug, warn } from '../../logger.js';
 
 /**
  * @param {import('../context.js').PipelineContext} ctx
@@ -39,6 +39,6 @@ export async function runAnalyses(ctx) {
     ctx.timing.cfgMs = analysisTiming.cfgMs;
     ctx.timing.dataflowMs = analysisTiming.dataflowMs;
   } catch (err) {
-    debug(`Unified analysis engine failed: ${err.message}`);
+    warn(`Analysis engine failed (AST/complexity/CFG/dataflow may be incomplete): ${err.message}`);
   }
 }
