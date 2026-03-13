@@ -101,6 +101,7 @@ export class CodeGraph {
     for (const [src, targets] of this._successors) {
       for (const [tgt, attrs] of targets) {
         if (!this._directed) {
+          // \0 is safe as separator — node IDs are file paths/symbols, never contain null bytes
           const key = src < tgt ? `${src}\0${tgt}` : `${tgt}\0${src}`;
           if (seen.has(key)) continue;
           seen.add(key);
