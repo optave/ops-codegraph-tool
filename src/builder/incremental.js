@@ -25,7 +25,7 @@ import { BUILTIN_RECEIVERS, readFileSafe } from './helpers.js';
  * @param {Function} [options.diffSymbols] - Symbol diff function
  * @returns {Promise<object|null>} Update result or null on failure
  */
-export async function rebuildFile(db, rootDir, filePath, stmts, engineOpts, cache, options = {}) {
+export async function rebuildFile(_db, rootDir, filePath, stmts, engineOpts, cache, options = {}) {
   const { diffSymbols } = options;
   const relPath = normalizePath(path.relative(rootDir, filePath));
   const oldNodes = stmts.countNodes.get(relPath)?.c || 0;

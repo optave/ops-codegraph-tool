@@ -118,4 +118,3 @@ export function triageData(customDbPath, opts = {}) {
     db.close();
   }
 }
-
