@@ -31,13 +31,11 @@
 
 ## The Problem
 
-AI agents are the primary interface to large codebases — and they're flying blind.
+AI agents face an impossible trade-off in large codebases. They either spend thousands of tokens reading files to understand the structure — blowing up their context window until quality degrades — or they assume, and the assumptions are wrong. Either way, things break. The larger the codebase, the worse it gets.
 
-An agent burns a great portion of its token budget on `grep`, `find`, `cat` — re-discovering the same structure every session. It modifies `parseConfig()` without knowing 9 files import it. It hallucinates a function signature because it never saw the real one. Multiply that by every session, every developer, every repo.
+An agent modifies a function without knowing 9 files import it. It misreads what a helper does and builds logic on top of that misunderstanding. It leaves dead code behind after a refactor. The PR gets opened, and your reviewer — Greptile, CodeRabbit, or a teammate — flags the same structural issues every time: _"this breaks 14 callers,"_ _"that function already exists,"_ _"this export is now dead."_ Three rounds of review later, the fix is in. Multiply that by every PR, every developer, every repo.
 
-Developers aren't much better off. They inherit projects and spend days grepping to understand what calls what. Architects draw boundary rules that erode within weeks because nothing enforces them. CI catches test failures but can't tell you _"this change silently affects 14 callers across 9 files."_
-
-The information exists — it's in the code itself. But without a structured map, agents hallucinate, developers guess, and architecture degrades one unreviewed change at a time.
+The information to prevent all of this exists — it's in the code itself. But without a structured map, agents lack the context to get it right the first time, reviewers waste cycles on preventable issues, and architecture degrades one unreviewed change at a time.
 
 ## What Codegraph Does
 
@@ -50,7 +48,7 @@ It parses your code with [tree-sitter](https://tree-sitter.github.io/) (native R
 - **CI gates** — `check` and `manifesto` commands enforce quality thresholds with exit codes
 - **Programmatic API** — embed codegraph in your own tools via `npm install`
 
-Instead of an agent burning 30 tool calls to maybe discover half your dependencies, it gets _"this function has 14 callers across 9 files"_ in one MCP call. Instead of hoping architecture rules are followed, you enforce them. Instead of finding breakage in production, `diff-impact --staged` catches it before you commit.
+Instead of an agent blindly editing code and letting reviewers catch the fallout, it knows _"this function has 14 callers across 9 files"_ before it touches anything. Dead exports, circular dependencies, and boundary violations surface during development — not during review. The result: PRs that pass automated review on the first round, not the third.
 
 **Free. Open source. Fully local.** Zero network calls, zero telemetry. Your code stays on your machine. When you want deeper intelligence, bring your own LLM provider — your code only goes where you choose to send it.
 
@@ -68,12 +66,12 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 
 | | Without codegraph | With codegraph |
 |---|---|---|
-| **AI agents** | Spend 20+ tool calls per session re-discovering code structure | Get full dependency context in one MCP call |
-| **AI agents** | Modify `parseConfig()` without knowing 9 files import it | `fn-impact parseConfig` shows every caller before the edit |
-| **AI agents** | Hallucinate function signatures and miss callers | `context <name> -T` returns source, deps, callers, and tests — no guessing |
+| **Code review** | Reviewers (Greptile, CodeRabbit, humans) flag broken callers, dead code, and boundary violations round after round | Structural issues are caught during development — PRs pass review with fewer rounds |
+| **AI agents** | Modify `parseConfig()` without knowing 9 files import it — reviewer catches it | `fn-impact parseConfig` shows every caller before the edit — agent fixes it proactively |
+| **AI agents** | Leave dead exports and duplicate helpers behind after refactors | Dead code, cycles, and duplicates surface in real time via hooks and MCP queries |
+| **AI agents** | Produce code that works but doesn't fit the codebase structure | `context <name> -T` returns source, deps, callers, and tests — the agent writes code that fits |
 | **CI pipelines** | Catch test failures but miss structural degradation | `check --staged` fails the build when blast radius or complexity thresholds are exceeded |
 | **Developers** | Inherit a codebase and grep for hours to understand what calls what | `context handleAuth -T` gives the same structured view agents use |
-| **Developers** | Rename a function, break 14 call sites silently | `diff-impact --staged` catches breakage before you commit |
 | **Architects** | Draw boundary rules that erode within weeks | `manifesto` and `boundaries` enforce architecture rules on every commit |
 
 ### Feature comparison
