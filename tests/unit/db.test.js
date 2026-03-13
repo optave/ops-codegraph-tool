@@ -196,12 +196,11 @@ describe('build_meta', () => {
 
 describe('openReadonlyOrFail', () => {
   it('throws DbError when DB does not exist', () => {
-    expect(() => openReadonlyOrFail(path.join(tmpDir, 'nonexistent.db'))).toThrow(
-      'No codegraph database found',
-    );
+    expect.assertions(4);
     try {
       openReadonlyOrFail(path.join(tmpDir, 'nonexistent.db'));
     } catch (err) {
+      expect(err.message).toContain('No codegraph database found');
       expect(err.name).toBe('DbError');
       expect(err.code).toBe('DB_ERROR');
       expect(err.file).toBeDefined();

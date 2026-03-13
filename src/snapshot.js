@@ -48,7 +48,7 @@ export function snapshotSave(name, options = {}) {
 
   if (fs.existsSync(dest)) {
     if (!options.force) {
-      throw new DbError(`Snapshot "${name}" already exists. Use --force to overwrite.`);
+      throw new ConfigError(`Snapshot "${name}" already exists. Use --force to overwrite.`);
     }
     fs.unlinkSync(dest);
     debug(`Deleted existing snapshot: ${dest}`);
