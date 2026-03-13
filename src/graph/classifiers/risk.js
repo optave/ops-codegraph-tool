@@ -14,6 +14,10 @@ export const DEFAULT_WEIGHTS = {
   mi: 0.1,
 };
 
+// Role weights reflect structural importance: core modules are central to the
+// dependency graph, utilities are widely imported, entry points are API
+// surfaces. Adapters bridge subsystems but are replaceable. Leaves and dead
+// code have minimal downstream impact.
 export const ROLE_WEIGHTS = {
   core: 1.0,
   utility: 0.9,
