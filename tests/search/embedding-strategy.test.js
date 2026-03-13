@@ -31,7 +31,7 @@ import {
   EMBEDDING_STRATEGIES,
   estimateTokens,
   MODELS,
-} from '../../src/embedder.js';
+} from '../../src/embeddings/index.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

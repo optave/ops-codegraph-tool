@@ -38,7 +38,7 @@ import {
   multiSearchData,
   search,
   searchData,
-} from '../../src/embedder.js';
+} from '../../src/embeddings/index.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

@@ -26,7 +26,7 @@ const { version, srcDir, cleanup } = await resolveBenchmarkSource();
 const dbPath = path.join(root, '.codegraph', 'graph.db');
 
 const { buildEmbeddings, MODELS, searchData, disposeModel } = await import(
-	srcImport(srcDir, 'embedder.js')
+	srcImport(srcDir, 'embeddings/index.js')
 );
 
 // Redirect console.log to stderr so only JSON goes to stdout
