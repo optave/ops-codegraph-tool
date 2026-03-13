@@ -11,7 +11,7 @@ export async function handler(args, ctx) {
   };
 
   if (mode === 'keyword') {
-    const { ftsSearchData } = await import('../../embedder.js');
+    const { ftsSearchData } = await import('../../embeddings/index.js');
     const result = ftsSearchData(args.query, ctx.dbPath, searchOpts);
     if (result === null) {
       return {
@@ -28,7 +28,7 @@ export async function handler(args, ctx) {
   }
 
   if (mode === 'semantic') {
-    const { searchData } = await import('../../embedder.js');
+    const { searchData } = await import('../../embeddings/index.js');
     const result = await searchData(args.query, ctx.dbPath, searchOpts);
     if (result === null) {
       return {
@@ -45,7 +45,7 @@ export async function handler(args, ctx) {
   }
 
   // hybrid (default) — falls back to semantic if no FTS5
-  const { hybridSearchData, searchData } = await import('../../embedder.js');
+  const { hybridSearchData, searchData } = await import('../../embeddings/index.js');
   let result = await hybridSearchData(args.query, ctx.dbPath, searchOpts);
   if (result === null) {
     result = await searchData(args.query, ctx.dbPath, searchOpts);

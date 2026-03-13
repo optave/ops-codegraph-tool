@@ -1,4 +1,4 @@
-import { DEFAULT_MODEL, MODELS } from '../../embedder.js';
+import { DEFAULT_MODEL, MODELS } from '../../embeddings/index.js';
 
 export const command = {
   name: 'models',

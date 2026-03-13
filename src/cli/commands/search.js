@@ -1,4 +1,4 @@
-import { search } from '../../embedder.js';
+import { search } from '../../embeddings/index.js';
 
 export const command = {
   name: 'search <query>',

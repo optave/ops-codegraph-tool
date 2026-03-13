@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { buildEmbeddings, DEFAULT_MODEL, EMBEDDING_STRATEGIES } from '../../embedder.js';
+import { buildEmbeddings, DEFAULT_MODEL, EMBEDDING_STRATEGIES } from '../../embeddings/index.js';
 
 export const command = {
   name: 'embed [dir]',

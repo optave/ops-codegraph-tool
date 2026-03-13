@@ -44,7 +44,7 @@ describe('loadTransformers install prompt', () => {
       throw new Error('Cannot find package');
     });
 
-    const { embed } = await import('../../src/embedder.js');
+    const { embed } = await import('../../src/embeddings/index.js');
 
     await expect(embed(['test'], 'minilm')).rejects.toThrow(
       'Semantic search requires @huggingface/transformers',
@@ -71,7 +71,7 @@ describe('loadTransformers install prompt', () => {
       throw new Error('Cannot find package');
     });
 
-    const { embed } = await import('../../src/embedder.js');
+    const { embed } = await import('../../src/embeddings/index.js');
 
     await expect(embed(['test'], 'minilm')).rejects.toThrow(
       'Semantic search requires @huggingface/transformers',
@@ -99,7 +99,7 @@ describe('loadTransformers install prompt', () => {
       throw new Error('Cannot find package');
     });
 
-    const { embed } = await import('../../src/embedder.js');
+    const { embed } = await import('../../src/embeddings/index.js');
 
     await expect(embed(['test'], 'minilm')).rejects.toThrow(
       'Semantic search requires @huggingface/transformers',
@@ -137,7 +137,7 @@ describe('loadTransformers install prompt', () => {
       };
     });
 
-    const { embed } = await import('../../src/embedder.js');
+    const { embed } = await import('../../src/embeddings/index.js');
 
     const result = await embed(['test text'], 'minilm');
     expect(result.vectors).toHaveLength(1);

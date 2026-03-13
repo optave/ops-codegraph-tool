@@ -23,7 +23,12 @@ export { loadConfig } from './config.js';
 export { EXTENSIONS, IGNORE_DIRS } from './constants.js';
 export { findCycles } from './cycles.js';
 export { dataflowData } from './dataflow.js';
-export { buildEmbeddings, hybridSearchData, multiSearchData, searchData } from './embedder.js';
+export {
+  buildEmbeddings,
+  hybridSearchData,
+  multiSearchData,
+  searchData,
+} from './embeddings/index.js';
 export {
   AnalysisError,
   BoundaryError,
