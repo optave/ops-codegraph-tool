@@ -15,7 +15,7 @@ export function estimateTokens(text) {
   return Math.ceil(text.length / 4);
 }
 
-export function initEmbeddingsSchema(db) {
+function initEmbeddingsSchema(db) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS embeddings (
       node_id INTEGER PRIMARY KEY,
