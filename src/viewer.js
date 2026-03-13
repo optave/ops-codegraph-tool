@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import Graph from 'graphology';
-import louvain from 'graphology-communities-louvain';
+import { louvainCommunities } from './graph/algorithms/louvain.js';
+import { CodeGraph } from './graph/model.js';
 import { isTestFile } from './infrastructure/test-filter.js';
 
 const DEFAULT_MIN_CONFIDENCE = 0.5;
@@ -208,7 +208,16 @@ function prepareFunctionLevelData(db, noTests, minConf, cfg) {
     // table may not exist in old DBs
   }
 
-  // Fan-in / fan-out
+  // Fan-in / fan-out via graph subsystem
+  const fnGraph = new CodeGraph();
+  for (const [id] of nodeMap) fnGraph.addNode(String(id));
+  for (const e of edges) {
+    const src = String(e.source_id);
+    const tgt = String(e.target_id);
+    if (src !== tgt && !fnGraph.hasEdge(src, tgt)) fnGraph.addEdge(src, tgt);
+  }
+
+  // Use DB-level fan-in/fan-out (counts ALL call edges, not just visible)
   const fanInMap = new Map();
   const fanOutMap = new Map();
   const fanInRows = db
@@ -225,19 +234,12 @@ function prepareFunctionLevelData(db, noTests, minConf, cfg) {
     .all();
   for (const r of fanOutRows) fanOutMap.set(r.node_id, r.fan_out);
 
-  // Communities (Louvain)
+  // Communities (Louvain) via graph subsystem
   const communityMap = new Map();
   if (nodeMap.size > 0) {
     try {
-      const graph = new Graph({ type: 'undirected' });
-      for (const [id] of nodeMap) graph.addNode(String(id));
-      for (const e of edges) {
-        const src = String(e.source_id);
-        const tgt = String(e.target_id);
-        if (src !== tgt && !graph.hasEdge(src, tgt)) graph.addEdge(src, tgt);
-      }
-      const communities = louvain(graph);
-      for (const [nid, cid] of Object.entries(communities)) communityMap.set(Number(nid), cid);
+      const { assignments } = louvainCommunities(fnGraph);
+      for (const [nid, cid] of assignments) communityMap.set(Number(nid), cid);
     } catch {
       // louvain can fail on disconnected graphs
     }
@@ -335,17 +337,18 @@ function prepareFileLevelData(db, noTests, minConf, cfg) {
     fanInCount.set(target, (fanInCount.get(target) || 0) + 1);
   }
 
-  // Communities
+  // Communities via graph subsystem
   const communityMap = new Map();
   if (files.size > 0) {
     try {
-      const graph = new Graph({ type: 'undirected' });
-      for (const f of files) graph.addNode(f);
+      const fileGraph = new CodeGraph();
+      for (const f of files) fileGraph.addNode(f);
       for (const { source, target } of edges) {
-        if (source !== target && !graph.hasEdge(source, target)) graph.addEdge(source, target);
+        if (source !== target && !fileGraph.hasEdge(source, target))
+          fileGraph.addEdge(source, target);
       }
-      const communities = louvain(graph);
-      for (const [file, cid] of Object.entries(communities)) communityMap.set(file, cid);
+      const { assignments } = louvainCommunities(fileGraph);
+      for (const [file, cid] of assignments) communityMap.set(file, cid);
     } catch {
       // ignore
     }

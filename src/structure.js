@@ -312,13 +312,10 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
 
 // ─── Node role classification ─────────────────────────────────────────
 
-export const FRAMEWORK_ENTRY_PREFIXES = ['route:', 'event:', 'command:'];
+// Re-export from classifier for backward compatibility
+export { FRAMEWORK_ENTRY_PREFIXES } from './graph/classifiers/roles.js';
 
-function median(sorted) {
-  if (sorted.length === 0) return 0;
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-}
+import { classifyRoles } from './graph/classifiers/roles.js';
 
 export function classifyNodeRoles(db) {
   const rows = db
@@ -354,44 +351,22 @@ export function classifyNodeRoles(db) {
       .map((r) => r.target_id),
   );
 
-  const nonZeroFanIn = rows
-    .filter((r) => r.fan_in > 0)
-    .map((r) => r.fan_in)
-    .sort((a, b) => a - b);
-  const nonZeroFanOut = rows
-    .filter((r) => r.fan_out > 0)
-    .map((r) => r.fan_out)
-    .sort((a, b) => a - b);
+  // Delegate classification to the pure-logic classifier
+  const classifierInput = rows.map((r) => ({
+    id: String(r.id),
+    name: r.name,
+    fanIn: r.fan_in,
+    fanOut: r.fan_out,
+    isExported: exportedIds.has(r.id),
+  }));
 
-  const medFanIn = median(nonZeroFanIn);
-  const medFanOut = median(nonZeroFanOut);
+  const roleMap = classifyRoles(classifierInput);
 
-  const updates = [];
+  // Build summary and updates
   const summary = { entry: 0, core: 0, utility: 0, adapter: 0, dead: 0, leaf: 0 };
-
+  const updates = [];
   for (const row of rows) {
-    const highIn = row.fan_in >= medFanIn && row.fan_in > 0;
-    const highOut = row.fan_out >= medFanOut && row.fan_out > 0;
-    const isExported = exportedIds.has(row.id);
-
-    let role;
-    const isFrameworkEntry = FRAMEWORK_ENTRY_PREFIXES.some((p) => row.name.startsWith(p));
-    if (isFrameworkEntry) {
-      role = 'entry';
-    } else if (row.fan_in === 0 && !isExported) {
-      role = 'dead';
-    } else if (row.fan_in === 0 && isExported) {
-      role = 'entry';
-    } else if (highIn && !highOut) {
-      role = 'core';
-    } else if (highIn && highOut) {
-      role = 'utility';
-    } else if (!highIn && highOut) {
-      role = 'adapter';
-    } else {
-      role = 'leaf';
-    }
-
+    const role = roleMap.get(String(row.id)) || 'leaf';
     updates.push({ id: row.id, role });
     summary[role]++;
   }
