@@ -260,6 +260,10 @@ export function findNodeChildren(db, parentId) {
  * @param {string} [opts.file] - Filter by file path (LIKE match)
  * @returns {object[]}
  */
+function escapeLike(s) {
+  return s.replace(/[%_\\]/g, '\\$&');
+}
+
 export function findNodesByScope(db, scopeName, opts = {}) {
   let sql = 'SELECT * FROM nodes WHERE scope = ?';
   const params = [scopeName];
@@ -268,8 +272,8 @@ export function findNodesByScope(db, scopeName, opts = {}) {
     params.push(opts.kind);
   }
   if (opts.file) {
-    sql += ' AND file LIKE ?';
-    params.push(`%${opts.file}%`);
+    sql += " AND file LIKE ? ESCAPE '\\'";
+    params.push(`%${escapeLike(opts.file)}%`);
   }
   sql += ' ORDER BY file, line';
   return db.prepare(sql).all(...params);
@@ -288,8 +292,10 @@ export function findNodesByScope(db, scopeName, opts = {}) {
 export function findNodeByQualifiedName(db, qualifiedName, opts = {}) {
   if (opts.file) {
     return db
-      .prepare('SELECT * FROM nodes WHERE qualified_name = ? AND file LIKE ? ORDER BY file, line')
-      .all(qualifiedName, `%${opts.file}%`);
+      .prepare(
+        "SELECT * FROM nodes WHERE qualified_name = ? AND file LIKE ? ESCAPE '\\' ORDER BY file, line",
+      )
+      .all(qualifiedName, `%${escapeLike(opts.file)}%`);
   }
   return cachedStmt(
     _findNodeByQualifiedNameStmt,
