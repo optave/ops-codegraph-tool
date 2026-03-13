@@ -1,3 +1,4 @@
+import { CORE_SYMBOL_KINDS } from '../../kinds.js';
 import { cachedStmt } from './cached-stmt.js';
 
 // ─── Statement caches (one prepared statement per db instance) ────────────
@@ -6,8 +7,10 @@ const _getCallEdgesStmt = new WeakMap();
 const _getFileNodesAllStmt = new WeakMap();
 const _getImportEdgesStmt = new WeakMap();
 
+const CALLABLE_KINDS_SQL = CORE_SYMBOL_KINDS.map((k) => `'${k}'`).join(',');
+
 /**
- * Get callable nodes (function/method/class) for community detection.
+ * Get callable nodes (all core symbol kinds) for graph construction.
  * @param {object} db
  * @returns {{ id: number, name: string, kind: string, file: string }[]}
  */
@@ -15,7 +18,7 @@ export function getCallableNodes(db) {
   return cachedStmt(
     _getCallableNodesStmt,
     db,
-    "SELECT id, name, kind, file FROM nodes WHERE kind IN ('function','method','class')",
+    `SELECT id, name, kind, file FROM nodes WHERE kind IN (${CALLABLE_KINDS_SQL})`,
   ).all();
 }
 

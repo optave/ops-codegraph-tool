@@ -48,7 +48,8 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `embeddings/` | Embedding subsystem: model management, vector generation, semantic/keyword/hybrid search, CLI formatting |
 | `db.js` | SQLite schema and operations (`better-sqlite3`) |
 | `mcp.js` | MCP server exposing graph queries to AI agents; single-repo by default, `--multi-repo` to enable cross-repo access |
-| `cycles.js` | Circular dependency detection |
+| `graph/` | Unified graph model: `CodeGraph` class (`model.js`), algorithms (Tarjan SCC, Louvain, BFS, shortest path, centrality), classifiers (role, risk), builders (dependency, structure, temporal) |
+| `cycles.js` | Circular dependency detection (delegates to `graph/` subsystem) |
 | `export.js` | DOT/Mermaid/JSON graph export |
 | `watcher.js` | Watch mode for incremental rebuilds |
 | `config.js` | `.codegraphrc.json` loading, env overrides, `apiKeyCommand` secret resolution |
@@ -58,11 +59,11 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `resolve.js` | Import resolution (supports native batch mode) |
 | `ast-analysis/` | Unified AST analysis framework: shared DFS walker (`visitor.js`), engine orchestrator (`engine.js`), extracted metrics (`metrics.js`), and pluggable visitors for complexity, dataflow, and AST-store |
 | `complexity.js` | Cognitive, cyclomatic, Halstead, MI computation from AST; `complexity` CLI command |
-| `communities.js` | Louvain community detection, drift analysis |
+| `communities.js` | Louvain community detection, drift analysis (delegates to `graph/` subsystem) |
 | `manifesto.js` | Configurable rule engine with warn/fail thresholds; CI gate |
 | `audit.js` | Composite audit command: explain + impact + health in one call |
 | `batch.js` | Batch querying for multi-agent dispatch |
-| `triage.js` | Risk-ranked audit priority queue |
+| `triage.js` | Risk-ranked audit priority queue (delegates scoring to `graph/classifiers/`) |
 | `check.js` | CI validation predicates (cycles, complexity, blast radius, boundaries) |
 | `boundaries.js` | Architecture boundary rules with onion architecture preset |
 | `owners.js` | CODEOWNERS integration for ownership queries |

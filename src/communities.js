@@ -1,78 +1,8 @@
 import path from 'node:path';
-import Graph from 'graphology';
-import louvain from 'graphology-communities-louvain';
-import {
-  getCallableNodes,
-  getCallEdges,
-  getFileNodesAll,
-  getImportEdges,
-  openReadonlyOrFail,
-} from './db.js';
-import { isTestFile } from './infrastructure/test-filter.js';
+import { openReadonlyOrFail } from './db.js';
+import { louvainCommunities } from './graph/algorithms/louvain.js';
+import { buildDependencyGraph } from './graph/builders/dependency.js';
 import { paginateResult } from './paginate.js';
-
-// ─── Graph Construction ───────────────────────────────────────────────
-
-/**
- * Build a graphology graph from the codegraph SQLite database.
- *
- * @param {object} db - open better-sqlite3 database (readonly)
- * @param {object} opts
- * @param {boolean} [opts.functions] - Function-level instead of file-level
- * @param {boolean} [opts.noTests] - Exclude test files
- * @returns {Graph}
- */
-function buildGraphologyGraph(db, opts = {}) {
-  const graph = new Graph({ type: 'undirected' });
-
-  if (opts.functions) {
-    // Function-level: nodes = function/method/class symbols, edges = calls
-    let nodes = getCallableNodes(db);
-    if (opts.noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
-
-    const nodeIds = new Set();
-    for (const n of nodes) {
-      const key = String(n.id);
-      graph.addNode(key, { label: n.name, file: n.file, kind: n.kind });
-      nodeIds.add(n.id);
-    }
-
-    const edges = getCallEdges(db);
-    for (const e of edges) {
-      if (!nodeIds.has(e.source_id) || !nodeIds.has(e.target_id)) continue;
-      const src = String(e.source_id);
-      const tgt = String(e.target_id);
-      if (src === tgt) continue;
-      if (!graph.hasEdge(src, tgt)) {
-        graph.addEdge(src, tgt);
-      }
-    }
-  } else {
-    // File-level: nodes = files, edges = imports + imports-type (deduplicated, cross-file)
-    let nodes = getFileNodesAll(db);
-    if (opts.noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
-
-    const nodeIds = new Set();
-    for (const n of nodes) {
-      const key = String(n.id);
-      graph.addNode(key, { label: n.file, file: n.file });
-      nodeIds.add(n.id);
-    }
-
-    const edges = getImportEdges(db);
-    for (const e of edges) {
-      if (!nodeIds.has(e.source_id) || !nodeIds.has(e.target_id)) continue;
-      const src = String(e.source_id);
-      const tgt = String(e.target_id);
-      if (src === tgt) continue;
-      if (!graph.hasEdge(src, tgt)) {
-        graph.addEdge(src, tgt);
-      }
-    }
-  }
-
-  return graph;
-}
 
 // ─── Directory Helpers ────────────────────────────────────────────────
 
@@ -97,11 +27,10 @@ function getDirectory(filePath) {
  */
 export function communitiesData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
-  const resolution = opts.resolution ?? 1.0;
   let graph;
   try {
-    graph = buildGraphologyGraph(db, {
-      functions: opts.functions,
+    graph = buildDependencyGraph(db, {
+      fileLevel: !opts.functions,
       noTests: opts.noTests,
     });
   } finally {
@@ -109,27 +38,27 @@ export function communitiesData(customDbPath, opts = {}) {
   }
 
   // Handle empty or trivial graphs
-  if (graph.order === 0 || graph.size === 0) {
+  if (graph.nodeCount === 0 || graph.edgeCount === 0) {
     return {
       communities: [],
       modularity: 0,
       drift: { splitCandidates: [], mergeCandidates: [] },
-      summary: { communityCount: 0, modularity: 0, nodeCount: graph.order, driftScore: 0 },
+      summary: { communityCount: 0, modularity: 0, nodeCount: graph.nodeCount, driftScore: 0 },
     };
   }
 
   // Run Louvain
-  const details = louvain.detailed(graph, { resolution });
-  const assignments = details.communities; // node → community id
-  const modularity = details.modularity;
+  const resolution = opts.resolution ?? 1.0;
+  const { assignments, modularity } = louvainCommunities(graph, { resolution });
 
   // Group nodes by community
   const communityMap = new Map(); // community id → node keys[]
-  graph.forEachNode((key) => {
-    const cid = assignments[key];
+  for (const [key] of graph.nodes()) {
+    const cid = assignments.get(key);
+    if (cid == null) continue;
     if (!communityMap.has(cid)) communityMap.set(cid, []);
     communityMap.get(cid).push(key);
-  });
+  }
 
   // Build community objects
   const communities = [];
@@ -139,7 +68,7 @@ export function communitiesData(customDbPath, opts = {}) {
     const dirCounts = {};
     const memberData = [];
     for (const key of members) {
-      const attrs = graph.getNodeAttributes(key);
+      const attrs = graph.getNodeAttrs(key);
       const dir = getDirectory(attrs.file);
       dirCounts[dir] = (dirCounts[dir] || 0) + 1;
       memberData.push({
@@ -196,7 +125,6 @@ export function communitiesData(customDbPath, opts = {}) {
   mergeCandidates.sort((a, b) => b.directoryCount - a.directoryCount);
 
   // Drift score: 0-100 based on how much directory structure diverges from communities
-  // Higher = more drift (directories don't match communities)
   const totalDirs = dirToCommunities.size;
   const splitDirs = splitCandidates.length;
   const splitRatio = totalDirs > 0 ? splitDirs / totalDirs : 0;
@@ -214,7 +142,7 @@ export function communitiesData(customDbPath, opts = {}) {
     summary: {
       communityCount: communities.length,
       modularity: +modularity.toFixed(4),
-      nodeCount: graph.order,
+      nodeCount: graph.nodeCount,
       driftScore,
     },
   };
