@@ -8,6 +8,9 @@
     ".": {
       "import": "./src/index.js"
     },
+    "./cli": {
+      "import": "./src/cli.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {

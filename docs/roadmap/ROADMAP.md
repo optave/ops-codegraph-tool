@@ -739,37 +739,37 @@ Adding a new MCP tool = adding a file + one line in the barrel. No other files c
 
 **Affected files:** `src/mcp.js` -> split into `src/mcp/`
 
-### 3.6 -- CLI Command Objects
+### 3.6 -- CLI Command Objects ✅
 
-Move from 1,557 lines of inline Commander chains to self-contained command modules.
-
-> **Note:** Phase 2.7.11 consolidated 5 commands — the first CLI surface area reduction. This item continues that direction by making each of the 39 remaining commands independently testable.
+Monolithic 1,525-line `src/cli.js` split into `src/cli/` with auto-discovery of command modules. 40 independently testable command files in `src/cli/commands/`, each exporting `{ name, description, options, queryOpts, validate, execute }`. Shared utilities extracted to `src/cli/shared/` (query options, output formatting). `src/cli/index.js` provides `registerCommand()` + `discoverCommands()` — new commands are added by dropping a file into `commands/`. `src/cli.js` reduced to an 8-line thin wrapper ([#427](https://github.com/optave/codegraph/pull/427)).
 
 ```
 src/
+  cli.js                         # 8-line thin wrapper → cli/index.js
   cli/
-    index.js                   # Commander setup, auto-discover commands
+    index.js                     # Commander setup, registerCommand(), discoverCommands()
     shared/
-      output.js                # --json, --ndjson, table, plain text
-      options.js               # Shared options (--no-tests, --json, --db, etc.)
-    commands/                  # 39 files, one per command
-      build.js                 # { name, description, options, validate, execute }
+      output.js                  # --json, --ndjson, table, plain text
+      options.js                 # Shared options (--no-tests, --json, --db, etc.)
+    commands/                    # 40 files, one per command
+      build.js                   # { name, description, options, validate, execute }
       ...
 ```
 
-Each command is independently testable by calling `execute()` directly.
-
 **Affected files:** `src/cli.js` -> split into `src/cli/`
 
-### 3.7 -- Curated Public API Surface
+### 3.7 -- Curated Public API Surface ✅
 
-Reduce `index.js` from 140+ exports to ~35 curated exports. Use `package.json` `exports` field to enforce module boundaries.
+Reduced `index.js` from ~190 named exports (243 lines) to 48 curated exports (57 lines). CLI formatters, internal DB utilities, parser internals, infrastructure helpers, and implementation-detail constants removed from the public surface. `package.json` `exports` field updated to expose `./cli` entry point.
 
-```json
-{ "exports": { ".": "./src/index.js", "./cli": "./src/cli.js" } }
-```
+**What's exported:**
+- **31 `*Data()` query functions** — one per command (e.g. `queryNameData`, `contextData`, `auditData`, `cfgData`)
+- **4 graph building** — `buildGraph`, `loadConfig`, `findCycles`, `buildEmbeddings`
+- **3 export formats** — `exportDOT`, `exportJSON`, `exportMermaid`
+- **3 search** — `searchData`, `multiSearchData`, `hybridSearchData`
+- **4 constants** — `EVERY_SYMBOL_KIND`, `EVERY_EDGE_KIND`, `EXTENSIONS`, `IGNORE_DIRS`
 
-Export only `*Data()` functions (the command execute functions). Never export CLI formatters. Group by domain.
+**What's removed:** CLI display wrappers (`commands/*.js`, `queries-cli.js`), internal DB functions (`fanInJoinSQL`, `NodeQuery`, etc.), parser internals (`parseFileAuto`, `disposeParsers`), infrastructure (`outputResult`, `isTestFile`), registry management, snapshot internals, pagination helpers, implementation-detail constants (`COMPLEXITY_RULES`, `HALSTEAD_RULES`, etc.), and lower-level analysis functions. All remain importable via direct paths.
 
 **Affected files:** `src/index.js`, `package.json`
 
