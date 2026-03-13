@@ -71,6 +71,44 @@ jobs:
             - Performance (unnecessary full rebuilds, missing incremental hash checks)
             - Test coverage for new functionality
 
+            ### Phase 5: Backlog Compliance (grade the feature like BACKLOG.md)
+            Rate the functionality this PR implements on the same axes used in `docs/roadmap/BACKLOG.md`:
+
+            **Zero-dep** — Does this PR add new runtime dependencies (`dependencies` in package.json)?
+            - ✓ = no new deps, builds on tree-sitter/SQLite/existing AST
+            - ✗ = adds a new npm runtime package → flag it, require strong justification
+            - Git CLI usage is acceptable (already assumed)
+
+            **Foundation-aligned** — Does it comply with FOUNDATION.md core principles?
+            Red flags that indicate misalignment:
+            - Adds cloud API calls to the core pipeline → violates P1 (always-current) and P4 (zero-cost core)
+            - Requires Docker, external DB, or non-npm toolchain → violates zero-infrastructure goal
+            - Generates code, edits files, or makes decisions → violates P8 (we are not an agent)
+            - Primarily optimizes for CI/CD or linting → deprioritized by P8
+            - Breaks programmatic API contract → check against P5 (embeddable-first)
+            - ✓ = fully aligned, ✗ = conflicts with at least one principle
+
+            **Problem-fit (1-5)** — How directly does this address the core problem:
+            *AI coding assistants waste tokens re-orienting in large codebases, hallucinate dependencies, and miss blast radius.*
+            - 5 = directly reduces token waste, prevents hallucinated deps, or catches blast-radius breakage
+            - 4 = improves agent accuracy or reduces round-trips for common tasks
+            - 3 = useful but doesn't address the core "lost AI" problem
+            - 2 = nice-to-have, tangential to the stated problem
+            - 1 = cool feature, doesn't help AI agents navigate codebases
+
+            **Breaking** — Does this PR change existing behavior incompatibly?
+            - Check: CLI output format changes, API signature changes, DB schema changes,
+              MCP tool contract changes (renamed/removed tools, changed parameter schemas)
+            - Breaking = Yes → requires major version bump justification
+            - Breaking = No → purely additive, no concern
+
+            **Tier classification and blocking rules:**
+            - **Tier 1** (zero-dep ✓ + foundation-aligned ✓): No objection on these axes.
+            - **Tier 2** (foundation-aligned ✓ + zero-dep ✗): ⚠️ REQUEST justification for the new dependency — what does it enable that existing deps cannot?
+            - **Tier 3** (foundation-aligned ✗): ⚠️ REQUEST CHANGES — needs a deliberate exception with written justification for which principle is being violated and why it's worth it.
+            - **Problem-fit ≤ 2**: ⚠️ Flag as low-priority / tangential — recommend deferring unless bundled with higher-fit work.
+            - **Breaking = Yes without major version bump plan**: ⚠️ REQUEST CHANGES — breaking changes must be tracked and versioned.
+
             ### Rating (STRICT — default to 2-3 stars)
             - ⭐ Critical issues, REJECT
             - ⭐⭐ Significant concerns, REQUEST CHANGES
@@ -84,6 +122,13 @@ jobs:
             **Problem Being Solved**: [...]
             **Why This Approach**: [...]
             **Risk Assessment**: [...]
+
+            ## Backlog Compliance
+            - Zero-dep: [✓ | ✗ — reason]
+            - Foundation-aligned: [✓ | ✗ — which principle violated]
+            - Problem-fit: [1-5] — [reason]
+            - Breaking: [Yes — what breaks | No]
+            - Tier: [1 | 2 | 3]
 
             ## Critical Concerns (if any)
             [...]
