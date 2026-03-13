@@ -33,7 +33,7 @@
 
 AI agents face an impossible trade-off in large codebases. They either spend thousands of tokens reading files to understand the structure — blowing up their context window until quality degrades — or they assume, and the assumptions are wrong. Either way, things break. The larger the codebase, the worse it gets.
 
-An agent modifies a function without knowing 9 files import it. It misreads what a helper does and builds logic on top of that misunderstanding. It leaves dead code behind after a refactor. The PR gets opened, and your reviewer — Greptile, CodeRabbit, or a teammate — flags the same structural issues every time: _"this breaks 14 callers,"_ _"that function already exists,"_ _"this export is now dead."_ Three rounds of review later, the fix is in. Multiply that by every PR, every developer, every repo.
+An agent modifies a function without knowing 9 files import it. It misreads what a helper does and builds logic on top of that misunderstanding. It leaves dead code behind after a refactor. The PR gets opened, and your reviewer — human or automated — flags the same structural issues every time: _"this breaks 14 callers,"_ _"that function already exists,"_ _"this export is now dead."_ Three rounds of review later, the fix is in. Multiply that by every PR, every developer, every repo.
 
 The information to prevent all of this exists — it's in the code itself. But without a structured map, agents lack the context to get it right the first time, reviewers waste cycles on preventable issues, and architecture degrades one unreviewed change at a time.
 
@@ -66,7 +66,7 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 
 | | Without codegraph | With codegraph |
 |---|---|---|
-| **Code review** | Reviewers (Greptile, CodeRabbit, humans) flag broken callers, dead code, and boundary violations round after round | Structural issues are caught during development — PRs pass review with fewer rounds |
+| **Code review** | Reviewers flag broken callers, dead code, and boundary violations round after round | Structural issues are caught during development — PRs pass review with fewer rounds |
 | **AI agents** | Modify `parseConfig()` without knowing 9 files import it — reviewer catches it | `fn-impact parseConfig` shows every caller before the edit — agent fixes it proactively |
 | **AI agents** | Leave dead exports and duplicate helpers behind after refactors | Dead code, cycles, and duplicates surface in real time via hooks and MCP queries |
 | **AI agents** | Produce code that works but doesn't fit the codebase structure | `context <name> -T` returns source, deps, callers, and tests — the agent writes code that fits |
