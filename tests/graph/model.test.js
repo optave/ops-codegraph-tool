@@ -94,8 +94,7 @@ describe('CodeGraph — undirected', () => {
     const g = new CodeGraph({ directed: false });
     g.addEdge('a', 'b');
     g.addEdge('b', 'c');
-    expect(g.edgeCount).toBe(4); // 2 directed entries per undirected edge
-    // But edges() iterator deduplicates
+    expect(g.edgeCount).toBe(2);
     expect([...g.edges()]).toHaveLength(2);
   });
 });

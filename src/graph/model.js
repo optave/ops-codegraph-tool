@@ -32,7 +32,8 @@ export class CodeGraph {
   get edgeCount() {
     let count = 0;
     for (const targets of this._successors.values()) count += targets.size;
-    return count;
+    // Undirected graphs store each edge twice (a→b and b→a)
+    return this._directed ? count : count / 2;
   }
 
   // ─── Node operations ────────────────────────────────────────────
@@ -195,17 +196,9 @@ export class CodeGraph {
       g.addNode(id);
     }
 
-    if (type === 'undirected') {
-      // Deduplicate: only add each unordered pair once
-      for (const [src, tgt] of this.edges()) {
-        if (src === tgt) continue;
-        if (!g.hasEdge(src, tgt)) g.addEdge(src, tgt);
-      }
-    } else {
-      for (const [src, tgt] of this.edges()) {
-        if (src === tgt) continue;
-        if (!g.hasEdge(src, tgt)) g.addEdge(src, tgt);
-      }
+    for (const [src, tgt] of this.edges()) {
+      if (src === tgt) continue;
+      if (!g.hasEdge(src, tgt)) g.addEdge(src, tgt);
     }
     return g;
   }
