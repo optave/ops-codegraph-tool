@@ -31,11 +31,11 @@
 
 ## The Problem
 
-AI agents face an impossible trade-off in large codebases. They either spend thousands of tokens reading files to understand the structure — blowing up their context window until quality degrades — or they assume, and the assumptions are wrong. Either way, things break. The larger the codebase, the worse it gets.
+AI agents face an impossible trade-off. They either spend thousands of tokens reading files to understand a codebase's structure — blowing up their context window until quality degrades — or they assume how things work, and the assumptions are often wrong. Either way, things break. The larger the codebase, the worse it gets.
 
-An agent modifies a function without knowing 9 files import it. It misreads what a helper does and builds logic on top of that misunderstanding. It leaves dead code behind after a refactor. The PR gets opened, and your reviewer — human or automated — flags the same structural issues every time: _"this breaks 14 callers,"_ _"that function already exists,"_ _"this export is now dead."_ If the reviewer catches it, that's three rounds of back-and-forth. If they don't, it ships to production. Multiply that by every PR, every developer, every repo.
+An agent modifies a function without knowing 9 files import it. It misreads what a helper does and builds logic on top of that misunderstanding. It leaves dead code behind after a refactor. The PR gets opened, and your reviewer — human or automated — flags the same structural issues again and again: _"this breaks 14 callers,"_ _"that function already exists,"_ _"this export is now dead."_ If the reviewer catches it, that's multiple rounds of back-and-forth. If they don't, it can ship to production. Multiply that by every PR, every developer, every repo.
 
-The information to prevent all of this exists — it's in the code itself. But without a structured map, agents lack the context to get it right the first time, reviewers waste cycles on preventable issues, and architecture degrades one unreviewed change at a time.
+The information to prevent these issues exists — it's in the code itself. But without a structured map, agents lack the context to get it right consistently, reviewers waste cycles on preventable issues, and architecture degrades one unreviewed change at a time.
 
 ## What Codegraph Does
 
@@ -48,7 +48,7 @@ It parses your code with [tree-sitter](https://tree-sitter.github.io/) (native R
 - **CI gates** — `check` and `manifesto` commands enforce quality thresholds with exit codes
 - **Programmatic API** — embed codegraph in your own tools via `npm install`
 
-Instead of an agent blindly editing code and letting reviewers catch the fallout, it knows _"this function has 14 callers across 9 files"_ before it touches anything. Dead exports, circular dependencies, and boundary violations surface during development — not during review. The result: PRs that pass automated review on the first round, not the third.
+Instead of an agent editing code without structural context and letting reviewers catch the fallout, it knows _"this function has 14 callers across 9 files"_ before it touches anything. Dead exports, circular dependencies, and boundary violations surface during development — not during review. The result: PRs that need fewer review rounds.
 
 **Free. Open source. Fully local.** Zero network calls, zero telemetry. Your code stays on your machine. When you want deeper intelligence, bring your own LLM provider — your code only goes where you choose to send it.
 
@@ -60,7 +60,7 @@ cd your-project
 codegraph build
 ```
 
-No config files, no Docker, no JVM, no API keys, no accounts. Point your agent at the MCP server and it has full structural awareness of your codebase.
+No config files, no Docker, no JVM, no API keys, no accounts. Point your agent at the MCP server and it has structural awareness of your codebase.
 
 ### Why it matters
 
@@ -115,9 +115,9 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 | | Differentiator | In practice |
 |---|---|---|
 | **🤖** | **AI-first architecture** | 30-tool [MCP server](https://modelcontextprotocol.io/) — agents query the graph directly instead of scraping the filesystem. One call replaces 20+ grep/find/cat invocations |
-| **🏷️** | **Role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` — agents instantly know what they're looking at without reading the code |
+| **🏷️** | **Role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` — agents understand a symbol's architectural role without reading surrounding code |
 | **🔬** | **Function-level, not just files** | Traces `handleAuth()` → `validateToken()` → `decryptJWT()` and shows 14 callers across 9 files break if `decryptJWT` changes |
-| **⚡** | **Always-fresh graph** | Three-tier change detection: journal (O(changed)) → mtime+size (O(n) stats) → hash (O(changed) reads). Sub-second rebuilds — agents always work with current data |
+| **⚡** | **Always-fresh graph** | Three-tier change detection: journal (O(changed)) → mtime+size (O(n) stats) → hash (O(changed) reads). Sub-second rebuilds — agents work with current data |
 | **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — enriched with historically coupled files from git co-change analysis. Ships with a GitHub Actions workflow |
 | **🌐** | **Multi-language, one graph** | JS/TS + Python + Go + Rust + Java + C# + PHP + Ruby + HCL in a single graph — agents don't need per-language tools |
 | **🧠** | **Hybrid search** | BM25 keyword + semantic embeddings fused via RRF — `hybrid` (default), `semantic`, or `keyword` mode; multi-query via `"auth; token; JWT"` |
