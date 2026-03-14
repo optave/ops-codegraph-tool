@@ -1,9 +1,12 @@
 /**
  * Interactive HTML viewer — presentation layer.
  *
- * Pure data → HTML transform. Receives prepared graph data and config,
- * returns a self-contained HTML string with embedded vis-network.
- * No DB access — all data must be pre-loaded via prepareGraphData().
+ * renderPlotHTML() is a pure data → HTML transform: receives prepared graph
+ * data and config, returns a self-contained HTML string with vis-network.
+ * No DB access — all graph data must be pre-loaded via prepareGraphData().
+ *
+ * Also exports loadPlotConfig() for reading .plotDotCfg files from disk,
+ * and color/layout constants shared with the domain layer.
  */
 
 import fs from 'node:fs';

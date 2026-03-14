@@ -18,12 +18,19 @@ const DEFAULT_MIN_CONFIDENCE = 0.5;
 
 /**
  * Load file-level edges from DB with filtering.
+ * @param {object} db
+ * @param {object} opts
+ * @param {boolean} [opts.includeKind] - Include edge_kind in SELECT DISTINCT
+ * @param {boolean} [opts.includeConfidence] - Include confidence (adds a column to DISTINCT — use only when needed)
  * @returns {{ edges: Array, totalEdges: number }}
  */
-function loadFileLevelEdges(db, { noTests, minConfidence, limit, includeKind = false }) {
+function loadFileLevelEdges(
+  db,
+  { noTests, minConfidence, limit, includeKind = false, includeConfidence = false },
+) {
   const minConf = minConfidence ?? DEFAULT_MIN_CONFIDENCE;
   const kindClause = includeKind ? ', e.kind AS edge_kind' : '';
-  const confidenceClause = includeKind ? ', e.confidence' : '';
+  const confidenceClause = includeConfidence ? ', e.confidence' : '';
   let edges = db
     .prepare(
       `
@@ -361,6 +368,7 @@ export function exportNeo4jCSV(db, opts = {}) {
       minConfidence,
       limit,
       includeKind: true,
+      includeConfidence: true,
     });
     return renderFileLevelNeo4jCSV({ edges });
   }

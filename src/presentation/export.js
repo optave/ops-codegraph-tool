@@ -368,7 +368,7 @@ export function renderFunctionLevelGraphML(data) {
 /**
  * Render file-level graph data as Neo4j bulk-import CSV.
  *
- * @param {{ edges: Array<{ source: string, target: string, kind: string, confidence: number }> }} data
+ * @param {{ edges: Array<{ source: string, target: string, edge_kind: string, confidence: number }> }} data
  * @returns {{ nodes: string, relationships: string }}
  */
 export function renderFileLevelNeo4jCSV(data) {
@@ -386,7 +386,7 @@ export function renderFileLevelNeo4jCSV(data) {
 
   const relLines = [':START_ID,:END_ID,:TYPE,confidence:float'];
   for (const e of data.edges) {
-    const edgeType = (e.edge_kind || e.kind).toUpperCase().replace(/-/g, '_');
+    const edgeType = e.edge_kind.toUpperCase().replace(/-/g, '_');
     relLines.push(`${files.get(e.source)},${files.get(e.target)},${edgeType},${e.confidence}`);
   }
 
