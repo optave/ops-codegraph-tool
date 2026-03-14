@@ -250,6 +250,11 @@ export function findNodeChildren(db, parentId) {
   ).all(parentId);
 }
 
+/** Escape LIKE wildcards in a literal string segment. */
+function escapeLike(s) {
+  return s.replace(/[%_\\]/g, '\\$&');
+}
+
 /**
  * Find all nodes that belong to a given scope (by scope column).
  * Enables "all methods of class X" without traversing edges.

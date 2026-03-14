@@ -70,6 +70,8 @@ export function extractModifierVisibility(node, modifierTypes = DEFAULT_MODIFIER
     if (modifierTypes.has(child.type)) {
       const text = child.text;
       if (VISIBILITY_KEYWORDS.has(text)) return text;
+      // C# 'private protected' — accessible to derived types in same assembly → protected
+      if (text === 'private protected') return 'protected';
       // Compound modifiers node (Java: "public static") — scan its text for a keyword
       for (const kw of VISIBILITY_KEYWORDS) {
         if (text.includes(kw)) return kw;

@@ -183,7 +183,7 @@ export const BATCH_CHUNK = 200;
 
 /**
  * Batch-insert node rows via multi-value INSERT statements.
- * Each row: [name, kind, file, line, end_line, parent_id]
+ * Each row: [name, kind, file, line, end_line, parent_id, qualified_name, scope, visibility]
  */
 export function batchInsertNodes(db, rows) {
   if (!rows.length) return;
