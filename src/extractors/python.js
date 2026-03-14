@@ -1,4 +1,4 @@
-import { findChild, nodeEndLine } from './helpers.js';
+import { findChild, nodeEndLine, pythonVisibility } from './helpers.js';
 
 /**
  * Extract symbols from Python files.
@@ -30,6 +30,7 @@ export function extractPythonSymbols(tree, _filePath) {
             endLine: nodeEndLine(node),
             decorators,
             children: fnChildren.length > 0 ? fnChildren : undefined,
+            visibility: pythonVisibility(nameNode.text),
           });
         }
         break;
@@ -209,7 +210,12 @@ export function extractPythonSymbols(tree, _filePath) {
           const left = assignment.childForFieldName('left');
           if (left && left.type === 'identifier' && !seen.has(left.text)) {
             seen.add(left.text);
-            props.push({ name: left.text, kind: 'property', line: child.startPosition.row + 1 });
+            props.push({
+              name: left.text,
+              kind: 'property',
+              line: child.startPosition.row + 1,
+              visibility: pythonVisibility(left.text),
+            });
           }
         }
       }
@@ -262,7 +268,12 @@ export function extractPythonSymbols(tree, _filePath) {
         !seen.has(attr.text)
       ) {
         seen.add(attr.text);
-        props.push({ name: attr.text, kind: 'property', line: stmt.startPosition.row + 1 });
+        props.push({
+          name: attr.text,
+          kind: 'property',
+          line: stmt.startPosition.row + 1,
+          visibility: pythonVisibility(attr.text),
+        });
       }
     }
   }
