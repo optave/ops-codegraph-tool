@@ -16,7 +16,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Complete** (v1.4.0) |
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.6.0) |
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
-| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, presentation layer, domain grouping, curated API, unified graph model | **In Progress** (v3.1.3) |
+| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names | **In Progress** (v3.1.3) |
 | [**4**](#phase-4--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | Planned |
 | [**5**](#phase-5--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
 | [**6**](#phase-6--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
@@ -667,7 +667,7 @@ src/
 src/
   db/
     connection.js              # Open, WAL mode, pragma tuning
-    migrations.js              # Schema versions (currently 13 migrations)
+    migrations.js              # Schema versions (currently 15 migrations)
     query-builder.js           # Lightweight SQL builder for common filtered queries
     repository/
       index.js                 # Barrel re-export
@@ -775,9 +775,9 @@ Reduced `index.js` from ~190 named exports (243 lines) to 48 curated exports (57
 
 > **Removed: Decompose complexity.js** — Subsumed by 3.1. The standalone complexity decomposition from the previous revision is now part of the unified AST analysis framework (3.1). The `complexity.js` per-language rules become `ast-analysis/rules/complexity/{lang}.js` alongside CFG and dataflow rules.
 
-### 3.8 -- Domain Error Hierarchy
+### 3.8 -- Domain Error Hierarchy ✅
 
-Replace ad-hoc error handling (mix of thrown `Error`, returned `null`, `logger.warn()`, `process.exit(1)`) across 50 modules with structured domain errors.
+Structured domain errors replace ad-hoc error handling across the codebase. 8 error classes in `src/errors.js`: `CodegraphError`, `ParseError`, `DbError`, `ConfigError`, `ResolutionError`, `EngineError`, `AnalysisError`, `BoundaryError`. The CLI catches domain errors and formats for humans; MCP returns structured `{ isError, code }` responses.
 
 ```js
 class CodegraphError extends Error { constructor(message, { code, file, cause }) { ... } }
@@ -790,41 +790,43 @@ class AnalysisError extends CodegraphError { code = 'ANALYSIS_FAILED' }
 class BoundaryError extends CodegraphError { code = 'BOUNDARY_VIOLATION' }
 ```
 
-The CLI catches domain errors and formats for humans. MCP returns structured error responses. No more `process.exit()` from library code.
+- ✅ `src/errors.js` — 8 domain error classes with `code`, `file`, `cause` fields
+- ✅ CLI top-level catch formats domain errors for humans
+- ✅ MCP returns structured error responses
+- ✅ Domain errors adopted across config, boundaries, triage, and query modules
 
 **New file:** `src/errors.js`
 
-### 3.9 -- Builder Pipeline Architecture
+### 3.9 -- Builder Pipeline Architecture ✅
 
-Refactor `buildGraph()` (1,355 lines) from a mega-function into explicit, independently testable pipeline stages. Phase 2.7 added 4 opt-in stages, bringing the total to 11 core + 4 optional.
+Refactored `buildGraph()` from a monolithic mega-function into explicit, independently testable pipeline stages. `src/builder.js` is now a 12-line barrel re-export. `src/builder/pipeline.js` orchestrates 9 stages via `PipelineContext`. Each stage is a separate file in `src/builder/stages/`.
 
-```js
-const pipeline = [
-  // Core (always)
-  collectFiles,        // (rootDir, config) => filePaths[]
-  detectChanges,       // (filePaths, db) => { changed, removed, isFullBuild }
-  parseFiles,          // (filePaths, engineOpts) => Map<file, symbols>
-  insertNodes,         // (symbolMap, db) => nodeIndex
-  resolveImports,      // (symbolMap, rootDir, aliases) => importEdges[]
-  buildCallEdges,      // (symbolMap, nodeIndex) => callEdges[]
-  buildClassEdges,     // (symbolMap, nodeIndex) => classEdges[]
-  resolveBarrels,      // (edges, symbolMap) => resolvedEdges[]
-  insertEdges,         // (allEdges, db) => stats
-  extractASTNodes,     // (fileSymbols, db) => astStats (always, post-parse)
-  buildStructure,      // (db, fileSymbols, rootDir) => structureStats
-  classifyRoles,       // (db) => roleStats
-  emitChangeJournal,   // (rootDir, changes) => void
-
-  // Opt-in (dynamic imports)
-  computeComplexity,   // --complexity: (db, rootDir, engine) => complexityStats
-  buildDataflowEdges,  // --dataflow:   (db, fileSymbols, rootDir) => dataflowStats
-  buildCFGData,        // --cfg:        (db, fileSymbols, rootDir) => cfgStats
-]
+```
+src/
+  builder.js                    # 12-line barrel re-export
+  builder/
+    context.js                  # PipelineContext — shared state across stages
+    pipeline.js                 # Orchestrator: setup → stages → timing
+    helpers.js                  # batchInsertNodes, collectFiles, fileHash, etc.
+    incremental.js              # Incremental build logic
+    stages/
+      collect-files.js          # Discover source files
+      detect-changes.js         # Incremental: hash comparison, removed detection
+      parse-files.js            # Parse via native/WASM engine
+      insert-nodes.js           # Batch-insert nodes, children, contains/parameter_of edges
+      resolve-imports.js        # Import resolution with aliases
+      build-edges.js            # Call edges, class edges, barrel resolution
+      build-structure.js        # Directory/file hierarchy
+      run-analyses.js           # Complexity, CFG, dataflow, AST store
+      finalize.js               # Build meta, timing, db close
 ```
 
-Watch mode reuses the same stages triggered per-file, eliminating the `watcher.js` divergence.
+- ✅ `PipelineContext` shared state replaces function parameters
+- ✅ 9 sequential stages, each independently testable
+- ✅ `src/builder.js` reduced to barrel re-export
+- ✅ Timing tracked per-stage in `ctx.timing`
 
-**Affected files:** `src/builder.js`, `src/watcher.js`
+**Affected files:** `src/builder.js` → split into `src/builder/`
 
 ### 3.10 -- Embedder Subsystem Extraction
 
@@ -852,49 +854,70 @@ The pluggable store interface enables future O(log n) ANN search (e.g., `hnswlib
 
 **Affected files:** `src/embedder.js` -> split into `src/embeddings/`
 
-### 3.11 -- Unified Graph Model
+### 3.11 -- Unified Graph Model ✅
 
-Unify the four parallel graph representations (structure.js, cochange.js, communities.js, viewer.js) into a shared in-memory graph model.
+Unified the four parallel graph representations into a shared in-memory `CodeGraph` model. The `src/graph/` directory contains the model, 3 builders, 6 algorithms, and 2 classifiers. Algorithms are composable — run community detection on the dependency graph, the temporal graph, or a merged graph.
 
 ```
 src/
   graph/
-    model.js                   # Shared in-memory graph (nodes + edges + metadata)
+    index.js                   # Barrel re-export
+    model.js                   # CodeGraph class: nodes Map, directed/undirected adjacency
     builders/
-      dependency.js            # Build from SQLite edges
+      index.js                 # Barrel
+      dependency.js            # Build from SQLite call/import edges
       structure.js             # Build from file/directory hierarchy
-      temporal.js              # Build from git history (co-changes)
+      temporal.js              # Build from git co-change history
     algorithms/
+      index.js                 # Barrel
       bfs.js                   # Breadth-first traversal
-      shortest-path.js         # Path finding
-      tarjan.js                # Cycle detection
+      shortest-path.js         # Dijkstra path finding
+      tarjan.js                # Strongly connected components / cycle detection
       louvain.js               # Community detection
-      centrality.js            # Fan-in/fan-out, betweenness
-      clustering.js            # Cohesion, coupling, density
+      centrality.js            # Fan-in/fan-out, betweenness centrality
     classifiers/
-      roles.js                 # Node role classification
-      risk.js                  # Risk scoring
+      index.js                 # Barrel
+      roles.js                 # Node role classification (hub, utility, leaf, etc.)
+      risk.js                  # Composite risk scoring
 ```
 
-Algorithms become composable -- run community detection on the dependency graph, the temporal graph, or a merged graph.
+- ✅ `CodeGraph` in-memory model with nodes Map, successors/predecessors adjacency
+- ✅ 3 builders: dependency (SQLite edges), structure (file hierarchy), temporal (git co-changes)
+- ✅ 6 algorithms: BFS, shortest-path, Tarjan SCC, Louvain community, centrality
+- ✅ 2 classifiers: role classification, risk scoring
+- ✅ `structure.js`, `communities.js`, `cycles.js`, `triage.js`, `viewer.js` refactored to use graph model
 
 **Affected files:** `src/structure.js`, `src/cochange.js`, `src/communities.js`, `src/cycles.js`, `src/triage.js`, `src/viewer.js`
 
-### 3.12 -- Qualified Names & Hierarchical Scoping (Partially Addressed)
+### 3.12 -- Qualified Names & Hierarchical Scoping ✅
 
-> **Phase 2.7 progress:** `parent_id` column, `contains` edges, `parameter_of` edges, and `childrenData()` query now model one-level parent-child relationships. This addresses ~80% of the use case.
+> **Phase 2.7 progress:** `parent_id` column, `contains` edges, `parameter_of` edges, and `childrenData()` query now model one-level parent-child relationships.
 
-Remaining work -- enrich the node model with deeper scope information:
+Node model enriched with `qualified_name`, `scope`, and `visibility` columns (migration v15). Enables direct lookups like "all methods of class X" via `findNodesByScope()` and qualified name resolution via `findNodeByQualifiedName()` — no edge traversal needed.
 
 ```sql
-ALTER TABLE nodes ADD COLUMN qualified_name TEXT;  -- 'DateHelper.format'
-ALTER TABLE nodes ADD COLUMN scope TEXT;            -- 'DateHelper'
+ALTER TABLE nodes ADD COLUMN qualified_name TEXT;  -- 'DateHelper.format', 'freeFunction.x'
+ALTER TABLE nodes ADD COLUMN scope TEXT;            -- 'DateHelper', null for top-level
 ALTER TABLE nodes ADD COLUMN visibility TEXT;       -- 'public' | 'private' | 'protected'
+CREATE INDEX idx_nodes_qualified_name ON nodes(qualified_name);
+CREATE INDEX idx_nodes_scope ON nodes(scope);
 ```
 
-Enables queries like "all methods of class X" without traversing edges. The `parent_id` FK only goes one level -- deeply nested scopes (namespace > class > method > closure) aren't fully represented. `qualified_name` would allow direct lookup.
+- ✅ Migration v15: `qualified_name`, `scope`, `visibility` columns + indexes
+- ✅ `batchInsertNodes` expanded to 9 columns (name, kind, file, line, end_line, parent_id, qualified_name, scope, visibility)
+- ✅ `insert-nodes.js` computes qualified_name and scope during insertion: methods get scope from class prefix, children get `parent.child` qualified names
+- ✅ Visibility extraction for all 8 language extractors:
+  - JS/TS: `accessibility_modifier` nodes + `#` private field detection
+  - Java/C#/PHP: `modifiers`/`visibility_modifier` AST nodes via shared `extractModifierVisibility()`
+  - Python: convention-based (`__name` → private, `_name` → protected)
+  - Go: capitalization convention (uppercase → public, lowercase → private)
+  - Rust: `visibility_modifier` child (`pub` → public, else private)
+- ✅ `findNodesByScope(db, scopeName, opts)` — query by scope with optional kind/file filters
+- ✅ `findNodeByQualifiedName(db, qualifiedName)` — direct lookup without edge traversal
+- ✅ `childrenData()` returns `qualifiedName`, `scope`, `visibility` for parent and children
+- ✅ Integration tests covering qualified_name, scope, visibility, and childrenData output
 
-**Affected files:** `src/db.js`, `src/extractors/`, `src/queries.js`, `src/builder.js`
+**Affected files:** `src/db/migrations.js`, `src/db/repository/nodes.js`, `src/builder/helpers.js`, `src/builder/stages/insert-nodes.js`, `src/extractors/*.js`, `src/extractors/helpers.js`, `src/analysis/symbol-lookup.js`
 
 ### 3.13 -- Testing Pyramid with InMemoryRepository
 

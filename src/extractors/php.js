@@ -1,4 +1,4 @@
-import { findChild, nodeEndLine } from './helpers.js';
+import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js';
 
 function extractPhpParameters(fnNode) {
   const params = [];
@@ -35,6 +35,7 @@ function extractPhpClassChildren(classNode) {
             name: varNode.text,
             kind: 'property',
             line: member.startPosition.row + 1,
+            visibility: extractModifierVisibility(member),
           });
         }
       }
@@ -231,6 +232,7 @@ export function extractPHPSymbols(tree, _filePath) {
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
             children: params.length > 0 ? params : undefined,
+            visibility: extractModifierVisibility(node),
           });
         }
         break;

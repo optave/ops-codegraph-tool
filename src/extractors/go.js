@@ -1,4 +1,4 @@
-import { findChild, nodeEndLine } from './helpers.js';
+import { findChild, goVisibility, nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from Go files.
@@ -22,6 +22,7 @@ export function extractGoSymbols(tree, _filePath) {
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
             children: params.length > 0 ? params : undefined,
+            visibility: goVisibility(nameNode.text),
           });
         }
         break;
@@ -55,6 +56,7 @@ export function extractGoSymbols(tree, _filePath) {
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
             children: params.length > 0 ? params : undefined,
+            visibility: goVisibility(nameNode.text),
           });
         }
         break;

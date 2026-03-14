@@ -209,11 +209,17 @@ export function childrenData(name, customDbPath, opts = {}) {
         kind: node.kind,
         file: node.file,
         line: node.line,
+        scope: node.scope || null,
+        visibility: node.visibility || null,
+        qualifiedName: node.qualified_name || null,
         children: children.map((c) => ({
           name: c.name,
           kind: c.kind,
           line: c.line,
           endLine: c.end_line || null,
+          qualifiedName: c.qualified_name || null,
+          scope: c.scope || null,
+          visibility: c.visibility || null,
         })),
       };
     });

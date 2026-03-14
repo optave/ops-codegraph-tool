@@ -183,17 +183,17 @@ export const BATCH_CHUNK = 200;
 
 /**
  * Batch-insert node rows via multi-value INSERT statements.
- * Each row: [name, kind, file, line, end_line, parent_id]
+ * Each row: [name, kind, file, line, end_line, parent_id, qualified_name, scope, visibility]
  */
 export function batchInsertNodes(db, rows) {
   if (!rows.length) return;
-  const ph = '(?,?,?,?,?,?)';
+  const ph = '(?,?,?,?,?,?,?,?,?)';
   for (let i = 0; i < rows.length; i += BATCH_CHUNK) {
     const chunk = rows.slice(i, i + BATCH_CHUNK);
     const vals = [];
-    for (const r of chunk) vals.push(r[0], r[1], r[2], r[3], r[4], r[5]);
+    for (const r of chunk) vals.push(r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8]);
     db.prepare(
-      'INSERT OR IGNORE INTO nodes (name,kind,file,line,end_line,parent_id) VALUES ' +
+      'INSERT OR IGNORE INTO nodes (name,kind,file,line,end_line,parent_id,qualified_name,scope,visibility) VALUES ' +
         chunk.map(() => ph).join(','),
     ).run(...vals);
   }

@@ -50,14 +50,29 @@ export async function insertNodes(ctx) {
 
   const insertAll = db.transaction(() => {
     // Phase 1: Batch insert all file nodes + definitions + exports
+    // Row format: [name, kind, file, line, end_line, parent_id, qualified_name, scope, visibility]
     const phase1Rows = [];
     for (const [relPath, symbols] of allSymbols) {
-      phase1Rows.push([relPath, 'file', relPath, 0, null, null]);
+      phase1Rows.push([relPath, 'file', relPath, 0, null, null, null, null, null]);
       for (const def of symbols.definitions) {
-        phase1Rows.push([def.name, def.kind, relPath, def.line, def.endLine || null, null]);
+        // Methods already have 'Class.method' as name — use as qualified_name.
+        // For methods, scope is the class portion; for top-level defs, scope is null.
+        const dotIdx = def.name.lastIndexOf('.');
+        const scope = dotIdx !== -1 ? def.name.slice(0, dotIdx) : null;
+        phase1Rows.push([
+          def.name,
+          def.kind,
+          relPath,
+          def.line,
+          def.endLine || null,
+          null,
+          def.name,
+          scope,
+          def.visibility || null,
+        ]);
       }
       for (const exp of symbols.exports) {
-        phase1Rows.push([exp.name, exp.kind, relPath, exp.line, null, null]);
+        phase1Rows.push([exp.name, exp.kind, relPath, exp.line, null, null, exp.name, null, null]);
       }
     }
     batchInsertNodes(db, phase1Rows);
@@ -84,6 +99,7 @@ export async function insertNodes(ctx) {
         const defId = nodeIdMap.get(`${def.name}|${def.kind}|${def.line}`);
         if (!defId) continue;
         for (const child of def.children) {
+          const qualifiedName = `${def.name}.${child.name}`;
           childRows.push([
             child.name,
             child.kind,
@@ -91,6 +107,9 @@ export async function insertNodes(ctx) {
             child.line,
             child.endLine || null,
             defId,
+            qualifiedName,
+            def.name,
+            child.visibility || null,
           ]);
         }
       }
