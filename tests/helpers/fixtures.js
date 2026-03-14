@@ -12,7 +12,6 @@ import { InMemoryRepository } from '../../src/db/repository/in-memory-repository
  */
 class TestRepoBuilder {
   #pending = { nodes: [], edges: [], complexity: [] };
-  #nameIndex = new Map(); // name → { kind, file, line, ... }
 
   /**
    * Add a function node.
@@ -128,7 +127,6 @@ class TestRepoBuilder {
 
   #addNode(name, kind, file, line, extra = {}) {
     this.#pending.nodes.push({ name, kind, file, line, ...extra });
-    this.#nameIndex.set(name, { kind, file, line });
     return this;
   }
 }

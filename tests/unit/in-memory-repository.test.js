@@ -317,6 +317,16 @@ describe('InMemoryRepository', () => {
       expect(rows.length).toBe(1);
       expect(rows[0].name).toBe('foo');
     });
+
+    it('throws on invalid kind', () => {
+      const { repo } = makeRepo();
+      expect(() => repo.findNodesForTriage({ kind: 'bogus' })).toThrow('Invalid kind');
+    });
+
+    it('throws on invalid role', () => {
+      const { repo } = makeRepo();
+      expect(() => repo.findNodesForTriage({ role: 'supervisor' })).toThrow('Invalid role');
+    });
   });
 
   // ── Edge queries ──────────────────────────────────────────────────

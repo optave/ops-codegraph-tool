@@ -1,4 +1,5 @@
-import { CORE_SYMBOL_KINDS } from '../../kinds.js';
+import { ConfigError } from '../../errors.js';
+import { CORE_SYMBOL_KINDS, EVERY_SYMBOL_KIND, VALID_ROLES } from '../../kinds.js';
 import { Repository } from './base.js';
 
 /**
@@ -223,6 +224,16 @@ export class InMemoryRepository extends Repository {
   }
 
   findNodesForTriage(opts = {}) {
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      throw new ConfigError(
+        `Invalid kind: ${opts.kind} (expected one of ${EVERY_SYMBOL_KIND.join(', ')})`,
+      );
+    }
+    if (opts.role && !VALID_ROLES.includes(opts.role)) {
+      throw new ConfigError(
+        `Invalid role: ${opts.role} (expected one of ${VALID_ROLES.join(', ')})`,
+      );
+    }
     const kindsToUse = opts.kind ? [opts.kind] : ['function', 'method', 'class'];
     let nodes = [...this.#nodes.values()].filter((n) => kindsToUse.includes(n.kind));
 
@@ -450,14 +461,12 @@ export class InMemoryRepository extends Repository {
         results.push({ caller_name: caller.name, callee_name: callee.name });
       }
     }
+    const lineByName = new Map();
+    for (const n of this.#nodes.values()) {
+      if (n.file === file) lineByName.set(n.name, n.line);
+    }
     return results.sort((a, b) => {
-      const callerA = [...this.#nodes.values()].find(
-        (n) => n.name === a.caller_name && n.file === file,
-      );
-      const callerB = [...this.#nodes.values()].find(
-        (n) => n.name === b.caller_name && n.file === file,
-      );
-      return (callerA?.line ?? 0) - (callerB?.line ?? 0);
+      return (lineByName.get(a.caller_name) ?? 0) - (lineByName.get(b.caller_name) ?? 0);
     });
   }
 

@@ -277,4 +277,14 @@ describe.each([
   it('hasDataflowTable returns false', () => {
     expect(repo.hasDataflowTable()).toBe(false);
   });
+
+  // ── Validation ────────────────────────────────────────────────────
+
+  it('findNodesForTriage throws on invalid kind', () => {
+    expect(() => repo.findNodesForTriage({ kind: 'bogus' })).toThrow('Invalid kind');
+  });
+
+  it('findNodesForTriage throws on invalid role', () => {
+    expect(() => repo.findNodesForTriage({ role: 'supervisor' })).toThrow('Invalid role');
+  });
 });
