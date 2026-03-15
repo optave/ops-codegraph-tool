@@ -14,11 +14,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  COMMUNITY_COLORS,
-  DEFAULT_NODE_COLORS,
-  DEFAULT_ROLE_COLORS,
-} from './colors.js';
+import { COMMUNITY_COLORS, DEFAULT_NODE_COLORS, DEFAULT_ROLE_COLORS } from './colors.js';
 
 // Re-export color constants so existing consumers are unaffected
 export { COMMUNITY_COLORS, DEFAULT_NODE_COLORS, DEFAULT_ROLE_COLORS };
