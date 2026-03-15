@@ -4,11 +4,10 @@ import { CodeGraph } from './graph/model.js';
 import { isTestFile } from './infrastructure/test-filter.js';
 import {
   COMMUNITY_COLORS,
-  DEFAULT_CONFIG,
   DEFAULT_NODE_COLORS,
   DEFAULT_ROLE_COLORS,
-  renderPlotHTML,
-} from './presentation/viewer.js';
+} from './presentation/colors.js';
+import { DEFAULT_CONFIG, renderPlotHTML } from './presentation/viewer.js';
 
 // Re-export presentation utilities for backward compatibility
 export { loadPlotConfig } from './presentation/viewer.js';
