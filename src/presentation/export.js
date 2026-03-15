@@ -121,11 +121,18 @@ export function renderFunctionLevelDOT(data) {
     '',
   ];
 
+  const emittedNodes = new Set();
   for (const e of data.edges) {
     const sId = `${e.source_file}:${e.source_name}`.replace(/[^a-zA-Z0-9_]/g, '_');
     const tId = `${e.target_file}:${e.target_name}`.replace(/[^a-zA-Z0-9_]/g, '_');
-    lines.push(`  ${sId} [label="${e.source_name}\\n${path.basename(e.source_file)}"];`);
-    lines.push(`  ${tId} [label="${e.target_name}\\n${path.basename(e.target_file)}"];`);
+    if (!emittedNodes.has(sId)) {
+      lines.push(`  ${sId} [label="${e.source_name}\\n${path.basename(e.source_file)}"];`);
+      emittedNodes.add(sId);
+    }
+    if (!emittedNodes.has(tId)) {
+      lines.push(`  ${tId} [label="${e.target_name}\\n${path.basename(e.target_file)}"];`);
+      emittedNodes.add(tId);
+    }
     lines.push(`  ${sId} -> ${tId};`);
   }
   if (data.limit && data.totalEdges > data.limit) {
