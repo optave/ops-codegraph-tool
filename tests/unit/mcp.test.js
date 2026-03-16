@@ -5,7 +5,7 @@
  * and tests the TOOLS schema and dispatch logic.
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildToolList, TOOLS } from '../../src/mcp.js';
 
 const ALL_TOOL_NAMES = [
@@ -258,6 +258,7 @@ describe('buildToolList', () => {
 
 describe('startMCPServer handler dispatch', () => {
   // We test the handler logic by mocking the SDK and capturing the registered handlers
+  beforeEach(() => vi.resetModules());
 
   it('dispatches query to fnDepsData', async () => {
     const handlers = {};
@@ -281,6 +282,10 @@ describe('startMCPServer handler dispatch', () => {
 
     // Mock query functions
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(() => ({ file: 'test', sources: [] })),
       moduleMapData: vi.fn(() => ({ topNodes: [], stats: {} })),
       fileDepsData: vi.fn(() => ({ file: 'test', results: [] })),
@@ -325,10 +330,6 @@ describe('startMCPServer handler dispatch', () => {
     });
     expect(unknownResult.isError).toBe(true);
     expect(unknownResult.content[0].text).toContain('Unknown tool');
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/queries.js');
   });
 
   it('dispatches query deps mode to fnDepsData with options', async () => {
@@ -352,6 +353,10 @@ describe('startMCPServer handler dispatch', () => {
 
     const fnDepsMock = vi.fn(() => ({ name: 'myFn', results: [{ callers: [] }] }));
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -386,10 +391,6 @@ describe('startMCPServer handler dispatch', () => {
       limit: 10,
       offset: 0,
     });
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/queries.js');
   });
 
   it('dispatches fn_impact to fnImpactData', async () => {
@@ -413,6 +414,10 @@ describe('startMCPServer handler dispatch', () => {
 
     const fnImpactMock = vi.fn(() => ({ name: 'test', results: [] }));
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -444,10 +449,6 @@ describe('startMCPServer handler dispatch', () => {
       limit: 5,
       offset: 0,
     });
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/queries.js');
   });
 
   it('dispatches diff_impact to diffImpactData', async () => {
@@ -471,6 +472,10 @@ describe('startMCPServer handler dispatch', () => {
 
     const diffImpactMock = vi.fn(() => ({ changedFiles: 2, affectedFunctions: [] }));
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -502,10 +507,6 @@ describe('startMCPServer handler dispatch', () => {
       limit: 30,
       offset: 0,
     });
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/queries.js');
   });
 
   it('dispatches list_functions to listFunctionsData', async () => {
@@ -532,6 +533,10 @@ describe('startMCPServer handler dispatch', () => {
       functions: [{ name: 'a' }, { name: 'b' }, { name: 'c' }],
     }));
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -562,10 +567,6 @@ describe('startMCPServer handler dispatch', () => {
       limit: 100,
       offset: 0,
     });
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/queries.js');
   });
 
   it('resolves repo param via registry', async () => {
@@ -594,6 +595,10 @@ describe('startMCPServer handler dispatch', () => {
 
     const fnDepsMock = vi.fn(() => ({ name: 'test', results: [] }));
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -625,11 +630,6 @@ describe('startMCPServer handler dispatch', () => {
       limit: 10,
       offset: 0,
     });
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/registry.js');
-    vi.doUnmock('../../src/queries.js');
   });
 
   it('returns error when repo not found in registry', async () => {
@@ -654,6 +654,10 @@ describe('startMCPServer handler dispatch', () => {
       resolveRepoDbPath: vi.fn(() => undefined),
     }));
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -679,11 +683,6 @@ describe('startMCPServer handler dispatch', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('unknown-repo');
     expect(result.content[0].text).toContain('not found');
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/registry.js');
-    vi.doUnmock('../../src/queries.js');
   });
 
   it('rejects repo not in allowedRepos list', async () => {
@@ -708,6 +707,10 @@ describe('startMCPServer handler dispatch', () => {
       resolveRepoDbPath: vi.fn(() => '/some/path'),
     }));
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -733,11 +736,6 @@ describe('startMCPServer handler dispatch', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('blocked-repo');
     expect(result.content[0].text).toContain('not in the allowed');
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/registry.js');
-    vi.doUnmock('../../src/queries.js');
   });
 
   it('allows repo in allowedRepos list', async () => {
@@ -764,6 +762,10 @@ describe('startMCPServer handler dispatch', () => {
 
     const fnDepsMock = vi.fn(() => ({ name: 'test', results: [] }));
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -795,11 +797,6 @@ describe('startMCPServer handler dispatch', () => {
       limit: 10,
       offset: 0,
     });
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/registry.js');
-    vi.doUnmock('../../src/queries.js');
   });
 
   it('list_repos filters by allowedRepos', async () => {
@@ -830,6 +827,10 @@ describe('startMCPServer handler dispatch', () => {
       pruneRegistry: vi.fn(),
     }));
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -855,11 +856,6 @@ describe('startMCPServer handler dispatch', () => {
     const data = JSON.parse(result.content[0].text);
     expect(data.repos).toHaveLength(2);
     expect(data.repos.map((r) => r.name)).toEqual(['alpha', 'gamma']);
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/registry.js');
-    vi.doUnmock('../../src/queries.js');
   });
 
   it('list_repos returns all repos when no allowlist', async () => {
@@ -889,6 +885,10 @@ describe('startMCPServer handler dispatch', () => {
       pruneRegistry: vi.fn(),
     }));
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -913,11 +913,6 @@ describe('startMCPServer handler dispatch', () => {
     });
     const data = JSON.parse(result.content[0].text);
     expect(data.repos).toHaveLength(2);
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/registry.js');
-    vi.doUnmock('../../src/queries.js');
   });
 
   it('rejects repo param in single-repo mode', async () => {
@@ -939,6 +934,10 @@ describe('startMCPServer handler dispatch', () => {
       CallToolRequestSchema: 'tools/call',
     }));
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -964,10 +963,6 @@ describe('startMCPServer handler dispatch', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Multi-repo access is disabled');
     expect(result.content[0].text).toContain('--multi-repo');
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/queries.js');
   });
 
   it('rejects list_repos in single-repo mode', async () => {
@@ -989,6 +984,10 @@ describe('startMCPServer handler dispatch', () => {
       CallToolRequestSchema: 'tools/call',
     }));
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -1014,10 +1013,6 @@ describe('startMCPServer handler dispatch', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Multi-repo access is disabled');
     expect(result.content[0].text).toContain('--multi-repo');
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/queries.js');
   });
 
   it('tools/list in single-repo mode has no repo property and no list_repos', async () => {
@@ -1039,6 +1034,10 @@ describe('startMCPServer handler dispatch', () => {
       CallToolRequestSchema: 'tools/call',
     }));
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -1064,10 +1063,6 @@ describe('startMCPServer handler dispatch', () => {
     for (const tool of toolsList.tools) {
       expect(tool.inputSchema.properties).not.toHaveProperty('repo');
     }
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/queries.js');
   });
 
   it('dispatches complexity to complexityData', async () => {
@@ -1090,6 +1085,10 @@ describe('startMCPServer handler dispatch', () => {
     }));
 
     vi.doMock('../../src/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
       impactAnalysisData: vi.fn(),
       moduleMapData: vi.fn(),
       fileDepsData: vi.fn(),
@@ -1144,10 +1143,5 @@ describe('startMCPServer handler dispatch', () => {
       noTests: true,
       kind: 'function',
     });
-
-    vi.doUnmock('@modelcontextprotocol/sdk/server/index.js');
-    vi.doUnmock('@modelcontextprotocol/sdk/server/stdio.js');
-    vi.doUnmock('../../src/queries.js');
-    vi.doUnmock('../../src/complexity.js');
   });
 });
