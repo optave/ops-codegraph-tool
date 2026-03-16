@@ -1,7 +1,42 @@
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { warn } from '../logger.js';
+
+let _cachedRepoRoot = undefined; // undefined = not computed, null = not a git repo
+
+/**
+ * Return the git worktree/repo root for the given directory (or cwd).
+ * Uses `git rev-parse --show-toplevel` which returns the correct root
+ * for both regular repos and git worktrees.
+ * Results are cached per-process when called without arguments.
+ * @param {string} [fromDir] - Directory to resolve from (defaults to cwd)
+ * @returns {string | null} Absolute path to repo root, or null if not in a git repo
+ */
+export function findRepoRoot(fromDir) {
+  const dir = fromDir || process.cwd();
+  if (!fromDir && _cachedRepoRoot !== undefined) return _cachedRepoRoot;
+  let root = null;
+  try {
+    root = path.resolve(
+      execFileSync('git', ['rev-parse', '--show-toplevel'], {
+        cwd: dir,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      }).trim(),
+    );
+  } catch {
+    root = null;
+  }
+  if (!fromDir) _cachedRepoRoot = root;
+  return root;
+}
+
+/** Reset the cached repo root (for testing). */
+export function _resetRepoRootCache() {
+  _cachedRepoRoot = undefined;
+}
 
 function isProcessAlive(pid) {
   try {
@@ -61,15 +96,18 @@ export function closeDb(db) {
 
 export function findDbPath(customPath) {
   if (customPath) return path.resolve(customPath);
+  const ceiling = findRepoRoot();
   let dir = process.cwd();
   while (true) {
     const candidate = path.join(dir, '.codegraph', 'graph.db');
     if (fs.existsSync(candidate)) return candidate;
+    if (ceiling && path.resolve(dir) === ceiling) break;
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;
   }
-  return path.join(process.cwd(), '.codegraph', 'graph.db');
+  const base = ceiling || process.cwd();
+  return path.join(base, '.codegraph', 'graph.db');
 }
 
 /**

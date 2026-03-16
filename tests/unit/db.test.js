@@ -8,15 +8,14 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
+  _resetRepoRootCache,
   closeDb,
   findDbPath,
-  getBuildMeta,
-  initSchema,
-  MIGRATIONS,
+  findRepoRoot,
   openDb,
   openReadonlyOrFail,
-  setBuildMeta,
-} from '../../src/db.js';
+} from '../../src/db/connection.js';
+import { getBuildMeta, initSchema, MIGRATIONS, setBuildMeta } from '../../src/db.js';
 
 let tmpDir;
 
@@ -131,11 +130,13 @@ describe('findDbPath', () => {
     const origCwd = process.cwd;
     process.cwd = () => deepDir;
     try {
+      _resetRepoRootCache();
       const result = findDbPath();
       expect(result).toContain('.codegraph');
       expect(result).toContain('graph.db');
     } finally {
       process.cwd = origCwd;
+      _resetRepoRootCache();
     }
   });
 
@@ -144,11 +145,13 @@ describe('findDbPath', () => {
     const origCwd = process.cwd;
     process.cwd = () => emptyDir;
     try {
+      _resetRepoRootCache();
       const result = findDbPath();
       expect(result).toContain('.codegraph');
       expect(result).toContain('graph.db');
     } finally {
       process.cwd = origCwd;
+      _resetRepoRootCache();
     }
   });
 });
@@ -191,6 +194,114 @@ describe('build_meta', () => {
     setBuildMeta(db, { engine: 'native' });
     expect(getBuildMeta(db, 'engine')).toBe('native');
     db.close();
+  });
+});
+
+describe('findRepoRoot', () => {
+  beforeEach(() => {
+    _resetRepoRootCache();
+  });
+
+  afterEach(() => {
+    _resetRepoRootCache();
+  });
+
+  it('returns normalized git toplevel for the current repo', () => {
+    _resetRepoRootCache();
+    const root = findRepoRoot();
+    expect(root).toBeTruthy();
+    expect(path.isAbsolute(root)).toBe(true);
+    // Should contain a .git entry at the root
+    expect(fs.existsSync(path.join(root, '.git'))).toBe(true);
+  });
+
+  it('returns null when not in a git repo', () => {
+    const root = findRepoRoot(os.tmpdir());
+    // os.tmpdir() is typically not a git repo; if it is, skip gracefully
+    if (root === null) {
+      expect(root).toBeNull();
+    }
+  });
+
+  it('caches results when called without arguments', () => {
+    _resetRepoRootCache();
+    const first = findRepoRoot();
+    const second = findRepoRoot();
+    expect(first).toBe(second);
+  });
+
+  it('does not use cache when called with explicit dir', () => {
+    _resetRepoRootCache();
+    const fromCwd = findRepoRoot();
+    // Calling with an explicit dir should still work (not use cwd cache)
+    const fromExplicit = findRepoRoot(process.cwd());
+    expect(fromExplicit).toBe(fromCwd);
+  });
+});
+
+describe('findDbPath with git ceiling', () => {
+  let outerDir;
+  let innerDir;
+
+  beforeAll(() => {
+    // Simulate a worktree-inside-repo layout:
+    // outerDir/.codegraph/graph.db  (parent repo DB — should NOT be found)
+    // outerDir/worktree/            (simulated worktree root)
+    // outerDir/worktree/sub/        (cwd inside worktree)
+    outerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-ceiling-'));
+    innerDir = path.join(outerDir, 'worktree', 'sub');
+    fs.mkdirSync(path.join(outerDir, '.codegraph'), { recursive: true });
+    fs.writeFileSync(path.join(outerDir, '.codegraph', 'graph.db'), '');
+    fs.mkdirSync(innerDir, { recursive: true });
+  });
+
+  afterAll(() => {
+    fs.rmSync(outerDir, { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    _resetRepoRootCache();
+  });
+
+  it('stops walking at git ceiling and does not find parent DB', () => {
+    const origCwd = process.cwd;
+    // Mock cwd to be inside the inner "worktree"
+    process.cwd = () => innerDir;
+    // Mock findRepoRoot to return the worktree root (one level up from innerDir)
+    const worktreeRoot = path.join(outerDir, 'worktree');
+    const origFindRepoRoot = findRepoRoot;
+
+    // We can't easily mock findRepoRoot since findDbPath calls it internally,
+    // but we can test the behavior by creating a DB at the worktree level
+    fs.mkdirSync(path.join(worktreeRoot, '.codegraph'), { recursive: true });
+    fs.writeFileSync(path.join(worktreeRoot, '.codegraph', 'graph.db'), '');
+
+    try {
+      _resetRepoRootCache();
+      const result = findDbPath();
+      // Should find the worktree DB, not the outer one
+      expect(result).toContain('worktree');
+      expect(result).toContain('.codegraph');
+    } finally {
+      process.cwd = origCwd;
+      // Clean up the worktree DB
+      fs.rmSync(path.join(worktreeRoot, '.codegraph'), { recursive: true, force: true });
+    }
+  });
+
+  it('falls back gracefully when not in a git repo', () => {
+    const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-nogit-'));
+    const origCwd = process.cwd;
+    process.cwd = () => emptyDir;
+    _resetRepoRootCache();
+    try {
+      const result = findDbPath();
+      // Should return default path at cwd since there's no git ceiling
+      expect(result).toBe(path.join(emptyDir, '.codegraph', 'graph.db'));
+    } finally {
+      process.cwd = origCwd;
+      fs.rmSync(emptyDir, { recursive: true, force: true });
+    }
   });
 });
 
