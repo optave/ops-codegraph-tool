@@ -1623,7 +1623,7 @@ LLM-powered structural analysis that identifies refactoring opportunities. The g
 
 **Depends on:** 6.4 (`risk_score`, `complexity_notes`), 6.5 (module summaries)
 
-### 9.5 -- Auto-generated Docstrings
+### 10.6 -- Auto-generated Docstrings
 
 ```bash
 codegraph annotate
