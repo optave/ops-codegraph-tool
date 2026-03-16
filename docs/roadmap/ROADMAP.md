@@ -1646,6 +1646,17 @@ LLM-powered structural analysis that identifies refactoring opportunities. The g
 
 **Depends on:** 6.4 (`risk_score`, `complexity_notes`), 6.5 (module summaries)
 
+### 10.6 -- Auto-generated Docstrings
+
+```bash
+codegraph annotate
+codegraph annotate --changed-only
+```
+
+LLM-generated docstrings aware of callers, callees, and types. Diff-aware: only regenerate for functions whose code or dependencies changed. Stores in `docstrings` column on nodes table -- does not modify source files unless explicitly requested.
+
+**Depends on:** 6.1 (LLM provider abstraction), 6.4 (side effects context)
+
 > **Full spec:** See [llm-integration.md](./llm-integration.md) for detailed architecture, infrastructure tables, and prompt design for all LLM-powered features.
 
 
