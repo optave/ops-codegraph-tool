@@ -115,4 +115,4 @@ export async function run() {
   await program.parseAsync();
 }
 
-export { program, registerCommand, ctx };
+export { ctx, program, registerCommand };

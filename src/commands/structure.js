@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { hotspotsData, moduleBoundariesData, structureData } from '../structure.js';
 
-export { structureData, hotspotsData, moduleBoundariesData };
+export { hotspotsData, moduleBoundariesData, structureData };
 
 export function formatStructure(data) {
   if (data.count === 0) return 'No directory structure found. Run "codegraph build" first.';

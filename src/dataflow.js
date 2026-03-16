@@ -26,8 +26,7 @@ import { paginateResult } from './paginate.js';
 import { ALL_SYMBOL_KINDS, normalizeSymbol } from './queries.js';
 
 // Re-export for backward compatibility
-export { DATAFLOW_RULES };
-export { _makeDataflowRules as makeDataflowRules };
+export { _makeDataflowRules as makeDataflowRules, DATAFLOW_RULES };
 
 export const DATAFLOW_EXTENSIONS = buildExtensionSet(DATAFLOW_RULES);
 
