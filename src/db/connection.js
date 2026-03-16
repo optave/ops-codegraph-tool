@@ -128,7 +128,21 @@ export function closeDb(db) {
 
 export function findDbPath(customPath) {
   if (customPath) return path.resolve(customPath);
-  const ceiling = findRepoRoot();
+  const rawCeiling = findRepoRoot();
+  // Normalize ceiling with realpathSync to resolve 8.3 short names (Windows
+  // RUNNER~1 → runneradmin) and symlinks (macOS /var → /private/var).
+  // findRepoRoot already applies realpathSync internally, but the git output
+  // may still contain short names on some Windows CI environments.
+  let ceiling;
+  if (rawCeiling) {
+    try {
+      ceiling = fs.realpathSync(rawCeiling);
+    } catch {
+      ceiling = rawCeiling;
+    }
+  } else {
+    ceiling = null;
+  }
   // Resolve symlinks (e.g. macOS /var → /private/var) so dir matches ceiling from git
   let dir;
   try {
