@@ -1,4 +1,6 @@
-import { isTestFile } from './infrastructure/test-filter.js';
+import { tarjan } from './graph/algorithms/tarjan.js';
+import { buildDependencyGraph } from './graph/builders/dependency.js';
+import { CodeGraph } from './graph/model.js';
 import { loadNative } from './native.js';
 
 /**
@@ -12,44 +14,24 @@ export function findCycles(db, opts = {}) {
   const fileLevel = opts.fileLevel !== false;
   const noTests = opts.noTests || false;
 
-  // Build adjacency list from SQLite (stays in JS — only the algorithm can move to Rust)
-  let edges;
-  if (fileLevel) {
-    edges = db
-      .prepare(`
-      SELECT DISTINCT n1.file AS source, n2.file AS target
-      FROM edges e
-      JOIN nodes n1 ON e.source_id = n1.id
-      JOIN nodes n2 ON e.target_id = n2.id
-      WHERE n1.file != n2.file AND e.kind IN ('imports', 'imports-type')
-    `)
-      .all();
-    if (noTests) {
-      edges = edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target));
-    }
-  } else {
-    edges = db
-      .prepare(`
-      SELECT DISTINCT
-        (n1.name || '|' || n1.file) AS source,
-        (n2.name || '|' || n2.file) AS target
-      FROM edges e
-      JOIN nodes n1 ON e.source_id = n1.id
-      JOIN nodes n2 ON e.target_id = n2.id
-      WHERE n1.kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module')
-        AND n2.kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module')
-        AND e.kind = 'calls'
-        AND n1.id != n2.id
-    `)
-      .all();
-    if (noTests) {
-      edges = edges.filter((e) => {
-        const sourceFile = e.source.split('|').pop();
-        const targetFile = e.target.split('|').pop();
-        return !isTestFile(sourceFile) && !isTestFile(targetFile);
-      });
+  const graph = buildDependencyGraph(db, { fileLevel, noTests });
+
+  // Build a label map: DB string ID → human-readable key
+  // File-level: file path; Function-level: name|file composite (for native Rust compat)
+  const idToLabel = new Map();
+  for (const [id, attrs] of graph.nodes()) {
+    if (fileLevel) {
+      idToLabel.set(id, attrs.file);
+    } else {
+      idToLabel.set(id, `${attrs.label}|${attrs.file}`);
     }
   }
+
+  // Build edge array with human-readable keys (for native engine)
+  const edges = graph.toEdgeArray().map((e) => ({
+    source: idToLabel.get(e.source),
+    target: idToLabel.get(e.target),
+  }));
 
   // Try native Rust implementation
   const native = loadNative();
@@ -57,62 +39,25 @@ export function findCycles(db, opts = {}) {
     return native.detectCycles(edges);
   }
 
-  // Fallback: JS Tarjan
-  return findCyclesJS(edges);
+  // Fallback: JS Tarjan via graph subsystem
+  // Re-key graph with human-readable labels for consistent output
+  const labelGraph = new CodeGraph();
+  for (const { source, target } of edges) {
+    labelGraph.addEdge(source, target);
+  }
+  return tarjan(labelGraph);
 }
 
 /**
  * Pure-JS Tarjan's SCC implementation.
+ * Kept for backward compatibility — accepts raw {source, target}[] edges.
  */
 export function findCyclesJS(edges) {
-  const graph = new Map();
+  const graph = new CodeGraph();
   for (const { source, target } of edges) {
-    if (!graph.has(source)) graph.set(source, []);
-    graph.get(source).push(target);
-    if (!graph.has(target)) graph.set(target, []);
+    graph.addEdge(source, target);
   }
-
-  // Tarjan's strongly connected components algorithm
-  let index = 0;
-  const stack = [];
-  const onStack = new Set();
-  const indices = new Map();
-  const lowlinks = new Map();
-  const sccs = [];
-
-  function strongconnect(v) {
-    indices.set(v, index);
-    lowlinks.set(v, index);
-    index++;
-    stack.push(v);
-    onStack.add(v);
-
-    for (const w of graph.get(v) || []) {
-      if (!indices.has(w)) {
-        strongconnect(w);
-        lowlinks.set(v, Math.min(lowlinks.get(v), lowlinks.get(w)));
-      } else if (onStack.has(w)) {
-        lowlinks.set(v, Math.min(lowlinks.get(v), indices.get(w)));
-      }
-    }
-
-    if (lowlinks.get(v) === indices.get(v)) {
-      const scc = [];
-      let w;
-      do {
-        w = stack.pop();
-        onStack.delete(w);
-        scc.push(w);
-      } while (w !== v);
-      if (scc.length > 1) sccs.push(scc);
-    }
-  }
-
-  for (const node of graph.keys()) {
-    if (!indices.has(node)) strongconnect(node);
-  }
-
-  return sccs;
+  return tarjan(graph);
 }
 
 /**

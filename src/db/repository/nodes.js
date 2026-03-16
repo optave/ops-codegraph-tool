@@ -1,3 +1,4 @@
+import { ConfigError } from '../../errors.js';
 import { EVERY_SYMBOL_KIND, VALID_ROLES } from '../../kinds.js';
 import { NodeQuery } from '../query-builder.js';
 import { cachedStmt } from './cached-stmt.js';
@@ -37,10 +38,12 @@ export function findNodesWithFanIn(db, namePattern, opts = {}) {
  */
 export function findNodesForTriage(db, opts = {}) {
   if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
-    throw new Error(`Invalid kind: ${opts.kind} (expected one of ${EVERY_SYMBOL_KIND.join(', ')})`);
+    throw new ConfigError(
+      `Invalid kind: ${opts.kind} (expected one of ${EVERY_SYMBOL_KIND.join(', ')})`,
+    );
   }
   if (opts.role && !VALID_ROLES.includes(opts.role)) {
-    throw new Error(`Invalid role: ${opts.role} (expected one of ${VALID_ROLES.join(', ')})`);
+    throw new ConfigError(`Invalid role: ${opts.role} (expected one of ${VALID_ROLES.join(', ')})`);
   }
 
   const kindsToUse = opts.kind ? [opts.kind] : ['function', 'method', 'class'];
@@ -113,6 +116,7 @@ const _getNodeIdStmt = new WeakMap();
 const _getFunctionNodeIdStmt = new WeakMap();
 const _bulkNodeIdsByFileStmt = new WeakMap();
 const _findNodeChildrenStmt = new WeakMap();
+const _findNodeByQualifiedNameStmt = new WeakMap();
 
 /**
  * Count total nodes.
@@ -236,12 +240,67 @@ export function bulkNodeIdsByFile(db, file) {
  * Find child nodes (parameters, properties, constants) of a parent.
  * @param {object} db
  * @param {number} parentId
- * @returns {{ name: string, kind: string, line: number, end_line: number|null }[]}
+ * @returns {{ name: string, kind: string, line: number, end_line: number|null, qualified_name: string|null, scope: string|null, visibility: string|null }[]}
  */
 export function findNodeChildren(db, parentId) {
   return cachedStmt(
     _findNodeChildrenStmt,
     db,
-    'SELECT name, kind, line, end_line FROM nodes WHERE parent_id = ? ORDER BY line',
+    'SELECT name, kind, line, end_line, qualified_name, scope, visibility FROM nodes WHERE parent_id = ? ORDER BY line',
   ).all(parentId);
+}
+
+/** Escape LIKE wildcards in a literal string segment. */
+function escapeLike(s) {
+  return s.replace(/[%_\\]/g, '\\$&');
+}
+
+/**
+ * Find all nodes that belong to a given scope (by scope column).
+ * Enables "all methods of class X" without traversing edges.
+ * @param {object} db
+ * @param {string} scopeName - The scope to search for (e.g., class name)
+ * @param {object} [opts]
+ * @param {string} [opts.kind] - Filter by node kind
+ * @param {string} [opts.file] - Filter by file path (LIKE match)
+ * @returns {object[]}
+ */
+export function findNodesByScope(db, scopeName, opts = {}) {
+  let sql = 'SELECT * FROM nodes WHERE scope = ?';
+  const params = [scopeName];
+  if (opts.kind) {
+    sql += ' AND kind = ?';
+    params.push(opts.kind);
+  }
+  if (opts.file) {
+    sql += " AND file LIKE ? ESCAPE '\\'";
+    params.push(`%${escapeLike(opts.file)}%`);
+  }
+  sql += ' ORDER BY file, line';
+  return db.prepare(sql).all(...params);
+}
+
+/**
+ * Find nodes by qualified name. Returns all matches since the same
+ * qualified_name can exist in different files (e.g., two classes named
+ * `DateHelper.format` in separate modules). Pass `opts.file` to narrow.
+ * @param {object} db
+ * @param {string} qualifiedName - e.g., 'DateHelper.format'
+ * @param {object} [opts]
+ * @param {string} [opts.file] - Filter by file path (LIKE match)
+ * @returns {object[]}
+ */
+export function findNodeByQualifiedName(db, qualifiedName, opts = {}) {
+  if (opts.file) {
+    return db
+      .prepare(
+        "SELECT * FROM nodes WHERE qualified_name = ? AND file LIKE ? ESCAPE '\\' ORDER BY file, line",
+      )
+      .all(qualifiedName, `%${escapeLike(opts.file)}%`);
+  }
+  return cachedStmt(
+    _findNodeByQualifiedNameStmt,
+    db,
+    'SELECT * FROM nodes WHERE qualified_name = ? ORDER BY file, line',
+  ).all(qualifiedName);
 }

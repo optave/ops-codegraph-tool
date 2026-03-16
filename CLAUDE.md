@@ -45,11 +45,13 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `builder.js` | Graph building: file collection, parsing, import resolution, incremental hashing |
 | `parser.js` | tree-sitter WASM wrapper; `LANGUAGE_REGISTRY` + per-language extractors for functions, classes, methods, imports, exports, call sites |
 | `queries.js` | Query functions: symbol search, file deps, impact analysis, diff-impact; `SYMBOL_KINDS` constant defines all node kinds |
-| `embedder.js` | Semantic search with `@huggingface/transformers`; multi-query RRF ranking |
+| `embeddings/` | Embedding subsystem: model management, vector generation, semantic/keyword/hybrid search, CLI formatting |
 | `db.js` | SQLite schema and operations (`better-sqlite3`) |
 | `mcp.js` | MCP server exposing graph queries to AI agents; single-repo by default, `--multi-repo` to enable cross-repo access |
-| `cycles.js` | Circular dependency detection |
-| `export.js` | DOT/Mermaid/JSON graph export |
+| `graph/` | Unified graph model: `CodeGraph` class (`model.js`), algorithms (Tarjan SCC, Louvain, BFS, shortest path, centrality), classifiers (role, risk), builders (dependency, structure, temporal) |
+| `cycles.js` | Circular dependency detection (delegates to `graph/` subsystem) |
+| `export.js` | Graph export orchestration: loads data from DB, delegates to `presentation/export.js` serializers |
+| `presentation/` | Pure output formatting: `viewer.js` (HTML renderer), `export.js` (DOT/Mermaid/GraphML/Neo4j serializers), `sequence-renderer.js` (Mermaid sequence diagrams), `table.js` (CLI table formatting), `result-formatter.js` (JSON/NDJSON output) |
 | `watcher.js` | Watch mode for incremental rebuilds |
 | `config.js` | `.codegraphrc.json` loading, env overrides, `apiKeyCommand` secret resolution |
 | `constants.js` | `EXTENSIONS` (derived from parser registry) and `IGNORE_DIRS` constants |
@@ -58,16 +60,16 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `resolve.js` | Import resolution (supports native batch mode) |
 | `ast-analysis/` | Unified AST analysis framework: shared DFS walker (`visitor.js`), engine orchestrator (`engine.js`), extracted metrics (`metrics.js`), and pluggable visitors for complexity, dataflow, and AST-store |
 | `complexity.js` | Cognitive, cyclomatic, Halstead, MI computation from AST; `complexity` CLI command |
-| `communities.js` | Louvain community detection, drift analysis |
+| `communities.js` | Louvain community detection, drift analysis (delegates to `graph/` subsystem) |
 | `manifesto.js` | Configurable rule engine with warn/fail thresholds; CI gate |
 | `audit.js` | Composite audit command: explain + impact + health in one call |
 | `batch.js` | Batch querying for multi-agent dispatch |
-| `triage.js` | Risk-ranked audit priority queue |
+| `triage.js` | Risk-ranked audit priority queue (delegates scoring to `graph/classifiers/`) |
 | `check.js` | CI validation predicates (cycles, complexity, blast radius, boundaries) |
 | `boundaries.js` | Architecture boundary rules with onion architecture preset |
 | `owners.js` | CODEOWNERS integration for ownership queries |
 | `snapshot.js` | SQLite DB backup and restore |
-| `sequence.js` | Mermaid sequence diagram generation from call graph edges |
+| `sequence.js` | Sequence diagram data generation (BFS traversal); Mermaid rendering delegated to `presentation/sequence-renderer.js` |
 | `paginate.js` | Pagination helpers for bounded query results |
 | `logger.js` | Structured logging (`warn`, `debug`, `info`, `error`) |
 

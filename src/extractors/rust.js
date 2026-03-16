@@ -1,4 +1,4 @@
-import { findChild, nodeEndLine } from './helpers.js';
+import { findChild, nodeEndLine, rustVisibility } from './helpers.js';
 
 /**
  * Extract symbols from Rust files.
@@ -37,6 +37,7 @@ export function extractRustSymbols(tree, _filePath) {
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
             children: params.length > 0 ? params : undefined,
+            visibility: rustVisibility(node),
           });
         }
         break;
@@ -52,6 +53,7 @@ export function extractRustSymbols(tree, _filePath) {
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
             children: fields.length > 0 ? fields : undefined,
+            visibility: rustVisibility(node),
           });
         }
         break;

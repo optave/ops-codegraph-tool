@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { DbError } from '../errors.js';
 import { warn } from '../logger.js';
 
 function isProcessAlive(pid) {
@@ -78,11 +79,10 @@ export function findDbPath(customPath) {
 export function openReadonlyOrFail(customPath) {
   const dbPath = findDbPath(customPath);
   if (!fs.existsSync(dbPath)) {
-    console.error(
-      `No codegraph database found at ${dbPath}.\n` +
-        `Run "codegraph build" first to analyze your codebase.`,
+    throw new DbError(
+      `No codegraph database found at ${dbPath}.\nRun "codegraph build" first to analyze your codebase.`,
+      { file: dbPath },
     );
-    process.exit(1);
   }
   return new Database(dbPath, { readonly: true });
 }

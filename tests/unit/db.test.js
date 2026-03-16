@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   closeDb,
   findDbPath,
@@ -195,20 +195,16 @@ describe('build_meta', () => {
 });
 
 describe('openReadonlyOrFail', () => {
-  it('exits with error when DB does not exist', () => {
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
-      throw new Error('process.exit');
-    });
-    const stderrSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
-
-    expect(() => openReadonlyOrFail(path.join(tmpDir, 'nonexistent.db'))).toThrow('process.exit');
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(stderrSpy).toHaveBeenCalled();
-    const errorMsg = stderrSpy.mock.calls[0][0];
-    expect(errorMsg).toContain('No codegraph database found');
-
-    exitSpy.mockRestore();
-    stderrSpy.mockRestore();
+  it('throws DbError when DB does not exist', () => {
+    expect.assertions(4);
+    try {
+      openReadonlyOrFail(path.join(tmpDir, 'nonexistent.db'));
+    } catch (err) {
+      expect(err.message).toContain('No codegraph database found');
+      expect(err.name).toBe('DbError');
+      expect(err.code).toBe('DB_ERROR');
+      expect(err.file).toBeDefined();
+    }
   });
 
   it('returns a readonly database when DB exists', () => {

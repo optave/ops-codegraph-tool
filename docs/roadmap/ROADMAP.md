@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.1.2 | **Status:** Active development | **Updated:** March 2026
+> **Current version:** 3.1.4 | **Status:** Active development | **Updated:** March 2026
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across ten phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -16,7 +16,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Complete** (v1.4.0) |
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.6.0) |
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
-| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, presentation layer, domain grouping, curated API, unified graph model, CLI composability | **In Progress** (v3.1.2) |
+| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names, CLI composability | **In Progress** (v3.1.4) |
 | [**4**](#phase-4--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | Planned |
 | [**5**](#phase-5--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
 | [**6**](#phase-6--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
@@ -652,6 +652,8 @@ src/
 > **v3.1.1 progress:** `src/db/` directory created with `repository.js` (134 lines), `query-builder.js` (280 lines), and `migrations.js` (312 lines). All db usage across the codebase wrapped in try/finally for reliable `db.close()` ([#371](https://github.com/optave/codegraph/pull/371), [#384](https://github.com/optave/codegraph/pull/384), [#383](https://github.com/optave/codegraph/pull/383)).
 >
 > **v3.1.2 progress:** `repository.js` split into `src/db/repository/` directory with 10 domain files (nodes, edges, build-stmts, complexity, cfg, dataflow, cochange, embeddings, graph-read, barrel). Raw SQL migrated from 14 src/ modules into repository layer. `connection.js` already complete (89 lines handling open/close/WAL/pragma/locks/readonly).
+>
+> **v3.1.3 progress:** Extracted `cachedStmt` utility into `src/db/repository/cached-stmt.js` — reusable prepared statement caching for hot-path repository functions ([#417](https://github.com/optave/codegraph/pull/417), [#402](https://github.com/optave/codegraph/pull/402)).
 
 - ✅ `src/db/` directory structure created
 - ✅ `repository/` — domain-split repository (nodes, edges, build-stmts, complexity, cfg, dataflow, cochange, embeddings, graph-read)
@@ -665,7 +667,7 @@ src/
 src/
   db/
     connection.js              # Open, WAL mode, pragma tuning
-    migrations.js              # Schema versions (currently 13 migrations)
+    migrations.js              # Schema versions (currently 15 migrations)
     query-builder.js           # Lightweight SQL builder for common filtered queries
     repository/
       index.js                 # Barrel re-export
@@ -682,14 +684,14 @@ src/
 
 **Affected files:** `src/db.js` barrel updated, raw SQL extracted from `queries.js`, `builder.js`, `watcher.js`, `structure.js`, `complexity.js`, `cfg.js`, `dataflow.js`, `ast.js`, `ast-analysis/engine.js`, `embedder.js`, `sequence.js`, `communities.js`
 
-### 3.4 -- Decompose queries.js (3,395 Lines) 🔄
+### 3.4 -- Decompose queries.js (3,395 Lines) ✅
 
 > **v3.1.1 progress:** `queries.js` reduced from 3,395 → 2,490 lines by extracting all CLI formatting to `queries-cli.js` (3.2). Symbol kind constants extracted to `kinds.js` (49 lines) ([#378](https://github.com/optave/codegraph/pull/378)).
 
 - ✅ CLI formatting separated → `queries-cli.js` (via 3.2)
 - ✅ `kinds.js` — symbol kind constants extracted
-- 🔲 Split remaining `queries.js` data functions into `src/analysis/` modules
-- 🔲 Extract `shared/normalize.js`, `shared/generators.js`
+- ✅ Split remaining `queries.js` data functions into `src/analysis/` modules
+- ✅ Extract `shared/normalize.js`, `shared/generators.js`
 
 Split into pure analysis modules that return data and share no formatting concerns.
 
@@ -716,64 +718,66 @@ src/
 
 **Affected files:** `src/queries.js` -> split into `src/analysis/` + `src/shared/`
 
-### 3.5 -- Composable MCP Tool Registry
+### 3.5 -- Composable MCP Tool Registry ✅
 
-Replace the monolithic 1,370-line `mcp.js` (30 tools in one switch dispatch) with self-contained tool modules.
+Replaced the monolithic 1,470-line `mcp.js` (31 tools in one switch dispatch) with self-contained tool modules.
 
 ```
 src/
+  mcp.js                       # 2-line re-export shim (preserves public API)
   mcp/
-    server.js                  # MCP server setup, transport, lifecycle
-    tool-registry.js           # Auto-discovery + dynamic registration
-    middleware.js              # Pagination, error handling, repo resolution
+    index.js                   # Re-exports: TOOLS, buildToolList, startMCPServer
+    server.js                  # MCP server setup, transport, lifecycle, dispatch
+    tool-registry.js           # BASE_TOOLS schemas, buildToolList(), TOOLS constant
+    middleware.js              # effectiveLimit/effectiveOffset pagination helpers
     tools/
-      query-function.js        # { schema, handler } -- one per tool (30 files)
-      ...
+      index.js                 # Barrel: Map<name, { name, handler }> for all 31 tools
+      query.js ... ast-query.js  # { name, handler } -- one per tool (31 files)
 ```
 
-Adding a new MCP tool = adding a file. No other files change.
+Adding a new MCP tool = adding a file + one line in the barrel. No other files change.
 
 **Affected files:** `src/mcp.js` -> split into `src/mcp/`
 
-### 3.6 -- CLI Command Objects
+### 3.6 -- CLI Command Objects ✅
 
-Move from 1,557 lines of inline Commander chains to self-contained command modules.
-
-> **Note:** Phase 2.7.11 consolidated 5 commands — the first CLI surface area reduction. This item continues that direction by making each of the 39 remaining commands independently testable.
+Monolithic 1,525-line `src/cli.js` split into `src/cli/` with auto-discovery of command modules. 40 independently testable command files in `src/cli/commands/`, each exporting `{ name, description, options, queryOpts, validate, execute }`. Shared utilities extracted to `src/cli/shared/` (query options, output formatting). `src/cli/index.js` provides `registerCommand()` + `discoverCommands()` — new commands are added by dropping a file into `commands/`. `src/cli.js` reduced to an 8-line thin wrapper ([#427](https://github.com/optave/codegraph/pull/427)).
 
 ```
 src/
+  cli.js                         # 8-line thin wrapper → cli/index.js
   cli/
-    index.js                   # Commander setup, auto-discover commands
+    index.js                     # Commander setup, registerCommand(), discoverCommands()
     shared/
-      output.js                # --json, --ndjson, table, plain text
-      options.js               # Shared options (--no-tests, --json, --db, etc.)
-    commands/                  # 39 files, one per command
-      build.js                 # { name, description, options, validate, execute }
+      output.js                  # --json, --ndjson, table, plain text
+      options.js                 # Shared options (--no-tests, --json, --db, etc.)
+    commands/                    # 40 files, one per command
+      build.js                   # { name, description, options, validate, execute }
       ...
 ```
 
-Each command is independently testable by calling `execute()` directly.
-
 **Affected files:** `src/cli.js` -> split into `src/cli/`
 
-### 3.7 -- Curated Public API Surface
+### 3.7 -- Curated Public API Surface ✅
 
-Reduce `index.js` from 140+ exports to ~35 curated exports. Use `package.json` `exports` field to enforce module boundaries.
+Reduced `index.js` from ~190 named exports (243 lines) to 48 curated exports (57 lines). CLI formatters, internal DB utilities, parser internals, infrastructure helpers, and implementation-detail constants removed from the public surface. `package.json` `exports` field updated to expose `./cli` entry point.
 
-```json
-{ "exports": { ".": "./src/index.js", "./cli": "./src/cli.js" } }
-```
+**What's exported:**
+- **31 `*Data()` query functions** — one per command (e.g. `queryNameData`, `contextData`, `auditData`, `cfgData`)
+- **4 graph building** — `buildGraph`, `loadConfig`, `findCycles`, `buildEmbeddings`
+- **3 export formats** — `exportDOT`, `exportJSON`, `exportMermaid`
+- **3 search** — `searchData`, `multiSearchData`, `hybridSearchData`
+- **4 constants** — `EVERY_SYMBOL_KIND`, `EVERY_EDGE_KIND`, `EXTENSIONS`, `IGNORE_DIRS`
 
-Export only `*Data()` functions (the command execute functions). Never export CLI formatters. Group by domain.
+**What's removed:** CLI display wrappers (`commands/*.js`, `queries-cli.js`), internal DB functions (`fanInJoinSQL`, `NodeQuery`, etc.), parser internals (`parseFileAuto`, `disposeParsers`), infrastructure (`outputResult`, `isTestFile`), registry management, snapshot internals, pagination helpers, implementation-detail constants (`COMPLEXITY_RULES`, `HALSTEAD_RULES`, etc.), and lower-level analysis functions. All remain importable via direct paths.
 
 **Affected files:** `src/index.js`, `package.json`
 
 > **Removed: Decompose complexity.js** — Subsumed by 3.1. The standalone complexity decomposition from the previous revision is now part of the unified AST analysis framework (3.1). The `complexity.js` per-language rules become `ast-analysis/rules/complexity/{lang}.js` alongside CFG and dataflow rules.
 
-### 3.8 -- Domain Error Hierarchy
+### 3.8 -- Domain Error Hierarchy ✅
 
-Replace ad-hoc error handling (mix of thrown `Error`, returned `null`, `logger.warn()`, `process.exit(1)`) across 50 modules with structured domain errors.
+Structured domain errors replace ad-hoc error handling across the codebase. 8 error classes in `src/errors.js`: `CodegraphError`, `ParseError`, `DbError`, `ConfigError`, `ResolutionError`, `EngineError`, `AnalysisError`, `BoundaryError`. The CLI catches domain errors and formats for humans; MCP returns structured `{ isError, code }` responses.
 
 ```js
 class CodegraphError extends Error { constructor(message, { code, file, cause }) { ... } }
@@ -786,45 +790,47 @@ class AnalysisError extends CodegraphError { code = 'ANALYSIS_FAILED' }
 class BoundaryError extends CodegraphError { code = 'BOUNDARY_VIOLATION' }
 ```
 
-The CLI catches domain errors and formats for humans. MCP returns structured error responses. No more `process.exit()` from library code.
+- ✅ `src/errors.js` — 8 domain error classes with `code`, `file`, `cause` fields
+- ✅ CLI top-level catch formats domain errors for humans
+- ✅ MCP returns structured error responses
+- ✅ Domain errors adopted across config, boundaries, triage, and query modules
 
 **New file:** `src/errors.js`
 
-### 3.9 -- Builder Pipeline Architecture
+### 3.9 -- Builder Pipeline Architecture ✅
 
-Refactor `buildGraph()` (1,355 lines) from a mega-function into explicit, independently testable pipeline stages. Phase 2.7 added 4 opt-in stages, bringing the total to 11 core + 4 optional.
+Refactored `buildGraph()` from a monolithic mega-function into explicit, independently testable pipeline stages. `src/builder.js` is now a 12-line barrel re-export. `src/builder/pipeline.js` orchestrates 9 stages via `PipelineContext`. Each stage is a separate file in `src/builder/stages/`.
 
-```js
-const pipeline = [
-  // Core (always)
-  collectFiles,        // (rootDir, config) => filePaths[]
-  detectChanges,       // (filePaths, db) => { changed, removed, isFullBuild }
-  parseFiles,          // (filePaths, engineOpts) => Map<file, symbols>
-  insertNodes,         // (symbolMap, db) => nodeIndex
-  resolveImports,      // (symbolMap, rootDir, aliases) => importEdges[]
-  buildCallEdges,      // (symbolMap, nodeIndex) => callEdges[]
-  buildClassEdges,     // (symbolMap, nodeIndex) => classEdges[]
-  resolveBarrels,      // (edges, symbolMap) => resolvedEdges[]
-  insertEdges,         // (allEdges, db) => stats
-  extractASTNodes,     // (fileSymbols, db) => astStats (always, post-parse)
-  buildStructure,      // (db, fileSymbols, rootDir) => structureStats
-  classifyRoles,       // (db) => roleStats
-  emitChangeJournal,   // (rootDir, changes) => void
-
-  // Opt-in (dynamic imports)
-  computeComplexity,   // --complexity: (db, rootDir, engine) => complexityStats
-  buildDataflowEdges,  // --dataflow:   (db, fileSymbols, rootDir) => dataflowStats
-  buildCFGData,        // --cfg:        (db, fileSymbols, rootDir) => cfgStats
-]
+```
+src/
+  builder.js                    # 12-line barrel re-export
+  builder/
+    context.js                  # PipelineContext — shared state across stages
+    pipeline.js                 # Orchestrator: setup → stages → timing
+    helpers.js                  # batchInsertNodes, collectFiles, fileHash, etc.
+    incremental.js              # Incremental build logic
+    stages/
+      collect-files.js          # Discover source files
+      detect-changes.js         # Incremental: hash comparison, removed detection
+      parse-files.js            # Parse via native/WASM engine
+      insert-nodes.js           # Batch-insert nodes, children, contains/parameter_of edges
+      resolve-imports.js        # Import resolution with aliases
+      build-edges.js            # Call edges, class edges, barrel resolution
+      build-structure.js        # Directory/file hierarchy
+      run-analyses.js           # Complexity, CFG, dataflow, AST store
+      finalize.js               # Build meta, timing, db close
 ```
 
-Watch mode reuses the same stages triggered per-file, eliminating the `watcher.js` divergence.
+- ✅ `PipelineContext` shared state replaces function parameters
+- ✅ 9 sequential stages, each independently testable
+- ✅ `src/builder.js` reduced to barrel re-export
+- ✅ Timing tracked per-stage in `ctx.timing`
 
-**Affected files:** `src/builder.js`, `src/watcher.js`
+**Affected files:** `src/builder.js` → split into `src/builder/`
 
-### 3.10 -- Embedder Subsystem Extraction
+### 3.10 -- Embedder Subsystem Extraction ✅
 
-Restructure `embedder.js` (1,113 lines) -- which now contains 3 search engines -- into a standalone subsystem.
+Restructured `embedder.js` (1,113 lines) into a standalone `src/embeddings/` subsystem with pluggable stores and search strategies.
 
 ```
 src/
@@ -846,66 +852,90 @@ src/
 
 The pluggable store interface enables future O(log n) ANN search (e.g., `hnswlib-node`) when symbol counts reach 50K+.
 
+- ✅ Extracted into `src/embeddings/` with `index.js`, `models.js`, `generator.js` (v3.1.4, [#433](https://github.com/optave/codegraph/pull/433))
+- ✅ Pluggable stores: `sqlite-blob.js`, `fts5.js`
+- ✅ Search engines: `semantic.js`, `keyword.js`, `hybrid.js`
+- ✅ Text preparation strategies: `structured.js`, `source.js`
+
 **Affected files:** `src/embedder.js` -> split into `src/embeddings/`
 
-### 3.11 -- Unified Graph Model
+### 3.11 -- Unified Graph Model ✅
 
-Unify the four parallel graph representations (structure.js, cochange.js, communities.js, viewer.js) into a shared in-memory graph model.
+Unified the four parallel graph representations into a shared in-memory `CodeGraph` model. The `src/graph/` directory contains the model, 3 builders, 6 algorithms, and 2 classifiers. Algorithms are composable — run community detection on the dependency graph, the temporal graph, or a merged graph.
 
 ```
 src/
   graph/
-    model.js                   # Shared in-memory graph (nodes + edges + metadata)
+    index.js                   # Barrel re-export
+    model.js                   # CodeGraph class: nodes Map, directed/undirected adjacency
     builders/
-      dependency.js            # Build from SQLite edges
+      index.js                 # Barrel
+      dependency.js            # Build from SQLite call/import edges
       structure.js             # Build from file/directory hierarchy
-      temporal.js              # Build from git history (co-changes)
+      temporal.js              # Build from git co-change history
     algorithms/
+      index.js                 # Barrel
       bfs.js                   # Breadth-first traversal
-      shortest-path.js         # Path finding
-      tarjan.js                # Cycle detection
+      shortest-path.js         # Dijkstra path finding
+      tarjan.js                # Strongly connected components / cycle detection
       louvain.js               # Community detection
-      centrality.js            # Fan-in/fan-out, betweenness
-      clustering.js            # Cohesion, coupling, density
+      centrality.js            # Fan-in/fan-out, betweenness centrality
     classifiers/
-      roles.js                 # Node role classification
-      risk.js                  # Risk scoring
+      index.js                 # Barrel
+      roles.js                 # Node role classification (hub, utility, leaf, etc.)
+      risk.js                  # Composite risk scoring
 ```
 
-Algorithms become composable -- run community detection on the dependency graph, the temporal graph, or a merged graph.
+- ✅ `CodeGraph` in-memory model with nodes Map, successors/predecessors adjacency
+- ✅ 3 builders: dependency (SQLite edges), structure (file hierarchy), temporal (git co-changes)
+- ✅ 6 algorithms: BFS, shortest-path, Tarjan SCC, Louvain community, centrality
+- ✅ 2 classifiers: role classification, risk scoring
+- ✅ `structure.js`, `communities.js`, `cycles.js`, `triage.js`, `viewer.js` refactored to use graph model
 
 **Affected files:** `src/structure.js`, `src/cochange.js`, `src/communities.js`, `src/cycles.js`, `src/triage.js`, `src/viewer.js`
 
-### 3.12 -- Qualified Names & Hierarchical Scoping (Partially Addressed)
+### 3.12 -- Qualified Names & Hierarchical Scoping ✅
 
-> **Phase 2.7 progress:** `parent_id` column, `contains` edges, `parameter_of` edges, and `childrenData()` query now model one-level parent-child relationships. This addresses ~80% of the use case.
+> **Phase 2.7 progress:** `parent_id` column, `contains` edges, `parameter_of` edges, and `childrenData()` query now model one-level parent-child relationships.
 
-Remaining work -- enrich the node model with deeper scope information:
+Node model enriched with `qualified_name`, `scope`, and `visibility` columns (migration v15). Enables direct lookups like "all methods of class X" via `findNodesByScope()` and qualified name resolution via `findNodeByQualifiedName()` — no edge traversal needed.
 
 ```sql
-ALTER TABLE nodes ADD COLUMN qualified_name TEXT;  -- 'DateHelper.format'
-ALTER TABLE nodes ADD COLUMN scope TEXT;            -- 'DateHelper'
+ALTER TABLE nodes ADD COLUMN qualified_name TEXT;  -- 'DateHelper.format', 'freeFunction.x'
+ALTER TABLE nodes ADD COLUMN scope TEXT;            -- 'DateHelper', null for top-level
 ALTER TABLE nodes ADD COLUMN visibility TEXT;       -- 'public' | 'private' | 'protected'
+CREATE INDEX idx_nodes_qualified_name ON nodes(qualified_name);
+CREATE INDEX idx_nodes_scope ON nodes(scope);
 ```
 
-Enables queries like "all methods of class X" without traversing edges. The `parent_id` FK only goes one level -- deeply nested scopes (namespace > class > method > closure) aren't fully represented. `qualified_name` would allow direct lookup.
+- ✅ Migration v15: `qualified_name`, `scope`, `visibility` columns + indexes
+- ✅ `batchInsertNodes` expanded to 9 columns (name, kind, file, line, end_line, parent_id, qualified_name, scope, visibility)
+- ✅ `insert-nodes.js` computes qualified_name and scope during insertion: methods get scope from class prefix, children get `parent.child` qualified names
+- ✅ Visibility extraction for all 8 language extractors:
+  - JS/TS: `accessibility_modifier` nodes + `#` private field detection
+  - Java/C#/PHP: `modifiers`/`visibility_modifier` AST nodes via shared `extractModifierVisibility()`
+  - Python: convention-based (`__name` → private, `_name` → protected)
+  - Go: capitalization convention (uppercase → public, lowercase → private)
+  - Rust: `visibility_modifier` child (`pub` → public, else private)
+- ✅ `findNodesByScope(db, scopeName, opts)` — query by scope with optional kind/file filters
+- ✅ `findNodeByQualifiedName(db, qualifiedName)` — direct lookup without edge traversal
+- ✅ `childrenData()` returns `qualifiedName`, `scope`, `visibility` for parent and children
+- ✅ Integration tests covering qualified_name, scope, visibility, and childrenData output
 
-**Affected files:** `src/db.js`, `src/extractors/`, `src/queries.js`, `src/builder.js`
+**Affected files:** `src/db/migrations.js`, `src/db/repository/nodes.js`, `src/builder/helpers.js`, `src/builder/stages/insert-nodes.js`, `src/extractors/*.js`, `src/extractors/helpers.js`, `src/analysis/symbol-lookup.js`
 
-### 3.13 -- Testing Pyramid with InMemoryRepository
+### 3.13 -- Testing Pyramid with InMemoryRepository ✅
 
-The repository pattern (3.3) enables true unit testing:
+The repository pattern (3.3) enables true unit testing. `InMemoryRepository` provides an in-memory backend that implements the same interface as `SqliteRepository`, enabling fast unit tests without SQLite.
 
-- Pure unit tests for graph algorithms (pass adjacency list, assert result)
-- Pure unit tests for risk/confidence scoring (pass parameters, assert score)
-- `InMemoryRepository` for query tests (no SQLite, instant setup)
-- Existing 70 test files continue as integration tests
+- ✅ `InMemoryRepository` at `src/db/repository/in-memory-repository.js` (v3.1.4, [#444](https://github.com/optave/codegraph/pull/444))
+- ✅ Pure unit tests for graph algorithms (pass adjacency list, assert result)
+- ✅ Pure unit tests for risk/confidence scoring (pass parameters, assert score)
+- 🔲 Migrate existing integration tests that only need query data to use `InMemoryRepository`
 
-**Current gap:** Many "unit" tests still hit SQLite because there's no repository abstraction.
+### 3.14 -- Presentation Layer Extraction ✅
 
-### 3.14 -- Presentation Layer Extraction
-
-Separate all output formatting from domain logic into a dedicated `src/presentation/` directory. Currently `viewer.js` (948 lines) and `export.js` (681 lines) mix graph traversal with rendering. `result-formatter.js` already exists in `infrastructure/` as a first step.
+Separated all output formatting from domain logic into `src/presentation/`. Domain functions return plain data objects; presentation functions are pure transforms: `data → formatted string`. Commands wire the two together.
 
 ```
 src/
@@ -915,15 +945,14 @@ src/
     table.js               # Tabular CLI output (used by complexity, stats, etc.)
     sequence-renderer.js   # Mermaid sequence diagram formatting (from sequence.js)
     result-formatter.js    # Structured result formatting (moved from infrastructure/)
+    colors.js              # Shared color/style utilities
 ```
 
-- 🔲 Extract rendering logic from `viewer.js` — keep graph data loading in domain, move formatting to presentation
-- 🔲 Extract serialization from `export.js` — DOT/Mermaid/JSON writers become pure data → string transforms
-- 🔲 Extract table formatting helpers used across `queries-cli.js`, `complexity`, `stats`
-- 🔲 Move `result-formatter.js` from `infrastructure/` to `presentation/` (it's output formatting, not infrastructure)
-- 🔲 Extract Mermaid rendering from `sequence.js` into `sequence-renderer.js`
-
-**Principle:** Domain functions return plain data objects. Presentation functions are pure transforms: `data → formatted string`. Commands wire the two together.
+- ✅ Extract rendering logic from `viewer.js` (v3.1.4, [#443](https://github.com/optave/codegraph/pull/443))
+- ✅ Extract serialization from `export.js` — DOT/Mermaid/JSON writers become pure data → string transforms
+- ✅ Extract table formatting helpers used across `queries-cli.js`, `complexity`, `stats`
+- ✅ Move `result-formatter.js` from `infrastructure/` to `presentation/`
+- ✅ Extract Mermaid rendering from `sequence.js` into `sequence-renderer.js`
 
 **Affected files:** `src/viewer.js`, `src/export.js`, `src/sequence.js`, `src/infrastructure/result-formatter.js`
 

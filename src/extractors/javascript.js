@@ -77,12 +77,14 @@ function extractSymbolsQuery(tree, query) {
       const parentClass = findParentClass(c.meth_node);
       const fullName = parentClass ? `${parentClass}.${methName}` : methName;
       const methChildren = extractParameters(c.meth_node);
+      const methVis = extractVisibility(c.meth_node);
       definitions.push({
         name: fullName,
         kind: 'method',
         line: c.meth_node.startPosition.row + 1,
         endLine: nodeEndLine(c.meth_node),
         children: methChildren.length > 0 ? methChildren : undefined,
+        visibility: methVis,
       });
     } else if (c.iface_node) {
       // interface_declaration (TS/TSX only)
@@ -375,12 +377,14 @@ function extractSymbolsWalk(tree) {
           const parentClass = findParentClass(node);
           const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
           const methChildren = extractParameters(node);
+          const methVis = extractVisibility(node);
           definitions.push({
             name: fullName,
             kind: 'method',
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
             children: methChildren.length > 0 ? methChildren : undefined,
+            visibility: methVis,
           });
         }
         break;
@@ -701,11 +705,44 @@ function extractClassProperties(classNode) {
           nameNode.type === 'identifier' ||
           nameNode.type === 'private_property_identifier')
       ) {
-        props.push({ name: nameNode.text, kind: 'property', line: child.startPosition.row + 1 });
+        // Private # fields: nameNode.type is 'private_property_identifier'
+        // TS modifiers: accessibility_modifier child on the field_definition
+        const vis =
+          nameNode.type === 'private_property_identifier' ? 'private' : extractVisibility(child);
+        props.push({
+          name: nameNode.text,
+          kind: 'property',
+          line: child.startPosition.row + 1,
+          visibility: vis,
+        });
       }
     }
   }
   return props;
+}
+
+/**
+ * Extract visibility modifier from a class member node.
+ * Checks for TS access modifiers (public/private/protected) and JS private (#) fields.
+ * Returns 'public' | 'private' | 'protected' | undefined.
+ */
+function extractVisibility(node) {
+  // Check for TS accessibility modifiers (accessibility_modifier child)
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    if (child.type === 'accessibility_modifier') {
+      const text = child.text;
+      if (text === 'private' || text === 'protected' || text === 'public') return text;
+    }
+  }
+  // Check for JS private name (# prefix) — try multiple field names
+  const nameNode =
+    node.childForFieldName('name') || node.childForFieldName('property') || node.child(0);
+  if (nameNode && nameNode.type === 'private_property_identifier') {
+    return 'private';
+  }
+  return undefined;
 }
 
 function isConstantValue(valueNode) {

@@ -1,3 +1,4 @@
+import { DbError } from '../errors.js';
 import { EVERY_EDGE_KIND } from '../kinds.js';
 
 // ─── Validation Helpers ─────────────────────────────────────────────
@@ -12,13 +13,13 @@ const SAFE_SELECT_TOKEN_RE =
 
 function validateAlias(alias) {
   if (!SAFE_ALIAS_RE.test(alias)) {
-    throw new Error(`Invalid SQL alias: ${alias}`);
+    throw new DbError(`Invalid SQL alias: ${alias}`);
   }
 }
 
 function validateColumn(column) {
   if (!SAFE_COLUMN_RE.test(column)) {
-    throw new Error(`Invalid SQL column: ${column}`);
+    throw new DbError(`Invalid SQL column: ${column}`);
   }
 }
 
@@ -26,7 +27,7 @@ function validateOrderBy(clause) {
   const terms = clause.split(',').map((t) => t.trim());
   for (const term of terms) {
     if (!SAFE_ORDER_TERM_RE.test(term)) {
-      throw new Error(`Invalid ORDER BY term: ${term}`);
+      throw new DbError(`Invalid ORDER BY term: ${term}`);
     }
   }
 }
@@ -51,14 +52,14 @@ function validateSelectCols(cols) {
   const tokens = splitTopLevelCommas(cols);
   for (const token of tokens) {
     if (!SAFE_SELECT_TOKEN_RE.test(token)) {
-      throw new Error(`Invalid SELECT expression: ${token}`);
+      throw new DbError(`Invalid SELECT expression: ${token}`);
     }
   }
 }
 
 function validateEdgeKind(edgeKind) {
   if (!EVERY_EDGE_KIND.includes(edgeKind)) {
-    throw new Error(
+    throw new DbError(
       `Invalid edge kind: ${edgeKind} (expected one of ${EVERY_EDGE_KIND.join(', ')})`,
     );
   }

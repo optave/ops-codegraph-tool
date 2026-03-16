@@ -2,13 +2,13 @@ import { outputResult } from '../infrastructure/result-formatter.js';
 import { manifestoData } from '../manifesto.js';
 
 /**
- * CLI formatter — prints manifesto results and exits with code 1 on failure.
+ * CLI formatter — prints manifesto results and sets exitCode 1 on failure.
  */
 export function manifesto(customDbPath, opts = {}) {
   const data = manifestoData(customDbPath, opts);
 
   if (outputResult(data, 'violations', opts)) {
-    if (!data.passed) process.exit(1);
+    if (!data.passed) process.exitCode = 1;
     return;
   }
 
@@ -72,6 +72,6 @@ export function manifesto(customDbPath, opts = {}) {
   console.log();
 
   if (!data.passed) {
-    process.exit(1);
+    process.exitCode = 1;
   }
 }

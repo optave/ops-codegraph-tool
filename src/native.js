@@ -8,6 +8,7 @@
 
 import { createRequire } from 'node:module';
 import os from 'node:os';
+import { EngineError } from './errors.js';
 
 let _cached; // undefined = not yet tried, null = failed, object = module
 let _loadError = null;
@@ -101,9 +102,10 @@ export function getNativePackageVersion() {
 export function getNative() {
   const mod = loadNative();
   if (!mod) {
-    throw new Error(
+    throw new EngineError(
       `Native codegraph-core not available: ${_loadError?.message || 'unknown error'}. ` +
         'Install the platform package or use --engine wasm.',
+      { cause: _loadError },
     );
   }
   return mod;

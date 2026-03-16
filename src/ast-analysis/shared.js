@@ -2,6 +2,7 @@
  * Shared utilities for AST analysis modules (complexity, CFG, dataflow, AST nodes).
  */
 
+import { ConfigError } from '../errors.js';
 import { LANGUAGE_REGISTRY } from '../parser.js';
 
 // ─── Generic Rule Factory ─────────────────────────────────────────────────
@@ -18,7 +19,7 @@ export function makeRules(defaults, overrides, label) {
   const validKeys = new Set(Object.keys(defaults));
   for (const key of Object.keys(overrides)) {
     if (!validKeys.has(key)) {
-      throw new Error(`${label} rules: unknown key "${key}"`);
+      throw new ConfigError(`${label} rules: unknown key "${key}"`);
     }
   }
   return { ...defaults, ...overrides };
@@ -61,10 +62,10 @@ export const CFG_DEFAULTS = {
 export function makeCfgRules(overrides) {
   const rules = makeRules(CFG_DEFAULTS, overrides, 'CFG');
   if (!(rules.functionNodes instanceof Set) || rules.functionNodes.size === 0) {
-    throw new Error('CFG rules: functionNodes must be a non-empty Set');
+    throw new ConfigError('CFG rules: functionNodes must be a non-empty Set');
   }
   if (!(rules.forNodes instanceof Set)) {
-    throw new Error('CFG rules: forNodes must be a Set');
+    throw new ConfigError('CFG rules: forNodes must be a Set');
   }
   return rules;
 }
@@ -136,7 +137,7 @@ export const DATAFLOW_DEFAULTS = {
 export function makeDataflowRules(overrides) {
   const rules = makeRules(DATAFLOW_DEFAULTS, overrides, 'Dataflow');
   if (!(rules.functionNodes instanceof Set) || rules.functionNodes.size === 0) {
-    throw new Error('Dataflow rules: functionNodes must be a non-empty Set');
+    throw new ConfigError('Dataflow rules: functionNodes must be a non-empty Set');
   }
   return rules;
 }

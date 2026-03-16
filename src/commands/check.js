@@ -1,19 +1,19 @@
 import { checkData } from '../check.js';
+import { AnalysisError } from '../errors.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 
 /**
- * CLI formatter — prints check results and exits with code 1 on failure.
+ * CLI formatter — prints check results and sets exitCode 1 on failure.
  */
 export function check(customDbPath, opts = {}) {
   const data = checkData(customDbPath, opts);
 
   if (data.error) {
-    console.error(data.error);
-    process.exit(1);
+    throw new AnalysisError(data.error);
   }
 
   if (outputResult(data, null, opts)) {
-    if (!data.passed) process.exit(1);
+    if (!data.passed) process.exitCode = 1;
     return;
   }
 
@@ -77,6 +77,6 @@ export function check(customDbPath, opts = {}) {
   console.log(`\n  ${s.total} predicates | ${s.passed} passed | ${s.failed} failed\n`);
 
   if (!data.passed) {
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
