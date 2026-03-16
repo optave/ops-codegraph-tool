@@ -16,7 +16,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Complete** (v1.4.0) |
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.6.0) |
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
-| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names | **In Progress** (v3.1.4) |
+| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names, CLI composability | **In Progress** (v3.1.4) |
 | [**4**](#phase-4--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | Planned |
 | [**5**](#phase-5--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
 | [**6**](#phase-6--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
@@ -987,6 +987,18 @@ These items from the original Phase 3 are still valid but less urgent:
 - **Query result caching:** LRU/TTL cache between analysis layer and repository. More valuable now with 34 MCP tools.
 - **Configuration profiles:** `--profile backend` for monorepos with multiple services.
 - **Pagination standardization:** SQL-level LIMIT/OFFSET in repository + command runner shaping.
+- **Plugin system for custom commands:** Drop a JS module into `~/.codegraph/plugins/` (or `.codegraph/plugins/`) and it becomes a CLI command. Plugin contract: `export function data(db, args) → object` + `export const meta = { name, description, args }`. Auto-discovered at startup. Low priority until there's user demand for extensibility beyond the 34 built-in commands.
+
+### 3.17 -- CLI Composability
+
+Practical cleanup to make the CLI surface match the internal composability that `*Data()` functions and MCP already provide. Not a philosophical overhaul -- just eliminating duplication and making the human CLI path as clean as the programmatic one.
+
+**Context:** The internal architecture is already well-layered -- pure `*Data()` functions, read/write separation, NDJSON support. The 3.6 refactor split the former 1,525-line `cli.js` into `src/cli/` with 40 command modules and an 8-line thin wrapper, but individual commands still repeat DB open/close boilerplate, and output formatting is scattered across command files. MCP and `batch_query` already solve in-process composition for AI agents; these items fix the equivalent gaps on the CLI side.
+
+- **Extract shared `openGraph()` helper.** The thin dispatcher is done (3.6), but each of the 40 `commands/*.js` files still inlines its own DB-open / config-load / cleanup sequence. A single `openGraph(opts)` helper returning `{ db, rootDir, config }` with engine selection, config loading, and cleanup eliminates ~200 lines of per-command duplication.
+- **Universal output formatter.** Complete the existing `result-formatter.js` into a full presentation layer that handles `--json`, `--ndjson`, `--table`, `--csv` for any data function. Commands produce data; the formatter renders. Eliminates per-command format-switching logic.
+
+**Affected files:** `src/cli/commands/*.js`, `src/cli/shared/`, `src/presentation/result-formatter.js`
 
 ---
 

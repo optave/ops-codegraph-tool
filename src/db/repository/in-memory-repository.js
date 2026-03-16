@@ -1,16 +1,7 @@
 import { ConfigError } from '../../errors.js';
 import { CORE_SYMBOL_KINDS, EVERY_SYMBOL_KIND, VALID_ROLES } from '../../kinds.js';
+import { escapeLike } from '../query-builder.js';
 import { Repository } from './base.js';
-
-/**
- * Escape LIKE special characters so they are treated as literals.
- * Mirrors the `escapeLike` function in `nodes.js`.
- * @param {string} s
- * @returns {string}
- */
-function escapeLike(s) {
-  return s.replace(/[%_\\]/g, '\\$&');
-}
 
 /**
  * Convert a SQL LIKE pattern to a RegExp (case-insensitive).

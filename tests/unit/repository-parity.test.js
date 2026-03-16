@@ -387,6 +387,12 @@ describe.each([
     expect(foo.fan_in).toBe(2); // bar calls foo, Baz calls foo
   });
 
+  it('findNodesWithFanIn treats _ as literal in file filter', () => {
+    // "_" is a LIKE wildcard — must not match arbitrary single chars
+    const nodes = repo.findNodesWithFanIn('%foo%', { file: '_oo.js' });
+    expect(nodes.length).toBe(0);
+  });
+
   // ── File nodes ────────────────────────────────────────────────────
 
   it('findFileNodes', () => {

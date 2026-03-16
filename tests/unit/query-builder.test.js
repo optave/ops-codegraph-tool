@@ -157,6 +157,12 @@ describe('NodeQuery', () => {
     expect(rows.every((r) => r.file.includes('foo'))).toBe(true);
   });
 
+  it('.fileFilter() escapes LIKE wildcards', () => {
+    // "_" should not match arbitrary single character
+    const rows = new NodeQuery().fileFilter('_oo').all(db);
+    expect(rows.length).toBe(0);
+  });
+
   it('.kindFilter() filters by exact kind', () => {
     const rows = new NodeQuery().kindFilter('class').all(db);
     expect(rows.length).toBe(1);
@@ -172,6 +178,12 @@ describe('NodeQuery', () => {
   it('.nameLike() filters by name pattern', () => {
     const rows = new NodeQuery().nameLike('ba').all(db);
     expect(rows.every((r) => r.name.toLowerCase().includes('ba'))).toBe(true);
+  });
+
+  it('.nameLike() escapes LIKE wildcards', () => {
+    // "_" should not match arbitrary single character
+    const rows = new NodeQuery().nameLike('_oo').all(db);
+    expect(rows.length).toBe(0);
   });
 
   it('.where() adds raw condition', () => {
@@ -264,7 +276,7 @@ describe('NodeQuery', () => {
       .roleFilter('core')
       .build();
     expect(sql).toContain('n.kind IN (?, ?)');
-    expect(sql).toContain('n.file LIKE ?');
+    expect(sql).toContain("n.file LIKE ? ESCAPE '\\'");
     expect(sql).toContain('n.role = ?');
     // All connected with AND
     const whereClause = sql.split('WHERE')[1];
