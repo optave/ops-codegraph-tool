@@ -35,7 +35,7 @@ function autoColumns(items) {
 /** Escape a value for RFC 4180 CSV output. */
 function escapeCsv(val) {
   const str = val == null ? '' : String(val);
-  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+  if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
     return `"${str.replace(/"/g, '""')}"`;
   }
   return str;
@@ -53,7 +53,7 @@ function printCsv(data, field) {
   const flatItems = items.map((item) =>
     typeof item === 'object' && item !== null ? flattenObject(item) : { value: item },
   );
-  const columns = autoColumns(items.filter((i) => typeof i === 'object' && i !== null));
+  const columns = autoColumns(flatItems);
   if (columns.length === 0) columns.push('value');
 
   console.log(columns.map(escapeCsv).join(','));
@@ -76,7 +76,7 @@ function printAutoTable(data, field) {
   const flatItems = items.map((item) =>
     typeof item === 'object' && item !== null ? flattenObject(item) : { value: item },
   );
-  const columns = autoColumns(items.filter((i) => typeof i === 'object' && i !== null));
+  const columns = autoColumns(flatItems);
   if (columns.length === 0) columns.push('value');
 
   const colDefs = columns.map((col) => {
