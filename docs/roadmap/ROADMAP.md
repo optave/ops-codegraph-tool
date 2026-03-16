@@ -205,7 +205,7 @@ Support querying multiple codebases from a single MCP server instance.
 
 **Goal:** Build a comprehensive analysis toolkit on top of the graph -- complexity metrics, community detection, risk triage, architecture boundary enforcement, CI validation, and hybrid search. This phase emerged organically as features were needed and wasn't in the original roadmap.
 
-### 2.6.1 -- Complexity Metrics ✅
+### 2.5.1 -- Complexity Metrics ✅
 
 Per-function complexity analysis using language-specific AST rules.
 
@@ -219,7 +219,7 @@ Per-function complexity analysis using language-specific AST rules.
 
 **New file:** `src/complexity.js` (2,163 lines)
 
-### 2.6.2 -- Community Detection & Drift ✅
+### 2.5.2 -- Community Detection & Drift ✅
 
 Louvain community detection at file or function level.
 
@@ -230,7 +230,7 @@ Louvain community detection at file or function level.
 
 **New file:** `src/communities.js` (310 lines)
 
-### 2.6.3 -- Structure & Role Classification ✅
+### 2.5.3 -- Structure & Role Classification ✅
 
 Directory structure graph with node role classification.
 
@@ -243,7 +243,7 @@ Directory structure graph with node role classification.
 
 **New file:** `src/structure.js` (668 lines)
 
-### 2.6.4 -- Execution Flow Tracing ✅
+### 2.5.4 -- Execution Flow Tracing ✅
 
 Forward BFS from framework entry points through callees to leaves.
 
@@ -253,7 +253,7 @@ Forward BFS from framework entry points through callees to leaves.
 
 **New file:** `src/flow.js` (362 lines)
 
-### 2.6.5 -- Temporal Coupling (Co-change Analysis) ✅
+### 2.5.5 -- Temporal Coupling (Co-change Analysis) ✅
 
 Git history analysis for temporal file coupling.
 
@@ -264,7 +264,7 @@ Git history analysis for temporal file coupling.
 
 **New file:** `src/cochange.js` (502 lines)
 
-### 2.6.6 -- Manifesto Rule Engine ✅
+### 2.5.6 -- Manifesto Rule Engine ✅
 
 Configurable rule engine with warn/fail thresholds for function, file, and graph rules.
 
@@ -276,7 +276,7 @@ Configurable rule engine with warn/fail thresholds for function, file, and graph
 
 **New file:** `src/manifesto.js` (511 lines)
 
-### 2.6.7 -- Architecture Boundary Rules ✅
+### 2.5.7 -- Architecture Boundary Rules ✅
 
 Architecture enforcement using glob patterns and presets.
 
@@ -287,7 +287,7 @@ Architecture enforcement using glob patterns and presets.
 
 **New file:** `src/boundaries.js` (347 lines)
 
-### 2.6.8 -- CI Validation Predicates (`check`) ✅
+### 2.5.8 -- CI Validation Predicates (`check`) ✅
 
 Structured pass/fail checks for CI pipelines.
 
@@ -301,7 +301,7 @@ Structured pass/fail checks for CI pipelines.
 
 **New file:** `src/check.js` (433 lines)
 
-### 2.6.9 -- Composite Analysis Commands ✅
+### 2.5.9 -- Composite Analysis Commands ✅
 
 High-level commands that compose multiple analysis steps.
 
@@ -311,7 +311,7 @@ High-level commands that compose multiple analysis steps.
 
 **New files:** `src/audit.js` (424 lines), `src/batch.js` (91 lines), `src/triage.js` (274 lines)
 
-### 2.6.10 -- Hybrid Search ✅
+### 2.5.10 -- Hybrid Search ✅
 
 BM25 keyword search + semantic vector search with RRF fusion.
 
@@ -323,7 +323,7 @@ BM25 keyword search + semantic vector search with RRF fusion.
 
 **Affected file:** `src/embedder.js` (grew from 525 -> 1,113 lines)
 
-### 2.6.11 -- Supporting Infrastructure ✅
+### 2.5.11 -- Supporting Infrastructure ✅
 
 Cross-cutting utilities added during the expansion.
 
@@ -335,7 +335,7 @@ Cross-cutting utilities added during the expansion.
 - ✅ **Journal:** change journal validation/management (`src/journal.js`, 110 lines)
 - ✅ **Update Check:** npm registry polling with 24h cache (`src/update-check.js`, 161 lines)
 
-### 2.6.12 -- MCP Tool Expansion ✅
+### 2.5.12 -- MCP Tool Expansion ✅
 
 MCP grew from 12 -> 25 tools, covering all new analysis capabilities.
 
@@ -367,7 +367,7 @@ MCP grew from 12 -> 25 tools, covering all new analysis capabilities.
 
 **Goal:** Add deeper static analysis capabilities (dataflow, control flow graphs, AST querying), enrich the graph model with sub-declaration node types and structural edges, refactor extractors into per-language modules, consolidate the CLI surface area, and introduce interactive visualization. This phase emerged from competitive analysis against Joern and Narsil-MCP.
 
-### 2.8.1 -- Dataflow Analysis ✅
+### 2.7.1 -- Dataflow Analysis ✅
 
 Define-use chain extraction tracking how data flows between functions.
 
@@ -384,7 +384,7 @@ Define-use chain extraction tracking how data flows between functions.
 
 **New file:** `src/dataflow.js` (1,187 lines)
 
-### 2.8.2 -- Expanded Node Types (Phase 1) ✅
+### 2.7.2 -- Expanded Node Types (Phase 1) ✅
 
 Extend the graph model with sub-declaration node kinds.
 
@@ -398,7 +398,7 @@ Extend the graph model with sub-declaration node kinds.
 
 **Affected files:** All extractors, `src/builder.js`, `src/queries.js`, `src/db.js`
 
-### 2.8.3 -- Expanded Edge Types (Phase 2) ✅
+### 2.7.3 -- Expanded Edge Types (Phase 2) ✅
 
 Structural edges for richer graph relationships.
 
@@ -409,7 +409,7 @@ Structural edges for richer graph relationships.
 
 **Affected files:** `src/builder.js`, `src/queries.js`
 
-### 2.8.4 -- Intraprocedural Control Flow Graph (CFG) ✅
+### 2.7.4 -- Intraprocedural Control Flow Graph (CFG) ✅
 
 Basic-block control flow graph construction from function ASTs.
 
@@ -424,7 +424,7 @@ Basic-block control flow graph construction from function ASTs.
 
 **New file:** `src/cfg.js` (1,451 lines)
 
-### 2.8.5 -- Stored Queryable AST Nodes ✅
+### 2.7.5 -- Stored Queryable AST Nodes ✅
 
 Persist and query selected AST node types for pattern-based codebase exploration.
 
@@ -439,7 +439,7 @@ Persist and query selected AST node types for pattern-based codebase exploration
 
 **New file:** `src/ast.js` (392 lines)
 
-### 2.8.6 -- Extractors Refactoring ✅
+### 2.7.6 -- Extractors Refactoring ✅
 
 Split per-language extractors from monolithic `parser.js` into dedicated modules.
 
@@ -453,7 +453,7 @@ Split per-language extractors from monolithic `parser.js` into dedicated modules
 
 **New directory:** `src/extractors/`
 
-### 2.8.7 -- normalizeSymbol Utility ✅
+### 2.7.7 -- normalizeSymbol Utility ✅
 
 Stable JSON schema for symbol output across all query functions.
 
@@ -463,7 +463,7 @@ Stable JSON schema for symbol output across all query functions.
 
 **Affected file:** `src/queries.js`
 
-### 2.8.8 -- Interactive Graph Viewer ✅
+### 2.7.8 -- Interactive Graph Viewer ✅
 
 Self-contained HTML visualization with vis-network.
 
@@ -480,7 +480,7 @@ Self-contained HTML visualization with vis-network.
 
 **New file:** `src/viewer.js` (948 lines)
 
-### 2.8.9 -- Exports Command ✅
+### 2.7.9 -- Exports Command ✅
 
 Per-symbol consumer analysis for file exports.
 
@@ -491,7 +491,7 @@ Per-symbol consumer analysis for file exports.
 
 **Affected file:** `src/queries.js`
 
-### 2.8.10 -- Export Format Expansion ✅
+### 2.7.10 -- Export Format Expansion ✅
 
 Three new graph export formats for external tooling integration.
 
@@ -501,7 +501,7 @@ Three new graph export formats for external tooling integration.
 
 **Affected file:** `src/export.js` (681 lines)
 
-### 2.8.11 -- CLI Consolidation ✅
+### 2.7.11 -- CLI Consolidation ✅
 
 First CLI surface area reduction -- 5 commands merged into existing ones.
 
@@ -514,7 +514,7 @@ First CLI surface area reduction -- 5 commands merged into existing ones.
 
 **Affected file:** `src/cli.js`
 
-### 2.8.12 -- MCP Tool Consolidation & Expansion ✅
+### 2.7.12 -- MCP Tool Consolidation & Expansion ✅
 
 MCP tools were both consolidated and expanded, resulting in a net change from 25 → 30 tools (31 in multi-repo mode).
 
@@ -542,7 +542,7 @@ Plus updated enums on existing tools (edge_kinds, symbol kinds).
 
 ### 2.7 Summary
 
-| Metric | Before (v2.7.0) | After (v3.0.0) | Delta |
+| Metric | Before (v2.7.0 baseline) | After (v3.0.0) | Delta |
 |--------|-----------------|-----------------|-------|
 | Source modules | 35 | 50 | +15 |
 | Total source lines | 17,830 | 26,277 | +47% |
@@ -1680,7 +1680,7 @@ LLM-generated docstrings aware of callers, callees, and types. Diff-aware: only 
 
 ### 11.1 -- Interactive Web Visualization (Partially Complete)
 
-> **Phase 2.7 progress:** `codegraph plot` (Phase 2.8.8) ships a self-contained HTML viewer with vis-network. It supports layout switching, color/size/cluster overlays, drill-down, community detection, and a detail panel. The remaining work is the server-based experience below.
+> **Phase 2.7 progress:** `codegraph plot` (Phase 2.7.8) ships a self-contained HTML viewer with vis-network. It supports layout switching, color/size/cluster overlays, drill-down, community detection, and a detail panel. The remaining work is the server-based experience below.
 
 ```bash
 codegraph viz
