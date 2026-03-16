@@ -52,9 +52,12 @@ export {
   hasCoChanges,
   hasDataflowTable,
   hasEmbeddings,
+  InMemoryRepository,
   iterateFunctionNodes,
   listFunctionNodes,
   purgeFileData,
   purgeFilesData,
+  Repository,
+  SqliteRepository,
   upsertCoChangeMeta,
 } from './db/repository/index.js';
