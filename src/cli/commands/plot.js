@@ -22,7 +22,7 @@ export const command = {
     ['--color-by <mode>', 'Color nodes by: kind | role | community | complexity'],
   ],
   async execute(_args, opts, ctx) {
-    const { generatePlotHTML, loadPlotConfig } = await import('../../viewer.js');
+    const { generatePlotHTML, loadPlotConfig } = await import('../../features/graph-enrichment.js');
     const os = await import('node:os');
     const db = openReadonlyOrFail(opts.db);
 

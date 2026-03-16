@@ -20,7 +20,7 @@ export const command = {
     }
   },
   async execute([name], opts, ctx) {
-    const { flow } = await import('../../commands/flow.js');
+    const { flow } = await import('../../presentation/flow.js');
     flow(name, opts.db, {
       list: opts.list,
       depth: parseInt(opts.depth, 10),

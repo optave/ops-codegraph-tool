@@ -9,7 +9,7 @@ export const command = {
     ['-f, --format <format>', 'Output format: text, mermaid, json', 'text'],
   ],
   async execute([base, target], opts, ctx) {
-    const { branchCompare } = await import('../../commands/branch-compare.js');
+    const { branchCompare } = await import('../../presentation/branch-compare.js');
     await branchCompare(base, target, {
       engine: ctx.program.opts().engine,
       depth: parseInt(opts.depth, 10),

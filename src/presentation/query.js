@@ -18,4 +18,4 @@ export {
   stats,
   symbolPath,
   where,
-} from '../presentation/queries-cli.js';
+} from './queries-cli/index.js';

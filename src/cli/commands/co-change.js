@@ -19,8 +19,10 @@ export const command = {
     ['--ndjson', 'Newline-delimited JSON output'],
   ],
   async execute([file], opts, ctx) {
-    const { analyzeCoChanges, coChangeData, coChangeTopData } = await import('../../cochange.js');
-    const { formatCoChange, formatCoChangeTop } = await import('../../commands/cochange.js');
+    const { analyzeCoChanges, coChangeData, coChangeTopData } = await import(
+      '../../features/cochange.js'
+    );
+    const { formatCoChange, formatCoChangeTop } = await import('../../presentation/cochange.js');
 
     if (opts.analyze) {
       const result = analyzeCoChanges(opts.db, {

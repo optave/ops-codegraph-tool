@@ -32,7 +32,7 @@ export const command = {
           `Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`,
         );
       }
-      const { manifesto } = await import('../../commands/manifesto.js');
+      const { manifesto } = await import('../../presentation/manifesto.js');
       manifesto(opts.db, {
         file: opts.file,
         kind: opts.kind,
@@ -45,7 +45,7 @@ export const command = {
       return;
     }
 
-    const { check } = await import('../../commands/check.js');
+    const { check } = await import('../../presentation/check.js');
     check(opts.db, {
       ref,
       staged: opts.staged,
@@ -64,7 +64,7 @@ export const command = {
           `Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`,
         );
       }
-      const { manifesto } = await import('../../commands/manifesto.js');
+      const { manifesto } = await import('../../presentation/manifesto.js');
       manifesto(opts.db, {
         file: opts.file,
         kind: opts.kind,
