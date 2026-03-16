@@ -2,7 +2,48 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **Hooks enforce code quality.** This project uses Claude Code hooks (`.claude/hooks/`) to automatically inject codegraph dependency context on reads, block commits with cycles or dead exports, run lint on staged files, and show diff-impact before commits. You don't need to run codegraph commands manually — the hooks handle it. If codegraph reports an error or produces wrong results when analyzing itself, **fix the bug in the codebase**.
+> **Hooks enforce code quality.** This project uses Claude Code hooks (`.claude/hooks/`) to automatically inject file-level dependency context on reads, rebuild the graph after edits, block commits with cycles or dead exports, run lint on staged files, and show diff-impact before commits. If codegraph reports an error or produces wrong results when analyzing itself, **fix the bug in the codebase**.
+
+## Codegraph Workflow
+
+Hooks handle: file-level deps on reads, graph rebuild after edits, commit-time checks (cycles, dead exports, diff-impact, lint). **You must actively run these for function-level understanding:**
+
+### Before modifying code:
+1. `codegraph where <name>` — find where the symbol lives
+2. `codegraph audit --quick <target>` — understand the structure
+3. `codegraph context <name> -T` — get full context (source, deps, callers)
+4. `codegraph fn-impact <name> -T` — check blast radius before editing
+
+### After modifying code:
+5. `codegraph diff-impact --staged -T` — verify impact before committing
+
+### Navigation
+- `codegraph where --file <path>` — file inventory (symbols, imports, exports)
+- `codegraph query <name> -T` — function call chain (callers + callees)
+- `codegraph path <from> <to> -T` — shortest call path between two symbols
+- `codegraph exports <file> -T` — per-symbol export consumers
+- `codegraph children <name> -T` — sub-declarations (parameters, properties, constants)
+- `codegraph search "<query>"` — semantic search (requires `codegraph embed`)
+- `codegraph ast --kind call <name> -T` — find all call sites of a function
+
+### Impact & analysis
+- `codegraph diff-impact main -T` — impact of branch vs main
+- `codegraph audit <target> -T` — structural summary + impact + health in one report
+- `codegraph triage -T` — ranked audit priority queue
+- `codegraph complexity -T` — per-function complexity metrics
+- `codegraph batch t1 t2 t3 -T --json` — batch query multiple targets
+
+### Overview & health
+- `codegraph map` — module overview (most-connected files)
+- `codegraph stats` — graph health and quality score
+- `codegraph structure --depth 2` — directory tree with cohesion scores
+- `codegraph roles --role dead -T` — find dead code (unreferenced symbols)
+- `codegraph roles --role core -T` — find core symbols (high fan-in)
+- `codegraph branch-compare main HEAD -T` — structural diff between refs
+
+### Flags
+- `-T` — exclude test files (use by default) · `-j` — JSON output
+- `-f, --file <path>` — scope to file · `-k, --kind <kind>` — filter kind
 
 ## Project Overview
 
