@@ -41,10 +41,12 @@ function escapeCsv(val) {
  */
 function printCsv(data, field) {
   const items = field ? data[field] : data;
-  if (!Array.isArray(items) || items.length === 0) return;
+  if (!Array.isArray(items)) return;
 
   const flatItems = items.map((item) =>
-    typeof item === 'object' && item !== null ? flattenObject(item) : { value: item },
+    typeof item === 'object' && item !== null && !Array.isArray(item)
+      ? flattenObject(item)
+      : { value: item },
   );
   const columns = (() => {
     const keys = new Set();
@@ -71,7 +73,9 @@ function printAutoTable(data, field) {
   if (!Array.isArray(items) || items.length === 0) return;
 
   const flatItems = items.map((item) =>
-    typeof item === 'object' && item !== null ? flattenObject(item) : { value: item },
+    typeof item === 'object' && item !== null && !Array.isArray(item)
+      ? flattenObject(item)
+      : { value: item },
   );
   const columns = (() => {
     const keys = new Set();
