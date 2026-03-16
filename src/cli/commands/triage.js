@@ -31,7 +31,7 @@ export const command = {
   ],
   async execute(_args, opts, ctx) {
     if (opts.level === 'file' || opts.level === 'directory') {
-      const { hotspotsData, formatHotspots } = await import('../../commands/structure.js');
+      const { hotspotsData, formatHotspots } = await import('../../presentation/structure.js');
       const metric = opts.sort === 'risk' ? 'fan-in' : opts.sort;
       const data = hotspotsData(opts.db, {
         metric,
@@ -60,7 +60,7 @@ export const command = {
         throw new ConfigError('Invalid --weights JSON', { cause: err });
       }
     }
-    const { triage } = await import('../../commands/triage.js');
+    const { triage } = await import('../../presentation/triage.js');
     triage(opts.db, {
       limit: parseInt(opts.limit, 10),
       offset: opts.offset ? parseInt(opts.offset, 10) : undefined,

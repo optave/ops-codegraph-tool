@@ -19,7 +19,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names, CLI composability | **In Progress** (v3.1.4) |
 | [**4**](#phase-4--native-analysis-acceleration) | Native Analysis Acceleration | Move JS-only build phases (AST nodes, CFG, dataflow, insert nodes, structure, roles, complexity) to Rust; fix incremental rebuild data loss on native; sub-100ms 1-file rebuilds | Planned |
 | [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration, supply-chain security, CI coverage gates | Planned |
-| [**6**](#phase-6--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system | Planned |
+| [**6**](#phase-6--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system, DX & onboarding | Planned |
 | [**7**](#phase-7--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
 | [**8**](#phase-8--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
 | [**9**](#phase-9--expanded-language-support) | Expanded Language Support | 8 new languages (11 -> 19), parser utilities | Planned |
@@ -1234,7 +1234,7 @@ Migrate top-level orchestration and entry points:
 1. **Coverage gate** -- add `vitest --coverage` to CI with minimum threshold (e.g. 80% lines/branches); fail the pipeline when coverage drops below the threshold
 2. **Unified test workflow** -- merge embedding tests into the main CI workflow using a securely stored `HF_TOKEN` secret; eliminate the separate workflow
 3. **Timer cleanup** -- audit and reduce `setTimeout`/`sleep` usage in tests; replace with deterministic waits (event-based, polling with backoff, or `vi.useFakeTimers()`) to reduce flakiness
-4. **Dependency audit step** -- add `npm audit --omit=dev` to CI (shared with 5.7)
+4. > _Dependency audit step is covered by [5.7](#57----supply-chain-security--audit) deliverable 1._
 
 **Affected files:** `.github/workflows/ci.yml`, `vitest.config.js`, `tests/`
 
@@ -1371,6 +1371,18 @@ export function data(db: Database, args: ParsedArgs, config: Config): object {
 - Low priority until there's user demand for extensibility beyond the built-in commands
 
 **Affected files:** `src/cli/`, `src/mcp/`, new `src/infrastructure/plugins.js`
+
+### 5.9 -- Developer Experience & Onboarding
+
+Lower the barrier to first successful use. Today codegraph requires manual install, manual config, and prior knowledge of which command to run next.
+
+1. **`codegraph init`** -- interactive wizard that detects the project (languages, framework, monorepo), suggests `.codegraphrc.json` config, and auto-writes MCP settings for the detected editor (Claude Code, Cursor, VS Code, Zed)
+2. **Surface benchmark numbers in README** -- headline performance numbers (parse time, build time, query latency) already exist internally; surface them prominently in the README so users see concrete numbers before installing
+3. **`npx @optave/codegraph` support** -- zero-install path; ensure the package works correctly when invoked via `npx` without prior `npm install` (handle WASM grammar bootstrapping, native addon fallback)
+4. **Pre-built editor configs** -- ship ready-to-use MCP/extension configs for Cursor, VS Code, and Zed (not just Claude Code); include in `docs/editors/` with one-command setup instructions
+5. **Guided CLI output** -- after each command, suggest the logical next step (e.g. `"Next: try codegraph context <symbol> to see full context"`); suppressible via `--quiet` or config
+
+**Affected files:** new `src/cli/commands/init.js`, `docs/benchmarks/`, `docs/editors/`, `src/presentation/result-formatter.js`
 
 ---
 
@@ -1650,6 +1662,17 @@ Extend the existing `diff-impact --format mermaid` foundation with CI automation
 Add SARIF output format for cycle detection. SARIF integrates with GitHub Code Scanning, showing issues inline in the PR.
 
 **Affected files:** `src/export.js`
+
+### 9.5 -- Auto-generated Docstrings
+
+```bash
+codegraph annotate
+codegraph annotate --changed-only
+```
+
+LLM-generated docstrings aware of callers, callees, and types. Diff-aware: only regenerate for functions whose code or dependencies changed. Stores in `docstrings` column on nodes table -- does not modify source files unless explicitly requested.
+
+**Depends on:** 6.1 (LLM provider abstraction), 6.4 (side effects context)
 
 ---
 

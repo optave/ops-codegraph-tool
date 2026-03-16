@@ -1,5 +1,5 @@
-import { audit } from '../../commands/audit.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
+import { audit } from '../../presentation/audit.js';
 import { explain } from '../../presentation/queries-cli.js';
 
 export const command = {

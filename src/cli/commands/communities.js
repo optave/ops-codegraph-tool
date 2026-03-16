@@ -8,7 +8,7 @@ export const command = {
     ['--drift', 'Show only drift analysis'],
   ],
   async execute(_args, opts, ctx) {
-    const { communities } = await import('../../commands/communities.js');
+    const { communities } = await import('../../presentation/communities.js');
     communities(opts.db, {
       functions: opts.functions,
       resolution: parseFloat(opts.resolution),

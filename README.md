@@ -603,16 +603,16 @@ codegraph mcp --repos a,b      # Restrict to specific repos (implies --multi-rep
 
 ### CLAUDE.md / Agent Instructions
 
-Add this to your project's `CLAUDE.md` to help AI agents use codegraph (full template in the [AI Agent Guide](docs/guides/ai-agent-guide.md#claudemd-template)):
+Add this to your project's `CLAUDE.md` to help AI agents use codegraph. Full template with all commands in the [AI Agent Guide](docs/guides/ai-agent-guide.md#claudemd-template).
 
 ```markdown
-## Code Navigation
+## Codegraph
 
-This project uses codegraph. The database is at `.codegraph/graph.db`.
+This project uses codegraph for dependency analysis. The graph is at `.codegraph/graph.db`.
 
-### Before modifying code, always:
+### Before modifying code:
 1. `codegraph where <name>` — find where the symbol lives
-2. `codegraph audit <file-or-function> --quick` — understand the structure
+2. `codegraph audit --quick <target>` — understand the structure
 3. `codegraph context <name> -T` — get full context (source, deps, callers)
 4. `codegraph fn-impact <name> -T` — check blast radius before editing
 
@@ -620,65 +620,19 @@ This project uses codegraph. The database is at `.codegraph/graph.db`.
 5. `codegraph diff-impact --staged -T` — verify impact before committing
 
 ### Other useful commands
-- `codegraph build .` — rebuild the graph (incremental by default)
-- `codegraph map` — module overview
-- `codegraph query <name> -T` — function call chain (callers + callees)
-- `codegraph path <from> <to> -T` — shortest call path between two symbols
-- `codegraph deps <file>` — file-level dependencies
-- `codegraph roles --role dead -T` — find dead code (unreferenced symbols)
-- `codegraph roles --role core -T` — find core symbols (high fan-in)
-- `codegraph co-change <file>` — files that historically change together
-- `codegraph complexity -T` — per-function complexity metrics (cognitive, cyclomatic, MI)
-- `codegraph communities --drift -T` — module boundary drift analysis
-- `codegraph check -T` — pass/fail rule check (CI gate, exit code 1 on fail)
-- `codegraph audit <target> -T` — combined structural summary + impact + health in one report
-- `codegraph triage -T` — ranked audit priority queue
-- `codegraph triage --level file -T` — file-level hotspot analysis
-- `codegraph check --staged` — CI validation predicates (exit code 0/1)
-- `codegraph batch target1 target2` — batch query multiple targets at once
-- `codegraph owners [target]` — CODEOWNERS mapping for symbols
-- `codegraph snapshot save <name>` — checkpoint the graph DB before refactoring
-- `codegraph branch-compare main HEAD -T` — structural diff between two refs (added/removed/changed symbols)
-- `codegraph exports <file>` — per-symbol consumer analysis (who calls each export)
-- `codegraph children <name>` — list parameters, properties, constants of a symbol
-- `codegraph dataflow <name>` — data flow edges (flows_to, returns, mutates)
-- `codegraph cfg <name>` — intraprocedural control flow graph
-- `codegraph ast <pattern>` — search stored AST nodes (calls, new, string, regex, throw, await)
-- `codegraph plot` — interactive HTML dependency graph viewer
-- `codegraph search "<query>"` — hybrid search (requires `codegraph embed`)
-- `codegraph search "<query>" --mode keyword` — BM25 keyword search
-- `codegraph cycles` — check for circular dependencies
+- `codegraph build .` — rebuild graph (incremental by default)
+- `codegraph map` — module overview · `codegraph stats` — graph health
+- `codegraph query <name> -T` — call chain · `codegraph path <from> <to> -T` — shortest path
+- `codegraph deps <file>` — file deps · `codegraph exports <file> -T` — export consumers
+- `codegraph audit <target> -T` — full risk report · `codegraph triage -T` — priority queue
+- `codegraph check --staged` — CI gate · `codegraph batch t1 t2 -T --json` — batch query
+- `codegraph search "<query>"` — semantic search · `codegraph cycles` — cycle detection
+- `codegraph roles --role dead -T` — dead code · `codegraph complexity -T` — metrics
+- `codegraph dataflow <name> -T` — data flow · `codegraph cfg <name> -T` — control flow
 
 ### Flags
-- `-T` / `--no-tests` — exclude test files (use by default)
-- `-j` / `--json` — JSON output for programmatic use
-- `-f, --file <path>` — scope to a specific file
-- `-k, --kind <kind>` — filter by symbol kind
-
-### Semantic search
-
-Use `codegraph search` to find functions by intent rather than exact name.
-When a single query might miss results, combine multiple angles with `;`:
-
-  codegraph search "validate auth; check token; verify JWT"
-  codegraph search "parse config; load settings" --kind function
-
-Multi-query search uses Reciprocal Rank Fusion — functions that rank
-highly across several queries surface first. This is especially useful
-when you're not sure what naming convention the codebase uses.
-
-When writing multi-queries, use 2-4 sub-queries (2-4 words each) that
-attack the problem from different angles. Pick from these strategies:
-- **Naming variants**: cover synonyms the author might have used
-  ("send email; notify user; deliver message")
-- **Abstraction levels**: pair high-level intent with low-level operation
-  ("handle payment; charge credit card")
-- **Input/output sides**: cover the read half and write half
-  ("parse config; apply settings")
-- **Domain + technical**: bridge business language and implementation
-  ("onboard tenant; create organization; provision workspace")
-
-Use `--kind function` to cut noise. Use `--file <pattern>` to scope.
+- `-T` — exclude test files (use by default) · `-j` — JSON output
+- `-f, --file <path>` — scope to file · `-k, --kind <kind>` — filter kind
 ```
 
 ## 📋 Recommended Practices
