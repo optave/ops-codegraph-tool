@@ -870,35 +870,80 @@ Add this to your project's `CLAUDE.md` to teach Claude Code about codegraph:
 ## Codegraph
 
 This project uses codegraph for dependency analysis. The graph is at `.codegraph/graph.db`.
-Hooks in `.claude/hooks/` automatically inject dependency context on reads, block commits
-with cycles or dead exports, run lint on staged files, and show diff-impact before commits.
-See `docs/examples/claude-code-hooks/` for setup.
 
-### Commands
-- `codegraph build .` — rebuild the graph (incremental by default)
-- `codegraph map` — module overview
-- `codegraph stats` — graph health and quality score
-- `codegraph audit <target> -T` — combined structural summary + impact + health in one report
-- `codegraph triage -T` — ranked audit priority queue
-- `codegraph check --staged` — CI validation predicates (exit code 0/1)
-- `codegraph batch target1 target2` — batch query multiple targets at once
-- `codegraph query <name> -T` — function call chain
+### Before modifying code:
+1. `codegraph where <name>` — find where the symbol lives
+2. `codegraph audit --quick <target>` — understand the structure
+3. `codegraph context <name> -T` — get full context (source, deps, callers)
+4. `codegraph fn-impact <name> -T` — check blast radius before editing
+
+### After modifying code:
+5. `codegraph diff-impact --staged -T` — verify impact before committing
+
+### Navigation
+- `codegraph where --file <path>` — file inventory (symbols, imports, exports)
+- `codegraph query <name> -T` — function call chain (callers + callees)
+- `codegraph path <from> <to> -T` — shortest call path between two symbols
 - `codegraph deps <file>` — file-level dependencies
 - `codegraph exports <file> -T` — per-symbol export consumers
 - `codegraph children <name> -T` — sub-declarations (parameters, properties, constants)
+- `codegraph search "<query>"` — semantic search (requires `codegraph embed`)
+- `codegraph search "<query>" --mode keyword` — BM25 keyword search
+
+### Impact & analysis
+- `codegraph diff-impact main -T` — impact of branch vs main
+- `codegraph audit <target> -T` — structural summary + impact + health in one report
+- `codegraph triage -T` — ranked audit priority queue
+- `codegraph check --staged --no-new-cycles` — CI validation predicates (exit 0/1)
+- `codegraph batch t1 t2 t3 -T --json` — batch query multiple targets
+
+### Overview
+- `codegraph build .` — rebuild the graph (incremental by default)
+- `codegraph map` — module overview (most-connected files)
+- `codegraph stats` — graph health and quality score
+- `codegraph structure --depth 2` — directory tree with cohesion scores
+- `codegraph cycles` — circular dependency detection
+- `codegraph triage --level file --sort coupling` — file-level hotspot analysis
+- `codegraph roles --role dead -T` — find dead code (unreferenced symbols)
+- `codegraph roles --role core -T` — find core symbols (high fan-in)
+- `codegraph complexity -T` — per-function complexity metrics
+- `codegraph communities --drift -T` — module boundary drift analysis
+- `codegraph co-change <file>` — files that historically change together
+- `codegraph branch-compare main HEAD -T` — structural diff between refs
+
+### Deep analysis
 - `codegraph dataflow <name> -T` — data flow edges (requires `build --dataflow`)
 - `codegraph cfg <name> -T` — control flow graph (requires `build --cfg`)
 - `codegraph ast --kind call <name> -T` — search stored AST nodes
 - `codegraph owners [target]` — CODEOWNERS mapping for symbols
-- `codegraph snapshot save <name>` — checkpoint the graph DB before refactoring
-- `codegraph search "<query>"` — semantic search (requires `codegraph embed`)
-- `codegraph cycles` — check for circular dependencies
+- `codegraph snapshot save <name>` — checkpoint graph DB before refactoring
+- `codegraph plot` — interactive HTML dependency graph viewer
 
 ### Flags
 - `-T` / `--no-tests` — exclude test files (use by default)
 - `-j` / `--json` — JSON output for programmatic use
 - `-f, --file <path>` — scope to a specific file
 - `-k, --kind <kind>` — filter by symbol kind
+
+### Semantic search
+
+Use `codegraph search` to find functions by intent rather than exact name.
+Combine multiple angles with `;` for better recall:
+
+    codegraph search "validate auth; check token; verify JWT"
+
+Multi-query uses Reciprocal Rank Fusion — functions ranking highly across
+queries surface first. Use 2-4 sub-queries (2-4 words each):
+- **Naming variants**: "send email; notify user; deliver message"
+- **Abstraction levels**: "handle payment; charge credit card"
+- **Input/output**: "parse config; apply settings"
+- **Domain + technical**: "onboard tenant; create organization"
+
+### Hooks (optional)
+
+Hooks in `.claude/hooks/` can automatically inject dependency context on reads,
+block commits with cycles or dead exports, and show diff-impact before commits.
+See `docs/examples/claude-code-hooks/` for setup.
 ```
 
 ---
