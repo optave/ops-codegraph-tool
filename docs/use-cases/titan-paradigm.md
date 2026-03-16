@@ -83,7 +83,7 @@ codegraph where resolveImports
 
 ### THE GAUNTLET: Audit every file against strict standards
 
-> **Claude Code skill:** [`/titan-gauntlet`](../examples/claude-code-skills/titan-gauntlet/SKILL.md) implements all 4 pillars (31 rules) with batch processing, multi-agent dispatch, context budget management, and session resumability via `titan-state.json`.
+> **Claude Code skill:** [`/titan-gauntlet`](../examples/claude-code-skills/titan-gauntlet/SKILL.md) implements all 4 pillars (17 rules) with batch processing, multi-agent dispatch, context budget management, and session resumability via `titan-state.json`.
 
 The Gauntlet needs each sub-agent to understand what a file does, what depends on it, and how risky changes are. The `audit` command gives each agent everything in one call:
 

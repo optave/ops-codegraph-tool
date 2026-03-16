@@ -90,7 +90,7 @@ If GAUNTLET runs out of context, just re-invoke `/titan-gauntlet` — it resumes
 
 ## Artifacts
 
-All artifacts are written to `.codegraph/titan/` (5 files, no redundancy):
+All artifacts are written to `.codegraph/titan/` (6 files, no redundancy):
 
 | File | Format | Written by | Read by |
 |------|--------|-----------|---------|
