@@ -70,7 +70,7 @@ const MAX_COL_WIDTH = 40;
  */
 function printAutoTable(data, field) {
   const items = field ? data[field] : data;
-  if (!Array.isArray(items) || items.length === 0) return;
+  if (!Array.isArray(items)) return;
 
   const flatItems = items.map((item) =>
     typeof item === 'object' && item !== null && !Array.isArray(item)
