@@ -27,7 +27,7 @@ export const command = {
     }
   },
   async execute([target], opts, ctx) {
-    const { complexity } = await import('../../commands/complexity.js');
+    const { complexity } = await import('../../presentation/complexity.js');
     complexity(opts.db, {
       target,
       limit: parseInt(opts.limit, 10),

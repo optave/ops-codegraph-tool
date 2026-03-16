@@ -15,7 +15,7 @@ export const command = {
     }
   },
   async execute([name], opts, ctx) {
-    const { cfg } = await import('../../commands/cfg.js');
+    const { cfg } = await import('../../presentation/cfg.js');
     cfg(name, opts.db, {
       format: opts.format,
       file: opts.file,

@@ -16,7 +16,7 @@ export const command = {
     }
   },
   async execute([name], opts, ctx) {
-    const { sequence } = await import('../../commands/sequence.js');
+    const { sequence } = await import('../../presentation/sequence.js');
     sequence(name, opts.db, {
       depth: parseInt(opts.depth, 10),
       file: opts.file,
