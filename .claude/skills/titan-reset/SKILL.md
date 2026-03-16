@@ -27,22 +27,13 @@ This restores the graph database to its pre-GAUNTLET state.
 codegraph snapshot delete titan-baseline 2>/dev/null
 ```
 
-Also delete any batch snapshots:
+Also delete any batch snapshots dynamically:
 
 ```bash
-codegraph snapshot delete titan-batch-1 2>/dev/null
-codegraph snapshot delete titan-batch-2 2>/dev/null
-codegraph snapshot delete titan-batch-3 2>/dev/null
-codegraph snapshot delete titan-batch-4 2>/dev/null
-codegraph snapshot delete titan-batch-5 2>/dev/null
-codegraph snapshot delete titan-batch-6 2>/dev/null
-codegraph snapshot delete titan-batch-7 2>/dev/null
-codegraph snapshot delete titan-batch-8 2>/dev/null
-codegraph snapshot delete titan-batch-9 2>/dev/null
-codegraph snapshot delete titan-batch-10 2>/dev/null
+for name in $(codegraph snapshot list --json 2>/dev/null | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));d.filter(s=>s.name.startsWith('titan-batch-')).forEach(s=>console.log(s.name))}catch(e){}"); do
+  codegraph snapshot delete "$name" 2>/dev/null
+done
 ```
-
-(Errors are expected for snapshots that don't exist — ignore them.)
 
 ---
 
