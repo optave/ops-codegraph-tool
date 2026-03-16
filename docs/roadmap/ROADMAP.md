@@ -17,7 +17,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.6.0) |
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
 | [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names, CLI composability | **In Progress** (v3.1.4) |
-| [**4**](#phase-4--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | Planned |
+| [**4**](#phase-4--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration, supply-chain security, CI coverage gates | Planned |
 | [**5**](#phase-5--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system | Planned |
 | [**6**](#phase-6--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
 | [**7**](#phase-7--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
@@ -933,7 +933,7 @@ The repository pattern (3.3) enables true unit testing. `InMemoryRepository` pro
 - ✅ `InMemoryRepository` at `src/db/repository/in-memory-repository.js` (v3.1.4, [#444](https://github.com/optave/codegraph/pull/444))
 - ✅ Pure unit tests for graph algorithms (pass adjacency list, assert result)
 - ✅ Pure unit tests for risk/confidence scoring (pass parameters, assert score)
-- 🔲 Migrate existing integration tests that only need query data to use `InMemoryRepository`
+- ✅ Migrate existing integration tests that only need query data to use `InMemoryRepository`
 
 ### 3.14 -- Presentation Layer Extraction ✅
 
@@ -1091,6 +1091,37 @@ Migrate top-level orchestration and entry points:
 **Verification:** All existing tests pass. `tsc --noEmit` succeeds with zero errors. No `any` escape hatches except at FFI boundaries (napi-rs addon, tree-sitter WASM).
 
 **Affected files:** All `src/**/*.js` -> `src/**/*.ts`, all `tests/**/*.js` -> `tests/**/*.ts`, `package.json`, `biome.json`
+
+### 4.7 -- Supply-Chain Security & Audit
+
+**Gap:** No `npm audit` in CI pipeline. No supply-chain attestation (SLSA/SBOM). No formal security audit history.
+
+**Deliverables:**
+
+1. **CI `npm audit`** -- add `npm audit --omit=dev` step to CI pipeline; fail on critical/high vulnerabilities
+2. **SBOM generation** -- produce CycloneDX or SPDX SBOM on each release via `@cyclonedx/cyclonedx-npm` or similar
+3. **SLSA provenance** -- enable SLSA Level 2+ build provenance using `actions/attest-build-provenance` in the publish workflow; attach attestation to npm packages
+4. **Security audit log** -- maintain `docs/security/AUDIT_LOG.md` documenting past audits, dependency reviews, and remediation history
+
+**Affected files:** `.github/workflows/ci.yml`, `.github/workflows/publish.yml`, `docs/security/`
+
+### 4.8 -- CI Test Quality & Coverage Gates
+
+**Gaps:**
+
+- No coverage thresholds enforced in CI (coverage report runs locally only)
+- Embedding tests in separate workflow requiring HuggingFace token
+- 312 `setTimeout`/`sleep` instances in tests — potential flakiness under load
+- No dependency audit step in CI (see also [4.7](#47----supply-chain-security--audit))
+
+**Deliverables:**
+
+1. **Coverage gate** -- add `vitest --coverage` to CI with minimum threshold (e.g. 80% lines/branches); fail the pipeline when coverage drops below the threshold
+2. **Unified test workflow** -- merge embedding tests into the main CI workflow using a securely stored `HF_TOKEN` secret; eliminate the separate workflow
+3. **Timer cleanup** -- audit and reduce `setTimeout`/`sleep` usage in tests; replace with deterministic waits (event-based, polling with backoff, or `vi.useFakeTimers()`) to reduce flakiness
+4. **Dependency audit step** -- add `npm audit --omit=dev` to CI (shared with 4.7)
+
+**Affected files:** `.github/workflows/ci.yml`, `vitest.config.js`, `tests/`
 
 ---
 
@@ -1592,7 +1623,7 @@ LLM-powered structural analysis that identifies refactoring opportunities. The g
 
 **Depends on:** 6.4 (`risk_score`, `complexity_notes`), 6.5 (module summaries)
 
-### 9.6 -- Auto-generated Docstrings
+### 9.5 -- Auto-generated Docstrings
 
 ```bash
 codegraph annotate
@@ -1604,6 +1635,7 @@ LLM-generated docstrings aware of callers, callees, and types. Diff-aware: only 
 **Depends on:** 6.1 (LLM provider abstraction), 6.4 (side effects context)
 
 > **Full spec:** See [llm-integration.md](./llm-integration.md) for detailed architecture, infrastructure tables, and prompt design for all LLM-powered features.
+
 
 ---
 
