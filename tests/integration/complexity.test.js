@@ -10,9 +10,9 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
-import { complexityData } from '../../src/complexity.js';
 import { loadConfig } from '../../src/config.js';
-import { initSchema } from '../../src/db.js';
+import { initSchema } from '../../src/db/index.js';
+import { complexityData } from '../../src/features/complexity.js';
 
 vi.mock('../../src/config.js', () => ({
   loadConfig: vi.fn(() => ({})),

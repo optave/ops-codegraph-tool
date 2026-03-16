@@ -1,5 +1,5 @@
-import { checkData } from '../check.js';
 import { AnalysisError } from '../errors.js';
+import { checkData } from '../features/check.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 
 /**

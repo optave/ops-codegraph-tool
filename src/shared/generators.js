@@ -1,4 +1,4 @@
-import { iterateFunctionNodes, openReadonlyOrFail } from '../db.js';
+import { iterateFunctionNodes, openReadonlyOrFail } from '../db/index.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { ALL_SYMBOL_KINDS } from '../kinds.js';
 

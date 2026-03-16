@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test, vi } from 'vitest';
-import { initSchema } from '../../src/db.js';
+import { initSchema } from '../../src/db/index.js';
 
 // ─── Mock setup ────────────────────────────────────────────────────────
 
@@ -31,7 +31,7 @@ import {
   EMBEDDING_STRATEGIES,
   estimateTokens,
   MODELS,
-} from '../../src/embeddings/index.js';
+} from '../../src/domain/search/index.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

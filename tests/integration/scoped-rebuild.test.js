@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { buildGraph } from '../../src/builder.js';
+import { buildGraph } from '../../src/domain/graph/builder.js';
 
 const FIXTURE_DIR = path.join(import.meta.dirname, '..', 'fixtures', 'sample-project');
 

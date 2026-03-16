@@ -1,4 +1,4 @@
-import { getClassHierarchy } from '../db.js';
+import { getClassHierarchy } from '../db/index.js';
 
 export function resolveMethodViaHierarchy(db, methodName) {
   const methods = db

@@ -1,5 +1,5 @@
-import { EVERY_SYMBOL_KIND } from '../../queries.js';
-import { fnImpact } from '../../queries-cli.js';
+import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
+import { fnImpact } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'fn-impact <name>',

@@ -8,8 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { buildGraph } from '../../src/builder.js';
-import { closeDb, openDb, setBuildMeta } from '../../src/db.js';
+import { closeDb, openDb, setBuildMeta } from '../../src/db/index.js';
+import { buildGraph } from '../../src/domain/graph/builder.js';
 import { JOURNAL_FILENAME, writeJournalHeader } from '../../src/journal.js';
 
 // ES-module versions of the sample-project fixture so the parser

@@ -3,7 +3,7 @@ import { effectiveOffset, MCP_DEFAULTS } from '../middleware.js';
 export const name = 'cfg';
 
 export async function handler(args, ctx) {
-  const { cfgData, cfgToDOT, cfgToMermaid } = await import('../../cfg.js');
+  const { cfgData, cfgToDOT, cfgToMermaid } = await import('../../features/cfg.js');
   const cfgResult = cfgData(args.name, ctx.dbPath, {
     file: args.file,
     kind: args.kind,

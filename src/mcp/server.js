@@ -6,7 +6,7 @@
  */
 
 import { createRequire } from 'node:module';
-import { findDbPath } from '../db.js';
+import { findDbPath } from '../db/index.js';
 import { CodegraphError, ConfigError } from '../errors.js';
 import { MCP_MAX_LIMIT } from '../paginate.js';
 import { buildToolList } from './tool-registry.js';
@@ -48,7 +48,7 @@ export async function startMCPServer(customDbPath, options = {}) {
 
   async function getQueries() {
     if (!_queries) {
-      _queries = await import('../queries.js');
+      _queries = await import('../domain/queries.js');
     }
     return _queries;
   }

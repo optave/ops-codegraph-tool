@@ -1,4 +1,4 @@
-import { where } from '../../queries-cli.js';
+import { where } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'where [name]',

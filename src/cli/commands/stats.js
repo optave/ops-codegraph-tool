@@ -1,4 +1,4 @@
-import { stats } from '../../queries-cli.js';
+import { stats } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'stats',

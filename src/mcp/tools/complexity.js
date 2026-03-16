@@ -3,7 +3,7 @@ import { effectiveLimit, effectiveOffset } from '../middleware.js';
 export const name = 'complexity';
 
 export async function handler(args, ctx) {
-  const { complexityData } = await import('../../complexity.js');
+  const { complexityData } = await import('../../features/complexity.js');
   return complexityData(ctx.dbPath, {
     target: args.name,
     file: args.file,

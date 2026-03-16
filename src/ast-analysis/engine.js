@@ -17,7 +17,7 @@
 
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { bulkNodeIdsByFile } from '../db.js';
+import { bulkNodeIdsByFile } from '../db/index.js';
 import { debug } from '../logger.js';
 import { computeLOCMetrics, computeMaintainabilityIndex } from './metrics.js';
 import {

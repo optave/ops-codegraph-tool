@@ -12,8 +12,8 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { buildAstNodes } from '../../src/ast.js';
-import { initSchema } from '../../src/db.js';
+import { initSchema } from '../../src/db/index.js';
+import { buildAstNodes } from '../../src/features/ast.js';
 import { loadNative } from '../../src/native.js';
 import { parseFilesAuto } from '../../src/parser.js';
 

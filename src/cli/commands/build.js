@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { buildGraph } from '../../builder.js';
+import { buildGraph } from '../../domain/graph/builder.js';
 
 export const command = {
   name: 'build [dir]',

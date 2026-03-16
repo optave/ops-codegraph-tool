@@ -1,6 +1,6 @@
-import { branchCompareData, branchCompareMermaid } from '../branch-compare.js';
+import { kindIcon } from '../domain/queries.js';
+import { branchCompareData, branchCompareMermaid } from '../features/branch-compare.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
-import { kindIcon } from '../queries.js';
 
 // ─── Text Formatting ────────────────────────────────────────────────────
 

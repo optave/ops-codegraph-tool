@@ -4,8 +4,8 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { auditData } from '../../src/audit.js';
-import { initSchema } from '../../src/db.js';
+import { initSchema } from '../../src/db/index.js';
+import { auditData } from '../../src/features/audit.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

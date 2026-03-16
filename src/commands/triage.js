@@ -1,5 +1,5 @@
+import { triageData } from '../features/triage.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
-import { triageData } from '../triage.js';
 
 /**
  * Print triage results to console.

@@ -1,4 +1,4 @@
-import { EVERY_SYMBOL_KIND } from '../../queries.js';
+import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 
 export const command = {
   name: 'cfg <name>',

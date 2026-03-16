@@ -1,4 +1,4 @@
-import { DEFAULT_MODEL, MODELS } from '../../embeddings/index.js';
+import { DEFAULT_MODEL, MODELS } from '../../domain/search/index.js';
 
 export const command = {
   name: 'models',

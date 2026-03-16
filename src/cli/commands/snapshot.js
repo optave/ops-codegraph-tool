@@ -1,4 +1,9 @@
-import { snapshotDelete, snapshotList, snapshotRestore, snapshotSave } from '../../snapshot.js';
+import {
+  snapshotDelete,
+  snapshotList,
+  snapshotRestore,
+  snapshotSave,
+} from '../../features/snapshot.js';
 
 export const command = {
   name: 'snapshot',

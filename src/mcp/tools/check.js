@@ -6,7 +6,7 @@ export async function handler(args, ctx) {
   const isDiffMode = args.ref || args.staged;
 
   if (!isDiffMode && !args.rules) {
-    const { manifestoData } = await import('../../manifesto.js');
+    const { manifestoData } = await import('../../features/manifesto.js');
     return manifestoData(ctx.dbPath, {
       file: args.file,
       noTests: args.no_tests,
@@ -16,7 +16,7 @@ export async function handler(args, ctx) {
     });
   }
 
-  const { checkData } = await import('../../check.js');
+  const { checkData } = await import('../../features/check.js');
   const checkResult = checkData(ctx.dbPath, {
     ref: args.ref,
     staged: args.staged,
@@ -29,7 +29,7 @@ export async function handler(args, ctx) {
   });
 
   if (args.rules) {
-    const { manifestoData } = await import('../../manifesto.js');
+    const { manifestoData } = await import('../../features/manifesto.js');
     const manifestoResult = manifestoData(ctx.dbPath, {
       file: args.file,
       noTests: args.no_tests,

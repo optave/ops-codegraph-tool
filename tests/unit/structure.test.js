@@ -7,8 +7,8 @@
 
 import Database from 'better-sqlite3';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { initSchema } from '../../src/db.js';
-import { buildStructure } from '../../src/structure.js';
+import { initSchema } from '../../src/db/index.js';
+import { buildStructure } from '../../src/features/structure.js';
 
 let db;
 

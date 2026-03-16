@@ -2,7 +2,7 @@
  * Unit tests for PipelineContext.
  */
 import { describe, expect, it } from 'vitest';
-import { PipelineContext } from '../../src/builder/context.js';
+import { PipelineContext } from '../../src/domain/graph/builder/context.js';
 
 describe('PipelineContext', () => {
   it('creates an instance with default values', () => {

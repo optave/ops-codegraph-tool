@@ -7,8 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, describe, expect, test } from 'vitest';
-import { purgeFilesFromGraph } from '../../src/builder.js';
-import { initSchema } from '../../src/db.js';
+import { initSchema } from '../../src/db/index.js';
+import { purgeFilesFromGraph } from '../../src/domain/graph/builder.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

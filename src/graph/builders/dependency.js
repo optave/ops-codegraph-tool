@@ -3,7 +3,7 @@
  * Replaces inline graph construction in cycles.js, communities.js, viewer.js, export.js.
  */
 
-import { getCallableNodes, getCallEdges, getFileNodesAll, getImportEdges } from '../../db.js';
+import { getCallableNodes, getCallEdges, getFileNodesAll, getImportEdges } from '../../db/index.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { CodeGraph } from '../model.js';
 

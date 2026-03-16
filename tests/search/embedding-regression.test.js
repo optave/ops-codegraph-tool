@@ -22,8 +22,8 @@ try {
 }
 
 // Lazy-import to avoid top-level errors when transformers is missing
-const { buildGraph } = await import('../../src/builder.js');
-const { buildEmbeddings, searchData } = await import('../../src/embeddings/index.js');
+const { buildGraph } = await import('../../src/domain/graph/builder.js');
+const { buildEmbeddings, searchData } = await import('../../src/domain/search/index.js');
 
 // Same ES-module fixture files used by build.test.js
 const FIXTURE_FILES = {

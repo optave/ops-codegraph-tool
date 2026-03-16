@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { watchProject } from '../../watcher.js';
+import { watchProject } from '../../domain/graph/watcher.js';
 
 export const command = {
   name: 'watch [dir]',

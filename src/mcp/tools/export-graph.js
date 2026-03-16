@@ -1,11 +1,11 @@
-import { findDbPath } from '../../db.js';
+import { findDbPath } from '../../db/index.js';
 import { effectiveOffset, MCP_DEFAULTS, MCP_MAX_LIMIT } from '../middleware.js';
 
 export const name = 'export_graph';
 
 export async function handler(args, ctx) {
   const { exportDOT, exportGraphML, exportGraphSON, exportJSON, exportMermaid, exportNeo4jCSV } =
-    await import('../../export.js');
+    await import('../../features/export.js');
   const Database = ctx.getDatabase();
   const db = new Database(findDbPath(ctx.dbPath), { readonly: true });
   const fileLevel = args.file_level !== false;

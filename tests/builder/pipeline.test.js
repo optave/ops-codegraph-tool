@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildGraph } from '../../src/builder/pipeline.js';
+import { buildGraph } from '../../src/domain/graph/builder/pipeline.js';
 
 const FIXTURE_DIR = path.join(import.meta.dirname, '..', 'fixtures', 'sample-project');
 let tmpDir;
@@ -73,7 +73,7 @@ describe('buildGraph pipeline', () => {
 
   it('exports from barrel are identical to direct import', async () => {
     // Verify the barrel re-export works
-    const { buildGraph: fromBarrel } = await import('../../src/builder.js');
+    const { buildGraph: fromBarrel } = await import('../../src/domain/graph/builder.js');
     expect(fromBarrel).toBe(buildGraph);
   });
 });

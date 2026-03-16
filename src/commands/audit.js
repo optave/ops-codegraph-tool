@@ -1,6 +1,6 @@
-import { auditData } from '../audit.js';
+import { kindIcon } from '../domain/queries.js';
+import { auditData } from '../features/audit.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
-import { kindIcon } from '../queries.js';
 
 /**
  * CLI formatter for the audit command.

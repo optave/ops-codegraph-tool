@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { openReadonlyOrFail } from '../../db.js';
+import { openReadonlyOrFail } from '../../db/index.js';
 
 export const command = {
   name: 'plot',

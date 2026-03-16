@@ -14,7 +14,7 @@ import {
   convertAliasesForNative,
   resolveImportPathJS,
   resolveImportsBatch,
-} from '../../src/resolve.js';
+} from '../../src/domain/graph/resolve.js';
 
 // ─── Temp project setup ──────────────────────────────────────────────
 

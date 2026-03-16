@@ -17,8 +17,13 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { BATCH_COMMANDS, batchData, multiBatchData, splitTargets } from '../../src/batch.js';
-import { initSchema } from '../../src/db.js';
+import { initSchema } from '../../src/db/index.js';
+import {
+  BATCH_COMMANDS,
+  batchData,
+  multiBatchData,
+  splitTargets,
+} from '../../src/features/batch.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

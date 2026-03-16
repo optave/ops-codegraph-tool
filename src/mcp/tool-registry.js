@@ -4,8 +4,8 @@
  * Owns BASE_TOOLS, LIST_REPOS_TOOL, buildToolList(), and the backward-compatible TOOLS export.
  */
 
-import { AST_NODE_KINDS } from '../ast.js';
-import { EVERY_EDGE_KIND, EVERY_SYMBOL_KIND, VALID_ROLES } from '../queries.js';
+import { EVERY_EDGE_KIND, EVERY_SYMBOL_KIND, VALID_ROLES } from '../domain/queries.js';
+import { AST_NODE_KINDS } from '../features/ast.js';
 
 const REPO_PROP = {
   repo: {

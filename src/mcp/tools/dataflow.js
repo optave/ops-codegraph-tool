@@ -5,7 +5,7 @@ export const name = 'dataflow';
 export async function handler(args, ctx) {
   const dfMode = args.mode || 'edges';
   if (dfMode === 'impact') {
-    const { dataflowImpactData } = await import('../../dataflow.js');
+    const { dataflowImpactData } = await import('../../features/dataflow.js');
     return dataflowImpactData(args.name, ctx.dbPath, {
       depth: args.depth,
       file: args.file,
@@ -15,7 +15,7 @@ export async function handler(args, ctx) {
       offset: effectiveOffset(args),
     });
   }
-  const { dataflowData } = await import('../../dataflow.js');
+  const { dataflowData } = await import('../../features/dataflow.js');
   return dataflowData(args.name, ctx.dbPath, {
     file: args.file,
     kind: args.kind,

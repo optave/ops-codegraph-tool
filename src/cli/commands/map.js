@@ -1,4 +1,4 @@
-import { moduleMap } from '../../queries-cli.js';
+import { moduleMap } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'map',

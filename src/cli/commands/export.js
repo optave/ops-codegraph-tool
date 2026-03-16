@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { openReadonlyOrFail } from '../../db.js';
+import { openReadonlyOrFail } from '../../db/index.js';
 import {
   exportDOT,
   exportGraphML,
@@ -7,7 +7,7 @@ import {
   exportJSON,
   exportMermaid,
   exportNeo4jCSV,
-} from '../../export.js';
+} from '../../features/export.js';
 
 export const command = {
   name: 'export',

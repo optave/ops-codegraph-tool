@@ -3,7 +3,7 @@ import { effectiveLimit, effectiveOffset } from '../middleware.js';
 export const name = 'ast_query';
 
 export async function handler(args, ctx) {
-  const { astQueryData } = await import('../../ast.js');
+  const { astQueryData } = await import('../../features/ast.js');
   return astQueryData(args.pattern, ctx.dbPath, {
     kind: args.kind,
     file: args.file,

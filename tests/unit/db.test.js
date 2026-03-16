@@ -16,7 +16,7 @@ import {
   openDb,
   openReadonlyOrFail,
   setBuildMeta,
-} from '../../src/db.js';
+} from '../../src/db/index.js';
 
 let tmpDir;
 

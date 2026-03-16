@@ -3,7 +3,7 @@ import { effectiveLimit, effectiveOffset } from '../middleware.js';
 export const name = 'co_changes';
 
 export async function handler(args, ctx) {
-  const { coChangeData, coChangeTopData } = await import('../../cochange.js');
+  const { coChangeData, coChangeTopData } = await import('../../features/cochange.js');
   return args.file
     ? coChangeData(args.file, ctx.dbPath, {
         limit: effectiveLimit(args, name),

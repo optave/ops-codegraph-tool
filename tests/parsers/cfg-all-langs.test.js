@@ -13,9 +13,9 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { buildCFGData, buildFunctionCFG } from '../../src/cfg.js';
-import { COMPLEXITY_RULES, findFunctionNode } from '../../src/complexity.js';
-import { initSchema } from '../../src/db.js';
+import { initSchema } from '../../src/db/index.js';
+import { buildCFGData, buildFunctionCFG } from '../../src/features/cfg.js';
+import { COMPLEXITY_RULES, findFunctionNode } from '../../src/features/complexity.js';
 import { loadNative } from '../../src/native.js';
 import { createParsers, getParser, parseFilesAuto } from '../../src/parser.js';
 

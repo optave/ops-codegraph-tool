@@ -13,7 +13,7 @@ import {
   computeLOCMetrics,
   computeMaintainabilityIndex,
   HALSTEAD_RULES,
-} from '../../src/complexity.js';
+} from '../../src/features/complexity.js';
 import { createParsers } from '../../src/parser.js';
 
 let jsParser;

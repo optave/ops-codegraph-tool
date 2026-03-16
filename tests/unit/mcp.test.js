@@ -6,7 +6,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildToolList, TOOLS } from '../../src/mcp.js';
+import { buildToolList, TOOLS } from '../../src/mcp/index.js';
 
 const ALL_TOOL_NAMES = [
   'query',
@@ -281,7 +281,7 @@ describe('startMCPServer handler dispatch', () => {
     }));
 
     // Mock query functions
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -309,7 +309,7 @@ describe('startMCPServer handler dispatch', () => {
     }));
 
     // Clear module cache and reimport
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer('/tmp/test.db');
 
     // Test tools/list — single-repo mode by default (no list_repos)
@@ -352,7 +352,7 @@ describe('startMCPServer handler dispatch', () => {
     }));
 
     const fnDepsMock = vi.fn(() => ({ name: 'myFn', results: [{ callers: [] }] }));
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -373,7 +373,7 @@ describe('startMCPServer handler dispatch', () => {
       pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer('/tmp/test.db');
 
     const result = await handlers['tools/call']({
@@ -413,7 +413,7 @@ describe('startMCPServer handler dispatch', () => {
     }));
 
     const fnImpactMock = vi.fn(() => ({ name: 'test', results: [] }));
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -434,7 +434,7 @@ describe('startMCPServer handler dispatch', () => {
       pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer('/tmp/test.db');
 
     const result = await handlers['tools/call']({
@@ -471,7 +471,7 @@ describe('startMCPServer handler dispatch', () => {
     }));
 
     const diffImpactMock = vi.fn(() => ({ changedFiles: 2, affectedFunctions: [] }));
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -492,7 +492,7 @@ describe('startMCPServer handler dispatch', () => {
       pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer('/tmp/test.db');
 
     const result = await handlers['tools/call']({
@@ -532,7 +532,7 @@ describe('startMCPServer handler dispatch', () => {
       count: 3,
       functions: [{ name: 'a' }, { name: 'b' }, { name: 'c' }],
     }));
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -553,7 +553,7 @@ describe('startMCPServer handler dispatch', () => {
       pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer('/tmp/test.db');
 
     const result = await handlers['tools/call']({
@@ -594,7 +594,7 @@ describe('startMCPServer handler dispatch', () => {
     }));
 
     const fnDepsMock = vi.fn(() => ({ name: 'test', results: [] }));
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -615,7 +615,7 @@ describe('startMCPServer handler dispatch', () => {
       pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer(undefined, { multiRepo: true });
 
     const result = await handlers['tools/call']({
@@ -653,7 +653,7 @@ describe('startMCPServer handler dispatch', () => {
     vi.doMock('../../src/registry.js', () => ({
       resolveRepoDbPath: vi.fn(() => undefined),
     }));
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -674,7 +674,7 @@ describe('startMCPServer handler dispatch', () => {
       pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer(undefined, { multiRepo: true });
 
     const result = await handlers['tools/call']({
@@ -706,7 +706,7 @@ describe('startMCPServer handler dispatch', () => {
     vi.doMock('../../src/registry.js', () => ({
       resolveRepoDbPath: vi.fn(() => '/some/path'),
     }));
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -727,7 +727,7 @@ describe('startMCPServer handler dispatch', () => {
       pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer(undefined, { allowedRepos: ['allowed-repo'] });
 
     const result = await handlers['tools/call']({
@@ -761,7 +761,7 @@ describe('startMCPServer handler dispatch', () => {
     }));
 
     const fnDepsMock = vi.fn(() => ({ name: 'test', results: [] }));
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -782,7 +782,7 @@ describe('startMCPServer handler dispatch', () => {
       pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer(undefined, { allowedRepos: ['my-repo'] });
 
     const result = await handlers['tools/call']({
@@ -826,7 +826,7 @@ describe('startMCPServer handler dispatch', () => {
       ]),
       pruneRegistry: vi.fn(),
     }));
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -847,7 +847,7 @@ describe('startMCPServer handler dispatch', () => {
       pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer(undefined, { allowedRepos: ['alpha', 'gamma'] });
 
     const result = await handlers['tools/call']({
@@ -884,7 +884,7 @@ describe('startMCPServer handler dispatch', () => {
       ]),
       pruneRegistry: vi.fn(),
     }));
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -905,7 +905,7 @@ describe('startMCPServer handler dispatch', () => {
       pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer(undefined, { multiRepo: true });
 
     const result = await handlers['tools/call']({
@@ -933,7 +933,7 @@ describe('startMCPServer handler dispatch', () => {
       ListToolsRequestSchema: 'tools/list',
       CallToolRequestSchema: 'tools/call',
     }));
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -954,7 +954,7 @@ describe('startMCPServer handler dispatch', () => {
       pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer('/tmp/test.db');
 
     const result = await handlers['tools/call']({
@@ -983,7 +983,7 @@ describe('startMCPServer handler dispatch', () => {
       ListToolsRequestSchema: 'tools/list',
       CallToolRequestSchema: 'tools/call',
     }));
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -1004,7 +1004,7 @@ describe('startMCPServer handler dispatch', () => {
       pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer('/tmp/test.db');
 
     const result = await handlers['tools/call']({
@@ -1033,7 +1033,7 @@ describe('startMCPServer handler dispatch', () => {
       ListToolsRequestSchema: 'tools/list',
       CallToolRequestSchema: 'tools/call',
     }));
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -1054,7 +1054,7 @@ describe('startMCPServer handler dispatch', () => {
       pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
     }));
 
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer('/tmp/test.db');
 
     const toolsList = await handlers['tools/list']();
@@ -1084,7 +1084,7 @@ describe('startMCPServer handler dispatch', () => {
       CallToolRequestSchema: 'tools/call',
     }));
 
-    vi.doMock('../../src/queries.js', () => ({
+    vi.doMock('../../src/domain/queries.js', () => ({
       EVERY_SYMBOL_KIND: [],
       EVERY_EDGE_KIND: [],
       VALID_ROLES: [],
@@ -1110,11 +1110,11 @@ describe('startMCPServer handler dispatch', () => {
       summary: { analyzed: 1, avgCognitive: 50, avgCyclomatic: 20 },
       thresholds: { cognitive: { warn: 15 }, cyclomatic: { warn: 10 }, maxNesting: { warn: 4 } },
     }));
-    vi.doMock('../../src/complexity.js', () => ({
+    vi.doMock('../../src/features/complexity.js', () => ({
       complexityData: complexityMock,
     }));
 
-    const { startMCPServer } = await import('../../src/mcp.js');
+    const { startMCPServer } = await import('../../src/mcp/index.js');
     await startMCPServer('/tmp/test.db');
 
     const result = await handlers['tools/call']({
