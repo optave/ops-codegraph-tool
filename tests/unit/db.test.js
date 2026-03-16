@@ -19,8 +19,8 @@ vi.mock('node:child_process', async (importOriginal) => {
   return { ...mod, execFileSync: execFileSyncSpy };
 });
 
+import { _resetRepoRootCache } from '../../src/db/connection.js';
 import {
-  _resetRepoRootCache,
   closeDb,
   findDbPath,
   findRepoRoot,

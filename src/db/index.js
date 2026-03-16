@@ -1,6 +1,5 @@
 // Barrel re-export — keeps all existing `import { ... } from '…/db/index.js'` working.
 export {
-  _resetRepoRootCache,
   closeDb,
   findDbPath,
   findRepoRoot,
