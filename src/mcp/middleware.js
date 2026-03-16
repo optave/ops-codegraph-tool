@@ -2,7 +2,7 @@
  * MCP middleware helpers — pagination defaults and limits.
  */
 
-import { MCP_DEFAULTS, MCP_MAX_LIMIT } from '../paginate.js';
+import { MCP_DEFAULTS, MCP_MAX_LIMIT } from '../shared/paginate.js';
 
 export { MCP_DEFAULTS, MCP_MAX_LIMIT };
 

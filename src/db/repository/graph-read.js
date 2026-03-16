@@ -1,4 +1,4 @@
-import { CORE_SYMBOL_KINDS } from '../../kinds.js';
+import { CORE_SYMBOL_KINDS } from '../../shared/kinds.js';
 import { cachedStmt } from './cached-stmt.js';
 
 // ─── Statement caches (one prepared statement per db instance) ────────────

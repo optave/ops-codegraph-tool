@@ -12,7 +12,7 @@ import {
   EngineError,
   ParseError,
   ResolutionError,
-} from '../../src/errors.js';
+} from '../../src/shared/errors.js';
 
 describe('CodegraphError', () => {
   it('sets defaults', () => {

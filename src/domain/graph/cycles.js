@@ -1,7 +1,7 @@
 import { tarjan } from '../../graph/algorithms/tarjan.js';
 import { buildDependencyGraph } from '../../graph/builders/dependency.js';
 import { CodeGraph } from '../../graph/model.js';
-import { loadNative } from '../../native.js';
+import { loadNative } from '../../infrastructure/native.js';
 
 /**
  * Detect circular dependencies in the codebase using Tarjan's SCC algorithm.

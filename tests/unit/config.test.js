@@ -12,7 +12,7 @@ import {
   DEFAULTS,
   loadConfig,
   resolveSecrets,
-} from '../../src/config.js';
+} from '../../src/infrastructure/config.js';
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal();

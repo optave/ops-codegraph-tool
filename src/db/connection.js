@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { DbError } from '../errors.js';
-import { warn } from '../logger.js';
+import { warn } from '../infrastructure/logger.js';
+import { DbError } from '../shared/errors.js';
 
 function isProcessAlive(pid) {
   try {

@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createParsers, extractRubySymbols } from '../../src/parser.js';
+import { createParsers, extractRubySymbols } from '../../src/domain/parser.js';
 
 describe('Ruby parser', () => {
   let parsers;

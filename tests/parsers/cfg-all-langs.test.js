@@ -14,10 +14,10 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { initSchema } from '../../src/db/index.js';
+import { createParsers, getParser, parseFilesAuto } from '../../src/domain/parser.js';
 import { buildCFGData, buildFunctionCFG } from '../../src/features/cfg.js';
 import { COMPLEXITY_RULES, findFunctionNode } from '../../src/features/complexity.js';
-import { loadNative } from '../../src/native.js';
-import { createParsers, getParser, parseFilesAuto } from '../../src/parser.js';
+import { loadNative } from '../../src/infrastructure/native.js';
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 

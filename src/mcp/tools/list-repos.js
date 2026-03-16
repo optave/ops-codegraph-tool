@@ -1,7 +1,7 @@
 export const name = 'list_repos';
 
 export async function handler(_args, ctx) {
-  const { listRepos, pruneRegistry } = await import('../../registry.js');
+  const { listRepos, pruneRegistry } = await import('../../infrastructure/registry.js');
   pruneRegistry();
   let repos = listRepos();
   if (ctx.allowedRepos) {

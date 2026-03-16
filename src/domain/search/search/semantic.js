@@ -1,4 +1,4 @@
-import { warn } from '../../../logger.js';
+import { warn } from '../../../infrastructure/logger.js';
 import { normalizeSymbol } from '../../queries.js';
 import { embed } from '../models.js';
 import { cosineSim } from '../stores/sqlite-blob.js';

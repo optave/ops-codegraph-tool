@@ -8,6 +8,7 @@
 
 // ── Re-export from dedicated module for backward compat ───────────────────
 export { isTestFile, TEST_PATTERN } from '../infrastructure/test-filter.js';
+export { iterListFunctions, iterRoles, iterWhere } from '../shared/generators.js';
 // ── Kind/edge constants (canonical source: kinds.js) ─────────────────────
 export {
   ALL_SYMBOL_KINDS,
@@ -18,8 +19,7 @@ export {
   EXTENDED_SYMBOL_KINDS,
   STRUCTURAL_EDGE_KINDS,
   VALID_ROLES,
-} from '../kinds.js';
-export { iterListFunctions, iterRoles, iterWhere } from '../shared/generators.js';
+} from '../shared/kinds.js';
 // ── Shared utilities ─────────────────────────────────────────────────────
 export { kindIcon, normalizeSymbol } from '../shared/normalize.js';
 export { contextData, explainData } from './analysis/context.js';

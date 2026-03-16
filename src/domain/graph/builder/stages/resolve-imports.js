@@ -6,7 +6,7 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { parseFilesAuto } from '../../../../parser.js';
+import { parseFilesAuto } from '../../../parser.js';
 import { resolveImportPath, resolveImportsBatch } from '../../resolve.js';
 
 /**

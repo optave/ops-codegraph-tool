@@ -14,7 +14,7 @@ import {
   resolveImportPathJS,
   resolveImportsBatch,
 } from '../../src/domain/graph/resolve.js';
-import { isNativeAvailable, loadNative } from '../../src/native.js';
+import { isNativeAvailable, loadNative } from '../../src/infrastructure/native.js';
 
 const hasNative = isNativeAvailable();
 

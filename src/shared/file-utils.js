@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { debug } from '../logger.js';
-import { LANGUAGE_REGISTRY } from '../parser.js';
+import { LANGUAGE_REGISTRY } from '../domain/parser.js';
+import { debug } from '../infrastructure/logger.js';
 
 /**
  * Resolve a file path relative to repoRoot, rejecting traversal outside the repo.

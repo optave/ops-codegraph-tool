@@ -12,9 +12,9 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
+import { createParsers, getParser } from '../../src/domain/parser.js';
 import { extractDataflow } from '../../src/features/dataflow.js';
-import { isNativeAvailable } from '../../src/native.js';
-import { createParsers, getParser } from '../../src/parser.js';
+import { isNativeAvailable } from '../../src/infrastructure/native.js';
 
 let native;
 let parsers;
@@ -136,7 +136,7 @@ const describeOrSkip = hasNative ? describe : describe.skip;
 describeOrSkip('Cross-engine dataflow parity', () => {
   beforeAll(async () => {
     if (!hasNative) return;
-    const { getNative } = await import('../../src/native.js');
+    const { getNative } = await import('../../src/infrastructure/native.js');
     native = getNative();
     nativeHasDataflow = detectNativeDataflow();
     parsers = await createParsers();

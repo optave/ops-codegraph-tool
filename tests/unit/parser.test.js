@@ -4,7 +4,7 @@
 
 import fs from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { isWasmAvailable, LANGUAGE_REGISTRY } from '../../src/parser.js';
+import { isWasmAvailable, LANGUAGE_REGISTRY } from '../../src/domain/parser.js';
 
 describe('isWasmAvailable', () => {
   afterEach(() => {

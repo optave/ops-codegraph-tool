@@ -5,7 +5,7 @@
  */
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { isNativeAvailable, loadNative } from '../../src/native.js';
+import { isNativeAvailable, loadNative } from '../../src/infrastructure/native.js';
 
 const hasNative = isNativeAvailable();
 

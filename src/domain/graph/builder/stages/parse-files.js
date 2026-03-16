@@ -5,8 +5,8 @@
  * Populates ctx.allSymbols, ctx.fileSymbols, ctx.filesToParse.
  */
 import { performance } from 'node:perf_hooks';
-import { info } from '../../../../logger.js';
-import { parseFilesAuto } from '../../../../parser.js';
+import { info } from '../../../../infrastructure/logger.js';
+import { parseFilesAuto } from '../../../parser.js';
 
 /**
  * @param {import('../context.js').PipelineContext} ctx

@@ -3,9 +3,9 @@ export const command = {
   description: 'Show codegraph engine info and diagnostics',
   async execute(_args, _opts, ctx) {
     const { getNativePackageVersion, isNativeAvailable, loadNative } = await import(
-      '../../native.js'
+      '../../infrastructure/native.js'
     );
-    const { getActiveEngine } = await import('../../parser.js');
+    const { getActiveEngine } = await import('../../domain/parser.js');
 
     const engine = ctx.program.opts().engine;
     const { name: activeName, version: activeVersion } = getActiveEngine({ engine });

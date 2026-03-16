@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { findDbPath } from '../db/index.js';
-import { ConfigError, DbError } from '../errors.js';
-import { debug } from '../logger.js';
+import { debug } from '../infrastructure/logger.js';
+import { ConfigError, DbError } from '../shared/errors.js';
 
 const NAME_RE = /^[a-zA-Z0-9_-]+$/;
 

@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { ConfigError } from '../../errors.js';
 import {
   listRepos,
   pruneRegistry,
   REGISTRY_PATH,
   registerRepo,
   unregisterRepo,
-} from '../../registry.js';
+} from '../../infrastructure/registry.js';
+import { ConfigError } from '../../shared/errors.js';
 
 export const command = {
   name: 'registry',

@@ -4,7 +4,7 @@
  * Dispatches to the unified AST analysis engine (AST nodes, complexity, CFG, dataflow).
  * Filters out reverse-dep files for incremental builds.
  */
-import { debug, warn } from '../../../../logger.js';
+import { debug, warn } from '../../../../infrastructure/logger.js';
 
 /**
  * @param {import('../context.js').PipelineContext} ctx

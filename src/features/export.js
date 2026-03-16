@@ -1,6 +1,5 @@
 import path from 'node:path';
 import { isTestFile } from '../infrastructure/test-filter.js';
-import { paginateResult } from '../paginate.js';
 import {
   renderFileLevelDOT,
   renderFileLevelGraphML,
@@ -11,6 +10,7 @@ import {
   renderFunctionLevelMermaid,
   renderFunctionLevelNeo4jCSV,
 } from '../presentation/export.js';
+import { paginateResult } from '../shared/paginate.js';
 
 const DEFAULT_MIN_CONFIDENCE = 0.5;
 

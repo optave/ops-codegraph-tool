@@ -42,21 +42,28 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 |------|------|
 | `cli.js` | Commander CLI entry point (`bin.codegraph`) |
 | `index.js` | Programmatic API exports |
-| `parser.js` | tree-sitter WASM wrapper; `LANGUAGE_REGISTRY` + per-language extractors for functions, classes, methods, imports, exports, call sites |
-| `config.js` | `.codegraphrc.json` loading, env overrides, `apiKeyCommand` secret resolution |
-| `constants.js` | `EXTENSIONS` (derived from parser registry) and `IGNORE_DIRS` constants |
-| `native.js` | Native napi-rs addon loader with WASM fallback |
-| `registry.js` | Global repo registry (`~/.codegraph/registry.json`) for multi-repo MCP |
-| `paginate.js` | Pagination helpers for bounded query results |
-| `logger.js` | Structured logging (`warn`, `debug`, `info`, `error`) |
+| **`shared/`** | **Cross-cutting constants and utilities** |
+| `shared/constants.js` | `EXTENSIONS` (derived from parser registry) and `IGNORE_DIRS` constants |
+| `shared/errors.js` | Domain error hierarchy (`CodegraphError`, `ConfigError`, `ParseError`, etc.) |
+| `shared/kinds.js` | Symbol and edge kind constants (`CORE_SYMBOL_KINDS`, `EVERY_SYMBOL_KIND`, `VALID_ROLES`) |
+| `shared/paginate.js` | Pagination helpers for bounded query results |
+| **`infrastructure/`** | **Platform and I/O plumbing** |
+| `infrastructure/config.js` | `.codegraphrc.json` loading, env overrides, `apiKeyCommand` secret resolution |
+| `infrastructure/logger.js` | Structured logging (`warn`, `debug`, `info`, `error`) |
+| `infrastructure/native.js` | Native napi-rs addon loader with WASM fallback |
+| `infrastructure/registry.js` | Global repo registry (`~/.codegraph/registry.json`) for multi-repo MCP |
+| `infrastructure/update-check.js` | npm update availability check |
 | **`db/`** | **Database layer** |
 | `db/index.js` | SQLite schema and operations (`better-sqlite3`) |
 | **`domain/`** | **Core domain logic** |
-| `domain/queries.js` | Query functions: symbol search, file deps, impact analysis, diff-impact; `SYMBOL_KINDS` constant defines all node kinds |
+| `domain/parser.js` | tree-sitter WASM wrapper; `LANGUAGE_REGISTRY` + per-language extractors for functions, classes, methods, imports, exports, call sites |
+| `domain/queries.js` | Query functions: symbol search, file deps, impact analysis, diff-impact |
 | `domain/graph/builder.js` | Graph building: file collection, parsing, import resolution, incremental hashing |
 | `domain/graph/cycles.js` | Circular dependency detection (delegates to `graph/` subsystem) |
 | `domain/graph/resolve.js` | Import resolution (supports native batch mode) |
 | `domain/graph/watcher.js` | Watch mode for incremental rebuilds |
+| `domain/graph/journal.js` | Change journal for incremental builds |
+| `domain/graph/change-journal.js` | Change event tracking (NDJSON) |
 | `domain/analysis/` | Query-layer analysis: context, dependencies, exports, impact, module-map, roles, symbol-lookup |
 | `domain/search/` | Embedding subsystem: model management, vector generation, semantic/keyword/hybrid search, CLI formatting |
 | **`features/`** | **Composable feature modules** |
@@ -87,7 +94,7 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 - **Dual-engine architecture:** Native Rust parsing via napi-rs (`crates/codegraph-core/`) with automatic fallback to WASM. Controlled by `--engine native|wasm|auto` (default: `auto`)
 - Platform-specific prebuilt binaries published as optional npm packages (`@optave/codegraph-{platform}-{arch}`)
 - WASM grammars are built from devDeps on `npm install` (via `prepare` script) and not committed to git — used as fallback when native addon is unavailable
-- **Language parser registry:** `LANGUAGE_REGISTRY` in `parser.js` is the single source of truth for all supported languages — maps each language to `{ id, extensions, grammarFile, extractor, required }`. `EXTENSIONS` in `constants.js` is derived from the registry. Adding a new language requires one registry entry + extractor function
+- **Language parser registry:** `LANGUAGE_REGISTRY` in `domain/parser.js` is the single source of truth for all supported languages — maps each language to `{ id, extensions, grammarFile, extractor, required }`. `EXTENSIONS` in `shared/constants.js` is derived from the registry. Adding a new language requires one registry entry + extractor function
 - **Node kinds:** `SYMBOL_KINDS` in `domain/queries.js` lists all valid kinds: `function`, `method`, `class`, `interface`, `type`, `struct`, `enum`, `trait`, `record`, `module`. Language-specific types use their native kind (e.g. Go structs → `struct`, Rust traits → `trait`, Ruby modules → `module`) rather than mapping everything to `class`/`interface`
 - `@huggingface/transformers` and `@modelcontextprotocol/sdk` are optional dependencies, lazy-loaded
 - Non-required parsers (all except JS/TS/TSX) fail gracefully if their WASM grammar is unavailable

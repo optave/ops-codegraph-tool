@@ -5,8 +5,8 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { normalizePath } from '../../../../constants.js';
-import { debug } from '../../../../logger.js';
+import { debug } from '../../../../infrastructure/logger.js';
+import { normalizePath } from '../../../../shared/constants.js';
 import { readFileSafe } from '../helpers.js';
 
 /**

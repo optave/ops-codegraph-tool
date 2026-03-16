@@ -15,7 +15,7 @@ import {
   impactAnalysisData,
   whereData,
 } from '../domain/queries.js';
-import { ConfigError } from '../errors.js';
+import { ConfigError } from '../shared/errors.js';
 import { complexityData } from './complexity.js';
 import { dataflowData } from './dataflow.js';
 import { flowData } from './flow.js';

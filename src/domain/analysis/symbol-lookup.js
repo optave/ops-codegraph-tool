@@ -14,9 +14,9 @@ import {
   openReadonlyOrFail,
 } from '../../db/index.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
-import { ALL_SYMBOL_KINDS } from '../../kinds.js';
-import { paginateResult } from '../../paginate.js';
+import { ALL_SYMBOL_KINDS } from '../../shared/kinds.js';
 import { getFileHash, normalizeSymbol } from '../../shared/normalize.js';
+import { paginateResult } from '../../shared/paginate.js';
 
 const FUNCTION_KINDS = ['function', 'method', 'class'];
 

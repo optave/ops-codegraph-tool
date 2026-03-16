@@ -1,4 +1,4 @@
-import { warn } from '../../../logger.js';
+import { warn } from '../../../infrastructure/logger.js';
 import { hybridSearchData } from './hybrid.js';
 import { ftsSearchData } from './keyword.js';
 import { multiSearchData, searchData } from './semantic.js';

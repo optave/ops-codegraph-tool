@@ -1,5 +1,5 @@
-import { ConfigError } from '../../errors.js';
-import { EVERY_SYMBOL_KIND, VALID_ROLES } from '../../kinds.js';
+import { ConfigError } from '../../shared/errors.js';
+import { EVERY_SYMBOL_KIND, VALID_ROLES } from '../../shared/kinds.js';
 import { escapeLike, NodeQuery } from '../query-builder.js';
 import { cachedStmt } from './cached-stmt.js';
 

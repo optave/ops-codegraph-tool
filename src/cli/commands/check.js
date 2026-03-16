@@ -1,5 +1,5 @@
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
-import { ConfigError } from '../../errors.js';
+import { ConfigError } from '../../shared/errors.js';
 
 export const command = {
   name: 'check [ref]',

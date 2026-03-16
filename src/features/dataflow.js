@@ -21,9 +21,9 @@ import { walkWithVisitors } from '../ast-analysis/visitor.js';
 import { createDataflowVisitor } from '../ast-analysis/visitors/dataflow-visitor.js';
 import { hasDataflowTable, openReadonlyOrFail } from '../db/index.js';
 import { ALL_SYMBOL_KINDS, normalizeSymbol } from '../domain/queries.js';
+import { info } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
-import { info } from '../logger.js';
-import { paginateResult } from '../paginate.js';
+import { paginateResult } from '../shared/paginate.js';
 
 // Re-export for backward compatibility
 export { _makeDataflowRules as makeDataflowRules, DATAFLOW_RULES };
@@ -88,13 +88,13 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
   }
 
   if (needsFallback) {
-    const { createParsers } = await import('./parser.js');
+    const { createParsers } = await import('../domain/parser.js');
     parsers = await createParsers();
   }
 
   let getParserFn = null;
   if (parsers) {
-    const mod = await import('./parser.js');
+    const mod = await import('../domain/parser.js');
     getParserFn = mod.getParser;
   }
 

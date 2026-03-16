@@ -3,7 +3,14 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { debug, error, info, isVerbose, setVerbose, warn } from '../../src/logger.js';
+import {
+  debug,
+  error,
+  info,
+  isVerbose,
+  setVerbose,
+  warn,
+} from '../../src/infrastructure/logger.js';
 
 describe('logger', () => {
   let stderrSpy;

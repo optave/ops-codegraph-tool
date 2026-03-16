@@ -6,10 +6,10 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { loadConfig } from '../../../config.js';
 import { closeDb, getBuildMeta, initSchema, MIGRATIONS, openDb } from '../../../db/index.js';
-import { info } from '../../../logger.js';
-import { getActiveEngine } from '../../../parser.js';
+import { loadConfig } from '../../../infrastructure/config.js';
+import { info } from '../../../infrastructure/logger.js';
+import { getActiveEngine } from '../../parser.js';
 import { PipelineContext } from './context.js';
 import { loadPathAliases } from './helpers.js';
 import { buildEdges } from './stages/build-edges.js';

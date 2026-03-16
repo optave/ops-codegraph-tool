@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { ConfigError, EngineError } from '../../errors.js';
-import { info } from '../../logger.js';
+import { info } from '../../infrastructure/logger.js';
+import { ConfigError, EngineError } from '../../shared/errors.js';
 
 // Lazy-load transformers (heavy, optional module)
 let pipeline = null;

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { debug, warn } from './logger.js';
+import { debug, warn } from '../../infrastructure/logger.js';
 
 export const JOURNAL_FILENAME = 'changes.journal';
 const HEADER_PREFIX = '# codegraph-journal v1 ';

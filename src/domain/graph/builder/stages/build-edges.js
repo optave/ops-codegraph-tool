@@ -7,7 +7,7 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { getNodeId } from '../../../../db/index.js';
-import { loadNative } from '../../../../native.js';
+import { loadNative } from '../../../../infrastructure/native.js';
 import { computeConfidence } from '../../resolve.js';
 import { BUILTIN_RECEIVERS, batchInsertEdges } from '../helpers.js';
 import { getResolved, isBarrelFile, resolveBarrelExport } from './resolve-imports.js';

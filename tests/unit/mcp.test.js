@@ -587,7 +587,7 @@ describe('startMCPServer handler dispatch', () => {
       ListToolsRequestSchema: 'tools/list',
       CallToolRequestSchema: 'tools/call',
     }));
-    vi.doMock('../../src/registry.js', () => ({
+    vi.doMock('../../src/infrastructure/registry.js', () => ({
       resolveRepoDbPath: vi.fn((name) =>
         name === 'my-project' ? '/resolved/path/.codegraph/graph.db' : undefined,
       ),
@@ -650,7 +650,7 @@ describe('startMCPServer handler dispatch', () => {
       ListToolsRequestSchema: 'tools/list',
       CallToolRequestSchema: 'tools/call',
     }));
-    vi.doMock('../../src/registry.js', () => ({
+    vi.doMock('../../src/infrastructure/registry.js', () => ({
       resolveRepoDbPath: vi.fn(() => undefined),
     }));
     vi.doMock('../../src/domain/queries.js', () => ({
@@ -703,7 +703,7 @@ describe('startMCPServer handler dispatch', () => {
       ListToolsRequestSchema: 'tools/list',
       CallToolRequestSchema: 'tools/call',
     }));
-    vi.doMock('../../src/registry.js', () => ({
+    vi.doMock('../../src/infrastructure/registry.js', () => ({
       resolveRepoDbPath: vi.fn(() => '/some/path'),
     }));
     vi.doMock('../../src/domain/queries.js', () => ({
@@ -756,7 +756,7 @@ describe('startMCPServer handler dispatch', () => {
       ListToolsRequestSchema: 'tools/list',
       CallToolRequestSchema: 'tools/call',
     }));
-    vi.doMock('../../src/registry.js', () => ({
+    vi.doMock('../../src/infrastructure/registry.js', () => ({
       resolveRepoDbPath: vi.fn(() => '/resolved/db'),
     }));
 
@@ -817,7 +817,7 @@ describe('startMCPServer handler dispatch', () => {
       ListToolsRequestSchema: 'tools/list',
       CallToolRequestSchema: 'tools/call',
     }));
-    vi.doMock('../../src/registry.js', () => ({
+    vi.doMock('../../src/infrastructure/registry.js', () => ({
       resolveRepoDbPath: vi.fn(),
       listRepos: vi.fn(() => [
         { name: 'alpha', path: '/alpha' },
@@ -876,7 +876,7 @@ describe('startMCPServer handler dispatch', () => {
       ListToolsRequestSchema: 'tools/list',
       CallToolRequestSchema: 'tools/call',
     }));
-    vi.doMock('../../src/registry.js', () => ({
+    vi.doMock('../../src/infrastructure/registry.js', () => ({
       resolveRepoDbPath: vi.fn(),
       listRepos: vi.fn(() => [
         { name: 'alpha', path: '/alpha' },

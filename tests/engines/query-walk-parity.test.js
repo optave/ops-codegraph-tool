@@ -9,8 +9,8 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
+import { createParsers, getParser, parseFileAuto } from '../../src/domain/parser.js';
 import { extractSymbols } from '../../src/extractors/javascript.js';
-import { createParsers, getParser, parseFileAuto } from '../../src/parser.js';
 
 let parsers;
 

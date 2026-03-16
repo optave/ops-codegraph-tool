@@ -6,7 +6,7 @@
 
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { getActiveEngine, parseFileAuto, parseFilesAuto } from '../../src/parser.js';
+import { getActiveEngine, parseFileAuto, parseFilesAuto } from '../../src/domain/parser.js';
 
 describe('Unified parser API', () => {
   describe('getActiveEngine', () => {

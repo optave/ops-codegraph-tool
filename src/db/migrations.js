@@ -1,4 +1,4 @@
-import { debug } from '../logger.js';
+import { debug } from '../infrastructure/logger.js';
 
 // ─── Schema Migrations ─────────────────────────────────────────────────
 export const MIGRATIONS = [

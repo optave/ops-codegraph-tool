@@ -6,9 +6,9 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { normalizePath } from '../../../constants.js';
-import { warn } from '../../../logger.js';
-import { parseFileIncremental } from '../../../parser.js';
+import { warn } from '../../../infrastructure/logger.js';
+import { normalizePath } from '../../../shared/constants.js';
+import { parseFileIncremental } from '../../parser.js';
 import { computeConfidence, resolveImportPath } from '../resolve.js';
 import { BUILTIN_RECEIVERS, readFileSafe } from './helpers.js';
 

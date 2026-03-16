@@ -18,7 +18,7 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { bulkNodeIdsByFile } from '../db/index.js';
-import { debug } from '../logger.js';
+import { debug } from '../infrastructure/logger.js';
 import { computeLOCMetrics, computeMaintainabilityIndex } from './metrics.js';
 import {
   AST_TYPE_MAPS,
@@ -45,7 +45,7 @@ const WALK_EXTENSIONS = buildExtensionSet(AST_TYPE_MAPS);
 
 let _parserModule = null;
 async function getParserModule() {
-  if (!_parserModule) _parserModule = await import('../parser.js');
+  if (!_parserModule) _parserModule = await import('../domain/parser.js');
   return _parserModule;
 }
 

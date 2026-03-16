@@ -41,7 +41,7 @@ import {
   paginate,
   paginateResult,
   printNdjson,
-} from '../../src/paginate.js';
+} from '../../src/shared/paginate.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

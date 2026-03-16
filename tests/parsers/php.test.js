@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createParsers, extractPHPSymbols } from '../../src/parser.js';
+import { createParsers, extractPHPSymbols } from '../../src/domain/parser.js';
 
 describe('PHP parser', () => {
   let parsers;
