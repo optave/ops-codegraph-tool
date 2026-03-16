@@ -74,6 +74,11 @@ function buildFunctionLevelGraph(db, noTests, minConfidence) {
   let edges;
   if (minConfidence != null) {
     if (isRepo) {
+      // Trade-off: Repository.getCallEdges() returns all call edges, so we
+      // filter in JS. This is O(all call edges) rather than the SQL path's
+      // indexed WHERE clause. Acceptable for current data sizes; a dedicated
+      // getCallEdgesByMinConfidence(threshold) method on the Repository
+      // interface would be the proper fix if this becomes a bottleneck.
       edges = db
         .getCallEdges()
         .filter((e) => e.confidence != null && e.confidence >= minConfidence);

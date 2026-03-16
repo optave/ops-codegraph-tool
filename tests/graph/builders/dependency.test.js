@@ -1,7 +1,9 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { initSchema } from '../../../src/db/index.js';
+import { InMemoryRepository } from '../../../src/db/repository/in-memory-repository.js';
 import { buildDependencyGraph } from '../../../src/graph/builders/dependency.js';
+import { createTestRepo } from '../../helpers/fixtures.js';
 
 function createTestDb() {
   const db = new Database(':memory:');
@@ -90,5 +92,84 @@ describe('buildDependencyGraph — function-level', () => {
     expect(graph.hasEdge(String(fn1), String(fn2))).toBe(true);
     expect(graph.hasEdge(String(fn1), String(fn3))).toBe(false);
     db.close();
+  });
+});
+
+// ── InMemoryRepository dispatch path ────────────────────────────────────────
+
+describe('buildDependencyGraph — file-level via InMemoryRepository', () => {
+  it('builds graph from file nodes and import edges', () => {
+    const { repo, ids } = createTestRepo()
+      .file('a.js')
+      .file('b.js')
+      .file('c.js')
+      .imports('a.js', 'b.js')
+      .imports('b.js', 'c.js')
+      .build();
+
+    const graph = buildDependencyGraph(repo);
+    expect(graph.nodeCount).toBe(3);
+    expect(graph.edgeCount).toBe(2);
+    expect(graph.hasEdge(String(ids.get('a.js')), String(ids.get('b.js')))).toBe(true);
+    expect(graph.hasEdge(String(ids.get('b.js')), String(ids.get('c.js')))).toBe(true);
+  });
+
+  it('excludes test files when noTests is set', () => {
+    const { repo } = createTestRepo()
+      .file('src/a.js')
+      .file('tests/a.test.js')
+      .imports('tests/a.test.js', 'src/a.js')
+      .build();
+
+    const graph = buildDependencyGraph(repo, { noTests: true });
+    expect(graph.nodeCount).toBe(1);
+  });
+
+  it('skips self-loops', () => {
+    const repo = new InMemoryRepository();
+    const a = repo.addNode({ name: 'a.js', kind: 'file', file: 'a.js', line: 0 });
+    repo.addEdge({ source_id: a, target_id: a, kind: 'imports' });
+
+    const graph = buildDependencyGraph(repo);
+    expect(graph.edgeCount).toBe(0);
+  });
+});
+
+describe('buildDependencyGraph — function-level via InMemoryRepository', () => {
+  it('builds graph from callable nodes and call edges', () => {
+    const { repo, ids } = createTestRepo()
+      .fn('foo', 'a.js', 5)
+      .fn('bar', 'b.js', 10)
+      .calls('foo', 'bar')
+      .build();
+
+    const graph = buildDependencyGraph(repo, { fileLevel: false });
+    expect(graph.nodeCount).toBe(2);
+    expect(graph.edgeCount).toBe(1);
+    expect(graph.hasEdge(String(ids.get('foo')), String(ids.get('bar')))).toBe(true);
+  });
+
+  it('respects minConfidence filter', () => {
+    const repo = new InMemoryRepository();
+    const fn1 = repo.addNode({ name: 'foo', kind: 'function', file: 'a.js', line: 5 });
+    const fn2 = repo.addNode({ name: 'bar', kind: 'function', file: 'b.js', line: 10 });
+    const fn3 = repo.addNode({ name: 'baz', kind: 'function', file: 'c.js', line: 15 });
+    repo.addEdge({ source_id: fn1, target_id: fn2, kind: 'calls', confidence: 0.9 });
+    repo.addEdge({ source_id: fn1, target_id: fn3, kind: 'calls', confidence: 0.3 });
+
+    const graph = buildDependencyGraph(repo, { fileLevel: false, minConfidence: 0.5 });
+    expect(graph.edgeCount).toBe(1);
+    expect(graph.hasEdge(String(fn1), String(fn2))).toBe(true);
+    expect(graph.hasEdge(String(fn1), String(fn3))).toBe(false);
+  });
+
+  it('returns all call edges when minConfidence is omitted', () => {
+    const repo = new InMemoryRepository();
+    const fn1 = repo.addNode({ name: 'foo', kind: 'function', file: 'a.js', line: 5 });
+    const fn2 = repo.addNode({ name: 'bar', kind: 'function', file: 'b.js', line: 10 });
+    repo.addEdge({ source_id: fn1, target_id: fn2, kind: 'calls', confidence: 0.1 });
+
+    const graph = buildDependencyGraph(repo, { fileLevel: false });
+    expect(graph.edgeCount).toBe(1);
   });
 });
