@@ -1,39 +1,8 @@
 import { findNodesForTriage, openReadonlyOrFail } from './db.js';
+import { DEFAULT_WEIGHTS, scoreRisk } from './graph/classifiers/risk.js';
 import { isTestFile } from './infrastructure/test-filter.js';
 import { warn } from './logger.js';
 import { paginateResult } from './paginate.js';
-
-// ─── Constants ────────────────────────────────────────────────────────
-
-const DEFAULT_WEIGHTS = {
-  fanIn: 0.25,
-  complexity: 0.3,
-  churn: 0.2,
-  role: 0.15,
-  mi: 0.1,
-};
-
-const ROLE_WEIGHTS = {
-  core: 1.0,
-  utility: 0.9,
-  entry: 0.8,
-  adapter: 0.5,
-  leaf: 0.2,
-  dead: 0.1,
-};
-
-const DEFAULT_ROLE_WEIGHT = 0.5;
-
-// ─── Helpers ──────────────────────────────────────────────────────────
-
-/** Min-max normalize an array of numbers. All-equal → all zeros. */
-function minMaxNormalize(values) {
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  if (max === min) return values.map(() => 0);
-  const range = max - min;
-  return values.map((v) => (v - min) / range);
-}
 
 // ─── Data Function ────────────────────────────────────────────────────
 
@@ -81,48 +50,27 @@ export function triageData(customDbPath, opts = {}) {
       };
     }
 
-    // Extract raw signal arrays
-    const fanIns = filtered.map((r) => r.fan_in);
-    const cognitives = filtered.map((r) => r.cognitive);
-    const churns = filtered.map((r) => r.churn);
-    const mis = filtered.map((r) => r.mi);
-
-    // Min-max normalize
-    const normFanIns = minMaxNormalize(fanIns);
-    const normCognitives = minMaxNormalize(cognitives);
-    const normChurns = minMaxNormalize(churns);
-    // MI: higher is better, so invert: 1 - norm(mi)
-    const normMIsRaw = minMaxNormalize(mis);
-    const normMIs = normMIsRaw.map((v) => round4(1 - v));
+    // Delegate scoring to classifier
+    const riskMetrics = scoreRisk(filtered, weights);
 
     // Compute risk scores
-    const items = filtered.map((r, i) => {
-      const roleWeight = ROLE_WEIGHTS[r.role] ?? DEFAULT_ROLE_WEIGHT;
-      const riskScore =
-        weights.fanIn * normFanIns[i] +
-        weights.complexity * normCognitives[i] +
-        weights.churn * normChurns[i] +
-        weights.role * roleWeight +
-        weights.mi * normMIs[i];
-
-      return {
-        name: r.name,
-        kind: r.kind,
-        file: r.file,
-        line: r.line,
-        role: r.role || null,
-        fanIn: r.fan_in,
-        cognitive: r.cognitive,
-        churn: r.churn,
-        maintainabilityIndex: r.mi,
-        normFanIn: round4(normFanIns[i]),
-        normComplexity: round4(normCognitives[i]),
-        normChurn: round4(normChurns[i]),
-        normMI: round4(normMIs[i]),
-        roleWeight,
-        riskScore: round4(riskScore),
-      };
-    });
+    const items = filtered.map((r, i) => ({
+      name: r.name,
+      kind: r.kind,
+      file: r.file,
+      line: r.line,
+      role: r.role || null,
+      fanIn: r.fan_in,
+      cognitive: r.cognitive,
+      churn: r.churn,
+      maintainabilityIndex: r.mi,
+      normFanIn: riskMetrics[i].normFanIn,
+      normComplexity: riskMetrics[i].normComplexity,
+      normChurn: riskMetrics[i].normChurn,
+      normMI: riskMetrics[i].normMI,
+      roleWeight: riskMetrics[i].roleWeight,
+      riskScore: riskMetrics[i].riskScore,
+    }));
 
     // Apply minScore filter
     const scored = minScore != null ? items.filter((it) => it.riskScore >= minScore) : items;

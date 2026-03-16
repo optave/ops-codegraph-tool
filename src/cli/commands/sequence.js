@@ -1,0 +1,32 @@
+import { EVERY_SYMBOL_KIND } from '../../queries.js';
+
+export const command = {
+  name: 'sequence <name>',
+  description: 'Generate a Mermaid sequence diagram from call graph edges (participants = files)',
+  queryOpts: true,
+  options: [
+    ['--depth <n>', 'Max forward traversal depth', '10'],
+    ['--dataflow', 'Annotate with parameter names and return arrows from dataflow table'],
+    ['-f, --file <path>', 'Scope to a specific file (partial match)'],
+    ['-k, --kind <kind>', 'Filter by symbol kind'],
+  ],
+  validate([_name], opts) {
+    if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
+      return `Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`;
+    }
+  },
+  async execute([name], opts, ctx) {
+    const { sequence } = await import('../../commands/sequence.js');
+    sequence(name, opts.db, {
+      depth: parseInt(opts.depth, 10),
+      file: opts.file,
+      kind: opts.kind,
+      noTests: ctx.resolveNoTests(opts),
+      json: opts.json,
+      dataflow: opts.dataflow,
+      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ndjson: opts.ndjson,
+    });
+  },
+};

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { findDbPath } from './db.js';
+import { ConfigError, DbError } from './errors.js';
 import { debug } from './logger.js';
 
 const NAME_RE = /^[a-zA-Z0-9_-]+$/;
@@ -12,7 +13,7 @@ const NAME_RE = /^[a-zA-Z0-9_-]+$/;
  */
 export function validateSnapshotName(name) {
   if (!name || !NAME_RE.test(name)) {
-    throw new Error(
+    throw new ConfigError(
       `Invalid snapshot name "${name}". Use only letters, digits, hyphens, and underscores.`,
     );
   }
@@ -39,7 +40,7 @@ export function snapshotSave(name, options = {}) {
   validateSnapshotName(name);
   const dbPath = options.dbPath || findDbPath();
   if (!fs.existsSync(dbPath)) {
-    throw new Error(`Database not found: ${dbPath}`);
+    throw new DbError(`Database not found: ${dbPath}`, { file: dbPath });
   }
 
   const dir = snapshotsDir(dbPath);
@@ -47,7 +48,7 @@ export function snapshotSave(name, options = {}) {
 
   if (fs.existsSync(dest)) {
     if (!options.force) {
-      throw new Error(`Snapshot "${name}" already exists. Use --force to overwrite.`);
+      throw new ConfigError(`Snapshot "${name}" already exists. Use --force to overwrite.`);
     }
     fs.unlinkSync(dest);
     debug(`Deleted existing snapshot: ${dest}`);
@@ -82,7 +83,7 @@ export function snapshotRestore(name, options = {}) {
   const src = path.join(dir, `${name}.db`);
 
   if (!fs.existsSync(src)) {
-    throw new Error(`Snapshot "${name}" not found at ${src}`);
+    throw new DbError(`Snapshot "${name}" not found at ${src}`, { file: src });
   }
 
   // Remove WAL/SHM sidecar files for a clean restore
@@ -141,7 +142,7 @@ export function snapshotDelete(name, options = {}) {
   const target = path.join(dir, `${name}.db`);
 
   if (!fs.existsSync(target)) {
-    throw new Error(`Snapshot "${name}" not found at ${target}`);
+    throw new DbError(`Snapshot "${name}" not found at ${target}`, { file: target });
   }
 
   fs.unlinkSync(target);

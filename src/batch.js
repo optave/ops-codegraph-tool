@@ -7,6 +7,7 @@
 
 import { complexityData } from './complexity.js';
 import { dataflowData } from './dataflow.js';
+import { ConfigError } from './errors.js';
 import { flowData } from './flow.js';
 import {
   contextData,
@@ -53,7 +54,7 @@ export const BATCH_COMMANDS = {
 export function batchData(command, targets, customDbPath, opts = {}) {
   const entry = BATCH_COMMANDS[command];
   if (!entry) {
-    throw new Error(
+    throw new ConfigError(
       `Unknown batch command "${command}". Valid commands: ${Object.keys(BATCH_COMMANDS).join(', ')}`,
     );
   }

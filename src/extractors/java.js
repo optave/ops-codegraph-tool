@@ -1,4 +1,4 @@
-import { findChild, nodeEndLine } from './helpers.js';
+import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from Java files.
@@ -165,6 +165,7 @@ export function extractJavaSymbols(tree, _filePath) {
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
             children: params.length > 0 ? params : undefined,
+            visibility: extractModifierVisibility(node),
           });
         }
         break;
@@ -182,6 +183,7 @@ export function extractJavaSymbols(tree, _filePath) {
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
             children: params.length > 0 ? params : undefined,
+            visibility: extractModifierVisibility(node),
           });
         }
         break;
@@ -267,7 +269,12 @@ function extractClassFields(classNode) {
       if (!child || child.type !== 'variable_declarator') continue;
       const nameNode = child.childForFieldName('name');
       if (nameNode) {
-        fields.push({ name: nameNode.text, kind: 'property', line: member.startPosition.row + 1 });
+        fields.push({
+          name: nameNode.text,
+          kind: 'property',
+          line: member.startPosition.row + 1,
+          visibility: extractModifierVisibility(member),
+        });
       }
     }
   }

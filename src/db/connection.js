@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { DbError } from '../errors.js';
 import { debug, warn } from '../logger.js';
 
 let _cachedRepoRoot = undefined; // undefined = not computed, null = not a git repo
@@ -119,11 +120,10 @@ export function findDbPath(customPath) {
 export function openReadonlyOrFail(customPath) {
   const dbPath = findDbPath(customPath);
   if (!fs.existsSync(dbPath)) {
-    console.error(
-      `No codegraph database found at ${dbPath}.\n` +
-        `Run "codegraph build" first to analyze your codebase.`,
+    throw new DbError(
+      `No codegraph database found at ${dbPath}.\nRun "codegraph build" first to analyze your codebase.`,
+      { file: dbPath },
     );
-    process.exit(1);
   }
   return new Database(dbPath, { readonly: true });
 }
