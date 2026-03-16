@@ -1,5 +1,5 @@
-import { openReadonlyOrFail } from '../../db/index.js';
 import { findCycles, formatCycles } from '../../domain/graph/cycles.js';
+import { openGraph } from '../shared/open-graph.js';
 
 export const command = {
   name: 'cycles',
@@ -12,12 +12,12 @@ export const command = {
     ['-j, --json', 'Output as JSON'],
   ],
   execute(_args, opts, ctx) {
-    const db = openReadonlyOrFail(opts.db);
+    const { db, close } = openGraph(opts);
     const cycles = findCycles(db, {
       fileLevel: !opts.functions,
       noTests: ctx.resolveNoTests(opts),
     });
-    db.close();
+    close();
 
     if (opts.json) {
       console.log(JSON.stringify({ cycles, count: cycles.length }, null, 2));

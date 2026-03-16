@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import { openReadonlyOrFail } from '../../db/index.js';
 import {
   exportDOT,
   exportGraphML,
@@ -8,6 +7,7 @@ import {
   exportMermaid,
   exportNeo4jCSV,
 } from '../../features/export.js';
+import { openGraph } from '../shared/open-graph.js';
 
 export const command = {
   name: 'export',
@@ -23,7 +23,7 @@ export const command = {
     ['-o, --output <file>', 'Write to file instead of stdout'],
   ],
   execute(_args, opts, ctx) {
-    const db = openReadonlyOrFail(opts.db);
+    const { db, close } = openGraph(opts);
     const exportOpts = {
       fileLevel: !opts.functions,
       noTests: ctx.resolveNoTests(opts),
@@ -51,7 +51,7 @@ export const command = {
           const base = opts.output.replace(/\.[^.]+$/, '') || opts.output;
           fs.writeFileSync(`${base}-nodes.csv`, csv.nodes, 'utf-8');
           fs.writeFileSync(`${base}-relationships.csv`, csv.relationships, 'utf-8');
-          db.close();
+          close();
           console.log(`Exported to ${base}-nodes.csv and ${base}-relationships.csv`);
           return;
         }
@@ -63,7 +63,7 @@ export const command = {
         break;
     }
 
-    db.close();
+    close();
 
     if (opts.output) {
       fs.writeFileSync(opts.output, output, 'utf-8');

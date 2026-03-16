@@ -15,7 +15,9 @@ export function applyQueryOpts(cmd) {
     .option('-j, --json', 'Output as JSON')
     .option('--limit <number>', 'Max results to return')
     .option('--offset <number>', 'Skip N results (default: 0)')
-    .option('--ndjson', 'Newline-delimited JSON output');
+    .option('--ndjson', 'Newline-delimited JSON output')
+    .option('--table', 'Output as aligned table')
+    .option('--csv', 'Output as CSV');
 }
 
 /**
@@ -28,6 +30,24 @@ export function resolveNoTests(opts) {
   if (opts.includeTests) return false;
   if (opts.tests === false) return true;
   return config.query?.excludeTests || false;
+}
+
+/**
+ * Extract the common query option fields shared by most analysis commands.
+ *
+ * Spreads cleanly into per-command option objects:
+ *   `{ ...resolveQueryOpts(opts), depth: parseInt(opts.depth, 10) }`
+ */
+export function resolveQueryOpts(opts) {
+  return {
+    noTests: resolveNoTests(opts),
+    json: opts.json,
+    ndjson: opts.ndjson,
+    table: opts.table,
+    csv: opts.csv,
+    limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
+    offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+  };
 }
 
 export function formatSize(bytes) {

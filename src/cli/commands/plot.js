@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { openReadonlyOrFail } from '../../db/index.js';
+import { openGraph } from '../shared/open-graph.js';
 
 export const command = {
   name: 'plot',
@@ -24,7 +24,7 @@ export const command = {
   async execute(_args, opts, ctx) {
     const { generatePlotHTML, loadPlotConfig } = await import('../../viewer.js');
     const os = await import('node:os');
-    const db = openReadonlyOrFail(opts.db);
+    const { db, close } = openGraph(opts);
 
     let plotCfg;
     if (opts.config) {
@@ -32,7 +32,7 @@ export const command = {
         plotCfg = JSON.parse(fs.readFileSync(opts.config, 'utf-8'));
       } catch (e) {
         console.error(`Failed to load config: ${e.message}`);
-        db.close();
+        close();
         process.exitCode = 1;
         return;
       }
@@ -58,7 +58,7 @@ export const command = {
       minConfidence: parseFloat(opts.minConfidence),
       config: plotCfg,
     });
-    db.close();
+    close();
 
     const outPath = opts.output || path.join(os.tmpdir(), `codegraph-plot-${Date.now()}.html`);
     fs.writeFileSync(outPath, html, 'utf-8');
