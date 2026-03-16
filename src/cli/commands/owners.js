@@ -12,7 +12,7 @@ export const command = {
     ['-j, --json', 'Output as JSON'],
   ],
   async execute([target], opts, ctx) {
-    const { owners } = await import('../../commands/owners.js');
+    const { owners } = await import('../../presentation/owners.js');
     owners(opts.db, {
       owner: opts.owner,
       boundary: opts.boundary,

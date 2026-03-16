@@ -82,8 +82,14 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `features/snapshot.js` | SQLite DB backup and restore |
 | `features/structure.js` | Codebase structure analysis |
 | `features/triage.js` | Risk-ranked audit priority queue (delegates scoring to `graph/classifiers/`) |
-| **`presentation/`** | **Pure output formatting** |
-| `presentation/` | `viewer.js` (HTML renderer), `export.js` (DOT/Mermaid/GraphML/Neo4j serializers), `sequence-renderer.js` (Mermaid sequence diagrams), `table.js` (CLI table formatting), `result-formatter.js` (JSON/NDJSON output) |
+| `features/graph-enrichment.js` | Data enrichment for HTML viewer (complexity, communities, fan-in/out) |
+| **`presentation/`** | **Pure output formatting + CLI command wrappers** |
+| `presentation/viewer.js` | Interactive HTML renderer with vis-network |
+| `presentation/queries-cli/` | CLI display wrappers for query functions, split by concern: `path.js`, `overview.js`, `inspect.js`, `impact.js`, `exports.js` |
+| `presentation/*.js` | Command formatters (audit, batch, check, communities, complexity, etc.) — call `features/*.js`, format output, set exit codes |
+| `presentation/export.js` | DOT/Mermaid/GraphML/Neo4j serializers |
+| `presentation/sequence-renderer.js` | Mermaid sequence diagram rendering |
+| `presentation/table.js`, `result-formatter.js`, `colors.js` | CLI table formatting, JSON/NDJSON output, color constants |
 | **`graph/`** | **Unified graph model** |
 | `graph/` | `CodeGraph` class (`model.js`), algorithms (Tarjan SCC, Louvain, BFS, shortest path, centrality), classifiers (role, risk), builders (dependency, structure, temporal) |
 | **`mcp/`** | **MCP server** |
