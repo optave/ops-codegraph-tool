@@ -7,7 +7,7 @@ export const command = {
     ['--repos <names>', 'Comma-separated list of allowed repo names (restricts access)'],
   ],
   async execute(_args, opts) {
-    const { startMCPServer } = await import('../../mcp.js');
+    const { startMCPServer } = await import('../../mcp/index.js');
     const mcpOpts = {};
     mcpOpts.multiRepo = opts.multiRepo || !!opts.repos;
     if (opts.repos) {
