@@ -320,7 +320,7 @@ describe('findDbPath with git ceiling', () => {
     process.cwd = () => innerDir;
     try {
       _resetRepoRootCache();
-      const ceiling = findRepoRoot();
+      const ceiling = fs.realpathSync(findRepoRoot());
       const result = findDbPath();
       expect(result).toBe(path.join(ceiling, '.codegraph', 'graph.db'));
     } finally {
