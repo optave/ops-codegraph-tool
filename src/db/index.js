@@ -5,6 +5,7 @@ export {
   findRepoRoot,
   openDb,
   openReadonlyOrFail,
+  openRepo,
 } from './connection.js';
 export { getBuildMeta, initSchema, MIGRATIONS, setBuildMeta } from './migrations.js';
 export {

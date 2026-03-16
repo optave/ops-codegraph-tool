@@ -41,6 +41,7 @@ export const command = {
       kind: opts.kind,
       noTests: ctx.resolveNoTests(opts),
       json: opts.json,
+      config: ctx.config,
     });
   },
 };

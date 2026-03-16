@@ -524,7 +524,7 @@ export function complexityData(customDbPath, opts = {}) {
     const kindFilter = opts.kind || null;
 
     // Load thresholds from config
-    const config = loadConfig(process.cwd());
+    const config = opts.config || loadConfig(process.cwd());
     const thresholds = config.manifesto?.rules || {
       cognitive: { warn: 15, fail: null },
       cyclomatic: { warn: 10, fail: null },

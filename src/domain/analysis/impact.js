@@ -18,6 +18,42 @@ import { normalizeSymbol } from '../../shared/normalize.js';
 import { paginateResult } from '../../shared/paginate.js';
 import { findMatchingNodes } from './symbol-lookup.js';
 
+// ─── Shared BFS: transitive callers ────────────────────────────────────
+
+/**
+ * BFS traversal to find transitive callers of a node.
+ *
+ * @param {import('better-sqlite3').Database} db - Open read-only SQLite database handle (not a Repository)
+ * @param {number} startId - Starting node ID
+ * @param {{ noTests?: boolean, maxDepth?: number, onVisit?: (caller: object, parentId: number, depth: number) => void }} options
+ * @returns {{ totalDependents: number, levels: Record<number, Array<{name:string, kind:string, file:string, line:number}>> }}
+ */
+export function bfsTransitiveCallers(db, startId, { noTests = false, maxDepth = 3, onVisit } = {}) {
+  const visited = new Set([startId]);
+  const levels = {};
+  let frontier = [startId];
+
+  for (let d = 1; d <= maxDepth; d++) {
+    const nextFrontier = [];
+    for (const fid of frontier) {
+      const callers = findDistinctCallers(db, fid);
+      for (const c of callers) {
+        if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
+          visited.add(c.id);
+          nextFrontier.push(c.id);
+          if (!levels[d]) levels[d] = [];
+          levels[d].push({ name: c.name, kind: c.kind, file: c.file, line: c.line });
+          if (onVisit) onVisit(c, fid, d);
+        }
+      }
+    }
+    frontier = nextFrontier;
+    if (frontier.length === 0) break;
+  }
+
+  return { totalDependents: visited.size - 1, levels };
+}
+
 export function impactAnalysisData(file, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   try {
@@ -82,31 +118,11 @@ export function fnImpactData(name, customDbPath, opts = {}) {
     }
 
     const results = nodes.map((node) => {
-      const visited = new Set([node.id]);
-      const levels = {};
-      let frontier = [node.id];
-
-      for (let d = 1; d <= maxDepth; d++) {
-        const nextFrontier = [];
-        for (const fid of frontier) {
-          const callers = findDistinctCallers(db, fid);
-          for (const c of callers) {
-            if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
-              visited.add(c.id);
-              nextFrontier.push(c.id);
-              if (!levels[d]) levels[d] = [];
-              levels[d].push({ name: c.name, kind: c.kind, file: c.file, line: c.line });
-            }
-          }
-        }
-        frontier = nextFrontier;
-        if (frontier.length === 0) break;
-      }
-
+      const { levels, totalDependents } = bfsTransitiveCallers(db, node.id, { noTests, maxDepth });
       return {
         ...normalizeSymbol(node, db, hc),
         levels,
-        totalDependents: visited.size - 1,
+        totalDependents,
       };
     });
 
@@ -232,40 +248,27 @@ export function diffImpactData(customDbPath, opts = {}) {
 
     const allAffected = new Set();
     const functionResults = affectedFunctions.map((fn) => {
-      const visited = new Set([fn.id]);
-      let frontier = [fn.id];
-      let totalCallers = 0;
-      const levels = {};
       const edges = [];
       const idToKey = new Map();
       idToKey.set(fn.id, `${fn.file}::${fn.name}:${fn.line}`);
-      for (let d = 1; d <= maxDepth; d++) {
-        const nextFrontier = [];
-        for (const fid of frontier) {
-          const callers = findDistinctCallers(db, fid);
-          for (const c of callers) {
-            if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
-              visited.add(c.id);
-              nextFrontier.push(c.id);
-              allAffected.add(`${c.file}:${c.name}`);
-              const callerKey = `${c.file}::${c.name}:${c.line}`;
-              idToKey.set(c.id, callerKey);
-              if (!levels[d]) levels[d] = [];
-              levels[d].push({ name: c.name, kind: c.kind, file: c.file, line: c.line });
-              edges.push({ from: idToKey.get(fid), to: callerKey });
-              totalCallers++;
-            }
-          }
-        }
-        frontier = nextFrontier;
-        if (frontier.length === 0) break;
-      }
+
+      const { levels, totalDependents } = bfsTransitiveCallers(db, fn.id, {
+        noTests,
+        maxDepth,
+        onVisit(c, parentId) {
+          allAffected.add(`${c.file}:${c.name}`);
+          const callerKey = `${c.file}::${c.name}:${c.line}`;
+          idToKey.set(c.id, callerKey);
+          edges.push({ from: idToKey.get(parentId), to: callerKey });
+        },
+      });
+
       return {
         name: fn.name,
         kind: fn.kind,
         file: fn.file,
         line: fn.line,
-        transitiveCallers: totalCallers,
+        transitiveCallers: totalDependents,
         levels,
         edges,
       };
@@ -310,8 +313,8 @@ export function diffImpactData(customDbPath, opts = {}) {
     let boundaryViolations = [];
     let boundaryViolationCount = 0;
     try {
-      const config = loadConfig(repoRoot);
-      const boundaryConfig = config.manifesto?.boundaries;
+      const cfg = opts.config || loadConfig(repoRoot);
+      const boundaryConfig = cfg.manifesto?.boundaries;
       if (boundaryConfig) {
         const result = evaluateBoundaries(db, boundaryConfig, {
           scopeFiles: [...changedRanges.keys()],

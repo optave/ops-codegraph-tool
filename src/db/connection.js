@@ -4,6 +4,57 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 import { debug, warn } from '../infrastructure/logger.js';
 import { DbError } from '../shared/errors.js';
+import { Repository } from './repository/base.js';
+import { SqliteRepository } from './repository/sqlite-repository.js';
+
+let _cachedRepoRoot; // undefined = not computed, null = not a git repo
+let _cachedRepoRootCwd; // cwd at the time the cache was populated
+
+/**
+ * Return the git worktree/repo root for the given directory (or cwd).
+ * Uses `git rev-parse --show-toplevel` which returns the correct root
+ * for both regular repos and git worktrees.
+ * Results are cached per-process when called without arguments.
+ * The cache is keyed on cwd so it invalidates if the working directory changes
+ * (e.g. MCP server serving multiple sessions).
+ * @param {string} [fromDir] - Directory to resolve from (defaults to cwd)
+ * @returns {string | null} Absolute path to repo root, or null if not in a git repo
+ */
+export function findRepoRoot(fromDir) {
+  const dir = fromDir || process.cwd();
+  if (!fromDir && _cachedRepoRoot !== undefined && _cachedRepoRootCwd === dir) {
+    return _cachedRepoRoot;
+  }
+  let root = null;
+  try {
+    const raw = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: dir,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    // Use realpathSync to resolve symlinks (macOS /var → /private/var) and
+    // 8.3 short names (Windows RUNNER~1 → runneradmin) so the ceiling path
+    // matches the realpathSync'd dir in findDbPath.
+    try {
+      root = fs.realpathSync(raw);
+    } catch {
+      root = path.resolve(raw);
+    }
+  } catch {
+    root = null;
+  }
+  if (!fromDir) {
+    _cachedRepoRoot = root;
+    _cachedRepoRootCwd = dir;
+  }
+  return root;
+}
+
+/** Reset the cached repo root (for testing). */
+export function _resetRepoRootCache() {
+  _cachedRepoRoot = undefined;
+  _cachedRepoRootCwd = undefined;
+}
 
 let _cachedRepoRoot; // undefined = not computed, null = not a git repo
 let _cachedRepoRootCwd; // cwd at the time the cache was populated
@@ -177,4 +228,33 @@ export function openReadonlyOrFail(customPath) {
     );
   }
   return new Database(dbPath, { readonly: true });
+}
+
+/**
+ * Open a Repository from either an injected instance or a DB path.
+ *
+ * When `opts.repo` is a Repository instance, returns it directly (no DB opened).
+ * Otherwise opens a readonly SQLite DB and wraps it in SqliteRepository.
+ *
+ * @param {string} [customDbPath] - Path to graph.db (ignored when opts.repo is set)
+ * @param {object} [opts]
+ * @param {Repository} [opts.repo] - Pre-built Repository to use instead of SQLite
+ * @returns {{ repo: Repository, close(): void }}
+ */
+export function openRepo(customDbPath, opts = {}) {
+  if (opts.repo != null) {
+    if (!(opts.repo instanceof Repository)) {
+      throw new TypeError(
+        `openRepo: opts.repo must be a Repository instance, got ${Object.prototype.toString.call(opts.repo)}`,
+      );
+    }
+    return { repo: opts.repo, close() {} };
+  }
+  const db = openReadonlyOrFail(customDbPath);
+  return {
+    repo: new SqliteRepository(db),
+    close() {
+      db.close();
+    },
+  };
 }

@@ -40,6 +40,7 @@ export const command = {
       noTests: ctx.resolveNoTests(opts),
       json: opts.json,
       ndjson: opts.ndjson,
+      config: ctx.config,
     });
   },
 };

@@ -1,4 +1,4 @@
-import { findNodesForTriage, openReadonlyOrFail } from '../db/index.js';
+import { openRepo } from '../db/index.js';
 import { DEFAULT_WEIGHTS, scoreRisk } from '../graph/classifiers/risk.js';
 import { warn } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
@@ -14,7 +14,7 @@ import { paginateResult } from '../shared/paginate.js';
  * @returns {{ items: object[], summary: object, _pagination?: object }}
  */
 export function triageData(customDbPath, opts = {}) {
-  const db = openReadonlyOrFail(customDbPath);
+  const { repo, close } = openRepo(customDbPath, opts);
   try {
     const noTests = opts.noTests || false;
     const fileFilter = opts.file || null;
@@ -26,7 +26,7 @@ export function triageData(customDbPath, opts = {}) {
 
     let rows;
     try {
-      rows = findNodesForTriage(db, {
+      rows = repo.findNodesForTriage({
         noTests,
         file: fileFilter,
         kind: kindFilter,
@@ -115,7 +115,7 @@ export function triageData(customDbPath, opts = {}) {
       offset: opts.offset,
     });
   } finally {
-    db.close();
+    close();
   }
 }
 

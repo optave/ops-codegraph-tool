@@ -25,13 +25,13 @@ export function getCallableNodes(db) {
 /**
  * Get all 'calls' edges.
  * @param {object} db
- * @returns {{ source_id: number, target_id: number }[]}
+ * @returns {{ source_id: number, target_id: number, confidence: number|null }[]}
  */
 export function getCallEdges(db) {
   return cachedStmt(
     _getCallEdgesStmt,
     db,
-    "SELECT source_id, target_id FROM edges WHERE kind = 'calls'",
+    "SELECT source_id, target_id, confidence FROM edges WHERE kind = 'calls'",
   ).all();
 }
 

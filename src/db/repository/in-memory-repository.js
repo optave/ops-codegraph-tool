@@ -489,7 +489,7 @@ export class InMemoryRepository extends Repository {
   getCallEdges() {
     return [...this.#edges.values()]
       .filter((e) => e.kind === 'calls')
-      .map((e) => ({ source_id: e.source_id, target_id: e.target_id }));
+      .map((e) => ({ source_id: e.source_id, target_id: e.target_id, confidence: e.confidence }));
   }
 
   getFileNodesAll() {

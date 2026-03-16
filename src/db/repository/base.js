@@ -163,7 +163,7 @@ export class Repository {
     throw new Error('not implemented');
   }
 
-  /** @returns {{ source_id: number, target_id: number }[]} */
+  /** @returns {{ source_id: number, target_id: number, confidence: number|null }[]} */
   getCallEdges() {
     throw new Error('not implemented');
   }

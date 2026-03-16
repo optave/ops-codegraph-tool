@@ -38,6 +38,7 @@ import { createDataflowVisitor } from './visitors/dataflow-visitor.js';
 // ─── Extension sets for quick language-support checks ────────────────────
 
 const CFG_EXTENSIONS = buildExtensionSet(CFG_RULES);
+const COMPLEXITY_EXTENSIONS = buildExtensionSet(COMPLEXITY_RULES);
 const DATAFLOW_EXTENSIONS = buildExtensionSet(DATAFLOW_RULES);
 const WALK_EXTENSIONS = buildExtensionSet(AST_TYPE_MAPS);
 
@@ -74,15 +75,34 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, engineOpts) {
   const extToLang = buildExtToLangMap();
 
   // ── WASM pre-parse for files that need it ───────────────────────────
-  // CFG now runs as a visitor in the unified walk, so only dataflow
-  // triggers WASM pre-parse when no tree exists.
-  if (doDataflow) {
+  // The native engine only handles parsing (symbols, calls, imports).
+  // Complexity, CFG, and dataflow all require a WASM tree-sitter tree
+  // for their visitor walks. Without this, incremental rebuilds on the
+  // native engine silently lose these analyses for changed files (#468).
+  if (doComplexity || doCfg || doDataflow) {
     let needsWasmTrees = false;
     for (const [relPath, symbols] of fileSymbols) {
       if (symbols._tree) continue;
       const ext = path.extname(relPath).toLowerCase();
+      const defs = symbols.definitions || [];
 
-      if (!symbols.dataflow && DATAFLOW_EXTENSIONS.has(ext)) {
+      const needsComplexity =
+        doComplexity &&
+        COMPLEXITY_EXTENSIONS.has(ext) &&
+        defs.some((d) => (d.kind === 'function' || d.kind === 'method') && d.line && !d.complexity);
+      const needsCfg =
+        doCfg &&
+        CFG_EXTENSIONS.has(ext) &&
+        defs.some(
+          (d) =>
+            (d.kind === 'function' || d.kind === 'method') &&
+            d.line &&
+            d.cfg !== null &&
+            !Array.isArray(d.cfg?.blocks),
+        );
+      const needsDataflow = doDataflow && !symbols.dataflow && DATAFLOW_EXTENSIONS.has(ext);
+
+      if (needsComplexity || needsCfg || needsDataflow) {
         needsWasmTrees = true;
         break;
       }
@@ -320,7 +340,7 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, engineOpts) {
   if (doAst) {
     const t0 = performance.now();
     try {
-      const { buildAstNodes } = await import('../ast.js');
+      const { buildAstNodes } = await import('../features/ast.js');
       await buildAstNodes(db, fileSymbols, rootDir, engineOpts);
     } catch (err) {
       debug(`buildAstNodes failed: ${err.message}`);
@@ -331,7 +351,7 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, engineOpts) {
   if (doComplexity) {
     const t0 = performance.now();
     try {
-      const { buildComplexityMetrics } = await import('../complexity.js');
+      const { buildComplexityMetrics } = await import('../features/complexity.js');
       await buildComplexityMetrics(db, fileSymbols, rootDir, engineOpts);
     } catch (err) {
       debug(`buildComplexityMetrics failed: ${err.message}`);
@@ -342,7 +362,7 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, engineOpts) {
   if (doCfg) {
     const t0 = performance.now();
     try {
-      const { buildCFGData } = await import('../cfg.js');
+      const { buildCFGData } = await import('../features/cfg.js');
       await buildCFGData(db, fileSymbols, rootDir, engineOpts);
     } catch (err) {
       debug(`buildCFGData failed: ${err.message}`);
@@ -353,7 +373,7 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, engineOpts) {
   if (doDataflow) {
     const t0 = performance.now();
     try {
-      const { buildDataflowEdges } = await import('../dataflow.js');
+      const { buildDataflowEdges } = await import('../features/dataflow.js');
       await buildDataflowEdges(db, fileSymbols, rootDir, engineOpts);
     } catch (err) {
       debug(`buildDataflowEdges failed: ${err.message}`);

@@ -41,6 +41,7 @@ export const command = {
         limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
         offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
         ndjson: opts.ndjson,
+        config: ctx.config,
       });
       return;
     }
@@ -56,6 +57,7 @@ export const command = {
       depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
       noTests: ctx.resolveNoTests(opts),
       json: opts.json,
+      config: ctx.config,
     });
 
     if (opts.rules) {
@@ -73,6 +75,7 @@ export const command = {
         limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
         offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
         ndjson: opts.ndjson,
+        config: ctx.config,
       });
     }
   },

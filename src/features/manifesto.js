@@ -395,7 +395,7 @@ export function manifestoData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
 
   try {
-    const config = loadConfig(process.cwd());
+    const config = opts.config || loadConfig(process.cwd());
     const rules = resolveRules(config.manifesto?.rules);
 
     const violations = [];

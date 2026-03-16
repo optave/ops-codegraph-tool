@@ -8,6 +8,7 @@
 
 import path from 'node:path';
 import { openReadonlyOrFail } from '../db/index.js';
+import { bfsTransitiveCallers } from '../domain/analysis/impact.js';
 import { explainData } from '../domain/queries.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
@@ -17,11 +18,15 @@ import { RULE_DEFS } from './manifesto.js';
 
 const FUNCTION_RULES = RULE_DEFS.filter((d) => d.level === 'function');
 
-function resolveThresholds(customDbPath) {
+function resolveThresholds(customDbPath, config) {
   try {
-    const dbDir = path.dirname(customDbPath);
-    const repoRoot = path.resolve(dbDir, '..');
-    const cfg = loadConfig(repoRoot);
+    const cfg =
+      config ||
+      (() => {
+        const dbDir = path.dirname(customDbPath);
+        const repoRoot = path.resolve(dbDir, '..');
+        return loadConfig(repoRoot);
+      })();
     const userRules = cfg.manifesto || {};
     const resolved = {};
     for (const def of FUNCTION_RULES) {
@@ -70,39 +75,6 @@ function checkBreaches(row, thresholds) {
   return breaches;
 }
 
-// ─── BFS impact (inline, same algorithm as fnImpactData) ────────────
-
-function computeImpact(db, nodeId, noTests, maxDepth) {
-  const visited = new Set([nodeId]);
-  const levels = {};
-  let frontier = [nodeId];
-
-  for (let d = 1; d <= maxDepth; d++) {
-    const nextFrontier = [];
-    for (const fid of frontier) {
-      const callers = db
-        .prepare(
-          `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
-           FROM edges e JOIN nodes n ON e.source_id = n.id
-           WHERE e.target_id = ? AND e.kind = 'calls'`,
-        )
-        .all(fid);
-      for (const c of callers) {
-        if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
-          visited.add(c.id);
-          nextFrontier.push(c.id);
-          if (!levels[d]) levels[d] = [];
-          levels[d].push({ name: c.name, kind: c.kind, file: c.file, line: c.line });
-        }
-      }
-    }
-    frontier = nextFrontier;
-    if (frontier.length === 0) break;
-  }
-
-  return { totalDependents: visited.size - 1, levels };
-}
-
 // ─── Phase 4.4 fields (graceful null fallback) ─────────────────────
 
 function readPhase44(db, nodeId) {
@@ -147,7 +119,7 @@ export function auditData(target, customDbPath, opts = {}) {
 
   // 2. Open DB for enrichment
   const db = openReadonlyOrFail(customDbPath);
-  const thresholds = resolveThresholds(customDbPath);
+  const thresholds = resolveThresholds(customDbPath, opts.config);
 
   let functions;
   try {
@@ -189,7 +161,7 @@ function enrichFunction(db, r, noTests, maxDepth, thresholds) {
   const nodeId = nodeRow?.id;
   const health = nodeId ? buildHealth(db, nodeId, thresholds) : defaultHealth();
   const impact = nodeId
-    ? computeImpact(db, nodeId, noTests, maxDepth)
+    ? bfsTransitiveCallers(db, nodeId, { noTests, maxDepth })
     : { totalDependents: 0, levels: {} };
   const phase44 = nodeId
     ? readPhase44(db, nodeId)
@@ -260,7 +232,7 @@ function enrichSymbol(db, sym, file, noTests, maxDepth, thresholds) {
 
   const health = nodeId ? buildHealth(db, nodeId, thresholds) : defaultHealth();
   const impact = nodeId
-    ? computeImpact(db, nodeId, noTests, maxDepth)
+    ? bfsTransitiveCallers(db, nodeId, { noTests, maxDepth })
     : { totalDependents: 0, levels: {} };
   const phase44 = nodeId
     ? readPhase44(db, nodeId)

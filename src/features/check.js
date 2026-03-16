@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { findDbPath, openReadonlyOrFail } from '../db/index.js';
+import { bfsTransitiveCallers } from '../domain/analysis/impact.js';
 import { findCycles } from '../domain/graph/cycles.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
@@ -96,31 +97,10 @@ export function checkMaxBlastRadius(db, changedRanges, threshold, noTests, maxDe
       }
       if (!overlaps) continue;
 
-      // BFS transitive callers
-      const visited = new Set([def.id]);
-      let frontier = [def.id];
-      let totalCallers = 0;
-      for (let d = 1; d <= maxDepth; d++) {
-        const nextFrontier = [];
-        for (const fid of frontier) {
-          const callers = db
-            .prepare(
-              `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
-               FROM edges e JOIN nodes n ON e.source_id = n.id
-               WHERE e.target_id = ? AND e.kind = 'calls'`,
-            )
-            .all(fid);
-          for (const c of callers) {
-            if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
-              visited.add(c.id);
-              nextFrontier.push(c.id);
-              totalCallers++;
-            }
-          }
-        }
-        frontier = nextFrontier;
-        if (frontier.length === 0) break;
-      }
+      const { totalDependents: totalCallers } = bfsTransitiveCallers(db, def.id, {
+        noTests,
+        maxDepth,
+      });
 
       if (totalCallers > maxFound) maxFound = totalCallers;
       if (totalCallers > threshold) {
@@ -240,7 +220,10 @@ export function checkData(customDbPath, opts = {}) {
     const maxDepth = opts.depth || 3;
 
     // Load config defaults for check predicates
-    const config = loadConfig(repoRoot);
+    // NOTE: opts.config is loaded from process.cwd() at startup (via CLI context),
+    // which may differ from the DB's parent repo root when --db points to an external
+    // project. This is an acceptable trade-off to avoid duplicate I/O on the hot path.
+    const config = opts.config || loadConfig(repoRoot);
     const checkConfig = config.check || {};
 
     // Resolve which predicates are enabled: CLI flags ?? config ?? built-in defaults

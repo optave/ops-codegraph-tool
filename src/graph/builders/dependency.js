@@ -3,32 +3,39 @@
  * Replaces inline graph construction in cycles.js, communities.js, viewer.js, export.js.
  */
 
-import { getCallableNodes, getCallEdges, getFileNodesAll, getImportEdges } from '../../db/index.js';
+import {
+  getCallableNodes,
+  getCallEdges,
+  getFileNodesAll,
+  getImportEdges,
+  Repository,
+} from '../../db/index.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { CodeGraph } from '../model.js';
 
 /**
- * @param {object} db - Open better-sqlite3 database (readonly)
+ * @param {object} dbOrRepo - Open better-sqlite3 database (readonly) or a Repository instance
  * @param {object} [opts]
  * @param {boolean} [opts.fileLevel=true] - File-level (imports) or function-level (calls)
  * @param {boolean} [opts.noTests=false] - Exclude test files
  * @param {number}  [opts.minConfidence] - Minimum edge confidence (function-level only)
  * @returns {CodeGraph}
  */
-export function buildDependencyGraph(db, opts = {}) {
+export function buildDependencyGraph(dbOrRepo, opts = {}) {
   const fileLevel = opts.fileLevel !== false;
   const noTests = opts.noTests || false;
 
   if (fileLevel) {
-    return buildFileLevelGraph(db, noTests);
+    return buildFileLevelGraph(dbOrRepo, noTests);
   }
-  return buildFunctionLevelGraph(db, noTests, opts.minConfidence);
+  return buildFunctionLevelGraph(dbOrRepo, noTests, opts.minConfidence);
 }
 
-function buildFileLevelGraph(db, noTests) {
+function buildFileLevelGraph(dbOrRepo, noTests) {
   const graph = new CodeGraph();
+  const isRepo = dbOrRepo instanceof Repository;
 
-  let nodes = getFileNodesAll(db);
+  let nodes = isRepo ? dbOrRepo.getFileNodesAll() : getFileNodesAll(dbOrRepo);
   if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
 
   const nodeIds = new Set();
@@ -37,7 +44,7 @@ function buildFileLevelGraph(db, noTests) {
     nodeIds.add(n.id);
   }
 
-  const edges = getImportEdges(db);
+  const edges = isRepo ? dbOrRepo.getImportEdges() : getImportEdges(dbOrRepo);
   for (const e of edges) {
     if (!nodeIds.has(e.source_id) || !nodeIds.has(e.target_id)) continue;
     const src = String(e.source_id);
@@ -51,10 +58,11 @@ function buildFileLevelGraph(db, noTests) {
   return graph;
 }
 
-function buildFunctionLevelGraph(db, noTests, minConfidence) {
+function buildFunctionLevelGraph(dbOrRepo, noTests, minConfidence) {
   const graph = new CodeGraph();
+  const isRepo = dbOrRepo instanceof Repository;
 
-  let nodes = getCallableNodes(db);
+  let nodes = isRepo ? dbOrRepo.getCallableNodes() : getCallableNodes(dbOrRepo);
   if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
 
   const nodeIds = new Set();
@@ -70,11 +78,22 @@ function buildFunctionLevelGraph(db, noTests, minConfidence) {
 
   let edges;
   if (minConfidence != null) {
-    edges = db
-      .prepare("SELECT source_id, target_id FROM edges WHERE kind = 'calls' AND confidence >= ?")
-      .all(minConfidence);
+    if (isRepo) {
+      // Trade-off: Repository.getCallEdges() returns all call edges, so we
+      // filter in JS. This is O(all call edges) rather than the SQL path's
+      // indexed WHERE clause. Acceptable for current data sizes; a dedicated
+      // getCallEdgesByMinConfidence(threshold) method on the Repository
+      // interface would be the proper fix if this becomes a bottleneck.
+      edges = dbOrRepo
+        .getCallEdges()
+        .filter((e) => e.confidence != null && e.confidence >= minConfidence);
+    } else {
+      edges = dbOrRepo
+        .prepare("SELECT source_id, target_id FROM edges WHERE kind = 'calls' AND confidence >= ?")
+        .all(minConfidence);
+    }
   } else {
-    edges = getCallEdges(db);
+    edges = isRepo ? dbOrRepo.getCallEdges() : getCallEdges(dbOrRepo);
   }
 
   for (const e of edges) {
