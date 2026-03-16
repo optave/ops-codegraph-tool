@@ -56,55 +56,6 @@ export function _resetRepoRootCache() {
   _cachedRepoRootCwd = undefined;
 }
 
-let _cachedRepoRoot; // undefined = not computed, null = not a git repo
-let _cachedRepoRootCwd; // cwd at the time the cache was populated
-
-/**
- * Return the git worktree/repo root for the given directory (or cwd).
- * Uses `git rev-parse --show-toplevel` which returns the correct root
- * for both regular repos and git worktrees.
- * Results are cached per-process when called without arguments.
- * The cache is keyed on cwd so it invalidates if the working directory changes
- * (e.g. MCP server serving multiple sessions).
- * @param {string} [fromDir] - Directory to resolve from (defaults to cwd)
- * @returns {string | null} Absolute path to repo root, or null if not in a git repo
- */
-export function findRepoRoot(fromDir) {
-  const dir = fromDir || process.cwd();
-  if (!fromDir && _cachedRepoRoot !== undefined && _cachedRepoRootCwd === dir) {
-    return _cachedRepoRoot;
-  }
-  let root = null;
-  try {
-    const raw = execFileSync('git', ['rev-parse', '--show-toplevel'], {
-      cwd: dir,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-    }).trim();
-    // Use realpathSync to resolve symlinks (macOS /var → /private/var) and
-    // 8.3 short names (Windows RUNNER~1 → runneradmin) so the ceiling path
-    // matches the realpathSync'd dir in findDbPath.
-    try {
-      root = fs.realpathSync(raw);
-    } catch {
-      root = path.resolve(raw);
-    }
-  } catch {
-    root = null;
-  }
-  if (!fromDir) {
-    _cachedRepoRoot = root;
-    _cachedRepoRootCwd = dir;
-  }
-  return root;
-}
-
-/** Reset the cached repo root (for testing). */
-export function _resetRepoRootCache() {
-  _cachedRepoRoot = undefined;
-  _cachedRepoRootCwd = undefined;
-}
-
 function isProcessAlive(pid) {
   try {
     process.kill(pid, 0);
