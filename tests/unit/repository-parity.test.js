@@ -123,7 +123,10 @@ function seedInMemoryRepo() {
     halstead_volume: 100,
   });
 
-  return { repo, ids: { foo: fooId, bar: barId, baz: bazId, fooFile: fooFileId, bazMethod: bazMethodId } };
+  return {
+    repo,
+    ids: { foo: fooId, bar: barId, baz: bazId, fooFile: fooFileId, bazMethod: bazMethodId },
+  };
 }
 
 describe.each([
