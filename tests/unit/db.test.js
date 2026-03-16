@@ -322,7 +322,10 @@ describe('findDbPath with git ceiling', () => {
       _resetRepoRootCache();
       const ceiling = fs.realpathSync(findRepoRoot());
       const result = findDbPath();
-      expect(result).toBe(path.join(ceiling, '.codegraph', 'graph.db'));
+      // Use realpathSync on both sides to normalize Windows 8.3 short names
+      // (e.g. RUNNER~1 vs runneradmin) that path.dirname walking may preserve
+      const expected = path.join(ceiling, '.codegraph', 'graph.db');
+      expect(fs.realpathSync(result)).toBe(fs.realpathSync(expected));
     } finally {
       process.cwd = origCwd;
       fs.rmSync(path.join(worktreeRoot, '.codegraph'), { recursive: true, force: true });
