@@ -1,6 +1,7 @@
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 import { audit } from '../../presentation/audit.js';
 import { explain } from '../../presentation/queries-cli.js';
+import { config } from '../shared/options.js';
 
 export const command = {
   name: 'audit <target>',
@@ -38,7 +39,7 @@ export const command = {
       kind: opts.kind,
       noTests: qOpts.noTests,
       json: qOpts.json,
-      config: qOpts.config,
+      config,
     });
   },
 };

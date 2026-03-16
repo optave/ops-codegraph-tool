@@ -47,7 +47,6 @@ export function resolveQueryOpts(opts) {
     csv: opts.csv,
     limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
     offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-    config,
   };
 }
 

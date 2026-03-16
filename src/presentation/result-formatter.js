@@ -41,7 +41,7 @@ function escapeCsv(val) {
  */
 function printCsv(data, field) {
   const items = field ? data[field] : data;
-  if (!Array.isArray(items)) return;
+  if (!Array.isArray(items)) return false;
 
   const flatItems = items.map((item) =>
     typeof item === 'object' && item !== null && !Array.isArray(item)
@@ -59,6 +59,7 @@ function printCsv(data, field) {
   for (const row of flatItems) {
     console.log(columns.map((col) => escapeCsv(row[col])).join(','));
   }
+  return true;
 }
 
 const MAX_COL_WIDTH = 40;
@@ -70,7 +71,7 @@ const MAX_COL_WIDTH = 40;
  */
 function printAutoTable(data, field) {
   const items = field ? data[field] : data;
-  if (!Array.isArray(items)) return;
+  if (!Array.isArray(items)) return false;
 
   const flatItems = items.map((item) =>
     typeof item === 'object' && item !== null && !Array.isArray(item)
@@ -105,6 +106,7 @@ function printAutoTable(data, field) {
   );
 
   console.log(formatTable({ columns: colDefs, rows }));
+  return true;
 }
 
 /**
@@ -125,12 +127,10 @@ export function outputResult(data, field, opts) {
     return true;
   }
   if (opts.csv) {
-    printCsv(data, field);
-    return true;
+    return printCsv(data, field) !== false;
   }
   if (opts.table) {
-    printAutoTable(data, field);
-    return true;
+    return printAutoTable(data, field) !== false;
   }
   return false;
 }

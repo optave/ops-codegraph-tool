@@ -53,9 +53,9 @@ export const command = {
             fs.writeFileSync(`${base}-nodes.csv`, csv.nodes, 'utf-8');
             fs.writeFileSync(`${base}-relationships.csv`, csv.relationships, 'utf-8');
             console.log(`Exported to ${base}-nodes.csv and ${base}-relationships.csv`);
-            return;
+          } else {
+            output = `--- nodes.csv ---\n${csv.nodes}\n\n--- relationships.csv ---\n${csv.relationships}`;
           }
-          output = `--- nodes.csv ---\n${csv.nodes}\n\n--- relationships.csv ---\n${csv.relationships}`;
           break;
         }
         default:
@@ -65,6 +65,8 @@ export const command = {
     } finally {
       close();
     }
+
+    if (output === undefined) return;
 
     if (opts.output) {
       fs.writeFileSync(opts.output, output, 'utf-8');

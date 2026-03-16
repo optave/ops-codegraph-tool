@@ -1,5 +1,6 @@
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 import { ConfigError } from '../../shared/errors.js';
+import { config } from '../shared/options.js';
 
 export const command = {
   name: 'check [ref]',
@@ -53,7 +54,7 @@ export const command = {
       depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
       noTests: qOpts.noTests,
       json: qOpts.json,
-      config: qOpts.config,
+      config,
     });
 
     if (opts.rules) {
