@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.1.3 | **Status:** Active development | **Updated:** March 2026
+> **Current version:** 3.1.4 | **Status:** Active development | **Updated:** March 2026
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across ten phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -16,7 +16,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Complete** (v1.4.0) |
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.6.0) |
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
-| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names | **In Progress** (v3.1.3) |
+| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names | **In Progress** (v3.1.4) |
 | [**4**](#phase-4--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | Planned |
 | [**5**](#phase-5--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
 | [**6**](#phase-6--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
@@ -828,9 +828,9 @@ src/
 
 **Affected files:** `src/builder.js` → split into `src/builder/`
 
-### 3.10 -- Embedder Subsystem Extraction
+### 3.10 -- Embedder Subsystem Extraction ✅
 
-Restructure `embedder.js` (1,113 lines) -- which now contains 3 search engines -- into a standalone subsystem.
+Restructured `embedder.js` (1,113 lines) into a standalone `src/embeddings/` subsystem with pluggable stores and search strategies.
 
 ```
 src/
@@ -851,6 +851,11 @@ src/
 ```
 
 The pluggable store interface enables future O(log n) ANN search (e.g., `hnswlib-node`) when symbol counts reach 50K+.
+
+- ✅ Extracted into `src/embeddings/` with `index.js`, `models.js`, `generator.js` (v3.1.4, [#433](https://github.com/optave/codegraph/pull/433))
+- ✅ Pluggable stores: `sqlite-blob.js`, `fts5.js`
+- ✅ Search engines: `semantic.js`, `keyword.js`, `hybrid.js`
+- ✅ Text preparation strategies: `structured.js`, `source.js`
 
 **Affected files:** `src/embedder.js` -> split into `src/embeddings/`
 
@@ -919,20 +924,18 @@ CREATE INDEX idx_nodes_scope ON nodes(scope);
 
 **Affected files:** `src/db/migrations.js`, `src/db/repository/nodes.js`, `src/builder/helpers.js`, `src/builder/stages/insert-nodes.js`, `src/extractors/*.js`, `src/extractors/helpers.js`, `src/analysis/symbol-lookup.js`
 
-### 3.13 -- Testing Pyramid with InMemoryRepository
+### 3.13 -- Testing Pyramid with InMemoryRepository ✅
 
-The repository pattern (3.3) enables true unit testing:
+The repository pattern (3.3) enables true unit testing. `InMemoryRepository` provides an in-memory backend that implements the same interface as `SqliteRepository`, enabling fast unit tests without SQLite.
 
-- Pure unit tests for graph algorithms (pass adjacency list, assert result)
-- Pure unit tests for risk/confidence scoring (pass parameters, assert score)
-- `InMemoryRepository` for query tests (no SQLite, instant setup)
-- Existing 70 test files continue as integration tests
+- ✅ `InMemoryRepository` at `src/db/repository/in-memory-repository.js` (v3.1.4, [#444](https://github.com/optave/codegraph/pull/444))
+- ✅ Pure unit tests for graph algorithms (pass adjacency list, assert result)
+- ✅ Pure unit tests for risk/confidence scoring (pass parameters, assert score)
+- 🔲 Migrate existing integration tests that only need query data to use `InMemoryRepository`
 
-**Current gap:** Many "unit" tests still hit SQLite because there's no repository abstraction.
+### 3.14 -- Presentation Layer Extraction ✅
 
-### 3.14 -- Presentation Layer Extraction
-
-Separate all output formatting from domain logic into a dedicated `src/presentation/` directory. Currently `viewer.js` (948 lines) and `export.js` (681 lines) mix graph traversal with rendering. `result-formatter.js` already exists in `infrastructure/` as a first step.
+Separated all output formatting from domain logic into `src/presentation/`. Domain functions return plain data objects; presentation functions are pure transforms: `data → formatted string`. Commands wire the two together.
 
 ```
 src/
@@ -942,15 +945,14 @@ src/
     table.js               # Tabular CLI output (used by complexity, stats, etc.)
     sequence-renderer.js   # Mermaid sequence diagram formatting (from sequence.js)
     result-formatter.js    # Structured result formatting (moved from infrastructure/)
+    colors.js              # Shared color/style utilities
 ```
 
-- ✅ Extract rendering logic from `viewer.js` — keep graph data loading in domain, move formatting to presentation
+- ✅ Extract rendering logic from `viewer.js` (v3.1.4, [#443](https://github.com/optave/codegraph/pull/443))
 - ✅ Extract serialization from `export.js` — DOT/Mermaid/JSON writers become pure data → string transforms
 - ✅ Extract table formatting helpers used across `queries-cli.js`, `complexity`, `stats`
-- ✅ Move `result-formatter.js` from `infrastructure/` to `presentation/` (it's output formatting, not infrastructure)
+- ✅ Move `result-formatter.js` from `infrastructure/` to `presentation/`
 - ✅ Extract Mermaid rendering from `sequence.js` into `sequence-renderer.js`
-
-**Principle:** Domain functions return plain data objects. Presentation functions are pure transforms: `data → formatted string`. Commands wire the two together.
 
 **Affected files:** `src/viewer.js`, `src/export.js`, `src/sequence.js`, `src/infrastructure/result-formatter.js`
 
