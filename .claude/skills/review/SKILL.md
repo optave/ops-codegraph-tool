@@ -10,6 +10,12 @@ You are performing a full review sweep across all open PRs in this repository. Y
 
 ---
 
+## Step 0: Worktree Isolation
+
+Before doing anything else, run `/worktree` to get an isolated copy of the repo. CLAUDE.md mandates that every session starts with `/worktree` to prevent cross-session interference. All subsequent steps run inside the worktree.
+
+---
+
 ## Step 1: Discover Open PRs
 
 ```bash
@@ -112,8 +118,9 @@ For **each** review comment — including minor suggestions, nits, style feedbac
 After addressing all comments for a PR:
 
 1. Stage only the files you changed.
-2. Commit: `fix: address review feedback on #<number>`
-3. Push to the PR branch.
+2. Group changes by concern — each logically distinct fix gets its own commit (e.g., one commit for a missing validation, another for a naming change). Do not lump all feedback into a single commit.
+3. Use descriptive messages per commit: `fix: <what this specific change does> (#<number>)`
+4. Push to the PR branch.
 
 ### 2g. Re-trigger reviewers
 
