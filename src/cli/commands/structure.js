@@ -15,7 +15,7 @@ export const command = {
     ['--ndjson', 'Newline-delimited JSON output'],
   ],
   async execute([dir], opts, ctx) {
-    const { structureData, formatStructure } = await import('../../commands/structure.js');
+    const { structureData, formatStructure } = await import('../../presentation/structure.js');
     const data = structureData(opts.db, {
       directory: dir,
       depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
