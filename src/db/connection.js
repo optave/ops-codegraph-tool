@@ -6,18 +6,23 @@ import { debug, warn } from '../infrastructure/logger.js';
 import { DbError } from '../shared/errors.js';
 
 let _cachedRepoRoot; // undefined = not computed, null = not a git repo
+let _cachedRepoRootCwd; // cwd at the time the cache was populated
 
 /**
  * Return the git worktree/repo root for the given directory (or cwd).
  * Uses `git rev-parse --show-toplevel` which returns the correct root
  * for both regular repos and git worktrees.
  * Results are cached per-process when called without arguments.
+ * The cache is keyed on cwd so it invalidates if the working directory changes
+ * (e.g. MCP server serving multiple sessions).
  * @param {string} [fromDir] - Directory to resolve from (defaults to cwd)
  * @returns {string | null} Absolute path to repo root, or null if not in a git repo
  */
 export function findRepoRoot(fromDir) {
   const dir = fromDir || process.cwd();
-  if (!fromDir && _cachedRepoRoot !== undefined) return _cachedRepoRoot;
+  if (!fromDir && _cachedRepoRoot !== undefined && _cachedRepoRootCwd === dir) {
+    return _cachedRepoRoot;
+  }
   let root = null;
   try {
     const raw = execFileSync('git', ['rev-parse', '--show-toplevel'], {
@@ -36,13 +41,17 @@ export function findRepoRoot(fromDir) {
   } catch {
     root = null;
   }
-  if (!fromDir) _cachedRepoRoot = root;
+  if (!fromDir) {
+    _cachedRepoRoot = root;
+    _cachedRepoRootCwd = dir;
+  }
   return root;
 }
 
 /** Reset the cached repo root (for testing). */
 export function _resetRepoRootCache() {
   _cachedRepoRoot = undefined;
+  _cachedRepoRootCwd = undefined;
 }
 
 function isProcessAlive(pid) {
