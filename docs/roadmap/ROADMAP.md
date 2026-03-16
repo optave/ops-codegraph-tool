@@ -944,11 +944,11 @@ src/
     result-formatter.js    # Structured result formatting (moved from infrastructure/)
 ```
 
-- 🔲 Extract rendering logic from `viewer.js` — keep graph data loading in domain, move formatting to presentation
-- 🔲 Extract serialization from `export.js` — DOT/Mermaid/JSON writers become pure data → string transforms
-- 🔲 Extract table formatting helpers used across `queries-cli.js`, `complexity`, `stats`
-- 🔲 Move `result-formatter.js` from `infrastructure/` to `presentation/` (it's output formatting, not infrastructure)
-- 🔲 Extract Mermaid rendering from `sequence.js` into `sequence-renderer.js`
+- ✅ Extract rendering logic from `viewer.js` — keep graph data loading in domain, move formatting to presentation
+- ✅ Extract serialization from `export.js` — DOT/Mermaid/JSON writers become pure data → string transforms
+- ✅ Extract table formatting helpers used across `queries-cli.js`, `complexity`, `stats`
+- ✅ Move `result-formatter.js` from `infrastructure/` to `presentation/` (it's output formatting, not infrastructure)
+- ✅ Extract Mermaid rendering from `sequence.js` into `sequence-renderer.js`
 
 **Principle:** Domain functions return plain data objects. Presentation functions are pure transforms: `data → formatted string`. Commands wire the two together.
 

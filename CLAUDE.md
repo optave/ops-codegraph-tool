@@ -50,7 +50,8 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `mcp.js` | MCP server exposing graph queries to AI agents; single-repo by default, `--multi-repo` to enable cross-repo access |
 | `graph/` | Unified graph model: `CodeGraph` class (`model.js`), algorithms (Tarjan SCC, Louvain, BFS, shortest path, centrality), classifiers (role, risk), builders (dependency, structure, temporal) |
 | `cycles.js` | Circular dependency detection (delegates to `graph/` subsystem) |
-| `export.js` | DOT/Mermaid/JSON graph export |
+| `export.js` | Graph export orchestration: loads data from DB, delegates to `presentation/export.js` serializers |
+| `presentation/` | Pure output formatting: `viewer.js` (HTML renderer), `export.js` (DOT/Mermaid/GraphML/Neo4j serializers), `sequence-renderer.js` (Mermaid sequence diagrams), `table.js` (CLI table formatting), `result-formatter.js` (JSON/NDJSON output) |
 | `watcher.js` | Watch mode for incremental rebuilds |
 | `config.js` | `.codegraphrc.json` loading, env overrides, `apiKeyCommand` secret resolution |
 | `constants.js` | `EXTENSIONS` (derived from parser registry) and `IGNORE_DIRS` constants |
@@ -68,7 +69,7 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 | `boundaries.js` | Architecture boundary rules with onion architecture preset |
 | `owners.js` | CODEOWNERS integration for ownership queries |
 | `snapshot.js` | SQLite DB backup and restore |
-| `sequence.js` | Mermaid sequence diagram generation from call graph edges |
+| `sequence.js` | Sequence diagram data generation (BFS traversal); Mermaid rendering delegated to `presentation/sequence-renderer.js` |
 | `paginate.js` | Pagination helpers for bounded query results |
 | `logger.js` | Structured logging (`warn`, `debug`, `info`, `error`) |
 
