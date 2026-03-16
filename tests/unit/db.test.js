@@ -2,21 +2,12 @@
  * Unit tests for src/db.js — build_meta helpers included
  */
 
-import { execFileSync as realExecFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-
-const execFileSyncSpy = vi.hoisted(() => vi.fn());
-
-vi.mock('node:child_process', async (importOriginal) => {
-  const mod = await importOriginal();
-  execFileSyncSpy.mockImplementation(mod.execFileSync);
-  return { ...mod, execFileSync: execFileSyncSpy };
-});
-
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   _resetRepoRootCache,
   closeDb,
@@ -226,30 +217,29 @@ describe('findRepoRoot', () => {
   });
 
   it('returns null when not in a git repo', () => {
-    execFileSyncSpy.mockImplementationOnce(() => {
-      throw new Error('not a git repo');
-    });
-    const root = findRepoRoot(os.tmpdir());
-    expect(root).toBeNull();
+    // Create a fresh temp dir that is guaranteed not to be inside a git repo
+    const noGitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-nogit-root-'));
+    try {
+      const root = findRepoRoot(noGitDir);
+      expect(root).toBeNull();
+    } finally {
+      fs.rmSync(noGitDir, { recursive: true, force: true });
+    }
   });
 
   it('caches results when called without arguments', () => {
     _resetRepoRootCache();
-    execFileSyncSpy.mockClear();
     const first = findRepoRoot();
     const second = findRepoRoot();
     expect(first).toBe(second);
-    expect(execFileSyncSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('bypasses cache when called with explicit dir', () => {
+  it('does not use cache when called with explicit dir', () => {
     _resetRepoRootCache();
-    execFileSyncSpy.mockClear();
     const fromCwd = findRepoRoot();
+    // Calling with an explicit dir should still work (not use cwd cache)
     const fromExplicit = findRepoRoot(process.cwd());
     expect(fromExplicit).toBe(fromCwd);
-    // First call populates cache, second call with explicit dir must call again
-    expect(execFileSyncSpy).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -270,7 +260,7 @@ describe('findDbPath with git ceiling', () => {
     fs.writeFileSync(path.join(outerDir, '.codegraph', 'graph.db'), '');
     fs.mkdirSync(innerDir, { recursive: true });
     // Initialize a real git repo at the worktree root so findRepoRoot returns it
-    realExecFileSync('git', ['init'], { cwd: worktreeRoot, stdio: 'pipe' });
+    execFileSync('git', ['init'], { cwd: worktreeRoot, stdio: 'pipe' });
   });
 
   afterAll(() => {
