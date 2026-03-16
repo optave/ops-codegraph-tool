@@ -1,8 +1,10 @@
 /**
  * Integration tests for sequence diagram generation.
  *
- * Uses a hand-crafted in-memory DB with known graph topology:
+ * Main tests use InMemoryRepository via createTestRepo() for fast, SQLite-free testing.
+ * Dataflow annotation tests still use SQLite (InMemoryRepository has no dataflow table).
  *
+ * Graph topology:
  *   buildGraph() → parseFiles()       [src/builder.js → src/parser.js]
  *                → resolveImports()   [src/builder.js → src/resolve.js]
  *   parseFiles() → extractSymbols()   [src/parser.js  → src/parser.js, same-file]
@@ -21,8 +23,9 @@ import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { initSchema } from '../../src/db/index.js';
 import { sequenceData, sequenceToMermaid } from '../../src/features/sequence.js';
+import { createTestRepo } from '../helpers/fixtures.js';
 
-// ─── Helpers ───────────────────────────────────────────────────────────
+// ─── Helpers (for dataflow SQLite tests only) ─────────────────────────
 
 function insertNode(db, name, kind, file, line) {
   return db
@@ -36,52 +39,37 @@ function insertEdge(db, sourceId, targetId, kind, confidence = 1.0) {
   ).run(sourceId, targetId, kind, confidence);
 }
 
-// ─── Fixture DB ────────────────────────────────────────────────────────
+// ─── InMemory Fixture ─────────────────────────────────────────────────
 
-let tmpDir, dbPath;
+let repo;
 
 beforeAll(() => {
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-sequence-'));
-  fs.mkdirSync(path.join(tmpDir, '.codegraph'));
-  dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
-
-  const db = new Database(dbPath);
-  db.pragma('journal_mode = WAL');
-  initSchema(db);
-
-  // Core nodes
-  const buildGraph = insertNode(db, 'buildGraph', 'function', 'src/builder.js', 10);
-  const parseFiles = insertNode(db, 'parseFiles', 'function', 'src/parser.js', 5);
-  const extractSymbols = insertNode(db, 'extractSymbols', 'function', 'src/parser.js', 20);
-  const resolveImports = insertNode(db, 'resolveImports', 'function', 'src/resolve.js', 1);
-
-  // Call edges
-  insertEdge(db, buildGraph, parseFiles, 'calls');
-  insertEdge(db, buildGraph, resolveImports, 'calls');
-  insertEdge(db, parseFiles, extractSymbols, 'calls');
-
-  // Alias collision nodes (two different helper.js files)
-  const helperA = insertNode(db, 'helperA', 'function', 'src/utils/helper.js', 1);
-  const helperB = insertNode(db, 'helperB', 'function', 'lib/utils/helper.js', 1);
-  insertEdge(db, buildGraph, helperA, 'calls');
-  insertEdge(db, helperA, helperB, 'calls');
-
-  // Test file node (for noTests filtering)
-  const testFn = insertNode(db, 'testBuild', 'function', 'tests/builder.test.js', 1);
-  insertEdge(db, buildGraph, testFn, 'calls');
-
-  db.close();
-});
-
-afterAll(() => {
-  if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+  ({ repo } = createTestRepo()
+    // Core nodes
+    .fn('buildGraph', 'src/builder.js', 10)
+    .fn('parseFiles', 'src/parser.js', 5)
+    .fn('extractSymbols', 'src/parser.js', 20)
+    .fn('resolveImports', 'src/resolve.js', 1)
+    // Alias collision nodes (two different helper.js files)
+    .fn('helperA', 'src/utils/helper.js', 1)
+    .fn('helperB', 'lib/utils/helper.js', 1)
+    // Test file node (for noTests filtering)
+    .fn('testBuild', 'tests/builder.test.js', 1)
+    // Call edges
+    .calls('buildGraph', 'parseFiles')
+    .calls('buildGraph', 'resolveImports')
+    .calls('parseFiles', 'extractSymbols')
+    .calls('buildGraph', 'helperA')
+    .calls('helperA', 'helperB')
+    .calls('buildGraph', 'testBuild')
+    .build());
 });
 
 // ─── sequenceData ──────────────────────────────────────────────────────
 
 describe('sequenceData', () => {
   test('basic sequence — correct participants and messages in BFS order', () => {
-    const data = sequenceData('buildGraph', dbPath, { noTests: true });
+    const data = sequenceData('buildGraph', null, { repo, noTests: true });
     expect(data.entry).not.toBeNull();
     expect(data.entry.name).toBe('buildGraph');
 
@@ -98,7 +86,7 @@ describe('sequenceData', () => {
   });
 
   test('self-call — same-file call appears as self-message', () => {
-    const data = sequenceData('parseFiles', dbPath, { noTests: true });
+    const data = sequenceData('parseFiles', null, { repo, noTests: true });
     expect(data.entry).not.toBeNull();
 
     // parseFiles → extractSymbols are both in src/parser.js
@@ -108,7 +96,7 @@ describe('sequenceData', () => {
   });
 
   test('depth limiting — depth:1 truncates', () => {
-    const data = sequenceData('buildGraph', dbPath, { depth: 1, noTests: true });
+    const data = sequenceData('buildGraph', null, { repo, depth: 1, noTests: true });
     expect(data.truncated).toBe(true);
     expect(data.depth).toBe(1);
 
@@ -118,14 +106,14 @@ describe('sequenceData', () => {
   });
 
   test('unknown name — entry is null', () => {
-    const data = sequenceData('nonExistentFunction', dbPath);
+    const data = sequenceData('nonExistentFunction', null, { repo });
     expect(data.entry).toBeNull();
     expect(data.participants).toHaveLength(0);
     expect(data.messages).toHaveLength(0);
   });
 
   test('leaf entry — entry exists, zero messages', () => {
-    const data = sequenceData('extractSymbols', dbPath);
+    const data = sequenceData('extractSymbols', null, { repo });
     expect(data.entry).not.toBeNull();
     expect(data.entry.name).toBe('extractSymbols');
     expect(data.messages).toHaveLength(0);
@@ -134,7 +122,7 @@ describe('sequenceData', () => {
   });
 
   test('participant alias collision — two helper.js files get distinct IDs', () => {
-    const data = sequenceData('buildGraph', dbPath, { noTests: true });
+    const data = sequenceData('buildGraph', null, { repo, noTests: true });
     const helperParticipants = data.participants.filter((p) => p.label === 'helper.js');
     expect(helperParticipants.length).toBe(2);
 
@@ -149,8 +137,8 @@ describe('sequenceData', () => {
   });
 
   test('noTests filtering — test file nodes excluded', () => {
-    const withTests = sequenceData('buildGraph', dbPath, { noTests: false });
-    const withoutTests = sequenceData('buildGraph', dbPath, { noTests: true });
+    const withTests = sequenceData('buildGraph', null, { repo, noTests: false });
+    const withoutTests = sequenceData('buildGraph', null, { repo, noTests: true });
 
     // With tests should have more messages (includes testBuild)
     expect(withTests.totalMessages).toBeGreaterThan(withoutTests.totalMessages);
@@ -165,7 +153,7 @@ describe('sequenceData', () => {
 
 describe('sequenceToMermaid', () => {
   test('starts with sequenceDiagram and has participant lines', () => {
-    const data = sequenceData('buildGraph', dbPath, { noTests: true });
+    const data = sequenceData('buildGraph', null, { repo, noTests: true });
     const mermaid = sequenceToMermaid(data);
 
     expect(mermaid).toMatch(/^sequenceDiagram/);
@@ -173,13 +161,13 @@ describe('sequenceToMermaid', () => {
   });
 
   test('has ->> arrows for calls', () => {
-    const data = sequenceData('buildGraph', dbPath, { noTests: true });
+    const data = sequenceData('buildGraph', null, { repo, noTests: true });
     const mermaid = sequenceToMermaid(data);
     expect(mermaid).toContain('->>');
   });
 
   test('truncation note when truncated', () => {
-    const data = sequenceData('buildGraph', dbPath, { depth: 1, noTests: true });
+    const data = sequenceData('buildGraph', null, { repo, depth: 1, noTests: true });
     const mermaid = sequenceToMermaid(data);
     expect(mermaid).toContain('Truncated at depth');
   });
@@ -208,7 +196,7 @@ describe('sequenceToMermaid', () => {
   });
 });
 
-// ─── Dataflow annotations ───────────────────────────────────────────────
+// ─── Dataflow annotations (SQLite — requires dataflow table) ──────────
 
 describe('dataflow annotations', () => {
   let dfTmpDir, dfDbPath;

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { openReadonlyOrFail } from '../db/index.js';
+import { openRepo } from '../db/index.js';
 import { louvainCommunities } from '../graph/algorithms/louvain.js';
 import { buildDependencyGraph } from '../graph/builders/dependency.js';
 import { paginateResult } from '../shared/paginate.js';
@@ -26,15 +26,15 @@ function getDirectory(filePath) {
  * @returns {{ communities: object[], modularity: number, drift: object, summary: object }}
  */
 export function communitiesData(customDbPath, opts = {}) {
-  const db = openReadonlyOrFail(customDbPath);
+  const { repo, close } = openRepo(customDbPath, opts);
   let graph;
   try {
-    graph = buildDependencyGraph(db, {
+    graph = buildDependencyGraph(repo, {
       fileLevel: !opts.functions,
       noTests: opts.noTests,
     });
   } finally {
-    db.close();
+    close();
   }
 
   // Handle empty or trivial graphs
