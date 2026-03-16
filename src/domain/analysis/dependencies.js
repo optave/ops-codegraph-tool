@@ -8,7 +8,7 @@ import {
   openReadonlyOrFail,
 } from '../../db/index.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
-import { paginateResult } from '../../paginate.js';
+import { paginateResult } from '../../shared/paginate.js';
 import { resolveMethodViaHierarchy } from '../../shared/hierarchy.js';
 import { normalizeSymbol } from '../../shared/normalize.js';
 import { findMatchingNodes } from './symbol-lookup.js';

@@ -11,7 +11,7 @@ import {
   JOURNAL_FILENAME,
   readJournal,
   writeJournalHeader,
-} from '../../src/journal.js';
+} from '../../src/domain/graph/journal.js';
 
 let tmpDir;
 

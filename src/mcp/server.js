@@ -7,8 +7,8 @@
 
 import { createRequire } from 'node:module';
 import { findDbPath } from '../db/index.js';
-import { CodegraphError, ConfigError } from '../errors.js';
-import { MCP_MAX_LIMIT } from '../paginate.js';
+import { CodegraphError, ConfigError } from '../shared/errors.js';
+import { MCP_MAX_LIMIT } from '../shared/paginate.js';
 import { buildToolList } from './tool-registry.js';
 import { TOOL_HANDLERS } from './tools/index.js';
 
@@ -89,7 +89,7 @@ export async function startMCPServer(customDbPath, options = {}) {
         if (allowedRepos && !allowedRepos.includes(args.repo)) {
           throw new ConfigError(`Repository "${args.repo}" is not in the allowed repos list.`);
         }
-        const { resolveRepoDbPath } = await import('../registry.js');
+        const { resolveRepoDbPath } = await import('../infrastructure/registry.js');
         const resolved = resolveRepoDbPath(args.repo);
         if (!resolved)
           throw new ConfigError(

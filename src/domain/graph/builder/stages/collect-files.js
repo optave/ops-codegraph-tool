@@ -5,8 +5,8 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { normalizePath } from '../../../../constants.js';
-import { info } from '../../../../logger.js';
+import { normalizePath } from '../../../../shared/constants.js';
+import { info } from '../../../../infrastructure/logger.js';
 import { collectFiles as collectFilesUtil } from '../helpers.js';
 
 /**

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { run } from './cli/index.js';
-import { CodegraphError } from './errors.js';
+import { CodegraphError } from './shared/errors.js';
 
 run().catch((err) => {
   if (err instanceof CodegraphError) {

@@ -1,4 +1,4 @@
-import { AnalysisError } from '../errors.js';
+import { AnalysisError } from '../shared/errors.js';
 import { checkData } from '../features/check.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 

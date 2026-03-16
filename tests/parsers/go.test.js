@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createParsers, extractGoSymbols } from '../../src/parser.js';
+import { createParsers, extractGoSymbols } from '../../src/domain/parser.js';
 
 describe('Go parser', () => {
   let parsers;

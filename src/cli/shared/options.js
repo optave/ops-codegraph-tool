@@ -1,4 +1,4 @@
-import { loadConfig } from '../../config.js';
+import { loadConfig } from '../../infrastructure/config.js';
 
 const config = loadConfig(process.cwd());
 

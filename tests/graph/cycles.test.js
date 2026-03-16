@@ -6,7 +6,7 @@ import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { initSchema } from '../../src/db/index.js';
 import { findCycles, findCyclesJS } from '../../src/domain/graph/cycles.js';
-import { isNativeAvailable, loadNative } from '../../src/native.js';
+import { isNativeAvailable, loadNative } from '../../src/infrastructure/native.js';
 
 const hasNative = isNativeAvailable();
 

@@ -6,11 +6,11 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { normalizePath } from '../../../../constants.js';
+import { normalizePath } from '../../../../shared/constants.js';
 import { closeDb } from '../../../../db/index.js';
-import { readJournal, writeJournalHeader } from '../../../../journal.js';
-import { debug, info } from '../../../../logger.js';
-import { parseFilesAuto } from '../../../../parser.js';
+import { readJournal, writeJournalHeader } from '../../journal.js';
+import { debug, info } from '../../../../infrastructure/logger.js';
+import { parseFilesAuto } from '../../../parser.js';
 import { fileHash, fileStat, purgeFilesFromGraph, readFileSafe } from '../helpers.js';
 
 /**

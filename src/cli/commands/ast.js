@@ -1,4 +1,4 @@
-import { ConfigError } from '../../errors.js';
+import { ConfigError } from '../../shared/errors.js';
 
 export const command = {
   name: 'ast [pattern]',

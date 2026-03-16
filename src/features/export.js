@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { isTestFile } from '../infrastructure/test-filter.js';
-import { paginateResult } from '../paginate.js';
+import { paginateResult } from '../shared/paginate.js';
 import {
   renderFileLevelDOT,
   renderFileLevelGraphML,

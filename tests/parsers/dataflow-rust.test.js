@@ -3,7 +3,7 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 import { extractDataflow } from '../../src/features/dataflow.js';
-import { createParsers } from '../../src/parser.js';
+import { createParsers } from '../../src/domain/parser.js';
 
 describe('extractDataflow — Rust', () => {
   let parsers;

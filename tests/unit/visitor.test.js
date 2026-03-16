@@ -8,7 +8,7 @@ let parse;
 
 async function ensureParser() {
   if (parse) return;
-  const { createParsers, getParser } = await import('../../src/parser.js');
+  const { createParsers, getParser } = await import('../../src/domain/parser.js');
   const parsers = await createParsers();
   parse = (code) => {
     // getParser needs a path to determine language

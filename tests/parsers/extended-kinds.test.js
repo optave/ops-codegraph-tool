@@ -15,7 +15,7 @@ import {
   extractRubySymbols,
   extractRustSymbols,
   extractSymbols,
-} from '../../src/parser.js';
+} from '../../src/domain/parser.js';
 
 // ── JavaScript ──────────────────────────────────────────────────────────────
 

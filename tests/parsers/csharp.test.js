@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createParsers, extractCSharpSymbols } from '../../src/parser.js';
+import { createParsers, extractCSharpSymbols } from '../../src/domain/parser.js';
 
 describe('C# parser', () => {
   let parsers;

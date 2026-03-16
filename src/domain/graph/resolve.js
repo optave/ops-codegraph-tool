@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { normalizePath } from '../../constants.js';
-import { loadNative } from '../../native.js';
+import { normalizePath } from '../../shared/constants.js';
+import { loadNative } from '../../infrastructure/native.js';
 
 // ── Alias format conversion ─────────────────────────────────────────
 

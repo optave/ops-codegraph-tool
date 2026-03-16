@@ -1,9 +1,9 @@
 import path from 'node:path';
-import { normalizePath } from '../constants.js';
+import { normalizePath } from '../shared/constants.js';
 import { getNodeId, openReadonlyOrFail, testFilterSQL } from '../db/index.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
-import { debug } from '../logger.js';
-import { paginateResult } from '../paginate.js';
+import { debug } from '../infrastructure/logger.js';
+import { paginateResult } from '../shared/paginate.js';
 
 // ─── Build-time: insert directory nodes, contains edges, and metrics ────
 

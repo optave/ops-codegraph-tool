@@ -1,5 +1,5 @@
-import { DbError } from '../errors.js';
-import { EVERY_EDGE_KIND } from '../kinds.js';
+import { DbError } from '../shared/errors.js';
+import { EVERY_EDGE_KIND } from '../shared/kinds.js';
 
 // ─── Validation Helpers ─────────────────────────────────────────────
 

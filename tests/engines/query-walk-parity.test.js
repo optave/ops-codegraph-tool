@@ -10,7 +10,7 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { extractSymbols } from '../../src/extractors/javascript.js';
-import { createParsers, getParser, parseFileAuto } from '../../src/parser.js';
+import { createParsers, getParser, parseFileAuto } from '../../src/domain/parser.js';
 
 let parsers;
 

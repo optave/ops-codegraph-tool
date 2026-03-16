@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import { batch } from '../../commands/batch.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
-import { ConfigError } from '../../errors.js';
+import { ConfigError } from '../../shared/errors.js';
 import { BATCH_COMMANDS, multiBatchData, splitTargets } from '../../features/batch.js';
 
 export const command = {

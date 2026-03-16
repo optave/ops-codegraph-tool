@@ -11,8 +11,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { isNativeAvailable } from '../../src/native.js';
-import { createParseTreeCache, parseFileIncremental } from '../../src/parser.js';
+import { isNativeAvailable } from '../../src/infrastructure/native.js';
+import { createParseTreeCache, parseFileIncremental } from '../../src/domain/parser.js';
 
 const hasNative = isNativeAvailable();
 

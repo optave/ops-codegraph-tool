@@ -9,7 +9,7 @@
 import { findCallees, openReadonlyOrFail } from '../db/index.js';
 import { findMatchingNodes } from '../domain/queries.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
-import { paginateResult } from '../paginate.js';
+import { paginateResult } from '../shared/paginate.js';
 import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
 
 // ─── Alias generation ────────────────────────────────────────────────

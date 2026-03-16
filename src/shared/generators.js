@@ -1,6 +1,6 @@
 import { iterateFunctionNodes, openReadonlyOrFail } from '../db/index.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
-import { ALL_SYMBOL_KINDS } from '../kinds.js';
+import { ALL_SYMBOL_KINDS } from './kinds.js';
 
 /**
  * Generator: stream functions one-by-one using .iterate() for memory efficiency.

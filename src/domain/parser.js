@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Language, Parser, Query } from 'web-tree-sitter';
-import { warn } from './logger.js';
-import { getNative, getNativePackageVersion, loadNative } from './native.js';
+import { warn } from '../infrastructure/logger.js';
+import { getNative, getNativePackageVersion, loadNative } from '../infrastructure/native.js';
 
 // Re-export all extractors for backward compatibility
 export {
@@ -16,7 +16,7 @@ export {
   extractRubySymbols,
   extractRustSymbols,
   extractSymbols,
-} from './extractors/index.js';
+} from '../extractors/index.js';
 
 import {
   extractCSharpSymbols,
@@ -28,12 +28,12 @@ import {
   extractRubySymbols,
   extractRustSymbols,
   extractSymbols,
-} from './extractors/index.js';
+} from '../extractors/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function grammarPath(name) {
-  return path.join(__dirname, '..', 'grammars', name);
+  return path.join(__dirname, '..', '..', 'grammars', name);
 }
 
 let _initialized = false;

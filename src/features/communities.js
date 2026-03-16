@@ -2,7 +2,7 @@ import path from 'node:path';
 import { openReadonlyOrFail } from '../db/index.js';
 import { louvainCommunities } from '../graph/algorithms/louvain.js';
 import { buildDependencyGraph } from '../graph/builders/dependency.js';
-import { paginateResult } from '../paginate.js';
+import { paginateResult } from '../shared/paginate.js';
 
 // ─── Directory Helpers ────────────────────────────────────────────────
 

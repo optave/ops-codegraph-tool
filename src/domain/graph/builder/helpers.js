@@ -6,9 +6,9 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { EXTENSIONS, IGNORE_DIRS } from '../../../constants.js';
+import { EXTENSIONS, IGNORE_DIRS } from '../../../shared/constants.js';
 import { purgeFilesData } from '../../../db/index.js';
-import { warn } from '../../../logger.js';
+import { warn } from '../../../infrastructure/logger.js';
 
 export const BUILTIN_RECEIVERS = new Set([
   'console',

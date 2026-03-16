@@ -1,4 +1,4 @@
-import { AnalysisError } from '../../errors.js';
+import { AnalysisError } from '../../shared/errors.js';
 
 export const command = {
   name: 'co-change [file]',

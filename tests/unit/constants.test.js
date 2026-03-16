@@ -10,7 +10,7 @@ import {
   isSupportedFile,
   normalizePath,
   shouldIgnore,
-} from '../../src/constants.js';
+} from '../../src/shared/constants.js';
 
 describe('EXTENSIONS', () => {
   it('contains known supported extensions', () => {

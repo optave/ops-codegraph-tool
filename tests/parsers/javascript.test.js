@@ -6,7 +6,7 @@
  * Then: npm test
  */
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createParsers, extractSymbols } from '../../src/parser.js';
+import { createParsers, extractSymbols } from '../../src/domain/parser.js';
 
 describe('JavaScript parser', () => {
   let parsers;

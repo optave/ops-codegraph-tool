@@ -18,7 +18,7 @@ export {
   EXTENDED_SYMBOL_KINDS,
   STRUCTURAL_EDGE_KINDS,
   VALID_ROLES,
-} from '../kinds.js';
+} from '../shared/kinds.js';
 export { iterListFunctions, iterRoles, iterWhere } from '../shared/generators.js';
 // ── Shared utilities ─────────────────────────────────────────────────────
 export { kindIcon, normalizeSymbol } from '../shared/normalize.js';

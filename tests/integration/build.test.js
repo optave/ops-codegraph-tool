@@ -10,7 +10,7 @@ import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { closeDb, openDb, setBuildMeta } from '../../src/db/index.js';
 import { buildGraph } from '../../src/domain/graph/builder.js';
-import { JOURNAL_FILENAME, writeJournalHeader } from '../../src/journal.js';
+import { JOURNAL_FILENAME, writeJournalHeader } from '../../src/domain/graph/journal.js';
 
 // ES-module versions of the sample-project fixture so the parser
 // generates import edges (the originals use CommonJS require()).

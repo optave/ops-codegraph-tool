@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { debug, warn } from './logger.js';
+import { debug, warn } from '../../infrastructure/logger.js';
 
 export const CHANGE_EVENTS_FILENAME = 'change-events.ndjson';
 export const DEFAULT_MAX_BYTES = 1024 * 1024; // 1 MB

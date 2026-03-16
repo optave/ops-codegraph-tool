@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { closeDb, findDbPath, openDb } from '../../db/index.js';
-import { DbError } from '../../errors.js';
-import { warn } from '../../logger.js';
+import { DbError } from '../../shared/errors.js';
+import { warn } from '../../infrastructure/logger.js';
 import { embed, getModelConfig } from './models.js';
 import { buildSourceText } from './strategies/source.js';
 import { buildStructuredText } from './strategies/structured.js';

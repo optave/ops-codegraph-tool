@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { appendChangeEvents, buildChangeEvent, diffSymbols } from '../../change-journal.js';
-import { EXTENSIONS, IGNORE_DIRS, normalizePath } from '../../constants.js';
+import { appendChangeEvents, buildChangeEvent, diffSymbols } from './change-journal.js';
+import { EXTENSIONS, IGNORE_DIRS, normalizePath } from '../../shared/constants.js';
 import { closeDb, getNodeId as getNodeIdQuery, initSchema, openDb } from '../../db/index.js';
-import { DbError } from '../../errors.js';
-import { appendJournalEntries } from '../../journal.js';
-import { info } from '../../logger.js';
-import { createParseTreeCache, getActiveEngine } from '../../parser.js';
+import { DbError } from '../../shared/errors.js';
+import { appendJournalEntries } from './journal.js';
+import { info } from '../../infrastructure/logger.js';
+import { createParseTreeCache, getActiveEngine } from '../parser.js';
 import { rebuildFile } from './builder/incremental.js';
 
 function shouldIgnore(filePath) {

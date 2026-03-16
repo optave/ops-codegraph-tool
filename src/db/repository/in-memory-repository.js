@@ -1,5 +1,5 @@
-import { ConfigError } from '../../errors.js';
-import { CORE_SYMBOL_KINDS, EVERY_SYMBOL_KIND, VALID_ROLES } from '../../kinds.js';
+import { ConfigError } from '../../shared/errors.js';
+import { CORE_SYMBOL_KINDS, EVERY_SYMBOL_KIND, VALID_ROLES } from '../../shared/kinds.js';
 import { escapeLike } from '../query-builder.js';
 import { Repository } from './base.js';
 

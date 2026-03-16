@@ -7,8 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { closeDb, getBuildMeta, setBuildMeta } from '../../../../db/index.js';
-import { writeJournalHeader } from '../../../../journal.js';
-import { debug, info, warn } from '../../../../logger.js';
+import { writeJournalHeader } from '../../journal.js';
+import { debug, info, warn } from '../../../../infrastructure/logger.js';
 
 const __builderDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'));
 const CODEGRAPH_VERSION = JSON.parse(
@@ -127,7 +127,7 @@ export async function finalize(ctx) {
       debug(`Skipping auto-registration for temp directory: ${resolvedRoot}`);
     } else {
       try {
-        const { registerRepo } = await import('../../../../registry.js');
+        const { registerRepo } = await import('../../../../infrastructure/registry.js');
         registerRepo(rootDir);
       } catch (err) {
         debug(`Auto-registration failed: ${err.message}`);

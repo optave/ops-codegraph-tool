@@ -8,7 +8,7 @@
 
 import { createRequire } from 'node:module';
 import os from 'node:os';
-import { EngineError } from './errors.js';
+import { EngineError } from '../shared/errors.js';
 
 let _cached; // undefined = not yet tried, null = failed, object = module
 let _loadError = null;

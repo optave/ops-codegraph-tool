@@ -1,6 +1,6 @@
 import { openReadonlyOrFail } from '../../db/index.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
-import { paginateResult } from '../../paginate.js';
+import { paginateResult } from '../../shared/paginate.js';
 import { normalizeSymbol } from '../../shared/normalize.js';
 
 export function rolesData(customDbPath, opts = {}) {

@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDb, initSchema, openDb } from '../../src/db/index.js';
 import { PipelineContext } from '../../src/domain/graph/builder/context.js';
 import { detectChanges } from '../../src/domain/graph/builder/stages/detect-changes.js';
-import { writeJournalHeader } from '../../src/journal.js';
+import { writeJournalHeader } from '../../src/domain/graph/journal.js';
 
 let tmpDir;
 

@@ -14,7 +14,7 @@ import {
   DEFAULT_MAX_BYTES,
   diffSymbols,
   rotateIfNeeded,
-} from '../../src/change-journal.js';
+} from '../../src/domain/graph/change-journal.js';
 
 let tmpDir;
 

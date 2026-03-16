@@ -13,7 +13,7 @@ import {
   resolveRepoDbPath,
   saveRegistry,
   unregisterRepo,
-} from '../../src/registry.js';
+} from '../../src/infrastructure/registry.js';
 
 let tmpDir;
 let registryPath;
@@ -41,7 +41,7 @@ describe('REGISTRY_PATH', () => {
       [
         '--input-type=module',
         '-e',
-        `import { REGISTRY_PATH } from './src/registry.js'; process.stdout.write(REGISTRY_PATH);`,
+        `import { REGISTRY_PATH } from './src/infrastructure/registry.js'; process.stdout.write(REGISTRY_PATH);`,
       ],
       {
         cwd: path.resolve(import.meta.dirname, '..', '..'),

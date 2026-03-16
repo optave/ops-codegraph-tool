@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
-import { createParsers, extractRustSymbols } from '../../src/parser.js';
+import { createParsers, extractRustSymbols } from '../../src/domain/parser.js';
 
 describe('Rust parser', () => {
   let parsers;

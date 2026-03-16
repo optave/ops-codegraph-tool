@@ -12,11 +12,11 @@ import {
 } from '../ast-analysis/shared.js';
 import { walkWithVisitors } from '../ast-analysis/visitor.js';
 import { createComplexityVisitor } from '../ast-analysis/visitors/complexity-visitor.js';
-import { loadConfig } from '../config.js';
+import { loadConfig } from '../infrastructure/config.js';
 import { getFunctionNodeId, openReadonlyOrFail } from '../db/index.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
-import { info } from '../logger.js';
-import { paginateResult } from '../paginate.js';
+import { info } from '../infrastructure/logger.js';
+import { paginateResult } from '../shared/paginate.js';
 
 // Re-export rules for backward compatibility
 export { COMPLEXITY_RULES, HALSTEAD_RULES };
@@ -360,12 +360,12 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
     }
   }
   if (needsFallback) {
-    const { createParsers } = await import('./parser.js');
+    const { createParsers } = await import('../domain/parser.js');
     parsers = await createParsers();
     extToLang = buildExtToLangMap();
   }
 
-  const { getParser } = await import('./parser.js');
+  const { getParser } = await import('../domain/parser.js');
 
   const upsert = db.prepare(
     `INSERT OR REPLACE INTO function_complexity

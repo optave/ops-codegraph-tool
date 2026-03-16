@@ -11,7 +11,7 @@ import { walkWithVisitors } from '../../src/ast-analysis/visitor.js';
 import { createCfgVisitor } from '../../src/ast-analysis/visitors/cfg-visitor.js';
 import { buildFunctionCFG, makeCfgRules } from '../../src/features/cfg.js';
 import { COMPLEXITY_RULES } from '../../src/features/complexity.js';
-import { createParsers } from '../../src/parser.js';
+import { createParsers } from '../../src/domain/parser.js';
 
 let jsParser;
 

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { SUPPORTED_EXTENSIONS } from './parser.js';
+import { SUPPORTED_EXTENSIONS } from '../domain/parser.js';
 
 export const IGNORE_DIRS = new Set([
   'node_modules',

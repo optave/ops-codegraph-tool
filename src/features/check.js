@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadConfig } from '../config.js';
+import { loadConfig } from '../infrastructure/config.js';
 import { findDbPath, openReadonlyOrFail } from '../db/index.js';
 import { findCycles } from '../domain/graph/cycles.js';
 import { isTestFile } from '../infrastructure/test-filter.js';

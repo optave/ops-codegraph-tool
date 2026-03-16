@@ -1,8 +1,8 @@
 import { findNodesForTriage, openReadonlyOrFail } from '../db/index.js';
 import { DEFAULT_WEIGHTS, scoreRisk } from '../graph/classifiers/risk.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
-import { warn } from '../logger.js';
-import { paginateResult } from '../paginate.js';
+import { warn } from '../infrastructure/logger.js';
+import { paginateResult } from '../shared/paginate.js';
 
 // ─── Data Function ────────────────────────────────────────────────────
 

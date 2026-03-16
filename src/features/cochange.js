@@ -8,11 +8,11 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { normalizePath } from '../constants.js';
+import { normalizePath } from '../shared/constants.js';
 import { closeDb, findDbPath, initSchema, openDb, openReadonlyOrFail } from '../db/index.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
-import { warn } from '../logger.js';
-import { paginateResult } from '../paginate.js';
+import { warn } from '../infrastructure/logger.js';
+import { paginateResult } from '../shared/paginate.js';
 
 /**
  * Scan git history and return parsed commit data.

@@ -14,7 +14,7 @@ import {
   computeMaintainabilityIndex,
   HALSTEAD_RULES,
 } from '../../src/features/complexity.js';
-import { createParsers } from '../../src/parser.js';
+import { createParsers } from '../../src/domain/parser.js';
 
 let jsParser;
 

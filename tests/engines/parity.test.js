@@ -8,7 +8,7 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { isNativeAvailable } from '../../src/native.js';
+import { isNativeAvailable } from '../../src/infrastructure/native.js';
 import {
   createParsers,
   extractCSharpSymbols,
@@ -21,7 +21,7 @@ import {
   extractRustSymbols,
   extractSymbols,
   getParser,
-} from '../../src/parser.js';
+} from '../../src/domain/parser.js';
 
 let native;
 let parsers;
@@ -110,7 +110,7 @@ const describeOrSkip = hasNative ? describe : describe.skip;
 describeOrSkip('Cross-engine parity', () => {
   beforeAll(async () => {
     if (!hasNative) return;
-    const { getNative } = await import('../../src/native.js');
+    const { getNative } = await import('../../src/infrastructure/native.js');
     native = getNative();
     parsers = await createParsers();
   });

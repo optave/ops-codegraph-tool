@@ -9,8 +9,8 @@
  *   import { buildGraph, queryNameData, findCycles, exportDOT } from '@optave/codegraph';
  */
 
-export { loadConfig } from './config.js';
-export { EXTENSIONS, IGNORE_DIRS } from './constants.js';
+export { loadConfig } from './infrastructure/config.js';
+export { EXTENSIONS, IGNORE_DIRS } from './shared/constants.js';
 export { buildGraph } from './domain/graph/builder.js';
 export { findCycles } from './domain/graph/cycles.js';
 export {
@@ -45,7 +45,7 @@ export {
   EngineError,
   ParseError,
   ResolutionError,
-} from './errors.js';
+} from './shared/errors.js';
 export { astQueryData } from './features/ast.js';
 export { auditData } from './features/audit.js';
 export { batchData } from './features/batch.js';
@@ -63,4 +63,4 @@ export { ownersData } from './features/owners.js';
 export { sequenceData } from './features/sequence.js';
 export { hotspotsData, moduleBoundariesData, structureData } from './features/structure.js';
 export { triageData } from './features/triage.js';
-export { EVERY_EDGE_KIND, EVERY_SYMBOL_KIND } from './kinds.js';
+export { EVERY_EDGE_KIND, EVERY_SYMBOL_KIND } from './shared/kinds.js';
