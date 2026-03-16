@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { openReadonlyOrFail, testFilterSQL } from '../../db/index.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
-import { LANGUAGE_REGISTRY } from '../parser.js';
 import { findCycles } from '../graph/cycles.js';
+import { LANGUAGE_REGISTRY } from '../parser.js';
 
 export const FALSE_POSITIVE_NAMES = new Set([
   'run',

@@ -6,6 +6,7 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
+import { createParsers } from '../../src/domain/parser.js';
 import {
   COMPLEXITY_RULES,
   computeFunctionComplexity,
@@ -14,7 +15,6 @@ import {
   computeMaintainabilityIndex,
   HALSTEAD_RULES,
 } from '../../src/features/complexity.js';
-import { createParsers } from '../../src/domain/parser.js';
 
 let jsParser;
 

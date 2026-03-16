@@ -8,7 +8,6 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { isNativeAvailable } from '../../src/infrastructure/native.js';
 import {
   createParsers,
   extractCSharpSymbols,
@@ -22,6 +21,7 @@ import {
   extractSymbols,
   getParser,
 } from '../../src/domain/parser.js';
+import { isNativeAvailable } from '../../src/infrastructure/native.js';
 
 let native;
 let parsers;

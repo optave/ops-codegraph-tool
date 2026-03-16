@@ -2,7 +2,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { checkForUpdates, printUpdateNotification, semverCompare } from '../../src/infrastructure/update-check.js';
+import {
+  checkForUpdates,
+  printUpdateNotification,
+  semverCompare,
+} from '../../src/infrastructure/update-check.js';
 
 let tmpDir;
 let cachePath;

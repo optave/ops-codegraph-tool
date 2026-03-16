@@ -1,5 +1,5 @@
-import { isTestFile } from '../infrastructure/test-filter.js';
 import { debug } from '../infrastructure/logger.js';
+import { isTestFile } from '../infrastructure/test-filter.js';
 
 // ─── Glob-to-Regex ───────────────────────────────────────────────────
 

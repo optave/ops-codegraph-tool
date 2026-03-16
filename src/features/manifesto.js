@@ -1,6 +1,6 @@
-import { loadConfig } from '../infrastructure/config.js';
 import { openReadonlyOrFail } from '../db/index.js';
 import { findCycles } from '../domain/graph/cycles.js';
+import { loadConfig } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
 import { paginateResult } from '../shared/paginate.js';
 import { evaluateBoundaries } from './boundaries.js';

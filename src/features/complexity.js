@@ -12,10 +12,10 @@ import {
 } from '../ast-analysis/shared.js';
 import { walkWithVisitors } from '../ast-analysis/visitor.js';
 import { createComplexityVisitor } from '../ast-analysis/visitors/complexity-visitor.js';
-import { loadConfig } from '../infrastructure/config.js';
 import { getFunctionNodeId, openReadonlyOrFail } from '../db/index.js';
-import { isTestFile } from '../infrastructure/test-filter.js';
+import { loadConfig } from '../infrastructure/config.js';
 import { info } from '../infrastructure/logger.js';
+import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
 
 // Re-export rules for backward compatibility

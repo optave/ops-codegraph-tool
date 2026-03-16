@@ -2,8 +2,8 @@
  * Unit tests for extractDataflow() against parsed Ruby ASTs.
  */
 import { beforeAll, describe, expect, it } from 'vitest';
-import { extractDataflow } from '../../src/features/dataflow.js';
 import { createParsers } from '../../src/domain/parser.js';
+import { extractDataflow } from '../../src/features/dataflow.js';
 
 describe('extractDataflow — Ruby', () => {
   let parsers;

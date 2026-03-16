@@ -12,9 +12,9 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
+import { createParsers, getParser } from '../../src/domain/parser.js';
 import { extractDataflow } from '../../src/features/dataflow.js';
 import { isNativeAvailable } from '../../src/infrastructure/native.js';
-import { createParsers, getParser } from '../../src/domain/parser.js';
 
 let native;
 let parsers;

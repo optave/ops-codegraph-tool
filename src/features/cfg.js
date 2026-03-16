@@ -23,8 +23,8 @@ import {
   hasCfgTables,
   openReadonlyOrFail,
 } from '../db/index.js';
-import { isTestFile } from '../infrastructure/test-filter.js';
 import { info } from '../infrastructure/logger.js';
+import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
 
 // Re-export for backward compatibility

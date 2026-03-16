@@ -6,8 +6,8 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { loadConfig } from '../../../infrastructure/config.js';
 import { closeDb, getBuildMeta, initSchema, MIGRATIONS, openDb } from '../../../db/index.js';
+import { loadConfig } from '../../../infrastructure/config.js';
 import { info } from '../../../infrastructure/logger.js';
 import { getActiveEngine } from '../../parser.js';
 import { PipelineContext } from './context.js';

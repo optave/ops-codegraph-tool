@@ -7,8 +7,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { closeDb, getBuildMeta, setBuildMeta } from '../../../../db/index.js';
-import { writeJournalHeader } from '../../journal.js';
 import { debug, info, warn } from '../../../../infrastructure/logger.js';
+import { writeJournalHeader } from '../../journal.js';
 
 const __builderDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'));
 const CODEGRAPH_VERSION = JSON.parse(

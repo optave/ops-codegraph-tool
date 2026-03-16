@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Command } from 'commander';
-import { ConfigError } from '../shared/errors.js';
 import { setVerbose } from '../infrastructure/logger.js';
 import { checkForUpdates, printUpdateNotification } from '../infrastructure/update-check.js';
+import { ConfigError } from '../shared/errors.js';
 import { applyQueryOpts, config, formatSize, resolveNoTests } from './shared/options.js';
 import { outputResult } from './shared/output.js';
 

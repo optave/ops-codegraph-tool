@@ -2,8 +2,8 @@
  * Shared utilities for AST analysis modules (complexity, CFG, dataflow, AST nodes).
  */
 
-import { ConfigError } from '../shared/errors.js';
 import { LANGUAGE_REGISTRY } from '../domain/parser.js';
+import { ConfigError } from '../shared/errors.js';
 
 // ─── Generic Rule Factory ─────────────────────────────────────────────────
 

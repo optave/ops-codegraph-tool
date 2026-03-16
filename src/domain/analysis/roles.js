@@ -1,7 +1,7 @@
 import { openReadonlyOrFail } from '../../db/index.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
-import { paginateResult } from '../../shared/paginate.js';
 import { normalizeSymbol } from '../../shared/normalize.js';
+import { paginateResult } from '../../shared/paginate.js';
 
 export function rolesData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);

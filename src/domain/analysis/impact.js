@@ -1,7 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { loadConfig } from '../../infrastructure/config.js';
 import {
   findDbPath,
   findDistinctCallers,
@@ -13,9 +12,10 @@ import {
 import { evaluateBoundaries } from '../../features/boundaries.js';
 import { coChangeForFiles } from '../../features/cochange.js';
 import { ownersForFiles } from '../../features/owners.js';
+import { loadConfig } from '../../infrastructure/config.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
-import { paginateResult } from '../../shared/paginate.js';
 import { normalizeSymbol } from '../../shared/normalize.js';
+import { paginateResult } from '../../shared/paginate.js';
 import { findMatchingNodes } from './symbol-lookup.js';
 
 export function impactAnalysisData(file, customDbPath, opts = {}) {

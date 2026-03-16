@@ -12,8 +12,8 @@ import { buildExtensionSet } from '../ast-analysis/shared.js';
 import { walkWithVisitors } from '../ast-analysis/visitor.js';
 import { createAstStoreVisitor } from '../ast-analysis/visitors/ast-store-visitor.js';
 import { bulkNodeIdsByFile, openReadonlyOrFail } from '../db/index.js';
-import { outputResult } from '../infrastructure/result-formatter.js';
 import { debug } from '../infrastructure/logger.js';
+import { outputResult } from '../infrastructure/result-formatter.js';
 import { paginateResult } from '../shared/paginate.js';
 
 // ─── Constants ────────────────────────────────────────────────────────

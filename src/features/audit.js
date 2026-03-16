@@ -7,9 +7,9 @@
  */
 
 import path from 'node:path';
-import { loadConfig } from '../infrastructure/config.js';
 import { openReadonlyOrFail } from '../db/index.js';
 import { explainData } from '../domain/queries.js';
+import { loadConfig } from '../infrastructure/config.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { RULE_DEFS } from './manifesto.js';
 

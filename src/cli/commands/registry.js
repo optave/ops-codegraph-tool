@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { ConfigError } from '../../shared/errors.js';
 import {
   listRepos,
   pruneRegistry,
@@ -8,6 +7,7 @@ import {
   registerRepo,
   unregisterRepo,
 } from '../../infrastructure/registry.js';
+import { ConfigError } from '../../shared/errors.js';
 
 export const command = {
   name: 'registry',
