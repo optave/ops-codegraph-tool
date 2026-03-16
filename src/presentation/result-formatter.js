@@ -90,10 +90,12 @@ function printAutoTable(data, field) {
       (max, item) => Math.max(max, String(item[col] ?? '').length),
       col.length,
     );
-    const isNumeric = flatItems.every((item) => {
-      const v = item[col];
-      return v == null || v === '' || (typeof v !== 'boolean' && Number.isFinite(Number(v)));
-    });
+    const isNumeric =
+      flatItems.length > 0 &&
+      flatItems.every((item) => {
+        const v = item[col];
+        return v == null || v === '' || (typeof v !== 'boolean' && Number.isFinite(Number(v)));
+      });
     return {
       header: col,
       width: Math.min(maxLen, MAX_COL_WIDTH),
