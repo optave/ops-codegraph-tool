@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
-import { warn } from '../logger.js';
+import { debug, warn } from '../logger.js';
 
 let _cachedRepoRoot = undefined; // undefined = not computed, null = not a git repo
 
@@ -101,7 +101,10 @@ export function findDbPath(customPath) {
   while (true) {
     const candidate = path.join(dir, '.codegraph', 'graph.db');
     if (fs.existsSync(candidate)) return candidate;
-    if (ceiling && path.resolve(dir) === ceiling) break;
+    if (ceiling && path.resolve(dir) === ceiling) {
+      debug(`findDbPath: stopped at git ceiling ${ceiling}`);
+      break;
+    }
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;
