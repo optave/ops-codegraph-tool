@@ -6,7 +6,8 @@
  * sequence-diagram conventions.
  */
 
-import { findCallees, openReadonlyOrFail } from '../db/index.js';
+import { openRepo } from '../db/index.js';
+import { SqliteRepository } from '../db/repository/sqlite-repository.js';
 import { findMatchingNodes } from '../domain/queries.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
@@ -85,19 +86,19 @@ function buildAliases(files) {
  * @returns {{ entry, participants, messages, depth, totalMessages, truncated }}
  */
 export function sequenceData(name, dbPath, opts = {}) {
-  const db = openReadonlyOrFail(dbPath);
+  const { repo, close } = openRepo(dbPath, opts);
   try {
     const maxDepth = opts.depth || 10;
     const noTests = opts.noTests || false;
     const withDataflow = opts.dataflow || false;
 
     // Phase 1: Direct LIKE match
-    let matchNode = findMatchingNodes(db, name, opts)[0] ?? null;
+    let matchNode = findMatchingNodes(repo, name, opts)[0] ?? null;
 
     // Phase 2: Prefix-stripped matching
     if (!matchNode) {
       for (const prefix of FRAMEWORK_ENTRY_PREFIXES) {
-        matchNode = findMatchingNodes(db, `${prefix}${name}`, opts)[0] ?? null;
+        matchNode = findMatchingNodes(repo, `${prefix}${name}`, opts)[0] ?? null;
         if (matchNode) break;
       }
     }
@@ -133,7 +134,7 @@ export function sequenceData(name, dbPath, opts = {}) {
       const nextFrontier = [];
 
       for (const fid of frontier) {
-        const callees = findCallees(db, fid);
+        const callees = repo.findCallees(fid);
 
         const caller = idToNode.get(fid);
 
@@ -163,18 +164,17 @@ export function sequenceData(name, dbPath, opts = {}) {
 
       if (d === maxDepth && frontier.length > 0) {
         // Only mark truncated if at least one frontier node has further callees
-        const hasMoreCalls = frontier.some((fid) => findCallees(db, fid).length > 0);
+        const hasMoreCalls = frontier.some((fid) => repo.findCallees(fid).length > 0);
         if (hasMoreCalls) truncated = true;
       }
     }
 
     // Dataflow annotations: add return arrows
     if (withDataflow && messages.length > 0) {
-      const hasTable = db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='dataflow'")
-        .get();
+      const hasTable = repo.hasDataflowTable();
 
-      if (hasTable) {
+      if (hasTable && repo instanceof SqliteRepository) {
+        const db = repo.db;
         // Build name|file lookup for O(1) target node access
         const nodeByNameFile = new Map();
         for (const n of idToNode.values()) {
@@ -281,7 +281,7 @@ export function sequenceData(name, dbPath, opts = {}) {
     }
     return result;
   } finally {
-    db.close();
+    close();
   }
 }
 

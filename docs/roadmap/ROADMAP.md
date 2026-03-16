@@ -2,7 +2,7 @@
 
 > **Current version:** 3.1.4 | **Status:** Active development | **Updated:** March 2026
 
-Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across ten phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
+Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across eleven phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
 **LLM strategy:** All LLM-powered features are **optional enhancements**. Everything works without an API key. When configured (OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint), users unlock richer semantic search and natural language queries.
 
@@ -17,13 +17,14 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.6.0) |
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
 | [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names, CLI composability | **In Progress** (v3.1.4) |
-| [**4**](#phase-4--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration, supply-chain security, CI coverage gates | Planned |
-| [**5**](#phase-5--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system, DX & onboarding | Planned |
-| [**6**](#phase-6--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
-| [**7**](#phase-7--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
-| [**8**](#phase-8--expanded-language-support) | Expanded Language Support | 8 new languages (11 -> 19), parser utilities | Planned |
-| [**9**](#phase-9--github-integration--ci) | GitHub Integration & CI | Reusable GitHub Action, LLM-enhanced PR review, visual impact graphs, SARIF output | Planned |
-| [**10**](#phase-10--interactive-visualization--advanced-features) | Visualization & Advanced | Web UI, dead code detection, monorepo, agentic search, refactoring analysis | Planned |
+| [**4**](#phase-4--native-analysis-acceleration) | Native Analysis Acceleration | Move JS-only build phases (AST nodes, CFG, dataflow, insert nodes, structure, roles, complexity) to Rust; fix incremental rebuild data loss on native; sub-100ms 1-file rebuilds | Planned |
+| [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration, supply-chain security, CI coverage gates | Planned |
+| [**6**](#phase-6--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system, DX & onboarding | Planned |
+| [**7**](#phase-7--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
+| [**8**](#phase-8--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
+| [**9**](#phase-9--expanded-language-support) | Expanded Language Support | 8 new languages (11 -> 19), parser utilities | Planned |
+| [**10**](#phase-10--github-integration--ci) | GitHub Integration & CI | Reusable GitHub Action, LLM-enhanced PR review, visual impact graphs, SARIF output | Planned |
+| [**11**](#phase-11--interactive-visualization--advanced-features) | Visualization & Advanced | Web UI, dead code detection, monorepo, agentic search, refactoring analysis | Planned |
 
 ### Dependency graph
 
@@ -33,12 +34,13 @@ Phase 1 (Rust Core)
          |-->  Phase 2.5 (Analysis Expansion)
                 |-->  Phase 2.7 (Deep Analysis & Graph Enrichment)
                        |-->  Phase 3 (Architectural Refactoring)
-                              |-->  Phase 4 (TypeScript Migration)
-                                     |-->  Phase 5 (Runtime & Extensibility)
-                                     |-->  Phase 6 (Embeddings + Metadata)  -->  Phase 7 (NL Queries + Narration)
-                                     |-->  Phase 8 (Languages)
-                                     |-->  Phase 9 (GitHub/CI) <-- Phase 6 (risk_score, side_effects)
-Phases 1-7 -->  Phase 10 (Visualization + Refactoring Analysis)
+                              |-->  Phase 4 (Native Analysis Acceleration)
+                                     |-->  Phase 5 (TypeScript Migration)
+                                            |-->  Phase 6 (Runtime & Extensibility)
+                                            |-->  Phase 7 (Embeddings + Metadata)  -->  Phase 8 (NL Queries + Narration)
+                                            |-->  Phase 9 (Languages)
+                                            |-->  Phase 10 (GitHub/CI) <-- Phase 7 (risk_score, side_effects)
+Phases 1-8 -->  Phase 11 (Visualization + Refactoring Analysis)
 ```
 
 ---
@@ -991,13 +993,126 @@ Practical cleanup to make the CLI surface match the internal composability that 
 
 ---
 
-## Phase 4 -- TypeScript Migration
+## Phase 4 -- Native Analysis Acceleration
+
+**Goal:** Move the remaining JS-only build phases to Rust so that `--engine native` eliminates all redundant WASM visitor walks. Today only 3 of 10 build phases (parse, resolve imports, build edges) run in Rust — the other 7 execute identical JavaScript regardless of engine, leaving ~50% of native build time on the table.
+
+**Why its own phase:** This is a substantial Rust engineering effort — porting 6 JS visitors to `crates/codegraph-core/`, fixing a data loss bug in incremental rebuilds, and optimizing the 1-file rebuild path. Doing this before the TS migration avoids rewriting the same visitor code twice (once to TS, once to Rust). The Phase 3 module boundaries make each phase a self-contained target.
+
+**Evidence (v3.1.4 benchmarks on 398 files):**
+
+| Phase | Native | WASM | Ratio | Status |
+|-------|-------:|-----:|------:|--------|
+| Parse | 468ms | 1483ms | 3.2x faster | Already Rust |
+| Build edges | 88ms | 152ms | 1.7x faster | Already Rust |
+| Resolve imports | 8ms | 9ms | ~1x | Already Rust |
+| **AST nodes** | **361ms** | **347ms** | **~1x** | JS visitor — biggest win |
+| **CFG** | **126ms** | **125ms** | **~1x** | JS visitor |
+| **Dataflow** | **100ms** | **98ms** | **~1x** | JS visitor |
+| **Insert nodes** | **143ms** | **148ms** | **~1x** | Pure SQLite batching |
+| **Roles** | **29ms** | **32ms** | **~1x** | JS classification |
+| **Structure** | **13ms** | **17ms** | **~1x** | JS directory tree |
+| Complexity | 16ms | 77ms | 5x faster | Partly pre-computed |
+
+**Target:** Reduce native full-build time from ~1,400ms to ~700ms (2x improvement) by eliminating ~690ms of redundant JS visitor work.
+
+### 4.1 -- AST Node Extraction in Rust
+
+The largest single opportunity. Currently the native parser returns partial AST node data, so the JS `buildAstNodes()` visitor re-walks all WASM trees anyway (~361ms).
+
+- Extend `crates/codegraph-core/` to extract all AST node types (`call`, `new`, `string`, `regex`, `throw`, `await`) during the native parse phase
+- Return complete AST node data in the `FileSymbols` result so `run-analyses.js` can skip the WASM walker entirely
+- Validate parity: ensure native extraction produces identical node counts to the WASM visitor (benchmark already tracks this via `nodes/file`)
+
+**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/features/ast.js`, `src/domain/graph/builder/stages/run-analyses.js`
+
+### 4.2 -- CFG Construction in Rust
+
+The intraprocedural control-flow graph visitor runs in JS even on native builds (~126ms).
+
+- Port `createCfgVisitor()` logic to Rust: basic block detection, branch/loop edges, entry/exit nodes
+- Return CFG block data per function in `FileSymbols` so the JS visitor is fully bypassed
+- Validate parity: CFG block counts and edge counts must match the WASM visitor output
+
+**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/features/cfg.js`, `src/ast-analysis/visitors/cfg-visitor.js`
+
+### 4.3 -- Dataflow Analysis in Rust
+
+Dataflow edges are computed by a JS visitor that walks WASM trees (~100ms on native builds).
+
+- Port `createDataflowVisitor()` to Rust: variable definitions, assignments, reads, def-use chains
+- Return dataflow edges in `FileSymbols`
+- Validate parity against WASM visitor output
+
+**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/features/dataflow.js`, `src/ast-analysis/visitors/dataflow-visitor.js`
+
+### 4.4 -- Batch SQLite Inserts via Rust
+
+`insertNodes` is pure SQLite work (~143ms) but runs row-by-row from JS. Batching in Rust can reduce JS↔native boundary crossings.
+
+- Expose a `batchInsertNodes(nodes[])` function from Rust that uses a single prepared statement in a transaction
+- Alternatively, generate the SQL batch on the JS side and execute as a single `better-sqlite3` call (may be sufficient without Rust)
+- Benchmark both approaches; pick whichever is faster
+
+**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/db/index.js`, `src/domain/graph/builder/stages/insert-nodes.js`
+
+### 4.5 -- Role Classification & Structure in Rust
+
+Smaller wins (~42ms combined) but complete the picture of a fully native build pipeline.
+
+- Port `classifyNodeRoles()` to Rust: hub/leaf/bridge/utility classification based on in/out degree and betweenness
+- Port directory structure building and metrics aggregation
+- Return role assignments and structure data alongside parse results
+
+**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/features/structure.js`, `src/domain/graph/builder/stages/build-structure.js`
+
+### 4.6 -- Complete Complexity Pre-computation
+
+Complexity is partly pre-computed by native (~16ms vs 77ms WASM) but not all functions are covered.
+
+- Ensure native parse computes cognitive, cyclomatic, Halstead, and MI metrics for every function, not just a subset
+- Eliminate the WASM fallback path in `buildComplexityMetrics()` when running native
+
+**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/features/complexity.js`
+
+### 4.7 -- Fix Incremental Rebuild Data Loss on Native Engine
+
+**Bug:** On native 1-file rebuilds, complexity, CFG, and dataflow data for the changed file is **silently lost**. `purgeFilesFromGraph` removes the old data, but the analysis phases never re-compute it because:
+
+1. The native parser does not produce a `_tree` (WASM tree-sitter tree)
+2. The unified walker at `src/ast-analysis/engine.js:108-109` skips files without `_tree`
+3. The `buildXxx` functions check for pre-computed fields (`d.complexity`, `d.cfg?.blocks`) which the native parser does not provide for these analyses
+4. Result: 0.1ms no-op — the phases run but do nothing
+
+This is confirmed by the v3.1.4 1-file rebuild data: complexity (0.1ms), CFG (0.1ms), dataflow (0.2ms) on native — these are just module import overhead, not actual computation. Contrast with v3.1.3 where the numbers were higher (1.3ms, 8.7ms, 4ms) because earlier versions triggered a WASM fallback tree via `ensureWasmTrees`.
+
+**Fix (prerequisite: 4.1–4.3):** Once the native parser returns complete AST nodes, CFG blocks, and dataflow edges in `FileSymbols`, the `run-analyses` stage can store them directly without needing a WASM tree. The incremental path must:
+
+- Ensure `parseFilesAuto()` returns pre-computed analysis data for the single changed file
+- Have `run-analyses.js` store that data (currently it only stores if `_tree` exists or if pre-computed fields are present — the latter path needs to work reliably)
+- Add an integration test: rebuild 1 file on native engine, then query its complexity/CFG/dataflow and assert non-empty results
+
+**Affected files:** `src/ast-analysis/engine.js`, `src/domain/graph/builder/stages/run-analyses.js`, `src/domain/parser.js`, `tests/integration/`
+
+### 4.8 -- Incremental Rebuild Performance
+
+With analysis data loss fixed, optimize the 1-file rebuild path end-to-end. Current native 1-file rebuild is 265ms — dominated by parse (51ms), structure (13ms), roles (27ms), edges (13ms), insert (12ms), and finalize (12ms).
+
+- **Skip unchanged phases:** Structure and roles are graph-wide computations. On a 1-file change, only the changed file's nodes/edges need updating — skip full reclassification unless the file's degree changed significantly
+- **Incremental edge rebuild:** Only rebuild edges involving the changed file's symbols, not the full edge set
+- **Benchmark target:** Sub-100ms native 1-file rebuilds (from current 265ms)
+
+**Affected files:** `src/domain/graph/builder/stages/build-structure.js`, `src/domain/graph/builder/stages/build-edges.js`, `src/domain/graph/builder/pipeline.js`
+
+---
+
+## Phase 5 -- TypeScript Migration
 
 **Goal:** Migrate the codebase from plain JavaScript to TypeScript, leveraging the clean module boundaries established in Phase 3. Incremental module-by-module migration starting from leaf modules inward.
 
-**Why after Phase 3:** The architectural refactoring creates small, well-bounded modules with explicit interfaces (Repository, Engine, BaseExtractor, Pipeline stages, Command objects). These are natural type boundaries -- typing monolithic 2,000-line files that are about to be split would be double work.
+**Why after Phase 4:** The architectural refactoring (Phase 3) creates small, well-bounded modules with explicit interfaces. Phase 4 moves the remaining hot-path visitor code to Rust — doing TS migration first would mean rewriting those visitors to TypeScript only to delete them when porting to Rust. With both phases complete, the JS layer is purely orchestration and presentation, which is the ideal surface for TypeScript.
 
-### 4.1 -- Project Setup
+### 5.1 -- Project Setup
 
 - Add `typescript` as a devDependency
 - Create `tsconfig.json` with strict mode, ES module output, path aliases matching the Phase 3 module structure
@@ -1008,7 +1123,7 @@ Practical cleanup to make the CLI surface match the internal composability that 
 
 **Affected files:** `package.json`, `biome.json`, new `tsconfig.json`
 
-### 4.2 -- Core Type Definitions
+### 5.2 -- Core Type Definitions
 
 Define TypeScript interfaces for all abstractions introduced in Phase 3:
 
@@ -1036,7 +1151,7 @@ These interfaces serve as the migration contract -- each module is migrated to s
 
 **New file:** `src/types.ts`
 
-### 4.3 -- Leaf Module Migration
+### 5.3 -- Leaf Module Migration
 
 Migrate modules with no internal dependencies first:
 
@@ -1053,7 +1168,7 @@ Migrate modules with no internal dependencies first:
 
 Allow `.js` and `.ts` to coexist during migration (`allowJs: true` in tsconfig).
 
-### 4.4 -- Core Module Migration
+### 5.4 -- Core Module Migration
 
 Migrate modules that implement Phase 3 interfaces:
 
@@ -1068,7 +1183,7 @@ Migrate modules that implement Phase 3 interfaces:
 | `src/analysis/*.ts` | Typed analysis results (impact scores, call chains) |
 | `src/resolve.ts` | Import resolution with confidence types |
 
-### 4.5 -- Orchestration & Public API Migration
+### 5.5 -- Orchestration & Public API Migration
 
 Migrate top-level orchestration and entry points:
 
@@ -1081,7 +1196,7 @@ Migrate top-level orchestration and entry points:
 | `src/cli/*.ts` | Command objects with typed options |
 | `src/index.ts` | Curated public API with proper export types |
 
-### 4.6 -- Test Migration
+### 5.6 -- Test Migration
 
 - Migrate test files from `.js` to `.ts`
 - Add type-safe test utilities and fixture builders
@@ -1092,7 +1207,7 @@ Migrate top-level orchestration and entry points:
 
 **Affected files:** All `src/**/*.js` -> `src/**/*.ts`, all `tests/**/*.js` -> `tests/**/*.ts`, `package.json`, `biome.json`
 
-### 4.7 -- Supply-Chain Security & Audit
+### 5.7 -- Supply-Chain Security & Audit
 
 **Gap:** No `npm audit` in CI pipeline. No supply-chain attestation (SLSA/SBOM). No formal security audit history.
 
@@ -1105,33 +1220,33 @@ Migrate top-level orchestration and entry points:
 
 **Affected files:** `.github/workflows/ci.yml`, `.github/workflows/publish.yml`, `docs/security/`
 
-### 4.8 -- CI Test Quality & Coverage Gates
+### 5.8 -- CI Test Quality & Coverage Gates
 
 **Gaps:**
 
 - No coverage thresholds enforced in CI (coverage report runs locally only)
 - Embedding tests in separate workflow requiring HuggingFace token
 - 312 `setTimeout`/`sleep` instances in tests — potential flakiness under load
-- No dependency audit step in CI (see also [4.7](#47----supply-chain-security--audit))
+- No dependency audit step in CI (see also [5.7](#57----supply-chain-security--audit))
 
 **Deliverables:**
 
 1. **Coverage gate** -- add `vitest --coverage` to CI with minimum threshold (e.g. 80% lines/branches); fail the pipeline when coverage drops below the threshold
 2. **Unified test workflow** -- merge embedding tests into the main CI workflow using a securely stored `HF_TOKEN` secret; eliminate the separate workflow
 3. **Timer cleanup** -- audit and reduce `setTimeout`/`sleep` usage in tests; replace with deterministic waits (event-based, polling with backoff, or `vi.useFakeTimers()`) to reduce flakiness
-4. > _Dependency audit step is covered by [4.7](#47----supply-chain-security--audit) deliverable 1._
+4. > _Dependency audit step is covered by [5.7](#57----supply-chain-security--audit) deliverable 1._
 
 **Affected files:** `.github/workflows/ci.yml`, `vitest.config.js`, `tests/`
 
 ---
 
-## Phase 5 -- Runtime & Extensibility
+## Phase 6 -- Runtime & Extensibility
 
-**Goal:** Harden the runtime for large codebases and open the platform to external contributors. These items were deferred from Phase 3 -- they depend on the clean module boundaries and domain layering established there, and benefit from TypeScript's type safety (Phase 4) for safe refactoring of cross-cutting concerns like caching, streaming, and plugin contracts.
+**Goal:** Harden the runtime for large codebases and open the platform to external contributors. These items were deferred from Phase 3 -- they depend on the clean module boundaries and domain layering established there, and benefit from TypeScript's type safety (Phase 5) for safe refactoring of cross-cutting concerns like caching, streaming, and plugin contracts.
 
 **Why after TypeScript Migration:** Several of these items introduce new internal contracts (plugin API, cache interface, streaming protocol, engine strategy). Defining those contracts in TypeScript from the start avoids a second migration pass and gives contributors type-checked extension points.
 
-### 5.1 -- Event-Driven Pipeline
+### 6.1 -- Event-Driven Pipeline
 
 Replace the synchronous build/analysis pipeline with an event/streaming architecture. Enables progress reporting, cancellation tokens, and bounded memory usage on large repositories (10K+ files).
 
@@ -1143,7 +1258,7 @@ Replace the synchronous build/analysis pipeline with an event/streaming architec
 
 **Affected files:** `src/domain/graph/builder.js`, `src/cli/`, `src/mcp/`
 
-### 5.2 -- Unified Engine Interface (Strategy Pattern)
+### 6.2 -- Unified Engine Interface (Strategy Pattern)
 
 Replace scattered `engine.name === 'native'` / `engine === 'wasm'` branching throughout the codebase with a formal Strategy pattern. Each engine implements a common `ParsingEngine` interface with methods like `parse(file)`, `batchParse(files)`, `supports(language)`, and `capabilities()`.
 
@@ -1155,7 +1270,7 @@ Replace scattered `engine.name === 'native'` / `engine === 'wasm'` branching thr
 
 **Affected files:** `src/infrastructure/native.js`, `src/domain/parser.js`, `src/domain/graph/builder.js`
 
-### 5.3 -- Subgraph Export Filtering
+### 6.3 -- Subgraph Export Filtering
 
 Add focus and depth controls to `codegraph export` so users can produce usable visualizations of specific subsystems rather than the entire graph.
 
@@ -1172,7 +1287,7 @@ codegraph export --focus "buildGraph" --depth 3 --format dot
 
 **Affected files:** `src/features/export.js`, `src/presentation/export.js`
 
-### 5.4 -- Transitive Import-Aware Confidence
+### 6.4 -- Transitive Import-Aware Confidence
 
 Improve import resolution accuracy by walking the import graph before falling back to proximity heuristics. Currently the 6-level priority system uses directory proximity as a strong signal, but this can mis-resolve when a symbol is re-exported through an index file several directories away.
 
@@ -1183,7 +1298,7 @@ Improve import resolution accuracy by walking the import graph before falling ba
 
 **Affected files:** `src/domain/graph/resolve.js`
 
-### 5.5 -- Query Result Caching
+### 6.5 -- Query Result Caching
 
 Add an LRU/TTL cache layer between the analysis/query functions and the SQLite repository. With 34+ MCP tools that often run overlapping queries within a session, caching eliminates redundant DB round-trips.
 
@@ -1196,7 +1311,7 @@ Add an LRU/TTL cache layer between the analysis/query functions and the SQLite r
 
 **Affected files:** `src/domain/analysis/`, `src/db/index.js`
 
-### 5.6 -- Configuration Profiles
+### 6.6 -- Configuration Profiles
 
 Support named configuration profiles for monorepos and multi-service projects where different parts of the codebase need different settings.
 
@@ -1217,7 +1332,7 @@ Support named configuration profiles for monorepos and multi-service projects wh
 
 **Affected files:** `src/infrastructure/config.js`, `src/cli/`
 
-### 5.7 -- Pagination Standardization
+### 6.7 -- Pagination Standardization
 
 Standardize SQL-level `LIMIT`/`OFFSET` pagination across all repository queries and surface it consistently through the CLI and MCP.
 
@@ -1229,7 +1344,7 @@ Standardize SQL-level `LIMIT`/`OFFSET` pagination across all repository queries 
 
 **Affected files:** `src/shared/paginate.js`, `src/db/index.js`, `src/domain/analysis/`, `src/mcp/`
 
-### 5.8 -- Plugin System for Custom Commands
+### 6.8 -- Plugin System for Custom Commands
 
 Allow users to extend codegraph with custom commands by dropping a JS/TS module into `~/.codegraph/plugins/` (global) or `.codegraph/plugins/` (project-local).
 
@@ -1271,13 +1386,13 @@ Lower the barrier to first successful use. Today codegraph requires manual insta
 
 ---
 
-## Phase 6 -- Intelligent Embeddings
+## Phase 7 -- Intelligent Embeddings
 
 **Goal:** Dramatically improve semantic search quality by embedding natural-language descriptions instead of raw code.
 
-> **Phase 6.3 (Hybrid Search) was completed early** during Phase 2.5 -- FTS5 BM25 + semantic search with RRF fusion is already shipped in v2.6.0.
+> **Phase 7.3 (Hybrid Search) was completed early** during Phase 2.5 -- FTS5 BM25 + semantic search with RRF fusion is already shipped in v2.6.0.
 
-### 6.1 -- LLM Description Generator
+### 7.1 -- LLM Description Generator
 
 For each function/method/class node, generate a concise natural-language description:
 
@@ -1305,7 +1420,7 @@ For each function/method/class node, generate a concise natural-language descrip
 
 **New file:** `src/describer.js`
 
-### 6.2 -- Enhanced Embedding Pipeline
+### 7.2 -- Enhanced Embedding Pipeline
 
 - When descriptions exist, embed the description text instead of raw code
 - Keep raw code as fallback when no description is available
@@ -1316,11 +1431,11 @@ For each function/method/class node, generate a concise natural-language descrip
 
 **Affected files:** `src/embedder.js`
 
-### ~~6.3 -- Hybrid Search~~ ✅ Completed in Phase 2.5
+### ~~7.3 -- Hybrid Search~~ ✅ Completed in Phase 2.5
 
 Shipped in v2.6.0. FTS5 BM25 keyword search + semantic vector search with RRF fusion. Three search modes: `hybrid` (default), `semantic`, `keyword`.
 
-### 6.4 -- Build-time Semantic Metadata
+### 7.4 -- Build-time Semantic Metadata
 
 Enrich nodes with LLM-generated metadata beyond descriptions. Computed incrementally at build time (only for changed nodes), stored as columns on the `nodes` table.
 
@@ -1333,9 +1448,9 @@ Enrich nodes with LLM-generated metadata beyond descriptions. Computed increment
 - MCP tool: `assess <name>` -- returns complexity rating + specific concerns
 - Cascade invalidation: when a node changes, mark dependents for re-enrichment
 
-**Depends on:** 6.1 (LLM provider abstraction)
+**Depends on:** 7.1 (LLM provider abstraction)
 
-### 6.5 -- Module Summaries
+### 7.5 -- Module Summaries
 
 Aggregate function descriptions + dependency direction into file-level narratives.
 
@@ -1343,17 +1458,17 @@ Aggregate function descriptions + dependency direction into file-level narrative
 - MCP tool: `explain_module <file>` -- returns module purpose, key exports, role in the system
 - `naming_conventions` metadata per module -- detected patterns (camelCase, snake_case, verb-first), flag outliers
 
-**Depends on:** 6.1 (function-level descriptions must exist first)
+**Depends on:** 7.1 (function-level descriptions must exist first)
 
 > **Full spec:** See [llm-integration.md](./llm-integration.md) for detailed architecture, infrastructure table, and prompt design.
 
 ---
 
-## Phase 7 -- Natural Language Queries
+## Phase 8 -- Natural Language Queries
 
 **Goal:** Allow developers to ask questions about their codebase in plain English.
 
-### 7.1 -- Query Engine
+### 8.1 -- Query Engine
 
 ```bash
 codegraph ask "How does the authentication flow work?"
@@ -1379,7 +1494,7 @@ codegraph ask "How does the authentication flow work?"
 
 **New file:** `src/nlquery.js`
 
-### 7.2 -- Conversational Sessions
+### 8.2 -- Conversational Sessions
 
 Multi-turn conversations with session memory.
 
@@ -1393,7 +1508,7 @@ codegraph sessions clear
 - Store conversation history in SQLite table `sessions`
 - Include prior Q&A pairs in subsequent prompts
 
-### 7.3 -- MCP Integration
+### 8.3 -- MCP Integration
 
 New MCP tool: `ask_codebase` -- natural language query via MCP.
 
@@ -1401,7 +1516,7 @@ Enables AI coding agents (Claude Code, Cursor, etc.) to ask codegraph questions 
 
 **Affected files:** `src/mcp.js`
 
-### 7.4 -- LLM-Narrated Graph Queries
+### 8.4 -- LLM-Narrated Graph Queries
 
 Graph traversal + LLM narration for questions that require both structural data and natural-language explanation. Each query walks the graph first, then sends the structural result to the LLM for narration.
 
@@ -1414,9 +1529,9 @@ Graph traversal + LLM narration for questions that require both structural data 
 
 Pre-computed `flow_narratives` table caches results for key entry points at build time, invalidated when any node in the chain changes.
 
-**Depends on:** 6.4 (`side_effects` metadata), 6.1 (descriptions for narration context)
+**Depends on:** 7.4 (`side_effects` metadata), 7.1 (descriptions for narration context)
 
-### 7.5 -- Onboarding & Navigation Tools
+### 8.5 -- Onboarding & Navigation Tools
 
 Help new contributors and AI agents orient in an unfamiliar codebase.
 
@@ -1425,15 +1540,15 @@ Help new contributors and AI agents orient in an unfamiliar codebase.
 - MCP tool: `get_started` -- returns ordered list: "start here, then read this, then this"
 - `change_plan <description>` -- LLM reads description, graph identifies relevant modules, returns touch points and test coverage gaps
 
-**Depends on:** 6.5 (module summaries for context), 7.1 (query engine)
+**Depends on:** 7.5 (module summaries for context), 8.1 (query engine)
 
 ---
 
-## Phase 8 -- Expanded Language Support
+## Phase 9 -- Expanded Language Support
 
 **Goal:** Go from 11 -> 19 supported languages.
 
-### 8.1 -- Batch 1: High Demand
+### 9.1 -- Batch 1: High Demand
 
 | Language | Extensions | Grammar | Effort |
 |----------|-----------|---------|--------|
@@ -1442,7 +1557,7 @@ Help new contributors and AI agents orient in an unfamiliar codebase.
 | Kotlin | `.kt`, `.kts` | `tree-sitter-kotlin` | Low |
 | Swift | `.swift` | `tree-sitter-swift` | Medium |
 
-### 8.2 -- Batch 2: Growing Ecosystems
+### 9.2 -- Batch 2: Growing Ecosystems
 
 | Language | Extensions | Grammar | Effort |
 |----------|-----------|---------|--------|
@@ -1451,7 +1566,7 @@ Help new contributors and AI agents orient in an unfamiliar codebase.
 | Lua | `.lua` | `tree-sitter-lua` | Low |
 | Zig | `.zig` | `tree-sitter-zig` | Low |
 
-### 8.3 -- Parser Abstraction Layer
+### 9.3 -- Parser Abstraction Layer
 
 Extract shared patterns from existing extractors into reusable helpers.
 
@@ -1467,13 +1582,13 @@ Extract shared patterns from existing extractors into reusable helpers.
 
 ---
 
-## Phase 9 -- GitHub Integration & CI
+## Phase 10 -- GitHub Integration & CI
 
 **Goal:** Bring codegraph's analysis into pull request workflows.
 
 > **Note:** Phase 2.5 delivered `codegraph check` (CI validation predicates with exit code 0/1), which provides the foundation for GitHub Action integration. The boundary violation, blast radius, and cycle detection predicates are already available.
 
-### 9.1 -- Reusable GitHub Action
+### 10.1 -- Reusable GitHub Action
 
 A reusable GitHub Action that runs on PRs:
 
@@ -1496,7 +1611,7 @@ A reusable GitHub Action that runs on PRs:
 
 **New file:** `.github/actions/codegraph-ci/action.yml`
 
-### 9.2 -- PR Review Integration
+### 10.2 -- PR Review Integration
 
 ```bash
 codegraph review --pr <number>
@@ -1519,7 +1634,7 @@ Requires `gh` CLI. For each changed function:
 
 **New file:** `src/github.js`
 
-### 9.3 -- Visual Impact Graphs for PRs
+### 10.3 -- Visual Impact Graphs for PRs
 
 Extend the existing `diff-impact --format mermaid` foundation with CI automation and LLM annotations.
 
@@ -1540,9 +1655,9 @@ Extend the existing `diff-impact --format mermaid` foundation with CI automation
 - Highlight fragile nodes: high churn + high fan-in = high breakage risk
 - Track blast radius trends: "this PR's blast radius is 2x larger than your average"
 
-**Depends on:** 9.1 (GitHub Action), 6.4 (`risk_score`, `side_effects`)
+**Depends on:** 10.1 (GitHub Action), 7.4 (`risk_score`, `side_effects`)
 
-### 9.4 -- SARIF Output
+### 10.4 -- SARIF Output
 
 Add SARIF output format for cycle detection. SARIF integrates with GitHub Code Scanning, showing issues inline in the PR.
 
@@ -1561,9 +1676,9 @@ LLM-generated docstrings aware of callers, callees, and types. Diff-aware: only 
 
 ---
 
-## Phase 10 -- Interactive Visualization & Advanced Features
+## Phase 11 -- Interactive Visualization & Advanced Features
 
-### 10.1 -- Interactive Web Visualization (Partially Complete)
+### 11.1 -- Interactive Web Visualization (Partially Complete)
 
 > **Phase 2.7 progress:** `codegraph plot` (Phase 2.7.8) ships a self-contained HTML viewer with vis-network. It supports layout switching, color/size/cluster overlays, drill-down, community detection, and a detail panel. The remaining work is the server-based experience below.
 
@@ -1584,7 +1699,7 @@ Opens a local web UI at `localhost:3000` extending the static HTML viewer with:
 
 **New file:** `src/visualizer.js`
 
-### 10.2 -- Dead Code Detection
+### 11.2 -- Dead Code Detection
 
 ```bash
 codegraph dead
@@ -1597,7 +1712,7 @@ Find functions/methods/classes with zero incoming edges (never called). Filters 
 
 **Affected files:** `src/queries.js`
 
-### 10.3 -- Cross-Repository Support (Monorepo)
+### 11.3 -- Cross-Repository Support (Monorepo)
 
 Support multi-package monorepos with cross-package edges.
 
@@ -1607,7 +1722,7 @@ Support multi-package monorepos with cross-package edges.
 - `codegraph build --workspace` to scan all packages
 - Impact analysis across package boundaries
 
-### 10.4 -- Agentic Search
+### 11.4 -- Agentic Search
 
 Recursive reference-following search that traces connections.
 
@@ -1629,7 +1744,7 @@ codegraph agent-search "payment processing"
 
 **New file:** `src/agentic-search.js`
 
-### 10.5 -- Refactoring Analysis
+### 11.5 -- Refactoring Analysis
 
 LLM-powered structural analysis that identifies refactoring opportunities. The graph provides the structural data; the LLM interprets it.
 
@@ -1644,7 +1759,7 @@ LLM-powered structural analysis that identifies refactoring opportunities. The g
 
 > **Note:** `hotspots` and `boundary_analysis` already have data foundations from Phase 2.5 (structure.js hotspots, boundaries.js evaluation). This phase adds LLM interpretation on top.
 
-**Depends on:** 6.4 (`risk_score`, `complexity_notes`), 6.5 (module summaries)
+**Depends on:** 7.4 (`risk_score`, `complexity_notes`), 7.5 (module summaries)
 
 ### 10.6 -- Auto-generated Docstrings
 
@@ -1655,7 +1770,7 @@ codegraph annotate --changed-only
 
 LLM-generated docstrings aware of callers, callees, and types. Diff-aware: only regenerate for functions whose code or dependencies changed. Stores in `docstrings` column on nodes table -- does not modify source files unless explicitly requested.
 
-**Depends on:** 6.1 (LLM provider abstraction), 6.4 (side effects context)
+**Depends on:** 7.1 (LLM provider abstraction), 7.4 (side effects context)
 
 > **Full spec:** See [llm-integration.md](./llm-integration.md) for detailed architecture, infrastructure tables, and prompt design for all LLM-powered features.
 

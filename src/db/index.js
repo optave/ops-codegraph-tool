@@ -1,5 +1,12 @@
 // Barrel re-export — keeps all existing `import { ... } from '…/db/index.js'` working.
-export { closeDb, findDbPath, openDb, openReadonlyOrFail } from './connection.js';
+export {
+  closeDb,
+  findDbPath,
+  findRepoRoot,
+  openDb,
+  openReadonlyOrFail,
+  openRepo,
+} from './connection.js';
 export { getBuildMeta, initSchema, MIGRATIONS, setBuildMeta } from './migrations.js';
 export {
   fanInJoinSQL,
