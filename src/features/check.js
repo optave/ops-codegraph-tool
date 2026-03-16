@@ -220,6 +220,9 @@ export function checkData(customDbPath, opts = {}) {
     const maxDepth = opts.depth || 3;
 
     // Load config defaults for check predicates
+    // NOTE: opts.config is loaded from process.cwd() at startup (via CLI context),
+    // which may differ from the DB's parent repo root when --db points to an external
+    // project. This is an acceptable trade-off to avoid duplicate I/O on the hot path.
     const config = opts.config || loadConfig(repoRoot);
     const checkConfig = config.check || {};
 
