@@ -33,9 +33,7 @@ For **each** open PR, perform the following steps in order. Process PRs one at a
 ### 2a. Switch to the PR branch
 
 ```bash
-git fetch origin
-git checkout <head-branch>
-git pull origin <head-branch>
+gh pr checkout <number>
 ```
 
 ### 2b. Resolve merge conflicts
