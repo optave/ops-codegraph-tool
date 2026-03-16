@@ -248,7 +248,14 @@ export class InMemoryRepository extends Repository {
     let nodes = [...this.#nodes.values()].filter((n) => kindsToUse.includes(n.kind));
 
     if (opts.noTests) {
-      nodes = nodes.filter((n) => !n.file.includes('.test.') && !n.file.includes('.spec.'));
+      nodes = nodes.filter(
+        (n) =>
+          !n.file.includes('.test.') &&
+          !n.file.includes('.spec.') &&
+          !n.file.includes('__test__') &&
+          !n.file.includes('__tests__') &&
+          !n.file.includes('.stories.'),
+      );
     }
     if (opts.file) {
       const fileRe = likeToRegex(`%${escapeLike(opts.file)}%`);
@@ -552,7 +559,14 @@ export class InMemoryRepository extends Repository {
       nodes = nodes.filter((n) => patternRe.test(n.name));
     }
     if (opts.noTests) {
-      nodes = nodes.filter((n) => !n.file.includes('.test.') && !n.file.includes('.spec.'));
+      nodes = nodes.filter(
+        (n) =>
+          !n.file.includes('.test.') &&
+          !n.file.includes('.spec.') &&
+          !n.file.includes('__test__') &&
+          !n.file.includes('__tests__') &&
+          !n.file.includes('.stories.'),
+      );
     }
 
     nodes.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);

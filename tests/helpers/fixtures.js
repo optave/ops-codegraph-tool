@@ -107,8 +107,7 @@ class TestRepoBuilder {
           `Duplicate node name: "${n.name}" — use unique names or qualify with file path`,
         );
       }
-      const id = repo.addNode(n);
-      ids.set(n.name, id);
+      ids.set(n.name, repo.addNode(n));
     }
 
     // Add edges

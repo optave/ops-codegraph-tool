@@ -21,6 +21,8 @@ function seedSqliteRepo() {
   insertNode.run('Baz', 'class', 'src/baz.js', 20, 50, 'entry', null, 'Baz');
   insertNode.run('qux', 'interface', 'src/qux.js', 30, 40, null, null, null);
   insertNode.run('testFn', 'function', 'tests/foo.test.js', 1, 10, null, null, null);
+  insertNode.run('jestFn', 'function', 'src/__tests__/helper.js', 1, 10, null, null, null);
+  insertNode.run('storyFn', 'function', 'src/Button.stories.js', 1, 10, null, null, null);
   // File-kind node for findFileNodes / getFileNodesAll
   db.prepare('INSERT INTO nodes (name, kind, file, line) VALUES (?, ?, ?, ?)').run(
     'src/foo.js',
@@ -96,6 +98,20 @@ function seedInMemoryRepo() {
     line: 1,
     end_line: 10,
   });
+  repo.addNode({
+    name: 'jestFn',
+    kind: 'function',
+    file: 'src/__tests__/helper.js',
+    line: 1,
+    end_line: 10,
+  });
+  repo.addNode({
+    name: 'storyFn',
+    kind: 'function',
+    file: 'src/Button.stories.js',
+    line: 1,
+    end_line: 10,
+  });
   // File-kind node for findFileNodes / getFileNodesAll
   const fooFileId = repo.addNode({ name: 'src/foo.js', kind: 'file', file: 'src/foo.js', line: 0 });
   // Child node with parent_id for findNodeChildren
@@ -151,7 +167,7 @@ describe.each([
   // ── Counts ──────────────────────────────────────────────────────────
 
   it('countNodes', () => {
-    expect(repo.countNodes()).toBe(7);
+    expect(repo.countNodes()).toBe(9);
   });
 
   it('countEdges', () => {
@@ -159,7 +175,7 @@ describe.each([
   });
 
   it('countFiles', () => {
-    expect(repo.countFiles()).toBe(5); // foo.js, bar.js, baz.js, qux.js, foo.test.js
+    expect(repo.countFiles()).toBe(7); // foo.js, bar.js, baz.js, qux.js, foo.test.js, __tests__/helper.js, Button.stories.js
   });
 
   // ── Node lookups ────────────────────────────────────────────────────
@@ -202,7 +218,7 @@ describe.each([
 
   it('listFunctionNodes returns fn/method/class', () => {
     const rows = repo.listFunctionNodes();
-    expect(rows.length).toBe(5); // foo, bar, Baz, testFn, bazMethod
+    expect(rows.length).toBe(7); // foo, bar, Baz, testFn, bazMethod, jestFn, storyFn
     expect(rows.every((r) => ['function', 'method', 'class'].includes(r.kind))).toBe(true);
   });
 
@@ -210,6 +226,8 @@ describe.each([
     const rows = repo.listFunctionNodes({ noTests: true });
     expect(rows.length).toBe(4); // foo, bar, Baz, bazMethod
     expect(rows.every((r) => !r.file.includes('.test.'))).toBe(true);
+    expect(rows.every((r) => !r.file.includes('__tests__'))).toBe(true);
+    expect(rows.every((r) => !r.file.includes('.stories.'))).toBe(true);
   });
 
   it('listFunctionNodes filters by pattern', () => {
@@ -430,7 +448,7 @@ describe.each([
   it('getCallableNodes', () => {
     const nodes = repo.getCallableNodes();
     // CORE_SYMBOL_KINDS includes function, method, class, interface, etc.
-    expect(nodes.length).toBeGreaterThanOrEqual(5);
+    expect(nodes.length).toBeGreaterThanOrEqual(7);
     expect(nodes.every((n) => n.id && n.name && n.kind && n.file)).toBe(true);
   });
 
