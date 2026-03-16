@@ -47,39 +47,42 @@ function readAnalysisTables(dbPath) {
   const db = new Database(dbPath, { readonly: true });
   const result = {};
   try {
-    result.complexity = db
-      .prepare(
-        `SELECT fc.node_id, fc.cognitive, fc.cyclomatic, n.name, n.file
-         FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
-         ORDER BY n.name, n.file`,
-      )
-      .all();
-  } catch {
-    result.complexity = [];
+    try {
+      result.complexity = db
+        .prepare(
+          `SELECT fc.node_id, fc.cognitive, fc.cyclomatic, n.name, n.file
+           FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
+           ORDER BY n.name, n.file`,
+        )
+        .all();
+    } catch {
+      result.complexity = [];
+    }
+    try {
+      result.cfgBlocks = db
+        .prepare(
+          `SELECT cb.function_node_id, cb.block_index, cb.block_type, n.name, n.file
+           FROM cfg_blocks cb JOIN nodes n ON cb.function_node_id = n.id
+           ORDER BY n.name, n.file, cb.block_index`,
+        )
+        .all();
+    } catch {
+      result.cfgBlocks = [];
+    }
+    try {
+      result.dataflow = db
+        .prepare(
+          `SELECT d.source_id, d.kind, n.name, n.file
+           FROM dataflow d JOIN nodes n ON d.source_id = n.id
+           ORDER BY n.name, n.file, d.kind`,
+        )
+        .all();
+    } catch {
+      result.dataflow = [];
+    }
+  } finally {
+    db.close();
   }
-  try {
-    result.cfgBlocks = db
-      .prepare(
-        `SELECT cb.function_node_id, cb.block_index, cb.block_type, n.name, n.file
-         FROM cfg_blocks cb JOIN nodes n ON cb.function_node_id = n.id
-         ORDER BY n.name, n.file, cb.block_index`,
-      )
-      .all();
-  } catch {
-    result.cfgBlocks = [];
-  }
-  try {
-    result.dataflow = db
-      .prepare(
-        `SELECT d.source_id, d.kind, n.name, n.file
-         FROM dataflow d JOIN nodes n ON d.source_id = n.id
-         ORDER BY n.name, n.file, d.kind`,
-      )
-      .all();
-  } catch {
-    result.dataflow = [];
-  }
-  db.close();
   return result;
 }
 

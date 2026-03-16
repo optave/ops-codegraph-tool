@@ -38,6 +38,7 @@ import { createDataflowVisitor } from './visitors/dataflow-visitor.js';
 // ─── Extension sets for quick language-support checks ────────────────────
 
 const CFG_EXTENSIONS = buildExtensionSet(CFG_RULES);
+const COMPLEXITY_EXTENSIONS = buildExtensionSet(COMPLEXITY_RULES);
 const DATAFLOW_EXTENSIONS = buildExtensionSet(DATAFLOW_RULES);
 const WALK_EXTENSIONS = buildExtensionSet(AST_TYPE_MAPS);
 
@@ -87,6 +88,7 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, engineOpts) {
 
       const needsComplexity =
         doComplexity &&
+        COMPLEXITY_EXTENSIONS.has(ext) &&
         defs.some((d) => (d.kind === 'function' || d.kind === 'method') && d.line && !d.complexity);
       const needsCfg =
         doCfg &&
