@@ -4,7 +4,7 @@ export const name = 'triage';
 
 export async function handler(args, ctx) {
   if (args.level === 'file' || args.level === 'directory') {
-    const { hotspotsData } = await import('../../structure.js');
+    const { hotspotsData } = await import('../../features/structure.js');
     const TRIAGE_TO_HOTSPOT = {
       risk: 'fan-in',
       complexity: 'density',
@@ -20,7 +20,7 @@ export async function handler(args, ctx) {
       noTests: args.no_tests,
     });
   }
-  const { triageData } = await import('../../triage.js');
+  const { triageData } = await import('../../features/triage.js');
   return triageData(ctx.dbPath, {
     sort: args.sort,
     minScore: args.min_score,

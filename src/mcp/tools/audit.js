@@ -11,7 +11,7 @@ export async function handler(args, ctx) {
       offset: effectiveOffset(args),
     });
   }
-  const { auditData } = await import('../../audit.js');
+  const { auditData } = await import('../../features/audit.js');
   return auditData(args.target, ctx.dbPath, {
     depth: args.depth,
     file: args.file,

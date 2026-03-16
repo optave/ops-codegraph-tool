@@ -1,4 +1,4 @@
-import { impactAnalysis } from '../../queries-cli.js';
+import { impactAnalysis } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'impact <file>',

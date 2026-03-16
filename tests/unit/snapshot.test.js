@@ -10,7 +10,7 @@ import {
   snapshotSave,
   snapshotsDir,
   validateSnapshotName,
-} from '../../src/snapshot.js';
+} from '../../src/features/snapshot.js';
 
 let tmpDir;
 let dbPath;

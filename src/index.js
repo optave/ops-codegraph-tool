@@ -9,41 +9,10 @@
  *   import { buildGraph, queryNameData, findCycles, exportDOT } from '@optave/codegraph';
  */
 
-export { astQueryData } from './ast.js';
-export { auditData } from './audit.js';
-export { batchData } from './batch.js';
-export { branchCompareData } from './branch-compare.js';
-export { buildGraph } from './builder.js';
-export { cfgData } from './cfg.js';
-export { checkData } from './check.js';
-export { coChangeData } from './cochange.js';
-export { communitiesData } from './communities.js';
-export { complexityData } from './complexity.js';
 export { loadConfig } from './config.js';
 export { EXTENSIONS, IGNORE_DIRS } from './constants.js';
-export { findCycles } from './cycles.js';
-export { dataflowData } from './dataflow.js';
-export {
-  buildEmbeddings,
-  hybridSearchData,
-  multiSearchData,
-  searchData,
-} from './embeddings/index.js';
-export {
-  AnalysisError,
-  BoundaryError,
-  CodegraphError,
-  ConfigError,
-  DbError,
-  EngineError,
-  ParseError,
-  ResolutionError,
-} from './errors.js';
-export { exportDOT, exportJSON, exportMermaid } from './export.js';
-export { flowData, listEntryPointsData } from './flow.js';
-export { EVERY_EDGE_KIND, EVERY_SYMBOL_KIND } from './kinds.js';
-export { manifestoData } from './manifesto.js';
-export { ownersData } from './owners.js';
+export { buildGraph } from './domain/graph/builder.js';
+export { findCycles } from './domain/graph/cycles.js';
 export {
   childrenData,
   contextData,
@@ -60,7 +29,38 @@ export {
   rolesData,
   statsData,
   whereData,
-} from './queries.js';
-export { sequenceData } from './sequence.js';
-export { hotspotsData, moduleBoundariesData, structureData } from './structure.js';
-export { triageData } from './triage.js';
+} from './domain/queries.js';
+export {
+  buildEmbeddings,
+  hybridSearchData,
+  multiSearchData,
+  searchData,
+} from './domain/search/index.js';
+export {
+  AnalysisError,
+  BoundaryError,
+  CodegraphError,
+  ConfigError,
+  DbError,
+  EngineError,
+  ParseError,
+  ResolutionError,
+} from './errors.js';
+export { astQueryData } from './features/ast.js';
+export { auditData } from './features/audit.js';
+export { batchData } from './features/batch.js';
+export { branchCompareData } from './features/branch-compare.js';
+export { cfgData } from './features/cfg.js';
+export { checkData } from './features/check.js';
+export { coChangeData } from './features/cochange.js';
+export { communitiesData } from './features/communities.js';
+export { complexityData } from './features/complexity.js';
+export { dataflowData } from './features/dataflow.js';
+export { exportDOT, exportJSON, exportMermaid } from './features/export.js';
+export { flowData, listEntryPointsData } from './features/flow.js';
+export { manifestoData } from './features/manifesto.js';
+export { ownersData } from './features/owners.js';
+export { sequenceData } from './features/sequence.js';
+export { hotspotsData, moduleBoundariesData, structureData } from './features/structure.js';
+export { triageData } from './features/triage.js';
+export { EVERY_EDGE_KIND, EVERY_SYMBOL_KIND } from './kinds.js';

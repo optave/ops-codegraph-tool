@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { branchCompareData, branchCompareMermaid } from '../../src/branch-compare.js';
+import { branchCompareData, branchCompareMermaid } from '../../src/features/branch-compare.js';
 
 let tmpDir;
 

@@ -3,14 +3,14 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
+import { initSchema } from '../../src/db/index.js';
 import {
   evaluateBoundaries,
   globToRegex,
   PRESETS,
   resolveModules,
   validateBoundaryConfig,
-} from '../../src/boundaries.js';
-import { initSchema } from '../../src/db.js';
+} from '../../src/features/boundaries.js';
 
 // ─── globToRegex ─────────────────────────────────────────────────────
 

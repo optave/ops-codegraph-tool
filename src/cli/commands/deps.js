@@ -1,4 +1,4 @@
-import { fileDeps } from '../../queries-cli.js';
+import { fileDeps } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'deps <file>',

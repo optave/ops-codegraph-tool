@@ -8,7 +8,7 @@ import {
   parseCodeowners,
   parseCodeownersContent,
   patternToRegex,
-} from '../../src/owners.js';
+} from '../../src/features/owners.js';
 
 // ─── parseCodeownersContent ──────────────────────────────────────────
 

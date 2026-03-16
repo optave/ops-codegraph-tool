@@ -18,16 +18,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { initSchema } from '../../src/db.js';
-import { exportDOT, exportJSON, exportMermaid } from '../../src/export.js';
-import { listEntryPointsData } from '../../src/flow.js';
-import {
-  MCP_DEFAULTS,
-  MCP_MAX_LIMIT,
-  paginate,
-  paginateResult,
-  printNdjson,
-} from '../../src/paginate.js';
+import { initSchema } from '../../src/db/index.js';
 import {
   contextData,
   explainData,
@@ -41,7 +32,16 @@ import {
   queryNameData,
   rolesData,
   whereData,
-} from '../../src/queries.js';
+} from '../../src/domain/queries.js';
+import { exportDOT, exportJSON, exportMermaid } from '../../src/features/export.js';
+import { listEntryPointsData } from '../../src/features/flow.js';
+import {
+  MCP_DEFAULTS,
+  MCP_MAX_LIMIT,
+  paginate,
+  paginateResult,
+  printNdjson,
+} from '../../src/paginate.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

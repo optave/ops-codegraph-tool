@@ -1,4 +1,4 @@
-import { complexityData } from '../complexity.js';
+import { complexityData } from '../features/complexity.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 
 /**

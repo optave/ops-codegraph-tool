@@ -1,5 +1,5 @@
-import { EVERY_SYMBOL_KIND } from '../../queries.js';
-import { symbolPath } from '../../queries-cli.js';
+import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
+import { symbolPath } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'path <from> <to>',

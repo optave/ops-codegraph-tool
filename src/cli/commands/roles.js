@@ -1,5 +1,5 @@
-import { VALID_ROLES } from '../../queries.js';
-import { roles } from '../../queries-cli.js';
+import { VALID_ROLES } from '../../domain/queries.js';
+import { roles } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'roles',

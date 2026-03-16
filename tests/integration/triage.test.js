@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { triageData } from '../../src/triage.js';
+import { triageData } from '../../src/features/triage.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 
@@ -57,7 +57,7 @@ let tmpDir, dbPath;
 let fnHigh, fnMed, fnLow, fnTest, fnClass;
 
 beforeAll(async () => {
-  const { initSchema } = await import('../../src/db.js');
+  const { initSchema } = await import('../../src/db/index.js');
 
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-triage-'));
   fs.mkdirSync(path.join(tmpDir, '.codegraph'));
@@ -286,7 +286,7 @@ describe('triage', () => {
     fs.mkdirSync(path.join(sparseDir, '.codegraph'));
     const sparseDbPath = path.join(sparseDir, '.codegraph', 'graph.db');
 
-    const { initSchema } = await import('../../src/db.js');
+    const { initSchema } = await import('../../src/db/index.js');
     const db = new Database(sparseDbPath);
     db.pragma('journal_mode = WAL');
     initSchema(db);

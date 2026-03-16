@@ -2,7 +2,7 @@
  * Unit tests for extractDataflow() against parsed Go ASTs.
  */
 import { beforeAll, describe, expect, it } from 'vitest';
-import { extractDataflow } from '../../src/dataflow.js';
+import { extractDataflow } from '../../src/features/dataflow.js';
 import { createParsers } from '../../src/parser.js';
 
 describe('extractDataflow — Go', () => {

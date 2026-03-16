@@ -1,5 +1,5 @@
-import { EVERY_SYMBOL_KIND } from '../../queries.js';
-import { fnDeps, symbolPath } from '../../queries-cli.js';
+import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
+import { fnDeps, symbolPath } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'query <name>',

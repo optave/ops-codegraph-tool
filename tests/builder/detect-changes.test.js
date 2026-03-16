@@ -5,9 +5,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PipelineContext } from '../../src/builder/context.js';
-import { detectChanges } from '../../src/builder/stages/detect-changes.js';
-import { closeDb, initSchema, openDb } from '../../src/db.js';
+import { closeDb, initSchema, openDb } from '../../src/db/index.js';
+import { PipelineContext } from '../../src/domain/graph/builder/context.js';
+import { detectChanges } from '../../src/domain/graph/builder/stages/detect-changes.js';
 import { writeJournalHeader } from '../../src/journal.js';
 
 let tmpDir;

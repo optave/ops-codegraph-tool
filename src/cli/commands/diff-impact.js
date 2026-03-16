@@ -1,4 +1,4 @@
-import { diffImpact } from '../../queries-cli.js';
+import { diffImpact } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'diff-impact [ref]',

@@ -1,6 +1,6 @@
 import { audit } from '../../commands/audit.js';
-import { EVERY_SYMBOL_KIND } from '../../queries.js';
-import { explain } from '../../queries-cli.js';
+import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
+import { explain } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'audit <target>',

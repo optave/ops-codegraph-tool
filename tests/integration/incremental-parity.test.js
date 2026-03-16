@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildGraph } from '../../src/builder.js';
+import { buildGraph } from '../../src/domain/graph/builder.js';
 
 const FIXTURE_DIR = path.join(import.meta.dirname, '..', 'fixtures', 'barrel-project');
 

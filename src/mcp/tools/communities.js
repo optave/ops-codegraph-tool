@@ -3,7 +3,7 @@ import { effectiveLimit, effectiveOffset } from '../middleware.js';
 export const name = 'communities';
 
 export async function handler(args, ctx) {
-  const { communitiesData } = await import('../../communities.js');
+  const { communitiesData } = await import('../../features/communities.js');
   return communitiesData(ctx.dbPath, {
     functions: args.functions,
     resolution: args.resolution,

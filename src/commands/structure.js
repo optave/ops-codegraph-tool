@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { hotspotsData, moduleBoundariesData, structureData } from '../structure.js';
+import { hotspotsData, moduleBoundariesData, structureData } from '../features/structure.js';
 
 export { hotspotsData, moduleBoundariesData, structureData };
 

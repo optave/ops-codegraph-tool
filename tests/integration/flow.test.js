@@ -17,9 +17,9 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { initSchema } from '../../src/db.js';
-import { entryPointType, flowData, listEntryPointsData } from '../../src/flow.js';
-import { classifyNodeRoles, FRAMEWORK_ENTRY_PREFIXES } from '../../src/structure.js';
+import { initSchema } from '../../src/db/index.js';
+import { entryPointType, flowData, listEntryPointsData } from '../../src/features/flow.js';
+import { classifyNodeRoles, FRAMEWORK_ENTRY_PREFIXES } from '../../src/features/structure.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

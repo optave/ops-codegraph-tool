@@ -2,10 +2,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildGraph } from '../../src/builder.js';
-import { findNodeByQualifiedName, findNodesByScope, openReadonlyOrFail } from '../../src/db.js';
+import {
+  findNodeByQualifiedName,
+  findNodesByScope,
+  openReadonlyOrFail,
+} from '../../src/db/index.js';
+import { buildGraph } from '../../src/domain/graph/builder.js';
+import { childrenData } from '../../src/domain/queries.js';
 import { pythonVisibility } from '../../src/extractors/helpers.js';
-import { childrenData } from '../../src/queries.js';
 
 // Fixture: a small project with classes, methods, and visibility modifiers
 const FIXTURE_FILES = {

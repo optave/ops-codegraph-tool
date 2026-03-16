@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
-import { initSchema } from '../../../src/db.js';
+import { initSchema } from '../../../src/db/index.js';
 import { buildTemporalGraph } from '../../../src/graph/builders/temporal.js';
 
 function createTestDb() {

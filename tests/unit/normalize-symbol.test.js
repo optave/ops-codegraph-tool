@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from 'vitest';
-import { normalizeSymbol } from '../../src/queries.js';
+import { normalizeSymbol } from '../../src/domain/queries.js';
 
 describe('normalizeSymbol', () => {
   test('full row with all fields', () => {

@@ -1,4 +1,4 @@
-import { dataflowData, dataflowImpactData } from '../dataflow.js';
+import { dataflowData, dataflowImpactData } from '../features/dataflow.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 
 /**

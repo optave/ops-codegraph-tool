@@ -5,8 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { PipelineContext } from '../../src/builder/context.js';
-import { collectFiles } from '../../src/builder/stages/collect-files.js';
+import { PipelineContext } from '../../src/domain/graph/builder/context.js';
+import { collectFiles } from '../../src/domain/graph/builder/stages/collect-files.js';
 
 let tmpDir;
 

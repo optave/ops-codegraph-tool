@@ -12,7 +12,7 @@
  */
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { extractDataflow } from '../../src/dataflow.js';
+import { extractDataflow } from '../../src/features/dataflow.js';
 import { isNativeAvailable } from '../../src/native.js';
 import { createParsers, getParser } from '../../src/parser.js';
 

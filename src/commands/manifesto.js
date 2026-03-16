@@ -1,5 +1,5 @@
+import { manifestoData } from '../features/manifesto.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
-import { manifestoData } from '../manifesto.js';
 
 /**
  * CLI formatter — prints manifesto results and sets exitCode 1 on failure.

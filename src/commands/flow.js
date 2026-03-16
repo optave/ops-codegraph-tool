@@ -1,6 +1,6 @@
-import { flowData, listEntryPointsData } from '../flow.js';
+import { kindIcon } from '../domain/queries.js';
+import { flowData, listEntryPointsData } from '../features/flow.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
-import { kindIcon } from '../queries.js';
 
 /**
  * CLI formatter — text or JSON output.

@@ -1,5 +1,5 @@
-import { EVERY_SYMBOL_KIND } from '../../queries.js';
-import { children } from '../../queries-cli.js';
+import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
+import { children } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'children <name>',

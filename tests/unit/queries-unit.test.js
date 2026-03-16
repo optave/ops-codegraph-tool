@@ -14,8 +14,13 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { initSchema } from '../../src/db.js';
-import { diffImpactData, diffImpactMermaid, fnDepsData, fnImpactData } from '../../src/queries.js';
+import { initSchema } from '../../src/db/index.js';
+import {
+  diffImpactData,
+  diffImpactMermaid,
+  fnDepsData,
+  fnImpactData,
+} from '../../src/domain/queries.js';
 import {
   diffImpact,
   fileDeps,
@@ -23,7 +28,7 @@ import {
   fnImpact,
   impactAnalysis,
   moduleMap,
-} from '../../src/queries-cli.js';
+} from '../../src/presentation/queries-cli.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

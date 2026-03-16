@@ -1,5 +1,5 @@
-import { findCycles, formatCycles } from '../../cycles.js';
-import { openReadonlyOrFail } from '../../db.js';
+import { openReadonlyOrFail } from '../../db/index.js';
+import { findCycles, formatCycles } from '../../domain/graph/cycles.js';
 
 export const command = {
   name: 'cycles',

@@ -14,8 +14,8 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { communitiesData, communitySummaryForStats } from '../../src/communities.js';
-import { initSchema } from '../../src/db.js';
+import { initSchema } from '../../src/db/index.js';
+import { communitiesData, communitySummaryForStats } from '../../src/features/communities.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

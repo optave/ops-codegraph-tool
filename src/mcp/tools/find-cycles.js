@@ -1,5 +1,5 @@
-import { findCycles } from '../../cycles.js';
-import { findDbPath } from '../../db.js';
+import { findDbPath } from '../../db/index.js';
+import { findCycles } from '../../domain/graph/cycles.js';
 
 export const name = 'find_cycles';
 

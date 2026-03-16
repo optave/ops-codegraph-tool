@@ -1,6 +1,6 @@
+import { kindIcon } from '../domain/queries.js';
+import { sequenceData, sequenceToMermaid } from '../features/sequence.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
-import { kindIcon } from '../queries.js';
-import { sequenceData, sequenceToMermaid } from '../sequence.js';
 
 /**
  * CLI entry point — format sequence data as mermaid, JSON, or ndjson.

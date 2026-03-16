@@ -1,4 +1,4 @@
-import { communitiesData } from '../communities.js';
+import { communitiesData } from '../features/communities.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 
 /**

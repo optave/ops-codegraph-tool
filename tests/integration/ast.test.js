@@ -9,8 +9,8 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { AST_NODE_KINDS, astQueryData } from '../../src/ast.js';
-import { initSchema } from '../../src/db.js';
+import { initSchema } from '../../src/db/index.js';
+import { AST_NODE_KINDS, astQueryData } from '../../src/features/ast.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────
 

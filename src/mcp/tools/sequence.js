@@ -3,7 +3,7 @@ import { effectiveOffset, MCP_DEFAULTS } from '../middleware.js';
 export const name = 'sequence';
 
 export async function handler(args, ctx) {
-  const { sequenceData, sequenceToMermaid } = await import('../../sequence.js');
+  const { sequenceData, sequenceToMermaid } = await import('../../features/sequence.js');
   const seqResult = sequenceData(args.name, ctx.dbPath, {
     depth: args.depth,
     file: args.file,

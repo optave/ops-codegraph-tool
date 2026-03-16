@@ -1,5 +1,5 @@
-import { EVERY_SYMBOL_KIND } from '../../queries.js';
-import { context } from '../../queries-cli.js';
+import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
+import { context } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'context <name>',

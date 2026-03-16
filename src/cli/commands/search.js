@@ -1,4 +1,4 @@
-import { search } from '../../embeddings/index.js';
+import { search } from '../../domain/search/index.js';
 
 export const command = {
   name: 'search <query>',

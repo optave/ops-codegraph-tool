@@ -1,4 +1,4 @@
-import { cfgData, cfgToDOT, cfgToMermaid } from '../cfg.js';
+import { cfgData, cfgToDOT, cfgToMermaid } from '../features/cfg.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 
 /**

@@ -1,4 +1,4 @@
-import { batchData, multiBatchData } from '../batch.js';
+import { batchData, multiBatchData } from '../features/batch.js';
 
 /**
  * CLI wrapper — calls batchData and prints JSON to stdout.

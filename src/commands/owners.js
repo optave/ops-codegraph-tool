@@ -1,5 +1,5 @@
+import { ownersData } from '../features/owners.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
-import { ownersData } from '../owners.js';
 
 /**
  * CLI display function for the `owners` command.

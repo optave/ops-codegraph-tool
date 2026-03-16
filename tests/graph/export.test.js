@@ -4,7 +4,7 @@
 
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
-import { initSchema } from '../../src/db.js';
+import { initSchema } from '../../src/db/index.js';
 import {
   exportDOT,
   exportGraphML,
@@ -12,7 +12,7 @@ import {
   exportJSON,
   exportMermaid,
   exportNeo4jCSV,
-} from '../../src/export.js';
+} from '../../src/features/export.js';
 
 function createTestDb() {
   const db = new Database(':memory:');

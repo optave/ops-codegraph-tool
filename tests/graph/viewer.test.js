@@ -4,8 +4,8 @@
 
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
-import { initSchema } from '../../src/db.js';
-import { generatePlotHTML, loadPlotConfig, prepareGraphData } from '../../src/viewer.js';
+import { initSchema } from '../../src/db/index.js';
+import { generatePlotHTML, loadPlotConfig, prepareGraphData } from '../../src/features/viewer.js';
 
 function createTestDb() {
   const db = new Database(':memory:');

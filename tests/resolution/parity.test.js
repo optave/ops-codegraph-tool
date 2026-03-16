@@ -6,7 +6,6 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { isNativeAvailable, loadNative } from '../../src/native.js';
 import {
   computeConfidence,
   computeConfidenceJS,
@@ -14,7 +13,8 @@ import {
   resolveImportPath,
   resolveImportPathJS,
   resolveImportsBatch,
-} from '../../src/resolve.js';
+} from '../../src/domain/graph/resolve.js';
+import { isNativeAvailable, loadNative } from '../../src/native.js';
 
 const hasNative = isNativeAvailable();
 

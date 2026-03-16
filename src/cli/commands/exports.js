@@ -1,4 +1,4 @@
-import { fileExports } from '../../queries-cli.js';
+import { fileExports } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'exports <file>',

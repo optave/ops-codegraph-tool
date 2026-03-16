@@ -8,8 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
-import { buildGraph } from '../../src/builder.js';
-import { hotspotsData, moduleBoundariesData, structureData } from '../../src/structure.js';
+import { buildGraph } from '../../src/domain/graph/builder.js';
+import { hotspotsData, moduleBoundariesData, structureData } from '../../src/features/structure.js';
 
 // Multi-directory fixture with cross-directory imports
 const FIXTURE_FILES = {
