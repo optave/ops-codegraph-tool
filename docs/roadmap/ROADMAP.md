@@ -13,8 +13,8 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | Phase | Theme | Key Deliverables | Status |
 |-------|-------|-----------------|--------|
 | [**1**](#phase-1--rust-core) | Rust Core | Rust parsing engine via napi-rs, parallel parsing, incremental tree-sitter, JS orchestration layer | **Complete** (v1.3.0) |
-| [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Complete** (v1.4.0) |
-| [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.6.0) |
+| [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Complete** (v1.5.0) |
+| [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.7.0) |
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
 | [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names, CLI composability | **In Progress** (v3.1.4) |
 | [**4**](#phase-4--native-analysis-acceleration) | Native Analysis Acceleration | Move JS-only build phases (AST nodes, CFG, dataflow, insert nodes, structure, roles, complexity) to Rust; fix incremental rebuild data loss on native; sub-100ms 1-file rebuilds | Planned |
@@ -115,7 +115,7 @@ Ensure the transition is seamless.
 
 ## Phase 2 -- Foundation Hardening ✅
 
-> **Status:** Complete -- shipped in v1.4.0
+> **Status:** Complete -- shipped in v1.5.0
 
 **Goal:** Fix structural issues that make subsequent phases harder.
 
@@ -201,7 +201,7 @@ Support querying multiple codebases from a single MCP server instance.
 
 ## Phase 2.5 -- Analysis Expansion ✅
 
-> **Status:** Complete -- shipped across v2.0.0 -> v2.6.0
+> **Status:** Complete -- shipped across v2.0.0 -> v2.7.0
 
 **Goal:** Build a comprehensive analysis toolkit on top of the graph -- complexity metrics, community detection, risk triage, architecture boundary enforcement, CI validation, and hybrid search. This phase emerged organically as features were needed and wasn't in the original roadmap.
 
@@ -542,7 +542,7 @@ Plus updated enums on existing tools (edge_kinds, symbol kinds).
 
 ### 2.7 Summary
 
-| Metric | Before (v2.6.0) | After (v3.0.0) | Delta |
+| Metric | Before (v2.7.0 baseline) | After (v3.0.0) | Delta |
 |--------|-----------------|-----------------|-------|
 | Source modules | 35 | 50 | +15 |
 | Total source lines | 17,830 | 26,277 | +47% |
@@ -1372,7 +1372,7 @@ export function data(db: Database, args: ParsedArgs, config: Config): object {
 
 **Affected files:** `src/cli/`, `src/mcp/`, new `src/infrastructure/plugins.js`
 
-### 5.9 -- Developer Experience & Onboarding
+### 6.9 -- Developer Experience & Onboarding
 
 Lower the barrier to first successful use. Today codegraph requires manual install, manual config, and prior knowledge of which command to run next.
 
@@ -1390,7 +1390,7 @@ Lower the barrier to first successful use. Today codegraph requires manual insta
 
 **Goal:** Dramatically improve semantic search quality by embedding natural-language descriptions instead of raw code.
 
-> **Phase 7.3 (Hybrid Search) was completed early** during Phase 2.5 -- FTS5 BM25 + semantic search with RRF fusion is already shipped in v2.6.0.
+> **Phase 7.3 (Hybrid Search) was completed early** during Phase 2.5 -- FTS5 BM25 + semantic search with RRF fusion is already shipped in v2.7.0.
 
 ### 7.1 -- LLM Description Generator
 
@@ -1433,7 +1433,7 @@ For each function/method/class node, generate a concise natural-language descrip
 
 ### ~~7.3 -- Hybrid Search~~ ✅ Completed in Phase 2.5
 
-Shipped in v2.6.0. FTS5 BM25 keyword search + semantic vector search with RRF fusion. Three search modes: `hybrid` (default), `semantic`, `keyword`.
+Shipped in v2.7.0. FTS5 BM25 keyword search + semantic vector search with RRF fusion. Three search modes: `hybrid` (default), `semantic`, `keyword`.
 
 ### 7.4 -- Build-time Semantic Metadata
 
@@ -1663,7 +1663,7 @@ Add SARIF output format for cycle detection. SARIF integrates with GitHub Code S
 
 **Affected files:** `src/export.js`
 
-### 9.5 -- Auto-generated Docstrings
+### 10.5 -- Auto-generated Docstrings
 
 ```bash
 codegraph annotate
@@ -1672,7 +1672,7 @@ codegraph annotate --changed-only
 
 LLM-generated docstrings aware of callers, callees, and types. Diff-aware: only regenerate for functions whose code or dependencies changed. Stores in `docstrings` column on nodes table -- does not modify source files unless explicitly requested.
 
-**Depends on:** 6.1 (LLM provider abstraction), 6.4 (side effects context)
+**Depends on:** 7.1 (LLM provider abstraction), 7.4 (side effects context)
 
 ---
 
