@@ -29,6 +29,7 @@ Your goal: audit every high-priority target from the RECON phase against 4 pilla
    ```bash
    git fetch origin main && git merge origin/main --no-edit
    ```
+   If there are merge conflicts, stop: "Merge conflict detected. Resolve conflicts and re-run `/titan-gauntlet`."
 
 3. **Load state.** Read `.codegraph/titan/titan-state.json`. If missing:
    - Warn: "No RECON artifacts. Run `/titan-recon` first for best results."

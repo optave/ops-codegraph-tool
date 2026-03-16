@@ -27,6 +27,7 @@ Your goal: analyze GAUNTLET results to find overlapping problems, identify share
    ```bash
    git fetch origin main && git merge origin/main --no-edit
    ```
+   If there are merge conflicts, stop: "Merge conflict detected. Resolve conflicts and re-run `/titan-sync`."
 
 3. **Load artifacts.** Read:
    - `.codegraph/titan/titan-state.json` — state, domains, batches, file audits
