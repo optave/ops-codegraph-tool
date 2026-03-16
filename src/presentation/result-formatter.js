@@ -20,19 +20,7 @@ function flattenObject(obj, prefix = '') {
   return result;
 }
 
-/**
- * Auto-detect column keys from an array of objects.
- * Returns stable insertion-order keys across all items.
- */
-function autoColumns(items) {
-  const keys = new Set();
-  for (const item of items) {
-    for (const key of Object.keys(flattenObject(item))) keys.add(key);
-  }
-  return [...keys];
-}
-
-/** Escape a value for RFC 4180 CSV output. */
+/** Escape a value for CSV output (LF line endings). */
 function escapeCsv(val) {
   const str = val == null ? '' : String(val);
   if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
@@ -53,7 +41,11 @@ function printCsv(data, field) {
   const flatItems = items.map((item) =>
     typeof item === 'object' && item !== null ? flattenObject(item) : { value: item },
   );
-  const columns = autoColumns(flatItems);
+  const columns = (() => {
+    const keys = new Set();
+    for (const item of flatItems) for (const key of Object.keys(item)) keys.add(key);
+    return [...keys];
+  })();
   if (columns.length === 0) columns.push('value');
 
   console.log(columns.map(escapeCsv).join(','));
@@ -76,7 +68,11 @@ function printAutoTable(data, field) {
   const flatItems = items.map((item) =>
     typeof item === 'object' && item !== null ? flattenObject(item) : { value: item },
   );
-  const columns = autoColumns(flatItems);
+  const columns = (() => {
+    const keys = new Set();
+    for (const item of flatItems) for (const key of Object.keys(item)) keys.add(key);
+    return [...keys];
+  })();
   if (columns.length === 0) columns.push('value');
 
   const colDefs = columns.map((col) => {
