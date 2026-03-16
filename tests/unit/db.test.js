@@ -299,9 +299,13 @@ describe('findDbPath with git ceiling', () => {
     process.cwd = () => innerDir;
     try {
       _resetRepoRootCache();
+      // Use findRepoRoot() for the expected ceiling — git may resolve 8.3 short
+      // names (Windows RUNNER~1 → runneradmin) or symlinks (macOS /tmp → /private/tmp)
+      // differently than fs.realpathSync on the test's worktreeRoot.
+      const ceiling = findRepoRoot();
       const result = findDbPath();
       // Should return default path at the ceiling root, NOT the outer DB
-      expect(result).toBe(path.join(worktreeRoot, '.codegraph', 'graph.db'));
+      expect(result).toBe(path.join(ceiling, '.codegraph', 'graph.db'));
       expect(result).not.toContain(`${path.basename(outerDir)}${path.sep}.codegraph`);
     } finally {
       process.cwd = origCwd;

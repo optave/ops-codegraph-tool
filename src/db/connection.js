@@ -85,6 +85,22 @@ function releaseAdvisoryLock(lockPath) {
   }
 }
 
+/**
+ * Check if two paths refer to the same directory.
+ * Handles Windows 8.3 short names (RUNNER~1 vs runneradmin) and macOS
+ * symlinks (/tmp vs /private/tmp) where string comparison fails.
+ */
+function isSameDirectory(a, b) {
+  if (path.resolve(a) === path.resolve(b)) return true;
+  try {
+    const sa = fs.statSync(a);
+    const sb = fs.statSync(b);
+    return sa.dev === sb.dev && sa.ino === sb.ino;
+  } catch {
+    return false;
+  }
+}
+
 export function openDb(dbPath) {
   const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -114,7 +130,7 @@ export function findDbPath(customPath) {
   while (true) {
     const candidate = path.join(dir, '.codegraph', 'graph.db');
     if (fs.existsSync(candidate)) return candidate;
-    if (ceiling && path.resolve(dir) === ceiling) {
+    if (ceiling && isSameDirectory(dir, ceiling)) {
       debug(`findDbPath: stopped at git ceiling ${ceiling}`);
       break;
     }
