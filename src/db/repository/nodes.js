@@ -1,6 +1,6 @@
 import { ConfigError } from '../../errors.js';
 import { EVERY_SYMBOL_KIND, VALID_ROLES } from '../../kinds.js';
-import { NodeQuery } from '../query-builder.js';
+import { escapeLike, NodeQuery } from '../query-builder.js';
 import { cachedStmt } from './cached-stmt.js';
 
 // ─── Query-builder based lookups (moved from src/db/repository.js) ─────
@@ -248,11 +248,6 @@ export function findNodeChildren(db, parentId) {
     db,
     'SELECT name, kind, line, end_line, qualified_name, scope, visibility FROM nodes WHERE parent_id = ? ORDER BY line',
   ).all(parentId);
-}
-
-/** Escape LIKE wildcards in a literal string segment. */
-function escapeLike(s) {
-  return s.replace(/[%_\\]/g, '\\$&');
 }
 
 /**

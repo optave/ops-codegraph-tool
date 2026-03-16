@@ -65,6 +65,13 @@ function validateEdgeKind(edgeKind) {
   }
 }
 
+// ─── LIKE Escaping ──────────────────────────────────────────────────
+
+/** Escape LIKE wildcards in a literal string segment. */
+export function escapeLike(s) {
+  return s.replace(/[%_\\]/g, '\\$&');
+}
+
 // ─── Standalone Helpers ──────────────────────────────────────────────
 
 /**
@@ -164,11 +171,11 @@ export class NodeQuery {
     return this;
   }
 
-  /** WHERE n.file LIKE ? (no-op if falsy). */
+  /** WHERE n.file LIKE ? (no-op if falsy). Escapes LIKE wildcards in the value. */
   fileFilter(file) {
     if (!file) return this;
-    this.#conditions.push('n.file LIKE ?');
-    this.#params.push(`%${file}%`);
+    this.#conditions.push("n.file LIKE ? ESCAPE '\\'");
+    this.#params.push(`%${escapeLike(file)}%`);
     return this;
   }
 
@@ -188,11 +195,11 @@ export class NodeQuery {
     return this;
   }
 
-  /** WHERE n.name LIKE ? (no-op if falsy). */
+  /** WHERE n.name LIKE ? (no-op if falsy). Escapes LIKE wildcards in the value. */
   nameLike(pattern) {
     if (!pattern) return this;
-    this.#conditions.push('n.name LIKE ?');
-    this.#params.push(`%${pattern}%`);
+    this.#conditions.push("n.name LIKE ? ESCAPE '\\'");
+    this.#params.push(`%${escapeLike(pattern)}%`);
     return this;
   }
 
