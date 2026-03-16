@@ -821,7 +821,7 @@ See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap a
 1. ~~**Rust Core**~~ — **Complete** (v1.3.0) — native tree-sitter parsing via napi-rs, parallel multi-core parsing, incremental re-parsing, import resolution & cycle detection in Rust
 2. ~~**Foundation Hardening**~~ — **Complete** (v1.4.0) — parser registry, 12-tool MCP server with multi-repo support, test coverage 62%→75%, `apiKeyCommand` secret resolution, global repo registry
 3. ~~**Deep Analysis**~~ — **Complete** (v3.0.0) — dataflow analysis (flows_to, returns, mutates), intraprocedural CFG for all 11 languages, stored AST nodes, expanded node/edge types (parameter, property, constant, contains, parameter_of, receiver), GraphML/GraphSON/Neo4j CSV export, interactive HTML viewer, CLI consolidation, stable JSON schema
-4. **Architectural Refactoring** — parser plugin system, repository pattern, pipeline builder, engine strategy, domain errors, curated API
+4. **Architectural Refactoring** — **In Progress** (v3.1.4) — unified AST analysis, composable MCP, domain errors, builder pipeline, embedder subsystem, graph model, qualified names, presentation layer, InMemoryRepository (11/14 tasks complete)
 5. **Natural Language Queries** — `codegraph ask` command, conversational sessions
 6. **Expanded Language Support** — 8 new languages (12 → 20)
 7. **GitHub Integration & CI** — reusable GitHub Action, PR review, SARIF output

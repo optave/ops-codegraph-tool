@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.1.4](https://github.com/optave/codegraph/compare/v3.1.3...v3.1.4) (2026-03-16)
+
+**Phase 3 architectural refactoring reaches near-completion.** This release delivers 11 of 14 roadmap tasks in Phase 3 (Vertical Slice Architecture), restructuring the codebase from a flat collection of large files into a modular subsystem layout. The 3,395-line `queries.js` is decomposed into `src/analysis/` and `src/shared/` modules. The MCP tool registry becomes composable. CLI commands are self-contained modules under `src/commands/`. A domain error hierarchy replaces ad-hoc throws. The build pipeline is decomposed into named stages. The embedder is extracted into `src/embeddings/` with pluggable stores and search strategies. A unified graph model (`src/graph/`) consolidates four parallel graph representations. Nodes gain qualified names, hierarchical scoping, and visibility metadata. An `InMemoryRepository` enables fast unit testing without SQLite. The presentation layer (`src/presentation/`) separates all output formatting from domain logic. `better-sqlite3` is bumped to 12.8.0.
+
+### Features
+
+* **graph-model:** unified in-memory `CodeGraph` model with 3 builders, 6 algorithms, and 2 classifiers — consolidates four parallel graph representations into `src/graph/` ([#435](https://github.com/optave/codegraph/pull/435), [#436](https://github.com/optave/codegraph/pull/436))
+* **qualified-names:** `qualified_name`, `scope`, and `visibility` columns on nodes (migration v15) — enables direct lookups like "all methods of class X" without edge traversal ([#437](https://github.com/optave/codegraph/pull/437))
+* **testing:** `InMemoryRepository` for unit tests without SQLite — repository pattern now supports in-memory and persistent backends ([#444](https://github.com/optave/codegraph/pull/444))
+
+### Refactors
+
+* **queries:** decompose `queries.js` (3,395 lines) into `src/analysis/` and `src/shared/` modules ([#425](https://github.com/optave/codegraph/pull/425))
+* **mcp:** composable MCP tool registry — tools defined alongside their implementations ([#426](https://github.com/optave/codegraph/pull/426))
+* **cli:** split `cli.js` into self-contained command modules under `src/commands/` ([#427](https://github.com/optave/codegraph/pull/427))
+* **api:** curate public API surface — explicit exports, remove internal leaks ([#430](https://github.com/optave/codegraph/pull/430))
+* **errors:** domain error hierarchy — typed errors replace ad-hoc throws ([#431](https://github.com/optave/codegraph/pull/431))
+* **embeddings:** extract embedder into `src/embeddings/` subsystem with pluggable stores and search strategies ([#433](https://github.com/optave/codegraph/pull/433))
+* **builder:** decompose `buildGraph()` into named pipeline stages ([#434](https://github.com/optave/codegraph/pull/434))
+* **presentation:** extract all output formatting into `src/presentation/` — viewer, export, table, sequence renderer, result formatter ([#443](https://github.com/optave/codegraph/pull/443))
+
+### Chores
+
+* **ci:** add backlog compliance phase to automated PR review ([#432](https://github.com/optave/codegraph/pull/432))
+* **deps:** bump better-sqlite3 from 12.6.2 to 12.8.0 ([#442](https://github.com/optave/codegraph/pull/442))
+* **deps-dev:** bump @biomejs/biome from 2.4.6 to 2.4.7 ([#441](https://github.com/optave/codegraph/pull/441))
+* **deps-dev:** bump @commitlint/cli from 20.4.3 to 20.4.4 ([#440](https://github.com/optave/codegraph/pull/440))
+* **deps-dev:** bump @commitlint/config-conventional from 20.4.3 to 20.4.4 ([#439](https://github.com/optave/codegraph/pull/439))
+* **deps-dev:** bump @vitest/coverage-v8 from 4.0.18 to 4.1.0 ([#438](https://github.com/optave/codegraph/pull/438))
+
 ## [3.1.3](https://github.com/optave/codegraph/compare/v3.1.2...v3.1.3) (2026-03-11)
 
 **Bug fixes and build instrumentation.** This patch fixes WASM builds silently producing zero complexity rows, resolves four dogfood-reported issues (benchmark crash resilience, WASM parser memory cleanup, native dynamic import tracking, stale native version reporting), and adds missing build phase timers so `setupMs` and `finalizeMs` now account for the previously untracked ~45% of total build time. Prepared statement caching is extracted into a reusable `cachedStmt` utility.
