@@ -28,8 +28,7 @@ import { info } from './logger.js';
 import { paginateResult } from './paginate.js';
 
 // Re-export for backward compatibility
-export { CFG_RULES };
-export { _makeCfgRules as makeCfgRules };
+export { _makeCfgRules as makeCfgRules, CFG_RULES };
 
 const CFG_EXTENSIONS = buildExtensionSet(CFG_RULES);
 

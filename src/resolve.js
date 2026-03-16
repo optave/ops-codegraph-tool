@@ -178,4 +178,4 @@ export function resolveImportsBatch(inputs, rootDir, aliases, knownFiles) {
 
 // ── Exported for testing ────────────────────────────────────────────
 
-export { resolveImportPathJS, computeConfidenceJS };
+export { computeConfidenceJS, resolveImportPathJS };
