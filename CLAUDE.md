@@ -14,6 +14,9 @@ Hooks handle: file-level deps on reads, graph rebuild after edits, commit-time c
 3. `codegraph context <name> -T` — get full context (source, deps, callers)
 4. `codegraph fn-impact <name> -T` — check blast radius before editing
 
+### After modifying code:
+5. `codegraph diff-impact --staged -T` — verify impact before committing
+
 ### Navigation
 - `codegraph where --file <path>` — file inventory (symbols, imports, exports)
 - `codegraph query <name> -T` — function call chain (callers + callees)
