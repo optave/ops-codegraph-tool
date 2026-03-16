@@ -272,12 +272,16 @@ describe('findDbPath with git ceiling', () => {
     // outerDir/worktree/sub/        (cwd inside worktree)
     outerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-ceiling-'));
     worktreeRoot = path.join(outerDir, 'worktree');
-    innerDir = path.join(worktreeRoot, 'sub');
     fs.mkdirSync(path.join(outerDir, '.codegraph'), { recursive: true });
     fs.writeFileSync(path.join(outerDir, '.codegraph', 'graph.db'), '');
-    fs.mkdirSync(innerDir, { recursive: true });
+    fs.mkdirSync(path.join(worktreeRoot, 'sub'), { recursive: true });
     // Initialize a real git repo at the worktree root so findRepoRoot returns it
     execFileSyncForSetup('git', ['init'], { cwd: worktreeRoot, stdio: 'pipe' });
+    // Resolve symlinks (macOS /var → /private/var) and 8.3 short names
+    // (Windows RUNNER~1 → runneradmin) so test paths match findRepoRoot output.
+    outerDir = fs.realpathSync(outerDir);
+    worktreeRoot = fs.realpathSync(worktreeRoot);
+    innerDir = path.join(worktreeRoot, 'sub');
   });
 
   afterAll(() => {

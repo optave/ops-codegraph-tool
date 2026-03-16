@@ -20,13 +20,19 @@ export function findRepoRoot(fromDir) {
   if (!fromDir && _cachedRepoRoot !== undefined) return _cachedRepoRoot;
   let root = null;
   try {
-    root = path.resolve(
-      execFileSync('git', ['rev-parse', '--show-toplevel'], {
-        cwd: dir,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      }).trim(),
-    );
+    const raw = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: dir,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    // Use realpathSync to resolve symlinks (macOS /var → /private/var) and
+    // 8.3 short names (Windows RUNNER~1 → runneradmin) so the ceiling path
+    // matches the realpathSync'd dir in findDbPath.
+    try {
+      root = fs.realpathSync(raw);
+    } catch {
+      root = path.resolve(raw);
+    }
   } catch {
     root = null;
   }
