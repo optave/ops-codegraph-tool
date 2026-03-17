@@ -481,6 +481,7 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
       const result = getTreeForFile(symbols, relPath, rootDir, parsers, extToLang, getParser);
       const tree = result ? result.tree : null;
       const langId = result ? result.langId : null;
+
       const rules = langId ? COMPLEXITY_RULES.get(langId) : null;
 
       for (const def of symbols.definitions) {
