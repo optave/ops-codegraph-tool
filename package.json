@@ -6,7 +6,9 @@
   "main": "src/index.js",
   "exports": {
     ".": {
-      "import": "./src/index.js"
+      "import": "./src/index.js",
+      "require": "./src/index.cjs",
+      "default": "./src/index.cjs"
     },
     "./cli": {
       "import": "./src/cli.js"
