@@ -13,12 +13,13 @@ import { parseFilesAuto } from '../../../parser.js';
 import { readJournal, writeJournalHeader } from '../../journal.js';
 import { fileHash, fileStat, purgeFilesFromGraph, readFileSafe } from '../helpers.js';
 
+// ── Three-tier change detection ─────────────────────────────────────────
+
 /**
  * Determine which files have changed since last build.
- * Three-tier cascade:
- *   Tier 0 — Journal: O(changed) when watcher was running
- *   Tier 1 — mtime+size: O(n) stats, O(changed) reads
- *   Tier 2 — Hash comparison: O(changed) reads (fallback from Tier 1)
+ * Tier 0 — Journal: O(changed) when watcher was running
+ * Tier 1 — mtime+size: O(n) stats, O(changed) reads
+ * Tier 2 — Hash comparison: O(changed) reads (fallback from Tier 1)
  */
 function getChangedFiles(db, allFiles, rootDir) {
   let hasTable = false;
@@ -44,6 +45,17 @@ function getChangedFiles(db, allFiles, rootDir) {
       .map((r) => [r.file, r]),
   );
 
+  const removed = detectRemovedFiles(existing, allFiles, rootDir);
+
+  // Tier 0: Journal
+  const journalResult = tryJournalTier(db, existing, rootDir, removed);
+  if (journalResult) return journalResult;
+
+  // Tier 1 + 2: mtime/size fast-path → hash comparison
+  return mtimeAndHashTiers(existing, allFiles, rootDir, removed);
+}
+
+function detectRemovedFiles(existing, allFiles, rootDir) {
   const currentFiles = new Set();
   for (const file of allFiles) {
     currentFiles.add(normalizePath(path.relative(rootDir, file)));
@@ -55,51 +67,57 @@ function getChangedFiles(db, allFiles, rootDir) {
       removed.push(existingFile);
     }
   }
+  return removed;
+}
 
-  // ── Tier 0: Journal ──────────────────────────────────────────────
+function tryJournalTier(db, existing, rootDir, removed) {
   const journal = readJournal(rootDir);
-  if (journal.valid) {
-    const dbMtimes = db.prepare('SELECT MAX(mtime) as latest FROM file_hashes').get();
-    const latestDbMtime = dbMtimes?.latest || 0;
-    const hasJournalEntries = journal.changed.length > 0 || journal.removed.length > 0;
+  if (!journal.valid) return null;
 
-    if (hasJournalEntries && journal.timestamp >= latestDbMtime) {
-      debug(
-        `Tier 0: journal valid, ${journal.changed.length} changed, ${journal.removed.length} removed`,
-      );
-      const changed = [];
+  const dbMtimes = db.prepare('SELECT MAX(mtime) as latest FROM file_hashes').get();
+  const latestDbMtime = dbMtimes?.latest || 0;
+  const hasJournalEntries = journal.changed.length > 0 || journal.removed.length > 0;
 
-      for (const relPath of journal.changed) {
-        const absPath = path.join(rootDir, relPath);
-        const stat = fileStat(absPath);
-        if (!stat) continue;
-
-        let content;
-        try {
-          content = readFileSafe(absPath);
-        } catch {
-          continue;
-        }
-        const hash = fileHash(content);
-        const record = existing.get(relPath);
-        if (!record || record.hash !== hash) {
-          changed.push({ file: absPath, content, hash, relPath, stat });
-        }
-      }
-
-      const removedSet = new Set(removed);
-      for (const relPath of journal.removed) {
-        if (existing.has(relPath)) removedSet.add(relPath);
-      }
-
-      return { changed, removed: [...removedSet], isFullBuild: false };
-    }
+  if (!hasJournalEntries || journal.timestamp < latestDbMtime) {
     debug(
       `Tier 0: skipped (${hasJournalEntries ? 'timestamp stale' : 'no entries'}), falling to Tier 1`,
     );
+    return null;
   }
 
-  // ── Tier 1: mtime+size fast-path ─────────────────────────────────
+  debug(
+    `Tier 0: journal valid, ${journal.changed.length} changed, ${journal.removed.length} removed`,
+  );
+  const changed = [];
+
+  for (const relPath of journal.changed) {
+    const absPath = path.join(rootDir, relPath);
+    const stat = fileStat(absPath);
+    if (!stat) continue;
+
+    let content;
+    try {
+      content = readFileSafe(absPath);
+    } catch {
+      continue;
+    }
+    const hash = fileHash(content);
+    const record = existing.get(relPath);
+    if (!record || record.hash !== hash) {
+      changed.push({ file: absPath, content, hash, relPath, stat });
+    }
+  }
+
+  const removedSet = new Set(removed);
+  for (const relPath of journal.removed) {
+    if (existing.has(relPath)) removedSet.add(relPath);
+  }
+
+  return { changed, removed: [...removedSet], isFullBuild: false };
+}
+
+function mtimeAndHashTiers(existing, allFiles, rootDir, removed) {
+  // Tier 1: mtime+size fast-path
   const needsHash = [];
   const skipped = [];
 
@@ -130,7 +148,7 @@ function getChangedFiles(db, allFiles, rootDir) {
     debug(`Tier 1: ${skipped.length} skipped by mtime+size, ${needsHash.length} need hash check`);
   }
 
-  // ── Tier 2: Hash comparison ──────────────────────────────────────
+  // Tier 2: Hash comparison
   const changed = [];
 
   for (const item of needsHash) {
@@ -168,9 +186,10 @@ function getChangedFiles(db, allFiles, rootDir) {
   return { changed, removed, isFullBuild: false };
 }
 
+// ── Pending analysis ────────────────────────────────────────────────────
+
 /**
  * Run pending analysis pass when no file changes but analysis tables are empty.
- * @returns {boolean} true if analysis was run and we should early-exit
  */
 async function runPendingAnalysis(ctx) {
   const { db, opts, engineOpts, allFiles, rootDir } = ctx;
@@ -213,9 +232,8 @@ async function runPendingAnalysis(ctx) {
   return true;
 }
 
-/**
- * Self-heal metadata-only updates (mtime/size) without re-parsing.
- */
+// ── Metadata self-heal ──────────────────────────────────────────────────
+
 function healMetadata(ctx) {
   const { db, metadataUpdates } = ctx;
   if (!metadataUpdates || metadataUpdates.length === 0) return;
@@ -237,72 +255,146 @@ function healMetadata(ctx) {
   }
 }
 
+// ── Reverse-dependency cascade ──────────────────────────────────────────
+
+function findReverseDependencies(db, changedRelPaths, rootDir) {
+  const reverseDeps = new Set();
+  if (changedRelPaths.size === 0) return reverseDeps;
+
+  const findReverseDepsStmt = db.prepare(`
+    SELECT DISTINCT n_src.file FROM edges e
+    JOIN nodes n_src ON e.source_id = n_src.id
+    JOIN nodes n_tgt ON e.target_id = n_tgt.id
+    WHERE n_tgt.file = ? AND n_src.file != n_tgt.file AND n_src.kind != 'directory'
+  `);
+  for (const relPath of changedRelPaths) {
+    for (const row of findReverseDepsStmt.all(relPath)) {
+      if (!changedRelPaths.has(row.file) && !reverseDeps.has(row.file)) {
+        const absPath = path.join(rootDir, row.file);
+        if (fs.existsSync(absPath)) {
+          reverseDeps.add(row.file);
+        }
+      }
+    }
+  }
+  return reverseDeps;
+}
+
+function purgeAndAddReverseDeps(ctx, changePaths, reverseDeps) {
+  const { db, rootDir } = ctx;
+
+  if (changePaths.length > 0 || ctx.removed.length > 0) {
+    purgeFilesFromGraph(db, [...ctx.removed, ...changePaths], { purgeHashes: false });
+  }
+
+  if (reverseDeps.size > 0) {
+    const deleteOutgoingEdgesForFile = db.prepare(
+      'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
+    );
+    for (const relPath of reverseDeps) {
+      deleteOutgoingEdgesForFile.run(relPath);
+    }
+    for (const relPath of reverseDeps) {
+      const absPath = path.join(rootDir, relPath);
+      ctx.parseChanges.push({ file: absPath, relPath, _reverseDepOnly: true });
+    }
+  }
+}
+
+// ── Shared helpers ───────────────────────────────────────────────────────
+
+function detectHasEmbeddings(db) {
+  try {
+    db.prepare('SELECT 1 FROM embeddings LIMIT 1').get();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ── Scoped build path ───────────────────────────────────────────────────
+
+function handleScopedBuild(ctx) {
+  const { db, rootDir, opts } = ctx;
+
+  ctx.hasEmbeddings = detectHasEmbeddings(db);
+
+  const changePaths = ctx.parseChanges.map(
+    (item) => item.relPath || normalizePath(path.relative(rootDir, item.file)),
+  );
+
+  let reverseDeps = new Set();
+  if (!opts.noReverseDeps) {
+    const changedRelPaths = new Set([...changePaths, ...ctx.removed]);
+    reverseDeps = findReverseDependencies(db, changedRelPaths, rootDir);
+  }
+
+  // Purge changed + removed files, then add reverse-deps
+  purgeAndAddReverseDeps(ctx, changePaths, reverseDeps);
+
+  info(
+    `Scoped rebuild: ${changePaths.length} changed, ${ctx.removed.length} removed, ${reverseDeps.size} reverse-deps`,
+  );
+}
+
+// ── Full/incremental build path ─────────────────────────────────────────
+
+function handleFullBuild(ctx) {
+  const { db } = ctx;
+
+  const hasEmbeddings = detectHasEmbeddings(db);
+  ctx.hasEmbeddings = hasEmbeddings;
+
+  const deletions =
+    'PRAGMA foreign_keys = OFF; DELETE FROM cfg_edges; DELETE FROM cfg_blocks; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM function_complexity; DELETE FROM dataflow; DELETE FROM ast_nodes; DELETE FROM nodes; PRAGMA foreign_keys = ON;';
+  db.exec(
+    hasEmbeddings
+      ? `${deletions.replace('PRAGMA foreign_keys = ON;', '')} DELETE FROM embeddings; PRAGMA foreign_keys = ON;`
+      : deletions,
+  );
+}
+
+function handleIncrementalBuild(ctx) {
+  const { db, rootDir, opts } = ctx;
+
+  ctx.hasEmbeddings = detectHasEmbeddings(db);
+
+  let reverseDeps = new Set();
+  if (!opts.noReverseDeps) {
+    const changedRelPaths = new Set();
+    for (const item of ctx.parseChanges) {
+      changedRelPaths.add(item.relPath || normalizePath(path.relative(rootDir, item.file)));
+    }
+    for (const relPath of ctx.removed) {
+      changedRelPaths.add(relPath);
+    }
+    reverseDeps = findReverseDependencies(db, changedRelPaths, rootDir);
+  }
+
+  info(
+    `Incremental: ${ctx.parseChanges.length} changed, ${ctx.removed.length} removed${reverseDeps.size > 0 ? `, ${reverseDeps.size} reverse-deps` : ''}`,
+  );
+  if (ctx.parseChanges.length > 0)
+    debug(`Changed files: ${ctx.parseChanges.map((c) => c.relPath).join(', ')}`);
+  if (ctx.removed.length > 0) debug(`Removed files: ${ctx.removed.join(', ')}`);
+
+  const changePaths = ctx.parseChanges.map(
+    (item) => item.relPath || normalizePath(path.relative(rootDir, item.file)),
+  );
+  purgeAndAddReverseDeps(ctx, changePaths, reverseDeps);
+}
+
+// ── Main entry point ────────────────────────────────────────────────────
+
 /**
  * @param {import('../context.js').PipelineContext} ctx
  */
 export async function detectChanges(ctx) {
   const { db, allFiles, rootDir, incremental, forceFullRebuild, opts } = ctx;
 
-  // Scoped builds already set parseChanges in collectFiles.
-  // Still need to purge removed files and set hasEmbeddings.
+  // Scoped builds already set parseChanges in collectFiles
   if (opts.scope) {
-    let hasEmbeddings = false;
-    try {
-      db.prepare('SELECT 1 FROM embeddings LIMIT 1').get();
-      hasEmbeddings = true;
-    } catch {
-      /* table doesn't exist */
-    }
-    ctx.hasEmbeddings = hasEmbeddings;
-
-    // Reverse-dependency cascade BEFORE purging (needs existing edges to find importers)
-    const changePaths = ctx.parseChanges.map(
-      (item) => item.relPath || normalizePath(path.relative(rootDir, item.file)),
-    );
-    const reverseDeps = new Set();
-    if (!opts.noReverseDeps) {
-      const changedRelPaths = new Set([...changePaths, ...ctx.removed]);
-      if (changedRelPaths.size > 0) {
-        const findReverseDeps = db.prepare(`
-          SELECT DISTINCT n_src.file FROM edges e
-          JOIN nodes n_src ON e.source_id = n_src.id
-          JOIN nodes n_tgt ON e.target_id = n_tgt.id
-          WHERE n_tgt.file = ? AND n_src.file != n_tgt.file AND n_src.kind != 'directory'
-        `);
-        for (const relPath of changedRelPaths) {
-          for (const row of findReverseDeps.all(relPath)) {
-            if (!changedRelPaths.has(row.file) && !reverseDeps.has(row.file)) {
-              const absPath = path.join(rootDir, row.file);
-              if (fs.existsSync(absPath)) {
-                reverseDeps.add(row.file);
-              }
-            }
-          }
-        }
-      }
-    }
-
-    // Now purge changed + removed files
-    if (changePaths.length > 0 || ctx.removed.length > 0) {
-      purgeFilesFromGraph(db, [...ctx.removed, ...changePaths], { purgeHashes: false });
-    }
-
-    // Delete outgoing edges for reverse-dep files and add to parse list
-    if (reverseDeps.size > 0) {
-      const deleteOutgoingEdgesForFile = db.prepare(
-        'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
-      );
-      for (const relPath of reverseDeps) {
-        deleteOutgoingEdgesForFile.run(relPath);
-      }
-      for (const relPath of reverseDeps) {
-        const absPath = path.join(rootDir, relPath);
-        ctx.parseChanges.push({ file: absPath, relPath, _reverseDepOnly: true });
-      }
-      info(
-        `Scoped rebuild: ${changePaths.length} changed, ${ctx.removed.length} removed, ${reverseDeps.size} reverse-deps`,
-      );
-    }
+    handleScopedBuild(ctx);
     return;
   }
 
@@ -334,80 +426,9 @@ export async function detectChanges(ctx) {
     return;
   }
 
-  // ── Full build: truncate all tables ──────────────────────────────
-  let hasEmbeddings = false;
-  try {
-    db.prepare('SELECT 1 FROM embeddings LIMIT 1').get();
-    hasEmbeddings = true;
-  } catch {
-    /* table doesn't exist */
-  }
-  ctx.hasEmbeddings = hasEmbeddings;
-
   if (ctx.isFullBuild) {
-    const deletions =
-      'PRAGMA foreign_keys = OFF; DELETE FROM cfg_edges; DELETE FROM cfg_blocks; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM function_complexity; DELETE FROM dataflow; DELETE FROM ast_nodes; DELETE FROM nodes; PRAGMA foreign_keys = ON;';
-    db.exec(
-      hasEmbeddings
-        ? `${deletions.replace('PRAGMA foreign_keys = ON;', '')} DELETE FROM embeddings; PRAGMA foreign_keys = ON;`
-        : deletions,
-    );
-    return;
-  }
-
-  // ── Reverse-dependency cascade (incremental) ─────────────────────
-  const reverseDeps = new Set();
-  if (!opts.noReverseDeps) {
-    const changedRelPaths = new Set();
-    for (const item of ctx.parseChanges) {
-      changedRelPaths.add(item.relPath || normalizePath(path.relative(rootDir, item.file)));
-    }
-    for (const relPath of ctx.removed) {
-      changedRelPaths.add(relPath);
-    }
-
-    if (changedRelPaths.size > 0) {
-      const findReverseDeps = db.prepare(`
-        SELECT DISTINCT n_src.file FROM edges e
-        JOIN nodes n_src ON e.source_id = n_src.id
-        JOIN nodes n_tgt ON e.target_id = n_tgt.id
-        WHERE n_tgt.file = ? AND n_src.file != n_tgt.file AND n_src.kind != 'directory'
-      `);
-      for (const relPath of changedRelPaths) {
-        for (const row of findReverseDeps.all(relPath)) {
-          if (!changedRelPaths.has(row.file) && !reverseDeps.has(row.file)) {
-            const absPath = path.join(rootDir, row.file);
-            if (fs.existsSync(absPath)) {
-              reverseDeps.add(row.file);
-            }
-          }
-        }
-      }
-    }
-  }
-
-  info(
-    `Incremental: ${ctx.parseChanges.length} changed, ${ctx.removed.length} removed${reverseDeps.size > 0 ? `, ${reverseDeps.size} reverse-deps` : ''}`,
-  );
-  if (ctx.parseChanges.length > 0)
-    debug(`Changed files: ${ctx.parseChanges.map((c) => c.relPath).join(', ')}`);
-  if (ctx.removed.length > 0) debug(`Removed files: ${ctx.removed.join(', ')}`);
-
-  // Purge changed and removed files
-  const changePaths = ctx.parseChanges.map(
-    (item) => item.relPath || normalizePath(path.relative(rootDir, item.file)),
-  );
-  purgeFilesFromGraph(db, [...ctx.removed, ...changePaths], { purgeHashes: false });
-
-  // Delete outgoing edges for reverse-dep files, then add them to parse list
-  const deleteOutgoingEdgesForFile = db.prepare(
-    'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
-  );
-  for (const relPath of reverseDeps) {
-    deleteOutgoingEdgesForFile.run(relPath);
-  }
-  for (const relPath of reverseDeps) {
-    const absPath = path.join(rootDir, relPath);
-    ctx.parseChanges.push({ file: absPath, relPath, _reverseDepOnly: true });
+    handleFullBuild(ctx);
+  } else {
+    handleIncrementalBuild(ctx);
   }
 }

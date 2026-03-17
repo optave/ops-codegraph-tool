@@ -12,6 +12,122 @@ import {
   computeMaintainabilityIndex,
 } from '../metrics.js';
 
+// ── Halstead classification ─────────────────────────────────────────────
+
+function classifyHalstead(node, hRules, acc) {
+  const type = node.type;
+  if (hRules.skipTypes.has(type)) acc.halsteadSkipDepth++;
+  if (acc.halsteadSkipDepth > 0) return;
+
+  if (hRules.compoundOperators.has(type)) {
+    acc.operators.set(type, (acc.operators.get(type) || 0) + 1);
+  }
+  if (node.childCount === 0) {
+    if (hRules.operatorLeafTypes.has(type)) {
+      acc.operators.set(type, (acc.operators.get(type) || 0) + 1);
+    } else if (hRules.operandLeafTypes.has(type)) {
+      const text = node.text;
+      acc.operands.set(text, (acc.operands.get(text) || 0) + 1);
+    }
+  }
+}
+
+// ── Branch complexity classification ────────────────────────────────────
+
+function classifyBranchNode(node, type, nestingLevel, cRules, acc) {
+  // Pattern A: else clause wraps if (JS/C#/Rust)
+  if (cRules.elseNodeType && type === cRules.elseNodeType) {
+    const firstChild = node.namedChild(0);
+    if (firstChild && firstChild.type === cRules.ifNodeType) {
+      // else-if: the if_statement child handles its own increment
+      return;
+    }
+    acc.cognitive++;
+    return;
+  }
+
+  // Pattern B: explicit elif node (Python/Ruby/PHP)
+  if (cRules.elifNodeType && type === cRules.elifNodeType) {
+    acc.cognitive++;
+    acc.cyclomatic++;
+    return;
+  }
+
+  // Detect else-if via Pattern A or C
+  let isElseIf = false;
+  if (type === cRules.ifNodeType) {
+    if (cRules.elseViaAlternative) {
+      isElseIf =
+        node.parent?.type === cRules.ifNodeType &&
+        node.parent.childForFieldName('alternative')?.id === node.id;
+    } else if (cRules.elseNodeType) {
+      isElseIf = node.parent?.type === cRules.elseNodeType;
+    }
+  }
+
+  if (isElseIf) {
+    acc.cognitive++;
+    acc.cyclomatic++;
+    return;
+  }
+
+  // Regular branch node
+  acc.cognitive += 1 + nestingLevel;
+  acc.cyclomatic++;
+
+  if (cRules.switchLikeNodes?.has(type)) {
+    acc.cyclomatic--;
+  }
+}
+
+// ── Plain-else detection (Pattern C: Go/Java) ──────────────────────────
+
+function classifyPlainElse(node, type, cRules, acc) {
+  if (
+    cRules.elseViaAlternative &&
+    type !== cRules.ifNodeType &&
+    node.parent?.type === cRules.ifNodeType &&
+    node.parent.childForFieldName('alternative')?.id === node.id
+  ) {
+    acc.cognitive++;
+  }
+}
+
+// ── Result collection ───────────────────────────────────────────────────
+
+function collectResult(funcNode, acc, hRules, langId) {
+  const halstead =
+    hRules && acc.operators && acc.operands
+      ? computeHalsteadDerived(acc.operators, acc.operands)
+      : null;
+  const loc = computeLOCMetrics(funcNode, langId);
+  const volume = halstead ? halstead.volume : 0;
+  const commentRatio = loc.loc > 0 ? loc.commentLines / loc.loc : 0;
+  const mi = computeMaintainabilityIndex(volume, acc.cyclomatic, loc.sloc, commentRatio);
+
+  return {
+    cognitive: acc.cognitive,
+    cyclomatic: acc.cyclomatic,
+    maxNesting: acc.maxNesting,
+    halstead,
+    loc,
+    mi,
+  };
+}
+
+function resetAccumulators(hRules) {
+  return {
+    cognitive: 0,
+    cyclomatic: 1,
+    maxNesting: 0,
+    operators: hRules ? new Map() : null,
+    operands: hRules ? new Map() : null,
+    halsteadSkipDepth: 0,
+  };
+}
+
+// ── Visitor factory ─────────────────────────────────────────────────────
+
 /**
  * Create a complexity visitor for use with walkWithVisitors.
  *
@@ -28,42 +144,11 @@ import {
 export function createComplexityVisitor(cRules, hRules, options = {}) {
   const { fileLevelWalk = false, langId = null } = options;
 
-  // Per-function accumulators
-  let cognitive = 0;
-  let cyclomatic = 1;
-  let maxNesting = 0;
-  let operators = hRules ? new Map() : null;
-  let operands = hRules ? new Map() : null;
-  let halsteadSkipDepth = 0;
-
-  // In file-level mode, we only count when inside a function
+  let acc = resetAccumulators(hRules);
   let activeFuncNode = null;
   let activeFuncName = null;
-  // Nesting depth relative to the active function (for nested functions)
   let funcDepth = 0;
-
-  // Collected results (one per function)
   const results = [];
-
-  function reset() {
-    cognitive = 0;
-    cyclomatic = 1;
-    maxNesting = 0;
-    operators = hRules ? new Map() : null;
-    operands = hRules ? new Map() : null;
-    halsteadSkipDepth = 0;
-  }
-
-  function collectResult(funcNode) {
-    const halstead =
-      hRules && operators && operands ? computeHalsteadDerived(operators, operands) : null;
-    const loc = computeLOCMetrics(funcNode, langId);
-    const volume = halstead ? halstead.volume : 0;
-    const commentRatio = loc.loc > 0 ? loc.commentLines / loc.loc : 0;
-    const mi = computeMaintainabilityIndex(volume, cyclomatic, loc.sloc, commentRatio);
-
-    return { cognitive, cyclomatic, maxNesting, halstead, loc, mi };
-  }
 
   return {
     name: 'complexity',
@@ -72,17 +157,14 @@ export function createComplexityVisitor(cRules, hRules, options = {}) {
     enterFunction(funcNode, funcName, _context) {
       if (fileLevelWalk) {
         if (!activeFuncNode) {
-          // Top-level function: start fresh
-          reset();
+          acc = resetAccumulators(hRules);
           activeFuncNode = funcNode;
           activeFuncName = funcName;
           funcDepth = 0;
         } else {
-          // Nested function: increase nesting for complexity
           funcDepth++;
         }
       } else {
-        // Function-level mode: track nested functions for correct nesting depth
         funcDepth++;
       }
     },
@@ -90,11 +172,10 @@ export function createComplexityVisitor(cRules, hRules, options = {}) {
     exitFunction(funcNode, _funcName, _context) {
       if (fileLevelWalk) {
         if (funcNode === activeFuncNode) {
-          // Leaving the top-level function: emit result
           results.push({
             funcNode,
             funcName: activeFuncName,
-            metrics: collectResult(funcNode),
+            metrics: collectResult(funcNode, acc, hRules, langId),
           });
           activeFuncNode = null;
           activeFuncName = null;
@@ -107,137 +188,52 @@ export function createComplexityVisitor(cRules, hRules, options = {}) {
     },
 
     enterNode(node, context) {
-      // In file-level mode, skip nodes outside any function
       if (fileLevelWalk && !activeFuncNode) return;
 
       const type = node.type;
       const nestingLevel = fileLevelWalk ? context.nestingLevel + funcDepth : context.nestingLevel;
 
-      // ── Halstead classification ──
-      if (hRules) {
-        if (hRules.skipTypes.has(type)) halsteadSkipDepth++;
-        if (halsteadSkipDepth === 0) {
-          if (hRules.compoundOperators.has(type)) {
-            operators.set(type, (operators.get(type) || 0) + 1);
-          }
-          if (node.childCount === 0) {
-            if (hRules.operatorLeafTypes.has(type)) {
-              operators.set(type, (operators.get(type) || 0) + 1);
-            } else if (hRules.operandLeafTypes.has(type)) {
-              const text = node.text;
-              operands.set(text, (operands.get(text) || 0) + 1);
-            }
-          }
-        }
-      }
+      if (hRules) classifyHalstead(node, hRules, acc);
 
-      // ── Complexity: track nesting depth ──
-      if (nestingLevel > maxNesting) maxNesting = nestingLevel;
+      if (nestingLevel > acc.maxNesting) acc.maxNesting = nestingLevel;
 
-      // Handle logical operators in binary expressions
+      // Logical operators in binary expressions
       if (type === cRules.logicalNodeType) {
         const op = node.child(1)?.type;
         if (op && cRules.logicalOperators.has(op)) {
-          cyclomatic++;
+          acc.cyclomatic++;
           const parent = node.parent;
           let sameSequence = false;
           if (parent && parent.type === cRules.logicalNodeType) {
             const parentOp = parent.child(1)?.type;
             if (parentOp === op) sameSequence = true;
           }
-          if (!sameSequence) cognitive++;
-          // Don't skip children — walker handles recursion
+          if (!sameSequence) acc.cognitive++;
         }
       }
 
-      // Handle optional chaining (cyclomatic only)
-      if (type === cRules.optionalChainType) {
-        cyclomatic++;
-      }
+      // Optional chaining (cyclomatic only)
+      if (type === cRules.optionalChainType) acc.cyclomatic++;
 
-      // Handle branch/control flow nodes (skip keyword leaf tokens)
+      // Branch/control flow nodes (skip keyword leaf tokens)
       if (cRules.branchNodes.has(type) && node.childCount > 0) {
-        // Pattern A: else clause wraps if (JS/C#/Rust)
-        if (cRules.elseNodeType && type === cRules.elseNodeType) {
-          const firstChild = node.namedChild(0);
-          if (firstChild && firstChild.type === cRules.ifNodeType) {
-            // else-if: the if_statement child handles its own increment
-            return;
-          }
-          cognitive++;
-          return;
-        }
-
-        // Pattern B: explicit elif node (Python/Ruby/PHP)
-        if (cRules.elifNodeType && type === cRules.elifNodeType) {
-          cognitive++;
-          cyclomatic++;
-          return;
-        }
-
-        // Detect else-if via Pattern A or C
-        let isElseIf = false;
-        if (type === cRules.ifNodeType) {
-          if (cRules.elseViaAlternative) {
-            isElseIf =
-              node.parent?.type === cRules.ifNodeType &&
-              node.parent.childForFieldName('alternative')?.id === node.id;
-          } else if (cRules.elseNodeType) {
-            isElseIf = node.parent?.type === cRules.elseNodeType;
-          }
-        }
-
-        if (isElseIf) {
-          cognitive++;
-          cyclomatic++;
-          return;
-        }
-
-        // Regular branch node
-        cognitive += 1 + nestingLevel;
-        cyclomatic++;
-
-        if (cRules.switchLikeNodes?.has(type)) {
-          cyclomatic--;
-        }
-
-        // Nesting nodes are handled by the walker's nestingNodeTypes option
-        // But we still need them to count in complexity — they already do above
+        classifyBranchNode(node, type, nestingLevel, cRules, acc);
       }
 
-      // Pattern C plain else: block that is the alternative of an if_statement (Go/Java)
-      if (
-        cRules.elseViaAlternative &&
-        type !== cRules.ifNodeType &&
-        node.parent?.type === cRules.ifNodeType &&
-        node.parent.childForFieldName('alternative')?.id === node.id
-      ) {
-        cognitive++;
-      }
+      // Pattern C plain else (Go/Java)
+      classifyPlainElse(node, type, cRules, acc);
 
-      // Handle case nodes (cyclomatic only, skip keyword leaves)
-      if (cRules.caseNodes.has(type) && node.childCount > 0) {
-        cyclomatic++;
-      }
-
-      // Handle nested function definitions (increase nesting)
-      // In file-level mode funcDepth handles this; in function-level mode the
-      // nestingNodeTypes option should include function nodes
+      // Case nodes (cyclomatic only, skip keyword leaves)
+      if (cRules.caseNodes.has(type) && node.childCount > 0) acc.cyclomatic++;
     },
 
     exitNode(node) {
-      // Decrement skip depth when leaving a skip-type subtree
-      if (hRules?.skipTypes.has(node.type)) {
-        halsteadSkipDepth--;
-      }
+      if (hRules?.skipTypes.has(node.type)) acc.halsteadSkipDepth--;
     },
 
     finish() {
-      if (fileLevelWalk) {
-        return results;
-      }
-      // Function-level mode: return single result (no funcNode reference needed)
-      return collectResult({ text: '' });
+      if (fileLevelWalk) return results;
+      return collectResult({ text: '' }, acc, hRules, langId);
     },
   };
 }

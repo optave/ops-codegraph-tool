@@ -23,94 +23,73 @@ import { parseFiles } from './stages/parse-files.js';
 import { resolveImports } from './stages/resolve-imports.js';
 import { runAnalyses } from './stages/run-analyses.js';
 
-/**
- * Build the dependency graph for a codebase.
- *
- * Signature and return value are identical to the original monolithic buildGraph().
- *
- * @param {string} rootDir - Root directory to scan
- * @param {object} [opts] - Build options
- * @returns {Promise<{ phases: object } | undefined>}
- */
-export async function buildGraph(rootDir, opts = {}) {
-  const ctx = new PipelineContext();
-  ctx.buildStart = performance.now();
-  ctx.opts = opts;
+// ── Setup helpers ───────────────────────────────────────────────────────
 
-  // ── Setup (creates DB, loads config, selects engine) ──────────────
-  ctx.rootDir = path.resolve(rootDir);
+function initializeEngine(ctx) {
+  ctx.engineOpts = {
+    engine: ctx.opts.engine || 'auto',
+    dataflow: ctx.opts.dataflow !== false,
+    ast: ctx.opts.ast !== false,
+  };
+  const { name: engineName, version: engineVersion } = getActiveEngine(ctx.engineOpts);
+  ctx.engineName = engineName;
+  ctx.engineVersion = engineVersion;
+  info(`Using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
+}
+
+function checkEngineSchemaMismatch(ctx) {
+  ctx.schemaVersion = MIGRATIONS[MIGRATIONS.length - 1].version;
+  ctx.forceFullRebuild = false;
+  if (!ctx.incremental) return;
+
+  const prevEngine = getBuildMeta(ctx.db, 'engine');
+  if (prevEngine && prevEngine !== ctx.engineName) {
+    info(`Engine changed (${prevEngine} → ${ctx.engineName}), promoting to full rebuild.`);
+    ctx.forceFullRebuild = true;
+  }
+  const prevSchema = getBuildMeta(ctx.db, 'schema_version');
+  if (prevSchema && Number(prevSchema) !== ctx.schemaVersion) {
+    info(
+      `Schema version changed (${prevSchema} → ${ctx.schemaVersion}), promoting to full rebuild.`,
+    );
+    ctx.forceFullRebuild = true;
+  }
+}
+
+function loadAliases(ctx) {
+  ctx.aliases = loadPathAliases(ctx.rootDir);
+  if (ctx.config.aliases) {
+    for (const [key, value] of Object.entries(ctx.config.aliases)) {
+      const pattern = key.endsWith('/') ? `${key}*` : key;
+      const target = path.resolve(ctx.rootDir, value);
+      ctx.aliases.paths[pattern] = [target.endsWith('/') ? `${target}*` : `${target}/*`];
+    }
+  }
+  if (ctx.aliases.baseUrl || Object.keys(ctx.aliases.paths).length > 0) {
+    info(
+      `Loaded path aliases: baseUrl=${ctx.aliases.baseUrl || 'none'}, ${Object.keys(ctx.aliases.paths).length} path mappings`,
+    );
+  }
+}
+
+function setupPipeline(ctx) {
+  ctx.rootDir = path.resolve(ctx.rootDir);
   ctx.dbPath = path.join(ctx.rootDir, '.codegraph', 'graph.db');
   ctx.db = openDb(ctx.dbPath);
-  try {
-    initSchema(ctx.db);
+  initSchema(ctx.db);
 
-    ctx.config = loadConfig(ctx.rootDir);
-    ctx.incremental =
-      opts.incremental !== false && ctx.config.build && ctx.config.build.incremental !== false;
+  ctx.config = loadConfig(ctx.rootDir);
+  ctx.incremental =
+    ctx.opts.incremental !== false && ctx.config.build && ctx.config.build.incremental !== false;
 
-    ctx.engineOpts = {
-      engine: opts.engine || 'auto',
-      dataflow: opts.dataflow !== false,
-      ast: opts.ast !== false,
-    };
-    const { name: engineName, version: engineVersion } = getActiveEngine(ctx.engineOpts);
-    ctx.engineName = engineName;
-    ctx.engineVersion = engineVersion;
-    info(`Using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
+  initializeEngine(ctx);
+  checkEngineSchemaMismatch(ctx);
+  loadAliases(ctx);
 
-    // Engine/schema mismatch detection
-    ctx.schemaVersion = MIGRATIONS[MIGRATIONS.length - 1].version;
-    ctx.forceFullRebuild = false;
-    if (ctx.incremental) {
-      const prevEngine = getBuildMeta(ctx.db, 'engine');
-      if (prevEngine && prevEngine !== engineName) {
-        info(`Engine changed (${prevEngine} → ${engineName}), promoting to full rebuild.`);
-        ctx.forceFullRebuild = true;
-      }
-      const prevSchema = getBuildMeta(ctx.db, 'schema_version');
-      if (prevSchema && Number(prevSchema) !== ctx.schemaVersion) {
-        info(
-          `Schema version changed (${prevSchema} → ${ctx.schemaVersion}), promoting to full rebuild.`,
-        );
-        ctx.forceFullRebuild = true;
-      }
-    }
+  ctx.timing.setupMs = performance.now() - ctx.buildStart;
+}
 
-    // Path aliases
-    ctx.aliases = loadPathAliases(ctx.rootDir);
-    if (ctx.config.aliases) {
-      for (const [key, value] of Object.entries(ctx.config.aliases)) {
-        const pattern = key.endsWith('/') ? `${key}*` : key;
-        const target = path.resolve(ctx.rootDir, value);
-        ctx.aliases.paths[pattern] = [target.endsWith('/') ? `${target}*` : `${target}/*`];
-      }
-    }
-    if (ctx.aliases.baseUrl || Object.keys(ctx.aliases.paths).length > 0) {
-      info(
-        `Loaded path aliases: baseUrl=${ctx.aliases.baseUrl || 'none'}, ${Object.keys(ctx.aliases.paths).length} path mappings`,
-      );
-    }
-
-    ctx.timing.setupMs = performance.now() - ctx.buildStart;
-
-    // ── Pipeline stages ─────────────────────────────────────────────
-    await collectFiles(ctx);
-    await detectChanges(ctx);
-
-    if (ctx.earlyExit) return;
-
-    await parseFiles(ctx);
-    await insertNodes(ctx);
-    await resolveImports(ctx);
-    await buildEdges(ctx);
-    await buildStructure(ctx);
-    await runAnalyses(ctx);
-    await finalize(ctx);
-  } catch (err) {
-    if (!ctx.earlyExit) closeDb(ctx.db);
-    throw err;
-  }
-
+function formatTimingResult(ctx) {
   return {
     phases: {
       setupMs: +ctx.timing.setupMs.toFixed(1),
@@ -127,4 +106,51 @@ export async function buildGraph(rootDir, opts = {}) {
       finalizeMs: +(ctx.timing.finalizeMs ?? 0).toFixed(1),
     },
   };
+}
+
+// ── Pipeline stages execution ───────────────────────────────────────────
+
+async function runPipelineStages(ctx) {
+  await collectFiles(ctx);
+  await detectChanges(ctx);
+
+  if (ctx.earlyExit) return;
+
+  await parseFiles(ctx);
+  await insertNodes(ctx);
+  await resolveImports(ctx);
+  await buildEdges(ctx);
+  await buildStructure(ctx);
+  await runAnalyses(ctx);
+  await finalize(ctx);
+}
+
+// ── Main entry point ────────────────────────────────────────────────────
+
+/**
+ * Build the dependency graph for a codebase.
+ *
+ * Signature and return value are identical to the original monolithic buildGraph().
+ *
+ * @param {string} rootDir - Root directory to scan
+ * @param {object} [opts] - Build options
+ * @returns {Promise<{ phases: object } | undefined>}
+ */
+export async function buildGraph(rootDir, opts = {}) {
+  const ctx = new PipelineContext();
+  ctx.buildStart = performance.now();
+  ctx.opts = opts;
+  ctx.rootDir = rootDir;
+
+  try {
+    setupPipeline(ctx);
+    await runPipelineStages(ctx);
+  } catch (err) {
+    if (!ctx.earlyExit) closeDb(ctx.db);
+    throw err;
+  }
+
+  if (ctx.earlyExit) return;
+
+  return formatTimingResult(ctx);
 }
