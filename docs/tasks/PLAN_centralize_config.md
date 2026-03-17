@@ -22,10 +22,10 @@ The config system already exists and handles env overrides, but ~70 individual b
 | A6 | `FALSE_POSITIVE_CALLER_THRESHOLD = 20` | `domain/analysis/module-map.js` | 37 | Generic function false-positive filter |
 | A7 | `resolution = 1.0` | `graph/algorithms/louvain.js` | 17 | Louvain community detection granularity |
 | A8 | `driftThreshold = 0.3` | `features/structure.js` | 581 | Structure cohesion drift warning |
-| A9 | `maxCallers >= 10` | `domain/analysis/brief.js` | 40 | `brief` high-risk tier threshold |
-| A10 | `maxCallers >= 3` | `domain/analysis/brief.js` | 41 | `brief` medium-risk tier threshold |
-| A11 | `maxDepth = 5` | `domain/analysis/brief.js` | 50 | `brief` transitive caller BFS depth |
-| A12 | `maxDepth = 5` | `domain/analysis/brief.js` | 76 | `brief` transitive importer BFS depth |
+| A9 | `maxCallers >= 10` | `domain/analysis/brief.js` | 38 | `brief` high-risk tier threshold |
+| A10 | `maxCallers >= 3` | `domain/analysis/brief.js` | 39 | `brief` medium-risk tier threshold |
+| A11 | `maxDepth = 5` | `domain/analysis/brief.js` | 47 | `brief` transitive caller BFS depth |
+| A12 | `maxDepth = 5` | `domain/analysis/brief.js` | 73 | `brief` transitive importer BFS depth |
 
 ### Category B — Risk & Scoring Weights (medium-high user value)
 
@@ -91,15 +91,21 @@ export const DEFAULTS = {
     auditDepth: 3,             // A3: audit blast-radius depth
     sequenceDepth: 10,         // A5: sequence diagram depth
     falsePositiveCallers: 20,  // A6: generic function filter threshold
-    briefBfsDepth: 5,          // A11/A12: brief command BFS depth (callers + importers)
+    briefCallerDepth: 5,       // A11: brief transitive caller BFS depth
+    briefImporterDepth: 5,     // A12: brief transitive importer BFS depth
     briefHighRiskCallers: 10,  // A9: brief high-risk tier threshold
     briefMediumRiskCallers: 3, // A10: brief medium-risk tier threshold
   },
 
   community: {
-    resolution: 1.0,           // A7: Louvain resolution
-    driftThreshold: 0.2,       // existing (build.driftThreshold → move here)
-    structureDriftThreshold: 0.3, // A8: structure cohesion drift
+    resolution: 1.0,           // A7: Louvain resolution (only Louvain params here)
+  },
+
+  // build.driftThreshold stays in `build` (already wired in finalize.js line 52)
+  // — it's a build-pipeline concern, not community detection
+
+  structure: {
+    cohesionThreshold: 0.3,    // A8: structure cohesion drift warning
   },
 
   risk: {
@@ -153,8 +159,8 @@ export const DEFAULTS = {
 
 **Files:** `src/infrastructure/config.js`, `tests/unit/config.test.js`
 
-1. Add `analysis`, `community`, `risk`, `display`, `mcp` sections to `DEFAULTS`
-2. Move `build.driftThreshold` → `community.driftThreshold` (keep `build.driftThreshold` as deprecated alias)
+1. Add `analysis`, `community`, `structure`, `risk`, `display`, `mcp` sections to `DEFAULTS`
+2. Keep `build.driftThreshold` where it is (already wired in `finalize.js` — no migration needed)
 3. **Hard prerequisite:** Update `mergeConfig` to perform recursive (deep) merging — at minimum 2 levels deep. The current implementation only merges 1 level deep, which means partial user overrides of nested objects like `risk.weights` (e.g. `{ "complexity": 0.4, "churn": 0.1 }`) will **silently drop** un-specified sibling keys (`fanIn`, `role`, `mi`), producing `NaN` risk scores. This must be fixed before any nested config keys are wired in subsequent phases
 4. Add tests: loading config with overrides for each new section
 
@@ -163,10 +169,10 @@ export const DEFAULTS = {
 **Files to change:**
 - `src/domain/analysis/impact.js` → read `config.analysis.defaultDepth` / `config.analysis.fnImpactDepth`
 - `src/features/audit.js` → read `config.analysis.auditDepth`
-- `src/features/check.js` → read `config.check.depth` (already exists) and `config.analysis.defaultDepth`
+- `src/features/check.js` → replace hardcoded `3` with `config.check.depth` (already in DEFAULTS, sole authoritative key for check depth — do **not** chain with `config.analysis.defaultDepth`)
 - `src/features/sequence.js` → read `config.analysis.sequenceDepth`
 - `src/domain/analysis/module-map.js` → read `config.analysis.falsePositiveCallers`
-- `src/domain/analysis/brief.js` → read `config.analysis.briefBfsDepth`, `config.analysis.briefHighRiskCallers`, `config.analysis.briefMediumRiskCallers` (PR #480)
+- `src/domain/analysis/brief.js` → read `config.analysis.briefCallerDepth`, `config.analysis.briefImporterDepth`, `config.analysis.briefHighRiskCallers`, `config.analysis.briefMediumRiskCallers` (PR #480)
 
 **Pattern:** Each module calls `loadConfig()` (or receives config as a parameter). Replace the hardcoded value with `config.analysis.X ?? FALLBACK`. The fallback ensures backward compatibility if config is missing.
 
@@ -177,7 +183,7 @@ export const DEFAULTS = {
 **Files to change:**
 - `src/graph/classifiers/risk.js` → read `config.risk.weights`, `config.risk.roleWeights`, `config.risk.defaultRoleWeight`
 - `src/graph/algorithms/louvain.js` → accept `resolution` parameter, default from config
-- `src/features/structure.js` → read `config.community.structureDriftThreshold`
+- `src/features/structure.js` → read `config.structure.cohesionThreshold`
 
 **Pattern:** These modules don't currently receive config. Options:
 1. **Preferred:** Accept an `options` parameter that callers populate from config
@@ -207,7 +213,7 @@ export const DEFAULTS = {
 
 1. Update `README.md` configuration section with the full schema
 2. Add a `docs/configuration.md` reference with all keys, types, defaults, and descriptions
-3. Document the deprecated `build.driftThreshold` alias
+3. Document the `structure.cohesionThreshold` key and its relationship to A8
 4. Add a JSON Schema file (`.codegraphrc.schema.json`) for IDE autocomplete
 5. Add a **Configuration** section to `CLAUDE.md` that documents:
    - The `.codegraphrc.json` config file and its location
@@ -224,7 +230,7 @@ export const DEFAULTS = {
 - All new config keys have defaults matching current hardcoded values → **zero breaking changes**
 - Existing `.codegraphrc.json` files continue to work unchanged
 - `mergeConfig` will be updated to deep-merge recursively (Phase 1 prerequisite), so users only need to specify the keys they want to override
-- The `build.driftThreshold` → `community.driftThreshold` move uses a deprecated alias
+- `build.driftThreshold` stays in place — no migration needed
 
 ## Example `.codegraphrc.json` after this work
 
@@ -240,9 +246,8 @@ export const DEFAULTS = {
       "churn": 0.1
     }
   },
-  "community": {
-    "resolution": 1.5
-  },
+  "community": { "resolution": 1.5 },
+  "structure": { "cohesionThreshold": 0.25 },
   "display": {
     "maxColWidth": 60
   }
