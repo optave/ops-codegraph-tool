@@ -277,7 +277,7 @@ codegraph fn-impact <target> -T --json
 Append to `.codegraph/titan/gauntlet.ndjson` (one line per target):
 
 ```json
-{"target": "<name>", "file": "<path>", "verdict": "FAIL", "pillarVerdicts": {"I": "fail", "II": "warn", "III": "pass", "IV": "pass"}, "metrics": {"cognitive": 28, "cyclomatic": 15, "maxNesting": 4, "mi": 32, "halsteadEffort": 12000, "halsteadBugs": 1.2, "sloc": 85}, "violations": [{"rule": 1, "pillar": "I", "metric": "cognitive", "detail": "28 > 30 threshold", "level": "fail"}], "blastRadius": {"direct": 5, "transitive": 18}, "recommendation": "Split: halstead.bugs 1.2 suggests ~1 defect. Separate validation from I/O."}
+{"target": "<name>", "file": "<path>", "verdict": "FAIL", "pillarVerdicts": {"I": "fail", "II": "warn", "III": "pass", "IV": "pass"}, "metrics": {"cognitive": 35, "cyclomatic": 15, "maxNesting": 4, "mi": 32, "halsteadEffort": 12000, "halsteadBugs": 1.2, "sloc": 85}, "violations": [{"rule": 1, "pillar": "I", "metric": "cognitive", "detail": "35 > 30 threshold", "level": "fail"}], "blastRadius": {"direct": 5, "transitive": 18}, "recommendation": "Split: halstead.bugs 1.2 suggests ~1 defect. Separate validation from I/O."}
 ```
 
 ### 2i. Update state machine
