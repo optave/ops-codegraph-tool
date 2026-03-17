@@ -12,6 +12,7 @@
 export { buildGraph } from './domain/graph/builder.js';
 export { findCycles } from './domain/graph/cycles.js';
 export {
+  briefData,
   childrenData,
   contextData,
   diffImpactData,

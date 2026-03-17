@@ -26,6 +26,7 @@ import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { initSchema } from '../../src/db/index.js';
 import {
+  briefData,
   diffImpactData,
   explainData,
   exportsData,
@@ -254,6 +255,44 @@ describe('moduleMapData', () => {
       expect(nodeC.outEdges).toBe(1);
     } finally {
       fs.rmSync(tmpDir2, { recursive: true, force: true });
+    }
+  });
+});
+
+// ─── briefData ─────────────────────────────────────────────────────────
+
+describe('briefData', () => {
+  test('returns symbols with roles, caller counts, imports, importedBy, and risk tier', () => {
+    const data = briefData('middleware.js', dbPath);
+    expect(data.results).toHaveLength(1);
+    const r = data.results[0];
+    expect(r.file).toBe('middleware.js');
+    expect(r.risk).toMatch(/^(high|medium|low)$/);
+    expect(r.imports).toContain('auth.js');
+    expect(r.importedBy).toContain('routes.js');
+    expect(typeof r.totalImporterCount).toBe('number');
+    expect(r.totalImporterCount).toBeGreaterThanOrEqual(r.importedBy.length);
+
+    // Symbols should include functions/methods but not parameters/properties
+    const symbolNames = r.symbols.map((s) => s.name);
+    expect(symbolNames).toContain('authMiddleware');
+    for (const s of r.symbols) {
+      expect(s).toHaveProperty('role');
+      expect(s).toHaveProperty('callerCount');
+      expect(typeof s.callerCount).toBe('number');
+    }
+  });
+
+  test('returns empty for unknown file', () => {
+    const data = briefData('nonexistent.js', dbPath);
+    expect(data.results).toHaveLength(0);
+  });
+
+  test('filters test files when noTests is true', () => {
+    const data = briefData('auth.js', dbPath, { noTests: true });
+    const r = data.results[0];
+    for (const imp of r.importedBy) {
+      expect(imp).not.toMatch(/\.test\./);
     }
   });
 });

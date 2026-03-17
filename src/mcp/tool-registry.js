@@ -100,6 +100,19 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'brief',
+    description:
+      'Token-efficient file summary: symbols with roles and transitive caller counts, importer counts, and file risk tier (high/medium/low). Designed for context injection.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file: { type: 'string', description: 'File path (partial match supported)' },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+      },
+      required: ['file'],
+    },
+  },
+  {
     name: 'file_exports',
     description:
       'Show exported symbols of a file with per-symbol consumers — who calls each export and from where',
