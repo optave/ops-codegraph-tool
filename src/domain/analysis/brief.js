@@ -114,7 +114,7 @@ export function briefData(file, customDbPath, opts = {}) {
       // Direct importers
       let importedBy = findImportSources(db, fn.id);
       if (noTests) importedBy = importedBy.filter((i) => !isTestFile(i.file));
-      const directImporters = importedBy.map((i) => i.file);
+      const directImporters = [...new Set(importedBy.map((i) => i.file))];
 
       // Transitive importer count
       const totalImporterCount = countTransitiveImporters(db, [fn.id], noTests);
