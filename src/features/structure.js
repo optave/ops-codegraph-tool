@@ -373,11 +373,7 @@ export function classifyNodeRoles(db) {
       FROM edges e
       JOIN nodes caller ON e.source_id = caller.id
       WHERE e.kind = 'calls'
-        AND caller.file NOT LIKE '%.test.%'
-        AND caller.file NOT LIKE '%.spec.%'
-        AND caller.file NOT LIKE '%__test__%'
-        AND caller.file NOT LIKE '%__tests__%'
-        AND caller.file NOT LIKE '%.stories.%'
+        ${testFilterSQL('caller.file')}
       GROUP BY e.target_id`,
     )
     .all();
