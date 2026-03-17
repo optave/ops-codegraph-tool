@@ -30,12 +30,12 @@ const BRIEF_KINDS = new Set([
  */
 function computeRiskTier(symbols) {
   let maxCallers = 0;
-  let hasCoreOrUtility = false;
+  let hasCoreRole = false;
   for (const s of symbols) {
     if (s.callerCount > maxCallers) maxCallers = s.callerCount;
-    if (s.role === 'core' || s.role === 'utility') hasCoreOrUtility = true;
+    if (s.role === 'core') hasCoreRole = true;
   }
-  if (maxCallers >= 10 || hasCoreOrUtility) return 'high';
+  if (maxCallers >= 10 || hasCoreRole) return 'high';
   if (maxCallers >= 3) return 'medium';
   return 'low';
 }
@@ -112,7 +112,7 @@ export function briefData(file, customDbPath, opts = {}) {
       const directImporters = importedBy.map((i) => i.file);
 
       // Transitive importer count
-      const transitiveImporterCount = countTransitiveImporters(db, [fn.id], noTests);
+      const totalImporterCount = countTransitiveImporters(db, [fn.id], noTests);
 
       // Direct imports
       let importsTo = findImportTargets(db, fn.id);
@@ -138,7 +138,7 @@ export function briefData(file, customDbPath, opts = {}) {
         risk: riskTier,
         imports: importsTo.map((i) => i.file),
         importedBy: directImporters,
-        transitiveImporterCount,
+        totalImporterCount,
         symbols,
       };
     });

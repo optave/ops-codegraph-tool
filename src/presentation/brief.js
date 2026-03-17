@@ -41,11 +41,11 @@ export function brief(file, customDbPath, opts = {}) {
 
     // Imported by line with transitive count
     if (r.importedBy.length > 0) {
-      const transitive = r.transitiveImporterCount - r.importedBy.length;
+      const transitive = r.totalImporterCount - r.importedBy.length;
       const suffix = transitive > 0 ? ` (+${transitive} transitive)` : '';
       console.log(`  Imported by: ${r.importedBy.join(', ')}${suffix}`);
-    } else if (r.transitiveImporterCount > 0) {
-      console.log(`  Imported by: ${r.transitiveImporterCount} transitive importers`);
+    } else if (r.totalImporterCount > 0) {
+      console.log(`  Imported by: ${r.totalImporterCount} transitive importers`);
     }
   }
 }

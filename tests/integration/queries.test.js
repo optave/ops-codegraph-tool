@@ -270,8 +270,8 @@ describe('briefData', () => {
     expect(r.risk).toMatch(/^(high|medium|low)$/);
     expect(r.imports).toContain('auth.js');
     expect(r.importedBy).toContain('routes.js');
-    expect(typeof r.transitiveImporterCount).toBe('number');
-    expect(r.transitiveImporterCount).toBeGreaterThanOrEqual(r.importedBy.length);
+    expect(typeof r.totalImporterCount).toBe('number');
+    expect(r.totalImporterCount).toBeGreaterThanOrEqual(r.importedBy.length);
 
     // Symbols should include functions/methods but not parameters/properties
     const symbolNames = r.symbols.map((s) => s.name);
