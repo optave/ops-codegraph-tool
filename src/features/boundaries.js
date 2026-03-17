@@ -94,104 +94,119 @@ export function resolveModules(boundaryConfig) {
 // ─── Validation ──────────────────────────────────────────────────────
 
 /**
+ * Validate the `modules` section of a boundary config.
+ * @param {object} modules
+ * @param {string[]} errors - Mutated: push any validation errors
+ */
+function validateModules(modules, errors) {
+  if (!modules || typeof modules !== 'object' || Object.keys(modules).length === 0) {
+    errors.push('boundaries.modules must be a non-empty object');
+    return;
+  }
+  for (const [name, value] of Object.entries(modules)) {
+    if (typeof value === 'string') continue;
+    if (value && typeof value === 'object' && typeof value.match === 'string') continue;
+    errors.push(`boundaries.modules.${name}: must be a glob string or { match: "<glob>" }`);
+  }
+}
+
+/**
+ * Validate the `preset` field of a boundary config.
+ * @param {string|null|undefined} preset
+ * @param {string[]} errors - Mutated: push any validation errors
+ */
+function validatePreset(preset, errors) {
+  if (preset == null) return;
+  if (typeof preset !== 'string' || !PRESETS[preset]) {
+    errors.push(
+      `boundaries.preset: must be one of ${Object.keys(PRESETS).join(', ')} (got "${preset}")`,
+    );
+  }
+}
+
+/**
+ * Validate a single rule's target list (`notTo` or `onlyTo`).
+ * @param {*} list - The target list value
+ * @param {string} field - "notTo" or "onlyTo"
+ * @param {number} idx - Rule index for error messages
+ * @param {Set<string>} moduleNames
+ * @param {string[]} errors - Mutated
+ */
+function validateTargetList(list, field, idx, moduleNames, errors) {
+  if (!Array.isArray(list)) {
+    errors.push(`boundaries.rules[${idx}]: "${field}" must be an array`);
+    return;
+  }
+  for (const target of list) {
+    if (!moduleNames.has(target)) {
+      errors.push(`boundaries.rules[${idx}]: "${field}" references unknown module "${target}"`);
+    }
+  }
+}
+
+/**
+ * Validate the `rules` array of a boundary config.
+ * @param {Array} rules
+ * @param {object|undefined} modules - The modules config (for cross-referencing names)
+ * @param {string[]} errors - Mutated
+ */
+function validateRules(rules, modules, errors) {
+  if (!rules) return;
+  if (!Array.isArray(rules)) {
+    errors.push('boundaries.rules must be an array');
+    return;
+  }
+  const moduleNames = modules ? new Set(Object.keys(modules)) : new Set();
+  for (let i = 0; i < rules.length; i++) {
+    const rule = rules[i];
+    if (!rule.from) {
+      errors.push(`boundaries.rules[${i}]: missing "from" field`);
+    } else if (!moduleNames.has(rule.from)) {
+      errors.push(`boundaries.rules[${i}]: "from" references unknown module "${rule.from}"`);
+    }
+    if (rule.notTo && rule.onlyTo) {
+      errors.push(`boundaries.rules[${i}]: cannot have both "notTo" and "onlyTo"`);
+    }
+    if (!rule.notTo && !rule.onlyTo) {
+      errors.push(`boundaries.rules[${i}]: must have either "notTo" or "onlyTo"`);
+    }
+    if (rule.notTo) validateTargetList(rule.notTo, 'notTo', i, moduleNames, errors);
+    if (rule.onlyTo) validateTargetList(rule.onlyTo, 'onlyTo', i, moduleNames, errors);
+  }
+}
+
+/**
+ * Validate that module layer assignments match preset layers.
+ * @param {object} config
+ * @param {string[]} errors - Mutated
+ */
+function validateLayerAssignments(config, errors) {
+  if (!config.preset || !PRESETS[config.preset] || !config.modules) return;
+  const presetLayers = new Set(PRESETS[config.preset].layers);
+  for (const [name, value] of Object.entries(config.modules)) {
+    if (typeof value === 'object' && value.layer && !presetLayers.has(value.layer)) {
+      errors.push(
+        `boundaries.modules.${name}: layer "${value.layer}" not in preset "${config.preset}" (valid: ${[...presetLayers].join(', ')})`,
+      );
+    }
+  }
+}
+
+/**
  * Validate a boundary configuration object.
  * @param {object} config - The `manifesto.boundaries` config
  * @returns {{ valid: boolean, errors: string[] }}
  */
 export function validateBoundaryConfig(config) {
-  const errors = [];
-
   if (!config || typeof config !== 'object') {
     return { valid: false, errors: ['boundaries config must be an object'] };
   }
 
-  // Validate modules
-  if (
-    !config.modules ||
-    typeof config.modules !== 'object' ||
-    Object.keys(config.modules).length === 0
-  ) {
-    errors.push('boundaries.modules must be a non-empty object');
-  } else {
-    for (const [name, value] of Object.entries(config.modules)) {
-      if (typeof value === 'string') continue;
-      if (value && typeof value === 'object' && typeof value.match === 'string') continue;
-      errors.push(`boundaries.modules.${name}: must be a glob string or { match: "<glob>" }`);
-    }
-  }
-
-  // Validate preset
-  if (config.preset != null) {
-    if (typeof config.preset !== 'string' || !PRESETS[config.preset]) {
-      errors.push(
-        `boundaries.preset: must be one of ${Object.keys(PRESETS).join(', ')} (got "${config.preset}")`,
-      );
-    }
-  }
-
-  // Validate rules
-  if (config.rules) {
-    if (!Array.isArray(config.rules)) {
-      errors.push('boundaries.rules must be an array');
-    } else {
-      const moduleNames = config.modules ? new Set(Object.keys(config.modules)) : new Set();
-      for (let i = 0; i < config.rules.length; i++) {
-        const rule = config.rules[i];
-        if (!rule.from) {
-          errors.push(`boundaries.rules[${i}]: missing "from" field`);
-        } else if (!moduleNames.has(rule.from)) {
-          errors.push(`boundaries.rules[${i}]: "from" references unknown module "${rule.from}"`);
-        }
-        if (rule.notTo && rule.onlyTo) {
-          errors.push(`boundaries.rules[${i}]: cannot have both "notTo" and "onlyTo"`);
-        }
-        if (!rule.notTo && !rule.onlyTo) {
-          errors.push(`boundaries.rules[${i}]: must have either "notTo" or "onlyTo"`);
-        }
-        if (rule.notTo) {
-          if (!Array.isArray(rule.notTo)) {
-            errors.push(`boundaries.rules[${i}]: "notTo" must be an array`);
-          } else {
-            for (const target of rule.notTo) {
-              if (!moduleNames.has(target)) {
-                errors.push(
-                  `boundaries.rules[${i}]: "notTo" references unknown module "${target}"`,
-                );
-              }
-            }
-          }
-        }
-        if (rule.onlyTo) {
-          if (!Array.isArray(rule.onlyTo)) {
-            errors.push(`boundaries.rules[${i}]: "onlyTo" must be an array`);
-          } else {
-            for (const target of rule.onlyTo) {
-              if (!moduleNames.has(target)) {
-                errors.push(
-                  `boundaries.rules[${i}]: "onlyTo" references unknown module "${target}"`,
-                );
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // Validate preset + layer assignments
-  if (config.preset && PRESETS[config.preset] && config.modules) {
-    const presetLayers = new Set(PRESETS[config.preset].layers);
-    for (const [name, value] of Object.entries(config.modules)) {
-      if (typeof value === 'object' && value.layer) {
-        if (!presetLayers.has(value.layer)) {
-          errors.push(
-            `boundaries.modules.${name}: layer "${value.layer}" not in preset "${config.preset}" (valid: ${[...presetLayers].join(', ')})`,
-          );
-        }
-      }
-    }
-  }
-
+  const errors = [];
+  validateModules(config.modules, errors);
+  validatePreset(config.preset, errors);
+  validateRules(config.rules, config.modules, errors);
+  validateLayerAssignments(config, errors);
   return { valid: errors.length === 0, errors };
 }
 

@@ -4,7 +4,82 @@ import { warn } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
 
+// ─── Scoring ─────────────────────────────────────────────────────────
+
+const SORT_FNS = {
+  risk: (a, b) => b.riskScore - a.riskScore,
+  complexity: (a, b) => b.cognitive - a.cognitive,
+  churn: (a, b) => b.churn - a.churn,
+  'fan-in': (a, b) => b.fanIn - a.fanIn,
+  mi: (a, b) => a.maintainabilityIndex - b.maintainabilityIndex,
+};
+
+/**
+ * Build scored triage items from raw rows and risk metrics.
+ * @param {object[]} rows - Raw DB rows
+ * @param {object[]} riskMetrics - Per-row risk metric objects from scoreRisk
+ * @returns {object[]}
+ */
+function buildTriageItems(rows, riskMetrics) {
+  return rows.map((r, i) => ({
+    name: r.name,
+    kind: r.kind,
+    file: r.file,
+    line: r.line,
+    role: r.role || null,
+    fanIn: r.fan_in,
+    cognitive: r.cognitive,
+    churn: r.churn,
+    maintainabilityIndex: r.mi,
+    normFanIn: riskMetrics[i].normFanIn,
+    normComplexity: riskMetrics[i].normComplexity,
+    normChurn: riskMetrics[i].normChurn,
+    normMI: riskMetrics[i].normMI,
+    roleWeight: riskMetrics[i].roleWeight,
+    riskScore: riskMetrics[i].riskScore,
+  }));
+}
+
+/**
+ * Compute signal coverage and summary statistics.
+ * @param {object[]} filtered - All filtered rows
+ * @param {object[]} scored - Scored and filtered items
+ * @param {object} weights - Active weights
+ * @returns {object}
+ */
+function computeTriageSummary(filtered, scored, weights) {
+  const signalCoverage = {
+    complexity: round4(filtered.filter((r) => r.cognitive > 0).length / filtered.length),
+    churn: round4(filtered.filter((r) => r.churn > 0).length / filtered.length),
+    fanIn: round4(filtered.filter((r) => r.fan_in > 0).length / filtered.length),
+    mi: round4(filtered.filter((r) => r.mi > 0).length / filtered.length),
+  };
+
+  const scores = scored.map((it) => it.riskScore);
+  const avgScore =
+    scores.length > 0 ? round4(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+  const maxScore = scores.length > 0 ? round4(Math.max(...scores)) : 0;
+
+  return {
+    total: filtered.length,
+    analyzed: scored.length,
+    avgScore,
+    maxScore,
+    weights,
+    signalCoverage,
+  };
+}
+
 // ─── Data Function ────────────────────────────────────────────────────
+
+const EMPTY_SUMMARY = (weights) => ({
+  total: 0,
+  analyzed: 0,
+  avgScore: 0,
+  maxScore: 0,
+  weights,
+  signalCoverage: {},
+});
 
 /**
  * Compute composite risk scores for all symbols.
@@ -17,9 +92,6 @@ export function triageData(customDbPath, opts = {}) {
   const { repo, close } = openRepo(customDbPath, opts);
   try {
     const noTests = opts.noTests || false;
-    const fileFilter = opts.file || null;
-    const kindFilter = opts.kind || null;
-    const roleFilter = opts.role || null;
     const minScore = opts.minScore != null ? Number(opts.minScore) : null;
     const sort = opts.sort || 'risk';
     const weights = { ...DEFAULT_WEIGHTS, ...(opts.weights || {}) };
@@ -28,86 +100,29 @@ export function triageData(customDbPath, opts = {}) {
     try {
       rows = repo.findNodesForTriage({
         noTests,
-        file: fileFilter,
-        kind: kindFilter,
-        role: roleFilter,
+        file: opts.file || null,
+        kind: opts.kind || null,
+        role: opts.role || null,
       });
     } catch (err) {
       warn(`triage query failed: ${err.message}`);
-      return {
-        items: [],
-        summary: { total: 0, analyzed: 0, avgScore: 0, maxScore: 0, weights, signalCoverage: {} },
-      };
+      return { items: [], summary: EMPTY_SUMMARY(weights) };
     }
 
-    // Post-filter test files (belt-and-suspenders)
     const filtered = noTests ? rows.filter((r) => !isTestFile(r.file)) : rows;
-
     if (filtered.length === 0) {
-      return {
-        items: [],
-        summary: { total: 0, analyzed: 0, avgScore: 0, maxScore: 0, weights, signalCoverage: {} },
-      };
+      return { items: [], summary: EMPTY_SUMMARY(weights) };
     }
 
-    // Delegate scoring to classifier
     const riskMetrics = scoreRisk(filtered, weights);
+    const items = buildTriageItems(filtered, riskMetrics);
 
-    // Compute risk scores
-    const items = filtered.map((r, i) => ({
-      name: r.name,
-      kind: r.kind,
-      file: r.file,
-      line: r.line,
-      role: r.role || null,
-      fanIn: r.fan_in,
-      cognitive: r.cognitive,
-      churn: r.churn,
-      maintainabilityIndex: r.mi,
-      normFanIn: riskMetrics[i].normFanIn,
-      normComplexity: riskMetrics[i].normComplexity,
-      normChurn: riskMetrics[i].normChurn,
-      normMI: riskMetrics[i].normMI,
-      roleWeight: riskMetrics[i].roleWeight,
-      riskScore: riskMetrics[i].riskScore,
-    }));
-
-    // Apply minScore filter
     const scored = minScore != null ? items.filter((it) => it.riskScore >= minScore) : items;
-
-    // Sort
-    const sortFns = {
-      risk: (a, b) => b.riskScore - a.riskScore,
-      complexity: (a, b) => b.cognitive - a.cognitive,
-      churn: (a, b) => b.churn - a.churn,
-      'fan-in': (a, b) => b.fanIn - a.fanIn,
-      mi: (a, b) => a.maintainabilityIndex - b.maintainabilityIndex,
-    };
-    scored.sort(sortFns[sort] || sortFns.risk);
-
-    // Signal coverage: % of items with non-zero signal
-    const signalCoverage = {
-      complexity: round4(filtered.filter((r) => r.cognitive > 0).length / filtered.length),
-      churn: round4(filtered.filter((r) => r.churn > 0).length / filtered.length),
-      fanIn: round4(filtered.filter((r) => r.fan_in > 0).length / filtered.length),
-      mi: round4(filtered.filter((r) => r.mi > 0).length / filtered.length),
-    };
-
-    const scores = scored.map((it) => it.riskScore);
-    const avgScore =
-      scores.length > 0 ? round4(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
-    const maxScore = scores.length > 0 ? round4(Math.max(...scores)) : 0;
+    scored.sort(SORT_FNS[sort] || SORT_FNS.risk);
 
     const result = {
       items: scored,
-      summary: {
-        total: filtered.length,
-        analyzed: scored.length,
-        avgScore,
-        maxScore,
-        weights,
-        signalCoverage,
-      },
+      summary: computeTriageSummary(filtered, scored, weights),
     };
 
     return paginateResult(result, 'items', {
