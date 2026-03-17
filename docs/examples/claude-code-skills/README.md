@@ -22,6 +22,12 @@ A single AI agent cannot hold an entire large codebase in context. The Titan Par
 /titan-sync → sync.json (execution plan)
       │
       ▼
+/titan-forge → executes sync.json (one phase per invocation, resumable)
+      │  ├─ codegraph context/fn-impact before each change
+      │  ├─ /titan-gate validates each commit
+      │  └─ advances titan-state.json
+      │
+      ▼
 /titan-gate (validates each commit: codegraph + lint/build/test)
 
 /titan-reset (escape hatch: clean up everything)
@@ -34,6 +40,7 @@ A single AI agent cannot hold an entire large codebase in context. The Titan Par
 | `/titan-recon` | RECON | Builds graph + embeddings, complexity health baseline, domains, priority queue, work batches, `GLOBAL_ARCH.md`, baseline snapshot | `titan-state.json` |
 | `/titan-gauntlet` | GAUNTLET | 4-pillar audit (17 rules) using full codegraph metrics (`cognitive`, `cyclomatic`, `halstead.bugs`, `halstead.effort`, `mi`, `loc.sloc`). Batches of 5, NDJSON writes, session resume | `gauntlet.ndjson` |
 | `/titan-sync` | GLOBAL SYNC | Dependency clusters, code ownership, shared abstractions, ordered execution plan with logical commits | `sync.json` |
+| `/titan-forge` | FORGE | Executes `sync.json` one phase at a time — makes code changes, validates with `/titan-gate`, commits, tracks progress. Resumable across sessions | `titan-state.json` (execution block) |
 | `/titan-gate` | STATE MACHINE | `codegraph check --staged --cycles --blast-radius 30 --boundaries` + lint/build/test. Snapshot restore on failure | `gate-log.ndjson` |
 | `/titan-reset` | ESCAPE HATCH | Restores baseline snapshot, deletes all artifacts and snapshots, rebuilds graph | — |
 
@@ -62,8 +69,8 @@ codegraph build .
 /titan-recon           # Map the codebase, produce priority queue + embeddings
 /titan-gauntlet 5      # Audit top targets in batches of 5
 /titan-sync            # Plan shared abstractions and execution order
-# ... make changes based on sync plan ...
-/titan-gate            # Validate before each commit
+/titan-forge            # Execute next phase (re-run for each phase)
+                       # (calls /titan-gate automatically per commit)
 ```
 
 If GAUNTLET runs out of context, just re-invoke `/titan-gauntlet` — it resumes from the next pending batch.
@@ -73,6 +80,7 @@ If GAUNTLET runs out of context, just re-invoke `/titan-gauntlet` — it resumes
 - `/titan-recon` always works standalone (builds graph fresh)
 - `/titan-gauntlet` falls back to `codegraph triage` if no RECON artifact exists
 - `/titan-sync` requires GAUNTLET artifacts (warns if missing)
+- `/titan-forge` requires SYNC artifacts (`sync.json`); supports `--phase N`, `--target <name>`, `--dry-run`
 - `/titan-gate` works with or without prior artifacts (uses default thresholds)
 - `/titan-reset` cleans up everything — use when you want to start over
 
@@ -83,11 +91,10 @@ If GAUNTLET runs out of context, just re-invoke `/titan-gauntlet` — it resumes
 /titan-gauntlet           # Once (or multiple sessions): audit everything
 /titan-sync               # Once: plan the work
 
-# Then for each fix:
-# 1. Make changes based on sync plan
-# 2. Stage changes
-/titan-gate               # Validate
-# 3. Commit if PASS
+# Then for each phase:
+/titan-forge               # Executes one phase, validates, commits
+/titan-forge               # Re-run for next phase
+/titan-forge               # ...until all phases complete
 ```
 
 ## Artifacts
@@ -170,21 +177,21 @@ All skills enforce worktree isolation as their first step. If invoked from the m
 | `codegraph communities` | RECON | Module boundaries and drift |
 | `codegraph roles` | RECON, GAUNTLET | Core/dead/entry symbol classification |
 | `codegraph structure` | RECON | Directory cohesion |
-| `codegraph complexity --health` | RECON, GAUNTLET, GATE | Full metrics: cognitive, cyclomatic, nesting, Halstead, MI |
+| `codegraph complexity --health` | RECON, GAUNTLET, GATE, FORGE | Full metrics: cognitive, cyclomatic, nesting, Halstead, MI |
 | `codegraph complexity --above-threshold` | RECON | Only functions exceeding thresholds |
 | `codegraph batch complexity` | GAUNTLET | Multi-target complexity in one call |
 | `codegraph batch context` | GAUNTLET | Multi-target context in one call |
 | `codegraph check --staged --cycles --blast-radius --boundaries` | GATE | Full validation predicates |
 | `codegraph ast --kind call\|await\|string` | GAUNTLET | AST pattern detection |
 | `codegraph dataflow` | GAUNTLET | Data flow and mutation analysis |
-| `codegraph exports` | GAUNTLET | Per-symbol export consumers |
-| `codegraph fn-impact` | GAUNTLET, SYNC | Blast radius |
+| `codegraph exports` | GAUNTLET, FORGE | Per-symbol export consumers |
+| `codegraph fn-impact` | GAUNTLET, SYNC, FORGE | Blast radius |
 | `codegraph search` | GAUNTLET | Duplicate code detection (needs embeddings) |
 | `codegraph co-change` | GAUNTLET, SYNC | Git history coupling |
 | `codegraph path` | SYNC | Dependency paths between targets |
 | `codegraph cycles` | SYNC, GATE | Circular dependency detection |
 | `codegraph deps` | SYNC | File-level dependency map |
-| `codegraph context` | SYNC | Full function context |
+| `codegraph context` | SYNC, FORGE | Full function context |
 | `codegraph owners` | SYNC | CODEOWNERS mapping for cross-team coordination |
 | `codegraph branch-compare` | SYNC, GATE | Structural diff between refs |
 | `codegraph diff-impact` | GATE | Impact of staged changes |
