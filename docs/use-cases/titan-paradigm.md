@@ -31,6 +31,8 @@ That's exactly what codegraph provides.
 
 ### RECON: Map the dependency graph, prioritize high-traffic files
 
+> **Claude Code skill:** [`/titan-recon`](../examples/claude-code-skills/titan-recon/SKILL.md) automates this entire phase — builds the graph, names domains, produces `GLOBAL_ARCH.md`, and writes a ranked priority queue with work batches.
+
 This is codegraph's bread and butter. The RECON phase needs a dependency graph — codegraph **is** a dependency graph.
 
 ```bash
@@ -81,6 +83,8 @@ codegraph where resolveImports
 
 ### THE GAUNTLET: Audit every file against strict standards
 
+> **Claude Code skill:** [`/titan-gauntlet`](../examples/claude-code-skills/titan-gauntlet/SKILL.md) implements all 4 pillars (17 rules) with batch processing, multi-agent dispatch, context budget management, and session resumability via `titan-state.json`.
+
 The Gauntlet needs each sub-agent to understand what a file does, what depends on it, and how risky changes are. The `audit` command gives each agent everything in one call:
 
 ```bash
@@ -125,6 +129,8 @@ codegraph audit parseConfig -T --json > audit/parser.json
 
 ### GLOBAL SYNC: Identify overlapping fixes, build shared abstractions
 
+> **Claude Code skill:** [`/titan-sync`](../examples/claude-code-skills/titan-sync/SKILL.md) reads GAUNTLET artifacts, finds dependency clusters among failures, plans shared abstractions, and produces an ordered execution plan with logical commit grouping.
+
 Before the swarm starts coding, a lead agent needs to see the big picture: which files are tightly coupled, where circular dependencies exist, and what shared abstractions could be extracted.
 
 ```bash
@@ -149,6 +155,8 @@ codegraph structure
 The lead agent can use `cycles` to identify dependency knots, `path` to understand how modules relate, and `structure` to assess directory cohesion. This analysis informs which shared abstractions to build before individual agents start their refactoring work.
 
 ### STATE MACHINE: Track changes, verify impact, enable rollback
+
+> **Claude Code skill:** [`/titan-gate`](../examples/claude-code-skills/titan-gate/SKILL.md) validates staged changes against codegraph thresholds AND the project's own lint/build/test. Auto-rolls back on failure. Maintains an append-only audit trail in `gate-log.ndjson`.
 
 The State Machine phase needs yes/no answers: "Did this change introduce a cycle?" "Did blast radius exceed N?" "Did any boundary get violated?" The `check` command provides exactly this:
 
@@ -251,9 +259,81 @@ Several planned features would make codegraph even more powerful for the Titan P
 
 ---
 
+## Claude Code Skills — Ready-Made Titan Pipeline
+
+We've built five Claude Code skills that implement the full Titan Paradigm using codegraph. Each phase writes structured JSON artifacts to `.codegraph/titan/` that the next phase reads — this keeps context usage minimal even on large codebases.
+
+```
+/titan-recon → titan-state.json + GLOBAL_ARCH.md
+      │
+      ▼
+/titan-gauntlet → gauntlet.ndjson (batches of 5, resumes across sessions)
+      │
+      ▼
+/titan-sync → sync.json (execution plan with logical commits)
+      │
+      ▼
+/titan-gate (validates each commit: codegraph + lint/build/test)
+
+/titan-reset (escape hatch: clean up all artifacts and snapshots)
+```
+
+| Skill | Phase | What it does |
+|-------|-------|-------------|
+| `/titan-recon` | RECON | Builds graph + embeddings, runs complexity health baseline (`--health --above-threshold`), identifies domains, produces priority queue + work batches + `GLOBAL_ARCH.md`, saves baseline snapshot |
+| `/titan-gauntlet` | GAUNTLET | 4-pillar audit (17 rules) leveraging codegraph's full metrics (`cognitive`, `cyclomatic`, `halstead.bugs`, `halstead.effort`, `mi`, `loc.sloc`). Batches of 5 (configurable), NDJSON incremental writes, resumes across sessions via `titan-state.json` |
+| `/titan-sync` | GLOBAL SYNC | Finds dependency clusters among failures using `codegraph path` + `owners` + `branch-compare`. Plans shared abstractions, produces ordered execution plan with logical commit grouping |
+| `/titan-gate` | STATE MACHINE | Validates staged changes: `codegraph check --staged --cycles --blast-radius 30 --boundaries` + project lint/build/test. Auto-rollback with snapshot restore on failure. Append-only audit trail |
+| `/titan-reset` | ESCAPE HATCH | Restores baseline snapshot, deletes all Titan artifacts and snapshots, rebuilds graph clean |
+
+### Context window management
+
+The original Titan Paradigm prompt struggles with large codebases because a single agent cannot hold everything in context. These skills solve this two ways:
+
+1. **Artifact bridging:** each phase writes compact JSON artifacts. The next phase reads only those — not the full source. Works across separate conversations too.
+2. **Batch processing with resume:** the GAUNTLET audits 5 files at a time (configurable), writes to NDJSON between batches, and stops at ~80% context usage. Re-invoking `/titan-gauntlet` resumes from the next pending batch automatically.
+
+### Snapshot lifecycle
+
+Codegraph snapshots provide instant graph database backup/restore at each stage:
+
+| Snapshot | Created by | Restored by | Deleted by |
+|----------|-----------|------------|-----------|
+| `titan-baseline` | RECON | GATE (on failure) | GATE (on final success) or RESET |
+| `titan-batch-N` | GAUNTLET (per batch) | GATE (on failure) | GAUNTLET (next batch replaces it) or RESET |
+
+See [Claude Code Skills Example](../examples/claude-code-skills/) for installation and usage.
+
+---
+
 ## What's Next
 
 All six recommendations from v2.5.0 — `audit`, `batch`, `triage`, `check`, `snapshot`, and MCP orchestration tools — shipped in v2.6.0. The remaining enhancements that would make codegraph even more powerful for the Titan Paradigm are in the LLM integration roadmap:
+
+### New backlog items surfaced by skill development
+
+Building and reviewing the Titan skills revealed gaps where codegraph could provide first-class support instead of relying on grep patterns or manual analysis:
+
+**Detection gaps — rules that currently fall back to grep:**
+
+| Feature | GAUNTLET Rule | How it helps | Backlog candidate |
+|---------|--------------|-------------|-------------------|
+| **Async hygiene detection** | Pillar I, Rule 2 | AST-level detection of uncaught promises, `.then()` without `.catch()`, and async functions without `try/catch`. Currently grep-based | `codegraph check --floating-promises` |
+| **Resource leak detection** | Pillar I, Rule 5 | AST detection of `addEventListener`/`setInterval`/`createReadStream` without matching cleanup. Currently grep-based and fragile | `codegraph check --resource-leaks` |
+| **Mutation tracking** | Pillar I, Rule 6 | Detect functions that mutate their arguments or external state. `codegraph dataflow` tracks flow but not mutation specifically | Enhancement to `dataflow` |
+| **Empty catch detection** | Pillar II, Rule 10 | Find empty `catch` blocks or catch blocks with only comments. AST-level, not grep | `codegraph check --empty-catches` |
+| **Magic literal detection** | Pillar II, Rule 7 | Find hardcoded strings/numbers in logic branches (if/switch conditions) vs constants. Currently uses `ast --kind string` but misses numeric literals | Extend `ast` with `--kind literal` |
+| **Duplicate code detection** | Pillar III, Rule 11 | Identify semantically similar functions — near-duplicates to merge. `codegraph search` finds related code but doesn't specifically flag duplicates | `codegraph duplicates` or `--duplicates` on `search` |
+
+**Orchestration gaps — pipeline features that could be built into codegraph:**
+
+| Feature | Phase | How it helps | Backlog candidate |
+|---------|-------|-------------|-------------------|
+| **Domain inventory command** | RECON | Auto-name logical domains from communities + directory structure. Currently the skill infers this manually | `codegraph domains` combining `communities`, `structure`, and `deps` |
+| **Session state persistence** | ALL | Built-in state tracking for multi-phase pipelines — per-file audit status, batch progress, execution phase. Currently the skills manage `titan-state.json` themselves | `codegraph session init/update/status` |
+| **Batch complexity with `--health`** | GAUNTLET | `codegraph batch complexity` returns metrics but the skill needs `--health` data (Halstead, MI) for each target in one call. Currently must run separate per-file calls for `--health` mode | `codegraph batch complexity --health` support |
+| **NDJSON integrity check** | GAUNTLET/GATE | Validate that `.ndjson` artifacts have no truncated lines from partial writes. A single malformed line corrupts downstream parsing | `codegraph session validate` or built-in NDJSON repair |
+| **Concurrent-safe graph operations** | GAUNTLET | Multiple agents running codegraph simultaneously corrupt the SQLite database. A locking mechanism or read-only mode would enable safe parallel querying | `--read-only` flag on query commands, or WAL mode with proper locking |
 
 ### LLM-enhanced features (Roadmap Phase 4+)
 
@@ -276,7 +356,25 @@ cd your-project
 codegraph build
 ```
 
-Then wire your orchestrator's RECON phase to start with:
+### With Claude Code skills (recommended)
+
+Copy the skills into your project and run the pipeline:
+
+```bash
+# Install skills
+cp -r node_modules/@optave/codegraph/docs/examples/claude-code-skills/titan-* .claude/skills/
+
+# In Claude Code:
+/titan-recon           # Map the codebase, produce priority queue
+/titan-gauntlet 5      # Audit top targets in batches of 5
+/titan-sync            # Plan shared abstractions and execution order
+# ... make changes ...
+/titan-gate            # Validate before each commit
+```
+
+### With raw commands
+
+Wire your orchestrator's RECON phase to start with:
 
 ```bash
 codegraph triage -T --limit 50 --json   # Ranked priority queue (one call)
