@@ -37,7 +37,9 @@ export function rolesData(customDbPath, opts = {}) {
 
     if (noTests) {
       rows = rows.filter((r) => !isTestFile(r.file));
+    }
 
+    if (noTests || filterRole === 'test-only') {
       // Reclassify symbols whose only callers are in test files as 'test-only'.
       // A symbol that has fanIn > 0 at build time (all edges) but fanIn === 0
       // when test-file callers are excluded should be 'test-only' instead of
