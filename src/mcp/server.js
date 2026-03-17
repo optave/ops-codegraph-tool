@@ -12,6 +12,8 @@ import { MCP_MAX_LIMIT } from '../shared/paginate.js';
 import { buildToolList } from './tool-registry.js';
 import { TOOL_HANDLERS } from './tools/index.js';
 
+const require = createRequire(import.meta.url);
+
 async function loadMCPSdk() {
   try {
     const sdk = await import('@modelcontextprotocol/sdk/server/index.js');
@@ -40,7 +42,6 @@ function createLazyLoaders() {
     },
     getDatabase() {
       if (!_Database) {
-        const require = createRequire(import.meta.url);
         _Database = require('better-sqlite3');
       }
       return _Database;
@@ -49,7 +50,7 @@ function createLazyLoaders() {
 }
 
 async function resolveDbPath(customDbPath, args, allowedRepos) {
-  let dbPath = customDbPath || undefined;
+  let dbPath = customDbPath;
   if (args.repo) {
     if (allowedRepos && !allowedRepos.includes(args.repo)) {
       throw new ConfigError(`Repository "${args.repo}" is not in the allowed repos list.`);
