@@ -60,7 +60,13 @@ If `CONFLICTING`:
    ```bash
    git merge origin/<base-branch>
    ```
-2. Resolve all conflicts by reading the conflicting files, understanding both sides, and making the correct resolution.
+2. **Do not assume which side to keep.** You must fully understand the context of both sides before resolving. If you don't know why a line was added — what feature it supports, what bug it fixes, what reviewer requested it — you cannot resolve the conflict correctly. Before touching any conflict:
+   - Read the PR description and any linked issues (`gh pr view <number>`) to understand the PR's purpose and scope.
+   - Check the PR's commit history (`git log --oneline origin/<base-branch>..HEAD -- <file>`) to understand *why* the conflicting line was changed on the PR side. Also check the base branch history (`git log --oneline HEAD..origin/<base-branch> -- <file>`) to understand *why* the base version exists.
+   - Read Greptile and Claude review comments on the PR (`gh api repos/optave/codegraph/pulls/<number>/comments`, `gh api repos/optave/codegraph/issues/<number>/comments`) — a reviewer may have requested the change that caused the conflict.
+   - Check what landed on main that introduced the other side (`git log --oneline HEAD..origin/<base-branch> -- <file>`) and read those PR descriptions too if needed.
+   - Compare the PR's diff against its merge base (`git diff $(git merge-base origin/<base-branch> HEAD) HEAD -- <file>`) to see which side introduced an intentional change vs. which side carried stale code.
+   - Only then choose the correct resolution. If the PR deliberately changed a line and main still has the old version, keep the PR's version. If main introduced a fix or new feature the PR doesn't have, keep main's version. If both sides made intentional changes, merge them together manually.
 3. After resolving, stage the resolved files by name (not `git add .`), commit with: `fix: resolve merge conflicts with <base-branch>`
 4. Push the updated branch.
 
