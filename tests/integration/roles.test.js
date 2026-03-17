@@ -60,6 +60,7 @@ beforeAll(() => {
   const helper = insertNode(db, 'helper', 'function', 'lib.js', 1);
   const format = insertNode(db, 'format', 'function', 'lib.js', 10);
   insertNode(db, 'unused', 'function', 'lib.js', 20);
+  const testHelper = insertNode(db, 'testHelper', 'function', 'lib.js', 30);
   const testFn = insertNode(db, 'testMain', 'function', 'app.test.js', 1);
 
   // Import edges
@@ -72,11 +73,13 @@ beforeAll(() => {
   // processData → format (cross-file) → makes format exported
   // helper → format (same file)
   // testFn → main (cross-file) → makes main exported
+  // testFn → testHelper (cross-file) → testHelper only called from test
   insertEdge(db, main, process_, 'calls');
   insertEdge(db, main, helper, 'calls');
   insertEdge(db, process_, format, 'calls');
   insertEdge(db, helper, format, 'calls');
   insertEdge(db, testFn, main, 'calls');
+  insertEdge(db, testFn, testHelper, 'calls');
 
   // unused has no callers and no cross-file callers → dead
 
@@ -132,6 +135,37 @@ describe('rolesData', () => {
     for (const s of withoutTests.symbols) {
       expect(s.file).not.toMatch(/\.test\./);
     }
+  });
+
+  test('reclassifies test-only-called symbols when noTests is true', () => {
+    const data = rolesData(dbPath, { noTests: true });
+    const th = data.symbols.find((s) => s.name === 'testHelper');
+    expect(th).toBeDefined();
+    expect(th.role).toBe('test-only');
+  });
+
+  test('does not reclassify test-only-called symbols when noTests is false', () => {
+    const data = rolesData(dbPath);
+    const th = data.symbols.find((s) => s.name === 'testHelper');
+    expect(th).toBeDefined();
+    expect(th.role).not.toBe('test-only');
+  });
+
+  test('filters by role=test-only with noTests', () => {
+    const data = rolesData(dbPath, { noTests: true, role: 'test-only' });
+    expect(data.count).toBeGreaterThan(0);
+    for (const s of data.symbols) {
+      expect(s.role).toBe('test-only');
+    }
+    const names = data.symbols.map((s) => s.name);
+    expect(names).toContain('testHelper');
+  });
+
+  test('unused symbol stays dead with noTests', () => {
+    const data = rolesData(dbPath, { noTests: true });
+    const unused = data.symbols.find((s) => s.name === 'unused');
+    expect(unused).toBeDefined();
+    expect(unused.role).toBe('dead');
   });
 });
 

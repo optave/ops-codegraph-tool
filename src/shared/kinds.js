@@ -47,4 +47,4 @@ export const STRUCTURAL_EDGE_KINDS = ['parameter_of', 'receiver'];
 // Full set for MCP enum and validation
 export const EVERY_EDGE_KIND = [...CORE_EDGE_KINDS, ...STRUCTURAL_EDGE_KINDS];
 
-export const VALID_ROLES = ['entry', 'core', 'utility', 'adapter', 'dead', 'leaf'];
+export const VALID_ROLES = ['entry', 'core', 'utility', 'adapter', 'dead', 'test-only', 'leaf'];

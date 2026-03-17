@@ -151,7 +151,15 @@ describe('classifyNodeRoles', () => {
 
   it('handles empty graph without crashing', () => {
     const summary = classifyNodeRoles(db);
-    expect(summary).toEqual({ entry: 0, core: 0, utility: 0, adapter: 0, dead: 0, leaf: 0 });
+    expect(summary).toEqual({
+      entry: 0,
+      core: 0,
+      utility: 0,
+      adapter: 0,
+      dead: 0,
+      'test-only': 0,
+      leaf: 0,
+    });
   });
 
   it('adapts median thresholds to data', () => {

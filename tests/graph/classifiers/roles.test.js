@@ -60,4 +60,29 @@ describe('classifyRoles', () => {
     const roles = classifyRoles(nodes);
     expect(roles.get('1')).toBe('leaf');
   });
+
+  it('classifies test-only when fanIn is 0 but testOnlyFanIn > 0', () => {
+    const nodes = [
+      { id: '1', name: 'helperForTests', fanIn: 0, fanOut: 0, isExported: false, testOnlyFanIn: 3 },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('test-only');
+  });
+
+  it('classifies dead when fanIn is 0 and testOnlyFanIn is 0', () => {
+    const nodes = [
+      { id: '1', name: 'reallyDead', fanIn: 0, fanOut: 0, isExported: false, testOnlyFanIn: 0 },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('dead');
+  });
+
+  it('ignores testOnlyFanIn when fanIn > 0', () => {
+    const nodes = [
+      { id: '1', name: 'normalLeaf', fanIn: 1, fanOut: 0, isExported: false, testOnlyFanIn: 2 },
+      { id: '2', name: 'hub', fanIn: 10, fanOut: 10, isExported: true },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('leaf');
+  });
 });

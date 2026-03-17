@@ -254,8 +254,13 @@ function hasTable(db, table) {
 
 export function getBuildMeta(db, key) {
   if (!hasTable(db, 'build_meta')) return null;
-  const row = db.prepare('SELECT value FROM build_meta WHERE key = ?').get(key);
-  return row ? row.value : null;
+  try {
+    const row = db.prepare('SELECT value FROM build_meta WHERE key = ?').get(key);
+    return row ? row.value : null;
+  } catch (e) {
+    debug(`getBuildMeta failed for key "${key}": ${e.message}`);
+    return null;
+  }
 }
 
 export function setBuildMeta(db, entries) {
@@ -288,36 +293,38 @@ export function initSchema(db) {
   }
 
   // Legacy column compat — add columns that may be missing from pre-migration DBs
-  if (!hasColumn(db, 'nodes', 'end_line')) {
-    db.exec('ALTER TABLE nodes ADD COLUMN end_line INTEGER');
-  }
-  if (!hasColumn(db, 'edges', 'confidence')) {
-    db.exec('ALTER TABLE edges ADD COLUMN confidence REAL DEFAULT 1.0');
-  }
-  if (!hasColumn(db, 'edges', 'dynamic')) {
-    db.exec('ALTER TABLE edges ADD COLUMN dynamic INTEGER DEFAULT 0');
-  }
-  if (!hasColumn(db, 'nodes', 'role')) {
-    db.exec('ALTER TABLE nodes ADD COLUMN role TEXT');
-  }
-  db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_role ON nodes(role)');
-  if (!hasColumn(db, 'nodes', 'parent_id')) {
-    db.exec('ALTER TABLE nodes ADD COLUMN parent_id INTEGER REFERENCES nodes(id)');
-  }
-  db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_kind_parent ON nodes(kind, parent_id)');
-  if (!hasColumn(db, 'nodes', 'qualified_name')) {
-    db.exec('ALTER TABLE nodes ADD COLUMN qualified_name TEXT');
-  }
-  if (!hasColumn(db, 'nodes', 'scope')) {
-    db.exec('ALTER TABLE nodes ADD COLUMN scope TEXT');
-  }
-  if (!hasColumn(db, 'nodes', 'visibility')) {
-    db.exec('ALTER TABLE nodes ADD COLUMN visibility TEXT');
-  }
   if (hasTable(db, 'nodes')) {
+    if (!hasColumn(db, 'nodes', 'end_line')) {
+      db.exec('ALTER TABLE nodes ADD COLUMN end_line INTEGER');
+    }
+    if (!hasColumn(db, 'nodes', 'role')) {
+      db.exec('ALTER TABLE nodes ADD COLUMN role TEXT');
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_role ON nodes(role)');
+    if (!hasColumn(db, 'nodes', 'parent_id')) {
+      db.exec('ALTER TABLE nodes ADD COLUMN parent_id INTEGER REFERENCES nodes(id)');
+    }
+    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_kind_parent ON nodes(kind, parent_id)');
+    if (!hasColumn(db, 'nodes', 'qualified_name')) {
+      db.exec('ALTER TABLE nodes ADD COLUMN qualified_name TEXT');
+    }
+    if (!hasColumn(db, 'nodes', 'scope')) {
+      db.exec('ALTER TABLE nodes ADD COLUMN scope TEXT');
+    }
+    if (!hasColumn(db, 'nodes', 'visibility')) {
+      db.exec('ALTER TABLE nodes ADD COLUMN visibility TEXT');
+    }
     db.exec('UPDATE nodes SET qualified_name = name WHERE qualified_name IS NULL');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_qualified_name ON nodes(qualified_name)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_scope ON nodes(scope)');
   }
-  db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_qualified_name ON nodes(qualified_name)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_scope ON nodes(scope)');
+  if (hasTable(db, 'edges')) {
+    if (!hasColumn(db, 'edges', 'confidence')) {
+      db.exec('ALTER TABLE edges ADD COLUMN confidence REAL DEFAULT 1.0');
+    }
+    if (!hasColumn(db, 'edges', 'dynamic')) {
+      db.exec('ALTER TABLE edges ADD COLUMN dynamic INTEGER DEFAULT 0');
+    }
+  }
 }

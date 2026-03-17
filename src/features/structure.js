@@ -349,7 +349,7 @@ export function classifyNodeRoles(db) {
     .all();
 
   if (rows.length === 0) {
-    return { entry: 0, core: 0, utility: 0, adapter: 0, dead: 0, leaf: 0 };
+    return { entry: 0, core: 0, utility: 0, adapter: 0, dead: 0, 'test-only': 0, leaf: 0 };
   }
 
   const exportedIds = new Set(
@@ -377,7 +377,7 @@ export function classifyNodeRoles(db) {
   const roleMap = classifyRoles(classifierInput);
 
   // Build summary and updates
-  const summary = { entry: 0, core: 0, utility: 0, adapter: 0, dead: 0, leaf: 0 };
+  const summary = { entry: 0, core: 0, utility: 0, adapter: 0, dead: 0, 'test-only': 0, leaf: 0 };
   const updates = [];
   for (const row of rows) {
     const role = roleMap.get(String(row.id)) || 'leaf';

@@ -362,7 +362,7 @@ const BASE_TOOLS = [
   {
     name: 'node_roles',
     description:
-      'Show node role classification (entry, core, utility, adapter, dead, leaf) based on connectivity patterns',
+      'Show node role classification (entry, core, utility, adapter, dead, test-only, leaf) based on connectivity patterns',
     inputSchema: {
       type: 'object',
       properties: {

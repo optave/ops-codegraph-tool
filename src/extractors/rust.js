@@ -53,6 +53,8 @@ function walkRustNode(node, ctx) {
 // ── Walk-path per-node-type handlers ────────────────────────────────────────
 
 function handleRustFuncItem(node, ctx) {
+  // Skip default-impl functions already emitted by handleRustTraitItem
+  if (node.parent?.parent?.type === 'trait_item') return;
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const implType = findCurrentImpl(node);

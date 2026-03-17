@@ -301,19 +301,23 @@ function purgeAndAddReverseDeps(ctx, changePaths, reverseDeps) {
   }
 }
 
+// ── Shared helpers ───────────────────────────────────────────────────────
+
+function detectHasEmbeddings(db) {
+  try {
+    db.prepare('SELECT 1 FROM embeddings LIMIT 1').get();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ── Scoped build path ───────────────────────────────────────────────────
 
 function handleScopedBuild(ctx) {
   const { db, rootDir, opts } = ctx;
 
-  let hasEmbeddings = false;
-  try {
-    db.prepare('SELECT 1 FROM embeddings LIMIT 1').get();
-    hasEmbeddings = true;
-  } catch {
-    /* table doesn't exist */
-  }
-  ctx.hasEmbeddings = hasEmbeddings;
+  ctx.hasEmbeddings = detectHasEmbeddings(db);
 
   const changePaths = ctx.parseChanges.map(
     (item) => item.relPath || normalizePath(path.relative(rootDir, item.file)),
@@ -328,11 +332,9 @@ function handleScopedBuild(ctx) {
   // Purge changed + removed files, then add reverse-deps
   purgeAndAddReverseDeps(ctx, changePaths, reverseDeps);
 
-  if (reverseDeps.size > 0) {
-    info(
-      `Scoped rebuild: ${changePaths.length} changed, ${ctx.removed.length} removed, ${reverseDeps.size} reverse-deps`,
-    );
-  }
+  info(
+    `Scoped rebuild: ${changePaths.length} changed, ${ctx.removed.length} removed, ${reverseDeps.size} reverse-deps`,
+  );
 }
 
 // ── Full/incremental build path ─────────────────────────────────────────
@@ -340,13 +342,7 @@ function handleScopedBuild(ctx) {
 function handleFullBuild(ctx) {
   const { db } = ctx;
 
-  let hasEmbeddings = false;
-  try {
-    db.prepare('SELECT 1 FROM embeddings LIMIT 1').get();
-    hasEmbeddings = true;
-  } catch {
-    /* table doesn't exist */
-  }
+  const hasEmbeddings = detectHasEmbeddings(db);
   ctx.hasEmbeddings = hasEmbeddings;
 
   const deletions =
@@ -361,14 +357,7 @@ function handleFullBuild(ctx) {
 function handleIncrementalBuild(ctx) {
   const { db, rootDir, opts } = ctx;
 
-  let hasEmbeddings = false;
-  try {
-    db.prepare('SELECT 1 FROM embeddings LIMIT 1').get();
-    hasEmbeddings = true;
-  } catch {
-    /* table doesn't exist */
-  }
-  ctx.hasEmbeddings = hasEmbeddings;
+  ctx.hasEmbeddings = detectHasEmbeddings(db);
 
   let reverseDeps = new Set();
   if (!opts.noReverseDeps) {
