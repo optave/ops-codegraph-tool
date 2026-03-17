@@ -36,12 +36,13 @@ export function applyFilters(rows, opts = {}) {
   let filtered = rows;
   const fp = opts.filePattern;
   const fpArr = Array.isArray(fp) ? fp : fp ? [fp] : [];
-  const isGlob =
-    opts.isGlob !== undefined
-      ? opts.isGlob
-      : fpArr.length > 0 && fpArr.some((p) => /[*?[\]]/.test(p));
-  if (isGlob) {
-    filtered = filtered.filter((row) => fpArr.some((p) => globMatch(row.file, p)));
+  if (fpArr.length > 0) {
+    filtered = filtered.filter((row) =>
+      fpArr.some((p) => {
+        const patternIsGlob = opts.isGlob !== undefined ? opts.isGlob : /[*?[\]]/.test(p);
+        return patternIsGlob ? globMatch(row.file, p) : row.file.includes(p);
+      }),
+    );
   }
   if (opts.noTests) {
     filtered = filtered.filter((row) => !TEST_PATTERN.test(row.file));
