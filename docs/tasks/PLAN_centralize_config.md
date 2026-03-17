@@ -44,7 +44,7 @@ The config system already exists and handles env overrides, but ~70 individual b
 | C3 | `limit = 15` | `domain/search/search/semantic.js` | 12 | Semantic search default limit |
 | C4 | `minScore = 0.2` | `domain/search/search/semantic.js` | 13, 52 | Minimum similarity threshold |
 | C5 | `SIMILARITY_WARN_THRESHOLD = 0.85` | `domain/search/search/semantic.js` | 71 | Duplicate query warning |
-| C6 | Batch sizes per model | `domain/search/models.js` | 66-75 | Embedding batch sizes |
+| ~~C6~~ | ~~Batch sizes per model~~ | — | — | Moved to Category F (see below) |
 
 ### Category D — Display & Truncation (low-medium user value)
 
@@ -75,6 +75,7 @@ The config system already exists and handles env overrides, but ~70 individual b
 | F5 | `volume / 3000` | `features/complexity.js` | 85 | Halstead bugs formula (standard) |
 | F6 | `timeout = 10_000` | `infrastructure/config.js` | 110 | apiKeyCommand timeout |
 | F7 | `MCP_MAX_LIMIT = 1000` | `shared/paginate.js` | 37 | Hard abuse-prevention cap — server-side safety boundary, not a tuning knob |
+| F8 | Batch sizes per model | `domain/search/models.js` | 66-75 | Embedding batch sizes — model-specific implementation details rarely tuned by end-users, analogous to watcher debounce (F3) |
 
 ---
 
@@ -87,7 +88,7 @@ export const DEFAULTS = {
   // ... existing fields ...
 
   analysis: {
-    defaultDepth: 3,           // A2: BFS depth for impact/diff-impact
+    impactDepth: 3,           // A2: BFS depth for impact/diff-impact
     fnImpactDepth: 5,          // A1: fn-impact transitive depth
     auditDepth: 3,             // A3: audit blast-radius depth
     sequenceDepth: 10,         // A5: sequence diagram depth
@@ -158,6 +159,7 @@ export const DEFAULTS = {
 - **Update check TTL/timeout** — implementation detail
 - **Watcher debounce** — could be configurable later but low priority
 - **`MCP_MAX_LIMIT`** — server-side abuse-prevention cap; making it user-configurable via `.codegraphrc.json` would allow any process with project directory write access to raise it arbitrarily, defeating its security purpose
+- **Embedding batch sizes** — model-specific implementation details (per-model map shape); rarely tuned by end-users, analogous to watcher debounce
 
 ---
 
@@ -175,9 +177,9 @@ export const DEFAULTS = {
 ### Phase 2 — Wire analysis parameters (1 PR)
 
 **Files to change:**
-- `src/domain/analysis/impact.js` → read `config.analysis.defaultDepth` / `config.analysis.fnImpactDepth`
+- `src/domain/analysis/impact.js` → read `config.analysis.impactDepth` / `config.analysis.fnImpactDepth`
 - `src/features/audit.js` → read `config.analysis.auditDepth`
-- `src/features/check.js` → replace hardcoded `3` with `config.check.depth` (already in DEFAULTS, sole authoritative key for check depth — do **not** chain with `config.analysis.defaultDepth`)
+- `src/features/check.js` → replace hardcoded `3` with `config.check.depth` (already in DEFAULTS, sole authoritative key for check depth — do **not** chain with `config.analysis.impactDepth`)
 - `src/features/sequence.js` → read `config.analysis.sequenceDepth`
 - `src/domain/analysis/module-map.js` → read `config.analysis.falsePositiveCallers`
 - `src/domain/analysis/brief.js` → read `config.analysis.briefCallerDepth`, `config.analysis.briefImporterDepth`, `config.analysis.briefHighRiskCallers`, `config.analysis.briefMediumRiskCallers` (PR #480)
@@ -204,7 +206,7 @@ export const DEFAULTS = {
 **Files to change:**
 - `src/domain/search/search/hybrid.js` → read `config.search.rrfK`, `config.search.topK`
 - `src/domain/search/search/semantic.js` → read `config.search.defaultMinScore` and `config.search.similarityWarnThreshold` (C5, replaces hardcoded `SIMILARITY_WARN_THRESHOLD`)
-- `src/domain/search/models.js` → batch sizes could be config-overridable per model
+- `src/domain/search/models.js` → batch sizes stay hardcoded (moved to Category F — model-specific implementation details)
 
 **Note:** `config.search` already exists with `defaultMinScore`, `rrfK`, `topK`. The modules just don't read from it — they duplicate the values. This phase wires the existing config keys.
 
