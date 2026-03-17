@@ -1,4 +1,5 @@
 import { openReadonlyOrFail } from '../../db/index.js';
+import { warn } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { normalizeSymbol } from '../../shared/normalize.js';
 import { paginateResult } from '../../shared/paginate.js';
@@ -75,6 +76,18 @@ export function rolesData(customDbPath, opts = {}) {
  * if test-file edges were excluded.
  */
 function _findTestOnlyCalledIds(db) {
+  const hasTestNodes = db
+    .prepare(
+      `SELECT 1 FROM nodes WHERE file LIKE '%.test.%' OR file LIKE '%.spec.%' OR file LIKE '%__tests__%' LIMIT 1`,
+    )
+    .get();
+  if (!hasTestNodes) {
+    warn(
+      'No test-file nodes in the graph — cannot determine test-only callers. Rebuild without -T to include test files.',
+    );
+    return new Set();
+  }
+
   // Get all non-test symbols that have at least one caller
   const rows = db
     .prepare(
