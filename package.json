@@ -76,12 +76,12 @@
   },
   "optionalDependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@optave/codegraph-darwin-arm64": "3.1.4",
-    "@optave/codegraph-darwin-x64": "3.1.4",
-    "@optave/codegraph-linux-arm64-gnu": "3.1.4",
-    "@optave/codegraph-linux-x64-gnu": "3.1.4",
-    "@optave/codegraph-linux-x64-musl": "3.1.4",
-    "@optave/codegraph-win32-x64-msvc": "3.1.4"
+    "@optave/codegraph-darwin-arm64": "3.1.5",
+    "@optave/codegraph-darwin-x64": "3.1.5",
+    "@optave/codegraph-linux-arm64-gnu": "3.1.5",
+    "@optave/codegraph-linux-x64-gnu": "3.1.5",
+    "@optave/codegraph-linux-x64-musl": "3.1.5",
+    "@optave/codegraph-win32-x64-msvc": "3.1.5"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",

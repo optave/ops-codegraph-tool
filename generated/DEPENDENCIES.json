@@ -1,5 +1,5 @@
 {
-  "version": "3.1.4",
+  "version": "3.1.5",
   "name": "@optave/codegraph",
   "problems": [
     "extraneous: @emnapi/runtime@1.8.1 /home/runner/work/codegraph/codegraph/node_modules/@emnapi/runtime",
@@ -756,8 +756,8 @@
     "@optave/codegraph-darwin-x64": {},
     "@optave/codegraph-linux-arm64-gnu": {},
     "@optave/codegraph-linux-x64-gnu": {
-      "version": "3.1.4",
-      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-3.1.4.tgz",
+      "version": "3.1.5",
+      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-3.1.5.tgz",
       "overridden": false
     },
     "@optave/codegraph-linux-x64-musl": {},
