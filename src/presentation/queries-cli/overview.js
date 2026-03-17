@@ -2,64 +2,42 @@ import path from 'node:path';
 import { kindIcon, moduleMapData, rolesData, statsData } from '../../domain/queries.js';
 import { outputResult } from '../../infrastructure/result-formatter.js';
 
-export async function stats(customDbPath, opts = {}) {
-  const data = statsData(customDbPath, { noTests: opts.noTests });
-
-  // Community detection summary (async import for lazy-loading)
-  try {
-    const { communitySummaryForStats } = await import('../../features/communities.js');
-    data.communities = communitySummaryForStats(customDbPath, { noTests: opts.noTests });
-  } catch {
-    /* graphology may not be available */
+function printCountGrid(entries, padWidth) {
+  const parts = entries.map(([k, v]) => `${k} ${v}`);
+  for (let i = 0; i < parts.length; i += 3) {
+    const row = parts
+      .slice(i, i + 3)
+      .map((p) => p.padEnd(padWidth))
+      .join('');
+    console.log(`  ${row}`);
   }
+}
 
-  if (outputResult(data, null, opts)) return;
-
-  // Human-readable output
-  console.log('\n# Codegraph Stats\n');
-
-  // Nodes
+function printNodes(data) {
   console.log(`Nodes:     ${data.nodes.total} total`);
   const kindEntries = Object.entries(data.nodes.byKind).sort((a, b) => b[1] - a[1]);
-  const kindParts = kindEntries.map(([k, v]) => `${k} ${v}`);
-  for (let i = 0; i < kindParts.length; i += 3) {
-    const row = kindParts
-      .slice(i, i + 3)
-      .map((p) => p.padEnd(18))
-      .join('');
-    console.log(`  ${row}`);
-  }
+  printCountGrid(kindEntries, 18);
+}
 
-  // Edges
+function printEdges(data) {
   console.log(`\nEdges:     ${data.edges.total} total`);
   const edgeEntries = Object.entries(data.edges.byKind).sort((a, b) => b[1] - a[1]);
-  const edgeParts = edgeEntries.map(([k, v]) => `${k} ${v}`);
-  for (let i = 0; i < edgeParts.length; i += 3) {
-    const row = edgeParts
-      .slice(i, i + 3)
-      .map((p) => p.padEnd(18))
-      .join('');
-    console.log(`  ${row}`);
-  }
+  printCountGrid(edgeEntries, 18);
+}
 
-  // Files
+function printFiles(data) {
   console.log(`\nFiles:     ${data.files.total} (${data.files.languages} languages)`);
   const langEntries = Object.entries(data.files.byLanguage).sort((a, b) => b[1] - a[1]);
-  const langParts = langEntries.map(([k, v]) => `${k} ${v}`);
-  for (let i = 0; i < langParts.length; i += 3) {
-    const row = langParts
-      .slice(i, i + 3)
-      .map((p) => p.padEnd(18))
-      .join('');
-    console.log(`  ${row}`);
-  }
+  printCountGrid(langEntries, 18);
+}
 
-  // Cycles
+function printCycles(data) {
   console.log(
     `\nCycles:    ${data.cycles.fileLevel} file-level, ${data.cycles.functionLevel} function-level`,
   );
+}
 
-  // Hotspots
+function printHotspots(data) {
   if (data.hotspots.length > 0) {
     console.log(`\nTop ${data.hotspots.length} coupling hotspots:`);
     for (let i = 0; i < data.hotspots.length; i++) {
@@ -69,8 +47,9 @@ export async function stats(customDbPath, opts = {}) {
       );
     }
   }
+}
 
-  // Embeddings
+function printEmbeddings(data) {
   if (data.embeddings) {
     const e = data.embeddings;
     console.log(
@@ -79,8 +58,9 @@ export async function stats(customDbPath, opts = {}) {
   } else {
     console.log('\nEmbeddings: not built');
   }
+}
 
-  // Quality
+function printQuality(data) {
   if (data.quality) {
     const q = data.quality;
     const cc = q.callerCoverage;
@@ -99,24 +79,18 @@ export async function stats(customDbPath, opts = {}) {
       }
     }
   }
+}
 
-  // Roles
+function printRoles(data) {
   if (data.roles && Object.keys(data.roles).length > 0) {
     const total = Object.values(data.roles).reduce((a, b) => a + b, 0);
     console.log(`\nRoles:     ${total} classified symbols`);
-    const roleParts = Object.entries(data.roles)
-      .sort((a, b) => b[1] - a[1])
-      .map(([k, v]) => `${k} ${v}`);
-    for (let i = 0; i < roleParts.length; i += 3) {
-      const row = roleParts
-        .slice(i, i + 3)
-        .map((p) => p.padEnd(18))
-        .join('');
-      console.log(`  ${row}`);
-    }
+    const roleEntries = Object.entries(data.roles).sort((a, b) => b[1] - a[1]);
+    printCountGrid(roleEntries, 18);
   }
+}
 
-  // Complexity
+function printComplexity(data) {
   if (data.complexity) {
     const cx = data.complexity;
     const miPart = cx.avgMI != null ? ` | avg MI: ${cx.avgMI} | min MI: ${cx.minMI}` : '';
@@ -124,15 +98,40 @@ export async function stats(customDbPath, opts = {}) {
       `\nComplexity: ${cx.analyzed} functions | avg cognitive: ${cx.avgCognitive} | avg cyclomatic: ${cx.avgCyclomatic} | max cognitive: ${cx.maxCognitive}${miPart}`,
     );
   }
+}
 
-  // Communities
+function printCommunities(data) {
   if (data.communities) {
     const cm = data.communities;
     console.log(
       `\nCommunities: ${cm.communityCount} detected | modularity: ${cm.modularity} | drift: ${cm.driftScore}%`,
     );
   }
+}
 
+export async function stats(customDbPath, opts = {}) {
+  const data = statsData(customDbPath, { noTests: opts.noTests });
+
+  try {
+    const { communitySummaryForStats } = await import('../../features/communities.js');
+    data.communities = communitySummaryForStats(customDbPath, { noTests: opts.noTests });
+  } catch {
+    /* graphology may not be available */
+  }
+
+  if (outputResult(data, null, opts)) return;
+
+  console.log('\n# Codegraph Stats\n');
+  printNodes(data);
+  printEdges(data);
+  printFiles(data);
+  printCycles(data);
+  printHotspots(data);
+  printEmbeddings(data);
+  printQuality(data);
+  printRoles(data);
+  printComplexity(data);
+  printCommunities(data);
   console.log();
 }
 
