@@ -184,4 +184,5 @@ After processing all PRs, output a summary table:
 - **No Claude Code references** in commit messages or comments.
 - **Run tests and lint locally** before pushing any fix.
 - **One concern per commit** — don't lump conflict resolution with code fixes.
+- **Flag scope creep.** If a PR's diff contains files unrelated to its stated purpose (e.g., a docs PR carrying `src/` or test changes from a merged feature branch), flag it immediately. Split the unrelated changes into a separate branch and PR. Do not proceed with review until the PR is scoped correctly — scope creep is not acceptable.
 - If a PR is fundamentally broken beyond what review feedback can fix, note it in the summary and skip to the next PR.
