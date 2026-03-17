@@ -326,7 +326,7 @@ describe('findDbPath with git ceiling', () => {
       // existence, suffix, and that it's not the outer directory's DB.
       expect(fs.existsSync(result)).toBe(true);
       expect(result).toMatch(/\.codegraph[/\\]graph\.db$/);
-      expect(result).not.toContain(path.basename(outerDir) + path.sep + '.codegraph');
+      expect(result).not.toContain(`${path.basename(outerDir)}${path.sep}.codegraph`);
     } finally {
       process.cwd = origCwd;
       fs.rmSync(path.join(worktreeRoot, '.codegraph'), { recursive: true, force: true });
