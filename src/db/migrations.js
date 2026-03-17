@@ -254,8 +254,13 @@ function hasTable(db, table) {
 
 export function getBuildMeta(db, key) {
   if (!hasTable(db, 'build_meta')) return null;
-  const row = db.prepare('SELECT value FROM build_meta WHERE key = ?').get(key);
-  return row ? row.value : null;
+  try {
+    const row = db.prepare('SELECT value FROM build_meta WHERE key = ?').get(key);
+    return row ? row.value : null;
+  } catch (e) {
+    debug(`getBuildMeta failed for key "${key}": ${e.message}`);
+    return null;
+  }
 }
 
 export function setBuildMeta(db, entries) {
@@ -317,7 +322,7 @@ export function initSchema(db) {
   }
   if (hasTable(db, 'nodes')) {
     db.exec('UPDATE nodes SET qualified_name = name WHERE qualified_name IS NULL');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_qualified_name ON nodes(qualified_name)');
+    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_scope ON nodes(scope)');
   }
-  db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_qualified_name ON nodes(qualified_name)');
-  db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_scope ON nodes(scope)');
 }
