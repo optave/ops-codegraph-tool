@@ -562,8 +562,6 @@ Plus updated enums on existing tools (edge_kinds, symbol kinds).
 
 **Goal:** Restructure the codebase for modularity, testability, and long-term maintainability. These are internal improvements -- no new user-facing features, but they make every subsequent phase easier to build and maintain.
 
-> Reference: [generated/architecture.md](../../generated/architecture.md) -- full analysis with code examples and rationale.
-
 **Architecture pattern: Vertical Slice Architecture.** Each CLI command is a natural vertical slice — thin command entry point → domain logic → data access → formatted output. This avoids the overhead of layered patterns (Hexagonal, Clean Architecture) that would create abstractions with only one implementation, while giving clear boundaries and independent testability per feature. The target end-state directory structure:
 
 ```
