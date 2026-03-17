@@ -76,6 +76,10 @@ The config system already exists and handles env overrides, but ~70 individual b
 | F6 | `timeout = 10_000` | `infrastructure/config.js` | 110 | apiKeyCommand timeout |
 | F7 | `MCP_MAX_LIMIT = 1000` | `shared/paginate.js` | 37 | Hard abuse-prevention cap — server-side safety boundary, not a tuning knob |
 | F8 | Batch sizes per model | `domain/search/models.js` | 66-75 | Embedding batch sizes — model-specific implementation details rarely tuned by end-users, analogous to watcher debounce (F3) |
+| F9 | `MAX_VISIT_DEPTH = 200` | `crates/.../dataflow.rs` | 11 | Dataflow AST visit recursion limit — stack overflow prevention |
+| F10 | `MAX_WALK_DEPTH = 200` | `crates/.../extractors/helpers.rs` | 6 | Extractor AST walk recursion limit — stack overflow prevention (#481) |
+| F11 | `MAX_WALK_DEPTH = 200` | `crates/.../complexity.rs` | 6 | Complexity walk recursion limit — stack overflow prevention (#481) |
+| F12 | `MAX_WALK_DEPTH = 200` | `crates/.../cfg.rs` | 5 | CFG process_if recursion limit — stack overflow prevention (#481) |
 
 ---
 
@@ -160,6 +164,7 @@ export const DEFAULTS = {
 - **Watcher debounce** — could be configurable later but low priority
 - **`MCP_MAX_LIMIT`** — server-side abuse-prevention cap; making it user-configurable via `.codegraphrc.json` would allow any process with project directory write access to raise it arbitrarily, defeating its security purpose
 - **Embedding batch sizes** — model-specific implementation details (per-model map shape); rarely tuned by end-users, analogous to watcher debounce
+- **Native engine `MAX_WALK_DEPTH` / `MAX_VISIT_DEPTH` (200)** — stack overflow safety boundaries in Rust extractors, complexity, CFG, and dataflow modules; raising them risks process crashes on deeply nested ASTs
 
 ---
 
