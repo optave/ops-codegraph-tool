@@ -1,5 +1,7 @@
 # Claude Code Skills for Codegraph
 
+> **Experimental — agent-oriented extensions.** These skills are outside codegraph's core scope as a code intelligence engine. They orchestrate multi-step workflows that make decisions, modify code, and run automated pipelines — capabilities that go beyond codegraph's primary role of exposing dependency data to AI agents via MCP. Use them as reference implementations and starting points, not as production-grade automation. They may produce incorrect changes, miss edge cases, or behave unexpectedly on codebases with unusual structures. Always review their output before committing.
+
 This directory contains example [Claude Code skills](https://docs.anthropic.com/en/docs/claude-code/skills) that use codegraph to power autonomous codebase cleanup — based on the [Titan Paradigm](../../use-cases/titan-paradigm.md).
 
 ## The Problem: Context Window Explosion
