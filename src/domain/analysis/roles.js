@@ -21,8 +21,6 @@ export function rolesData(customDbPath, opts = {}) {
     } else if (filterRole === 'test-only') {
       // test-only is not stored in DB; we need all symbols to reclassify
       // Fetch everything and filter after reclassification
-      conditions.length = 1; // keep only 'role IS NOT NULL'
-      params.length = 0;
     }
     if (filterFile) {
       conditions.push('file LIKE ?');
