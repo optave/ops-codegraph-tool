@@ -1,6 +1,9 @@
 use tree_sitter::Node;
 use crate::types::{AstNode, Definition};
 
+// Re-export so extractors that `use super::helpers::*` still see it.
+pub use crate::constants::MAX_WALK_DEPTH;
+
 /// Get the text of a node from the source bytes.
 pub fn node_text<'a>(node: &Node, source: &'a [u8]) -> &'a str {
     node.utf8_text(source).unwrap_or("")
@@ -211,6 +214,19 @@ pub fn walk_ast_nodes_with_config(
     ast_nodes: &mut Vec<AstNode>,
     config: &LangAstConfig,
 ) {
+    walk_ast_nodes_with_config_depth(node, source, ast_nodes, config, 0);
+}
+
+fn walk_ast_nodes_with_config_depth(
+    node: &Node,
+    source: &[u8],
+    ast_nodes: &mut Vec<AstNode>,
+    config: &LangAstConfig,
+    depth: usize,
+) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
     let kind = node.kind();
 
     if config.new_types.contains(&kind) {
@@ -276,7 +292,7 @@ pub fn walk_ast_nodes_with_config(
         if content.chars().count() < 2 {
             for i in 0..node.child_count() {
                 if let Some(child) = node.child(i) {
-                    walk_ast_nodes_with_config(&child, source, ast_nodes, config);
+                    walk_ast_nodes_with_config_depth(&child, source, ast_nodes, config, depth + 1);
                 }
             }
             return;
@@ -307,7 +323,7 @@ pub fn walk_ast_nodes_with_config(
 
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            walk_ast_nodes_with_config(&child, source, ast_nodes, config);
+            walk_ast_nodes_with_config_depth(&child, source, ast_nodes, config, depth + 1);
         }
     }
 }

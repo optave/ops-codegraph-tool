@@ -17,6 +17,13 @@ impl SymbolExtractor for GoExtractor {
 }
 
 fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    walk_node_depth(node, source, symbols, 0);
+}
+
+fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
     match node.kind() {
         "function_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
@@ -228,7 +235,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            walk_node(&child, source, symbols);
+            walk_node_depth(&child, source, symbols, depth + 1);
         }
     }
 }

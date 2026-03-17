@@ -14,6 +14,13 @@ impl SymbolExtractor for HclExtractor {
 }
 
 fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    walk_node_depth(node, source, symbols, 0);
+}
+
+fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
     if node.kind() == "block" {
         let mut identifiers = Vec::new();
         let mut strings = Vec::new();
@@ -111,7 +118,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            walk_node(&child, source, symbols);
+            walk_node_depth(&child, source, symbols, depth + 1);
         }
     }
 }

@@ -17,6 +17,13 @@ impl SymbolExtractor for JsExtractor {
 }
 
 fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    walk_node_depth(node, source, symbols, 0);
+}
+
+fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
     match node.kind() {
         "function_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
@@ -397,7 +404,7 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            walk_node(&child, source, symbols);
+            walk_node_depth(&child, source, symbols, depth + 1);
         }
     }
 }
@@ -409,6 +416,13 @@ const TEXT_MAX: usize = 200;
 /// Walk the tree collecting new/throw/await/string/regex AST nodes.
 /// Mirrors `walkAst()` in `ast.js:216-276`.
 fn walk_ast_nodes(node: &Node, source: &[u8], ast_nodes: &mut Vec<AstNode>) {
+    walk_ast_nodes_depth(node, source, ast_nodes, 0);
+}
+
+fn walk_ast_nodes_depth(node: &Node, source: &[u8], ast_nodes: &mut Vec<AstNode>, depth: usize) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
     match node.kind() {
         "new_expression" => {
             let name = extract_new_name(node, source);
@@ -459,7 +473,7 @@ fn walk_ast_nodes(node: &Node, source: &[u8], ast_nodes: &mut Vec<AstNode>) {
                 // Still recurse children (template_string may have nested expressions)
                 for i in 0..node.child_count() {
                     if let Some(child) = node.child(i) {
-                        walk_ast_nodes(&child, source, ast_nodes);
+                        walk_ast_nodes_depth(&child, source, ast_nodes, depth + 1);
                     }
                 }
                 return;
@@ -493,7 +507,7 @@ fn walk_ast_nodes(node: &Node, source: &[u8], ast_nodes: &mut Vec<AstNode>) {
 
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            walk_ast_nodes(&child, source, ast_nodes);
+            walk_ast_nodes_depth(&child, source, ast_nodes, depth + 1);
         }
     }
 }
@@ -763,13 +777,20 @@ fn extract_implements(heritage: &Node, source: &[u8]) -> Vec<String> {
 }
 
 fn extract_implements_from_node(node: &Node, source: &[u8], result: &mut Vec<String>) {
+    extract_implements_depth(node, source, result, 0);
+}
+
+fn extract_implements_depth(node: &Node, source: &[u8], result: &mut Vec<String>, depth: usize) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
             if child.kind() == "identifier" || child.kind() == "type_identifier" {
                 result.push(node_text(&child, source).to_string());
             }
             if child.child_count() > 0 {
-                extract_implements_from_node(&child, source, result);
+                extract_implements_depth(&child, source, result, depth + 1);
             }
         }
     }
@@ -1113,6 +1134,13 @@ fn extract_import_names(node: &Node, source: &[u8]) -> Vec<String> {
 }
 
 fn scan_import_names(node: &Node, source: &[u8], names: &mut Vec<String>) {
+    scan_import_names_depth(node, source, names, 0);
+}
+
+fn scan_import_names_depth(node: &Node, source: &[u8], names: &mut Vec<String>, depth: usize) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
     match node.kind() {
         "import_specifier" | "export_specifier" => {
             let name_node = node
@@ -1138,7 +1166,7 @@ fn scan_import_names(node: &Node, source: &[u8], names: &mut Vec<String>) {
     }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
-            scan_import_names(&child, source, names);
+            scan_import_names_depth(&child, source, names, depth + 1);
         }
     }
 }

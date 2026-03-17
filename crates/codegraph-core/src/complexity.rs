@@ -1,5 +1,6 @@
 use tree_sitter::Node;
 
+use crate::constants::MAX_WALK_DEPTH;
 use crate::types::ComplexityMetrics;
 
 // ─── Language-Configurable Complexity Rules ───────────────────────────────
@@ -373,6 +374,7 @@ pub fn compute_function_complexity(
         &mut cognitive,
         &mut cyclomatic,
         &mut max_nesting,
+        0,
     );
 
     ComplexityMetrics::basic(cognitive, cyclomatic, max_nesting)
@@ -386,7 +388,11 @@ fn walk_children(
     cognitive: &mut u32,
     cyclomatic: &mut u32,
     max_nesting: &mut u32,
+    depth: usize,
 ) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
             walk(
@@ -397,6 +403,7 @@ fn walk_children(
                 cognitive,
                 cyclomatic,
                 max_nesting,
+                depth + 1,
             );
         }
     }
@@ -410,7 +417,11 @@ fn walk(
     cognitive: &mut u32,
     cyclomatic: &mut u32,
     max_nesting: &mut u32,
+    depth: usize,
 ) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
     let kind = node.kind();
 
     // Track nesting depth
@@ -450,6 +461,7 @@ fn walk(
                     cognitive,
                     cyclomatic,
                     max_nesting,
+                    depth,
                 );
                 return;
             }
@@ -481,6 +493,7 @@ fn walk(
                         cognitive,
                         cyclomatic,
                         max_nesting,
+                        depth,
                     );
                     return;
                 }
@@ -494,6 +507,7 @@ fn walk(
                     cognitive,
                     cyclomatic,
                     max_nesting,
+                    depth,
                 );
                 return;
             }
@@ -512,6 +526,7 @@ fn walk(
                     cognitive,
                     cyclomatic,
                     max_nesting,
+                    depth,
                 );
                 return;
             }
@@ -558,6 +573,7 @@ fn walk(
                 cognitive,
                 cyclomatic,
                 max_nesting,
+                depth,
             );
             return;
         }
@@ -580,6 +596,7 @@ fn walk(
                 cognitive,
                 cyclomatic,
                 max_nesting,
+                depth,
             );
             return;
         }
@@ -604,6 +621,7 @@ fn walk(
                                 cognitive,
                                 cyclomatic,
                                 max_nesting,
+                                depth,
                             );
                             return;
                         }
@@ -628,6 +646,7 @@ fn walk(
             cognitive,
             cyclomatic,
             max_nesting,
+            depth,
         );
         return;
     }
@@ -641,6 +660,7 @@ fn walk(
         cognitive,
         cyclomatic,
         max_nesting,
+        depth,
     );
 }
 
