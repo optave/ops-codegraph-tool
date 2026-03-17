@@ -24,7 +24,7 @@ Your goal is to install the published package, exercise every feature, compare e
    npm init -y && npm install @optave/codegraph@$ARGUMENTS
    ```
 
-   **Dev build** (version contains `-dev.`, e.g. `2.5.33-dev.3c36ef7`):
+   **Dev build** (version contains `-dev.`, e.g. `3.1.6-dev.12`):
    Dev builds are **not published to npm**. They are attached as tarballs to GitHub pre-releases. Install from the GitHub release:
    ```bash
    npm init -y
