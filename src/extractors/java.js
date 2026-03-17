@@ -160,6 +160,8 @@ function handleJavaEnumDecl(node, ctx) {
 }
 
 function handleJavaMethodDecl(node, ctx) {
+  // Skip interface methods already emitted by handleJavaInterfaceDecl
+  if (node.parent?.parent?.type === 'interface_declaration') return;
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const parentClass = findJavaParentClass(node);

@@ -351,7 +351,7 @@ export async function buildEdges(ctx) {
 
   const allNodes = db
     .prepare(
-      `SELECT id, name, kind, file, line FROM nodes WHERE kind IN ('function','method','class','interface','struct','type','module','enum','trait')`,
+      `SELECT id, name, kind, file, line FROM nodes WHERE kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')`,
     )
     .all();
   setupNodeLookups(ctx, allNodes);

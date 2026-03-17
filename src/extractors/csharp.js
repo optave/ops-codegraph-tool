@@ -140,6 +140,8 @@ function handleCsEnumDecl(node, ctx) {
 }
 
 function handleCsMethodDecl(node, ctx) {
+  // Skip interface methods already emitted by handleCsInterfaceDecl
+  if (node.parent?.parent?.type === 'interface_declaration') return;
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const parentType = findCSharpParentType(node);

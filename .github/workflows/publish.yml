@@ -81,7 +81,7 @@ jobs:
               IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
             fi
             if [ "$COMMITS" -eq 0 ]; then
-              VERSION="${MAJOR}.${MINOR}.${PATCH}"
+              VERSION="${MAJOR}.${MINOR}.${PATCH}-dev.0"
             else
               VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))-dev.${COMMITS}"
             fi

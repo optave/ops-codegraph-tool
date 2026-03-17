@@ -1,27 +1,55 @@
 ---
 name: release
 description: Prepare a codegraph release — bump versions, update CHANGELOG, ROADMAP, BACKLOG, README, create PR
-argument-hint: <version e.g. 3.1.1>
+argument-hint: "[version e.g. 3.1.1]  (optional — auto-detects from commits)"
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Agent
 ---
 
-# Release v$ARGUMENTS
+# Release
 
-You are preparing a release for `@optave/codegraph` version **$ARGUMENTS**.
+You are preparing a release for `@optave/codegraph`.
+
+**Version argument:** `$ARGUMENTS`
+- If a version was provided (e.g. `3.1.1`), use it as the target version.
+- If no version was provided (empty or blank `$ARGUMENTS`), you will auto-detect it in Step 1b.
 
 ---
 
-## Step 1: Gather context
+## Step 1a: Gather context
 
 Run these in parallel:
-1. `git log --oneline v<previous-tag>..HEAD` — all commits since the last release tag
+1. `git log --oneline v<previous-tag>..HEAD` — all commits since the last release tag (use `git describe --tags --match "v*" --abbrev=0` to find the previous tag)
 2. Read `CHANGELOG.md` (first 80 lines) — understand the format
 3. Read `package.json` — current version
 4. `git describe --tags --match "v*" --abbrev=0` — find the previous stable release tag
 
+## Step 1b: Determine version (if not provided)
+
+If `$ARGUMENTS` is empty or blank, determine the semver bump from the commits gathered in Step 1a.
+
+Scan **every commit message** between the last tag and HEAD. Apply these rules in priority order:
+
+| Condition | Bump |
+|-----------|------|
+| Any commit has a `BREAKING CHANGE:` or `BREAKING-CHANGE:` footer, **or** uses the `!` suffix (e.g. `feat!:`, `fix!:`, `refactor!:`) | **major** |
+| Any commit uses `feat:` or `feat(scope):` | **minor** |
+| Everything else (`fix:`, `refactor:`, `perf:`, `chore:`, `docs:`, `test:`, `ci:`, etc.) | **patch** |
+
+Given the current version `MAJOR.MINOR.PATCH` from `package.json`, compute the new version:
+- **major** → `(MAJOR+1).0.0`
+- **minor** → `MAJOR.(MINOR+1).0`
+- **patch** → `MAJOR.MINOR.(PATCH+1)`
+
+Print the detected bump reason and the resolved version, e.g.:
+> Detected **minor** bump (found `feat:` commits). Version: 3.1.0 → **3.2.0**
+
+Use the resolved version as `VERSION` for all subsequent steps.
+
+If `$ARGUMENTS` was provided, use it directly as `VERSION`.
+
 ## Step 2: Bump version in package.json
 
-Edit `package.json` to set `"version": "$ARGUMENTS"`.
+Edit `package.json` to set `"version": "VERSION"`.
 
 **Do NOT bump:**
 - `crates/codegraph-core/Cargo.toml` — synced automatically by `scripts/sync-native-versions.js` during the publish workflow
@@ -104,16 +132,16 @@ Run `grep` to confirm the new version appears in `package-lock.json` and that al
 
 ## Step 8: Create branch, commit, push, PR
 
-1. Create branch: `git checkout -b release/$ARGUMENTS`
+1. Create branch: `git checkout -b release/VERSION`
 2. Stage only the files you changed: `CHANGELOG.md`, `package.json`, `package-lock.json`, `docs/roadmap/ROADMAP.md`, `docs/roadmap/BACKLOG.md` if changed, `README.md` if changed
-3. Commit: `chore: release v$ARGUMENTS`
-4. Push: `git push -u origin release/$ARGUMENTS`
+3. Commit: `chore: release vVERSION`
+4. Push: `git push -u origin release/VERSION`
 5. Create PR:
 
 ```
-gh pr create --title "chore: release v$ARGUMENTS" --body "$(cat <<'EOF'
+gh pr create --title "chore: release vVERSION" --body "$(cat <<'EOF'
 ## Summary
-- Bump version to $ARGUMENTS
+- Bump version to VERSION
 - Add CHANGELOG entry for all commits since previous release
 - Update ROADMAP progress
 

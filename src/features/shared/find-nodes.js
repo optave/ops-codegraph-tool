@@ -9,8 +9,9 @@ import { isTestFile } from '../../infrastructure/test-filter.js';
  * @param {string[]} defaultKinds - fallback kinds when opts.kind is not set
  * @returns {object[]} matching node rows
  */
-export function findNodes(db, name, opts = {}, defaultKinds) {
+export function findNodes(db, name, opts = {}, defaultKinds = []) {
   const kinds = opts.kind ? [opts.kind] : defaultKinds;
+  if (kinds.length === 0) throw new Error('findNodes: no kinds specified');
   const placeholders = kinds.map(() => '?').join(', ');
   const params = [`%${name}%`, ...kinds];
 

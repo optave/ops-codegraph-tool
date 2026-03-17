@@ -236,6 +236,8 @@ function handlePhpEnumDecl(node, ctx) {
 }
 
 function handlePhpMethodDecl(node, ctx) {
+  // Skip interface methods already emitted by handlePhpInterfaceDecl
+  if (node.parent?.parent?.type === 'interface_declaration') return;
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const parentClass = findPHPParentClass(node);
