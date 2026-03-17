@@ -330,6 +330,127 @@ export function computeAllMetrics(functionNode, langId) {
  */
 export { _findFunctionNode as findFunctionNode };
 
+async function initWasmParsersIfNeeded(fileSymbols) {
+  for (const [relPath, symbols] of fileSymbols) {
+    if (!symbols._tree) {
+      const ext = path.extname(relPath).toLowerCase();
+      if (!COMPLEXITY_EXTENSIONS.has(ext)) continue;
+      const hasPrecomputed = symbols.definitions.every(
+        (d) => (d.kind !== 'function' && d.kind !== 'method') || d.complexity,
+      );
+      if (!hasPrecomputed) {
+        const { createParsers } = await import('../domain/parser.js');
+        const parsers = await createParsers();
+        const extToLang = buildExtToLangMap();
+        return { parsers, extToLang };
+      }
+    }
+  }
+  return { parsers: null, extToLang: null };
+}
+
+function getTreeForFile(symbols, relPath, rootDir, parsers, extToLang, getParser) {
+  let tree = symbols._tree;
+  let langId = symbols._langId;
+
+  const allPrecomputed = symbols.definitions.every(
+    (d) => (d.kind !== 'function' && d.kind !== 'method') || d.complexity,
+  );
+
+  if (!allPrecomputed && !tree) {
+    const ext = path.extname(relPath).toLowerCase();
+    if (!COMPLEXITY_EXTENSIONS.has(ext)) return null;
+    if (!extToLang) return null;
+    langId = extToLang.get(ext);
+    if (!langId) return null;
+
+    const absPath = path.join(rootDir, relPath);
+    let code;
+    try {
+      code = fs.readFileSync(absPath, 'utf-8');
+    } catch (e) {
+      debug(`complexity: cannot read ${relPath}: ${e.message}`);
+      return null;
+    }
+
+    const parser = getParser(parsers, absPath);
+    if (!parser) return null;
+
+    try {
+      tree = parser.parse(code);
+    } catch (e) {
+      debug(`complexity: parse failed for ${relPath}: ${e.message}`);
+      return null;
+    }
+  }
+
+  return { tree, langId };
+}
+
+function upsertPrecomputedComplexity(db, upsert, def, relPath) {
+  const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
+  if (!nodeId) return 0;
+  const ch = def.complexity.halstead;
+  const cl = def.complexity.loc;
+  upsert.run(
+    nodeId,
+    def.complexity.cognitive,
+    def.complexity.cyclomatic,
+    def.complexity.maxNesting ?? 0,
+    cl ? cl.loc : 0,
+    cl ? cl.sloc : 0,
+    cl ? cl.commentLines : 0,
+    ch ? ch.n1 : 0,
+    ch ? ch.n2 : 0,
+    ch ? ch.bigN1 : 0,
+    ch ? ch.bigN2 : 0,
+    ch ? ch.vocabulary : 0,
+    ch ? ch.length : 0,
+    ch ? ch.volume : 0,
+    ch ? ch.difficulty : 0,
+    ch ? ch.effort : 0,
+    ch ? ch.bugs : 0,
+    def.complexity.maintainabilityIndex ?? 0,
+  );
+  return 1;
+}
+
+function upsertAstComplexity(db, upsert, def, relPath, tree, langId, rules) {
+  if (!tree || !rules) return 0;
+
+  const funcNode = _findFunctionNode(tree.rootNode, def.line, def.endLine, rules);
+  if (!funcNode) return 0;
+
+  const metrics = computeAllMetrics(funcNode, langId);
+  if (!metrics) return 0;
+
+  const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
+  if (!nodeId) return 0;
+
+  const h = metrics.halstead;
+  upsert.run(
+    nodeId,
+    metrics.cognitive,
+    metrics.cyclomatic,
+    metrics.maxNesting,
+    metrics.loc.loc,
+    metrics.loc.sloc,
+    metrics.loc.commentLines,
+    h ? h.n1 : 0,
+    h ? h.n2 : 0,
+    h ? h.bigN1 : 0,
+    h ? h.bigN2 : 0,
+    h ? h.vocabulary : 0,
+    h ? h.length : 0,
+    h ? h.volume : 0,
+    h ? h.difficulty : 0,
+    h ? h.effort : 0,
+    h ? h.bugs : 0,
+    metrics.mi,
+  );
+  return 1;
+}
+
 /**
  * Re-parse changed files with WASM tree-sitter, find function AST subtrees,
  * compute complexity, and upsert into function_complexity table.
@@ -340,31 +461,7 @@ export { _findFunctionNode as findFunctionNode };
  * @param {object} [engineOpts] - engine options (unused; always uses WASM for AST)
  */
 export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOpts) {
-  // Only initialize WASM parsers if some files lack both a cached tree AND pre-computed complexity
-  let parsers = null;
-  let extToLang = null;
-  let needsFallback = false;
-  for (const [relPath, symbols] of fileSymbols) {
-    if (!symbols._tree) {
-      // Only consider files whose language actually has complexity rules
-      const ext = path.extname(relPath).toLowerCase();
-      if (!COMPLEXITY_EXTENSIONS.has(ext)) continue;
-      // Check if all function/method defs have pre-computed complexity (native engine)
-      const hasPrecomputed = symbols.definitions.every(
-        (d) => (d.kind !== 'function' && d.kind !== 'method') || d.complexity,
-      );
-      if (!hasPrecomputed) {
-        needsFallback = true;
-        break;
-      }
-    }
-  }
-  if (needsFallback) {
-    const { createParsers } = await import('../domain/parser.js');
-    parsers = await createParsers();
-    extToLang = buildExtToLangMap();
-  }
-
+  const { parsers, extToLang } = await initWasmParsersIfNeeded(fileSymbols);
   const { getParser } = await import('../domain/parser.js');
 
   const upsert = db.prepare(
@@ -381,113 +478,20 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
 
   const tx = db.transaction(() => {
     for (const [relPath, symbols] of fileSymbols) {
-      // Check if all function/method defs have pre-computed complexity
-      const allPrecomputed = symbols.definitions.every(
-        (d) => (d.kind !== 'function' && d.kind !== 'method') || d.complexity,
-      );
-
-      let tree = symbols._tree;
-      let langId = symbols._langId;
-
-      // Only attempt WASM fallback if we actually need AST-based computation
-      if (!allPrecomputed && !tree) {
-        const ext = path.extname(relPath).toLowerCase();
-        if (!COMPLEXITY_EXTENSIONS.has(ext)) continue; // Language has no complexity rules
-        if (!extToLang) continue; // No WASM parsers available
-        langId = extToLang.get(ext);
-        if (!langId) continue;
-
-        const absPath = path.join(rootDir, relPath);
-        let code;
-        try {
-          code = fs.readFileSync(absPath, 'utf-8');
-        } catch (e) {
-          debug(`complexity: cannot read ${relPath}: ${e.message}`);
-          continue;
-        }
-
-        const parser = getParser(parsers, absPath);
-        if (!parser) continue;
-
-        try {
-          tree = parser.parse(code);
-        } catch (e) {
-          debug(`complexity: parse failed for ${relPath}: ${e.message}`);
-          continue;
-        }
-      }
-
+      const result = getTreeForFile(symbols, relPath, rootDir, parsers, extToLang, getParser);
+      const tree = result ? result.tree : null;
+      const langId = result ? result.langId : null;
       const rules = langId ? COMPLEXITY_RULES.get(langId) : null;
 
       for (const def of symbols.definitions) {
         if (def.kind !== 'function' && def.kind !== 'method') continue;
         if (!def.line) continue;
 
-        // Use pre-computed complexity from native engine if available
         if (def.complexity) {
-          const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
-          if (!nodeId) continue;
-          const ch = def.complexity.halstead;
-          const cl = def.complexity.loc;
-          upsert.run(
-            nodeId,
-            def.complexity.cognitive,
-            def.complexity.cyclomatic,
-            def.complexity.maxNesting ?? 0,
-            cl ? cl.loc : 0,
-            cl ? cl.sloc : 0,
-            cl ? cl.commentLines : 0,
-            ch ? ch.n1 : 0,
-            ch ? ch.n2 : 0,
-            ch ? ch.bigN1 : 0,
-            ch ? ch.bigN2 : 0,
-            ch ? ch.vocabulary : 0,
-            ch ? ch.length : 0,
-            ch ? ch.volume : 0,
-            ch ? ch.difficulty : 0,
-            ch ? ch.effort : 0,
-            ch ? ch.bugs : 0,
-            def.complexity.maintainabilityIndex ?? 0,
-          );
-          analyzed++;
-          continue;
+          analyzed += upsertPrecomputedComplexity(db, upsert, def, relPath);
+        } else {
+          analyzed += upsertAstComplexity(db, upsert, def, relPath, tree, langId, rules);
         }
-
-        // Fallback: compute from AST tree
-        if (!tree || !rules) continue;
-
-        const funcNode = _findFunctionNode(tree.rootNode, def.line, def.endLine, rules);
-        if (!funcNode) continue;
-
-        // Single-pass: complexity + Halstead + LOC + MI in one DFS walk
-        const metrics = computeAllMetrics(funcNode, langId);
-        if (!metrics) continue;
-
-        const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
-        if (!nodeId) continue;
-
-        const h = metrics.halstead;
-        upsert.run(
-          nodeId,
-          metrics.cognitive,
-          metrics.cyclomatic,
-          metrics.maxNesting,
-          metrics.loc.loc,
-          metrics.loc.sloc,
-          metrics.loc.commentLines,
-          h ? h.n1 : 0,
-          h ? h.n2 : 0,
-          h ? h.bigN1 : 0,
-          h ? h.bigN2 : 0,
-          h ? h.vocabulary : 0,
-          h ? h.length : 0,
-          h ? h.volume : 0,
-          h ? h.difficulty : 0,
-          h ? h.effort : 0,
-          h ? h.bugs : 0,
-          metrics.mi,
-        );
-        analyzed++;
       }
     }
   });
