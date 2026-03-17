@@ -45,17 +45,16 @@ function walkGoNode(node, ctx) {
 
 function handleGoFuncDecl(node, ctx) {
   const nameNode = node.childForFieldName('name');
-  if (nameNode) {
-    const params = extractGoParameters(node.childForFieldName('parameters'));
-    ctx.definitions.push({
-      name: nameNode.text,
-      kind: 'function',
-      line: node.startPosition.row + 1,
-      endLine: nodeEndLine(node),
-      children: params.length > 0 ? params : undefined,
-      visibility: goVisibility(nameNode.text),
-    });
-  }
+  if (!nameNode) return;
+  const params = extractGoParameters(node.childForFieldName('parameters'));
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'function',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+    children: params.length > 0 ? params : undefined,
+    visibility: goVisibility(nameNode.text),
+  });
 }
 
 function handleGoMethodDecl(node, ctx) {
