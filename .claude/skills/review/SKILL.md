@@ -32,6 +32,16 @@ For **each** open PR, perform the following steps in order. Process PRs one at a
 
 ### 2a. Switch to the PR branch
 
+Ensure the working tree is clean before switching to avoid cross-PR contamination:
+
+```bash
+if [ -n "$(git status --porcelain)" ]; then
+  git stash push -m "pre-checkout stash"
+fi
+```
+
+Then check out the PR branch:
+
 ```bash
 gh pr checkout <number>
 ```
