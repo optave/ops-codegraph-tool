@@ -176,18 +176,6 @@ export function findFunctionNode(rootNode, startLine, _endLine, rules) {
   return best;
 }
 
-/**
- * Truncate a string to a maximum length, appending an ellipsis if truncated.
- *
- * @param {string} str - Input string
- * @param {number} [max=200] - Maximum length
- * @returns {string}
- */
-export function truncate(str, max = 200) {
-  if (!str) return '';
-  return str.length > max ? `${str.slice(0, max)}…` : str;
-}
-
 // ─── Extension / Language Mapping ─────────────────────────────────────────
 
 /**

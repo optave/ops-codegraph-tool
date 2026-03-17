@@ -13,6 +13,7 @@ import {
   getComplexityForNode,
   openReadonlyOrFail,
 } from '../../db/index.js';
+import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import {
   createFileLinesReader,
@@ -95,7 +96,7 @@ function explainFileImpl(db, target, getFileLines) {
 function explainFunctionImpl(db, target, noTests, getFileLines) {
   let nodes = db
     .prepare(
-      `SELECT * FROM nodes WHERE name LIKE ? AND kind IN ('function','method','class','interface','type','struct','enum','trait','record','module') ORDER BY file, line`,
+      `SELECT * FROM nodes WHERE name LIKE ? AND kind IN ('function','method','class','interface','type','struct','enum','trait','record','module','constant') ORDER BY file, line`,
     )
     .all(`%${target}%`);
   if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
@@ -142,8 +143,8 @@ function explainFunctionImpl(db, target, noTests, getFileLines) {
           halsteadVolume: cRow.halstead_volume || 0,
         };
       }
-    } catch {
-      /* table may not exist */
+    } catch (e) {
+      debug(`complexity lookup failed for node ${node.id}: ${e.message}`);
     }
 
     return {
@@ -311,8 +312,8 @@ export function contextData(name, customDbPath, opts = {}) {
             halsteadVolume: cRow.halstead_volume || 0,
           };
         }
-      } catch {
-        /* table may not exist */
+      } catch (e) {
+        debug(`complexity lookup failed for node ${node.id}: ${e.message}`);
       }
 
       // Children (parameters, properties, constants)
@@ -324,8 +325,8 @@ export function contextData(name, customDbPath, opts = {}) {
           line: c.line,
           endLine: c.end_line || null,
         }));
-      } catch {
-        /* parent_id column may not exist */
+      } catch (e) {
+        debug(`findNodeChildren failed for node ${node.id}: ${e.message}`);
       }
 
       return {

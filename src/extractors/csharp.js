@@ -4,233 +4,250 @@ import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js'
  * Extract symbols from C# files.
  */
 export function extractCSharpSymbols(tree, _filePath) {
-  const definitions = [];
-  const calls = [];
-  const imports = [];
-  const classes = [];
-  const exports = [];
+  const ctx = {
+    definitions: [],
+    calls: [],
+    imports: [],
+    classes: [],
+    exports: [],
+  };
 
-  function findCSharpParentType(node) {
-    let current = node.parent;
-    while (current) {
-      if (
-        current.type === 'class_declaration' ||
-        current.type === 'struct_declaration' ||
-        current.type === 'interface_declaration' ||
-        current.type === 'enum_declaration' ||
-        current.type === 'record_declaration'
-      ) {
-        const nameNode = current.childForFieldName('name');
-        return nameNode ? nameNode.text : null;
-      }
-      current = current.parent;
-    }
-    return null;
+  walkCSharpNode(tree.rootNode, ctx);
+  return ctx;
+}
+
+function walkCSharpNode(node, ctx) {
+  switch (node.type) {
+    case 'class_declaration':
+      handleCsClassDecl(node, ctx);
+      break;
+    case 'struct_declaration':
+      handleCsStructDecl(node, ctx);
+      break;
+    case 'record_declaration':
+      handleCsRecordDecl(node, ctx);
+      break;
+    case 'interface_declaration':
+      handleCsInterfaceDecl(node, ctx);
+      break;
+    case 'enum_declaration':
+      handleCsEnumDecl(node, ctx);
+      break;
+    case 'method_declaration':
+      handleCsMethodDecl(node, ctx);
+      break;
+    case 'constructor_declaration':
+      handleCsConstructorDecl(node, ctx);
+      break;
+    case 'property_declaration':
+      handleCsPropertyDecl(node, ctx);
+      break;
+    case 'using_directive':
+      handleCsUsingDirective(node, ctx);
+      break;
+    case 'invocation_expression':
+      handleCsInvocationExpr(node, ctx);
+      break;
+    case 'object_creation_expression':
+      handleCsObjectCreation(node, ctx);
+      break;
   }
 
-  function walkCSharpNode(node) {
-    switch (node.type) {
-      case 'class_declaration': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          const classChildren = extractCSharpClassFields(node);
-          definitions.push({
-            name: nameNode.text,
-            kind: 'class',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-            children: classChildren.length > 0 ? classChildren : undefined,
-          });
-          extractCSharpBaseTypes(node, nameNode.text, classes);
-        }
-        break;
-      }
+  for (let i = 0; i < node.childCount; i++) walkCSharpNode(node.child(i), ctx);
+}
 
-      case 'struct_declaration': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          const structChildren = extractCSharpClassFields(node);
-          definitions.push({
-            name: nameNode.text,
-            kind: 'struct',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-            children: structChildren.length > 0 ? structChildren : undefined,
-          });
-          extractCSharpBaseTypes(node, nameNode.text, classes);
-        }
-        break;
-      }
+// ── Walk-path per-node-type handlers ────────────────────────────────────────
 
-      case 'record_declaration': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          definitions.push({
-            name: nameNode.text,
-            kind: 'record',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-          });
-          extractCSharpBaseTypes(node, nameNode.text, classes);
-        }
-        break;
-      }
+function handleCsClassDecl(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  const classChildren = extractCSharpClassFields(node);
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'class',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+    children: classChildren.length > 0 ? classChildren : undefined,
+  });
+  extractCSharpBaseTypes(node, nameNode.text, ctx.classes);
+}
 
-      case 'interface_declaration': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          definitions.push({
-            name: nameNode.text,
-            kind: 'interface',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-          });
-          const body = node.childForFieldName('body');
-          if (body) {
-            for (let i = 0; i < body.childCount; i++) {
-              const child = body.child(i);
-              if (child && child.type === 'method_declaration') {
-                const methName = child.childForFieldName('name');
-                if (methName) {
-                  definitions.push({
-                    name: `${nameNode.text}.${methName.text}`,
-                    kind: 'method',
-                    line: child.startPosition.row + 1,
-                    endLine: child.endPosition.row + 1,
-                  });
-                }
-              }
-            }
-          }
-        }
-        break;
-      }
+function handleCsStructDecl(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  const structChildren = extractCSharpClassFields(node);
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'struct',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+    children: structChildren.length > 0 ? structChildren : undefined,
+  });
+  extractCSharpBaseTypes(node, nameNode.text, ctx.classes);
+}
 
-      case 'enum_declaration': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          const enumChildren = extractCSharpEnumMembers(node);
-          definitions.push({
-            name: nameNode.text,
-            kind: 'enum',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-            children: enumChildren.length > 0 ? enumChildren : undefined,
-          });
-        }
-        break;
-      }
+function handleCsRecordDecl(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'record',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+  });
+  extractCSharpBaseTypes(node, nameNode.text, ctx.classes);
+}
 
-      case 'method_declaration': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          const parentType = findCSharpParentType(node);
-          const fullName = parentType ? `${parentType}.${nameNode.text}` : nameNode.text;
-          const params = extractCSharpParameters(node.childForFieldName('parameters'));
-          definitions.push({
-            name: fullName,
+function handleCsInterfaceDecl(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'interface',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+  });
+  const body = node.childForFieldName('body');
+  if (body) {
+    for (let i = 0; i < body.childCount; i++) {
+      const child = body.child(i);
+      if (child && child.type === 'method_declaration') {
+        const methName = child.childForFieldName('name');
+        if (methName) {
+          ctx.definitions.push({
+            name: `${nameNode.text}.${methName.text}`,
             kind: 'method',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-            children: params.length > 0 ? params : undefined,
-            visibility: extractModifierVisibility(node),
+            line: child.startPosition.row + 1,
+            endLine: child.endPosition.row + 1,
           });
         }
-        break;
-      }
-
-      case 'constructor_declaration': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          const parentType = findCSharpParentType(node);
-          const fullName = parentType ? `${parentType}.${nameNode.text}` : nameNode.text;
-          const params = extractCSharpParameters(node.childForFieldName('parameters'));
-          definitions.push({
-            name: fullName,
-            kind: 'method',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-            children: params.length > 0 ? params : undefined,
-            visibility: extractModifierVisibility(node),
-          });
-        }
-        break;
-      }
-
-      case 'property_declaration': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          const parentType = findCSharpParentType(node);
-          const fullName = parentType ? `${parentType}.${nameNode.text}` : nameNode.text;
-          definitions.push({
-            name: fullName,
-            kind: 'property',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-            visibility: extractModifierVisibility(node),
-          });
-        }
-        break;
-      }
-
-      case 'using_directive': {
-        // using System.Collections.Generic;
-        const nameNode =
-          node.childForFieldName('name') ||
-          findChild(node, 'qualified_name') ||
-          findChild(node, 'identifier');
-        if (nameNode) {
-          const fullPath = nameNode.text;
-          const lastName = fullPath.split('.').pop();
-          imports.push({
-            source: fullPath,
-            names: [lastName],
-            line: node.startPosition.row + 1,
-            csharpUsing: true,
-          });
-        }
-        break;
-      }
-
-      case 'invocation_expression': {
-        const fn = node.childForFieldName('function') || node.child(0);
-        if (fn) {
-          if (fn.type === 'identifier') {
-            calls.push({ name: fn.text, line: node.startPosition.row + 1 });
-          } else if (fn.type === 'member_access_expression') {
-            const name = fn.childForFieldName('name');
-            if (name) {
-              const expr = fn.childForFieldName('expression');
-              const call = { name: name.text, line: node.startPosition.row + 1 };
-              if (expr) call.receiver = expr.text;
-              calls.push(call);
-            }
-          } else if (fn.type === 'generic_name' || fn.type === 'member_binding_expression') {
-            const name = fn.childForFieldName('name') || fn.child(0);
-            if (name) calls.push({ name: name.text, line: node.startPosition.row + 1 });
-          }
-        }
-        break;
-      }
-
-      case 'object_creation_expression': {
-        const typeNode = node.childForFieldName('type');
-        if (typeNode) {
-          const typeName =
-            typeNode.type === 'generic_name'
-              ? typeNode.childForFieldName('name')?.text || typeNode.child(0)?.text
-              : typeNode.text;
-          if (typeName) calls.push({ name: typeName, line: node.startPosition.row + 1 });
-        }
-        break;
       }
     }
-
-    for (let i = 0; i < node.childCount; i++) walkCSharpNode(node.child(i));
   }
+}
 
-  walkCSharpNode(tree.rootNode);
-  return { definitions, calls, imports, classes, exports };
+function handleCsEnumDecl(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  const enumChildren = extractCSharpEnumMembers(node);
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'enum',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+    children: enumChildren.length > 0 ? enumChildren : undefined,
+  });
+}
+
+function handleCsMethodDecl(node, ctx) {
+  // Skip interface methods already emitted by handleCsInterfaceDecl
+  if (node.parent?.parent?.type === 'interface_declaration') return;
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  const parentType = findCSharpParentType(node);
+  const fullName = parentType ? `${parentType}.${nameNode.text}` : nameNode.text;
+  const params = extractCSharpParameters(node.childForFieldName('parameters'));
+  ctx.definitions.push({
+    name: fullName,
+    kind: 'method',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+    children: params.length > 0 ? params : undefined,
+    visibility: extractModifierVisibility(node),
+  });
+}
+
+function handleCsConstructorDecl(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  const parentType = findCSharpParentType(node);
+  const fullName = parentType ? `${parentType}.${nameNode.text}` : nameNode.text;
+  const params = extractCSharpParameters(node.childForFieldName('parameters'));
+  ctx.definitions.push({
+    name: fullName,
+    kind: 'method',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+    children: params.length > 0 ? params : undefined,
+    visibility: extractModifierVisibility(node),
+  });
+}
+
+function handleCsPropertyDecl(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  const parentType = findCSharpParentType(node);
+  const fullName = parentType ? `${parentType}.${nameNode.text}` : nameNode.text;
+  ctx.definitions.push({
+    name: fullName,
+    kind: 'property',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+    visibility: extractModifierVisibility(node),
+  });
+}
+
+function handleCsUsingDirective(node, ctx) {
+  const nameNode =
+    node.childForFieldName('name') ||
+    findChild(node, 'qualified_name') ||
+    findChild(node, 'identifier');
+  if (!nameNode) return;
+  const fullPath = nameNode.text;
+  const lastName = fullPath.split('.').pop();
+  ctx.imports.push({
+    source: fullPath,
+    names: [lastName],
+    line: node.startPosition.row + 1,
+    csharpUsing: true,
+  });
+}
+
+function handleCsInvocationExpr(node, ctx) {
+  const fn = node.childForFieldName('function') || node.child(0);
+  if (!fn) return;
+  if (fn.type === 'identifier') {
+    ctx.calls.push({ name: fn.text, line: node.startPosition.row + 1 });
+  } else if (fn.type === 'member_access_expression') {
+    const name = fn.childForFieldName('name');
+    if (name) {
+      const expr = fn.childForFieldName('expression');
+      const call = { name: name.text, line: node.startPosition.row + 1 };
+      if (expr) call.receiver = expr.text;
+      ctx.calls.push(call);
+    }
+  } else if (fn.type === 'generic_name' || fn.type === 'member_binding_expression') {
+    const name = fn.childForFieldName('name') || fn.child(0);
+    if (name) ctx.calls.push({ name: name.text, line: node.startPosition.row + 1 });
+  }
+}
+
+function handleCsObjectCreation(node, ctx) {
+  const typeNode = node.childForFieldName('type');
+  if (!typeNode) return;
+  const typeName =
+    typeNode.type === 'generic_name'
+      ? typeNode.childForFieldName('name')?.text || typeNode.child(0)?.text
+      : typeNode.text;
+  if (typeName) ctx.calls.push({ name: typeName, line: node.startPosition.row + 1 });
+}
+
+function findCSharpParentType(node) {
+  let current = node.parent;
+  while (current) {
+    if (
+      current.type === 'class_declaration' ||
+      current.type === 'struct_declaration' ||
+      current.type === 'interface_declaration' ||
+      current.type === 'enum_declaration' ||
+      current.type === 'record_declaration'
+    ) {
+      const nameNode = current.childForFieldName('name');
+      return nameNode ? nameNode.text : null;
+    }
+    current = current.parent;
+  }
+  return null;
 }
 
 // ── Child extraction helpers ────────────────────────────────────────────────

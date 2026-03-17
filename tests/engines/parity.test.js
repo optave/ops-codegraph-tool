@@ -65,19 +65,25 @@ function nativeExtract(code, filePath) {
 function normalize(symbols) {
   if (!symbols) return symbols;
   return {
-    definitions: (symbols.definitions || []).map((d) => ({
-      name: d.name,
-      kind: d.kind,
-      line: d.line,
-      endLine: d.endLine ?? d.end_line ?? null,
-      ...(() => {
-        // Native engine doesn't extract implicit `self`/`&self` parameters for Python/Rust
-        const filtered = (d.children || [])
-          .filter((c) => c.name !== 'self')
-          .map((c) => ({ name: c.name, kind: c.kind, line: c.line }));
-        return filtered.length ? { children: filtered } : {};
-      })(),
-    })),
+    definitions: (symbols.definitions || [])
+      .map((d) => ({
+        name: d.name,
+        kind: d.kind,
+        line: d.line,
+        endLine: d.endLine ?? d.end_line ?? null,
+        ...(() => {
+          // Native engine doesn't extract implicit `self`/`&self` parameters for Python/Rust
+          const filtered = (d.children || [])
+            .filter((c) => c.name !== 'self')
+            .map((c) => ({ name: c.name, kind: c.kind, line: c.line }));
+          return filtered.length ? { children: filtered } : {};
+        })(),
+      }))
+      // Deduplicate: interface/trait methods can be emitted twice (handler + recursive walk)
+      .filter(
+        (d, i, arr) =>
+          arr.findIndex((x) => x.name === d.name && x.kind === d.kind && x.line === d.line) === i,
+      ),
     calls: (symbols.calls || []).map((c) => ({
       name: c.name,
       line: c.line,

@@ -179,7 +179,7 @@ export function purgeFilesFromGraph(db, files, options = {}) {
 }
 
 /** Batch INSERT chunk size for multi-value INSERTs. */
-export const BATCH_CHUNK = 200;
+const BATCH_CHUNK = 200;
 
 /**
  * Batch-insert node rows via multi-value INSERT statements.

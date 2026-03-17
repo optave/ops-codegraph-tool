@@ -242,11 +242,23 @@ export const MIGRATIONS = [
   },
 ];
 
+function hasColumn(db, table, column) {
+  const cols = db.pragma(`table_info(${table})`);
+  return cols.some((c) => c.name === column);
+}
+
+function hasTable(db, table) {
+  const row = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
+  return !!row;
+}
+
 export function getBuildMeta(db, key) {
+  if (!hasTable(db, 'build_meta')) return null;
   try {
     const row = db.prepare('SELECT value FROM build_meta WHERE key = ?').get(key);
     return row ? row.value : null;
-  } catch {
+  } catch (e) {
+    debug(`getBuildMeta failed for key "${key}": ${e.message}`);
     return null;
   }
 }
@@ -280,74 +292,39 @@ export function initSchema(db) {
     }
   }
 
-  try {
-    db.exec('ALTER TABLE nodes ADD COLUMN end_line INTEGER');
-  } catch {
-    /* already exists */
-  }
-  try {
-    db.exec('ALTER TABLE edges ADD COLUMN confidence REAL DEFAULT 1.0');
-  } catch {
-    /* already exists */
-  }
-  try {
-    db.exec('ALTER TABLE edges ADD COLUMN dynamic INTEGER DEFAULT 0');
-  } catch {
-    /* already exists */
-  }
-  try {
-    db.exec('ALTER TABLE nodes ADD COLUMN role TEXT');
-  } catch {
-    /* already exists */
-  }
-  try {
+  // Legacy column compat — add columns that may be missing from pre-migration DBs
+  if (hasTable(db, 'nodes')) {
+    if (!hasColumn(db, 'nodes', 'end_line')) {
+      db.exec('ALTER TABLE nodes ADD COLUMN end_line INTEGER');
+    }
+    if (!hasColumn(db, 'nodes', 'role')) {
+      db.exec('ALTER TABLE nodes ADD COLUMN role TEXT');
+    }
     db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_role ON nodes(role)');
-  } catch {
-    /* already exists */
-  }
-  try {
-    db.exec('ALTER TABLE nodes ADD COLUMN parent_id INTEGER REFERENCES nodes(id)');
-  } catch {
-    /* already exists */
-  }
-  try {
+    if (!hasColumn(db, 'nodes', 'parent_id')) {
+      db.exec('ALTER TABLE nodes ADD COLUMN parent_id INTEGER REFERENCES nodes(id)');
+    }
     db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)');
-  } catch {
-    /* already exists */
-  }
-  try {
     db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_kind_parent ON nodes(kind, parent_id)');
-  } catch {
-    /* already exists */
-  }
-  try {
-    db.exec('ALTER TABLE nodes ADD COLUMN qualified_name TEXT');
-  } catch {
-    /* already exists */
-  }
-  try {
-    db.exec('ALTER TABLE nodes ADD COLUMN scope TEXT');
-  } catch {
-    /* already exists */
-  }
-  try {
-    db.exec('ALTER TABLE nodes ADD COLUMN visibility TEXT');
-  } catch {
-    /* already exists */
-  }
-  try {
+    if (!hasColumn(db, 'nodes', 'qualified_name')) {
+      db.exec('ALTER TABLE nodes ADD COLUMN qualified_name TEXT');
+    }
+    if (!hasColumn(db, 'nodes', 'scope')) {
+      db.exec('ALTER TABLE nodes ADD COLUMN scope TEXT');
+    }
+    if (!hasColumn(db, 'nodes', 'visibility')) {
+      db.exec('ALTER TABLE nodes ADD COLUMN visibility TEXT');
+    }
     db.exec('UPDATE nodes SET qualified_name = name WHERE qualified_name IS NULL');
-  } catch {
-    /* nodes table may not exist yet */
-  }
-  try {
     db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_qualified_name ON nodes(qualified_name)');
-  } catch {
-    /* already exists */
-  }
-  try {
     db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_scope ON nodes(scope)');
-  } catch {
-    /* already exists */
+  }
+  if (hasTable(db, 'edges')) {
+    if (!hasColumn(db, 'edges', 'confidence')) {
+      db.exec('ALTER TABLE edges ADD COLUMN confidence REAL DEFAULT 1.0');
+    }
+    if (!hasColumn(db, 'edges', 'dynamic')) {
+      db.exec('ALTER TABLE edges ADD COLUMN dynamic INTEGER DEFAULT 0');
+    }
   }
 }
