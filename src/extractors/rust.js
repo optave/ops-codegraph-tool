@@ -4,191 +4,206 @@ import { findChild, nodeEndLine, rustVisibility } from './helpers.js';
  * Extract symbols from Rust files.
  */
 export function extractRustSymbols(tree, _filePath) {
-  const definitions = [];
-  const calls = [];
-  const imports = [];
-  const classes = [];
-  const exports = [];
+  const ctx = {
+    definitions: [],
+    calls: [],
+    imports: [],
+    classes: [],
+    exports: [],
+  };
 
-  function findCurrentImpl(node) {
-    let current = node.parent;
-    while (current) {
-      if (current.type === 'impl_item') {
-        const typeNode = current.childForFieldName('type');
-        return typeNode ? typeNode.text : null;
-      }
-      current = current.parent;
-    }
-    return null;
+  walkRustNode(tree.rootNode, ctx);
+  return ctx;
+}
+
+function walkRustNode(node, ctx) {
+  switch (node.type) {
+    case 'function_item':
+      handleRustFuncItem(node, ctx);
+      break;
+    case 'struct_item':
+      handleRustStructItem(node, ctx);
+      break;
+    case 'enum_item':
+      handleRustEnumItem(node, ctx);
+      break;
+    case 'const_item':
+      handleRustConstItem(node, ctx);
+      break;
+    case 'trait_item':
+      handleRustTraitItem(node, ctx);
+      break;
+    case 'impl_item':
+      handleRustImplItem(node, ctx);
+      break;
+    case 'use_declaration':
+      handleRustUseDecl(node, ctx);
+      break;
+    case 'call_expression':
+      handleRustCallExpr(node, ctx);
+      break;
+    case 'macro_invocation':
+      handleRustMacroInvocation(node, ctx);
+      break;
   }
 
-  function walkRustNode(node) {
-    switch (node.type) {
-      case 'function_item': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          const implType = findCurrentImpl(node);
-          const fullName = implType ? `${implType}.${nameNode.text}` : nameNode.text;
-          const kind = implType ? 'method' : 'function';
-          const params = extractRustParameters(node.childForFieldName('parameters'));
-          definitions.push({
-            name: fullName,
-            kind,
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-            children: params.length > 0 ? params : undefined,
-            visibility: rustVisibility(node),
+  for (let i = 0; i < node.childCount; i++) walkRustNode(node.child(i), ctx);
+}
+
+// ── Walk-path per-node-type handlers ────────────────────────────────────────
+
+function handleRustFuncItem(node, ctx) {
+  // Skip default-impl functions already emitted by handleRustTraitItem
+  if (node.parent?.parent?.type === 'trait_item') return;
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  const implType = findCurrentImpl(node);
+  const fullName = implType ? `${implType}.${nameNode.text}` : nameNode.text;
+  const kind = implType ? 'method' : 'function';
+  const params = extractRustParameters(node.childForFieldName('parameters'));
+  ctx.definitions.push({
+    name: fullName,
+    kind,
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+    children: params.length > 0 ? params : undefined,
+    visibility: rustVisibility(node),
+  });
+}
+
+function handleRustStructItem(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  const fields = extractStructFields(node);
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'struct',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+    children: fields.length > 0 ? fields : undefined,
+    visibility: rustVisibility(node),
+  });
+}
+
+function handleRustEnumItem(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  const variants = extractEnumVariants(node);
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'enum',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+    children: variants.length > 0 ? variants : undefined,
+  });
+}
+
+function handleRustConstItem(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'constant',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+  });
+}
+
+function handleRustTraitItem(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'trait',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+  });
+  const body = node.childForFieldName('body');
+  if (body) {
+    for (let i = 0; i < body.childCount; i++) {
+      const child = body.child(i);
+      if (child && (child.type === 'function_signature_item' || child.type === 'function_item')) {
+        const methName = child.childForFieldName('name');
+        if (methName) {
+          ctx.definitions.push({
+            name: `${nameNode.text}.${methName.text}`,
+            kind: 'method',
+            line: child.startPosition.row + 1,
+            endLine: child.endPosition.row + 1,
           });
         }
-        break;
-      }
-
-      case 'struct_item': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          const fields = extractStructFields(node);
-          definitions.push({
-            name: nameNode.text,
-            kind: 'struct',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-            children: fields.length > 0 ? fields : undefined,
-            visibility: rustVisibility(node),
-          });
-        }
-        break;
-      }
-
-      case 'enum_item': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          const variants = extractEnumVariants(node);
-          definitions.push({
-            name: nameNode.text,
-            kind: 'enum',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-            children: variants.length > 0 ? variants : undefined,
-          });
-        }
-        break;
-      }
-
-      case 'const_item': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          definitions.push({
-            name: nameNode.text,
-            kind: 'constant',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-          });
-        }
-        break;
-      }
-
-      case 'trait_item': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          definitions.push({
-            name: nameNode.text,
-            kind: 'trait',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-          });
-          const body = node.childForFieldName('body');
-          if (body) {
-            for (let i = 0; i < body.childCount; i++) {
-              const child = body.child(i);
-              if (
-                child &&
-                (child.type === 'function_signature_item' || child.type === 'function_item')
-              ) {
-                const methName = child.childForFieldName('name');
-                if (methName) {
-                  definitions.push({
-                    name: `${nameNode.text}.${methName.text}`,
-                    kind: 'method',
-                    line: child.startPosition.row + 1,
-                    endLine: child.endPosition.row + 1,
-                  });
-                }
-              }
-            }
-          }
-        }
-        break;
-      }
-
-      case 'impl_item': {
-        const typeNode = node.childForFieldName('type');
-        const traitNode = node.childForFieldName('trait');
-        if (typeNode && traitNode) {
-          classes.push({
-            name: typeNode.text,
-            implements: traitNode.text,
-            line: node.startPosition.row + 1,
-          });
-        }
-        break;
-      }
-
-      case 'use_declaration': {
-        const argNode = node.child(1);
-        if (argNode) {
-          const usePaths = extractRustUsePath(argNode);
-          for (const imp of usePaths) {
-            imports.push({
-              source: imp.source,
-              names: imp.names,
-              line: node.startPosition.row + 1,
-              rustUse: true,
-            });
-          }
-        }
-        break;
-      }
-
-      case 'call_expression': {
-        const fn = node.childForFieldName('function');
-        if (fn) {
-          if (fn.type === 'identifier') {
-            calls.push({ name: fn.text, line: node.startPosition.row + 1 });
-          } else if (fn.type === 'field_expression') {
-            const field = fn.childForFieldName('field');
-            if (field) {
-              const value = fn.childForFieldName('value');
-              const call = { name: field.text, line: node.startPosition.row + 1 };
-              if (value) call.receiver = value.text;
-              calls.push(call);
-            }
-          } else if (fn.type === 'scoped_identifier') {
-            const name = fn.childForFieldName('name');
-            if (name) {
-              const path = fn.childForFieldName('path');
-              const call = { name: name.text, line: node.startPosition.row + 1 };
-              if (path) call.receiver = path.text;
-              calls.push(call);
-            }
-          }
-        }
-        break;
-      }
-
-      case 'macro_invocation': {
-        const macroNode = node.child(0);
-        if (macroNode) {
-          calls.push({ name: `${macroNode.text}!`, line: node.startPosition.row + 1 });
-        }
-        break;
       }
     }
-
-    for (let i = 0; i < node.childCount; i++) walkRustNode(node.child(i));
   }
+}
 
-  walkRustNode(tree.rootNode);
-  return { definitions, calls, imports, classes, exports };
+function handleRustImplItem(node, ctx) {
+  const typeNode = node.childForFieldName('type');
+  const traitNode = node.childForFieldName('trait');
+  if (typeNode && traitNode) {
+    ctx.classes.push({
+      name: typeNode.text,
+      implements: traitNode.text,
+      line: node.startPosition.row + 1,
+    });
+  }
+}
+
+function handleRustUseDecl(node, ctx) {
+  const argNode = node.child(1);
+  if (!argNode) return;
+  const usePaths = extractRustUsePath(argNode);
+  for (const imp of usePaths) {
+    ctx.imports.push({
+      source: imp.source,
+      names: imp.names,
+      line: node.startPosition.row + 1,
+      rustUse: true,
+    });
+  }
+}
+
+function handleRustCallExpr(node, ctx) {
+  const fn = node.childForFieldName('function');
+  if (!fn) return;
+  if (fn.type === 'identifier') {
+    ctx.calls.push({ name: fn.text, line: node.startPosition.row + 1 });
+  } else if (fn.type === 'field_expression') {
+    const field = fn.childForFieldName('field');
+    if (field) {
+      const value = fn.childForFieldName('value');
+      const call = { name: field.text, line: node.startPosition.row + 1 };
+      if (value) call.receiver = value.text;
+      ctx.calls.push(call);
+    }
+  } else if (fn.type === 'scoped_identifier') {
+    const name = fn.childForFieldName('name');
+    if (name) {
+      const path = fn.childForFieldName('path');
+      const call = { name: name.text, line: node.startPosition.row + 1 };
+      if (path) call.receiver = path.text;
+      ctx.calls.push(call);
+    }
+  }
+}
+
+function handleRustMacroInvocation(node, ctx) {
+  const macroNode = node.child(0);
+  if (macroNode) {
+    ctx.calls.push({ name: `${macroNode.text}!`, line: node.startPosition.row + 1 });
+  }
+}
+
+function findCurrentImpl(node) {
+  let current = node.parent;
+  while (current) {
+    if (current.type === 'impl_item') {
+      const typeNode = current.childForFieldName('type');
+      return typeNode ? typeNode.text : null;
+    }
+    current = current.parent;
+  }
+  return null;
 }
 
 // ── Child extraction helpers ────────────────────────────────────────────────

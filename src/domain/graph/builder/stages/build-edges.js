@@ -28,7 +28,7 @@ export async function buildEdges(ctx) {
   // Pre-load all nodes into lookup maps
   const allNodes = db
     .prepare(
-      `SELECT id, name, kind, file, line FROM nodes WHERE kind IN ('function','method','class','interface','struct','type','module','enum','trait')`,
+      `SELECT id, name, kind, file, line FROM nodes WHERE kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')`,
     )
     .all();
   ctx.nodesByName = new Map();

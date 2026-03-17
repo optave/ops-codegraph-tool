@@ -67,8 +67,8 @@ function loadFunctionLevelEdges(db, { noTests, minConfidence, limit }) {
       FROM edges e
       JOIN nodes n1 ON e.source_id = n1.id
       JOIN nodes n2 ON e.target_id = n2.id
-      WHERE n1.kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module')
-        AND n2.kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module')
+      WHERE n1.kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant')
+        AND n2.kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant')
         AND e.kind = 'calls'
         AND e.confidence >= ?
     `,
@@ -308,7 +308,7 @@ export function exportGraphSON(db, opts = {}) {
   let nodes = db
     .prepare(`
     SELECT id, name, kind, file, line, role FROM nodes
-    WHERE kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'file')
+    WHERE kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant', 'file')
   `)
     .all();
   if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));

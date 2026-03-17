@@ -4,239 +4,245 @@ import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js'
  * Extract symbols from Java files.
  */
 export function extractJavaSymbols(tree, _filePath) {
-  const definitions = [];
-  const calls = [];
-  const imports = [];
-  const classes = [];
-  const exports = [];
+  const ctx = {
+    definitions: [],
+    calls: [],
+    imports: [],
+    classes: [],
+    exports: [],
+  };
 
-  function findJavaParentClass(node) {
-    let current = node.parent;
-    while (current) {
+  walkJavaNode(tree.rootNode, ctx);
+  return ctx;
+}
+
+function walkJavaNode(node, ctx) {
+  switch (node.type) {
+    case 'class_declaration':
+      handleJavaClassDecl(node, ctx);
+      break;
+    case 'interface_declaration':
+      handleJavaInterfaceDecl(node, ctx);
+      break;
+    case 'enum_declaration':
+      handleJavaEnumDecl(node, ctx);
+      break;
+    case 'method_declaration':
+      handleJavaMethodDecl(node, ctx);
+      break;
+    case 'constructor_declaration':
+      handleJavaConstructorDecl(node, ctx);
+      break;
+    case 'import_declaration':
+      handleJavaImportDecl(node, ctx);
+      break;
+    case 'method_invocation':
+      handleJavaMethodInvocation(node, ctx);
+      break;
+    case 'object_creation_expression':
+      handleJavaObjectCreation(node, ctx);
+      break;
+  }
+
+  for (let i = 0; i < node.childCount; i++) walkJavaNode(node.child(i), ctx);
+}
+
+// ── Walk-path per-node-type handlers ────────────────────────────────────────
+
+function handleJavaClassDecl(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  const classChildren = extractClassFields(node);
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'class',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+    children: classChildren.length > 0 ? classChildren : undefined,
+  });
+
+  const superclass = node.childForFieldName('superclass');
+  if (superclass) {
+    for (let i = 0; i < superclass.childCount; i++) {
+      const child = superclass.child(i);
       if (
-        current.type === 'class_declaration' ||
-        current.type === 'enum_declaration' ||
-        current.type === 'interface_declaration'
+        child &&
+        (child.type === 'type_identifier' ||
+          child.type === 'identifier' ||
+          child.type === 'generic_type')
       ) {
-        const nameNode = current.childForFieldName('name');
-        return nameNode ? nameNode.text : null;
-      }
-      current = current.parent;
-    }
-    return null;
-  }
-
-  function walkJavaNode(node) {
-    switch (node.type) {
-      case 'class_declaration': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          const classChildren = extractClassFields(node);
-          definitions.push({
+        const superName = child.type === 'generic_type' ? child.child(0)?.text : child.text;
+        if (superName)
+          ctx.classes.push({
             name: nameNode.text,
-            kind: 'class',
+            extends: superName,
             line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-            children: classChildren.length > 0 ? classChildren : undefined,
           });
-
-          const superclass = node.childForFieldName('superclass');
-          if (superclass) {
-            for (let i = 0; i < superclass.childCount; i++) {
-              const child = superclass.child(i);
-              if (
-                child &&
-                (child.type === 'type_identifier' ||
-                  child.type === 'identifier' ||
-                  child.type === 'generic_type')
-              ) {
-                const superName = child.type === 'generic_type' ? child.child(0)?.text : child.text;
-                if (superName)
-                  classes.push({
-                    name: nameNode.text,
-                    extends: superName,
-                    line: node.startPosition.row + 1,
-                  });
-                break;
-              }
-            }
-          }
-
-          const interfaces = node.childForFieldName('interfaces');
-          if (interfaces) {
-            for (let i = 0; i < interfaces.childCount; i++) {
-              const child = interfaces.child(i);
-              if (
-                child &&
-                (child.type === 'type_identifier' ||
-                  child.type === 'identifier' ||
-                  child.type === 'type_list' ||
-                  child.type === 'generic_type')
-              ) {
-                if (child.type === 'type_list') {
-                  for (let j = 0; j < child.childCount; j++) {
-                    const t = child.child(j);
-                    if (
-                      t &&
-                      (t.type === 'type_identifier' ||
-                        t.type === 'identifier' ||
-                        t.type === 'generic_type')
-                    ) {
-                      const ifaceName = t.type === 'generic_type' ? t.child(0)?.text : t.text;
-                      if (ifaceName)
-                        classes.push({
-                          name: nameNode.text,
-                          implements: ifaceName,
-                          line: node.startPosition.row + 1,
-                        });
-                    }
-                  }
-                } else {
-                  const ifaceName =
-                    child.type === 'generic_type' ? child.child(0)?.text : child.text;
-                  if (ifaceName)
-                    classes.push({
-                      name: nameNode.text,
-                      implements: ifaceName,
-                      line: node.startPosition.row + 1,
-                    });
-                }
-              }
-            }
-          }
-        }
-        break;
-      }
-
-      case 'interface_declaration': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          definitions.push({
-            name: nameNode.text,
-            kind: 'interface',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-          });
-          const body = node.childForFieldName('body');
-          if (body) {
-            for (let i = 0; i < body.childCount; i++) {
-              const child = body.child(i);
-              if (child && child.type === 'method_declaration') {
-                const methName = child.childForFieldName('name');
-                if (methName) {
-                  definitions.push({
-                    name: `${nameNode.text}.${methName.text}`,
-                    kind: 'method',
-                    line: child.startPosition.row + 1,
-                    endLine: child.endPosition.row + 1,
-                  });
-                }
-              }
-            }
-          }
-        }
-        break;
-      }
-
-      case 'enum_declaration': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          const enumChildren = extractEnumConstants(node);
-          definitions.push({
-            name: nameNode.text,
-            kind: 'enum',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-            children: enumChildren.length > 0 ? enumChildren : undefined,
-          });
-        }
-        break;
-      }
-
-      case 'method_declaration': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          const parentClass = findJavaParentClass(node);
-          const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
-          const params = extractJavaParameters(node.childForFieldName('parameters'));
-          definitions.push({
-            name: fullName,
-            kind: 'method',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-            children: params.length > 0 ? params : undefined,
-            visibility: extractModifierVisibility(node),
-          });
-        }
-        break;
-      }
-
-      case 'constructor_declaration': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          const parentClass = findJavaParentClass(node);
-          const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
-          const params = extractJavaParameters(node.childForFieldName('parameters'));
-          definitions.push({
-            name: fullName,
-            kind: 'method',
-            line: node.startPosition.row + 1,
-            endLine: nodeEndLine(node),
-            children: params.length > 0 ? params : undefined,
-            visibility: extractModifierVisibility(node),
-          });
-        }
-        break;
-      }
-
-      case 'import_declaration': {
-        for (let i = 0; i < node.childCount; i++) {
-          const child = node.child(i);
-          if (child && (child.type === 'scoped_identifier' || child.type === 'identifier')) {
-            const fullPath = child.text;
-            const lastName = fullPath.split('.').pop();
-            imports.push({
-              source: fullPath,
-              names: [lastName],
-              line: node.startPosition.row + 1,
-              javaImport: true,
-            });
-          }
-          if (child && child.type === 'asterisk') {
-            const lastImport = imports[imports.length - 1];
-            if (lastImport) lastImport.names = ['*'];
-          }
-        }
-        break;
-      }
-
-      case 'method_invocation': {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) {
-          const obj = node.childForFieldName('object');
-          const call = { name: nameNode.text, line: node.startPosition.row + 1 };
-          if (obj) call.receiver = obj.text;
-          calls.push(call);
-        }
-        break;
-      }
-
-      case 'object_creation_expression': {
-        const typeNode = node.childForFieldName('type');
-        if (typeNode) {
-          const typeName =
-            typeNode.type === 'generic_type' ? typeNode.child(0)?.text : typeNode.text;
-          if (typeName) calls.push({ name: typeName, line: node.startPosition.row + 1 });
-        }
         break;
       }
     }
-
-    for (let i = 0; i < node.childCount; i++) walkJavaNode(node.child(i));
   }
 
-  walkJavaNode(tree.rootNode);
-  return { definitions, calls, imports, classes, exports };
+  const interfaces = node.childForFieldName('interfaces');
+  if (interfaces) {
+    extractJavaInterfaces(interfaces, nameNode.text, node.startPosition.row + 1, ctx);
+  }
+}
+
+function extractJavaInterfaces(interfaces, className, line, ctx) {
+  for (let i = 0; i < interfaces.childCount; i++) {
+    const child = interfaces.child(i);
+    if (
+      child &&
+      (child.type === 'type_identifier' ||
+        child.type === 'identifier' ||
+        child.type === 'type_list' ||
+        child.type === 'generic_type')
+    ) {
+      if (child.type === 'type_list') {
+        for (let j = 0; j < child.childCount; j++) {
+          const t = child.child(j);
+          if (
+            t &&
+            (t.type === 'type_identifier' || t.type === 'identifier' || t.type === 'generic_type')
+          ) {
+            const ifaceName = t.type === 'generic_type' ? t.child(0)?.text : t.text;
+            if (ifaceName) ctx.classes.push({ name: className, implements: ifaceName, line });
+          }
+        }
+      } else {
+        const ifaceName = child.type === 'generic_type' ? child.child(0)?.text : child.text;
+        if (ifaceName) ctx.classes.push({ name: className, implements: ifaceName, line });
+      }
+    }
+  }
+}
+
+function handleJavaInterfaceDecl(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'interface',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+  });
+  const body = node.childForFieldName('body');
+  if (body) {
+    for (let i = 0; i < body.childCount; i++) {
+      const child = body.child(i);
+      if (child && child.type === 'method_declaration') {
+        const methName = child.childForFieldName('name');
+        if (methName) {
+          ctx.definitions.push({
+            name: `${nameNode.text}.${methName.text}`,
+            kind: 'method',
+            line: child.startPosition.row + 1,
+            endLine: child.endPosition.row + 1,
+          });
+        }
+      }
+    }
+  }
+}
+
+function handleJavaEnumDecl(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  const enumChildren = extractEnumConstants(node);
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'enum',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+    children: enumChildren.length > 0 ? enumChildren : undefined,
+  });
+}
+
+function handleJavaMethodDecl(node, ctx) {
+  // Skip interface methods already emitted by handleJavaInterfaceDecl
+  if (node.parent?.parent?.type === 'interface_declaration') return;
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  const parentClass = findJavaParentClass(node);
+  const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
+  const params = extractJavaParameters(node.childForFieldName('parameters'));
+  ctx.definitions.push({
+    name: fullName,
+    kind: 'method',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+    children: params.length > 0 ? params : undefined,
+    visibility: extractModifierVisibility(node),
+  });
+}
+
+function handleJavaConstructorDecl(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  const parentClass = findJavaParentClass(node);
+  const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
+  const params = extractJavaParameters(node.childForFieldName('parameters'));
+  ctx.definitions.push({
+    name: fullName,
+    kind: 'method',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+    children: params.length > 0 ? params : undefined,
+    visibility: extractModifierVisibility(node),
+  });
+}
+
+function handleJavaImportDecl(node, ctx) {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child && (child.type === 'scoped_identifier' || child.type === 'identifier')) {
+      const fullPath = child.text;
+      const lastName = fullPath.split('.').pop();
+      ctx.imports.push({
+        source: fullPath,
+        names: [lastName],
+        line: node.startPosition.row + 1,
+        javaImport: true,
+      });
+    }
+    if (child && child.type === 'asterisk') {
+      const lastImport = ctx.imports[ctx.imports.length - 1];
+      if (lastImport) lastImport.names = ['*'];
+    }
+  }
+}
+
+function handleJavaMethodInvocation(node, ctx) {
+  const nameNode = node.childForFieldName('name');
+  if (!nameNode) return;
+  const obj = node.childForFieldName('object');
+  const call = { name: nameNode.text, line: node.startPosition.row + 1 };
+  if (obj) call.receiver = obj.text;
+  ctx.calls.push(call);
+}
+
+function handleJavaObjectCreation(node, ctx) {
+  const typeNode = node.childForFieldName('type');
+  if (!typeNode) return;
+  const typeName = typeNode.type === 'generic_type' ? typeNode.child(0)?.text : typeNode.text;
+  if (typeName) ctx.calls.push({ name: typeName, line: node.startPosition.row + 1 });
+}
+
+function findJavaParentClass(node) {
+  let current = node.parent;
+  while (current) {
+    if (
+      current.type === 'class_declaration' ||
+      current.type === 'enum_declaration' ||
+      current.type === 'interface_declaration'
+    ) {
+      const nameNode = current.childForFieldName('name');
+      return nameNode ? nameNode.text : null;
+    }
+    current = current.parent;
+  }
+  return null;
 }
 
 // ── Child extraction helpers ────────────────────────────────────────────────
