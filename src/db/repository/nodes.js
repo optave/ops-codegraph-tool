@@ -1,6 +1,6 @@
 import { ConfigError } from '../../shared/errors.js';
 import { EVERY_SYMBOL_KIND, VALID_ROLES } from '../../shared/kinds.js';
-import { escapeLike, NodeQuery } from '../query-builder.js';
+import { buildFileConditionSQL, NodeQuery } from '../query-builder.js';
 import { cachedStmt } from './cached-stmt.js';
 
 // ─── Query-builder based lookups (moved from src/db/repository.js) ─────
@@ -267,10 +267,9 @@ export function findNodesByScope(db, scopeName, opts = {}) {
     sql += ' AND kind = ?';
     params.push(opts.kind);
   }
-  if (opts.file) {
-    sql += " AND file LIKE ? ESCAPE '\\'";
-    params.push(`%${escapeLike(opts.file)}%`);
-  }
+  const fc = buildFileConditionSQL(opts.file, 'file');
+  sql += fc.sql;
+  params.push(...fc.params);
   sql += ' ORDER BY file, line';
   return db.prepare(sql).all(...params);
 }
@@ -286,12 +285,11 @@ export function findNodesByScope(db, scopeName, opts = {}) {
  * @returns {object[]}
  */
 export function findNodeByQualifiedName(db, qualifiedName, opts = {}) {
-  if (opts.file) {
+  const fc = buildFileConditionSQL(opts.file, 'file');
+  if (fc.sql) {
     return db
-      .prepare(
-        "SELECT * FROM nodes WHERE qualified_name = ? AND file LIKE ? ESCAPE '\\' ORDER BY file, line",
-      )
-      .all(qualifiedName, `%${escapeLike(opts.file)}%`);
+      .prepare(`SELECT * FROM nodes WHERE qualified_name = ?${fc.sql} ORDER BY file, line`)
+      .all(qualifiedName, ...fc.params);
   }
   return cachedStmt(
     _findNodeByQualifiedNameStmt,

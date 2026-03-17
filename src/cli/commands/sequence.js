@@ -1,3 +1,4 @@
+import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 
 export const command = {
@@ -7,7 +8,7 @@ export const command = {
   options: [
     ['--depth <n>', 'Max forward traversal depth', '10'],
     ['--dataflow', 'Annotate with parameter names and return arrows from dataflow table'],
-    ['-f, --file <path>', 'Scope to a specific file (partial match)'],
+    ['-f, --file <path>', 'Scope to a specific file (partial match, repeatable)', collectFile],
     ['-k, --kind <kind>', 'Filter by symbol kind'],
   ],
   validate([_name], opts) {

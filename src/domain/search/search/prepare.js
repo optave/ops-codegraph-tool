@@ -1,4 +1,5 @@
 import { openReadonlyOrFail } from '../../../db/index.js';
+import { escapeLike } from '../../../db/query-builder.js';
 import { getEmbeddingCount, getEmbeddingMeta } from '../../../db/repository/embeddings.js';
 import { MODELS } from '../models.js';
 import { applyFilters } from './filters.js';
@@ -35,7 +36,9 @@ export function prepareSearch(customDbPath, opts = {}) {
     }
 
     // Pre-filter: allow filtering by kind or file pattern to reduce search space
-    const isGlob = opts.filePattern && /[*?[\]]/.test(opts.filePattern);
+    const fp = opts.filePattern;
+    const fpArr = Array.isArray(fp) ? fp : fp ? [fp] : [];
+    const isGlob = fpArr.length > 0 && fpArr.some((p) => /[*?[\]]/.test(p));
     let sql = `
     SELECT e.node_id, e.vector, e.text_preview, n.name, n.kind, n.file, n.line, n.end_line, n.role
     FROM embeddings e
@@ -47,16 +50,21 @@ export function prepareSearch(customDbPath, opts = {}) {
       conditions.push('n.kind = ?');
       params.push(opts.kind);
     }
-    if (opts.filePattern && !isGlob) {
-      conditions.push('n.file LIKE ?');
-      params.push(`%${opts.filePattern}%`);
+    if (fpArr.length > 0 && !isGlob) {
+      if (fpArr.length === 1) {
+        conditions.push("n.file LIKE ? ESCAPE '\\'");
+        params.push(`%${escapeLike(fpArr[0])}%`);
+      } else {
+        conditions.push(`(${fpArr.map(() => "n.file LIKE ? ESCAPE '\\'").join(' OR ')})`);
+        params.push(...fpArr.map((f) => `%${escapeLike(f)}%`));
+      }
     }
     if (conditions.length > 0) {
       sql += ` WHERE ${conditions.join(' AND ')}`;
     }
 
     let rows = db.prepare(sql).all(...params);
-    rows = applyFilters(rows, { ...opts, isGlob });
+    rows = applyFilters(rows, opts);
 
     return { db, rows, modelKey, storedDim };
   } catch (err) {

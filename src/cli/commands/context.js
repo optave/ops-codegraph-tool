@@ -1,3 +1,4 @@
+import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 import { context } from '../../presentation/queries-cli.js';
 
@@ -7,7 +8,11 @@ export const command = {
   queryOpts: true,
   options: [
     ['--depth <n>', 'Include callee source up to N levels deep', '0'],
-    ['-f, --file <path>', 'Scope search to functions in this file (partial match)'],
+    [
+      '-f, --file <path>',
+      'Scope search to functions in this file (partial match, repeatable)',
+      collectFile,
+    ],
     ['-k, --kind <kind>', 'Filter to a specific symbol kind'],
     ['--no-source', 'Metadata only (skip source extraction)'],
     ['--with-test-source', 'Include test source code'],

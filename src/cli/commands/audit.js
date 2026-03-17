@@ -1,3 +1,4 @@
+import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 import { audit } from '../../presentation/audit.js';
 import { explain } from '../../presentation/queries-cli.js';
@@ -10,7 +11,7 @@ export const command = {
     ['-d, --db <path>', 'Path to graph.db'],
     ['--quick', 'Structural summary only (skip impact analysis and health metrics)'],
     ['--depth <n>', 'Impact/explain depth', '3'],
-    ['-f, --file <path>', 'Scope to file (partial match)'],
+    ['-f, --file <path>', 'Scope to file (partial match, repeatable)', collectFile],
     ['-k, --kind <kind>', 'Filter by symbol kind'],
     ['-T, --no-tests', 'Exclude test/spec files from results'],
     ['--include-tests', 'Include test/spec files (overrides excludeTests config)'],

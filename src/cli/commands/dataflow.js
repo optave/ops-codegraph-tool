@@ -1,3 +1,4 @@
+import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 
 export const command = {
@@ -5,7 +6,7 @@ export const command = {
   description: 'Show data flow for a function: parameters, return consumers, mutations',
   queryOpts: true,
   options: [
-    ['-f, --file <path>', 'Scope to file (partial match)'],
+    ['-f, --file <path>', 'Scope to file (partial match, repeatable)', collectFile],
     ['-k, --kind <kind>', 'Filter by symbol kind'],
     ['--impact', 'Show data-dependent blast radius'],
     ['--depth <n>', 'Max traversal depth', '5'],

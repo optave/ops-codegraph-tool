@@ -1,4 +1,5 @@
 import { openReadonlyOrFail } from '../../../db/index.js';
+import { buildFileConditionSQL } from '../../../db/query-builder.js';
 import { normalizeSymbol } from '../../queries.js';
 import { hasFtsIndex, sanitizeFtsQuery } from '../stores/fts5.js';
 import { applyFilters } from './filters.js';
@@ -36,10 +37,16 @@ export function ftsSearchData(query, customDbPath, opts = {}) {
       params.push(opts.kind);
     }
 
-    const isGlob = opts.filePattern && /[*?[\]]/.test(opts.filePattern);
-    if (opts.filePattern && !isGlob) {
-      sql += ' AND n.file LIKE ?';
-      params.push(`%${opts.filePattern}%`);
+    const fp = opts.filePattern;
+    const fpArr = Array.isArray(fp) ? fp : fp ? [fp] : [];
+    const isGlob = fpArr.length > 0 && fpArr.some((p) => /[*?[\]]/.test(p));
+    // For non-glob patterns, push filtering into SQL via buildFileConditionSQL
+    // (handles escapeLike + ESCAPE clause). Glob patterns are handled post-query
+    // by applyFilters.
+    if (fpArr.length > 0 && !isGlob) {
+      const fc = buildFileConditionSQL(fpArr, 'n.file');
+      sql += fc.sql;
+      params.push(...fc.params);
     }
 
     sql += ' ORDER BY rank LIMIT ?';
@@ -53,7 +60,7 @@ export function ftsSearchData(query, customDbPath, opts = {}) {
       return { results: [] };
     }
 
-    rows = applyFilters(rows, { ...opts, isGlob });
+    rows = applyFilters(rows, opts);
 
     const hc = new Map();
     const results = rows.slice(0, limit).map((row) => ({

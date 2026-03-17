@@ -2,10 +2,13 @@ import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { initSchema } from '../../src/db/migrations.js';
 import {
+  buildFileConditionSQL,
+  collectFile,
   fanInJoinSQL,
   fanOutJoinSQL,
   kindInClause,
   NodeQuery,
+  normalizeFileFilter,
   testFilterSQL,
 } from '../../src/db/query-builder.js';
 
@@ -87,6 +90,71 @@ describe('fanOutJoinSQL', () => {
   });
 });
 
+// ─── normalizeFileFilter ─────────────────────────────────────────────
+
+describe('normalizeFileFilter', () => {
+  it('returns empty array for falsy input', () => {
+    expect(normalizeFileFilter(null)).toEqual([]);
+    expect(normalizeFileFilter(undefined)).toEqual([]);
+    expect(normalizeFileFilter('')).toEqual([]);
+  });
+
+  it('wraps a single string in an array', () => {
+    expect(normalizeFileFilter('foo.js')).toEqual(['foo.js']);
+  });
+
+  it('passes through an array unchanged', () => {
+    expect(normalizeFileFilter(['a.js', 'b.js'])).toEqual(['a.js', 'b.js']);
+  });
+});
+
+// ─── buildFileConditionSQL ──────────────────────────────────────────
+
+describe('buildFileConditionSQL', () => {
+  it('returns empty sql/params for falsy input', () => {
+    expect(buildFileConditionSQL(null)).toEqual({ sql: '', params: [] });
+    expect(buildFileConditionSQL(undefined)).toEqual({ sql: '', params: [] });
+  });
+
+  it('builds single-value LIKE clause', () => {
+    const { sql, params } = buildFileConditionSQL('foo');
+    expect(sql).toContain('LIKE ?');
+    expect(sql).toContain('ESCAPE');
+    expect(params).toEqual(['%foo%']);
+  });
+
+  it('builds multi-value OR clause', () => {
+    const { sql, params } = buildFileConditionSQL(['foo', 'bar']);
+    expect(sql).toContain('OR');
+    expect(sql).toMatch(/LIKE \?.*OR.*LIKE \?/);
+    expect(params).toEqual(['%foo%', '%bar%']);
+  });
+
+  it('uses custom column name', () => {
+    const { sql } = buildFileConditionSQL('foo', 'n.file');
+    expect(sql).toContain('n.file LIKE');
+  });
+
+  it('escapes LIKE wildcards', () => {
+    const { params } = buildFileConditionSQL('file_name%');
+    expect(params[0]).toBe('%file\\_name\\%%');
+  });
+});
+
+// ─── collectFile ────────────────────────────────────────────────────
+
+describe('collectFile', () => {
+  it('creates array on first call', () => {
+    expect(collectFile('a.js', undefined)).toEqual(['a.js']);
+  });
+
+  it('accumulates values on subsequent calls', () => {
+    let acc = collectFile('a.js', undefined);
+    acc = collectFile('b.js', acc);
+    expect(acc).toEqual(['a.js', 'b.js']);
+  });
+});
+
 // ─── NodeQuery ───────────────────────────────────────────────────────
 
 describe('NodeQuery', () => {
@@ -161,6 +229,23 @@ describe('NodeQuery', () => {
     // "_" should not match arbitrary single character
     const rows = new NodeQuery().fileFilter('_oo').all(db);
     expect(rows.length).toBe(0);
+  });
+
+  it('.fileFilter() accepts an array of paths', () => {
+    const rows = new NodeQuery().fileFilter(['foo', 'bar']).all(db);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.every((r) => r.file.includes('foo') || r.file.includes('bar'))).toBe(true);
+    // Should include both foo and bar files
+    const files = new Set(rows.map((r) => r.file));
+    expect(files.has('src/foo.js')).toBe(true);
+    expect(files.has('src/bar.js')).toBe(true);
+  });
+
+  it('.fileFilter() with single-element array works like string', () => {
+    const arrayRows = new NodeQuery().fileFilter(['foo']).all(db);
+    const stringRows = new NodeQuery().fileFilter('foo').all(db);
+    expect(arrayRows.length).toBe(stringRows.length);
+    expect(arrayRows.map((r) => r.name).sort()).toEqual(stringRows.map((r) => r.name).sort());
   });
 
   it('.kindFilter() filters by exact kind', () => {

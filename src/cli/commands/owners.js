@@ -1,3 +1,5 @@
+import { collectFile } from '../../db/query-builder.js';
+
 export const command = {
   name: 'owners [target]',
   description: 'Show CODEOWNERS mapping for files and functions',
@@ -5,7 +7,7 @@ export const command = {
     ['-d, --db <path>', 'Path to graph.db'],
     ['--owner <owner>', 'Filter to a specific owner'],
     ['--boundary', 'Show cross-owner boundary edges'],
-    ['-f, --file <path>', 'Scope to a specific file'],
+    ['-f, --file <path>', 'Scope to a specific file (repeatable)', collectFile],
     ['-k, --kind <kind>', 'Filter by symbol kind'],
     ['-T, --no-tests', 'Exclude test/spec files'],
     ['--include-tests', 'Include test/spec files (overrides excludeTests config)'],
@@ -16,7 +18,7 @@ export const command = {
     owners(opts.db, {
       owner: opts.owner,
       boundary: opts.boundary,
-      file: opts.file || target,
+      file: opts.file && opts.file.length > 0 ? opts.file : target,
       kind: opts.kind,
       noTests: ctx.resolveNoTests(opts),
       json: opts.json,
