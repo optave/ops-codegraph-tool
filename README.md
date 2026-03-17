@@ -141,7 +141,7 @@ That's it. The graph is ready. Now connect your AI agent.
 Connect directly via MCP — your agent gets 30 tools to query the graph:
 
 ```bash
-codegraph mcp          # 30-tool MCP server — AI queries the graph directly
+codegraph mcp          # 33-tool MCP server — AI queries the graph directly
 ```
 
 Or add codegraph to your agent's instructions (e.g. `CLAUDE.md`):
@@ -183,7 +183,7 @@ cd codegraph && npm install && npm link
 
 | | Feature | Description |
 |---|---|---|
-| 🤖 | **MCP server** | 30-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
+| 🤖 | **MCP server** | 33-tool MCP server for AI assistants; single-repo by default, opt-in multi-repo |
 | 🎯 | **Deep context** | `context` gives agents source, deps, callers, signature, and tests for a function in one call; `audit --quick` gives structural summaries |
 | 🏷️ | **Node role classification** | Every symbol auto-tagged as `entry`/`core`/`utility`/`adapter`/`dead`/`leaf` based on connectivity — agents instantly know architectural role |
 | 📦 | **Batch querying** | Accept a list of targets and return all results in one JSON payload — enables multi-agent parallel dispatch |
@@ -258,6 +258,7 @@ codegraph children <name>         # List parameters, properties, constants of a 
 ```bash
 codegraph context <name>       # Full context: source, deps, callers, signature, tests
 codegraph context <name> --depth 2 --no-tests  # Include callee source 2 levels deep
+codegraph brief <file>            # Token-efficient file summary: symbols, roles, risk tiers
 codegraph audit <file> --quick    # Structural summary: public API, internals, data flow
 codegraph audit <function> --quick  # Function summary: signature, calls, callers, tests
 ```
