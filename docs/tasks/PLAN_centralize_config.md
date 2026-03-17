@@ -53,7 +53,8 @@ The config system already exists and handles env overrides, but ~70 individual b
 | D1 | `MAX_COL_WIDTH = 40` | `presentation/result-formatter.js` | 82 | Table column width |
 | D2 | `50 lines` | `shared/file-utils.js` | 23 | Source context excerpt length |
 | D3 | `100 chars` | `shared/file-utils.js` | 48, 63 | Summary/docstring truncation |
-| D4 | `10 / 20 lines` | `shared/file-utils.js` | 36, 54 | JSDoc scan depth |
+| D4a | `10 lines` | `shared/file-utils.js` | 36 | JSDoc block-end scan depth (upward scan for `*/`) |
+| D4b | `20 lines` | `shared/file-utils.js` | 54 | JSDoc opening scan depth (upward scan for `/**`) |
 | D5 | `5 lines` | `shared/file-utils.js` | 76 | Multi-line signature gather |
 
 ### Category E — MCP Pagination (medium user value)
@@ -131,8 +132,15 @@ export const DEFAULTS = {
     maxColWidth: 40,           // D1
     excerptLines: 50,          // D2
     summaryMaxChars: 100,      // D3
-    jsdocScanLines: 10,        // D4
+    jsdocEndScanLines: 10,     // D4a: lines to scan upward for block-end marker (*/)
+    jsdocOpenScanLines: 20,    // D4b: lines to scan upward for /** opening
     signatureGatherLines: 5,   // D5
+  },
+
+  search: {
+    // defaultMinScore, rrfK, topK already exist in DEFAULTS —
+    // add the missing C5 key:
+    similarityWarnThreshold: 0.85, // C5: duplicate-query warning in multiSearchData
   },
 
   mcp: {
@@ -195,7 +203,7 @@ export const DEFAULTS = {
 
 **Files to change:**
 - `src/domain/search/search/hybrid.js` → read `config.search.rrfK`, `config.search.topK`
-- `src/domain/search/search/semantic.js` → read `config.search.defaultMinScore`
+- `src/domain/search/search/semantic.js` → read `config.search.defaultMinScore` and `config.search.similarityWarnThreshold` (C5, replaces hardcoded `SIMILARITY_WARN_THRESHOLD`)
 - `src/domain/search/models.js` → batch sizes could be config-overridable per model
 
 **Note:** `config.search` already exists with `defaultMinScore`, `rrfK`, `topK`. The modules just don't read from it — they duplicate the values. This phase wires the existing config keys.
@@ -204,7 +212,7 @@ export const DEFAULTS = {
 
 **Files to change:**
 - `src/presentation/result-formatter.js` → read `config.display.maxColWidth`
-- `src/shared/file-utils.js` → read `config.display.excerptLines`, etc.
+- `src/shared/file-utils.js` → read `config.display.excerptLines`, `config.display.jsdocEndScanLines` (D4a, 10 lines), `config.display.jsdocOpenScanLines` (D4b, 20 lines — note different default values), `config.display.summaryMaxChars`, `config.display.signatureGatherLines`
 - `src/shared/paginate.js` → read `config.mcp.defaults` (`MCP_MAX_LIMIT` stays hardcoded — security boundary)
 
 **Consideration:** `file-utils.js` and `paginate.js` are low-level shared utilities. They shouldn't call `loadConfig()` directly. Instead, pass display/mcp settings down from callers, or use a module-level config cache set at startup.
