@@ -6,8 +6,8 @@
  *   2. `git rev-list <tag>..HEAD --count` → count commits since that tag
  *
  * - If HEAD is exactly tagged (0 commits): returns "2.5.0"
- * - Otherwise: returns "2.5.N-dev.hash" (e.g. "2.5.3-dev.c50f7f5")
- *   where N = PATCH + commits since tag, hash = short commit SHA
+ * - Otherwise: returns "2.5.(PATCH+1)-dev.COMMITS" (e.g. "2.5.3-dev.45")
+ *   where COMMITS = number of commits since the tag
  *
  * This prevents dev/dogfood benchmark runs from overwriting release data
  * in the historical benchmark reports (which deduplicate by version).
@@ -38,24 +38,17 @@ export function getBenchmarkVersion(pkgVersion, cwd) {
 		// Exact tag (0 commits since tag): return clean release version
 		if (commits === 0) return `${major}.${minor}.${patch}`;
 
-		// Dev build: MAJOR.MINOR.(PATCH+COMMITS)-dev.SHORT_SHA
-		const hash = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd, ...GIT_OPTS }).trim();
-		const devPatch = Number(patch) + commits;
-		return `${major}.${minor}.${devPatch}-dev.${hash}`;
+		// Dev build: MAJOR.MINOR.(PATCH+1)-dev.COMMITS
+		return `${major}.${minor}.${Number(patch) + 1}-dev.${commits}`;
 	} catch {
 		/* git not available or no tags */
 	}
 
-	// Fallback: no git or no tags — match publish.yml's no-tags behavior (PATCH+1-dev.SHA)
+	// Fallback: no git or no tags — match publish.yml's no-tags behavior (COMMITS=1)
 	const parts = pkgVersion.split('.');
 	if (parts.length === 3) {
 		const [major, minor, patch] = parts;
-		try {
-			const hash = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd, ...GIT_OPTS }).trim();
-			return `${major}.${minor}.${Number(patch) + 1}-dev.${hash}`;
-		} catch {
-			return `${major}.${minor}.${Number(patch) + 1}-dev`;
-		}
+		return `${major}.${minor}.${Number(patch) + 1}-dev.1`;
 	}
 	return `${pkgVersion}-dev`;
 }
