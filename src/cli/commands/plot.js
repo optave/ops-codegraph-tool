@@ -63,6 +63,12 @@ export const command = {
       close();
     }
 
+    if (!html) {
+      console.error('generatePlotHTML returned no output');
+      process.exitCode = 1;
+      return;
+    }
+
     const outPath = opts.output || path.join(os.tmpdir(), `codegraph-plot-${Date.now()}.html`);
     fs.writeFileSync(outPath, html, 'utf-8');
     console.log(`Plot written to ${outPath}`);
