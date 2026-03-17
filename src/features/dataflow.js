@@ -24,6 +24,7 @@ import { ALL_SYMBOL_KINDS, normalizeSymbol } from '../domain/queries.js';
 import { info } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
+import { findNodes } from './shared/find-nodes.js';
 
 // Re-export for backward compatibility
 export { _makeDataflowRules as makeDataflowRules, DATAFLOW_RULES };
@@ -234,31 +235,7 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
 
 // ── Query functions ─────────────────────────────────────────────────────────
 
-/**
- * Look up node(s) by name with optional file/kind/noTests filtering.
- * Similar to findMatchingNodes in queries.js but operates on the dataflow table.
- */
-function findNodes(db, name, opts = {}) {
-  const kinds = opts.kind ? [opts.kind] : ALL_SYMBOL_KINDS;
-  const placeholders = kinds.map(() => '?').join(', ');
-  const params = [`%${name}%`, ...kinds];
-
-  let fileCondition = '';
-  if (opts.file) {
-    fileCondition = ' AND file LIKE ?';
-    params.push(`%${opts.file}%`);
-  }
-
-  const rows = db
-    .prepare(
-      `SELECT * FROM nodes
-       WHERE name LIKE ? AND kind IN (${placeholders})${fileCondition}
-       ORDER BY file, line`,
-    )
-    .all(...params);
-
-  return opts.noTests ? rows.filter((n) => !isTestFile(n.file)) : rows;
-}
+// findNodes imported from ./shared/find-nodes.js
 
 /**
  * Return all dataflow edges for a symbol.
@@ -282,7 +259,12 @@ export function dataflowData(name, customDbPath, opts = {}) {
       };
     }
 
-    const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    const nodes = findNodes(
+      db,
+      name,
+      { noTests, file: opts.file, kind: opts.kind },
+      ALL_SYMBOL_KINDS,
+    );
     if (nodes.length === 0) {
       return { name, results: [] };
     }
@@ -426,12 +408,22 @@ export function dataflowPathData(from, to, customDbPath, opts = {}) {
       };
     }
 
-    const fromNodes = findNodes(db, from, { noTests, file: opts.fromFile, kind: opts.kind });
+    const fromNodes = findNodes(
+      db,
+      from,
+      { noTests, file: opts.fromFile, kind: opts.kind },
+      ALL_SYMBOL_KINDS,
+    );
     if (fromNodes.length === 0) {
       return { from, to, found: false, error: `No symbol matching "${from}"` };
     }
 
-    const toNodes = findNodes(db, to, { noTests, file: opts.toFile, kind: opts.kind });
+    const toNodes = findNodes(
+      db,
+      to,
+      { noTests, file: opts.toFile, kind: opts.kind },
+      ALL_SYMBOL_KINDS,
+    );
     if (toNodes.length === 0) {
       return { from, to, found: false, error: `No symbol matching "${to}"` };
     }
@@ -554,7 +546,12 @@ export function dataflowImpactData(name, customDbPath, opts = {}) {
       };
     }
 
-    const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    const nodes = findNodes(
+      db,
+      name,
+      { noTests, file: opts.file, kind: opts.kind },
+      ALL_SYMBOL_KINDS,
+    );
     if (nodes.length === 0) {
       return { name, results: [] };
     }

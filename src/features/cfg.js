@@ -24,8 +24,8 @@ import {
   openReadonlyOrFail,
 } from '../db/index.js';
 import { info } from '../infrastructure/logger.js';
-import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
+import { findNodes } from './shared/find-nodes.js';
 
 // Re-export for backward compatibility
 export { _makeCfgRules as makeCfgRules, CFG_RULES };
@@ -273,27 +273,7 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
 
 // ─── Query-Time Functions ───────────────────────────────────────────────
 
-function findNodes(db, name, opts = {}) {
-  const kinds = opts.kind ? [opts.kind] : ['function', 'method'];
-  const placeholders = kinds.map(() => '?').join(', ');
-  const params = [`%${name}%`, ...kinds];
-
-  let fileCondition = '';
-  if (opts.file) {
-    fileCondition = ' AND n.file LIKE ?';
-    params.push(`%${opts.file}%`);
-  }
-
-  const rows = db
-    .prepare(
-      `SELECT n.id, n.name, n.kind, n.file, n.line, n.end_line
-       FROM nodes n
-       WHERE n.name LIKE ? AND n.kind IN (${placeholders})${fileCondition}`,
-    )
-    .all(...params);
-
-  return opts.noTests ? rows.filter((n) => !isTestFile(n.file)) : rows;
-}
+const CFG_DEFAULT_KINDS = ['function', 'method'];
 
 /**
  * Load CFG data for a function from the database.
@@ -317,7 +297,12 @@ export function cfgData(name, customDbPath, opts = {}) {
       };
     }
 
-    const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    const nodes = findNodes(
+      db,
+      name,
+      { noTests, file: opts.file, kind: opts.kind },
+      CFG_DEFAULT_KINDS,
+    );
     if (nodes.length === 0) {
       return { name, results: [] };
     }
