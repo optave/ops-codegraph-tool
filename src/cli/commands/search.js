@@ -26,8 +26,8 @@ export const command = {
     }
   },
   async execute([query], opts, ctx) {
-    // --file collects into an array; search supports single string filePattern,
-    // so pass first element for single value, or join for backward compat.
+    // --file collects into an array; pass single element unwrapped for single
+    // value, or pass the raw array for multi-file scoping.
     const fileArr = opts.file || [];
     const filePattern =
       fileArr.length === 1 ? fileArr[0] : fileArr.length > 1 ? fileArr : undefined;
