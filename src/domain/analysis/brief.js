@@ -68,20 +68,25 @@ function countTransitiveCallers(db, startId, noTests, maxDepth = 5) {
 
 /**
  * Count transitive file-level import dependents via BFS.
+ * Depth-bounded to match countTransitiveCallers and keep hook latency predictable.
  */
-function countTransitiveImporters(db, fileNodeIds, noTests) {
+function countTransitiveImporters(db, fileNodeIds, noTests, maxDepth = 5) {
   const visited = new Set(fileNodeIds);
-  const queue = [...fileNodeIds];
+  let frontier = [...fileNodeIds];
 
-  while (queue.length > 0) {
-    const current = queue.shift();
-    const dependents = findImportDependents(db, current);
-    for (const dep of dependents) {
-      if (!visited.has(dep.id) && (!noTests || !isTestFile(dep.file))) {
-        visited.add(dep.id);
-        queue.push(dep.id);
+  for (let d = 1; d <= maxDepth; d++) {
+    const nextFrontier = [];
+    for (const current of frontier) {
+      const dependents = findImportDependents(db, current);
+      for (const dep of dependents) {
+        if (!visited.has(dep.id) && (!noTests || !isTestFile(dep.file))) {
+          visited.add(dep.id);
+          nextFrontier.push(dep.id);
+        }
       }
     }
+    frontier = nextFrontier;
+    if (frontier.length === 0) break;
   }
 
   return visited.size - fileNodeIds.length;
