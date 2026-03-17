@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Language, Parser, Query } from 'web-tree-sitter';
-import { warn } from '../infrastructure/logger.js';
+import { debug, warn } from '../infrastructure/logger.js';
 import { getNative, getNativePackageVersion, loadNative } from '../infrastructure/native.js';
 
 // Re-export all extractors for backward compatibility
@@ -116,29 +116,35 @@ export async function createParsers() {
  */
 export function disposeParsers() {
   if (_cachedParsers) {
-    for (const [, parser] of _cachedParsers) {
+    for (const [id, parser] of _cachedParsers) {
       if (parser && typeof parser.delete === 'function') {
         try {
           parser.delete();
-        } catch {}
+        } catch (e) {
+          debug(`Failed to dispose parser ${id}: ${e.message}`);
+        }
       }
     }
     _cachedParsers = null;
   }
-  for (const [, query] of _queryCache) {
+  for (const [id, query] of _queryCache) {
     if (query && typeof query.delete === 'function') {
       try {
         query.delete();
-      } catch {}
+      } catch (e) {
+        debug(`Failed to dispose query ${id}: ${e.message}`);
+      }
     }
   }
   _queryCache.clear();
   if (_cachedLanguages) {
-    for (const [, lang] of _cachedLanguages) {
+    for (const [id, lang] of _cachedLanguages) {
       if (lang && typeof lang.delete === 'function') {
         try {
           lang.delete();
-        } catch {}
+        } catch (e) {
+          debug(`Failed to dispose language ${id}: ${e.message}`);
+        }
       }
     }
     _cachedLanguages = null;
@@ -189,14 +195,15 @@ export async function ensureWasmTrees(fileSymbols, rootDir) {
     let code;
     try {
       code = fs.readFileSync(absPath, 'utf-8');
-    } catch {
+    } catch (e) {
+      debug(`ensureWasmTrees: cannot read ${relPath}: ${e.message}`);
       continue;
     }
     try {
       symbols._tree = parser.parse(code);
       symbols._langId = entry.id;
-    } catch {
-      // skip files that fail to parse
+    } catch (e) {
+      debug(`ensureWasmTrees: parse failed for ${relPath}: ${e.message}`);
     }
   }
 }
@@ -483,7 +490,9 @@ export function getActiveEngine(opts = {}) {
   if (native) {
     try {
       version = getNativePackageVersion() ?? version;
-    } catch {}
+    } catch (e) {
+      debug(`getNativePackageVersion failed: ${e.message}`);
+    }
   }
   return { name, version };
 }
