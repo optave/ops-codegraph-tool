@@ -321,10 +321,11 @@ describe('findDbPath with git ceiling', () => {
     try {
       _resetRepoRootCache();
       const result = findDbPath();
-      // Verify the DB was found (file exists) and is the worktree DB, not the outer one
+      // Avoid exact path comparison — realpathSync doesn't resolve Windows
+      // 8.3 short names (RUNNER~1 vs runneradmin) on CI. Instead verify
+      // existence, suffix, and that it's not the outer directory's DB.
       expect(fs.existsSync(result)).toBe(true);
       expect(result).toMatch(/\.codegraph[/\\]graph\.db$/);
-      // The outer DB is at outerDir/.codegraph — verify we didn't find that one
       expect(result).not.toContain(`${path.basename(outerDir)}${path.sep}.codegraph`);
     } finally {
       process.cwd = origCwd;
