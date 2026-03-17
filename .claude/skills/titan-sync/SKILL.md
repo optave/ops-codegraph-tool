@@ -80,7 +80,7 @@ The codebase may have changed between GAUNTLET and now. Detect this before plann
    ```bash
    git rev-parse origin/main
    ```
-   Compare against `titan-state.json → mainSHA`. If identical, skip to Step 1.
+   Compare against `titan-state.json → mainSHA`. If identical, skip to Step 2.
 
 2. **If main has advanced**, find what changed:
    ```bash
@@ -102,7 +102,7 @@ The codebase may have changed between GAUNTLET and now. Detect this before plann
    | **high** | >30% of FAIL targets affected OR shared dependencies changed | **Warn user:** "Main has changed significantly since GAUNTLET. Audit results for N targets may be stale. Recommend `/titan-gauntlet` re-run for affected targets before planning." |
    | **critical** | New files added to src/ that would be in priority queue, or deleted files that were FAIL targets | **Stop:** "Codebase structure changed. Run `/titan-recon` to rebuild baseline, then `/titan-gauntlet`." |
 
-5. **Write/update drift report** to `.codegraph/titan/drift-report.json` (same schema as GAUNTLET, with `"detectedBy": "sync"`).
+5. **Append drift report** to `.codegraph/titan/drift-report.json` (the file is a JSON array — read existing entries, push the new entry, write back; same schema as GAUNTLET, with `"detectedBy": "sync"`).
 
 6. **Update state:** Set `titan-state.json → mainSHA` to current `origin/main`.
 

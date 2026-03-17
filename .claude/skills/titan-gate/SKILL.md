@@ -64,7 +64,7 @@ GATE may run many times across a long pipeline. Check for upstream changes each 
    ```bash
    git rev-parse origin/main
    ```
-   Compare against `titan-state.json → mainSHA` (if state exists). If identical, skip to Step 1.
+   Compare against `titan-state.json → mainSHA` (if state exists). If identical, skip to Step 2.
 
 2. **If main has advanced**, find what changed:
    ```bash

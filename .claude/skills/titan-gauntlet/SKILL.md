@@ -75,7 +75,7 @@ The codebase may have changed significantly since RECON ran. Detect this before 
    ```bash
    git rev-parse origin/main
    ```
-   Compare against `titan-state.json → mainSHA`. If identical, skip to Step 1.
+   Compare against `titan-state.json → mainSHA`. If identical, skip to Step 2.
 
 2. **If main has advanced**, find what changed:
    ```bash
@@ -104,7 +104,7 @@ The codebase may have changed significantly since RECON ran. Detect this before 
    | **high** | >20% of batches affected OR core symbols changed | **Warn user:** "Significant changes on main since RECON. Recommend re-running affected batches or `/titan-recon`." |
    | **critical** | New files in src/, deleted files that were in batches, or >50% of priority queue affected | **Stop and recommend:** "Main has diverged significantly. Run `/titan-recon` to rebuild the baseline." |
 
-6. **Write drift report** to `.codegraph/titan/drift-report.json`:
+6. **Append drift report** to `.codegraph/titan/drift-report.json` (the file is a JSON array — read existing entries first, push the new entry, write back):
 
    ```json
    {

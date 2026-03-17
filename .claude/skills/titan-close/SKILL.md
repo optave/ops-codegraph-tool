@@ -88,7 +88,7 @@ CLOSE is the last phase — it must assess the full pipeline's freshness before 
    git diff --name-only <mainSHA>..origin/main
    ```
 
-3. **Read all prior drift reports** from `.codegraph/titan/drift-report.json`. This shows the cumulative drift across the pipeline.
+3. **Read all prior drift reports** from `.codegraph/titan/drift-report.json` (a JSON array of entries, one per phase that detected drift). This shows the cumulative drift across the pipeline.
 
 4. **Assess overall pipeline freshness:**
 
