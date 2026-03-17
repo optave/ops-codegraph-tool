@@ -67,8 +67,11 @@ jobs:
             NPM_TAG="latest"
             echo "Stable release (manual retry): $VERSION"
           else
-            # Use git describe to find the nearest release tag — same strategy
-            # as scripts/bench-version.js so versions are always consistent.
+            # Dev versions use the NEXT patch with a prerelease suffix:
+            #   v3.1.5 tag + 12 commits → 3.1.6-dev.12
+            # This keeps dev versions in the correct semver range (between
+            # the current release and the next) and avoids inflating the
+            # patch number (old scheme produced 3.1.17 for 12 commits after 3.1.5).
             RELEASE_TAG=$(git describe --tags --match "v*" --abbrev=0 2>/dev/null || echo "")
             if [ -n "$RELEASE_TAG" ]; then
               COMMITS=$(git rev-list "${RELEASE_TAG}..HEAD" --count)
@@ -77,9 +80,8 @@ jobs:
               COMMITS=1
               IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
             fi
-            DEV_PATCH=$((PATCH + COMMITS))
-            SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
-            VERSION="${MAJOR}.${MINOR}.${DEV_PATCH}-dev.${SHORT_SHA}"
+            NEXT_PATCH=$((PATCH + 1))
+            VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}-dev.${COMMITS}"
             NPM_TAG="dev"
             echo "Dev release: $VERSION (${COMMITS} commits since ${RELEASE_TAG:-none})"
           fi
