@@ -30,7 +30,7 @@ codegraph snapshot delete titan-baseline 2>/dev/null
 Also delete any batch snapshots dynamically:
 
 ```bash
-for name in $(codegraph snapshot list --json 2>/dev/null | node -e "try{const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));d.filter(s=>s.name.startsWith('titan-batch-')).forEach(s=>console.log(s.name))}catch(e){}"); do
+for name in $(codegraph snapshot list --json 2>/dev/null | node -e "let d='';process.stdin.on('data',c=>d+=c).on('end',()=>{try{JSON.parse(d).filter(s=>s.name.startsWith('titan-batch-')).forEach(s=>console.log(s.name))}catch(e){}})"); do
   codegraph snapshot delete "$name" 2>/dev/null
 done
 ```
