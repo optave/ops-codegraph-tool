@@ -4,6 +4,10 @@ import { formatTable, truncEnd } from './table.js';
 /**
  * Flatten a nested object into dot-notation keys.
  * Arrays are JSON-stringified; nested objects are recursed.
+ *
+ * Note: this assumes input objects do not contain literal dot-notation keys
+ * (e.g. `{ "a.b": 1 }`). If they do, flattened keys will silently collide
+ * with nested paths (e.g. `{ a: { b: 2 } }` also produces `"a.b"`).
  */
 function flattenObject(obj, prefix = '') {
   const result = {};
