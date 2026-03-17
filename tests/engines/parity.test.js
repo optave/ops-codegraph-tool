@@ -80,7 +80,10 @@ function normalize(symbols) {
         })(),
       }))
       // Deduplicate: interface/trait methods can be emitted twice (handler + recursive walk)
-      .filter((d, i, arr) => arr.findIndex((x) => x.name === d.name && x.kind === d.kind && x.line === d.line) === i),
+      .filter(
+        (d, i, arr) =>
+          arr.findIndex((x) => x.name === d.name && x.kind === d.kind && x.line === d.line) === i,
+      ),
     calls: (symbols.calls || []).map((c) => ({
       name: c.name,
       line: c.line,
