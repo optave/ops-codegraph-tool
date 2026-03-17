@@ -16,14 +16,15 @@ export const command = {
   ],
   async execute([dir], opts, ctx) {
     const { structureData, formatStructure } = await import('../../presentation/structure.js');
+    const qOpts = ctx.resolveQueryOpts(opts);
     const data = structureData(opts.db, {
       directory: dir,
       depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
       sort: opts.sort,
       full: opts.full,
-      noTests: ctx.resolveNoTests(opts),
-      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      noTests: qOpts.noTests,
+      limit: qOpts.limit,
+      offset: qOpts.offset,
     });
     if (!ctx.outputResult(data, 'directories', opts)) {
       console.log(formatStructure(data));

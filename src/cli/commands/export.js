@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import { openReadonlyOrFail } from '../../db/index.js';
 import {
   exportDOT,
   exportGraphML,
@@ -8,6 +7,7 @@ import {
   exportMermaid,
   exportNeo4jCSV,
 } from '../../features/export.js';
+import { openGraph } from '../shared/open-graph.js';
 
 export const command = {
   name: 'export',
@@ -23,7 +23,7 @@ export const command = {
     ['-o, --output <file>', 'Write to file instead of stdout'],
   ],
   execute(_args, opts, ctx) {
-    const db = openReadonlyOrFail(opts.db);
+    const { db, close } = openGraph(opts);
     const exportOpts = {
       fileLevel: !opts.functions,
       noTests: ctx.resolveNoTests(opts),
@@ -32,38 +32,41 @@ export const command = {
     };
 
     let output;
-    switch (opts.format) {
-      case 'mermaid':
-        output = exportMermaid(db, exportOpts);
-        break;
-      case 'json':
-        output = JSON.stringify(exportJSON(db, exportOpts), null, 2);
-        break;
-      case 'graphml':
-        output = exportGraphML(db, exportOpts);
-        break;
-      case 'graphson':
-        output = JSON.stringify(exportGraphSON(db, exportOpts), null, 2);
-        break;
-      case 'neo4j': {
-        const csv = exportNeo4jCSV(db, exportOpts);
-        if (opts.output) {
-          const base = opts.output.replace(/\.[^.]+$/, '') || opts.output;
-          fs.writeFileSync(`${base}-nodes.csv`, csv.nodes, 'utf-8');
-          fs.writeFileSync(`${base}-relationships.csv`, csv.relationships, 'utf-8');
-          db.close();
-          console.log(`Exported to ${base}-nodes.csv and ${base}-relationships.csv`);
-          return;
+    try {
+      switch (opts.format) {
+        case 'mermaid':
+          output = exportMermaid(db, exportOpts);
+          break;
+        case 'json':
+          output = JSON.stringify(exportJSON(db, exportOpts), null, 2);
+          break;
+        case 'graphml':
+          output = exportGraphML(db, exportOpts);
+          break;
+        case 'graphson':
+          output = JSON.stringify(exportGraphSON(db, exportOpts), null, 2);
+          break;
+        case 'neo4j': {
+          const csv = exportNeo4jCSV(db, exportOpts);
+          if (opts.output) {
+            const base = opts.output.replace(/\.[^.]+$/, '') || opts.output;
+            fs.writeFileSync(`${base}-nodes.csv`, csv.nodes, 'utf-8');
+            fs.writeFileSync(`${base}-relationships.csv`, csv.relationships, 'utf-8');
+            console.log(`Exported to ${base}-nodes.csv and ${base}-relationships.csv`);
+          } else {
+            output = `--- nodes.csv ---\n${csv.nodes}\n\n--- relationships.csv ---\n${csv.relationships}`;
+          }
+          break;
         }
-        output = `--- nodes.csv ---\n${csv.nodes}\n\n--- relationships.csv ---\n${csv.relationships}`;
-        break;
+        default:
+          output = exportDOT(db, exportOpts);
+          break;
       }
-      default:
-        output = exportDOT(db, exportOpts);
-        break;
+    } finally {
+      close();
     }
 
-    db.close();
+    if (output === undefined) return;
 
     if (opts.output) {
       fs.writeFileSync(opts.output, output, 'utf-8');

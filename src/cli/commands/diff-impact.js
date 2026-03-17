@@ -19,13 +19,8 @@ export const command = {
       ref,
       staged: opts.staged,
       depth: parseInt(opts.depth, 10),
-      noTests: ctx.resolveNoTests(opts),
-      json: opts.json,
       format: opts.format,
-      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-      ndjson: opts.ndjson,
-      config: ctx.config,
+      ...ctx.resolveQueryOpts(opts),
     });
   },
 };

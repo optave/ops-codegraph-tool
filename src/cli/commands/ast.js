@@ -16,11 +16,7 @@ export const command = {
     astQuery(pattern, opts.db, {
       kind: opts.kind,
       file: opts.file,
-      noTests: ctx.resolveNoTests(opts),
-      json: opts.json,
-      ndjson: opts.ndjson,
-      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ...ctx.resolveQueryOpts(opts),
     });
   },
 };

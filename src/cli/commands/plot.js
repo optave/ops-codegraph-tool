@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { openReadonlyOrFail } from '../../db/index.js';
+import { openGraph } from '../shared/open-graph.js';
 
 export const command = {
   name: 'plot',
@@ -24,41 +24,50 @@ export const command = {
   async execute(_args, opts, ctx) {
     const { generatePlotHTML, loadPlotConfig } = await import('../../features/graph-enrichment.js');
     const os = await import('node:os');
-    const db = openReadonlyOrFail(opts.db);
+    const { db, close } = openGraph(opts);
 
     let plotCfg;
-    if (opts.config) {
-      try {
-        plotCfg = JSON.parse(fs.readFileSync(opts.config, 'utf-8'));
-      } catch (e) {
-        console.error(`Failed to load config: ${e.message}`);
-        db.close();
-        process.exitCode = 1;
-        return;
+    let html;
+    try {
+      if (opts.config) {
+        try {
+          plotCfg = JSON.parse(fs.readFileSync(opts.config, 'utf-8'));
+        } catch (e) {
+          console.error(`Failed to load config: ${e.message}`);
+          process.exitCode = 1;
+          return;
+        }
+      } else {
+        plotCfg = loadPlotConfig(process.cwd());
       }
-    } else {
-      plotCfg = loadPlotConfig(process.cwd());
+
+      if (opts.cluster) plotCfg.clusterBy = opts.cluster;
+      if (opts.colorBy) plotCfg.colorBy = opts.colorBy;
+      if (opts.sizeBy) plotCfg.sizeBy = opts.sizeBy;
+      if (opts.seed) plotCfg.seedStrategy = opts.seed;
+      if (opts.seedCount) plotCfg.seedCount = parseInt(opts.seedCount, 10);
+      if (opts.overlay) {
+        const parts = opts.overlay.split(',').map((s) => s.trim());
+        if (!plotCfg.overlays) plotCfg.overlays = {};
+        if (parts.includes('complexity')) plotCfg.overlays.complexity = true;
+        if (parts.includes('risk')) plotCfg.overlays.risk = true;
+      }
+
+      html = generatePlotHTML(db, {
+        fileLevel: !opts.functions,
+        noTests: ctx.resolveNoTests(opts),
+        minConfidence: parseFloat(opts.minConfidence),
+        config: plotCfg,
+      });
+    } finally {
+      close();
     }
 
-    if (opts.cluster) plotCfg.clusterBy = opts.cluster;
-    if (opts.colorBy) plotCfg.colorBy = opts.colorBy;
-    if (opts.sizeBy) plotCfg.sizeBy = opts.sizeBy;
-    if (opts.seed) plotCfg.seedStrategy = opts.seed;
-    if (opts.seedCount) plotCfg.seedCount = parseInt(opts.seedCount, 10);
-    if (opts.overlay) {
-      const parts = opts.overlay.split(',').map((s) => s.trim());
-      if (!plotCfg.overlays) plotCfg.overlays = {};
-      if (parts.includes('complexity')) plotCfg.overlays.complexity = true;
-      if (parts.includes('risk')) plotCfg.overlays.risk = true;
+    if (!html) {
+      console.error('generatePlotHTML returned no output');
+      process.exitCode = 1;
+      return;
     }
-
-    const html = generatePlotHTML(db, {
-      fileLevel: !opts.functions,
-      noTests: ctx.resolveNoTests(opts),
-      minConfidence: parseFloat(opts.minConfidence),
-      config: plotCfg,
-    });
-    db.close();
 
     const outPath = opts.output || path.join(os.tmpdir(), `codegraph-plot-${Date.now()}.html`);
     fs.writeFileSync(outPath, html, 'utf-8');

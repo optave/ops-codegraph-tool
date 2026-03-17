@@ -20,13 +20,9 @@ export const command = {
     dataflow(name, opts.db, {
       file: opts.file,
       kind: opts.kind,
-      noTests: ctx.resolveNoTests(opts),
-      json: opts.json,
-      ndjson: opts.ndjson,
-      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
       impact: opts.impact,
       depth: parseInt(opts.depth, 10),
+      ...ctx.resolveQueryOpts(opts),
     });
   },
 };

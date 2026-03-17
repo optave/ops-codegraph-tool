@@ -1,5 +1,6 @@
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 import { ConfigError } from '../../shared/errors.js';
+import { config } from '../shared/options.js';
 
 export const command = {
   name: 'check [ref]',
@@ -25,6 +26,7 @@ export const command = {
   ],
   async execute([ref], opts, ctx) {
     const isDiffMode = ref || opts.staged;
+    const qOpts = ctx.resolveQueryOpts(opts);
 
     if (!isDiffMode && !opts.rules) {
       if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
@@ -36,12 +38,7 @@ export const command = {
       manifesto(opts.db, {
         file: opts.file,
         kind: opts.kind,
-        noTests: ctx.resolveNoTests(opts),
-        json: opts.json,
-        limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-        offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-        ndjson: opts.ndjson,
-        config: ctx.config,
+        ...qOpts,
       });
       return;
     }
@@ -55,9 +52,9 @@ export const command = {
       signatures: opts.signatures || undefined,
       boundaries: opts.boundaries || undefined,
       depth: opts.depth ? parseInt(opts.depth, 10) : undefined,
-      noTests: ctx.resolveNoTests(opts),
-      json: opts.json,
-      config: ctx.config,
+      noTests: qOpts.noTests,
+      json: qOpts.json,
+      config,
     });
 
     if (opts.rules) {
@@ -70,12 +67,7 @@ export const command = {
       manifesto(opts.db, {
         file: opts.file,
         kind: opts.kind,
-        noTests: ctx.resolveNoTests(opts),
-        json: opts.json,
-        limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-        offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-        ndjson: opts.ndjson,
-        config: ctx.config,
+        ...qOpts,
       });
     }
   },

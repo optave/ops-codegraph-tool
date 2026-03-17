@@ -24,11 +24,7 @@ export const command = {
     roles(opts.db, {
       role: opts.role,
       file: opts.file,
-      noTests: ctx.resolveNoTests(opts),
-      json: opts.json,
-      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-      ndjson: opts.ndjson,
+      ...ctx.resolveQueryOpts(opts),
     });
   },
 };

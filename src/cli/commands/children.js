@@ -22,10 +22,7 @@ export const command = {
     children(name, opts.db, {
       file: opts.file,
       kind: opts.kind,
-      noTests: ctx.resolveNoTests(opts),
-      json: opts.json,
-      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
+      ...ctx.resolveQueryOpts(opts),
     });
   },
 };

@@ -6,11 +6,7 @@ export const command = {
   queryOpts: true,
   execute([file], opts, ctx) {
     impactAnalysis(file, opts.db, {
-      noTests: ctx.resolveNoTests(opts),
-      json: opts.json,
-      limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-      offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-      ndjson: opts.ndjson,
+      ...ctx.resolveQueryOpts(opts),
     });
   },
 };

@@ -5,7 +5,13 @@ import { Command } from 'commander';
 import { setVerbose } from '../infrastructure/logger.js';
 import { checkForUpdates, printUpdateNotification } from '../infrastructure/update-check.js';
 import { ConfigError } from '../shared/errors.js';
-import { applyQueryOpts, config, formatSize, resolveNoTests } from './shared/options.js';
+import {
+  applyQueryOpts,
+  config,
+  formatSize,
+  resolveNoTests,
+  resolveQueryOpts,
+} from './shared/options.js';
 import { outputResult } from './shared/output.js';
 
 const __cliDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'));
@@ -35,7 +41,7 @@ program
   });
 
 /** Shared context passed to every command's execute(). */
-const ctx = { config, resolveNoTests, formatSize, outputResult, program };
+const ctx = { config, resolveNoTests, resolveQueryOpts, formatSize, outputResult, program };
 
 /**
  * Register a command definition onto a Commander parent.

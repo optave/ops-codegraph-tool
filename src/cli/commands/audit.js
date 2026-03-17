@@ -1,6 +1,7 @@
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 import { audit } from '../../presentation/audit.js';
 import { explain } from '../../presentation/queries-cli.js';
+import { config } from '../shared/options.js';
 
 export const command = {
   name: 'audit <target>',
@@ -24,14 +25,11 @@ export const command = {
     }
   },
   execute([target], opts, ctx) {
+    const qOpts = ctx.resolveQueryOpts(opts);
     if (opts.quick) {
       explain(target, opts.db, {
         depth: parseInt(opts.depth, 10),
-        noTests: ctx.resolveNoTests(opts),
-        json: opts.json,
-        limit: opts.limit ? parseInt(opts.limit, 10) : undefined,
-        offset: opts.offset ? parseInt(opts.offset, 10) : undefined,
-        ndjson: opts.ndjson,
+        ...qOpts,
       });
       return;
     }
@@ -39,9 +37,9 @@ export const command = {
       depth: parseInt(opts.depth, 10),
       file: opts.file,
       kind: opts.kind,
-      noTests: ctx.resolveNoTests(opts),
-      json: opts.json,
-      config: ctx.config,
+      noTests: qOpts.noTests,
+      json: qOpts.json,
+      config,
     });
   },
 };
