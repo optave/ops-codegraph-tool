@@ -37,11 +37,3 @@ export function truncEnd(str, maxLen) {
   if (str.length <= maxLen) return str;
   return `${str.slice(0, maxLen - 1)}\u2026`;
 }
-
-/**
- * Truncate a string from the start, prepending '\u2026' if truncated.
- */
-export function truncStart(str, maxLen) {
-  if (str.length <= maxLen) return str;
-  return `\u2026${str.slice(-(maxLen - 1))}`;
-}
