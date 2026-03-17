@@ -12,6 +12,7 @@ import { buildExtensionSet } from '../ast-analysis/shared.js';
 import { walkWithVisitors } from '../ast-analysis/visitor.js';
 import { createAstStoreVisitor } from '../ast-analysis/visitors/ast-store-visitor.js';
 import { bulkNodeIdsByFile, openReadonlyOrFail } from '../db/index.js';
+import { buildFileConditionSQL } from '../db/query-builder.js';
 import { debug } from '../infrastructure/logger.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 import { paginateResult } from '../shared/paginate.js';
@@ -193,9 +194,10 @@ export function astQueryData(pattern, customDbPath, opts = {}) {
     params.push(kind);
   }
 
-  if (file) {
-    where += ' AND a.file LIKE ?';
-    params.push(`%${file}%`);
+  {
+    const fc = buildFileConditionSQL(file, 'a.file');
+    where += fc.sql;
+    params.push(...fc.params);
   }
 
   if (noTests) {

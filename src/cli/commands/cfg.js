@@ -1,3 +1,4 @@
+import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 
 export const command = {
@@ -6,7 +7,7 @@ export const command = {
   queryOpts: true,
   options: [
     ['--format <fmt>', 'Output format: text, dot, mermaid', 'text'],
-    ['-f, --file <path>', 'Scope to file (partial match)'],
+    ['-f, --file <path>', 'Scope to file (partial match, repeatable)', collectFile],
     ['-k, --kind <kind>', 'Filter by symbol kind'],
   ],
   validate([_name], opts) {

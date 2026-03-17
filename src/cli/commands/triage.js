@@ -1,3 +1,4 @@
+import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND, VALID_ROLES } from '../../domain/queries.js';
 import { ConfigError } from '../../shared/errors.js';
 
@@ -20,7 +21,7 @@ export const command = {
     ],
     ['--min-score <score>', 'Only show symbols with risk score >= threshold'],
     ['--role <role>', 'Filter by role (entry, core, utility, adapter, leaf, dead)'],
-    ['-f, --file <path>', 'Scope to a specific file (partial match)'],
+    ['-f, --file <path>', 'Scope to a specific file (partial match, repeatable)', collectFile],
     ['-k, --kind <kind>', 'Filter by symbol kind (function, method, class)'],
     ['-T, --no-tests', 'Exclude test/spec files from results'],
     ['--include-tests', 'Include test/spec files (overrides excludeTests config)'],

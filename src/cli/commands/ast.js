@@ -1,3 +1,4 @@
+import { collectFile } from '../../db/query-builder.js';
 import { ConfigError } from '../../shared/errors.js';
 
 export const command = {
@@ -6,7 +7,7 @@ export const command = {
   queryOpts: true,
   options: [
     ['-k, --kind <kind>', 'Filter by AST node kind (call, new, string, regex, throw, await)'],
-    ['-f, --file <path>', 'Scope to file (partial match)'],
+    ['-f, --file <path>', 'Scope to file (partial match, repeatable)', collectFile],
   ],
   async execute([pattern], opts, ctx) {
     const { AST_NODE_KINDS, astQuery } = await import('../../ast.js');

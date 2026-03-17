@@ -1,4 +1,5 @@
 import { openReadonlyOrFail } from '../db/index.js';
+import { buildFileConditionSQL } from '../db/query-builder.js';
 import { findCycles } from '../domain/graph/cycles.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
@@ -144,9 +145,10 @@ function evaluateFunctionRules(db, rules, opts, violations, ruleResults) {
   let where = "WHERE n.kind IN ('function','method')";
   const params = [];
   if (opts.noTests) where += NO_TEST_SQL;
-  if (opts.file) {
-    where += ' AND n.file LIKE ?';
-    params.push(`%${opts.file}%`);
+  {
+    const fc = buildFileConditionSQL(opts.file, 'n.file');
+    where += fc.sql;
+    params.push(...fc.params);
   }
   if (opts.kind) {
     where += ' AND n.kind = ?';
@@ -221,9 +223,10 @@ function evaluateFileRules(db, rules, opts, violations, ruleResults) {
   let where = "WHERE n.kind = 'file'";
   const params = [];
   if (opts.noTests) where += NO_TEST_SQL;
-  if (opts.file) {
-    where += ' AND n.file LIKE ?';
-    params.push(`%${opts.file}%`);
+  {
+    const fc = buildFileConditionSQL(opts.file, 'n.file');
+    where += fc.sql;
+    params.push(...fc.params);
   }
 
   let rows;

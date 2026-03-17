@@ -34,10 +34,14 @@ const TEST_PATTERN = /\.(test|spec)\.|__test__|__tests__|\.stories\./;
  */
 export function applyFilters(rows, opts = {}) {
   let filtered = rows;
+  const fp = opts.filePattern;
+  const fpArr = Array.isArray(fp) ? fp : fp ? [fp] : [];
   const isGlob =
-    opts.isGlob !== undefined ? opts.isGlob : opts.filePattern && /[*?[\]]/.test(opts.filePattern);
+    opts.isGlob !== undefined
+      ? opts.isGlob
+      : fpArr.length > 0 && fpArr.some((p) => /[*?[\]]/.test(p));
   if (isGlob) {
-    filtered = filtered.filter((row) => globMatch(row.file, opts.filePattern));
+    filtered = filtered.filter((row) => fpArr.some((p) => globMatch(row.file, p)));
   }
   if (opts.noTests) {
     filtered = filtered.filter((row) => !TEST_PATTERN.test(row.file));

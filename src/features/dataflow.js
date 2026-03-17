@@ -20,6 +20,7 @@ import {
 import { walkWithVisitors } from '../ast-analysis/visitor.js';
 import { createDataflowVisitor } from '../ast-analysis/visitors/dataflow-visitor.js';
 import { hasDataflowTable, openReadonlyOrFail } from '../db/index.js';
+import { buildFileConditionSQL } from '../db/query-builder.js';
 import { ALL_SYMBOL_KINDS, normalizeSymbol } from '../domain/queries.js';
 import { info } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
@@ -243,16 +244,13 @@ function findNodes(db, name, opts = {}) {
   const placeholders = kinds.map(() => '?').join(', ');
   const params = [`%${name}%`, ...kinds];
 
-  let fileCondition = '';
-  if (opts.file) {
-    fileCondition = ' AND file LIKE ?';
-    params.push(`%${opts.file}%`);
-  }
+  const fc = buildFileConditionSQL(opts.file, 'file');
+  params.push(...fc.params);
 
   const rows = db
     .prepare(
       `SELECT * FROM nodes
-       WHERE name LIKE ? AND kind IN (${placeholders})${fileCondition}
+       WHERE name LIKE ? AND kind IN (${placeholders})${fc.sql}
        ORDER BY file, line`,
     )
     .all(...params);

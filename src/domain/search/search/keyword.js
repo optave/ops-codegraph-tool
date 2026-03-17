@@ -36,10 +36,17 @@ export function ftsSearchData(query, customDbPath, opts = {}) {
       params.push(opts.kind);
     }
 
-    const isGlob = opts.filePattern && /[*?[\]]/.test(opts.filePattern);
-    if (opts.filePattern && !isGlob) {
-      sql += ' AND n.file LIKE ?';
-      params.push(`%${opts.filePattern}%`);
+    const fp = opts.filePattern;
+    const fpArr = Array.isArray(fp) ? fp : fp ? [fp] : [];
+    const isGlob = fpArr.length > 0 && fpArr.some((p) => /[*?[\]]/.test(p));
+    if (fpArr.length > 0 && !isGlob) {
+      if (fpArr.length === 1) {
+        sql += ' AND n.file LIKE ?';
+        params.push(`%${fpArr[0]}%`);
+      } else {
+        sql += ` AND (${fpArr.map(() => 'n.file LIKE ?').join(' OR ')})`;
+        params.push(...fpArr.map((f) => `%${f}%`));
+      }
     }
 
     sql += ' ORDER BY rank LIMIT ?';

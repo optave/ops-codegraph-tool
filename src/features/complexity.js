@@ -13,6 +13,7 @@ import {
 import { walkWithVisitors } from '../ast-analysis/visitor.js';
 import { createComplexityVisitor } from '../ast-analysis/visitors/complexity-visitor.js';
 import { getFunctionNodeId, openReadonlyOrFail } from '../db/index.js';
+import { buildFileConditionSQL } from '../db/query-builder.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { info } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
@@ -547,9 +548,10 @@ export function complexityData(customDbPath, opts = {}) {
       where += ' AND n.name LIKE ?';
       params.push(`%${target}%`);
     }
-    if (fileFilter) {
-      where += ' AND n.file LIKE ?';
-      params.push(`%${fileFilter}%`);
+    {
+      const fc = buildFileConditionSQL(fileFilter, 'n.file');
+      where += fc.sql;
+      params.push(...fc.params);
     }
     if (kindFilter) {
       where += ' AND n.kind = ?';
@@ -753,9 +755,10 @@ export function* iterComplexity(customDbPath, opts = {}) {
       where += ' AND n.name LIKE ?';
       params.push(`%${opts.target}%`);
     }
-    if (opts.file) {
-      where += ' AND n.file LIKE ?';
-      params.push(`%${opts.file}%`);
+    {
+      const fc = buildFileConditionSQL(opts.file, 'n.file');
+      where += fc.sql;
+      params.push(...fc.params);
     }
     if (opts.kind) {
       where += ' AND n.kind = ?';

@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 import { BATCH_COMMANDS, multiBatchData, splitTargets } from '../../features/batch.js';
 import { batch } from '../../presentation/batch.js';
@@ -12,7 +13,7 @@ export const command = {
     ['--from-file <path>', 'Read targets from file (JSON array or newline-delimited)'],
     ['--stdin', 'Read targets from stdin (JSON array)'],
     ['--depth <n>', 'Traversal depth passed to underlying command'],
-    ['-f, --file <path>', 'Scope to file (partial match)'],
+    ['-f, --file <path>', 'Scope to file (partial match, repeatable)', collectFile],
     ['-k, --kind <kind>', 'Filter by symbol kind'],
     ['-T, --no-tests', 'Exclude test/spec files from results'],
     ['--include-tests', 'Include test/spec files (overrides excludeTests config)'],
