@@ -2,6 +2,34 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.1.5](https://github.com/optave/codegraph/compare/v3.1.4...v3.1.5) (2026-03-16)
+
+**Phase 3 architectural refactoring completes.** This release finishes the remaining two Phase 3 roadmap tasks — domain directory grouping (3.15) and CLI composability (3.16) — bringing Phase 3 to 14 of 14 tasks complete. The `src/` directory is now reorganized into `domain/`, `features/`, and `presentation/` layers. A new `openGraph()` helper eliminates DB-open/close boilerplate across CLI commands, and a universal output formatter adds `--table` and `--csv` output to all commands. Several post-reorganization bugs are fixed: complexity/CFG/dataflow analysis restored after the move, MCP server imports corrected, worktree boundary escapes prevented, CJS `require()` support added, and LIKE wildcard injection in queries patched.
+
+### Features
+
+* **cli:** `openGraph()` helper and universal output formatter with `--table` and `--csv` output formats — eliminates per-command DB boilerplate and format-switching logic ([#461](https://github.com/optave/codegraph/pull/461))
+
+### Bug Fixes
+
+* **builder:** restore complexity/CFG/dataflow analysis that silently stopped running after src/ reorganization ([#469](https://github.com/optave/codegraph/pull/469))
+* **db:** prevent `findDbPath` from escaping git worktree boundary — stops codegraph from accidentally using a parent repo's database ([#457](https://github.com/optave/codegraph/pull/457))
+* **mcp:** update MCP server import path after src/ reorganization ([#466](https://github.com/optave/codegraph/pull/466))
+* **api:** add CJS `require()` support to package exports — fixes `ERR_REQUIRE_ESM` for CommonJS consumers ([#472](https://github.com/optave/codegraph/pull/472))
+* **db:** escape LIKE wildcards in `NodeQuery.fileFilter` and `nameLike` — prevents filenames containing `%` or `_` from matching unrelated rows ([#446](https://github.com/optave/codegraph/pull/446))
+
+### Refactors
+
+* **architecture:** reorganize `src/` into `domain/`, `features/`, `presentation/` layers — completes Phase 3.15 domain directory grouping ([#456](https://github.com/optave/codegraph/pull/456))
+* **architecture:** move remaining flat `src/` files into subdirectories ([#458](https://github.com/optave/codegraph/pull/458))
+* **architecture:** resolve three post-reorganization issues (circular imports, barrel exports, path corrections) ([#459](https://github.com/optave/codegraph/pull/459))
+* **queries:** deduplicate BFS impact traversal and centralize config loading ([#463](https://github.com/optave/codegraph/pull/463))
+* **tests:** migrate integration tests to InMemoryRepository for faster execution ([#462](https://github.com/optave/codegraph/pull/462))
+
+### Tests
+
+* **db:** add `findRepoRoot` and `findDbPath` ceiling boundary tests ([#475](https://github.com/optave/codegraph/pull/475))
+
 ## [3.1.4](https://github.com/optave/codegraph/compare/v3.1.3...v3.1.4) (2026-03-16)
 
 **Phase 3 architectural refactoring reaches near-completion.** This release delivers 11 of 14 roadmap tasks in Phase 3 (Vertical Slice Architecture), restructuring the codebase from a flat collection of large files into a modular subsystem layout. The 3,395-line `queries.js` is decomposed into `src/analysis/` and `src/shared/` modules. The MCP tool registry becomes composable. CLI commands are self-contained modules under `src/commands/`. A domain error hierarchy replaces ad-hoc throws. The build pipeline is decomposed into named stages. The embedder is extracted into `src/embeddings/` with pluggable stores and search strategies. A unified graph model (`src/graph/`) consolidates four parallel graph representations. Nodes gain qualified names, hierarchical scoping, and visibility metadata. An `InMemoryRepository` enables fast unit testing without SQLite. The presentation layer (`src/presentation/`) separates all output formatting from domain logic. `better-sqlite3` is bumped to 12.8.0.

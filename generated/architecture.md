@@ -2,7 +2,7 @@
 
 > **Scope:** Unconstrained redesign proposals. No consideration for migration effort or backwards compatibility. What would the ideal architecture look like?
 >
-> **Revision context:** The original audit (Feb 22, 2026) analyzed v1.4.0 with ~12 source modules totaling ~5K lines. The first revision (Mar 2, 2026) covered v2.6.0 with 35 modules totaling 17,830 lines. Since then, a rapid expansion added 6 new modules (cfg, ast, dataflow, viewer, extractors refactor, CLI consolidation), 4 new DB tables, 3 new node kinds, 3 new edge kinds, and 9 new MCP tools — all in a single day. The codebase now stands at 50 source modules totaling 26,277 lines. This revision re-evaluates every recommendation against the actual codebase as it stands today.
+> **Revision context:** The original audit (Feb 22, 2026) analyzed v1.4.0 with ~12 source modules totaling ~5K lines. The first revision (Mar 2, 2026) covered v2.6.0 with 35 modules totaling 17,830 lines. The second revision (Mar 3, 2026) covered 50 modules totaling 26,277 lines and identified 20 prioritized architectural concerns. **Phase 3 (Architectural Refactoring, v3.1.1–v3.1.5) resolved 15 of 20 concerns** — see [Revision 4](#revision-4--phase-3-complete-v315-march-2026) at the end of this document. The remaining 5 items are deferred to Phase 6 (Runtime & Extensibility).
 
 ---
 
@@ -451,6 +451,51 @@ A single AST walk with pluggable visitors would:
 2. Share language-specific node type mappings
 3. Allow new analyses to plug in without creating another 1K+ line module
 4. Enable the 4 opt-in build stages to share a single parse pass
+
+---
+
+## Revision 4 — Phase 3 Complete (v3.1.5, March 2026)
+
+Phase 3 (Architectural Refactoring) is now complete across v3.1.1–v3.1.5. This section maps each architectural concern from the audit above to its resolution status.
+
+### All 20 Items — Resolution Status
+
+| # | Concern | Resolution | Phase 3 Task |
+|---|---------|-----------|--------------|
+| **1** | Dual-function pattern (19 modules) | **Resolved.** CLI wrappers extracted to `src/presentation/` (formerly `src/commands/`). All 19 modules now have clean `*Data()` functions with no CLI formatting. | 3.2, 3.14 |
+| **2** | Repository pattern (25+ modules, 13 tables) | **Resolved.** `src/db/repository/` with 10 domain files (nodes, edges, build-stmts, complexity, cfg, dataflow, cochange, embeddings, graph-read, barrel). Raw SQL migrated from 14 modules. Prepared statement caching via `cachedStmt`. | 3.3 |
+| **3** | queries.js (3,395 lines) | **Resolved.** Decomposed into `src/domain/analysis/` (symbol-lookup, impact, dependencies, module-map, context, exports, roles) and `src/shared/` (constants, normalize, generators). | 3.4, 3.15 |
+| **4** | Three independent AST rule engines (4,801 lines) | **Resolved.** `src/ast-analysis/` with shared DFS `walkWithVisitors`, pluggable visitor hooks (`enterNode`/`exitNode`/`enterFunction`/`exitFunction`), and 4 visitors (complexity, CFG, dataflow, AST-store) running in a single coordinated pass. CFG rewritten from 1,242→518 lines. | 3.1 |
+| **5** | MCP monolith (34 tools, 1,370 lines) | **Resolved.** `src/mcp/tools/` with one file per tool. `tool-registry.js` for schema definitions. Adding a tool = adding a file + one barrel line. | 3.5 |
+| **6** | CLI monolith (47 commands, 1,557 lines) | **Resolved.** `src/cli/commands/` with 40 independently testable command files. `cli.js` reduced to 8-line wrapper. `openGraph()` helper and `resolveQueryOpts()` eliminate per-command boilerplate. | 3.6, 3.16 |
+| **7** | Uncurated public API (140+ exports) | **Resolved.** Reduced to 48 curated exports in `index.js`: 31 `*Data()` functions, 4 graph building, 3 export formats, 3 search, 4 constants. CJS `require()` support added. | 3.7 |
+| **8** | Domain error hierarchy (50 modules, inconsistent) | **Resolved.** 8 error classes in `src/shared/errors.js`: `CodegraphError`, `ParseError`, `DbError`, `ConfigError`, `ResolutionError`, `EngineError`, `AnalysisError`, `BoundaryError`. CLI catches domain errors; MCP returns structured responses. | 3.8 |
+| **9** | Builder pipeline (1,355 lines, 11 stages) | **Resolved.** `src/domain/graph/builder/` with `PipelineContext`, 9 named stages in `stages/`, per-stage timing. `builder.js` reduced to barrel re-export. | 3.9 |
+| **10** | Embedder subsystem (1,113 lines) | **Resolved.** `src/domain/search/` with pluggable stores (`sqlite-blob`, `fts5`), search engines (`semantic`, `keyword`, `hybrid`), and text preparation strategies (`structured`, `source`). | 3.10 |
+| **11** | Unified graph model (4 parallel representations) | **Resolved.** `src/graph/` with `CodeGraph` model, 3 builders (dependency, structure, temporal), 6 algorithms (BFS, shortest-path, Tarjan, Louvain, centrality), 2 classifiers (role, risk). | 3.11 |
+| **12** | Pagination standardization | **Previously resolved** (Phase 2.5). Universal `limit`/`offset` pagination on all 21 MCP tools. NDJSON streaming on ~14 CLI commands. | — |
+| **13** | Testing pyramid with InMemoryRepository | **Resolved.** `InMemoryRepository` at `src/db/repository/in-memory-repository.js`. Integration tests migrated. | 3.13 |
+| **14** | Event-driven pipeline for streaming | **Deferred** to Phase 6 (Runtime & Extensibility). | — |
+| **15** | Qualified names + hierarchical scoping | **Resolved.** Migration v15: `qualified_name`, `scope`, `visibility` columns. Visibility extraction for all 8 language extractors. `findNodesByScope()` and `findNodeByQualifiedName()` queries. | 3.12 |
+| **16** | Query result caching | **Deferred** to Phase 6. | — |
+| **17** | Unified engine interface (Strategy) | **Deferred** to Phase 6. | — |
+| **18** | Subgraph export with filtering | **Deferred** to Phase 6. | — |
+| **19** | Transitive import-aware confidence | **Deferred** to Phase 6. | — |
+| **20** | Config profiles for monorepos | **Deferred** to Phase 6. | — |
+
+### Additional completions not in original audit
+
+| Completion | Description | Phase 3 Task |
+|-----------|-------------|--------------|
+| Presentation layer extraction | All output formatting separated into `src/presentation/` — viewer, export, table, sequence-renderer, result-formatter, colors | 3.14 |
+| Domain directory grouping | `src/` reorganized into `domain/`, `features/`, `presentation/`, `infrastructure/`, `shared/` layers | 3.15 |
+| CLI composability | `openGraph()` helper, `resolveQueryOpts()`, universal `--table`/`--csv` output formats | 3.16 |
+
+### Summary
+
+**15 of 20 items resolved** during Phase 3 (v3.1.1–v3.1.5). Item 12 was already resolved in Phase 2.5. The remaining **5 items** (#14, #16–#20) are deferred to Phase 6 (Runtime & Extensibility) — they are optimization and extensibility concerns that become tractable now that the modular foundation is in place.
+
+The codebase has moved from 50 flat modules totaling 26,277 lines with pervasive anti-patterns to a structured vertical-slice architecture with clear layer boundaries (`domain/`, `features/`, `presentation/`, `infrastructure/`, `shared/`, `db/`, `graph/`, `mcp/`, `cli/`, `ast-analysis/`, `extractors/`). The dual-function pattern is eliminated, raw SQL is centralized, AST analysis runs in a single pass, and the public API surface is curated.
 
 ---
 

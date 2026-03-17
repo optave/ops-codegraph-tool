@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.1.4 | **Status:** Active development | **Updated:** March 2026
+> **Current version:** 3.1.5 | **Status:** Active development | **Updated:** March 2026
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across eleven phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -16,7 +16,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2**](#phase-2--foundation-hardening) | Foundation Hardening | Parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP | **Complete** (v1.5.0) |
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.7.0) |
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
-| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names, CLI composability | **In Progress** (v3.1.4) |
+| [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names, CLI composability | **Complete** (v3.1.5) |
 | [**4**](#phase-4--native-analysis-acceleration) | Native Analysis Acceleration | Move JS-only build phases (AST nodes, CFG, dataflow, insert nodes, structure, roles, complexity) to Rust; fix incremental rebuild data loss on native; sub-100ms 1-file rebuilds | Planned |
 | [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration, supply-chain security, CI coverage gates | Planned |
 | [**6**](#phase-6--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system, DX & onboarding | Planned |
@@ -556,9 +556,9 @@ Plus updated enums on existing tools (edge_kinds, symbol kinds).
 
 ---
 
-## Phase 3 -- Architectural Refactoring 🔄
+## Phase 3 -- Architectural Refactoring ✅
 
-> **Status:** In Progress -- started in v3.1.1
+> **Status:** Complete -- started in v3.1.1, finished in v3.1.5
 
 **Goal:** Restructure the codebase for modularity, testability, and long-term maintainability. These are internal improvements -- no new user-facing features, but they make every subsequent phase easier to build and maintain.
 
@@ -960,34 +960,34 @@ src/
 
 **Affected files:** `src/viewer.js`, `src/export.js`, `src/sequence.js`, `src/infrastructure/result-formatter.js`
 
-### 3.15 -- Domain Directory Grouping
+### 3.15 -- Domain Directory Grouping ✅
 
-Once 3.2-3.4 are complete and analysis modules are standalone, group them under `src/domain/` by feature area. This is a move-only refactor — no logic changes, just directory organization to match the vertical slice target structure.
+**Completed:** `src/` reorganized into `domain/`, `features/`, and `presentation/` layers ([#456](https://github.com/optave/codegraph/pull/456), [#458](https://github.com/optave/codegraph/pull/458)). Three post-reorganization issues (circular imports, barrel exports, path corrections) resolved in [#459](https://github.com/optave/codegraph/pull/459). MCP server import path fixed in [#466](https://github.com/optave/codegraph/pull/466). Complexity/CFG/dataflow analysis restored after the move in [#469](https://github.com/optave/codegraph/pull/469).
 
 ```
 src/domain/
-  graph/                 # builder.js, resolve.js, cycles.js, watcher.js
+  graph/                 # builder.js, resolve.js, cycles.js, watcher.js, journal.js, change-journal.js
   analysis/              # symbol-lookup.js, impact.js, dependencies.js, module-map.js,
-                         # context.js, exports.js, roles.js (from 3.4 decomposition)
-  search/                # embedder.js subsystem (from 3.10)
+                         # context.js, exports.js, roles.js
+  search/                # embedder subsystem (models, generator, stores, search strategies)
+  parser.js              # tree-sitter WASM wrapper + LANGUAGE_REGISTRY
+  queries.js             # Query functions (symbol search, file deps, impact analysis)
 ```
 
-- 🔲 Move builder pipeline modules to `domain/graph/`
-- 🔲 Move decomposed query modules (from 3.4) to `domain/analysis/`
-- 🔲 Move embedder subsystem (from 3.10) to `domain/search/`
-- 🔲 Update all import paths across codebase
-- 🔲 Update `package.json` exports map (from 3.7)
+- ✅ Move builder pipeline modules to `domain/graph/` ([#456](https://github.com/optave/codegraph/pull/456))
+- ✅ Move decomposed query modules (from 3.4) to `domain/analysis/` ([#456](https://github.com/optave/codegraph/pull/456))
+- ✅ Move embedder subsystem (from 3.10) to `domain/search/` ([#456](https://github.com/optave/codegraph/pull/456))
+- ✅ Move remaining flat files (`features/`, `presentation/`, `infrastructure/`, `shared/`) into subdirectories ([#458](https://github.com/optave/codegraph/pull/458))
+- ✅ Update all import paths across codebase ([#456](https://github.com/optave/codegraph/pull/456), [#458](https://github.com/optave/codegraph/pull/458), [#459](https://github.com/optave/codegraph/pull/459))
 
 **Prerequisite:** 3.2, 3.4, 3.9, 3.10 should be complete before this step — it organizes the results of those decompositions.
 
-### 3.16 -- CLI Composability
+### 3.16 -- CLI Composability ✅
 
-Practical cleanup to make the CLI surface match the internal composability that `*Data()` functions and MCP already provide. Not a philosophical overhaul -- just eliminating duplication and making the human CLI path as clean as the programmatic one.
+**Completed:** `openGraph(opts)` helper eliminates DB-open/close boilerplate across CLI commands. `resolveQueryOpts(opts)` extracts the 5 repeated option fields into one call, refactoring 20 command files. Universal output formatter extended with `--table` (auto-column aligned) and `--csv` (RFC 4180 with nested object flattening) output formats ([#461](https://github.com/optave/codegraph/pull/461)).
 
-**Context:** The internal architecture is already well-layered -- pure `*Data()` functions, read/write separation, NDJSON support. The 3.6 refactor split the former 1,525-line `cli.js` into `src/cli/` with 40 command modules and an 8-line thin wrapper, but individual commands still repeat DB open/close boilerplate, and output formatting is scattered across command files. MCP and `batch_query` already solve in-process composition for AI agents; these items fix the equivalent gaps on the CLI side.
-
-- **Extract shared `openGraph()` helper.** The thin dispatcher is done (3.6), but each of the 40 `commands/*.js` files still inlines its own DB-open / config-load / cleanup sequence. A single `openGraph(opts)` helper returning `{ db, rootDir, config }` with engine selection, config loading, and cleanup eliminates ~200 lines of per-command duplication.
-- **Universal output formatter.** Complete the existing `result-formatter.js` into a full presentation layer that handles `--json`, `--ndjson`, `--table`, `--csv` for any data function. Commands produce data; the formatter renders. Eliminates per-command format-switching logic.
+- ✅ **`openGraph()` helper** — single helper returning `{ db, rootDir, config }` with engine selection, config loading, and cleanup ([#461](https://github.com/optave/codegraph/pull/461))
+- ✅ **Universal output formatter** — `outputResult()` extended with `--table` and `--csv` formats; `resolveQueryOpts()` extracts repeated option fields ([#461](https://github.com/optave/codegraph/pull/461))
 
 **Affected files:** `src/cli/commands/*.js`, `src/cli/shared/`, `src/presentation/result-formatter.js`
 

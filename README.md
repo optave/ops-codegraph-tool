@@ -477,6 +477,8 @@ codegraph registry remove <name>  # Unregister
 | `-f, --file <path>` | Scope to a specific file (`fn`, `context`, `where`) |
 | `--mode <mode>` | Search mode: `hybrid` (default), `semantic`, or `keyword` (`search`) |
 | `--ndjson` | Output as newline-delimited JSON (one object per line) |
+| `--table` | Output as auto-column aligned table |
+| `--csv` | Output as CSV (RFC 4180, nested objects flattened) |
 | `--limit <n>` | Limit number of results |
 | `--offset <n>` | Skip first N results (pagination) |
 | `--rrf-k <n>` | RRF smoothing constant for multi-query search (default 60) |
@@ -775,7 +777,7 @@ See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap a
 1. ~~**Rust Core**~~ — **Complete** (v1.3.0) — native tree-sitter parsing via napi-rs, parallel multi-core parsing, incremental re-parsing, import resolution & cycle detection in Rust
 2. ~~**Foundation Hardening**~~ — **Complete** (v1.4.0) — parser registry, 12-tool MCP server with multi-repo support, test coverage 62%→75%, `apiKeyCommand` secret resolution, global repo registry
 3. ~~**Deep Analysis**~~ — **Complete** (v3.0.0) — dataflow analysis (flows_to, returns, mutates), intraprocedural CFG for all 11 languages, stored AST nodes, expanded node/edge types (parameter, property, constant, contains, parameter_of, receiver), GraphML/GraphSON/Neo4j CSV export, interactive HTML viewer, CLI consolidation, stable JSON schema
-4. **Architectural Refactoring** — **In Progress** (v3.1.4) — unified AST analysis, composable MCP, domain errors, builder pipeline, embedder subsystem, graph model, qualified names, presentation layer, InMemoryRepository (11/14 tasks complete)
+4. ~~**Architectural Refactoring**~~ — **Complete** (v3.1.5) — unified AST analysis, composable MCP, domain errors, builder pipeline, embedder subsystem, graph model, qualified names, presentation layer, InMemoryRepository, domain directory grouping, CLI composability
 5. **Natural Language Queries** — `codegraph ask` command, conversational sessions
 6. **Expanded Language Support** — 8 new languages (12 → 20)
 7. **GitHub Integration & CI** — reusable GitHub Action, PR review, SARIF output
