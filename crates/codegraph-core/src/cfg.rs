@@ -1,8 +1,6 @@
 use tree_sitter::Node;
+use crate::constants::MAX_WALK_DEPTH;
 use crate::types::{CfgBlock, CfgData, CfgEdge};
-
-/// Maximum recursion depth for CFG construction to prevent stack overflow.
-const MAX_WALK_DEPTH: usize = 200;
 
 // ─── CFG Rules ──────────────────────────────────────────────────────────
 

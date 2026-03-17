@@ -1,5 +1,6 @@
 pub mod cfg;
 pub mod complexity;
+pub mod constants;
 pub mod cycles;
 pub mod dataflow;
 pub mod edge_builder;

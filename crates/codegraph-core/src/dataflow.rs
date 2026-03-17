@@ -1,14 +1,11 @@
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
 
+use crate::constants::MAX_WALK_DEPTH;
 use crate::types::{
     DataflowArgFlow, DataflowAssignment, DataflowMutation, DataflowParam, DataflowResult,
     DataflowReturn,
 };
-
-/// Maximum recursion depth for AST traversal to prevent stack overflow
-/// on deeply nested trees. Matches the approach used in cfg.rs.
-const MAX_VISIT_DEPTH: usize = 200;
 
 // ─── Param Strategy ──────────────────────────────────────────────────────
 
@@ -852,7 +849,7 @@ fn member_receiver(member_expr: &Node, rules: &DataflowRules, source: &[u8]) -> 
 
 /// Collect all identifier names referenced within a node.
 fn collect_identifiers(node: &Node, out: &mut Vec<String>, rules: &DataflowRules, source: &[u8], depth: usize) {
-    if depth >= MAX_VISIT_DEPTH {
+    if depth >= MAX_WALK_DEPTH {
         return;
     }
     if is_ident(rules, node.kind()) {
@@ -964,7 +961,7 @@ fn visit(
     mutations: &mut Vec<DataflowMutation>,
     depth: usize,
 ) {
-    if depth >= MAX_VISIT_DEPTH {
+    if depth >= MAX_WALK_DEPTH {
         return;
     }
 

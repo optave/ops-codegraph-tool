@@ -1,9 +1,7 @@
 use tree_sitter::Node;
 
+use crate::constants::MAX_WALK_DEPTH;
 use crate::types::ComplexityMetrics;
-
-/// Maximum recursion depth for AST traversal to prevent stack overflow.
-const MAX_WALK_DEPTH: usize = 200;
 
 // ─── Language-Configurable Complexity Rules ───────────────────────────────
 
@@ -392,6 +390,9 @@ fn walk_children(
     max_nesting: &mut u32,
     depth: usize,
 ) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
             walk(

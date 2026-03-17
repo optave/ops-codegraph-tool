@@ -1,9 +1,8 @@
 use tree_sitter::Node;
 use crate::types::{AstNode, Definition};
 
-/// Maximum recursion depth for AST traversal to prevent stack overflow
-/// on deeply nested trees. Matches `MAX_VISIT_DEPTH` in `dataflow.rs`.
-pub const MAX_WALK_DEPTH: usize = 200;
+// Re-export so extractors that `use super::helpers::*` still see it.
+pub use crate::constants::MAX_WALK_DEPTH;
 
 /// Get the text of a node from the source bytes.
 pub fn node_text<'a>(node: &Node, source: &'a [u8]) -> &'a str {
