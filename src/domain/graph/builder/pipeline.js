@@ -146,7 +146,7 @@ export async function buildGraph(rootDir, opts = {}) {
     setupPipeline(ctx);
     await runPipelineStages(ctx);
   } catch (err) {
-    if (!ctx.earlyExit) closeDb(ctx.db);
+    if (!ctx.earlyExit && ctx.db) closeDb(ctx.db);
     throw err;
   }
 
