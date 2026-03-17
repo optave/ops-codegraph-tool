@@ -14,6 +14,7 @@ import {
   openReadonlyOrFail,
   Repository,
 } from '../../db/index.js';
+import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { ALL_SYMBOL_KINDS } from '../../shared/kinds.js';
 import { getFileHash, normalizeSymbol } from '../../shared/normalize.js';
@@ -206,7 +207,8 @@ export function childrenData(name, customDbPath, opts = {}) {
       let children;
       try {
         children = findNodeChildren(db, node.id);
-      } catch {
+      } catch (e) {
+        debug(`findNodeChildren failed for node ${node.id}: ${e.message}`);
         children = [];
       }
       if (noTests) children = children.filter((c) => !isTestFile(c.file || node.file));

@@ -15,7 +15,7 @@ import { createComplexityVisitor } from '../ast-analysis/visitors/complexity-vis
 import { getFunctionNodeId, openReadonlyOrFail } from '../db/index.js';
 import { buildFileConditionSQL } from '../db/query-builder.js';
 import { loadConfig } from '../infrastructure/config.js';
-import { info } from '../infrastructure/logger.js';
+import { debug, info } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
 
@@ -402,7 +402,8 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
         let code;
         try {
           code = fs.readFileSync(absPath, 'utf-8');
-        } catch {
+        } catch (e) {
+          debug(`complexity: cannot read ${relPath}: ${e.message}`);
           continue;
         }
 
@@ -411,7 +412,8 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
 
         try {
           tree = parser.parse(code);
-        } catch {
+        } catch (e) {
+          debug(`complexity: parse failed for ${relPath}: ${e.message}`);
           continue;
         }
       }
@@ -608,13 +610,14 @@ export function complexityData(customDbPath, opts = {}) {
          ORDER BY ${orderBy}`,
         )
         .all(...params);
-    } catch {
+    } catch (e) {
+      debug(`complexity query failed (table may not exist): ${e.message}`);
       // Check if graph has nodes even though complexity table is missing/empty
       let hasGraph = false;
       try {
         hasGraph = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c > 0;
-      } catch {
-        /* ignore */
+      } catch (e2) {
+        debug(`nodes table check failed: ${e2.message}`);
       }
       return { functions: [], summary: null, thresholds, hasGraph };
     }
@@ -703,8 +706,8 @@ export function complexityData(customDbPath, opts = {}) {
           ).length,
         };
       }
-    } catch {
-      /* ignore */
+    } catch (e) {
+      debug(`complexity summary query failed: ${e.message}`);
     }
 
     // When summary is null (no complexity rows), check if graph has nodes
@@ -712,8 +715,8 @@ export function complexityData(customDbPath, opts = {}) {
     if (summary === null) {
       try {
         hasGraph = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c > 0;
-      } catch {
-        /* ignore */
+      } catch (e) {
+        debug(`nodes table check failed: ${e.message}`);
       }
     }
 

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { openReadonlyOrFail, testFilterSQL } from '../../db/index.js';
+import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { findCycles } from '../graph/cycles.js';
 import { LANGUAGE_REGISTRY } from '../parser.js';
@@ -193,8 +194,8 @@ export function statsData(customDbPath, opts = {}) {
           builtAt: meta.built_at || null,
         };
       }
-    } catch {
-      /* embeddings table may not exist */
+    } catch (e) {
+      debug(`embeddings lookup skipped: ${e.message}`);
     }
 
     // Graph quality metrics
@@ -301,8 +302,8 @@ export function statsData(customDbPath, opts = {}) {
           minMI: +Math.min(...miValues).toFixed(1),
         };
       }
-    } catch {
-      /* table may not exist in older DBs */
+    } catch (e) {
+      debug(`complexity summary skipped: ${e.message}`);
     }
 
     return {

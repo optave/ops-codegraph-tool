@@ -20,11 +20,11 @@ import {
 import { walkWithVisitors } from '../ast-analysis/visitor.js';
 import { createDataflowVisitor } from '../ast-analysis/visitors/dataflow-visitor.js';
 import { hasDataflowTable, openReadonlyOrFail } from '../db/index.js';
-import { buildFileConditionSQL } from '../db/query-builder.js';
 import { ALL_SYMBOL_KINDS, normalizeSymbol } from '../domain/queries.js';
-import { info } from '../infrastructure/logger.js';
+import { debug, info } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
+import { findNodes } from './shared/find-nodes.js';
 
 // Re-export for backward compatibility
 export { _makeDataflowRules as makeDataflowRules, DATAFLOW_RULES };
@@ -141,7 +141,8 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
           let code;
           try {
             code = fs.readFileSync(absPath, 'utf-8');
-          } catch {
+          } catch (e) {
+            debug(`dataflow: cannot read ${relPath}: ${e.message}`);
             continue;
           }
 
@@ -150,7 +151,8 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
 
           try {
             tree = parser.parse(code);
-          } catch {
+          } catch (e) {
+            debug(`dataflow: parse failed for ${relPath}: ${e.message}`);
             continue;
           }
         }
@@ -235,28 +237,7 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
 
 // ── Query functions ─────────────────────────────────────────────────────────
 
-/**
- * Look up node(s) by name with optional file/kind/noTests filtering.
- * Similar to findMatchingNodes in queries.js but operates on the dataflow table.
- */
-function findNodes(db, name, opts = {}) {
-  const kinds = opts.kind ? [opts.kind] : ALL_SYMBOL_KINDS;
-  const placeholders = kinds.map(() => '?').join(', ');
-  const params = [`%${name}%`, ...kinds];
-
-  const fc = buildFileConditionSQL(opts.file, 'file');
-  params.push(...fc.params);
-
-  const rows = db
-    .prepare(
-      `SELECT * FROM nodes
-       WHERE name LIKE ? AND kind IN (${placeholders})${fc.sql}
-       ORDER BY file, line`,
-    )
-    .all(...params);
-
-  return opts.noTests ? rows.filter((n) => !isTestFile(n.file)) : rows;
-}
+// findNodes imported from ./shared/find-nodes.js
 
 /**
  * Return all dataflow edges for a symbol.
@@ -280,7 +261,12 @@ export function dataflowData(name, customDbPath, opts = {}) {
       };
     }
 
-    const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    const nodes = findNodes(
+      db,
+      name,
+      { noTests, file: opts.file, kind: opts.kind },
+      ALL_SYMBOL_KINDS,
+    );
     if (nodes.length === 0) {
       return { name, results: [] };
     }
@@ -424,12 +410,22 @@ export function dataflowPathData(from, to, customDbPath, opts = {}) {
       };
     }
 
-    const fromNodes = findNodes(db, from, { noTests, file: opts.fromFile, kind: opts.kind });
+    const fromNodes = findNodes(
+      db,
+      from,
+      { noTests, file: opts.fromFile, kind: opts.kind },
+      ALL_SYMBOL_KINDS,
+    );
     if (fromNodes.length === 0) {
       return { from, to, found: false, error: `No symbol matching "${from}"` };
     }
 
-    const toNodes = findNodes(db, to, { noTests, file: opts.toFile, kind: opts.kind });
+    const toNodes = findNodes(
+      db,
+      to,
+      { noTests, file: opts.toFile, kind: opts.kind },
+      ALL_SYMBOL_KINDS,
+    );
     if (toNodes.length === 0) {
       return { from, to, found: false, error: `No symbol matching "${to}"` };
     }
@@ -552,7 +548,12 @@ export function dataflowImpactData(name, customDbPath, opts = {}) {
       };
     }
 
-    const nodes = findNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    const nodes = findNodes(
+      db,
+      name,
+      { noTests, file: opts.file, kind: opts.kind },
+      ALL_SYMBOL_KINDS,
+    );
     if (nodes.length === 0) {
       return { name, results: [] };
     }

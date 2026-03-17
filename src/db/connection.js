@@ -37,10 +37,12 @@ export function findRepoRoot(fromDir) {
     // matches the realpathSync'd dir in findDbPath.
     try {
       root = fs.realpathSync(raw);
-    } catch {
+    } catch (e) {
+      debug(`realpathSync failed for git root "${raw}", using resolve: ${e.message}`);
       root = path.resolve(raw);
     }
-  } catch {
+  } catch (e) {
+    debug(`git rev-parse failed for "${dir}": ${e.message}`);
     root = null;
   }
   if (!fromDir) {
@@ -60,7 +62,8 @@ function isProcessAlive(pid) {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
+  } catch (e) {
+    debug(`PID ${pid} not alive: ${e.code || e.message}`);
     return false;
   }
 }
@@ -75,13 +78,13 @@ function acquireAdvisoryLock(dbPath) {
         warn(`Another process (PID ${pid}) may be using this database. Proceeding with caution.`);
       }
     }
-  } catch {
-    /* ignore read errors */
+  } catch (e) {
+    debug(`Advisory lock read failed: ${e.message}`);
   }
   try {
     fs.writeFileSync(lockPath, String(process.pid), 'utf-8');
-  } catch {
-    /* best-effort */
+  } catch (e) {
+    debug(`Advisory lock write failed: ${e.message}`);
   }
 }
 
@@ -91,8 +94,8 @@ function releaseAdvisoryLock(lockPath) {
     if (Number(content) === process.pid) {
       fs.unlinkSync(lockPath);
     }
-  } catch {
-    /* ignore */
+  } catch (e) {
+    debug(`Advisory lock release failed for ${lockPath}: ${e.message}`);
   }
 }
 
@@ -107,7 +110,8 @@ function isSameDirectory(a, b) {
     const sa = fs.statSync(a);
     const sb = fs.statSync(b);
     return sa.dev === sb.dev && sa.ino === sb.ino;
-  } catch {
+  } catch (e) {
+    debug(`isSameDirectory stat failed: ${e.message}`);
     return false;
   }
 }
@@ -139,7 +143,8 @@ export function findDbPath(customPath) {
   if (rawCeiling) {
     try {
       ceiling = fs.realpathSync(rawCeiling);
-    } catch {
+    } catch (e) {
+      debug(`realpathSync failed for ceiling "${rawCeiling}": ${e.message}`);
       ceiling = rawCeiling;
     }
   } else {
@@ -149,7 +154,8 @@ export function findDbPath(customPath) {
   let dir;
   try {
     dir = fs.realpathSync(process.cwd());
-  } catch {
+  } catch (e) {
+    debug(`realpathSync failed for cwd: ${e.message}`);
     dir = process.cwd();
   }
   while (true) {

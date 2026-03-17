@@ -6,6 +6,7 @@ import {
   findNodesByFile,
   openReadonlyOrFail,
 } from '../../db/index.js';
+import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import {
   createFileLinesReader,
@@ -60,8 +61,8 @@ function exportsFileImpl(db, target, noTests, getFileLines, unused) {
   try {
     db.prepare('SELECT exported FROM nodes LIMIT 0').raw();
     hasExportedCol = true;
-  } catch {
-    /* old DB without exported column */
+  } catch (e) {
+    debug(`exported column not available, using fallback: ${e.message}`);
   }
 
   return fileNodes.map((fn) => {

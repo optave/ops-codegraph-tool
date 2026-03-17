@@ -13,6 +13,7 @@ import { evaluateBoundaries } from '../../features/boundaries.js';
 import { coChangeForFiles } from '../../features/cochange.js';
 import { ownersForFiles } from '../../features/owners.js';
 import { loadConfig } from '../../infrastructure/config.js';
+import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { normalizeSymbol } from '../../shared/normalize.js';
 import { paginateResult } from '../../shared/paginate.js';
@@ -289,8 +290,8 @@ export function diffImpactData(customDbPath, opts = {}) {
       });
       // Exclude files already found via static analysis
       historicallyCoupled = coResults.filter((r) => !affectedFiles.has(r.file));
-    } catch {
-      /* co_changes table doesn't exist — skip silently */
+    } catch (e) {
+      debug(`co_changes lookup skipped: ${e.message}`);
     }
 
     // Look up CODEOWNERS for changed + affected files
@@ -305,8 +306,8 @@ export function diffImpactData(customDbPath, opts = {}) {
           suggestedReviewers: ownerResult.suggestedReviewers,
         };
       }
-    } catch {
-      /* CODEOWNERS missing or unreadable — skip silently */
+    } catch (e) {
+      debug(`CODEOWNERS lookup skipped: ${e.message}`);
     }
 
     // Check boundary violations scoped to changed files
@@ -323,8 +324,8 @@ export function diffImpactData(customDbPath, opts = {}) {
         boundaryViolations = result.violations;
         boundaryViolationCount = result.violationCount;
       }
-    } catch {
-      /* boundary check failed — skip silently */
+    } catch (e) {
+      debug(`boundary check skipped: ${e.message}`);
     }
 
     const base = {
