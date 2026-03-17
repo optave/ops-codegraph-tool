@@ -8,6 +8,7 @@
 
 import path from 'node:path';
 import { openReadonlyOrFail } from '../db/index.js';
+import { normalizeFileFilter } from '../db/query-builder.js';
 import { bfsTransitiveCallers } from '../domain/analysis/impact.js';
 import { explainData } from '../domain/queries.js';
 import { loadConfig } from '../infrastructure/config.js';
@@ -100,7 +101,7 @@ function readPhase44(db, nodeId) {
 export function auditData(target, customDbPath, opts = {}) {
   const noTests = opts.noTests || false;
   const maxDepth = opts.depth || 3;
-  const file = opts.file;
+  const fileFilters = normalizeFileFilter(opts.file);
   const kind = opts.kind;
 
   // 1. Get structure via explainData
@@ -109,7 +110,8 @@ export function auditData(target, customDbPath, opts = {}) {
   // Apply --file and --kind filters for function targets
   let results = explained.results;
   if (explained.kind === 'function') {
-    if (file) results = results.filter((r) => r.file.includes(file));
+    if (fileFilters.length > 0)
+      results = results.filter((r) => fileFilters.some((f) => r.file.includes(f)));
     if (kind) results = results.filter((r) => r.kind === kind);
   }
 

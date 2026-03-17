@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { findDbPath, openReadonlyOrFail } from '../db/index.js';
+import { normalizeFileFilter } from '../db/query-builder.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 
 // ─── CODEOWNERS Parsing ──────────────────────────────────────────────
@@ -192,9 +193,9 @@ export function ownersData(customDbPath, opts = {}) {
       .map((r) => r.file);
 
     if (opts.noTests) allFiles = allFiles.filter((f) => !isTestFile(f));
-    if (opts.file) {
-      const filter = opts.file;
-      allFiles = allFiles.filter((f) => f.includes(filter));
+    const fileFilters = normalizeFileFilter(opts.file);
+    if (fileFilters.length > 0) {
+      allFiles = allFiles.filter((f) => fileFilters.some((filter) => f.includes(filter)));
     }
 
     // Map files to owners

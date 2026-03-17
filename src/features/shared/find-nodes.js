@@ -1,3 +1,4 @@
+import { buildFileConditionSQL } from '../../db/query-builder.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 
 /**
@@ -15,16 +16,13 @@ export function findNodes(db, name, opts = {}, defaultKinds = []) {
   const placeholders = kinds.map(() => '?').join(', ');
   const params = [`%${name}%`, ...kinds];
 
-  let fileCondition = '';
-  if (opts.file) {
-    fileCondition = ' AND file LIKE ?';
-    params.push(`%${opts.file}%`);
-  }
+  const fc = buildFileConditionSQL(opts.file, 'file');
+  params.push(...fc.params);
 
   const rows = db
     .prepare(
       `SELECT * FROM nodes
-       WHERE name LIKE ? AND kind IN (${placeholders})${fileCondition}
+       WHERE name LIKE ? AND kind IN (${placeholders})${fc.sql}
        ORDER BY file, line`,
     )
     .all(...params);

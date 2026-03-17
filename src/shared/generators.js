@@ -1,4 +1,5 @@
 import { iterateFunctionNodes, openReadonlyOrFail } from '../db/index.js';
+import { buildFileConditionSQL } from '../db/query-builder.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { ALL_SYMBOL_KINDS } from './kinds.js';
 
@@ -52,9 +53,12 @@ export function* iterRoles(customDbPath, opts = {}) {
       conditions.push('role = ?');
       params.push(opts.role);
     }
-    if (opts.file) {
-      conditions.push('file LIKE ?');
-      params.push(`%${opts.file}%`);
+    {
+      const fc = buildFileConditionSQL(opts.file, 'file');
+      if (fc.sql) {
+        conditions.push(fc.sql.replace(/^ AND /, ''));
+        params.push(...fc.params);
+      }
     }
 
     const stmt = db.prepare(

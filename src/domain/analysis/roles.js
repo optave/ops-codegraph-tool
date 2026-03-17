@@ -1,4 +1,5 @@
 import { openReadonlyOrFail } from '../../db/index.js';
+import { buildFileConditionSQL } from '../../db/query-builder.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { normalizeSymbol } from '../../shared/normalize.js';
 import { paginateResult } from '../../shared/paginate.js';
@@ -8,8 +9,6 @@ export function rolesData(customDbPath, opts = {}) {
   try {
     const noTests = opts.noTests || false;
     const filterRole = opts.role || null;
-    const filterFile = opts.file || null;
-
     const conditions = ['role IS NOT NULL'];
     const params = [];
 
@@ -17,9 +16,13 @@ export function rolesData(customDbPath, opts = {}) {
       conditions.push('role = ?');
       params.push(filterRole);
     }
-    if (filterFile) {
-      conditions.push('file LIKE ?');
-      params.push(`%${filterFile}%`);
+    {
+      const fc = buildFileConditionSQL(opts.file, 'file');
+      if (fc.sql) {
+        // Strip leading ' AND ' since we're using conditions array
+        conditions.push(fc.sql.replace(/^ AND /, ''));
+        params.push(...fc.params);
+      }
     }
 
     let rows = db

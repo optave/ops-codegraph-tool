@@ -29,15 +29,19 @@ const TEST_PATTERN = /\.(test|spec)\.|__test__|__tests__|\.stories\./;
  * @param {object} opts
  * @param {string} [opts.filePattern] - Glob pattern (only applied if it contains glob chars)
  * @param {boolean} [opts.noTests] - Exclude test/spec files
- * @param {boolean} [opts.isGlob] - Pre-computed: does filePattern contain glob chars?
  * @returns {Array}
  */
 export function applyFilters(rows, opts = {}) {
   let filtered = rows;
-  const isGlob =
-    opts.isGlob !== undefined ? opts.isGlob : opts.filePattern && /[*?[\]]/.test(opts.filePattern);
-  if (isGlob) {
-    filtered = filtered.filter((row) => globMatch(row.file, opts.filePattern));
+  const fp = opts.filePattern;
+  const fpArr = Array.isArray(fp) ? fp : fp ? [fp] : [];
+  if (fpArr.length > 0) {
+    filtered = filtered.filter((row) =>
+      fpArr.some((p) => {
+        const patternIsGlob = /[*?[\]]/.test(p);
+        return patternIsGlob ? globMatch(row.file, p) : row.file.includes(p);
+      }),
+    );
   }
   if (opts.noTests) {
     filtered = filtered.filter((row) => !TEST_PATTERN.test(row.file));

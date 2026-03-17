@@ -1,6 +1,6 @@
 import { ConfigError } from '../../shared/errors.js';
 import { CORE_SYMBOL_KINDS, EVERY_SYMBOL_KIND, VALID_ROLES } from '../../shared/kinds.js';
-import { escapeLike } from '../query-builder.js';
+import { escapeLike, normalizeFileFilter } from '../query-builder.js';
 import { Repository } from './base.js';
 
 /**
@@ -25,6 +25,17 @@ function likeToRegex(pattern) {
     }
   }
   return new RegExp(`^${regex}$`, 'i');
+}
+
+/**
+ * Build a filter predicate for file matching.
+ * Accepts string, string[], or falsy. Returns null when no filtering needed.
+ */
+function buildFileFilterFn(file) {
+  const files = normalizeFileFilter(file);
+  if (files.length === 0) return null;
+  const regexes = files.map((f) => likeToRegex(`%${escapeLike(f)}%`));
+  return (filePath) => regexes.some((re) => re.test(filePath));
 }
 
 /**
@@ -121,9 +132,9 @@ export class InMemoryRepository extends Repository {
     if (opts.kinds) {
       nodes = nodes.filter((n) => opts.kinds.includes(n.kind));
     }
-    if (opts.file) {
-      const fileRe = likeToRegex(`%${escapeLike(opts.file)}%`);
-      nodes = nodes.filter((n) => fileRe.test(n.file));
+    {
+      const fileFn = buildFileFilterFn(opts.file);
+      if (fileFn) nodes = nodes.filter((n) => fileFn(n.file));
     }
 
     // Compute fan-in per node
@@ -197,9 +208,9 @@ export class InMemoryRepository extends Repository {
     if (opts.kind) {
       nodes = nodes.filter((n) => n.kind === opts.kind);
     }
-    if (opts.file) {
-      const fileRe = likeToRegex(`%${escapeLike(opts.file)}%`);
-      nodes = nodes.filter((n) => fileRe.test(n.file));
+    {
+      const fileFn = buildFileFilterFn(opts.file);
+      if (fileFn) nodes = nodes.filter((n) => fileFn(n.file));
     }
 
     return nodes.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
@@ -208,9 +219,9 @@ export class InMemoryRepository extends Repository {
   findNodeByQualifiedName(qualifiedName, opts = {}) {
     let nodes = [...this.#nodes.values()].filter((n) => n.qualified_name === qualifiedName);
 
-    if (opts.file) {
-      const fileRe = likeToRegex(`%${escapeLike(opts.file)}%`);
-      nodes = nodes.filter((n) => fileRe.test(n.file));
+    {
+      const fileFn = buildFileFilterFn(opts.file);
+      if (fileFn) nodes = nodes.filter((n) => fileFn(n.file));
     }
 
     return nodes.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
@@ -248,9 +259,9 @@ export class InMemoryRepository extends Repository {
           !n.file.includes('.stories.'),
       );
     }
-    if (opts.file) {
-      const fileRe = likeToRegex(`%${escapeLike(opts.file)}%`);
-      nodes = nodes.filter((n) => fileRe.test(n.file));
+    {
+      const fileFn = buildFileFilterFn(opts.file);
+      if (fileFn) nodes = nodes.filter((n) => fileFn(n.file));
     }
     if (opts.role) {
       nodes = nodes.filter((n) => n.role === opts.role);
@@ -541,9 +552,9 @@ export class InMemoryRepository extends Repository {
       ['function', 'method', 'class'].includes(n.kind),
     );
 
-    if (opts.file) {
-      const fileRe = likeToRegex(`%${escapeLike(opts.file)}%`);
-      nodes = nodes.filter((n) => fileRe.test(n.file));
+    {
+      const fileFn = buildFileFilterFn(opts.file);
+      if (fileFn) nodes = nodes.filter((n) => fileFn(n.file));
     }
     if (opts.pattern) {
       const patternRe = likeToRegex(`%${escapeLike(opts.pattern)}%`);

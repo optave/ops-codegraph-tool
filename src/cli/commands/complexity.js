@@ -1,3 +1,4 @@
+import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 
 export const command = {
@@ -13,7 +14,7 @@ export const command = {
     ],
     ['--above-threshold', 'Only functions exceeding warn thresholds'],
     ['--health', 'Show health metrics (Halstead, MI) columns'],
-    ['-f, --file <path>', 'Scope to file (partial match)'],
+    ['-f, --file <path>', 'Scope to file (partial match, repeatable)', collectFile],
     ['-k, --kind <kind>', 'Filter by symbol kind'],
     ['-T, --no-tests', 'Exclude test/spec files from results'],
     ['--include-tests', 'Include test/spec files (overrides excludeTests config)'],

@@ -1,3 +1,4 @@
+import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 import { children } from '../../presentation/queries-cli.js';
 
@@ -6,7 +7,11 @@ export const command = {
   description: 'List parameters, properties, and constants of a symbol',
   options: [
     ['-d, --db <path>', 'Path to graph.db'],
-    ['-f, --file <path>', 'Scope search to symbols in this file (partial match)'],
+    [
+      '-f, --file <path>',
+      'Scope search to symbols in this file (partial match, repeatable)',
+      collectFile,
+    ],
     ['-k, --kind <kind>', 'Filter to a specific symbol kind'],
     ['-T, --no-tests', 'Exclude test/spec files from results'],
     ['-j, --json', 'Output as JSON'],

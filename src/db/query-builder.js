@@ -72,6 +72,55 @@ export function escapeLike(s) {
   return s.replace(/[%_\\]/g, '\\$&');
 }
 
+/**
+ * Normalize a file filter value (string, string[], or falsy) into a flat array.
+ * Returns an empty array when the input is falsy.
+ * @param {string|string[]|undefined|null} file
+ * @returns {string[]}
+ */
+export function normalizeFileFilter(file) {
+  if (!file) return [];
+  return Array.isArray(file) ? file : [file];
+}
+
+/**
+ * Build a SQL condition + params for a multi-value file LIKE filter.
+ * Returns `{ sql: '', params: [] }` when the filter is empty.
+ *
+ * @param {string|string[]} file - One or more partial file paths
+ * @param {string} [column='file'] - The column name to filter on (e.g. 'n.file', 'a.file')
+ * @returns {{ sql: string, params: string[] }}
+ */
+export function buildFileConditionSQL(file, column = 'file') {
+  validateColumn(column);
+  const files = normalizeFileFilter(file);
+  if (files.length === 0) return { sql: '', params: [] };
+  if (files.length === 1) {
+    return {
+      sql: ` AND ${column} LIKE ? ESCAPE '\\'`,
+      params: [`%${escapeLike(files[0])}%`],
+    };
+  }
+  const clauses = files.map(() => `${column} LIKE ? ESCAPE '\\'`);
+  return {
+    sql: ` AND (${clauses.join(' OR ')})`,
+    params: files.map((f) => `%${escapeLike(f)}%`),
+  };
+}
+
+/**
+ * Commander option accumulator for repeatable `--file` flag.
+ * Use as: `['-f, --file <path>', 'Scope to file (partial match, repeatable)', collectFile]`
+ * @param {string} val - New value from Commander
+ * @param {string[]} acc - Accumulated values (undefined on first call)
+ * @returns {string[]}
+ */
+export function collectFile(val, acc) {
+  acc = acc || [];
+  acc.push(val);
+  return acc;
+}
+
 // ─── Standalone Helpers ──────────────────────────────────────────────
 
 /**
@@ -171,11 +220,18 @@ export class NodeQuery {
     return this;
   }
 
-  /** WHERE n.file LIKE ? (no-op if falsy). Escapes LIKE wildcards in the value. */
+  /** WHERE n.file LIKE ? (no-op if falsy). Accepts a single string or string[]. */
   fileFilter(file) {
-    if (!file) return this;
-    this.#conditions.push("n.file LIKE ? ESCAPE '\\'");
-    this.#params.push(`%${escapeLike(file)}%`);
+    const files = normalizeFileFilter(file);
+    if (files.length === 0) return this;
+    if (files.length === 1) {
+      this.#conditions.push("n.file LIKE ? ESCAPE '\\'");
+      this.#params.push(`%${escapeLike(files[0])}%`);
+    } else {
+      const clauses = files.map(() => "n.file LIKE ? ESCAPE '\\'");
+      this.#conditions.push(`(${clauses.join(' OR ')})`);
+      this.#params.push(...files.map((f) => `%${escapeLike(f)}%`));
+    }
     return this;
   }
 

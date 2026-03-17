@@ -1,3 +1,4 @@
+import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 import { ConfigError } from '../../shared/errors.js';
 import { config } from '../shared/options.js';
@@ -31,7 +32,7 @@ export const command = {
     ['--signatures', 'Assert no function declaration lines were modified'],
     ['--boundaries', 'Assert no cross-owner boundary violations'],
     ['--depth <n>', 'Max BFS depth for blast radius (default: 3)'],
-    ['-f, --file <path>', 'Scope to file (partial match, manifesto mode)'],
+    ['-f, --file <path>', 'Scope to file (partial match, repeatable, manifesto mode)', collectFile],
     ['-k, --kind <kind>', 'Filter by symbol kind (manifesto mode)'],
     ['-T, --no-tests', 'Exclude test/spec files from results'],
     ['--include-tests', 'Include test/spec files (overrides excludeTests config)'],
