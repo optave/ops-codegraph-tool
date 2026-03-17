@@ -312,7 +312,6 @@ function detectHasEmbeddings(db) {
   }
 }
 
-
 // ── Scoped build path ───────────────────────────────────────────────────
 
 function handleScopedBuild(ctx) {
