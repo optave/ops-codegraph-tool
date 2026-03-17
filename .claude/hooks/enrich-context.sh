@@ -39,7 +39,7 @@ if ! command -v codegraph &>/dev/null && ! command -v npx &>/dev/null; then
   exit 0
 fi
 
-# Run codegraph brief and capture output (falls back to deps for older installs)
+# Run codegraph brief and capture output (silent no-op on older installs without the brief command)
 BRIEF=""
 if command -v codegraph &>/dev/null; then
   BRIEF=$(codegraph brief "$REL_PATH" --json -d "$DB_PATH" 2>/dev/null) || true
@@ -64,7 +64,7 @@ printf '%s' "$BRIEF" | node -e "
       const risk=r.risk||'unknown';
       const imports=(r.imports||[]).join(', ');
       const importedBy=(r.importedBy||[]).join(', ');
-      const transitive=r.transitiveImporterCount||0;
+      const transitive=r.totalImporterCount||0;
       const direct=(r.importedBy||[]).length;
       const extra=transitive-direct;
       const syms=(r.symbols||[]).map(s=>{
