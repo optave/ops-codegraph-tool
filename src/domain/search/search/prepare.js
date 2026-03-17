@@ -1,4 +1,5 @@
 import { openReadonlyOrFail } from '../../../db/index.js';
+import { escapeLike } from '../../../db/query-builder.js';
 import { getEmbeddingCount, getEmbeddingMeta } from '../../../db/repository/embeddings.js';
 import { MODELS } from '../models.js';
 import { applyFilters } from './filters.js';
@@ -51,11 +52,11 @@ export function prepareSearch(customDbPath, opts = {}) {
     }
     if (fpArr.length > 0 && !isGlob) {
       if (fpArr.length === 1) {
-        conditions.push('n.file LIKE ?');
-        params.push(`%${fpArr[0]}%`);
+        conditions.push("n.file LIKE ? ESCAPE '\\'");
+        params.push(`%${escapeLike(fpArr[0])}%`);
       } else {
-        conditions.push(`(${fpArr.map(() => 'n.file LIKE ?').join(' OR ')})`);
-        params.push(...fpArr.map((f) => `%${f}%`));
+        conditions.push(`(${fpArr.map(() => "n.file LIKE ? ESCAPE '\\'").join(' OR ')})`);
+        params.push(...fpArr.map((f) => `%${escapeLike(f)}%`));
       }
     }
     if (conditions.length > 0) {
