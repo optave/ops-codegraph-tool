@@ -6,6 +6,7 @@ import * as astQuery from './ast-query.js';
 import * as audit from './audit.js';
 import * as batchQuery from './batch-query.js';
 import * as branchCompare from './branch-compare.js';
+import * as brief from './brief.js';
 import * as cfg from './cfg.js';
 import * as check from './check.js';
 import * as coChanges from './co-changes.js';
@@ -67,5 +68,6 @@ export const TOOL_HANDLERS = new Map([
   [dataflow.name, dataflow],
   [check.name, check],
   [astQuery.name, astQuery],
+  [brief.name, brief],
   [listRepos.name, listRepos],
 ]);
