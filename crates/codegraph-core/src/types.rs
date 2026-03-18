@@ -271,6 +271,14 @@ pub struct DataflowResult {
 
 #[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TypeMapEntry {
+    pub name: String,
+    #[napi(js_name = "typeName")]
+    pub type_name: String,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileSymbols {
     pub file: String,
     pub definitions: Vec<Definition>,
@@ -283,6 +291,8 @@ pub struct FileSymbols {
     pub dataflow: Option<DataflowResult>,
     #[napi(js_name = "lineCount")]
     pub line_count: Option<u32>,
+    #[napi(js_name = "typeMap")]
+    pub type_map: Vec<TypeMapEntry>,
 }
 
 impl FileSymbols {
@@ -297,6 +307,7 @@ impl FileSymbols {
             ast_nodes: Vec::new(),
             dataflow: None,
             line_count: None,
+            type_map: Vec::new(),
         }
     }
 }

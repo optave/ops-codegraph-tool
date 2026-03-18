@@ -4,6 +4,10 @@
  * Build the same fixture project with both WASM and native engines,
  * then compare the resulting nodes/edges in SQLite.
  *
+ * IMPORTANT: Every feature MUST be implemented for BOTH engines (WASM and native).
+ * This test is a hard gate — if it fails, the feature is incomplete. Do not weaken,
+ * skip, or filter this test to work around missing engine parity. Fix the code instead.
+ *
  * Skipped when the native engine is not installed.
  */
 

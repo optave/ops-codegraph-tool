@@ -10,9 +10,11 @@ export function extractPythonSymbols(tree, _filePath) {
     imports: [],
     classes: [],
     exports: [],
+    typeMap: new Map(),
   };
 
   walkPythonNode(tree.rootNode, ctx);
+  extractPythonTypeMap(tree.rootNode, ctx);
   return ctx;
 }
 
@@ -282,6 +284,56 @@ function walkInitBody(bodyNode, seen, props) {
       });
     }
   }
+}
+
+function extractPythonTypeMap(node, ctx) {
+  extractPythonTypeMapDepth(node, ctx, 0);
+}
+
+function extractPythonTypeMapDepth(node, ctx, depth) {
+  if (depth >= 200) return;
+
+  // typed_parameter: identifier : type
+  if (node.type === 'typed_parameter') {
+    const nameNode = node.child(0);
+    const typeNode = node.childForFieldName('type');
+    if (nameNode && nameNode.type === 'identifier' && typeNode) {
+      const typeName = extractPythonTypeName(typeNode);
+      if (typeName && typeName !== 'self' && typeName !== 'cls') {
+        ctx.typeMap.set(nameNode.text, typeName);
+      }
+    }
+  }
+
+  // typed_default_parameter: name : type = default
+  if (node.type === 'typed_default_parameter') {
+    const nameNode = node.childForFieldName('name');
+    const typeNode = node.childForFieldName('type');
+    if (nameNode && nameNode.type === 'identifier' && typeNode) {
+      const typeName = extractPythonTypeName(typeNode);
+      if (typeName) ctx.typeMap.set(nameNode.text, typeName);
+    }
+  }
+
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) extractPythonTypeMapDepth(child, ctx, depth + 1);
+  }
+}
+
+function extractPythonTypeName(typeNode) {
+  if (!typeNode) return null;
+  const t = typeNode.type;
+  if (t === 'identifier') return typeNode.text;
+  if (t === 'attribute') return typeNode.text; // module.Type
+  // Generic: List[int] → subscript → value is identifier
+  if (t === 'subscript') {
+    const value = typeNode.childForFieldName('value');
+    return value ? value.text : null;
+  }
+  // None type, string, etc → skip
+  if (t === 'none' || t === 'string') return null;
+  return null;
 }
 
 function findPythonParentClass(node) {

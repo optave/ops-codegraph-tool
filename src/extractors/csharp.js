@@ -10,9 +10,11 @@ export function extractCSharpSymbols(tree, _filePath) {
     imports: [],
     classes: [],
     exports: [],
+    typeMap: new Map(),
   };
 
   walkCSharpNode(tree.rootNode, ctx);
+  extractCSharpTypeMap(tree.rootNode, ctx);
   return ctx;
 }
 
@@ -306,6 +308,66 @@ function extractCSharpEnumMembers(enumNode) {
     }
   }
   return constants;
+}
+
+// ── Type map extraction ──────────────────────────────────────────────────────
+
+function extractCSharpTypeMap(node, ctx) {
+  extractCSharpTypeMapDepth(node, ctx, 0);
+}
+
+function extractCSharpTypeMapDepth(node, ctx, depth) {
+  if (depth >= 200) return;
+
+  // local_declaration_statement → variable_declaration → type + variable_declarator(s)
+  if (node.type === 'variable_declaration') {
+    const typeNode = node.childForFieldName('type') || node.child(0);
+    if (typeNode && typeNode.type !== 'var_keyword') {
+      const typeName = extractCSharpTypeName(typeNode);
+      if (typeName) {
+        for (let i = 0; i < node.childCount; i++) {
+          const child = node.child(i);
+          if (child && child.type === 'variable_declarator') {
+            const nameNode = child.childForFieldName('name') || child.child(0);
+            if (nameNode && nameNode.type === 'identifier') {
+              ctx.typeMap.set(nameNode.text, typeName);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Method/constructor parameter: parameter node has type + name fields
+  if (node.type === 'parameter') {
+    const typeNode = node.childForFieldName('type');
+    const nameNode = node.childForFieldName('name');
+    if (typeNode && nameNode) {
+      const typeName = extractCSharpTypeName(typeNode);
+      if (typeName) ctx.typeMap.set(nameNode.text, typeName);
+    }
+  }
+
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) extractCSharpTypeMapDepth(child, ctx, depth + 1);
+  }
+}
+
+function extractCSharpTypeName(typeNode) {
+  if (!typeNode) return null;
+  const t = typeNode.type;
+  if (t === 'identifier' || t === 'qualified_name') return typeNode.text;
+  if (t === 'predefined_type') return null; // skip int, string, etc
+  if (t === 'generic_name') {
+    const first = typeNode.child(0);
+    return first ? first.text : null;
+  }
+  if (t === 'nullable_type') {
+    const inner = typeNode.child(0);
+    return inner ? extractCSharpTypeName(inner) : null;
+  }
+  return null;
 }
 
 function extractCSharpBaseTypes(node, className, classes) {

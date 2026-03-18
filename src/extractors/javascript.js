@@ -19,6 +19,7 @@ function extractSymbolsQuery(tree, query) {
   const imports = [];
   const classes = [];
   const exps = [];
+  const typeMap = new Map();
 
   const matches = query.matches(tree.rootNode);
 
@@ -179,7 +180,10 @@ function extractSymbolsQuery(tree, query) {
   // Extract dynamic import() calls via targeted walk (query patterns don't match `import` function type)
   extractDynamicImportsWalk(tree.rootNode, imports);
 
-  return { definitions, calls, imports, classes, exports: exps };
+  // Extract typeMap from type annotations and new expressions
+  extractTypeMapWalk(tree.rootNode, typeMap);
+
+  return { definitions, calls, imports, classes, exports: exps, typeMap };
 }
 
 /**
@@ -326,9 +330,12 @@ function extractSymbolsWalk(tree) {
     imports: [],
     classes: [],
     exports: [],
+    typeMap: new Map(),
   };
 
   walkJavaScriptNode(tree.rootNode, ctx);
+  // Populate typeMap for parameter type annotations (walk path handles variables inline)
+  extractTypeMapWalk(tree.rootNode, ctx.typeMap);
   return ctx;
 }
 
@@ -472,6 +479,19 @@ function handleVariableDecl(node, ctx) {
     if (declarator && declarator.type === 'variable_declarator') {
       const nameN = declarator.childForFieldName('name');
       const valueN = declarator.childForFieldName('value');
+
+      // Populate typeMap from type annotations or new expressions
+      if (nameN && nameN.type === 'identifier') {
+        const typeAnno = findChild(declarator, 'type_annotation');
+        if (typeAnno) {
+          const typeName = extractSimpleTypeName(typeAnno);
+          if (typeName) ctx.typeMap.set(nameN.text, typeName);
+        } else if (valueN && valueN.type === 'new_expression') {
+          const ctorType = extractNewExprTypeName(valueN);
+          if (ctorType) ctx.typeMap.set(nameN.text, ctorType);
+        }
+      }
+
       if (nameN && valueN) {
         const valType = valueN.type;
         if (
@@ -786,6 +806,70 @@ function extractImplementsFromNode(node) {
     if (child.childCount > 0) result.push(...extractImplementsFromNode(child));
   }
   return result;
+}
+
+// ── Type inference helpers ───────────────────────────────────────────────
+
+function extractSimpleTypeName(typeAnnotationNode) {
+  if (!typeAnnotationNode) return null;
+  for (let i = 0; i < typeAnnotationNode.childCount; i++) {
+    const child = typeAnnotationNode.child(i);
+    if (!child) continue;
+    const t = child.type;
+    if (t === 'type_identifier' || t === 'identifier') return child.text;
+    if (t === 'generic_type') return child.child(0)?.text || null;
+    if (t === 'parenthesized_type') return extractSimpleTypeName(child);
+    // Skip union, intersection, and array types — too ambiguous
+  }
+  return null;
+}
+
+function extractNewExprTypeName(newExprNode) {
+  if (!newExprNode || newExprNode.type !== 'new_expression') return null;
+  const ctor = newExprNode.childForFieldName('constructor') || newExprNode.child(1);
+  if (!ctor) return null;
+  if (ctor.type === 'identifier') return ctor.text;
+  if (ctor.type === 'member_expression') {
+    const prop = ctor.childForFieldName('property');
+    return prop ? prop.text : null;
+  }
+  return null;
+}
+
+function extractTypeMapWalk(rootNode, typeMap) {
+  function walk(node) {
+    const t = node.type;
+    if (t === 'variable_declarator') {
+      const nameN = node.childForFieldName('name');
+      if (nameN && nameN.type === 'identifier') {
+        const typeAnno = findChild(node, 'type_annotation');
+        if (typeAnno) {
+          const typeName = extractSimpleTypeName(typeAnno);
+          if (typeName) typeMap.set(nameN.text, typeName);
+        } else {
+          const valueN = node.childForFieldName('value');
+          if (valueN && valueN.type === 'new_expression') {
+            const ctorType = extractNewExprTypeName(valueN);
+            if (ctorType) typeMap.set(nameN.text, ctorType);
+          }
+        }
+      }
+    } else if (t === 'required_parameter' || t === 'optional_parameter') {
+      const nameNode =
+        node.childForFieldName('pattern') || node.childForFieldName('left') || node.child(0);
+      if (nameNode && nameNode.type === 'identifier') {
+        const typeAnno = findChild(node, 'type_annotation');
+        if (typeAnno) {
+          const typeName = extractSimpleTypeName(typeAnno);
+          if (typeName) typeMap.set(nameNode.text, typeName);
+        }
+      }
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walk(node.child(i));
+    }
+  }
+  walk(rootNode);
 }
 
 function extractReceiverName(objNode) {

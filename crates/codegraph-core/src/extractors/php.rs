@@ -11,6 +11,7 @@ impl SymbolExtractor for PhpExtractor {
     fn extract(&self, tree: &Tree, source: &[u8], file_path: &str) -> FileSymbols {
         let mut symbols = FileSymbols::new(file_path.to_string());
         walk_node(&tree.root_node(), source, &mut symbols);
+        extract_php_type_map(&tree.root_node(), source, &mut symbols);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &PHP_AST_CONFIG);
         symbols
     }
@@ -396,4 +397,51 @@ fn extract_php_enum_cases(node: &Node, source: &[u8]) -> Vec<Definition> {
         }
     }
     cases
+}
+
+fn extract_php_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    match type_node.kind() {
+        "named_type" | "name" | "qualified_name" => Some(node_text(type_node, source)),
+        "optional_type" => {
+            // ?MyType → skip the ? and get inner type
+            type_node.child(1)
+                .or_else(|| type_node.child(0))
+                .and_then(|inner| extract_php_type_name(&inner, source))
+        }
+        // Skip union/intersection types (too ambiguous)
+        "union_type" | "intersection_type" => None,
+        _ => None,
+    }
+}
+
+fn extract_php_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    extract_php_type_map_depth(node, source, symbols, 0);
+}
+
+fn extract_php_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
+    match node.kind() {
+        "simple_parameter" | "variadic_parameter" | "property_promotion_parameter" => {
+            if let Some(type_node) = node.child_by_field_name("type") {
+                if let Some(type_name) = extract_php_type_name(&type_node, source) {
+                    let name_node = node.child_by_field_name("name")
+                        .or_else(|| find_child(node, "variable_name"));
+                    if let Some(name_node) = name_node {
+                        symbols.type_map.push(TypeMapEntry {
+                            name: node_text(&name_node, source).to_string(),
+                            type_name: type_name.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            extract_php_type_map_depth(&child, source, symbols, depth + 1);
+        }
+    }
 }

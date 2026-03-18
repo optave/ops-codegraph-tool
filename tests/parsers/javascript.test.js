@@ -96,6 +96,57 @@ describe('JavaScript parser', () => {
     expect(c.receiver).toBe('a.b');
   });
 
+  describe('typeMap extraction', () => {
+    function parseTS(code) {
+      const parser = parsers.get('typescript');
+      const tree = parser.parse(code);
+      return extractSymbols(tree, 'test.ts');
+    }
+
+    it('extracts typeMap from type annotations', () => {
+      const symbols = parseTS(`const x: Router = express.Router();`);
+      expect(symbols.typeMap).toBeInstanceOf(Map);
+      expect(symbols.typeMap.get('x')).toBe('Router');
+    });
+
+    it('extracts typeMap from generic types', () => {
+      const symbols = parseTS(`const m: Map<string, number> = new Map();`);
+      expect(symbols.typeMap.get('m')).toBe('Map');
+    });
+
+    it('infers type from new expressions', () => {
+      const symbols = parseTS(`const r = new Router();`);
+      expect(symbols.typeMap.get('r')).toBe('Router');
+    });
+
+    it('extracts parameter types into typeMap', () => {
+      const symbols = parseTS(`function process(req: Request, res: Response) {}`);
+      expect(symbols.typeMap.get('req')).toBe('Request');
+      expect(symbols.typeMap.get('res')).toBe('Response');
+    });
+
+    it('returns empty typeMap when no annotations', () => {
+      const symbols = parseJS(`const x = 42; function foo(a, b) {}`);
+      expect(symbols.typeMap).toBeInstanceOf(Map);
+      expect(symbols.typeMap.size).toBe(0);
+    });
+
+    it('skips union and intersection types', () => {
+      const symbols = parseTS(`const x: string | number = 42;`);
+      expect(symbols.typeMap.has('x')).toBe(false);
+    });
+
+    it('handles let/var declarations with type annotations', () => {
+      const symbols = parseTS(`let app: Express = createApp();`);
+      expect(symbols.typeMap.get('app')).toBe('Express');
+    });
+
+    it('prefers type annotation over new expression', () => {
+      const symbols = parseTS(`const x: Base = new Derived();`);
+      expect(symbols.typeMap.get('x')).toBe('Base');
+    });
+  });
+
   it('does not set receiver for .call()/.apply()/.bind() unwrapped calls', () => {
     const symbols = parseJS(`fn.call(null, arg);`);
     const fnCall = symbols.calls.find((c) => c.name === 'fn');
