@@ -334,7 +334,7 @@ function extractSymbolsWalk(tree) {
   };
 
   walkJavaScriptNode(tree.rootNode, ctx);
-  // Populate typeMap for parameter type annotations (walk path handles variables inline)
+  // Populate typeMap for variables and parameter type annotations
   extractTypeMapWalk(tree.rootNode, ctx.typeMap);
   return ctx;
 }
@@ -479,18 +479,6 @@ function handleVariableDecl(node, ctx) {
     if (declarator && declarator.type === 'variable_declarator') {
       const nameN = declarator.childForFieldName('name');
       const valueN = declarator.childForFieldName('value');
-
-      // Populate typeMap from type annotations or new expressions
-      if (nameN && nameN.type === 'identifier') {
-        const typeAnno = findChild(declarator, 'type_annotation');
-        if (typeAnno) {
-          const typeName = extractSimpleTypeName(typeAnno);
-          if (typeName) ctx.typeMap.set(nameN.text, typeName);
-        } else if (valueN && valueN.type === 'new_expression') {
-          const ctorType = extractNewExprTypeName(valueN);
-          if (ctorType) ctx.typeMap.set(nameN.text, ctorType);
-        }
-      }
 
       if (nameN && valueN) {
         const valType = valueN.type;
