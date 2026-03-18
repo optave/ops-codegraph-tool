@@ -140,6 +140,7 @@ fn resolve_import_path_inner(
         ".jsx",
         ".mjs",
         ".py",
+        ".pyi",
         "/index.ts",
         "/index.tsx",
         "/index.js",

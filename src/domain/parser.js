@@ -320,7 +320,7 @@ export const LANGUAGE_REGISTRY = [
   },
   {
     id: 'python',
-    extensions: ['.py'],
+    extensions: ['.py', '.pyi'],
     grammarFile: 'tree-sitter-python.wasm',
     extractor: extractPythonSymbols,
     required: false,
@@ -355,14 +355,14 @@ export const LANGUAGE_REGISTRY = [
   },
   {
     id: 'ruby',
-    extensions: ['.rb'],
+    extensions: ['.rb', '.rake', '.gemspec'],
     grammarFile: 'tree-sitter-ruby.wasm',
     extractor: extractRubySymbols,
     required: false,
   },
   {
     id: 'php',
-    extensions: ['.php'],
+    extensions: ['.php', '.phtml'],
     grammarFile: 'tree-sitter-php.wasm',
     extractor: extractPHPSymbols,
     required: false,
