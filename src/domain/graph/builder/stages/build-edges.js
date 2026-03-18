@@ -296,11 +296,6 @@ function resolveCallTargets(ctx, call, relPath, importedNames, typeMap) {
 }
 
 function resolveByMethodOrGlobal(ctx, call, relPath, typeMap) {
-  const methodCandidates = (ctx.nodesByName.get(call.name) || []).filter(
-    (n) => n.name.endsWith(`.${call.name}`) && n.kind === 'method',
-  );
-  if (methodCandidates.length > 0) return methodCandidates;
-
   // Type-aware resolution: translate variable receiver to its declared type
   if (call.receiver && typeMap) {
     const typeName = typeMap.get(call.receiver);
