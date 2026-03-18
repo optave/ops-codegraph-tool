@@ -237,7 +237,12 @@ function countRoles(db, noTests) {
       .all();
   }
   const roles = {};
-  for (const r of roleRows) roles[r.role] = r.c;
+  let deadTotal = 0;
+  for (const r of roleRows) {
+    roles[r.role] = r.c;
+    if (r.role.startsWith('dead')) deadTotal += r.c;
+  }
+  if (deadTotal > 0) roles.dead = deadTotal;
   return roles;
 }
 

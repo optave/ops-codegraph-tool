@@ -264,7 +264,9 @@ export class InMemoryRepository extends Repository {
       if (fileFn) nodes = nodes.filter((n) => fileFn(n.file));
     }
     if (opts.role) {
-      nodes = nodes.filter((n) => n.role === opts.role);
+      nodes = nodes.filter((n) =>
+        opts.role === 'dead' ? n.role?.startsWith('dead') : n.role === opts.role,
+      );
     }
 
     const fanInMap = this.#computeFanIn();

@@ -13,8 +13,12 @@ export function rolesData(customDbPath, opts = {}) {
     const params = [];
 
     if (filterRole) {
-      conditions.push('role = ?');
-      params.push(filterRole);
+      if (filterRole === 'dead') {
+        conditions.push("role LIKE 'dead%'");
+      } else {
+        conditions.push('role = ?');
+        params.push(filterRole);
+      }
     }
     {
       const fc = buildFileConditionSQL(opts.file, 'file');

@@ -115,7 +115,7 @@ describe('classifyNodeRoles', () => {
     // Verify specific node roles
     const getRole = (name) => db.prepare('SELECT role FROM nodes WHERE name = ?').get(name)?.role;
 
-    expect(getRole('deadFn')).toBe('dead');
+    expect(getRole('deadFn')).toBe('dead-unresolved');
     expect(getRole('coreFn')).toBe('core');
     expect(getRole('utilityFn')).toBe('utility');
   });
@@ -157,6 +157,10 @@ describe('classifyNodeRoles', () => {
       utility: 0,
       adapter: 0,
       dead: 0,
+      'dead-leaf': 0,
+      'dead-entry': 0,
+      'dead-ffi': 0,
+      'dead-unresolved': 0,
       'test-only': 0,
       leaf: 0,
     });
@@ -178,7 +182,7 @@ describe('classifyNodeRoles', () => {
     expect(summary.utility).toBe(2);
   });
 
-  it('classifies nodes with only non-call edges as dead', () => {
+  it('classifies nodes with only non-call edges as dead-unresolved', () => {
     const fA = insertNode('a.js', 'file', 'a.js', 0);
     const fn1 = insertNode('fn1', 'function', 'a.js', 1);
     // Only import edge, no call edge
@@ -186,6 +190,6 @@ describe('classifyNodeRoles', () => {
 
     classifyNodeRoles(db);
     const role = db.prepare("SELECT role FROM nodes WHERE name = 'fn1'").get();
-    expect(role.role).toBe('dead');
+    expect(role.role).toBe('dead-unresolved');
   });
 });

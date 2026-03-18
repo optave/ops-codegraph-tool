@@ -995,22 +995,15 @@ src/domain/
 
 ## Phase 4 -- Resolution Accuracy
 
-> **Status:** Planned
+> **Status:** In Progress
 
 **Goal:** Close the most impactful gaps in call graph accuracy before investing in type safety or native acceleration. The entire value proposition — blast radius, impact analysis, dependency chains — rests on the call graph. These targeted improvements make the graph trustworthy.
 
 **Why before TypeScript:** These fixes operate on the existing JS codebase and produce measurable accuracy gains immediately. TypeScript types will further improve resolution later, but receiver tracking, dead role fixes, and precision benchmarks don't require types to implement.
 
-### 4.1 -- Fix "Dead" Role Sub-categories
+### ~~4.1 -- Fix "Dead" Role Sub-categories~~ ✅
 
-The current `dead` role classification conflates genuinely different categories, making the tool's own metrics misleading. Of ~509 dead callable symbols in codegraph's own codebase: 151 are Rust FFI (invisible by design), 94 are CLI/MCP entry points (framework dispatch), 26 are AST visitors (dynamic dispatch), 125 are repository methods (receiver type unknown), and only ~94 are genuine dead code or resolution misses.
-
-- Add sub-categories to role classification: `dead-leaf` (parameters, properties, constants — leaf nodes by definition), `dead-entry` (framework dispatch: CLI commands, MCP tools, event handlers), `dead-ffi` (cross-language FFI boundaries), `dead-unresolved` (genuinely unreferenced callables — the real dead code)
-- Update `classifyNodeRoles()` to use the new sub-categories
-- Update `roles` command, `audit`, and `triage` to report sub-categories
-- MCP `node_roles` tool gains `--role dead-entry`, `--role dead-unresolved` etc.
-
-**Affected files:** `src/graph/classifiers/roles.js`, `src/shared/kinds.js`, `src/domain/analysis/roles.js`, `src/features/triage.js`
+The coarse `dead` role is now sub-classified into four categories: `dead-leaf` (parameters, properties, constants), `dead-entry` (CLI commands, MCP tools, route/handler files), `dead-ffi` (cross-language FFI — `.rs`, `.c`, `.go`, etc.), and `dead-unresolved` (genuinely unreferenced callables). The `--role dead` filter matches all sub-roles for backward compatibility. Risk weights are tuned per sub-role. `VALID_ROLES`, `DEAD_SUB_ROLES` exported from `shared/kinds.js`. Stats, MCP `node_roles`, CLI `roles`/`triage` all updated.
 
 ### 4.2 -- Receiver Type Tracking for Method Dispatch
 

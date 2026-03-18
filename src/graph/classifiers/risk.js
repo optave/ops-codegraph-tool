@@ -26,6 +26,10 @@ export const ROLE_WEIGHTS = {
   leaf: 0.2,
   'test-only': 0.1,
   dead: 0.1,
+  'dead-leaf': 0.0,
+  'dead-entry': 0.3,
+  'dead-ffi': 0.05,
+  'dead-unresolved': 0.15,
 };
 
 const DEFAULT_ROLE_WEIGHT = 0.5;

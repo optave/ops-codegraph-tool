@@ -1,10 +1,55 @@
 /**
  * Node role classification — pure logic, no DB.
  *
- * Roles: entry, core, utility, adapter, leaf, dead, test-only
+ * Roles: entry, core, utility, adapter, leaf, dead-*, test-only
+ *
+ * Dead sub-categories refine the coarse "dead" bucket:
+ *   dead-leaf       — parameters, properties, constants (leaf nodes by definition)
+ *   dead-entry      — framework dispatch: CLI commands, MCP tools, event handlers
+ *   dead-ffi        — cross-language FFI boundaries (e.g. Rust napi-rs bindings)
+ *   dead-unresolved — genuinely unreferenced callables (the real dead code)
  */
 
 export const FRAMEWORK_ENTRY_PREFIXES = ['route:', 'event:', 'command:'];
+
+// ── Dead sub-classification helpers ────────────────────────────────
+
+const LEAF_KINDS = new Set(['parameter', 'property', 'constant']);
+
+const FFI_EXTENSIONS = new Set(['.rs', '.c', '.cpp', '.h', '.go', '.java', '.cs']);
+
+/** Path patterns indicating framework-dispatched entry points. */
+const ENTRY_PATH_PATTERNS = [
+  /cli[/\\]commands[/\\]/,
+  /mcp[/\\]/,
+  /routes?[/\\]/,
+  /handlers?[/\\]/,
+  /middleware[/\\]/,
+];
+
+/**
+ * Refine a "dead" classification into a sub-category.
+ *
+ * @param {{ kind?: string, file?: string }} node
+ * @returns {'dead-leaf'|'dead-entry'|'dead-ffi'|'dead-unresolved'}
+ */
+function classifyDeadSubRole(node) {
+  // Leaf kinds are dead by definition — they can't have callers
+  if (node.kind && LEAF_KINDS.has(node.kind)) return 'dead-leaf';
+
+  if (node.file) {
+    // Cross-language FFI: compiled-language files in a JS/TS project
+    const dotIdx = node.file.lastIndexOf('.');
+    if (dotIdx !== -1 && FFI_EXTENSIONS.has(node.file.slice(dotIdx))) return 'dead-ffi';
+
+    // Framework-dispatched entry points (CLI commands, MCP tools, routes)
+    if (ENTRY_PATH_PATTERNS.some((p) => p.test(node.file))) return 'dead-entry';
+  }
+
+  return 'dead-unresolved';
+}
+
+// ── Helpers ────────────────────────────────────────────────────────
 
 function median(sorted) {
   if (sorted.length === 0) return 0;
@@ -15,7 +60,7 @@ function median(sorted) {
 /**
  * Classify nodes into architectural roles based on fan-in/fan-out metrics.
  *
- * @param {{ id: string, name: string, fanIn: number, fanOut: number, isExported: boolean, testOnlyFanIn?: number }[]} nodes
+ * @param {{ id: string, name: string, kind?: string, file?: string, fanIn: number, fanOut: number, isExported: boolean, testOnlyFanIn?: number }[]} nodes
  * @returns {Map<string, string>} nodeId → role
  */
 export function classifyRoles(nodes) {
@@ -45,7 +90,7 @@ export function classifyRoles(nodes) {
     if (isFrameworkEntry) {
       role = 'entry';
     } else if (node.fanIn === 0 && !node.isExported) {
-      role = node.testOnlyFanIn > 0 ? 'test-only' : 'dead';
+      role = node.testOnlyFanIn > 0 ? 'test-only' : classifyDeadSubRole(node);
     } else if (node.fanIn === 0 && node.isExported) {
       role = 'entry';
     } else if (hasProdFanIn && node.fanIn > 0 && node.productionFanIn === 0) {

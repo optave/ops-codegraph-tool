@@ -162,7 +162,7 @@ function prepareFunctionLevelData(db, noTests, minConf, cfg) {
     const community = communityMap.get(n.id) ?? null;
     const directory = path.dirname(n.file);
     const risk = [];
-    if (n.role === 'dead') risk.push('dead-code');
+    if (n.role?.startsWith('dead')) risk.push('dead-code');
     if (fanIn >= (cfg.riskThresholds?.highBlastRadius ?? 10)) risk.push('high-blast-radius');
     if (cx && cx.maintainabilityIndex < (cfg.riskThresholds?.lowMI ?? 40)) risk.push('low-mi');
 

@@ -53,7 +53,10 @@ export const command = {
       'risk',
     ],
     ['--min-score <score>', 'Only show symbols with risk score >= threshold'],
-    ['--role <role>', 'Filter by role (entry, core, utility, adapter, leaf, dead)'],
+    [
+      '--role <role>',
+      'Filter by role (entry, core, utility, adapter, leaf, dead, dead-leaf, dead-entry, dead-ffi, dead-unresolved)',
+    ],
     ['-f, --file <path>', 'Scope to a specific file (partial match, repeatable)', collectFile],
     ['-k, --kind <kind>', 'Filter by symbol kind (function, method, class)'],
     ['-T, --no-tests', 'Exclude test/spec files from results'],

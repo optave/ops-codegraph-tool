@@ -110,12 +110,11 @@ describe('rolesData', () => {
     expect(names).toContain('unused');
   });
 
-  test('filters by role', () => {
+  test('filters by role (dead matches all sub-roles)', () => {
     const data = rolesData(dbPath, { role: 'dead' });
     for (const s of data.symbols) {
-      expect(s.role).toBe('dead');
+      expect(s.role).toMatch(/^dead/);
     }
-    expect(data.summary.dead).toBe(data.count);
   });
 
   test('filters by file', () => {
@@ -171,7 +170,7 @@ describe('whereData with roles', () => {
     const data = whereData('unused', dbPath);
     const unusedResult = data.results.find((r) => r.name === 'unused');
     expect(unusedResult).toBeDefined();
-    expect(unusedResult.role).toBe('dead');
+    expect(unusedResult.role).toMatch(/^dead/);
   });
 });
 

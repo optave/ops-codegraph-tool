@@ -243,11 +243,15 @@ export class NodeQuery {
     return this;
   }
 
-  /** WHERE n.role = ? (no-op if falsy). */
+  /** WHERE n.role = ? (no-op if falsy). 'dead' matches all dead-* sub-roles. */
   roleFilter(role) {
     if (!role) return this;
-    this.#conditions.push('n.role = ?');
-    this.#params.push(role);
+    if (role === 'dead') {
+      this.#conditions.push("n.role LIKE 'dead%'");
+    } else {
+      this.#conditions.push('n.role = ?');
+      this.#params.push(role);
+    }
     return this;
   }
 

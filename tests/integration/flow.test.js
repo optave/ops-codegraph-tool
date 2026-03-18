@@ -285,10 +285,10 @@ describe('framework entry point classification fix', () => {
     }
   });
 
-  test('orphanFn is classified as dead', () => {
+  test('orphanFn is classified as dead (sub-role)', () => {
     const db = new Database(dbPath, { readonly: true });
     const row = db.prepare(`SELECT role FROM nodes WHERE name = 'orphanFn'`).get();
     db.close();
-    expect(row.role).toBe('dead');
+    expect(row.role).toMatch(/^dead/);
   });
 });

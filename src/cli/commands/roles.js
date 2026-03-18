@@ -4,7 +4,8 @@ import { roles } from '../../presentation/queries-cli.js';
 
 export const command = {
   name: 'roles',
-  description: 'Show node role classification: entry, core, utility, adapter, dead, leaf',
+  description:
+    'Show node role classification: entry, core, utility, adapter, dead (dead-leaf, dead-entry, dead-ffi, dead-unresolved), leaf',
   options: [
     ['-d, --db <path>', 'Path to graph.db'],
     ['--role <role>', `Filter by role (${VALID_ROLES.join(', ')})`],
