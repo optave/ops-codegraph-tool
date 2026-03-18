@@ -268,6 +268,9 @@ function patchNativeResult(r) {
     }
   }
 
+  // typeMap: default to empty array when native binary predates the type-map feature
+  if (!r.typeMap) r.typeMap = [];
+
   // dataflow: wrap bindingType into binding object for argFlows and mutations
   if (r.dataflow) {
     if (r.dataflow.argFlows) {
@@ -414,7 +417,21 @@ export async function parseFileAuto(filePath, source, opts = {}) {
 
   if (native) {
     const result = native.parseFile(filePath, source, !!opts.dataflow, opts.ast !== false);
-    return result ? patchNativeResult(result) : null;
+    if (!result) return null;
+    const patched = patchNativeResult(result);
+    // Backfill typeMap via WASM when native binary predates the type-map feature
+    if (patched.typeMap.length === 0 && patched.calls?.length > 0) {
+      const parsers = await createParsers();
+      const extracted = wasmExtractSymbols(parsers, filePath, source);
+      if (extracted?.symbols?.typeMap) {
+        patched.typeMap =
+          extracted.symbols.typeMap instanceof Map
+            ? extracted.symbols.typeMap
+            : new Map(extracted.symbols.typeMap.map((e) => [e.name, e.typeName]));
+        patched._typeMapBackfilled = true;
+      }
+    }
+    return patched;
   }
 
   // WASM path
@@ -442,10 +459,37 @@ export async function parseFilesAuto(filePaths, rootDir, opts = {}) {
       !!opts.dataflow,
       opts.ast !== false,
     );
+    const needsTypeMap = [];
     for (const r of nativeResults) {
       if (!r) continue;
       const relPath = path.relative(rootDir, r.file).split(path.sep).join('/');
-      result.set(relPath, patchNativeResult(r));
+      const patched = patchNativeResult(r);
+      result.set(relPath, patched);
+      if (patched.typeMap.length === 0 && patched.calls?.length > 0) {
+        needsTypeMap.push({ filePath: r.file, relPath });
+      }
+    }
+    // Backfill typeMap via WASM for native binaries that predate the type-map feature.
+    // Also convert backfilled typeMap arrays to Maps for consistency with WASM output,
+    // so the JS edge builder can be used as a fallback.
+    if (needsTypeMap.length > 0) {
+      const parsers = await createParsers();
+      for (const { filePath, relPath } of needsTypeMap) {
+        try {
+          const code = fs.readFileSync(filePath, 'utf-8');
+          const extracted = wasmExtractSymbols(parsers, filePath, code);
+          if (extracted?.symbols?.typeMap) {
+            const symbols = result.get(relPath);
+            symbols.typeMap =
+              extracted.symbols.typeMap instanceof Map
+                ? extracted.symbols.typeMap
+                : new Map(extracted.symbols.typeMap.map((e) => [e.name, e.typeName]));
+            symbols._typeMapBackfilled = true;
+          }
+        } catch {
+          /* skip — typeMap is a best-effort backfill */
+        }
+      }
     }
     return result;
   }

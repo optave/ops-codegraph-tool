@@ -390,8 +390,11 @@ export async function buildEdges(ctx) {
 
     buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
 
+    // Use native edge builder unless typeMap was backfilled (old native binary
+    // lacks type-map support in its edge builder, so JS fallback is needed)
     const native = engineName === 'native' ? loadNative() : null;
-    if (native?.buildCallEdges) {
+    const typeMapBackfilled = [...ctx.fileSymbols.values()].some((s) => s._typeMapBackfilled);
+    if (native?.buildCallEdges && !typeMapBackfilled) {
       buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodes, native);
     } else {
       buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows);
