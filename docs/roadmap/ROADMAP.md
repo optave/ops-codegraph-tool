@@ -1293,7 +1293,8 @@ Smaller wins (~42ms combined) but complete the picture of a fully native build p
 
 Complexity is partly pre-computed by native (~16ms vs 77ms WASM) but not all functions are covered.
 
-- Ensure native parse computes cognitive, cyclomatic, Halstead, and MI metrics for every function, not just a subset
+- Ensure native parse computes cognitive and cyclomatic metrics for every function, not just a subset
+- Halstead and MI are scoped by Phase 5.9 (Kill List): MI will be removed entirely; Halstead will be limited to imperative code blocks. Native acceleration should only target the metrics that survive the Kill List
 - Eliminate the WASM fallback path in `buildComplexityMetrics()` when running native
 
 **Affected files:** `crates/codegraph-core/src/lib.rs`, `src/features/complexity.js`
