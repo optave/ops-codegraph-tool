@@ -1,4 +1,5 @@
 import { openReadonlyOrFail } from '../../../db/index.js';
+import { loadConfig } from '../../../infrastructure/config.js';
 import { hasFtsIndex } from '../stores/fts5.js';
 import { ftsSearchData } from './keyword.js';
 import { searchData } from './semantic.js';
@@ -9,9 +10,11 @@ import { searchData } from './semantic.js';
  * or null if no FTS5 index (caller should fall back to semantic-only).
  */
 export async function hybridSearchData(query, customDbPath, opts = {}) {
-  const limit = opts.limit || 15;
-  const k = opts.rrfK || 60;
-  const topK = (opts.limit || 15) * 5;
+  const config = opts.config || loadConfig();
+  const searchCfg = config.search || {};
+  const limit = opts.limit || searchCfg.topK || 15;
+  const k = opts.rrfK || searchCfg.rrfK || 60;
+  const topK = (opts.limit || searchCfg.topK || 15) * 5;
 
   // Split semicolons for multi-query support
   const queries =

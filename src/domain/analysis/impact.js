@@ -109,7 +109,8 @@ export function impactAnalysisData(file, customDbPath, opts = {}) {
 export function fnImpactData(name, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   try {
-    const maxDepth = opts.depth || 5;
+    const config = opts.config || loadConfig();
+    const maxDepth = opts.depth || config.analysis?.fnImpactDepth || 5;
     const noTests = opts.noTests || false;
     const hc = new Map();
 
@@ -387,7 +388,8 @@ export function diffImpactData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
-    const maxDepth = opts.depth || 3;
+    const config = opts.config || loadConfig();
+    const maxDepth = opts.depth || config.analysis?.impactDepth || 3;
 
     const dbPath = findDbPath(customDbPath);
     const repoRoot = path.resolve(path.dirname(dbPath), '..');

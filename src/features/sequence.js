@@ -9,6 +9,7 @@
 import { openRepo } from '../db/index.js';
 import { SqliteRepository } from '../db/repository/sqlite-repository.js';
 import { findMatchingNodes } from '../domain/queries.js';
+import { loadConfig } from '../infrastructure/config.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
 import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
@@ -230,7 +231,8 @@ function buildParticipants(fileSet, entryFile) {
 export function sequenceData(name, dbPath, opts = {}) {
   const { repo, close } = openRepo(dbPath, opts);
   try {
-    const maxDepth = opts.depth || 10;
+    const config = opts.config || loadConfig();
+    const maxDepth = opts.depth || config.analysis?.sequenceDepth || 10;
     const noTests = opts.noTests || false;
 
     const matchNode = findEntryNode(repo, name, opts);

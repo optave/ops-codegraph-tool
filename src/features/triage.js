@@ -1,5 +1,6 @@
 import { openRepo } from '../db/index.js';
 import { DEFAULT_WEIGHTS, scoreRisk } from '../graph/classifiers/risk.js';
+import { loadConfig } from '../infrastructure/config.js';
 import { warn } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
@@ -94,7 +95,13 @@ export function triageData(customDbPath, opts = {}) {
     const noTests = opts.noTests || false;
     const minScore = opts.minScore != null ? Number(opts.minScore) : null;
     const sort = opts.sort || 'risk';
-    const weights = { ...DEFAULT_WEIGHTS, ...(opts.weights || {}) };
+    const config = opts.config || loadConfig();
+    const riskConfig = config.risk || {};
+    const weights = { ...DEFAULT_WEIGHTS, ...(riskConfig.weights || {}), ...(opts.weights || {}) };
+    const riskOpts = {
+      roleWeights: riskConfig.roleWeights,
+      defaultRoleWeight: riskConfig.defaultRoleWeight,
+    };
 
     let rows;
     try {
@@ -114,7 +121,7 @@ export function triageData(customDbPath, opts = {}) {
       return { items: [], summary: EMPTY_SUMMARY(weights) };
     }
 
-    const riskMetrics = scoreRisk(filtered, weights);
+    const riskMetrics = scoreRisk(filtered, weights, riskOpts);
     const items = buildTriageItems(filtered, riskMetrics);
 
     const scored = minScore != null ? items.filter((it) => it.riskScore >= minScore) : items;

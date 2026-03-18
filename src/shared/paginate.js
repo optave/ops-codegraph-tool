@@ -7,13 +7,11 @@
 
 /** Default limits applied by MCP tool handlers (not by the programmatic API). */
 export const MCP_DEFAULTS = {
-  // Existing
   list_functions: 100,
   query: 10,
   where: 50,
   node_roles: 100,
   export_graph: 500,
-  // Smaller defaults for rich/nested results
   fn_impact: 5,
   context: 5,
   explain: 10,
@@ -32,6 +30,16 @@ export const MCP_DEFAULTS = {
   triage: 20,
   ast_query: 50,
 };
+
+/**
+ * Get MCP page-size defaults, optionally merged with config overrides.
+ * @param {object} [configDefaults] - Override map from config.mcp.defaults
+ * @returns {object}
+ */
+export function getMcpDefaults(configDefaults) {
+  if (!configDefaults) return MCP_DEFAULTS;
+  return { ...MCP_DEFAULTS, ...configDefaults };
+}
 
 /** Hard cap to prevent abuse via MCP. */
 export const MCP_MAX_LIMIT = 1000;

@@ -7,6 +7,7 @@ import {
   findNodesByFile,
   openReadonlyOrFail,
 } from '../../db/index.js';
+import { loadConfig } from '../../infrastructure/config.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 
 /** Symbol kinds meaningful for a file brief — excludes parameters, properties, constants. */
@@ -28,15 +29,15 @@ const BRIEF_KINDS = new Set([
  * @param {{ role: string|null, callerCount: number }[]} symbols
  * @returns {'high'|'medium'|'low'}
  */
-function computeRiskTier(symbols) {
+function computeRiskTier(symbols, highThreshold = 10, mediumThreshold = 3) {
   let maxCallers = 0;
   let hasCoreRole = false;
   for (const s of symbols) {
     if (s.callerCount > maxCallers) maxCallers = s.callerCount;
     if (s.role === 'core') hasCoreRole = true;
   }
-  if (maxCallers >= 10 || hasCoreRole) return 'high';
-  if (maxCallers >= 3) return 'medium';
+  if (maxCallers >= highThreshold || hasCoreRole) return 'high';
+  if (maxCallers >= mediumThreshold) return 'medium';
   return 'low';
 }
 
@@ -105,6 +106,11 @@ export function briefData(file, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
+    const config = opts.config || loadConfig();
+    const callerDepth = config.analysis?.briefCallerDepth ?? 5;
+    const importerDepth = config.analysis?.briefImporterDepth ?? 5;
+    const highRiskCallers = config.analysis?.briefHighRiskCallers ?? 10;
+    const mediumRiskCallers = config.analysis?.briefMediumRiskCallers ?? 3;
     const fileNodes = findFileNodes(db, `%${file}%`);
     if (fileNodes.length === 0) {
       return { file, results: [] };
@@ -117,7 +123,7 @@ export function briefData(file, customDbPath, opts = {}) {
       const directImporters = [...new Set(importedBy.map((i) => i.file))];
 
       // Transitive importer count
-      const totalImporterCount = countTransitiveImporters(db, [fn.id], noTests);
+      const totalImporterCount = countTransitiveImporters(db, [fn.id], noTests, importerDepth);
 
       // Direct imports
       let importsTo = findImportTargets(db, fn.id);
@@ -126,7 +132,7 @@ export function briefData(file, customDbPath, opts = {}) {
       // Symbol definitions with roles and caller counts
       const defs = findNodesByFile(db, fn.file).filter((d) => BRIEF_KINDS.has(d.kind));
       const symbols = defs.map((d) => {
-        const callerCount = countTransitiveCallers(db, d.id, noTests);
+        const callerCount = countTransitiveCallers(db, d.id, noTests, callerDepth);
         return {
           name: d.name,
           kind: d.kind,
@@ -136,7 +142,7 @@ export function briefData(file, customDbPath, opts = {}) {
         };
       });
 
-      const riskTier = computeRiskTier(symbols);
+      const riskTier = computeRiskTier(symbols, highRiskCallers, mediumRiskCallers);
 
       return {
         file: fn.file,

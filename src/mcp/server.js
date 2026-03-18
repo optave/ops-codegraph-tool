@@ -7,8 +7,10 @@
 
 import { createRequire } from 'node:module';
 import { findDbPath } from '../db/index.js';
+import { loadConfig } from '../infrastructure/config.js';
 import { CodegraphError, ConfigError } from '../shared/errors.js';
 import { MCP_MAX_LIMIT } from '../shared/paginate.js';
+import { initMcpDefaults } from './middleware.js';
 import { buildToolList } from './tool-registry.js';
 import { TOOL_HANDLERS } from './tools/index.js';
 
@@ -90,6 +92,10 @@ function validateMultiRepoAccess(multiRepo, name, args) {
 export async function startMCPServer(customDbPath, options = {}) {
   const { allowedRepos } = options;
   const multiRepo = options.multiRepo || !!allowedRepos;
+
+  // Apply config-based MCP page-size overrides
+  const config = options.config || loadConfig();
+  initMcpDefaults(config.mcp?.defaults);
 
   const { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema } =
     await loadMCPSdk();

@@ -13,14 +13,15 @@ export function safePath(repoRoot, file) {
   return resolved;
 }
 
-export function readSourceRange(repoRoot, file, startLine, endLine) {
+export function readSourceRange(repoRoot, file, startLine, endLine, opts = {}) {
   try {
     const absPath = safePath(repoRoot, file);
     if (!absPath) return null;
     const content = fs.readFileSync(absPath, 'utf-8');
     const lines = content.split('\n');
+    const excerptLines = opts.excerptLines ?? 50;
     const start = Math.max(0, (startLine || 1) - 1);
-    const end = Math.min(lines.length, endLine || startLine + 50);
+    const end = Math.min(lines.length, endLine || startLine + excerptLines);
     return lines.slice(start, end).join('\n');
   } catch (e) {
     debug(`readSourceRange failed for ${file}: ${e.message}`);
@@ -28,12 +29,15 @@ export function readSourceRange(repoRoot, file, startLine, endLine) {
   }
 }
 
-export function extractSummary(fileLines, line) {
+export function extractSummary(fileLines, line, opts = {}) {
   if (!fileLines || !line || line <= 1) return null;
   const idx = line - 2; // line above the definition (0-indexed)
-  // Scan up to 10 lines above for JSDoc or comment
+  const jsdocEndScanLines = opts.jsdocEndScanLines ?? 10;
+  const jsdocOpenScanLines = opts.jsdocOpenScanLines ?? 20;
+  const summaryMaxChars = opts.summaryMaxChars ?? 100;
+  // Scan up for JSDoc or comment
   let jsdocEnd = -1;
-  for (let i = idx; i >= Math.max(0, idx - 10); i--) {
+  for (let i = idx; i >= Math.max(0, idx - jsdocEndScanLines); i--) {
     const trimmed = fileLines[i].trim();
     if (trimmed.endsWith('*/')) {
       jsdocEnd = i;
@@ -45,13 +49,13 @@ export function extractSummary(fileLines, line) {
         .replace(/^\/\/\s*/, '')
         .replace(/^#\s*/, '')
         .trim();
-      return text.length > 100 ? `${text.slice(0, 100)}...` : text;
+      return text.length > summaryMaxChars ? `${text.slice(0, summaryMaxChars)}...` : text;
     }
     if (trimmed !== '' && !trimmed.startsWith('*') && !trimmed.startsWith('/*')) break;
   }
   if (jsdocEnd >= 0) {
     // Find opening /**
-    for (let i = jsdocEnd; i >= Math.max(0, jsdocEnd - 20); i--) {
+    for (let i = jsdocEnd; i >= Math.max(0, jsdocEnd - jsdocOpenScanLines); i--) {
       if (fileLines[i].trim().startsWith('/**')) {
         // Extract first non-tag, non-empty line
         for (let j = i + 1; j <= jsdocEnd; j++) {
@@ -60,7 +64,9 @@ export function extractSummary(fileLines, line) {
             .replace(/^\*\s?/, '')
             .trim();
           if (docLine && !docLine.startsWith('@') && docLine !== '/' && docLine !== '*/') {
-            return docLine.length > 100 ? `${docLine.slice(0, 100)}...` : docLine;
+            return docLine.length > summaryMaxChars
+              ? `${docLine.slice(0, summaryMaxChars)}...`
+              : docLine;
           }
         }
         break;
@@ -70,11 +76,14 @@ export function extractSummary(fileLines, line) {
   return null;
 }
 
-export function extractSignature(fileLines, line) {
+export function extractSignature(fileLines, line, opts = {}) {
   if (!fileLines || !line) return null;
   const idx = line - 1;
-  // Gather up to 5 lines to handle multi-line params
-  const chunk = fileLines.slice(idx, Math.min(fileLines.length, idx + 5)).join('\n');
+  const signatureGatherLines = opts.signatureGatherLines ?? 5;
+  // Gather lines to handle multi-line params
+  const chunk = fileLines
+    .slice(idx, Math.min(fileLines.length, idx + signatureGatherLines))
+    .join('\n');
 
   // JS/TS: function name(params) or (params) => or async function
   let m = chunk.match(

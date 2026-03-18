@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { openReadonlyOrFail, testFilterSQL } from '../../db/index.js';
+import { loadConfig } from '../../infrastructure/config.js';
 import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { findCycles } from '../graph/cycles.js';
@@ -159,7 +160,7 @@ function getEmbeddingsInfo(db) {
   return null;
 }
 
-function computeQualityMetrics(db, testFilter) {
+function computeQualityMetrics(db, testFilter, fpThreshold = FALSE_POSITIVE_CALLER_THRESHOLD) {
   const qualityTestFilter = testFilter.replace(/n\.file/g, 'file');
 
   const totalCallable = db
@@ -192,7 +193,7 @@ function computeQualityMetrics(db, testFilter) {
       HAVING caller_count > ?
       ORDER BY caller_count DESC
     `)
-    .all(FALSE_POSITIVE_CALLER_THRESHOLD);
+    .all(fpThreshold);
   const falsePositiveWarnings = fpRows
     .filter((r) =>
       FALSE_POSITIVE_NAMES.has(r.name.includes('.') ? r.name.split('.').pop() : r.name),
@@ -314,6 +315,7 @@ export function statsData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
+    const config = opts.config || loadConfig();
     const testFilter = testFilterSQL('n.file', noTests);
 
     const testFileIds = noTests ? buildTestFileIds(db) : null;
@@ -327,7 +329,8 @@ export function statsData(customDbPath, opts = {}) {
 
     const hotspots = findHotspots(db, noTests, 5);
     const embeddings = getEmbeddingsInfo(db);
-    const quality = computeQualityMetrics(db, testFilter);
+    const fpThreshold = config.analysis?.falsePositiveCallers ?? FALSE_POSITIVE_CALLER_THRESHOLD;
+    const quality = computeQualityMetrics(db, testFilter, fpThreshold);
     const roles = countRoles(db, noTests);
     const complexity = getComplexitySummary(db, testFilter);
 

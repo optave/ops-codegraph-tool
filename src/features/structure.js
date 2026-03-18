@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { getNodeId, openReadonlyOrFail, testFilterSQL } from '../db/index.js';
+import { loadConfig } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { normalizePath } from '../shared/constants.js';
@@ -609,7 +610,8 @@ export function hotspotsData(customDbPath, opts = {}) {
 export function moduleBoundariesData(customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   try {
-    const threshold = opts.threshold || 0.3;
+    const config = opts.config || loadConfig();
+    const threshold = opts.threshold || config.structure?.cohesionThreshold || 0.3;
 
     const dirs = db
       .prepare(`

@@ -100,7 +100,8 @@ function readPhase44(db, nodeId) {
 
 export function auditData(target, customDbPath, opts = {}) {
   const noTests = opts.noTests || false;
-  const maxDepth = opts.depth || 3;
+  const config = opts.config || loadConfig();
+  const maxDepth = opts.depth || config.analysis?.auditDepth || 3;
   const fileFilters = normalizeFileFilter(opts.file);
   const kind = opts.kind;
 

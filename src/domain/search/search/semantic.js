@@ -1,3 +1,4 @@
+import { loadConfig } from '../../../infrastructure/config.js';
 import { warn } from '../../../infrastructure/logger.js';
 import { normalizeSymbol } from '../../queries.js';
 import { embed } from '../models.js';
@@ -9,8 +10,10 @@ import { prepareSearch } from './prepare.js';
  * Returns { results: [{ name, kind, file, line, similarity }] } or null on failure.
  */
 export async function searchData(query, customDbPath, opts = {}) {
-  const limit = opts.limit || 15;
-  const minScore = opts.minScore || 0.2;
+  const config = opts.config || loadConfig();
+  const searchCfg = config.search || {};
+  const limit = opts.limit || searchCfg.topK || 15;
+  const minScore = opts.minScore || searchCfg.defaultMinScore || 0.2;
 
   const prepared = prepareSearch(customDbPath, opts);
   if (!prepared) return null;
@@ -56,9 +59,11 @@ export async function searchData(query, customDbPath, opts = {}) {
  * Returns { results: [{ name, kind, file, line, rrf, queryScores }] } or null on failure.
  */
 export async function multiSearchData(queries, customDbPath, opts = {}) {
-  const limit = opts.limit || 15;
-  const minScore = opts.minScore || 0.2;
-  const k = opts.rrfK || 60;
+  const config = opts.config || loadConfig();
+  const searchCfg = config.search || {};
+  const limit = opts.limit || searchCfg.topK || 15;
+  const minScore = opts.minScore || searchCfg.defaultMinScore || 0.2;
+  const k = opts.rrfK || searchCfg.rrfK || 60;
 
   const prepared = prepareSearch(customDbPath, opts);
   if (!prepared) return null;
@@ -68,7 +73,7 @@ export async function multiSearchData(queries, customDbPath, opts = {}) {
     const { vectors: queryVecs, dim } = await embed(queries, modelKey);
 
     // Warn about similar queries that may bias RRF results
-    const SIMILARITY_WARN_THRESHOLD = 0.85;
+    const SIMILARITY_WARN_THRESHOLD = searchCfg.similarityWarnThreshold ?? 0.85;
     for (let i = 0; i < queryVecs.length; i++) {
       for (let j = i + 1; j < queryVecs.length; j++) {
         const sim = cosineSim(queryVecs[i], queryVecs[j]);

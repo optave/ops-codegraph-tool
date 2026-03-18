@@ -150,6 +150,8 @@ JS source is plain JavaScript (ES modules) in `src/`. No transpilation step. The
 - **MCP single-repo isolation:** `startMCPServer` defaults to single-repo mode — tools have no `repo` property and `list_repos` is not exposed. Passing `--multi-repo` or `--repos` to the CLI (or `options.multiRepo` / `options.allowedRepos` programmatically) enables multi-repo access. `buildToolList(multiRepo)` builds the tool list dynamically; the backward-compatible `TOOLS` export equals `buildToolList(true)`
 - **Credential resolution:** `loadConfig` pipeline is `mergeConfig → applyEnvOverrides → resolveSecrets`. The `apiKeyCommand` config field shells out to an external secret manager via `execFileSync` (no shell). Priority: command output > env var > file config > defaults. On failure, warns and falls back gracefully
 
+**Configuration:** All tunable behavioral constants live in `DEFAULTS` in `src/infrastructure/config.js`, grouped by concern (`analysis`, `risk`, `search`, `display`, `community`, `structure`, `mcp`, `check`, `coChange`, `manifesto`). Users override via `.codegraphrc.json` — `mergeConfig` deep-merges recursively so partial overrides preserve sibling keys. Env vars override LLM settings (`CODEGRAPH_LLM_*`). When adding new behavioral constants, **always add them to `DEFAULTS`** and wire them through config — never introduce new hardcoded magic numbers in individual modules. Category F values (safety boundaries, standard formulas, platform concerns) are the only exception.
+
 **Database:** SQLite at `.codegraph/graph.db` with tables: `nodes`, `edges`, `metadata`, `embeddings`, `function_complexity`
 
 ## Test Structure

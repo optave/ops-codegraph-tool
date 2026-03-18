@@ -11,6 +11,7 @@ import {
   CONFIG_FILES,
   DEFAULTS,
   loadConfig,
+  mergeConfig,
   resolveSecrets,
 } from '../../src/infrastructure/config.js';
 
@@ -69,11 +70,66 @@ describe('DEFAULTS', () => {
   });
 
   it('has search defaults', () => {
-    expect(DEFAULTS.search).toEqual({ defaultMinScore: 0.2, rrfK: 60, topK: 15 });
+    expect(DEFAULTS.search).toEqual({
+      defaultMinScore: 0.2,
+      rrfK: 60,
+      topK: 15,
+      similarityWarnThreshold: 0.85,
+    });
   });
 
   it('has ci defaults', () => {
     expect(DEFAULTS.ci).toEqual({ failOnCycles: false, impactThreshold: null });
+  });
+
+  it('has analysis defaults', () => {
+    expect(DEFAULTS.analysis).toEqual({
+      impactDepth: 3,
+      fnImpactDepth: 5,
+      auditDepth: 3,
+      sequenceDepth: 10,
+      falsePositiveCallers: 20,
+      briefCallerDepth: 5,
+      briefImporterDepth: 5,
+      briefHighRiskCallers: 10,
+      briefMediumRiskCallers: 3,
+    });
+  });
+
+  it('has risk defaults', () => {
+    expect(DEFAULTS.risk.weights).toEqual({
+      fanIn: 0.25,
+      complexity: 0.3,
+      churn: 0.2,
+      role: 0.15,
+      mi: 0.1,
+    });
+    expect(DEFAULTS.risk.defaultRoleWeight).toBe(0.5);
+    expect(DEFAULTS.risk.roleWeights.core).toBe(1.0);
+  });
+
+  it('has display defaults', () => {
+    expect(DEFAULTS.display).toEqual({
+      maxColWidth: 40,
+      excerptLines: 50,
+      summaryMaxChars: 100,
+      jsdocEndScanLines: 10,
+      jsdocOpenScanLines: 20,
+      signatureGatherLines: 5,
+    });
+  });
+
+  it('has community defaults', () => {
+    expect(DEFAULTS.community).toEqual({ resolution: 1.0 });
+  });
+
+  it('has structure defaults', () => {
+    expect(DEFAULTS.structure).toEqual({ cohesionThreshold: 0.3 });
+  });
+
+  it('has mcp defaults', () => {
+    expect(DEFAULTS.mcp.defaults.list_functions).toBe(100);
+    expect(DEFAULTS.mcp.defaults.fn_impact).toBe(5);
   });
 });
 
@@ -159,6 +215,72 @@ describe('loadConfig', () => {
     expect(config.search.topK).toBe(50);
     expect(config.search.defaultMinScore).toBe(0.2);
     expect(config.search.rrfK).toBe(60);
+  });
+
+  it('deep-merges nested objects recursively (2+ levels)', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'deep-merge-'));
+    fs.writeFileSync(
+      path.join(dir, '.codegraphrc.json'),
+      JSON.stringify({ risk: { weights: { complexity: 0.4, churn: 0.1 } } }),
+    );
+    const config = loadConfig(dir);
+    // User overrides applied
+    expect(config.risk.weights.complexity).toBe(0.4);
+    expect(config.risk.weights.churn).toBe(0.1);
+    // Sibling keys preserved (not dropped)
+    expect(config.risk.weights.fanIn).toBe(0.25);
+    expect(config.risk.weights.role).toBe(0.15);
+    expect(config.risk.weights.mi).toBe(0.1);
+    // Sibling sections preserved
+    expect(config.risk.defaultRoleWeight).toBe(0.5);
+    expect(config.risk.roleWeights.core).toBe(1.0);
+  });
+
+  it('loads analysis overrides from config', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'analysis-'));
+    fs.writeFileSync(
+      path.join(dir, '.codegraphrc.json'),
+      JSON.stringify({ analysis: { fnImpactDepth: 8, falsePositiveCallers: 30 } }),
+    );
+    const config = loadConfig(dir);
+    expect(config.analysis.fnImpactDepth).toBe(8);
+    expect(config.analysis.falsePositiveCallers).toBe(30);
+    // Defaults preserved
+    expect(config.analysis.impactDepth).toBe(3);
+    expect(config.analysis.auditDepth).toBe(3);
+  });
+});
+
+describe('mergeConfig', () => {
+  it('recursively merges nested objects', () => {
+    const defaults = { a: { b: { c: 1, d: 2 }, e: 3 } };
+    const overrides = { a: { b: { c: 10 } } };
+    const result = mergeConfig(defaults, overrides);
+    expect(result.a.b.c).toBe(10);
+    expect(result.a.b.d).toBe(2);
+    expect(result.a.e).toBe(3);
+  });
+
+  it('replaces arrays instead of merging', () => {
+    const defaults = { a: [1, 2, 3] };
+    const overrides = { a: [4] };
+    const result = mergeConfig(defaults, overrides);
+    expect(result.a).toEqual([4]);
+  });
+
+  it('handles overrides with keys not in defaults', () => {
+    const defaults = { a: 1 };
+    const overrides = { b: 2 };
+    const result = mergeConfig(defaults, overrides);
+    expect(result.a).toBe(1);
+    expect(result.b).toBe(2);
+  });
+
+  it('does not mutate defaults', () => {
+    const defaults = { a: { b: 1 } };
+    const overrides = { a: { b: 2 } };
+    mergeConfig(defaults, overrides);
+    expect(defaults.a.b).toBe(1);
   });
 });
 

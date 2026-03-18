@@ -48,11 +48,14 @@ function round4(n) {
  *
  * @param {{ fan_in: number, cognitive: number, churn: number, mi: number, role: string|null }[]} items
  * @param {object} [weights] - Override DEFAULT_WEIGHTS
+ * @param {{ roleWeights?: object, defaultRoleWeight?: number }} [opts] - Optional role weight overrides
  * @returns {{ normFanIn: number, normComplexity: number, normChurn: number, normMI: number, roleWeight: number, riskScore: number }[]}
  *   Parallel array with risk metrics for each input item.
  */
-export function scoreRisk(items, weights = {}) {
+export function scoreRisk(items, weights = {}, opts = {}) {
   const w = { ...DEFAULT_WEIGHTS, ...weights };
+  const rw = opts.roleWeights || ROLE_WEIGHTS;
+  const drw = opts.defaultRoleWeight ?? DEFAULT_ROLE_WEIGHT;
 
   const fanIns = items.map((r) => r.fan_in);
   const cognitives = items.map((r) => r.cognitive);
@@ -66,7 +69,7 @@ export function scoreRisk(items, weights = {}) {
   const normMIs = normMIsRaw.map((v) => round4(1 - v));
 
   return items.map((r, i) => {
-    const roleWeight = ROLE_WEIGHTS[r.role] ?? DEFAULT_ROLE_WEIGHT;
+    const roleWeight = rw[r.role] ?? drw;
     const riskScore =
       w.fanIn * normFanIns[i] +
       w.complexity * normCognitives[i] +
