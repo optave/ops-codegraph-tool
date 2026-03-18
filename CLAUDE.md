@@ -198,6 +198,7 @@ Multiple Claude Code instances run concurrently in this repo. **Every session mu
 
 **Rules:**
 - Run `/worktree` before starting work
+- **Always sync with `origin/main` before starting feature work.** Run `git fetch origin && git log --oneline origin/main -10` to check recent merges. If the current branch is behind main, create a new branch from `origin/main`. Never implement features on stale branches — the work may already exist on main.
 - Stage only files you explicitly changed
 - Commit with specific file paths: `git commit <files> -m "msg"`
 - Ignore unexpected dirty files — they belong to another session

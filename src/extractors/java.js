@@ -235,7 +235,7 @@ function handleJavaLocalVarDecl(node, ctx) {
     const child = node.child(i);
     if (child?.type === 'variable_declarator') {
       const nameNode = child.childForFieldName('name');
-      if (nameNode) ctx.typeMap.set(nameNode.text, typeName);
+      if (nameNode) ctx.typeMap.set(nameNode.text, { type: typeName, confidence: 0.9 });
     }
   }
 }
@@ -280,7 +280,7 @@ function extractJavaParameters(paramListNode, typeMap) {
           if (typeNode) {
             const typeName =
               typeNode.type === 'generic_type' ? typeNode.child(0)?.text : typeNode.text;
-            if (typeName) typeMap.set(nameNode.text, typeName);
+            if (typeName) typeMap.set(nameNode.text, { type: typeName, confidence: 0.9 });
           }
         }
       }

@@ -17,7 +17,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.7.0) |
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
 | [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names, CLI composability | **Complete** (v3.1.5) |
-| [**4**](#phase-4--resolution-accuracy) | Resolution Accuracy | Dead role sub-categories, receiver type tracking, interface/trait implementation edges, resolution precision/recall benchmarks, `package.json` exports field, monorepo workspace resolution | Planned |
+| [**4**](#phase-4--resolution-accuracy) | Resolution Accuracy | Dead role sub-categories, receiver type tracking, interface/trait implementation edges, resolution precision/recall benchmarks, `package.json` exports field, monorepo workspace resolution | **In Progress** (4.2 complete) |
 | [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration, supply-chain security, CI coverage gates | Planned |
 | [**6**](#phase-6--native-analysis-acceleration) | Native Analysis Acceleration | Move JS-only build phases (AST nodes, CFG, dataflow, insert nodes, structure, roles, complexity) to Rust; fix incremental rebuild data loss on native; sub-100ms 1-file rebuilds | Planned |
 | [**7**](#phase-7--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system, DX & onboarding, confidence annotations, shell completion | Planned |
@@ -1012,17 +1012,21 @@ The current `dead` role classification conflates genuinely different categories,
 
 **Affected files:** `src/graph/classifiers/roles.js`, `src/shared/kinds.js`, `src/domain/analysis/roles.js`, `src/features/triage.js`
 
-### 4.2 -- Receiver Type Tracking for Method Dispatch
+### 4.2 -- Receiver Type Tracking for Method Dispatch ✅
 
-The single highest-impact resolution improvement. Currently `obj.method()` resolves to ANY exported `method` in scope — no receiver type tracking. This misses repository pattern calls (`repo.findCallers()`), builder chains, and visitor dispatch.
+The single highest-impact resolution improvement. Previously `obj.method()` resolved to ANY exported `method` in scope — no receiver type tracking. This missed repository pattern calls (`repo.findCallers()`), builder chains, and visitor dispatch.
 
-- Track variable-to-type assignments: when `const x = new SomeClass()` or `const x: SomeClass = ...`, record `x → SomeClass` in a per-file type map
-- During edge building, resolve `x.method()` to `SomeClass.method` using the type map
-- Leverage the existing `qualified_name` and `scope` columns (Phase 3.12) for matching
-- Confidence: `1.0` for explicit constructor, `0.9` for type annotation, `0.7` for factory function return
-- Covers: TypeScript annotated variables, constructor assignments, factory patterns
+**Implemented:**
+- ✅ Upgraded `typeMap` from `Map<string, string>` to `Map<string, {type, confidence}>` across all 8 language extractors
+- ✅ Graded confidence per type source: `1.0` constructor (`new Foo()`), `0.9` type annotation / typed parameter, `0.7` factory method (`Foo.create()`)
+- ✅ Factory pattern extraction: JS/TS (`Foo.create()`), Go (`NewFoo()`, `&Struct{}`, `Struct{}`), Python (`Foo()`, `Foo.create()`)
+- ✅ Edge builder uses type map for precise `ClassName.method` qualified-name lookup in both JS fallback and native supplement paths
+- ✅ Receiver edges carry type-source confidence instead of hardcoded 0.9/0.7
+- ✅ `setIfHigher` logic ensures highest-confidence assignment wins per variable
+- ✅ Incremental build path updated to consume new format
+- ✅ Backwards-compatible: `typeof entry === 'string'` guards handle mixed old/new formats
 
-**Affected files:** `src/domain/graph/builder/stages/build-edges.js`, `src/extractors/*.js`
+**Affected files:** `src/domain/graph/builder/stages/build-edges.js`, `src/domain/graph/builder/incremental.js`, `src/extractors/*.js` (all 8 languages)
 
 ### 4.3 -- Interface and Trait Implementation Tracking
 

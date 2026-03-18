@@ -119,16 +119,16 @@ public class Foo {}`);
   }
 }`);
       expect(symbols.typeMap).toBeInstanceOf(Map);
-      expect(symbols.typeMap.get('items')).toBe('List');
-      expect(symbols.typeMap.get('router')).toBe('Router');
+      expect(symbols.typeMap.get('items')).toEqual({ type: 'List', confidence: 0.9 });
+      expect(symbols.typeMap.get('router')).toEqual({ type: 'Router', confidence: 0.9 });
     });
 
     it('extracts typeMap from method parameters', () => {
       const symbols = parseJava(`public class Foo {
   void handle(Request req, Response res) {}
 }`);
-      expect(symbols.typeMap.get('req')).toBe('Request');
-      expect(symbols.typeMap.get('res')).toBe('Response');
+      expect(symbols.typeMap.get('req')).toEqual({ type: 'Request', confidence: 0.9 });
+      expect(symbols.typeMap.get('res')).toEqual({ type: 'Response', confidence: 0.9 });
     });
   });
 });

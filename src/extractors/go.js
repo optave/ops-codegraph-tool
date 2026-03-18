@@ -208,10 +208,17 @@ function extractGoTypeMap(node, ctx) {
   extractGoTypeMapDepth(node, ctx, 0);
 }
 
+function setIfHigher(typeMap, name, type, confidence) {
+  const existing = typeMap.get(name);
+  if (!existing || confidence > existing.confidence) {
+    typeMap.set(name, { type, confidence });
+  }
+}
+
 function extractGoTypeMapDepth(node, ctx, depth) {
   if (depth >= 200) return;
 
-  // var x MyType = ... or var x, y MyType → var_declaration > var_spec
+  // var x MyType = ... or var x, y MyType → var_declaration > var_spec (confidence 0.9)
   if (node.type === 'var_spec') {
     const typeNode = node.childForFieldName('type');
     if (typeNode) {
@@ -220,14 +227,14 @@ function extractGoTypeMapDepth(node, ctx, depth) {
         for (let i = 0; i < node.childCount; i++) {
           const child = node.child(i);
           if (child && child.type === 'identifier') {
-            ctx.typeMap.set(child.text, typeName);
+            setIfHigher(ctx.typeMap, child.text, typeName, 0.9);
           }
         }
       }
     }
   }
 
-  // Function/method parameter types: parameter_declaration has identifiers then a type
+  // Function/method parameter types: parameter_declaration (confidence 0.9)
   if (node.type === 'parameter_declaration') {
     const typeNode = node.childForFieldName('type');
     if (typeNode) {
@@ -236,7 +243,52 @@ function extractGoTypeMapDepth(node, ctx, depth) {
         for (let i = 0; i < node.childCount; i++) {
           const child = node.child(i);
           if (child && child.type === 'identifier') {
-            ctx.typeMap.set(child.text, typeName);
+            setIfHigher(ctx.typeMap, child.text, typeName, 0.9);
+          }
+        }
+      }
+    }
+  }
+
+  // short_var_declaration: x := Struct{}, x := &Struct{}, x := NewFoo()
+  if (node.type === 'short_var_declaration') {
+    const left = node.childForFieldName('left');
+    const right = node.childForFieldName('right');
+    if (left && right) {
+      const varNode = left.type === 'expression_list' ? left.child(0) : left;
+      const rhs = right.type === 'expression_list' ? right.child(0) : right;
+      if (varNode && varNode.type === 'identifier' && rhs) {
+        // x := Struct{...} — composite literal (confidence 1.0)
+        if (rhs.type === 'composite_literal') {
+          const typeNode = rhs.childForFieldName('type');
+          if (typeNode) {
+            const typeName = extractGoTypeName(typeNode);
+            if (typeName) setIfHigher(ctx.typeMap, varNode.text, typeName, 1.0);
+          }
+        }
+        // x := &Struct{...} — address-of composite literal (confidence 1.0)
+        if (rhs.type === 'unary_expression') {
+          const operand = rhs.childForFieldName('operand');
+          if (operand && operand.type === 'composite_literal') {
+            const typeNode = operand.childForFieldName('type');
+            if (typeNode) {
+              const typeName = extractGoTypeName(typeNode);
+              if (typeName) setIfHigher(ctx.typeMap, varNode.text, typeName, 1.0);
+            }
+          }
+        }
+        // x := NewFoo() or x := pkg.NewFoo() — factory function (confidence 0.7)
+        if (rhs.type === 'call_expression') {
+          const fn = rhs.childForFieldName('function');
+          if (fn && fn.type === 'selector_expression') {
+            const field = fn.childForFieldName('field');
+            if (field?.text.startsWith('New')) {
+              const typeName = field.text.slice(3);
+              if (typeName) setIfHigher(ctx.typeMap, varNode.text, typeName, 0.7);
+            }
+          } else if (fn && fn.type === 'identifier' && fn.text.startsWith('New')) {
+            const typeName = fn.text.slice(3);
+            if (typeName) setIfHigher(ctx.typeMap, varNode.text, typeName, 0.7);
           }
         }
       }

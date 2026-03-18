@@ -339,7 +339,7 @@ function extractPhpTypeMapDepth(node, ctx, depth) {
     const nameNode = node.childForFieldName('name') || findChild(node, 'variable_name');
     if (typeNode && nameNode) {
       const typeName = extractPhpTypeName(typeNode);
-      if (typeName) ctx.typeMap.set(nameNode.text, typeName);
+      if (typeName) ctx.typeMap.set(nameNode.text, { type: typeName, confidence: 0.9 });
     }
   }
 

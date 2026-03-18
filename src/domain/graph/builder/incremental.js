@@ -101,7 +101,12 @@ function resolveCallTargets(stmts, call, relPath, importedNames, typeMap) {
   }
   // Type-aware resolution: translate variable receiver to declared type
   if ((!targets || targets.length === 0) && call.receiver && typeMap) {
-    const typeName = typeMap.get(call.receiver);
+    const typeEntry = typeMap.get(call.receiver);
+    const typeName = typeEntry
+      ? typeof typeEntry === 'string'
+        ? typeEntry
+        : typeEntry.type
+      : null;
     if (typeName) {
       const qualified = `${typeName}.${call.name}`;
       targets = stmts.findNodeByName.all(qualified);

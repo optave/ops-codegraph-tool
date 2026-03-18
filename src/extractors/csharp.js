@@ -330,7 +330,7 @@ function extractCSharpTypeMapDepth(node, ctx, depth) {
           if (child && child.type === 'variable_declarator') {
             const nameNode = child.childForFieldName('name') || child.child(0);
             if (nameNode && nameNode.type === 'identifier') {
-              ctx.typeMap.set(nameNode.text, typeName);
+              ctx.typeMap.set(nameNode.text, { type: typeName, confidence: 0.9 });
             }
           }
         }
@@ -344,7 +344,7 @@ function extractCSharpTypeMapDepth(node, ctx, depth) {
     const nameNode = node.childForFieldName('name');
     if (typeNode && nameNode) {
       const typeName = extractCSharpTypeName(typeNode);
-      if (typeName) ctx.typeMap.set(nameNode.text, typeName);
+      if (typeName) ctx.typeMap.set(nameNode.text, { type: typeName, confidence: 0.9 });
     }
   }
 

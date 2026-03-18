@@ -103,26 +103,28 @@ describe('JavaScript parser', () => {
       return extractSymbols(tree, 'test.ts');
     }
 
-    it('extracts typeMap from type annotations', () => {
+    it('extracts typeMap from type annotations with confidence 0.9', () => {
       const symbols = parseTS(`const x: Router = express.Router();`);
       expect(symbols.typeMap).toBeInstanceOf(Map);
-      expect(symbols.typeMap.get('x')).toBe('Router');
+      expect(symbols.typeMap.get('x')).toEqual({ type: 'Router', confidence: 0.9 });
     });
 
     it('extracts typeMap from generic types', () => {
       const symbols = parseTS(`const m: Map<string, number> = new Map();`);
-      expect(symbols.typeMap.get('m')).toBe('Map');
+      expect(symbols.typeMap.get('m')).toEqual(
+        expect.objectContaining({ type: 'Map', confidence: 1.0 }),
+      );
     });
 
-    it('infers type from new expressions', () => {
+    it('infers type from new expressions with confidence 1.0', () => {
       const symbols = parseTS(`const r = new Router();`);
-      expect(symbols.typeMap.get('r')).toBe('Router');
+      expect(symbols.typeMap.get('r')).toEqual({ type: 'Router', confidence: 1.0 });
     });
 
-    it('extracts parameter types into typeMap', () => {
+    it('extracts parameter types into typeMap with confidence 0.9', () => {
       const symbols = parseTS(`function process(req: Request, res: Response) {}`);
-      expect(symbols.typeMap.get('req')).toBe('Request');
-      expect(symbols.typeMap.get('res')).toBe('Response');
+      expect(symbols.typeMap.get('req')).toEqual({ type: 'Request', confidence: 0.9 });
+      expect(symbols.typeMap.get('res')).toEqual({ type: 'Response', confidence: 0.9 });
     });
 
     it('returns empty typeMap when no annotations', () => {
@@ -138,12 +140,23 @@ describe('JavaScript parser', () => {
 
     it('handles let/var declarations with type annotations', () => {
       const symbols = parseTS(`let app: Express = createApp();`);
-      expect(symbols.typeMap.get('app')).toBe('Express');
+      expect(symbols.typeMap.get('app')).toEqual({ type: 'Express', confidence: 0.9 });
     });
 
-    it('prefers type annotation over new expression', () => {
+    it('prefers constructor (1.0) over type annotation (0.9)', () => {
       const symbols = parseTS(`const x: Base = new Derived();`);
-      expect(symbols.typeMap.get('x')).toBe('Base');
+      // Constructor confidence (1.0) beats annotation (0.9)
+      expect(symbols.typeMap.get('x')).toEqual({ type: 'Derived', confidence: 1.0 });
+    });
+
+    it('extracts factory method patterns with confidence 0.7', () => {
+      const symbols = parseJS(`const client = HttpClient.create();`);
+      expect(symbols.typeMap.get('client')).toEqual({ type: 'HttpClient', confidence: 0.7 });
+    });
+
+    it('ignores lowercase factory calls', () => {
+      const symbols = parseJS(`const result = utils.create();`);
+      expect(symbols.typeMap.has('result')).toBe(false);
     });
   });
 

@@ -272,7 +272,7 @@ function extractRustTypeMapDepth(node, ctx, depth) {
     const typeNode = node.childForFieldName('type');
     if (pattern && pattern.type === 'identifier' && typeNode) {
       const typeName = extractRustTypeName(typeNode);
-      if (typeName) ctx.typeMap.set(pattern.text, typeName);
+      if (typeName) ctx.typeMap.set(pattern.text, { type: typeName, confidence: 0.9 });
     }
   }
 
@@ -284,7 +284,7 @@ function extractRustTypeMapDepth(node, ctx, depth) {
       const name = pattern.type === 'identifier' ? pattern.text : null;
       if (name && name !== 'self' && name !== '&self' && name !== '&mut self') {
         const typeName = extractRustTypeName(typeNode);
-        if (typeName) ctx.typeMap.set(name, typeName);
+        if (typeName) ctx.typeMap.set(name, { type: typeName, confidence: 0.9 });
       }
     }
   }
