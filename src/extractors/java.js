@@ -10,6 +10,7 @@ export function extractJavaSymbols(tree, _filePath) {
     imports: [],
     classes: [],
     exports: [],
+    typeMap: new Map(),
   };
 
   walkJavaNode(tree.rootNode, ctx);
@@ -41,6 +42,9 @@ function walkJavaNode(node, ctx) {
       break;
     case 'object_creation_expression':
       handleJavaObjectCreation(node, ctx);
+      break;
+    case 'local_variable_declaration':
+      handleJavaLocalVarDecl(node, ctx);
       break;
   }
 
@@ -166,7 +170,7 @@ function handleJavaMethodDecl(node, ctx) {
   if (!nameNode) return;
   const parentClass = findJavaParentClass(node);
   const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
-  const params = extractJavaParameters(node.childForFieldName('parameters'));
+  const params = extractJavaParameters(node.childForFieldName('parameters'), ctx.typeMap);
   ctx.definitions.push({
     name: fullName,
     kind: 'method',
@@ -182,7 +186,7 @@ function handleJavaConstructorDecl(node, ctx) {
   if (!nameNode) return;
   const parentClass = findJavaParentClass(node);
   const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
-  const params = extractJavaParameters(node.childForFieldName('parameters'));
+  const params = extractJavaParameters(node.childForFieldName('parameters'), ctx.typeMap);
   ctx.definitions.push({
     name: fullName,
     kind: 'method',
@@ -222,6 +226,20 @@ function handleJavaMethodInvocation(node, ctx) {
   ctx.calls.push(call);
 }
 
+function handleJavaLocalVarDecl(node, ctx) {
+  const typeNode = node.childForFieldName('type');
+  if (!typeNode) return;
+  const typeName = typeNode.type === 'generic_type' ? typeNode.child(0)?.text : typeNode.text;
+  if (!typeName) return;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child?.type === 'variable_declarator') {
+      const nameNode = child.childForFieldName('name');
+      if (nameNode) ctx.typeMap.set(nameNode.text, typeName);
+    }
+  }
+}
+
 function handleJavaObjectCreation(node, ctx) {
   const typeNode = node.childForFieldName('type');
   if (!typeNode) return;
@@ -247,7 +265,7 @@ function findJavaParentClass(node) {
 
 // ── Child extraction helpers ────────────────────────────────────────────────
 
-function extractJavaParameters(paramListNode) {
+function extractJavaParameters(paramListNode, typeMap) {
   const params = [];
   if (!paramListNode) return params;
   for (let i = 0; i < paramListNode.childCount; i++) {
@@ -257,6 +275,14 @@ function extractJavaParameters(paramListNode) {
       const nameNode = param.childForFieldName('name');
       if (nameNode) {
         params.push({ name: nameNode.text, kind: 'parameter', line: param.startPosition.row + 1 });
+        if (typeMap) {
+          const typeNode = param.childForFieldName('type');
+          if (typeNode) {
+            const typeName =
+              typeNode.type === 'generic_type' ? typeNode.child(0)?.text : typeNode.text;
+            if (typeName) typeMap.set(nameNode.text, typeName);
+          }
+        }
       }
     }
   }

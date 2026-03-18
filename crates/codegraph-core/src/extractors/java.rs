@@ -12,7 +12,66 @@ impl SymbolExtractor for JavaExtractor {
         let mut symbols = FileSymbols::new(file_path.to_string());
         walk_node(&tree.root_node(), source, &mut symbols);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &JAVA_AST_CONFIG);
+        extract_java_type_map(&tree.root_node(), source, &mut symbols);
         symbols
+    }
+}
+
+// ── Type inference helpers ──────────────────────────────────────────────────
+
+fn extract_java_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    if type_node.kind() == "generic_type" {
+        type_node.child(0).map(|n| node_text(&n, source))
+    } else {
+        Some(node_text(type_node, source))
+    }
+}
+
+fn extract_java_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    extract_java_type_map_depth(node, source, symbols, 0);
+}
+
+fn extract_java_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
+    match node.kind() {
+        "local_variable_declaration" => {
+            if let Some(type_node) = node.child_by_field_name("type") {
+                if let Some(type_name) = extract_java_type_name(&type_node, source) {
+                    for i in 0..node.child_count() {
+                        if let Some(child) = node.child(i) {
+                            if child.kind() == "variable_declarator" {
+                                if let Some(name_node) = child.child_by_field_name("name") {
+                                    symbols.type_map.push(TypeMapEntry {
+                                        name: node_text(&name_node, source).to_string(),
+                                        type_name: type_name.to_string(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "formal_parameter" => {
+            if let Some(type_node) = node.child_by_field_name("type") {
+                if let Some(type_name) = extract_java_type_name(&type_node, source) {
+                    if let Some(name_node) = node.child_by_field_name("name") {
+                        symbols.type_map.push(TypeMapEntry {
+                            name: node_text(&name_node, source).to_string(),
+                            type_name: type_name.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            extract_java_type_map_depth(&child, source, symbols, depth + 1);
+        }
     }
 }
 

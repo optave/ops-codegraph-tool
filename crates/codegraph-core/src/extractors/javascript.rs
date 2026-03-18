@@ -12,7 +12,112 @@ impl SymbolExtractor for JsExtractor {
         let mut symbols = FileSymbols::new(file_path.to_string());
         walk_node(&tree.root_node(), source, &mut symbols);
         walk_ast_nodes(&tree.root_node(), source, &mut symbols.ast_nodes);
+        extract_type_map(&tree.root_node(), source, &mut symbols);
         symbols
+    }
+}
+
+// ── Type inference helpers ──────────────────────────────────────────────────
+
+/// Extract simple type name from a type_annotation node.
+/// Returns the type name for simple types and generics, None for unions/intersections/arrays.
+fn extract_simple_type_name<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            match child.kind() {
+                "type_identifier" | "identifier" => return Some(node_text(&child, source)),
+                "generic_type" => {
+                    return child.child(0).map(|n| node_text(&n, source));
+                }
+                "parenthesized_type" => return extract_simple_type_name(&child, source),
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// Extract constructor type name from a new_expression node.
+fn extract_new_expr_type_name<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    if node.kind() != "new_expression" {
+        return None;
+    }
+    let ctor = node.child_by_field_name("constructor").or_else(|| node.child(1))?;
+    match ctor.kind() {
+        "identifier" => Some(node_text(&ctor, source)),
+        "member_expression" => {
+            ctor.child_by_field_name("property").map(|p| node_text(&p, source))
+        }
+        _ => None,
+    }
+}
+
+/// Walk the entire tree to extract type annotations and new-expression type inferences.
+fn extract_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    extract_type_map_depth(node, source, symbols, 0);
+}
+
+fn extract_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
+    match node.kind() {
+        "variable_declarator" => {
+            if let Some(name_n) = node.child_by_field_name("name") {
+                if name_n.kind() == "identifier" {
+                    let var_name = node_text(&name_n, source);
+                    // Type annotation takes priority
+                    if let Some(type_anno) = find_child(node, "type_annotation") {
+                        if let Some(type_name) = extract_simple_type_name(&type_anno, source) {
+                            symbols.type_map.push(TypeMapEntry {
+                                name: var_name.to_string(),
+                                type_name: type_name.to_string(),
+                            });
+                            // Skip new_expression check — annotation wins
+                            return walk_type_map_children(node, source, symbols, depth);
+                        }
+                    }
+                    // Fall back to new expression inference
+                    if let Some(value_n) = node.child_by_field_name("value") {
+                        if value_n.kind() == "new_expression" {
+                            if let Some(type_name) = extract_new_expr_type_name(&value_n, source) {
+                                symbols.type_map.push(TypeMapEntry {
+                                    name: var_name.to_string(),
+                                    type_name: type_name.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "required_parameter" | "optional_parameter" => {
+            let name_node = node.child_by_field_name("pattern")
+                .or_else(|| node.child_by_field_name("left"))
+                .or_else(|| node.child(0));
+            if let Some(name_node) = name_node {
+                if name_node.kind() == "identifier" {
+                    if let Some(type_anno) = find_child(node, "type_annotation") {
+                        if let Some(type_name) = extract_simple_type_name(&type_anno, source) {
+                            symbols.type_map.push(TypeMapEntry {
+                                name: node_text(&name_node, source).to_string(),
+                                type_name: type_name.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    walk_type_map_children(node, source, symbols, depth);
+}
+
+fn walk_type_map_children(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            extract_type_map_depth(&child, source, symbols, depth + 1);
+        }
     }
 }
 

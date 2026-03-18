@@ -478,3 +478,66 @@ describe('version/engine mismatch auto-promotes to full rebuild', () => {
     expect(output).not.toContain('No changes detected');
   });
 });
+
+describe('typed method call resolution', () => {
+  let typedDir, typedDbPath;
+
+  beforeAll(async () => {
+    typedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-typed-'));
+    fs.writeFileSync(
+      path.join(typedDir, 'typed.ts'),
+      [
+        'class Router {',
+        '  get(path: string) {}',
+        '  post(path: string) {}',
+        '}',
+        'const app: Router = new Router();',
+        'app.get("/users");',
+        'app.post("/items");',
+        '',
+      ].join('\n'),
+    );
+    // Force WASM engine — typeMap resolution is JS-only (native deferred)
+    await buildGraph(typedDir, { skipRegistry: true, engine: 'wasm' });
+    typedDbPath = path.join(typedDir, '.codegraph', 'graph.db');
+  });
+
+  afterAll(() => {
+    if (typedDir) fs.rmSync(typedDir, { recursive: true, force: true });
+  });
+
+  test('typed variable call produces call edge to the declared type method', () => {
+    const db = new Database(typedDbPath, { readonly: true });
+    const edges = db
+      .prepare(`
+        SELECT s.name as caller, t.name as callee FROM edges e
+        JOIN nodes s ON e.source_id = s.id
+        JOIN nodes t ON e.target_id = t.id
+        WHERE e.kind = 'calls'
+      `)
+      .all();
+    db.close();
+    const callees = edges.map((e) => e.callee);
+    // The key assertion: typed receiver 'app' resolves to Router, producing
+    // call edges to Router.get and Router.post
+    expect(callees).toContain('Router.get');
+    expect(callees).toContain('Router.post');
+  });
+
+  test('typed variable produces receiver edge to the class', () => {
+    const db = new Database(typedDbPath, { readonly: true });
+    const edges = db
+      .prepare(`
+        SELECT s.name as caller, t.name as target, e.confidence FROM edges e
+        JOIN nodes s ON e.source_id = s.id
+        JOIN nodes t ON e.target_id = t.id
+        WHERE e.kind = 'receiver'
+      `)
+      .all();
+    db.close();
+    const receiverEdges = edges.filter((e) => e.target === 'Router');
+    expect(receiverEdges.length).toBeGreaterThan(0);
+    // Type-resolved receiver edges should have 0.9 confidence
+    expect(receiverEdges[0].confidence).toBe(0.9);
+  });
+});

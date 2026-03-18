@@ -82,9 +82,11 @@ export function extractPHPSymbols(tree, _filePath) {
     imports: [],
     classes: [],
     exports: [],
+    typeMap: new Map(),
   };
 
   walkPhpNode(tree.rootNode, ctx);
+  extractPhpTypeMap(tree.rootNode, ctx);
   return ctx;
 }
 
@@ -318,6 +320,47 @@ function handlePhpObjectCreation(node, ctx) {
     const parts = classNode.text.split('\\');
     ctx.calls.push({ name: parts[parts.length - 1], line: node.startPosition.row + 1 });
   }
+}
+
+function extractPhpTypeMap(node, ctx) {
+  extractPhpTypeMapDepth(node, ctx, 0);
+}
+
+function extractPhpTypeMapDepth(node, ctx, depth) {
+  if (depth >= 200) return;
+
+  // Function/method parameters with type hints
+  if (
+    node.type === 'simple_parameter' ||
+    node.type === 'variadic_parameter' ||
+    node.type === 'property_promotion_parameter'
+  ) {
+    const typeNode = node.childForFieldName('type');
+    const nameNode = node.childForFieldName('name') || findChild(node, 'variable_name');
+    if (typeNode && nameNode) {
+      const typeName = extractPhpTypeName(typeNode);
+      if (typeName) ctx.typeMap.set(nameNode.text, typeName);
+    }
+  }
+
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) extractPhpTypeMapDepth(child, ctx, depth + 1);
+  }
+}
+
+function extractPhpTypeName(typeNode) {
+  if (!typeNode) return null;
+  const t = typeNode.type;
+  if (t === 'named_type' || t === 'name' || t === 'qualified_name') return typeNode.text;
+  // Nullable: ?MyType
+  if (t === 'optional_type') {
+    const inner = typeNode.child(1) || typeNode.child(0);
+    return inner ? extractPhpTypeName(inner) : null;
+  }
+  // Skip union types (too ambiguous)
+  if (t === 'union_type' || t === 'intersection_type') return null;
+  return null;
 }
 
 function findPHPParentClass(node) {

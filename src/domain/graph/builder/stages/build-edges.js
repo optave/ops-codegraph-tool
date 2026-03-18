@@ -102,6 +102,12 @@ function buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodes, native)
     if (!fileNodeRow) continue;
 
     const importedNames = buildImportedNamesForNative(ctx, relPath, symbols, rootDir);
+    const typeMap =
+      symbols.typeMap instanceof Map
+        ? [...symbols.typeMap.entries()].map(([name, typeName]) => ({ name, typeName }))
+        : Array.isArray(symbols.typeMap)
+          ? symbols.typeMap
+          : [];
     nativeFiles.push({
       file: relPath,
       fileNodeId: fileNodeRow.id,
@@ -114,6 +120,7 @@ function buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodes, native)
       calls: symbols.calls,
       importedNames,
       classes: symbols.classes,
+      typeMap,
     });
   }
 
@@ -151,6 +158,7 @@ function buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows) {
     if (!fileNodeRow) continue;
 
     const importedNames = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
+    const typeMap = symbols.typeMap || new Map();
     const seenCallEdges = new Set();
 
     buildFileCallEdges(
@@ -162,6 +170,7 @@ function buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows) {
       seenCallEdges,
       getNodeIdStmt,
       allEdgeRows,
+      typeMap,
     );
     buildClassHierarchyEdges(ctx, relPath, symbols, allEdgeRows);
   }
@@ -202,7 +211,7 @@ function findCaller(call, definitions, relPath, getNodeIdStmt, fileNodeRow) {
   return caller || fileNodeRow;
 }
 
-function resolveCallTargets(ctx, call, relPath, importedNames) {
+function resolveCallTargets(ctx, call, relPath, importedNames, typeMap) {
   const importedFrom = importedNames.get(call.name);
   let targets;
 
@@ -219,7 +228,7 @@ function resolveCallTargets(ctx, call, relPath, importedNames) {
   if (!targets || targets.length === 0) {
     targets = ctx.nodesByNameAndFile.get(`${call.name}|${relPath}`) || [];
     if (targets.length === 0) {
-      targets = resolveByMethodOrGlobal(ctx, call, relPath);
+      targets = resolveByMethodOrGlobal(ctx, call, relPath, typeMap);
     }
   }
 
@@ -234,11 +243,21 @@ function resolveCallTargets(ctx, call, relPath, importedNames) {
   return { targets, importedFrom };
 }
 
-function resolveByMethodOrGlobal(ctx, call, relPath) {
+function resolveByMethodOrGlobal(ctx, call, relPath, typeMap) {
   const methodCandidates = (ctx.nodesByName.get(call.name) || []).filter(
     (n) => n.name.endsWith(`.${call.name}`) && n.kind === 'method',
   );
   if (methodCandidates.length > 0) return methodCandidates;
+
+  // Type-aware resolution: translate variable receiver to its declared type
+  if (call.receiver && typeMap) {
+    const typeName = typeMap.get(call.receiver);
+    if (typeName) {
+      const qualifiedName = `${typeName}.${call.name}`;
+      const typed = (ctx.nodesByName.get(qualifiedName) || []).filter((n) => n.kind === 'method');
+      if (typed.length > 0) return typed;
+    }
+  }
 
   if (
     !call.receiver ||
@@ -262,13 +281,20 @@ function buildFileCallEdges(
   seenCallEdges,
   getNodeIdStmt,
   allEdgeRows,
+  typeMap,
 ) {
   for (const call of symbols.calls) {
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
     const caller = findCaller(call, symbols.definitions, relPath, getNodeIdStmt, fileNodeRow);
     const isDynamic = call.dynamic ? 1 : 0;
-    const { targets, importedFrom } = resolveCallTargets(ctx, call, relPath, importedNames);
+    const { targets, importedFrom } = resolveCallTargets(
+      ctx,
+      call,
+      relPath,
+      importedNames,
+      typeMap,
+    );
 
     for (const t of targets) {
       const edgeKey = `${caller.id}|${t.id}`;
@@ -287,22 +313,24 @@ function buildFileCallEdges(
       call.receiver !== 'self' &&
       call.receiver !== 'super'
     ) {
-      buildReceiverEdge(ctx, call, caller, relPath, seenCallEdges, allEdgeRows);
+      buildReceiverEdge(ctx, call, caller, relPath, seenCallEdges, allEdgeRows, typeMap);
     }
   }
 }
 
-function buildReceiverEdge(ctx, call, caller, relPath, seenCallEdges, allEdgeRows) {
+function buildReceiverEdge(ctx, call, caller, relPath, seenCallEdges, allEdgeRows, typeMap) {
   const receiverKinds = new Set(['class', 'struct', 'interface', 'type', 'module']);
-  const samefile = ctx.nodesByNameAndFile.get(`${call.receiver}|${relPath}`) || [];
-  const candidates = samefile.length > 0 ? samefile : ctx.nodesByName.get(call.receiver) || [];
+  const effectiveReceiver = typeMap?.get(call.receiver) || call.receiver;
+  const samefile = ctx.nodesByNameAndFile.get(`${effectiveReceiver}|${relPath}`) || [];
+  const candidates = samefile.length > 0 ? samefile : ctx.nodesByName.get(effectiveReceiver) || [];
   const receiverNodes = candidates.filter((n) => receiverKinds.has(n.kind));
   if (receiverNodes.length > 0 && caller) {
     const recvTarget = receiverNodes[0];
     const recvKey = `recv|${caller.id}|${recvTarget.id}`;
     if (!seenCallEdges.has(recvKey)) {
       seenCallEdges.add(recvKey);
-      allEdgeRows.push([caller.id, recvTarget.id, 'receiver', 0.7, 0]);
+      const confidence = effectiveReceiver !== call.receiver ? 0.9 : 0.7;
+      allEdgeRows.push([caller.id, recvTarget.id, 'receiver', confidence, 0]);
     }
   }
 }

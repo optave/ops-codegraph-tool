@@ -10,9 +10,11 @@ export function extractGoSymbols(tree, _filePath) {
     imports: [],
     classes: [],
     exports: [],
+    typeMap: new Map(),
   };
 
   walkGoNode(tree.rootNode, ctx);
+  extractGoTypeMap(tree.rootNode, ctx);
   return ctx;
 }
 
@@ -198,6 +200,69 @@ function handleGoCallExpr(node, ctx) {
       ctx.calls.push(call);
     }
   }
+}
+
+// ── Type map extraction ─────────────────────────────────────────────────────
+
+function extractGoTypeMap(node, ctx) {
+  extractGoTypeMapDepth(node, ctx, 0);
+}
+
+function extractGoTypeMapDepth(node, ctx, depth) {
+  if (depth >= 200) return;
+
+  // var x MyType = ... → var_declaration > var_spec
+  if (node.type === 'var_spec') {
+    const nameNode = node.childForFieldName('name');
+    const typeNode = node.childForFieldName('type');
+    if (nameNode && typeNode) {
+      const typeName = extractGoTypeName(typeNode);
+      if (typeName) ctx.typeMap.set(nameNode.text, typeName);
+    }
+  }
+
+  // Function/method parameter types: parameter_declaration has identifiers then a type
+  if (node.type === 'parameter_declaration') {
+    const typeNode = node.childForFieldName('type');
+    if (typeNode) {
+      const typeName = extractGoTypeName(typeNode);
+      if (typeName) {
+        for (let i = 0; i < node.childCount; i++) {
+          const child = node.child(i);
+          if (child && child.type === 'identifier') {
+            ctx.typeMap.set(child.text, typeName);
+          }
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) extractGoTypeMapDepth(child, ctx, depth + 1);
+  }
+}
+
+function extractGoTypeName(typeNode) {
+  if (!typeNode) return null;
+  const t = typeNode.type;
+  if (t === 'type_identifier' || t === 'identifier') return typeNode.text;
+  if (t === 'qualified_type') return typeNode.text;
+  // pointer type: *MyType → MyType
+  if (t === 'pointer_type') {
+    for (let i = 0; i < typeNode.childCount; i++) {
+      const child = typeNode.child(i);
+      if (child && (child.type === 'type_identifier' || child.type === 'identifier')) {
+        return child.text;
+      }
+    }
+  }
+  // generic type: MyType[T] → MyType
+  if (t === 'generic_type') {
+    const first = typeNode.child(0);
+    return first ? first.text : null;
+  }
+  return null;
 }
 
 // ── Child extraction helpers ────────────────────────────────────────────────
