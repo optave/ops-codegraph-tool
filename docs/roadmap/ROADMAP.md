@@ -1220,8 +1220,6 @@ Items to remove or rework during the TypeScript migration, identified by archite
 
 **Why its own phase:** This is a substantial Rust engineering effort — porting 6 JS visitors to `crates/codegraph-core/`, fixing a data loss bug in incremental rebuilds, and optimizing the 1-file rebuild path. With TypeScript types (Phase 5) defining the interface contracts, the Rust ports can target well-typed boundaries. The Phase 3 module boundaries make each phase a self-contained target.
 
-**Architectural note:** The dual-engine (JS + Rust) architecture carries a maintenance cost — every bug fix and new feature must be applied in both engines, with parity verified by tests. This phase deepens that investment. The alternative — consolidating to a single engine — would eliminate the maintenance tax but sacrifice native parsing speed (5-10x faster than WASM on initial builds). The decision to accelerate rather than consolidate is based on the parsing speed advantage being material for large codebases (10K+ files), where initial build time directly affects developer adoption. If the target audience shifts toward smaller codebases where build time is not a bottleneck, consolidation should be reconsidered.
-
 **Evidence (v3.1.4 benchmarks on 398 files):**
 
 | Phase | Native | WASM | Ratio | Status |
