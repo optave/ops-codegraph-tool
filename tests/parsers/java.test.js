@@ -109,4 +109,26 @@ public class Foo {}`);
 }`);
     expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'User' }));
   });
+
+  describe('typeMap extraction', () => {
+    it('extracts typeMap from local variables', () => {
+      const symbols = parseJava(`public class Foo {
+  void run() {
+    List<String> items = new ArrayList<>();
+    Router router = new Router();
+  }
+}`);
+      expect(symbols.typeMap).toBeInstanceOf(Map);
+      expect(symbols.typeMap.get('items')).toBe('List');
+      expect(symbols.typeMap.get('router')).toBe('Router');
+    });
+
+    it('extracts typeMap from method parameters', () => {
+      const symbols = parseJava(`public class Foo {
+  void handle(Request req, Response res) {}
+}`);
+      expect(symbols.typeMap.get('req')).toBe('Request');
+      expect(symbols.typeMap.get('res')).toBe('Response');
+    });
+  });
 });

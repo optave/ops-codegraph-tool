@@ -44,6 +44,13 @@ pub struct DefInfo {
 }
 
 #[napi(object)]
+pub struct TypeMapInput {
+    pub name: String,
+    #[napi(js_name = "typeName")]
+    pub type_name: String,
+}
+
+#[napi(object)]
 pub struct FileEdgeInput {
     pub file: String,
     #[napi(js_name = "fileNodeId")]
@@ -53,6 +60,8 @@ pub struct FileEdgeInput {
     #[napi(js_name = "importedNames")]
     pub imported_names: Vec<ImportedName>,
     pub classes: Vec<ClassInfo>,
+    #[napi(js_name = "typeMap")]
+    pub type_map: Vec<TypeMapInput>,
 }
 
 #[napi(object)]
@@ -106,6 +115,13 @@ pub fn build_call_edges(
             .imported_names
             .iter()
             .map(|im| (im.name.as_str(), im.file.as_str()))
+            .collect();
+
+        // Build type map (variable name → declared type name)
+        let type_map: HashMap<&str, &str> = file_input
+            .type_map
+            .iter()
+            .map(|tm| (tm.name.as_str(), tm.type_name.as_str()))
             .collect();
 
         // Build def → node ID map for caller resolution (match by name+kind+file+line)
@@ -204,10 +220,25 @@ pub fn build_call_edges(
 
                     if !method_candidates.is_empty() {
                         targets = method_candidates;
-                    } else if call.receiver.is_none()
+                    } else if let Some(ref receiver) = call.receiver {
+                        // Type-aware resolution: translate variable receiver to declared type
+                        if let Some(type_name) = type_map.get(receiver.as_str()) {
+                            let qualified = format!("{}.{}", type_name, call.name);
+                            let typed: Vec<&NodeInfo> = nodes_by_name
+                                .get(qualified.as_str())
+                                .map(|v| v.iter().filter(|n| n.kind == "method").copied().collect())
+                                .unwrap_or_default();
+                            if !typed.is_empty() {
+                                targets = typed;
+                            }
+                        }
+                    }
+
+                    if targets.is_empty()
+                        && (call.receiver.is_none()
                         || call.receiver.as_deref() == Some("this")
                         || call.receiver.as_deref() == Some("self")
-                        || call.receiver.as_deref() == Some("super")
+                        || call.receiver.as_deref() == Some("super"))
                     {
                         // Scoped fallback — same-dir or parent-dir only
                         targets = nodes_by_name
@@ -263,15 +294,19 @@ pub fn build_call_edges(
                     && receiver != "self"
                     && receiver != "super"
                 {
+                    // Resolve variable to its declared type via typeMap
+                    let effective_receiver = type_map.get(receiver.as_str()).copied().unwrap_or(receiver.as_str());
+                    let type_resolved = effective_receiver != receiver.as_str();
+
                     let samefile = nodes_by_name_and_file
-                        .get(&(receiver.as_str(), rel_path.as_str()))
+                        .get(&(effective_receiver, rel_path.as_str()))
                         .cloned()
                         .unwrap_or_default();
                     let candidates = if !samefile.is_empty() {
                         samefile
                     } else {
                         nodes_by_name
-                            .get(receiver.as_str())
+                            .get(effective_receiver)
                             .cloned()
                             .unwrap_or_default()
                     };
@@ -286,11 +321,12 @@ pub fn build_call_edges(
                             (1u64 << 63) | ((caller_id as u64) << 32) | (recv_target.id as u64);
                         if !seen_edges.contains(&recv_key) {
                             seen_edges.insert(recv_key);
+                            let confidence = if type_resolved { 0.9 } else { 0.7 };
                             edges.push(ComputedEdge {
                                 source_id: caller_id,
                                 target_id: recv_target.id,
                                 kind: "receiver".to_string(),
-                                confidence: 0.7,
+                                confidence,
                                 dynamic: 0,
                             });
                         }

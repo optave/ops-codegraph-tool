@@ -87,7 +87,7 @@ function findCaller(call, definitions, relPath, stmts) {
   return caller;
 }
 
-function resolveCallTargets(stmts, call, relPath, importedNames) {
+function resolveCallTargets(stmts, call, relPath, importedNames, typeMap) {
   const importedFrom = importedNames.get(call.name);
   let targets;
   if (importedFrom) {
@@ -99,16 +99,31 @@ function resolveCallTargets(stmts, call, relPath, importedNames) {
       targets = stmts.findNodeByName.all(call.name);
     }
   }
+  // Type-aware resolution: translate variable receiver to declared type
+  if ((!targets || targets.length === 0) && call.receiver && typeMap) {
+    const typeName = typeMap.get(call.receiver);
+    if (typeName) {
+      const qualified = `${typeName}.${call.name}`;
+      targets = stmts.findNodeByName.all(qualified);
+    }
+  }
   return { targets, importedFrom };
 }
 
 function buildCallEdges(stmts, relPath, symbols, fileNodeRow, importedNames) {
+  const typeMap = symbols.typeMap || new Map();
   let edgesAdded = 0;
   for (const call of symbols.calls) {
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
     const caller = findCaller(call, symbols.definitions, relPath, stmts) || fileNodeRow;
-    const { targets, importedFrom } = resolveCallTargets(stmts, call, relPath, importedNames);
+    const { targets, importedFrom } = resolveCallTargets(
+      stmts,
+      call,
+      relPath,
+      importedNames,
+      typeMap,
+    );
 
     for (const t of targets) {
       if (t.id !== caller.id) {

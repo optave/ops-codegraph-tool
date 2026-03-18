@@ -12,6 +12,7 @@ impl SymbolExtractor for GoExtractor {
         let mut symbols = FileSymbols::new(file_path.to_string());
         walk_node(&tree.root_node(), source, &mut symbols);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &GO_AST_CONFIG);
+        extract_go_type_map(&tree.root_node(), source, &mut symbols);
         symbols
     }
 }
@@ -307,6 +308,73 @@ fn extract_go_import_spec(spec: &Node, source: &[u8], symbols: &mut FileSymbols)
         let mut imp = Import::new(import_path, vec![alias], start_line(spec));
         imp.go_import = Some(true);
         symbols.imports.push(imp);
+    }
+}
+
+// ── Type map extraction ─────────────────────────────────────────────────────
+
+fn extract_go_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    match type_node.kind() {
+        "type_identifier" | "identifier" | "qualified_type" => Some(node_text(type_node, source)),
+        "pointer_type" => {
+            // *MyType → MyType
+            for i in 0..type_node.child_count() {
+                if let Some(child) = type_node.child(i) {
+                    if child.kind() == "type_identifier" || child.kind() == "identifier" {
+                        return Some(node_text(&child, source));
+                    }
+                }
+            }
+            None
+        }
+        "generic_type" => type_node.child(0).map(|n| node_text(&n, source)),
+        _ => None,
+    }
+}
+
+fn extract_go_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    extract_go_type_map_depth(node, source, symbols, 0);
+}
+
+fn extract_go_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
+    match node.kind() {
+        "var_spec" => {
+            if let Some(type_node) = node.child_by_field_name("type") {
+                if let Some(type_name) = extract_go_type_name(&type_node, source) {
+                    if let Some(name_node) = node.child_by_field_name("name") {
+                        symbols.type_map.push(TypeMapEntry {
+                            name: node_text(&name_node, source).to_string(),
+                            type_name: type_name.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        "parameter_declaration" => {
+            if let Some(type_node) = node.child_by_field_name("type") {
+                if let Some(type_name) = extract_go_type_name(&type_node, source) {
+                    for i in 0..node.child_count() {
+                        if let Some(child) = node.child(i) {
+                            if child.kind() == "identifier" {
+                                symbols.type_map.push(TypeMapEntry {
+                                    name: node_text(&child, source).to_string(),
+                                    type_name: type_name.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            extract_go_type_map_depth(&child, source, symbols, depth + 1);
+        }
     }
 }
 

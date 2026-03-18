@@ -12,6 +12,7 @@ impl SymbolExtractor for RustExtractor {
         let mut symbols = FileSymbols::new(file_path.to_string());
         walk_node(&tree.root_node(), source, &mut symbols);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &RUST_AST_CONFIG);
+        extract_rust_type_map(&tree.root_node(), source, &mut symbols);
         symbols
     }
 }
@@ -378,6 +379,73 @@ fn extract_rust_use_path(node: &Node, source: &[u8]) -> Vec<(String, Vec<String>
         }
 
         _ => vec![],
+    }
+}
+
+fn extract_rust_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    match type_node.kind() {
+        "type_identifier" | "identifier" | "scoped_type_identifier" => Some(node_text(type_node, source)),
+        "reference_type" => {
+            for i in 0..type_node.child_count() {
+                if let Some(child) = type_node.child(i) {
+                    if child.kind() == "type_identifier" || child.kind() == "scoped_type_identifier" {
+                        return Some(node_text(&child, source));
+                    }
+                }
+            }
+            None
+        }
+        "generic_type" => type_node.child(0).map(|n| node_text(&n, source)),
+        _ => None,
+    }
+}
+
+fn extract_rust_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    extract_rust_type_map_depth(node, source, symbols, 0);
+}
+
+fn extract_rust_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
+    match node.kind() {
+        "let_declaration" => {
+            if let Some(pattern) = node.child_by_field_name("pattern") {
+                if pattern.kind() == "identifier" {
+                    if let Some(type_node) = node.child_by_field_name("type") {
+                        if let Some(type_name) = extract_rust_type_name(&type_node, source) {
+                            symbols.type_map.push(TypeMapEntry {
+                                name: node_text(&pattern, source).to_string(),
+                                type_name: type_name.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        "parameter" => {
+            if let Some(pattern) = node.child_by_field_name("pattern") {
+                if pattern.kind() == "identifier" {
+                    let name = node_text(&pattern, source);
+                    if name != "self" && name != "&self" && name != "&mut self" && name != "mut self" {
+                        if let Some(type_node) = node.child_by_field_name("type") {
+                            if let Some(type_name) = extract_rust_type_name(&type_node, source) {
+                                symbols.type_map.push(TypeMapEntry {
+                                    name: name.to_string(),
+                                    type_name: type_name.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            extract_rust_type_map_depth(&child, source, symbols, depth + 1);
+        }
     }
 }
 

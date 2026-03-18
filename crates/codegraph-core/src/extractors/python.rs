@@ -12,6 +12,7 @@ impl SymbolExtractor for PythonExtractor {
         let mut symbols = FileSymbols::new(file_path.to_string());
         walk_node(&tree.root_node(), source, &mut symbols);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &PYTHON_AST_CONFIG);
+        extract_python_type_map(&tree.root_node(), source, &mut symbols);
         symbols
     }
 }
@@ -352,6 +353,78 @@ fn find_python_parent_class<'a>(node: &Node<'a>, source: &[u8]) -> Option<String
         current = parent.parent();
     }
     None
+}
+
+fn extract_python_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    match type_node.kind() {
+        "identifier" | "attribute" => Some(node_text(type_node, source)),
+        "subscript" => {
+            // List[int] → List
+            type_node
+                .child_by_field_name("value")
+                .map(|n| node_text(&n, source))
+        }
+        _ => None,
+    }
+}
+
+fn extract_python_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    extract_python_type_map_depth(node, source, symbols, 0);
+}
+
+fn extract_python_type_map_depth(
+    node: &Node,
+    source: &[u8],
+    symbols: &mut FileSymbols,
+    depth: usize,
+) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
+    match node.kind() {
+        "typed_parameter" => {
+            // first child is identifier, type field is the type
+            if let Some(name_node) = node.child(0) {
+                if name_node.kind() == "identifier" {
+                    let name = node_text(&name_node, source);
+                    if name != "self" && name != "cls" {
+                        if let Some(type_node) = node.child_by_field_name("type") {
+                            if let Some(type_name) =
+                                extract_python_type_name(&type_node, source)
+                            {
+                                symbols.type_map.push(TypeMapEntry {
+                                    name: name.to_string(),
+                                    type_name: type_name.to_string(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "typed_default_parameter" => {
+            if let Some(name_node) = node.child_by_field_name("name") {
+                if name_node.kind() == "identifier" {
+                    if let Some(type_node) = node.child_by_field_name("type") {
+                        if let Some(type_name) =
+                            extract_python_type_name(&type_node, source)
+                        {
+                            symbols.type_map.push(TypeMapEntry {
+                                name: node_text(&name_node, source).to_string(),
+                                type_name: type_name.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            extract_python_type_map_depth(&child, source, symbols, depth + 1);
+        }
+    }
 }
 
 #[cfg(test)]

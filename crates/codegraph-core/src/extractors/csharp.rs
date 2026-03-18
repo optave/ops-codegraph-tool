@@ -12,6 +12,7 @@ impl SymbolExtractor for CSharpExtractor {
         let mut symbols = FileSymbols::new(file_path.to_string());
         walk_node(&tree.root_node(), source, &mut symbols);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &CSHARP_AST_CONFIG);
+        extract_csharp_type_map(&tree.root_node(), source, &mut symbols);
         symbols
     }
 }
@@ -466,6 +467,75 @@ fn extract_csharp_base_types(
                 }
                 _ => {}
             }
+        }
+    }
+}
+
+// ── Type map extraction ─────────────────────────────────────────────────────
+
+fn extract_csharp_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {
+    match type_node.kind() {
+        "identifier" | "qualified_name" => Some(node_text(type_node, source)),
+        "predefined_type" => None, // skip int, string, etc.
+        "generic_name" => type_node.child(0).map(|n| node_text(&n, source)),
+        "nullable_type" => {
+            type_node.child(0).and_then(|inner| extract_csharp_type_name(&inner, source))
+        }
+        _ => None,
+    }
+}
+
+fn extract_csharp_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    extract_csharp_type_map_depth(node, source, symbols, 0);
+}
+
+fn extract_csharp_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
+    match node.kind() {
+        "variable_declaration" => {
+            let type_node = node.child_by_field_name("type").or_else(|| node.child(0));
+            if let Some(type_node) = type_node {
+                if type_node.kind() != "var_keyword" && type_node.kind() != "implicit_type" {
+                    if let Some(type_name) = extract_csharp_type_name(&type_node, source) {
+                        for i in 0..node.child_count() {
+                            if let Some(child) = node.child(i) {
+                                if child.kind() == "variable_declarator" {
+                                    let name_node = child.child_by_field_name("name")
+                                        .or_else(|| child.child(0));
+                                    if let Some(name_node) = name_node {
+                                        if name_node.kind() == "identifier" {
+                                            symbols.type_map.push(TypeMapEntry {
+                                                name: node_text(&name_node, source).to_string(),
+                                                type_name: type_name.to_string(),
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "parameter" => {
+            if let Some(type_node) = node.child_by_field_name("type") {
+                if let Some(type_name) = extract_csharp_type_name(&type_node, source) {
+                    if let Some(name_node) = node.child_by_field_name("name") {
+                        symbols.type_map.push(TypeMapEntry {
+                            name: node_text(&name_node, source).to_string(),
+                            type_name: type_name.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            extract_csharp_type_map_depth(&child, source, symbols, depth + 1);
         }
     }
 }

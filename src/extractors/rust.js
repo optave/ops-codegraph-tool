@@ -10,9 +10,11 @@ export function extractRustSymbols(tree, _filePath) {
     imports: [],
     classes: [],
     exports: [],
+    typeMap: new Map(),
   };
 
   walkRustNode(tree.rootNode, ctx);
+  extractRustTypeMap(tree.rootNode, ctx);
   return ctx;
 }
 
@@ -255,6 +257,64 @@ function extractEnumVariants(enumNode) {
     }
   }
   return variants;
+}
+
+function extractRustTypeMap(node, ctx) {
+  extractRustTypeMapDepth(node, ctx, 0);
+}
+
+function extractRustTypeMapDepth(node, ctx, depth) {
+  if (depth >= 200) return;
+
+  // let x: MyType = ...
+  if (node.type === 'let_declaration') {
+    const pattern = node.childForFieldName('pattern');
+    const typeNode = node.childForFieldName('type');
+    if (pattern && pattern.type === 'identifier' && typeNode) {
+      const typeName = extractRustTypeName(typeNode);
+      if (typeName) ctx.typeMap.set(pattern.text, typeName);
+    }
+  }
+
+  // fn foo(x: MyType) — parameter node has pattern + type fields
+  if (node.type === 'parameter') {
+    const pattern = node.childForFieldName('pattern');
+    const typeNode = node.childForFieldName('type');
+    if (pattern && typeNode) {
+      const name = pattern.type === 'identifier' ? pattern.text : null;
+      if (name && name !== 'self' && name !== '&self' && name !== '&mut self') {
+        const typeName = extractRustTypeName(typeNode);
+        if (typeName) ctx.typeMap.set(name, typeName);
+      }
+    }
+  }
+
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) extractRustTypeMapDepth(child, ctx, depth + 1);
+  }
+}
+
+function extractRustTypeName(typeNode) {
+  if (!typeNode) return null;
+  const t = typeNode.type;
+  if (t === 'type_identifier' || t === 'identifier') return typeNode.text;
+  if (t === 'scoped_type_identifier') return typeNode.text;
+  // Reference: &MyType or &mut MyType → MyType
+  if (t === 'reference_type') {
+    for (let i = 0; i < typeNode.childCount; i++) {
+      const child = typeNode.child(i);
+      if (child && (child.type === 'type_identifier' || child.type === 'scoped_type_identifier')) {
+        return child.text;
+      }
+    }
+  }
+  // Generic: Vec<T> → Vec
+  if (t === 'generic_type') {
+    const first = typeNode.child(0);
+    return first ? first.text : null;
+  }
+  return null;
 }
 
 function extractRustUsePath(node) {
