@@ -825,7 +825,8 @@ function extractNewExprTypeName(newExprNode) {
 }
 
 function extractTypeMapWalk(rootNode, typeMap) {
-  function walk(node) {
+  function walk(node, depth) {
+    if (depth >= 200) return;
     const t = node.type;
     if (t === 'variable_declarator') {
       const nameN = node.childForFieldName('name');
@@ -854,10 +855,10 @@ function extractTypeMapWalk(rootNode, typeMap) {
       }
     }
     for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i));
+      walk(node.child(i), depth + 1);
     }
   }
-  walk(rootNode);
+  walk(rootNode, 0);
 }
 
 function extractReceiverName(objNode) {

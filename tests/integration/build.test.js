@@ -497,7 +497,7 @@ describe('typed method call resolution', () => {
         '',
       ].join('\n'),
     );
-    // Force WASM engine — typeMap resolution is JS-only (native deferred)
+    // Force WASM engine — native binary may not be present in all test environments
     await buildGraph(typedDir, { skipRegistry: true, engine: 'wasm' });
     typedDbPath = path.join(typedDir, '.codegraph', 'graph.db');
   });

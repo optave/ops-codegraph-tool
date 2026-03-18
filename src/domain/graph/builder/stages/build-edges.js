@@ -128,6 +128,14 @@ function buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodes, native)
   for (const e of nativeEdges) {
     allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic]);
   }
+
+  // Older native binaries (< 3.2.0) don't emit receiver or type-resolved method-call
+  // edges. Supplement them on the JS side if the native binary missed them.
+  // TODO: Remove once all published native binaries handle receivers (>= 3.2.0)
+  const hasReceiver = nativeEdges.some((e) => e.kind === 'receiver');
+  if (!hasReceiver) {
+    supplementReceiverEdges(ctx, nativeFiles, getNodeIdStmt, allEdgeRows);
+  }
 }
 
 function buildImportedNamesForNative(ctx, relPath, symbols, rootDir) {
@@ -145,6 +153,50 @@ function buildImportedNamesForNative(ctx, relPath, symbols, rootDir) {
     }
   }
   return importedNames;
+}
+
+// ── Receiver edge supplement for older native binaries ──────────────────
+
+function supplementReceiverEdges(ctx, nativeFiles, getNodeIdStmt, allEdgeRows) {
+  const seenCallEdges = new Set();
+  // Collect existing edges to avoid duplicates
+  for (const row of allEdgeRows) {
+    seenCallEdges.add(`${row[0]}|${row[1]}|${row[2]}`);
+  }
+
+  for (const nf of nativeFiles) {
+    const relPath = nf.file;
+    const typeMap = new Map(nf.typeMap.map((t) => [t.name, t.typeName]));
+    const fileNodeRow = { id: nf.fileNodeId };
+
+    for (const call of nf.calls) {
+      if (!call.receiver || BUILTIN_RECEIVERS.has(call.receiver)) continue;
+      if (call.receiver === 'this' || call.receiver === 'self' || call.receiver === 'super')
+        continue;
+
+      const caller = findCaller(call, nf.definitions, relPath, getNodeIdStmt, fileNodeRow);
+
+      // Receiver edge: caller → receiver type node
+      buildReceiverEdge(ctx, call, caller, relPath, seenCallEdges, allEdgeRows, typeMap);
+
+      // Type-resolved method call: caller → Type.method
+      const typeName = typeMap.get(call.receiver);
+      if (typeName) {
+        const qualifiedName = `${typeName}.${call.name}`;
+        const targets = (ctx.nodesByName.get(qualifiedName) || []).filter(
+          (n) => n.kind === 'method',
+        );
+        for (const t of targets) {
+          const key = `${caller.id}|${t.id}|calls`;
+          if (t.id !== caller.id && !seenCallEdges.has(key)) {
+            seenCallEdges.add(key);
+            const confidence = computeConfidence(relPath, t.file, null);
+            allEdgeRows.push([caller.id, t.id, 'calls', confidence, call.dynamic ? 1 : 0]);
+          }
+        }
+      }
+    }
+  }
 }
 
 // ── Call edges (JS fallback) ────────────────────────────────────────────
@@ -244,11 +296,6 @@ function resolveCallTargets(ctx, call, relPath, importedNames, typeMap) {
 }
 
 function resolveByMethodOrGlobal(ctx, call, relPath, typeMap) {
-  const methodCandidates = (ctx.nodesByName.get(call.name) || []).filter(
-    (n) => n.name.endsWith(`.${call.name}`) && n.kind === 'method',
-  );
-  if (methodCandidates.length > 0) return methodCandidates;
-
   // Type-aware resolution: translate variable receiver to its declared type
   if (call.receiver && typeMap) {
     const typeName = typeMap.get(call.receiver);
@@ -390,11 +437,8 @@ export async function buildEdges(ctx) {
 
     buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
 
-    // Use native edge builder unless typeMap was backfilled (old native binary
-    // lacks type-map support in its edge builder, so JS fallback is needed)
     const native = engineName === 'native' ? loadNative() : null;
-    const typeMapBackfilled = [...ctx.fileSymbols.values()].some((s) => s._typeMapBackfilled);
-    if (native?.buildCallEdges && !typeMapBackfilled) {
+    if (native?.buildCallEdges) {
       buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodes, native);
     } else {
       buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows);

@@ -268,9 +268,6 @@ function patchNativeResult(r) {
     }
   }
 
-  // typeMap: default to empty array when native binary predates the type-map feature
-  if (!r.typeMap) r.typeMap = [];
-
   // dataflow: wrap bindingType into binding object for argFlows and mutations
   if (r.dataflow) {
     if (r.dataflow.argFlows) {
@@ -323,7 +320,7 @@ export const LANGUAGE_REGISTRY = [
   },
   {
     id: 'python',
-    extensions: ['.py'],
+    extensions: ['.py', '.pyi'],
     grammarFile: 'tree-sitter-python.wasm',
     extractor: extractPythonSymbols,
     required: false,
@@ -358,14 +355,14 @@ export const LANGUAGE_REGISTRY = [
   },
   {
     id: 'ruby',
-    extensions: ['.rb'],
+    extensions: ['.rb', '.rake', '.gemspec'],
     grammarFile: 'tree-sitter-ruby.wasm',
     extractor: extractRubySymbols,
     required: false,
   },
   {
     id: 'php',
-    extensions: ['.php'],
+    extensions: ['.php', '.phtml'],
     grammarFile: 'tree-sitter-php.wasm',
     extractor: extractPHPSymbols,
     required: false,
@@ -380,6 +377,31 @@ for (const entry of LANGUAGE_REGISTRY) {
 }
 
 export const SUPPORTED_EXTENSIONS = new Set(_extToLang.keys());
+
+/**
+ * WASM-based typeMap backfill for older native binaries that don't emit typeMap.
+ * Uses tree-sitter AST extraction instead of regex to avoid false positives from
+ * matches inside comments and string literals.
+ * TODO: Remove once all published native binaries include typeMap extraction (>= 3.2.0)
+ */
+async function backfillTypeMap(filePath, source) {
+  let code = source;
+  if (!code) {
+    try {
+      code = fs.readFileSync(filePath, 'utf-8');
+    } catch {
+      return { typeMap: [], backfilled: false };
+    }
+  }
+  const parsers = await createParsers();
+  const extracted = wasmExtractSymbols(parsers, filePath, code);
+  if (!extracted?.symbols?.typeMap) return { typeMap: [], backfilled: false };
+  const tm = extracted.symbols.typeMap;
+  return {
+    typeMap: tm instanceof Map ? tm : new Map(tm.map((e) => [e.name, e.typeName])),
+    backfilled: true,
+  };
+}
 
 /**
  * WASM extraction helper: picks the right extractor based on file extension.
@@ -419,17 +441,10 @@ export async function parseFileAuto(filePath, source, opts = {}) {
     const result = native.parseFile(filePath, source, !!opts.dataflow, opts.ast !== false);
     if (!result) return null;
     const patched = patchNativeResult(result);
-    // Backfill typeMap via WASM when native binary predates the type-map feature
-    if (patched.typeMap.length === 0 && patched.calls?.length > 0) {
-      const parsers = await createParsers();
-      const extracted = wasmExtractSymbols(parsers, filePath, source);
-      if (extracted?.symbols?.typeMap) {
-        patched.typeMap =
-          extracted.symbols.typeMap instanceof Map
-            ? extracted.symbols.typeMap
-            : new Map(extracted.symbols.typeMap.map((e) => [e.name, e.typeName]));
-        patched._typeMapBackfilled = true;
-      }
+    if (!patched.typeMap || patched.typeMap.length === 0) {
+      const { typeMap, backfilled } = await backfillTypeMap(filePath, source);
+      patched.typeMap = typeMap;
+      if (backfilled) patched._typeMapBackfilled = true;
     }
     return patched;
   }
@@ -462,36 +477,32 @@ export async function parseFilesAuto(filePaths, rootDir, opts = {}) {
     const needsTypeMap = [];
     for (const r of nativeResults) {
       if (!r) continue;
-      const relPath = path.relative(rootDir, r.file).split(path.sep).join('/');
       const patched = patchNativeResult(r);
+      const relPath = path.relative(rootDir, r.file).split(path.sep).join('/');
       result.set(relPath, patched);
-      if (patched.typeMap.length === 0 && patched.calls?.length > 0) {
+      if (!patched.typeMap || patched.typeMap.length === 0) {
         needsTypeMap.push({ filePath: r.file, relPath });
       }
     }
-    // Backfill typeMap via WASM for native binaries that predate the type-map feature.
-    // Also convert backfilled typeMap arrays to Maps for consistency with WASM output,
-    // so the JS edge builder can be used as a fallback.
+    // Backfill typeMap via WASM for native binaries that predate the type-map feature
     if (needsTypeMap.length > 0) {
       const parsers = await createParsers();
-      await Promise.all(
-        needsTypeMap.map(async ({ filePath, relPath }) => {
-          try {
-            const code = await fs.promises.readFile(filePath, 'utf-8');
-            const extracted = wasmExtractSymbols(parsers, filePath, code);
-            if (extracted?.symbols?.typeMap) {
-              const symbols = result.get(relPath);
-              symbols.typeMap =
-                extracted.symbols.typeMap instanceof Map
-                  ? extracted.symbols.typeMap
-                  : new Map(extracted.symbols.typeMap.map((e) => [e.name, e.typeName]));
-              symbols._typeMapBackfilled = true;
-            }
-          } catch {
-            /* skip — typeMap is a best-effort backfill */
+      for (const { filePath, relPath } of needsTypeMap) {
+        try {
+          const code = fs.readFileSync(filePath, 'utf-8');
+          const extracted = wasmExtractSymbols(parsers, filePath, code);
+          if (extracted?.symbols?.typeMap) {
+            const symbols = result.get(relPath);
+            symbols.typeMap =
+              extracted.symbols.typeMap instanceof Map
+                ? extracted.symbols.typeMap
+                : new Map(extracted.symbols.typeMap.map((e) => [e.name, e.typeName]));
+            symbols._typeMapBackfilled = true;
           }
-        }),
-      );
+        } catch {
+          /* skip — typeMap is a best-effort backfill */
+        }
+      }
     }
     return result;
   }
@@ -565,7 +576,14 @@ export function createParseTreeCache() {
 export async function parseFileIncremental(cache, filePath, source, opts = {}) {
   if (cache) {
     const result = cache.parseFile(filePath, source);
-    return result ? patchNativeResult(result) : null;
+    if (!result) return null;
+    const patched = patchNativeResult(result);
+    if (!patched.typeMap || patched.typeMap.length === 0) {
+      const { typeMap, backfilled } = await backfillTypeMap(filePath, source);
+      patched.typeMap = typeMap;
+      if (backfilled) patched._typeMapBackfilled = true;
+    }
+    return patched;
   }
   return parseFileAuto(filePath, source, opts);
 }

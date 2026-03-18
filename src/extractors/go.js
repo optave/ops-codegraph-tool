@@ -211,13 +211,19 @@ function extractGoTypeMap(node, ctx) {
 function extractGoTypeMapDepth(node, ctx, depth) {
   if (depth >= 200) return;
 
-  // var x MyType = ... → var_declaration > var_spec
+  // var x MyType = ... or var x, y MyType → var_declaration > var_spec
   if (node.type === 'var_spec') {
-    const nameNode = node.childForFieldName('name');
     const typeNode = node.childForFieldName('type');
-    if (nameNode && typeNode) {
+    if (typeNode) {
       const typeName = extractGoTypeName(typeNode);
-      if (typeName) ctx.typeMap.set(nameNode.text, typeName);
+      if (typeName) {
+        for (let i = 0; i < node.childCount; i++) {
+          const child = node.child(i);
+          if (child && child.type === 'identifier') {
+            ctx.typeMap.set(child.text, typeName);
+          }
+        }
+      }
     }
   }
 

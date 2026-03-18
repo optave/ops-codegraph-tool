@@ -78,6 +78,7 @@ function resolveImportPathJS(fromFile, importSource, rootDir, aliases) {
     '.jsx',
     '.mjs',
     '.py',
+    '.pyi',
     '/index.ts',
     '/index.tsx',
     '/index.js',

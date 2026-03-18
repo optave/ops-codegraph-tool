@@ -50,14 +50,14 @@ impl LanguageKind {
         }
         match ext {
             "js" | "jsx" | "mjs" | "cjs" => Some(Self::JavaScript),
-            "py" => Some(Self::Python),
+            "py" | "pyi" => Some(Self::Python),
             "tf" | "hcl" => Some(Self::Hcl),
             "go" => Some(Self::Go),
             "rs" => Some(Self::Rust),
             "java" => Some(Self::Java),
             "cs" => Some(Self::CSharp),
-            "rb" => Some(Self::Ruby),
-            "php" => Some(Self::Php),
+            "rb" | "rake" | "gemspec" => Some(Self::Ruby),
+            "php" | "phtml" => Some(Self::Php),
             _ => None,
         }
     }

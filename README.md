@@ -76,39 +76,24 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 
 ### Feature comparison
 
-<sub>Comparison last verified: March 2026. Full analysis: <a href="generated/competitive/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
+<sub>Comparison last verified: March 2026. Claims verified against each repo's README/docs. Full analysis: <a href="generated/competitive/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
 
-| Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [code-graph-rag](https://github.com/vitali87/code-graph-rag) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) | [CodeMCP](https://github.com/SimplyLiz/CodeMCP) | [axon](https://github.com/harshkedia177/axon) |
-|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| MCP / AI agent support | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
-| Batch querying | **Yes** | — | — | — | — | — | — | — |
-| Composite audit command | **Yes** | — | — | — | — | — | — | — |
-| Function-level analysis | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
-| Multi-language | **11** | **14** | **32** | **11** | **~10** | **12** | **12** | **3** |
-| Semantic search | **Yes** | — | **Yes** | **Yes** | — | **Yes** | — | **Yes** |
-| Hybrid BM25 + semantic | **Yes** | — | — | — | — | **Yes** | — | **Yes** |
-| CODEOWNERS integration | **Yes** | — | — | — | — | — | — | — |
-| Architecture boundary rules | **Yes** | — | — | — | — | — | — | — |
-| CI validation predicates | **Yes** | — | — | — | — | — | — | — |
-| Graph snapshots | **Yes** | — | — | — | — | — | — | — |
-| Git diff impact | **Yes** | — | — | — | — | **Yes** | **Yes** | **Yes** |
-| Branch structural diff | **Yes** | — | — | — | — | — | — | **Yes** |
-| Git co-change analysis | **Yes** | — | — | — | — | — | — | **Yes** |
-| Watch mode | **Yes** | — | **Yes** | **Yes** | — | — | **Yes** | **Yes** |
-| Dead code / role classification | **Yes** | — | **Yes** | — | — | — | **Yes** | **Yes** |
-| Cycle detection | **Yes** | — | — | — | — | — | — | — |
-| Incremental rebuilds | **O(changed)** | — | O(n) Merkle | — | — | — | Go only | **Yes** |
-| Zero config | **Yes** | — | **Yes** | — | — | **Yes** | — | **Yes** |
-| Embeddable JS library (`npm install`) | **Yes** | — | — | — | — | — | — | — |
-| LLM-optional (works without API keys) | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** |
-| Dataflow analysis | **Yes** | **Yes** | — | — | **Yes** | — | — | — |
-| Control flow graph (CFG) | **Yes** | **Yes** | — | — | **Yes** | — | — | — |
-| AST node querying | **Yes** | **Yes** | — | — | **Yes** | — | — | — |
-| Expanded node/edge types | **Yes** | **Yes** | — | — | **Yes** | — | — | — |
-| GraphML / Neo4j export | **Yes** | **Yes** | — | — | — | — | — | — |
-| Interactive graph viewer | **Yes** | — | — | — | — | — | — | — |
-| Commercial use allowed | **Yes** | **Yes** | **Yes** | **Yes** | **Yes** | No | Paid | **Yes** |
-| Open source | **Yes** | Yes | Yes | Yes | Yes | No | No | Yes |
+| Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [axon](https://github.com/harshkedia177/axon) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Languages | **11** | ~12 | **32** | ~10 | 3 | 13 |
+| MCP server | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** |
+| Dataflow + CFG + AST querying | **Yes** | **Yes** | **Yes**¹ | **Yes** | — | — |
+| Hybrid search (BM25 + semantic) | **Yes** | — | — | — | **Yes** | **Yes** |
+| Git-aware (diff impact, co-change, branch diff) | **All 3** | — | — | — | **All 3** | — |
+| Dead code / role classification | **Yes** | — | **Yes** | — | **Yes** | — |
+| Incremental rebuilds | **O(changed)** | — | O(n) | — | **Yes** | Commit-level⁴ |
+| Architecture rules + CI gate | **Yes** | — | — | — | — | — |
+| Security scanning (SAST / vuln detection) | Intentionally out of scope² | **Yes** | **Yes** | **Yes** | — | — |
+| Zero config, `npm install` | **Yes** | — | **Yes** | — | **Yes** | **Yes** |
+| Graph export (GraphML / Neo4j / DOT) | **Yes** | **Yes** | — | — | — | — |
+| Open source + commercial use | **Yes** (Apache-2.0) | **Yes** (Apache-2.0) | **Yes** (MIT/Apache-2.0) | **Yes** (Apache-2.0) | Source-available³ | Non-commercial⁵ |
+
+<sup>¹ narsil-mcp added CFG and dataflow in recent versions. ² Codegraph focuses on structural understanding, not vulnerability detection — use dedicated SAST tools (Semgrep, CodeQL, Snyk) for that. ³ axon claims MIT in pyproject.toml but has no LICENSE file in the repo. ⁴ GitNexus skips re-index if the git commit hasn't changed, but re-processes the entire repo when it does — no per-file incremental parsing. ⁵ GitNexus uses the PolyForm Noncommercial 1.0.0 license.</sup>
 
 ### What makes codegraph different
 
@@ -490,16 +475,16 @@ codegraph registry remove <name>  # Unregister
 |---|---|---|:---:|:---:|
 | ![JavaScript](https://img.shields.io/badge/-JavaScript-F7DF1E?style=flat-square&logo=javascript&logoColor=black) | `.js`, `.jsx`, `.mjs`, `.cjs` | functions, classes, methods, imports, exports, call sites, constants, dataflow | ✅ | ✅ |
 | ![TypeScript](https://img.shields.io/badge/-TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white) | `.ts`, `.tsx` | functions, classes, interfaces, type aliases, methods, imports, exports, call sites, dataflow | ✅ | ✅ |
-| ![Python](https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white) | `.py` | functions, classes, methods, imports, decorators, constants, call sites, dataflow | ✅ | ✅ |
+| ![Python](https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white) | `.py`, `.pyi` | functions, classes, methods, imports, decorators, constants, call sites, dataflow | ✅ | ✅ |
 | ![Go](https://img.shields.io/badge/-Go-00ADD8?style=flat-square&logo=go&logoColor=white) | `.go` | functions, methods, structs, interfaces, constants, imports, call sites, dataflow | ✅ | ✅ |
 | ![Rust](https://img.shields.io/badge/-Rust-000000?style=flat-square&logo=rust&logoColor=white) | `.rs` | functions, methods, structs, enums, traits, constants, `use` imports, call sites, dataflow | ✅ | ✅ |
 | ![Java](https://img.shields.io/badge/-Java-ED8B00?style=flat-square&logo=openjdk&logoColor=white) | `.java` | classes, methods, constructors, interfaces, enums, imports, call sites, dataflow | ✅ | ✅ |
 | ![C#](https://img.shields.io/badge/-C%23-512BD4?style=flat-square&logo=dotnet&logoColor=white) | `.cs` | classes, structs, records, interfaces, enums, methods, constructors, properties, using directives, call sites, dataflow | ✅ | ✅ |
-| ![PHP](https://img.shields.io/badge/-PHP-777BB4?style=flat-square&logo=php&logoColor=white) | `.php` | functions, classes, interfaces, traits, enums, methods, namespace use, call sites, dataflow | ✅ | ✅ |
-| ![Ruby](https://img.shields.io/badge/-Ruby-CC342D?style=flat-square&logo=ruby&logoColor=white) | `.rb` | classes, modules, methods, singleton methods, require/require_relative, include/extend, dataflow | — | ✅ |
-| ![Terraform](https://img.shields.io/badge/-Terraform-844FBA?style=flat-square&logo=terraform&logoColor=white) | `.tf`, `.hcl` | resource, data, variable, module, output blocks | — | ✅ |
+| ![PHP](https://img.shields.io/badge/-PHP-777BB4?style=flat-square&logo=php&logoColor=white) | `.php`, `.phtml` | functions, classes, interfaces, traits, enums, methods, namespace use, call sites, dataflow | ✅ | ✅ |
+| ![Ruby](https://img.shields.io/badge/-Ruby-CC342D?style=flat-square&logo=ruby&logoColor=white) | `.rb`, `.rake`, `.gemspec` | classes, modules, methods, singleton methods, require/require_relative, include/extend, dataflow | N/A⁴ | ✅ |
+| ![Terraform](https://img.shields.io/badge/-Terraform-844FBA?style=flat-square&logo=terraform&logoColor=white) | `.tf`, `.hcl` | resource, data, variable, module, output blocks | N/A⁴ | ✅ |
 
-> **Type Inference** extracts a per-file type map from annotations (`const x: Router`, `MyType x`, `x: MyType`) and `new` expressions, enabling the edge resolver to connect `x.method()` → `Type.method()`. **Parity** = WASM and native Rust engines produce identical output.
+> **Type Inference** extracts a per-file type map from annotations (`const x: Router`, `MyType x`, `x: MyType`) and `new` expressions, enabling the edge resolver to connect `x.method()` → `Type.method()`. **Parity** = WASM and native Rust engines produce identical output. ⁴ Ruby and HCL are dynamically typed / declarative — type inference does not apply.
 
 ## ⚙️ How It Works
 
@@ -768,7 +753,7 @@ const { results: fused } = await multiSearchData(
 
 ## ⚠️ Limitations
 
-- **No full type inference** — parses `.d.ts` interfaces but doesn't use TypeScript's type checker for overload resolution
+- **No TypeScript type-checker integration** — type inference resolves annotations, `new` expressions, and assignment chains, but does not invoke `tsc` for overload resolution or complex generics
 - **Dynamic calls are best-effort** — complex computed property access and `eval` patterns are not resolved
 - **Python imports** — resolves relative imports but doesn't follow `sys.path` or virtual environment packages
 - **Dataflow analysis** — intraprocedural (single-function scope), not interprocedural
@@ -778,13 +763,18 @@ const { results: fused } = await multiSearchData(
 See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap and **[STABILITY.md](STABILITY.md)** for the stability policy and versioning guarantees. Current plan:
 
 1. ~~**Rust Core**~~ — **Complete** (v1.3.0) — native tree-sitter parsing via napi-rs, parallel multi-core parsing, incremental re-parsing, import resolution & cycle detection in Rust
-2. ~~**Foundation Hardening**~~ — **Complete** (v1.4.0) — parser registry, 12-tool MCP server with multi-repo support, test coverage 62%→75%, `apiKeyCommand` secret resolution, global repo registry
-3. ~~**Deep Analysis**~~ — **Complete** (v3.0.0) — dataflow analysis (flows_to, returns, mutates), intraprocedural CFG for all 11 languages, stored AST nodes, expanded node/edge types (parameter, property, constant, contains, parameter_of, receiver), GraphML/GraphSON/Neo4j CSV export, interactive HTML viewer, CLI consolidation, stable JSON schema
-4. ~~**Architectural Refactoring**~~ — **Complete** (v3.1.5) — unified AST analysis, composable MCP, domain errors, builder pipeline, embedder subsystem, graph model, qualified names, presentation layer, InMemoryRepository, domain directory grouping, CLI composability
-5. **Natural Language Queries** — `codegraph ask` command, conversational sessions
-6. **Expanded Language Support** — 8 new languages (12 → 20)
-7. **GitHub Integration & CI** — reusable GitHub Action, PR review, SARIF output
-8. **TypeScript Migration** — gradual migration from JS to TypeScript
+2. ~~**Foundation Hardening**~~ — **Complete** (v1.5.0) — parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP
+3. ~~**Analysis Expansion**~~ — **Complete** (v2.7.0) — complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search
+4. ~~**Deep Analysis & Graph Enrichment**~~ — **Complete** (v3.0.0) — dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, interactive viewer, exports command
+5. ~~**Architectural Refactoring**~~ — **Complete** (v3.1.5) — unified AST analysis, composable MCP, domain errors, builder pipeline, graph model, qualified names, presentation layer, CLI composability
+6. **Native Analysis Acceleration** — move JS-only build phases to Rust, sub-100ms 1-file rebuilds
+7. **TypeScript Migration** — project setup, core type definitions, leaf → core → orchestration migration
+8. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
+9. **Intelligent Embeddings** — LLM-generated descriptions, enhanced embeddings, module summaries
+10. **Natural Language Queries** — `codegraph ask` command, conversational sessions
+11. **Expanded Language Support** — 8 new languages (11 → 19)
+12. **GitHub Integration & CI** — reusable GitHub Action, LLM-enhanced PR review, SARIF output
+13. **Visualization & Advanced** — web UI, dead code detection, monorepo, agentic search
 
 ## 🤝 Contributing
 

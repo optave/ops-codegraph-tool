@@ -344,11 +344,15 @@ fn extract_go_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSymbo
         "var_spec" => {
             if let Some(type_node) = node.child_by_field_name("type") {
                 if let Some(type_name) = extract_go_type_name(&type_node, source) {
-                    if let Some(name_node) = node.child_by_field_name("name") {
-                        symbols.type_map.push(TypeMapEntry {
-                            name: node_text(&name_node, source).to_string(),
-                            type_name: type_name.to_string(),
-                        });
+                    for i in 0..node.child_count() {
+                        if let Some(child) = node.child(i) {
+                            if child.kind() == "identifier" {
+                                symbols.type_map.push(TypeMapEntry {
+                                    name: node_text(&child, source).to_string(),
+                                    type_name: type_name.to_string(),
+                                });
+                            }
+                        }
                     }
                 }
             }
