@@ -78,24 +78,22 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 
 <sub>Comparison last verified: March 2026. Claims verified against each repo's README/docs. Full analysis: <a href="generated/competitive/COMPETITIVE_ANALYSIS.md">COMPETITIVE_ANALYSIS.md</a></sub>
 
-| Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [axon](https://github.com/harshkedia177/axon) |
-|---|:---:|:---:|:---:|:---:|:---:|
-| Languages | **11** | ~12 | **32** | ~10 | 3 |
-| MCP server | **Yes** | — | **Yes** | **Yes** | **Yes** |
-| Dataflow + CFG + AST querying | **Yes** | **Yes** | **Yes**¹ | **Yes** | — |
-| Hybrid search (BM25 + semantic) | **Yes** | — | — | — | **Yes** |
-| Git-aware (diff impact, co-change, branch diff) | **All 3** | — | — | — | **All 3** |
-| Dead code / role classification | **Yes** | — | **Yes** | — | **Yes** |
-| Incremental rebuilds | **O(changed)** | — | O(n) | — | **Yes** |
-| Architecture rules + CI gate | **Yes** | — | — | — | — |
-| Security scanning (SAST / vuln detection) | Intentionally out of scope² | **Yes** | **Yes** | **Yes** | — |
-| Zero config, `npm install` | **Yes** | — | **Yes** | — | **Yes** |
-| Graph export (GraphML / Neo4j / DOT) | **Yes** | **Yes** | — | — | — |
-| Open source + commercial use | **Yes** (MIT) | **Yes** (Apache-2.0) | **Yes** (MIT/Apache-2.0) | **Yes** (Apache-2.0) | Source-available³ |
+| Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [axon](https://github.com/harshkedia177/axon) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| Languages | **11** | ~12 | **32** | ~10 | 3 | 13 |
+| MCP server | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** |
+| Dataflow + CFG + AST querying | **Yes** | **Yes** | **Yes**¹ | **Yes** | — | — |
+| Hybrid search (BM25 + semantic) | **Yes** | — | — | — | **Yes** | **Yes** |
+| Git-aware (diff impact, co-change, branch diff) | **All 3** | — | — | — | **All 3** | — |
+| Dead code / role classification | **Yes** | — | **Yes** | — | **Yes** | — |
+| Incremental rebuilds | **O(changed)** | — | O(n) | — | **Yes** | Commit-level⁴ |
+| Architecture rules + CI gate | **Yes** | — | — | — | — | — |
+| Security scanning (SAST / vuln detection) | Intentionally out of scope² | **Yes** | **Yes** | **Yes** | — | — |
+| Zero config, `npm install` | **Yes** | — | **Yes** | — | **Yes** | **Yes** |
+| Graph export (GraphML / Neo4j / DOT) | **Yes** | **Yes** | — | — | — | — |
+| Open source + commercial use | **Yes** (Apache-2.0) | **Yes** (Apache-2.0) | **Yes** (MIT/Apache-2.0) | **Yes** (Apache-2.0) | Source-available³ | Non-commercial⁵ |
 
-<sup>¹ narsil-mcp added CFG and dataflow in recent versions. ² Codegraph focuses on structural understanding, not vulnerability detection — use dedicated SAST tools (Semgrep, CodeQL, Snyk) for that. ³ axon claims MIT in pyproject.toml but has no LICENSE file in the repo.</sup>
-
-> **Other tools evaluated:** [code-graph-rag](https://github.com/vitali87/code-graph-rag) (7 languages, requires Docker + Memgraph + API keys), [GitNexus](https://github.com/abhigyanpatwari/GitNexus) (13 languages, non-commercial license), [CodeMCP](https://github.com/SimplyLiz/CodeMCP) (12 languages, freemium/paid). See [COMPETITIVE_ANALYSIS.md](generated/competitive/COMPETITIVE_ANALYSIS.md) for details.
+<sup>¹ narsil-mcp added CFG and dataflow in recent versions. ² Codegraph focuses on structural understanding, not vulnerability detection — use dedicated SAST tools (Semgrep, CodeQL, Snyk) for that. ³ axon claims MIT in pyproject.toml but has no LICENSE file in the repo. ⁴ GitNexus skips re-index if the git commit hasn't changed, but re-processes the entire repo when it does — no per-file incremental parsing. ⁵ GitNexus uses the PolyForm Noncommercial 1.0.0 license.</sup>
 
 ### What makes codegraph different
 
@@ -755,7 +753,7 @@ const { results: fused } = await multiSearchData(
 
 ## ⚠️ Limitations
 
-- **No full type inference** — parses `.d.ts` interfaces but doesn't use TypeScript's type checker for overload resolution
+- **No TypeScript type-checker integration** — type inference resolves annotations, `new` expressions, and assignment chains, but does not invoke `tsc` for overload resolution or complex generics
 - **Dynamic calls are best-effort** — complex computed property access and `eval` patterns are not resolved
 - **Python imports** — resolves relative imports but doesn't follow `sys.path` or virtual environment packages
 - **Dataflow analysis** — intraprocedural (single-function scope), not interprocedural
@@ -765,13 +763,18 @@ const { results: fused } = await multiSearchData(
 See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap and **[STABILITY.md](STABILITY.md)** for the stability policy and versioning guarantees. Current plan:
 
 1. ~~**Rust Core**~~ — **Complete** (v1.3.0) — native tree-sitter parsing via napi-rs, parallel multi-core parsing, incremental re-parsing, import resolution & cycle detection in Rust
-2. ~~**Foundation Hardening**~~ — **Complete** (v1.4.0) — parser registry, 12-tool MCP server with multi-repo support, test coverage 62%→75%, `apiKeyCommand` secret resolution, global repo registry
-3. ~~**Deep Analysis**~~ — **Complete** (v3.0.0) — dataflow analysis (flows_to, returns, mutates), intraprocedural CFG for all 11 languages, stored AST nodes, expanded node/edge types (parameter, property, constant, contains, parameter_of, receiver), GraphML/GraphSON/Neo4j CSV export, interactive HTML viewer, CLI consolidation, stable JSON schema
-4. ~~**Architectural Refactoring**~~ — **Complete** (v3.1.5) — unified AST analysis, composable MCP, domain errors, builder pipeline, embedder subsystem, graph model, qualified names, presentation layer, InMemoryRepository, domain directory grouping, CLI composability
-5. **Natural Language Queries** — `codegraph ask` command, conversational sessions
-6. **Expanded Language Support** — 8 new languages (12 → 20)
-7. **GitHub Integration & CI** — reusable GitHub Action, PR review, SARIF output
-8. **TypeScript Migration** — gradual migration from JS to TypeScript
+2. ~~**Foundation Hardening**~~ — **Complete** (v1.5.0) — parser registry, complete MCP, test coverage, enhanced config, multi-repo MCP
+3. ~~**Analysis Expansion**~~ — **Complete** (v2.7.0) — complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search
+4. ~~**Deep Analysis & Graph Enrichment**~~ — **Complete** (v3.0.0) — dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, interactive viewer, exports command
+5. ~~**Architectural Refactoring**~~ — **Complete** (v3.1.5) — unified AST analysis, composable MCP, domain errors, builder pipeline, graph model, qualified names, presentation layer, CLI composability
+6. **Native Analysis Acceleration** — move JS-only build phases to Rust, sub-100ms 1-file rebuilds
+7. **TypeScript Migration** — project setup, core type definitions, leaf → core → orchestration migration
+8. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
+9. **Intelligent Embeddings** — LLM-generated descriptions, enhanced embeddings, module summaries
+10. **Natural Language Queries** — `codegraph ask` command, conversational sessions
+11. **Expanded Language Support** — 8 new languages (11 → 19)
+12. **GitHub Integration & CI** — reusable GitHub Action, LLM-enhanced PR review, SARIF output
+13. **Visualization & Advanced** — web UI, dead code detection, monorepo, agentic search
 
 ## 🤝 Contributing
 
