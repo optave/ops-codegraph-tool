@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "compilerOptions": {
+    /* Language & Environment */
+    "target": "es2022",
+    "lib": ["es2022"],
+
+    /* Modules */
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "rootDir": "./src",
+    "baseUrl": "./src",
+    "paths": {
+      "#shared/*": ["./shared/*"],
+      "#infrastructure/*": ["./infrastructure/*"],
+      "#db/*": ["./db/*"],
+      "#domain/*": ["./domain/*"],
+      "#features/*": ["./features/*"],
+      "#presentation/*": ["./presentation/*"],
+      "#graph/*": ["./graph/*"],
+      "#mcp/*": ["./mcp/*"],
+      "#ast-analysis/*": ["./ast-analysis/*"]
+    },
+
+    /* Emit */
+    "outDir": "./dist",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+
+    /* Incremental */
+    "incremental": true,
+    "tsBuildInfoFile": "./.tsbuildinfo",
+
+    /* Interop */
+    "esModuleInterop": true,
+    "allowImportingTsExtensions": false,
+    "verbatimModuleSyntax": false,
+    "isolatedModules": true,
+
+    /* Type Checking — strict mode */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "exactOptionalPropertyTypes": false,
+
+    /* Migration support */
+    "allowJs": true,
+    "checkJs": false,
+
+    /* Misc */
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "grammars", "tests", "scripts", "crates"]
+}

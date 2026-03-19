@@ -217,6 +217,9 @@ jobs:
           node scripts/sync-native-versions.js --strip
           echo "Packaging version $VERSION"
 
+      - name: Build TypeScript
+        run: npm run build
+
       - name: Disable prepublishOnly
         run: npm pkg delete scripts.prepublishOnly
 
@@ -394,6 +397,9 @@ jobs:
           npm version "$VERSION" --no-git-tag-version --allow-same-version
           node scripts/sync-native-versions.js
           echo "Publishing version $VERSION"
+
+      - name: Build TypeScript
+        run: npm run build
 
       - name: Disable prepublishOnly
         run: npm pkg delete scripts.prepublishOnly
