@@ -20,7 +20,7 @@ import { isWorker, workerEngine, forkEngines } from './lib/fork-engine.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
 if (!isWorker()) {
-	const { version } = await resolveBenchmarkSource();
+	const { version, cleanup: versionCleanup } = await resolveBenchmarkSource();
 	const { wasm, native } = await forkEngines(import.meta.url, process.argv.slice(2));
 
 	const primary = wasm || native;
@@ -66,6 +66,7 @@ if (!isWorker()) {
 	};
 
 	console.log(JSON.stringify(result, null, 2));
+	versionCleanup();
 	process.exit(0);
 }
 
