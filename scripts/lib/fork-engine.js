@@ -178,7 +178,7 @@ export async function forkEngines(scriptUrl, argv = [], opts = {}) {
 	}
 
 	// Propagate targets from the first engine to the second
-	const firstResult = results.wasm || results.native;
+	const firstResult = results.wasm;
 	if (firstResult?.targets) {
 		process.env[TARGETS_ENV_KEY] = JSON.stringify(firstResult.targets);
 	}
