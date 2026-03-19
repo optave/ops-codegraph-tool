@@ -35,12 +35,12 @@ if (!isWorker()) {
 	const rootParent = path.resolve(__dirParent, '..');
 	const dbPathParent = path.join(rootParent, '.codegraph', 'graph.db');
 
-	const { statsData: parentStats } = await import(srcImport(parentSrcDir, 'queries.js'));
+	const { statsData: parentStats } = await import(srcImport(parentSrcDir, 'domain/queries.js'));
 	const { resolveImportsBatch: parentBatch, resolveImportPathJS: parentJS } = await import(
-		srcImport(parentSrcDir, 'resolve.js')
+		srcImport(parentSrcDir, 'domain/graph/resolve.js')
 	);
 	const { isNativeAvailable: parentNativeCheck } = await import(
-		srcImport(parentSrcDir, 'native.js')
+		srcImport(parentSrcDir, 'infrastructure/native.js')
 	);
 
 	const RUNS = 3;
@@ -52,18 +52,22 @@ if (!isWorker()) {
 	function round1(n) { return Math.round(n * 10) / 10; }
 
 	function collectImportPairs() {
-		const srcDir = path.join(rootParent, 'src');
-		const files = fs.readdirSync(srcDir).filter((f) => f.endsWith('.js'));
+		const srcRoot = path.join(rootParent, 'src');
 		const importRe = /(?:^|\n)\s*import\s+.*?\s+from\s+['"]([^'"]+)['"]/g;
 		const pairs = [];
-		for (const file of files) {
-			const absFile = path.join(srcDir, file);
-			const content = fs.readFileSync(absFile, 'utf8');
-			let match;
-			while ((match = importRe.exec(content)) !== null) {
-				pairs.push({ fromFile: absFile, importSource: match[1] });
+		function walk(dir) {
+			for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+				if (entry.isDirectory()) { walk(path.join(dir, entry.name)); continue; }
+				if (!entry.name.endsWith('.js')) continue;
+				const absFile = path.join(dir, entry.name);
+				const content = fs.readFileSync(absFile, 'utf8');
+				let match;
+				while ((match = importRe.exec(content)) !== null) {
+					pairs.push({ fromFile: absFile, importSource: match[1] });
+				}
 			}
 		}
+		walk(srcRoot);
 		return pairs;
 	}
 
@@ -138,14 +142,14 @@ const root = path.resolve(__dirname, '..');
 const { srcDir, cleanup } = await resolveBenchmarkSource();
 const dbPath = path.join(root, '.codegraph', 'graph.db');
 
-const { buildGraph } = await import(srcImport(srcDir, 'builder.js'));
+const { buildGraph } = await import(srcImport(srcDir, 'domain/graph/builder.js'));
 
 // Redirect console.log to stderr so only JSON goes to stdout
 const origLog = console.log;
 console.log = (...args) => console.error(...args);
 
 const RUNS = 3;
-const PROBE_FILE = path.join(root, 'src', 'queries.js');
+const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.js');
 
 function median(arr) {
 	const sorted = [...arr].sort((a, b) => a - b);

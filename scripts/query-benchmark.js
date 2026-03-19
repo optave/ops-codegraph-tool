@@ -90,9 +90,9 @@ const root = path.resolve(__dirname, '..');
 const { srcDir, cleanup } = await resolveBenchmarkSource();
 const dbPath = path.join(root, '.codegraph', 'graph.db');
 
-const { buildGraph } = await import(srcImport(srcDir, 'builder.js'));
+const { buildGraph } = await import(srcImport(srcDir, 'domain/graph/builder.js'));
 const { fnDepsData, fnImpactData, diffImpactData } = await import(
-	srcImport(srcDir, 'queries.js')
+	srcImport(srcDir, 'domain/queries.js')
 );
 
 // Redirect console.log to stderr so only JSON goes to stdout

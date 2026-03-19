@@ -138,12 +138,12 @@ export async function forkEngines(scriptUrl, argv = [], opts = {}) {
 	const { srcDir, cleanup } = await resolveBenchmarkSource();
 
 	try {
-		const { isWasmAvailable } = await import(srcImport(srcDir, 'parser.js'));
+		const { isWasmAvailable } = await import(srcImport(srcDir, 'domain/parser.js'));
 		hasWasm = isWasmAvailable();
 	} catch { /* unavailable */ }
 
 	try {
-		const { isNativeAvailable } = await import(srcImport(srcDir, 'native.js'));
+		const { isNativeAvailable } = await import(srcImport(srcDir, 'infrastructure/native.js'));
 		hasNative = isNativeAvailable();
 	} catch { /* unavailable */ }
 

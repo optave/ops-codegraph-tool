@@ -88,14 +88,14 @@ const { srcDir, cleanup } = await resolveBenchmarkSource();
 
 const dbPath = path.join(root, '.codegraph', 'graph.db');
 
-const { buildGraph } = await import(srcImport(srcDir, 'builder.js'));
+const { buildGraph } = await import(srcImport(srcDir, 'domain/graph/builder.js'));
 const { fnDepsData, fnImpactData, pathData, rolesData, statsData } = await import(
-	srcImport(srcDir, 'queries.js')
+	srcImport(srcDir, 'domain/queries.js')
 );
 
 const INCREMENTAL_RUNS = 3;
 const QUERY_RUNS = 5;
-const PROBE_FILE = path.join(root, 'src', 'queries.js');
+const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.js');
 
 function median(arr) {
 	const sorted = [...arr].sort((a, b) => a - b);

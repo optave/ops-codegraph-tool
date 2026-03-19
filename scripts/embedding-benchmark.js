@@ -30,7 +30,7 @@ if (process.env[MODEL_WORKER_KEY]) {
 	const dbPath = path.join(root, '.codegraph', 'graph.db');
 
 	const { buildEmbeddings, MODELS, searchData, disposeModel } = await import(
-		srcImport(srcDir, 'embeddings/index.js')
+		srcImport(srcDir, 'domain/search/index.js')
 	);
 
 	const TEST_PATTERN = /\.(test|spec)\.|__test__|__tests__|\.stories\./;
@@ -123,7 +123,7 @@ if (process.env[MODEL_WORKER_KEY]) {
 const { version, srcDir, cleanup } = await resolveBenchmarkSource();
 const dbPath = path.join(root, '.codegraph', 'graph.db');
 
-const { MODELS } = await import(srcImport(srcDir, 'embeddings/index.js'));
+const { MODELS } = await import(srcImport(srcDir, 'domain/search/index.js'));
 
 const TIMEOUT_MS = 600_000;
 const hasHfToken = !!process.env.HF_TOKEN;
