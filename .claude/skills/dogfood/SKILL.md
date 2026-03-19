@@ -69,7 +69,17 @@ Your goal is to install the published package, exercise every feature, compare e
    ```
    This should report `engine: native`. If it falls back to `wasm`, record why.
 5. Record: platform, OS version, Node version, native binary package name + version, engine reported by `info`.
-6. **Do NOT rebuild the graph yet.** The first phase tests commands against the codegraph source repo without a pre-existing graph.
+6. **Update the native binary in the source repo.** The source repo's `node_modules` may have a stale native binary from a previous release. Since Phases 1–4 run commands against the source repo (using `--db` or directly), a version mismatch produces wrong results for **all phases**, not just benchmarks. Check and fix immediately:
+   ```bash
+   # In the codegraph source repo:
+   node -e "const p = require('@optave/codegraph-win32-x64-msvc/package.json'); console.log('Source repo native binary:', p.version)"
+   ```
+   If the version does **not** match `$ARGUMENTS`, install the correct binary now:
+   - **Stable release:** `npm install @optave/codegraph-win32-x64-msvc@$ARGUMENTS` (adjust platform suffix)
+   - **Dev build:** `npm install https://github.com/optave/codegraph/releases/download/dev-v$ARGUMENTS/optave-codegraph-win32-x64-msvc-$ARGUMENTS.tgz`
+
+   Verify with `npx codegraph info` in the source repo. Revert `package.json` / `package-lock.json` changes after the session (do not commit them on the fix branch).
+7. **Do NOT rebuild the graph yet.** The first phase tests commands against the codegraph source repo without a pre-existing graph.
 
 ---
 
@@ -202,30 +212,13 @@ Run all four benchmark scripts from the codegraph source repo and record results
 
 ### Pre-flight: verify native binary version
 
-**Before running any benchmarks**, confirm the native binary in the source repo matches the version being dogfooded. A stale binary will produce misleading results (e.g., the Rust engine may lack features added in the release, causing silent WASM fallback during the complexity phase).
+If you followed Phase 0 step 6, the source repo's native binary should already match `$ARGUMENTS`. Double-check before benchmarking:
 
 ```bash
-# In the codegraph source repo — adjust the platform package name as needed:
-node -e "const r=require('module').createRequire(require('url').pathToFileURL(__filename).href); const pkg=r.resolve('@optave/codegraph-win32-x64-msvc/package.json'); const p=require(pkg); console.log('Native binary version:', p.version)"
+node -e "const p = require('@optave/codegraph-win32-x64-msvc/package.json'); console.log('Native binary version:', p.version)"
 ```
 
-If the version does **not** match `$ARGUMENTS`:
-
-**Stable release** (no `-dev.` in version):
-1. Update `optionalDependencies` in `package.json` to pin all `@optave/codegraph-*` packages to `$ARGUMENTS`.
-2. Run `npm install` to fetch the correct binaries.
-3. Verify with `npx codegraph info` that the native engine loads at the correct version.
-4. Revert the `package.json` / `package-lock.json` changes after benchmarking (do not commit them on the fix branch).
-
-**Dev build** (version contains `-dev.`):
-Native binaries for dev builds are not on npm — they are in the GitHub release tarballs. Install the platform binary directly:
-1. Download the platform tarball into the source repo:
-   ```bash
-   # Example for Windows x64 — adjust platform suffix as needed:
-   npm install https://github.com/optave/codegraph/releases/download/dev-v$ARGUMENTS/optave-codegraph-win32-x64-msvc-$ARGUMENTS.tgz
-   ```
-2. Verify with `npx codegraph info` that the native engine loads at the correct version.
-3. Revert the `package.json` / `package-lock.json` changes after benchmarking (do not commit them on the fix branch).
+If it doesn't match, go back to Phase 0 step 6 and fix it — **all benchmark results with a stale binary are invalid.**
 
 **Why this matters:** The native engine computes complexity metrics during the Rust parse phase. If the binary is from an older release that lacks this, the complexity phase silently falls back to WASM — inflating native complexity time by 50-100x and making native appear slower than WASM.
 

@@ -166,6 +166,18 @@ remains at 6.6 ms/file (vs 5.0 in v2.0.0). The WASM/Native ratio widened from
 2.0x to 3.5x. Further optimization of WASM boundary crossings in the JS
 extractor is needed to recover the regression.
 
+**Build regression (v3.1.4 3.5 ms/file → v3.3.0 8 ms/file, +129% native):** The codebase grew from
+398 to 429 files (+8%), but the per-file regression is real and driven by richer extraction. Between
+v3.1.4 and v3.3.0, type inference was extended to all typed languages (#501), receiver type tracking
+with graded confidence was added (#505), re-exported barrel file symbols are now tracked (#515), and
+package.json exports + monorepo workspace resolution was introduced (#509). These produce 33% more
+nodes/file (13.4 → 17.8) and 28% more edges/file (28.8 → 36.8). The Parse phase tripled on native
+(468 → 1511 ms) because extractors now perform additional AST traversals for type annotations and
+receiver resolution. The Complexity phase grew 10× (16 → 179 ms) because 33% more functions each
+require full AST analysis. Major refactors also decomposed monolithic extractors into per-category
+handlers (#490) and split domain/feature modules (#491, #492), adding 31 new source files — the
+benchmark measures codegraph on itself, so more source files amplify per-file overhead.
+
 **Native build regression (v3.0.0 4.4 ms/file → v3.0.3 12.3 ms/file):** The regression is entirely
 from new build phases added in v3.0.1 that are now default-on: AST node extraction (651ms),
 dataflow analysis (367ms), and CFG construction (169ms) — totalling ~1,187ms of new work. The original

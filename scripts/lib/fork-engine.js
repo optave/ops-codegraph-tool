@@ -25,6 +25,7 @@ import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const WORKER_ENV_KEY = '__BENCH_ENGINE__';
+const TARGETS_ENV_KEY = '__BENCH_TARGETS__';
 
 /**
  * Returns true when running inside a forked worker process.
@@ -41,6 +42,16 @@ export function workerEngine() {
 	const engine = process.env[WORKER_ENV_KEY];
 	if (!engine) throw new Error('workerEngine() called outside a worker process');
 	return engine;
+}
+
+/**
+ * Returns pre-selected targets passed from the parent process, or null if
+ * this is the first engine run (no targets yet).
+ */
+export function workerTargets() {
+	const raw = process.env[TARGETS_ENV_KEY];
+	if (!raw) return null;
+	try { return JSON.parse(raw); } catch { return null; }
 }
 
 /**
@@ -158,10 +169,18 @@ export async function forkEngines(scriptUrl, argv = [], opts = {}) {
 	const results = { wasm: null, native: null };
 
 	// Run engines sequentially — they share the DB file and filesystem state.
+	// After the first engine completes, extract its targets and pass them to
+	// the second engine via TARGETS_ENV_KEY so both benchmark the same symbols.
 	if (hasWasm) {
 		results.wasm = await forkWorker(scriptPath, WORKER_ENV_KEY, 'wasm', argv, timeoutMs);
 	} else {
 		console.error('WASM grammars not built — skipping WASM benchmark');
+	}
+
+	// Propagate targets from the first engine to the second
+	const firstResult = results.wasm;
+	if (firstResult?.targets) {
+		process.env[TARGETS_ENV_KEY] = JSON.stringify(firstResult.targets);
 	}
 
 	if (hasNative) {
@@ -169,6 +188,9 @@ export async function forkEngines(scriptUrl, argv = [], opts = {}) {
 	} else {
 		console.error('Native engine not available — skipping native benchmark');
 	}
+
+	// Clean up env
+	delete process.env[TARGETS_ENV_KEY];
 
 	return results;
 }

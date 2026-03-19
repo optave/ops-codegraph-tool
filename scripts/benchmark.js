@@ -16,7 +16,7 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
-import { isWorker, workerEngine, forkEngines } from './lib/fork-engine.js';
+import { isWorker, workerEngine, workerTargets, forkEngines } from './lib/fork-engine.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
 if (!isWorker()) {
@@ -179,7 +179,7 @@ try {
 
 // ── Query benchmarks ────────────────────────────────────────────────
 console.error(`  [${engine}] Benchmarking queries...`);
-const targets = selectTargets();
+const targets = workerTargets() || selectTargets();
 console.error(`    hub=${targets.hub}, leaf=${targets.leaf}`);
 
 function benchQuery(fn, ...args) {
@@ -219,6 +219,7 @@ const workerResult = {
 	oneFileRebuildMs,
 	oneFilePhases,
 	queries,
+	targets,
 	phases: buildResult?.phases || null,
 };
 
