@@ -51,9 +51,10 @@ If `$ARGUMENTS` was provided, use it directly as `VERSION`.
 
 Edit `package.json` to set `"version": "VERSION"`.
 
+Also bump `crates/codegraph-core/Cargo.toml` — set the `version` field in `[package]` to match `VERSION`. This keeps the Rust crate version in sync with the npm package.
+
 **Do NOT bump:**
-- `crates/codegraph-core/Cargo.toml` — synced automatically by `scripts/sync-native-versions.js` during the publish workflow
-- `optionalDependencies` versions — also synced automatically by the same script
+- `optionalDependencies` versions — synced automatically by `scripts/sync-native-versions.js` during the publish workflow
 
 Then run `npm install --package-lock-only` to update `package-lock.json`.
 
@@ -133,7 +134,7 @@ Run `grep` to confirm the new version appears in `package-lock.json` and that al
 ## Step 8: Create branch, commit, push, PR
 
 1. Create branch: `git checkout -b release/VERSION`
-2. Stage only the files you changed: `CHANGELOG.md`, `package.json`, `package-lock.json`, `docs/roadmap/ROADMAP.md`, `docs/roadmap/BACKLOG.md` if changed, `README.md` if changed
+2. Stage only the files you changed: `CHANGELOG.md`, `package.json`, `package-lock.json`, `crates/codegraph-core/Cargo.toml`, `docs/roadmap/ROADMAP.md`, `docs/roadmap/BACKLOG.md` if changed, `README.md` if changed
 3. Commit: `chore: release vVERSION`
 4. Push: `git push -u origin release/VERSION`
 5. Create PR:
@@ -157,5 +158,5 @@ EOF
 
 - **No co-author lines** in commit messages
 - **No Claude Code references** in commit messages or PR descriptions
-- The publish workflow (`publish.yml`) handles: Cargo.toml version sync, optionalDependencies version sync, npm publishing, git tagging, and the post-publish version bump PR
+- The publish workflow (`publish.yml`) handles: optionalDependencies version sync, npm publishing, git tagging, and the post-publish version bump PR
 - If you find issues (incomplete lock entries, phantom packages), fix them in a separate commit with a descriptive message

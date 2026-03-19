@@ -100,15 +100,14 @@ Test each with `-j`/`--json` and `-T`/`--no-tests` where supported:
 | `map` | `-n/--limit <number>` |
 | `stats` | |
 | `deps <file>` | |
-| `fn <name>` | `--depth <n>`, `-f/--file <path>`, `-k/--kind <kind>` |
 | `fn-impact <name>` | `--depth <n>`, `-f/--file`, `-k/--kind` |
 | `context <name>` | `--depth <n>`, `-f/--file`, `-k/--kind`, `--no-source`, `--include-tests` |
-| `explain <target>` | test with both a file path and a function name |
+| `audit <target>` | test with both a file path and a function name; replaces the old `explain` command |
 | `where <name>` | also test `where -f <file>` for file-overview mode |
 | `diff-impact [ref]` | `--staged`, test vs `main`, vs `HEAD`, and with no arg (unstaged) |
 | `cycles` | `--functions` for function-level cycles |
 | `structure [dir]` | `--depth <n>`, `--sort cohesion\|fan-in\|fan-out\|density\|files` |
-| `hotspots` | `--metric fan-in\|fan-out\|density\|coupling`, `--level file\|directory`, `-n/--limit` |
+| `triage` | `--level file\|function\|directory`, `-n/--limit`, `--json` |
 
 ### Export commands
 | Command | Flags |
@@ -139,7 +138,7 @@ Test each with `-j`/`--json` and `-T`/`--no-tests` where supported:
 |----------|----------|
 | Non-existent symbol: `query nonexistent` | Graceful "No results" message |
 | Non-existent file: `deps nonexistent.js` | Graceful "No file matching" message |
-| Non-existent function: `fn nonexistent` | Graceful message |
+| Non-existent function: `fn-impact nonexistent` | Graceful message |
 | `structure .` | Should work (was a bug in v2.2.0 — verify fix) |
 | `--json` on every command that supports it | Valid JSON output |
 | `--no-tests` effect: compare counts with/without | Test file count should drop |
@@ -149,6 +148,8 @@ Test each with `-j`/`--json` and `-T`/`--no-tests` where supported:
 | `search` with no embeddings | Should warn, not crash |
 | `embed` then `search` with dimension mismatch model | Should warn about mismatch |
 | Pipe output: `codegraph map --json \| head -1` | Clean JSON, no status messages in stdout |
+| Embed → rebuild → search pipeline: `embed -m minilm`, modify a file, `build`, `search "build graph"` without re-embedding | Results should still return; stale embeddings should be detected or warned about |
+| Watch mode lifecycle: start `watch`, modify a file, run a query to verify update, then Ctrl+C | Watcher detects change, graph reflects it, graceful shutdown (journal flush, no crash) |
 
 ---
 
@@ -184,7 +185,7 @@ Test that incremental rebuilds, full rebuilds, and cross-feature state remain co
    - `context parseFileAuto` — compare source extraction
    - `cycles --functions` — compare cycle detection
    - `stats --json` — full metric comparison
-   - `hotspots --metric fan-in --json` — compare rankings
+   - `triage --json` — compare risk rankings
 
 ---
 
@@ -265,8 +266,8 @@ Before writing the report, **stop and think** about:
 
 - What testing approaches am I missing?
 - **Cross-command pipelines:** Have I tested `build` → `embed` → `search` → modify → `build` → `search`? Have I tested `watch` detecting changes then `diff-impact`?
-- **MCP server:** Have I tested the `mcp` command? Initialize via JSON-RPC on stdin, send `tools/list`, verify all 24 tools are present (23 in single-repo mode; 24 with `list_repos` in multi-repo). Test single-repo mode (default — `list_repos` should be absent, no `repo` parameter on tools) vs `--multi-repo` mode.
-- **Programmatic API:** Have I tested `require('@optave/codegraph')` or `import` from `index.js`? Key exports to verify: `buildGraph`, `loadConfig`, `openDb`, `findDbPath`, `contextData`, `explainData`, `whereData`, `fnDepsData`, `diffImpactData`, `statsData`, `isNativeAvailable`, `EXTENSIONS`, `IGNORE_DIRS`, `ALL_SYMBOL_KINDS`, `MODELS`.
+- **MCP server:** Have I tested the `mcp` command? Initialize via JSON-RPC on stdin, send `tools/list`, verify all 33 tools are present (32 in single-repo mode; 33 with `list_repos` in multi-repo). Test single-repo mode (default — `list_repos` should be absent, no `repo` parameter on tools) vs `--multi-repo` mode.
+- **Programmatic API:** Have I tested `require('@optave/codegraph')` or `import` from `index.js`? Key exports to verify: `buildGraph`, `loadConfig`, `contextData`, `explainData`, `whereData`, `fnDepsData`, `fnImpactData`, `diffImpactData`, `statsData`, `queryNameData`, `rolesData`, `auditData`, `triageData`, `complexityData`, `EXTENSIONS`, `IGNORE_DIRS`, `EVERY_SYMBOL_KIND`.
 - **Config options:** Have I tested `.codegraphrc.json`? Create one with `include`/`exclude` patterns, custom `aliases`, `build.incremental: false`, `query.defaultDepth`, `search.defaultMinScore`. Verify overrides work.
 - **Env var overrides:** `CODEGRAPH_LLM_PROVIDER`, `CODEGRAPH_LLM_API_KEY`, `CODEGRAPH_LLM_MODEL`, `CODEGRAPH_REGISTRY_PATH`.
 - **Credential resolution:** `apiKeyCommand` in config — does it shell out via `execFileSync` correctly? Test with a simple `echo` command.
