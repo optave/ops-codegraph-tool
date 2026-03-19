@@ -1,2 +1,2 @@
-export { MAX_ITEMS, DEFAULT_NAME, clamp } from './constants.js';
-export { paginate, formatName } from './helpers.js';
+export { clamp, DEFAULT_NAME, MAX_ITEMS } from './constants.js';
+export { formatName, paginate } from './helpers.js';

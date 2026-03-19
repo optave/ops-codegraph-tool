@@ -1,6 +1,6 @@
 import { parseItems } from '../domain/index.js';
-import { paginate } from '../shared/helpers.js';
 import { clamp } from '../shared/constants.js';
+import { paginate } from '../shared/helpers.js';
 
 export function runQuery(raw, page) {
   const items = parseItems(raw);

@@ -14,9 +14,9 @@ import os from 'node:os';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { buildGraph } from '../../src/domain/graph/builder.js';
-import { rebuildFile } from '../../src/domain/graph/builder/incremental.js';
 import { getNodeId as getNodeIdQuery, initSchema, openDb } from '../../src/db/index.js';
+import { rebuildFile } from '../../src/domain/graph/builder/incremental.js';
+import { buildGraph } from '../../src/domain/graph/builder.js';
 
 const FIXTURE_DIR = path.join(import.meta.dirname, '..', 'fixtures', 'deep-deps-project');
 
@@ -73,9 +73,7 @@ function makeStmts(db) {
     findNodeByName: db.prepare(
       "SELECT id, file FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant')",
     ),
-    listSymbols: db.prepare(
-      "SELECT name, kind, line FROM nodes WHERE file = ? AND kind != 'file'",
-    ),
+    listSymbols: db.prepare("SELECT name, kind, line FROM nodes WHERE file = ? AND kind != 'file'"),
   };
 
   const origDeleteEdges = db.prepare(

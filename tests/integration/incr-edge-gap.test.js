@@ -23,7 +23,8 @@ function copyDirSync(src, dest) {
 
 function readEdges(dbPath) {
   const db = new Database(dbPath, { readonly: true });
-  const edges = db.prepare(`
+  const edges = db
+    .prepare(`
     SELECT n1.name AS src_name, n1.kind AS src_kind, n1.file AS src_file,
            n2.name AS tgt_name, n2.kind AS tgt_kind, n2.file AS tgt_file,
            e.kind AS edge_kind, e.confidence
@@ -31,10 +32,11 @@ function readEdges(dbPath) {
     JOIN nodes n1 ON e.source_id = n1.id
     JOIN nodes n2 ON e.target_id = n2.id
     ORDER BY src_file, src_name, tgt_file, tgt_name, e.kind
-  `).all();
-  const nodes = db.prepare(
-    'SELECT name, kind, file, line FROM nodes ORDER BY name, kind, file, line'
-  ).all();
+  `)
+    .all();
+  const nodes = db
+    .prepare('SELECT name, kind, file, line FROM nodes ORDER BY name, kind, file, line')
+    .all();
   db.close();
   return { edges, nodes };
 }
@@ -73,8 +75,8 @@ describe('Issue #533: incremental edge gap', () => {
       // Detailed edge comparison
       const fullKeys = new Set(fullGraph.edges.map(edgeKey));
       const incrKeys = new Set(incrGraph.edges.map(edgeKey));
-      const missing = [...fullKeys].filter(k => !incrKeys.has(k));
-      const extra = [...incrKeys].filter(k => !fullKeys.has(k));
+      const missing = [...fullKeys].filter((k) => !incrKeys.has(k));
+      const extra = [...incrKeys].filter((k) => !fullKeys.has(k));
 
       if (missing.length > 0 || extra.length > 0) {
         console.log(`\nFull build: ${fullGraph.edges.length} edges`);
@@ -115,8 +117,8 @@ describe('Issue #533: incremental edge gap', () => {
 
       const fullKeys = new Set(fullGraph.edges.map(edgeKey));
       const incrKeys = new Set(incrGraph.edges.map(edgeKey));
-      const missing = [...fullKeys].filter(k => !incrKeys.has(k));
-      const extra = [...incrKeys].filter(k => !fullKeys.has(k));
+      const missing = [...fullKeys].filter((k) => !incrKeys.has(k));
+      const extra = [...incrKeys].filter((k) => !fullKeys.has(k));
 
       if (missing.length > 0 || extra.length > 0) {
         console.log(`\nFull: ${fullGraph.edges.length}, Incr: ${incrGraph.edges.length}`);
