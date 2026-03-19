@@ -130,6 +130,8 @@ describe('Incremental edge parity (CI gate)', () => {
         let src = fs.readFileSync(p, 'utf-8');
         // Change add implementation but keep the same signature and exports
         src = src.replace('return a + b;', 'return b + a;');
+        if (!src.includes('return b + a;'))
+          throw new Error('Mutation failed: target string not found in math.js');
         fs.writeFileSync(p, src);
       });
     }, 60_000);
@@ -156,6 +158,8 @@ describe('Incremental edge parity (CI gate)', () => {
           'module.exports = { add, multiply, square };',
           `function subtract(a, b) {\n  return a - b;\n}\n\nmodule.exports = { add, multiply, square, subtract };`,
         );
+        if (!src.includes('subtract'))
+          throw new Error('Mutation failed: module.exports replacement not applied in math.js');
         fs.writeFileSync(mathPath, src);
 
         // Have index.js import and call the new function
@@ -165,10 +169,14 @@ describe('Incremental edge parity (CI gate)', () => {
           "const { add } = require('./math');",
           "const { add, subtract } = require('./math');",
         );
+        if (!indexSrc.includes('subtract'))
+          throw new Error('Mutation failed: require replacement not applied in index.js');
         indexSrc = indexSrc.replace(
           'console.log(add(1, 2));',
           'console.log(add(1, 2));\n  console.log(subtract(5, 3));',
         );
+        if (!indexSrc.includes('subtract(5, 3)'))
+          throw new Error('Mutation failed: console.log replacement not applied in index.js');
         fs.writeFileSync(indexPath, indexSrc);
       });
     }, 60_000);
@@ -207,10 +215,15 @@ describe('Incremental edge parity (CI gate)', () => {
         // Update index.js to remove the require
         const indexPath = path.join(dir, 'index.js');
         let src = fs.readFileSync(indexPath, 'utf-8');
+        const before = src;
         src = src.replace("const { sumOfSquares, Calculator } = require('./utils');\n", '');
         src = src.replace('  console.log(sumOfSquares(3, 4));\n', '');
         src = src.replace('  const calc = new Calculator();\n', '');
         src = src.replace('  console.log(calc.compute(5, 6));\n', '');
+        if (src === before)
+          throw new Error(
+            'Mutation failed: no replacements applied in index.js for file deletion scenario',
+          );
         fs.writeFileSync(indexPath, src);
       });
     }, 60_000);
