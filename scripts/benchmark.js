@@ -26,6 +26,7 @@ if (!isWorker()) {
 	const primary = wasm || native;
 	if (!primary) {
 		console.error('Error: Both engines failed. No results to report.');
+		versionCleanup();
 		process.exit(1);
 	}
 
