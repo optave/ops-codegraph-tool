@@ -48,6 +48,7 @@ export const STRUCTURAL_EDGE_KINDS = ['parameter_of', 'receiver'];
 export const EVERY_EDGE_KIND = [...CORE_EDGE_KINDS, ...STRUCTURAL_EDGE_KINDS];
 
 // Dead sub-categories — refine the coarse "dead" bucket
+export const DEAD_ROLE_PREFIX = 'dead';
 export const DEAD_SUB_ROLES = ['dead-leaf', 'dead-entry', 'dead-ffi', 'dead-unresolved'];
 
 export const VALID_ROLES = [

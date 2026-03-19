@@ -1,6 +1,7 @@
 import { openReadonlyOrFail } from '../../db/index.js';
 import { buildFileConditionSQL } from '../../db/query-builder.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
+import { DEAD_ROLE_PREFIX } from '../../shared/kinds.js';
 import { normalizeSymbol } from '../../shared/normalize.js';
 import { paginateResult } from '../../shared/paginate.js';
 
@@ -13,8 +14,8 @@ export function rolesData(customDbPath, opts = {}) {
     const params = [];
 
     if (filterRole) {
-      if (filterRole === 'dead') {
-        conditions.push("role LIKE 'dead%'");
+      if (filterRole === DEAD_ROLE_PREFIX) {
+        conditions.push(`role LIKE '${DEAD_ROLE_PREFIX}%'`);
       } else {
         conditions.push('role = ?');
         params.push(filterRole);

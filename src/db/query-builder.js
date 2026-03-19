@@ -1,5 +1,5 @@
 import { DbError } from '../shared/errors.js';
-import { EVERY_EDGE_KIND } from '../shared/kinds.js';
+import { DEAD_ROLE_PREFIX, EVERY_EDGE_KIND } from '../shared/kinds.js';
 
 // ─── Validation Helpers ─────────────────────────────────────────────
 
@@ -246,8 +246,8 @@ export class NodeQuery {
   /** WHERE n.role = ? (no-op if falsy). 'dead' matches all dead-* sub-roles. */
   roleFilter(role) {
     if (!role) return this;
-    if (role === 'dead') {
-      this.#conditions.push("n.role LIKE 'dead%'");
+    if (role === DEAD_ROLE_PREFIX) {
+      this.#conditions.push(`n.role LIKE '${DEAD_ROLE_PREFIX}%'`);
     } else {
       this.#conditions.push('n.role = ?');
       this.#params.push(role);
