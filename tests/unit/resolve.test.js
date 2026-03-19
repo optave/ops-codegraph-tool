@@ -7,13 +7,20 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
+  clearExportsCache,
+  clearWorkspaceCache,
   computeConfidence,
   computeConfidenceJS,
   convertAliasesForNative,
+  isWorkspaceResolved,
+  parseBareSpecifier,
   resolveImportPathJS,
   resolveImportsBatch,
+  resolveViaExports,
+  resolveViaWorkspace,
+  setWorkspaces,
 } from '../../src/domain/graph/resolve.js';
 
 // ─── Temp project setup ──────────────────────────────────────────────
@@ -217,5 +224,424 @@ describe('resolveImportsBatch', () => {
     );
     // native may or may not be available
     expect(result === null || result instanceof Map).toBe(true);
+  });
+});
+
+// ─── parseBareSpecifier ──────────────────────────────────────────────
+
+describe('parseBareSpecifier', () => {
+  it('parses plain package with no subpath', () => {
+    expect(parseBareSpecifier('lodash')).toEqual({ packageName: 'lodash', subpath: '.' });
+  });
+
+  it('parses plain package with subpath', () => {
+    expect(parseBareSpecifier('lodash/fp')).toEqual({ packageName: 'lodash', subpath: './fp' });
+  });
+
+  it('parses scoped package with no subpath', () => {
+    expect(parseBareSpecifier('@scope/pkg')).toEqual({ packageName: '@scope/pkg', subpath: '.' });
+  });
+
+  it('parses scoped package with subpath', () => {
+    expect(parseBareSpecifier('@scope/pkg/utils/deep')).toEqual({
+      packageName: '@scope/pkg',
+      subpath: './utils/deep',
+    });
+  });
+
+  it('returns null for bare @ with no slash', () => {
+    expect(parseBareSpecifier('@scope')).toBeNull();
+  });
+});
+
+// ─── resolveViaExports ───────────────────────────────────────────────
+
+describe('resolveViaExports', () => {
+  let pkgRoot;
+
+  beforeAll(() => {
+    clearExportsCache();
+    // Create a fake node_modules structure inside tmpDir
+    pkgRoot = path.join(tmpDir, 'node_modules', 'test-pkg');
+    fs.mkdirSync(path.join(pkgRoot, 'dist'), { recursive: true });
+    fs.mkdirSync(path.join(pkgRoot, 'lib', 'utils'), { recursive: true });
+    fs.writeFileSync(path.join(pkgRoot, 'dist', 'index.mjs'), 'export default 1;');
+    fs.writeFileSync(path.join(pkgRoot, 'dist', 'index.cjs'), 'module.exports = 1;');
+    fs.writeFileSync(path.join(pkgRoot, 'dist', 'helpers.mjs'), 'export const h = 1;');
+    fs.writeFileSync(path.join(pkgRoot, 'lib', 'utils', 'deep.js'), 'export const d = 1;');
+  });
+
+  afterEach(() => {
+    clearExportsCache();
+  });
+
+  it('resolves string exports (shorthand)', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({ name: 'test-pkg', exports: './dist/index.mjs' }),
+    );
+    const result = resolveViaExports('test-pkg', tmpDir);
+    expect(result).toBe(path.join(pkgRoot, 'dist', 'index.mjs'));
+  });
+
+  it('returns null for subpath when exports is a string', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({ name: 'test-pkg', exports: './dist/index.mjs' }),
+    );
+    expect(resolveViaExports('test-pkg/helpers', tmpDir)).toBeNull();
+  });
+
+  it('resolves conditional exports (import/require/default)', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({
+        name: 'test-pkg',
+        exports: {
+          '.': { import: './dist/index.mjs', require: './dist/index.cjs' },
+        },
+      }),
+    );
+    const result = resolveViaExports('test-pkg', tmpDir);
+    expect(result).toBe(path.join(pkgRoot, 'dist', 'index.mjs'));
+  });
+
+  it('falls back to require when import is absent', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({
+        name: 'test-pkg',
+        exports: {
+          '.': { require: './dist/index.cjs' },
+        },
+      }),
+    );
+    const result = resolveViaExports('test-pkg', tmpDir);
+    expect(result).toBe(path.join(pkgRoot, 'dist', 'index.cjs'));
+  });
+
+  it('resolves subpath exports', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({
+        name: 'test-pkg',
+        exports: {
+          '.': './dist/index.mjs',
+          './helpers': './dist/helpers.mjs',
+        },
+      }),
+    );
+    const result = resolveViaExports('test-pkg/helpers', tmpDir);
+    expect(result).toBe(path.join(pkgRoot, 'dist', 'helpers.mjs'));
+  });
+
+  it('resolves subpath patterns with wildcard', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({
+        name: 'test-pkg',
+        exports: {
+          '.': './dist/index.mjs',
+          './lib/*': './lib/*.js',
+        },
+      }),
+    );
+    const result = resolveViaExports('test-pkg/lib/utils/deep', tmpDir);
+    expect(result).toBe(path.join(pkgRoot, 'lib', 'utils', 'deep.js'));
+  });
+
+  it('resolves conditional subpath exports', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({
+        name: 'test-pkg',
+        exports: {
+          './helpers': { import: './dist/helpers.mjs', default: './dist/helpers.mjs' },
+        },
+      }),
+    );
+    const result = resolveViaExports('test-pkg/helpers', tmpDir);
+    expect(result).toBe(path.join(pkgRoot, 'dist', 'helpers.mjs'));
+  });
+
+  it('resolves top-level conditions object (no . keys)', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({
+        name: 'test-pkg',
+        exports: { import: './dist/index.mjs', require: './dist/index.cjs' },
+      }),
+    );
+    const result = resolveViaExports('test-pkg', tmpDir);
+    expect(result).toBe(path.join(pkgRoot, 'dist', 'index.mjs'));
+  });
+
+  it('returns null when exports field is absent', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({ name: 'test-pkg', main: './dist/index.mjs' }),
+    );
+    expect(resolveViaExports('test-pkg', tmpDir)).toBeNull();
+  });
+
+  it('returns null when package is not in node_modules', () => {
+    expect(resolveViaExports('nonexistent-pkg', tmpDir)).toBeNull();
+  });
+});
+
+// ─── resolveImportPathJS with exports ────────────────────────────────
+
+describe('resolveImportPathJS with package.json exports', () => {
+  let pkgRoot;
+
+  beforeAll(() => {
+    clearExportsCache();
+    pkgRoot = path.join(tmpDir, 'node_modules', 'exports-pkg');
+    fs.mkdirSync(path.join(pkgRoot, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(pkgRoot, 'dist', 'main.mjs'), 'export default 1;');
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({
+        name: 'exports-pkg',
+        exports: { '.': './dist/main.mjs' },
+      }),
+    );
+  });
+
+  afterEach(() => {
+    clearExportsCache();
+  });
+
+  it('resolves bare specifier through exports field', () => {
+    const fromFile = path.join(tmpDir, 'src', 'index.js');
+    const result = resolveImportPathJS(fromFile, 'exports-pkg', tmpDir, null);
+    expect(result).toContain('node_modules/exports-pkg/dist/main.mjs');
+  });
+
+  it('still passes through bare specifiers without exports', () => {
+    const fromFile = path.join(tmpDir, 'src', 'index.js');
+    const result = resolveImportPathJS(fromFile, 'lodash', tmpDir, null);
+    expect(result).toBe('lodash');
+  });
+});
+
+// ─── resolveViaWorkspace ─────────────────────────────────────────────
+
+describe('resolveViaWorkspace', () => {
+  let wsRoot;
+
+  beforeAll(() => {
+    wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-ws-'));
+    // Create a monorepo structure:
+    //   packages/core/src/index.js
+    //   packages/core/src/helpers.js
+    //   packages/core/package.json  { name: "@myorg/core", main: "./src/index.js" }
+    //   packages/utils/src/index.ts
+    //   packages/utils/package.json { name: "@myorg/utils" }
+    fs.mkdirSync(path.join(wsRoot, 'packages', 'core', 'src'), { recursive: true });
+    fs.mkdirSync(path.join(wsRoot, 'packages', 'utils', 'src'), { recursive: true });
+    fs.writeFileSync(path.join(wsRoot, 'packages', 'core', 'src', 'index.js'), 'export default 1;');
+    fs.writeFileSync(
+      path.join(wsRoot, 'packages', 'core', 'src', 'helpers.js'),
+      'export const h = 1;',
+    );
+    fs.writeFileSync(
+      path.join(wsRoot, 'packages', 'core', 'package.json'),
+      JSON.stringify({ name: '@myorg/core', main: './src/index.js' }),
+    );
+    fs.writeFileSync(
+      path.join(wsRoot, 'packages', 'utils', 'src', 'index.ts'),
+      'export default 1;',
+    );
+    fs.writeFileSync(
+      path.join(wsRoot, 'packages', 'utils', 'package.json'),
+      JSON.stringify({ name: '@myorg/utils' }),
+    );
+
+    // Register workspaces
+    setWorkspaces(
+      wsRoot,
+      new Map([
+        [
+          '@myorg/core',
+          {
+            dir: path.join(wsRoot, 'packages', 'core'),
+            entry: path.join(wsRoot, 'packages', 'core', 'src', 'index.js'),
+          },
+        ],
+        [
+          '@myorg/utils',
+          {
+            dir: path.join(wsRoot, 'packages', 'utils'),
+            entry: path.join(wsRoot, 'packages', 'utils', 'src', 'index.ts'),
+          },
+        ],
+      ]),
+    );
+  });
+
+  afterAll(() => {
+    clearWorkspaceCache();
+    if (wsRoot) fs.rmSync(wsRoot, { recursive: true, force: true });
+  });
+
+  afterEach(() => {
+    clearExportsCache();
+  });
+
+  it('resolves root import to workspace entry point', () => {
+    const result = resolveViaWorkspace('@myorg/core', wsRoot);
+    expect(result).toBe(path.join(wsRoot, 'packages', 'core', 'src', 'index.js'));
+  });
+
+  it('resolves root import for package without main (index fallback)', () => {
+    const result = resolveViaWorkspace('@myorg/utils', wsRoot);
+    expect(result).toBe(path.join(wsRoot, 'packages', 'utils', 'src', 'index.ts'));
+  });
+
+  it('resolves subpath import via filesystem probe', () => {
+    const result = resolveViaWorkspace('@myorg/core/src/helpers', wsRoot);
+    expect(result).toBe(path.join(wsRoot, 'packages', 'core', 'src', 'helpers.js'));
+  });
+
+  it('resolves subpath import via src/ convention', () => {
+    const result = resolveViaWorkspace('@myorg/core/helpers', wsRoot);
+    expect(result).toBe(path.join(wsRoot, 'packages', 'core', 'src', 'helpers.js'));
+  });
+
+  it('returns null for unknown package', () => {
+    expect(resolveViaWorkspace('@myorg/unknown', wsRoot)).toBeNull();
+  });
+
+  it('returns null for non-existent subpath', () => {
+    expect(resolveViaWorkspace('@myorg/core/nonexistent', wsRoot)).toBeNull();
+  });
+});
+
+// ─── resolveImportPathJS with workspaces ─────────────────────────────
+
+describe('resolveImportPathJS with workspace resolution', () => {
+  let wsRoot;
+
+  beforeAll(() => {
+    wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-ws-resolve-'));
+    fs.mkdirSync(path.join(wsRoot, 'packages', 'lib', 'src'), { recursive: true });
+    fs.mkdirSync(path.join(wsRoot, 'apps', 'web', 'src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(wsRoot, 'packages', 'lib', 'src', 'index.js'),
+      'export const add = (a, b) => a + b;',
+    );
+    fs.writeFileSync(
+      path.join(wsRoot, 'packages', 'lib', 'package.json'),
+      JSON.stringify({ name: '@myorg/lib', main: './src/index.js' }),
+    );
+    fs.writeFileSync(
+      path.join(wsRoot, 'apps', 'web', 'src', 'app.js'),
+      'import { add } from "@myorg/lib";',
+    );
+
+    setWorkspaces(
+      wsRoot,
+      new Map([
+        [
+          '@myorg/lib',
+          {
+            dir: path.join(wsRoot, 'packages', 'lib'),
+            entry: path.join(wsRoot, 'packages', 'lib', 'src', 'index.js'),
+          },
+        ],
+      ]),
+    );
+  });
+
+  afterAll(() => {
+    clearWorkspaceCache();
+    if (wsRoot) fs.rmSync(wsRoot, { recursive: true, force: true });
+  });
+
+  it('resolves workspace package import to source file', () => {
+    const fromFile = path.join(wsRoot, 'apps', 'web', 'src', 'app.js');
+    const result = resolveImportPathJS(fromFile, '@myorg/lib', wsRoot, null);
+    expect(result).toBe('packages/lib/src/index.js');
+  });
+
+  it('marks workspace-resolved paths for confidence boost', () => {
+    const fromFile = path.join(wsRoot, 'apps', 'web', 'src', 'app.js');
+    clearWorkspaceCache();
+    setWorkspaces(
+      wsRoot,
+      new Map([
+        [
+          '@myorg/lib',
+          {
+            dir: path.join(wsRoot, 'packages', 'lib'),
+            entry: path.join(wsRoot, 'packages', 'lib', 'src', 'index.js'),
+          },
+        ],
+      ]),
+    );
+    resolveImportPathJS(fromFile, '@myorg/lib', wsRoot, null);
+    expect(isWorkspaceResolved('packages/lib/src/index.js')).toBe(true);
+  });
+});
+
+// ─── computeConfidenceJS with workspace boost ────────────────────────
+
+describe('computeConfidenceJS workspace confidence', () => {
+  let wsRoot;
+
+  beforeAll(() => {
+    wsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-ws-conf-'));
+    fs.mkdirSync(path.join(wsRoot, 'packages', 'lib', 'src'), { recursive: true });
+    fs.mkdirSync(path.join(wsRoot, 'apps', 'web', 'src'), { recursive: true });
+    fs.writeFileSync(
+      path.join(wsRoot, 'packages', 'lib', 'src', 'index.js'),
+      'export const x = 1;',
+    );
+    fs.writeFileSync(
+      path.join(wsRoot, 'packages', 'lib', 'package.json'),
+      JSON.stringify({ name: '@myorg/lib', main: './src/index.js' }),
+    );
+    fs.writeFileSync(path.join(wsRoot, 'apps', 'web', 'src', 'app.js'), 'import "@myorg/lib";');
+
+    setWorkspaces(
+      wsRoot,
+      new Map([
+        [
+          '@myorg/lib',
+          {
+            dir: path.join(wsRoot, 'packages', 'lib'),
+            entry: path.join(wsRoot, 'packages', 'lib', 'src', 'index.js'),
+          },
+        ],
+      ]),
+    );
+
+    // Trigger resolution to populate _workspaceResolvedPaths
+    const fromFile = path.join(wsRoot, 'apps', 'web', 'src', 'app.js');
+    resolveImportPathJS(fromFile, '@myorg/lib', wsRoot, null);
+  });
+
+  afterAll(() => {
+    clearWorkspaceCache();
+    if (wsRoot) fs.rmSync(wsRoot, { recursive: true, force: true });
+  });
+
+  it('returns 0.95 confidence for workspace-resolved imports', () => {
+    const conf = computeConfidenceJS(
+      'apps/web/src/app.js',
+      'packages/lib/src/utils.js',
+      'packages/lib/src/index.js',
+    );
+    expect(conf).toBe(0.95);
+  });
+
+  it('returns normal confidence for non-workspace imports', () => {
+    const conf = computeConfidenceJS(
+      'apps/web/src/app.js',
+      'some/distant/file.js',
+      'some/other/import.js',
+    );
+    expect(conf).toBeLessThan(0.95);
   });
 });
