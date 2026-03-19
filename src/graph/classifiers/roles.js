@@ -39,6 +39,9 @@ function classifyDeadSubRole(node) {
 
   if (node.file) {
     // Cross-language FFI: compiled-language files in a JS/TS project
+    // Priority: dead-ffi is checked before dead-entry deliberately — an FFI
+    // boundary is a more fundamental classification than a path-based hint.
+    // A .so/.dll in a routes/ directory is still FFI, not an entry point.
     const dotIdx = node.file.lastIndexOf('.');
     if (dotIdx !== -1 && FFI_EXTENSIONS.has(node.file.slice(dotIdx))) return 'dead-ffi';
 
