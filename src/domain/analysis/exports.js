@@ -64,11 +64,10 @@ export function exportsData(file, customDbPath, opts = {}) {
       totalReexportedUnused: first.totalReexportedUnused,
     };
     const paginated = paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
-    // Paginate reexportedSymbols with the same limit/offset
-    if (opts.limit != null || opts.offset != null) {
+    // Paginate reexportedSymbols with the same limit/offset (match paginateResult behaviour)
+    if (opts.limit != null) {
       const off = opts.offset || 0;
-      const lim = opts.limit != null ? opts.limit : paginated.reexportedSymbols.length;
-      paginated.reexportedSymbols = paginated.reexportedSymbols.slice(off, off + lim);
+      paginated.reexportedSymbols = paginated.reexportedSymbols.slice(off, off + opts.limit);
     }
     return paginated;
   } finally {
@@ -145,7 +144,7 @@ function exportsFileImpl(db, target, noTests, getFileLines, unused, displayOpts)
     // For barrel files: gather symbols re-exported from target modules
     const reexportTargets = db
       .prepare(
-        `SELECT DISTINCT n.id, n.file FROM edges e JOIN nodes n ON e.target_id = n.id
+        `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.target_id = n.id
          WHERE e.source_id = ? AND e.kind = 'reexports'`,
       )
       .all(fn.id);
