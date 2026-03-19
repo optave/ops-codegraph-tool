@@ -34,7 +34,17 @@ export function exportsData(file, customDbPath, opts = {}) {
 
     if (fileResults.length === 0) {
       return paginateResult(
-        { file, results: [], reexports: [], totalExported: 0, totalInternal: 0, totalUnused: 0 },
+        {
+          file,
+          results: [],
+          reexports: [],
+          reexportedSymbols: [],
+          totalExported: 0,
+          totalInternal: 0,
+          totalUnused: 0,
+          totalReexported: 0,
+          totalReexportedUnused: 0,
+        },
         'results',
         { limit: opts.limit, offset: opts.offset },
       );
@@ -46,11 +56,28 @@ export function exportsData(file, customDbPath, opts = {}) {
       file: first.file,
       results: first.results,
       reexports: first.reexports,
+      reexportedSymbols: first.reexportedSymbols,
       totalExported: first.totalExported,
       totalInternal: first.totalInternal,
       totalUnused: first.totalUnused,
+      totalReexported: first.totalReexported,
+      totalReexportedUnused: first.totalReexportedUnused,
     };
-    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    const paginated = paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    // Paginate reexportedSymbols with the same limit/offset (match paginateResult behaviour)
+    if (opts.limit != null) {
+      const off = opts.offset || 0;
+      paginated.reexportedSymbols = paginated.reexportedSymbols.slice(off, off + opts.limit);
+      // Update _pagination.hasMore to account for reexportedSymbols (barrel-only files
+      // have empty results[], so hasMore would always be false without this)
+      if (paginated._pagination) {
+        const reexTotal = opts.unused ? base.totalReexportedUnused : base.totalReexported;
+        const resultsHasMore = paginated._pagination.hasMore;
+        const reexHasMore = off + opts.limit < reexTotal;
+        paginated._pagination.hasMore = resultsHasMore || reexHasMore;
+      }
+    }
+    return paginated;
   } finally {
     db.close();
   }
@@ -87,9 +114,7 @@ function exportsFileImpl(db, target, noTests, getFileLines, unused, displayOpts)
     }
     const internalCount = symbols.length - exported.length;
 
-    const results = exported.map((s) => {
-      const fileLines = getFileLines(fn.file);
-
+    const buildSymbolResult = (s, fileLines) => {
       let consumers = db
         .prepare(
           `SELECT n.name, n.file, n.line FROM edges e JOIN nodes n ON e.source_id = n.id
@@ -109,7 +134,9 @@ function exportsFileImpl(db, target, noTests, getFileLines, unused, displayOpts)
         consumers: consumers.map((c) => ({ name: c.name, file: c.file, line: c.line })),
         consumerCount: consumers.length,
       };
-    });
+    };
+
+    const results = exported.map((s) => buildSymbolResult(s, getFileLines(fn.file)));
 
     const totalUnused = results.filter((r) => r.consumerCount === 0).length;
 
@@ -122,18 +149,58 @@ function exportsFileImpl(db, target, noTests, getFileLines, unused, displayOpts)
       .all(fn.id)
       .map((r) => ({ file: r.file }));
 
+    // For barrel files: gather symbols re-exported from target modules
+    const reexportTargets = db
+      .prepare(
+        `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.target_id = n.id
+         WHERE e.source_id = ? AND e.kind = 'reexports'`,
+      )
+      .all(fn.id);
+
+    const reexportedSymbols = [];
+    for (const target of reexportTargets) {
+      let targetExported;
+      if (hasExportedCol) {
+        targetExported = db
+          .prepare(
+            "SELECT * FROM nodes WHERE file = ? AND kind != 'file' AND exported = 1 ORDER BY line",
+          )
+          .all(target.file);
+      } else {
+        // Fallback: same heuristic as direct exports — symbols called from other files
+        const targetSymbols = findNodesByFile(db, target.file);
+        const exportedIds = findCrossFileCallTargets(db, target.file);
+        targetExported = targetSymbols.filter((s) => exportedIds.has(s.id));
+      }
+      for (const s of targetExported) {
+        const fileLines = getFileLines(target.file);
+        reexportedSymbols.push({
+          ...buildSymbolResult(s, fileLines),
+          originFile: target.file,
+        });
+      }
+    }
+
     let filteredResults = results;
+    let filteredReexported = reexportedSymbols;
     if (unused) {
       filteredResults = results.filter((r) => r.consumerCount === 0);
+      filteredReexported = reexportedSymbols.filter((r) => r.consumerCount === 0);
     }
+
+    const totalReexported = reexportedSymbols.length;
+    const totalReexportedUnused = reexportedSymbols.filter((r) => r.consumerCount === 0).length;
 
     return {
       file: fn.file,
       results: filteredResults,
       reexports,
+      reexportedSymbols: filteredReexported,
       totalExported: exported.length,
       totalInternal: internalCount,
       totalUnused,
+      totalReexported,
+      totalReexportedUnused,
     };
   });
 }

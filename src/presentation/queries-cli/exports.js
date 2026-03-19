@@ -30,11 +30,39 @@ function printExportSymbols(results) {
   }
 }
 
+function printReexportedSymbols(reexportedSymbols) {
+  // Group by origin file
+  const byOrigin = new Map();
+  for (const sym of reexportedSymbols) {
+    if (!byOrigin.has(sym.originFile)) byOrigin.set(sym.originFile, []);
+    byOrigin.get(sym.originFile).push(sym);
+  }
+
+  for (const [originFile, syms] of byOrigin) {
+    console.log(`\n  from ${originFile}:`);
+    for (const sym of syms) {
+      const icon = kindIcon(sym.kind);
+      const sig = sym.signature?.params ? `(${sym.signature.params})` : '';
+      const role = sym.role ? ` [${sym.role}]` : '';
+      console.log(`    ${icon} ${sym.name}${sig}${role} :${sym.line}`);
+      if (sym.consumers.length === 0) {
+        console.log('      (no consumers)');
+      } else {
+        for (const c of sym.consumers) {
+          console.log(`      <- ${c.name} (${c.file}:${c.line})`);
+        }
+      }
+    }
+  }
+}
+
 export function fileExports(file, customDbPath, opts = {}) {
   const data = exportsData(file, customDbPath, opts);
   if (outputResult(data, 'results', opts)) return;
 
-  if (data.results.length === 0) {
+  const hasReexported = data.reexportedSymbols && data.reexportedSymbols.length > 0;
+
+  if (data.results.length === 0 && !hasReexported) {
     if (opts.unused) {
       console.log(`No unused exports found for "${file}".`);
     } else {
@@ -43,11 +71,33 @@ export function fileExports(file, customDbPath, opts = {}) {
     return;
   }
 
-  printExportHeader(data, opts);
-  printExportSymbols(data.results);
+  if (data.results.length > 0) {
+    printExportHeader(data, opts);
+    printExportSymbols(data.results);
+  }
+
+  if (hasReexported) {
+    const totalReexported = opts.unused
+      ? (data.totalReexportedUnused ?? data.reexportedSymbols.length)
+      : (data.totalReexported ?? data.reexportedSymbols.length);
+    if (data.results.length === 0) {
+      if (opts.unused) {
+        console.log(
+          `\n# ${data.file} — barrel file (${totalReexported} unused re-exported symbol${totalReexported !== 1 ? 's' : ''} from sub-modules)\n`,
+        );
+      } else {
+        console.log(
+          `\n# ${data.file} — barrel file (${totalReexported} re-exported symbol${totalReexported !== 1 ? 's' : ''} from sub-modules)\n`,
+        );
+      }
+    } else {
+      console.log(`\n  Re-exported symbols (${totalReexported} from sub-modules):`);
+    }
+    printReexportedSymbols(data.reexportedSymbols);
+  }
 
   if (data.reexports.length > 0) {
-    console.log(`\n  Re-exports: ${data.reexports.map((r) => r.file).join(', ')}`);
+    console.log(`\n  Re-exported by: ${data.reexports.map((r) => r.file).join(', ')}`);
   }
   console.log();
 }
