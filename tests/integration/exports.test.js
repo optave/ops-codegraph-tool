@@ -217,6 +217,9 @@ describe('exportsData', () => {
     // consumer info is preserved
     const addSym = data.reexportedSymbols.find((s) => s.name === 'add');
     expect(addSym.consumerCount).toBe(2);
+    // re-export counters reflect barrel symbols
+    expect(data.totalReexported).toBe(3);
+    expect(data.totalReexportedUnused).toBe(1); // unusedFn
   });
 
   test('barrel file --unused filters re-exported symbols', () => {
@@ -225,10 +228,15 @@ describe('exportsData', () => {
     expect(data.reexportedSymbols.length).toBe(1);
     expect(data.reexportedSymbols[0].name).toBe('unusedFn');
     expect(data.reexportedSymbols[0].consumerCount).toBe(0);
+    // counters still reflect totals (not filtered)
+    expect(data.totalReexported).toBe(3);
+    expect(data.totalReexportedUnused).toBe(1);
   });
 
   test('reexportedSymbols is empty array for non-barrel files', () => {
     const data = exportsData('lib.js', dbPath);
     expect(data.reexportedSymbols).toEqual([]);
+    expect(data.totalReexported).toBe(0);
+    expect(data.totalReexportedUnused).toBe(0);
   });
 });

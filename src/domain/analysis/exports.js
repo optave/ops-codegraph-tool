@@ -42,6 +42,8 @@ export function exportsData(file, customDbPath, opts = {}) {
           totalExported: 0,
           totalInternal: 0,
           totalUnused: 0,
+          totalReexported: 0,
+          totalReexportedUnused: 0,
         },
         'results',
         { limit: opts.limit, offset: opts.offset },
@@ -58,8 +60,17 @@ export function exportsData(file, customDbPath, opts = {}) {
       totalExported: first.totalExported,
       totalInternal: first.totalInternal,
       totalUnused: first.totalUnused,
+      totalReexported: first.totalReexported,
+      totalReexportedUnused: first.totalReexportedUnused,
     };
-    return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    const paginated = paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    // Paginate reexportedSymbols with the same limit/offset
+    if (opts.limit != null || opts.offset != null) {
+      const off = opts.offset || 0;
+      const lim = opts.limit != null ? opts.limit : paginated.reexportedSymbols.length;
+      paginated.reexportedSymbols = paginated.reexportedSymbols.slice(off, off + lim);
+    }
+    return paginated;
   } finally {
     db.close();
   }
@@ -164,6 +175,9 @@ function exportsFileImpl(db, target, noTests, getFileLines, unused, displayOpts)
       filteredReexported = reexportedSymbols.filter((r) => r.consumerCount === 0);
     }
 
+    const totalReexported = reexportedSymbols.length;
+    const totalReexportedUnused = reexportedSymbols.filter((r) => r.consumerCount === 0).length;
+
     return {
       file: fn.file,
       results: filteredResults,
@@ -172,6 +186,8 @@ function exportsFileImpl(db, target, noTests, getFileLines, unused, displayOpts)
       totalExported: exported.length,
       totalInternal: internalCount,
       totalUnused,
+      totalReexported,
+      totalReexportedUnused,
     };
   });
 }
