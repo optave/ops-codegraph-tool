@@ -9,7 +9,7 @@
  *   coreFn     - high fan_in, low fan_out → core
  *   utilityFn  - high fan_in, high fan_out → utility
  *   adapterFn  - low fan_in, high fan_out → adapter
- *   deadFn     - fan_in=0, not exported → dead
+ *   deadFn     - fan_in=0, not exported → dead-unresolved
  *   leafFn     - low fan_in, low fan_out → leaf
  */
 
