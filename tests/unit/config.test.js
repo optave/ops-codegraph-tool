@@ -10,6 +10,7 @@ import {
   applyEnvOverrides,
   CONFIG_FILES,
   DEFAULTS,
+  detectWorkspaces,
   loadConfig,
   mergeConfig,
   resolveSecrets,
@@ -544,5 +545,132 @@ describe('apiKeyCommand integration', () => {
     expect(config.llm.apiKey).toBe('env-fallback');
     expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('apiKeyCommand failed'));
     stderrSpy.mockRestore();
+  });
+});
+
+// ─── detectWorkspaces ────────────────────────────────────────────────
+
+describe('detectWorkspaces', () => {
+  /** Helper: create a minimal workspace package */
+  function makeWorkspacePackage(dir, name, entryContent = 'export default 1;') {
+    fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'src', 'index.js'), entryContent);
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name }));
+  }
+
+  it('returns empty map when no workspace config exists', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'no-ws-'));
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'root' }));
+    const ws = detectWorkspaces(dir);
+    expect(ws).toBeInstanceOf(Map);
+    expect(ws.size).toBe(0);
+  });
+
+  it('detects npm workspaces from package.json', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'npm-ws-'));
+    fs.mkdirSync(path.join(dir, 'packages', 'core'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'packages', 'utils'), { recursive: true });
+    makeWorkspacePackage(path.join(dir, 'packages', 'core'), '@myorg/core');
+    makeWorkspacePackage(path.join(dir, 'packages', 'utils'), '@myorg/utils');
+    fs.writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'root', workspaces: ['packages/*'] }),
+    );
+
+    const ws = detectWorkspaces(dir);
+    expect(ws.size).toBe(2);
+    expect(ws.has('@myorg/core')).toBe(true);
+    expect(ws.has('@myorg/utils')).toBe(true);
+    expect(ws.get('@myorg/core').dir).toBe(path.join(dir, 'packages', 'core'));
+    expect(ws.get('@myorg/core').entry).toContain('index.js');
+  });
+
+  it('detects yarn classic workspaces format', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'yarn-ws-'));
+    fs.mkdirSync(path.join(dir, 'packages', 'lib'), { recursive: true });
+    makeWorkspacePackage(path.join(dir, 'packages', 'lib'), 'my-lib');
+    fs.writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'root', workspaces: { packages: ['packages/*'] } }),
+    );
+
+    const ws = detectWorkspaces(dir);
+    expect(ws.size).toBe(1);
+    expect(ws.has('my-lib')).toBe(true);
+  });
+
+  it('detects pnpm workspaces from pnpm-workspace.yaml', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'pnpm-ws-'));
+    fs.mkdirSync(path.join(dir, 'packages', 'shared'), { recursive: true });
+    makeWorkspacePackage(path.join(dir, 'packages', 'shared'), '@myorg/shared');
+    fs.writeFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'packages:\n  - "packages/*"\n');
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'root' }));
+
+    const ws = detectWorkspaces(dir);
+    expect(ws.size).toBe(1);
+    expect(ws.has('@myorg/shared')).toBe(true);
+  });
+
+  it('detects lerna workspaces from lerna.json', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'lerna-ws-'));
+    fs.mkdirSync(path.join(dir, 'packages', 'app'), { recursive: true });
+    makeWorkspacePackage(path.join(dir, 'packages', 'app'), '@myorg/app');
+    fs.writeFileSync(path.join(dir, 'lerna.json'), JSON.stringify({ packages: ['packages/*'] }));
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'root' }));
+
+    const ws = detectWorkspaces(dir);
+    expect(ws.size).toBe(1);
+    expect(ws.has('@myorg/app')).toBe(true);
+  });
+
+  it('resolves entry via main field', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'main-entry-'));
+    fs.mkdirSync(path.join(dir, 'packages', 'lib', 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'packages', 'lib', 'dist', 'lib.js'), 'module.exports = 1;');
+    fs.writeFileSync(
+      path.join(dir, 'packages', 'lib', 'package.json'),
+      JSON.stringify({ name: 'my-lib', main: './dist/lib.js' }),
+    );
+    fs.writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'root', workspaces: ['packages/*'] }),
+    );
+
+    const ws = detectWorkspaces(dir);
+    expect(ws.get('my-lib').entry).toBe(path.join(dir, 'packages', 'lib', 'dist', 'lib.js'));
+  });
+
+  it('handles direct path patterns (no glob)', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'direct-path-'));
+    fs.mkdirSync(path.join(dir, 'apps', 'web', 'src'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'apps', 'web', 'src', 'index.ts'), 'export default 1;');
+    fs.writeFileSync(
+      path.join(dir, 'apps', 'web', 'package.json'),
+      JSON.stringify({ name: '@myorg/web' }),
+    );
+    fs.writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'root', workspaces: ['apps/web'] }),
+    );
+
+    const ws = detectWorkspaces(dir);
+    expect(ws.size).toBe(1);
+    expect(ws.has('@myorg/web')).toBe(true);
+  });
+
+  it('skips directories without package.json', () => {
+    const dir = fs.mkdtempSync(path.join(tmpDir, 'no-pkg-'));
+    fs.mkdirSync(path.join(dir, 'packages', 'no-pkg'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'packages', 'no-pkg', 'index.js'), 'export default 1;');
+    fs.mkdirSync(path.join(dir, 'packages', 'has-pkg', 'src'), { recursive: true });
+    makeWorkspacePackage(path.join(dir, 'packages', 'has-pkg'), 'has-pkg');
+    fs.writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'root', workspaces: ['packages/*'] }),
+    );
+
+    const ws = detectWorkspaces(dir);
+    expect(ws.size).toBe(1);
+    expect(ws.has('has-pkg')).toBe(true);
   });
 });

@@ -7,9 +7,10 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { closeDb, getBuildMeta, initSchema, MIGRATIONS, openDb } from '../../../db/index.js';
-import { loadConfig } from '../../../infrastructure/config.js';
+import { detectWorkspaces, loadConfig } from '../../../infrastructure/config.js';
 import { info } from '../../../infrastructure/logger.js';
 import { getActiveEngine } from '../../parser.js';
+import { setWorkspaces } from '../resolve.js';
 import { PipelineContext } from './context.js';
 import { loadPathAliases } from './helpers.js';
 import { buildEdges } from './stages/build-edges.js';
@@ -85,6 +86,13 @@ function setupPipeline(ctx) {
   initializeEngine(ctx);
   checkEngineSchemaMismatch(ctx);
   loadAliases(ctx);
+
+  // Workspace packages (monorepo)
+  const workspaces = detectWorkspaces(ctx.rootDir);
+  if (workspaces.size > 0) {
+    setWorkspaces(ctx.rootDir, workspaces);
+    info(`Detected ${workspaces.size} workspace packages`);
+  }
 
   ctx.timing.setupMs = performance.now() - ctx.buildStart;
 }

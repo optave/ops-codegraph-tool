@@ -400,13 +400,19 @@ function buildReceiverEdge(ctx, call, caller, relPath, seenCallEdges, allEdgeRow
 
 // ── Class hierarchy edges ───────────────────────────────────────────────
 
+const HIERARCHY_SOURCE_KINDS = new Set(['class', 'struct', 'record', 'enum']);
+const EXTENDS_TARGET_KINDS = new Set(['class', 'struct', 'trait', 'record']);
+const IMPLEMENTS_TARGET_KINDS = new Set(['interface', 'trait', 'class']);
+
 function buildClassHierarchyEdges(ctx, relPath, symbols, allEdgeRows) {
   for (const cls of symbols.classes) {
     if (cls.extends) {
-      const sourceRow = (ctx.nodesByNameAndFile.get(`${cls.name}|${relPath}`) || []).find(
-        (n) => n.kind === 'class',
+      const sourceRow = (ctx.nodesByNameAndFile.get(`${cls.name}|${relPath}`) || []).find((n) =>
+        HIERARCHY_SOURCE_KINDS.has(n.kind),
       );
-      const targetRows = (ctx.nodesByName.get(cls.extends) || []).filter((n) => n.kind === 'class');
+      const targetRows = (ctx.nodesByName.get(cls.extends) || []).filter((n) =>
+        EXTENDS_TARGET_KINDS.has(n.kind),
+      );
       if (sourceRow) {
         for (const t of targetRows) {
           allEdgeRows.push([sourceRow.id, t.id, 'extends', 1.0, 0]);
@@ -415,11 +421,11 @@ function buildClassHierarchyEdges(ctx, relPath, symbols, allEdgeRows) {
     }
 
     if (cls.implements) {
-      const sourceRow = (ctx.nodesByNameAndFile.get(`${cls.name}|${relPath}`) || []).find(
-        (n) => n.kind === 'class',
+      const sourceRow = (ctx.nodesByNameAndFile.get(`${cls.name}|${relPath}`) || []).find((n) =>
+        HIERARCHY_SOURCE_KINDS.has(n.kind),
       );
-      const targetRows = (ctx.nodesByName.get(cls.implements) || []).filter(
-        (n) => n.kind === 'interface' || n.kind === 'class',
+      const targetRows = (ctx.nodesByName.get(cls.implements) || []).filter((n) =>
+        IMPLEMENTS_TARGET_KINDS.has(n.kind),
       );
       if (sourceRow) {
         for (const t of targetRows) {

@@ -10,7 +10,7 @@ const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'u
 describe('index.js re-exports', () => {
   it('package.json exports map points to CJS wrapper', () => {
     expect(pkg.exports['.']).toBeDefined();
-    expect(pkg.exports['.'].require).toBe('./src/index.cjs');
+    expect(pkg.exports['.'].require).toBe('./dist/index.cjs');
   });
 
   it('all re-exports resolve without errors', async () => {

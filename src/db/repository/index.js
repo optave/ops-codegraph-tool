@@ -17,9 +17,11 @@ export {
   findCallers,
   findCrossFileCallTargets,
   findDistinctCallers,
+  findImplementors,
   findImportDependents,
   findImportSources,
   findImportTargets,
+  findInterfaces,
   findIntraFileCallEdges,
   getClassHierarchy,
 } from './edges.js';

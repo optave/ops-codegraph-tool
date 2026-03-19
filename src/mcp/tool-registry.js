@@ -759,6 +759,45 @@ const BASE_TOOLS = [
     },
   },
   {
+    name: 'implementations',
+    description:
+      'List all concrete types (classes, structs, records) that implement a given interface or trait',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Interface/trait name (partial match)' },
+        file: { type: 'string', description: 'Scope to file (partial match)' },
+        kind: {
+          type: 'string',
+          enum: EVERY_SYMBOL_KIND,
+          description: 'Filter by symbol kind',
+        },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'interfaces',
+    description: 'List all interfaces and traits that a given class, struct, or record implements',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Class/struct name (partial match)' },
+        file: { type: 'string', description: 'Scope to file (partial match)' },
+        kind: {
+          type: 'string',
+          enum: EVERY_SYMBOL_KIND,
+          description: 'Filter by symbol kind',
+        },
+        no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
+        ...PAGINATION_PROPS,
+      },
+      required: ['name'],
+    },
+  },
+  {
     name: 'ast_query',
     description:
       'Search stored AST nodes (calls, literals, new, throw, await) by pattern. Requires a prior build.',

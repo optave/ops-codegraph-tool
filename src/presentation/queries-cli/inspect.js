@@ -2,6 +2,8 @@ import {
   childrenData,
   contextData,
   explainData,
+  implementationsData,
+  interfacesData,
   kindIcon,
   queryNameData,
   whereData,
@@ -181,6 +183,22 @@ function renderContextResult(r) {
     console.log();
   }
 
+  if (r.implementors && r.implementors.length > 0) {
+    console.log(`## Implementors (${r.implementors.length})`);
+    for (const impl of r.implementors) {
+      console.log(`  ${kindIcon(impl.kind)} ${impl.name}  ${impl.file}:${impl.line}`);
+    }
+    console.log();
+  }
+
+  if (r.implements && r.implements.length > 0) {
+    console.log(`## Implements (${r.implements.length})`);
+    for (const iface of r.implements) {
+      console.log(`  ${kindIcon(iface.kind)} ${iface.name}  ${iface.file}:${iface.line}`);
+    }
+    console.log();
+  }
+
   if (r.relatedTests.length > 0) {
     console.log('## Related Tests');
     for (const t of r.relatedTests) {
@@ -326,4 +344,50 @@ export function explain(target, customDbPath, opts = {}) {
       renderFunctionExplain(r);
     }
   }
+}
+
+export function implementations(name, customDbPath, opts = {}) {
+  const data = implementationsData(name, customDbPath, opts);
+  if (outputResult(data, 'results', opts)) return;
+
+  if (data.results.length === 0) {
+    console.log(`No symbol matching "${name}"`);
+    return;
+  }
+
+  for (const r of data.results) {
+    console.log(`\n${kindIcon(r.kind)} ${r.name}  ${r.file}:${r.line}`);
+    if (r.implementors.length === 0) {
+      console.log('  (no implementors found)');
+    } else {
+      console.log(`  Implementors (${r.implementors.length}):`);
+      for (const impl of r.implementors) {
+        console.log(`    ${kindIcon(impl.kind)} ${impl.name}  ${impl.file}:${impl.line}`);
+      }
+    }
+  }
+  console.log();
+}
+
+export function interfaces(name, customDbPath, opts = {}) {
+  const data = interfacesData(name, customDbPath, opts);
+  if (outputResult(data, 'results', opts)) return;
+
+  if (data.results.length === 0) {
+    console.log(`No symbol matching "${name}"`);
+    return;
+  }
+
+  for (const r of data.results) {
+    console.log(`\n${kindIcon(r.kind)} ${r.name}  ${r.file}:${r.line}`);
+    if (r.interfaces.length === 0) {
+      console.log('  (no interfaces/traits found)');
+    } else {
+      console.log(`  Implements (${r.interfaces.length}):`);
+      for (const iface of r.interfaces) {
+        console.log(`    ${kindIcon(iface.kind)} ${iface.name}  ${iface.file}:${iface.line}`);
+      }
+    }
+  }
+  console.log();
 }

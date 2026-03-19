@@ -13,6 +13,7 @@ export const command = {
     ['--staged', 'Analyze staged changes instead of unstaged'],
     ['--depth <n>', 'Max transitive caller depth', '3'],
     ['-f, --format <format>', 'Output format: text, mermaid, json', 'text'],
+    ['--no-implementations', 'Exclude interface/trait implementors from blast radius'],
   ],
   execute([ref], opts, ctx) {
     diffImpact(opts.db, {
@@ -20,6 +21,7 @@ export const command = {
       staged: opts.staged,
       depth: parseInt(opts.depth, 10),
       format: opts.format,
+      includeImplementors: opts.implementations !== false,
       ...ctx.resolveQueryOpts(opts),
     });
   },

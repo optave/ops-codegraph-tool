@@ -23,6 +23,8 @@ import * as fileExports from './file-exports.js';
 import * as findCycles from './find-cycles.js';
 import * as fnImpact from './fn-impact.js';
 import * as impactAnalysis from './impact-analysis.js';
+import * as implementations from './implementations.js';
+import * as interfaces from './interfaces.js';
 import * as listFunctions from './list-functions.js';
 import * as listRepos from './list-repos.js';
 import * as moduleMap from './module-map.js';
@@ -69,5 +71,7 @@ export const TOOL_HANDLERS = new Map([
   [check.name, check],
   [astQuery.name, astQuery],
   [brief.name, brief],
+  [implementations.name, implementations],
+  [interfaces.name, interfaces],
   [listRepos.name, listRepos],
 ]);

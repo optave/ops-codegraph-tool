@@ -32,6 +32,7 @@ export {
   fnImpactData,
   impactAnalysisData,
 } from './analysis/impact.js';
+export { implementationsData, interfacesData } from './analysis/implementations.js';
 export {
   FALSE_POSITIVE_CALLER_THRESHOLD,
   FALSE_POSITIVE_NAMES,

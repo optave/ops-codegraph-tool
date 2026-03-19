@@ -41,6 +41,8 @@ const ALL_TOOL_NAMES = [
   'check',
   'ast_query',
   'brief',
+  'implementations',
+  'interfaces',
   'list_repos',
 ];
 

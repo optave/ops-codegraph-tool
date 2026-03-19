@@ -73,6 +73,34 @@ jobs:
       - name: Run tests
         run: npm test
 
+  typecheck:
+    runs-on: ubuntu-latest
+    name: TypeScript type check
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            npm install && break
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::npm install attempt $attempt failed, retrying in 15s..."
+              sleep 15
+            else
+              echo "::error::npm install failed after 3 attempts"
+              exit 1
+            fi
+          done
+
+      - name: Type check
+        run: npm run typecheck
+
   rust-check:
     runs-on: ubuntu-latest
     name: Rust compile check
@@ -93,7 +121,7 @@ jobs:
 
   ci-pipeline:
     if: always()
-    needs: [lint, test, rust-check]
+    needs: [lint, test, typecheck, rust-check]
     runs-on: ubuntu-latest
     name: CI Testing Pipeline
     steps:

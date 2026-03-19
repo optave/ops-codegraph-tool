@@ -5,8 +5,10 @@ import {
   findCrossFileCallTargets,
   findDbPath,
   findFileNodes,
+  findImplementors,
   findImportSources,
   findImportTargets,
+  findInterfaces,
   findIntraFileCallEdges,
   findNodeChildren,
   findNodesByFile,
@@ -106,6 +108,31 @@ function buildCallers(db, node, noTests) {
     line: c.line,
     viaHierarchy: c.viaHierarchy || undefined,
   }));
+}
+
+const INTERFACE_LIKE_KINDS = new Set(['interface', 'trait']);
+const IMPLEMENTOR_KINDS = new Set(['class', 'struct', 'record', 'enum']);
+
+function buildImplementationInfo(db, node, noTests) {
+  // For interfaces/traits: show who implements them
+  if (INTERFACE_LIKE_KINDS.has(node.kind)) {
+    let impls = findImplementors(db, node.id);
+    if (noTests) impls = impls.filter((n) => !isTestFile(n.file));
+    return {
+      implementors: impls.map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line })),
+    };
+  }
+  // For classes/structs: show what they implement
+  if (IMPLEMENTOR_KINDS.has(node.kind)) {
+    let ifaces = findInterfaces(db, node.id);
+    if (noTests) ifaces = ifaces.filter((n) => !isTestFile(n.file));
+    if (ifaces.length > 0) {
+      return {
+        implements: ifaces.map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line })),
+      };
+    }
+  }
+  return {};
 }
 
 function buildRelatedTests(db, node, getFileLines, includeTests) {
@@ -359,6 +386,7 @@ export function contextData(name, customDbPath, opts = {}) {
       const relatedTests = buildRelatedTests(db, node, getFileLines, includeTests);
       const complexityMetrics = getComplexityMetrics(db, node.id);
       const nodeChildren = getNodeChildrenSafe(db, node.id);
+      const implInfo = buildImplementationInfo(db, node, noTests);
 
       return {
         name: node.name,
@@ -374,6 +402,7 @@ export function contextData(name, customDbPath, opts = {}) {
         callees,
         callers,
         relatedTests,
+        ...implInfo,
       };
     });
 

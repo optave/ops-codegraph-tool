@@ -5,6 +5,7 @@ import {
   findDbPath,
   findDistinctCallers,
   findFileNodes,
+  findImplementors,
   findImportDependents,
   findNodeById,
   openReadonlyOrFail,
@@ -21,20 +22,58 @@ import { findMatchingNodes } from './symbol-lookup.js';
 
 // ─── Shared BFS: transitive callers ────────────────────────────────────
 
+const INTERFACE_LIKE_KINDS = new Set(['interface', 'trait']);
+
 /**
  * BFS traversal to find transitive callers of a node.
+ * When an interface/trait node is encountered (either as the start node or
+ * during traversal), its concrete implementors are also added to the frontier
+ * so that changes to an interface signature propagate to all implementors.
  *
  * @param {import('better-sqlite3').Database} db - Open read-only SQLite database handle (not a Repository)
  * @param {number} startId - Starting node ID
- * @param {{ noTests?: boolean, maxDepth?: number, onVisit?: (caller: object, parentId: number, depth: number) => void }} options
+ * @param {{ noTests?: boolean, maxDepth?: number, includeImplementors?: boolean, onVisit?: (caller: object, parentId: number, depth: number) => void }} options
  * @returns {{ totalDependents: number, levels: Record<number, Array<{name:string, kind:string, file:string, line:number}>> }}
  */
-export function bfsTransitiveCallers(db, startId, { noTests = false, maxDepth = 3, onVisit } = {}) {
+export function bfsTransitiveCallers(
+  db,
+  startId,
+  { noTests = false, maxDepth = 3, includeImplementors = true, onVisit } = {},
+) {
   const visited = new Set([startId]);
   const levels = {};
   let frontier = [startId];
 
+  // Seed: if start node is an interface/trait, include its implementors at depth 1.
+  // Implementors go into a separate list so their callers appear at depth 2, not depth 1.
+  const implNextFrontier = [];
+  if (includeImplementors) {
+    const startNode = findNodeById(db, startId);
+    if (startNode && INTERFACE_LIKE_KINDS.has(startNode.kind)) {
+      const impls = findImplementors(db, startId);
+      for (const impl of impls) {
+        if (!visited.has(impl.id) && (!noTests || !isTestFile(impl.file))) {
+          visited.add(impl.id);
+          implNextFrontier.push(impl.id);
+          if (!levels[1]) levels[1] = [];
+          levels[1].push({
+            name: impl.name,
+            kind: impl.kind,
+            file: impl.file,
+            line: impl.line,
+            viaImplements: true,
+          });
+          if (onVisit) onVisit({ ...impl, viaImplements: true }, startId, 1);
+        }
+      }
+    }
+  }
+
   for (let d = 1; d <= maxDepth; d++) {
+    // On the first wave, merge seeded implementors so their callers appear at d=2
+    if (d === 1 && implNextFrontier.length > 0) {
+      frontier = [...frontier, ...implNextFrontier];
+    }
     const nextFrontier = [];
     for (const fid of frontier) {
       const callers = findDistinctCallers(db, fid);
@@ -45,6 +84,28 @@ export function bfsTransitiveCallers(db, startId, { noTests = false, maxDepth = 
           if (!levels[d]) levels[d] = [];
           levels[d].push({ name: c.name, kind: c.kind, file: c.file, line: c.line });
           if (onVisit) onVisit(c, fid, d);
+        }
+
+        // If a caller is an interface/trait, also pull in its implementors
+        // Implementors are one extra hop away, so record at d+1
+        if (includeImplementors && INTERFACE_LIKE_KINDS.has(c.kind)) {
+          const impls = findImplementors(db, c.id);
+          for (const impl of impls) {
+            if (!visited.has(impl.id) && (!noTests || !isTestFile(impl.file))) {
+              visited.add(impl.id);
+              nextFrontier.push(impl.id);
+              const implDepth = d + 1;
+              if (!levels[implDepth]) levels[implDepth] = [];
+              levels[implDepth].push({
+                name: impl.name,
+                kind: impl.kind,
+                file: impl.file,
+                line: impl.line,
+                viaImplements: true,
+              });
+              if (onVisit) onVisit({ ...impl, viaImplements: true }, c.id, implDepth);
+            }
+          }
         }
       }
     }
@@ -119,8 +180,14 @@ export function fnImpactData(name, customDbPath, opts = {}) {
       return { name, results: [] };
     }
 
+    const includeImplementors = opts.includeImplementors !== false;
+
     const results = nodes.map((node) => {
-      const { levels, totalDependents } = bfsTransitiveCallers(db, node.id, { noTests, maxDepth });
+      const { levels, totalDependents } = bfsTransitiveCallers(db, node.id, {
+        noTests,
+        maxDepth,
+        includeImplementors,
+      });
       return {
         ...normalizeSymbol(node, db, hc),
         levels,
@@ -262,7 +329,13 @@ function findAffectedFunctions(db, changedRanges, noTests) {
  * @param {number} maxDepth
  * @returns {{ functionResults: Array<object>, allAffected: Set<string> }}
  */
-function buildFunctionImpactResults(db, affectedFunctions, noTests, maxDepth) {
+function buildFunctionImpactResults(
+  db,
+  affectedFunctions,
+  noTests,
+  maxDepth,
+  includeImplementors = true,
+) {
   const allAffected = new Set();
   const functionResults = affectedFunctions.map((fn) => {
     const edges = [];
@@ -272,6 +345,7 @@ function buildFunctionImpactResults(db, affectedFunctions, noTests, maxDepth) {
     const { levels, totalDependents } = bfsTransitiveCallers(db, fn.id, {
       noTests,
       maxDepth,
+      includeImplementors,
       onVisit(c, parentId) {
         allAffected.add(`${c.file}:${c.name}`);
         const callerKey = `${c.file}::${c.name}:${c.line}`;
@@ -424,11 +498,13 @@ export function diffImpactData(customDbPath, opts = {}) {
     }
 
     const affectedFunctions = findAffectedFunctions(db, changedRanges, noTests);
+    const includeImplementors = opts.includeImplementors !== false;
     const { functionResults, allAffected } = buildFunctionImpactResults(
       db,
       affectedFunctions,
       noTests,
       maxDepth,
+      includeImplementors,
     );
 
     const affectedFiles = new Set();

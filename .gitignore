@@ -1,5 +1,7 @@
 node_modules/
 .codegraph/
+dist/
+.tsbuildinfo
 *.db
 coverage/
 .env

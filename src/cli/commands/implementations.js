@@ -1,20 +1,18 @@
 import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
-import { fnImpact } from '../../presentation/queries-cli.js';
+import { implementations } from '../../presentation/queries-cli.js';
 
 export const command = {
-  name: 'fn-impact <name>',
-  description: 'Function-level impact: what functions break if this one changes',
+  name: 'implementations <name>',
+  description: 'List all concrete types implementing a given interface or trait',
   queryOpts: true,
   options: [
-    ['--depth <n>', 'Max transitive depth', '5'],
     [
       '-f, --file <path>',
-      'Scope search to functions in this file (partial match, repeatable)',
+      'Scope search to symbols in this file (partial match, repeatable)',
       collectFile,
     ],
     ['-k, --kind <kind>', 'Filter to a specific symbol kind'],
-    ['--no-implementations', 'Exclude interface/trait implementors from blast radius'],
   ],
   validate([_name], opts) {
     if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
@@ -22,11 +20,9 @@ export const command = {
     }
   },
   execute([name], opts, ctx) {
-    fnImpact(name, opts.db, {
-      depth: parseInt(opts.depth, 10),
+    implementations(name, opts.db, {
       file: opts.file,
       kind: opts.kind,
-      includeImplementors: opts.implementations !== false,
       ...ctx.resolveQueryOpts(opts),
     });
   },

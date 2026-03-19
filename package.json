@@ -3,22 +3,23 @@
   "version": "3.2.0",
   "description": "Local code graph CLI — parse codebases with tree-sitter, build dependency graphs, query them",
   "type": "module",
-  "main": "src/index.js",
+  "main": "dist/index.js",
   "exports": {
     ".": {
-      "import": "./src/index.js",
-      "require": "./src/index.cjs",
-      "default": "./src/index.cjs"
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.cjs"
     },
     "./cli": {
-      "import": "./src/cli.js"
+      "import": "./dist/cli.js"
     },
     "./package.json": "./package.json"
   },
   "bin": {
-    "codegraph": "./src/cli.js"
+    "codegraph": "./dist/cli.js"
   },
   "files": [
+    "dist/",
     "src/",
     "grammars/",
     "LICENSE",
@@ -28,14 +29,18 @@
     "node": ">=20"
   },
   "scripts": {
+    "build": "tsc",
     "build:wasm": "node scripts/build-wasm.js",
+    "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "lint": "biome check src/ tests/",
     "lint:fix": "biome check --write src/ tests/",
     "format": "biome format --write src/ tests/",
-    "prepare": "npm run build:wasm && husky && npm run deps:tree",
+    "prepack": "npm run build",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true});require('fs').rmSync('.tsbuildinfo',{force:true})\"",
+    "prepare": "npm run build:wasm && npm run build && husky && npm run deps:tree",
     "deps:tree": "node scripts/gen-deps.cjs",
     "release": "commit-and-tag-version",
     "release:dry-run": "commit-and-tag-version --dry-run",
@@ -102,6 +107,7 @@
     "tree-sitter-ruby": "^0.23.1",
     "tree-sitter-rust": "^0.24.0",
     "tree-sitter-typescript": "^0.23.2",
+    "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   },
   "license": "Apache-2.0"

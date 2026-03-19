@@ -4,7 +4,7 @@
  * The actual implementations live in queries-cli/ split by concern:
  *   path.js     — symbolPath
  *   overview.js — stats, moduleMap, roles
- *   inspect.js  — where, queryName, context, children, explain
+ *   inspect.js  — where, queryName, context, children, explain, implementations, interfaces
  *   impact.js   — fileDeps, fnDeps, impactAnalysis, fnImpact, diffImpact
  *   exports.js  — fileExports
  */
@@ -18,6 +18,8 @@ export {
   fnDeps,
   fnImpact,
   impactAnalysis,
+  implementations,
+  interfaces,
   moduleMap,
   queryName,
   roles,

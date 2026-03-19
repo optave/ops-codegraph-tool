@@ -15,6 +15,8 @@ const _findCrossFileCallTargetsStmt = new WeakMap();
 const _countCrossFileCallersStmt = new WeakMap();
 const _getClassAncestorsStmt = new WeakMap();
 const _findIntraFileCallEdgesStmt = new WeakMap();
+const _findImplementorsStmt = new WeakMap();
+const _findInterfacesStmt = new WeakMap();
 
 // ─── Call-edge queries ──────────────────────────────────────────────────
 
@@ -258,6 +260,42 @@ export function getClassHierarchy(db, classNodeId) {
     }
   }
   return ancestors;
+}
+
+// ─── Implements-edge queries ──────────────────────────────────────────
+
+/**
+ * Find all concrete types that implement a given interface/trait node.
+ * Follows incoming 'implements' edges (source = implementor, target = interface).
+ * @param {object} db
+ * @param {number} nodeId - The interface/trait node ID
+ * @returns {{ id: number, name: string, kind: string, file: string, line: number }[]}
+ */
+export function findImplementors(db, nodeId) {
+  return cachedStmt(
+    _findImplementorsStmt,
+    db,
+    `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
+     FROM edges e JOIN nodes n ON e.source_id = n.id
+     WHERE e.target_id = ? AND e.kind = 'implements'`,
+  ).all(nodeId);
+}
+
+/**
+ * Find all interfaces/traits that a given class/struct implements.
+ * Follows outgoing 'implements' edges (source = class, target = interface).
+ * @param {object} db
+ * @param {number} nodeId - The class/struct node ID
+ * @returns {{ id: number, name: string, kind: string, file: string, line: number }[]}
+ */
+export function findInterfaces(db, nodeId) {
+  return cachedStmt(
+    _findInterfacesStmt,
+    db,
+    `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line
+     FROM edges e JOIN nodes n ON e.target_id = n.id
+     WHERE e.source_id = ? AND e.kind = 'implements'`,
+  ).all(nodeId);
 }
 
 /**
