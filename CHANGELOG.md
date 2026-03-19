@@ -2,6 +2,29 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.3.0](https://github.com/optave/codegraph/compare/v3.2.0...v3.3.0) (2026-03-19)
+
+**Resolution accuracy reaches a new level.** This release delivers Phase 4 resolution improvements — type inference across all typed languages, receiver type tracking with graded confidence, `package.json` exports field resolution, and monorepo workspace resolution. Method calls like `repo.findCallers()` now resolve through receiver types instead of matching any `findCallers` in scope. Barrel files correctly show re-exported symbols. A precision/recall benchmark suite tracks call resolution accuracy across versions. On the infrastructure side, all hardcoded behavioral constants are centralized into `DEFAULTS` with recursive deep merge, and the TypeScript migration begins with project setup and core type definitions.
+
+### Features
+
+* **resolution:** type inference for all typed languages (TS, Java, Go, Rust, C#, PHP, Python) — `obj.method()` resolves through declared types in both WASM and native engines ([#501](https://github.com/optave/codegraph/pull/501))
+* **resolution:** receiver type tracking with graded confidence — constructors (`new Foo()`) at 1.0, annotations at 0.9, factory methods at 0.7; highest-confidence assignment wins per variable ([#505](https://github.com/optave/codegraph/pull/505))
+* **resolution:** `package.json` `exports` field and monorepo workspace resolution — conditional exports, subpath patterns, npm/pnpm/Yarn workspaces resolved with high confidence instead of brute-force filesystem probing ([#509](https://github.com/optave/codegraph/pull/509))
+* **exports:** show re-exported symbols for barrel files — `codegraph exports` now traces through re-exports to show the actual consumers of each symbol ([#515](https://github.com/optave/codegraph/pull/515))
+* **roles:** dead role sub-categories — `dead-leaf`, `dead-entry`, `dead-ffi`, `dead-unresolved` replace the coarse `dead` role for more precise dead code classification ([#504](https://github.com/optave/codegraph/pull/504))
+* **config:** centralize all hardcoded behavioral constants into `DEFAULTS` with recursive deep merge — partial `.codegraphrc.json` overrides now preserve sibling keys ([#506](https://github.com/optave/codegraph/pull/506))
+* **benchmarks:** call resolution precision/recall benchmark suite — hand-annotated fixtures per language with expected-edges manifests, CI gate on accuracy regression ([#507](https://github.com/optave/codegraph/pull/507))
+* **benchmarks:** child-process isolation for benchmarks — benchmark runner spawns builds in separate processes to prevent state leaks ([#512](https://github.com/optave/codegraph/pull/512))
+* **typescript:** project setup for incremental migration — `tsconfig.json`, build pipeline, `dist/` output with source maps ([#508](https://github.com/optave/codegraph/pull/508))
+* **typescript:** core type definitions (`src/types.ts`) — comprehensive types for symbols, edges, nodes, config, queries, and all domain model interfaces ([#516](https://github.com/optave/codegraph/pull/516))
+* **languages:** add `.pyi`, `.phtml`, `.rake`, `.gemspec` extensions to Python, PHP, and Ruby parsers ([#502](https://github.com/optave/codegraph/pull/502))
+
+### Bug Fixes
+
+* **cli:** reword misleading 'stale' warning in `codegraph info` — no longer implies the graph is broken when it's simply older than some files ([#510](https://github.com/optave/codegraph/pull/510))
+* **skills:** update dogfood and release skill templates to match current CLI surface ([#511](https://github.com/optave/codegraph/pull/511))
+
 ## [3.2.0](https://github.com/optave/codegraph/compare/v3.1.5...v3.2.0) (2026-03-17)
 
 **Post-Phase 3 decomposition and dead code accuracy.** This release completes a thorough decomposition of the remaining monolithic modules — language extractors, AST analysis visitors, domain analysis functions, and feature modules are all broken into focused, single-responsibility helpers. Dead code detection now correctly classifies symbols that are only referenced by tests as "test-only" instead of "dead", and constants are properly included in edge building so they no longer appear as false-positive dead exports. A new `brief` command provides token-efficient file summaries designed for AI hook context injection. The native engine gains a MAX_WALK_DEPTH guard to prevent stack overflows on deeply nested ASTs.
