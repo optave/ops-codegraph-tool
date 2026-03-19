@@ -226,7 +226,7 @@ class Document implements Printable {
     {
       name: 'C# — classes and using',
       file: 'Test.cs',
-      // Known native gap: native engine doesn't extract base_list into classes array
+      // TODO: re-enable once native engine extracts base_list into classes array
       skip: true,
       code: `
 using System;
