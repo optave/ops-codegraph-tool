@@ -1,3 +1,9 @@
+---
+name: architect
+description: Run a comprehensive architectural audit of codegraph against state-of-the-art tools and produce a structured report
+allowed-tools: Bash, Read, Write, Glob, Grep
+---
+
 # /architect — Full Architectural Audit
 
 Run a cold, harsh architectural audit of codegraph. Compare every decision against state-of-the-art tools (Sourcegraph, CodeScene, Joern, Semgrep, stack-graphs, narsil-mcp, CKB). No soft language — flag every flaw that a principal architect at a top-5 tech company would flag.
@@ -28,14 +34,17 @@ Before writing, check `docs/architecture/` for previous audits. Reference change
 
 ## Steps
 
-### Phase 0 — Setup
+### Phase 0 — Worktree Isolation
+Run `/worktree` to get an isolated copy of the repo. `CLAUDE.md` mandates this for every session that modifies files. This skill writes audit reports and rebuilds the graph — both mutations require isolation.
+
+### Phase 1 — Setup
 1. Read `package.json` to get the current version
 2. Get the current date, commit SHA, and branch name
 3. Check `docs/architecture/` for previous audit files
 4. **Read all ADRs in `docs/architecture/decisions/`.** These are the project's settled architectural decisions. Read every file — they document rationale, trade-offs, alternatives considered, and trajectory. The audit must evaluate the codebase *against* these decisions: are they being followed? Are the stated trade-offs still accurate? Has anything changed that invalidates the rationale?
 5. Run `codegraph build --no-incremental` to ensure fresh metrics
 
-### Phase 1 — Structural Census
+### Phase 2 — Structural Census
 1. Run `codegraph stats` to get graph health baseline
 2. Run `codegraph structure --depth 3` to get directory cohesion
 3. Run `codegraph triage -T` to get the risk priority queue
@@ -45,7 +54,7 @@ Before writing, check `docs/architecture/` for previous audits. Reference change
 7. Run `codegraph complexity -T --limit 25` to find the most complex functions
 8. Count files, LOC, and test-to-source ratio
 
-### Phase 2 — Layer-by-Layer Critique
+### Phase 3 — Layer-by-Layer Critique
 For each architectural layer, evaluate against these dimensions:
 
 **A. Abstraction Quality**
@@ -79,7 +88,7 @@ For each architectural layer, evaluate against these dimensions:
 - Has the codebase drifted from any stated trajectory? If so, is that drift justified or accidental?
 - Are there architectural decisions that *should* have an ADR but don't?
 
-### Phase 3 — Cross-Cutting Concerns
+### Phase 4 — Cross-Cutting Concerns
 
 Evaluate these across the entire codebase:
 
@@ -92,7 +101,7 @@ Evaluate these across the entire codebase:
 7. **API Design** — Is the programmatic API well-designed for embedding?
 8. **Documentation** — Is it accurate? Does it lie by omission?
 
-### Phase 4 — Competitive Verification
+### Phase 5 — Competitive Verification
 
 **Do not trust README claims.** For each top competitor:
 1. Fetch the actual GitHub repo README
@@ -101,7 +110,7 @@ Evaluate these across the entire codebase:
 
 Include a verified competitor comparison table with columns: MCP tools, CLI, Open source, Zero-dep, Deterministic, Incremental (all langs).
 
-### Phase 5 — Strategic Verdict
+### Phase 6 — Strategic Verdict
 
 1. **Does codegraph have a reason to exist?** — Answer with verified data, not assumptions
 2. **Fundamental Design Flaws** — Decisions that cannot be fixed incrementally
@@ -111,11 +120,32 @@ Include a verified competitor comparison table with columns: MCP tools, CLI, Ope
 6. **Build vs Buy** — Components that should use existing libraries instead of custom code
 7. **Roadmap Critique** — Is the planned roadmap the right path? What's missing? What's wrong?
 
-### Phase 6 — Write & Save
+### Phase 7 — Write & Save
 
 1. Write the full audit to `docs/architecture/ARCHITECTURE_AUDIT_v{VERSION}_{DATE}.md`
 2. Copy to `generated/architecture/ARCHITECTURE_AUDIT_v{VERSION}_{DATE}.md`
 3. If a previous audit exists, add a "Changes Since Last Audit" section at the end comparing key metrics (graph quality score, complexity stats, dead code counts, competitive position)
+
+### Phase 8 — Commit & PR
+1. Create a new branch: `git checkout -b docs/architect-audit-v{VERSION}-{DATE} main`
+2. Stage the audit file: `git add docs/architecture/ARCHITECTURE_AUDIT_v{VERSION}_{DATE}.md`
+3. Commit: `git commit -m "docs: add architectural audit v{VERSION} ({DATE})"`
+4. Push: `git push -u origin docs/architect-audit-v{VERSION}-{DATE}`
+5. Open a PR:
+   ```bash
+   gh pr create --title "docs: architectural audit v{VERSION} ({DATE})" --body "$(cat <<'EOF'
+   ## Summary
+   - Full architectural audit of codegraph v{VERSION}
+   - Competitive verification against Sourcegraph, CodeScene, Joern, Semgrep, etc.
+   - Strategic verdict with prioritized recommendations
+
+   ## Test plan
+   - [ ] Verify audit file renders correctly in GitHub markdown
+   - [ ] Confirm all codegraph command outputs are current
+   - [ ] Cross-check competitor claims against linked sources
+   EOF
+   )"
+   ```
 
 ## Audit Structure
 
