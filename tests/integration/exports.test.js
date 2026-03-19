@@ -199,4 +199,36 @@ describe('exportsData', () => {
     expect(data._pagination.total).toBe(1);
     expect(data._pagination.hasMore).toBe(false);
   });
+
+  test('barrel file shows re-exported symbols from target modules', () => {
+    const data = exportsData('barrel.js', dbPath);
+    expect(data.file).toBe('barrel.js');
+    // barrel.js has no own exports
+    expect(data.results).toEqual([]);
+    expect(data.totalExported).toBe(0);
+    // but it surfaces re-exported symbols from lib.js
+    expect(data.reexportedSymbols.length).toBe(3); // add, multiply, unusedFn
+    const names = data.reexportedSymbols.map((s) => s.name).sort();
+    expect(names).toEqual(['add', 'multiply', 'unusedFn']);
+    // each re-exported symbol has originFile
+    for (const sym of data.reexportedSymbols) {
+      expect(sym.originFile).toBe('lib.js');
+    }
+    // consumer info is preserved
+    const addSym = data.reexportedSymbols.find((s) => s.name === 'add');
+    expect(addSym.consumerCount).toBe(2);
+  });
+
+  test('barrel file --unused filters re-exported symbols', () => {
+    const data = exportsData('barrel.js', dbPath, { unused: true });
+    expect(data.results).toEqual([]);
+    expect(data.reexportedSymbols.length).toBe(1);
+    expect(data.reexportedSymbols[0].name).toBe('unusedFn');
+    expect(data.reexportedSymbols[0].consumerCount).toBe(0);
+  });
+
+  test('reexportedSymbols is empty array for non-barrel files', () => {
+    const data = exportsData('lib.js', dbPath);
+    expect(data.reexportedSymbols).toEqual([]);
+  });
 });
