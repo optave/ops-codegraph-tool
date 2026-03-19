@@ -392,7 +392,7 @@ function buildReceiverEdge(ctx, call, caller, relPath, seenCallEdges, allEdgeRow
     if (!seenCallEdges.has(recvKey)) {
       seenCallEdges.add(recvKey);
       // Use type source confidence when available, otherwise 0.7 for untyped receiver
-      const confidence = typeConfidence || (typeName ? 0.9 : 0.7);
+      const confidence = typeConfidence ?? (typeName ? 0.9 : 0.7);
       allEdgeRows.push([caller.id, recvTarget.id, 'receiver', confidence, 0]);
     }
   }
