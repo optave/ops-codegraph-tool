@@ -24,8 +24,8 @@ export type CoreSymbolKind =
   | 'record'
   | 'module';
 
-/** Sub-declaration kinds (Phase 1). */
-export type ExtendedSymbolKind = 'parameter' | 'property' | 'constant';
+/** Sub-declaration kinds (Phase 1). Includes 'method' for class child nodes. */
+export type ExtendedSymbolKind = 'parameter' | 'property' | 'constant' | 'method';
 
 /** All queryable symbol kinds. */
 export type SymbolKind = CoreSymbolKind | ExtendedSymbolKind;
@@ -140,7 +140,7 @@ export interface EdgeRow {
   id: number;
   source_id: number;
   target_id: number;
-  kind: AnyEdgeKind;
+  kind: EdgeKind;
   confidence: number | null;
   dynamic: 0 | 1;
 }
@@ -161,13 +161,13 @@ export interface AdjacentEdgeRow {
   kind: string;
   file: string;
   line: number;
-  edge_kind: AnyEdgeKind;
+  edge_kind: EdgeKind;
 }
 
 /** Import target/source row. */
 export interface ImportEdgeRow {
   file: string;
-  edge_kind: AnyEdgeKind;
+  edge_kind: EdgeKind;
 }
 
 /** Intra-file call edge (from findIntraFileCallEdges). */
@@ -707,11 +707,20 @@ export interface DataflowMutation {
 
 /** Node attributes stored in the in-memory graph. */
 export interface GraphNodeAttrs {
+  label?: string;
+  kind?: string;
+  file?: string;
+  name?: string;
+  line?: number;
+  dbId?: number;
   [key: string]: unknown;
 }
 
 /** Edge attributes stored in the in-memory graph. */
 export interface GraphEdgeAttrs {
+  kind?: string;
+  confidence?: number;
+  weight?: number;
   [key: string]: unknown;
 }
 
@@ -1243,7 +1252,12 @@ export interface CommunitiesResult {
   modularity: number;
   drift: {
     splitCandidates: Array<{ directory: string; communityCount: number }>;
-    mergeCandidates: unknown[];
+    mergeCandidates: Array<{
+      communityId: number;
+      size: number;
+      directoryCount: number;
+      directories: string[];
+    }>;
   };
   summary: {
     communityCount: number;
