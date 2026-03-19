@@ -31,7 +31,7 @@ const FIXTURES_DIR = path.join(import.meta.dirname, 'fixtures');
  */
 const THRESHOLDS = {
   javascript: { precision: 0.85, recall: 0.55, staticRecall: 0.6, receiverRecall: 0.3 },
-  typescript: { precision: 0.85, recall: 0.3, staticRecall: 0.8, receiverRecall: 0.05 },
+  typescript: { precision: 0.85, recall: 0.58, staticRecall: 0.9, receiverRecall: 0.45 },
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -43,9 +43,10 @@ const THRESHOLDS = {
 function copyFixture(lang) {
   const src = path.join(FIXTURES_DIR, lang);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `codegraph-resolution-${lang}-`));
-  for (const file of fs.readdirSync(src)) {
-    if (file === 'expected-edges.json') continue;
-    fs.copyFileSync(path.join(src, file), path.join(tmp, file));
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (entry.name === 'expected-edges.json') continue;
+    if (!entry.isFile()) continue;
+    fs.copyFileSync(path.join(src, entry.name), path.join(tmp, entry.name));
   }
   return tmp;
 }
@@ -208,6 +209,7 @@ function formatReport(lang, metrics) {
  * Discover all fixture languages that have an expected-edges.json manifest.
  */
 function discoverFixtures() {
+  if (!fs.existsSync(FIXTURES_DIR)) return [];
   const languages = [];
   for (const dir of fs.readdirSync(FIXTURES_DIR)) {
     const manifestPath = path.join(FIXTURES_DIR, dir, 'expected-edges.json');
@@ -276,7 +278,6 @@ describe('Call Resolution Precision/Recall', () => {
 
       test(`precision meets threshold`, () => {
         const threshold = THRESHOLDS[lang]?.precision ?? 0.85;
-        console.log(formatReport(lang, metrics));
         expect(
           metrics.precision,
           `${lang} precision ${(metrics.precision * 100).toFixed(1)}% is below ${(threshold * 100).toFixed(0)}% threshold.\n` +
