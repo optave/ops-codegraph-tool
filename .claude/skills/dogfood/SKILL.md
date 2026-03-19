@@ -107,7 +107,7 @@ Test each with `-j`/`--json` and `-T`/`--no-tests` where supported:
 | `diff-impact [ref]` | `--staged`, test vs `main`, vs `HEAD`, and with no arg (unstaged) |
 | `cycles` | `--functions` for function-level cycles |
 | `structure [dir]` | `--depth <n>`, `--sort cohesion\|fan-in\|fan-out\|density\|files` |
-| `triage` | `--level file\|function`, `-n/--limit`, `--json` |
+| `triage` | `--level file\|function\|directory`, `-n/--limit`, `--json` |
 
 ### Export commands
 | Command | Flags |
