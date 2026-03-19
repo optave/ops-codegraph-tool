@@ -184,7 +184,7 @@ jobs:
         run: |
           [[ -n "$VERSION" ]] || { echo "::error::VERSION is empty — compute-version output missing"; exit 1; }
           CARGO="crates/codegraph-core/Cargo.toml"
-          awk -v v="$VERSION" '/^version =/{$0="version = \""v"\""}1' "$CARGO" > "${CARGO}.tmp"
+          awk -v v="$VERSION" '!done && /^version =/{$0="version = \""v"\""; done=1}1' "$CARGO" > "${CARGO}.tmp"
           mv "${CARGO}.tmp" "$CARGO"
 
       - name: Install napi-rs CLI
