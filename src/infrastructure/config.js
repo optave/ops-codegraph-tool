@@ -156,7 +156,7 @@ export function loadConfig(cwd) {
         }
         delete merged.excludeTests;
         const result = resolveSecrets(applyEnvOverrides(merged));
-        _configCache.set(cwd, result);
+        _configCache.set(cwd, structuredClone(result));
         return result;
       } catch (err) {
         debug(`Failed to parse config ${filePath}: ${err.message}`);
@@ -164,7 +164,7 @@ export function loadConfig(cwd) {
     }
   }
   const defaults = resolveSecrets(applyEnvOverrides({ ...DEFAULTS }));
-  _configCache.set(cwd, defaults);
+  _configCache.set(cwd, structuredClone(defaults));
   return defaults;
 }
 
