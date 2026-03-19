@@ -33,24 +33,30 @@ function copyDirSync(src, dest) {
 
 function readEdges(dbPath) {
   const db = new Database(dbPath, { readonly: true });
-  const edges = db
-    .prepare(
-      `SELECT n1.name AS source_name, n2.name AS target_name, e.kind
-       FROM edges e
-       JOIN nodes n1 ON e.source_id = n1.id
-       JOIN nodes n2 ON e.target_id = n2.id
-       ORDER BY n1.name, n2.name, e.kind`,
-    )
-    .all();
-  db.close();
-  return edges;
+  try {
+    const edges = db
+      .prepare(
+        `SELECT n1.name AS source_name, n2.name AS target_name, e.kind
+         FROM edges e
+         JOIN nodes n1 ON e.source_id = n1.id
+         JOIN nodes n2 ON e.target_id = n2.id
+         ORDER BY n1.name, n2.name, e.kind`,
+      )
+      .all();
+    return edges;
+  } finally {
+    db.close();
+  }
 }
 
 function readNodes(dbPath) {
   const db = new Database(dbPath, { readonly: true });
-  const nodes = db.prepare('SELECT name, kind, file FROM nodes ORDER BY name, kind, file').all();
-  db.close();
-  return nodes;
+  try {
+    const nodes = db.prepare('SELECT name, kind, file FROM nodes ORDER BY name, kind, file').all();
+    return nodes;
+  } finally {
+    db.close();
+  }
 }
 
 function edgeKey(e) {
