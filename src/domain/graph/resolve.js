@@ -104,7 +104,7 @@ function matchSubpathPattern(pattern, subpath) {
   if (!subpath.startsWith(prefix)) return null;
   if (suffix && !subpath.endsWith(suffix)) return null;
   const matched = subpath.slice(prefix.length, suffix ? -suffix.length || undefined : undefined);
-  if (!suffix && subpath.length < prefix.length) return null;
+  if (!suffix && subpath.length <= prefix.length) return null;
   return matched;
 }
 
@@ -150,7 +150,7 @@ export function resolveViaExports(specifier, rootDir) {
   // Determine if exports is a conditions object (no keys start with ".")
   // or a subpath map (keys start with ".")
   const keys = Object.keys(exports);
-  const isSubpathMap = keys.length > 0 && keys[0].startsWith('.');
+  const isSubpathMap = keys.length > 0 && keys.some((k) => k.startsWith('.'));
 
   if (!isSubpathMap) {
     // Conditions object at top level → applies to "." subpath only
@@ -209,6 +209,8 @@ const _workspaceResolvedPaths = new Set();
  */
 export function setWorkspaces(rootDir, map) {
   _workspaceCache.set(rootDir, map);
+  _workspaceResolvedPaths.clear();
+  _exportsCache.clear();
 }
 
 /**
@@ -387,6 +389,7 @@ function resolveImportPathJS(fromFile, importSource, rootDir, aliases) {
     '.jsx',
     '.mjs',
     '.py',
+    '.pyi',
     '/index.ts',
     '/index.tsx',
     '/index.js',
