@@ -138,9 +138,14 @@ After addressing all comments for a PR:
 
 ### 2g. Re-trigger reviewers
 
-**Greptile:** Always re-trigger after pushing fixes. Post a comment:
+**Greptile:** Before re-triggering, check if your last reply to Greptile already has a positive emoji reaction (👍, ✅, 🎉, etc.) from `greptileai`. A positive reaction means Greptile is satisfied with your fix — do NOT re-trigger in that case, move on. Only re-trigger if there is no positive reaction on your last comment:
 
 ```bash
+# Check reactions on your most recent comment to see if Greptile already approved
+gh api repos/optave/codegraph/issues/<number>/comments --paginate \
+  --jq 'reverse | .[] | select(.user.login != "greptileai") | {id: .id, body: .body[0:80], reactions_url: .reactions_url}' | head -1
+
+# If no positive reaction from greptileai, re-trigger:
 gh api repos/optave/codegraph/issues/<number>/comments \
   -f body="@greptileai"
 ```
@@ -184,7 +189,7 @@ After processing all PRs, output a summary table:
 - **Never force-push** unless fixing a commit message that fails commitlint. Amend + force-push is the only way to fix a pushed commit title (messages are part of the SHA). This is safe on feature branches. For all other problems, fix with a new commit.
 - **Address ALL comments**, even minor/nit/optional ones. Leave zero unaddressed.
 - **Always reply to comments** explaining what was done. Don't just fix silently.
-- **Always re-trigger Greptile** after pushing fixes — it must confirm satisfaction.
+- **Don't re-trigger Greptile if already approved.** If your last reply to a Greptile comment has a positive emoji reaction (👍, ✅, 🎉) from `greptileai`, it's already satisfied — skip re-triggering.
 - **Only re-trigger Claude** if you addressed Claude's feedback specifically.
 - **No co-author lines** in commit messages.
 - **No Claude Code references** in commit messages or comments.
