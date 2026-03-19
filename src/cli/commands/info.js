@@ -25,7 +25,7 @@ export const command = {
       const knownBinaryVersion = binaryVersion !== 'unknown' ? binaryVersion : null;
       if (pkgVersion && knownBinaryVersion && pkgVersion !== knownBinaryVersion) {
         console.log(
-          `  Native version: ${pkgVersion} (binary reports ${knownBinaryVersion} — stale)`,
+          `  Native version: ${pkgVersion} (binary built as ${knownBinaryVersion}, cosmetic only)`,
         );
       } else {
         console.log(`  Native version: ${pkgVersion ?? binaryVersion}`);
