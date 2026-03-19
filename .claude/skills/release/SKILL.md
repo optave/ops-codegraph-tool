@@ -15,6 +15,20 @@ You are preparing a release for `@optave/codegraph`.
 
 ---
 
+## Step 0: Isolate and sync
+
+1. **Create a worktree** — run `/worktree` to get an isolated copy of the repo. All subsequent steps run inside the worktree.
+2. **Sync with main** — fetch and check if the worktree branch is behind `origin/main`:
+   ```bash
+   git fetch origin
+   git log --oneline origin/main -10
+   ```
+   If behind, create a fresh branch from `origin/main`:
+   ```bash
+   git checkout -b release/VERSION origin/main
+   ```
+   (Use a placeholder name if VERSION isn't known yet — you'll rename or recreate in Step 8.)
+
 ## Step 1a: Gather context
 
 Run these in parallel:
