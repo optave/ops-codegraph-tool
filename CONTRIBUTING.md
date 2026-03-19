@@ -153,11 +153,12 @@ enabled. The test structure:
 
 ```
 tests/
-  integration/     # buildGraph + full query commands
-  graph/           # Cycle detection, DOT/Mermaid export
-  parsers/         # Language parser extraction (one file per language)
-  search/          # Semantic search + embeddings
-  fixtures/        # Sample projects used by tests
+  integration/          # buildGraph + full query commands
+  graph/                # Cycle detection, DOT/Mermaid export
+  parsers/              # Language parser extraction (one file per language)
+  search/               # Semantic search + embeddings
+  benchmarks/resolution/ # Call resolution precision/recall (per-language fixtures)
+  fixtures/             # Sample projects used by tests
 ```
 
 - Integration tests create temporary copies of fixture projects for isolation
@@ -166,11 +167,11 @@ tests/
 
 ## Regression Benchmarks
 
-Two regression benchmark scripts live in `scripts/`. These are **not** unit
-tests — they measure performance metrics that reviewers use to judge whether a
-change is acceptable. If your PR touches code covered by a benchmark, you
-**must** run it before and after your changes and include the results in the PR
-description.
+Several regression benchmarks track codegraph's accuracy and performance across
+versions. Some live in `scripts/` (run manually), while the resolution benchmark
+runs automatically as part of `npm test`. If your PR touches code covered by a
+benchmark, you **must** run it before and after your changes and include the
+results in the PR description.
 
 | Benchmark | What it measures | When to run |
 |-----------|-----------------|-------------|
@@ -178,6 +179,33 @@ description.
 | `node scripts/embedding-benchmark.js` | Search recall (Hit@1/3/5/10) across models | Changes to `embedder.js` or embedding strategies |
 | `node scripts/query-benchmark.js` | Query depth scaling, diff-impact latency | Changes to `queries.js`, `resolve.js`, or `db.js` |
 | `node scripts/incremental-benchmark.js` | Incremental build, import resolution throughput | Changes to `builder.js`, `resolve.js`, `parser.js`, or `journal.js` |
+| `npx vitest run tests/benchmarks/resolution/` | Call resolution precision/recall per language | Changes to `build-edges.js`, `resolve.js`, `parser.js`, or any extractor |
+
+### Resolution precision/recall benchmark
+
+The resolution benchmark (`tests/benchmarks/resolution/`) measures how
+accurately codegraph resolves call edges. It uses hand-annotated fixture projects
+with an `expected-edges.json` manifest per language that declares every call edge
+that should be detected.
+
+The benchmark runner builds the graph for each fixture, compares resolved edges
+against the manifest, and reports:
+
+- **Precision** — what fraction of resolved edges are correct (no false positives)
+- **Recall** — what fraction of expected edges were found (no false negatives)
+- **Per-mode breakdown** — separate recall for `static`, `receiver-typed`, and
+  `interface-dispatched` resolution modes
+
+**CI gate:** The benchmark runs as part of `npm test`. If precision or recall
+drops below the configured thresholds for any language, the test fails.
+
+**Adding a new language fixture:**
+
+1. Create `tests/benchmarks/resolution/fixtures/<language>/` with source files
+2. Add an `expected-edges.json` manifest (see the JSON schema at
+   `tests/benchmarks/resolution/expected-edges.schema.json`)
+3. Add thresholds in `resolution-benchmark.test.js` → `THRESHOLDS`
+4. The benchmark runner auto-discovers fixtures with an `expected-edges.json`
 
 ### How to report results
 

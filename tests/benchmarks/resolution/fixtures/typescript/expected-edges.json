@@ -1,0 +1,119 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "typescript",
+  "description": "Hand-annotated call edges for TypeScript resolution benchmark",
+  "edges": [
+    {
+      "source": { "name": "JsonSerializer.serialize", "file": "serializer.ts" },
+      "target": { "name": "formatJson", "file": "serializer.ts" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Same-file function call from method"
+    },
+    {
+      "source": { "name": "JsonSerializer.deserialize", "file": "serializer.ts" },
+      "target": { "name": "parseJson", "file": "serializer.ts" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Same-file function call from method"
+    },
+    {
+      "source": { "name": "UserService.getUser", "file": "service.ts" },
+      "target": { "name": "UserRepository.findById", "file": "repository.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "this.repo.findById() — typed as Repository<User>, resolved to UserRepository"
+    },
+    {
+      "source": { "name": "UserService.getUser", "file": "service.ts" },
+      "target": { "name": "JsonSerializer.serialize", "file": "serializer.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "this.serializer.serialize() — typed as Serializer<User>, resolved to JsonSerializer"
+    },
+    {
+      "source": { "name": "UserService.addUser", "file": "service.ts" },
+      "target": { "name": "JsonSerializer.deserialize", "file": "serializer.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "this.serializer.deserialize() — typed as Serializer<User>"
+    },
+    {
+      "source": { "name": "UserService.addUser", "file": "service.ts" },
+      "target": { "name": "UserRepository.save", "file": "repository.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "this.repo.save() — typed as Repository<User>"
+    },
+    {
+      "source": { "name": "UserService.removeUser", "file": "service.ts" },
+      "target": { "name": "UserRepository.delete", "file": "repository.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "this.repo.delete() — typed as Repository<User>"
+    },
+    {
+      "source": { "name": "createService", "file": "service.ts" },
+      "target": { "name": "createRepository", "file": "repository.ts" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Direct imported function call"
+    },
+    {
+      "source": { "name": "main", "file": "index.ts" },
+      "target": { "name": "createService", "file": "service.ts" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Direct imported function call"
+    },
+    {
+      "source": { "name": "main", "file": "index.ts" },
+      "target": { "name": "UserService.addUser", "file": "service.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.addUser() — typed via createService() return type"
+    },
+    {
+      "source": { "name": "main", "file": "index.ts" },
+      "target": { "name": "UserService.getUser", "file": "service.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.getUser() — typed via createService() return type"
+    },
+    {
+      "source": { "name": "main", "file": "index.ts" },
+      "target": { "name": "UserService.removeUser", "file": "service.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.removeUser() — typed via createService() return type"
+    },
+    {
+      "source": { "name": "withExplicitType", "file": "index.ts" },
+      "target": { "name": "JsonSerializer.serialize", "file": "serializer.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "serializer.serialize() — explicit type annotation JsonSerializer"
+    },
+    {
+      "source": { "name": "withExplicitType", "file": "index.ts" },
+      "target": { "name": "createService", "file": "service.ts" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Direct imported function call"
+    },
+    {
+      "source": { "name": "withExplicitType", "file": "index.ts" },
+      "target": { "name": "UserService.addUser", "file": "service.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.addUser() — typed via createService() return type"
+    },
+    {
+      "source": { "name": "withExplicitType", "file": "index.ts" },
+      "target": { "name": "UserService.getUser", "file": "service.ts" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.getUser() — typed via createService() return type"
+    }
+  ]
+}

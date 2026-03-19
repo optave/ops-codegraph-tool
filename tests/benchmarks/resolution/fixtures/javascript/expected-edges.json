@@ -1,0 +1,112 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "javascript",
+  "description": "Hand-annotated call edges for JavaScript resolution benchmark",
+  "edges": [
+    {
+      "source": { "name": "UserService.createUser", "file": "service.js" },
+      "target": { "name": "normalize", "file": "validators.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Direct imported function call from method"
+    },
+    {
+      "source": { "name": "UserService.createUser", "file": "service.js" },
+      "target": { "name": "validate", "file": "validators.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Direct imported function call from method"
+    },
+    {
+      "source": { "name": "UserService.createUser", "file": "service.js" },
+      "target": { "name": "Logger.error", "file": "logger.js" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "this.logger.error() — receiver-typed via constructor assignment"
+    },
+    {
+      "source": { "name": "UserService.createUser", "file": "service.js" },
+      "target": { "name": "Logger.info", "file": "logger.js" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "this.logger.info() — receiver-typed via constructor assignment"
+    },
+    {
+      "source": { "name": "UserService.deleteUser", "file": "service.js" },
+      "target": { "name": "Logger.warn", "file": "logger.js" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "this.logger.warn() — receiver-typed via constructor assignment"
+    },
+    {
+      "source": { "name": "Logger.info", "file": "logger.js" },
+      "target": { "name": "Logger._write", "file": "logger.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "this._write() — same-class method call"
+    },
+    {
+      "source": { "name": "Logger.warn", "file": "logger.js" },
+      "target": { "name": "Logger._write", "file": "logger.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "this._write() — same-class method call"
+    },
+    {
+      "source": { "name": "Logger.error", "file": "logger.js" },
+      "target": { "name": "Logger._write", "file": "logger.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "this._write() — same-class method call"
+    },
+    {
+      "source": { "name": "validate", "file": "validators.js" },
+      "target": { "name": "checkLength", "file": "validators.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Same-file function call"
+    },
+    {
+      "source": { "name": "normalize", "file": "validators.js" },
+      "target": { "name": "trimWhitespace", "file": "validators.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Same-file function call"
+    },
+    {
+      "source": { "name": "main", "file": "index.js" },
+      "target": { "name": "buildService", "file": "service.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Direct imported function call"
+    },
+    {
+      "source": { "name": "main", "file": "index.js" },
+      "target": { "name": "UserService.createUser", "file": "service.js" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.createUser() — receiver typed via buildService() return"
+    },
+    {
+      "source": { "name": "main", "file": "index.js" },
+      "target": { "name": "validate", "file": "validators.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Direct imported function call"
+    },
+    {
+      "source": { "name": "main", "file": "index.js" },
+      "target": { "name": "UserService.deleteUser", "file": "service.js" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.deleteUser() — receiver typed via buildService() return"
+    },
+    {
+      "source": { "name": "directInstantiation", "file": "index.js" },
+      "target": { "name": "UserService.createUser", "file": "service.js" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.createUser() — receiver typed via new UserService()"
+    }
+  ]
+}

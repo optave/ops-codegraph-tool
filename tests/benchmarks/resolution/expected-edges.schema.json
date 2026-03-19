@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Expected Call Edges Manifest",
+  "description": "Hand-annotated call edges for resolution precision/recall benchmarks",
+  "type": "object",
+  "required": ["language", "edges"],
+  "properties": {
+    "language": {
+      "type": "string",
+      "description": "Language identifier matching the fixture directory name"
+    },
+    "description": {
+      "type": "string"
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "target", "kind", "mode"],
+        "properties": {
+          "source": {
+            "type": "object",
+            "required": ["name", "file"],
+            "properties": {
+              "name": { "type": "string", "description": "Function/method name" },
+              "file": { "type": "string", "description": "Filename (basename only)" }
+            }
+          },
+          "target": {
+            "type": "object",
+            "required": ["name", "file"],
+            "properties": {
+              "name": { "type": "string", "description": "Function/method name" },
+              "file": { "type": "string", "description": "Filename (basename only)" }
+            }
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["calls"],
+            "description": "Edge kind — currently only 'calls'"
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["static", "receiver-typed", "interface-dispatched"],
+            "description": "Resolution mode that should produce this edge"
+          },
+          "notes": {
+            "type": "string",
+            "description": "Human-readable explanation of why this edge is expected"
+          }
+        }
+      }
+    }
+  }
+}
