@@ -25,6 +25,19 @@ import { findMatchingNodes } from './symbol-lookup.js';
 const INTERFACE_LIKE_KINDS = new Set(['interface', 'trait']);
 
 /**
+ * Check whether the graph contains any 'implements' edges.
+ * Cached per db handle so the query runs at most once per connection.
+ */
+const _hasImplementsCache = new WeakMap();
+function hasImplementsEdges(db) {
+  if (_hasImplementsCache.has(db)) return _hasImplementsCache.get(db);
+  const row = db.prepare("SELECT 1 FROM edges WHERE kind = 'implements' LIMIT 1").get();
+  const result = !!row;
+  _hasImplementsCache.set(db, result);
+  return result;
+}
+
+/**
  * BFS traversal to find transitive callers of a node.
  * When an interface/trait node is encountered (either as the start node or
  * during traversal), its concrete implementors are also added to the frontier
@@ -40,6 +53,9 @@ export function bfsTransitiveCallers(
   startId,
   { noTests = false, maxDepth = 3, includeImplementors = true, onVisit } = {},
 ) {
+  // Skip all implementor lookups when the graph has no implements edges
+  const resolveImplementors = includeImplementors && hasImplementsEdges(db);
+
   const visited = new Set([startId]);
   const levels = {};
   let frontier = [startId];
@@ -47,7 +63,7 @@ export function bfsTransitiveCallers(
   // Seed: if start node is an interface/trait, include its implementors at depth 1.
   // Implementors go into a separate list so their callers appear at depth 2, not depth 1.
   const implNextFrontier = [];
-  if (includeImplementors) {
+  if (resolveImplementors) {
     const startNode = findNodeById(db, startId);
     if (startNode && INTERFACE_LIKE_KINDS.has(startNode.kind)) {
       const impls = findImplementors(db, startId);
@@ -88,7 +104,7 @@ export function bfsTransitiveCallers(
 
         // If a caller is an interface/trait, also pull in its implementors
         // Implementors are one extra hop away, so record at d+1
-        if (includeImplementors && INTERFACE_LIKE_KINDS.has(c.kind)) {
+        if (resolveImplementors && INTERFACE_LIKE_KINDS.has(c.kind)) {
           const impls = findImplementors(db, c.id);
           for (const impl of impls) {
             if (!visited.has(impl.id) && (!noTests || !isTestFile(impl.file))) {

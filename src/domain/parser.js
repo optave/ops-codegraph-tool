@@ -395,12 +395,23 @@ async function backfillTypeMap(filePath, source) {
   }
   const parsers = await createParsers();
   const extracted = wasmExtractSymbols(parsers, filePath, code);
-  if (!extracted?.symbols?.typeMap) return { typeMap: [], backfilled: false };
-  const tm = extracted.symbols.typeMap;
-  return {
-    typeMap: tm instanceof Map ? tm : new Map(tm.map((e) => [e.name, e.typeName])),
-    backfilled: true,
-  };
+  try {
+    if (!extracted?.symbols?.typeMap) {
+      return { typeMap: [], backfilled: false };
+    }
+    const tm = extracted.symbols.typeMap;
+    return {
+      typeMap: tm instanceof Map ? tm : new Map(tm.map((e) => [e.name, e.typeName])),
+      backfilled: true,
+    };
+  } finally {
+    // Free the WASM tree to prevent memory accumulation across repeated builds
+    if (extracted?.tree && typeof extracted.tree.delete === 'function') {
+      try {
+        extracted.tree.delete();
+      } catch {}
+    }
+  }
 }
 
 /**
@@ -441,7 +452,13 @@ export async function parseFileAuto(filePath, source, opts = {}) {
     const result = native.parseFile(filePath, source, !!opts.dataflow, opts.ast !== false);
     if (!result) return null;
     const patched = patchNativeResult(result);
-    if (!patched.typeMap || patched.typeMap.length === 0) {
+    // Only backfill typeMap for TS/TSX — JS files have no type annotations,
+    // and the native engine already handles `new Expr()` patterns.
+    const TS_BACKFILL_EXTS = new Set(['.ts', '.tsx']);
+    if (
+      (!patched.typeMap || patched.typeMap.length === 0) &&
+      TS_BACKFILL_EXTS.has(path.extname(filePath))
+    ) {
       const { typeMap, backfilled } = await backfillTypeMap(filePath, source);
       patched.typeMap = typeMap;
       if (backfilled) patched._typeMapBackfilled = true;
@@ -486,21 +503,35 @@ export async function parseFilesAuto(filePaths, rootDir, opts = {}) {
     }
     // Backfill typeMap via WASM for native binaries that predate the type-map feature
     if (needsTypeMap.length > 0) {
-      const parsers = await createParsers();
-      for (const { filePath, relPath } of needsTypeMap) {
-        try {
-          const code = fs.readFileSync(filePath, 'utf-8');
-          const extracted = wasmExtractSymbols(parsers, filePath, code);
-          if (extracted?.symbols?.typeMap) {
-            const symbols = result.get(relPath);
-            symbols.typeMap =
-              extracted.symbols.typeMap instanceof Map
-                ? extracted.symbols.typeMap
-                : new Map(extracted.symbols.typeMap.map((e) => [e.name, e.typeName]));
-            symbols._typeMapBackfilled = true;
+      // Only backfill for languages where WASM extraction can produce typeMap
+      // (TS/TSX have type annotations; JS only has `new Expr()` which native already handles)
+      const TS_EXTS = new Set(['.ts', '.tsx']);
+      const tsFiles = needsTypeMap.filter(({ filePath }) => TS_EXTS.has(path.extname(filePath)));
+      if (tsFiles.length > 0) {
+        const parsers = await createParsers();
+        for (const { filePath, relPath } of tsFiles) {
+          let extracted;
+          try {
+            const code = fs.readFileSync(filePath, 'utf-8');
+            extracted = wasmExtractSymbols(parsers, filePath, code);
+            if (extracted?.symbols?.typeMap) {
+              const symbols = result.get(relPath);
+              symbols.typeMap =
+                extracted.symbols.typeMap instanceof Map
+                  ? extracted.symbols.typeMap
+                  : new Map(extracted.symbols.typeMap.map((e) => [e.name, e.typeName]));
+              symbols._typeMapBackfilled = true;
+            }
+          } catch {
+            /* skip — typeMap is a best-effort backfill */
+          } finally {
+            // Free the WASM tree to prevent memory accumulation across repeated builds
+            if (extracted?.tree && typeof extracted.tree.delete === 'function') {
+              try {
+                extracted.tree.delete();
+              } catch {}
+            }
           }
-        } catch {
-          /* skip — typeMap is a best-effort backfill */
         }
       }
     }
@@ -578,7 +609,13 @@ export async function parseFileIncremental(cache, filePath, source, opts = {}) {
     const result = cache.parseFile(filePath, source);
     if (!result) return null;
     const patched = patchNativeResult(result);
-    if (!patched.typeMap || patched.typeMap.length === 0) {
+    // Only backfill typeMap for TS/TSX — JS files have no type annotations,
+    // and the native engine already handles `new Expr()` patterns.
+    const TS_BACKFILL_EXTS = new Set(['.ts', '.tsx']);
+    if (
+      (!patched.typeMap || patched.typeMap.length === 0) &&
+      TS_BACKFILL_EXTS.has(path.extname(filePath))
+    ) {
       const { typeMap, backfilled } = await backfillTypeMap(filePath, source);
       patched.typeMap = typeMap;
       if (backfilled) patched._typeMapBackfilled = true;

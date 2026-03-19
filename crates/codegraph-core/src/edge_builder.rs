@@ -339,13 +339,17 @@ pub fn build_call_edges(
         for cls in &file_input.classes {
             let source_row = nodes_by_name_and_file
                 .get(&(cls.name.as_str(), rel_path.as_str()))
-                .and_then(|v| v.iter().find(|n| n.kind == "class"));
+                .and_then(|v| v.iter().find(|n| {
+                    n.kind == "class" || n.kind == "struct" || n.kind == "record" || n.kind == "enum"
+                }));
 
             if let Some(source) = source_row {
                 if let Some(ref extends_name) = cls.extends {
                     let targets = nodes_by_name
                         .get(extends_name.as_str())
-                        .map(|v| v.iter().filter(|n| n.kind == "class").collect::<Vec<_>>())
+                        .map(|v| v.iter().filter(|n| {
+                            n.kind == "class" || n.kind == "struct" || n.kind == "trait" || n.kind == "record"
+                        }).collect::<Vec<_>>())
                         .unwrap_or_default();
                     for t in targets {
                         edges.push(ComputedEdge {
@@ -362,7 +366,7 @@ pub fn build_call_edges(
                         .get(implements_name.as_str())
                         .map(|v| {
                             v.iter()
-                                .filter(|n| n.kind == "interface" || n.kind == "class")
+                                .filter(|n| n.kind == "interface" || n.kind == "class" || n.kind == "trait")
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default();
