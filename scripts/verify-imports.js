@@ -35,8 +35,27 @@ function walk(dir) {
 }
 
 // ── extract dynamic import specifiers ───────────────────────────────────
-// Matches:  await import('...')  and  await import("...")
-const DYNAMIC_IMPORT_RE = /await\s+import\(\s*(['"])(.+?)\1\s*\)/g;
+// Matches:  import('...')  and  import("...") — with or without await
+const DYNAMIC_IMPORT_RE = /(?:await\s+)?import\(\s*(['"])(.+?)\1\s*\)/g;
+
+/**
+ * Check whether the text contains a `//` line-comment marker that is NOT
+ * inside a string literal. Walks character-by-character tracking quote state.
+ */
+function isInsideLineComment(text) {
+  let inStr = null; // null | "'" | '"' | '`'
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '\\' && inStr) { i++; continue; } // skip escaped char
+    if (inStr) {
+      if (ch === inStr) inStr = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') { inStr = ch; continue; }
+    if (ch === '/' && text[i + 1] === '/') return true;
+  }
+  return false;
+}
 
 function extractDynamicImports(filePath) {
   const src = readFileSync(filePath, 'utf8');
@@ -52,19 +71,29 @@ function extractDynamicImports(filePath) {
       if (line.includes('*/')) inBlockComment = false;
       continue;
     }
-    if (/^\s*\/\*/.test(line)) {
-      if (!line.includes('*/')) inBlockComment = true;
-      continue;
-    }
     // Skip single-line comments
     if (/^\s*\/\//.test(line)) continue;
 
+    // Strip block comments from the line before scanning for imports.
+    // Handles: mid-line /* ... */ (single-line) and opening /* without close.
+    let scanLine = line;
+    if (scanLine.includes('/*')) {
+      // Remove fully closed inline block comments: code /* ... */ more code
+      scanLine = scanLine.replace(/\/\*.*?\*\//g, '');
+      // If an unclosed /* remains, keep only the part before it and enter block mode
+      const openIdx = scanLine.indexOf('/*');
+      if (openIdx !== -1) {
+        scanLine = scanLine.slice(0, openIdx);
+        inBlockComment = true;
+      }
+    }
+
     let match;
     DYNAMIC_IMPORT_RE.lastIndex = 0;
-    while ((match = DYNAMIC_IMPORT_RE.exec(line)) !== null) {
-      // Skip if the match is inside a trailing comment
-      const before = line.slice(0, match.index);
-      if (before.includes('//') || before.includes('/*')) continue;
+    while ((match = DYNAMIC_IMPORT_RE.exec(scanLine)) !== null) {
+      // Skip if the match is inside a trailing line comment (// outside quotes)
+      const before = scanLine.slice(0, match.index);
+      if (isInsideLineComment(before)) continue;
 
       imports.push({ specifier: match[2], line: i + 1 });
     }
