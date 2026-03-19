@@ -15,6 +15,20 @@ You are preparing a release for `@optave/codegraph`.
 
 ---
 
+## Step 0: Isolate and sync
+
+1. **Create a worktree** — run `/worktree` to get an isolated copy of the repo. All subsequent steps run inside the worktree.
+2. **Sync with main** — fetch origin and check how far behind the current branch is:
+   ```bash
+   git fetch origin
+   git rev-list --count HEAD..origin/main
+   ```
+   If the count is > 0 (behind main), detach to `origin/main` so all subsequent work starts from the latest main:
+   ```bash
+   git checkout origin/main
+   ```
+   Do **not** create the `release/VERSION` branch here — Step 8 creates it once VERSION is known.
+
 ## Step 1a: Gather context
 
 Run these in parallel:
@@ -133,8 +147,8 @@ Run `grep` to confirm the new version appears in `package-lock.json` and that al
 
 ## Step 8: Create branch, commit, push, PR
 
-1. Create branch: `git checkout -b release/VERSION`
-2. Stage only the files you changed: `CHANGELOG.md`, `package.json`, `package-lock.json`, `crates/codegraph-core/Cargo.toml`, `docs/roadmap/ROADMAP.md`, `docs/roadmap/BACKLOG.md` if changed, `README.md` if changed
+1. Create branch: `git checkout -b release/VERSION` (if on detached HEAD from Step 0, this creates the branch at the current commit)
+2. Stage only the files you changed: `CHANGELOG.md`, `package.json`, `package-lock.json`, `docs/roadmap/ROADMAP.md`, `docs/roadmap/BACKLOG.md` if changed, `README.md` if changed
 3. Commit: `chore: release vVERSION`
 4. Push: `git push -u origin release/VERSION`
 5. Create PR:
