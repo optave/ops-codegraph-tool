@@ -266,7 +266,9 @@ function extractGoTypeMapDepth(node, ctx, depth) {
             : [];
       const rights =
         right.type === 'expression_list'
-          ? Array.from({ length: right.childCount }, (_, i) => right.child(i)).filter(Boolean)
+          ? Array.from({ length: right.childCount }, (_, i) => right.child(i)).filter(
+              (c) => c?.isNamed,
+            )
           : [right];
 
       for (let idx = 0; idx < lefts.length; idx++) {
