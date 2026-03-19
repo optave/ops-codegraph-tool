@@ -67,16 +67,15 @@ function extractDynamicImports(filePath) {
     const line = lines[i];
 
     // Track block comments (/** ... */ and /* ... */)
+    let scanLine = line;
     if (inBlockComment) {
-      if (line.includes('*/')) inBlockComment = false;
-      continue;
+      const closeIdx = scanLine.indexOf('*/');
+      if (closeIdx === -1) continue; // still fully inside a block comment
+      inBlockComment = false;
+      scanLine = scanLine.slice(closeIdx + 2); // scan content after */
     }
     // Skip single-line comments
-    if (/^\s*\/\//.test(line)) continue;
-
-    // Strip block comments from the line before scanning for imports.
-    // Handles: mid-line /* ... */ (single-line) and opening /* without close.
-    let scanLine = line;
+    if (/^\s*\/\//.test(scanLine)) continue;
     if (scanLine.includes('/*')) {
       // Remove fully closed inline block comments: code /* ... */ more code
       scanLine = scanLine.replace(/\/\*.*?\*\//g, '');
