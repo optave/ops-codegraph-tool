@@ -111,7 +111,9 @@ export function makeGraphAdapter(graph, opts = {}) {
       strengthIn[j] += w;
     }
 
-    // Add self-loops into adjacency and strengths
+    // Add self-loops into adjacency and strengths.
+    // Note: uses single-w convention (not standard 2w) — the modularity formulas in
+    // modularity.js are written to match this convention, keeping the system self-consistent.
     for (let v = 0; v < n; v++) {
       const w = selfLoop[v];
       if (w !== 0) {
