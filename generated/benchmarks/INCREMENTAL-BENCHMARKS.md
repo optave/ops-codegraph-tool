@@ -6,6 +6,10 @@ Import resolution: native batch vs JS fallback throughput.
 
 | Version | Engine | Files | Full Build | No-op | 1-File | Resolve (native) | Resolve (JS) |
 |---------|--------|------:|-----------:|------:|-------:|------------------:|-------------:|
+| 3.3.1 | native | 442 | 2.4s ↓22% | 11ms ↑10% | 346ms ↓17% | 9ms ↓6% | 26ms ~ |
+| 3.3.1 | wasm | 442 | 4.4s ↑2% | 10ms ↓9% | 508ms ↑6% | 9ms ↓6% | 26ms ~ |
+| 3.3.0 | native | 429 | 3.0s ↑141% | 10ms ↑67% | 417ms ↑74% | 10ms ↑700% | 26ms ↑888% |
+| 3.3.0 | wasm | 429 | 4.3s ↑29% | 11ms ~ | 479ms ↑41% | 10ms ↑700% | 26ms ↑888% |
 | 3.1.4 | native | 398 | 1.3s ↑9% | 6ms ~ | 240ms ↓11% | 1ms ↓37% | 3ms ↓45% |
 | 3.1.4 | wasm | 398 | 3.3s ↑10% | 11ms ↑83% | 340ms ↓28% | 1ms ↓37% | 3ms ↓45% |
 | 3.1.3 | native | 236 | 1.2s ~ | 6ms ↑20% | 271ms ↑3% | 2ms ↓5% | 5ms ~ |
@@ -31,37 +35,137 @@ Import resolution: native batch vs JS fallback throughput.
 
 ### Latest results
 
-**Version:** 3.1.4 | **Files:** 398 | **Date:** 2026-03-16
+**Version:** 3.3.1 | **Files:** 442 | **Date:** 2026-03-20
 
 #### Native (Rust)
 
 | Metric | Value |
 |--------|------:|
-| Full build | 1.3s |
-| No-op rebuild | 6ms |
-| 1-file rebuild | 240ms |
+| Full build | 2.4s |
+| No-op rebuild | 11ms |
+| 1-file rebuild | 346ms |
 
 #### WASM
 
 | Metric | Value |
 |--------|------:|
-| Full build | 3.3s |
-| No-op rebuild | 11ms |
-| 1-file rebuild | 340ms |
+| Full build | 4.4s |
+| No-op rebuild | 10ms |
+| 1-file rebuild | 508ms |
 
 #### Import Resolution
 
 | Metric | Value |
 |--------|------:|
-| Import pairs | 175 |
-| Native batch | 1ms |
-| JS fallback | 3ms |
+| Import pairs | 665 |
+| Native batch | 9ms |
+| JS fallback | 26ms |
 | Per-import (native) | 0ms |
 | Per-import (JS) | 0ms |
-| Speedup ratio | 2.2x |
+| Speedup ratio | 2.9x |
 
 <!-- INCREMENTAL_BENCHMARK_DATA
 [
+  {
+    "version": "3.3.1",
+    "date": "2026-03-20",
+    "files": 442,
+    "wasm": {
+      "fullBuildMs": 4363,
+      "noopRebuildMs": 10,
+      "oneFileRebuildMs": 508,
+      "oneFilePhases": {
+        "setupMs": 1.1,
+        "parseMs": 201.2,
+        "insertMs": 8.1,
+        "resolveMs": 1.6,
+        "edgesMs": 18.4,
+        "structureMs": 24.1,
+        "rolesMs": 52.1,
+        "astMs": 0.2,
+        "complexityMs": 0.1,
+        "cfgMs": 0.1,
+        "dataflowMs": 0.2,
+        "finalizeMs": 13.9
+      }
+    },
+    "native": {
+      "fullBuildMs": 2369,
+      "noopRebuildMs": 11,
+      "oneFileRebuildMs": 346,
+      "oneFilePhases": {
+        "setupMs": 1.2,
+        "parseMs": 59.2,
+        "insertMs": 8.1,
+        "resolveMs": 1.9,
+        "edgesMs": 27.3,
+        "structureMs": 23.4,
+        "rolesMs": 44.9,
+        "astMs": 0.3,
+        "complexityMs": 0.1,
+        "cfgMs": 0.1,
+        "dataflowMs": 0.2,
+        "finalizeMs": 9.1
+      }
+    },
+    "resolve": {
+      "imports": 665,
+      "nativeBatchMs": 9,
+      "jsFallbackMs": 25.8,
+      "perImportNativeMs": 0,
+      "perImportJsMs": 0
+    }
+  },
+  {
+    "version": "3.3.0",
+    "date": "2026-03-19",
+    "files": 429,
+    "wasm": {
+      "fullBuildMs": 4265,
+      "noopRebuildMs": 11,
+      "oneFileRebuildMs": 479,
+      "oneFilePhases": {
+        "setupMs": 1.7,
+        "parseMs": 193.6,
+        "insertMs": 8.3,
+        "resolveMs": 1.7,
+        "edgesMs": 14.7,
+        "structureMs": 16.5,
+        "rolesMs": 50.4,
+        "astMs": 0.2,
+        "complexityMs": 0.1,
+        "cfgMs": 0.1,
+        "dataflowMs": 0.2,
+        "finalizeMs": 13.3
+      }
+    },
+    "native": {
+      "fullBuildMs": 3048,
+      "noopRebuildMs": 10,
+      "oneFileRebuildMs": 417,
+      "oneFilePhases": {
+        "setupMs": 1.2,
+        "parseMs": 134,
+        "insertMs": 7.9,
+        "resolveMs": 1.6,
+        "edgesMs": 25.1,
+        "structureMs": 19.6,
+        "rolesMs": 45.9,
+        "astMs": 0.3,
+        "complexityMs": 0.1,
+        "cfgMs": 0.2,
+        "dataflowMs": 0.2,
+        "finalizeMs": 12
+      }
+    },
+    "resolve": {
+      "imports": 664,
+      "nativeBatchMs": 9.6,
+      "jsFallbackMs": 25.7,
+      "perImportNativeMs": 0,
+      "perImportJsMs": 0
+    }
+  },
   {
     "version": "3.1.4",
     "date": "2026-03-16",

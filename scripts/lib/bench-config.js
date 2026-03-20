@@ -134,6 +134,27 @@ export async function resolveBenchmarkSource() {
 		console.error(`Warning: failed to install native package: ${err.message}`);
 	}
 
+	// @huggingface/transformers is a devDependency (lazy-loaded for embeddings).
+	// It is not installed as a transitive dep in npm mode, so install it
+	// explicitly so the embedding benchmark workers can import it.
+	try {
+		const localPkg = JSON.parse(
+			fs.readFileSync(path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')), '..', '..', 'package.json'), 'utf8'),
+		);
+		const hfVersion = localPkg.devDependencies?.['@huggingface/transformers'];
+		if (hfVersion) {
+			console.error(`Installing @huggingface/transformers@${hfVersion} for embedding benchmarks...`);
+			execFileSync('npm', ['install', `@huggingface/transformers@${hfVersion}`, '--no-audit', '--no-fund', '--no-save'], {
+				cwd: tmpDir,
+				stdio: 'pipe',
+				timeout: 120_000,
+			});
+			console.error('Installed @huggingface/transformers');
+		}
+	} catch (err) {
+		console.error(`Warning: failed to install @huggingface/transformers: ${err.message}`);
+	}
+
 	const srcDir = path.join(pkgDir, 'src');
 
 	if (!fs.existsSync(srcDir)) {

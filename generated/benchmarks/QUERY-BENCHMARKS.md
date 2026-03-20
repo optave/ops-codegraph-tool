@@ -5,6 +5,10 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 | Version | Engine | fnDeps d1 | fnDeps d3 | fnDeps d5 | fnImpact d1 | fnImpact d3 | fnImpact d5 | diffImpact |
 |---------|--------|----------:|----------:|----------:|------------:|------------:|------------:|-----------:|
+| 3.3.1 | native | 3.6 ↑157% | 3.6 ↑177% | 3.5 ↑169% | 2.5 ↑92% | 2.6 ↑100% | 2.5 ↑92% | 7ms ↓20% |
+| 3.3.1 | wasm | 3.5 ↑169% | 3.6 ↑177% | 3.5 ↑192% | 2.4 ↑85% | 2.4 ↑85% | 2.4 ↑85% | 4.8ms ↓44% |
+| 3.3.0 | native | 1.4 ↑56% | 1.3 ↑44% | 1.3 ↑44% | 1.3 ↑44% | 1.3 ↑44% | 1.3 ↑44% | 8.8ms ↑28% |
+| 3.3.0 | wasm | 1.3 ↑30% | 1.3 ↑30% | 1.2 ↑33% | 1.3 ↑44% | 1.3 ↑44% | 1.3 ↑44% | 8.5ms ↑39% |
 | 3.1.4 | native | 0.9 ↑12% | 0.9 ↑12% | 0.9 ↑12% | 0.9 ↑12% | 0.9 ↑12% | 0.9 ↑12% | 6.9ms ↓17% |
 | 3.1.4 | wasm | 1 ↑11% | 1 ↑25% | 0.9 ↑12% | 0.9 ↑12% | 0.9 ↑12% | 0.9 ↑12% | 6.1ms ↓22% |
 | 3.1.3 | native | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.8 ~ | 0.8 ~ | 8.3ms ↓2% |
@@ -30,42 +34,138 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 ### Latest results
 
-**Version:** 3.1.4 | **Date:** 2026-03-16
+**Version:** 3.3.1 | **Date:** 2026-03-20
 
 #### Native (Rust)
 
-**Targets:** hub=`src/db.js`, mid=`previous`, leaf=`docs`
+**Targets:** hub=`buildGraph`, mid=`db`, leaf=`docs`
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 0.9ms |
-| fnDeps depth 3 | 0.9ms |
-| fnDeps depth 5 | 0.9ms |
-| fnImpact depth 1 | 0.9ms |
-| fnImpact depth 3 | 0.9ms |
-| fnImpact depth 5 | 0.9ms |
-| diffImpact latency | 6.9ms |
+| fnDeps depth 1 | 3.6ms |
+| fnDeps depth 3 | 3.6ms |
+| fnDeps depth 5 | 3.5ms |
+| fnImpact depth 1 | 2.5ms |
+| fnImpact depth 3 | 2.6ms |
+| fnImpact depth 5 | 2.5ms |
+| diffImpact latency | 7ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
 #### WASM
 
-**Targets:** hub=`src/db.js`, mid=`previous`, leaf=`docs`
+**Targets:** hub=`buildGraph`, mid=`db`, leaf=`docs`
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 1ms |
-| fnDeps depth 3 | 1ms |
-| fnDeps depth 5 | 0.9ms |
-| fnImpact depth 1 | 0.9ms |
-| fnImpact depth 3 | 0.9ms |
-| fnImpact depth 5 | 0.9ms |
-| diffImpact latency | 6.1ms |
+| fnDeps depth 1 | 3.5ms |
+| fnDeps depth 3 | 3.6ms |
+| fnDeps depth 5 | 3.5ms |
+| fnImpact depth 1 | 2.4ms |
+| fnImpact depth 3 | 2.4ms |
+| fnImpact depth 5 | 2.4ms |
+| diffImpact latency | 4.8ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
 <!-- QUERY_BENCHMARK_DATA
 [
+  {
+    "version": "3.3.1",
+    "date": "2026-03-20",
+    "wasm": {
+      "targets": {
+        "hub": "buildGraph",
+        "mid": "db",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 3.5,
+        "depth3Ms": 3.6,
+        "depth5Ms": 3.5
+      },
+      "fnImpact": {
+        "depth1Ms": 2.4,
+        "depth3Ms": 2.4,
+        "depth5Ms": 2.4
+      },
+      "diffImpact": {
+        "latencyMs": 4.8,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    },
+    "native": {
+      "targets": {
+        "hub": "buildGraph",
+        "mid": "db",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 3.6,
+        "depth3Ms": 3.6,
+        "depth5Ms": 3.5
+      },
+      "fnImpact": {
+        "depth1Ms": 2.5,
+        "depth3Ms": 2.6,
+        "depth5Ms": 2.5
+      },
+      "diffImpact": {
+        "latencyMs": 7,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    }
+  },
+  {
+    "version": "3.3.0",
+    "date": "2026-03-19",
+    "wasm": {
+      "targets": {
+        "hub": "src/types.ts",
+        "mid": "functionNodeId",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 1.3,
+        "depth3Ms": 1.3,
+        "depth5Ms": 1.2
+      },
+      "fnImpact": {
+        "depth1Ms": 1.3,
+        "depth3Ms": 1.3,
+        "depth5Ms": 1.3
+      },
+      "diffImpact": {
+        "latencyMs": 8.5,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    },
+    "native": {
+      "targets": {
+        "hub": "src/types.ts",
+        "mid": "db",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 1.4,
+        "depth3Ms": 1.3,
+        "depth5Ms": 1.3
+      },
+      "fnImpact": {
+        "depth1Ms": 1.3,
+        "depth3Ms": 1.3,
+        "depth5Ms": 1.3
+      },
+      "diffImpact": {
+        "latencyMs": 8.8,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    }
+  },
   {
     "version": "3.1.4",
     "date": "2026-03-16",

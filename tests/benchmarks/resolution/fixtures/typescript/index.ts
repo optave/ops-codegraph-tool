@@ -1,5 +1,5 @@
 import { JsonSerializer } from './serializer';
-import { createService, UserService } from './service';
+import { createService, type UserService } from './service';
 
 export function main(): void {
   const svc = createService();

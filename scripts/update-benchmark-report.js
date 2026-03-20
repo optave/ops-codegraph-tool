@@ -349,9 +349,17 @@ if (fs.existsSync(readmePath)) {
 		: formatMs(latest.wasm.perFile.buildTimeMs * ESTIMATE_FILES);
 	rows += `| ~${(ESTIMATE_FILES).toLocaleString()} files (est.) | **~${estBuild} build** |\n`;
 
+	// Preserve existing benchmark link line from README rather than hardcoding.
+	// Fall back to a default if we can't find it.
+	let benchmarkLinks = '[build benchmarks](generated/benchmarks/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/benchmarks/EMBEDDING-BENCHMARKS.md)';
+	const linksMatch = readme.match(/Self-measured on every release via CI \((.+?)\):/);
+	if (linksMatch) {
+		benchmarkLinks = linksMatch[1];
+	}
+
 	const perfSection = `## 📊 Performance
 
-Self-measured on every release via CI ([build benchmarks](generated/benchmarks/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/benchmarks/EMBEDDING-BENCHMARKS.md)):
+Self-measured on every release via CI (${benchmarkLinks}):
 
 | Metric | Latest |
 |---|---|

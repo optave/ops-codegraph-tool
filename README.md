@@ -550,14 +550,14 @@ Self-measured on every release via CI ([build benchmarks](generated/benchmarks/B
 
 | Metric | Latest |
 |---|---|
-| Build speed (native) | **3.5 ms/file** |
-| Build speed (WASM) | **9.6 ms/file** |
-| Query time | **3ms** |
-| No-op rebuild (native) | **9ms** |
-| 1-file rebuild (native) | **265ms** |
-| Query: fn-deps | **0.9ms** |
-| Query: path | **0.9ms** |
-| ~50,000 files (est.) | **~175.0s build** |
+| Build speed (native) | **6.1 ms/file** |
+| Build speed (WASM) | **11.2 ms/file** |
+| Query time | **7ms** |
+| No-op rebuild (native) | **12ms** |
+| 1-file rebuild (native) | **353ms** |
+| Query: fn-deps | **1.4ms** |
+| Query: path | **1.3ms** |
+| ~50,000 files (est.) | **~305.0s build** |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 
@@ -767,14 +767,15 @@ See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap a
 3. ~~**Analysis Expansion**~~ — **Complete** (v2.7.0) — complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search
 4. ~~**Deep Analysis & Graph Enrichment**~~ — **Complete** (v3.0.0) — dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, interactive viewer, exports command
 5. ~~**Architectural Refactoring**~~ — **Complete** (v3.1.5) — unified AST analysis, composable MCP, domain errors, builder pipeline, graph model, qualified names, presentation layer, CLI composability
-6. **Native Analysis Acceleration** — move JS-only build phases to Rust, sub-100ms 1-file rebuilds
-7. **TypeScript Migration** — project setup, core type definitions, leaf → core → orchestration migration
-8. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
-9. **Intelligent Embeddings** — LLM-generated descriptions, enhanced embeddings, module summaries
-10. **Natural Language Queries** — `codegraph ask` command, conversational sessions
-11. **Expanded Language Support** — 8 new languages (11 → 19)
-12. **GitHub Integration & CI** — reusable GitHub Action, LLM-enhanced PR review, SARIF output
-13. **Visualization & Advanced** — web UI, dead code detection, monorepo, agentic search
+6. **Resolution Accuracy** — **In Progress** (5 of 6 complete) — type inference, receiver type tracking, dead role sub-categories, resolution benchmarks, `package.json` exports, monorepo workspace resolution
+7. **TypeScript Migration** — **In Progress** (2 of 7 complete) — project setup, core type definitions, leaf → core → orchestration migration
+8. **Native Analysis Acceleration** — move JS-only build phases to Rust, sub-100ms 1-file rebuilds
+9. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
+10. **Intelligent Embeddings** — LLM-generated descriptions, enhanced embeddings, module summaries
+11. **Natural Language Queries** — `codegraph ask` command, conversational sessions
+12. **Expanded Language Support** — 8 new languages (11 → 19)
+13. **GitHub Integration & CI** — reusable GitHub Action, LLM-enhanced PR review, SARIF output
+14. **Visualization & Advanced** — web UI, dead code detection, monorepo, agentic search
 
 ## 🤝 Contributing
 

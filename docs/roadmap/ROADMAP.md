@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.2.0 | **Status:** Active development | **Updated:** March 2026
+> **Current version:** 3.3.1 | **Status:** Active development | **Updated:** March 2026
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across twelve phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -17,8 +17,8 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.7.0) |
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
 | [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names, CLI composability | **Complete** (v3.1.5) |
-| [**4**](#phase-4--resolution-accuracy) | Resolution Accuracy | Dead role sub-categories, receiver type tracking, interface/trait implementation edges, resolution precision/recall benchmarks, `package.json` exports field, monorepo workspace resolution | **In Progress** (4.2 complete) |
-| [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration, supply-chain security, CI coverage gates | Planned |
+| [**4**](#phase-4--resolution-accuracy) | Resolution Accuracy | Dead role sub-categories, receiver type tracking, interface/trait implementation edges, resolution precision/recall benchmarks, `package.json` exports field, monorepo workspace resolution | **In Progress** (5 of 6 complete) |
+| [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration, supply-chain security, CI coverage gates | **In Progress** (2 of 7 complete) |
 | [**6**](#phase-6--native-analysis-acceleration) | Native Analysis Acceleration | Move JS-only build phases (AST nodes, CFG, dataflow, insert nodes, structure, roles, complexity) to Rust; fix incremental rebuild data loss on native; sub-100ms 1-file rebuilds | Planned |
 | [**7**](#phase-7--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system, DX & onboarding, confidence annotations, shell completion | Planned |
 | [**8**](#phase-8--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
@@ -1032,88 +1032,71 @@ Extract `implements`/`extends`/trait-impl relationships from tree-sitter AST and
 
 **Affected files:** `src/extractors/*.js`, `src/domain/graph/builder/stages/build-edges.js`, `src/domain/analysis/impact.js`
 
-### 4.4 -- Call Resolution Precision/Recall Benchmark Suite
+### ~~4.4 -- Call Resolution Precision/Recall Benchmark Suite~~ ✅
 
-No tests currently measure call resolution accuracy. Add a benchmark suite that tracks precision/recall across versions.
+Hand-annotated fixture projects per language with `expected-edges.json` manifests. Benchmark runner compares codegraph's resolved edges against expected, reports precision and recall. CI gate fails if metrics drop below baseline. Child-process isolation prevents state leaks between benchmark runs.
 
-- Create `tests/benchmarks/resolution/` with hand-annotated fixture projects per language
-- Each fixture declares expected call edges in a `expected-edges.json` manifest
-- Benchmark runner compares codegraph's resolved edges against expected edges, reports precision (correct / total resolved) and recall (correct / total expected)
-- Track metrics per language and per resolution mode (static, receiver-typed, interface-dispatched)
-- CI gate: fail if precision or recall drops below baseline for any language
-- Initial target: ≥85% precision, ≥80% recall for TypeScript and JavaScript
+- ✅ `tests/benchmarks/resolution/` with per-language fixtures and expected-edges manifests
+- ✅ Benchmark runner with precision/recall reporting per language and resolution mode
+- ✅ CI gate on accuracy regression
+- ✅ Child-process isolation for benchmark builds ([#512](https://github.com/optave/codegraph/pull/512))
 
-**New directory:** `tests/benchmarks/resolution/`
+**New directory:** `tests/benchmarks/resolution/` ([#507](https://github.com/optave/codegraph/pull/507))
 
-### 4.5 -- `package.json` Exports Field Resolution
+### ~~4.5 -- `package.json` Exports Field Resolution~~ ✅
 
-Modern Node.js standard since v12. Currently codegraph's import resolution uses brute-force filesystem probing (tries 10+ extensions via `fs.existsSync()`). It doesn't read `package.json` `exports` field, meaning conditional exports, subpath patterns, and package self-references are invisible.
+Import resolution now reads `package.json` `exports` field for conditional exports, subpath patterns, and package self-references. Falls back to filesystem probing only when `exports` is absent.
 
-- Parse `package.json` `exports` field during import resolution
-- Support subpath patterns (`"./lib/*": "./src/*.js"`)
-- Support conditional exports (`"import"`, `"require"`, `"default"`)
-- Fall back to current filesystem probing only when `exports` field is absent
+- ✅ Parse `package.json` `exports` field during import resolution
+- ✅ Support subpath patterns (`"./lib/*": "./src/*.js"`)
+- ✅ Support conditional exports (`"import"`, `"require"`, `"default"`)
+- ✅ Fallback to filesystem probing when `exports` field is absent
 
-**Affected files:** `src/domain/graph/resolve.js`
+**Affected files:** `src/domain/graph/resolve.js` ([#509](https://github.com/optave/codegraph/pull/509))
 
-### 4.6 -- Monorepo Workspace Resolution
+### ~~4.6 -- Monorepo Workspace Resolution~~ ✅
 
-`pnpm-workspace.yaml`, npm workspaces (`package.json` `workspaces`), and `lerna.json` are not recognized. Internal package imports (`@myorg/utils`) fall through to global resolution with low confidence.
+npm workspaces (`package.json` `workspaces`), `pnpm-workspace.yaml`, and `lerna.json` are now recognized. Internal package imports (`@myorg/utils`) resolve to actual source files with high confidence (0.95).
 
 > **Scope note:** This phase covers the *resolution layer only* — detecting workspace packages and resolving internal imports to source files. Full monorepo graph support (package node type, cross-package edges, `build --workspace` flag) is deferred to Phase 12.2.
 
-- Detect workspace root and enumerate workspace packages
-- Resolve internal package imports to actual source files within the monorepo
-- Assign high confidence (0.95) to workspace-resolved imports
+- ✅ Detect workspace root and enumerate workspace packages
+- ✅ Resolve internal package imports to actual source files within the monorepo
+- ✅ High confidence (0.95) for workspace-resolved imports
 
-**Affected files:** `src/domain/graph/resolve.js`, `src/infrastructure/config.js`
+**Affected files:** `src/domain/graph/resolve.js`, `src/infrastructure/config.js` ([#509](https://github.com/optave/codegraph/pull/509))
 
 ---
 
 ## Phase 5 -- TypeScript Migration
 
+> **Status:** In Progress
+
 **Goal:** Migrate the codebase from plain JavaScript to TypeScript, leveraging the clean module boundaries established in Phase 3. Incremental module-by-module migration starting from leaf modules inward.
 
 **Why after Phase 4:** The resolution accuracy work (Phase 4) operates on the existing JS codebase and produces immediate accuracy gains. TypeScript migration builds on Phase 3's clean module boundaries to add type safety across the entire codebase. Every subsequent phase benefits from types: MCP schema auto-generation, API contracts, refactoring safety. The Phase 4 resolution improvements (receiver tracking, interface edges) establish the resolution model that TypeScript types will formalize.
 
-### 5.1 -- Project Setup
+### ~~5.1 -- Project Setup~~ ✅
 
-- Add `typescript` as a devDependency
-- Create `tsconfig.json` with strict mode, ES module output, path aliases matching the Phase 3 module structure
-- Update Biome config to lint `.ts` files
-- Configure build step: `tsc` emits to `dist/`, `package.json` `exports` point to compiled output
-- Add `tsc --noEmit` to CI as a type-checking gate
-- Enable incremental compilation for fast rebuilds
+TypeScript project configured with strict mode, ES module output, path aliases, incremental compilation, and `dist/` build output with source maps. Biome configured for `.ts` files. `package.json` `exports` point to compiled output.
 
-**Affected files:** `package.json`, `biome.json`, new `tsconfig.json`
+- ✅ `typescript` devDependency, `tsconfig.json` with strict mode
+- ✅ Build pipeline emitting to `dist/` with source maps
+- ✅ `tsc --noEmit` CI type-checking gate
+- ✅ Incremental compilation enabled
 
-### 5.2 -- Core Type Definitions
+**Affected files:** `package.json`, `biome.json`, new `tsconfig.json` ([#508](https://github.com/optave/codegraph/pull/508))
 
-Define TypeScript interfaces for all abstractions introduced in Phase 3:
+### ~~5.2 -- Core Type Definitions~~ ✅
 
-```ts
-// Types for the core domain model
-interface SymbolNode { id: number; name: string; qualifiedName?: string; kind: SymbolKind; file: string; line: number; endLine: number; parentId?: number; }
-interface Edge { source: number; target: number; kind: EdgeKind; confidence: number; }
-type CoreSymbolKind = 'function' | 'method' | 'class' | 'interface' | 'type' | 'struct' | 'enum' | 'trait' | 'record' | 'module'
-type ExtendedSymbolKind = 'parameter' | 'property' | 'constant'
-type SymbolKind = CoreSymbolKind | ExtendedSymbolKind
-type CoreEdgeKind = 'imports' | 'imports-type' | 'reexports' | 'calls' | 'extends' | 'implements'
-type StructuralEdgeKind = 'contains' | 'parameter_of' | 'receiver'
-type EdgeKind = CoreEdgeKind | StructuralEdgeKind
-type ASTNodeKind = 'call' | 'new' | 'string' | 'regex' | 'throw' | 'await'
+Comprehensive TypeScript type definitions for the entire domain model — symbols, edges, nodes, config, queries, analysis results, MCP tools, and all Phase 3 abstractions.
 
-// Interfaces for Phase 3 abstractions
-interface Repository { insertNode(node: SymbolNode): void; findNodesByName(name: string, opts?: QueryOpts): SymbolNode[]; }
-interface Engine { parseFile(path: string, source: string): ParseResult; resolveImports(batch: ImportBatch): ResolvedImport[]; }
-interface ASTVisitor { name: string; visit(node: TreeSitterNode, context: VisitorContext): void; } // Phase 3.1
-interface Extractor { language: string; handlers: Record<string, NodeHandler>; }
-interface Command { name: string; options: OptionDef[]; validate(args: unknown, opts: unknown): void; execute(args: unknown, opts: unknown): Promise<void>; }
-```
+- ✅ `SymbolNode`, `Edge`, `SymbolKind`, `EdgeKind`, `ASTNodeKind` types
+- ✅ `Repository`, `Engine`, `ASTVisitor`, `Extractor`, `Command` interfaces
+- ✅ Config, query options, analysis result types
+- ✅ Narrowed edge kind types and `ExtendedSymbolKind` method
 
-These interfaces serve as the migration contract -- each module is migrated to satisfy its interface.
-
-**New file:** `src/types.ts`
+**New file:** `src/types.ts` ([#516](https://github.com/optave/codegraph/pull/516))
 
 ### 5.3 -- Leaf Module Migration
 

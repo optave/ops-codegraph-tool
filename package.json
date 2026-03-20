@@ -1,6 +1,6 @@
 {
   "name": "@optave/codegraph",
-  "version": "3.2.0",
+  "version": "3.3.1",
   "description": "Local code graph CLI — parse codebases with tree-sitter, build dependency graphs, query them",
   "type": "module",
   "main": "dist/index.js",
@@ -32,6 +32,7 @@
     "build": "tsc",
     "build:wasm": "node scripts/build-wasm.js",
     "typecheck": "tsc --noEmit",
+    "verify-imports": "node scripts/verify-imports.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -79,12 +80,12 @@
   },
   "optionalDependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@optave/codegraph-darwin-arm64": "3.2.0",
-    "@optave/codegraph-darwin-x64": "3.2.0",
-    "@optave/codegraph-linux-arm64-gnu": "3.2.0",
-    "@optave/codegraph-linux-x64-gnu": "3.2.0",
-    "@optave/codegraph-linux-x64-musl": "3.2.0",
-    "@optave/codegraph-win32-x64-msvc": "3.2.0"
+    "@optave/codegraph-darwin-arm64": "3.3.1",
+    "@optave/codegraph-darwin-x64": "3.3.1",
+    "@optave/codegraph-linux-arm64-gnu": "3.3.1",
+    "@optave/codegraph-linux-x64-gnu": "3.3.1",
+    "@optave/codegraph-linux-x64-musl": "3.3.1",
+    "@optave/codegraph-win32-x64-msvc": "3.3.1"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",

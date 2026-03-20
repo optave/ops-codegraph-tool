@@ -26,6 +26,15 @@ if (arg) {
 }
 const entry = JSON.parse(jsonText);
 
+// Guard: reject empty benchmark results (all workers crashed or no symbols indexed)
+if (!entry.symbols || !entry.models || Object.keys(entry.models).length === 0) {
+	console.error(
+		`Embedding benchmark produced empty results (symbols=${entry.symbols}, models=${Object.keys(entry.models || {}).length}). ` +
+		'Skipping report update to avoid overwriting valid data. Check benchmark worker logs.',
+	);
+	process.exit(1);
+}
+
 // ── Paths ────────────────────────────────────────────────────────────────
 const reportPath = path.join(root, 'generated', 'benchmarks', 'EMBEDDING-BENCHMARKS.md');
 
