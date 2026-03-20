@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.3.1](https://github.com/optave/codegraph/compare/v3.3.0...v3.3.1) (2026-03-20)
+
+**Incremental rebuild accuracy and post-3.3.0 stabilization.** This patch fixes a critical edge gap in the file watcher's single-file rebuild path where call edges were silently dropped during incremental rebuilds, aligns the native Rust engine's edge builder kind filters with the JS engine for parity, plugs a WASM tree memory leak in native engine typeMap backfill, and restores query performance to pre-3.1.4 levels. Several post-reorganization import path issues are also corrected.
+
+### Bug Fixes
+
+* **watcher:** close edge gap in single-file rebuild — incremental rebuilds now correctly preserve call edges by coercing native typeMap arrays to Maps and rebuilding edges for reverse-dependency files ([#533](https://github.com/optave/codegraph/pull/533), [#542](https://github.com/optave/codegraph/pull/542))
+* **native:** align edge builder kind filters with JS engine parity — ensures native and WASM engines produce identical edge sets ([#541](https://github.com/optave/codegraph/pull/541))
+* **native:** free leaked WASM trees in native engine typeMap backfill ([#534](https://github.com/optave/codegraph/pull/534))
+* **cli:** correct `ast` command import path after src/ reorganization ([#532](https://github.com/optave/codegraph/pull/532))
+* **benchmarks:** stabilize benchmark targets across engines and preserve README links ([#527](https://github.com/optave/codegraph/pull/527))
+* **benchmarks:** update benchmark script import paths after src/ restructure ([#521](https://github.com/optave/codegraph/pull/521))
+* **ci:** sync Cargo.toml version before native binary build ([#538](https://github.com/optave/codegraph/pull/538))
+
+### Performance
+
+* **queries:** reduce query latency regression from 3.1.4 to 3.3.0 — cached prepared statements for `findReverseDeps` and `deleteOutgoingEdges` ([#528](https://github.com/optave/codegraph/pull/528))
+
+### Tests
+
+* **watcher:** incremental edge parity CI check — ensures watcher rebuilds produce identical edge sets to full builds ([#539](https://github.com/optave/codegraph/pull/539))
+
+### Chores
+
+* **ci:** add dynamic import verification to catch stale paths ([#540](https://github.com/optave/codegraph/pull/540))
+
 ## [3.3.0](https://github.com/optave/codegraph/compare/v3.2.0...v3.3.0) (2026-03-19)
 
 **Resolution accuracy reaches a new level.** This release delivers Phase 4 resolution improvements — type inference across all typed languages, receiver type tracking with graded confidence, `package.json` exports field resolution, and monorepo workspace resolution. Method calls like `repo.findCallers()` now resolve through receiver types instead of matching any `findCallers` in scope. Barrel files correctly show re-exported symbols. A precision/recall benchmark suite tracks call resolution accuracy across versions. On the infrastructure side, all hardcoded behavioral constants are centralized into `DEFAULTS` with recursive deep merge, and the TypeScript migration begins with project setup and core type definitions.

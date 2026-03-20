@@ -145,6 +145,19 @@ Read `README.md` and check if any new user-facing features from this release nee
 
 Run `grep` to confirm the new version appears in `package-lock.json` and that all `@optave/codegraph-*` optional dependency entries are complete (have version, resolved, integrity, cpu, os fields). Flag any incomplete entries — they indicate an unpublished platform binary.
 
+**Critical: verify `libc` fields on Linux entries.** Some npm versions (notably v11+) silently strip the `libc` field when regenerating the lock file via `npm install --package-lock-only`. Without `libc`, npm may install glibc binaries on musl systems (Alpine) and vice versa. Check:
+
+```bash
+grep -A12 'codegraph-linux' package-lock.json | grep -c libc
+# Expected: 3 (one each for linux-arm64-gnu, linux-x64-gnu, linux-x64-musl)
+```
+
+If the count is less than 3, manually restore the missing fields:
+- `-gnu` packages: `"libc": ["glibc"]`
+- `-musl` packages: `"libc": ["musl"]`
+
+Place the `libc` array after the `cpu` array in each entry.
+
 ## Step 8: Create branch, commit, push, PR
 
 1. Create branch: `git checkout -b release/VERSION` (if on detached HEAD from Step 0, this creates the branch at the current commit)
