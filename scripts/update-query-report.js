@@ -146,6 +146,19 @@ for (const engineKey of ['native', 'wasm']) {
 	md += `| diffImpact affected files | ${e.diffImpact.affectedFiles} |\n\n`;
 }
 
+// ── Preserve hand-written notes from existing file ────────────────────
+let notes = '';
+if (fs.existsSync(reportPath)) {
+	const existing = fs.readFileSync(reportPath, 'utf8');
+	const notesMatch = existing.match(/<!-- NOTES_START -->\n([\s\S]*?)<!-- NOTES_END -->/);
+	if (notesMatch) {
+		notes = notesMatch[1];
+	}
+}
+if (notes) {
+	md += `<!-- NOTES_START -->\n${notes}<!-- NOTES_END -->\n\n`;
+}
+
 md += `<!-- QUERY_BENCHMARK_DATA\n${JSON.stringify(history, null, 2)}\n-->\n`;
 
 fs.mkdirSync(path.dirname(reportPath), { recursive: true });
