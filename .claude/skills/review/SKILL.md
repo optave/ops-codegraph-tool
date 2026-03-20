@@ -63,7 +63,7 @@ If `CONFLICTING`:
 2. **Do not assume which side to keep.** You must fully understand the context of both sides before resolving. If you don't know why a line was added — what feature it supports, what bug it fixes, what reviewer requested it — you cannot resolve the conflict correctly. Before touching any conflict:
    - Read the PR description and any linked issues (`gh pr view <number>`) to understand the PR's purpose and scope.
    - Check the PR's commit history (`git log --oneline origin/<base-branch>..HEAD -- <file>`) to understand *why* the conflicting line was changed on the PR side. Also check the base branch history (`git log --oneline HEAD..origin/<base-branch> -- <file>`) to understand *why* the base version exists.
-   - Read Greptile and Claude review comments on the PR (`gh api repos/optave/codegraph/pulls/<number>/comments`, `gh api repos/optave/codegraph/issues/<number>/comments`) — a reviewer may have requested the change that caused the conflict.
+   - Read Greptile and Claude review comments on the PR (`gh api repos/optave/codegraph/pulls/<number>/comments`, `gh api repos/optave/codegraph/pulls/<number>/reviews`, `gh api repos/optave/codegraph/issues/<number>/comments`) — a reviewer may have requested the change that caused the conflict.
    - Check what landed on main that introduced the other side (`git log --oneline HEAD..origin/<base-branch> -- <file>`) and read those PR descriptions too if needed.
    - Compare the PR's diff against its merge base (`git diff $(git merge-base origin/<base-branch> HEAD) HEAD -- <file>`) to see which side introduced an intentional change vs. which side carried stale code.
    - Only then choose the correct resolution. If the PR deliberately changed a line and main still has the old version, keep the PR's version. If main introduced a fix or new feature the PR doesn't have, keep main's version. If both sides made intentional changes, merge them together manually.
@@ -95,20 +95,24 @@ If any checks are failing:
 
 ### 2d. Gather all review comments
 
-Fetch **all** review comments from both Claude and Greptile:
+Fetch **all** review comments from both Claude and Greptile. You MUST check all three endpoints — Claude's feedback often appears in the `/reviews` and `/comments` endpoints, not just issue comments:
 
 ```bash
-# PR review comments (inline code comments)
+# PR review comments (inline code comments — Claude and Greptile both use these)
 gh api repos/optave/codegraph/pulls/<number>/comments --paginate --jq '.[] | {id: .id, user: .user.login, body: .body, path: .path, line: .line, created_at: .created_at}'
 
-# PR reviews (top-level review bodies)
+# PR reviews (top-level review bodies — Claude typically posts CHANGES_REQUESTED or COMMENT reviews here)
 gh api repos/optave/codegraph/pulls/<number>/reviews --paginate --jq '.[] | {id: .id, user: .user.login, body: .body, state: .state}'
 
-# Issue-style comments (includes @greptileai trigger responses)
+# Issue-style comments (includes @greptileai trigger responses and general discussion)
 gh api repos/optave/codegraph/issues/<number>/comments --paginate --jq '.[] | {id: .id, user: .user.login, body: .body, created_at: .created_at}'
 ```
 
-### 2e. Address every comment
+**Important:** Go through the results from ALL three endpoints. Build a complete list of actionable items from every reviewer before starting fixes. Do not skip any reviewer's comments.
+
+### 2e. Address every comment from EVERY reviewer
+
+You must address comments from **all** reviewers — Claude (claude-code-review bot), Greptile, and any humans. Do not only address one reviewer's comments and skip another's. Process each reviewer's feedback systematically.
 
 For **each** review comment — including minor suggestions, nits, style feedback, and optional improvements:
 
@@ -116,16 +120,35 @@ For **each** review comment — including minor suggestions, nits, style feedbac
 2. **Read the relevant code** at the file and line referenced.
 3. **Make the change.** Even if the comment is marked as "nit" or "suggestion" or "minor" — address it. The goal is zero outstanding comments.
 4. **If you disagree** with a suggestion (e.g., it would introduce a bug or contradicts project conventions), do NOT silently ignore it. Reply to the comment explaining why you chose a different approach.
-5. **Reply to each comment** explaining what you did:
+5. **Reply to each comment** explaining what you did. The reply mechanism depends on where the comment lives:
+
+   **For inline PR review comments** (from Claude, Greptile, or humans — these have a `path` and `line`):
    ```bash
    gh api repos/optave/codegraph/pulls/<number>/comments/<comment-id>/replies \
      -f body="Fixed — <brief description of what was changed>"
    ```
-   For issue-style comments, reply on the issue:
+
+   **For top-level PR review bodies** (Claude often leaves a summary review with `CHANGES_REQUESTED` or `COMMENT` state — these come from the `/reviews` endpoint and have no `path`):
+   ```bash
+   # Reply on the PR conversation thread so the reviewer sees it
+   gh api repos/optave/codegraph/issues/<number>/comments \
+     -f body=$'Addressed Claude\'s review feedback:\n- <bullet per item addressed>'
+   ```
+
+   **For issue-style comments** (includes @greptileai trigger responses):
    ```bash
    gh api repos/optave/codegraph/issues/<number>/comments \
      -f body="Addressed: <summary of changes made>"
    ```
+
+**Checklist before moving on:** After addressing all comments, verify you haven't missed a reviewer:
+```bash
+# List all unique reviewers who left comments
+gh api repos/optave/codegraph/pulls/<number>/comments --paginate --jq '[.[].user.login] | unique | .[]'
+gh api repos/optave/codegraph/pulls/<number>/reviews --paginate --jq '[.[].user.login] | unique | .[]'
+gh api repos/optave/codegraph/issues/<number>/comments --paginate --jq '[.[].user.login] | unique | .[]'
+# Confirm you addressed comments from EVERY reviewer listed
+```
 
 ### 2f. Commit and push fixes
 
@@ -187,8 +210,8 @@ After processing all PRs, output a summary table:
 
 - **Never rebase.** Always `git merge <base>` to resolve conflicts.
 - **Never force-push** unless fixing a commit message that fails commitlint. Amend + force-push is the only way to fix a pushed commit title (messages are part of the SHA). This is safe on feature branches. For all other problems, fix with a new commit.
-- **Address ALL comments**, even minor/nit/optional ones. Leave zero unaddressed.
-- **Always reply to comments** explaining what was done. Don't just fix silently.
+- **Address ALL comments from ALL reviewers** (Claude, Greptile, and humans), even minor/nit/optional ones. Leave zero unaddressed. Do not only respond to one reviewer and skip another.
+- **Always reply to comments** explaining what was done. Don't just fix silently. Every reviewer must see a reply on their feedback.
 - **Don't re-trigger Greptile if already approved.** If your last reply to a Greptile comment has a positive emoji reaction (👍, ✅, 🎉) from `greptileai`, it's already satisfied — skip re-triggering.
 - **Only re-trigger Claude** if you addressed Claude's feedback specifically.
 - **No co-author lines** in commit messages.
