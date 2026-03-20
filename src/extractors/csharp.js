@@ -14,6 +14,7 @@ export function extractCSharpSymbols(tree, _filePath) {
   };
 
   walkCSharpNode(tree.rootNode, ctx);
+  reclassifyCSharpImplements(ctx);
   extractCSharpTypeMap(tree.rootNode, ctx);
   return ctx;
 }
@@ -370,8 +371,28 @@ function extractCSharpTypeName(typeNode) {
   return null;
 }
 
+/**
+ * Post-walk pass: reclassify `extends` entries as `implements` when the target
+ * is a known interface in the same file. At extraction time we cannot distinguish
+ * base classes from interfaces in the base_list, so we fix it up here using the
+ * definitions collected during the walk.
+ */
+function reclassifyCSharpImplements(ctx) {
+  const interfaceNames = new Set();
+  for (const def of ctx.definitions) {
+    if (def.kind === 'interface') interfaceNames.add(def.name);
+  }
+  for (const cls of ctx.classes) {
+    if (cls.extends && interfaceNames.has(cls.extends)) {
+      cls.implements = cls.extends;
+      delete cls.extends;
+    }
+  }
+}
+
 function extractCSharpBaseTypes(node, className, classes) {
-  const baseList = node.childForFieldName('bases');
+  // tree-sitter-c-sharp exposes base_list as a child node type, not a field
+  const baseList = node.childForFieldName('bases') || findChild(node, 'base_list');
   if (!baseList) return;
   for (let i = 0; i < baseList.childCount; i++) {
     const child = baseList.child(i);
@@ -382,17 +403,6 @@ function extractCSharpBaseTypes(node, className, classes) {
       const name = child.childForFieldName('name') || child.child(0);
       if (name)
         classes.push({ name: className, extends: name.text, line: node.startPosition.row + 1 });
-    } else if (child.type === 'base_list') {
-      for (let j = 0; j < child.childCount; j++) {
-        const base = child.child(j);
-        if (base && (base.type === 'identifier' || base.type === 'qualified_name')) {
-          classes.push({ name: className, extends: base.text, line: node.startPosition.row + 1 });
-        } else if (base && base.type === 'generic_name') {
-          const name = base.childForFieldName('name') || base.child(0);
-          if (name)
-            classes.push({ name: className, extends: name.text, line: node.startPosition.row + 1 });
-        }
-      }
     }
   }
 }

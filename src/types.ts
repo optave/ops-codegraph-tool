@@ -277,6 +277,8 @@ export interface Repository {
   findCrossFileCallTargets(file: string): Set<number>;
   countCrossFileCallers(nodeId: number, file: string): number;
   getClassHierarchy(classNodeId: number): Set<number>;
+  findImplementors(nodeId: number): RelatedNodeRow[];
+  findInterfaces(nodeId: number): RelatedNodeRow[];
   findIntraFileCallEdges(file: string): IntraFileCallEdge[];
 
   // ── Graph-read queries ────────────────────────────────────────────
@@ -1029,6 +1031,8 @@ export interface McpDefaults {
   structure: number;
   triage: number;
   ast_query: number;
+  implementations: number;
+  interfaces: number;
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -1489,6 +1493,32 @@ export interface RolesResult {
   count: number;
   summary: Record<Role, number>;
   symbols: NodeRow[];
+}
+
+// ── Implementations / Interfaces ─────────────────────────────────
+
+export interface ImplementationsResult {
+  name: string;
+  results: Array<{
+    name: string;
+    kind: string;
+    file: string;
+    line: number;
+    implementors: Array<{ name: string; kind: string; file: string; line: number }>;
+  }>;
+  _pagination?: PaginationMeta;
+}
+
+export interface InterfacesResult {
+  name: string;
+  results: Array<{
+    name: string;
+    kind: string;
+    file: string;
+    line: number;
+    interfaces: Array<{ name: string; kind: string; file: string; line: number }>;
+  }>;
+  _pagination?: PaginationMeta;
 }
 
 // ════════════════════════════════════════════════════════════════════════

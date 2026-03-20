@@ -15,6 +15,7 @@ export function extractGoSymbols(tree, _filePath) {
 
   walkGoNode(tree.rootNode, ctx);
   extractGoTypeMap(tree.rootNode, ctx);
+  matchGoStructuralInterfaces(ctx);
   return ctx;
 }
 
@@ -358,6 +359,64 @@ function extractGoParameters(paramListNode) {
     }
   }
   return params;
+}
+
+// ── Go structural interface matching ─────────────────────────────────────
+
+/**
+ * Go interfaces are satisfied structurally: a struct implements an interface
+ * if it has methods matching every method declared in the interface.
+ * This performs file-local matching (cross-file matching requires build-edges).
+ */
+function matchGoStructuralInterfaces(ctx) {
+  const interfaceMethods = new Map();
+  const structMethods = new Map();
+  const structLines = new Map();
+
+  // Collect interface and struct definitions
+  const interfaceNames = new Set();
+  const structNames = new Set();
+  for (const def of ctx.definitions) {
+    if (def.kind === 'interface') interfaceNames.add(def.name);
+    if (def.kind === 'struct') {
+      structNames.add(def.name);
+      structLines.set(def.name, def.line);
+    }
+  }
+
+  // Collect methods grouped by receiver type
+  for (const def of ctx.definitions) {
+    if (def.kind !== 'method' || !def.name.includes('.')) continue;
+    const dotIdx = def.name.indexOf('.');
+    const receiver = def.name.slice(0, dotIdx);
+    const method = def.name.slice(dotIdx + 1);
+
+    if (interfaceNames.has(receiver)) {
+      if (!interfaceMethods.has(receiver)) interfaceMethods.set(receiver, new Set());
+      interfaceMethods.get(receiver).add(method);
+    }
+    if (structNames.has(receiver)) {
+      if (!structMethods.has(receiver)) structMethods.set(receiver, new Set());
+      structMethods.get(receiver).add(method);
+    }
+  }
+
+  // Match: struct satisfies interface if it has all interface methods (name-only;
+  // signatures are not verified — treat as candidate match, not definitive).
+  // NOTE: embedded interfaces (type_elem nodes) are not resolved — composite
+  // interfaces like `type ReadWriter interface { Reader; Writer }` will have an
+  // empty method set and be silently excluded from matching.
+  for (const [structName, methods] of structMethods) {
+    for (const [ifaceName, ifaceMethods] of interfaceMethods) {
+      if (ifaceMethods.size > 0 && [...ifaceMethods].every((m) => methods.has(m))) {
+        ctx.classes.push({
+          name: structName,
+          implements: ifaceName,
+          line: structLines.get(structName) || 1,
+        });
+      }
+    }
+  }
 }
 
 function extractStructFields(structTypeNode) {
