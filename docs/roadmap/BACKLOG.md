@@ -112,7 +112,7 @@ Co-change data captures historical coupling from git history. Currently only use
 | 54 | Co-change communities vs dependency communities | Compare Leiden communities from the dependency graph with clusters from co-change data. Files that co-change frequently but live in different dependency communities indicate hidden coupling or architectural drift. | Architecture | Surfaces coupling that the static graph can't see — two modules may have no import relationship but always change together due to shared assumptions | ✓ | ✓ | 3 | No | — |
 | 55 | Missing co-change partner warning in `check` | When `--staged` changes touch file A but not its historical partner file B (high Jaccard), emit a warning: "file A historically co-changes with file B — did you forget to update it?" | CI | Catches incomplete changes in CI — the most common source of subtle bugs is changing one file in a coupled pair but forgetting the other | ✓ | ✓ | 4 | No | — |
 
-### Tier 1e′ — Community leverage (build on vendored Leiden algorithm)
+### Tier 1e.1 — Community leverage (build on vendored Leiden algorithm)
 
 Community detection uses a vendored Leiden optimiser (`src/graph/algorithms/leiden/`) with full control over resolution, quality functions, and refinement. Currently only consumed by `communities` command and HTML viewer enrichment. These features deepen community awareness across the analysis pipeline.
 
