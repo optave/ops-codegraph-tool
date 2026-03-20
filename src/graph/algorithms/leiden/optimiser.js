@@ -6,7 +6,7 @@
 import { CodeGraph } from '../../model.js';
 import { makeGraphAdapter } from './adapter.js';
 import { diffCPM } from './cpm.js';
-import { diffModularity, diffModularityDirected } from './modularity.js';
+import { diffModularity } from './modularity.js';
 import { makePartition } from './partition.js';
 import { createRng } from './rng.js';
 
@@ -282,9 +282,7 @@ function computeQualityGain(partition, v, c, opts) {
   if (quality === 'cpm') {
     return diffCPM(partition, partition.graph || {}, v, c, gamma);
   }
-  if (opts.directed) {
-    return diffModularityDirected(partition, partition.graph || {}, v, c, gamma);
-  }
+  // diffModularity dispatches to diffModularityDirected internally when g.directed is true
   return diffModularity(partition, partition.graph || {}, v, c, gamma);
 }
 
