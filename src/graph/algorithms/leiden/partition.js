@@ -170,11 +170,15 @@ export function makePartition(graph) {
       newC < communityTotalOutStrength.length ? communityTotalOutStrength[newC] : 0;
     const totalInStrengthOld = communityTotalInStrength[oldC];
     const totalOutStrengthOld = communityTotalOutStrength[oldC];
-    const deltaInternal = (inFromNew + outToNew - inFromOld - outToOld) / totalEdgeWeight;
+    // Self-loop correction + constant term (see modularity.js diffModularityDirected)
+    const selfW = graph.selfLoop[v] || 0;
+    const deltaInternal =
+      (inFromNew + outToNew - inFromOld - outToOld + 2 * selfW) / totalEdgeWeight;
     const deltaExpected =
       (gamma *
         (strengthOutV * (totalInStrengthNew - totalInStrengthOld) +
-          strengthInV * (totalOutStrengthNew - totalOutStrengthOld))) /
+          strengthInV * (totalOutStrengthNew - totalOutStrengthOld) +
+          2 * strengthOutV * strengthInV)) /
       (totalEdgeWeight * totalEdgeWeight);
     return deltaInternal - deltaExpected;
   }
@@ -183,12 +187,15 @@ export function makePartition(graph) {
     const oldC = nodeCommunity[v];
     if (newC === oldC) return 0;
     let w_old, w_new;
+    let selfCorrection = 0;
     if (graph.directed) {
       w_old = (outEdgeWeightToCommunity[oldC] || 0) + (inEdgeWeightFromCommunity[oldC] || 0);
       w_new =
         newC < outEdgeWeightToCommunity.length
           ? (outEdgeWeightToCommunity[newC] || 0) + (inEdgeWeightFromCommunity[newC] || 0)
           : 0;
+      // Self-loop correction (see cpm.js diffCPM)
+      selfCorrection = 2 * (graph.selfLoop[v] || 0);
     } else {
       w_old = neighborEdgeWeightToCommunity[oldC] || 0;
       w_new =
@@ -197,7 +204,7 @@ export function makePartition(graph) {
     const nodeSize = graph.size[v] || 1;
     const sizeOld = communityTotalSize[oldC] || 0;
     const sizeNew = newC < communityTotalSize.length ? communityTotalSize[newC] : 0;
-    return w_new - w_old - gamma * nodeSize * (sizeNew - sizeOld + nodeSize);
+    return w_new - w_old + selfCorrection - gamma * nodeSize * (sizeNew - sizeOld + nodeSize);
   }
 
   function moveNodeToCommunity(v, newC) {

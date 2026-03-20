@@ -32,8 +32,18 @@ export function diffModularityDirected(part, g, v, c, gamma = 1.0) {
   const F_new = c < part.communityTotalOutStrength.length ? part.communityTotalOutStrength[c] : 0;
   const T_old = part.communityTotalInStrength[oldC];
   const F_old = part.communityTotalOutStrength[oldC];
-  const deltaInternal = (w_new_in + w_new_out - w_old_in - w_old_out) / m;
-  const deltaExpected = (gamma * (k_out * (T_new - T_old) + k_in * (F_new - F_old))) / (m * m);
+  // Self-loop correction: the self-loop edge (v→v) appears in both
+  // outEdgeWeightToCommunity[oldC] and inEdgeWeightFromCommunity[oldC],
+  // making w_old include 2×selfLoop. Since the self-loop moves with the
+  // node, add it back to match moveNodeToCommunity's directed accounting.
+  const selfW = g.selfLoop[v] || 0;
+  const deltaInternal = (w_new_in + w_new_out - w_old_in - w_old_out + 2 * selfW) / m;
+  // The full Δ(F·T) expansion includes a constant 2·k_out·k_in term that
+  // doesn't depend on the target community but does affect the move-vs-stay
+  // decision.  Without it, coarse-level merges can appear profitable when
+  // they actually decrease quality.
+  const deltaExpected =
+    (gamma * (k_out * (T_new - T_old) + k_in * (F_new - F_old) + 2 * k_out * k_in)) / (m * m);
   return deltaInternal - deltaExpected;
 }
 
