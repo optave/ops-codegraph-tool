@@ -153,7 +153,7 @@ export function runLouvainUndirectedModularity(graph, optionsInput = {}) {
           improved = true;
         }
       }
-      if (localPasses > options.maxLocalPasses) break;
+      if (localPasses >= options.maxLocalPasses) break;
     }
 
     renumberCommunities(partition, options.preserveLabels);
@@ -266,7 +266,7 @@ function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
         improved = true;
       }
     }
-    if (passes > (opts.maxLocalPasses || DEFAULT_MAX_LOCAL_PASSES)) break;
+    if (passes >= (opts.maxLocalPasses || DEFAULT_MAX_LOCAL_PASSES)) break;
   }
   return p;
 }
