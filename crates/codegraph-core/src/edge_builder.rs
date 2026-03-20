@@ -4,6 +4,14 @@ use napi_derive::napi;
 
 use crate::import_resolution;
 
+/// Kind sets for hierarchy edge resolution -- mirrors the JS constants in
+/// `build-edges.js` (`HIERARCHY_SOURCE_KINDS`, `EXTENDS_TARGET_KINDS`,
+/// `IMPLEMENTS_TARGET_KINDS`).  Keeping them in one place prevents the
+/// native/WASM drift that caused the original parity bug.
+const HIERARCHY_SOURCE_KINDS: &[&str] = &["class", "struct", "record", "enum"];
+const EXTENDS_TARGET_KINDS: &[&str] = &["class", "struct", "trait", "record"];
+const IMPLEMENTS_TARGET_KINDS: &[&str] = &["interface", "trait", "class"];
+
 #[napi(object)]
 pub struct NodeInfo {
     pub id: u32,
@@ -339,16 +347,14 @@ pub fn build_call_edges(
         for cls in &file_input.classes {
             let source_row = nodes_by_name_and_file
                 .get(&(cls.name.as_str(), rel_path.as_str()))
-                .and_then(|v| v.iter().find(|n| {
-                    n.kind == "class" || n.kind == "struct" || n.kind == "record" || n.kind == "enum"
-                }));
+                .and_then(|v| v.iter().find(|n| HIERARCHY_SOURCE_KINDS.contains(&n.kind.as_str())));
 
             if let Some(source) = source_row {
                 if let Some(ref extends_name) = cls.extends {
                     let targets = nodes_by_name
                         .get(extends_name.as_str())
                         .map(|v| v.iter().filter(|n| {
-                            n.kind == "class" || n.kind == "struct" || n.kind == "trait" || n.kind == "record"
+                            EXTENDS_TARGET_KINDS.contains(&n.kind.as_str())
                         }).collect::<Vec<_>>())
                         .unwrap_or_default();
                     for t in targets {
@@ -366,7 +372,7 @@ pub fn build_call_edges(
                         .get(implements_name.as_str())
                         .map(|v| {
                             v.iter()
-                                .filter(|n| n.kind == "interface" || n.kind == "class" || n.kind == "trait")
+                                .filter(|n| IMPLEMENTS_TARGET_KINDS.contains(&n.kind.as_str()))
                                 .collect::<Vec<_>>()
                         })
                         .unwrap_or_default();
