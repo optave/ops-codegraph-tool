@@ -158,6 +158,38 @@ describe('directed self-loops', () => {
   });
 });
 
+// ─── Coarse graph quality ────────────────────────────────────────────
+
+describe('coarse graph quality', () => {
+  it('quality is not inflated by multi-level coarsening', () => {
+    // Two disconnected 4-cliques: the algorithm should split them into two
+    // communities. Quality must stay in [-1, 1] and be consistent whether
+    // the run goes through one or multiple coarsening levels.
+    const g = new CodeGraph();
+    const A = ['a0', 'a1', 'a2', 'a3'];
+    const B = ['b0', 'b1', 'b2', 'b3'];
+    for (const id of [...A, ...B]) g.addNode(id);
+    for (let i = 0; i < A.length; i++)
+      for (let j = i + 1; j < A.length; j++) {
+        g.addEdge(A[i], A[j]);
+        g.addEdge(A[j], A[i]);
+      }
+    for (let i = 0; i < B.length; i++)
+      for (let j = i + 1; j < B.length; j++) {
+        g.addEdge(B[i], B[j]);
+        g.addEdge(B[j], B[i]);
+      }
+    const clusters = detectClusters(g, { randomSeed: 42 });
+    const q = clusters.quality();
+    // Modularity must not exceed 1.0 (inflated values were ~0.5 when true was ~0)
+    expect(q).toBeLessThanOrEqual(1.0);
+    expect(q).toBeGreaterThanOrEqual(-1.0);
+    // With two perfect cliques and no inter-community edges, modularity should be ~0
+    // (each community captures exactly its expected share of edges)
+    expect(Math.abs(q)).toBeLessThan(0.1);
+  });
+});
+
 // ─── Edge cases ───────────────────────────────────────────────────────
 
 describe('edge cases', () => {

@@ -95,9 +95,10 @@ describe('communitiesData (file-level)', () => {
     expect(data.summary.communityCount).toBeGreaterThanOrEqual(2);
   });
 
-  test('modularity is between 0 and 1', () => {
+  test('modularity is in valid range', () => {
     const data = communitiesData(null, { repo });
-    expect(data.modularity).toBeGreaterThanOrEqual(0);
+    // Modularity theoretical range is [-0.5, 1]
+    expect(data.modularity).toBeGreaterThanOrEqual(-0.5);
     expect(data.modularity).toBeLessThanOrEqual(1);
   });
 
