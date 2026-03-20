@@ -188,6 +188,7 @@ export function runLouvainUndirectedModularity(graph, optionsInput = {}) {
     levels,
     originalToCurrent,
     originalNodeIds: baseGraphAdapter.nodeIds,
+    baseGraph: baseGraphAdapter,
   };
 }
 
@@ -213,6 +214,10 @@ function buildCoarseGraph(g, p) {
       const j = list[k].to;
       const w = list[k].w;
       const cv = p.nodeCommunity[j];
+      // Undirected: each non-self edge (i,j) appears in both outEdges[i] and
+      // outEdges[j]. For intra-community edges (cu===cv), skip the reverse to
+      // avoid inflating the coarse self-loop weight by 2×.
+      if (!g.directed && cu === cv && j < i) continue;
       const key = `${cu}:${cv}`;
       acc.set(key, (acc.get(key) || 0) + w);
     }
@@ -266,7 +271,7 @@ function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
         improved = true;
       }
     }
-    if (passes >= (opts.maxLocalPasses || DEFAULT_MAX_LOCAL_PASSES)) break;
+    if (passes >= opts.maxLocalPasses) break;
   }
   return p;
 }
