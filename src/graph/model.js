@@ -5,8 +5,6 @@
  * Node IDs are always strings. DB integer IDs should be stringified before use.
  */
 
-import Graph from 'graphology';
-
 export class CodeGraph {
   /**
    * @param {{ directed?: boolean }} [opts]
@@ -187,21 +185,6 @@ export class CodeGraph {
       result.push({ source, target });
     }
     return result;
-  }
-
-  /** Convert to graphology instance (for Louvain etc). */
-  toGraphology(opts = {}) {
-    const type = opts.type || (this._directed ? 'directed' : 'undirected');
-    const g = new Graph({ type });
-    for (const [id] of this._nodes) {
-      g.addNode(id);
-    }
-
-    for (const [src, tgt] of this.edges()) {
-      if (src === tgt) continue;
-      if (!g.hasEdge(src, tgt)) g.addEdge(src, tgt);
-    }
-    return g;
   }
 
   // ─── Utilities ──────────────────────────────────────────────────

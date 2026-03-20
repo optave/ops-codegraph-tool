@@ -147,7 +147,13 @@ export function communitiesData(customDbPath, opts = {}) {
 
   const config = opts.config || loadConfig();
   const resolution = opts.resolution ?? config.community?.resolution ?? 1.0;
-  const { assignments, modularity } = louvainCommunities(graph, { resolution });
+  const maxLevels = opts.maxLevels ?? config.community?.maxLevels;
+  const maxLocalPasses = opts.maxLocalPasses ?? config.community?.maxLocalPasses;
+  const { assignments, modularity } = louvainCommunities(graph, {
+    resolution,
+    maxLevels,
+    maxLocalPasses,
+  });
 
   const { communities, communityDirs } = buildCommunityObjects(graph, assignments, opts);
   const { splitCandidates, mergeCandidates, driftScore } = analyzeDrift(communities, communityDirs);

@@ -95,8 +95,10 @@ describe('communitiesData (file-level)', () => {
     expect(data.summary.communityCount).toBeGreaterThanOrEqual(2);
   });
 
-  test('modularity is between 0 and 1', () => {
+  test('modularity is in valid range', () => {
     const data = communitiesData(null, { repo });
+    // Leiden starts from singleton partition and only makes improving moves.
+    // Quality should always be non-negative on a real graph.
     expect(data.modularity).toBeGreaterThanOrEqual(0);
     expect(data.modularity).toBeLessThanOrEqual(1);
   });

@@ -1,26 +1,36 @@
 /**
- * Louvain community detection via graphology.
+ * Community detection via vendored Leiden algorithm.
+ * Maintains backward-compatible API: { assignments: Map<string, number>, modularity: number }
+ *
+ * **Note:** Always runs in undirected mode (`directed: false`) regardless of
+ * the input graph's directedness. For direction-aware community detection,
+ * use `detectClusters` from `./leiden/index.js` directly.
  *
  * @param {import('../model.js').CodeGraph} graph
- * @param {{ resolution?: number }} [opts]
+ * @param {{ resolution?: number, maxLevels?: number, maxLocalPasses?: number }} [opts]
  * @returns {{ assignments: Map<string, number>, modularity: number }}
  */
-import graphologyLouvain from 'graphology-communities-louvain';
+import { detectClusters } from './leiden/index.js';
 
 export function louvainCommunities(graph, opts = {}) {
-  const gy = graph.toGraphology({ type: 'undirected' });
-
-  if (gy.order === 0 || gy.size === 0) {
+  if (graph.nodeCount === 0 || graph.edgeCount === 0) {
     return { assignments: new Map(), modularity: 0 };
   }
 
   const resolution = opts.resolution ?? 1.0;
-  const details = graphologyLouvain.detailed(gy, { resolution });
+  const result = detectClusters(graph, {
+    resolution,
+    randomSeed: 42,
+    directed: false,
+    ...(opts.maxLevels != null && { maxLevels: opts.maxLevels }),
+    ...(opts.maxLocalPasses != null && { maxLocalPasses: opts.maxLocalPasses }),
+  });
 
   const assignments = new Map();
-  for (const [nodeId, communityId] of Object.entries(details.communities)) {
-    assignments.set(nodeId, communityId);
+  for (const [id] of graph.nodes()) {
+    const cls = result.getClass(id);
+    if (cls != null) assignments.set(id, cls);
   }
 
-  return { assignments, modularity: details.modularity };
+  return { assignments, modularity: result.quality() };
 }
