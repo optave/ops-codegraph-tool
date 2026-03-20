@@ -67,6 +67,8 @@ export const DEFAULTS = {
   },
   community: {
     resolution: 1.0,
+    maxLevels: 50,
+    maxLocalPasses: 20,
   },
   structure: {
     cohesionThreshold: 0.3,

@@ -10,6 +10,8 @@ import { diffModularity, diffModularityDirected } from './modularity.js';
 import { makePartition } from './partition.js';
 import { createRng } from './rng.js';
 
+// Mirrored in DEFAULTS.community (src/infrastructure/config.js) for user override
+// via .codegraphrc.json. Callers (e.g. louvain.js) can pass overrides through options.
 const DEFAULT_MAX_LEVELS = 50;
 const DEFAULT_MAX_LOCAL_PASSES = 20;
 const GAIN_EPSILON = 1e-12;
