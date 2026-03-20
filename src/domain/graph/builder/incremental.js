@@ -67,22 +67,35 @@ function buildContainmentEdges(db, stmts, relPath, symbols) {
 
 // ── Reverse-dep cascade ────────────────────────────────────────────────
 
-function findReverseDeps(db, relPath) {
-  return db
-    .prepare(
+// Lazily-cached prepared statements for reverse-dep operations
+let _revDepDb = null;
+let _findRevDepsStmt = null;
+let _deleteOutEdgesStmt = null;
+
+function getRevDepStmts(db) {
+  if (_revDepDb !== db) {
+    _revDepDb = db;
+    _findRevDepsStmt = db.prepare(
       `SELECT DISTINCT n_src.file FROM edges e
        JOIN nodes n_src ON e.source_id = n_src.id
        JOIN nodes n_tgt ON e.target_id = n_tgt.id
        WHERE n_tgt.file = ? AND n_src.file != ? AND n_src.kind != 'directory'`,
-    )
-    .all(relPath, relPath)
-    .map((r) => r.file);
+    );
+    _deleteOutEdgesStmt = db.prepare(
+      'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
+    );
+  }
+  return { findRevDepsStmt: _findRevDepsStmt, deleteOutEdgesStmt: _deleteOutEdgesStmt };
+}
+
+function findReverseDeps(db, relPath) {
+  const { findRevDepsStmt } = getRevDepStmts(db);
+  return findRevDepsStmt.all(relPath, relPath).map((r) => r.file);
 }
 
 function deleteOutgoingEdges(db, relPath) {
-  db.prepare('DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)').run(
-    relPath,
-  );
+  const { deleteOutEdgesStmt } = getRevDepStmts(db);
+  deleteOutEdgesStmt.run(relPath);
 }
 
 async function parseReverseDep(rootDir, depRelPath, engineOpts, cache) {
@@ -230,6 +243,30 @@ function resolveBarrelTarget(db, barrelPath, symbolName, visited = new Set()) {
   return null;
 }
 
+/**
+ * Resolve barrel imports for a single import statement and create edges to actual source files.
+ * Shared by buildImportEdges (primary file) and Pass 2 of the reverse-dep cascade.
+ */
+function resolveBarrelImportEdges(db, stmts, fileNodeId, resolvedPath, imp) {
+  let edgesAdded = 0;
+  if (!isBarrelFile(db, resolvedPath)) return edgesAdded;
+  const resolvedSources = new Set();
+  for (const name of imp.names) {
+    const cleanName = name.replace(/^\*\s+as\s+/, '');
+    const actualSource = resolveBarrelTarget(db, resolvedPath, cleanName);
+    if (actualSource && actualSource !== resolvedPath && !resolvedSources.has(actualSource)) {
+      resolvedSources.add(actualSource);
+      const actualRow = stmts.getNodeId.get(actualSource, 'file', actualSource, 0);
+      if (actualRow) {
+        const kind = imp.typeOnly ? 'imports-type' : 'imports';
+        stmts.insertEdge.run(fileNodeId, actualRow.id, kind, 0.9, 0);
+        edgesAdded++;
+      }
+    }
+  }
+  return edgesAdded;
+}
+
 function buildImportEdges(stmts, relPath, symbols, rootDir, fileNodeId, aliases, db) {
   let edgesAdded = 0;
   for (const imp of symbols.imports) {
@@ -246,21 +283,8 @@ function buildImportEdges(stmts, relPath, symbols, rootDir, fileNodeId, aliases,
       edgesAdded++;
 
       // Barrel resolution: create edges through re-export chains
-      if (!imp.reexport && db && isBarrelFile(db, resolvedPath)) {
-        const resolvedSources = new Set();
-        for (const name of imp.names) {
-          const cleanName = name.replace(/^\*\s+as\s+/, '');
-          const actualSource = resolveBarrelTarget(db, resolvedPath, cleanName);
-          if (actualSource && actualSource !== resolvedPath && !resolvedSources.has(actualSource)) {
-            resolvedSources.add(actualSource);
-            const actualRow = stmts.getNodeId.get(actualSource, 'file', actualSource, 0);
-            if (actualRow) {
-              const kind = edgeKind === 'imports-type' ? 'imports-type' : 'imports';
-              stmts.insertEdge.run(fileNodeId, actualRow.id, kind, 0.9, 0);
-              edgesAdded++;
-            }
-          }
-        }
+      if (!imp.reexport && db) {
+        edgesAdded += resolveBarrelImportEdges(db, stmts, fileNodeId, resolvedPath, imp);
       }
     }
   }
@@ -470,22 +494,7 @@ export async function rebuildFile(db, rootDir, filePath, stmts, engineOpts, cach
         rootDir,
         aliases_,
       );
-      if (db && isBarrelFile(db, resolvedPath)) {
-        const resolvedSources = new Set();
-        for (const name of imp.names) {
-          const cleanName = name.replace(/^\*\s+as\s+/, '');
-          const actualSource = resolveBarrelTarget(db, resolvedPath, cleanName);
-          if (actualSource && actualSource !== resolvedPath && !resolvedSources.has(actualSource)) {
-            resolvedSources.add(actualSource);
-            const actualRow = stmts.getNodeId.get(actualSource, 'file', actualSource, 0);
-            if (actualRow) {
-              const kind = imp.typeOnly ? 'imports-type' : 'imports';
-              stmts.insertEdge.run(fileNodeRow_.id, actualRow.id, kind, 0.9, 0);
-              edgesAdded++;
-            }
-          }
-        }
-      }
+      edgesAdded += resolveBarrelImportEdges(db, stmts, fileNodeRow_.id, resolvedPath, imp);
     }
   }
 
