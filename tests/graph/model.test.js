@@ -144,28 +144,6 @@ describe('CodeGraph — toEdgeArray', () => {
   });
 });
 
-describe('CodeGraph — toGraphology', () => {
-  it('creates an undirected graphology graph', () => {
-    const g = new CodeGraph();
-    g.addEdge('a', 'b');
-    g.addEdge('b', 'c');
-
-    const gy = g.toGraphology({ type: 'undirected' });
-    expect(gy.order).toBe(3);
-    expect(gy.size).toBe(2);
-    expect(gy.type).toBe('undirected');
-  });
-
-  it('skips self-loops', () => {
-    const g = new CodeGraph();
-    g.addEdge('a', 'a');
-    g.addEdge('a', 'b');
-
-    const gy = g.toGraphology({ type: 'undirected' });
-    expect(gy.size).toBe(1);
-  });
-});
-
 describe('CodeGraph — clone', () => {
   it('produces an independent copy', () => {
     const g = new CodeGraph();

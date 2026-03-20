@@ -116,7 +116,7 @@ export async function stats(customDbPath, opts = {}) {
     const { communitySummaryForStats } = await import('../../features/communities.js');
     data.communities = communitySummaryForStats(customDbPath, { noTests: opts.noTests });
   } catch {
-    /* graphology may not be available */
+    /* community detection may fail on disconnected graphs */
   }
 
   if (outputResult(data, null, opts)) return;

@@ -1,26 +1,30 @@
 /**
- * Louvain community detection via graphology.
+ * Community detection via vendored Leiden algorithm.
+ * Maintains backward-compatible API: { assignments: Map<string, number>, modularity: number }
  *
  * @param {import('../model.js').CodeGraph} graph
  * @param {{ resolution?: number }} [opts]
  * @returns {{ assignments: Map<string, number>, modularity: number }}
  */
-import graphologyLouvain from 'graphology-communities-louvain';
+import { detectClusters } from './leiden/index.js';
 
 export function louvainCommunities(graph, opts = {}) {
-  const gy = graph.toGraphology({ type: 'undirected' });
-
-  if (gy.order === 0 || gy.size === 0) {
+  if (graph.nodeCount === 0 || graph.edgeCount === 0) {
     return { assignments: new Map(), modularity: 0 };
   }
 
   const resolution = opts.resolution ?? 1.0;
-  const details = graphologyLouvain.detailed(gy, { resolution });
+  const result = detectClusters(graph, {
+    resolution,
+    randomSeed: 42,
+    directed: false,
+  });
 
   const assignments = new Map();
-  for (const [nodeId, communityId] of Object.entries(details.communities)) {
-    assignments.set(nodeId, communityId);
+  for (const [id] of graph.nodes()) {
+    const cls = result.getClass(id);
+    if (cls != null) assignments.set(id, cls);
   }
 
-  return { assignments, modularity: details.modularity };
+  return { assignments, modularity: result.quality() };
 }
