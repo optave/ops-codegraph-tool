@@ -32,6 +32,7 @@
     "build": "tsc",
     "build:wasm": "node scripts/build-wasm.js",
     "typecheck": "tsc --noEmit",
+    "verify-imports": "node scripts/verify-imports.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

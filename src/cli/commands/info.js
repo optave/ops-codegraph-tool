@@ -36,7 +36,7 @@ export const command = {
     console.log();
 
     try {
-      const { findDbPath, getBuildMeta } = await import('../../db.js');
+      const { findDbPath, getBuildMeta } = await import('../../db/index.js');
       const Database = (await import('better-sqlite3')).default;
       const dbPath = findDbPath();
       const fs = await import('node:fs');

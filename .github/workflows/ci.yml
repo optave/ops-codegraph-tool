@@ -101,6 +101,20 @@ jobs:
       - name: Type check
         run: npm run typecheck
 
+  verify-imports:
+    runs-on: ubuntu-latest
+    name: Verify dynamic imports
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Verify all dynamic imports resolve
+        run: node scripts/verify-imports.js
+
   rust-check:
     runs-on: ubuntu-latest
     name: Rust compile check
@@ -121,7 +135,7 @@ jobs:
 
   ci-pipeline:
     if: always()
-    needs: [lint, test, typecheck, rust-check]
+    needs: [lint, test, typecheck, verify-imports, rust-check]
     runs-on: ubuntu-latest
     name: CI Testing Pipeline
     steps:
