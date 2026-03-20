@@ -88,6 +88,55 @@ import (
     );
   });
 
+  it('matches struct to interface structurally', () => {
+    const symbols = parseGo(`package main
+type Writer interface {
+  Write(p []byte) (n int, err error)
+}
+type MyBuffer struct { data []byte }
+func (b *MyBuffer) Write(p []byte) (int, error) { return len(p), nil }
+func (b *MyBuffer) Flush() error { return nil }`);
+    expect(symbols.classes).toContainEqual(
+      expect.objectContaining({ name: 'MyBuffer', implements: 'Writer' }),
+    );
+  });
+
+  it('does not match struct missing interface methods', () => {
+    const symbols = parseGo(`package main
+type ReadWriter interface {
+  Read(p []byte) (n int, err error)
+  Write(p []byte) (n int, err error)
+}
+type OnlyWriter struct {}
+func (w *OnlyWriter) Write(p []byte) (int, error) { return 0, nil }`);
+    const match = symbols.classes.find(
+      (c) => c.name === 'OnlyWriter' && c.implements === 'ReadWriter',
+    );
+    expect(match).toBeUndefined();
+  });
+
+  it('matches multiple interfaces for one struct', () => {
+    const symbols = parseGo(`package main
+type Reader interface { Read() }
+type Writer interface { Write() }
+type File struct {}
+func (f *File) Read() {}
+func (f *File) Write() {}`);
+    const impls = symbols.classes.filter((c) => c.name === 'File');
+    expect(impls).toHaveLength(2);
+    const ifaceNames = impls.map((c) => c.implements).sort();
+    expect(ifaceNames).toEqual(['Reader', 'Writer']);
+  });
+
+  it('ignores empty interfaces (satisfied by everything)', () => {
+    const symbols = parseGo(`package main
+type Any interface {}
+type Foo struct {}
+func (f *Foo) Bar() {}`);
+    const match = symbols.classes.find((c) => c.implements === 'Any');
+    expect(match).toBeUndefined();
+  });
+
   it('extracts call expressions', () => {
     const symbols = parseGo(`package main
 import "fmt"

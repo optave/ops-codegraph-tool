@@ -103,6 +103,46 @@ public class Foo {}`);
     expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'User' }));
   });
 
+  it('classifies same-file interface base types as implements', () => {
+    const symbols = parseCSharp(`public interface ISerializable {
+  void Serialize();
+}
+public class User : ISerializable {
+  public void Serialize() {}
+}`);
+    expect(symbols.classes).toContainEqual(
+      expect.objectContaining({ name: 'User', implements: 'ISerializable' }),
+    );
+    const extendsEntry = symbols.classes.find(
+      (c) => c.name === 'User' && c.extends === 'ISerializable',
+    );
+    expect(extendsEntry).toBeUndefined();
+  });
+
+  it('keeps cross-file base types as extends', () => {
+    const symbols = parseCSharp(`public class Admin : BaseUser {
+  public void DoAdmin() {}
+}`);
+    expect(symbols.classes).toContainEqual(
+      expect.objectContaining({ name: 'Admin', extends: 'BaseUser' }),
+    );
+  });
+
+  it('handles mixed extends and implements', () => {
+    const symbols = parseCSharp(`public interface IDisposable {
+  void Dispose();
+}
+public class Service : BaseService, IDisposable {
+  public void Dispose() {}
+}`);
+    expect(symbols.classes).toContainEqual(
+      expect.objectContaining({ name: 'Service', implements: 'IDisposable' }),
+    );
+    expect(symbols.classes).toContainEqual(
+      expect.objectContaining({ name: 'Service', extends: 'BaseService' }),
+    );
+  });
+
   it('extracts property declarations', () => {
     const symbols = parseCSharp(`public class User {
   public string Name { get; set; }

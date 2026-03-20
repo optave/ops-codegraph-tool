@@ -1021,16 +1021,25 @@ The single highest-impact resolution improvement. Previously `obj.method()` reso
 
 **Affected files:** `src/domain/graph/builder/stages/build-edges.js`, `src/domain/graph/builder/incremental.js`, `src/extractors/*.js` (all 8 languages)
 
-### 4.3 -- Interface and Trait Implementation Tracking
+### 4.3 -- Interface and Trait Implementation Tracking ✅
 
 Extract `implements`/`extends`/trait-impl relationships from tree-sitter AST and store as `implements` edges. When an interface signature changes, all implementors appear in impact analysis.
 
-- New `codegraph implementations <interface>` command — all concrete types implementing a given interface/trait
-- Inverse: `codegraph interfaces <class>` — what a type implements
-- Covers: TypeScript interfaces, Java interfaces/abstract classes, Go interfaces (structural matching), Rust traits, C# interfaces, PHP interfaces
-- `fn-impact` and `diff-impact` include implementors in blast radius by default (`--include-implementations`, on by default)
+**Implemented:**
+- ✅ `codegraph implementations <interface>` command — all concrete types implementing a given interface/trait
+- ✅ `codegraph interfaces <class>` command — what a type implements (inverse query)
+- ✅ Covers: TypeScript interfaces, Java interfaces/abstract classes, Go interfaces (structural matching), Rust traits, C# interfaces, PHP interfaces, Ruby module inclusion
+- ✅ `fn-impact` and `diff-impact` include implementors in blast radius by default (`--include-implementations`, on by default)
+- ✅ `bfsTransitiveCallers` seeds interface/trait nodes with their implementors and traverses them transitively
+- ✅ `contextData` includes `implementors` for interface/trait nodes and `implements` for class/struct nodes
+- ✅ Go structural interface matching: post-extraction pass matches struct method sets against interface method sets (file-local)
+- ✅ C# base type disambiguation: post-walk pass reclassifies `extends` entries as `implements` when target is a known same-file interface; also fixed `base_list` lookup (`findChild` fallback for tree-sitter-c-sharp grammar)
+- ✅ DB layer: `findImplementors(db, nodeId)` and `findInterfaces(db, nodeId)` with cached prepared statements
+- ✅ MCP tools: `implementations` and `interfaces` tools registered in tool registry
+- ✅ TypeScript type definitions updated: `ImplementationsResult`, `InterfacesResult`, `Repository.findImplementors/findInterfaces`
+- ✅ Integration tests: 13 tests covering `implementationsData`, `interfacesData`, `contextData` with implementation info, and `fnImpactData` with/without implementors
 
-**Affected files:** `src/extractors/*.js`, `src/domain/graph/builder/stages/build-edges.js`, `src/domain/analysis/impact.js`
+**Affected files:** `src/extractors/go.js`, `src/extractors/csharp.js`, `src/domain/graph/builder/stages/build-edges.js`, `src/domain/analysis/impact.js`, `src/domain/analysis/implementations.js`, `src/db/repository/edges.js`, `src/cli/commands/implementations.js`, `src/cli/commands/interfaces.js`, `src/mcp/tools/implementations.js`, `src/mcp/tools/interfaces.js`, `src/presentation/queries-cli/inspect.js`, `src/types.ts`
 
 ### ~~4.4 -- Call Resolution Precision/Recall Benchmark Suite~~ ✅
 
