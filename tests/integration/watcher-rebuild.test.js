@@ -32,20 +32,23 @@ function copyDirSync(src, dest) {
 
 function readGraph(dbPath) {
   const db = new Database(dbPath, { readonly: true });
-  const nodes = db
-    .prepare('SELECT name, kind, file, line FROM nodes ORDER BY name, kind, file, line')
-    .all();
-  const edges = db
-    .prepare(
-      `SELECT n1.name AS src, n2.name AS tgt, e.kind
-       FROM edges e
-       JOIN nodes n1 ON e.source_id = n1.id
-       JOIN nodes n2 ON e.target_id = n2.id
-       ORDER BY n1.name, n2.name, e.kind`,
-    )
-    .all();
-  db.close();
-  return { nodes, edges };
+  try {
+    const nodes = db
+      .prepare('SELECT name, kind, file, line FROM nodes ORDER BY name, kind, file, line')
+      .all();
+    const edges = db
+      .prepare(
+        `SELECT n1.name AS src, n1.file AS src_file, n2.name AS tgt, n2.file AS tgt_file, e.kind
+         FROM edges e
+         JOIN nodes n1 ON e.source_id = n1.id
+         JOIN nodes n2 ON e.target_id = n2.id
+         ORDER BY n1.name, n1.file, n2.name, n2.file, e.kind`,
+      )
+      .all();
+    return { nodes, edges };
+  } finally {
+    db.close();
+  }
 }
 
 /** Build the prepared statements object that watcher.js normally provides. */
