@@ -3,7 +3,7 @@
  * Maintains backward-compatible API: { assignments: Map<string, number>, modularity: number }
  *
  * @param {import('../model.js').CodeGraph} graph
- * @param {{ resolution?: number }} [opts]
+ * @param {{ resolution?: number, maxLevels?: number, maxLocalPasses?: number }} [opts]
  * @returns {{ assignments: Map<string, number>, modularity: number }}
  */
 import { detectClusters } from './leiden/index.js';
@@ -18,6 +18,8 @@ export function louvainCommunities(graph, opts = {}) {
     resolution,
     randomSeed: 42,
     directed: false,
+    ...(opts.maxLevels != null && { maxLevels: opts.maxLevels }),
+    ...(opts.maxLocalPasses != null && { maxLocalPasses: opts.maxLocalPasses }),
   });
 
   const assignments = new Map();
