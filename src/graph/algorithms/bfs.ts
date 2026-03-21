@@ -1,18 +1,26 @@
+import type { CodeGraph } from '../model.js';
+
+export interface BfsOpts {
+  maxDepth?: number;
+  direction?: 'forward' | 'backward' | 'both';
+}
+
 /**
  * Breadth-first traversal on a CodeGraph.
  *
- * @param {import('../model.js').CodeGraph} graph
- * @param {string|string[]} startIds - One or more starting node IDs
- * @param {{ maxDepth?: number, direction?: 'forward'|'backward'|'both' }} [opts]
- * @returns {Map<string, number>} nodeId → depth from nearest start node
+ * @returns nodeId → depth from nearest start node
  */
-export function bfs(graph, startIds, opts = {}) {
+export function bfs(
+  graph: CodeGraph,
+  startIds: string | string[],
+  opts: BfsOpts = {},
+): Map<string, number> {
   const maxDepth = opts.maxDepth ?? Infinity;
   const direction = opts.direction ?? 'forward';
   const starts = Array.isArray(startIds) ? startIds : [startIds];
 
-  const depths = new Map();
-  const queue = [];
+  const depths = new Map<string, number>();
+  const queue: string[] = [];
 
   for (const id of starts) {
     const key = String(id);
@@ -24,11 +32,11 @@ export function bfs(graph, startIds, opts = {}) {
 
   let head = 0;
   while (head < queue.length) {
-    const current = queue[head++];
-    const depth = depths.get(current);
+    const current = queue[head++]!;
+    const depth = depths.get(current)!;
     if (depth >= maxDepth) continue;
 
-    let neighbors;
+    let neighbors: string[];
     if (direction === 'forward') {
       neighbors = graph.successors(current);
     } else if (direction === 'backward') {

@@ -5,7 +5,7 @@
 import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { initSchema } from '../../src/db/index.js';
-import { findCycles, findCyclesJS } from '../../src/domain/graph/cycles.js';
+import { findCycles, findCyclesJS, formatCycles } from '../../src/domain/graph/cycles.js';
 import { isNativeAvailable, loadNative } from '../../src/infrastructure/native.js';
 
 const hasNative = isNativeAvailable();
@@ -123,13 +123,11 @@ describe('findCycles — function-level', () => {
 
 describe('formatCycles', () => {
   it('returns no-cycles message for empty array', () => {
-    const { formatCycles } = require('../../src/domain/graph/cycles.js');
     const output = formatCycles([]);
     expect(output.toLowerCase()).toMatch(/no.*circular/);
   });
 
   it('formats a single cycle with all member files', () => {
-    const { formatCycles } = require('../../src/domain/graph/cycles.js');
     const output = formatCycles([['a.js', 'b.js']]);
     expect(output).toContain('a.js');
     expect(output).toContain('b.js');
@@ -137,7 +135,6 @@ describe('formatCycles', () => {
   });
 
   it('formats multiple cycles with distinct labels', () => {
-    const { formatCycles } = require('../../src/domain/graph/cycles.js');
     const output = formatCycles([
       ['a.js', 'b.js'],
       ['x.js', 'y.js', 'z.js'],

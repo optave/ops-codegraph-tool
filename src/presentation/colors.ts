@@ -6,7 +6,9 @@
  * without creating a cross-layer dependency.
  */
 
-export const DEFAULT_NODE_COLORS = {
+import type { AnyNodeKind, CoreRole } from '../types.js';
+
+export const DEFAULT_NODE_COLORS: Record<AnyNodeKind, string> = {
   function: '#4CAF50',
   method: '#66BB6A',
   class: '#2196F3',
@@ -18,9 +20,12 @@ export const DEFAULT_NODE_COLORS = {
   record: '#EC407A',
   module: '#78909C',
   file: '#90A4AE',
+  parameter: '#B0BEC5',
+  property: '#B0BEC5',
+  constant: '#B0BEC5',
 };
 
-export const DEFAULT_ROLE_COLORS = {
+export const DEFAULT_ROLE_COLORS: Partial<Record<CoreRole, string>> = {
   entry: '#e8f5e9',
   core: '#e3f2fd',
   utility: '#f5f5f5',
@@ -28,7 +33,7 @@ export const DEFAULT_ROLE_COLORS = {
   leaf: '#fffde7',
 };
 
-export const COMMUNITY_COLORS = [
+export const COMMUNITY_COLORS: readonly string[] = [
   '#4CAF50',
   '#2196F3',
   '#FF9800',

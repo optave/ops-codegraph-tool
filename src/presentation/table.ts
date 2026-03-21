@@ -4,16 +4,22 @@
  * Pure data → formatted string transforms. No I/O — callers handle printing.
  */
 
+export interface ColumnDef {
+  header: string;
+  width: number;
+  align?: 'left' | 'right';
+}
+
+export interface FormatTableOpts {
+  columns: ColumnDef[];
+  rows: string[][];
+  indent?: number;
+}
+
 /**
  * Format a table with aligned columns.
- *
- * @param {object} opts
- * @param {Array<{ header: string, width: number, align?: 'left'|'right' }>} opts.columns
- * @param {string[][]} opts.rows - Each row is an array of string cell values
- * @param {number} [opts.indent=2] - Leading spaces per line
- * @returns {string} Formatted table string (header + separator + data rows)
  */
-export function formatTable({ columns, rows, indent = 2 }) {
+export function formatTable({ columns, rows, indent = 2 }: FormatTableOpts): string {
   const prefix = ' '.repeat(indent);
   const header = columns
     .map((c) => (c.align === 'right' ? c.header.padStart(c.width) : c.header.padEnd(c.width)))
@@ -33,7 +39,7 @@ export function formatTable({ columns, rows, indent = 2 }) {
 /**
  * Truncate a string from the end, appending '\u2026' if truncated.
  */
-export function truncEnd(str, maxLen) {
+export function truncEnd(str: string, maxLen: number): string {
   if (str.length <= maxLen) return str;
   return `${str.slice(0, maxLen - 1)}\u2026`;
 }
