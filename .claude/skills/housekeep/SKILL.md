@@ -40,7 +40,8 @@ git worktree list
 A worktree is stale if:
 - Its directory no longer exists on disk (prunable)
 - It has no uncommitted changes AND its branch has been merged to main
-- It was created more than 7 days ago with no commits since (abandoned)
+- Its branch has no commits ahead of `origin/main` AND the branch's last commit is more than 7 days old
+  (check: `git log -1 --format=%ci <branch>` — `git worktree list` does not expose creation timestamps)
 
 Check `.claude/worktrees/` for Claude Code worktrees specifically.
 
@@ -166,6 +167,9 @@ git branch -d <branch>  # safe delete, only if fully merged
 ## Phase 5 — Update Codegraph
 
 **Skip if `SKIP_UPDATE` is set.**
+
+> **Source-repo guard:** This phase is only meaningful when codegraph is installed as a *dependency* of a consumer project. Because the pre-flight confirms we are inside the codegraph *source* repo (`"name": "@optave/codegraph"`), comparing the dev version to the published release and running `npm install` would be a no-op — codegraph is not one of its own dependencies. **Skip this entire phase** when running inside the source repo and print:
+> `Codegraph: skipped (running inside source repo — update via git pull / branch sync instead)`
 
 ### 5a. Check current version
 
