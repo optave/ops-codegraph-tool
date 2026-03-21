@@ -7,6 +7,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const loaderPath = pathToFileURL(resolve(__dirname, 'scripts/ts-resolve-loader.js')).href;
 const [major, minor] = process.versions.node.split('.').map(Number);
 const supportsStripTypes = major > 22 || (major === 22 && minor >= 6);
+const supportsHooks = major > 20 || (major === 20 && minor >= 6);
 const existing = process.env.NODE_OPTIONS || '';
 
 /**
@@ -52,7 +53,7 @@ export default defineConfig({
         !existing.includes('--strip-types')
           ? (major >= 23 ? '--strip-types' : '--experimental-strip-types')
           : '',
-        existing.includes(loaderPath) ? '' : `--import ${loaderPath}`,
+        existing.includes(loaderPath) ? '' : (supportsHooks ? `--import ${loaderPath}` : ''),
       ].filter(Boolean).join(' '),
     },
   },

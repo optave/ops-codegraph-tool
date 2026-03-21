@@ -8,6 +8,7 @@ import type {
   ImportEdgeRow,
   ImportGraphEdgeRow,
   IntraFileCallEdge,
+  Repository as IRepository,
   ListFunctionOpts,
   NodeIdRow,
   NodeRow,
@@ -23,7 +24,7 @@ import type {
  * Defines the contract for all graph data access. Every method throws
  * "not implemented" by default — concrete subclasses override what they support.
  */
-export class Repository {
+export class Repository implements IRepository {
   // ── Node lookups ────────────────────────────────────────────────────
   findNodeById(_id: number): NodeRow | undefined {
     throw new Error('not implemented');
