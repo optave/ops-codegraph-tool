@@ -232,19 +232,24 @@ function buildCoarseGraph(g, p) {
 /**
  * True Leiden refinement phase (Algorithm 3, Traag et al. 2019).
  *
- * Instead of greedily picking the best community (which is functionally
- * Louvain with an extra pass), we sample from a Boltzmann distribution:
+ * Key properties that distinguish this from Louvain-style refinement:
  *
- *   p(v, C) ∝ exp(ΔH / θ)
+ * 1. **Singleton start** — each node begins in its own community.
+ * 2. **Singleton guard** — only nodes still in singleton communities are
+ *    considered for merging. Once a node joins a non-singleton community
+ *    it is locked for the remainder of the pass. This prevents oscillation
+ *    and is essential for the γ-connectedness guarantee.
+ * 3. **Single pass** — one randomized sweep through all nodes, not an
+ *    iterative loop until convergence (that would be Louvain behavior).
+ * 4. **Probabilistic selection** — candidate communities are sampled from
+ *    a Boltzmann distribution `p(v, C) ∝ exp(ΔH / θ)`, with the "stay
+ *    as singleton" option (ΔH = 0) included in the distribution. This
+ *    means a node may probabilistically choose to remain alone even when
+ *    positive-gain merges exist.
  *
- * where ΔH is the quality gain of moving node v into community C, and θ
- * (refinementTheta) controls the temperature. Lower θ → more deterministic
- * (approaches greedy), higher θ → more exploratory. This probabilistic
- * step is what guarantees γ-connected communities, the defining
- * contribution of Leiden over Louvain.
- *
- * Determinism is preserved via the seeded PRNG — same seed produces the
- * same community assignments across runs.
+ * θ (refinementTheta) controls temperature: lower → more deterministic
+ * (approaches greedy), higher → more exploratory. Determinism is preserved
+ * via the seeded PRNG — same seed produces the same assignments.
  */
 function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
   const p = makePartition(g);
@@ -256,69 +261,66 @@ function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
 
   const theta = typeof opts.refinementTheta === 'number' ? opts.refinementTheta : 0.01;
 
+  // Single pass in random order (Algorithm 3, step 2).
   const order = new Int32Array(g.n);
   for (let i = 0; i < g.n; i++) order[i] = i;
-  let improved = true;
-  let passes = 0;
-  while (improved) {
-    improved = false;
-    passes++;
-    shuffleArrayInPlace(order, rng);
-    for (let idx = 0; idx < order.length; idx++) {
-      const v = order[idx];
-      if (fixedMask0?.[v]) continue;
-      const macroV = macro[v];
-      const touchedCount = p.accumulateNeighborCommunityEdgeWeights(v);
-      const maxSize = Number.isFinite(opts.maxCommunitySize) ? opts.maxCommunitySize : Infinity;
+  shuffleArrayInPlace(order, rng);
 
-      // Collect eligible communities and their quality gains.
-      const candidates = [];
-      for (let t = 0; t < touchedCount; t++) {
-        const c = p.getCandidateCommunityAt(t);
-        if (c === p.nodeCommunity[v]) continue;
-        if (commMacro[c] !== macroV) continue;
-        if (maxSize < Infinity) {
-          const nextSize = p.getCommunityTotalSize(c) + g.size[v];
-          if (nextSize > maxSize) continue;
-        }
-        const gain = computeQualityGain(p, v, c, opts);
-        if (gain > GAIN_EPSILON) {
-          candidates.push({ c, gain });
-        }
+  for (let idx = 0; idx < order.length; idx++) {
+    const v = order[idx];
+    if (fixedMask0?.[v]) continue;
+
+    // Singleton guard: only move nodes still alone in their community.
+    if (p.getCommunityNodeCount(p.nodeCommunity[v]) > 1) continue;
+
+    const macroV = macro[v];
+    const touchedCount = p.accumulateNeighborCommunityEdgeWeights(v);
+    const maxSize = Number.isFinite(opts.maxCommunitySize) ? opts.maxCommunitySize : Infinity;
+
+    // Collect eligible communities and their quality gains.
+    const candidates = [];
+    for (let t = 0; t < touchedCount; t++) {
+      const c = p.getCandidateCommunityAt(t);
+      if (c === p.nodeCommunity[v]) continue;
+      if (commMacro[c] !== macroV) continue;
+      if (maxSize < Infinity) {
+        const nextSize = p.getCommunityTotalSize(c) + g.size[v];
+        if (nextSize > maxSize) continue;
       }
-
-      if (candidates.length === 0) continue;
-
-      // Probabilistic selection: p(v, C) ∝ exp(ΔH / θ).
-      // For numerical stability, subtract the max gain before exponentiation.
-      let chosenC;
-      if (candidates.length === 1) {
-        chosenC = candidates[0].c;
-      } else {
-        const maxGain = candidates.reduce((m, x) => (x.gain > m ? x.gain : m), -Infinity);
-        let totalWeight = 0;
-        for (let i = 0; i < candidates.length; i++) {
-          candidates[i].weight = Math.exp((candidates[i].gain - maxGain) / theta);
-          totalWeight += candidates[i].weight;
-        }
-        const r = rng() * totalWeight;
-        let cumulative = 0;
-        chosenC = candidates[candidates.length - 1].c; // fallback
-        for (let i = 0; i < candidates.length; i++) {
-          cumulative += candidates[i].weight;
-          if (r < cumulative) {
-            chosenC = candidates[i].c;
-            break;
-          }
-        }
-      }
-
-      if (chosenC !== p.nodeCommunity[v]) {
-        p.moveNodeToCommunity(v, chosenC);
-        improved = true;
+      const gain = computeQualityGain(p, v, c, opts);
+      if (gain > GAIN_EPSILON) {
+        candidates.push({ c, gain });
       }
     }
-    if (passes >= opts.maxLocalPasses) break;
+
+    if (candidates.length === 0) continue;
+
+    // Probabilistic selection: p(v, C) ∝ exp(ΔH / θ), with the "stay"
+    // option (ΔH = 0) included per Algorithm 3.
+    // For numerical stability, subtract the max gain before exponentiation.
+    const maxGain = candidates.reduce((m, x) => (x.gain > m ? x.gain : m), 0);
+    // "Stay as singleton" weight: exp((0 - maxGain) / theta)
+    const stayWeight = Math.exp((0 - maxGain) / theta);
+    let totalWeight = stayWeight;
+    for (let i = 0; i < candidates.length; i++) {
+      candidates[i].weight = Math.exp((candidates[i].gain - maxGain) / theta);
+      totalWeight += candidates[i].weight;
+    }
+
+    const r = rng() * totalWeight;
+    if (r < stayWeight) continue; // node stays as singleton
+
+    let cumulative = stayWeight;
+    let chosenC = candidates[candidates.length - 1].c; // fallback
+    for (let i = 0; i < candidates.length; i++) {
+      cumulative += candidates[i].weight;
+      if (r < cumulative) {
+        chosenC = candidates[i].c;
+        break;
+      }
+    }
+
+    p.moveNodeToCommunity(v, chosenC);
   }
   return p;
 }
