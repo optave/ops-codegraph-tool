@@ -71,7 +71,7 @@ Before spawning any sub-agent, run these checks. This catches git state drift, c
 git status --porcelain
 ```
 - **Unexpected dirty files** (files not in `.codegraph/titan/`): Print warning with the file list. Ask user to confirm proceeding, or stop. If `--yes`, log the warning and continue — but do NOT stage or commit these files.
-- **Merge conflicts** (lines starting with `UU`, `AA`, `DD`): Stop immediately: "Unresolved merge conflict detected. Resolve before continuing."
+- **Merge conflicts** (lines starting with `UU`, `AA`, `DD`, `AU`, `UA`, `DU`, `UD`): Stop immediately: "Unresolved merge conflict detected. Resolve before continuing."
 
 ### G2. Worktree still valid
 ```bash
@@ -386,6 +386,9 @@ If `--yes` IS set: print the summary but continue automatically.
 
 Read `.codegraph/titan/sync.json` → count total phases in `executionOrder`.
 Read `.codegraph/titan/titan-state.json` → check `execution.completedPhases` (may not exist yet if forge hasn't started).
+
+If `.codegraph/titan/arch-snapshot.json` does not exist:
+  Print: "NOTE: No arch-snapshot.json found. Architectural comparison in /titan-gate (Step 5.5) will be skipped for this run. To enable it, run '/titan-run --start-from sync' to re-capture the pre-forge snapshot."
 
 ### 4b. Forge loop
 
