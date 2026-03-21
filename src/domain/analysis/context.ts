@@ -14,6 +14,8 @@ import {
   findNodeChildren,
   findNodesByFile,
   getComplexityForNode,
+  getLineCountForNode,
+  getMaxEndLineForFile,
   openReadonlyOrFail,
 } from '../../db/index.js';
 import { loadConfig } from '../../infrastructure/config.js';
@@ -276,14 +278,10 @@ function explainFileImpl(
       callees,
     }));
 
-    const metric = db
-      .prepare(`SELECT nm.line_count FROM node_metrics nm WHERE nm.node_id = ?`)
-      .get(fn.id) as { line_count: number } | undefined;
+    const metric = getLineCountForNode(db, fn.id) as { line_count: number } | undefined;
     let lineCount: number | null = metric?.line_count || null;
     if (!lineCount) {
-      const maxLine = db
-        .prepare(`SELECT MAX(end_line) as max_end FROM nodes WHERE file = ?`)
-        .get(fn.file) as { max_end: number | null } | undefined;
+      const maxLine = getMaxEndLineForFile(db, fn.file) as { max_end: number | null } | undefined;
       lineCount = maxLine?.max_end || null;
     }
 

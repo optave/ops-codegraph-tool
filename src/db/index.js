@@ -56,6 +56,8 @@ export {
   getFileNodesAll,
   getFunctionNodeId,
   getImportEdges,
+  getLineCountForNode,
+  getMaxEndLineForFile,
   getNodeId,
   hasCfgTables,
   hasCoChanges,
