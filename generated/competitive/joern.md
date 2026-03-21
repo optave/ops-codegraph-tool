@@ -334,7 +334,7 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 | Developer productivity commands | 41 built-in | ~5 built-in + custom CPGQL | Codegraph |
 | Language support | 11 | 16 (incl. binary/bytecode) | Joern |
 | Query expressiveness | Fixed commands | Arbitrary graph traversals | Joern |
-| Community & maturity | 32 stars, growing | 7 years, IEEE award, 3,021 stars, 75 contributors | Joern |
+| Community & maturity | Growing | 7 years, IEEE award, 3,021 stars, 75 contributors | Joern |
 | CI/CD readiness | Yes (`check --staged`) | Limited | Codegraph |
 
 **Final score against FOUNDATION.md principles: Codegraph 6, Joern 0, Tie 2.**
