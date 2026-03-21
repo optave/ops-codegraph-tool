@@ -39,8 +39,11 @@ Run each benchmark script and collect results. Each script outputs JSON to stdou
 ### 1a. Build & Query Benchmark
 
 ```bash
-node scripts/benchmark.js 2>/dev/null
+output=$(node scripts/benchmark.js 2>&1)
+exit_code=$?
 ```
+
+If `exit_code` is non-zero: record `"error: $output"` for this suite and continue.
 
 Extract:
 - `buildTime` (ms) — per engine (native, WASM)
@@ -50,8 +53,11 @@ Extract:
 ### 1b. Incremental Benchmark
 
 ```bash
-node scripts/incremental-benchmark.js 2>/dev/null
+output=$(node scripts/incremental-benchmark.js 2>&1)
+exit_code=$?
 ```
+
+If `exit_code` is non-zero: record `"error: $output"` for this suite and continue.
 
 Extract:
 - `noOpRebuild` (ms) — time for no-change rebuild
@@ -61,8 +67,11 @@ Extract:
 ### 1c. Query Depth Benchmark
 
 ```bash
-node scripts/query-benchmark.js 2>/dev/null
+output=$(node scripts/query-benchmark.js 2>&1)
+exit_code=$?
 ```
+
+If `exit_code` is non-zero: record `"error: $output"` for this suite and continue.
 
 Extract:
 - `fnDeps` scaling by depth
@@ -72,8 +81,11 @@ Extract:
 ### 1d. Embedding Benchmark (optional)
 
 ```bash
-node scripts/embedding-benchmark.js 2>/dev/null
+output=$(node scripts/embedding-benchmark.js 2>&1)
+exit_code=$?
 ```
+
+If `exit_code` is non-zero: record `"error: $output"` for this suite and continue.
 
 Extract:
 - `embeddingTime` (ms)
@@ -119,8 +131,9 @@ Skip this phase if `SAVE_ONLY=true` or no baseline exists.
 For each metric in the current run:
 
 1. Look up the same metric in the baseline
-2. Compute: `delta_pct = ((current - baseline) / baseline) * 100`
-3. Classify:
+2. Guard against division-by-zero: if `baseline == 0`, mark the delta as `"N/A � baseline was zero"` and treat the metric as **informational only** (not a regression or improvement)
+3. Otherwise compute: `delta_pct = ((current - baseline) / baseline) * 100`
+4. Classify:
    - **Regression**: metric increased by more than `THRESHOLD`% (for time metrics) or decreased by more than `THRESHOLD`% (for recall/quality metrics)
    - **Improvement**: metric decreased by more than `THRESHOLD`% (time) or increased (quality)
    - **Stable**: within threshold
@@ -177,6 +190,12 @@ Also append a one-line summary to `generated/bench-check/history.ndjson`:
 
 This creates a running log of benchmark results over time.
 
+After writing both files, commit the baseline so it is a shared reference point:
+```bash
+git add generated/bench-check/baseline.json generated/bench-check/history.ndjson
+git commit -m "chore: update bench-check baseline (<gitRef>)"
+```
+
 ## Phase 6 — Report
 
 Write a human-readable report to `generated/bench-check/BENCH_REPORT_<date>.md`:
@@ -218,6 +237,6 @@ Write a human-readable report to `generated/bench-check/BENCH_REPORT_<date>.md`:
 - **Don't update baseline on regression** — the user must investigate first
 - **Recall/quality metrics are inverted** — a decrease is a regression
 - **Count metrics are informational** — graph growing isn't a regression
-- **The baseline file is committed to git** — it's a shared reference point
+- **The baseline file is committed to git** — it's a shared reference point; Phase 5 always commits it
 - **history.ndjson is append-only** — never truncate or rewrite it
 - Generated files go in `generated/bench-check/` — create the directory if needed
