@@ -25,6 +25,10 @@ import {
   splitTargets,
 } from '../../src/features/batch.js';
 
+// Child processes load .ts files natively — requires Node >= 22.6 type stripping
+const [_major, _minor] = process.versions.node.split('.').map(Number);
+const canStripTypes = _major > 22 || (_major === 22 && _minor >= 6);
+
 // ─── Helpers ───────────────────────────────────────────────────────────
 
 function insertNode(db, name, kind, file, line) {
@@ -208,7 +212,7 @@ describe('batchData — complexity (dbOnly signature)', () => {
 
 // ─── CLI smoke test ──────────────────────────────────────────────────
 
-describe('batch CLI', () => {
+describe.skipIf(!canStripTypes)('batch CLI', () => {
   const cliPath = path.resolve(
     path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1')),
     '../../src/cli.js',

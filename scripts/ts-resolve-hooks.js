@@ -4,11 +4,10 @@
  * - resolve: when a .js specifier resolves to a path that doesn't exist,
  *   check if a .ts version exists and redirect to it.
  * - load: for .ts files, delegate to Node's native loader (works on
- *   Node >= 22.6 with --experimental-strip-types); fall back to reading
- *   the file as module source for older versions.
+ *   Node >= 22.6 with --experimental-strip-types). On older Node versions,
+ *   throws a clear error instead of returning unparseable TypeScript source.
  */
 
-import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 export async function resolve(specifier, context, nextResolve) {
@@ -38,9 +37,14 @@ export async function load(url, context, nextLoad) {
     if (err.code !== 'ERR_UNKNOWN_FILE_EXTENSION') throw err;
   }
 
-  // Fallback: read the file and return as module source.
-  // TypeScript-only syntax will cause a parse error — callers should ensure
-  // .ts files contain only erasable type annotations on Node < 22.6.
-  const source = await readFile(fileURLToPath(url), 'utf-8');
-  return { format: 'module', source, shortCircuit: true };
+  // Node < 22.6 cannot strip TypeScript syntax. Throw a clear error instead
+  // of returning raw TS source that would produce a confusing SyntaxError.
+  const filePath = fileURLToPath(url);
+  throw Object.assign(
+    new Error(
+      `Cannot load TypeScript file ${filePath} on Node ${process.versions.node}. ` +
+      `TypeScript type stripping requires Node >= 22.6 with --experimental-strip-types.`,
+    ),
+    { code: 'ERR_TS_UNSUPPORTED' },
+  );
 }

@@ -45,7 +45,8 @@ export default defineConfig({
     // This covers require() calls and child processes spawned by tests.
     env: {
       NODE_OPTIONS: [
-        supportsStripTypes ? '--experimental-strip-types' : '',
+        process.env.NODE_OPTIONS,
+        supportsStripTypes ? (major >= 23 ? '--strip-types' : '--experimental-strip-types') : '',
         `--import ${loaderPath}`,
       ].filter(Boolean).join(' '),
     },

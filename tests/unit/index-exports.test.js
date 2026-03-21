@@ -4,6 +4,10 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
+// Child processes load .ts files natively — requires Node >= 22.6 type stripping
+const [_major, _minor] = process.versions.node.split('.').map(Number);
+const canStripTypes = _major > 22 || (_major === 22 && _minor >= 6);
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(resolve(__dirname, '../../package.json'), 'utf8'));
 
@@ -22,7 +26,7 @@ describe('index.js re-exports', () => {
     expect(typeof mod).toBe('object');
   });
 
-  it('CJS wrapper resolves to the same exports', async () => {
+  it.skipIf(!canStripTypes)('CJS wrapper resolves to the same exports', async () => {
     const require = createRequire(import.meta.url);
     const cjs = await require('../../src/index.cjs');
     const esm = await import('../../src/index.js');
