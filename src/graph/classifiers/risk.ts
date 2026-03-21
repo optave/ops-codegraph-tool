@@ -2,11 +2,21 @@
  * Risk scoring — pure logic, no DB.
  */
 
+import type { Role } from '../../types.js';
+
+export interface RiskWeights {
+  fanIn: number;
+  complexity: number;
+  churn: number;
+  role: number;
+  mi: number;
+}
+
 // Weights sum to 1.0. Complexity gets the highest weight because cognitive load
 // is the strongest predictor of defect density. Fan-in and churn are next as
 // they reflect coupling and volatility. Role adds architectural context, and MI
 // (maintainability index) is a weaker composite signal, so it gets the least.
-export const DEFAULT_WEIGHTS = {
+export const DEFAULT_WEIGHTS: RiskWeights = {
   fanIn: 0.25,
   complexity: 0.3,
   churn: 0.2,
@@ -18,7 +28,7 @@ export const DEFAULT_WEIGHTS = {
 // dependency graph, utilities are widely imported, entry points are API
 // surfaces. Adapters bridge subsystems but are replaceable. Leaves, dead
 // code, and test-only symbols have minimal downstream impact.
-export const ROLE_WEIGHTS = {
+export const ROLE_WEIGHTS: Record<string, number> = {
   core: 1.0,
   utility: 0.9,
   entry: 0.8,
@@ -35,7 +45,7 @@ export const ROLE_WEIGHTS = {
 const DEFAULT_ROLE_WEIGHT = 0.5;
 
 /** Min-max normalize an array of numbers. All-equal → all zeros. */
-export function minMaxNormalize(values) {
+export function minMaxNormalize(values: number[]): number[] {
   const min = Math.min(...values);
   const max = Math.max(...values);
   if (max === min) return values.map(() => 0);
@@ -43,21 +53,41 @@ export function minMaxNormalize(values) {
   return values.map((v) => (v - min) / range);
 }
 
-function round4(n) {
+function round4(n: number): number {
   return Math.round(n * 10000) / 10000;
+}
+
+export interface RiskItem {
+  fan_in: number;
+  cognitive: number;
+  churn: number;
+  mi: number;
+  role: Role | string | null;
+}
+
+export interface RiskResult {
+  normFanIn: number;
+  normComplexity: number;
+  normChurn: number;
+  normMI: number;
+  roleWeight: number;
+  riskScore: number;
+}
+
+export interface ScoreRiskOpts {
+  roleWeights?: Record<string, number>;
+  defaultRoleWeight?: number;
 }
 
 /**
  * Score risk for a list of items.
- *
- * @param {{ fan_in: number, cognitive: number, churn: number, mi: number, role: string|null }[]} items
- * @param {object} [weights] - Override DEFAULT_WEIGHTS
- * @param {{ roleWeights?: object, defaultRoleWeight?: number }} [opts] - Optional role weight overrides
- * @returns {{ normFanIn: number, normComplexity: number, normChurn: number, normMI: number, roleWeight: number, riskScore: number }[]}
- *   Parallel array with risk metrics for each input item.
  */
-export function scoreRisk(items, weights = {}, opts = {}) {
-  const w = { ...DEFAULT_WEIGHTS, ...weights };
+export function scoreRisk(
+  items: RiskItem[],
+  weights: Partial<RiskWeights> = {},
+  opts: ScoreRiskOpts = {},
+): RiskResult[] {
+  const w: RiskWeights = { ...DEFAULT_WEIGHTS, ...weights };
   const rw = opts.roleWeights || ROLE_WEIGHTS;
   const drw = opts.defaultRoleWeight ?? DEFAULT_ROLE_WEIGHT;
 
@@ -73,19 +103,19 @@ export function scoreRisk(items, weights = {}, opts = {}) {
   const normMIs = normMIsRaw.map((v) => round4(1 - v));
 
   return items.map((r, i) => {
-    const roleWeight = rw[r.role] ?? drw;
+    const roleWeight = (r.role != null ? rw[r.role] : undefined) ?? drw;
+    const nfi = normFanIns[i] ?? 0;
+    const nci = normCognitives[i] ?? 0;
+    const nch = normChurns[i] ?? 0;
+    const nmi = normMIs[i] ?? 0;
     const riskScore =
-      w.fanIn * normFanIns[i] +
-      w.complexity * normCognitives[i] +
-      w.churn * normChurns[i] +
-      w.role * roleWeight +
-      w.mi * normMIs[i];
+      w.fanIn * nfi + w.complexity * nci + w.churn * nch + w.role * roleWeight + w.mi * nmi;
 
     return {
-      normFanIn: round4(normFanIns[i]),
-      normComplexity: round4(normCognitives[i]),
-      normChurn: round4(normChurns[i]),
-      normMI: round4(normMIs[i]),
+      normFanIn: round4(nfi),
+      normComplexity: round4(nci),
+      normChurn: round4(nch),
+      normMI: round4(nmi),
       roleWeight,
       riskScore: round4(riskScore),
     };

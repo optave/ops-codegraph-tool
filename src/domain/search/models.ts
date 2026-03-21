@@ -143,7 +143,7 @@ export async function loadTransformers(): Promise<unknown> {
       } catch (loadErr) {
         throw new EngineError(
           `${pkg} was installed but failed to load. Please check your environment.`,
-          { cause: loadErr },
+          { cause: loadErr instanceof Error ? loadErr : undefined },
         );
       }
     }
@@ -181,7 +181,8 @@ async function loadModel(modelKey?: string): Promise<{ extractor: unknown; confi
       await // biome-ignore lint/complexity/noBannedTypes: dynamically loaded transformers pipeline is untyped
       (pipeline as Function)('feature-extraction', config.name, pipelineOpts);
   } catch (err: unknown) {
-    const msg = (err as Error).message || String(err);
+    const cause = err instanceof Error ? err : undefined;
+    const msg = cause?.message || String(err);
     if (msg.includes('Unauthorized') || msg.includes('401') || msg.includes('gated')) {
       throw new EngineError(
         `Model "${config.name}" requires authentication.\n` +
@@ -189,13 +190,13 @@ async function loadModel(modelKey?: string): Promise<{ extractor: unknown; confi
           `Options:\n` +
           `  1. Set HF_TOKEN env var: export HF_TOKEN=hf_...\n` +
           `  2. Use a public model instead: codegraph embed --model minilm`,
-        { cause: err },
+        { cause },
       );
     }
     throw new EngineError(
       `Failed to load model "${config.name}": ${msg}\n` +
         `Try a different model: codegraph embed --model minilm`,
-      { cause: err },
+      { cause },
     );
   }
   activeModel = config.name;

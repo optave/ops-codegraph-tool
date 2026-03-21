@@ -167,6 +167,12 @@ export function runLouvainUndirectedModularity(graph, optionsInput = {}) {
         options,
         level === 0 ? fixedNodeMask : null,
       );
+      // Post-refinement: split any disconnected communities into their
+      // connected components. This is the cheap O(V+E) alternative to
+      // checking γ-connectedness on every candidate during refinement.
+      // A disconnected community violates even basic connectivity, so
+      // splitting is always correct.
+      splitDisconnectedCommunities(graphAdapter, refined);
       renumberCommunities(refined, options.preserveLabels);
       effectivePartition = refined;
     }
@@ -177,7 +183,18 @@ export function runLouvainUndirectedModularity(graph, optionsInput = {}) {
       originalToCurrent[i] = fineToCoarse[originalToCurrent[i]];
     }
 
-    if (partition.communityCount === graphAdapter.n) break;
+    // Terminate when no further coarsening is possible.  Check both the
+    // move-phase partition (did the greedy phase find merges?) and the
+    // effective partition that feeds buildCoarseGraph (would coarsening
+    // actually reduce the graph?).  When refine is enabled the refined
+    // partition starts from singletons and may have more communities than
+    // the move phase found, so checking only effectivePartition would
+    // cause premature termination.
+    if (
+      partition.communityCount === graphAdapter.n &&
+      effectivePartition.communityCount === graphAdapter.n
+    )
+      break;
     currentGraph = buildCoarseGraph(graphAdapter, effectivePartition);
   }
 
@@ -229,6 +246,28 @@ function buildCoarseGraph(g, p) {
   return coarse;
 }
 
+/**
+ * True Leiden refinement phase (Algorithm 3, Traag et al. 2019).
+ *
+ * Key properties that distinguish this from Louvain-style refinement:
+ *
+ * 1. **Singleton start** — each node begins in its own community.
+ * 2. **Singleton guard** — only nodes still in singleton communities are
+ *    considered for merging. Once a node joins a non-singleton community
+ *    it is locked for the remainder of the pass. This prevents oscillation
+ *    and is essential for the γ-connectedness guarantee.
+ * 3. **Single pass** — one randomized sweep through all nodes, not an
+ *    iterative loop until convergence (that would be Louvain behavior).
+ * 4. **Probabilistic selection** — candidate communities are sampled from
+ *    a Boltzmann distribution `p(v, C) ∝ exp(ΔH / θ)`, with the "stay
+ *    as singleton" option (ΔH = 0) included in the distribution. This
+ *    means a node may probabilistically choose to remain alone even when
+ *    positive-gain merges exist.
+ *
+ * θ (refinementTheta) controls temperature: lower → more deterministic
+ * (approaches greedy), higher → more exploratory. Determinism is preserved
+ * via the seeded PRNG — same seed produces the same assignments.
+ */
 function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
   const p = makePartition(g);
   p.initializeAggregates();
@@ -237,43 +276,166 @@ function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
   const commMacro = new Int32Array(p.communityCount);
   for (let i = 0; i < p.communityCount; i++) commMacro[i] = macro[i];
 
+  const theta = typeof opts.refinementTheta === 'number' ? opts.refinementTheta : 1.0;
+  if (theta <= 0) throw new RangeError(`refinementTheta must be > 0 (got ${theta})`);
+
+  // Single pass in random order (Algorithm 3, step 2).
   const order = new Int32Array(g.n);
   for (let i = 0; i < g.n; i++) order[i] = i;
-  let improved = true;
-  let passes = 0;
-  while (improved) {
-    improved = false;
-    passes++;
-    shuffleArrayInPlace(order, rng);
-    for (let idx = 0; idx < order.length; idx++) {
-      const v = order[idx];
-      if (fixedMask0?.[v]) continue;
-      const macroV = macro[v];
-      const touchedCount = p.accumulateNeighborCommunityEdgeWeights(v);
-      let bestC = p.nodeCommunity[v];
-      let bestGain = 0;
-      const maxSize = Number.isFinite(opts.maxCommunitySize) ? opts.maxCommunitySize : Infinity;
-      for (let t = 0; t < touchedCount; t++) {
-        const c = p.getCandidateCommunityAt(t);
-        if (commMacro[c] !== macroV) continue;
-        if (maxSize < Infinity) {
-          const nextSize = p.getCommunityTotalSize(c) + g.size[v];
-          if (nextSize > maxSize) continue;
-        }
-        const gain = computeQualityGain(p, v, c, opts);
-        if (gain > bestGain) {
-          bestGain = gain;
-          bestC = c;
-        }
+  shuffleArrayInPlace(order, rng);
+
+  // Pre-allocate flat arrays for candidate collection to avoid per-node GC pressure.
+  // Maximum possible candidates per node is bounded by g.n (community count).
+  const candC = new Int32Array(g.n);
+  const candGain = new Float64Array(g.n);
+  const candWeight = new Float64Array(g.n);
+
+  for (let idx = 0; idx < order.length; idx++) {
+    const v = order[idx];
+    if (fixedMask0?.[v]) continue;
+
+    // Singleton guard: only move nodes still alone in their community.
+    if (p.getCommunityNodeCount(p.nodeCommunity[v]) > 1) continue;
+
+    const macroV = macro[v];
+    const touchedCount = p.accumulateNeighborCommunityEdgeWeights(v);
+    const maxSize = Number.isFinite(opts.maxCommunitySize) ? opts.maxCommunitySize : Infinity;
+
+    // Collect eligible communities and their quality gains.
+    let candLen = 0;
+    for (let t = 0; t < touchedCount; t++) {
+      const c = p.getCandidateCommunityAt(t);
+      if (c === p.nodeCommunity[v]) continue;
+      if (commMacro[c] !== macroV) continue;
+      if (maxSize < Infinity) {
+        const nextSize = p.getCommunityTotalSize(c) + g.size[v];
+        if (nextSize > maxSize) continue;
       }
-      if (bestC !== p.nodeCommunity[v] && bestGain > GAIN_EPSILON) {
-        p.moveNodeToCommunity(v, bestC);
-        improved = true;
+      const gain = computeQualityGain(p, v, c, opts);
+      if (gain > GAIN_EPSILON) {
+        candC[candLen] = c;
+        candGain[candLen] = gain;
+        candLen++;
       }
     }
-    if (passes >= opts.maxLocalPasses) break;
+
+    if (candLen === 0) continue;
+
+    // Probabilistic selection: p(v, C) ∝ exp(ΔH / θ), with the "stay"
+    // option (ΔH = 0) included per Algorithm 3.
+    // For numerical stability, subtract the max gain before exponentiation.
+    let maxGain = 0;
+    for (let i = 0; i < candLen; i++) {
+      if (candGain[i] > maxGain) maxGain = candGain[i];
+    }
+    // "Stay as singleton" weight: exp((0 - maxGain) / theta)
+    const stayWeight = Math.exp((0 - maxGain) / theta);
+    let totalWeight = stayWeight;
+    for (let i = 0; i < candLen; i++) {
+      candWeight[i] = Math.exp((candGain[i] - maxGain) / theta);
+      totalWeight += candWeight[i];
+    }
+
+    const r = rng() * totalWeight;
+    if (r < stayWeight) continue; // node stays as singleton
+
+    let cumulative = stayWeight;
+    let chosenC = candC[candLen - 1]; // fallback
+    for (let i = 0; i < candLen; i++) {
+      cumulative += candWeight[i];
+      if (r < cumulative) {
+        chosenC = candC[i];
+        break;
+      }
+    }
+
+    p.moveNodeToCommunity(v, chosenC);
   }
   return p;
+}
+
+/**
+ * Post-refinement connectivity check.  For each community, run a BFS on
+ * the subgraph induced by its members (using the adapter's outEdges).
+ * If a community has multiple connected components, assign secondary
+ * components to new community IDs, then reinitialize aggregates once.
+ *
+ * O(V+E) total since communities partition V.
+ *
+ * This replaces the per-candidate γ-connectedness check from the paper
+ * with a cheaper post-step that catches the most important violation
+ * (disconnected subcommunities).
+ */
+function splitDisconnectedCommunities(g, partition) {
+  const n = g.n;
+  const nc = partition.nodeCommunity;
+  const members = partition.getCommunityMembers();
+  let nextC = partition.communityCount;
+  let didSplit = false;
+
+  const visited = new Uint8Array(n);
+  const inCommunity = new Uint8Array(n);
+
+  for (let c = 0; c < members.length; c++) {
+    const nodes = members[c];
+    if (nodes.length <= 1) continue;
+
+    for (let i = 0; i < nodes.length; i++) inCommunity[nodes[i]] = 1;
+
+    let componentCount = 0;
+    for (let i = 0; i < nodes.length; i++) {
+      const start = nodes[i];
+      if (visited[start]) continue;
+      componentCount++;
+
+      // BFS within the community subgraph.
+      // For directed graphs, traverse both outEdges and inEdges to check
+      // weak connectivity (reachability ignoring edge direction).
+      const queue = [start];
+      visited[start] = 1;
+      let head = 0;
+      while (head < queue.length) {
+        const v = queue[head++];
+        const out = g.outEdges[v];
+        for (let k = 0; k < out.length; k++) {
+          const w = out[k].to;
+          if (inCommunity[w] && !visited[w]) {
+            visited[w] = 1;
+            queue.push(w);
+          }
+        }
+        if (g.directed && g.inEdges) {
+          const inc = g.inEdges[v];
+          for (let k = 0; k < inc.length; k++) {
+            const w = inc[k].from;
+            if (inCommunity[w] && !visited[w]) {
+              visited[w] = 1;
+              queue.push(w);
+            }
+          }
+        }
+      }
+
+      if (componentCount > 1) {
+        // Secondary component — assign new community ID directly.
+        const newC = nextC++;
+        for (let q = 0; q < queue.length; q++) nc[queue[q]] = newC;
+        didSplit = true;
+      }
+    }
+
+    for (let i = 0; i < nodes.length; i++) {
+      inCommunity[nodes[i]] = 0;
+      visited[nodes[i]] = 0;
+    }
+  }
+
+  if (didSplit) {
+    // Grow the partition's typed arrays to accommodate new community IDs,
+    // then recompute all aggregates from the updated nodeCommunity array.
+    partition.resizeCommunities(nextC);
+    partition.initializeAggregates();
+  }
 }
 
 function computeQualityGain(partition, v, c, opts) {
@@ -329,6 +491,8 @@ function normalizeOptions(options = {}) {
   const maxCommunitySize = Number.isFinite(options.maxCommunitySize)
     ? options.maxCommunitySize
     : Infinity;
+  const refinementTheta =
+    typeof options.refinementTheta === 'number' ? options.refinementTheta : 1.0;
   return {
     directed,
     randomSeed,
@@ -341,6 +505,7 @@ function normalizeOptions(options = {}) {
     refine,
     preserveLabels,
     maxCommunitySize,
+    refinementTheta,
     fixedNodes: options.fixedNodes,
   };
 }

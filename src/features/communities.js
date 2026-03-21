@@ -149,10 +149,12 @@ export function communitiesData(customDbPath, opts = {}) {
   const resolution = opts.resolution ?? config.community?.resolution ?? 1.0;
   const maxLevels = opts.maxLevels ?? config.community?.maxLevels;
   const maxLocalPasses = opts.maxLocalPasses ?? config.community?.maxLocalPasses;
+  const refinementTheta = opts.refinementTheta ?? config.community?.refinementTheta;
   const { assignments, modularity } = louvainCommunities(graph, {
     resolution,
     maxLevels,
     maxLocalPasses,
+    refinementTheta,
   });
 
   const { communities, communityDirs } = buildCommunityObjects(graph, assignments, opts);

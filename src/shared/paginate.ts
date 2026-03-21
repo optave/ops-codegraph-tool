@@ -5,8 +5,26 @@
  * change between pages; offset/limit is simpler and maps directly to SQL.
  */
 
+export interface PaginationMeta {
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+  returned: number;
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  pagination?: PaginationMeta;
+}
+
+export interface PaginateOpts {
+  limit?: number;
+  offset?: number;
+}
+
 /** Default limits applied by MCP tool handlers (not by the programmatic API). */
-export const MCP_DEFAULTS = {
+export const MCP_DEFAULTS: Record<string, number> = {
   list_functions: 100,
   query: 10,
   where: 50,
@@ -33,10 +51,8 @@ export const MCP_DEFAULTS = {
 
 /**
  * Get MCP page-size defaults, optionally merged with config overrides.
- * @param {object} [configDefaults] - Override map from config.mcp.defaults
- * @returns {object}
  */
-export function getMcpDefaults(configDefaults) {
+export function getMcpDefaults(configDefaults?: Record<string, number>): Record<string, number> {
   if (!configDefaults) return MCP_DEFAULTS;
   return { ...MCP_DEFAULTS, ...configDefaults };
 }
@@ -48,12 +64,8 @@ export const MCP_MAX_LIMIT = 1000;
  * Paginate an array.
  *
  * When `limit` is undefined the input is returned unchanged (no-op).
- *
- * @param {any[]} items
- * @param {{ limit?: number, offset?: number }} opts
- * @returns {{ items: any[], pagination?: { total: number, offset: number, limit: number, hasMore: boolean, returned: number } }}
  */
-export function paginate(items, { limit, offset } = {}) {
+export function paginate<T>(items: T[], { limit, offset }: PaginateOpts = {}): PaginatedResult<T> {
   if (limit === undefined) {
     return { items };
   }
@@ -78,13 +90,12 @@ export function paginate(items, { limit, offset } = {}) {
  *
  * When `limit` is undefined the result is returned unchanged (backward compat).
  * When active, `_pagination` metadata is added to the result.
- *
- * @param {object} result - The result object (e.g. `{ count: 42, functions: [...] }`)
- * @param {string} field  - The array field name to paginate (e.g. `'functions'`)
- * @param {{ limit?: number, offset?: number }} opts
- * @returns {object} - Result with paginated field + `_pagination` (if active)
  */
-export function paginateResult(result, field, { limit, offset } = {}) {
+export function paginateResult<T extends Record<string, unknown>>(
+  result: T,
+  field: string,
+  { limit, offset }: PaginateOpts = {},
+): T & { _pagination?: PaginationMeta } {
   if (limit === undefined) {
     return result;
   }
@@ -100,11 +111,11 @@ export function paginateResult(result, field, { limit, offset } = {}) {
  *
  * Emits a `_meta` line with pagination info (if present), then one JSON
  * line per item in the named array field.
- *
- * @param {object} data   - Result object (may contain `_pagination`)
- * @param {string} field  - Array field name to stream (e.g. `'results'`)
  */
-export function printNdjson(data, field) {
+export function printNdjson(
+  data: Record<string, unknown> & { _pagination?: PaginationMeta },
+  field: string,
+): void {
   if (data._pagination) console.log(JSON.stringify({ _meta: data._pagination }));
   const items = data[field];
   if (Array.isArray(items)) {

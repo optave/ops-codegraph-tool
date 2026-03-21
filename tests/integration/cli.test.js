@@ -9,6 +9,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 
+// All tests spawn child processes that load .ts files — requires Node >= 22.6
+const [_major, _minor] = process.versions.node.split('.').map(Number);
+const canStripTypes = _major > 22 || (_major === 22 && _minor >= 6);
+
 const CLI = path.resolve('src/cli.js');
 
 const FIXTURE_FILES = {
@@ -65,7 +69,7 @@ afterAll(() => {
   if (tmpHome) fs.rmSync(tmpHome, { recursive: true, force: true });
 });
 
-describe('CLI smoke tests', () => {
+describe.skipIf(!canStripTypes)('CLI smoke tests', () => {
   // ─── Build ───────────────────────────────────────────────────────────
   test('build creates graph.db', () => {
     expect(fs.existsSync(dbPath)).toBe(true);
@@ -237,7 +241,7 @@ describe('CLI smoke tests', () => {
 
 // ─── Registry CLI ───────────────────────────────────────────────────────
 
-describe('Registry CLI commands', () => {
+describe.skipIf(!canStripTypes)('Registry CLI commands', () => {
   let tmpHome;
 
   /** Run CLI with isolated HOME to avoid touching real registry */

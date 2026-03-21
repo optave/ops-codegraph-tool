@@ -69,6 +69,7 @@ export const DEFAULTS = {
     resolution: 1.0,
     maxLevels: 50,
     maxLocalPasses: 20,
+    refinementTheta: 1.0,
   },
   structure: {
     cohesionThreshold: 0.3,

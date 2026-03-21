@@ -5,29 +5,40 @@
  * Node IDs are always strings. DB integer IDs should be stringified before use.
  */
 
+export interface NodeAttrs {
+  [key: string]: unknown;
+}
+
+export interface EdgeAttrs {
+  [key: string]: unknown;
+}
+
+export interface CodeGraphOpts {
+  directed?: boolean;
+}
+
 export class CodeGraph {
-  /**
-   * @param {{ directed?: boolean }} [opts]
-   */
-  constructor(opts = {}) {
+  private _directed: boolean;
+  private _nodes: Map<string, NodeAttrs>;
+  private _successors: Map<string, Map<string, EdgeAttrs>>;
+  private _predecessors: Map<string, Map<string, EdgeAttrs>>;
+
+  constructor(opts: CodeGraphOpts = {}) {
     this._directed = opts.directed !== false;
-    /** @type {Map<string, object>} */
     this._nodes = new Map();
-    /** @type {Map<string, Map<string, object>>} node → (target → edgeAttrs) */
     this._successors = new Map();
-    /** @type {Map<string, Map<string, object>>} node → (source → edgeAttrs) */
     this._predecessors = new Map();
   }
 
-  get directed() {
+  get directed(): boolean {
     return this._directed;
   }
 
-  get nodeCount() {
+  get nodeCount(): number {
     return this._nodes.size;
   }
 
-  get edgeCount() {
+  get edgeCount(): number {
     let count = 0;
     for (const targets of this._successors.values()) count += targets.size;
     // Undirected graphs store each edge twice (a→b and b→a)
@@ -36,7 +47,7 @@ export class CodeGraph {
 
   // ─── Node operations ────────────────────────────────────────────
 
-  addNode(id, attrs = {}) {
+  addNode(id: string | number, attrs: NodeAttrs = {}): this {
     const key = String(id);
     this._nodes.set(key, attrs);
     if (!this._successors.has(key)) this._successors.set(key, new Map());
@@ -44,65 +55,62 @@ export class CodeGraph {
     return this;
   }
 
-  hasNode(id) {
+  hasNode(id: string | number): boolean {
     return this._nodes.has(String(id));
   }
 
-  getNodeAttrs(id) {
+  getNodeAttrs(id: string | number): NodeAttrs | undefined {
     return this._nodes.get(String(id));
   }
 
-  /** @returns {IterableIterator<[string, object]>} */
-  nodes() {
+  nodes(): IterableIterator<[string, NodeAttrs]> {
     return this._nodes.entries();
   }
 
-  /** @returns {string[]} */
-  nodeIds() {
+  nodeIds(): string[] {
     return [...this._nodes.keys()];
   }
 
   // ─── Edge operations ────────────────────────────────────────────
 
-  addEdge(source, target, attrs = {}) {
+  addEdge(source: string | number, target: string | number, attrs: EdgeAttrs = {}): this {
     const src = String(source);
     const tgt = String(target);
     // Auto-add nodes if missing
     if (!this._nodes.has(src)) this.addNode(src);
     if (!this._nodes.has(tgt)) this.addNode(tgt);
 
-    this._successors.get(src).set(tgt, attrs);
-    this._predecessors.get(tgt).set(src, attrs);
+    this._successors.get(src)!.set(tgt, attrs);
+    this._predecessors.get(tgt)!.set(src, attrs);
 
     if (!this._directed) {
-      this._successors.get(tgt).set(src, attrs);
-      this._predecessors.get(src).set(tgt, attrs);
+      this._successors.get(tgt)!.set(src, attrs);
+      this._predecessors.get(src)!.set(tgt, attrs);
     }
     return this;
   }
 
-  hasEdge(source, target) {
+  hasEdge(source: string | number, target: string | number): boolean {
     const src = String(source);
     const tgt = String(target);
-    return this._successors.has(src) && this._successors.get(src).has(tgt);
+    return this._successors.has(src) && this._successors.get(src)!.has(tgt);
   }
 
-  getEdgeAttrs(source, target) {
+  getEdgeAttrs(source: string | number, target: string | number): EdgeAttrs | undefined {
     const src = String(source);
     const tgt = String(target);
     return this._successors.get(src)?.get(tgt);
   }
 
-  /** @yields {[string, string, object]} source, target, attrs */
-  *edges() {
-    const seen = this._directed ? null : new Set();
+  *edges(): Generator<[string, string, EdgeAttrs]> {
+    const seen = this._directed ? null : new Set<string>();
     for (const [src, targets] of this._successors) {
       for (const [tgt, attrs] of targets) {
         if (!this._directed) {
           // \0 is safe as separator — node IDs are file paths/symbols, never contain null bytes
           const key = src < tgt ? `${src}\0${tgt}` : `${tgt}\0${src}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
+          if (seen!.has(key)) continue;
+          seen!.add(key);
         }
         yield [src, tgt, attrs];
       }
@@ -112,23 +120,23 @@ export class CodeGraph {
   // ─── Adjacency ──────────────────────────────────────────────────
 
   /** Direct successors of a node (outgoing edges). */
-  successors(id) {
+  successors(id: string | number): string[] {
     const key = String(id);
     const map = this._successors.get(key);
     return map ? [...map.keys()] : [];
   }
 
   /** Direct predecessors of a node (incoming edges). */
-  predecessors(id) {
+  predecessors(id: string | number): string[] {
     const key = String(id);
     const map = this._predecessors.get(key);
     return map ? [...map.keys()] : [];
   }
 
   /** All neighbors (union of successors + predecessors). */
-  neighbors(id) {
+  neighbors(id: string | number): string[] {
     const key = String(id);
-    const set = new Set();
+    const set = new Set<string>();
     const succ = this._successors.get(key);
     if (succ) for (const k of succ.keys()) set.add(k);
     const pred = this._predecessors.get(key);
@@ -136,12 +144,12 @@ export class CodeGraph {
     return [...set];
   }
 
-  outDegree(id) {
+  outDegree(id: string | number): number {
     const map = this._successors.get(String(id));
     return map ? map.size : 0;
   }
 
-  inDegree(id) {
+  inDegree(id: string | number): number {
     const map = this._predecessors.get(String(id));
     return map ? map.size : 0;
   }
@@ -149,7 +157,7 @@ export class CodeGraph {
   // ─── Filtering ──────────────────────────────────────────────────
 
   /** Return a new graph containing only nodes matching the predicate. */
-  subgraph(predicate) {
+  subgraph(predicate: (id: string, attrs: NodeAttrs) => boolean): CodeGraph {
     const g = new CodeGraph({ directed: this._directed });
     for (const [id, attrs] of this._nodes) {
       if (predicate(id, attrs)) g.addNode(id, { ...attrs });
@@ -163,7 +171,7 @@ export class CodeGraph {
   }
 
   /** Return a new graph containing only edges matching the predicate. */
-  filterEdges(predicate) {
+  filterEdges(predicate: (source: string, target: string, attrs: EdgeAttrs) => boolean): CodeGraph {
     const g = new CodeGraph({ directed: this._directed });
     for (const [id, attrs] of this._nodes) {
       g.addNode(id, { ...attrs });
@@ -179,8 +187,8 @@ export class CodeGraph {
   // ─── Conversion ─────────────────────────────────────────────────
 
   /** Convert to flat edge array for native Rust interop. */
-  toEdgeArray() {
-    const result = [];
+  toEdgeArray(): { source: string; target: string }[] {
+    const result: { source: string; target: string }[] = [];
     for (const [source, target] of this.edges()) {
       result.push({ source, target });
     }
@@ -189,7 +197,7 @@ export class CodeGraph {
 
   // ─── Utilities ──────────────────────────────────────────────────
 
-  clone() {
+  clone(): CodeGraph {
     const g = new CodeGraph({ directed: this._directed });
     for (const [id, attrs] of this._nodes) {
       g.addNode(id, { ...attrs });
@@ -201,7 +209,7 @@ export class CodeGraph {
   }
 
   /** Merge another graph into this one. Nodes/edges from other override on conflict. */
-  merge(other) {
+  merge(other: CodeGraph): this {
     for (const [id, attrs] of other.nodes()) {
       this.addNode(id, attrs);
     }

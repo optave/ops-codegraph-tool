@@ -1,11 +1,12 @@
+export interface Rng {
+  nextDouble(): number;
+}
+
 /**
  * Seeded PRNG (mulberry32).
  * Drop-in replacement for ngraph.random — only nextDouble() is needed.
- *
- * @param {number} [seed]
- * @returns {{ nextDouble(): number }}
  */
-export function createRng(seed = 42) {
+export function createRng(seed: number = 42): Rng {
   let s = seed | 0;
   return {
     nextDouble() {

@@ -373,6 +373,10 @@ export function makePartition(graph) {
     get communityTotalInStrength() {
       return communityTotalInStrength;
     },
+    resizeCommunities(newCount) {
+      ensureCommCapacity(newCount);
+      communityCount = newCount;
+    },
     initializeAggregates,
     accumulateNeighborCommunityEdgeWeights,
     getCandidateCommunityCount: () => candidateCommunityCount,

@@ -1,19 +1,20 @@
+import type { CodeGraph } from '../model.js';
+
 /**
  * Tarjan's strongly connected components algorithm.
  * Operates on a CodeGraph instance.
  *
- * @param {import('../model.js').CodeGraph} graph
- * @returns {string[][]} SCCs with length > 1 (cycles)
+ * @returns SCCs with length > 1 (cycles)
  */
-export function tarjan(graph) {
+export function tarjan(graph: CodeGraph): string[][] {
   let index = 0;
-  const stack = [];
-  const onStack = new Set();
-  const indices = new Map();
-  const lowlinks = new Map();
-  const sccs = [];
+  const stack: string[] = [];
+  const onStack = new Set<string>();
+  const indices = new Map<string, number>();
+  const lowlinks = new Map<string, number>();
+  const sccs: string[][] = [];
 
-  function strongconnect(v) {
+  function strongconnect(v: string): void {
     indices.set(v, index);
     lowlinks.set(v, index);
     index++;
@@ -23,17 +24,17 @@ export function tarjan(graph) {
     for (const w of graph.successors(v)) {
       if (!indices.has(w)) {
         strongconnect(w);
-        lowlinks.set(v, Math.min(lowlinks.get(v), lowlinks.get(w)));
+        lowlinks.set(v, Math.min(lowlinks.get(v)!, lowlinks.get(w)!));
       } else if (onStack.has(w)) {
-        lowlinks.set(v, Math.min(lowlinks.get(v), indices.get(w)));
+        lowlinks.set(v, Math.min(lowlinks.get(v)!, indices.get(w)!));
       }
     }
 
     if (lowlinks.get(v) === indices.get(v)) {
-      const scc = [];
-      let w;
+      const scc: string[] = [];
+      let w: string | undefined;
       do {
-        w = stack.pop();
+        w = stack.pop()!;
         onStack.delete(w);
         scc.push(w);
       } while (w !== v);
