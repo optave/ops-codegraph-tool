@@ -72,27 +72,28 @@ function buildTransitiveCallers(
   const visited = new Set([nodeId]);
   let frontier = callers;
 
+  const upstreamStmt = db.prepare(`
+    SELECT n.id, n.name, n.kind, n.file, n.line
+    FROM edges e JOIN nodes n ON e.source_id = n.id
+    WHERE e.target_id = ? AND e.kind = 'calls'
+  `);
+
   for (let d = 2; d <= depth; d++) {
     const nextFrontier: typeof frontier = [];
     for (const f of frontier) {
       if (visited.has(f.id)) continue;
       visited.add(f.id);
-      const upstream = db
-        .prepare(`
-          SELECT n.name, n.kind, n.file, n.line
-          FROM edges e JOIN nodes n ON e.source_id = n.id
-          WHERE e.target_id = ? AND e.kind = 'calls'
-        `)
-        .all(f.id) as Array<{ name: string; kind: string; file: string; line: number }>;
+      const upstream = upstreamStmt.all(f.id) as Array<{
+        id: number;
+        name: string;
+        kind: string;
+        file: string;
+        line: number;
+      }>;
       for (const u of upstream) {
         if (noTests && isTestFile(u.file)) continue;
-        const uid = (
-          db
-            .prepare('SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? AND line = ?')
-            .get(u.name, u.kind, u.file, u.line) as { id: number } | undefined
-        )?.id;
-        if (uid && !visited.has(uid)) {
-          nextFrontier.push({ ...u, id: uid });
+        if (!visited.has(u.id)) {
+          nextFrontier.push(u);
         }
       }
     }
