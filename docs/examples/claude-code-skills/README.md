@@ -195,8 +195,8 @@ All skills enforce worktree isolation as their first step. If invoked from the m
 | `codegraph check --staged --cycles --blast-radius --boundaries` | GATE | Full validation predicates |
 | `codegraph ast --kind call\|await\|string` | GAUNTLET | AST pattern detection |
 | `codegraph dataflow` | GAUNTLET | Data flow and mutation analysis |
-| `codegraph exports` | GAUNTLET | Per-symbol export consumers |
-| `codegraph fn-impact` | GAUNTLET, SYNC | Blast radius |
+| `codegraph exports` | GAUNTLET, FORGE | Per-symbol export consumers |
+| `codegraph fn-impact` | GAUNTLET, SYNC, FORGE | Blast radius |
 | `codegraph search` | GAUNTLET | Duplicate code detection (needs embeddings) |
 | `codegraph co-change` | GAUNTLET, SYNC | Git history coupling |
 | `codegraph path` | SYNC | Dependency paths between targets |
