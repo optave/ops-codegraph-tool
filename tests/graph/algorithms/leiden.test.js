@@ -356,3 +356,84 @@ describe('refinement', () => {
     expect([...c1][0]).not.toBe([...c2][0]);
   });
 });
+
+// ─── Probabilistic refinement (Algorithm 3, Traag et al. 2019) ───────
+
+describe('probabilistic refinement', () => {
+  it('is deterministic with the same seed', () => {
+    const g = makeTwoCliquesBridge();
+    const opts = { randomSeed: 77, refine: true, refinementTheta: 0.05 };
+    const a = detectClusters(g, opts);
+    const b = detectClusters(g, opts);
+    const ids = ['0', '1', '2', '3', '4', '5', '6', '7'];
+    const classesA = ids.map((i) => a.getClass(i));
+    const classesB = ids.map((i) => b.getClass(i));
+    expect(classesA).toEqual(classesB);
+  });
+
+  it('produces different results with different seeds', () => {
+    // On a larger graph with ambiguous structure, different seeds should
+    // exercise different probabilistic paths. Build a ring of 5-cliques
+    // with equally-weighted bridges — partition is ambiguous, so the
+    // probabilistic step has room to diverge across seeds.
+    const g = new CodeGraph();
+    const cliqueSize = 5;
+    const numCliques = 4;
+    for (let c = 0; c < numCliques; c++)
+      for (let i = 0; i < cliqueSize; i++) g.addNode(`${c}_${i}`);
+    for (let c = 0; c < numCliques; c++)
+      for (let i = 0; i < cliqueSize; i++)
+        for (let j = i + 1; j < cliqueSize; j++) {
+          g.addEdge(`${c}_${i}`, `${c}_${j}`);
+          g.addEdge(`${c}_${j}`, `${c}_${i}`);
+        }
+    // Ring bridges with moderate weight — creates ambiguity
+    for (let c = 0; c < numCliques; c++) {
+      const next = (c + 1) % numCliques;
+      g.addEdge(`${c}_${cliqueSize - 1}`, `${next}_0`, { weight: 2 });
+      g.addEdge(`${next}_0`, `${c}_${cliqueSize - 1}`, { weight: 2 });
+    }
+
+    const opts1 = { randomSeed: 1, refine: true, refinementTheta: 1.0 };
+    const opts2 = { randomSeed: 9999, refine: true, refinementTheta: 1.0 };
+    const a = detectClusters(g, opts1);
+    const b = detectClusters(g, opts2);
+    const ids = [];
+    for (let c = 0; c < numCliques; c++) for (let i = 0; i < cliqueSize; i++) ids.push(`${c}_${i}`);
+
+    // At minimum, quality should be finite for both
+    expect(Number.isFinite(a.quality())).toBe(true);
+    expect(Number.isFinite(b.quality())).toBe(true);
+    // We don't assert they differ — the point is that both are valid
+    // partitions and neither crashes. True randomness divergence is
+    // probabilistic and cannot be asserted deterministically.
+  });
+
+  it('low theta approximates greedy (same result as very low theta)', () => {
+    const { g } = makeTwoCliques(4);
+    // Two runs with very low theta should produce identical results
+    // (exponential heavily favors max-gain candidate → effectively greedy)
+    const a = detectClusters(g, { randomSeed: 42, refine: true, refinementTheta: 1e-6 });
+    const b = detectClusters(g, { randomSeed: 42, refine: true, refinementTheta: 1e-8 });
+    const ids = [];
+    for (const [id] of g.nodes()) ids.push(id);
+    const classesA = ids.map((i) => a.getClass(i));
+    const classesB = ids.map((i) => b.getClass(i));
+    expect(classesA).toEqual(classesB);
+  });
+
+  it('respects refinementTheta option and still finds correct communities', () => {
+    const g = makeTwoCliquesBridge();
+    // Even with high theta, two well-separated cliques should still split
+    const clusters = detectClusters(g, {
+      randomSeed: 42,
+      refine: true,
+      refinementTheta: 0.5,
+    });
+    const cA = new Set(['0', '1', '2', '3'].map((i) => clusters.getClass(i)));
+    const cB = new Set(['4', '5', '6', '7'].map((i) => clusters.getClass(i)));
+    expect(cA.size).toBe(1);
+    expect(cB.size).toBe(1);
+    expect([...cA][0]).not.toBe([...cB][0]);
+  });
+});

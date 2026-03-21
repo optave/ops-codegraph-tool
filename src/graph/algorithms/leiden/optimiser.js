@@ -229,6 +229,23 @@ function buildCoarseGraph(g, p) {
   return coarse;
 }
 
+/**
+ * True Leiden refinement phase (Algorithm 3, Traag et al. 2019).
+ *
+ * Instead of greedily picking the best community (which is functionally
+ * Louvain with an extra pass), we sample from a Boltzmann distribution:
+ *
+ *   p(v, C) ∝ exp(ΔH / θ)
+ *
+ * where ΔH is the quality gain of moving node v into community C, and θ
+ * (refinementTheta) controls the temperature. Lower θ → more deterministic
+ * (approaches greedy), higher θ → more exploratory. This probabilistic
+ * step is what guarantees γ-connected communities, the defining
+ * contribution of Leiden over Louvain.
+ *
+ * Determinism is preserved via the seeded PRNG — same seed produces the
+ * same community assignments across runs.
+ */
 function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
   const p = makePartition(g);
   p.initializeAggregates();
@@ -236,6 +253,8 @@ function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
   const macro = basePart.nodeCommunity;
   const commMacro = new Int32Array(p.communityCount);
   for (let i = 0; i < p.communityCount; i++) commMacro[i] = macro[i];
+
+  const theta = typeof opts.refinementTheta === 'number' ? opts.refinementTheta : 0.01;
 
   const order = new Int32Array(g.n);
   for (let i = 0; i < g.n; i++) order[i] = i;
@@ -250,24 +269,52 @@ function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
       if (fixedMask0?.[v]) continue;
       const macroV = macro[v];
       const touchedCount = p.accumulateNeighborCommunityEdgeWeights(v);
-      let bestC = p.nodeCommunity[v];
-      let bestGain = 0;
       const maxSize = Number.isFinite(opts.maxCommunitySize) ? opts.maxCommunitySize : Infinity;
+
+      // Collect eligible communities and their quality gains.
+      const candidates = [];
       for (let t = 0; t < touchedCount; t++) {
         const c = p.getCandidateCommunityAt(t);
+        if (c === p.nodeCommunity[v]) continue;
         if (commMacro[c] !== macroV) continue;
         if (maxSize < Infinity) {
           const nextSize = p.getCommunityTotalSize(c) + g.size[v];
           if (nextSize > maxSize) continue;
         }
         const gain = computeQualityGain(p, v, c, opts);
-        if (gain > bestGain) {
-          bestGain = gain;
-          bestC = c;
+        if (gain > GAIN_EPSILON) {
+          candidates.push({ c, gain });
         }
       }
-      if (bestC !== p.nodeCommunity[v] && bestGain > GAIN_EPSILON) {
-        p.moveNodeToCommunity(v, bestC);
+
+      if (candidates.length === 0) continue;
+
+      // Probabilistic selection: p(v, C) ∝ exp(ΔH / θ).
+      // For numerical stability, subtract the max gain before exponentiation.
+      let chosenC;
+      if (candidates.length === 1) {
+        chosenC = candidates[0].c;
+      } else {
+        const maxGain = candidates.reduce((m, x) => (x.gain > m ? x.gain : m), -Infinity);
+        let totalWeight = 0;
+        for (let i = 0; i < candidates.length; i++) {
+          candidates[i].weight = Math.exp((candidates[i].gain - maxGain) / theta);
+          totalWeight += candidates[i].weight;
+        }
+        const r = rng() * totalWeight;
+        let cumulative = 0;
+        chosenC = candidates[candidates.length - 1].c; // fallback
+        for (let i = 0; i < candidates.length; i++) {
+          cumulative += candidates[i].weight;
+          if (r < cumulative) {
+            chosenC = candidates[i].c;
+            break;
+          }
+        }
+      }
+
+      if (chosenC !== p.nodeCommunity[v]) {
+        p.moveNodeToCommunity(v, chosenC);
         improved = true;
       }
     }
@@ -329,6 +376,8 @@ function normalizeOptions(options = {}) {
   const maxCommunitySize = Number.isFinite(options.maxCommunitySize)
     ? options.maxCommunitySize
     : Infinity;
+  const refinementTheta =
+    typeof options.refinementTheta === 'number' ? options.refinementTheta : 0.01;
   return {
     directed,
     randomSeed,
@@ -341,6 +390,7 @@ function normalizeOptions(options = {}) {
     refine,
     preserveLabels,
     maxCommunitySize,
+    refinementTheta,
     fixedNodes: options.fixedNodes,
   };
 }

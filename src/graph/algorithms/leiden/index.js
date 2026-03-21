@@ -23,6 +23,7 @@ import { runLouvainUndirectedModularity } from './optimiser.js';
  * @param {number}  [options.maxCommunitySize]
  * @param {Set|Array} [options.fixedNodes]
  * @param {string}  [options.candidateStrategy]    - 'neighbors' | 'all' | 'random' | 'random-neighbor'
+ * @param {number}  [options.refinementTheta=0.01] - Temperature for probabilistic Leiden refinement (Algorithm 3, Traag et al. 2019). Lower → more greedy, higher → more exploratory. Deterministic via seeded PRNG
  * @returns {{ getClass(id): number, getCommunities(): Map, quality(): number, toJSON(): object }}
  *
  * **Note on `quality()`:** For modularity, `quality()` always evaluates at γ=1.0
