@@ -7,6 +7,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const loaderPath = pathToFileURL(resolve(__dirname, 'scripts/ts-resolve-loader.js')).href;
 const [major, minor] = process.versions.node.split('.').map(Number);
 const supportsStripTypes = major > 22 || (major === 22 && minor >= 6);
+const existing = process.env.NODE_OPTIONS || '';
 
 /**
  * During the JS → TS migration, some .js files import from modules that have
@@ -45,9 +46,13 @@ export default defineConfig({
     // This covers require() calls and child processes spawned by tests.
     env: {
       NODE_OPTIONS: [
-        process.env.NODE_OPTIONS,
-        supportsStripTypes ? (major >= 23 ? '--strip-types' : '--experimental-strip-types') : '',
-        `--import ${loaderPath}`,
+        existing,
+        supportsStripTypes &&
+        !existing.includes('--experimental-strip-types') &&
+        !existing.includes('--strip-types')
+          ? (major >= 23 ? '--strip-types' : '--experimental-strip-types')
+          : '',
+        existing.includes(loaderPath) ? '' : `--import ${loaderPath}`,
       ].filter(Boolean).join(' '),
     },
   },

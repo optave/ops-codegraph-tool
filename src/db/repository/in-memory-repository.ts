@@ -178,9 +178,7 @@ export class InMemoryRepository extends Repository {
     let nodes = [...this.#nodes.values()].filter((n) => re.test(n.name));
 
     if (opts.kinds) {
-      nodes = nodes.filter((n) =>
-        opts.kinds?.includes(n.kind as typeof opts.kinds extends (infer U)[] ? U : never),
-      );
+      nodes = nodes.filter((n) => opts.kinds?.includes(n.kind as string));
     }
     {
       const fileFn = buildFileFilterFn(opts.file);
