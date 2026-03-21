@@ -471,20 +471,23 @@ codegraph registry remove <name>  # Unregister
 
 ## 🌐 Language Support
 
-| Language | Extensions | Symbols Extracted | Type Inference | Parity |
-|---|---|---|:---:|:---:|
-| ![JavaScript](https://img.shields.io/badge/-JavaScript-F7DF1E?style=flat-square&logo=javascript&logoColor=black) | `.js`, `.jsx`, `.mjs`, `.cjs` | functions, classes, methods, imports, exports, call sites, constants, dataflow | ✅ | ✅ |
-| ![TypeScript](https://img.shields.io/badge/-TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white) | `.ts`, `.tsx` | functions, classes, interfaces, type aliases, methods, imports, exports, call sites, dataflow | ✅ | ✅ |
-| ![Python](https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white) | `.py`, `.pyi` | functions, classes, methods, imports, decorators, constants, call sites, dataflow | ✅ | ✅ |
-| ![Go](https://img.shields.io/badge/-Go-00ADD8?style=flat-square&logo=go&logoColor=white) | `.go` | functions, methods, structs, interfaces, constants, imports, call sites, dataflow | ✅ | ✅ |
-| ![Rust](https://img.shields.io/badge/-Rust-000000?style=flat-square&logo=rust&logoColor=white) | `.rs` | functions, methods, structs, enums, traits, constants, `use` imports, call sites, dataflow | ✅ | ✅ |
-| ![Java](https://img.shields.io/badge/-Java-ED8B00?style=flat-square&logo=openjdk&logoColor=white) | `.java` | classes, methods, constructors, interfaces, enums, imports, call sites, dataflow | ✅ | ✅ |
-| ![C#](https://img.shields.io/badge/-C%23-512BD4?style=flat-square&logo=dotnet&logoColor=white) | `.cs` | classes, structs, records, interfaces, enums, methods, constructors, properties, using directives, call sites, dataflow | ✅ | ✅ |
-| ![PHP](https://img.shields.io/badge/-PHP-777BB4?style=flat-square&logo=php&logoColor=white) | `.php`, `.phtml` | functions, classes, interfaces, traits, enums, methods, namespace use, call sites, dataflow | ✅ | ✅ |
-| ![Ruby](https://img.shields.io/badge/-Ruby-CC342D?style=flat-square&logo=ruby&logoColor=white) | `.rb`, `.rake`, `.gemspec` | classes, modules, methods, singleton methods, require/require_relative, include/extend, dataflow | N/A⁴ | ✅ |
-| ![Terraform](https://img.shields.io/badge/-Terraform-844FBA?style=flat-square&logo=terraform&logoColor=white) | `.tf`, `.hcl` | resource, data, variable, module, output blocks | N/A⁴ | ✅ |
+| Language | Extensions | Imports | Exports | Call Sites | Heritage¹ | Type Inference² | Dataflow |
+|---|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| ![JavaScript](https://img.shields.io/badge/-JavaScript-F7DF1E?style=flat-square&logo=javascript&logoColor=black) | `.js`, `.jsx`, `.mjs`, `.cjs` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ![TypeScript](https://img.shields.io/badge/-TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white) | `.ts`, `.tsx` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ![Python](https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white) | `.py`, `.pyi` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ![Go](https://img.shields.io/badge/-Go-00ADD8?style=flat-square&logo=go&logoColor=white) | `.go` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ![Rust](https://img.shields.io/badge/-Rust-000000?style=flat-square&logo=rust&logoColor=white) | `.rs` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ![Java](https://img.shields.io/badge/-Java-ED8B00?style=flat-square&logo=openjdk&logoColor=white) | `.java` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ![C#](https://img.shields.io/badge/-C%23-512BD4?style=flat-square&logo=dotnet&logoColor=white) | `.cs` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ![PHP](https://img.shields.io/badge/-PHP-777BB4?style=flat-square&logo=php&logoColor=white) | `.php`, `.phtml` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| ![Ruby](https://img.shields.io/badge/-Ruby-CC342D?style=flat-square&logo=ruby&logoColor=white) | `.rb`, `.rake`, `.gemspec` | ✓ | ✓ | ✓ | ✓ | —³ | ✓ |
+| ![Terraform](https://img.shields.io/badge/-Terraform-844FBA?style=flat-square&logo=terraform&logoColor=white) | `.tf`, `.hcl` | ✓ | —³ | —³ | —³ | —³ | —³ |
 
-> **Type Inference** extracts a per-file type map from annotations (`const x: Router`, `MyType x`, `x: MyType`) and `new` expressions, enabling the edge resolver to connect `x.method()` → `Type.method()`. **Parity** = WASM and native Rust engines produce identical output. ⁴ Ruby and HCL are dynamically typed / declarative — type inference does not apply.
+> ¹ **Heritage** = `extends`, `implements`, `include`/`extend` (Ruby), trait `impl` (Rust), receiver methods (Go).
+> ² **Type Inference** extracts a per-file type map from annotations (`const x: Router`, `MyType x`, `x: MyType`) and `new` expressions, enabling the edge resolver to connect `x.method()` → `Type.method()`.
+> ³ Not applicable — Ruby is dynamically typed; Terraform/HCL is declarative (no functions, classes, or type system).
+> All languages have full **parity** between the native Rust engine and the WASM fallback.
 
 ## ⚙️ How It Works
 

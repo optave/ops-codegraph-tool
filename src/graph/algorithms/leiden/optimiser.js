@@ -183,7 +183,18 @@ export function runLouvainUndirectedModularity(graph, optionsInput = {}) {
       originalToCurrent[i] = fineToCoarse[originalToCurrent[i]];
     }
 
-    if (partition.communityCount === graphAdapter.n) break;
+    // Terminate when no further coarsening is possible.  Check both the
+    // move-phase partition (did the greedy phase find merges?) and the
+    // effective partition that feeds buildCoarseGraph (would coarsening
+    // actually reduce the graph?).  When refine is enabled the refined
+    // partition starts from singletons and may have more communities than
+    // the move phase found, so checking only effectivePartition would
+    // cause premature termination.
+    if (
+      partition.communityCount === graphAdapter.n &&
+      effectivePartition.communityCount === graphAdapter.n
+    )
+      break;
     currentGraph = buildCoarseGraph(graphAdapter, effectivePartition);
   }
 
@@ -266,11 +277,18 @@ function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
   for (let i = 0; i < p.communityCount; i++) commMacro[i] = macro[i];
 
   const theta = typeof opts.refinementTheta === 'number' ? opts.refinementTheta : 1.0;
+  if (theta <= 0) throw new RangeError(`refinementTheta must be > 0 (got ${theta})`);
 
   // Single pass in random order (Algorithm 3, step 2).
   const order = new Int32Array(g.n);
   for (let i = 0; i < g.n; i++) order[i] = i;
   shuffleArrayInPlace(order, rng);
+
+  // Pre-allocate flat arrays for candidate collection to avoid per-node GC pressure.
+  // Maximum possible candidates per node is bounded by g.n (community count).
+  const candC = new Int32Array(g.n);
+  const candGain = new Float64Array(g.n);
+  const candWeight = new Float64Array(g.n);
 
   for (let idx = 0; idx < order.length; idx++) {
     const v = order[idx];
@@ -284,7 +302,7 @@ function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
     const maxSize = Number.isFinite(opts.maxCommunitySize) ? opts.maxCommunitySize : Infinity;
 
     // Collect eligible communities and their quality gains.
-    const candidates = [];
+    let candLen = 0;
     for (let t = 0; t < touchedCount; t++) {
       const c = p.getCandidateCommunityAt(t);
       if (c === p.nodeCommunity[v]) continue;
@@ -295,33 +313,38 @@ function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
       }
       const gain = computeQualityGain(p, v, c, opts);
       if (gain > GAIN_EPSILON) {
-        candidates.push({ c, gain });
+        candC[candLen] = c;
+        candGain[candLen] = gain;
+        candLen++;
       }
     }
 
-    if (candidates.length === 0) continue;
+    if (candLen === 0) continue;
 
     // Probabilistic selection: p(v, C) ∝ exp(ΔH / θ), with the "stay"
     // option (ΔH = 0) included per Algorithm 3.
     // For numerical stability, subtract the max gain before exponentiation.
-    const maxGain = candidates.reduce((m, x) => (x.gain > m ? x.gain : m), 0);
+    let maxGain = 0;
+    for (let i = 0; i < candLen; i++) {
+      if (candGain[i] > maxGain) maxGain = candGain[i];
+    }
     // "Stay as singleton" weight: exp((0 - maxGain) / theta)
     const stayWeight = Math.exp((0 - maxGain) / theta);
     let totalWeight = stayWeight;
-    for (let i = 0; i < candidates.length; i++) {
-      candidates[i].weight = Math.exp((candidates[i].gain - maxGain) / theta);
-      totalWeight += candidates[i].weight;
+    for (let i = 0; i < candLen; i++) {
+      candWeight[i] = Math.exp((candGain[i] - maxGain) / theta);
+      totalWeight += candWeight[i];
     }
 
     const r = rng() * totalWeight;
     if (r < stayWeight) continue; // node stays as singleton
 
     let cumulative = stayWeight;
-    let chosenC = candidates[candidates.length - 1].c; // fallback
-    for (let i = 0; i < candidates.length; i++) {
-      cumulative += candidates[i].weight;
+    let chosenC = candC[candLen - 1]; // fallback
+    for (let i = 0; i < candLen; i++) {
+      cumulative += candWeight[i];
       if (r < cumulative) {
-        chosenC = candidates[i].c;
+        chosenC = candC[i];
         break;
       }
     }
@@ -366,17 +389,29 @@ function splitDisconnectedCommunities(g, partition) {
       componentCount++;
 
       // BFS within the community subgraph.
+      // For directed graphs, traverse both outEdges and inEdges to check
+      // weak connectivity (reachability ignoring edge direction).
       const queue = [start];
       visited[start] = 1;
       let head = 0;
       while (head < queue.length) {
         const v = queue[head++];
-        const edges = g.outEdges[v];
-        for (let k = 0; k < edges.length; k++) {
-          const w = edges[k].to;
+        const out = g.outEdges[v];
+        for (let k = 0; k < out.length; k++) {
+          const w = out[k].to;
           if (inCommunity[w] && !visited[w]) {
             visited[w] = 1;
             queue.push(w);
+          }
+        }
+        if (g.directed && g.inEdges) {
+          const inc = g.inEdges[v];
+          for (let k = 0; k < inc.length; k++) {
+            const w = inc[k].from;
+            if (inCommunity[w] && !visited[w]) {
+              visited[w] = 1;
+              queue.push(w);
+            }
           }
         }
       }

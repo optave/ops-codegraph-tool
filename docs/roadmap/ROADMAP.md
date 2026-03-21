@@ -38,11 +38,12 @@ Phase 1 (Rust Core)
                               |-->  Phase 4 (Resolution Accuracy)
                                      |-->  Phase 5 (TypeScript Migration)
                                             |-->  Phase 6 (Native Analysis Acceleration)
-                                            |-->  Phase 7 (Runtime & Extensibility)
-                                            |-->  Phase 8 (Embeddings + Metadata)  -->  Phase 9 (NL Queries + Narration)
-                                            |-->  Phase 10 (Languages)
-                                            |-->  Phase 11 (GitHub/CI) <-- Phase 8 (risk_score, side_effects)
-Phases 1-9 -->  Phase 12 (Advanced Features)
+                                            |-->  Phase 7 (Languages)
+                                            |-->  Phase 8 (Runtime & Extensibility)
+                                            |-->  Phase 9 (Quality & Security)
+                                            |-->  Phase 10 (Embeddings + Metadata)  -->  Phase 11 (NL Queries + Narration)
+                                            |-->  Phase 12 (GitHub/CI) <-- Phase 10 (risk_score, side_effects)
+Phases 1-11 -->  Phase 13 (Advanced Features)
 ```
 
 ---
@@ -1067,7 +1068,7 @@ Import resolution now reads `package.json` `exports` field for conditional expor
 
 npm workspaces (`package.json` `workspaces`), `pnpm-workspace.yaml`, and `lerna.json` are now recognized. Internal package imports (`@myorg/utils`) resolve to actual source files with high confidence (0.95).
 
-> **Scope note:** This phase covers the *resolution layer only* — detecting workspace packages and resolving internal imports to source files. Full monorepo graph support (package node type, cross-package edges, `build --workspace` flag) is deferred to Phase 12.2.
+> **Scope note:** This phase covers the *resolution layer only* — detecting workspace packages and resolving internal imports to source files. Full monorepo graph support (package node type, cross-package edges, `build --workspace` flag) is deferred to Phase 13.2.
 
 - ✅ Detect workspace root and enumerate workspace packages
 - ✅ Resolve internal package imports to actual source files within the monorepo
@@ -1163,46 +1164,6 @@ Migrate top-level orchestration and entry points:
 
 **Affected files:** All `src/**/*.js` -> `src/**/*.ts`, all `tests/**/*.js` -> `tests/**/*.ts`, `package.json`, `biome.json`
 
-### 5.7 -- Supply-Chain Security & Audit
-
-**Gap:** No `npm audit` in CI pipeline. No supply-chain attestation (SLSA/SBOM). No formal security audit history.
-
-**Deliverables:**
-
-1. **CI `npm audit`** -- add `npm audit --omit=dev` step to CI pipeline; fail on critical/high vulnerabilities
-2. **SBOM generation** -- produce CycloneDX or SPDX SBOM on each release via `@cyclonedx/cyclonedx-npm` or similar
-3. **SLSA provenance** -- enable SLSA Level 2+ build provenance using `actions/attest-build-provenance` in the publish workflow; attach attestation to npm packages
-4. **Security audit log** -- maintain `docs/security/AUDIT_LOG.md` documenting past audits, dependency reviews, and remediation history
-
-**Affected files:** `.github/workflows/ci.yml`, `.github/workflows/publish.yml`, `docs/security/`
-
-### 5.8 -- CI Test Quality & Coverage Gates
-
-**Gaps:**
-
-- No coverage thresholds enforced in CI (coverage report runs locally only)
-- Embedding tests in separate workflow requiring HuggingFace token
-- 312 `setTimeout`/`sleep` instances in tests — potential flakiness under load
-- No dependency audit step in CI (see also [5.7](#57----supply-chain-security--audit))
-
-**Deliverables:**
-
-1. **Coverage gate** -- add `vitest --coverage` to CI with minimum threshold (e.g. 80% lines/branches); fail the pipeline when coverage drops below the threshold
-2. **Unified test workflow** -- merge embedding tests into the main CI workflow using a securely stored `HF_TOKEN` secret; eliminate the separate workflow
-3. **Timer cleanup** -- audit and reduce `setTimeout`/`sleep` usage in tests; replace with deterministic waits (event-based, polling with backoff, or `vi.useFakeTimers()`) to reduce flakiness
-4. > _Dependency audit step is covered by [5.7](#57----supply-chain-security--audit) deliverable 1._
-
-**Affected files:** `.github/workflows/ci.yml`, `vitest.config.js`, `tests/`
-
-### 5.9 -- Kill List (Technical Debt Cleanup)
-
-Items to remove or rework during the TypeScript migration, identified by architectural audit:
-
-1. **Remove Maintainability Index computation** — The 1991 Coleman-Oman formula (171 - 5.2*ln(V) - 0.23*G - 16.2*ln(LOC)) was validated on Fortran and C, not modern languages with closures, async/await, and higher-order functions. Microsoft deprecated their MI implementation in 2023. Remove from `ast-analysis/metrics.js` and `complexity` output, or replace with a validated metric
-2. **Scope Halstead metrics to imperative code** — Halstead operator/operand counting is meaningless for JSX, template literals, HCL, and declarative code. Either scope to imperative code blocks or remove
-3. **Migrate custom `graph/model.js` to `graphology`** — `graphology` is already a runtime dependency. The custom model reimplements `addNode`, `addEdge`, `successors`, `predecessors`, `inDegree`, `outDegree` — all available natively in `graphology`. Migrate during the TypeScript migration to avoid maintaining two graph representations
-4. **Skip WASM loading on platforms with native binaries** — On supported platforms (darwin-arm64, linux-x64, win32-x64), WASM should not be loaded at all. Currently `loadNative()` is checked on every call in `resolve.js`
-
 ---
 
 ## Phase 6 -- Native Analysis Acceleration
@@ -1283,7 +1244,7 @@ Smaller wins (~42ms combined) but complete the picture of a fully native build p
 Complexity is partly pre-computed by native (~16ms vs 77ms WASM) but not all functions are covered.
 
 - Ensure native parse computes cognitive and cyclomatic metrics for every function, not just a subset
-- Halstead and MI are scoped by Phase 5.9 (Kill List): MI will be removed entirely; Halstead will be limited to imperative code blocks. Native acceleration should only target the metrics that survive the Kill List
+- Halstead and MI are scoped by Phase 9.3 (Kill List): MI will be removed entirely; Halstead will be limited to imperative code blocks. Native acceleration should only target the metrics that survive the Kill List
 - Eliminate the WASM fallback path in `buildComplexityMetrics()` when running native
 
 **Affected files:** `crates/codegraph-core/src/lib.rs`, `src/features/complexity.js`
@@ -1319,13 +1280,84 @@ With analysis data loss fixed, optimize the 1-file rebuild path end-to-end. Curr
 
 ---
 
-## Phase 7 -- Runtime & Extensibility
+## Phase 7 -- Expanded Language Support
+
+**Goal:** Support every major programming language that has a mature tree-sitter grammar available in both WASM (npm) and Rust (crates.io). This takes codegraph from 11 to 34 languages, covering every actively-used language where dependency and call-graph analysis is meaningful.
+
+**Why after Phase 6:** The native analysis acceleration work (Phase 6) establishes the dual-engine pipeline that new language grammars plug into. Adding languages before the engine is complete would mean porting extractors twice. With Phase 6 done, each new language needs only a `LANGUAGE_REGISTRY` entry + extractor function, and both engines support it automatically.
+
+### 7.1 -- Parser Abstraction Layer
+
+Extract shared patterns from existing extractors into reusable helpers to reduce per-language boilerplate from ~200 lines to ~80 lines.
+
+| Helper | Purpose |
+|--------|---------|
+| `findParentNode(node, typeNames)` | Walk parent chain to find enclosing class/struct |
+| `extractBodyMethods(bodyNode, parentName)` | Extract method definitions from a body block |
+| `normalizeImportPath(importText)` | Cross-language import path normalization |
+
+**New file:** `src/parser-utils.js`
+
+### 7.2 -- Batch 1: High Demand
+
+Major languages with official or widely-adopted tree-sitter grammars (millions of crate downloads).
+
+| Language | Extensions | Grammar | Org | Notes |
+|----------|-----------|---------|-----|-------|
+| C | `.c`, `.h` | `tree-sitter-c` | Official | 3.9M crate downloads |
+| C++ | `.cpp`, `.hpp`, `.cc`, `.cxx` | `tree-sitter-cpp` | Official | 4.1M crate downloads |
+| Kotlin | `.kt`, `.kts` | `tree-sitter-kotlin` | `fwcd/` | Major Android/multiplatform language |
+| Swift | `.swift` | `tree-sitter-swift` | `alex-pinkus/` | iOS/macOS ecosystem |
+| Scala | `.scala`, `.sc` | `tree-sitter-scala` | Official | JVM ecosystem, 1.5M crate downloads |
+| Bash | `.sh`, `.bash` | `tree-sitter-bash` | Official | 2.6M crate downloads |
+
+### 7.3 -- Batch 2: Growing Ecosystems
+
+Actively maintained grammars with both npm and Rust packages available.
+
+| Language | Extensions | Grammar | Org | Notes |
+|----------|-----------|---------|-----|-------|
+| Elixir | `.ex`, `.exs` | `tree-sitter-elixir` | `elixir-lang/` | Official Elixir org, 1.2M crate downloads |
+| Lua | `.lua` | `tree-sitter-lua` | `tree-sitter-grammars/` | Neovim ecosystem, 1.2M crate downloads |
+| Dart | `.dart` | `tree-sitter-dart` | Third-party | Flutter/mobile ecosystem |
+| Zig | `.zig` | `tree-sitter-zig` | `tree-sitter-grammars/` | Growing systems language |
+| Haskell | `.hs` | `tree-sitter-haskell` | Official | 1.0M crate downloads |
+| OCaml | `.ml`, `.mli` | `tree-sitter-ocaml` | Official | ML family, mature grammar |
+
+### 7.4 -- Batch 3: Functional & BEAM
+
+Languages with solid tree-sitter grammars and active communities.
+
+| Language | Extensions | Grammar | Org | Notes |
+|----------|-----------|---------|-----|-------|
+| F# | `.fs`, `.fsx`, `.fsi` | `tree-sitter-fsharp` | `ionide/` | .NET functional, Ionide community |
+| Gleam | `.gleam` | `tree-sitter-gleam` | `gleam-lang/` | Official Gleam org, fastest-growing BEAM language |
+| Clojure | `.clj`, `.cljs`, `.cljc` | `tree-sitter-clojure` | Third-party | JVM Lisp, active community |
+| Julia | `.jl` | `tree-sitter-julia` | Official | Scientific computing |
+| R | `.r`, `.R` | `tree-sitter-r` | `r-lib/` | Statistical computing, 135K crate downloads; WASM built from repo |
+| Erlang | `.erl`, `.hrl` | `tree-sitter-erlang` | `WhatsApp/` | BEAM VM; WASM built from repo |
+
+### 7.5 -- Batch 4: Specialized
+
+| Language | Extensions | Grammar | Org | Notes |
+|----------|-----------|---------|-----|-------|
+| Solidity | `.sol` | `tree-sitter-solidity` | Third-party | Smart contracts, 787K crate downloads |
+| Objective-C | `.m` | `tree-sitter-objc` | `tree-sitter-grammars/` | Apple legacy, 121K crate downloads |
+| CUDA | `.cu`, `.cuh` | `tree-sitter-cuda` | `tree-sitter-grammars/` | C++ superset for GPU/ML, both npm + crate |
+| Groovy | `.groovy`, `.gvy` | `tree-sitter-groovy` | Third-party | JVM, Gradle build scripts |
+| Verilog/SystemVerilog | `.v`, `.sv` | `tree-sitter-verilog` | Official | HDL, 33K crate downloads |
+
+> For languages where the npm package is name-squatted or missing (R, Erlang), WASM binaries can be built from the grammar repo via `tree-sitter build --wasm`.
+
+---
+
+## Phase 8 -- Runtime & Extensibility
 
 **Goal:** Harden the runtime for large codebases and open the platform to external contributors. These items were deferred from Phase 3 -- they depend on the clean module boundaries and domain layering established there, and benefit from TypeScript's type safety (Phase 5) for safe refactoring of cross-cutting concerns like caching, streaming, and plugin contracts.
 
 **Why after TypeScript Migration:** Several of these items introduce new internal contracts (plugin API, cache interface, streaming protocol, engine strategy). Defining those contracts in TypeScript from the start avoids a second migration pass and gives contributors type-checked extension points (Phase 5).
 
-### 7.1 -- Event-Driven Pipeline
+### 8.1 -- Event-Driven Pipeline
 
 Replace the synchronous build/analysis pipeline with an event/streaming architecture. Enables progress reporting, cancellation tokens, and bounded memory usage on large repositories (10K+ files).
 
@@ -1337,7 +1369,7 @@ Replace the synchronous build/analysis pipeline with an event/streaming architec
 
 **Affected files:** `src/domain/graph/builder.js`, `src/cli/`, `src/mcp/`
 
-### 7.2 -- Unified Engine Interface (Strategy Pattern)
+### 8.2 -- Unified Engine Interface (Strategy Pattern)
 
 Replace scattered `engine.name === 'native'` / `engine === 'wasm'` branching throughout the codebase with a formal Strategy pattern. Each engine implements a common `ParsingEngine` interface with methods like `parse(file)`, `batchParse(files)`, `supports(language)`, and `capabilities()`.
 
@@ -1349,7 +1381,7 @@ Replace scattered `engine.name === 'native'` / `engine === 'wasm'` branching thr
 
 **Affected files:** `src/infrastructure/native.js`, `src/domain/parser.js`, `src/domain/graph/builder.js`
 
-### 7.3 -- Subgraph Export Filtering
+### 8.3 -- Subgraph Export Filtering
 
 Add focus and depth controls to `codegraph export` so users can produce usable visualizations of specific subsystems rather than the entire graph.
 
@@ -1366,7 +1398,7 @@ codegraph export --focus "buildGraph" --depth 3 --format dot
 
 **Affected files:** `src/features/export.js`, `src/presentation/export.js`
 
-### 7.4 -- Transitive Import-Aware Confidence
+### 8.4 -- Transitive Import-Aware Confidence
 
 Improve import resolution accuracy by walking the import graph before falling back to proximity heuristics. Currently the 6-level priority system uses directory proximity as a strong signal, but this can mis-resolve when a symbol is re-exported through an index file several directories away.
 
@@ -1377,7 +1409,7 @@ Improve import resolution accuracy by walking the import graph before falling ba
 
 **Affected files:** `src/domain/graph/resolve.js`
 
-### 7.5 -- Query Result Caching
+### 8.5 -- Query Result Caching
 
 Add an LRU/TTL cache layer between the analysis/query functions and the SQLite repository. With 34+ MCP tools that often run overlapping queries within a session, caching eliminates redundant DB round-trips.
 
@@ -1390,7 +1422,7 @@ Add an LRU/TTL cache layer between the analysis/query functions and the SQLite r
 
 **Affected files:** `src/domain/analysis/`, `src/db/index.js`
 
-### 7.6 -- Configuration Profiles
+### 8.6 -- Configuration Profiles
 
 Support named configuration profiles for monorepos and multi-service projects where different parts of the codebase need different settings.
 
@@ -1411,7 +1443,7 @@ Support named configuration profiles for monorepos and multi-service projects wh
 
 **Affected files:** `src/infrastructure/config.js`, `src/cli/`
 
-### 7.7 -- Pagination Standardization
+### 8.7 -- Pagination Standardization
 
 Standardize SQL-level `LIMIT`/`OFFSET` pagination across all repository queries and surface it consistently through the CLI and MCP.
 
@@ -1423,7 +1455,7 @@ Standardize SQL-level `LIMIT`/`OFFSET` pagination across all repository queries 
 
 **Affected files:** `src/shared/paginate.js`, `src/db/index.js`, `src/domain/analysis/`, `src/mcp/`
 
-### 7.8 -- Plugin System for Custom Commands
+### 8.8 -- Plugin System for Custom Commands
 
 Allow users to extend codegraph with custom commands by dropping a JS/TS module into `~/.codegraph/plugins/` (global) or `.codegraph/plugins/` (project-local).
 
@@ -1451,7 +1483,7 @@ export function data(db: Database, args: ParsedArgs, config: Config): object {
 
 **Affected files:** `src/cli/`, `src/mcp/`, new `src/infrastructure/plugins.js`
 
-### 7.9 -- Developer Experience & Onboarding
+### 8.9 -- Developer Experience & Onboarding
 
 Lower the barrier to first successful use. Today codegraph requires manual install, manual config, and prior knowledge of which command to run next.
 
@@ -1463,7 +1495,7 @@ Lower the barrier to first successful use. Today codegraph requires manual insta
 
 **Affected files:** new `src/cli/commands/init.js`, `docs/benchmarks/`, `docs/editors/`, `src/presentation/result-formatter.js`
 
-### 7.10 -- Confidence Annotations on Query Output
+### 8.10 -- Confidence Annotations on Query Output
 
 Every query output should communicate its known limitations. When `fn-impact` shows a blast radius of 5 functions, it should note how many method-dispatch calls may be missing.
 
@@ -1474,7 +1506,7 @@ Every query output should communicate its known limitations. When `fn-impact` sh
 
 **Affected files:** `src/domain/analysis/*.js`, `src/presentation/result-formatter.js`
 
-### 7.11 -- Shell Completion
+### 8.11 -- Shell Completion
 
 Commander supports shell completion but it's not implemented. Basic UX gap for a CLI tool with 40+ commands.
 
@@ -1486,13 +1518,59 @@ Commander supports shell completion but it's not implemented. Basic UX gap for a
 
 ---
 
-## Phase 8 -- Intelligent Embeddings
+## Phase 9 -- Quality, Security & Technical Debt
+
+**Goal:** Harden the CI pipeline with supply-chain security, enforce test quality gates, and clean up technical debt identified by architectural audits. These items were originally scoped under Phase 5 (TypeScript Migration) but are independent of the migration itself.
+
+### 9.1 -- Supply-Chain Security & Audit
+
+**Gap:** No `npm audit` in CI pipeline. No supply-chain attestation (SLSA/SBOM). No formal security audit history.
+
+**Deliverables:**
+
+1. **CI `npm audit`** -- add `npm audit --omit=dev` step to CI pipeline; fail on critical/high vulnerabilities
+2. **SBOM generation** -- produce CycloneDX or SPDX SBOM on each release via `@cyclonedx/cyclonedx-npm` or similar
+3. **SLSA provenance** -- enable SLSA Level 2+ build provenance using `actions/attest-build-provenance` in the publish workflow; attach attestation to npm packages
+4. **Security audit log** -- maintain `docs/security/AUDIT_LOG.md` documenting past audits, dependency reviews, and remediation history
+
+**Affected files:** `.github/workflows/ci.yml`, `.github/workflows/publish.yml`, `docs/security/`
+
+### 9.2 -- CI Test Quality & Coverage Gates
+
+**Gaps:**
+
+- No coverage thresholds enforced in CI (coverage report runs locally only)
+- Embedding tests in separate workflow requiring HuggingFace token
+- 312 `setTimeout`/`sleep` instances in tests — potential flakiness under load
+- No dependency audit step in CI (see also [9.1](#91----supply-chain-security--audit))
+
+**Deliverables:**
+
+1. **Coverage gate** -- add `vitest --coverage` to CI with minimum threshold (e.g. 80% lines/branches); fail the pipeline when coverage drops below the threshold
+2. **Unified test workflow** -- merge embedding tests into the main CI workflow using a securely stored `HF_TOKEN` secret; eliminate the separate workflow
+3. **Timer cleanup** -- audit and reduce `setTimeout`/`sleep` usage in tests; replace with deterministic waits (event-based, polling with backoff, or `vi.useFakeTimers()`) to reduce flakiness
+4. > _Dependency audit step is covered by [9.1](#91----supply-chain-security--audit) deliverable 1._
+
+**Affected files:** `.github/workflows/ci.yml`, `vitest.config.js`, `tests/`
+
+### 9.3 -- Kill List (Technical Debt Cleanup)
+
+Items to remove or rework, identified by architectural audit:
+
+1. **Remove Maintainability Index computation** — The 1991 Coleman-Oman formula (171 - 5.2*ln(V) - 0.23*G - 16.2*ln(LOC)) was validated on Fortran and C, not modern languages with closures, async/await, and higher-order functions. Microsoft deprecated their MI implementation in 2023. Remove from `ast-analysis/metrics.js` and `complexity` output, or replace with a validated metric
+2. **Scope Halstead metrics to imperative code** — Halstead operator/operand counting is meaningless for JSX, template literals, HCL, and declarative code. Either scope to imperative code blocks or remove
+3. **Migrate custom `graph/model.js` to `graphology`** — `graphology` is already a runtime dependency. The custom model reimplements `addNode`, `addEdge`, `successors`, `predecessors`, `inDegree`, `outDegree` — all available natively in `graphology`. Migrate during the TypeScript migration to avoid maintaining two graph representations
+4. **Skip WASM loading on platforms with native binaries** — On supported platforms (darwin-arm64, linux-x64, win32-x64), WASM should not be loaded at all. Currently `loadNative()` is checked on every call in `resolve.js`
+
+---
+
+## Phase 10 -- Intelligent Embeddings
 
 **Goal:** Dramatically improve semantic search quality by embedding natural-language descriptions instead of raw code.
 
-> **Phase 8.3 (Hybrid Search) was completed early** during Phase 2.5 -- FTS5 BM25 + semantic search with RRF fusion is already shipped in v2.7.0.
+> **Phase 10.3 (Hybrid Search) was completed early** during Phase 2.5 -- FTS5 BM25 + semantic search with RRF fusion is already shipped in v2.7.0.
 
-### 8.1 -- LLM Description Generator
+### 10.1 -- LLM Description Generator
 
 For each function/method/class node, generate a concise natural-language description:
 
@@ -1520,7 +1598,7 @@ For each function/method/class node, generate a concise natural-language descrip
 
 **New file:** `src/describer.js`
 
-### 8.2 -- Enhanced Embedding Pipeline
+### 10.2 -- Enhanced Embedding Pipeline
 
 - When descriptions exist, embed the description text instead of raw code
 - Keep raw code as fallback when no description is available
@@ -1531,11 +1609,11 @@ For each function/method/class node, generate a concise natural-language descrip
 
 **Affected files:** `src/embedder.js`
 
-### ~~8.3 -- Hybrid Search~~ ✅ Completed in Phase 2.5
+### ~~10.3 -- Hybrid Search~~ ✅ Completed in Phase 2.5
 
 Shipped in v2.7.0. FTS5 BM25 keyword search + semantic vector search with RRF fusion. Three search modes: `hybrid` (default), `semantic`, `keyword`.
 
-### 8.4 -- Build-time Semantic Metadata
+### 10.4 -- Build-time Semantic Metadata
 
 Enrich nodes with LLM-generated metadata beyond descriptions. Computed incrementally at build time (only for changed nodes), stored as columns on the `nodes` table.
 
@@ -1550,7 +1628,7 @@ Enrich nodes with LLM-generated metadata beyond descriptions. Computed increment
 
 **Depends on:** 8.1 (LLM provider abstraction)
 
-### 8.5 -- Module Summaries
+### 10.5 -- Module Summaries
 
 Aggregate function descriptions + dependency direction into file-level narratives.
 
@@ -1564,11 +1642,11 @@ Aggregate function descriptions + dependency direction into file-level narrative
 
 ---
 
-## Phase 9 -- Natural Language Queries
+## Phase 11 -- Natural Language Queries
 
 **Goal:** Allow developers to ask questions about their codebase in plain English.
 
-### 9.1 -- Query Engine
+### 11.1 -- Query Engine
 
 ```bash
 codegraph ask "How does the authentication flow work?"
@@ -1594,7 +1672,7 @@ codegraph ask "How does the authentication flow work?"
 
 **New file:** `src/nlquery.js`
 
-### 9.2 -- Conversational Sessions
+### 11.2 -- Conversational Sessions
 
 Multi-turn conversations with session memory.
 
@@ -1608,7 +1686,7 @@ codegraph sessions clear
 - Store conversation history in SQLite table `sessions`
 - Include prior Q&A pairs in subsequent prompts
 
-### 9.3 -- MCP Integration
+### 11.3 -- MCP Integration
 
 New MCP tool: `ask_codebase` -- natural language query via MCP.
 
@@ -1616,7 +1694,7 @@ Enables AI coding agents (Claude Code, Cursor, etc.) to ask codegraph questions 
 
 **Affected files:** `src/mcp.js`
 
-### 9.4 -- LLM-Narrated Graph Queries
+### 11.4 -- LLM-Narrated Graph Queries
 
 Graph traversal + LLM narration for questions that require both structural data and natural-language explanation. Each query walks the graph first, then sends the structural result to the LLM for narration.
 
@@ -1631,7 +1709,7 @@ Pre-computed `flow_narratives` table caches results for key entry points at buil
 
 **Depends on:** 8.4 (`side_effects` metadata), 8.1 (descriptions for narration context)
 
-### 9.5 -- Onboarding & Navigation Tools
+### 11.5 -- Onboarding & Navigation Tools
 
 Help new contributors and AI agents orient in an unfamiliar codebase.
 
@@ -1640,55 +1718,18 @@ Help new contributors and AI agents orient in an unfamiliar codebase.
 - MCP tool: `get_started` -- returns ordered list: "start here, then read this, then this"
 - `change_plan <description>` -- LLM reads description, graph identifies relevant modules, returns touch points and test coverage gaps
 
-**Depends on:** 8.5 (module summaries for context), 9.1 (query engine)
+**Depends on:** 10.5 (module summaries for context), 11.1 (query engine)
 
 ---
 
-## Phase 10 -- Expanded Language Support
 
-**Goal:** Go from 11 -> 19 supported languages.
-
-### 10.1 -- Batch 1: High Demand
-
-| Language | Extensions | Grammar | Effort |
-|----------|-----------|---------|--------|
-| C | `.c`, `.h` | `tree-sitter-c` | Low |
-| C++ | `.cpp`, `.hpp`, `.cc`, `.cxx` | `tree-sitter-cpp` | Medium |
-| Kotlin | `.kt`, `.kts` | `tree-sitter-kotlin` | Low |
-| Swift | `.swift` | `tree-sitter-swift` | Medium |
-
-### 10.2 -- Batch 2: Growing Ecosystems
-
-| Language | Extensions | Grammar | Effort |
-|----------|-----------|---------|--------|
-| Scala | `.scala`, `.sc` | `tree-sitter-scala` | Medium |
-| Dart | `.dart` | `tree-sitter-dart` | Low |
-| Lua | `.lua` | `tree-sitter-lua` | Low |
-| Zig | `.zig` | `tree-sitter-zig` | Low |
-
-### 10.3 -- Parser Abstraction Layer
-
-Extract shared patterns from existing extractors into reusable helpers.
-
-| Helper | Purpose |
-|--------|---------|
-| `findParentNode(node, typeNames)` | Walk parent chain to find enclosing class/struct |
-| `extractBodyMethods(bodyNode, parentName)` | Extract method definitions from a body block |
-| `normalizeImportPath(importText)` | Cross-language import path normalization |
-
-**Result:** Reduces boilerplate for each new language from ~200 lines to ~80 lines.
-
-**New file:** `src/parser-utils.js`
-
----
-
-## Phase 11 -- GitHub Integration & CI
+## Phase 12 -- GitHub Integration & CI
 
 **Goal:** Bring codegraph's analysis into pull request workflows.
 
 > **Note:** Phase 2.5 delivered `codegraph check` (CI validation predicates with exit code 0/1), which provides the foundation for GitHub Action integration. The boundary violation, blast radius, and cycle detection predicates are already available.
 
-### 11.1 -- Reusable GitHub Action
+### 12.1 -- Reusable GitHub Action
 
 A reusable GitHub Action that runs on PRs:
 
@@ -1711,7 +1752,7 @@ A reusable GitHub Action that runs on PRs:
 
 **New file:** `.github/actions/codegraph-ci/action.yml`
 
-### 11.2 -- PR Review Integration
+### 12.2 -- PR Review Integration
 
 ```bash
 codegraph review --pr <number>
@@ -1734,7 +1775,7 @@ Requires `gh` CLI. For each changed function:
 
 **New file:** `src/github.js`
 
-### 11.3 -- Visual Impact Graphs for PRs
+### 12.3 -- Visual Impact Graphs for PRs
 
 Extend the existing `diff-impact --format mermaid` foundation with CI automation and LLM annotations.
 
@@ -1757,15 +1798,15 @@ Extend the existing `diff-impact --format mermaid` foundation with CI automation
 
 **Depends on:** 11.1 (GitHub Action), 8.4 (`risk_score`, `side_effects`)
 
-### 11.4 -- SARIF Output
+### 12.4 -- SARIF Output
 
-> **Note:** SARIF output could be delivered as early as Phase 7 for IDE integration, since it only requires serializing existing cycle/check data into the SARIF JSON schema.
+> **Note:** SARIF output could be delivered as early as Phase 8 for IDE integration, since it only requires serializing existing cycle/check data into the SARIF JSON schema.
 
 Add SARIF output format for cycle detection. SARIF integrates with GitHub Code Scanning, showing issues inline in the PR.
 
 **Affected files:** `src/export.js`
 
-### 11.5 -- Auto-generated Docstrings
+### 12.5 -- Auto-generated Docstrings
 
 ```bash
 codegraph annotate
@@ -1778,9 +1819,9 @@ LLM-generated docstrings aware of callers, callees, and types. Diff-aware: only 
 
 ---
 
-## Phase 12 -- Advanced Features
+## Phase 13 -- Advanced Features
 
-### 12.1 -- Dead Code Detection
+### 13.1 -- Dead Code Detection
 
 ```bash
 codegraph dead
@@ -1793,7 +1834,7 @@ Find functions/methods/classes with zero incoming edges (never called). Filters 
 
 **Affected files:** `src/queries.js`
 
-### 12.2 -- Cross-Repository Support (Monorepo)
+### 13.2 -- Cross-Repository Support (Monorepo)
 
 Support multi-package monorepos with cross-package edges.
 
@@ -1803,7 +1844,7 @@ Support multi-package monorepos with cross-package edges.
 - `codegraph build --workspace` to scan all packages
 - Impact analysis across package boundaries
 
-### 12.3 -- Agentic Search
+### 13.3 -- Agentic Search
 
 Recursive reference-following search that traces connections.
 
@@ -1825,7 +1866,7 @@ codegraph agent-search "payment processing"
 
 **New file:** `src/agentic-search.js`
 
-### 12.4 -- Refactoring Analysis
+### 13.4 -- Refactoring Analysis
 
 LLM-powered structural analysis that identifies refactoring opportunities. The graph provides the structural data; the LLM interprets it.
 
@@ -1840,9 +1881,9 @@ LLM-powered structural analysis that identifies refactoring opportunities. The g
 
 > **Note:** `hotspots` and `boundary_analysis` already have data foundations from Phase 2.5 (structure.js hotspots, boundaries.js evaluation). This phase adds LLM interpretation on top.
 
-**Depends on:** 8.4 (`risk_score`, `complexity_notes`), 8.5 (module summaries)
+**Depends on:** 10.4 (`risk_score`, `complexity_notes`), 10.5 (module summaries)
 
-### 12.5 -- Auto-generated Docstrings
+### 13.5 -- Auto-generated Docstrings
 
 ```bash
 codegraph annotate

@@ -121,7 +121,12 @@ describe('DEFAULTS', () => {
   });
 
   it('has community defaults', () => {
-    expect(DEFAULTS.community).toEqual({ resolution: 1.0, maxLevels: 50, maxLocalPasses: 20 });
+    expect(DEFAULTS.community).toEqual({
+      resolution: 1.0,
+      maxLevels: 50,
+      maxLocalPasses: 20,
+      refinementTheta: 1.0,
+    });
   });
 
   it('has structure defaults', () => {
