@@ -1,16 +1,17 @@
+import type { BetterSqlite3Database, ComplexityMetrics, StmtCache } from '../../types.js';
 import { cachedStmt } from './cached-stmt.js';
 
 // ─── Statement caches (one prepared statement per db instance) ────────────
-const _getComplexityForNodeStmt = new WeakMap();
+const _getComplexityForNodeStmt: StmtCache<ComplexityMetrics> = new WeakMap();
 
 /**
  * Get complexity metrics for a node.
  * Used by contextData and explainFunctionImpl in queries.js.
- * @param {object} db
- * @param {number} nodeId
- * @returns {{ cognitive: number, cyclomatic: number, max_nesting: number, maintainability_index: number, halstead_volume: number }|undefined}
  */
-export function getComplexityForNode(db, nodeId) {
+export function getComplexityForNode(
+  db: BetterSqlite3Database,
+  nodeId: number,
+): ComplexityMetrics | undefined {
   return cachedStmt(
     _getComplexityForNodeStmt,
     db,

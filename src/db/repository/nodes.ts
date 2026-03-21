@@ -1,5 +1,16 @@
 import { ConfigError } from '../../shared/errors.js';
 import { EVERY_SYMBOL_KIND, VALID_ROLES } from '../../shared/kinds.js';
+import type {
+  BetterSqlite3Database,
+  ChildNodeRow,
+  ListFunctionOpts,
+  NodeIdRow,
+  NodeRow,
+  NodeRowWithFanIn,
+  QueryOpts,
+  StmtCache,
+  TriageQueryOpts,
+} from '../../types.js';
 import { buildFileConditionSQL, NodeQuery } from '../query-builder.js';
 import { cachedStmt } from './cached-stmt.js';
 
@@ -7,14 +18,12 @@ import { cachedStmt } from './cached-stmt.js';
 
 /**
  * Find nodes matching a name pattern, with fan-in count.
- * @param {object} db
- * @param {string} namePattern - LIKE pattern (already wrapped with %)
- * @param {object} [opts]
- * @param {string[]} [opts.kinds]
- * @param {string} [opts.file]
- * @returns {object[]}
  */
-export function findNodesWithFanIn(db, namePattern, opts = {}) {
+export function findNodesWithFanIn(
+  db: BetterSqlite3Database,
+  namePattern: string,
+  opts: QueryOpts = {},
+): NodeRowWithFanIn[] {
   const q = new NodeQuery()
     .select('n.*, COALESCE(fi.cnt, 0) AS fan_in')
     .withFanIn()
@@ -32,11 +41,11 @@ export function findNodesWithFanIn(db, namePattern, opts = {}) {
 
 /**
  * Fetch nodes for triage scoring: fan-in + complexity + churn.
- * @param {object} db
- * @param {object} [opts]
- * @returns {object[]}
  */
-export function findNodesForTriage(db, opts = {}) {
+export function findNodesForTriage(
+  db: BetterSqlite3Database,
+  opts: TriageQueryOpts = {},
+): NodeRow[] {
   if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
     throw new ConfigError(
       `Invalid kind: ${opts.kind} (expected one of ${EVERY_SYMBOL_KIND.join(', ')})`,
@@ -71,10 +80,8 @@ export function findNodesForTriage(db, opts = {}) {
 
 /**
  * Shared query builder for function/method/class node listing.
- * @param {object} [opts]
- * @returns {NodeQuery}
  */
-function _functionNodeQuery(opts = {}) {
+function _functionNodeQuery(opts: ListFunctionOpts = {}): InstanceType<typeof NodeQuery> {
   return new NodeQuery()
     .select('name, kind, file, line, end_line, role')
     .kinds(['function', 'method', 'class'])
@@ -86,84 +93,74 @@ function _functionNodeQuery(opts = {}) {
 
 /**
  * List function/method/class nodes with basic info.
- * @param {object} db
- * @param {object} [opts]
- * @returns {object[]}
  */
-export function listFunctionNodes(db, opts = {}) {
+export function listFunctionNodes(
+  db: BetterSqlite3Database,
+  opts: ListFunctionOpts = {},
+): NodeRow[] {
   return _functionNodeQuery(opts).all(db);
 }
 
 /**
  * Iterator version of listFunctionNodes for memory efficiency.
- * @param {object} db
- * @param {object} [opts]
- * @returns {IterableIterator}
  */
-export function iterateFunctionNodes(db, opts = {}) {
+export function iterateFunctionNodes(
+  db: BetterSqlite3Database,
+  opts: ListFunctionOpts = {},
+): IterableIterator<NodeRow> {
   return _functionNodeQuery(opts).iterate(db);
 }
 
 // ─── Statement caches (one prepared statement per db instance) ────────────
 // WeakMap keys on the db object so statements are GC'd when the db closes.
-const _countNodesStmt = new WeakMap();
-const _countEdgesStmt = new WeakMap();
-const _countFilesStmt = new WeakMap();
-const _findNodeByIdStmt = new WeakMap();
-const _findNodesByFileStmt = new WeakMap();
-const _findFileNodesStmt = new WeakMap();
-const _getNodeIdStmt = new WeakMap();
-const _getFunctionNodeIdStmt = new WeakMap();
-const _bulkNodeIdsByFileStmt = new WeakMap();
-const _findNodeChildrenStmt = new WeakMap();
-const _findNodeByQualifiedNameStmt = new WeakMap();
+const _countNodesStmt: StmtCache<{ cnt: number }> = new WeakMap();
+const _countEdgesStmt: StmtCache<{ cnt: number }> = new WeakMap();
+const _countFilesStmt: StmtCache<{ cnt: number }> = new WeakMap();
+const _findNodeByIdStmt: StmtCache<NodeRow> = new WeakMap();
+const _findNodesByFileStmt: StmtCache<NodeRow> = new WeakMap();
+const _findFileNodesStmt: StmtCache<NodeRow> = new WeakMap();
+const _getNodeIdStmt: StmtCache<{ id: number }> = new WeakMap();
+const _getFunctionNodeIdStmt: StmtCache<{ id: number }> = new WeakMap();
+const _bulkNodeIdsByFileStmt: StmtCache<NodeIdRow> = new WeakMap();
+const _findNodeChildrenStmt: StmtCache<ChildNodeRow> = new WeakMap();
+const _findNodeByQualifiedNameStmt: StmtCache<NodeRow> = new WeakMap();
 
 /**
  * Count total nodes.
- * @param {object} db
- * @returns {number}
  */
-export function countNodes(db) {
-  return cachedStmt(_countNodesStmt, db, 'SELECT COUNT(*) AS cnt FROM nodes').get().cnt;
+export function countNodes(db: BetterSqlite3Database): number {
+  return cachedStmt(_countNodesStmt, db, 'SELECT COUNT(*) AS cnt FROM nodes').get()?.cnt ?? 0;
 }
 
 /**
  * Count total edges.
- * @param {object} db
- * @returns {number}
  */
-export function countEdges(db) {
-  return cachedStmt(_countEdgesStmt, db, 'SELECT COUNT(*) AS cnt FROM edges').get().cnt;
+export function countEdges(db: BetterSqlite3Database): number {
+  return cachedStmt(_countEdgesStmt, db, 'SELECT COUNT(*) AS cnt FROM edges').get()?.cnt ?? 0;
 }
 
 /**
  * Count distinct files.
- * @param {object} db
- * @returns {number}
  */
-export function countFiles(db) {
-  return cachedStmt(_countFilesStmt, db, 'SELECT COUNT(DISTINCT file) AS cnt FROM nodes').get().cnt;
+export function countFiles(db: BetterSqlite3Database): number {
+  return (
+    cachedStmt(_countFilesStmt, db, 'SELECT COUNT(DISTINCT file) AS cnt FROM nodes').get()?.cnt ?? 0
+  );
 }
 
 // ─── Shared node lookups ───────────────────────────────────────────────
 
 /**
  * Find a single node by ID.
- * @param {object} db
- * @param {number} id
- * @returns {object|undefined}
  */
-export function findNodeById(db, id) {
+export function findNodeById(db: BetterSqlite3Database, id: number): NodeRow | undefined {
   return cachedStmt(_findNodeByIdStmt, db, 'SELECT * FROM nodes WHERE id = ?').get(id);
 }
 
 /**
  * Find non-file nodes for a given file path (exact match), ordered by line.
- * @param {object} db
- * @param {string} file - Exact file path
- * @returns {object[]}
  */
-export function findNodesByFile(db, file) {
+export function findNodesByFile(db: BetterSqlite3Database, file: string): NodeRow[] {
   return cachedStmt(
     _findNodesByFileStmt,
     db,
@@ -173,11 +170,8 @@ export function findNodesByFile(db, file) {
 
 /**
  * Find file-kind nodes matching a LIKE pattern.
- * @param {object} db
- * @param {string} fileLike - LIKE pattern (caller wraps with %)
- * @returns {object[]}
  */
-export function findFileNodes(db, fileLike) {
+export function findFileNodes(db: BetterSqlite3Database, fileLike: string): NodeRow[] {
   return cachedStmt(
     _findFileNodesStmt,
     db,
@@ -187,15 +181,14 @@ export function findFileNodes(db, fileLike) {
 
 /**
  * Look up a node's ID by its unique (name, kind, file, line) tuple.
- * Shared by builder, watcher, structure, complexity, cfg, engine.
- * @param {object} db
- * @param {string} name
- * @param {string} kind
- * @param {string} file
- * @param {number} line
- * @returns {number|undefined}
  */
-export function getNodeId(db, name, kind, file, line) {
+export function getNodeId(
+  db: BetterSqlite3Database,
+  name: string,
+  kind: string,
+  file: string,
+  line: number,
+): number | undefined {
   return cachedStmt(
     _getNodeIdStmt,
     db,
@@ -205,14 +198,13 @@ export function getNodeId(db, name, kind, file, line) {
 
 /**
  * Look up a function/method node's ID (kind-restricted variant of getNodeId).
- * Used by complexity.js, cfg.js where only function/method kinds are expected.
- * @param {object} db
- * @param {string} name
- * @param {string} file
- * @param {number} line
- * @returns {number|undefined}
  */
-export function getFunctionNodeId(db, name, file, line) {
+export function getFunctionNodeId(
+  db: BetterSqlite3Database,
+  name: string,
+  file: string,
+  line: number,
+): number | undefined {
   return cachedStmt(
     _getFunctionNodeIdStmt,
     db,
@@ -222,13 +214,8 @@ export function getFunctionNodeId(db, name, file, line) {
 
 /**
  * Bulk-fetch all node IDs for a file in one query.
- * Returns rows suitable for building a `name|kind|line -> id` lookup map.
- * Shared by builder, ast.js, ast-analysis/engine.js.
- * @param {object} db
- * @param {string} file
- * @returns {{ id: number, name: string, kind: string, line: number }[]}
  */
-export function bulkNodeIdsByFile(db, file) {
+export function bulkNodeIdsByFile(db: BetterSqlite3Database, file: string): NodeIdRow[] {
   return cachedStmt(
     _bulkNodeIdsByFileStmt,
     db,
@@ -238,11 +225,8 @@ export function bulkNodeIdsByFile(db, file) {
 
 /**
  * Find child nodes (parameters, properties, constants) of a parent.
- * @param {object} db
- * @param {number} parentId
- * @returns {{ name: string, kind: string, line: number, end_line: number|null, qualified_name: string|null, scope: string|null, visibility: string|null }[]}
  */
-export function findNodeChildren(db, parentId) {
+export function findNodeChildren(db: BetterSqlite3Database, parentId: number): ChildNodeRow[] {
   return cachedStmt(
     _findNodeChildrenStmt,
     db,
@@ -252,17 +236,14 @@ export function findNodeChildren(db, parentId) {
 
 /**
  * Find all nodes that belong to a given scope (by scope column).
- * Enables "all methods of class X" without traversing edges.
- * @param {object} db
- * @param {string} scopeName - The scope to search for (e.g., class name)
- * @param {object} [opts]
- * @param {string} [opts.kind] - Filter by node kind
- * @param {string} [opts.file] - Filter by file path (LIKE match)
- * @returns {object[]}
  */
-export function findNodesByScope(db, scopeName, opts = {}) {
+export function findNodesByScope(
+  db: BetterSqlite3Database,
+  scopeName: string,
+  opts: QueryOpts = {},
+): NodeRow[] {
   let sql = 'SELECT * FROM nodes WHERE scope = ?';
-  const params = [scopeName];
+  const params: unknown[] = [scopeName];
   if (opts.kind) {
     sql += ' AND kind = ?';
     params.push(opts.kind);
@@ -271,24 +252,21 @@ export function findNodesByScope(db, scopeName, opts = {}) {
   sql += fc.sql;
   params.push(...fc.params);
   sql += ' ORDER BY file, line';
-  return db.prepare(sql).all(...params);
+  return db.prepare<NodeRow>(sql).all(...params);
 }
 
 /**
- * Find nodes by qualified name. Returns all matches since the same
- * qualified_name can exist in different files (e.g., two classes named
- * `DateHelper.format` in separate modules). Pass `opts.file` to narrow.
- * @param {object} db
- * @param {string} qualifiedName - e.g., 'DateHelper.format'
- * @param {object} [opts]
- * @param {string} [opts.file] - Filter by file path (LIKE match)
- * @returns {object[]}
+ * Find nodes by qualified name.
  */
-export function findNodeByQualifiedName(db, qualifiedName, opts = {}) {
+export function findNodeByQualifiedName(
+  db: BetterSqlite3Database,
+  qualifiedName: string,
+  opts: { file?: string } = {},
+): NodeRow[] {
   const fc = buildFileConditionSQL(opts.file, 'file');
   if (fc.sql) {
     return db
-      .prepare(`SELECT * FROM nodes WHERE qualified_name = ?${fc.sql} ORDER BY file, line`)
+      .prepare<NodeRow>(`SELECT * FROM nodes WHERE qualified_name = ?${fc.sql} ORDER BY file, line`)
       .all(qualifiedName, ...fc.params);
   }
   return cachedStmt(

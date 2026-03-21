@@ -1,13 +1,29 @@
+import type { BetterSqlite3Database, SqliteStatement } from '../../types.js';
+
+interface PurgeStmts {
+  embeddings: SqliteStatement | null;
+  cfgEdges: SqliteStatement | null;
+  cfgBlocks: SqliteStatement | null;
+  dataflow: SqliteStatement | null;
+  complexity: SqliteStatement | null;
+  nodeMetrics: SqliteStatement | null;
+  astNodes: SqliteStatement | null;
+  edges: SqliteStatement;
+  nodes: SqliteStatement;
+  fileHashes: SqliteStatement | null;
+}
+
+interface PurgeOpts {
+  purgeHashes?: boolean;
+}
+
 /**
  * Prepare all purge statements once, returning an object of runnable stmts.
  * Optional tables are wrapped in try/catch — if the table doesn't exist,
  * that slot is set to null.
- *
- * @param {object} db - Open read-write database handle
- * @returns {object} prepared statements (some may be null)
  */
-function preparePurgeStmts(db) {
-  const tryPrepare = (sql) => {
+function preparePurgeStmts(db: BetterSqlite3Database): PurgeStmts {
+  const tryPrepare = (sql: string): SqliteStatement | null => {
     try {
       return db.prepare(sql);
     } catch {
@@ -47,25 +63,16 @@ function preparePurgeStmts(db) {
 /**
  * Cascade-delete all graph data for a single file across all tables.
  * Order: dependent tables first, then edges, then nodes, then hashes.
- *
- * @param {object} db - Open read-write database handle
- * @param {string} file - Relative file path to purge
- * @param {object} [opts]
- * @param {boolean} [opts.purgeHashes=true] - Also delete file_hashes entry
  */
-export function purgeFileData(db, file, opts = {}) {
+export function purgeFileData(db: BetterSqlite3Database, file: string, opts: PurgeOpts = {}): void {
   const stmts = preparePurgeStmts(db);
   runPurge(stmts, file, opts);
 }
 
 /**
  * Run purge using pre-prepared statements for a single file.
- * @param {object} stmts - Prepared statements from preparePurgeStmts
- * @param {string} file - Relative file path to purge
- * @param {object} [opts]
- * @param {boolean} [opts.purgeHashes=true]
  */
-function runPurge(stmts, file, opts = {}) {
+function runPurge(stmts: PurgeStmts, file: string, opts: PurgeOpts = {}): void {
   const { purgeHashes = true } = opts;
 
   // Optional tables
@@ -89,13 +96,12 @@ function runPurge(stmts, file, opts = {}) {
 /**
  * Purge all graph data for multiple files.
  * Prepares statements once and loops over files for efficiency.
- *
- * @param {object} db - Open read-write database handle
- * @param {string[]} files - Relative file paths to purge
- * @param {object} [opts]
- * @param {boolean} [opts.purgeHashes=true]
  */
-export function purgeFilesData(db, files, opts = {}) {
+export function purgeFilesData(
+  db: BetterSqlite3Database,
+  files: string[],
+  opts: PurgeOpts = {},
+): void {
   if (!files || files.length === 0) return;
   const stmts = preparePurgeStmts(db);
   for (const file of files) {

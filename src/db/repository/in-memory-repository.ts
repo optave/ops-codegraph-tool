@@ -5,22 +5,42 @@ import {
   EVERY_SYMBOL_KIND,
   VALID_ROLES,
 } from '../../shared/kinds.js';
+import type {
+  AdjacentEdgeRow,
+  AnyEdgeKind,
+  AnyNodeKind,
+  CallableNodeRow,
+  CallEdgeRow,
+  ChildNodeRow,
+  ComplexityMetrics,
+  EdgeRow,
+  FileNodeRow,
+  ImportEdgeRow,
+  ImportGraphEdgeRow,
+  IntraFileCallEdge,
+  ListFunctionOpts,
+  NodeIdRow,
+  NodeRow,
+  NodeRowWithFanIn,
+  QueryOpts,
+  RelatedNodeRow,
+  Role,
+  TriageQueryOpts,
+} from '../../types.js';
 import { escapeLike, normalizeFileFilter } from '../query-builder.js';
 import { Repository } from './base.js';
 
 /**
  * Convert a SQL LIKE pattern to a RegExp (case-insensitive).
  * Supports `%` (any chars) and `_` (single char).
- * @param {string} pattern
- * @returns {RegExp}
  */
-function likeToRegex(pattern) {
+function likeToRegex(pattern: string): RegExp {
   let regex = '';
   for (let i = 0; i < pattern.length; i++) {
-    const ch = pattern[i];
+    const ch = pattern[i]!;
     if (ch === '\\' && i + 1 < pattern.length) {
       // Escaped literal
-      regex += pattern[++i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      regex += pattern[++i]?.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     } else if (ch === '%') {
       regex += '.*';
     } else if (ch === '_') {
@@ -36,11 +56,13 @@ function likeToRegex(pattern) {
  * Build a filter predicate for file matching.
  * Accepts string, string[], or falsy. Returns null when no filtering needed.
  */
-function buildFileFilterFn(file) {
+function buildFileFilterFn(
+  file: string | string[] | undefined,
+): ((filePath: string) => boolean) | null {
   const files = normalizeFileFilter(file);
   if (files.length === 0) return null;
-  const regexes = files.map((f) => likeToRegex(`%${escapeLike(f)}%`));
-  return (filePath) => regexes.some((re) => re.test(filePath));
+  const regexes = files.map((f: string) => likeToRegex(`%${escapeLike(f)}%`));
+  return (filePath: string) => regexes.some((re: RegExp) => re.test(filePath));
 }
 
 /**
@@ -48,9 +70,9 @@ function buildFileFilterFn(file) {
  * No SQLite dependency — suitable for fast unit tests.
  */
 export class InMemoryRepository extends Repository {
-  #nodes = new Map(); // id → node object
-  #edges = new Map(); // id → edge object
-  #complexity = new Map(); // node_id → complexity metrics
+  #nodes = new Map<number, NodeRow>();
+  #edges = new Map<number, EdgeRow>();
+  #complexity = new Map<number, ComplexityMetrics>();
   #nextNodeId = 1;
   #nextEdgeId = 1;
 
@@ -58,10 +80,20 @@ export class InMemoryRepository extends Repository {
 
   /**
    * Add a node. Returns the auto-assigned id.
-   * @param {object} attrs - { name, kind, file, line, end_line?, parent_id?, exported?, qualified_name?, scope?, visibility?, role? }
-   * @returns {number}
    */
-  addNode(attrs) {
+  addNode(attrs: {
+    name: string;
+    kind: AnyNodeKind;
+    file: string;
+    line: number;
+    end_line?: number;
+    parent_id?: number;
+    exported?: 0 | 1;
+    qualified_name?: string;
+    scope?: string;
+    visibility?: 'public' | 'private' | 'protected';
+    role?: Role;
+  }): number {
     const id = this.#nextNodeId++;
     this.#nodes.set(id, {
       id,
@@ -82,16 +114,20 @@ export class InMemoryRepository extends Repository {
 
   /**
    * Add an edge. Returns the auto-assigned id.
-   * @param {object} attrs - { source_id, target_id, kind, confidence?, dynamic? }
-   * @returns {number}
    */
-  addEdge(attrs) {
+  addEdge(attrs: {
+    source_id: number;
+    target_id: number;
+    kind: AnyEdgeKind;
+    confidence?: number;
+    dynamic?: 0 | 1;
+  }): number {
     const id = this.#nextEdgeId++;
     this.#edges.set(id, {
       id,
       source_id: attrs.source_id,
       target_id: attrs.target_id,
-      kind: attrs.kind,
+      kind: attrs.kind as EdgeRow['kind'],
       confidence: attrs.confidence ?? null,
       dynamic: attrs.dynamic ?? 0,
     });
@@ -100,10 +136,17 @@ export class InMemoryRepository extends Repository {
 
   /**
    * Add complexity metrics for a node.
-   * @param {number} nodeId
-   * @param {object} metrics - { cognitive, cyclomatic, max_nesting, maintainability_index?, halstead_volume? }
    */
-  addComplexity(nodeId, metrics) {
+  addComplexity(
+    nodeId: number,
+    metrics: {
+      cognitive: number;
+      cyclomatic: number;
+      max_nesting: number;
+      maintainability_index?: number;
+      halstead_volume?: number;
+    },
+  ): void {
     this.#complexity.set(nodeId, {
       cognitive: metrics.cognitive ?? 0,
       cyclomatic: metrics.cyclomatic ?? 0,
@@ -115,27 +158,29 @@ export class InMemoryRepository extends Repository {
 
   // ── Node lookups ──────────────────────────────────────────────────
 
-  findNodeById(id) {
+  findNodeById(id: number): NodeRow | undefined {
     return this.#nodes.get(id) ?? undefined;
   }
 
-  findNodesByFile(file) {
+  findNodesByFile(file: string): NodeRow[] {
     return [...this.#nodes.values()]
       .filter((n) => n.file === file && n.kind !== 'file')
       .sort((a, b) => a.line - b.line);
   }
 
-  findFileNodes(fileLike) {
+  findFileNodes(fileLike: string): NodeRow[] {
     const re = likeToRegex(fileLike);
     return [...this.#nodes.values()].filter((n) => n.kind === 'file' && re.test(n.file));
   }
 
-  findNodesWithFanIn(namePattern, opts = {}) {
+  findNodesWithFanIn(namePattern: string, opts: QueryOpts = {}): NodeRowWithFanIn[] {
     const re = likeToRegex(namePattern);
     let nodes = [...this.#nodes.values()].filter((n) => re.test(n.name));
 
     if (opts.kinds) {
-      nodes = nodes.filter((n) => opts.kinds.includes(n.kind));
+      nodes = nodes.filter((n) =>
+        opts.kinds?.includes(n.kind as typeof opts.kinds extends (infer U)[] ? U : never),
+      );
     }
     {
       const fileFn = buildFileFilterFn(opts.file);
@@ -147,23 +192,23 @@ export class InMemoryRepository extends Repository {
     return nodes.map((n) => ({ ...n, fan_in: fanInMap.get(n.id) ?? 0 }));
   }
 
-  countNodes() {
+  countNodes(): number {
     return this.#nodes.size;
   }
 
-  countEdges() {
+  countEdges(): number {
     return this.#edges.size;
   }
 
-  countFiles() {
-    const files = new Set();
+  countFiles(): number {
+    const files = new Set<string>();
     for (const n of this.#nodes.values()) {
       files.add(n.file);
     }
     return files.size;
   }
 
-  getNodeId(name, kind, file, line) {
+  getNodeId(name: string, kind: string, file: string, line: number): number | undefined {
     for (const n of this.#nodes.values()) {
       if (n.name === name && n.kind === kind && n.file === file && n.line === line) {
         return n.id;
@@ -172,7 +217,7 @@ export class InMemoryRepository extends Repository {
     return undefined;
   }
 
-  getFunctionNodeId(name, file, line) {
+  getFunctionNodeId(name: string, file: string, line: number): number | undefined {
     for (const n of this.#nodes.values()) {
       if (
         n.name === name &&
@@ -186,19 +231,19 @@ export class InMemoryRepository extends Repository {
     return undefined;
   }
 
-  bulkNodeIdsByFile(file) {
+  bulkNodeIdsByFile(file: string): NodeIdRow[] {
     return [...this.#nodes.values()]
       .filter((n) => n.file === file)
       .map((n) => ({ id: n.id, name: n.name, kind: n.kind, line: n.line }));
   }
 
-  findNodeChildren(parentId) {
+  findNodeChildren(parentId: number): ChildNodeRow[] {
     return [...this.#nodes.values()]
       .filter((n) => n.parent_id === parentId)
       .sort((a, b) => a.line - b.line)
       .map((n) => ({
         name: n.name,
-        kind: n.kind,
+        kind: n.kind as ChildNodeRow['kind'],
         line: n.line,
         end_line: n.end_line,
         qualified_name: n.qualified_name,
@@ -207,7 +252,7 @@ export class InMemoryRepository extends Repository {
       }));
   }
 
-  findNodesByScope(scopeName, opts = {}) {
+  findNodesByScope(scopeName: string, opts: QueryOpts = {}): NodeRow[] {
     let nodes = [...this.#nodes.values()].filter((n) => n.scope === scopeName);
 
     if (opts.kind) {
@@ -221,7 +266,7 @@ export class InMemoryRepository extends Repository {
     return nodes.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
   }
 
-  findNodeByQualifiedName(qualifiedName, opts = {}) {
+  findNodeByQualifiedName(qualifiedName: string, opts: { file?: string } = {}): NodeRow[] {
     let nodes = [...this.#nodes.values()].filter((n) => n.qualified_name === qualifiedName);
 
     {
@@ -232,15 +277,15 @@ export class InMemoryRepository extends Repository {
     return nodes.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
   }
 
-  listFunctionNodes(opts = {}) {
+  listFunctionNodes(opts: ListFunctionOpts = {}): NodeRow[] {
     return [...this.#iterateFunctionNodesImpl(opts)];
   }
 
-  *iterateFunctionNodes(opts = {}) {
+  *iterateFunctionNodes(opts: ListFunctionOpts = {}): IterableIterator<NodeRow> {
     yield* this.#iterateFunctionNodesImpl(opts);
   }
 
-  findNodesForTriage(opts = {}) {
+  findNodesForTriage(opts: TriageQueryOpts = {}): NodeRow[] {
     if (opts.kind && !EVERY_SYMBOL_KIND.includes(opts.kind)) {
       throw new ConfigError(
         `Invalid kind: ${opts.kind} (expected one of ${EVERY_SYMBOL_KIND.join(', ')})`,
@@ -282,28 +327,22 @@ export class InMemoryRepository extends Repository {
       .map((n) => {
         const cx = this.#complexity.get(n.id);
         return {
-          id: n.id,
-          name: n.name,
-          kind: n.kind,
-          file: n.file,
-          line: n.line,
-          end_line: n.end_line,
-          role: n.role,
+          ...n,
           fan_in: fanInMap.get(n.id) ?? 0,
           cognitive: cx?.cognitive ?? 0,
           mi: cx?.maintainability_index ?? 0,
           cyclomatic: cx?.cyclomatic ?? 0,
           max_nesting: cx?.max_nesting ?? 0,
           churn: 0, // no co-change data in-memory
-        };
+        } as NodeRow;
       });
   }
 
   // ── Edge queries ──────────────────────────────────────────────────
 
-  findCallees(nodeId) {
-    const seen = new Set();
-    const results = [];
+  findCallees(nodeId: number): RelatedNodeRow[] {
+    const seen = new Set<number>();
+    const results: RelatedNodeRow[] = [];
     for (const e of this.#edges.values()) {
       if (e.source_id === nodeId && e.kind === 'calls' && !seen.has(e.target_id)) {
         seen.add(e.target_id);
@@ -322,8 +361,8 @@ export class InMemoryRepository extends Repository {
     return results;
   }
 
-  findCallers(nodeId) {
-    const results = [];
+  findCallers(nodeId: number): RelatedNodeRow[] {
+    const results: RelatedNodeRow[] = [];
     for (const e of this.#edges.values()) {
       if (e.target_id === nodeId && e.kind === 'calls') {
         const n = this.#nodes.get(e.source_id);
@@ -333,9 +372,9 @@ export class InMemoryRepository extends Repository {
     return results;
   }
 
-  findDistinctCallers(nodeId) {
-    const seen = new Set();
-    const results = [];
+  findDistinctCallers(nodeId: number): RelatedNodeRow[] {
+    const seen = new Set<number>();
+    const results: RelatedNodeRow[] = [];
     for (const e of this.#edges.values()) {
       if (e.target_id === nodeId && e.kind === 'calls' && !seen.has(e.source_id)) {
         seen.add(e.source_id);
@@ -346,8 +385,8 @@ export class InMemoryRepository extends Repository {
     return results;
   }
 
-  findAllOutgoingEdges(nodeId) {
-    const results = [];
+  findAllOutgoingEdges(nodeId: number): AdjacentEdgeRow[] {
+    const results: AdjacentEdgeRow[] = [];
     for (const e of this.#edges.values()) {
       if (e.source_id === nodeId) {
         const n = this.#nodes.get(e.target_id);
@@ -364,8 +403,8 @@ export class InMemoryRepository extends Repository {
     return results;
   }
 
-  findAllIncomingEdges(nodeId) {
-    const results = [];
+  findAllIncomingEdges(nodeId: number): AdjacentEdgeRow[] {
+    const results: AdjacentEdgeRow[] = [];
     for (const e of this.#edges.values()) {
       if (e.target_id === nodeId) {
         const n = this.#nodes.get(e.source_id);
@@ -382,8 +421,8 @@ export class InMemoryRepository extends Repository {
     return results;
   }
 
-  findCalleeNames(nodeId) {
-    const names = new Set();
+  findCalleeNames(nodeId: number): string[] {
+    const names = new Set<string>();
     for (const e of this.#edges.values()) {
       if (e.source_id === nodeId && e.kind === 'calls') {
         const n = this.#nodes.get(e.target_id);
@@ -393,8 +432,8 @@ export class InMemoryRepository extends Repository {
     return [...names].sort();
   }
 
-  findCallerNames(nodeId) {
-    const names = new Set();
+  findCallerNames(nodeId: number): string[] {
+    const names = new Set<string>();
     for (const e of this.#edges.values()) {
       if (e.target_id === nodeId && e.kind === 'calls') {
         const n = this.#nodes.get(e.source_id);
@@ -404,8 +443,8 @@ export class InMemoryRepository extends Repository {
     return [...names].sort();
   }
 
-  findImportTargets(nodeId) {
-    const results = [];
+  findImportTargets(nodeId: number): ImportEdgeRow[] {
+    const results: ImportEdgeRow[] = [];
     for (const e of this.#edges.values()) {
       if (e.source_id === nodeId && (e.kind === 'imports' || e.kind === 'imports-type')) {
         const n = this.#nodes.get(e.target_id);
@@ -415,8 +454,8 @@ export class InMemoryRepository extends Repository {
     return results;
   }
 
-  findImportSources(nodeId) {
-    const results = [];
+  findImportSources(nodeId: number): ImportEdgeRow[] {
+    const results: ImportEdgeRow[] = [];
     for (const e of this.#edges.values()) {
       if (e.target_id === nodeId && (e.kind === 'imports' || e.kind === 'imports-type')) {
         const n = this.#nodes.get(e.source_id);
@@ -426,8 +465,8 @@ export class InMemoryRepository extends Repository {
     return results;
   }
 
-  findImportDependents(nodeId) {
-    const results = [];
+  findImportDependents(nodeId: number): NodeRow[] {
+    const results: NodeRow[] = [];
     for (const e of this.#edges.values()) {
       if (e.target_id === nodeId && (e.kind === 'imports' || e.kind === 'imports-type')) {
         const n = this.#nodes.get(e.source_id);
@@ -437,8 +476,8 @@ export class InMemoryRepository extends Repository {
     return results;
   }
 
-  findCrossFileCallTargets(file) {
-    const targets = new Set();
+  findCrossFileCallTargets(file: string): Set<number> {
+    const targets = new Set<number>();
     for (const e of this.#edges.values()) {
       if (e.kind !== 'calls') continue;
       const caller = this.#nodes.get(e.source_id);
@@ -450,7 +489,7 @@ export class InMemoryRepository extends Repository {
     return targets;
   }
 
-  countCrossFileCallers(nodeId, file) {
+  countCrossFileCallers(nodeId: number, file: string): number {
     let count = 0;
     for (const e of this.#edges.values()) {
       if (e.target_id === nodeId && e.kind === 'calls') {
@@ -461,11 +500,11 @@ export class InMemoryRepository extends Repository {
     return count;
   }
 
-  getClassHierarchy(classNodeId) {
-    const ancestors = new Set();
+  getClassHierarchy(classNodeId: number): Set<number> {
+    const ancestors = new Set<number>();
     const queue = [classNodeId];
     while (queue.length > 0) {
-      const current = queue.shift();
+      const current = queue.shift()!;
       for (const e of this.#edges.values()) {
         if (e.source_id === current && e.kind === 'extends') {
           const target = this.#nodes.get(e.target_id);
@@ -479,8 +518,30 @@ export class InMemoryRepository extends Repository {
     return ancestors;
   }
 
-  findIntraFileCallEdges(file) {
-    const results = [];
+  findImplementors(nodeId: number): RelatedNodeRow[] {
+    const results: RelatedNodeRow[] = [];
+    for (const e of this.#edges.values()) {
+      if (e.target_id === nodeId && e.kind === 'implements') {
+        const n = this.#nodes.get(e.source_id);
+        if (n) results.push({ id: n.id, name: n.name, kind: n.kind, file: n.file, line: n.line });
+      }
+    }
+    return results;
+  }
+
+  findInterfaces(nodeId: number): RelatedNodeRow[] {
+    const results: RelatedNodeRow[] = [];
+    for (const e of this.#edges.values()) {
+      if (e.source_id === nodeId && e.kind === 'implements') {
+        const n = this.#nodes.get(e.target_id);
+        if (n) results.push({ id: n.id, name: n.name, kind: n.kind, file: n.file, line: n.line });
+      }
+    }
+    return results;
+  }
+
+  findIntraFileCallEdges(file: string): IntraFileCallEdge[] {
+    const results: IntraFileCallEdge[] = [];
     for (const e of this.#edges.values()) {
       if (e.kind !== 'calls') continue;
       const caller = this.#nodes.get(e.source_id);
@@ -489,7 +550,7 @@ export class InMemoryRepository extends Repository {
         results.push({ caller_name: caller.name, callee_name: callee.name });
       }
     }
-    const lineByName = new Map();
+    const lineByName = new Map<string, number>();
     for (const n of this.#nodes.values()) {
       if (n.file === file) lineByName.set(n.name, n.line);
     }
@@ -500,25 +561,25 @@ export class InMemoryRepository extends Repository {
 
   // ── Graph-read queries ────────────────────────────────────────────
 
-  getCallableNodes() {
+  getCallableNodes(): CallableNodeRow[] {
     return [...this.#nodes.values()]
       .filter((n) => CORE_SYMBOL_KINDS.includes(n.kind))
       .map((n) => ({ id: n.id, name: n.name, kind: n.kind, file: n.file }));
   }
 
-  getCallEdges() {
+  getCallEdges(): CallEdgeRow[] {
     return [...this.#edges.values()]
       .filter((e) => e.kind === 'calls')
       .map((e) => ({ source_id: e.source_id, target_id: e.target_id, confidence: e.confidence }));
   }
 
-  getFileNodesAll() {
+  getFileNodesAll(): FileNodeRow[] {
     return [...this.#nodes.values()]
       .filter((n) => n.kind === 'file')
       .map((n) => ({ id: n.id, name: n.name, file: n.file }));
   }
 
-  getImportEdges() {
+  getImportEdges(): ImportGraphEdgeRow[] {
     return [...this.#edges.values()]
       .filter((e) => e.kind === 'imports' || e.kind === 'imports-type')
       .map((e) => ({ source_id: e.source_id, target_id: e.target_id }));
@@ -526,27 +587,27 @@ export class InMemoryRepository extends Repository {
 
   // ── Optional table checks ─────────────────────────────────────────
 
-  hasCfgTables() {
+  hasCfgTables(): boolean {
     return false;
   }
 
-  hasEmbeddings() {
+  hasEmbeddings(): boolean {
     return false;
   }
 
-  hasDataflowTable() {
+  hasDataflowTable(): boolean {
     return false;
   }
 
-  getComplexityForNode(nodeId) {
+  getComplexityForNode(nodeId: number): ComplexityMetrics | undefined {
     return this.#complexity.get(nodeId);
   }
 
   // ── Private helpers ───────────────────────────────────────────────
 
   /** Compute fan-in (incoming 'calls' edge count) for all nodes. */
-  #computeFanIn() {
-    const fanIn = new Map();
+  #computeFanIn(): Map<number, number> {
+    const fanIn = new Map<number, number>();
     for (const e of this.#edges.values()) {
       if (e.kind === 'calls') {
         fanIn.set(e.target_id, (fanIn.get(e.target_id) ?? 0) + 1);
@@ -556,7 +617,7 @@ export class InMemoryRepository extends Repository {
   }
 
   /** Internal generator for function/method/class listing with filters. */
-  *#iterateFunctionNodesImpl(opts = {}) {
+  *#iterateFunctionNodesImpl(opts: ListFunctionOpts = {}): IterableIterator<NodeRow> {
     let nodes = [...this.#nodes.values()].filter((n) =>
       ['function', 'method', 'class'].includes(n.kind),
     );
@@ -589,7 +650,7 @@ export class InMemoryRepository extends Repository {
         line: n.line,
         end_line: n.end_line,
         role: n.role,
-      };
+      } as NodeRow;
     }
   }
 }

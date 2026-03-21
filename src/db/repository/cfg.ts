@@ -1,17 +1,34 @@
+import type { BetterSqlite3Database, StmtCache } from '../../types.js';
 import { cachedStmt } from './cached-stmt.js';
 
 // ─── Statement caches (one prepared statement per db instance) ────────────
-const _getCfgBlocksStmt = new WeakMap();
-const _getCfgEdgesStmt = new WeakMap();
-const _deleteCfgEdgesStmt = new WeakMap();
-const _deleteCfgBlocksStmt = new WeakMap();
+
+interface CfgBlockRow {
+  id: number;
+  block_index: number;
+  block_type: string;
+  start_line: number;
+  end_line: number;
+  label: string | null;
+}
+
+interface CfgEdgeRow {
+  kind: string;
+  source_index: number;
+  source_type: string;
+  target_index: number;
+  target_type: string;
+}
+
+const _getCfgBlocksStmt: StmtCache<CfgBlockRow> = new WeakMap();
+const _getCfgEdgesStmt: StmtCache<CfgEdgeRow> = new WeakMap();
+const _deleteCfgEdgesStmt: StmtCache = new WeakMap();
+const _deleteCfgBlocksStmt: StmtCache = new WeakMap();
 
 /**
  * Check whether CFG tables exist.
- * @param {object} db
- * @returns {boolean}
  */
-export function hasCfgTables(db) {
+export function hasCfgTables(db: BetterSqlite3Database): boolean {
   try {
     db.prepare('SELECT 1 FROM cfg_blocks LIMIT 0').get();
     return true;
@@ -22,11 +39,8 @@ export function hasCfgTables(db) {
 
 /**
  * Get CFG blocks for a function node.
- * @param {object} db
- * @param {number} functionNodeId
- * @returns {object[]}
  */
-export function getCfgBlocks(db, functionNodeId) {
+export function getCfgBlocks(db: BetterSqlite3Database, functionNodeId: number): CfgBlockRow[] {
   return cachedStmt(
     _getCfgBlocksStmt,
     db,
@@ -38,11 +52,8 @@ export function getCfgBlocks(db, functionNodeId) {
 
 /**
  * Get CFG edges for a function node (with block info).
- * @param {object} db
- * @param {number} functionNodeId
- * @returns {object[]}
  */
-export function getCfgEdges(db, functionNodeId) {
+export function getCfgEdges(db: BetterSqlite3Database, functionNodeId: number): CfgEdgeRow[] {
   return cachedStmt(
     _getCfgEdgesStmt,
     db,
@@ -59,10 +70,8 @@ export function getCfgEdges(db, functionNodeId) {
 
 /**
  * Delete all CFG data for a function node.
- * @param {object} db
- * @param {number} functionNodeId
  */
-export function deleteCfgForNode(db, functionNodeId) {
+export function deleteCfgForNode(db: BetterSqlite3Database, functionNodeId: number): void {
   cachedStmt(_deleteCfgEdgesStmt, db, 'DELETE FROM cfg_edges WHERE function_node_id = ?').run(
     functionNodeId,
   );

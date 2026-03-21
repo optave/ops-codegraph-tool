@@ -1,16 +1,15 @@
+import type { BetterSqlite3Database, StmtCache } from '../../types.js';
 import { cachedStmt } from './cached-stmt.js';
 
 // ─── Statement caches (one prepared statement per db instance) ────────────
-const _hasCoChangesStmt = new WeakMap();
-const _getCoChangeMetaStmt = new WeakMap();
-const _upsertCoChangeMetaStmt = new WeakMap();
+const _hasCoChangesStmt: StmtCache<{ 1: number }> = new WeakMap();
+const _getCoChangeMetaStmt: StmtCache<{ key: string; value: string }> = new WeakMap();
+const _upsertCoChangeMetaStmt: StmtCache = new WeakMap();
 
 /**
  * Check whether the co_changes table has data.
- * @param {object} db
- * @returns {boolean}
  */
-export function hasCoChanges(db) {
+export function hasCoChanges(db: BetterSqlite3Database): boolean {
   try {
     return !!cachedStmt(_hasCoChangesStmt, db, 'SELECT 1 FROM co_changes LIMIT 1').get();
   } catch {
@@ -20,11 +19,9 @@ export function hasCoChanges(db) {
 
 /**
  * Get all co-change metadata as a key-value map.
- * @param {object} db
- * @returns {Record<string, string>}
  */
-export function getCoChangeMeta(db) {
-  const meta = {};
+export function getCoChangeMeta(db: BetterSqlite3Database): Record<string, string> {
+  const meta: Record<string, string> = {};
   try {
     for (const row of cachedStmt(
       _getCoChangeMetaStmt,
@@ -41,11 +38,8 @@ export function getCoChangeMeta(db) {
 
 /**
  * Upsert a co-change metadata key-value pair.
- * @param {object} db
- * @param {string} key
- * @param {string} value
  */
-export function upsertCoChangeMeta(db, key, value) {
+export function upsertCoChangeMeta(db: BetterSqlite3Database, key: string, value: string): void {
   cachedStmt(
     _upsertCoChangeMetaStmt,
     db,
