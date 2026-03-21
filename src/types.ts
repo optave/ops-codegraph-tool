@@ -1637,3 +1637,69 @@ export interface ExportNeo4jCSVResult {
   nodes: string;
   relationships: string;
 }
+
+// ════════════════════════════════════════════════════════════════════════
+// §21  SQLite Database (better-sqlite3 surface)
+// ════════════════════════════════════════════════════════════════════════
+
+/** Minimal prepared-statement interface matching better-sqlite3. */
+export interface SqliteStatement<TRow = unknown> {
+  get(...params: unknown[]): TRow | undefined;
+  all(...params: unknown[]): TRow[];
+  run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
+  iterate(...params: unknown[]): IterableIterator<TRow>;
+}
+
+/** Minimal database interface matching the better-sqlite3 surface we use. */
+export interface BetterSqlite3Database {
+  prepare<TRow = unknown>(sql: string): SqliteStatement<TRow>;
+  exec(sql: string): void;
+  close(): void;
+  pragma(sql: string): unknown;
+  transaction<T>(fn: (...args: unknown[]) => T): (...args: unknown[]) => T;
+  readonly open: boolean;
+  readonly name: string;
+}
+
+/** WeakMap-based statement cache: one prepared statement per db instance. */
+export type StmtCache<TRow = unknown> = WeakMap<BetterSqlite3Database, SqliteStatement<TRow>>;
+
+// ════════════════════════════════════════════════════════════════════════
+// §22  Native Addon (napi-rs FFI boundary)
+// ════════════════════════════════════════════════════════════════════════
+
+/** The native napi-rs addon interface (crates/codegraph-core). */
+export interface NativeAddon {
+  parseFile(filePath: string, source: string, dataflow: boolean, ast: boolean): unknown;
+  parseFiles(
+    files: Array<{ filePath: string; source: string }>,
+    dataflow: boolean,
+    ast: boolean,
+  ): unknown[];
+  resolveImport(
+    fromFile: string,
+    importSource: string,
+    rootDir: string,
+    extensions: string[],
+    aliases: unknown,
+  ): string | null;
+  resolveImports(
+    items: Array<{ fromFile: string; importSource: string }>,
+    rootDir: string,
+    extensions: string[],
+    aliases: unknown,
+  ): Array<{ key: string; resolved: string | null }>;
+  computeConfidence(callerFile: string, targetFile: string, importedFrom: string | null): number;
+  detectCycles(edges: Array<{ source: string; target: string }>): string[][];
+  buildCallEdges(files: unknown[], nodes: unknown[], builtinReceivers: string[]): unknown[];
+  engineVersion(): string;
+  ParseTreeCache: new () => NativeParseTreeCache;
+}
+
+/** Native parse-tree cache instance. */
+export interface NativeParseTreeCache {
+  get(filePath: string): unknown;
+  set(filePath: string, tree: unknown): void;
+  delete(filePath: string): void;
+  clear(): void;
+}
