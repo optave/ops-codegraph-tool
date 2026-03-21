@@ -6,6 +6,10 @@
  */
 
 import { createRequire } from 'node:module';
+
+const require = createRequire(import.meta.url);
+const { version: PKG_VERSION } = require('../../package.json') as { version: string };
+
 import { findDbPath } from '../db/index.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { CodegraphError, ConfigError } from '../shared/errors.js';
@@ -119,7 +123,7 @@ export async function startMCPServer(
 
   // biome-ignore lint/suspicious/noExplicitAny: MCP SDK types are lazy-loaded and untyped
   const server = new (Server as any)(
-    { name: 'codegraph', version: '1.0.0' },
+    { name: 'codegraph', version: PKG_VERSION },
     { capabilities: { tools: {} } },
   );
 

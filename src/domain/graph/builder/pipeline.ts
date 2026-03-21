@@ -8,7 +8,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { closeDb, getBuildMeta, initSchema, MIGRATIONS, openDb } from '../../../db/index.js';
 import { detectWorkspaces, loadConfig } from '../../../infrastructure/config.js';
-import { info } from '../../../infrastructure/logger.js';
+import { info, warn } from '../../../infrastructure/logger.js';
 import type { BuildGraphOpts, BuildResult } from '../../../types.js';
 import { getActiveEngine } from '../../parser.js';
 import { setWorkspaces } from '../resolve.js';
@@ -40,7 +40,8 @@ function initializeEngine(ctx: PipelineContext): void {
 }
 
 function checkEngineSchemaMismatch(ctx: PipelineContext): void {
-  ctx.schemaVersion = (MIGRATIONS[MIGRATIONS.length - 1] as { version: number }).version;
+  const lastMigration = MIGRATIONS[MIGRATIONS.length - 1] as { version: number } | undefined;
+  ctx.schemaVersion = lastMigration?.version ?? 0;
   ctx.forceFullRebuild = false;
   if (!ctx.incremental) return;
 
@@ -62,8 +63,12 @@ function loadAliases(ctx: PipelineContext): void {
   ctx.aliases = loadPathAliases(ctx.rootDir);
   if (ctx.config.aliases) {
     for (const [key, value] of Object.entries(ctx.config.aliases)) {
+      if (typeof value !== 'string') {
+        warn(`Alias target for "${key}" must be a string, got ${typeof value}. Skipping.`);
+        continue;
+      }
       const pattern = key.endsWith('/') ? `${key}*` : key;
-      const target = path.resolve(ctx.rootDir, value as string);
+      const target = path.resolve(ctx.rootDir, value);
       ctx.aliases.paths[pattern] = [target.endsWith('/') ? `${target}*` : `${target}/*`];
     }
   }

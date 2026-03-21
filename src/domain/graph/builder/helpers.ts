@@ -49,6 +49,20 @@ export const BUILTIN_RECEIVERS: Set<string> = new Set([
  */
 export function collectFiles(
   dir: string,
+  files: string[],
+  config: Partial<CodegraphConfig>,
+  directories: Set<string>,
+  _visited?: Set<string>,
+): { files: string[]; directories: Set<string> };
+export function collectFiles(
+  dir: string,
+  files?: string[],
+  config?: Partial<CodegraphConfig>,
+  directories?: null,
+  _visited?: Set<string>,
+): string[];
+export function collectFiles(
+  dir: string,
   files: string[] = [],
   config: Partial<CodegraphConfig> = {},
   directories: Set<string> | null = null,
@@ -91,7 +105,11 @@ export function collectFiles(
 
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      collectFiles(full, files, config, directories, _visited);
+      if (trackDirs) {
+        collectFiles(full, files, config, directories as Set<string>, _visited);
+      } else {
+        collectFiles(full, files, config, null, _visited);
+      }
     } else if (EXTENSIONS.has(path.extname(entry.name))) {
       files.push(full);
       hasFiles = true;
