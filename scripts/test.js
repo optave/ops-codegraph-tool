@@ -23,8 +23,8 @@ const hookImport = `--import ${hook}`;
 const existing = process.env.NODE_OPTIONS || '';
 const parts = [
   existing.includes(hookImport) ? null : hookImport,
-  supportsStripTypes && !existing.includes('--experimental-strip-types')
-    ? '--experimental-strip-types'
+  supportsStripTypes && !existing.includes('--experimental-strip-types') && !existing.includes('--strip-types')
+    ? (major >= 23 ? '--strip-types' : '--experimental-strip-types')
     : null,
   existing || null,
 ].filter(Boolean);
