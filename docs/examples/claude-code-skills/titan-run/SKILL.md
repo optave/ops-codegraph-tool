@@ -95,9 +95,9 @@ If a sub-agent corrupts the state, G3 on the next iteration will detect it and r
 
 ---
 
-## Step 0.5 — Artifact pre-validation (--start-from only)
+## Step 0.5 — Artifact pre-validation (phase skip)
 
-**Only run this step if `--start-from` was specified.** Phases before the start point are being skipped — their artifacts must exist and be valid before proceeding.
+**Run this step if `--start-from` was specified, `--skip-recon` is set, or `--skip-gauntlet` is set.** Any of these flags cause phases to be skipped — their artifacts must exist and be valid before proceeding. When `--skip-recon` is set, validate recon artifacts. When `--skip-gauntlet` is set, validate both recon and gauntlet artifacts.
 
 For each phase BEFORE `startPhase`, run the corresponding V-checks:
 
@@ -484,7 +484,8 @@ while iteration < maxIterations:
 
     # V13. Test suite still green after forge commits
     # Quick sanity — run tests to make sure the cumulative commits haven't broken anything
-    npm test 2>&1
+    # Run the project's test command (detect from package.json scripts — npm test, yarn test, pnpm test, etc.)
+    <detected-test-command> 2>&1
     if tests fail:
         Print: "CRITICAL: Test suite fails after forge phase <nextPhase>. Stopping pipeline."
         Print: "Commits from this phase: git log --oneline <headBefore>..<headAfter>"
@@ -582,7 +583,7 @@ Artifacts:
 
 ## Rules
 
-- **You are the orchestrator, not the executor.** Never run codegraph commands, edit source files, or make commits yourself. Only spawn sub-agents and read state files. The ONE exception: the post-forge test run (V13) and NDJSON integrity checks are run directly since they're pure validation.
+- **You are the orchestrator, not the executor.** Never run codegraph commands, edit source files, or make commits yourself. Only spawn sub-agents and read state files. Exceptions (pure validation/snapshot, no code changes): the post-forge test run (V13), NDJSON integrity checks, and the pre-forge architectural snapshot capture (Step 3.5a) are run directly by the orchestrator.
 - **Run the Pre-Agent Gate (G1-G4) before EVERY sub-agent.** No exceptions.
 - **One sub-agent at a time.** Phases are sequential — recon before gauntlet, gauntlet before sync, sync before forge.
 - **Fresh context per sub-agent.** This is the whole point — each sub-agent gets a clean context window.

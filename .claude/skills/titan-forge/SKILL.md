@@ -185,9 +185,9 @@ For each target in the current phase:
    **On DIFF FAIL:** Unstage and revert changes, add to `execution.failedTargets` with reason starting with `"diff-review: "`. Continue to next target.
    **On DIFF WARN:** Log the warning but proceed to gate. Include the warning in the gate-log entry.
 
-10. **Run tests:**
+10. **Run tests** (detect the project's test command from package.json scripts — `npm test`, `yarn test`, `pnpm test`, etc.):
     ```bash
-    npm test 2>&1
+    <detected-test-command> 2>&1
     ```
     If tests fail → go to rollback (step 13).
 
