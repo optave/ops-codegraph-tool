@@ -35,7 +35,7 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 20 | 3.5 | [nahisaho/CodeGraphMCPServer](https://github.com/nahisaho/CodeGraphMCPServer) | 7 | Python | MIT | GraphRAG with Louvain community detection, 16 languages, 14 MCP tools, 334 tests |
 | 21 | 3.5 | [dundalek/stratify](https://github.com/dundalek/stratify) | 102 | Clojure | MIT | Multi-backend extraction (LSP/SCIP/Joern), 10 languages, DGML/CodeCharta output, architecture linting |
 | 22 | 3.5 | [kraklabs/cie](https://github.com/kraklabs/cie) | 9 | Go | AGPL-3.0 | Code Intelligence Engine: 20+ MCP tools, tree-sitter, semantic search (Ollama), Homebrew, single Go binary |
-| 23 | 3.4 | [anrgct/autodev-codebase](https://github.com/anrgct/autodev-codebase) | 111 | TypeScript | None | 40+ languages, 7 embedding providers, Cytoscape.js visualization, LLM reranking. **Stagnant since Jan 2026** |
+| 23 | 3.3 | [anrgct/autodev-codebase](https://github.com/anrgct/autodev-codebase) | 111 | TypeScript | None | 40+ languages, 7 embedding providers, Cytoscape.js visualization, LLM reranking. **Stagnant since Jan 2026** |
 | 24 | 3.4 | [Durafen/Claude-code-memory](https://github.com/Durafen/Claude-code-memory) | 72 | Python | None | Memory Guard quality gate, persistent codebase memory, Voyage AI + Qdrant |
 | 25 | 3.3 | [NeuralRays/codexray](https://github.com/NeuralRays/codexray) | 2 | TypeScript | MIT | 16 MCP tools, TF-IDF semantic search (~50MB), dead code, complexity, path finding |
 | 26 | 3.3 | [DucPhamNgoc08/CodeVisualizer](https://github.com/DucPhamNgoc08/CodeVisualizer) | 475 | TypeScript | MIT | VS Code extension, tree-sitter WASM, flowcharts + dependency graphs, 5 AI providers, 9 themes |
@@ -141,7 +141,7 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 7 | cpg | 5 | 5 | 2 | 5 | 5 | 3 |
 | 8 | CKB | 5 | 5 | 4 | 3 | 4 | 3 |
 | 9 | axon | 5 | 5 | 4 | 2 | 4 | 3 |
-| 10 | glimpse | 4 | 4 | 5 | 3 | 5 | 4 |
+| 10 | glimpse | 4 | 4 | 5 | 3 | 5 | 2 |
 | 11 | codepropertygraph | 4 | 5 | 2 | 4 | 5 | 3 |
 | 12 | codegraph-rust | 5 | 5 | 2 | 4 | 4 | 3 |
 | 13 | arbor | 4 | 4 | 5 | 4 | 5 | 3 |
@@ -154,7 +154,7 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 20 | CodeGraphMCPServer | 4 | 4 | 4 | 5 | 3 | 1 |
 | 21 | stratify | 4 | 4 | 2 | 5 | 4 | 2 |
 | 22 | cie | 5 | 4 | 4 | 3 | 4 | 1 |
-| 23 | autodev-codebase | 5 | 3 | 3 | 5 | 3 | 3 |
+| 23 | autodev-codebase | 5 | 3 | 3 | 5 | 3 | 1 |
 | 24 | Claude-code-memory | 4 | 3 | 3 | 3 | 4 | 3 |
 | 25 | codexray | 5 | 4 | 4 | 4 | 3 | 1 |
 | 26 | CodeVisualizer | 4 | 3 | 5 | 3 | 3 | 2 |
