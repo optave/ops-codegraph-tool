@@ -80,7 +80,13 @@ function buildCallees(
               line: c.line,
               endLine: c.end_line || null,
               summary: cLines ? extractSummary(cLines, c.line, displayOpts) : null,
-              source: readSourceRange(repoRoot, c.file, c.line, c.end_line, displayOpts),
+              source: readSourceRange(
+                repoRoot,
+                c.file,
+                c.line,
+                c.end_line ?? undefined,
+                displayOpts,
+              ),
             });
           }
         }
