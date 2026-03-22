@@ -1,10 +1,18 @@
+import type {
+  Call,
+  ClassRelation,
+  ExtractorOutput,
+  SubDeclaration,
+  TreeSitterNode,
+  TreeSitterTree,
+} from '../types.js';
 import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from C# files.
  */
-export function extractCSharpSymbols(tree, _filePath) {
-  const ctx = {
+export function extractCSharpSymbols(tree: TreeSitterTree, _filePath: string): ExtractorOutput {
+  const ctx: ExtractorOutput = {
     definitions: [],
     calls: [],
     imports: [],
@@ -19,7 +27,7 @@ export function extractCSharpSymbols(tree, _filePath) {
   return ctx;
 }
 
-function walkCSharpNode(node, ctx) {
+function walkCSharpNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
   switch (node.type) {
     case 'class_declaration':
       handleCsClassDecl(node, ctx);
@@ -56,12 +64,15 @@ function walkCSharpNode(node, ctx) {
       break;
   }
 
-  for (let i = 0; i < node.childCount; i++) walkCSharpNode(node.child(i), ctx);
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) walkCSharpNode(child, ctx);
+  }
 }
 
 // ── Walk-path per-node-type handlers ────────────────────────────────────────
 
-function handleCsClassDecl(node, ctx) {
+function handleCsClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const classChildren = extractCSharpClassFields(node);
@@ -75,7 +86,7 @@ function handleCsClassDecl(node, ctx) {
   extractCSharpBaseTypes(node, nameNode.text, ctx.classes);
 }
 
-function handleCsStructDecl(node, ctx) {
+function handleCsStructDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const structChildren = extractCSharpClassFields(node);
@@ -89,7 +100,7 @@ function handleCsStructDecl(node, ctx) {
   extractCSharpBaseTypes(node, nameNode.text, ctx.classes);
 }
 
-function handleCsRecordDecl(node, ctx) {
+function handleCsRecordDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   ctx.definitions.push({
@@ -101,7 +112,7 @@ function handleCsRecordDecl(node, ctx) {
   extractCSharpBaseTypes(node, nameNode.text, ctx.classes);
 }
 
-function handleCsInterfaceDecl(node, ctx) {
+function handleCsInterfaceDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   ctx.definitions.push({
@@ -129,7 +140,7 @@ function handleCsInterfaceDecl(node, ctx) {
   }
 }
 
-function handleCsEnumDecl(node, ctx) {
+function handleCsEnumDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const enumChildren = extractCSharpEnumMembers(node);
@@ -142,7 +153,7 @@ function handleCsEnumDecl(node, ctx) {
   });
 }
 
-function handleCsMethodDecl(node, ctx) {
+function handleCsMethodDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // Skip interface methods already emitted by handleCsInterfaceDecl
   if (node.parent?.parent?.type === 'interface_declaration') return;
   const nameNode = node.childForFieldName('name');
@@ -160,7 +171,7 @@ function handleCsMethodDecl(node, ctx) {
   });
 }
 
-function handleCsConstructorDecl(node, ctx) {
+function handleCsConstructorDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const parentType = findCSharpParentType(node);
@@ -176,7 +187,7 @@ function handleCsConstructorDecl(node, ctx) {
   });
 }
 
-function handleCsPropertyDecl(node, ctx) {
+function handleCsPropertyDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const parentType = findCSharpParentType(node);
@@ -190,14 +201,14 @@ function handleCsPropertyDecl(node, ctx) {
   });
 }
 
-function handleCsUsingDirective(node, ctx) {
+function handleCsUsingDirective(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode =
     node.childForFieldName('name') ||
     findChild(node, 'qualified_name') ||
     findChild(node, 'identifier');
   if (!nameNode) return;
   const fullPath = nameNode.text;
-  const lastName = fullPath.split('.').pop();
+  const lastName = fullPath.split('.').pop() ?? fullPath;
   ctx.imports.push({
     source: fullPath,
     names: [lastName],
@@ -206,7 +217,7 @@ function handleCsUsingDirective(node, ctx) {
   });
 }
 
-function handleCsInvocationExpr(node, ctx) {
+function handleCsInvocationExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const fn = node.childForFieldName('function') || node.child(0);
   if (!fn) return;
   if (fn.type === 'identifier') {
@@ -215,7 +226,7 @@ function handleCsInvocationExpr(node, ctx) {
     const name = fn.childForFieldName('name');
     if (name) {
       const expr = fn.childForFieldName('expression');
-      const call = { name: name.text, line: node.startPosition.row + 1 };
+      const call: Call = { name: name.text, line: node.startPosition.row + 1 };
       if (expr) call.receiver = expr.text;
       ctx.calls.push(call);
     }
@@ -225,7 +236,7 @@ function handleCsInvocationExpr(node, ctx) {
   }
 }
 
-function handleCsObjectCreation(node, ctx) {
+function handleCsObjectCreation(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const typeNode = node.childForFieldName('type');
   if (!typeNode) return;
   const typeName =
@@ -235,7 +246,7 @@ function handleCsObjectCreation(node, ctx) {
   if (typeName) ctx.calls.push({ name: typeName, line: node.startPosition.row + 1 });
 }
 
-function findCSharpParentType(node) {
+function findCSharpParentType(node: TreeSitterNode): string | null {
   let current = node.parent;
   while (current) {
     if (
@@ -255,8 +266,8 @@ function findCSharpParentType(node) {
 
 // ── Child extraction helpers ────────────────────────────────────────────────
 
-function extractCSharpParameters(paramListNode) {
-  const params = [];
+function extractCSharpParameters(paramListNode: TreeSitterNode | null): SubDeclaration[] {
+  const params: SubDeclaration[] = [];
   if (!paramListNode) return params;
   for (let i = 0; i < paramListNode.childCount; i++) {
     const param = paramListNode.child(i);
@@ -269,8 +280,8 @@ function extractCSharpParameters(paramListNode) {
   return params;
 }
 
-function extractCSharpClassFields(classNode) {
-  const fields = [];
+function extractCSharpClassFields(classNode: TreeSitterNode): SubDeclaration[] {
+  const fields: SubDeclaration[] = [];
   const body = classNode.childForFieldName('body') || findChild(classNode, 'declaration_list');
   if (!body) return fields;
   for (let i = 0; i < body.childCount; i++) {
@@ -295,8 +306,8 @@ function extractCSharpClassFields(classNode) {
   return fields;
 }
 
-function extractCSharpEnumMembers(enumNode) {
-  const constants = [];
+function extractCSharpEnumMembers(enumNode: TreeSitterNode): SubDeclaration[] {
+  const constants: SubDeclaration[] = [];
   const body =
     enumNode.childForFieldName('body') || findChild(enumNode, 'enum_member_declaration_list');
   if (!body) return constants;
@@ -313,11 +324,15 @@ function extractCSharpEnumMembers(enumNode) {
 
 // ── Type map extraction ──────────────────────────────────────────────────────
 
-function extractCSharpTypeMap(node, ctx) {
+function extractCSharpTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void {
   extractCSharpTypeMapDepth(node, ctx, 0);
 }
 
-function extractCSharpTypeMapDepth(node, ctx, depth) {
+function extractCSharpTypeMapDepth(
+  node: TreeSitterNode,
+  ctx: ExtractorOutput,
+  depth: number,
+): void {
   if (depth >= 200) return;
 
   // local_declaration_statement → variable_declaration → type + variable_declarator(s)
@@ -331,7 +346,7 @@ function extractCSharpTypeMapDepth(node, ctx, depth) {
           if (child && child.type === 'variable_declarator') {
             const nameNode = child.childForFieldName('name') || child.child(0);
             if (nameNode && nameNode.type === 'identifier') {
-              ctx.typeMap.set(nameNode.text, { type: typeName, confidence: 0.9 });
+              ctx.typeMap?.set(nameNode.text, { type: typeName, confidence: 0.9 });
             }
           }
         }
@@ -345,7 +360,7 @@ function extractCSharpTypeMapDepth(node, ctx, depth) {
     const nameNode = node.childForFieldName('name');
     if (typeNode && nameNode) {
       const typeName = extractCSharpTypeName(typeNode);
-      if (typeName) ctx.typeMap.set(nameNode.text, { type: typeName, confidence: 0.9 });
+      if (typeName) ctx.typeMap?.set(nameNode.text, { type: typeName, confidence: 0.9 });
     }
   }
 
@@ -355,7 +370,7 @@ function extractCSharpTypeMapDepth(node, ctx, depth) {
   }
 }
 
-function extractCSharpTypeName(typeNode) {
+function extractCSharpTypeName(typeNode: TreeSitterNode): string | null {
   if (!typeNode) return null;
   const t = typeNode.type;
   if (t === 'identifier' || t === 'qualified_name') return typeNode.text;
@@ -377,8 +392,8 @@ function extractCSharpTypeName(typeNode) {
  * base classes from interfaces in the base_list, so we fix it up here using the
  * definitions collected during the walk.
  */
-function reclassifyCSharpImplements(ctx) {
-  const interfaceNames = new Set();
+function reclassifyCSharpImplements(ctx: ExtractorOutput): void {
+  const interfaceNames = new Set<string>();
   for (const def of ctx.definitions) {
     if (def.kind === 'interface') interfaceNames.add(def.name);
   }
@@ -390,7 +405,11 @@ function reclassifyCSharpImplements(ctx) {
   }
 }
 
-function extractCSharpBaseTypes(node, className, classes) {
+function extractCSharpBaseTypes(
+  node: TreeSitterNode,
+  className: string,
+  classes: ClassRelation[],
+): void {
   // tree-sitter-c-sharp exposes base_list as a child node type, not a field
   const baseList = node.childForFieldName('bases') || findChild(node, 'base_list');
   if (!baseList) return;

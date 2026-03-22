@@ -1,7 +1,14 @@
+import type {
+  Call,
+  ExtractorOutput,
+  SubDeclaration,
+  TreeSitterNode,
+  TreeSitterTree,
+} from '../types.js';
 import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js';
 
-function extractPhpParameters(fnNode) {
-  const params = [];
+function extractPhpParameters(fnNode: TreeSitterNode): SubDeclaration[] {
+  const params: SubDeclaration[] = [];
   const paramsNode =
     fnNode.childForFieldName('parameters') || findChild(fnNode, 'formal_parameters');
   if (!paramsNode) return params;
@@ -18,8 +25,8 @@ function extractPhpParameters(fnNode) {
   return params;
 }
 
-function extractPhpClassChildren(classNode) {
-  const children = [];
+function extractPhpClassChildren(classNode: TreeSitterNode): SubDeclaration[] {
+  const children: SubDeclaration[] = [];
   const body = classNode.childForFieldName('body') || findChild(classNode, 'declaration_list');
   if (!body) return children;
   for (let i = 0; i < body.childCount; i++) {
@@ -57,8 +64,8 @@ function extractPhpClassChildren(classNode) {
   return children;
 }
 
-function extractPhpEnumCases(enumNode) {
-  const children = [];
+function extractPhpEnumCases(enumNode: TreeSitterNode): SubDeclaration[] {
+  const children: SubDeclaration[] = [];
   const body = enumNode.childForFieldName('body') || findChild(enumNode, 'enum_declaration_list');
   if (!body) return children;
   for (let i = 0; i < body.childCount; i++) {
@@ -75,8 +82,8 @@ function extractPhpEnumCases(enumNode) {
 /**
  * Extract symbols from PHP files.
  */
-export function extractPHPSymbols(tree, _filePath) {
-  const ctx = {
+export function extractPHPSymbols(tree: TreeSitterTree, _filePath: string): ExtractorOutput {
+  const ctx: ExtractorOutput = {
     definitions: [],
     calls: [],
     imports: [],
@@ -90,7 +97,7 @@ export function extractPHPSymbols(tree, _filePath) {
   return ctx;
 }
 
-function walkPhpNode(node, ctx) {
+function walkPhpNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
   switch (node.type) {
     case 'function_definition':
       handlePhpFuncDef(node, ctx);
@@ -127,12 +134,15 @@ function walkPhpNode(node, ctx) {
       break;
   }
 
-  for (let i = 0; i < node.childCount; i++) walkPhpNode(node.child(i), ctx);
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) walkPhpNode(child, ctx);
+  }
 }
 
 // ── Walk-path per-node-type handlers ────────────────────────────────────────
 
-function handlePhpFuncDef(node, ctx) {
+function handlePhpFuncDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const params = extractPhpParameters(node);
@@ -145,7 +155,7 @@ function handlePhpFuncDef(node, ctx) {
   });
 }
 
-function handlePhpClassDecl(node, ctx) {
+function handlePhpClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const classChildren = extractPhpClassChildren(node);
@@ -185,7 +195,7 @@ function handlePhpClassDecl(node, ctx) {
   }
 }
 
-function handlePhpInterfaceDecl(node, ctx) {
+function handlePhpInterfaceDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   ctx.definitions.push({
@@ -213,7 +223,7 @@ function handlePhpInterfaceDecl(node, ctx) {
   }
 }
 
-function handlePhpTraitDecl(node, ctx) {
+function handlePhpTraitDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   ctx.definitions.push({
@@ -224,7 +234,7 @@ function handlePhpTraitDecl(node, ctx) {
   });
 }
 
-function handlePhpEnumDecl(node, ctx) {
+function handlePhpEnumDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const enumChildren = extractPhpEnumCases(node);
@@ -237,7 +247,7 @@ function handlePhpEnumDecl(node, ctx) {
   });
 }
 
-function handlePhpMethodDecl(node, ctx) {
+function handlePhpMethodDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // Skip interface methods already emitted by handlePhpInterfaceDecl
   if (node.parent?.parent?.type === 'interface_declaration') return;
   const nameNode = node.childForFieldName('name');
@@ -255,14 +265,14 @@ function handlePhpMethodDecl(node, ctx) {
   });
 }
 
-function handlePhpNamespaceUse(node, ctx) {
+function handlePhpNamespaceUse(node: TreeSitterNode, ctx: ExtractorOutput): void {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (child && child.type === 'namespace_use_clause') {
       const nameNode = findChild(child, 'qualified_name') || findChild(child, 'name');
       if (nameNode) {
         const fullPath = nameNode.text;
-        const lastName = fullPath.split('\\').pop();
+        const lastName = fullPath.split('\\').pop() ?? fullPath;
         const alias = child.childForFieldName('alias');
         ctx.imports.push({
           source: fullPath,
@@ -274,7 +284,7 @@ function handlePhpNamespaceUse(node, ctx) {
     }
     if (child && (child.type === 'qualified_name' || child.type === 'name')) {
       const fullPath = child.text;
-      const lastName = fullPath.split('\\').pop();
+      const lastName = fullPath.split('\\').pop() ?? fullPath;
       ctx.imports.push({
         source: fullPath,
         names: [lastName],
@@ -285,48 +295,51 @@ function handlePhpNamespaceUse(node, ctx) {
   }
 }
 
-function handlePhpFuncCall(node, ctx) {
+function handlePhpFuncCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const fn = node.childForFieldName('function') || node.child(0);
   if (!fn) return;
   if (fn.type === 'name' || fn.type === 'identifier') {
     ctx.calls.push({ name: fn.text, line: node.startPosition.row + 1 });
   } else if (fn.type === 'qualified_name') {
     const parts = fn.text.split('\\');
-    ctx.calls.push({ name: parts[parts.length - 1], line: node.startPosition.row + 1 });
+    ctx.calls.push({ name: parts[parts.length - 1] ?? fn.text, line: node.startPosition.row + 1 });
   }
 }
 
-function handlePhpMemberCall(node, ctx) {
+function handlePhpMemberCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const name = node.childForFieldName('name');
   if (!name) return;
   const obj = node.childForFieldName('object');
-  const call = { name: name.text, line: node.startPosition.row + 1 };
+  const call: Call = { name: name.text, line: node.startPosition.row + 1 };
   if (obj) call.receiver = obj.text;
   ctx.calls.push(call);
 }
 
-function handlePhpScopedCall(node, ctx) {
+function handlePhpScopedCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const name = node.childForFieldName('name');
   if (!name) return;
   const scope = node.childForFieldName('scope');
-  const call = { name: name.text, line: node.startPosition.row + 1 };
+  const call: Call = { name: name.text, line: node.startPosition.row + 1 };
   if (scope) call.receiver = scope.text;
   ctx.calls.push(call);
 }
 
-function handlePhpObjectCreation(node, ctx) {
+function handlePhpObjectCreation(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const classNode = node.child(1);
   if (classNode && (classNode.type === 'name' || classNode.type === 'qualified_name')) {
     const parts = classNode.text.split('\\');
-    ctx.calls.push({ name: parts[parts.length - 1], line: node.startPosition.row + 1 });
+    ctx.calls.push({
+      name: parts[parts.length - 1] ?? classNode.text,
+      line: node.startPosition.row + 1,
+    });
   }
 }
 
-function extractPhpTypeMap(node, ctx) {
+function extractPhpTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void {
   extractPhpTypeMapDepth(node, ctx, 0);
 }
 
-function extractPhpTypeMapDepth(node, ctx, depth) {
+function extractPhpTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, depth: number): void {
   if (depth >= 200) return;
 
   // Function/method parameters with type hints
@@ -339,7 +352,7 @@ function extractPhpTypeMapDepth(node, ctx, depth) {
     const nameNode = node.childForFieldName('name') || findChild(node, 'variable_name');
     if (typeNode && nameNode) {
       const typeName = extractPhpTypeName(typeNode);
-      if (typeName) ctx.typeMap.set(nameNode.text, { type: typeName, confidence: 0.9 });
+      if (typeName) ctx.typeMap?.set(nameNode.text, { type: typeName, confidence: 0.9 });
     }
   }
 
@@ -349,7 +362,7 @@ function extractPhpTypeMapDepth(node, ctx, depth) {
   }
 }
 
-function extractPhpTypeName(typeNode) {
+function extractPhpTypeName(typeNode: TreeSitterNode): string | null {
   if (!typeNode) return null;
   const t = typeNode.type;
   if (t === 'named_type' || t === 'name' || t === 'qualified_name') return typeNode.text;
@@ -363,7 +376,7 @@ function extractPhpTypeName(typeNode) {
   return null;
 }
 
-function findPHPParentClass(node) {
+function findPHPParentClass(node: TreeSitterNode): string | null {
   let current = node.parent;
   while (current) {
     if (

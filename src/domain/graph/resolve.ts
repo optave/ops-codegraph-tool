@@ -2,12 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadNative } from '../../infrastructure/native.js';
 import { normalizePath } from '../../shared/constants.js';
-import type { BareSpecifier, PathAliases } from '../../types.js';
+import type { BareSpecifier, BatchResolvedMap, ImportBatchItem, PathAliases } from '../../types.js';
 
 // ── package.json exports resolution ─────────────────────────────────
 
 /** Cache: packageDir → parsed exports field (or null) */
-const _exportsCache: Map<string, unknown> = new Map();
+// biome-ignore lint/suspicious/noExplicitAny: package.json exports field has no fixed schema
+const _exportsCache: Map<string, any> = new Map();
 
 /**
  * Parse a bare specifier into { packageName, subpath }.
@@ -54,7 +55,8 @@ function findPackageDir(packageName: string, rootDir: string): string | null {
  * Read and cache the exports field from a package's package.json.
  * Returns the exports value or null.
  */
-function getPackageExports(packageDir: string): unknown {
+// biome-ignore lint/suspicious/noExplicitAny: package.json exports field has no fixed schema
+function getPackageExports(packageDir: string): any {
   if (_exportsCache.has(packageDir)) return _exportsCache.get(packageDir);
   try {
     const raw = fs.readFileSync(path.join(packageDir, 'package.json'), 'utf8');
@@ -69,7 +71,7 @@ function getPackageExports(packageDir: string): unknown {
 }
 
 /** Condition names to try, in priority order. */
-const CONDITION_ORDER = ['import', 'require', 'default'];
+const CONDITION_ORDER: readonly string[] = ['import', 'require', 'default'];
 
 /**
  * Resolve a conditional exports value (string, object with conditions, or array).
@@ -151,7 +153,7 @@ export function resolveViaExports(specifier: string, rootDir: string): string | 
 
   // Determine if exports is a conditions object (no keys start with ".")
   // or a subpath map (keys start with ".")
-  const keys = Object.keys(exports as Record<string, unknown>);
+  const keys = Object.keys(exports);
   const isSubpathMap = keys.length > 0 && keys.some((k) => k.startsWith('.'));
 
   if (!isSubpathMap) {
@@ -167,9 +169,8 @@ export function resolveViaExports(specifier: string, rootDir: string): string | 
   }
 
   // Subpath map: try exact match first, then pattern match
-  const exportsMap = exports as Record<string, unknown>;
-  if (subpath in exportsMap) {
-    const target = resolveCondition(exportsMap[subpath]);
+  if (subpath in exports) {
+    const target = resolveCondition(exports[subpath]);
     if (target) {
       const resolved = path.resolve(packageDir, target);
       return fs.existsSync(resolved) ? resolved : null;
@@ -177,7 +178,7 @@ export function resolveViaExports(specifier: string, rootDir: string): string | 
   }
 
   // Pattern matching (keys with *)
-  for (const [pattern, value] of Object.entries(exportsMap)) {
+  for (const [pattern, value] of Object.entries(exports)) {
     if (!pattern.includes('*')) continue;
     const matched = matchSubpathPattern(pattern, subpath);
     if (matched == null) continue;
@@ -314,8 +315,8 @@ export function clearWorkspaceCache(): void {
  * to native format { baseUrl, paths: [{ pattern, targets }] }.
  */
 export function convertAliasesForNative(
-  aliases: PathAliases | null,
-): { baseUrl: string; paths: Array<{ pattern: string; targets: string[] }> } | null {
+  aliases: PathAliases | null | undefined,
+): { baseUrl: string; paths: { pattern: string; targets: string[] }[] } | null {
   if (!aliases) return null;
   return {
     baseUrl: aliases.baseUrl || '',
@@ -490,11 +491,11 @@ export function computeConfidence(
  * Returns Map<"fromFile|importSource", resolvedPath> or null when native unavailable.
  */
 export function resolveImportsBatch(
-  inputs: Array<{ fromFile: string; importSource: string }>,
+  inputs: ImportBatchItem[],
   rootDir: string,
   aliases: PathAliases | null,
-  knownFiles?: string[],
-): Map<string, string> | null {
+  knownFiles?: string[] | null,
+): BatchResolvedMap | null {
   const native = loadNative();
   if (!native) return null;
 
@@ -509,7 +510,7 @@ export function resolveImportsBatch(
       convertAliasesForNative(aliases),
       knownFiles || null,
     );
-    const map = new Map<string, string>();
+    const map: BatchResolvedMap = new Map();
     for (const r of results) {
       map.set(`${r.fromFile}|${r.importSource}`, normalizePath(path.normalize(r.resolvedPath)));
     }

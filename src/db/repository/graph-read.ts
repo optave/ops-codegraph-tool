@@ -1,20 +1,26 @@
 import { CORE_SYMBOL_KINDS } from '../../shared/kinds.js';
+import type {
+  BetterSqlite3Database,
+  CallableNodeRow,
+  CallEdgeRow,
+  FileNodeRow,
+  ImportGraphEdgeRow,
+  StmtCache,
+} from '../../types.js';
 import { cachedStmt } from './cached-stmt.js';
 
 // ─── Statement caches (one prepared statement per db instance) ────────────
-const _getCallableNodesStmt = new WeakMap();
-const _getCallEdgesStmt = new WeakMap();
-const _getFileNodesAllStmt = new WeakMap();
-const _getImportEdgesStmt = new WeakMap();
+const _getCallableNodesStmt: StmtCache<CallableNodeRow> = new WeakMap();
+const _getCallEdgesStmt: StmtCache<CallEdgeRow> = new WeakMap();
+const _getFileNodesAllStmt: StmtCache<FileNodeRow> = new WeakMap();
+const _getImportEdgesStmt: StmtCache<ImportGraphEdgeRow> = new WeakMap();
 
-const CALLABLE_KINDS_SQL = CORE_SYMBOL_KINDS.map((k) => `'${k}'`).join(',');
+const CALLABLE_KINDS_SQL = CORE_SYMBOL_KINDS.map((k: string) => `'${k}'`).join(',');
 
 /**
  * Get callable nodes (all core symbol kinds) for graph construction.
- * @param {object} db
- * @returns {{ id: number, name: string, kind: string, file: string }[]}
  */
-export function getCallableNodes(db) {
+export function getCallableNodes(db: BetterSqlite3Database): CallableNodeRow[] {
   return cachedStmt(
     _getCallableNodesStmt,
     db,
@@ -24,10 +30,8 @@ export function getCallableNodes(db) {
 
 /**
  * Get all 'calls' edges.
- * @param {object} db
- * @returns {{ source_id: number, target_id: number, confidence: number|null }[]}
  */
-export function getCallEdges(db) {
+export function getCallEdges(db: BetterSqlite3Database): CallEdgeRow[] {
   return cachedStmt(
     _getCallEdgesStmt,
     db,
@@ -37,10 +41,8 @@ export function getCallEdges(db) {
 
 /**
  * Get all file-kind nodes.
- * @param {object} db
- * @returns {{ id: number, name: string, file: string }[]}
  */
-export function getFileNodesAll(db) {
+export function getFileNodesAll(db: BetterSqlite3Database): FileNodeRow[] {
   return cachedStmt(
     _getFileNodesAllStmt,
     db,
@@ -50,10 +52,8 @@ export function getFileNodesAll(db) {
 
 /**
  * Get all import edges.
- * @param {object} db
- * @returns {{ source_id: number, target_id: number }[]}
  */
-export function getImportEdges(db) {
+export function getImportEdges(db: BetterSqlite3Database): ImportGraphEdgeRow[] {
   return cachedStmt(
     _getImportEdgesStmt,
     db,

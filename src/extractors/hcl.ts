@@ -1,10 +1,18 @@
+import type {
+  Definition,
+  ExtractorOutput,
+  Import,
+  SubDeclaration,
+  TreeSitterNode,
+  TreeSitterTree,
+} from '../types.js';
 import { nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from HCL (Terraform) files.
  */
-export function extractHCLSymbols(tree, _filePath) {
-  const ctx = { definitions: [], imports: [] };
+export function extractHCLSymbols(tree: TreeSitterTree, _filePath: string): ExtractorOutput {
+  const ctx: { definitions: Definition[]; imports: Import[] } = { definitions: [], imports: [] };
 
   walkHclNode(tree.rootNode, ctx);
   return {
@@ -13,39 +21,53 @@ export function extractHCLSymbols(tree, _filePath) {
     imports: ctx.imports,
     classes: [],
     exports: [],
-  };
+    typeMap: new Map(),
+  } as ExtractorOutput;
 }
 
-function walkHclNode(node, ctx) {
+function walkHclNode(
+  node: TreeSitterNode,
+  ctx: { definitions: Definition[]; imports: Import[] },
+): void {
   if (node.type === 'block') {
     handleHclBlock(node, ctx);
   }
 
-  for (let i = 0; i < node.childCount; i++) walkHclNode(node.child(i), ctx);
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) walkHclNode(child, ctx);
+  }
 }
 
-function handleHclBlock(node, ctx) {
-  const children = [];
-  for (let i = 0; i < node.childCount; i++) children.push(node.child(i));
+function handleHclBlock(
+  node: TreeSitterNode,
+  ctx: { definitions: Definition[]; imports: Import[] },
+): void {
+  const children: TreeSitterNode[] = [];
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) children.push(child);
+  }
 
   const identifiers = children.filter((c) => c.type === 'identifier');
   const strings = children.filter((c) => c.type === 'string_lit');
 
-  if (identifiers.length === 0) return;
-  const blockType = identifiers[0].text;
+  const firstIdent = identifiers[0];
+  if (!firstIdent) return;
+  const blockType = firstIdent.text;
   const name = resolveHclBlockName(blockType, strings);
 
   if (name) {
-    let blockChildren;
+    let blockChildren: SubDeclaration[] | undefined;
     if (blockType === 'variable' || blockType === 'output') {
       blockChildren = extractHclAttributes(children);
     }
     ctx.definitions.push({
       name,
-      kind: blockType,
+      kind: blockType as Definition['kind'],
       line: node.startPosition.row + 1,
       endLine: nodeEndLine(node),
-      children: blockChildren?.length > 0 ? blockChildren : undefined,
+      children: blockChildren?.length ? blockChildren : undefined,
     });
   }
 
@@ -54,30 +76,29 @@ function handleHclBlock(node, ctx) {
   }
 }
 
-function resolveHclBlockName(blockType, strings) {
-  if (blockType === 'resource' && strings.length >= 2) {
-    return `${strings[0].text.replace(/"/g, '')}.${strings[1].text.replace(/"/g, '')}`;
+function resolveHclBlockName(blockType: string, strings: TreeSitterNode[]): string {
+  const s0 = strings[0];
+  const s1 = strings[1];
+  if (blockType === 'resource' && s0 && s1) {
+    return `${s0.text.replace(/"/g, '')}.${s1.text.replace(/"/g, '')}`;
   }
-  if (blockType === 'data' && strings.length >= 2) {
-    return `data.${strings[0].text.replace(/"/g, '')}.${strings[1].text.replace(/"/g, '')}`;
+  if (blockType === 'data' && s0 && s1) {
+    return `data.${s0.text.replace(/"/g, '')}.${s1.text.replace(/"/g, '')}`;
   }
-  if (
-    (blockType === 'variable' || blockType === 'output' || blockType === 'module') &&
-    strings.length >= 1
-  ) {
-    return `${blockType}.${strings[0].text.replace(/"/g, '')}`;
+  if ((blockType === 'variable' || blockType === 'output' || blockType === 'module') && s0) {
+    return `${blockType}.${s0.text.replace(/"/g, '')}`;
   }
   if (blockType === 'locals') return 'locals';
   if (blockType === 'terraform' || blockType === 'provider') {
     let name = blockType;
-    if (strings.length >= 1) name += `.${strings[0].text.replace(/"/g, '')}`;
+    if (s0) name += `.${s0.text.replace(/"/g, '')}`;
     return name;
   }
   return '';
 }
 
-function extractHclAttributes(children) {
-  const attrs = [];
+function extractHclAttributes(children: TreeSitterNode[]): SubDeclaration[] {
+  const attrs: SubDeclaration[] = [];
   const body = children.find((c) => c.type === 'body');
   if (!body) return attrs;
   for (let j = 0; j < body.childCount; j++) {
@@ -92,7 +113,11 @@ function extractHclAttributes(children) {
   return attrs;
 }
 
-function extractHclModuleSource(children, _node, ctx) {
+function extractHclModuleSource(
+  children: TreeSitterNode[],
+  _node: TreeSitterNode,
+  ctx: { definitions: Definition[]; imports: Import[] },
+): void {
   const body = children.find((c) => c.type === 'body');
   if (!body) return;
   for (let i = 0; i < body.childCount; i++) {

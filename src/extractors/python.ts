@@ -1,7 +1,15 @@
+import type {
+  Call,
+  ExtractorOutput,
+  SubDeclaration,
+  TreeSitterNode,
+  TreeSitterTree,
+  TypeMapEntry,
+} from '../types.js';
 import { findChild, nodeEndLine, pythonVisibility } from './helpers.js';
 
 /** Built-in globals that start with uppercase but are not user-defined types. */
-const BUILTIN_GLOBALS_PY = new Set([
+const BUILTIN_GLOBALS_PY: Set<string> = new Set([
   // Uppercase builtins that would false-positive on the factory heuristic
   'Exception',
   'BaseException',
@@ -47,8 +55,8 @@ const BUILTIN_GLOBALS_PY = new Set([
 /**
  * Extract symbols from Python files.
  */
-export function extractPythonSymbols(tree, _filePath) {
-  const ctx = {
+export function extractPythonSymbols(tree: TreeSitterTree, _filePath: string): ExtractorOutput {
+  const ctx: ExtractorOutput = {
     definitions: [],
     calls: [],
     imports: [],
@@ -62,7 +70,7 @@ export function extractPythonSymbols(tree, _filePath) {
   return ctx;
 }
 
-function walkPythonNode(node, ctx) {
+function walkPythonNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
   switch (node.type) {
     case 'function_definition':
       handlePyFunctionDef(node, ctx);
@@ -71,7 +79,10 @@ function walkPythonNode(node, ctx) {
       handlePyClassDef(node, ctx);
       break;
     case 'decorated_definition':
-      for (let i = 0; i < node.childCount; i++) walkPythonNode(node.child(i), ctx);
+      for (let i = 0; i < node.childCount; i++) {
+        const child = node.child(i);
+        if (child) walkPythonNode(child, ctx);
+      }
       return;
     case 'call':
       handlePyCall(node, ctx);
@@ -87,15 +98,18 @@ function walkPythonNode(node, ctx) {
       break;
   }
 
-  for (let i = 0; i < node.childCount; i++) walkPythonNode(node.child(i), ctx);
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) walkPythonNode(child, ctx);
+  }
 }
 
 // ── Walk-path per-node-type handlers ────────────────────────────────────────
 
-function handlePyFunctionDef(node, ctx) {
+function handlePyFunctionDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
-  const decorators = [];
+  const decorators: string[] = [];
   if (node.previousSibling && node.previousSibling.type === 'decorator') {
     decorators.push(node.previousSibling.text);
   }
@@ -114,7 +128,7 @@ function handlePyFunctionDef(node, ctx) {
   });
 }
 
-function handlePyClassDef(node, ctx) {
+function handlePyClassDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const clsChildren = extractPythonClassProperties(node);
@@ -140,11 +154,11 @@ function handlePyClassDef(node, ctx) {
   }
 }
 
-function handlePyCall(node, ctx) {
+function handlePyCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const fn = node.childForFieldName('function');
   if (!fn) return;
-  let callName = null;
-  let receiver;
+  let callName: string | null = null;
+  let receiver: string | undefined;
   if (fn.type === 'identifier') callName = fn.text;
   else if (fn.type === 'attribute') {
     const attr = fn.childForFieldName('attribute');
@@ -153,14 +167,14 @@ function handlePyCall(node, ctx) {
     if (obj) receiver = obj.text;
   }
   if (callName) {
-    const call = { name: callName, line: node.startPosition.row + 1 };
+    const call: Call = { name: callName, line: node.startPosition.row + 1 };
     if (receiver) call.receiver = receiver;
     ctx.calls.push(call);
   }
 }
 
-function handlePyImport(node, ctx) {
-  const names = [];
+function handlePyImport(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const names: string[] = [];
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (child && (child.type === 'dotted_name' || child.type === 'aliased_import')) {
@@ -173,14 +187,14 @@ function handlePyImport(node, ctx) {
   }
   if (names.length > 0)
     ctx.imports.push({
-      source: names[0],
+      source: names[0] ?? '',
       names,
       line: node.startPosition.row + 1,
       pythonImport: true,
     });
 }
 
-function handlePyExpressionStmt(node, ctx) {
+function handlePyExpressionStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
   if (node.parent && node.parent.type === 'module') {
     const assignment = findChild(node, 'assignment');
     if (assignment) {
@@ -196,9 +210,9 @@ function handlePyExpressionStmt(node, ctx) {
   }
 }
 
-function handlePyImportFrom(node, ctx) {
+function handlePyImportFrom(node: TreeSitterNode, ctx: ExtractorOutput): void {
   let source = '';
-  const names = [];
+  const names: string[] = [];
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child) continue;
@@ -218,8 +232,8 @@ function handlePyImportFrom(node, ctx) {
 
 // ── Python-specific helpers ─────────────────────────────────────────────────
 
-function extractPythonParameters(fnNode) {
-  const params = [];
+function extractPythonParameters(fnNode: TreeSitterNode): SubDeclaration[] {
+  const params: SubDeclaration[] = [];
   const paramsNode = fnNode.childForFieldName('parameters') || findChild(fnNode, 'parameters');
   if (!paramsNode) return params;
   for (let i = 0; i < paramsNode.childCount; i++) {
@@ -254,9 +268,9 @@ function extractPythonParameters(fnNode) {
   return params;
 }
 
-function extractPythonClassProperties(classNode) {
-  const props = [];
-  const seen = new Set();
+function extractPythonClassProperties(classNode: TreeSitterNode): SubDeclaration[] {
+  const props: SubDeclaration[] = [];
+  const seen = new Set<string>();
   const body = classNode.childForFieldName('body') || findChild(classNode, 'block');
   if (!body) return props;
 
@@ -308,7 +322,7 @@ function extractPythonClassProperties(classNode) {
   return props;
 }
 
-function walkInitBody(bodyNode, seen, props) {
+function walkInitBody(bodyNode: TreeSitterNode, seen: Set<string>, props: SubDeclaration[]): void {
   for (let i = 0; i < bodyNode.childCount; i++) {
     const stmt = bodyNode.child(i);
     if (!stmt || stmt.type !== 'expression_statement') continue;
@@ -330,18 +344,27 @@ function walkInitBody(bodyNode, seen, props) {
   }
 }
 
-function extractPythonTypeMap(node, ctx) {
+function extractPythonTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void {
   extractPythonTypeMapDepth(node, ctx, 0);
 }
 
-function setIfHigherPy(typeMap, name, type, confidence) {
+function setIfHigherPy(
+  typeMap: Map<string, TypeMapEntry>,
+  name: string,
+  type: string,
+  confidence: number,
+): void {
   const existing = typeMap.get(name);
   if (!existing || confidence > existing.confidence) {
     typeMap.set(name, { type, confidence });
   }
 }
 
-function extractPythonTypeMapDepth(node, ctx, depth) {
+function extractPythonTypeMapDepth(
+  node: TreeSitterNode,
+  ctx: ExtractorOutput,
+  depth: number,
+): void {
   if (depth >= 200) return;
 
   // typed_parameter: identifier : type (confidence 0.9)
@@ -351,7 +374,7 @@ function extractPythonTypeMapDepth(node, ctx, depth) {
     if (nameNode && nameNode.type === 'identifier' && typeNode) {
       const typeName = extractPythonTypeName(typeNode);
       if (typeName && nameNode.text !== 'self' && nameNode.text !== 'cls') {
-        setIfHigherPy(ctx.typeMap, nameNode.text, typeName, 0.9);
+        if (ctx.typeMap) setIfHigherPy(ctx.typeMap, nameNode.text, typeName, 0.9);
       }
     }
   }
@@ -363,7 +386,7 @@ function extractPythonTypeMapDepth(node, ctx, depth) {
     if (nameNode && nameNode.type === 'identifier' && typeNode) {
       const typeName = extractPythonTypeName(typeNode);
       if (typeName && nameNode.text !== 'self' && nameNode.text !== 'cls') {
-        setIfHigherPy(ctx.typeMap, nameNode.text, typeName, 0.9);
+        if (ctx.typeMap) setIfHigherPy(ctx.typeMap, nameNode.text, typeName, 0.9);
       }
     }
   }
@@ -377,16 +400,20 @@ function extractPythonTypeMapDepth(node, ctx, depth) {
       const fn = right.childForFieldName('function');
       if (fn && fn.type === 'identifier') {
         const name = fn.text;
-        if (name[0] !== name[0].toLowerCase()) {
-          setIfHigherPy(ctx.typeMap, left.text, name, 1.0);
+        if (name[0] && name[0] !== name[0].toLowerCase()) {
+          if (ctx.typeMap) setIfHigherPy(ctx.typeMap, left.text, name, 1.0);
         }
       }
       if (fn && fn.type === 'attribute') {
         const obj = fn.childForFieldName('object');
         if (obj && obj.type === 'identifier') {
           const objName = obj.text;
-          if (objName[0] !== objName[0].toLowerCase() && !BUILTIN_GLOBALS_PY.has(objName)) {
-            setIfHigherPy(ctx.typeMap, left.text, objName, 0.7);
+          if (
+            objName[0] &&
+            objName[0] !== objName[0].toLowerCase() &&
+            !BUILTIN_GLOBALS_PY.has(objName)
+          ) {
+            if (ctx.typeMap) setIfHigherPy(ctx.typeMap, left.text, objName, 0.7);
           }
         }
       }
@@ -399,7 +426,7 @@ function extractPythonTypeMapDepth(node, ctx, depth) {
   }
 }
 
-function extractPythonTypeName(typeNode) {
+function extractPythonTypeName(typeNode: TreeSitterNode): string | null {
   if (!typeNode) return null;
   const t = typeNode.type;
   if (t === 'identifier') return typeNode.text;
@@ -414,7 +441,7 @@ function extractPythonTypeName(typeNode) {
   return null;
 }
 
-function findPythonParentClass(node) {
+function findPythonParentClass(node: TreeSitterNode): string | null {
   let current = node.parent;
   while (current) {
     if (current.type === 'class_definition') {

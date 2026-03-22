@@ -111,6 +111,12 @@ function resolveSpecifier(specifier, fromFile) {
   // Exact file exists
   if (existsSync(target) && statSync(target).isFile()) return null;
 
+  // .js → .ts fallback (mirrors the ESM resolver hook for incremental TS migration)
+  if (specifier.endsWith('.js')) {
+    const tsTarget = target.replace(/\.js$/, '.ts');
+    if (existsSync(tsTarget) && statSync(tsTarget).isFile()) return null;
+  }
+
   // Try implicit extensions (.js, .ts, .mjs, .cjs)
   for (const ext of ['.js', '.ts', '.mjs', '.cjs']) {
     if (!extname(target) && existsSync(target + ext)) return null;

@@ -1,10 +1,18 @@
+import type {
+  Call,
+  ExtractorOutput,
+  SubDeclaration,
+  TreeSitterNode,
+  TreeSitterTree,
+  TypeMapEntry,
+} from '../types.js';
 import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from Java files.
  */
-export function extractJavaSymbols(tree, _filePath) {
-  const ctx = {
+export function extractJavaSymbols(tree: TreeSitterTree, _filePath: string): ExtractorOutput {
+  const ctx: ExtractorOutput = {
     definitions: [],
     calls: [],
     imports: [],
@@ -17,7 +25,7 @@ export function extractJavaSymbols(tree, _filePath) {
   return ctx;
 }
 
-function walkJavaNode(node, ctx) {
+function walkJavaNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
   switch (node.type) {
     case 'class_declaration':
       handleJavaClassDecl(node, ctx);
@@ -48,12 +56,15 @@ function walkJavaNode(node, ctx) {
       break;
   }
 
-  for (let i = 0; i < node.childCount; i++) walkJavaNode(node.child(i), ctx);
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) walkJavaNode(child, ctx);
+  }
 }
 
 // ── Walk-path per-node-type handlers ────────────────────────────────────────
 
-function handleJavaClassDecl(node, ctx) {
+function handleJavaClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const classChildren = extractClassFields(node);
@@ -93,7 +104,12 @@ function handleJavaClassDecl(node, ctx) {
   }
 }
 
-function extractJavaInterfaces(interfaces, className, line, ctx) {
+function extractJavaInterfaces(
+  interfaces: TreeSitterNode,
+  className: string,
+  line: number,
+  ctx: ExtractorOutput,
+): void {
   for (let i = 0; i < interfaces.childCount; i++) {
     const child = interfaces.child(i);
     if (
@@ -122,7 +138,7 @@ function extractJavaInterfaces(interfaces, className, line, ctx) {
   }
 }
 
-function handleJavaInterfaceDecl(node, ctx) {
+function handleJavaInterfaceDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   ctx.definitions.push({
@@ -150,7 +166,7 @@ function handleJavaInterfaceDecl(node, ctx) {
   }
 }
 
-function handleJavaEnumDecl(node, ctx) {
+function handleJavaEnumDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const enumChildren = extractEnumConstants(node);
@@ -163,7 +179,7 @@ function handleJavaEnumDecl(node, ctx) {
   });
 }
 
-function handleJavaMethodDecl(node, ctx) {
+function handleJavaMethodDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // Skip interface methods already emitted by handleJavaInterfaceDecl
   if (node.parent?.parent?.type === 'interface_declaration') return;
   const nameNode = node.childForFieldName('name');
@@ -181,7 +197,7 @@ function handleJavaMethodDecl(node, ctx) {
   });
 }
 
-function handleJavaConstructorDecl(node, ctx) {
+function handleJavaConstructorDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const parentClass = findJavaParentClass(node);
@@ -197,12 +213,12 @@ function handleJavaConstructorDecl(node, ctx) {
   });
 }
 
-function handleJavaImportDecl(node, ctx) {
+function handleJavaImportDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (child && (child.type === 'scoped_identifier' || child.type === 'identifier')) {
       const fullPath = child.text;
-      const lastName = fullPath.split('.').pop();
+      const lastName = fullPath.split('.').pop() ?? fullPath;
       ctx.imports.push({
         source: fullPath,
         names: [lastName],
@@ -217,16 +233,16 @@ function handleJavaImportDecl(node, ctx) {
   }
 }
 
-function handleJavaMethodInvocation(node, ctx) {
+function handleJavaMethodInvocation(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const obj = node.childForFieldName('object');
-  const call = { name: nameNode.text, line: node.startPosition.row + 1 };
+  const call: Call = { name: nameNode.text, line: node.startPosition.row + 1 };
   if (obj) call.receiver = obj.text;
   ctx.calls.push(call);
 }
 
-function handleJavaLocalVarDecl(node, ctx) {
+function handleJavaLocalVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const typeNode = node.childForFieldName('type');
   if (!typeNode) return;
   const typeName = typeNode.type === 'generic_type' ? typeNode.child(0)?.text : typeNode.text;
@@ -235,19 +251,19 @@ function handleJavaLocalVarDecl(node, ctx) {
     const child = node.child(i);
     if (child?.type === 'variable_declarator') {
       const nameNode = child.childForFieldName('name');
-      if (nameNode) ctx.typeMap.set(nameNode.text, { type: typeName, confidence: 0.9 });
+      if (nameNode) ctx.typeMap?.set(nameNode.text, { type: typeName, confidence: 0.9 });
     }
   }
 }
 
-function handleJavaObjectCreation(node, ctx) {
+function handleJavaObjectCreation(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const typeNode = node.childForFieldName('type');
   if (!typeNode) return;
   const typeName = typeNode.type === 'generic_type' ? typeNode.child(0)?.text : typeNode.text;
   if (typeName) ctx.calls.push({ name: typeName, line: node.startPosition.row + 1 });
 }
 
-function findJavaParentClass(node) {
+function findJavaParentClass(node: TreeSitterNode): string | null {
   let current = node.parent;
   while (current) {
     if (
@@ -265,8 +281,11 @@ function findJavaParentClass(node) {
 
 // ── Child extraction helpers ────────────────────────────────────────────────
 
-function extractJavaParameters(paramListNode, typeMap) {
-  const params = [];
+function extractJavaParameters(
+  paramListNode: TreeSitterNode | null,
+  typeMap?: Map<string, TypeMapEntry>,
+): SubDeclaration[] {
+  const params: SubDeclaration[] = [];
   if (!paramListNode) return params;
   for (let i = 0; i < paramListNode.childCount; i++) {
     const param = paramListNode.child(i);
@@ -289,8 +308,8 @@ function extractJavaParameters(paramListNode, typeMap) {
   return params;
 }
 
-function extractClassFields(classNode) {
-  const fields = [];
+function extractClassFields(classNode: TreeSitterNode): SubDeclaration[] {
+  const fields: SubDeclaration[] = [];
   const body = classNode.childForFieldName('body') || findChild(classNode, 'class_body');
   if (!body) return fields;
   for (let i = 0; i < body.childCount; i++) {
@@ -313,8 +332,8 @@ function extractClassFields(classNode) {
   return fields;
 }
 
-function extractEnumConstants(enumNode) {
-  const constants = [];
+function extractEnumConstants(enumNode: TreeSitterNode): SubDeclaration[] {
+  const constants: SubDeclaration[] = [];
   const body = enumNode.childForFieldName('body') || findChild(enumNode, 'enum_body');
   if (!body) return constants;
   for (let i = 0; i < body.childCount; i++) {

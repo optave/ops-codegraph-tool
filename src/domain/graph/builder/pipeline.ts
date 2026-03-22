@@ -34,7 +34,7 @@ function initializeEngine(ctx: PipelineContext): void {
     ast: ctx.opts.ast !== false,
   };
   const { name: engineName, version: engineVersion } = getActiveEngine(ctx.engineOpts);
-  ctx.engineName = engineName;
+  ctx.engineName = engineName as 'native' | 'wasm';
   ctx.engineVersion = engineVersion;
   info(`Using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
 }

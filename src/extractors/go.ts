@@ -1,10 +1,18 @@
+import type {
+  Call,
+  ExtractorOutput,
+  SubDeclaration,
+  TreeSitterNode,
+  TreeSitterTree,
+  TypeMapEntry,
+} from '../types.js';
 import { findChild, goVisibility, nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from Go files.
  */
-export function extractGoSymbols(tree, _filePath) {
-  const ctx = {
+export function extractGoSymbols(tree: TreeSitterTree, _filePath: string): ExtractorOutput {
+  const ctx: ExtractorOutput = {
     definitions: [],
     calls: [],
     imports: [],
@@ -19,7 +27,7 @@ export function extractGoSymbols(tree, _filePath) {
   return ctx;
 }
 
-function walkGoNode(node, ctx) {
+function walkGoNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
   switch (node.type) {
     case 'function_declaration':
       handleGoFuncDecl(node, ctx);
@@ -41,12 +49,15 @@ function walkGoNode(node, ctx) {
       break;
   }
 
-  for (let i = 0; i < node.childCount; i++) walkGoNode(node.child(i), ctx);
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) walkGoNode(child, ctx);
+  }
 }
 
 // ── Walk-path per-node-type handlers ────────────────────────────────────────
 
-function handleGoFuncDecl(node, ctx) {
+function handleGoFuncDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const params = extractGoParameters(node.childForFieldName('parameters'));
@@ -60,11 +71,11 @@ function handleGoFuncDecl(node, ctx) {
   });
 }
 
-function handleGoMethodDecl(node, ctx) {
+function handleGoMethodDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   const receiver = node.childForFieldName('receiver');
   if (!nameNode) return;
-  let receiverType = null;
+  let receiverType: string | null = null;
   if (receiver) {
     for (let i = 0; i < receiver.childCount; i++) {
       const param = receiver.child(i);
@@ -89,7 +100,7 @@ function handleGoMethodDecl(node, ctx) {
   });
 }
 
-function handleGoTypeDecl(node, ctx) {
+function handleGoTypeDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   for (let i = 0; i < node.childCount; i++) {
     const spec = node.child(i);
     if (!spec || spec.type !== 'type_spec') continue;
@@ -138,7 +149,7 @@ function handleGoTypeDecl(node, ctx) {
   }
 }
 
-function handleGoImportDecl(node, ctx) {
+function handleGoImportDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child) continue;
@@ -156,12 +167,12 @@ function handleGoImportDecl(node, ctx) {
   }
 }
 
-function extractGoImportSpec(spec, ctx) {
+function extractGoImportSpec(spec: TreeSitterNode, ctx: ExtractorOutput): void {
   const pathNode = spec.childForFieldName('path');
   if (pathNode) {
     const importPath = pathNode.text.replace(/"/g, '');
     const nameNode = spec.childForFieldName('name');
-    const alias = nameNode ? nameNode.text : importPath.split('/').pop();
+    const alias = nameNode ? nameNode.text : (importPath.split('/').pop() ?? importPath);
     ctx.imports.push({
       source: importPath,
       names: [alias],
@@ -171,7 +182,7 @@ function extractGoImportSpec(spec, ctx) {
   }
 }
 
-function handleGoConstDecl(node, ctx) {
+function handleGoConstDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   for (let i = 0; i < node.childCount; i++) {
     const spec = node.child(i);
     if (!spec || spec.type !== 'const_spec') continue;
@@ -187,7 +198,7 @@ function handleGoConstDecl(node, ctx) {
   }
 }
 
-function handleGoCallExpr(node, ctx) {
+function handleGoCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const fn = node.childForFieldName('function');
   if (!fn) return;
   if (fn.type === 'identifier') {
@@ -196,7 +207,7 @@ function handleGoCallExpr(node, ctx) {
     const field = fn.childForFieldName('field');
     if (field) {
       const operand = fn.childForFieldName('operand');
-      const call = { name: field.text, line: node.startPosition.row + 1 };
+      const call: Call = { name: field.text, line: node.startPosition.row + 1 };
       if (operand) call.receiver = operand.text;
       ctx.calls.push(call);
     }
@@ -205,18 +216,23 @@ function handleGoCallExpr(node, ctx) {
 
 // ── Type map extraction ─────────────────────────────────────────────────────
 
-function extractGoTypeMap(node, ctx) {
+function extractGoTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void {
   extractGoTypeMapDepth(node, ctx, 0);
 }
 
-function setIfHigher(typeMap, name, type, confidence) {
+function setIfHigher(
+  typeMap: Map<string, TypeMapEntry>,
+  name: string,
+  type: string,
+  confidence: number,
+): void {
   const existing = typeMap.get(name);
   if (!existing || confidence > existing.confidence) {
     typeMap.set(name, { type, confidence });
   }
 }
 
-function extractGoTypeMapDepth(node, ctx, depth) {
+function extractGoTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, depth: number): void {
   if (depth >= 200) return;
 
   // var x MyType = ... or var x, y MyType → var_declaration > var_spec (confidence 0.9)
@@ -228,7 +244,7 @@ function extractGoTypeMapDepth(node, ctx, depth) {
         for (let i = 0; i < node.childCount; i++) {
           const child = node.child(i);
           if (child && child.type === 'identifier') {
-            setIfHigher(ctx.typeMap, child.text, typeName, 0.9);
+            if (ctx.typeMap) setIfHigher(ctx.typeMap, child.text, typeName, 0.9);
           }
         }
       }
@@ -244,7 +260,7 @@ function extractGoTypeMapDepth(node, ctx, depth) {
         for (let i = 0; i < node.childCount; i++) {
           const child = node.child(i);
           if (child && child.type === 'identifier') {
-            setIfHigher(ctx.typeMap, child.text, typeName, 0.9);
+            if (ctx.typeMap) setIfHigher(ctx.typeMap, child.text, typeName, 0.9);
           }
         }
       }
@@ -260,7 +276,7 @@ function extractGoTypeMapDepth(node, ctx, depth) {
       const lefts =
         left.type === 'expression_list'
           ? Array.from({ length: left.childCount }, (_, i) => left.child(i)).filter(
-              (c) => c?.type === 'identifier',
+              (c): c is TreeSitterNode => c?.type === 'identifier',
             )
           : left.type === 'identifier'
             ? [left]
@@ -268,7 +284,7 @@ function extractGoTypeMapDepth(node, ctx, depth) {
       const rights =
         right.type === 'expression_list'
           ? Array.from({ length: right.childCount }, (_, i) => right.child(i)).filter(
-              (c) => c?.isNamed,
+              (c): c is TreeSitterNode => !!c?.type,
             )
           : [right];
 
@@ -282,7 +298,7 @@ function extractGoTypeMapDepth(node, ctx, depth) {
           const typeNode = rhs.childForFieldName('type');
           if (typeNode) {
             const typeName = extractGoTypeName(typeNode);
-            if (typeName) setIfHigher(ctx.typeMap, varNode.text, typeName, 1.0);
+            if (typeName && ctx.typeMap) setIfHigher(ctx.typeMap, varNode.text, typeName, 1.0);
           }
         }
         // x := &Struct{...} — address-of composite literal (confidence 1.0)
@@ -292,7 +308,7 @@ function extractGoTypeMapDepth(node, ctx, depth) {
             const typeNode = operand.childForFieldName('type');
             if (typeNode) {
               const typeName = extractGoTypeName(typeNode);
-              if (typeName) setIfHigher(ctx.typeMap, varNode.text, typeName, 1.0);
+              if (typeName && ctx.typeMap) setIfHigher(ctx.typeMap, varNode.text, typeName, 1.0);
             }
           }
         }
@@ -303,11 +319,11 @@ function extractGoTypeMapDepth(node, ctx, depth) {
             const field = fn.childForFieldName('field');
             if (field?.text.startsWith('New')) {
               const typeName = field.text.slice(3);
-              if (typeName) setIfHigher(ctx.typeMap, varNode.text, typeName, 0.7);
+              if (typeName && ctx.typeMap) setIfHigher(ctx.typeMap, varNode.text, typeName, 0.7);
             }
           } else if (fn && fn.type === 'identifier' && fn.text.startsWith('New')) {
             const typeName = fn.text.slice(3);
-            if (typeName) setIfHigher(ctx.typeMap, varNode.text, typeName, 0.7);
+            if (typeName && ctx.typeMap) setIfHigher(ctx.typeMap, varNode.text, typeName, 0.7);
           }
         }
       }
@@ -320,7 +336,7 @@ function extractGoTypeMapDepth(node, ctx, depth) {
   }
 }
 
-function extractGoTypeName(typeNode) {
+function extractGoTypeName(typeNode: TreeSitterNode): string | null {
   if (!typeNode) return null;
   const t = typeNode.type;
   if (t === 'type_identifier' || t === 'identifier') return typeNode.text;
@@ -344,8 +360,8 @@ function extractGoTypeName(typeNode) {
 
 // ── Child extraction helpers ────────────────────────────────────────────────
 
-function extractGoParameters(paramListNode) {
-  const params = [];
+function extractGoParameters(paramListNode: TreeSitterNode | null): SubDeclaration[] {
+  const params: SubDeclaration[] = [];
   if (!paramListNode) return params;
   for (let i = 0; i < paramListNode.childCount; i++) {
     const param = paramListNode.child(i);
@@ -368,14 +384,14 @@ function extractGoParameters(paramListNode) {
  * if it has methods matching every method declared in the interface.
  * This performs file-local matching (cross-file matching requires build-edges).
  */
-function matchGoStructuralInterfaces(ctx) {
-  const interfaceMethods = new Map();
-  const structMethods = new Map();
-  const structLines = new Map();
+function matchGoStructuralInterfaces(ctx: ExtractorOutput): void {
+  const interfaceMethods = new Map<string, Set<string>>();
+  const structMethods = new Map<string, Set<string>>();
+  const structLines = new Map<string, number>();
 
   // Collect interface and struct definitions
-  const interfaceNames = new Set();
-  const structNames = new Set();
+  const interfaceNames = new Set<string>();
+  const structNames = new Set<string>();
   for (const def of ctx.definitions) {
     if (def.kind === 'interface') interfaceNames.add(def.name);
     if (def.kind === 'struct') {
@@ -393,11 +409,11 @@ function matchGoStructuralInterfaces(ctx) {
 
     if (interfaceNames.has(receiver)) {
       if (!interfaceMethods.has(receiver)) interfaceMethods.set(receiver, new Set());
-      interfaceMethods.get(receiver).add(method);
+      interfaceMethods.get(receiver)?.add(method);
     }
     if (structNames.has(receiver)) {
       if (!structMethods.has(receiver)) structMethods.set(receiver, new Set());
-      structMethods.get(receiver).add(method);
+      structMethods.get(receiver)?.add(method);
     }
   }
 
@@ -419,8 +435,8 @@ function matchGoStructuralInterfaces(ctx) {
   }
 }
 
-function extractStructFields(structTypeNode) {
-  const fields = [];
+function extractStructFields(structTypeNode: TreeSitterNode): SubDeclaration[] {
+  const fields: SubDeclaration[] = [];
   const fieldList = findChild(structTypeNode, 'field_declaration_list');
   if (!fieldList) return fields;
   for (let i = 0; i < fieldList.childCount; i++) {

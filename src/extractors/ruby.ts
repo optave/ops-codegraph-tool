@@ -1,22 +1,30 @@
+import type {
+  Call,
+  ExtractorOutput,
+  SubDeclaration,
+  TreeSitterNode,
+  TreeSitterTree,
+} from '../types.js';
 import { findChild, nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from Ruby files.
  */
-export function extractRubySymbols(tree, _filePath) {
-  const ctx = {
+export function extractRubySymbols(tree: TreeSitterTree, _filePath: string): ExtractorOutput {
+  const ctx: ExtractorOutput = {
     definitions: [],
     calls: [],
     imports: [],
     classes: [],
     exports: [],
-  };
+    typeMap: new Map(),
+  } as ExtractorOutput;
 
   walkRubyNode(tree.rootNode, ctx);
   return ctx;
 }
 
-function walkRubyNode(node, ctx) {
+function walkRubyNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
   switch (node.type) {
     case 'class':
       handleRubyClass(node, ctx);
@@ -38,12 +46,15 @@ function walkRubyNode(node, ctx) {
       break;
   }
 
-  for (let i = 0; i < node.childCount; i++) walkRubyNode(node.child(i), ctx);
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) walkRubyNode(child, ctx);
+  }
 }
 
 // ── Walk-path per-node-type handlers ────────────────────────────────────────
 
-function handleRubyClass(node, ctx) {
+function handleRubyClass(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const classChildren = extractRubyClassChildren(node);
@@ -83,7 +94,7 @@ function handleRubyClass(node, ctx) {
   }
 }
 
-function handleRubyModule(node, ctx) {
+function handleRubyModule(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const moduleChildren = extractRubyBodyConstants(node);
@@ -96,7 +107,7 @@ function handleRubyModule(node, ctx) {
   });
 }
 
-function handleRubyMethod(node, ctx) {
+function handleRubyMethod(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const parentClass = findRubyParentClass(node);
@@ -111,7 +122,7 @@ function handleRubyMethod(node, ctx) {
   });
 }
 
-function handleRubySingletonMethod(node, ctx) {
+function handleRubySingletonMethod(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const parentClass = findRubyParentClass(node);
@@ -126,7 +137,7 @@ function handleRubySingletonMethod(node, ctx) {
   });
 }
 
-function handleRubyAssignment(node, ctx) {
+function handleRubyAssignment(node: TreeSitterNode, ctx: ExtractorOutput): void {
   if (node.parent && node.parent.type === 'program') {
     const left = node.childForFieldName('left');
     if (left && left.type === 'constant') {
@@ -140,7 +151,7 @@ function handleRubyAssignment(node, ctx) {
   }
 }
 
-function handleRubyCall(node, ctx) {
+function handleRubyCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const methodNode = node.childForFieldName('method');
   if (!methodNode) return;
   if (methodNode.text === 'require' || methodNode.text === 'require_relative') {
@@ -153,13 +164,13 @@ function handleRubyCall(node, ctx) {
     handleRubyModuleInclusion(node, methodNode, ctx);
   } else {
     const recv = node.childForFieldName('receiver');
-    const call = { name: methodNode.text, line: node.startPosition.row + 1 };
+    const call: Call = { name: methodNode.text, line: node.startPosition.row + 1 };
     if (recv) call.receiver = recv.text;
     ctx.calls.push(call);
   }
 }
 
-function handleRubyRequire(node, ctx) {
+function handleRubyRequire(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const args = node.childForFieldName('arguments');
   if (!args) return;
   for (let i = 0; i < args.childCount; i++) {
@@ -168,7 +179,7 @@ function handleRubyRequire(node, ctx) {
       const strContent = arg.text.replace(/^['"]|['"]$/g, '');
       ctx.imports.push({
         source: strContent,
-        names: [strContent.split('/').pop()],
+        names: [strContent.split('/').pop() ?? strContent],
         line: node.startPosition.row + 1,
         rubyRequire: true,
       });
@@ -179,7 +190,7 @@ function handleRubyRequire(node, ctx) {
       if (content) {
         ctx.imports.push({
           source: content.text,
-          names: [content.text.split('/').pop()],
+          names: [content.text.split('/').pop() ?? content.text],
           line: node.startPosition.row + 1,
           rubyRequire: true,
         });
@@ -189,7 +200,11 @@ function handleRubyRequire(node, ctx) {
   }
 }
 
-function handleRubyModuleInclusion(node, _methodNode, ctx) {
+function handleRubyModuleInclusion(
+  node: TreeSitterNode,
+  _methodNode: TreeSitterNode,
+  ctx: ExtractorOutput,
+): void {
   const parentClass = findRubyParentClass(node);
   if (!parentClass) return;
   const args = node.childForFieldName('arguments');
@@ -206,7 +221,7 @@ function handleRubyModuleInclusion(node, _methodNode, ctx) {
   }
 }
 
-function findRubyParentClass(node) {
+function findRubyParentClass(node: TreeSitterNode): string | null {
   let current = node.parent;
   while (current) {
     if (current.type === 'class' || current.type === 'module') {
@@ -220,7 +235,7 @@ function findRubyParentClass(node) {
 
 // ── Child extraction helpers ────────────────────────────────────────────────
 
-const RUBY_PARAM_TYPES = new Set([
+const RUBY_PARAM_TYPES: Set<string> = new Set([
   'identifier',
   'optional_parameter',
   'splat_parameter',
@@ -229,15 +244,15 @@ const RUBY_PARAM_TYPES = new Set([
   'keyword_parameter',
 ]);
 
-function extractRubyParameters(methodNode) {
-  const params = [];
+function extractRubyParameters(methodNode: TreeSitterNode): SubDeclaration[] {
+  const params: SubDeclaration[] = [];
   const paramList =
     methodNode.childForFieldName('parameters') || findChild(methodNode, 'method_parameters');
   if (!paramList) return params;
   for (let i = 0; i < paramList.childCount; i++) {
     const param = paramList.child(i);
     if (!param || !RUBY_PARAM_TYPES.has(param.type)) continue;
-    let name;
+    let name: string;
     if (param.type === 'identifier') {
       name = param.text;
     } else {
@@ -250,8 +265,8 @@ function extractRubyParameters(methodNode) {
   return params;
 }
 
-function extractRubyBodyConstants(containerNode) {
-  const children = [];
+function extractRubyBodyConstants(containerNode: TreeSitterNode): SubDeclaration[] {
+  const children: SubDeclaration[] = [];
   const body = containerNode.childForFieldName('body') || findChild(containerNode, 'body');
   if (!body) return children;
   for (let i = 0; i < body.childCount; i++) {
@@ -265,8 +280,8 @@ function extractRubyBodyConstants(containerNode) {
   return children;
 }
 
-function extractRubyClassChildren(classNode) {
-  const children = [];
+function extractRubyClassChildren(classNode: TreeSitterNode): SubDeclaration[] {
+  const children: SubDeclaration[] = [];
   const body = classNode.childForFieldName('body') || findChild(classNode, 'body');
   if (!body) return children;
   for (let i = 0; i < body.childCount; i++) {

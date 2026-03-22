@@ -1,8 +1,21 @@
 import { debug } from '../infrastructure/logger.js';
+import type {
+  Call,
+  ClassRelation,
+  Definition,
+  Export,
+  ExtractorOutput,
+  Import,
+  SubDeclaration,
+  TreeSitterNode,
+  TreeSitterQuery,
+  TreeSitterTree,
+  TypeMapEntry,
+} from '../types.js';
 import { findChild, nodeEndLine } from './helpers.js';
 
 /** Built-in globals that start with uppercase but are not user-defined types. */
-const BUILTIN_GLOBALS = new Set([
+const BUILTIN_GLOBALS: Set<string> = new Set([
   'Math',
   'JSON',
   'Promise',
@@ -63,64 +76,70 @@ const BUILTIN_GLOBALS = new Set([
  * When a compiled tree-sitter Query is provided (from parser.js),
  * uses the fast query-based path. Falls back to manual tree walk otherwise.
  */
-export function extractSymbols(tree, _filePath, query) {
+export function extractSymbols(
+  tree: TreeSitterTree,
+  _filePath: string,
+  query?: TreeSitterQuery,
+): ExtractorOutput {
   if (query) return extractSymbolsQuery(tree, query);
   return extractSymbolsWalk(tree);
 }
 
 // ── Query-based extraction (fast path) ──────────────────────────────────────
 
-function extractSymbolsQuery(tree, query) {
-  const definitions = [];
-  const calls = [];
-  const imports = [];
-  const classes = [];
-  const exps = [];
-  const typeMap = new Map();
+function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): ExtractorOutput {
+  const definitions: Definition[] = [];
+  const calls: Call[] = [];
+  const imports: Import[] = [];
+  const classes: ClassRelation[] = [];
+  const exps: Export[] = [];
+  const typeMap: Map<string, TypeMapEntry> = new Map();
 
   const matches = query.matches(tree.rootNode);
 
   for (const match of matches) {
     // Build capture lookup for this match (1-3 captures each, very fast)
-    const c = Object.create(null);
+    const c: Record<string, TreeSitterNode> = Object.create(null);
     for (const cap of match.captures) c[cap.name] = cap.node;
 
-    if (c.fn_node) {
+    if (c['fn_node']) {
       // function_declaration
-      const fnChildren = extractParameters(c.fn_node);
+      const fnChildren = extractParameters(c['fn_node']);
       definitions.push({
-        name: c.fn_name.text,
+        name: c['fn_name']!.text,
         kind: 'function',
-        line: c.fn_node.startPosition.row + 1,
-        endLine: nodeEndLine(c.fn_node),
+        line: c['fn_node'].startPosition.row + 1,
+        endLine: nodeEndLine(c['fn_node']),
         children: fnChildren.length > 0 ? fnChildren : undefined,
       });
-    } else if (c.varfn_name) {
+    } else if (c['varfn_name']) {
       // variable_declarator with arrow_function / function_expression
-      const declNode = c.varfn_name.parent?.parent;
-      const line = declNode ? declNode.startPosition.row + 1 : c.varfn_name.startPosition.row + 1;
-      const varFnChildren = extractParameters(c.varfn_value);
+      const declNode = c['varfn_name'].parent?.parent;
+      const line = declNode
+        ? declNode.startPosition.row + 1
+        : c['varfn_name'].startPosition.row + 1;
+      const varFnChildren = extractParameters(c['varfn_value']!);
       definitions.push({
-        name: c.varfn_name.text,
+        name: c['varfn_name'].text,
         kind: 'function',
         line,
-        endLine: nodeEndLine(c.varfn_value),
+        endLine: nodeEndLine(c['varfn_value']!),
         children: varFnChildren.length > 0 ? varFnChildren : undefined,
       });
-    } else if (c.cls_node) {
+    } else if (c['cls_node']) {
       // class_declaration
-      const className = c.cls_name.text;
-      const startLine = c.cls_node.startPosition.row + 1;
-      const clsChildren = extractClassProperties(c.cls_node);
+      const className = c['cls_name']!.text;
+      const startLine = c['cls_node'].startPosition.row + 1;
+      const clsChildren = extractClassProperties(c['cls_node']);
       definitions.push({
         name: className,
         kind: 'class',
         line: startLine,
-        endLine: nodeEndLine(c.cls_node),
+        endLine: nodeEndLine(c['cls_node']),
         children: clsChildren.length > 0 ? clsChildren : undefined,
       });
       const heritage =
-        c.cls_node.childForFieldName('heritage') || findChild(c.cls_node, 'class_heritage');
+        c['cls_node'].childForFieldName('heritage') || findChild(c['cls_node'], 'class_heritage');
       if (heritage) {
         const superName = extractSuperclass(heritage);
         if (superName) classes.push({ name: className, extends: superName, line: startLine });
@@ -129,61 +148,61 @@ function extractSymbolsQuery(tree, query) {
           classes.push({ name: className, implements: iface, line: startLine });
         }
       }
-    } else if (c.meth_node) {
+    } else if (c['meth_node']) {
       // method_definition
-      const methName = c.meth_name.text;
-      const parentClass = findParentClass(c.meth_node);
+      const methName = c['meth_name']!.text;
+      const parentClass = findParentClass(c['meth_node']);
       const fullName = parentClass ? `${parentClass}.${methName}` : methName;
-      const methChildren = extractParameters(c.meth_node);
-      const methVis = extractVisibility(c.meth_node);
+      const methChildren = extractParameters(c['meth_node']);
+      const methVis = extractVisibility(c['meth_node']);
       definitions.push({
         name: fullName,
         kind: 'method',
-        line: c.meth_node.startPosition.row + 1,
-        endLine: nodeEndLine(c.meth_node),
+        line: c['meth_node'].startPosition.row + 1,
+        endLine: nodeEndLine(c['meth_node']),
         children: methChildren.length > 0 ? methChildren : undefined,
         visibility: methVis,
       });
-    } else if (c.iface_node) {
+    } else if (c['iface_node']) {
       // interface_declaration (TS/TSX only)
-      const ifaceName = c.iface_name.text;
+      const ifaceName = c['iface_name']!.text;
       definitions.push({
         name: ifaceName,
         kind: 'interface',
-        line: c.iface_node.startPosition.row + 1,
-        endLine: nodeEndLine(c.iface_node),
+        line: c['iface_node'].startPosition.row + 1,
+        endLine: nodeEndLine(c['iface_node']),
       });
       const body =
-        c.iface_node.childForFieldName('body') ||
-        findChild(c.iface_node, 'interface_body') ||
-        findChild(c.iface_node, 'object_type');
+        c['iface_node'].childForFieldName('body') ||
+        findChild(c['iface_node'], 'interface_body') ||
+        findChild(c['iface_node'], 'object_type');
       if (body) extractInterfaceMethods(body, ifaceName, definitions);
-    } else if (c.type_node) {
+    } else if (c['type_node']) {
       // type_alias_declaration (TS/TSX only)
       definitions.push({
-        name: c.type_name.text,
+        name: c['type_name']!.text,
         kind: 'type',
-        line: c.type_node.startPosition.row + 1,
-        endLine: nodeEndLine(c.type_node),
+        line: c['type_node'].startPosition.row + 1,
+        endLine: nodeEndLine(c['type_node']),
       });
-    } else if (c.imp_node) {
+    } else if (c['imp_node']) {
       // import_statement
-      const isTypeOnly = c.imp_node.text.startsWith('import type');
-      const modPath = c.imp_source.text.replace(/['"]/g, '');
-      const names = extractImportNames(c.imp_node);
+      const isTypeOnly = c['imp_node'].text.startsWith('import type');
+      const modPath = c['imp_source']!.text.replace(/['"]/g, '');
+      const names = extractImportNames(c['imp_node']);
       imports.push({
         source: modPath,
         names,
-        line: c.imp_node.startPosition.row + 1,
+        line: c['imp_node'].startPosition.row + 1,
         typeOnly: isTypeOnly,
       });
-    } else if (c.exp_node) {
+    } else if (c['exp_node']) {
       // export_statement
-      const exportLine = c.exp_node.startPosition.row + 1;
-      const decl = c.exp_node.childForFieldName('declaration');
+      const exportLine = c['exp_node'].startPosition.row + 1;
+      const decl = c['exp_node'].childForFieldName('declaration');
       if (decl) {
         const declType = decl.type;
-        const kindMap = {
+        const kindMap: Record<string, string> = {
           function_declaration: 'function',
           class_declaration: 'class',
           interface_declaration: 'interface',
@@ -192,14 +211,15 @@ function extractSymbolsQuery(tree, query) {
         const kind = kindMap[declType];
         if (kind) {
           const n = decl.childForFieldName('name');
-          if (n) exps.push({ name: n.text, kind, line: exportLine });
+          if (n) exps.push({ name: n.text, kind: kind as Export['kind'], line: exportLine });
         }
       }
-      const source = c.exp_node.childForFieldName('source') || findChild(c.exp_node, 'string');
+      const source =
+        c['exp_node'].childForFieldName('source') || findChild(c['exp_node'], 'string');
       if (source && !decl) {
         const modPath = source.text.replace(/['"]/g, '');
-        const reexportNames = extractImportNames(c.exp_node);
-        const nodeText = c.exp_node.text;
+        const reexportNames = extractImportNames(c['exp_node']);
+        const nodeText = c['exp_node'].text;
         const isWildcard = nodeText.includes('export *') || nodeText.includes('export*');
         imports.push({
           source: modPath,
@@ -209,25 +229,25 @@ function extractSymbolsQuery(tree, query) {
           wildcardReexport: isWildcard && reexportNames.length === 0,
         });
       }
-    } else if (c.callfn_node) {
+    } else if (c['callfn_node']) {
       // call_expression with identifier function
       calls.push({
-        name: c.callfn_name.text,
-        line: c.callfn_node.startPosition.row + 1,
+        name: c['callfn_name']!.text,
+        line: c['callfn_node'].startPosition.row + 1,
       });
-    } else if (c.callmem_node) {
+    } else if (c['callmem_node']) {
       // call_expression with member_expression function
-      const callInfo = extractCallInfo(c.callmem_fn, c.callmem_node);
+      const callInfo = extractCallInfo(c['callmem_fn']!, c['callmem_node']);
       if (callInfo) calls.push(callInfo);
-      const cbDef = extractCallbackDefinition(c.callmem_node, c.callmem_fn);
+      const cbDef = extractCallbackDefinition(c['callmem_node'], c['callmem_fn']);
       if (cbDef) definitions.push(cbDef);
-    } else if (c.callsub_node) {
+    } else if (c['callsub_node']) {
       // call_expression with subscript_expression function
-      const callInfo = extractCallInfo(c.callsub_fn, c.callsub_node);
+      const callInfo = extractCallInfo(c['callsub_fn']!, c['callsub_node']);
       if (callInfo) calls.push(callInfo);
-    } else if (c.assign_node) {
+    } else if (c['assign_node']) {
       // CommonJS: module.exports = require(...) / module.exports = { ...require(...) }
-      handleCommonJSAssignment(c.assign_left, c.assign_right, c.assign_node, imports);
+      handleCommonJSAssignment(c['assign_left']!, c['assign_right']!, c['assign_node'], imports);
     }
   }
 
@@ -248,7 +268,7 @@ function extractSymbolsQuery(tree, query) {
  * The query-based fast path has no pattern for lexical_declaration/variable_declaration,
  * so constants are missed. This targeted walk fills that gap without a full tree traversal.
  */
-function extractConstantsWalk(rootNode, definitions) {
+function extractConstantsWalk(rootNode: TreeSitterNode, definitions: Definition[]): void {
   for (let i = 0; i < rootNode.childCount; i++) {
     const node = rootNode.child(i);
     if (!node) continue;
@@ -296,7 +316,7 @@ function extractConstantsWalk(rootNode, definitions) {
  * Query patterns match call_expression with identifier/member_expression/subscript_expression
  * functions, but import() has function type `import` which none of those patterns cover.
  */
-function extractDynamicImportsWalk(node, imports) {
+function extractDynamicImportsWalk(node: TreeSitterNode, imports: Import[]): void {
   if (node.type === 'call_expression') {
     const fn = node.childForFieldName('function');
     if (fn && fn.type === 'import') {
@@ -322,11 +342,16 @@ function extractDynamicImportsWalk(node, imports) {
     }
   }
   for (let i = 0; i < node.childCount; i++) {
-    extractDynamicImportsWalk(node.child(i), imports);
+    extractDynamicImportsWalk(node.child(i)!, imports);
   }
 }
 
-function handleCommonJSAssignment(left, right, node, imports) {
+function handleCommonJSAssignment(
+  left: TreeSitterNode,
+  right: TreeSitterNode,
+  node: TreeSitterNode,
+  imports: Import[],
+): void {
   if (!left || !right) return;
   const leftText = left.text;
   if (!leftText.startsWith('module.exports') && leftText !== 'exports') return;
@@ -380,8 +405,8 @@ function handleCommonJSAssignment(left, right, node, imports) {
 
 // ── Manual tree walk (fallback when Query not available) ────────────────────
 
-function extractSymbolsWalk(tree) {
-  const ctx = {
+function extractSymbolsWalk(tree: TreeSitterTree): ExtractorOutput {
+  const ctx: ExtractorOutput = {
     definitions: [],
     calls: [],
     imports: [],
@@ -392,11 +417,11 @@ function extractSymbolsWalk(tree) {
 
   walkJavaScriptNode(tree.rootNode, ctx);
   // Populate typeMap for variables and parameter type annotations
-  extractTypeMapWalk(tree.rootNode, ctx.typeMap);
+  extractTypeMapWalk(tree.rootNode, ctx.typeMap!);
   return ctx;
 }
 
-function walkJavaScriptNode(node, ctx) {
+function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
   switch (node.type) {
     case 'function_declaration':
       handleFunctionDecl(node, ctx);
@@ -435,13 +460,13 @@ function walkJavaScriptNode(node, ctx) {
   }
 
   for (let i = 0; i < node.childCount; i++) {
-    walkJavaScriptNode(node.child(i), ctx);
+    walkJavaScriptNode(node.child(i)!, ctx);
   }
 }
 
 // ── Walk-path per-node-type handlers ────────────────────────────────────────
 
-function handleFunctionDecl(node, ctx) {
+function handleFunctionDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (nameNode) {
     const fnChildren = extractParameters(node);
@@ -455,7 +480,7 @@ function handleFunctionDecl(node, ctx) {
   }
 }
 
-function handleClassDecl(node, ctx) {
+function handleClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const className = nameNode.text;
@@ -481,7 +506,7 @@ function handleClassDecl(node, ctx) {
   }
 }
 
-function handleMethodDef(node, ctx) {
+function handleMethodDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (nameNode) {
     const parentClass = findParentClass(node);
@@ -499,7 +524,7 @@ function handleMethodDef(node, ctx) {
   }
 }
 
-function handleInterfaceDecl(node, ctx) {
+function handleInterfaceDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   ctx.definitions.push({
@@ -517,7 +542,7 @@ function handleInterfaceDecl(node, ctx) {
   }
 }
 
-function handleTypeAliasDecl(node, ctx) {
+function handleTypeAliasDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (nameNode) {
     ctx.definitions.push({
@@ -529,7 +554,7 @@ function handleTypeAliasDecl(node, ctx) {
   }
 }
 
-function handleVariableDecl(node, ctx) {
+function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const isConst = node.text.startsWith('const ');
   for (let i = 0; i < node.childCount; i++) {
     const declarator = node.child(i);
@@ -565,10 +590,10 @@ function handleVariableDecl(node, ctx) {
   }
 }
 
-function handleEnumDecl(node, ctx) {
+function handleEnumDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
-  const enumChildren = [];
+  const enumChildren: SubDeclaration[] = [];
   const body = node.childForFieldName('body') || findChild(node, 'enum_body');
   if (body) {
     for (let i = 0; i < body.childCount; i++) {
@@ -595,7 +620,7 @@ function handleEnumDecl(node, ctx) {
   });
 }
 
-function handleCallExpr(node, ctx) {
+function handleCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const fn = node.childForFieldName('function');
   if (!fn) return;
   if (fn.type === 'import') {
@@ -627,7 +652,7 @@ function handleCallExpr(node, ctx) {
   }
 }
 
-function handleImportStmt(node, ctx) {
+function handleImportStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const isTypeOnly = node.text.startsWith('import type');
   const source = node.childForFieldName('source') || findChild(node, 'string');
   if (source) {
@@ -642,12 +667,12 @@ function handleImportStmt(node, ctx) {
   }
 }
 
-function handleExportStmt(node, ctx) {
+function handleExportStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const exportLine = node.startPosition.row + 1;
   const decl = node.childForFieldName('declaration');
   if (decl) {
     const declType = decl.type;
-    const kindMap = {
+    const kindMap: Record<string, string> = {
       function_declaration: 'function',
       class_declaration: 'class',
       interface_declaration: 'interface',
@@ -656,7 +681,7 @@ function handleExportStmt(node, ctx) {
     const kind = kindMap[declType];
     if (kind) {
       const n = decl.childForFieldName('name');
-      if (n) ctx.exports.push({ name: n.text, kind, line: exportLine });
+      if (n) ctx.exports.push({ name: n.text, kind: kind as Export['kind'], line: exportLine });
     }
   }
   const source = node.childForFieldName('source') || findChild(node, 'string');
@@ -675,19 +700,19 @@ function handleExportStmt(node, ctx) {
   }
 }
 
-function handleExpressionStmt(node, ctx) {
+function handleExpressionStmt(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const expr = node.child(0);
   if (expr && expr.type === 'assignment_expression') {
     const left = expr.childForFieldName('left');
     const right = expr.childForFieldName('right');
-    handleCommonJSAssignment(left, right, node, ctx.imports);
+    if (left && right) handleCommonJSAssignment(left, right, node, ctx.imports);
   }
 }
 
 // ── Child extraction helpers ────────────────────────────────────────────────
 
-function extractParameters(node) {
-  const params = [];
+function extractParameters(node: TreeSitterNode): SubDeclaration[] {
+  const params: SubDeclaration[] = [];
   const paramsNode = node.childForFieldName('parameters') || findChild(node, 'formal_parameters');
   if (!paramsNode) return params;
   for (let i = 0; i < paramsNode.childCount; i++) {
@@ -720,8 +745,8 @@ function extractParameters(node) {
   return params;
 }
 
-function extractClassProperties(classNode) {
-  const props = [];
+function extractClassProperties(classNode: TreeSitterNode): SubDeclaration[] {
+  const props: SubDeclaration[] = [];
   const body = classNode.childForFieldName('body') || findChild(classNode, 'class_body');
   if (!body) return props;
   for (let i = 0; i < body.childCount; i++) {
@@ -761,7 +786,7 @@ function extractClassProperties(classNode) {
  * Checks for TS access modifiers (public/private/protected) and JS private (#) fields.
  * Returns 'public' | 'private' | 'protected' | undefined.
  */
-function extractVisibility(node) {
+function extractVisibility(node: TreeSitterNode): 'public' | 'private' | 'protected' | undefined {
   // Check for TS accessibility modifiers (accessibility_modifier child)
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
@@ -780,7 +805,7 @@ function extractVisibility(node) {
   return undefined;
 }
 
-function isConstantValue(valueNode) {
+function isConstantValue(valueNode: TreeSitterNode): boolean {
   if (!valueNode) return false;
   const t = valueNode.type;
   return (
@@ -802,7 +827,11 @@ function isConstantValue(valueNode) {
 
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
-function extractInterfaceMethods(bodyNode, interfaceName, definitions) {
+function extractInterfaceMethods(
+  bodyNode: TreeSitterNode,
+  interfaceName: string,
+  definitions: Definition[],
+): void {
   for (let i = 0; i < bodyNode.childCount; i++) {
     const child = bodyNode.child(i);
     if (!child) continue;
@@ -820,8 +849,8 @@ function extractInterfaceMethods(bodyNode, interfaceName, definitions) {
   }
 }
 
-function extractImplements(heritage) {
-  const interfaces = [];
+function extractImplements(heritage: TreeSitterNode): string[] {
+  const interfaces: string[] = [];
   for (let i = 0; i < heritage.childCount; i++) {
     const child = heritage.child(i);
     if (!child) continue;
@@ -842,8 +871,8 @@ function extractImplements(heritage) {
   return interfaces;
 }
 
-function extractImplementsFromNode(node) {
-  const result = [];
+function extractImplementsFromNode(node: TreeSitterNode): string[] {
+  const result: string[] = [];
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child) continue;
@@ -855,7 +884,7 @@ function extractImplementsFromNode(node) {
 
 // ── Type inference helpers ───────────────────────────────────────────────
 
-function extractSimpleTypeName(typeAnnotationNode) {
+function extractSimpleTypeName(typeAnnotationNode: TreeSitterNode): string | null {
   if (!typeAnnotationNode) return null;
   for (let i = 0; i < typeAnnotationNode.childCount; i++) {
     const child = typeAnnotationNode.child(i);
@@ -869,7 +898,7 @@ function extractSimpleTypeName(typeAnnotationNode) {
   return null;
 }
 
-function extractNewExprTypeName(newExprNode) {
+function extractNewExprTypeName(newExprNode: TreeSitterNode): string | null {
   if (!newExprNode || newExprNode.type !== 'new_expression') return null;
   const ctor = newExprNode.childForFieldName('constructor') || newExprNode.child(1);
   if (!ctor) return null;
@@ -891,15 +920,15 @@ function extractNewExprTypeName(newExprNode) {
  *
  * Higher-confidence entries take priority when the same variable is seen twice.
  */
-function extractTypeMapWalk(rootNode, typeMap) {
-  function setIfHigher(name, type, confidence) {
+function extractTypeMapWalk(rootNode: TreeSitterNode, typeMap: Map<string, TypeMapEntry>): void {
+  function setIfHigher(name: string, type: string, confidence: number): void {
     const existing = typeMap.get(name);
     if (!existing || confidence > existing.confidence) {
       typeMap.set(name, { type, confidence });
     }
   }
 
-  function walk(node, depth) {
+  function walk(node: TreeSitterNode, depth: number): void {
     if (depth >= 200) return;
     const t = node.type;
     if (t === 'variable_declarator') {
@@ -924,7 +953,7 @@ function extractTypeMapWalk(rootNode, typeMap) {
               const obj = fn.childForFieldName('object');
               if (obj && obj.type === 'identifier') {
                 const objName = obj.text;
-                if (objName[0] !== objName[0].toLowerCase() && !BUILTIN_GLOBALS.has(objName)) {
+                if (objName[0]! !== objName[0]!.toLowerCase() && !BUILTIN_GLOBALS.has(objName)) {
                   setIfHigher(nameN.text, objName, 0.7);
                 }
               }
@@ -944,20 +973,20 @@ function extractTypeMapWalk(rootNode, typeMap) {
       }
     }
     for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i), depth + 1);
+      walk(node.child(i)!, depth + 1);
     }
   }
   walk(rootNode, 0);
 }
 
-function extractReceiverName(objNode) {
+function extractReceiverName(objNode: TreeSitterNode | null): string | undefined {
   if (!objNode) return undefined;
   const t = objNode.type;
   if (t === 'identifier' || t === 'this' || t === 'super') return objNode.text;
   return objNode.text;
 }
 
-function extractCallInfo(fn, callNode) {
+function extractCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode): Call | null {
   const fnType = fn.type;
   if (fnType === 'identifier') {
     return { name: fn.text, line: callNode.startPosition.row + 1 };
@@ -1016,7 +1045,7 @@ function extractCallInfo(fn, callNode) {
   return null;
 }
 
-function findAnonymousCallback(argsNode) {
+function findAnonymousCallback(argsNode: TreeSitterNode): TreeSitterNode | null {
   for (let i = 0; i < argsNode.childCount; i++) {
     const child = argsNode.child(i);
     if (child && (child.type === 'arrow_function' || child.type === 'function_expression')) {
@@ -1026,7 +1055,7 @@ function findAnonymousCallback(argsNode) {
   return null;
 }
 
-function findFirstStringArg(argsNode) {
+function findFirstStringArg(argsNode: TreeSitterNode): string | null {
   for (let i = 0; i < argsNode.childCount; i++) {
     const child = argsNode.child(i);
     if (child && child.type === 'string') {
@@ -1036,8 +1065,8 @@ function findFirstStringArg(argsNode) {
   return null;
 }
 
-function walkCallChain(startNode, methodName) {
-  let current = startNode;
+function walkCallChain(startNode: TreeSitterNode, methodName: string): TreeSitterNode | null {
+  let current: TreeSitterNode | null = startNode;
   while (current) {
     const curType = current.type;
     if (curType === 'call_expression') {
@@ -1058,7 +1087,7 @@ function walkCallChain(startNode, methodName) {
   return null;
 }
 
-const EXPRESS_METHODS = new Set([
+const EXPRESS_METHODS: Set<string> = new Set([
   'get',
   'post',
   'put',
@@ -1069,9 +1098,12 @@ const EXPRESS_METHODS = new Set([
   'all',
   'use',
 ]);
-const EVENT_METHODS = new Set(['on', 'once', 'addEventListener', 'addListener']);
+const EVENT_METHODS: Set<string> = new Set(['on', 'once', 'addEventListener', 'addListener']);
 
-function extractCallbackDefinition(callNode, fn) {
+function extractCallbackDefinition(
+  callNode: TreeSitterNode,
+  fn?: TreeSitterNode | null,
+): Definition | null {
   if (!fn) fn = callNode.childForFieldName('function');
   if (!fn || fn.type !== 'member_expression') return null;
 
@@ -1086,14 +1118,14 @@ function extractCallbackDefinition(callNode, fn) {
   if (method === 'action') {
     const cb = findAnonymousCallback(args);
     if (!cb) return null;
-    const commandCall = walkCallChain(fn.childForFieldName('object'), 'command');
+    const commandCall = walkCallChain(fn.childForFieldName('object')!, 'command');
     if (!commandCall) return null;
     const cmdArgs =
       commandCall.childForFieldName('arguments') || findChild(commandCall, 'arguments');
     if (!cmdArgs) return null;
     const cmdName = findFirstStringArg(cmdArgs);
     if (!cmdName) return null;
-    const firstWord = cmdName.split(/\s/)[0];
+    const firstWord = cmdName.split(/\s/)[0]!;
     return {
       name: `command:${firstWord}`,
       kind: 'function',
@@ -1133,9 +1165,9 @@ function extractCallbackDefinition(callNode, fn) {
   return null;
 }
 
-function extractSuperclass(heritage) {
+function extractSuperclass(heritage: TreeSitterNode): string | null {
   for (let i = 0; i < heritage.childCount; i++) {
-    const child = heritage.child(i);
+    const child = heritage.child(i)!;
     if (child.type === 'identifier') return child.text;
     if (child.type === 'member_expression') return child.text;
     const found = extractSuperclass(child);
@@ -1144,7 +1176,7 @@ function extractSuperclass(heritage) {
   return null;
 }
 
-function findParentClass(node) {
+function findParentClass(node: TreeSitterNode): string | null {
   let current = node.parent;
   while (current) {
     const t = current.type;
@@ -1157,9 +1189,9 @@ function findParentClass(node) {
   return null;
 }
 
-function extractImportNames(node) {
-  const names = [];
-  function scan(n) {
+function extractImportNames(node: TreeSitterNode): string[] {
+  const names: string[] = [];
+  function scan(n: TreeSitterNode): void {
     if (n.type === 'import_specifier' || n.type === 'export_specifier') {
       const nameNode = n.childForFieldName('name') || n.childForFieldName('alias');
       if (nameNode) names.push(nameNode.text);
@@ -1169,7 +1201,7 @@ function extractImportNames(node) {
     } else if (n.type === 'namespace_import') {
       names.push(n.text);
     }
-    for (let i = 0; i < n.childCount; i++) scan(n.child(i));
+    for (let i = 0; i < n.childCount; i++) scan(n.child(i)!);
   }
   scan(node);
   return names;
@@ -1186,7 +1218,7 @@ function extractImportNames(node) {
  * Walks up the AST from the call_expression to find the enclosing
  * variable_declarator and reads the name/object_pattern.
  */
-function extractDynamicImportNames(callNode) {
+function extractDynamicImportNames(callNode: TreeSitterNode): string[] {
   // Walk up: call_expression → await_expression → variable_declarator
   let current = callNode.parent;
   // Skip await_expression wrapper if present
@@ -1199,9 +1231,9 @@ function extractDynamicImportNames(callNode) {
 
   // const { a, b } = await import(...)  →  object_pattern
   if (nameNode.type === 'object_pattern') {
-    const names = [];
+    const names: string[] = [];
     for (let i = 0; i < nameNode.childCount; i++) {
-      const child = nameNode.child(i);
+      const child = nameNode.child(i)!;
       if (child.type === 'shorthand_property_identifier_pattern') {
         names.push(child.text);
       } else if (child.type === 'pair_pattern') {
@@ -1221,9 +1253,9 @@ function extractDynamicImportNames(callNode) {
 
   // const [a, b] = await import(...)  →  array_pattern (rare but possible)
   if (nameNode.type === 'array_pattern') {
-    const names = [];
+    const names: string[] = [];
     for (let i = 0; i < nameNode.childCount; i++) {
-      const child = nameNode.child(i);
+      const child = nameNode.child(i)!;
       if (child.type === 'identifier') names.push(child.text);
       else if (child.type === 'rest_pattern') {
         const inner = child.child(0) || child.childForFieldName('name');

@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type BetterSqlite3 from 'better-sqlite3';
 import { closeDb, getNodeId as getNodeIdQuery, initSchema, openDb } from '../../db/index.js';
 import { info } from '../../infrastructure/logger.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from '../../shared/constants.js';
@@ -25,9 +24,11 @@ export async function watchProject(rootDir: string, opts: { engine?: string } = 
     throw new DbError('No graph.db found. Run `codegraph build` first.', { file: dbPath });
   }
 
-  const db: BetterSqlite3.Database = openDb(dbPath);
+  const db = openDb(dbPath) as import('better-sqlite3').Database;
+  // Alias for functions expecting the project's BetterSqlite3Database interface
+  const typedDb = db as unknown as import('../../types.js').BetterSqlite3Database;
   initSchema(db);
-  const engineOpts = { engine: opts.engine || 'auto' };
+  const engineOpts = { engine: (opts.engine || 'auto') as import('../../types.js').EngineMode };
   const { name: engineName, version: engineVersion } = getActiveEngine(engineOpts);
   console.log(
     `Watch mode using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`,
@@ -46,7 +47,7 @@ export async function watchProject(rootDir: string, opts: { engine?: string } = 
     ),
     getNodeId: {
       get: (name: string, kind: string, file: string, line: number) => {
-        const id = getNodeIdQuery(db, name, kind, file, line);
+        const id = getNodeIdQuery(typedDb, name, kind, file, line);
         return id != null ? { id } : undefined;
       },
     },

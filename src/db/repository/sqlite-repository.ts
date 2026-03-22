@@ -1,3 +1,22 @@
+import type {
+  AdjacentEdgeRow,
+  BetterSqlite3Database,
+  CallableNodeRow,
+  CallEdgeRow,
+  ChildNodeRow,
+  ComplexityMetrics,
+  FileNodeRow,
+  ImportEdgeRow,
+  ImportGraphEdgeRow,
+  IntraFileCallEdge,
+  ListFunctionOpts,
+  NodeIdRow,
+  NodeRow,
+  NodeRowWithFanIn,
+  QueryOpts,
+  RelatedNodeRow,
+  TriageQueryOpts,
+} from '../../types.js';
 import { Repository } from './base.js';
 import { hasCfgTables } from './cfg.js';
 import { getComplexityForNode } from './complexity.js';
@@ -12,9 +31,11 @@ import {
   findCallers,
   findCrossFileCallTargets,
   findDistinctCallers,
+  findImplementors,
   findImportDependents,
   findImportSources,
   findImportTargets,
+  findInterfaces,
   findIntraFileCallEdges,
   getClassHierarchy,
 } from './edges.js';
@@ -44,176 +65,183 @@ import {
  * behind the Repository interface so callers can use `repo.method(...)`.
  */
 export class SqliteRepository extends Repository {
-  #db;
+  #db: BetterSqlite3Database;
 
-  /** @param {object} db - better-sqlite3 Database instance */
-  constructor(db) {
+  constructor(db: BetterSqlite3Database) {
     super();
     this.#db = db;
   }
 
   /** Expose the underlying db for code that still needs raw access. */
-  get db() {
+  get db(): BetterSqlite3Database {
     return this.#db;
   }
 
   // ── Node lookups ──────────────────────────────────────────────────
 
-  findNodeById(id) {
+  findNodeById(id: number): NodeRow | undefined {
     return findNodeById(this.#db, id);
   }
 
-  findNodesByFile(file) {
+  findNodesByFile(file: string): NodeRow[] {
     return findNodesByFile(this.#db, file);
   }
 
-  findFileNodes(fileLike) {
+  findFileNodes(fileLike: string): NodeRow[] {
     return findFileNodes(this.#db, fileLike);
   }
 
-  findNodesWithFanIn(namePattern, opts) {
+  findNodesWithFanIn(namePattern: string, opts?: QueryOpts): NodeRowWithFanIn[] {
     return findNodesWithFanIn(this.#db, namePattern, opts);
   }
 
-  countNodes() {
+  countNodes(): number {
     return countNodes(this.#db);
   }
 
-  countEdges() {
+  countEdges(): number {
     return countEdges(this.#db);
   }
 
-  countFiles() {
+  countFiles(): number {
     return countFiles(this.#db);
   }
 
-  getNodeId(name, kind, file, line) {
+  getNodeId(name: string, kind: string, file: string, line: number): number | undefined {
     return getNodeId(this.#db, name, kind, file, line);
   }
 
-  getFunctionNodeId(name, file, line) {
+  getFunctionNodeId(name: string, file: string, line: number): number | undefined {
     return getFunctionNodeId(this.#db, name, file, line);
   }
 
-  bulkNodeIdsByFile(file) {
+  bulkNodeIdsByFile(file: string): NodeIdRow[] {
     return bulkNodeIdsByFile(this.#db, file);
   }
 
-  findNodeChildren(parentId) {
+  findNodeChildren(parentId: number): ChildNodeRow[] {
     return findNodeChildren(this.#db, parentId);
   }
 
-  findNodesByScope(scopeName, opts) {
+  findNodesByScope(scopeName: string, opts?: QueryOpts): NodeRow[] {
     return findNodesByScope(this.#db, scopeName, opts);
   }
 
-  findNodeByQualifiedName(qualifiedName, opts) {
+  findNodeByQualifiedName(qualifiedName: string, opts?: { file?: string }): NodeRow[] {
     return findNodeByQualifiedName(this.#db, qualifiedName, opts);
   }
 
-  listFunctionNodes(opts) {
+  listFunctionNodes(opts?: ListFunctionOpts): NodeRow[] {
     return listFunctionNodes(this.#db, opts);
   }
 
-  iterateFunctionNodes(opts) {
+  iterateFunctionNodes(opts?: ListFunctionOpts): IterableIterator<NodeRow> {
     return iterateFunctionNodes(this.#db, opts);
   }
 
-  findNodesForTriage(opts) {
+  findNodesForTriage(opts?: TriageQueryOpts): NodeRow[] {
     return findNodesForTriage(this.#db, opts);
   }
 
   // ── Edge queries ──────────────────────────────────────────────────
 
-  findCallees(nodeId) {
+  findCallees(nodeId: number): RelatedNodeRow[] {
     return findCallees(this.#db, nodeId);
   }
 
-  findCallers(nodeId) {
+  findCallers(nodeId: number): RelatedNodeRow[] {
     return findCallers(this.#db, nodeId);
   }
 
-  findDistinctCallers(nodeId) {
+  findDistinctCallers(nodeId: number): RelatedNodeRow[] {
     return findDistinctCallers(this.#db, nodeId);
   }
 
-  findAllOutgoingEdges(nodeId) {
+  findAllOutgoingEdges(nodeId: number): AdjacentEdgeRow[] {
     return findAllOutgoingEdges(this.#db, nodeId);
   }
 
-  findAllIncomingEdges(nodeId) {
+  findAllIncomingEdges(nodeId: number): AdjacentEdgeRow[] {
     return findAllIncomingEdges(this.#db, nodeId);
   }
 
-  findCalleeNames(nodeId) {
+  findCalleeNames(nodeId: number): string[] {
     return findCalleeNames(this.#db, nodeId);
   }
 
-  findCallerNames(nodeId) {
+  findCallerNames(nodeId: number): string[] {
     return findCallerNames(this.#db, nodeId);
   }
 
-  findImportTargets(nodeId) {
+  findImportTargets(nodeId: number): ImportEdgeRow[] {
     return findImportTargets(this.#db, nodeId);
   }
 
-  findImportSources(nodeId) {
+  findImportSources(nodeId: number): ImportEdgeRow[] {
     return findImportSources(this.#db, nodeId);
   }
 
-  findImportDependents(nodeId) {
+  findImportDependents(nodeId: number): NodeRow[] {
     return findImportDependents(this.#db, nodeId);
   }
 
-  findCrossFileCallTargets(file) {
+  findCrossFileCallTargets(file: string): Set<number> {
     return findCrossFileCallTargets(this.#db, file);
   }
 
-  countCrossFileCallers(nodeId, file) {
+  countCrossFileCallers(nodeId: number, file: string): number {
     return countCrossFileCallers(this.#db, nodeId, file);
   }
 
-  getClassHierarchy(classNodeId) {
+  getClassHierarchy(classNodeId: number): Set<number> {
     return getClassHierarchy(this.#db, classNodeId);
   }
 
-  findIntraFileCallEdges(file) {
+  findImplementors(nodeId: number): RelatedNodeRow[] {
+    return findImplementors(this.#db, nodeId);
+  }
+
+  findInterfaces(nodeId: number): RelatedNodeRow[] {
+    return findInterfaces(this.#db, nodeId);
+  }
+
+  findIntraFileCallEdges(file: string): IntraFileCallEdge[] {
     return findIntraFileCallEdges(this.#db, file);
   }
 
   // ── Graph-read queries ────────────────────────────────────────────
 
-  getCallableNodes() {
+  getCallableNodes(): CallableNodeRow[] {
     return getCallableNodes(this.#db);
   }
 
-  getCallEdges() {
+  getCallEdges(): CallEdgeRow[] {
     return getCallEdges(this.#db);
   }
 
-  getFileNodesAll() {
+  getFileNodesAll(): FileNodeRow[] {
     return getFileNodesAll(this.#db);
   }
 
-  getImportEdges() {
+  getImportEdges(): ImportGraphEdgeRow[] {
     return getImportEdges(this.#db);
   }
 
   // ── Optional table checks ─────────────────────────────────────────
 
-  hasCfgTables() {
+  hasCfgTables(): boolean {
     return hasCfgTables(this.#db);
   }
 
-  hasEmbeddings() {
+  hasEmbeddings(): boolean {
     return hasEmbeddings(this.#db);
   }
 
-  hasDataflowTable() {
+  hasDataflowTable(): boolean {
     return hasDataflowTable(this.#db);
   }
 
-  getComplexityForNode(nodeId) {
+  getComplexityForNode(nodeId: number): ComplexityMetrics | undefined {
     return getComplexityForNode(this.#db, nodeId);
   }
 }

@@ -10,7 +10,7 @@ import type BetterSqlite3 from 'better-sqlite3';
 import { purgeFilesData } from '../../../db/index.js';
 import { warn } from '../../../infrastructure/logger.js';
 import { EXTENSIONS, IGNORE_DIRS } from '../../../shared/constants.js';
-import type { CodegraphConfig, PathAliases } from '../../../types.js';
+import type { BetterSqlite3Database, CodegraphConfig, PathAliases } from '../../../types.js';
 
 export const BUILTIN_RECEIVERS: Set<string> = new Set([
   'console',
@@ -203,7 +203,8 @@ export function purgeFilesFromGraph(
   files: string[],
   options: Record<string, unknown> = {},
 ): void {
-  purgeFilesData(db, files, options);
+  // Double-cast needed: better-sqlite3 types don't declare `open`/`name` properties
+  purgeFilesData(db as unknown as BetterSqlite3Database, files, options);
 }
 
 /** Batch INSERT chunk size for multi-value INSERTs. */

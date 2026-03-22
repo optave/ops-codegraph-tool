@@ -1,10 +1,17 @@
+import type {
+  Call,
+  ExtractorOutput,
+  SubDeclaration,
+  TreeSitterNode,
+  TreeSitterTree,
+} from '../types.js';
 import { findChild, nodeEndLine, rustVisibility } from './helpers.js';
 
 /**
  * Extract symbols from Rust files.
  */
-export function extractRustSymbols(tree, _filePath) {
-  const ctx = {
+export function extractRustSymbols(tree: TreeSitterTree, _filePath: string): ExtractorOutput {
+  const ctx: ExtractorOutput = {
     definitions: [],
     calls: [],
     imports: [],
@@ -18,7 +25,7 @@ export function extractRustSymbols(tree, _filePath) {
   return ctx;
 }
 
-function walkRustNode(node, ctx) {
+function walkRustNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
   switch (node.type) {
     case 'function_item':
       handleRustFuncItem(node, ctx);
@@ -49,12 +56,15 @@ function walkRustNode(node, ctx) {
       break;
   }
 
-  for (let i = 0; i < node.childCount; i++) walkRustNode(node.child(i), ctx);
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child) walkRustNode(child, ctx);
+  }
 }
 
 // ── Walk-path per-node-type handlers ────────────────────────────────────────
 
-function handleRustFuncItem(node, ctx) {
+function handleRustFuncItem(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // Skip default-impl functions already emitted by handleRustTraitItem
   if (node.parent?.parent?.type === 'trait_item') return;
   const nameNode = node.childForFieldName('name');
@@ -73,7 +83,7 @@ function handleRustFuncItem(node, ctx) {
   });
 }
 
-function handleRustStructItem(node, ctx) {
+function handleRustStructItem(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const fields = extractStructFields(node);
@@ -87,7 +97,7 @@ function handleRustStructItem(node, ctx) {
   });
 }
 
-function handleRustEnumItem(node, ctx) {
+function handleRustEnumItem(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const variants = extractEnumVariants(node);
@@ -100,7 +110,7 @@ function handleRustEnumItem(node, ctx) {
   });
 }
 
-function handleRustConstItem(node, ctx) {
+function handleRustConstItem(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   ctx.definitions.push({
@@ -111,7 +121,7 @@ function handleRustConstItem(node, ctx) {
   });
 }
 
-function handleRustTraitItem(node, ctx) {
+function handleRustTraitItem(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   ctx.definitions.push({
@@ -139,7 +149,7 @@ function handleRustTraitItem(node, ctx) {
   }
 }
 
-function handleRustImplItem(node, ctx) {
+function handleRustImplItem(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const typeNode = node.childForFieldName('type');
   const traitNode = node.childForFieldName('trait');
   if (typeNode && traitNode) {
@@ -151,7 +161,7 @@ function handleRustImplItem(node, ctx) {
   }
 }
 
-function handleRustUseDecl(node, ctx) {
+function handleRustUseDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const argNode = node.child(1);
   if (!argNode) return;
   const usePaths = extractRustUsePath(argNode);
@@ -165,7 +175,7 @@ function handleRustUseDecl(node, ctx) {
   }
 }
 
-function handleRustCallExpr(node, ctx) {
+function handleRustCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const fn = node.childForFieldName('function');
   if (!fn) return;
   if (fn.type === 'identifier') {
@@ -174,7 +184,7 @@ function handleRustCallExpr(node, ctx) {
     const field = fn.childForFieldName('field');
     if (field) {
       const value = fn.childForFieldName('value');
-      const call = { name: field.text, line: node.startPosition.row + 1 };
+      const call: Call = { name: field.text, line: node.startPosition.row + 1 };
       if (value) call.receiver = value.text;
       ctx.calls.push(call);
     }
@@ -182,21 +192,21 @@ function handleRustCallExpr(node, ctx) {
     const name = fn.childForFieldName('name');
     if (name) {
       const path = fn.childForFieldName('path');
-      const call = { name: name.text, line: node.startPosition.row + 1 };
+      const call: Call = { name: name.text, line: node.startPosition.row + 1 };
       if (path) call.receiver = path.text;
       ctx.calls.push(call);
     }
   }
 }
 
-function handleRustMacroInvocation(node, ctx) {
+function handleRustMacroInvocation(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const macroNode = node.child(0);
   if (macroNode) {
     ctx.calls.push({ name: `${macroNode.text}!`, line: node.startPosition.row + 1 });
   }
 }
 
-function findCurrentImpl(node) {
+function findCurrentImpl(node: TreeSitterNode): string | null {
   let current = node.parent;
   while (current) {
     if (current.type === 'impl_item') {
@@ -210,8 +220,8 @@ function findCurrentImpl(node) {
 
 // ── Child extraction helpers ────────────────────────────────────────────────
 
-function extractRustParameters(paramListNode) {
-  const params = [];
+function extractRustParameters(paramListNode: TreeSitterNode | null): SubDeclaration[] {
+  const params: SubDeclaration[] = [];
   if (!paramListNode) return params;
   for (let i = 0; i < paramListNode.childCount; i++) {
     const param = paramListNode.child(i);
@@ -228,8 +238,8 @@ function extractRustParameters(paramListNode) {
   return params;
 }
 
-function extractStructFields(structNode) {
-  const fields = [];
+function extractStructFields(structNode: TreeSitterNode): SubDeclaration[] {
+  const fields: SubDeclaration[] = [];
   const fieldList =
     structNode.childForFieldName('body') || findChild(structNode, 'field_declaration_list');
   if (!fieldList) return fields;
@@ -244,8 +254,8 @@ function extractStructFields(structNode) {
   return fields;
 }
 
-function extractEnumVariants(enumNode) {
-  const variants = [];
+function extractEnumVariants(enumNode: TreeSitterNode): SubDeclaration[] {
+  const variants: SubDeclaration[] = [];
   const body = enumNode.childForFieldName('body') || findChild(enumNode, 'enum_variant_list');
   if (!body) return variants;
   for (let i = 0; i < body.childCount; i++) {
@@ -259,11 +269,11 @@ function extractEnumVariants(enumNode) {
   return variants;
 }
 
-function extractRustTypeMap(node, ctx) {
+function extractRustTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void {
   extractRustTypeMapDepth(node, ctx, 0);
 }
 
-function extractRustTypeMapDepth(node, ctx, depth) {
+function extractRustTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, depth: number): void {
   if (depth >= 200) return;
 
   // let x: MyType = ...
@@ -272,7 +282,7 @@ function extractRustTypeMapDepth(node, ctx, depth) {
     const typeNode = node.childForFieldName('type');
     if (pattern && pattern.type === 'identifier' && typeNode) {
       const typeName = extractRustTypeName(typeNode);
-      if (typeName) ctx.typeMap.set(pattern.text, { type: typeName, confidence: 0.9 });
+      if (typeName) ctx.typeMap?.set(pattern.text, { type: typeName, confidence: 0.9 });
     }
   }
 
@@ -284,7 +294,7 @@ function extractRustTypeMapDepth(node, ctx, depth) {
       const name = pattern.type === 'identifier' ? pattern.text : null;
       if (name && name !== 'self' && name !== '&self' && name !== '&mut self') {
         const typeName = extractRustTypeName(typeNode);
-        if (typeName) ctx.typeMap.set(name, { type: typeName, confidence: 0.9 });
+        if (typeName) ctx.typeMap?.set(name, { type: typeName, confidence: 0.9 });
       }
     }
   }
@@ -295,7 +305,7 @@ function extractRustTypeMapDepth(node, ctx, depth) {
   }
 }
 
-function extractRustTypeName(typeNode) {
+function extractRustTypeName(typeNode: TreeSitterNode): string | null {
   if (!typeNode) return null;
   const t = typeNode.type;
   if (t === 'type_identifier' || t === 'identifier') return typeNode.text;
@@ -317,11 +327,11 @@ function extractRustTypeName(typeNode) {
   return null;
 }
 
-function extractRustUsePath(node) {
+function extractRustUsePath(node: TreeSitterNode | null): { source: string; names: string[] }[] {
   if (!node) return [];
 
   if (node.type === 'use_list') {
-    const results = [];
+    const results: { source: string; names: string[] }[] = [];
     for (let i = 0; i < node.childCount; i++) {
       results.push(...extractRustUsePath(node.child(i)));
     }
@@ -333,7 +343,7 @@ function extractRustUsePath(node) {
     const listNode = node.childForFieldName('list');
     const prefix = pathNode ? pathNode.text : '';
     if (listNode) {
-      const names = [];
+      const names: string[] = [];
       for (let i = 0; i < listNode.childCount; i++) {
         const child = listNode.child(i);
         if (
@@ -364,7 +374,7 @@ function extractRustUsePath(node) {
 
   if (node.type === 'scoped_identifier' || node.type === 'identifier') {
     const text = node.text;
-    const lastName = text.split('::').pop();
+    const lastName = text.split('::').pop() ?? text;
     return [{ source: text, names: [lastName] }];
   }
 

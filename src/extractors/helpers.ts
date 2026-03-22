@@ -1,11 +1,13 @@
-export function nodeEndLine(node) {
+import type { TreeSitterNode } from '../types.js';
+
+export function nodeEndLine(node: TreeSitterNode): number {
   return node.endPosition.row + 1;
 }
 
-export function findChild(node, type) {
+export function findChild(node: TreeSitterNode, type: string): TreeSitterNode | null {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
-    if (child.type === type) return child;
+    if (child && child.type === type) return child;
   }
   return null;
 }
@@ -17,18 +19,18 @@ export function findChild(node, type) {
  * @param {Set<string>} [modifierTypes] - node types that indicate modifiers
  * @returns {'public'|'private'|'protected'|undefined}
  */
-const DEFAULT_MODIFIER_TYPES = new Set([
+const DEFAULT_MODIFIER_TYPES: Set<string> = new Set([
   'modifiers',
   'modifier',
   'visibility_modifier',
   'accessibility_modifier',
 ]);
-const VISIBILITY_KEYWORDS = new Set(['public', 'private', 'protected']);
+const VISIBILITY_KEYWORDS: Set<string> = new Set(['public', 'private', 'protected']);
 
 /**
  * Python convention: __name → private, _name → protected, else undefined.
  */
-export function pythonVisibility(name) {
+export function pythonVisibility(name: string): 'public' | 'private' | 'protected' | undefined {
   if (name.startsWith('__') && name.endsWith('__')) return undefined; // dunder — public
   if (name.startsWith('__')) return 'private';
   if (name.startsWith('_')) return 'protected';
@@ -38,20 +40,20 @@ export function pythonVisibility(name) {
 /**
  * Go convention: uppercase first letter → public, lowercase → private.
  */
-export function goVisibility(name) {
+export function goVisibility(name: string): 'public' | 'private' | 'protected' | undefined {
   if (!name) return undefined;
   // Strip receiver prefix (e.g., "Receiver.Method" → check "Method")
-  const bare = name.includes('.') ? name.split('.').pop() : name;
+  const bare = name.includes('.') ? (name.split('.').pop() ?? name) : name;
   if (!bare) return undefined;
-  return bare[0] === bare[0].toUpperCase() && bare[0] !== bare[0].toLowerCase()
-    ? 'public'
-    : 'private';
+  const first = bare[0];
+  if (!first) return undefined;
+  return first === first.toUpperCase() && first !== first.toLowerCase() ? 'public' : 'private';
 }
 
 /**
  * Rust: check for `visibility_modifier` child (pub, pub(crate), etc.).
  */
-export function rustVisibility(node) {
+export function rustVisibility(node: TreeSitterNode): 'public' | 'private' {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child) continue;
@@ -62,19 +64,22 @@ export function rustVisibility(node) {
   return 'private';
 }
 
-export function extractModifierVisibility(node, modifierTypes = DEFAULT_MODIFIER_TYPES) {
+export function extractModifierVisibility(
+  node: TreeSitterNode,
+  modifierTypes: Set<string> = DEFAULT_MODIFIER_TYPES,
+): 'public' | 'private' | 'protected' | undefined {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child) continue;
     // Direct keyword match (e.g., PHP visibility_modifier = "public")
     if (modifierTypes.has(child.type)) {
       const text = child.text;
-      if (VISIBILITY_KEYWORDS.has(text)) return text;
+      if (VISIBILITY_KEYWORDS.has(text)) return text as 'public' | 'private' | 'protected';
       // C# 'private protected' — accessible to derived types in same assembly → protected
       if (text === 'private protected') return 'protected';
       // Compound modifiers node (Java: "public static") — scan its text for a keyword
       for (const kw of VISIBILITY_KEYWORDS) {
-        if (text.includes(kw)) return kw;
+        if (text.includes(kw)) return kw as 'public' | 'private' | 'protected';
       }
     }
   }

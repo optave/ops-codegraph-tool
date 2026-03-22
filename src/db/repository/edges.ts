@@ -1,33 +1,38 @@
+import type {
+  AdjacentEdgeRow,
+  BetterSqlite3Database,
+  ImportEdgeRow,
+  IntraFileCallEdge,
+  NodeRow,
+  RelatedNodeRow,
+  StmtCache,
+} from '../../types.js';
 import { cachedStmt } from './cached-stmt.js';
 
 // ─── Prepared-statement caches (one per db instance) ────────────────────
-const _findCalleesStmt = new WeakMap();
-const _findCallersStmt = new WeakMap();
-const _findDistinctCallersStmt = new WeakMap();
-const _findAllOutgoingStmt = new WeakMap();
-const _findAllIncomingStmt = new WeakMap();
-const _findCalleeNamesStmt = new WeakMap();
-const _findCallerNamesStmt = new WeakMap();
-const _findImportTargetsStmt = new WeakMap();
-const _findImportSourcesStmt = new WeakMap();
-const _findImportDependentsStmt = new WeakMap();
-const _findCrossFileCallTargetsStmt = new WeakMap();
-const _countCrossFileCallersStmt = new WeakMap();
-const _getClassAncestorsStmt = new WeakMap();
-const _findIntraFileCallEdgesStmt = new WeakMap();
-const _findImplementorsStmt = new WeakMap();
-const _findInterfacesStmt = new WeakMap();
+const _findCalleesStmt: StmtCache<RelatedNodeRow> = new WeakMap();
+const _findCallersStmt: StmtCache<RelatedNodeRow> = new WeakMap();
+const _findDistinctCallersStmt: StmtCache<RelatedNodeRow> = new WeakMap();
+const _findAllOutgoingStmt: StmtCache<AdjacentEdgeRow> = new WeakMap();
+const _findAllIncomingStmt: StmtCache<AdjacentEdgeRow> = new WeakMap();
+const _findCalleeNamesStmt: StmtCache<{ name: string }> = new WeakMap();
+const _findCallerNamesStmt: StmtCache<{ name: string }> = new WeakMap();
+const _findImportTargetsStmt: StmtCache<ImportEdgeRow> = new WeakMap();
+const _findImportSourcesStmt: StmtCache<ImportEdgeRow> = new WeakMap();
+const _findImportDependentsStmt: StmtCache<NodeRow> = new WeakMap();
+const _findCrossFileCallTargetsStmt: StmtCache<{ target_id: number }> = new WeakMap();
+const _countCrossFileCallersStmt: StmtCache<{ cnt: number }> = new WeakMap();
+const _getClassAncestorsStmt: StmtCache<{ id: number; name: string }> = new WeakMap();
+const _findIntraFileCallEdgesStmt: StmtCache<IntraFileCallEdge> = new WeakMap();
+const _findImplementorsStmt: StmtCache<RelatedNodeRow> = new WeakMap();
+const _findInterfacesStmt: StmtCache<RelatedNodeRow> = new WeakMap();
 
 // ─── Call-edge queries ──────────────────────────────────────────────────
 
 /**
  * Find all callees of a node (outgoing 'calls' edges).
- * Returns full node info including end_line for source display.
- * @param {object} db
- * @param {number} nodeId
- * @returns {{ id: number, name: string, kind: string, file: string, line: number, end_line: number|null }[]}
  */
-export function findCallees(db, nodeId) {
+export function findCallees(db: BetterSqlite3Database, nodeId: number): RelatedNodeRow[] {
   return cachedStmt(
     _findCalleesStmt,
     db,
@@ -39,11 +44,8 @@ export function findCallees(db, nodeId) {
 
 /**
  * Find all callers of a node (incoming 'calls' edges).
- * @param {object} db
- * @param {number} nodeId
- * @returns {{ id: number, name: string, kind: string, file: string, line: number }[]}
  */
-export function findCallers(db, nodeId) {
+export function findCallers(db: BetterSqlite3Database, nodeId: number): RelatedNodeRow[] {
   return cachedStmt(
     _findCallersStmt,
     db,
@@ -55,11 +57,8 @@ export function findCallers(db, nodeId) {
 
 /**
  * Find distinct callers of a node (for impact analysis BFS).
- * @param {object} db
- * @param {number} nodeId
- * @returns {{ id: number, name: string, kind: string, file: string, line: number }[]}
  */
-export function findDistinctCallers(db, nodeId) {
+export function findDistinctCallers(db: BetterSqlite3Database, nodeId: number): RelatedNodeRow[] {
   return cachedStmt(
     _findDistinctCallersStmt,
     db,
@@ -73,11 +72,8 @@ export function findDistinctCallers(db, nodeId) {
 
 /**
  * Find all outgoing edges with edge kind (for queryNameData).
- * @param {object} db
- * @param {number} nodeId
- * @returns {{ name: string, kind: string, file: string, line: number, edge_kind: string }[]}
  */
-export function findAllOutgoingEdges(db, nodeId) {
+export function findAllOutgoingEdges(db: BetterSqlite3Database, nodeId: number): AdjacentEdgeRow[] {
   return cachedStmt(
     _findAllOutgoingStmt,
     db,
@@ -89,11 +85,8 @@ export function findAllOutgoingEdges(db, nodeId) {
 
 /**
  * Find all incoming edges with edge kind (for queryNameData).
- * @param {object} db
- * @param {number} nodeId
- * @returns {{ name: string, kind: string, file: string, line: number, edge_kind: string }[]}
  */
-export function findAllIncomingEdges(db, nodeId) {
+export function findAllIncomingEdges(db: BetterSqlite3Database, nodeId: number): AdjacentEdgeRow[] {
   return cachedStmt(
     _findAllIncomingStmt,
     db,
@@ -107,11 +100,8 @@ export function findAllIncomingEdges(db, nodeId) {
 
 /**
  * Get distinct callee names for a node, sorted alphabetically.
- * @param {object} db
- * @param {number} nodeId
- * @returns {string[]}
  */
-export function findCalleeNames(db, nodeId) {
+export function findCalleeNames(db: BetterSqlite3Database, nodeId: number): string[] {
   return cachedStmt(
     _findCalleeNamesStmt,
     db,
@@ -126,11 +116,8 @@ export function findCalleeNames(db, nodeId) {
 
 /**
  * Get distinct caller names for a node, sorted alphabetically.
- * @param {object} db
- * @param {number} nodeId
- * @returns {string[]}
  */
-export function findCallerNames(db, nodeId) {
+export function findCallerNames(db: BetterSqlite3Database, nodeId: number): string[] {
   return cachedStmt(
     _findCallerNamesStmt,
     db,
@@ -147,11 +134,8 @@ export function findCallerNames(db, nodeId) {
 
 /**
  * Find outgoing import edges (files this node imports).
- * @param {object} db
- * @param {number} nodeId
- * @returns {{ file: string, edge_kind: string }[]}
  */
-export function findImportTargets(db, nodeId) {
+export function findImportTargets(db: BetterSqlite3Database, nodeId: number): ImportEdgeRow[] {
   return cachedStmt(
     _findImportTargetsStmt,
     db,
@@ -163,11 +147,8 @@ export function findImportTargets(db, nodeId) {
 
 /**
  * Find incoming import edges (files that import this node).
- * @param {object} db
- * @param {number} nodeId
- * @returns {{ file: string, edge_kind: string }[]}
  */
-export function findImportSources(db, nodeId) {
+export function findImportSources(db: BetterSqlite3Database, nodeId: number): ImportEdgeRow[] {
   return cachedStmt(
     _findImportSourcesStmt,
     db,
@@ -179,12 +160,8 @@ export function findImportSources(db, nodeId) {
 
 /**
  * Find nodes that import a given node (BFS-ready, returns full node info).
- * Used by impactAnalysisData for transitive import traversal.
- * @param {object} db
- * @param {number} nodeId
- * @returns {object[]}
  */
-export function findImportDependents(db, nodeId) {
+export function findImportDependents(db: BetterSqlite3Database, nodeId: number): NodeRow[] {
   return cachedStmt(
     _findImportDependentsStmt,
     db,
@@ -197,12 +174,8 @@ export function findImportDependents(db, nodeId) {
 
 /**
  * Get IDs of symbols in a file that are called from other files.
- * Used for "exported" detection in explain/where/exports.
- * @param {object} db
- * @param {string} file
- * @returns {Set<number>}
  */
-export function findCrossFileCallTargets(db, file) {
+export function findCrossFileCallTargets(db: BetterSqlite3Database, file: string): Set<number> {
   return new Set(
     cachedStmt(
       _findCrossFileCallTargetsStmt,
@@ -219,29 +192,27 @@ export function findCrossFileCallTargets(db, file) {
 
 /**
  * Count callers that are in a different file than the target node.
- * Used by whereSymbolImpl to determine if a symbol is exported.
- * @param {object} db
- * @param {number} nodeId
- * @param {string} file - The target node's file
- * @returns {number}
  */
-export function countCrossFileCallers(db, nodeId, file) {
-  return cachedStmt(
-    _countCrossFileCallersStmt,
-    db,
-    `SELECT COUNT(*) AS cnt FROM edges e JOIN nodes n ON e.source_id = n.id
+export function countCrossFileCallers(
+  db: BetterSqlite3Database,
+  nodeId: number,
+  file: string,
+): number {
+  return (
+    cachedStmt(
+      _countCrossFileCallersStmt,
+      db,
+      `SELECT COUNT(*) AS cnt FROM edges e JOIN nodes n ON e.source_id = n.id
      WHERE e.target_id = ? AND e.kind = 'calls' AND n.file != ?`,
-  ).get(nodeId, file).cnt;
+    ).get(nodeId, file)?.cnt ?? 0
+  );
 }
 
 /**
  * Get all ancestor class IDs via extends edges (BFS).
- * @param {object} db
- * @param {number} classNodeId
- * @returns {Set<number>}
  */
-export function getClassHierarchy(db, classNodeId) {
-  const ancestors = new Set();
+export function getClassHierarchy(db: BetterSqlite3Database, classNodeId: number): Set<number> {
+  const ancestors = new Set<number>();
   const queue = [classNodeId];
   const stmt = cachedStmt(
     _getClassAncestorsStmt,
@@ -250,7 +221,7 @@ export function getClassHierarchy(db, classNodeId) {
      WHERE e.source_id = ? AND e.kind = 'extends'`,
   );
   while (queue.length > 0) {
-    const current = queue.shift();
+    const current = queue.shift() as number;
     const parents = stmt.all(current);
     for (const p of parents) {
       if (!ancestors.has(p.id)) {
@@ -266,12 +237,8 @@ export function getClassHierarchy(db, classNodeId) {
 
 /**
  * Find all concrete types that implement a given interface/trait node.
- * Follows incoming 'implements' edges (source = implementor, target = interface).
- * @param {object} db
- * @param {number} nodeId - The interface/trait node ID
- * @returns {{ id: number, name: string, kind: string, file: string, line: number }[]}
  */
-export function findImplementors(db, nodeId) {
+export function findImplementors(db: BetterSqlite3Database, nodeId: number): RelatedNodeRow[] {
   return cachedStmt(
     _findImplementorsStmt,
     db,
@@ -283,12 +250,8 @@ export function findImplementors(db, nodeId) {
 
 /**
  * Find all interfaces/traits that a given class/struct implements.
- * Follows outgoing 'implements' edges (source = class, target = interface).
- * @param {object} db
- * @param {number} nodeId - The class/struct node ID
- * @returns {{ id: number, name: string, kind: string, file: string, line: number }[]}
  */
-export function findInterfaces(db, nodeId) {
+export function findInterfaces(db: BetterSqlite3Database, nodeId: number): RelatedNodeRow[] {
   return cachedStmt(
     _findInterfacesStmt,
     db,
@@ -300,12 +263,11 @@ export function findInterfaces(db, nodeId) {
 
 /**
  * Find intra-file call edges (caller → callee within the same file).
- * Used by explainFileImpl for data flow visualization.
- * @param {object} db
- * @param {string} file
- * @returns {{ caller_name: string, callee_name: string }[]}
  */
-export function findIntraFileCallEdges(db, file) {
+export function findIntraFileCallEdges(
+  db: BetterSqlite3Database,
+  file: string,
+): IntraFileCallEdge[] {
   return cachedStmt(
     _findIntraFileCallEdgesStmt,
     db,
