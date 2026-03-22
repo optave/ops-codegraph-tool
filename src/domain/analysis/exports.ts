@@ -144,7 +144,11 @@ function exportsFileImpl(
     );
 
     const buildSymbolResult = (s: NodeRow, fileLines: string[] | null) => {
-      let consumers = consumersStmt.all(s.id) as Array<{ name: string; file: string; line: number }>;
+      let consumers = consumersStmt.all(s.id) as Array<{
+        name: string;
+        file: string;
+        line: number;
+      }>;
       if (noTests) consumers = consumers.filter((c) => !isTestFile(c.file));
 
       return {

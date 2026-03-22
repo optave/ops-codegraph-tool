@@ -556,7 +556,9 @@ export async function parseFilesAuto(
     if (needsTypeMap.length > 0) {
       // Only backfill for languages where WASM extraction can produce typeMap
       // (TS/TSX have type annotations; JS only has `new Expr()` which native already handles)
-      const tsFiles = needsTypeMap.filter(({ filePath }) => TS_BACKFILL_EXTS.has(path.extname(filePath)));
+      const tsFiles = needsTypeMap.filter(({ filePath }) =>
+        TS_BACKFILL_EXTS.has(path.extname(filePath)),
+      );
       if (tsFiles.length > 0) {
         const parsers = await createParsers();
         for (const { filePath, relPath } of tsFiles) {
