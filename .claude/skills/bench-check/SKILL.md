@@ -131,7 +131,7 @@ Skip this phase if `SAVE_ONLY=true` or no baseline exists.
 For each metric in the current run:
 
 1. Look up the same metric in the baseline
-2. Guard against division-by-zero: if `baseline == 0`, mark the delta as `"N/A � baseline was zero"` and treat the metric as **informational only** (not a regression or improvement)
+2. Guard against division-by-zero: if `baseline == 0`, mark the delta as `"N/A — baseline was zero"` and treat the metric as **informational only** (not a regression or improvement)
 3. Otherwise compute: `delta_pct = ((current - baseline) / baseline) * 100`
 4. Classify:
    - **Regression**: metric increased by more than `THRESHOLD`% (for time metrics) or decreased by more than `THRESHOLD`% (for recall/quality metrics)
@@ -168,6 +168,10 @@ Based on comparison results:
 - If `COMPARE_ONLY` is set: print a warning that no baseline exists and exit without saving
 - Otherwise: print `BENCH-CHECK — initial baseline saved` and save current results as baseline
 
+### Save-baseline with existing baseline (`--save-baseline`)
+- Print: `BENCH-CHECK — baseline overwritten (previous: <old gitRef>, new: <new gitRef>)`
+- Save current results as the new baseline (overwrite existing)
+
 ## Phase 5 — Save Baseline
 
 When saving (initial run, `--save-baseline`, or passed comparison):
@@ -192,8 +196,7 @@ This creates a running log of benchmark results over time.
 
 After writing both files, commit the baseline so it is a shared reference point:
 ```bash
-git add generated/bench-check/baseline.json generated/bench-check/history.ndjson
-git diff --cached --quiet || git commit -m "chore: update bench-check baseline (<gitRef>)"
+git diff --quiet generated/bench-check/baseline.json generated/bench-check/history.ndjson || git commit generated/bench-check/baseline.json generated/bench-check/history.ndjson -m "chore: update bench-check baseline (<gitRef>)"
 ```
 
 ## Phase 6 — Report
