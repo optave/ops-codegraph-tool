@@ -179,18 +179,25 @@ Read `.codegraph/titan/arch-snapshot.json` if it exists (created by `/titan-run`
 ### Capture current state
 
 ```bash
-codegraph communities -T --json > /tmp/titan-arch-current-communities.json
-codegraph structure --depth 2 --json > /tmp/titan-arch-current-structure.json
-codegraph communities --drift -T --json > /tmp/titan-arch-current-drift.json
+TITAN_TMP_ID="$(date +%s)-$$"
+codegraph communities -T --json > /tmp/titan-arch-${TITAN_TMP_ID}-current-communities.json
+codegraph structure --depth 2 --json > /tmp/titan-arch-${TITAN_TMP_ID}-current-structure.json
+codegraph communities --drift -T --json > /tmp/titan-arch-${TITAN_TMP_ID}-current-drift.json
 ```
 
 ### Compare
 
 **A1. Community stability:**
-Compare community assignments between snapshot and current. For each symbol that **moved** to a different community:
-- If the symbol was the target of this forge phase → **OK** (expected)
-- If the symbol was NOT touched in the diff → **WARN**: "Symbol `<name>` shifted from community <X> to <Y> as a side effect"
-- If > 5 untouched symbols shifted communities → **FAIL**: "Significant community restructuring detected — <N> symbols shifted communities. This change may have unintended architectural impact."
+Use the drift output (which uses content-based matching, not raw IDs, to track community movements across runs):
+
+```bash
+# Compare current drift report against snapshot drift baseline
+# New drift warnings not present in arch-snapshot.json → side-effect restructuring
+```
+
+Read `.codegraph/titan/arch-snapshot.json → drift` (the pre-forge drift baseline) and compare against `/tmp/titan-arch-${TITAN_TMP_ID}-current-drift.json`:
+- For each **new** drift warning in current that was NOT present in the snapshot: if the drifted symbol was NOT touched in the diff → **WARN**: "Symbol `<name>` drifted community as a side effect"
+- If > 5 untouched symbols appear in new drift warnings → **FAIL**: "Significant community restructuring detected — <N> symbols drifted communities. This change may have unintended architectural impact."
 
 **A2. Dependency direction between domains:**
 From `GLOBAL_ARCH.md`, extract the expected dependency direction between domains (e.g., "presentation depends on features, not the reverse").
@@ -211,6 +218,14 @@ Compare directory cohesion scores from `structure`:
 Compare drift warnings between snapshot and current:
 - New drift warning not in snapshot → **WARN** with details
 - Drift warning resolved → note as positive
+
+### Cleanup
+
+```bash
+rm -f /tmp/titan-arch-${TITAN_TMP_ID}-current-communities.json \
+      /tmp/titan-arch-${TITAN_TMP_ID}-current-structure.json \
+      /tmp/titan-arch-${TITAN_TMP_ID}-current-drift.json
+```
 
 ### Verdict integration
 
@@ -278,7 +293,7 @@ Aggregate all checks:
 
 > "GATE FAIL: [reason]. Graph restored, changes unstaged but preserved. Fix and re-stage."
 
-For structural-only failures (Steps 1-3, 5-7), do NOT auto-rollback — report and let user decide.
+For structural-only failures (Steps 1-3, 6-8), do NOT auto-rollback — report and let user decide.
 
 ### Snapshot cleanup on pipeline completion
 
@@ -347,15 +362,23 @@ GATE WARN — review before committing
   - Architecture: directory src/domain/ cohesion dropped 0.6 → 0.45
 ```
 
-**FAIL:**
+**FAIL (test/lint/build failures — rollback triggered):**
 ```
 GATE FAIL — changes unstaged, graph restored
   Failures:
   - Tests: 2 suites failed
-  - Semantic: removed export `parseConfig` still imported by 3 files
-  - Architecture: new upward dependency presentation/ → domain/
   - New cycle: parseConfig → loadConfig → parseConfig
   Fix issues, re-stage, re-run /titan-gate
+```
+
+**FAIL (structural/semantic failures — no rollback):**
+```
+GATE FAIL — changes preserved for review — manual unstage if needed
+  Failures:
+  - Semantic: removed export `parseConfig` still imported by 3 files
+  - Architecture: new upward dependency presentation/ → domain/
+  Staged changes are intact. Fix the issues above, or manually run `git reset HEAD` to unstage.
+  Re-stage and re-run /titan-gate when ready.
 ```
 
 ---
