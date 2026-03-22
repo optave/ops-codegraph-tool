@@ -568,6 +568,7 @@ export async function parseFilesAuto(
             extracted = wasmExtractSymbols(parsers, filePath, code);
             if (extracted?.symbols?.typeMap) {
               const symbols = result.get(relPath);
+              if (!symbols) continue;
               symbols.typeMap =
                 extracted.symbols.typeMap instanceof Map
                   ? extracted.symbols.typeMap
