@@ -120,28 +120,35 @@ function exportsFileImpl(
     debug(`exported column not available, using fallback: ${(e as Error).message}`);
   }
 
+  const exportedNodesStmt = db.prepare(
+    "SELECT * FROM nodes WHERE file = ? AND kind != 'file' AND exported = 1 ORDER BY line",
+  );
+  const consumersStmt = db.prepare(
+    `SELECT n.name, n.file, n.line FROM edges e JOIN nodes n ON e.source_id = n.id
+         WHERE e.target_id = ? AND e.kind = 'calls'`,
+  );
+  const reexportsFromStmt = db.prepare(
+    `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.source_id = n.id
+       WHERE e.target_id = ? AND e.kind = 'reexports'`,
+  );
+  const reexportsToStmt = db.prepare(
+    `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.target_id = n.id
+       WHERE e.source_id = ? AND e.kind = 'reexports'`,
+  );
+
   return fileNodes.map((fn) => {
     const symbols = findNodesByFile(db, fn.file) as NodeRow[];
 
     let exported: NodeRow[];
     if (hasExportedCol) {
       // Use the exported column populated during build
-      exported = db
-        .prepare(
-          "SELECT * FROM nodes WHERE file = ? AND kind != 'file' AND exported = 1 ORDER BY line",
-        )
-        .all(fn.file) as NodeRow[];
+      exported = exportedNodesStmt.all(fn.file) as NodeRow[];
     } else {
       // Fallback: symbols that have incoming calls from other files
       const exportedIds = findCrossFileCallTargets(db, fn.file) as Set<number>;
       exported = symbols.filter((s) => exportedIds.has(s.id));
     }
     const internalCount = symbols.length - exported.length;
-
-    const consumersStmt = db.prepare(
-      `SELECT n.name, n.file, n.line FROM edges e JOIN nodes n ON e.source_id = n.id
-           WHERE e.target_id = ? AND e.kind = 'calls'`,
-    );
 
     const buildSymbolResult = (s: NodeRow, fileLines: string[] | null) => {
       let consumers = consumersStmt.all(s.id) as Array<{
@@ -169,33 +176,19 @@ function exportsFileImpl(
     const totalUnused = results.filter((r) => r.consumerCount === 0).length;
 
     // Files that re-export this file (barrel -> this file)
-    const reexports = (
-      db
-        .prepare(
-          `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.source_id = n.id
-         WHERE e.target_id = ? AND e.kind = 'reexports'`,
-        )
-        .all(fn.id) as Array<{ file: string }>
-    ).map((r) => ({ file: r.file }));
+    const reexports = (reexportsFromStmt.all(fn.id) as Array<{ file: string }>).map((r) => ({
+      file: r.file,
+    }));
 
     // For barrel files: gather symbols re-exported from target modules
-    const reexportTargets = db
-      .prepare(
-        `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.target_id = n.id
-         WHERE e.source_id = ? AND e.kind = 'reexports'`,
-      )
-      .all(fn.id) as Array<{ file: string }>;
+    const reexportTargets = reexportsToStmt.all(fn.id) as Array<{ file: string }>;
 
     const reexportedSymbols: Array<ReturnType<typeof buildSymbolResult> & { originFile: string }> =
       [];
     for (const reexTarget of reexportTargets) {
       let targetExported: NodeRow[];
       if (hasExportedCol) {
-        targetExported = db
-          .prepare(
-            "SELECT * FROM nodes WHERE file = ? AND kind != 'file' AND exported = 1 ORDER BY line",
-          )
-          .all(reexTarget.file) as NodeRow[];
+        targetExported = exportedNodesStmt.all(reexTarget.file) as NodeRow[];
       } else {
         // Fallback: same heuristic as direct exports — symbols called from other files
         const targetSymbols = findNodesByFile(db, reexTarget.file) as NodeRow[];
