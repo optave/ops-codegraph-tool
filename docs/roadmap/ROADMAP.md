@@ -18,7 +18,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
 | [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names, CLI composability | **Complete** (v3.1.5) |
 | [**4**](#phase-4--resolution-accuracy) | Resolution Accuracy | Dead role sub-categories, receiver type tracking, interface/trait implementation edges, resolution precision/recall benchmarks, `package.json` exports field, monorepo workspace resolution | **In Progress** (5 of 6 complete) |
-| [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration, supply-chain security, CI coverage gates | **In Progress** (2 of 7 complete) |
+| [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | **In Progress** (32 of 269 src modules migrated; 14 stale `.js` to delete) |
 | [**6**](#phase-6--native-analysis-acceleration) | Native Analysis Acceleration | Move JS-only build phases (AST nodes, CFG, dataflow, insert nodes, structure, roles, complexity) to Rust; fix incremental rebuild data loss on native; sub-100ms 1-file rebuilds | Planned |
 | [**7**](#phase-7--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system, DX & onboarding, confidence annotations, shell completion | Planned |
 | [**8**](#phase-8--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
@@ -1080,11 +1080,15 @@ npm workspaces (`package.json` `workspaces`), `pnpm-workspace.yaml`, and `lerna.
 
 ## Phase 5 -- TypeScript Migration
 
-> **Status:** In Progress
+> **Status:** In Progress — 32 of 269 source modules migrated (~12%), plus 14 stale `.js` counterparts to delete
 
 **Goal:** Migrate the codebase from plain JavaScript to TypeScript, leveraging the clean module boundaries established in Phase 3. Incremental module-by-module migration starting from leaf modules inward.
 
 **Why after Phase 4:** The resolution accuracy work (Phase 4) operates on the existing JS codebase and produces immediate accuracy gains. TypeScript migration builds on Phase 3's clean module boundaries to add type safety across the entire codebase. Every subsequent phase benefits from types: MCP schema auto-generation, API contracts, refactoring safety. The Phase 4 resolution improvements (receiver tracking, interface edges) establish the resolution model that TypeScript types will formalize.
+
+**Note:** File paths below reflect the post-Phase 3 directory structure. Migration has progressed non-linearly — some orchestration modules were migrated before all leaf/core modules were complete. `.js` and `.ts` coexist during migration (`allowJs: true` in tsconfig). 14 already-migrated modules still have stale `.js` counterparts that need deletion (see cleanup note at the end of this section).
+
+**File counts (as of March 2026):** 32 `.ts` modules in `src/`, 237 `.js`-only files needing migration, 14 stale `.js` duplicates of already-migrated `.ts` files needing deletion. Remaining by step: 5.3 = 8, 5.4 = 54, 5.5 = 175 (total = 237).
 
 ### ~~5.1 -- Project Setup~~ ✅
 
@@ -1108,50 +1112,106 @@ Comprehensive TypeScript type definitions for the entire domain model — symbol
 
 **New file:** `src/types.ts` ([#516](https://github.com/optave/codegraph/pull/516))
 
-### 5.3 -- Leaf Module Migration
+### 5.3 -- Leaf Module Migration (In Progress)
 
-Migrate modules with no internal dependencies first:
+Migrate modules with no or minimal internal dependencies.
+
+**Migrated:**
 
 | Module | Notes |
 |--------|-------|
-| `src/errors.ts` | Domain error hierarchy (Phase 3.7) |
-| `src/logger.ts` | Minimal, no internal deps |
-| `src/constants.ts` | Pure data |
-| `src/config.ts` | Config types derived from `.codegraphrc.json` schema |
-| `src/db/connection.ts` | SQLite connection wrapper |
-| `src/db/migrations.ts` | Schema version management |
-| `src/formatters/*.ts` | Pure input->string transforms |
-| `src/paginate.ts` | Generic pagination helpers |
+| `src/shared/errors.ts` | Domain error hierarchy (Phase 3.7) |
+| `src/shared/kinds.ts` | Symbol and edge kind constants |
+| `src/shared/normalize.ts` | Symbol name normalization |
+| `src/shared/paginate.ts` | Generic pagination helpers |
+| `src/infrastructure/logger.ts` | Structured logging |
+| `src/infrastructure/result-formatter.ts` | JSON/NDJSON output formatting |
+| `src/infrastructure/test-filter.ts` | Test file detection heuristics |
+| `src/presentation/colors.ts` | ANSI color constants |
+| `src/presentation/table.ts` | CLI table formatting |
 
-Allow `.js` and `.ts` to coexist during migration (`allowJs: true` in tsconfig).
+**Remaining:**
 
-### 5.4 -- Core Module Migration
+| Module | Notes |
+|--------|-------|
+| `src/shared/constants.js` | `EXTENSIONS`, `IGNORE_DIRS` constants |
+| `src/shared/file-utils.js` | File path utilities |
+| `src/shared/generators.js` | Generator/async iterator helpers |
+| `src/shared/hierarchy.js` | Hierarchy traversal helpers |
+| `src/infrastructure/config.js` | Config loading, env overrides, secret resolution |
+| `src/infrastructure/native.js` | Native napi-rs addon loader with WASM fallback |
+| `src/infrastructure/registry.js` | Global repo registry for multi-repo MCP |
+| `src/infrastructure/update-check.js` | npm update availability check |
 
-Migrate modules that implement Phase 3 interfaces:
+### 5.4 -- Core Module Migration (In Progress)
+
+Migrate modules that implement domain logic and Phase 3 interfaces.
+
+**Migrated:**
 
 | Module | Key types |
 |--------|-----------|
-| `src/db/repository.ts` | `Repository` interface, all prepared statements typed |
-| `src/parser/engine.ts` | `Engine` interface, native/WASM dispatch |
-| `src/parser/registry.ts` | `LanguageEntry` type, extension mapping |
-| `src/parser/tree-utils.ts` | Tree-sitter node helpers |
-| `src/parser/base-extractor.ts` | `Extractor` interface, handler map |
-| `src/parser/extractors/*.ts` | Per-language extractors |
-| `src/analysis/*.ts` | Typed analysis results (impact scores, call chains) |
-| `src/resolve.ts` | Import resolution with confidence types |
+| `src/graph/model.ts` | `CodeGraph` class, unified graph model |
+| `src/graph/algorithms/bfs.ts` | Breadth-first search traversal |
+| `src/graph/algorithms/centrality.ts` | Centrality metrics (degree, betweenness) |
+| `src/graph/algorithms/shortest-path.ts` | Shortest path between symbols |
+| `src/graph/algorithms/tarjan.ts` | Tarjan SCC (cycle detection) |
+| `src/graph/algorithms/leiden/rng.ts` | Random number generator for Leiden |
+| `src/graph/classifiers/risk.ts` | Risk scoring classifier |
+| `src/graph/classifiers/roles.ts` | Symbol role classifier |
+| `src/domain/graph/resolve.ts` | Import resolution with confidence types |
 
-### 5.5 -- Orchestration & Public API Migration
+**Remaining (54 files):**
 
-Migrate top-level orchestration and entry points:
+| Module | Files | Key types |
+|--------|-------|-----------|
+| `src/db/` | 18 | `Repository` interface, SQLite connection, migrations, query builder, all repository modules |
+| `src/domain/parser.js` | 1 | `Engine` interface, tree-sitter WASM wrapper, `LANGUAGE_REGISTRY` |
+| `src/domain/queries.js` | 1 | Query functions: symbol search, file deps, impact analysis, diff-impact |
+| `src/domain/analysis/` | 9 | Analysis results (context, impact, dependencies, exports, roles, etc.) |
+| `src/extractors/` | 11 | Per-language extractors (JS, TS, Go, Rust, Java, C#, PHP, Ruby, Python, HCL) + helpers + barrel |
+| `src/graph/algorithms/` | 8 | Louvain, Leiden (6 files: adapter, CPM, index, modularity, optimiser, partition), algorithms barrel |
+| `src/graph/builders/` | 4 | Dependency, structure, temporal graph builders + barrel |
+| `src/graph/classifiers/index.js` + `src/graph/index.js` | 2 | Barrel exports |
+
+### 5.5 -- Orchestration & Public API Migration (In Progress)
+
+Migrate top-level orchestration, features, and entry points.
+
+**Migrated:**
 
 | Module | Notes |
 |--------|-------|
-| `src/builder.ts` | Pipeline stages with typed `PipelineStage` |
-| `src/watcher.ts` | File system events + pipeline |
-| `src/embeddings/*.ts` | Vector store interface, model registry |
-| `src/mcp/*.ts` | Tool schemas, typed handlers |
-| `src/cli/*.ts` | Command objects with typed options |
-| `src/index.ts` | Curated public API with proper export types |
+| `src/domain/graph/builder.ts` | Graph build orchestrator |
+| `src/domain/graph/builder/context.ts` | Build context (options, state) |
+| `src/domain/graph/builder/helpers.ts` | Builder utility functions |
+| `src/domain/graph/builder/pipeline.ts` | Pipeline stage definitions |
+| `src/domain/graph/watcher.ts` | File system events + rebuild triggers |
+| `src/domain/search/generator.ts` | Embedding vector generation |
+| `src/domain/search/index.ts` | Search module entry point |
+| `src/domain/search/models.ts` | Model management |
+| `src/mcp/index.ts` | MCP server entry point |
+| `src/mcp/middleware.ts` | MCP middleware layer |
+| `src/mcp/server.ts` | MCP server implementation |
+| `src/mcp/tool-registry.ts` | Dynamic tool list builder |
+| `src/features/export.ts` | Graph export orchestration |
+
+**Remaining (175 files):**
+
+| Module | Files | Notes |
+|--------|-------|-------|
+| `src/cli.js` + `src/cli/` | 48 | Commander CLI entry point, 43 command handlers (`commands/`), barrel, shared CLI utilities (`shared/`: open-graph, options, output) |
+| `src/index.js` | 1 | Curated public API exports |
+| `src/features/` | 20 | ast, audit, batch, boundaries, branch-compare, cfg, check, cochange, communities, complexity, dataflow, flow, graph-enrichment, manifesto, owners, sequence, snapshot, structure, triage, `shared/find-nodes` |
+| `src/presentation/` | 28 | All presentation formatters (14 files), `queries-cli/` (7 files), result-formatter, sequence-renderer, viewer, query, export, flow, brief |
+| `src/mcp/tools/` | 36 | Individual MCP tool handlers + barrel |
+| `src/domain/graph/builder/stages/` | 9 | Build pipeline stages (collect-files, parse-files, resolve-imports, etc.) |
+| `src/domain/graph/builder/incremental.js` | 1 | Incremental rebuild logic |
+| `src/domain/graph/` | 3 | `cycles.js`, `journal.js`, `change-journal.js` |
+| `src/domain/search/` | 11 | Search subsystem: `search/` (6 files), `stores/` (2 files), `strategies/` (3 files) |
+| `src/ast-analysis/` | 18 | AST analysis framework, visitors, language-specific rules |
+
+**JS counterpart cleanup (14 files to delete):** The following `.js` files are stale counterparts of already-migrated `.ts` files and should be deleted once all consumers import from `.ts`: `domain/graph/builder.js`, `domain/graph/builder/{context,helpers,pipeline}.js`, `domain/graph/resolve.js`, `domain/graph/watcher.js`, `domain/search/{generator,index,models}.js`, `features/export.js`, `mcp/{index,middleware,server,tool-registry}.js`
 
 ### 5.6 -- Test Migration
 
@@ -1162,7 +1222,7 @@ Migrate top-level orchestration and entry points:
 
 **Verification:** All existing tests pass. `tsc --noEmit` succeeds with zero errors. No `any` escape hatches except at FFI boundaries (napi-rs addon, tree-sitter WASM).
 
-**Affected files:** All `src/**/*.js` -> `src/**/*.ts`, all `tests/**/*.js` -> `tests/**/*.ts`, `package.json`, `biome.json`
+**Affected files:** All remaining `src/**/*.js` → `src/**/*.ts`, all `tests/**/*.js` → `tests/**/*.ts`, `package.json`, `biome.json`
 
 ---
 
