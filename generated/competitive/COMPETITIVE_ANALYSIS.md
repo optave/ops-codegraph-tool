@@ -35,8 +35,8 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 20 | 3.5 | [nahisaho/CodeGraphMCPServer](https://github.com/nahisaho/CodeGraphMCPServer) | 7 | Python | MIT | GraphRAG with Louvain community detection, 16 languages, 14 MCP tools, 334 tests |
 | 21 | 3.5 | [dundalek/stratify](https://github.com/dundalek/stratify) | 102 | Clojure | MIT | Multi-backend extraction (LSP/SCIP/Joern), 10 languages, DGML/CodeCharta output, architecture linting |
 | 22 | 3.5 | [kraklabs/cie](https://github.com/kraklabs/cie) | 9 | Go | AGPL-3.0 | Code Intelligence Engine: 20+ MCP tools, tree-sitter, semantic search (Ollama), Homebrew, single Go binary |
-| 23 | 3.3 | [anrgct/autodev-codebase](https://github.com/anrgct/autodev-codebase) | 111 | TypeScript | None | 40+ languages, 7 embedding providers, Cytoscape.js visualization, LLM reranking. **Stagnant since Jan 2026** |
-| 24 | 3.4 | [Durafen/Claude-code-memory](https://github.com/Durafen/Claude-code-memory) | 72 | Python | None | Memory Guard quality gate, persistent codebase memory, Voyage AI + Qdrant |
+| 23 | 3.4 | [Durafen/Claude-code-memory](https://github.com/Durafen/Claude-code-memory) | 72 | Python | None | Memory Guard quality gate, persistent codebase memory, Voyage AI + Qdrant |
+| 24 | 3.3 | [anrgct/autodev-codebase](https://github.com/anrgct/autodev-codebase) | 111 | TypeScript | None | 40+ languages, 7 embedding providers, Cytoscape.js visualization, LLM reranking. **Stagnant since Jan 2026** |
 | 25 | 3.3 | [NeuralRays/codexray](https://github.com/NeuralRays/codexray) | 2 | TypeScript | MIT | 16 MCP tools, TF-IDF semantic search (~50MB), dead code, complexity, path finding |
 | 26 | 3.3 | [DucPhamNgoc08/CodeVisualizer](https://github.com/DucPhamNgoc08/CodeVisualizer) | 475 | TypeScript | MIT | VS Code extension, tree-sitter WASM, flowcharts + dependency graphs, 5 AI providers, 9 themes |
 | 27 | 3.3 | [helabenkhalfallah/code-health-meter](https://github.com/helabenkhalfallah/code-health-meter) | 34 | JavaScript | MIT | Formal health metrics (MI, CC, Louvain modularity), published in ACM TOSEM 2025 |
