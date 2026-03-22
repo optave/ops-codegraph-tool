@@ -184,9 +184,9 @@ All skills enforce worktree isolation as their first step. If invoked from the m
 | `codegraph stats` | RECON | Baseline metrics |
 | `codegraph triage` | RECON, GAUNTLET (fallback) | Ranked priority queue |
 | `codegraph map` | RECON | High-traffic files |
-| `codegraph communities` | RECON | Module boundaries and drift |
+| `codegraph communities` | RECON, GATE | Module boundaries and drift |
 | `codegraph roles` | RECON, GAUNTLET | Core/dead/entry symbol classification |
-| `codegraph structure` | RECON | Directory cohesion |
+| `codegraph structure` | RECON, GATE | Directory cohesion |
 | `codegraph complexity --health` | RECON, GAUNTLET, GATE | Full metrics: cognitive, cyclomatic, nesting, Halstead, MI |
 | `codegraph complexity --above-threshold` | RECON | Only functions exceeding thresholds |
 | `codegraph batch complexity` | GAUNTLET | Multi-target complexity in one call |
@@ -200,7 +200,7 @@ All skills enforce worktree isolation as their first step. If invoked from the m
 | `codegraph co-change` | GAUNTLET, SYNC | Git history coupling |
 | `codegraph path` | SYNC | Dependency paths between targets |
 | `codegraph cycles` | SYNC, GATE | Circular dependency detection |
-| `codegraph deps` | SYNC | File-level dependency map |
+| `codegraph deps` | SYNC, GATE | File-level dependency map |
 | `codegraph context` | SYNC, FORGE | Full function context |
 | `codegraph owners` | SYNC | CODEOWNERS mapping for cross-team coordination |
 | `codegraph branch-compare` | SYNC, GATE | Structural diff between refs |

@@ -571,7 +571,7 @@ Artifacts:
 - **Mandatory pause before forge** unless `--yes` is set. Analysis is safe; code changes deserve human review.
 - **Stall detection is strict for forge** (2 retries) and looser for gauntlet (3 retries) since gauntlet is more likely to hit context limits legitimately.
 - **Respect --start-from.** Skip phases before the specified starting point, but verify their artifacts exist AND pass validation.
-- **Pass --yes through to forge** if the user provided it, so forge doesn't prompt for confirmation on each phase.
+- **Pass --yes through to forge** if the user provided it, so forge skips its per-phase confirmation prompt. Within the orchestrator, `--yes` also skips the pre-pipeline, forge checkpoint, and resume prompts.
 
 ## Self-Improvement
 
