@@ -38,13 +38,18 @@ Audit the test suite for flaky tests, dead/trivial tests, coverage gaps on recen
 Run the full test suite `FLAKY_RUNS` times and track per-test pass/fail:
 
 ```bash
-mkdir -p /tmp/test-health-runs
+RUN_DIR=$(mktemp -d /tmp/test-health-XXXXXX)
 for i in $(seq 1 $FLAKY_RUNS); do
-  npx vitest run --reporter=json > /tmp/test-health-runs/run-$i.json 2>/tmp/test-health-runs/run-$i.err
+  npx vitest run --reporter=json > "$RUN_DIR/run-$i.json" 2>"$RUN_DIR/run-$i.err"
 done
 ```
 
-For each run, parse the JSON reporter output from `/tmp/test-health-runs/run-$i.json` to get per-test results.
+For each run, parse the JSON reporter output from `$RUN_DIR/run-$i.json` to get per-test results.
+
+After all runs are parsed and analysis is complete, clean up the temporary directory:
+```bash
+rm -rf "$RUN_DIR"
+```
 
 ### Analysis
 
