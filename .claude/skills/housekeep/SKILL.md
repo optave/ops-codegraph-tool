@@ -157,12 +157,17 @@ This removes local refs to branches that no longer exist on the remote.
 
 **If `DRY_RUN`:** List branches that would be deleted.
 
-**Otherwise:** Delete merged branches:
+**Otherwise:** For each merged branch, ask the user for confirmation before deleting:
+```
+Delete merged branch '<branch>'? (y/n)
+```
+If confirmed, delete the branch:
 ```bash
 git branch -d <branch>  # safe delete, only if fully merged
 ```
 
 > **Never use `git branch -D`** (force delete). If `-d` fails, the branch has unmerged work — skip it.
+> **Always confirm before deleting** — consistent with worktree removal in Phase 1c.
 
 ## Phase 5 — Update Codegraph
 
