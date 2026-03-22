@@ -193,7 +193,12 @@ export function extractGoSymbols(tree, _filePath) {
   }
 
   walkGoNode(tree.rootNode);
-  return { definitions, calls, imports, classes, exports };
+
+  // Extract variable-to-type assignments for receiver type tracking
+  const typeAssignments = [];
+  extractGoTypeAssignments(tree.rootNode, typeAssignments);
+
+  return { definitions, calls, imports, classes, exports, typeAssignments };
 }
 
 // ── Child extraction helpers ────────────────────────────────────────────────
@@ -236,4 +241,131 @@ function extractStructFields(structTypeNode) {
     }
   }
   return fields;
+}
+
+/**
+ * Extract variable-to-type assignments from Go AST.
+ *
+ * Patterns:
+ *   1. x := SomeStruct{...}        → confidence 1.0 (composite literal)
+ *   2. var x SomeType               → confidence 0.9 (var declaration with type)
+ *   3. x := pkg.NewFoo(...)         → confidence 0.7 (factory function)
+ */
+function extractGoTypeAssignments(node, typeAssignments) {
+  const t = node.type;
+
+  // short_var_declaration: x := expr
+  if (t === 'short_var_declaration') {
+    const left = node.childForFieldName('left');
+    const right = node.childForFieldName('right');
+    if (left && right) {
+      // Find the first identifier on the left side
+      const varNode = left.type === 'expression_list' ? left.child(0) : left;
+      if (varNode && varNode.type === 'identifier') {
+        const varName = varNode.text;
+        const rhs = right.type === 'expression_list' ? right.child(0) : right;
+        if (rhs) {
+          // Pattern 1: x := SomeStruct{...} (composite literal)
+          if (rhs.type === 'composite_literal') {
+            const typeNode = rhs.childForFieldName('type');
+            if (typeNode) {
+              const typeName =
+                typeNode.type === 'pointer_type'
+                  ? typeNode.text.replace(/^\*/, '')
+                  : typeNode.type === 'type_identifier' || typeNode.type === 'identifier'
+                    ? typeNode.text
+                    : null;
+              if (typeName) {
+                typeAssignments.push({
+                  variable: varName,
+                  type: typeName,
+                  line: node.startPosition.row + 1,
+                  confidence: 1.0,
+                });
+              }
+            }
+          }
+          // Pattern 1b: x := &SomeStruct{...} (address-of composite literal)
+          if (rhs.type === 'unary_expression') {
+            const operand = rhs.childForFieldName('operand');
+            if (operand && operand.type === 'composite_literal') {
+              const typeNode = operand.childForFieldName('type');
+              if (typeNode) {
+                const typeName =
+                  typeNode.type === 'type_identifier' || typeNode.type === 'identifier'
+                    ? typeNode.text
+                    : null;
+                if (typeName) {
+                  typeAssignments.push({
+                    variable: varName,
+                    type: typeName,
+                    line: node.startPosition.row + 1,
+                    confidence: 1.0,
+                  });
+                }
+              }
+            }
+          }
+          // Pattern 3: x := pkg.NewFoo(...) or NewFoo(...)
+          if (rhs.type === 'call_expression') {
+            const fn = rhs.childForFieldName('function');
+            if (fn && fn.type === 'selector_expression') {
+              const field = fn.childForFieldName('field');
+              if (field?.text.startsWith('New')) {
+                const typeName = field.text.slice(3); // NewFoo → Foo
+                if (typeName) {
+                  typeAssignments.push({
+                    variable: varName,
+                    type: typeName,
+                    line: node.startPosition.row + 1,
+                    confidence: 0.7,
+                  });
+                }
+              }
+            } else if (fn && fn.type === 'identifier' && fn.text.startsWith('New')) {
+              const typeName = fn.text.slice(3);
+              if (typeName) {
+                typeAssignments.push({
+                  variable: varName,
+                  type: typeName,
+                  line: node.startPosition.row + 1,
+                  confidence: 0.7,
+                });
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // var_declaration: var x SomeType
+  if (t === 'var_declaration') {
+    for (let i = 0; i < node.childCount; i++) {
+      const spec = node.child(i);
+      if (!spec || spec.type !== 'var_spec') continue;
+      const nameNode = spec.childForFieldName('name');
+      const typeNode = spec.childForFieldName('type');
+      if (nameNode && typeNode) {
+        const typeName =
+          typeNode.type === 'pointer_type'
+            ? typeNode.text.replace(/^\*/, '')
+            : typeNode.type === 'type_identifier' || typeNode.type === 'identifier'
+              ? typeNode.text
+              : null;
+        if (typeName) {
+          typeAssignments.push({
+            variable: nameNode.text,
+            type: typeName,
+            line: spec.startPosition.row + 1,
+            confidence: 0.9,
+          });
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < node.childCount; i++) {
+    extractGoTypeAssignments(node.child(i), typeAssignments);
+  }
 }

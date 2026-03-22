@@ -3,8 +3,9 @@
 /**
  * Benchmark runner — measures codegraph performance on itself (dogfooding).
  *
- * Runs both native (Rust) and WASM engines, outputs JSON to stdout
- * with raw and per-file normalized metrics for each.
+ * Each engine (native / WASM) runs in a forked subprocess so that a segfault
+ * in the native addon only kills the child — the parent survives and collects
+ * partial results from whichever engines succeeded.
  *
  * Usage: node scripts/benchmark.js
  */
@@ -15,24 +16,72 @@ import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
+import { isWorker, workerEngine, forkEngines } from './lib/fork-engine.js';
+
+// ── Parent process: fork one child per engine, assemble final output ─────
+if (!isWorker()) {
+	const { version } = await resolveBenchmarkSource();
+	const { wasm, native } = await forkEngines(import.meta.url, process.argv.slice(2));
+
+	const primary = wasm || native;
+	if (!primary) {
+		console.error('Error: Both engines failed. No results to report.');
+		process.exit(1);
+	}
+
+	const result = {
+		version,
+		date: new Date().toISOString().slice(0, 10),
+		files: primary.files,
+		wasm: wasm
+			? {
+					buildTimeMs: wasm.buildTimeMs,
+					queryTimeMs: wasm.queryTimeMs,
+					nodes: wasm.nodes,
+					edges: wasm.edges,
+					dbSizeBytes: wasm.dbSizeBytes,
+					perFile: wasm.perFile,
+					noopRebuildMs: wasm.noopRebuildMs,
+					oneFileRebuildMs: wasm.oneFileRebuildMs,
+					oneFilePhases: wasm.oneFilePhases,
+					queries: wasm.queries,
+					phases: wasm.phases,
+				}
+			: null,
+		native: native
+			? {
+					buildTimeMs: native.buildTimeMs,
+					queryTimeMs: native.queryTimeMs,
+					nodes: native.nodes,
+					edges: native.edges,
+					dbSizeBytes: native.dbSizeBytes,
+					perFile: native.perFile,
+					noopRebuildMs: native.noopRebuildMs,
+					oneFileRebuildMs: native.oneFileRebuildMs,
+					oneFilePhases: native.oneFilePhases,
+					queries: native.queries,
+					phases: native.phases,
+				}
+			: null,
+	};
+
+	console.log(JSON.stringify(result, null, 2));
+	process.exit(0);
+}
+
+// ── Worker process: benchmark a single engine, write JSON to stdout ──────
+const engine = workerEngine();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
-const { version, srcDir, cleanup } = await resolveBenchmarkSource();
+const { srcDir, cleanup } = await resolveBenchmarkSource();
 
 const dbPath = path.join(root, '.codegraph', 'graph.db');
 
-// Import programmatic API (use file:// URLs for Windows compatibility)
 const { buildGraph } = await import(srcImport(srcDir, 'builder.js'));
 const { fnDepsData, fnImpactData, pathData, rolesData, statsData } = await import(
 	srcImport(srcDir, 'queries.js')
-);
-const { isNativeAvailable } = await import(
-	srcImport(srcDir, 'native.js')
-);
-const { isWasmAvailable } = await import(
-	srcImport(srcDir, 'parser.js')
 );
 
 const INCREMENTAL_RUNS = 3;
@@ -49,9 +98,6 @@ function round1(n) {
 	return Math.round(n * 10) / 10;
 }
 
-/**
- * Pick hub (most-connected) and leaf (least-connected) non-test symbols from the DB.
- */
 function selectTargets() {
 	const db = new Database(dbPath, { readonly: true });
 	const rows = db
@@ -67,7 +113,6 @@ function selectTargets() {
 	db.close();
 
 	if (rows.length === 0) return { hub: 'buildGraph', leaf: 'median' };
-
 	return { hub: rows[0].name, leaf: rows[rows.length - 1].name };
 }
 
@@ -75,175 +120,99 @@ function selectTargets() {
 const origLog = console.log;
 console.log = (...args) => console.error(...args);
 
-async function benchmarkEngine(engine) {
-	// Clean DB for a full build
-	if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
+// Clean DB for a full build
+if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
 
-	const buildStart = performance.now();
-	const buildResult = await buildGraph(root, { engine, incremental: false });
-	const buildTimeMs = performance.now() - buildStart;
+const buildStart = performance.now();
+const buildResult = await buildGraph(root, { engine, incremental: false });
+const buildTimeMs = performance.now() - buildStart;
 
-	const queryStart = performance.now();
-	fnDepsData('buildGraph', dbPath);
-	const queryTimeMs = performance.now() - queryStart;
+const queryStart = performance.now();
+fnDepsData('buildGraph', dbPath);
+const queryTimeMs = performance.now() - queryStart;
 
-	const stats = statsData(dbPath);
-	const totalFiles = stats.files.total;
-	const totalNodes = stats.nodes.total;
-	const totalEdges = stats.edges.total;
-	const dbSizeBytes = fs.statSync(dbPath).size;
+const stats = statsData(dbPath);
+const totalFiles = stats.files.total;
+const totalNodes = stats.nodes.total;
+const totalEdges = stats.edges.total;
+const dbSizeBytes = fs.statSync(dbPath).size;
 
-	// ── Incremental build tiers (reuse existing DB from full build) ─────
-	console.error(`  [${engine}] Benchmarking no-op rebuild...`);
-	const noopTimings = [];
+// ── Incremental build tiers ─────────────────────────────────────────
+console.error(`  [${engine}] Benchmarking no-op rebuild...`);
+const noopTimings = [];
+for (let i = 0; i < INCREMENTAL_RUNS; i++) {
+	const start = performance.now();
+	await buildGraph(root, { engine, incremental: true });
+	noopTimings.push(performance.now() - start);
+}
+const noopRebuildMs = Math.round(median(noopTimings));
+
+console.error(`  [${engine}] Benchmarking 1-file rebuild...`);
+const original = fs.readFileSync(PROBE_FILE, 'utf8');
+let oneFileRebuildMs;
+let oneFilePhases = null;
+try {
+	const oneFileRuns = [];
 	for (let i = 0; i < INCREMENTAL_RUNS; i++) {
+		fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`);
 		const start = performance.now();
-		await buildGraph(root, { engine, incremental: true });
-		noopTimings.push(performance.now() - start);
+		const res = await buildGraph(root, { engine, incremental: true });
+		oneFileRuns.push({ ms: performance.now() - start, phases: res?.phases || null });
 	}
-	const noopRebuildMs = Math.round(median(noopTimings));
-
-	console.error(`  [${engine}] Benchmarking 1-file rebuild...`);
-	const original = fs.readFileSync(PROBE_FILE, 'utf8');
-	let oneFileRebuildMs;
-	let oneFilePhases = null;
-	try {
-		const oneFileRuns = [];
-		for (let i = 0; i < INCREMENTAL_RUNS; i++) {
-			fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`);
-			const start = performance.now();
-			const res = await buildGraph(root, { engine, incremental: true });
-			oneFileRuns.push({ ms: performance.now() - start, phases: res?.phases || null });
-		}
-		oneFileRuns.sort((a, b) => a.ms - b.ms);
-		const medianRun = oneFileRuns[Math.floor(oneFileRuns.length / 2)];
-		oneFileRebuildMs = Math.round(medianRun.ms);
-		oneFilePhases = medianRun.phases;
-	} finally {
-		fs.writeFileSync(PROBE_FILE, original);
-		await buildGraph(root, { engine, incremental: true });
-	}
-
-	// ── Query benchmarks (median of QUERY_RUNS each) ────────────────────
-	console.error(`  [${engine}] Benchmarking queries...`);
-	const targets = selectTargets();
-	console.error(`    hub=${targets.hub}, leaf=${targets.leaf}`);
-
-	function benchQuery(fn, ...args) {
-		const timings = [];
-		for (let i = 0; i < QUERY_RUNS; i++) {
-			const start = performance.now();
-			fn(...args);
-			timings.push(performance.now() - start);
-		}
-		return round1(median(timings));
-	}
-
-	const queries = {
-		fnDepsMs: fnDepsData ? benchQuery(fnDepsData, targets.hub, dbPath, { depth: 3, noTests: true }) : null,
-		fnImpactMs: fnImpactData ? benchQuery(fnImpactData, targets.hub, dbPath, { depth: 3, noTests: true }) : null,
-		pathMs: pathData ? benchQuery(pathData, targets.hub, targets.leaf, dbPath, { noTests: true }) : null,
-		rolesMs: rolesData ? benchQuery(rolesData, dbPath, { noTests: true }) : null,
-	};
-
-	return {
-		buildTimeMs: Math.round(buildTimeMs),
-		queryTimeMs: Math.round(queryTimeMs * 10) / 10,
-		nodes: totalNodes,
-		edges: totalEdges,
-		files: totalFiles,
-		dbSizeBytes,
-		perFile: {
-			buildTimeMs: Math.round((buildTimeMs / totalFiles) * 10) / 10,
-			nodes: Math.round((totalNodes / totalFiles) * 10) / 10,
-			edges: Math.round((totalEdges / totalFiles) * 10) / 10,
-			dbSizeBytes: Math.round(dbSizeBytes / totalFiles),
-		},
-		noopRebuildMs,
-		oneFileRebuildMs,
-		oneFilePhases,
-		queries,
-		phases: buildResult?.phases || null,
-	};
+	oneFileRuns.sort((a, b) => a.ms - b.ms);
+	const medianRun = oneFileRuns[Math.floor(oneFileRuns.length / 2)];
+	oneFileRebuildMs = Math.round(medianRun.ms);
+	oneFilePhases = medianRun.phases;
+} finally {
+	fs.writeFileSync(PROBE_FILE, original);
+	await buildGraph(root, { engine, incremental: true });
 }
 
-// ── Run benchmarks ───────────────────────────────────────────────────────
-const hasWasm = isWasmAvailable();
-const hasNative = isNativeAvailable();
+// ── Query benchmarks ────────────────────────────────────────────────
+console.error(`  [${engine}] Benchmarking queries...`);
+const targets = selectTargets();
+console.error(`    hub=${targets.hub}, leaf=${targets.leaf}`);
 
-if (!hasWasm && !hasNative) {
-	console.error('Error: Neither WASM grammars nor native engine are available.');
-	console.error('Run "npm run build:wasm" to build WASM grammars, or install the native platform package.');
-	process.exit(1);
-}
-
-let wasm = null;
-if (hasWasm) {
-	try {
-		wasm = await benchmarkEngine('wasm');
-	} catch (err) {
-		console.error(`WASM benchmark failed: ${err?.message ?? String(err)}`);
+function benchQuery(fn, ...args) {
+	const timings = [];
+	for (let i = 0; i < QUERY_RUNS; i++) {
+		const start = performance.now();
+		fn(...args);
+		timings.push(performance.now() - start);
 	}
-} else {
-	console.error('WASM grammars not built — skipping WASM benchmark');
+	return round1(median(timings));
 }
 
-let native = null;
-if (hasNative) {
-	try {
-		native = await benchmarkEngine('native');
-	} catch (err) {
-		console.error(`Native benchmark failed: ${err?.message ?? String(err)}`);
-	}
-} else {
-	console.error('Native engine not available — skipping native benchmark');
-}
+const queries = {
+	fnDepsMs: fnDepsData ? benchQuery(fnDepsData, targets.hub, dbPath, { depth: 3, noTests: true }) : null,
+	fnImpactMs: fnImpactData ? benchQuery(fnImpactData, targets.hub, dbPath, { depth: 3, noTests: true }) : null,
+	pathMs: pathData ? benchQuery(pathData, targets.hub, targets.leaf, dbPath, { noTests: true }) : null,
+	rolesMs: rolesData ? benchQuery(rolesData, dbPath, { noTests: true }) : null,
+};
 
 // Restore console.log for JSON output
 console.log = origLog;
 
-const primary = wasm || native;
-if (!primary) {
-	console.error('Error: Both engines failed. No results to report.');
-	cleanup();
-	process.exit(1);
-}
-const result = {
-	version,
-	date: new Date().toISOString().slice(0, 10),
-	files: primary.files,
-	wasm: wasm
-		? {
-				buildTimeMs: wasm.buildTimeMs,
-				queryTimeMs: wasm.queryTimeMs,
-				nodes: wasm.nodes,
-				edges: wasm.edges,
-				dbSizeBytes: wasm.dbSizeBytes,
-				perFile: wasm.perFile,
-				noopRebuildMs: wasm.noopRebuildMs,
-				oneFileRebuildMs: wasm.oneFileRebuildMs,
-				oneFilePhases: wasm.oneFilePhases,
-				queries: wasm.queries,
-				phases: wasm.phases,
-			}
-		: null,
-	native: native
-		? {
-				buildTimeMs: native.buildTimeMs,
-				queryTimeMs: native.queryTimeMs,
-				nodes: native.nodes,
-				edges: native.edges,
-				dbSizeBytes: native.dbSizeBytes,
-				perFile: native.perFile,
-				noopRebuildMs: native.noopRebuildMs,
-				oneFileRebuildMs: native.oneFileRebuildMs,
-				oneFilePhases: native.oneFilePhases,
-				queries: native.queries,
-				phases: native.phases,
-			}
-		: null,
+const workerResult = {
+	buildTimeMs: Math.round(buildTimeMs),
+	queryTimeMs: Math.round(queryTimeMs * 10) / 10,
+	nodes: totalNodes,
+	edges: totalEdges,
+	files: totalFiles,
+	dbSizeBytes,
+	perFile: {
+		buildTimeMs: Math.round((buildTimeMs / totalFiles) * 10) / 10,
+		nodes: Math.round((totalNodes / totalFiles) * 10) / 10,
+		edges: Math.round((totalEdges / totalFiles) * 10) / 10,
+		dbSizeBytes: Math.round(dbSizeBytes / totalFiles),
+	},
+	noopRebuildMs,
+	oneFileRebuildMs,
+	oneFilePhases,
+	queries,
+	phases: buildResult?.phases || null,
 };
 
-console.log(JSON.stringify(result, null, 2));
+console.log(JSON.stringify(workerResult));
 
 cleanup();

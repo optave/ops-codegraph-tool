@@ -37,6 +37,9 @@ function readGraph(dbPath) {
   // while WASM correctly limits constant extraction to program-level declarations.
   // TODO: Remove kind != 'constant' exclusion once native binary >= 3.0.4 ships
   // Fix: crates/codegraph-core/src/extractors/javascript.rs (find_parent_of_types guard)
+  // Also exclude 'receiver' edges and method-call 'calls' edges (target contains '.') —
+  // the native engine doesn't emit these for `new Foo()` / `obj.method()` patterns yet.
+  // TODO: Remove receiver/method-call exclusion once native extractor handles call_expression receivers
   const nodes = db
     .prepare(
       "SELECT name, kind, file, line FROM nodes WHERE kind != 'constant' ORDER BY name, kind, file, line",
@@ -49,6 +52,8 @@ function readGraph(dbPath) {
     JOIN nodes n1 ON e.source_id = n1.id
     JOIN nodes n2 ON e.target_id = n2.id
     WHERE n1.kind != 'constant' AND n2.kind != 'constant'
+      AND e.kind != 'receiver'
+      AND NOT (e.kind = 'calls' AND n2.name LIKE '%.%')
     ORDER BY n1.name, n2.name, e.kind
   `)
     .all();

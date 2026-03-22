@@ -189,4 +189,51 @@ describe('JavaScript parser', () => {
       expect(def.endLine).toBe(4);
     });
   });
+
+  describe('type assignments (receiver type tracking)', () => {
+    it('extracts constructor assignments with confidence 1.0', () => {
+      const symbols = parseJS(`const repo = new UserRepository();`);
+      expect(symbols.typeAssignments).toContainEqual(
+        expect.objectContaining({ variable: 'repo', type: 'UserRepository', confidence: 1.0 }),
+      );
+    });
+
+    it('extracts factory method assignments with confidence 0.7', () => {
+      const symbols = parseJS(`const client = HttpClient.create();`);
+      expect(symbols.typeAssignments).toContainEqual(
+        expect.objectContaining({ variable: 'client', type: 'HttpClient', confidence: 0.7 }),
+      );
+    });
+
+    it('ignores lowercase factory calls (not class names)', () => {
+      const symbols = parseJS(`const result = utils.create();`);
+      expect(symbols.typeAssignments).toHaveLength(0);
+    });
+
+    it('extracts multiple type assignments in same scope', () => {
+      const symbols = parseJS(`
+        const db = new Database();
+        const cache = new RedisCache();
+      `);
+      expect(symbols.typeAssignments).toHaveLength(2);
+      expect(symbols.typeAssignments).toContainEqual(
+        expect.objectContaining({ variable: 'db', type: 'Database', confidence: 1.0 }),
+      );
+      expect(symbols.typeAssignments).toContainEqual(
+        expect.objectContaining({ variable: 'cache', type: 'RedisCache', confidence: 1.0 }),
+      );
+    });
+
+    it('extracts nested type assignments inside functions', () => {
+      const symbols = parseJS(`
+        function init() {
+          const service = new AuthService();
+          service.login();
+        }
+      `);
+      expect(symbols.typeAssignments).toContainEqual(
+        expect.objectContaining({ variable: 'service', type: 'AuthService', confidence: 1.0 }),
+      );
+    });
+  });
 });

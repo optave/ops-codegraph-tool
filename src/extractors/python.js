@@ -291,5 +291,84 @@ export function extractPythonSymbols(tree, _filePath) {
   }
 
   walkPythonNode(tree.rootNode);
-  return { definitions, calls, imports, classes, exports };
+
+  // Extract variable-to-type assignments for receiver type tracking
+  const typeAssignments = [];
+  extractPythonTypeAssignments(tree.rootNode, typeAssignments);
+
+  return { definitions, calls, imports, classes, exports, typeAssignments };
+}
+
+/**
+ * Extract variable-to-type assignments from Python AST.
+ *
+ * Patterns:
+ *   1. x = SomeClass(...)           → confidence 1.0 (constructor call)
+ *   2. x: SomeClass = ...           → confidence 0.9 (type annotation)
+ *   3. x = SomeClass.create(...)    → confidence 0.7 (factory method)
+ */
+function extractPythonTypeAssignments(node, typeAssignments) {
+  // assignment: x = SomeClass(...) or x: SomeClass = ...
+  if (node.type === 'assignment') {
+    const left = node.childForFieldName('left');
+    const right = node.childForFieldName('right');
+    const typeAnno = node.childForFieldName('type');
+    if (left && left.type === 'identifier') {
+      const varName = left.text;
+
+      // Pattern 1: x = SomeClass(...) — constructor call with uppercase name
+      if (right && right.type === 'call') {
+        const fn = right.childForFieldName('function');
+        if (fn && fn.type === 'identifier') {
+          const name = fn.text;
+          if (name[0] === name[0].toUpperCase() && name[0] !== name[0].toLowerCase()) {
+            typeAssignments.push({
+              variable: varName,
+              type: name,
+              line: node.startPosition.row + 1,
+              confidence: 1.0,
+            });
+            return;
+          }
+        }
+        // Pattern 3: x = SomeClass.create(...)
+        if (fn && fn.type === 'attribute') {
+          const obj = fn.childForFieldName('object');
+          if (obj && obj.type === 'identifier') {
+            const objName = obj.text;
+            if (
+              objName[0] === objName[0].toUpperCase() &&
+              objName[0] !== objName[0].toLowerCase()
+            ) {
+              typeAssignments.push({
+                variable: varName,
+                type: objName,
+                line: node.startPosition.row + 1,
+                confidence: 0.7,
+              });
+              return;
+            }
+          }
+        }
+      }
+
+      // Pattern 2: x: SomeClass = ...
+      if (typeAnno && typeAnno.type === 'type') {
+        const typeIdent = typeAnno.child(0);
+        if (typeIdent && typeIdent.type === 'identifier') {
+          typeAssignments.push({
+            variable: varName,
+            type: typeIdent.text,
+            line: node.startPosition.row + 1,
+            confidence: 0.9,
+          });
+          return;
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < node.childCount; i++) {
+    extractPythonTypeAssignments(node.child(i), typeAssignments);
+  }
 }

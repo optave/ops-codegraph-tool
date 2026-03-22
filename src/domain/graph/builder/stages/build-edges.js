@@ -28,7 +28,7 @@ export async function buildEdges(ctx) {
   // Pre-load all nodes into lookup maps
   const allNodes = db
     .prepare(
-      `SELECT id, name, kind, file, line FROM nodes WHERE kind IN ('function','method','class','interface','struct','type','module','enum','trait')`,
+      `SELECT id, name, kind, file, line FROM nodes WHERE kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')`,
     )
     .all();
   ctx.nodesByName = new Map();
@@ -134,6 +134,7 @@ export async function buildEdges(ctx) {
           calls: symbols.calls,
           importedNames,
           classes: symbols.classes,
+          typeAssignments: symbols.typeAssignments || [],
         });
       }
 
@@ -154,6 +155,18 @@ export async function buildEdges(ctx) {
           for (const name of imp.names) {
             const cleanName = name.replace(/^\*\s+as\s+/, '');
             importedNames.set(cleanName, resolvedPath);
+          }
+        }
+
+        // Build per-file type map from typeAssignments (receiver type tracking)
+        const typeMap = new Map();
+        if (symbols.typeAssignments) {
+          for (const ta of symbols.typeAssignments) {
+            // Keep highest-confidence assignment per variable
+            const existing = typeMap.get(ta.variable);
+            if (!existing || ta.confidence > existing.confidence) {
+              typeMap.set(ta.variable, ta);
+            }
           }
         }
 
@@ -198,20 +211,53 @@ export async function buildEdges(ctx) {
           if (!targets || targets.length === 0) {
             targets = ctx.nodesByNameAndFile.get(`${call.name}|${relPath}`) || [];
             if (targets.length === 0) {
-              const methodCandidates = (ctx.nodesByName.get(call.name) || []).filter(
-                (n) => n.name.endsWith(`.${call.name}`) && n.kind === 'method',
-              );
-              if (methodCandidates.length > 0) {
-                targets = methodCandidates;
-              } else if (
-                !call.receiver ||
-                call.receiver === 'this' ||
-                call.receiver === 'self' ||
-                call.receiver === 'super'
+              // ── Receiver type tracking: resolve receiver.method() via type map ──
+              // When we have a receiver (e.g., `repo.findCallers()`), check the type
+              // map to find the receiver's class and look for ClassName.method.
+              let typedTargets = [];
+              if (
+                call.receiver &&
+                call.receiver !== 'this' &&
+                call.receiver !== 'self' &&
+                call.receiver !== 'super'
               ) {
-                targets = (ctx.nodesByName.get(call.name) || []).filter(
-                  (n) => computeConfidence(relPath, n.file, null) >= 0.5,
+                const typeInfo = typeMap.get(call.receiver);
+                if (typeInfo) {
+                  // Try qualified name: ClassName.methodName
+                  const qualifiedName = `${typeInfo.type}.${call.name}`;
+                  typedTargets = (ctx.nodesByName.get(qualifiedName) || []).filter(
+                    (n) => n.kind === 'method',
+                  );
+                  // If no match by qualified name, check if the type was imported
+                  // and look in that file for the qualified method
+                  if (typedTargets.length === 0) {
+                    const typeFile = importedNames.get(typeInfo.type);
+                    if (typeFile) {
+                      typedTargets =
+                        ctx.nodesByNameAndFile.get(`${qualifiedName}|${typeFile}`) || [];
+                    }
+                  }
+                }
+              }
+
+              if (typedTargets.length > 0) {
+                targets = typedTargets;
+              } else {
+                const methodCandidates = (ctx.nodesByName.get(call.name) || []).filter(
+                  (n) => n.name.endsWith(`.${call.name}`) && n.kind === 'method',
                 );
+                if (methodCandidates.length > 0) {
+                  targets = methodCandidates;
+                } else if (
+                  !call.receiver ||
+                  call.receiver === 'this' ||
+                  call.receiver === 'self' ||
+                  call.receiver === 'super'
+                ) {
+                  targets = (ctx.nodesByName.get(call.name) || []).filter(
+                    (n) => computeConfidence(relPath, n.file, null) >= 0.5,
+                  );
+                }
               }
             }
           }
@@ -233,7 +279,7 @@ export async function buildEdges(ctx) {
             }
           }
 
-          // Receiver edge
+          // Receiver edge — use type map when available for precise class resolution
           if (
             call.receiver &&
             !BUILTIN_RECEIVERS.has(call.receiver) &&
@@ -242,16 +288,34 @@ export async function buildEdges(ctx) {
             call.receiver !== 'super'
           ) {
             const receiverKinds = new Set(['class', 'struct', 'interface', 'type', 'module']);
-            const samefile = ctx.nodesByNameAndFile.get(`${call.receiver}|${relPath}`) || [];
-            const candidates =
-              samefile.length > 0 ? samefile : ctx.nodesByName.get(call.receiver) || [];
-            const receiverNodes = candidates.filter((n) => receiverKinds.has(n.kind));
+            let receiverNodes = [];
+            let recvConfidence = 0.7;
+
+            // Try type map first for precise receiver resolution
+            const typeInfo = typeMap.get(call.receiver);
+            if (typeInfo) {
+              const typeName = typeInfo.type;
+              const sameFileTyped = ctx.nodesByNameAndFile.get(`${typeName}|${relPath}`) || [];
+              const typedCandidates =
+                sameFileTyped.length > 0 ? sameFileTyped : ctx.nodesByName.get(typeName) || [];
+              receiverNodes = typedCandidates.filter((n) => receiverKinds.has(n.kind));
+              recvConfidence = typeInfo.confidence;
+            }
+
+            // Fallback: look up receiver name directly as a class/struct
+            if (receiverNodes.length === 0) {
+              const samefile = ctx.nodesByNameAndFile.get(`${call.receiver}|${relPath}`) || [];
+              const candidates =
+                samefile.length > 0 ? samefile : ctx.nodesByName.get(call.receiver) || [];
+              receiverNodes = candidates.filter((n) => receiverKinds.has(n.kind));
+            }
+
             if (receiverNodes.length > 0 && caller) {
               const recvTarget = receiverNodes[0];
               const recvKey = `recv|${caller.id}|${recvTarget.id}`;
               if (!seenCallEdges.has(recvKey)) {
                 seenCallEdges.add(recvKey);
-                allEdgeRows.push([caller.id, recvTarget.id, 'receiver', 0.7, 0]);
+                allEdgeRows.push([caller.id, recvTarget.id, 'receiver', recvConfidence, 0]);
               }
             }
           }

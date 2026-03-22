@@ -179,7 +179,11 @@ function extractSymbolsQuery(tree, query) {
   // Extract dynamic import() calls via targeted walk (query patterns don't match `import` function type)
   extractDynamicImportsWalk(tree.rootNode, imports);
 
-  return { definitions, calls, imports, classes, exports: exps };
+  // Extract variable-to-type assignments for receiver type tracking
+  const typeAssignments = [];
+  extractTypeAssignmentsWalk(tree.rootNode, typeAssignments);
+
+  return { definitions, calls, imports, classes, exports: exps, typeAssignments };
 }
 
 /**
@@ -263,6 +267,117 @@ function extractDynamicImportsWalk(node, imports) {
   for (let i = 0; i < node.childCount; i++) {
     extractDynamicImportsWalk(node.child(i), imports);
   }
+}
+
+/**
+ * Recursive walk to extract variable-to-type assignments for receiver type tracking.
+ *
+ * Tracks three patterns with decreasing confidence:
+ *   1. Constructor:      const x = new SomeClass(...)         → confidence 1.0
+ *   2. Type annotation:  const x: SomeClass = ...             → confidence 0.9
+ *   3. Factory method:   const x = SomeClass.create(...)      → confidence 0.7
+ *
+ * The resulting typeAssignments array is consumed by build-edges to resolve
+ * receiver.method() calls to ClassName.method with high precision.
+ */
+function extractTypeAssignmentsWalk(node, typeAssignments) {
+  const t = node.type;
+  if (t === 'lexical_declaration' || t === 'variable_declaration') {
+    for (let i = 0; i < node.childCount; i++) {
+      const declarator = node.child(i);
+      if (!declarator || declarator.type !== 'variable_declarator') continue;
+      const nameNode = declarator.childForFieldName('name');
+      if (!nameNode || nameNode.type !== 'identifier') continue;
+      const varName = nameNode.text;
+      const valueNode = declarator.childForFieldName('value');
+
+      // Pattern 1: const x = new SomeClass(...)
+      if (valueNode && valueNode.type === 'new_expression') {
+        const ctor = valueNode.childForFieldName('constructor') || valueNode.child(1);
+        if (ctor) {
+          const typeName = ctor.type === 'identifier' ? ctor.text : null;
+          if (typeName) {
+            typeAssignments.push({
+              variable: varName,
+              type: typeName,
+              line: node.startPosition.row + 1,
+              confidence: 1.0,
+            });
+            continue;
+          }
+        }
+      }
+
+      // Pattern 2: const x: SomeClass = ... (TS type annotation)
+      const typeAnno =
+        nameNode.parent?.childForFieldName('type') || findChild(declarator, 'type_annotation');
+      if (typeAnno) {
+        const typeName = extractTypeAnnotationName(typeAnno);
+        if (typeName) {
+          typeAssignments.push({
+            variable: varName,
+            type: typeName,
+            line: node.startPosition.row + 1,
+            confidence: 0.9,
+          });
+          continue;
+        }
+      }
+
+      // Pattern 3: const x = SomeClass.create(...) (factory method)
+      if (valueNode && valueNode.type === 'call_expression') {
+        const fn = valueNode.childForFieldName('function');
+        if (fn && fn.type === 'member_expression') {
+          const obj = fn.childForFieldName('object');
+          if (obj && obj.type === 'identifier') {
+            const objName = obj.text;
+            // Heuristic: uppercase first letter suggests a class/constructor name
+            if (
+              objName[0] === objName[0].toUpperCase() &&
+              objName[0] !== objName[0].toLowerCase()
+            ) {
+              typeAssignments.push({
+                variable: varName,
+                type: objName,
+                line: node.startPosition.row + 1,
+                confidence: 0.7,
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
+  for (let i = 0; i < node.childCount; i++) {
+    extractTypeAssignmentsWalk(node.child(i), typeAssignments);
+  }
+}
+
+/**
+ * Extract the type name from a type annotation node.
+ * Handles: `: SomeClass`, `: SomeClass<T>`, `: SomeModule.SomeClass`
+ * Returns null for complex union/intersection types.
+ */
+function extractTypeAnnotationName(typeAnno) {
+  for (let i = 0; i < typeAnno.childCount; i++) {
+    const child = typeAnno.child(i);
+    if (!child) continue;
+    const ct = child.type;
+    if (ct === 'type_identifier' || ct === 'identifier') return child.text;
+    // Generic: SomeClass<T> → extract SomeClass
+    if (ct === 'generic_type') {
+      const nameNode = child.childForFieldName('name') || child.child(0);
+      if (nameNode && (nameNode.type === 'type_identifier' || nameNode.type === 'identifier')) {
+        return nameNode.text;
+      }
+    }
+    // Qualified: SomeModule.SomeClass → extract SomeModule.SomeClass
+    if (ct === 'nested_type_identifier' || ct === 'member_expression') {
+      return child.text;
+    }
+  }
+  return null;
 }
 
 function handleCommonJSAssignment(left, right, node, imports) {
@@ -646,7 +761,12 @@ function extractSymbolsWalk(tree) {
   }
 
   walkJavaScriptNode(tree.rootNode);
-  return { definitions, calls, imports, classes, exports };
+
+  // Extract variable-to-type assignments for receiver type tracking
+  const typeAssignments = [];
+  extractTypeAssignmentsWalk(tree.rootNode, typeAssignments);
+
+  return { definitions, calls, imports, classes, exports, typeAssignments };
 }
 
 // ── Child extraction helpers ────────────────────────────────────────────────

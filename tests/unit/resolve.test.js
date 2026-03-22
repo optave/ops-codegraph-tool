@@ -9,11 +9,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  clearExportsCache,
   computeConfidence,
   computeConfidenceJS,
   convertAliasesForNative,
+  parseBareSpecifier,
   resolveImportPathJS,
   resolveImportsBatch,
+  resolveViaExports,
 } from '../../src/domain/graph/resolve.js';
 
 // ─── Temp project setup ──────────────────────────────────────────────
@@ -217,5 +220,203 @@ describe('resolveImportsBatch', () => {
     );
     // native may or may not be available
     expect(result === null || result instanceof Map).toBe(true);
+  });
+});
+
+// ─── parseBareSpecifier ──────────────────────────────────────────────
+
+describe('parseBareSpecifier', () => {
+  it('parses plain package with no subpath', () => {
+    expect(parseBareSpecifier('lodash')).toEqual({ packageName: 'lodash', subpath: '.' });
+  });
+
+  it('parses plain package with subpath', () => {
+    expect(parseBareSpecifier('lodash/fp')).toEqual({ packageName: 'lodash', subpath: './fp' });
+  });
+
+  it('parses scoped package with no subpath', () => {
+    expect(parseBareSpecifier('@scope/pkg')).toEqual({ packageName: '@scope/pkg', subpath: '.' });
+  });
+
+  it('parses scoped package with subpath', () => {
+    expect(parseBareSpecifier('@scope/pkg/utils/deep')).toEqual({
+      packageName: '@scope/pkg',
+      subpath: './utils/deep',
+    });
+  });
+
+  it('returns null for bare @ with no slash', () => {
+    expect(parseBareSpecifier('@scope')).toBeNull();
+  });
+});
+
+// ─── resolveViaExports ───────────────────────────────────────────────
+
+describe('resolveViaExports', () => {
+  let pkgRoot;
+
+  beforeAll(() => {
+    clearExportsCache();
+    // Create a fake node_modules structure inside tmpDir
+    pkgRoot = path.join(tmpDir, 'node_modules', 'test-pkg');
+    fs.mkdirSync(path.join(pkgRoot, 'dist'), { recursive: true });
+    fs.mkdirSync(path.join(pkgRoot, 'lib', 'utils'), { recursive: true });
+    fs.writeFileSync(path.join(pkgRoot, 'dist', 'index.mjs'), 'export default 1;');
+    fs.writeFileSync(path.join(pkgRoot, 'dist', 'index.cjs'), 'module.exports = 1;');
+    fs.writeFileSync(path.join(pkgRoot, 'dist', 'helpers.mjs'), 'export const h = 1;');
+    fs.writeFileSync(path.join(pkgRoot, 'lib', 'utils', 'deep.js'), 'export const d = 1;');
+  });
+
+  afterEach(() => {
+    clearExportsCache();
+  });
+
+  it('resolves string exports (shorthand)', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({ name: 'test-pkg', exports: './dist/index.mjs' }),
+    );
+    const result = resolveViaExports('test-pkg', tmpDir);
+    expect(result).toBe(path.join(pkgRoot, 'dist', 'index.mjs'));
+  });
+
+  it('returns null for subpath when exports is a string', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({ name: 'test-pkg', exports: './dist/index.mjs' }),
+    );
+    expect(resolveViaExports('test-pkg/helpers', tmpDir)).toBeNull();
+  });
+
+  it('resolves conditional exports (import/require/default)', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({
+        name: 'test-pkg',
+        exports: {
+          '.': { import: './dist/index.mjs', require: './dist/index.cjs' },
+        },
+      }),
+    );
+    const result = resolveViaExports('test-pkg', tmpDir);
+    expect(result).toBe(path.join(pkgRoot, 'dist', 'index.mjs'));
+  });
+
+  it('falls back to require when import is absent', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({
+        name: 'test-pkg',
+        exports: {
+          '.': { require: './dist/index.cjs' },
+        },
+      }),
+    );
+    const result = resolveViaExports('test-pkg', tmpDir);
+    expect(result).toBe(path.join(pkgRoot, 'dist', 'index.cjs'));
+  });
+
+  it('resolves subpath exports', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({
+        name: 'test-pkg',
+        exports: {
+          '.': './dist/index.mjs',
+          './helpers': './dist/helpers.mjs',
+        },
+      }),
+    );
+    const result = resolveViaExports('test-pkg/helpers', tmpDir);
+    expect(result).toBe(path.join(pkgRoot, 'dist', 'helpers.mjs'));
+  });
+
+  it('resolves subpath patterns with wildcard', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({
+        name: 'test-pkg',
+        exports: {
+          '.': './dist/index.mjs',
+          './lib/*': './lib/*.js',
+        },
+      }),
+    );
+    const result = resolveViaExports('test-pkg/lib/utils/deep', tmpDir);
+    expect(result).toBe(path.join(pkgRoot, 'lib', 'utils', 'deep.js'));
+  });
+
+  it('resolves conditional subpath exports', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({
+        name: 'test-pkg',
+        exports: {
+          './helpers': { import: './dist/helpers.mjs', default: './dist/helpers.mjs' },
+        },
+      }),
+    );
+    const result = resolveViaExports('test-pkg/helpers', tmpDir);
+    expect(result).toBe(path.join(pkgRoot, 'dist', 'helpers.mjs'));
+  });
+
+  it('resolves top-level conditions object (no . keys)', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({
+        name: 'test-pkg',
+        exports: { import: './dist/index.mjs', require: './dist/index.cjs' },
+      }),
+    );
+    const result = resolveViaExports('test-pkg', tmpDir);
+    expect(result).toBe(path.join(pkgRoot, 'dist', 'index.mjs'));
+  });
+
+  it('returns null when exports field is absent', () => {
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({ name: 'test-pkg', main: './dist/index.mjs' }),
+    );
+    expect(resolveViaExports('test-pkg', tmpDir)).toBeNull();
+  });
+
+  it('returns null when package is not in node_modules', () => {
+    expect(resolveViaExports('nonexistent-pkg', tmpDir)).toBeNull();
+  });
+});
+
+// ─── resolveImportPathJS with exports ────────────────────────────────
+
+describe('resolveImportPathJS with package.json exports', () => {
+  let pkgRoot;
+
+  beforeAll(() => {
+    clearExportsCache();
+    pkgRoot = path.join(tmpDir, 'node_modules', 'exports-pkg');
+    fs.mkdirSync(path.join(pkgRoot, 'dist'), { recursive: true });
+    fs.writeFileSync(path.join(pkgRoot, 'dist', 'main.mjs'), 'export default 1;');
+    fs.writeFileSync(
+      path.join(pkgRoot, 'package.json'),
+      JSON.stringify({
+        name: 'exports-pkg',
+        exports: { '.': './dist/main.mjs' },
+      }),
+    );
+  });
+
+  afterEach(() => {
+    clearExportsCache();
+  });
+
+  it('resolves bare specifier through exports field', () => {
+    const fromFile = path.join(tmpDir, 'src', 'index.js');
+    const result = resolveImportPathJS(fromFile, 'exports-pkg', tmpDir, null);
+    expect(result).toContain('node_modules/exports-pkg/dist/main.mjs');
+  });
+
+  it('still passes through bare specifiers without exports', () => {
+    const fromFile = path.join(tmpDir, 'src', 'index.js');
+    const result = resolveImportPathJS(fromFile, 'lodash', tmpDir, null);
+    expect(result).toBe('lodash');
   });
 });

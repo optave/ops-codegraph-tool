@@ -95,7 +95,7 @@ function explainFileImpl(db, target, getFileLines) {
 function explainFunctionImpl(db, target, noTests, getFileLines) {
   let nodes = db
     .prepare(
-      `SELECT * FROM nodes WHERE name LIKE ? AND kind IN ('function','method','class','interface','type','struct','enum','trait','record','module') ORDER BY file, line`,
+      `SELECT * FROM nodes WHERE name LIKE ? AND kind IN ('function','method','class','interface','type','struct','enum','trait','record','module','constant') ORDER BY file, line`,
     )
     .all(`%${target}%`);
   if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
