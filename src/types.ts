@@ -1016,6 +1016,7 @@ export interface RiskWeights {
 }
 
 export interface McpDefaults {
+  [key: string]: number;
   list_functions: number;
   query: number;
   where: number;

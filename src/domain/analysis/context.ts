@@ -46,7 +46,13 @@ function buildCallees(
     const summary = cLines ? extractSummary(cLines, c.line, displayOpts) : null;
     let calleeSource: string | null = null;
     if (depth >= 1) {
-      calleeSource = readSourceRange(repoRoot, c.file, c.line, c.end_line, displayOpts);
+      calleeSource = readSourceRange(
+        repoRoot,
+        c.file,
+        c.line,
+        c.end_line ?? undefined,
+        displayOpts,
+      );
     }
     return {
       name: c.name,

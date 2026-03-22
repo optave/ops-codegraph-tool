@@ -100,7 +100,7 @@ export function getNativePackageVersion(): string | null {
 /**
  * Return the native module or throw if not available.
  */
-export function getNative(): object {
+export function getNative(): NativeAddon {
   const mod = loadNative();
   if (!mod) {
     throw new EngineError(
