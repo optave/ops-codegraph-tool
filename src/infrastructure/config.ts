@@ -1,16 +1,23 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { CodegraphConfig } from '../types.js';
 import { debug, warn } from './logger.js';
 
-export const CONFIG_FILES = ['.codegraphrc.json', '.codegraphrc', 'codegraph.config.json'];
+export type { CodegraphConfig } from '../types.js';
+
+export const CONFIG_FILES: readonly string[] = [
+  '.codegraphrc.json',
+  '.codegraphrc',
+  'codegraph.config.json',
+];
 
 export const DEFAULTS = {
-  include: [],
-  exclude: [],
-  ignoreDirs: [],
-  extensions: [],
-  aliases: {},
+  include: [] as string[],
+  exclude: [] as string[],
+  ignoreDirs: [] as string[],
+  extensions: [] as string[],
+  aliases: {} as Record<string, string>,
   build: {
     incremental: true,
     dbPath: '.codegraph/graph.db',
@@ -21,29 +28,35 @@ export const DEFAULTS = {
     defaultLimit: 20,
     excludeTests: false,
   },
-  embeddings: { model: 'nomic-v1.5', llmProvider: null },
-  llm: { provider: null, model: null, baseUrl: null, apiKey: null, apiKeyCommand: null },
+  embeddings: { model: 'nomic-v1.5', llmProvider: null as string | null },
+  llm: {
+    provider: null as string | null,
+    model: null as string | null,
+    baseUrl: null as string | null,
+    apiKey: null as string | null,
+    apiKeyCommand: null as string | null,
+  },
   search: { defaultMinScore: 0.2, rrfK: 60, topK: 15, similarityWarnThreshold: 0.85 },
-  ci: { failOnCycles: false, impactThreshold: null },
+  ci: { failOnCycles: false, impactThreshold: null as number | null },
   manifesto: {
     rules: {
       cognitive: { warn: 15 },
       cyclomatic: { warn: 10 },
       maxNesting: { warn: 4 },
-      maintainabilityIndex: { warn: 20, fail: null },
-      importCount: { warn: null, fail: null },
-      exportCount: { warn: null, fail: null },
-      lineCount: { warn: null, fail: null },
-      fanIn: { warn: null, fail: null },
-      fanOut: { warn: null, fail: null },
-      noCycles: { warn: null, fail: null },
-      boundaries: { warn: null, fail: null },
+      maintainabilityIndex: { warn: 20, fail: null as number | null },
+      importCount: { warn: null as number | null, fail: null as number | null },
+      exportCount: { warn: null as number | null, fail: null as number | null },
+      lineCount: { warn: null as number | null, fail: null as number | null },
+      fanIn: { warn: null as number | null, fail: null as number | null },
+      fanOut: { warn: null as number | null, fail: null as number | null },
+      noCycles: { warn: null as number | null, fail: null as number | null },
+      boundaries: { warn: null as number | null, fail: null as number | null },
     },
-    boundaries: null,
+    boundaries: null as unknown,
   },
   check: {
     cycles: true,
-    blastRadius: null,
+    blastRadius: null as number | null,
     signatures: true,
     boundaries: true,
     depth: 3,
@@ -94,7 +107,7 @@ export const DEFAULTS = {
       'dead-entry': 0.3,
       'dead-ffi': 0.05,
       'dead-unresolved': 0.15,
-    },
+    } as Record<string, number>,
     defaultRoleWeight: 0.5,
   },
   display: {
@@ -129,19 +142,21 @@ export const DEFAULTS = {
       structure: 30,
       triage: 20,
       ast_query: 50,
+      implementations: 50,
+      interfaces: 50,
     },
   },
-};
+} satisfies CodegraphConfig;
 
 // Per-cwd config cache — avoids re-reading the config file on every query call.
 // The config file rarely changes within a single process lifetime.
-const _configCache = new Map();
+const _configCache = new Map<string, CodegraphConfig>();
 
 /**
  * Load project configuration from a .codegraphrc.json or similar file.
  * Returns merged config with defaults. Results are cached per cwd.
  */
-export function loadConfig(cwd) {
+export function loadConfig(cwd?: string): CodegraphConfig {
   cwd = cwd || process.cwd();
   const cached = _configCache.get(cwd);
   if (cached) return structuredClone(cached);
@@ -153,16 +168,18 @@ export function loadConfig(cwd) {
         const raw = fs.readFileSync(filePath, 'utf-8');
         const config = JSON.parse(raw);
         debug(`Loaded config from ${filePath}`);
-        const merged = mergeConfig(DEFAULTS, config);
+        const merged = mergeConfig(DEFAULTS as unknown as Record<string, unknown>, config);
         if ('excludeTests' in config && !(config.query && 'excludeTests' in config.query)) {
-          merged.query.excludeTests = Boolean(config.excludeTests);
+          (merged['query'] as Record<string, unknown>)['excludeTests'] = Boolean(
+            config.excludeTests,
+          );
         }
-        delete merged.excludeTests;
-        const result = resolveSecrets(applyEnvOverrides(merged));
+        delete merged['excludeTests'];
+        const result = resolveSecrets(applyEnvOverrides(merged as unknown as CodegraphConfig));
         _configCache.set(cwd, structuredClone(result));
         return result;
-      } catch (err) {
-        debug(`Failed to parse config ${filePath}: ${err.message}`);
+      } catch (err: unknown) {
+        debug(`Failed to parse config ${filePath}: ${(err as Error).message}`);
       }
     }
   }
@@ -176,43 +193,44 @@ export function loadConfig(cwd) {
  * pick up on-disk config changes, and for test isolation when tests share
  * the same cwd.
  */
-export function clearConfigCache() {
+export function clearConfigCache(): void {
   _configCache.clear();
 }
 
-const ENV_LLM_MAP = {
+const ENV_LLM_MAP: Record<string, string> = {
   CODEGRAPH_LLM_PROVIDER: 'provider',
   CODEGRAPH_LLM_API_KEY: 'apiKey',
   CODEGRAPH_LLM_MODEL: 'model',
 };
 
-export function applyEnvOverrides(config) {
+export function applyEnvOverrides(config: CodegraphConfig): CodegraphConfig {
   for (const [envKey, field] of Object.entries(ENV_LLM_MAP)) {
-    if (process.env[envKey] !== undefined) {
-      config.llm[field] = process.env[envKey];
+    if (process.env[envKey as keyof NodeJS.ProcessEnv] !== undefined) {
+      (config.llm as Record<string, unknown>)[field] =
+        process.env[envKey as keyof NodeJS.ProcessEnv];
     }
   }
   return config;
 }
 
-export function resolveSecrets(config) {
+export function resolveSecrets(config: CodegraphConfig): CodegraphConfig {
   const cmd = config.llm.apiKeyCommand;
   if (typeof cmd !== 'string' || cmd.trim() === '') return config;
 
   const parts = cmd.trim().split(/\s+/);
   const [executable, ...args] = parts;
   try {
-    const result = execFileSync(executable, args, {
+    const result = execFileSync(executable!, args, {
       encoding: 'utf-8',
       timeout: 10_000,
       maxBuffer: 64 * 1024,
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
     if (result) {
-      config.llm.apiKey = result;
+      (config.llm as Record<string, unknown>)['apiKey'] = result;
     }
-  } catch (err) {
-    warn(`apiKeyCommand failed: ${err.message}`);
+  } catch (err: unknown) {
+    warn(`apiKeyCommand failed: ${(err as Error).message}`);
   }
   return config;
 }
@@ -224,7 +242,7 @@ export function resolveSecrets(config) {
  * Supports trailing `/*` or `/**` patterns (e.g. "packages/*").
  * Does not depend on an external glob library — uses fs.readdirSync.
  */
-function expandWorkspaceGlob(pattern, rootDir) {
+function expandWorkspaceGlob(pattern: string, rootDir: string): string[] {
   // Strip trailing /*, /**, or just *
   const clean = pattern.replace(/\/?\*\*?$/, '');
   const baseDir = path.resolve(rootDir, clean);
@@ -243,7 +261,7 @@ function expandWorkspaceGlob(pattern, rootDir) {
 /**
  * Read a package.json and return its name field, or null.
  */
-function readPackageName(pkgDir) {
+function readPackageName(pkgDir: string): string | null {
   try {
     const raw = fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf-8');
     const pkg = JSON.parse(raw);
@@ -253,11 +271,16 @@ function readPackageName(pkgDir) {
   }
 }
 
+interface WorkspaceEntry {
+  dir: string;
+  entry: string | null;
+}
+
 /**
  * Resolve the entry-point source file for a workspace package.
  * Checks exports → main → index file fallback.
  */
-function resolveWorkspaceEntry(pkgDir) {
+function resolveWorkspaceEntry(pkgDir: string): string | null {
   try {
     const raw = fs.readFileSync(path.join(pkgDir, 'package.json'), 'utf-8');
     const pkg = JSON.parse(raw);
@@ -300,14 +323,10 @@ function resolveWorkspaceEntry(pkgDir) {
  *   1. pnpm-workspace.yaml — `packages:` array
  *   2. package.json — `workspaces` field (npm/yarn)
  *   3. lerna.json — `packages` array
- *
- * @param {string} rootDir - Project root directory
- * @returns {Map<string, { dir: string, entry: string|null }>}
- *   Map of package name → { absolute dir, resolved entry file }
  */
-export function detectWorkspaces(rootDir) {
-  const workspaces = new Map();
-  const patterns = [];
+export function detectWorkspaces(rootDir: string): Map<string, WorkspaceEntry> {
+  const workspaces = new Map<string, WorkspaceEntry>();
+  const patterns: string[] = [];
 
   // 1. pnpm-workspace.yaml
   const pnpmPath = path.join(rootDir, 'pnpm-workspace.yaml');
@@ -317,11 +336,11 @@ export function detectWorkspaces(rootDir) {
       // Simple YAML parse for `packages:` array — no dependency needed
       const packagesMatch = raw.match(/^packages:\s*\n((?:\s+-\s+.+\n?)*)/m);
       if (packagesMatch) {
-        const lines = packagesMatch[1].match(/^\s+-\s+['"]?([^'"#\n]+)['"]?\s*$/gm);
+        const lines = packagesMatch[1]!.match(/^\s+-\s+['"]?([^'"#\n]+)['"]?\s*$/gm);
         if (lines) {
           for (const line of lines) {
             const m = line.match(/^\s+-\s+['"]?([^'"#\n]+?)['"]?\s*$/);
-            if (m) patterns.push(m[1].trim());
+            if (m) patterns.push(m[1]!.trim());
           }
         }
       }
@@ -393,8 +412,11 @@ export function detectWorkspaces(rootDir) {
   return workspaces;
 }
 
-export function mergeConfig(defaults, overrides) {
-  const result = { ...defaults };
+export function mergeConfig(
+  defaults: Record<string, unknown>,
+  overrides: Record<string, unknown>,
+): Record<string, unknown> {
+  const result: Record<string, unknown> = { ...defaults };
   for (const [key, value] of Object.entries(overrides)) {
     if (
       value &&
@@ -404,7 +426,10 @@ export function mergeConfig(defaults, overrides) {
       typeof defaults[key] === 'object' &&
       !Array.isArray(defaults[key])
     ) {
-      result[key] = mergeConfig(defaults[key], value);
+      result[key] = mergeConfig(
+        defaults[key] as Record<string, unknown>,
+        value as Record<string, unknown>,
+      );
     } else {
       result[key] = value;
     }
