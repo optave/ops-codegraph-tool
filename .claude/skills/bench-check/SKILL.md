@@ -196,8 +196,11 @@ This creates a running log of benchmark results over time.
 
 After writing both files, commit the baseline so it is a shared reference point:
 ```bash
-git diff --quiet generated/bench-check/baseline.json generated/bench-check/history.ndjson || git commit generated/bench-check/baseline.json generated/bench-check/history.ndjson -m "chore: update bench-check baseline (<gitRef>)"
+git add generated/bench-check/baseline.json generated/bench-check/history.ndjson
+git diff --cached --quiet || git commit generated/bench-check/baseline.json generated/bench-check/history.ndjson -m "chore: update bench-check baseline (<gitRef>)"
 ```
+
+> `git add` first so that newly created files (first run) are staged; `--cached` then detects them correctly. Without this, `git diff --quiet` ignores untracked files and the baseline is never committed on the first run.
 
 ## Phase 6 — Report
 
