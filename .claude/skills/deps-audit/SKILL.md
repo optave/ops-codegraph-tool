@@ -19,6 +19,10 @@ Audit the project's dependency tree for security vulnerabilities, outdated packa
 2. Run `node --version` — must be >= 20
 3. Run `npm --version` to capture toolchain info
 4. Parse `$ARGUMENTS` — set `AUTO_FIX=true` if `--fix` is present
+5. **If `AUTO_FIX` is set:** Save the original manifests now, before any npm commands run, so pre-existing unstaged changes are preserved:
+   ```bash
+   git stash push -m "deps-audit-backup" -- package.json package-lock.json
+   ```
 
 ## Phase 1 — Security Vulnerabilities
 
@@ -150,11 +154,6 @@ Write a report to `generated/deps-audit/DEPS_AUDIT_<date>.md` with this structur
 ## Phase 7 — Auto-fix Summary (if `--fix`)
 
 If `AUTO_FIX` was set:
-
-**Before running any auto-fix** (in Phase 1/2), save the original manifests so pre-existing unstaged changes are preserved:
-```bash
-git stash push -m "deps-audit-backup" -- package.json package-lock.json
-```
 
 Summarize all changes made:
 1. List each package updated/fixed
