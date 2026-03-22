@@ -4,9 +4,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const hookPath = pathToFileURL(resolve(__dirname, 'scripts/ts-resolver-hook.js')).href;
+const loaderPath = pathToFileURL(resolve(__dirname, 'scripts/ts-resolve-loader.js')).href;
 const [major, minor] = process.versions.node.split('.').map(Number);
 const supportsStripTypes = major > 22 || (major === 22 && minor >= 6);
+const supportsHooks = major > 20 || (major === 20 && minor >= 6);
 const existing = process.env.NODE_OPTIONS || '';
 
 /**
@@ -21,6 +22,7 @@ function jsToTsResolver() {
     enforce: 'pre',
     resolveId(source, importer) {
       if (!importer || !source.endsWith('.js')) return null;
+      // Only handle relative/absolute paths, not bare specifiers
       if (!source.startsWith('.') && !source.startsWith('/')) return null;
       const importerPath = importer.startsWith('file://')
         ? fileURLToPath(importer)
@@ -41,6 +43,8 @@ export default defineConfig({
     globals: true,
     testTimeout: 30000,
     exclude: ['**/node_modules/**', '**/.git/**', '.claude/**'],
+    // Register the .js→.ts resolve loader for Node's native ESM resolver.
+    // This covers require() calls and child processes spawned by tests.
     env: {
       NODE_OPTIONS: [
         existing,
@@ -49,7 +53,7 @@ export default defineConfig({
         !existing.includes('--strip-types')
           ? (major >= 23 ? '--strip-types' : '--experimental-strip-types')
           : '',
-        existing.includes(hookPath) ? '' : `--import ${hookPath}`,
+        existing.includes(loaderPath) ? '' : (supportsHooks ? `--import ${loaderPath}` : ''),
       ].filter(Boolean).join(' '),
     },
   },
