@@ -193,7 +193,7 @@ This creates a running log of benchmark results over time.
 After writing both files, commit the baseline so it is a shared reference point:
 ```bash
 git add generated/bench-check/baseline.json generated/bench-check/history.ndjson
-git commit -m "chore: update bench-check baseline (<gitRef>)"
+git diff --cached --quiet || git commit -m "chore: update bench-check baseline (<gitRef>)"
 ```
 
 ## Phase 6 — Report

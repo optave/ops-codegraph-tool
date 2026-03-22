@@ -149,11 +149,19 @@ Write a report to `generated/deps-audit/DEPS_AUDIT_<date>.md` with this structur
 
 ## Phase 7 — Auto-fix Summary (if `--fix`)
 
-If `AUTO_FIX` was set, summarize all changes made:
+If `AUTO_FIX` was set:
+
+**Before running any auto-fix** (in Phase 1/2), save the original manifests so pre-existing unstaged changes are preserved:
+```bash
+git stash push -m "deps-audit-backup" -- package.json package-lock.json
+```
+
+Summarize all changes made:
 1. List each package updated/fixed
 2. Run `npm test` to verify nothing broke
-3. If tests fail:
-   - Revert the manifest: `git checkout -- package.json package-lock.json`
+3. If tests pass: drop the saved state (`git stash drop`)
+4. If tests fail:
+   - Restore the saved manifests: `git stash pop`
    - Restore `node_modules/` to match the reverted lock file: `npm ci`
    - Report what failed
 
@@ -162,6 +170,6 @@ If `AUTO_FIX` was set, summarize all changes made:
 - **Never run `npm audit fix --force`** — breaking changes need human review
 - **Never remove a dependency** without asking the user, even if it appears unused — flag it in the report instead
 - **Always run tests** after any auto-fix changes
-- **If `--fix` causes test failures**, revert manifest with `git checkout -- package.json package-lock.json` then run `npm ci` to resync `node_modules/`, and report the failure
+- **If `--fix` causes test failures**, restore manifests from the saved state (`git stash pop`) then run `npm ci` to resync `node_modules/`, and report the failure
 - Treat `optionalDependencies` separately — they're expected to fail on some platforms
 - The report goes in `generated/deps-audit/` — create the directory if it doesn't exist

@@ -39,7 +39,7 @@ Run the full test suite `FLAKY_RUNS` times and track per-test pass/fail:
 
 ```bash
 for i in $(seq 1 $FLAKY_RUNS); do
-  npx vitest run --reporter=json 2>/dev/null
+  npx vitest run --reporter=json 2>&1
 done
 ```
 
@@ -101,7 +101,7 @@ Search for duplicate test descriptions within the same `describe` block — thes
 Run vitest with coverage and analyze:
 
 ```bash
-npx vitest run --coverage --coverage.reporter=json 2>/dev/null
+npx vitest run --coverage --coverage.reporter=json 2>&1
 ```
 
 ### 3a. Overall coverage

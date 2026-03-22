@@ -134,7 +134,7 @@ Flag any branches marked `[ahead N, behind M]` — these may need attention.
 ### 4a. Find merged branches
 
 ```bash
-git branch --merged main
+git branch --merged origin/main
 ```
 
 ### 4b. Safe to delete
