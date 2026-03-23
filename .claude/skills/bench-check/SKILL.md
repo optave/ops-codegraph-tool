@@ -43,8 +43,8 @@ output=$(timeout 300 node scripts/benchmark.js 2>&1)
 exit_code=$?
 ```
 
-If `exit_code` is 124: record `"timeout"` for this suite and continue.
-If `exit_code` is non-zero: record `"error: $output"` for this suite and continue.
+If `exit_code` is 124: record `"timeout"` for this suite and skip to the next suite.
+Else if `exit_code` is non-zero: record `"error: $output"` for this suite and skip to the next suite.
 
 Extract:
 - `buildTime` (ms) — per engine (native, WASM)
@@ -58,8 +58,8 @@ output=$(timeout 300 node scripts/incremental-benchmark.js 2>&1)
 exit_code=$?
 ```
 
-If `exit_code` is 124: record `"timeout"` for this suite and continue.
-If `exit_code` is non-zero: record `"error: $output"` for this suite and continue.
+If `exit_code` is 124: record `"timeout"` for this suite and skip to the next suite.
+Else if `exit_code` is non-zero: record `"error: $output"` for this suite and skip to the next suite.
 
 Extract:
 - `noOpRebuild` (ms) — time for no-change rebuild
@@ -73,8 +73,8 @@ output=$(timeout 300 node scripts/query-benchmark.js 2>&1)
 exit_code=$?
 ```
 
-If `exit_code` is 124: record `"timeout"` for this suite and continue.
-If `exit_code` is non-zero: record `"error: $output"` for this suite and continue.
+If `exit_code` is 124: record `"timeout"` for this suite and skip to the next suite.
+Else if `exit_code` is non-zero: record `"error: $output"` for this suite and skip to the next suite.
 
 Extract:
 - `fnDeps` scaling by depth
@@ -88,8 +88,8 @@ output=$(timeout 300 node scripts/embedding-benchmark.js 2>&1)
 exit_code=$?
 ```
 
-If `exit_code` is 124: record `"timeout"` for this suite and continue.
-If `exit_code` is non-zero: record `"error: $output"` for this suite and continue.
+If `exit_code` is 124: record `"timeout"` for this suite and skip to the next suite.
+Else if `exit_code` is non-zero: record `"error: $output"` for this suite and skip to the next suite.
 
 Extract:
 - `embeddingTime` (ms)
@@ -211,7 +211,23 @@ git diff --cached --quiet -- generated/bench-check/baseline.json generated/bench
 
 ## Phase 6 — Report
 
-Write a human-readable report to `generated/bench-check/BENCH_REPORT_<date>.md`:
+Write a human-readable report to `generated/bench-check/BENCH_REPORT_<date>.md`.
+
+**If `SAVE_ONLY` is set or no prior baseline existed (first run):** write a shortened report — omit the "Comparison vs Baseline" and "Regressions" sections since no comparison was performed:
+
+```markdown
+# Benchmark Report — <date>
+
+**Version:** X.Y.Z | **Git ref:** abc1234 | **Threshold:** $THRESHOLD%
+
+## Verdict: BASELINE SAVED — no comparison performed
+
+## Raw Results
+
+<!-- Full JSON output from each benchmark -->
+```
+
+**Otherwise (comparison was performed):** write the full report with comparison and verdict:
 
 ```markdown
 # Benchmark Report — <date>
