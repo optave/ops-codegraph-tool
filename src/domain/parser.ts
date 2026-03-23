@@ -565,7 +565,7 @@ export async function parseFilesAuto(
           try {
             const code = fs.readFileSync(filePath, 'utf-8');
             extracted = wasmExtractSymbols(parsers, filePath, code);
-            if (extracted?.symbols?.typeMap) {
+            if (extracted?.symbols && extracted.symbols.typeMap.size > 0) {
               const symbols = result.get(relPath);
               if (!symbols) continue;
               symbols.typeMap = extracted.symbols.typeMap;
