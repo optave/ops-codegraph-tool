@@ -1,7 +1,7 @@
 ---
 name: titan-forge
 description: Execute the sync.json plan — refactor code, validate with /titan-gate, commit, and advance state (Titan Paradigm Phase 4)
-argument-hint: <--phase N> <--target name> <--dry-run> <--yes>
+argument-hint: <--phase N> <--target name> <--dry-run>
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Skill, Agent
 ---
 
@@ -181,6 +181,7 @@ For each target in the current phase:
    If the gauntlet recommendation mentioned specific symbols to remove/refactor, verify they were actually addressed:
    - Dead symbols listed for removal but still present in the diff → **DIFF WARN**: "Gauntlet listed `<symbol>` for removal but it was not deleted."
    - Functions marked for decomposition but original is unchanged → **DIFF WARN**: "Gauntlet recommended decomposing `<symbol>` but original function was not simplified."
+   - If all recommended symbols were addressed → **DIFF PASS** (implicit — no warnings emitted)
 
    **On DIFF FAIL:** Unstage and revert changes, add to `execution.failedTargets` with reason starting with `"diff-review: "`. Continue to next target.
    **On DIFF WARN:** Log the warning but proceed to gate. Include the warning in the gate-log entry.
