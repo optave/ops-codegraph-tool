@@ -16,8 +16,8 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 1 | 4.5 | [abhigyanpatwari/GitNexus](https://github.com/abhigyanpatwari/GitNexus) | 18,453 | TS/JS | PolyForm NC | Zero-server knowledge graph engine with Graph RAG Agent, CLI + MCP + Web UI, tree-sitter native + WASM, LadybugDB (custom graph DB), multi-editor support (Claude Code hooks, Cursor, Codex, Windsurf, OpenCode), auto-generated AGENTS.md/CLAUDE.md. **Non-commercial license. Viral growth (18k stars in ~8 months)** |
 | 2 | 4.5 | [joernio/joern](https://github.com/joernio/joern) | 3,021 | Scala | Apache-2.0 | Full CPG analysis platform for vulnerability discovery, Scala query DSL, multi-language, daily releases (v4.0.508), 75 contributors |
 | 3 | 4.5 | [postrv/narsil-mcp](https://github.com/postrv/narsil-mcp) | 129 | Rust | Apache-2.0 | 90 MCP tools, 32 languages, taint analysis, SBOM, dead code, neural semantic search, single ~30MB binary, SPA web frontend (added v1.6.0, current v1.6.1) |
-| 4 | 4.2 | [vitali87/code-graph-rag](https://github.com/vitali87/code-graph-rag) | 2,168 | Python | MIT | Graph RAG with Memgraph, multi-provider AI, code editing, semantic search, MCP server (added 2026) |
-| **5** | **4.5** | **[@optave/codegraph](https://github.com/optave/codegraph)** | **32** | **JS/Rust** | **Apache-2.0** | **Sub-second incremental rebuilds (3-tier change detection), dual engine (native Rust + WASM), 11 languages, 32-tool MCP, 41 CLI commands, qualified call resolution with receiver type tracking, `context`/`audit`/`where` AI-optimized commands, dataflow + CFG + stored AST across all languages, sequence diagrams, structure/hotspot analysis, node role classification, dead code/export detection, architecture boundary enforcement, unified graph model with qualified names/scope/visibility, zero-cost core + optional LLM enhancement** |
+| **4** | **4.5** | **[@optave/codegraph](https://github.com/optave/codegraph)** | **32** | **JS/Rust** | **Apache-2.0** | **Sub-second incremental rebuilds (3-tier change detection), dual engine (native Rust + WASM), 11 languages, 32-tool MCP, 41 CLI commands, qualified call resolution with receiver type tracking, `context`/`audit`/`where` AI-optimized commands, dataflow + CFG + stored AST across all languages, sequence diagrams, structure/hotspot analysis, node role classification, dead code/export detection, architecture boundary enforcement, unified graph model with qualified names/scope/visibility, zero-cost core + optional LLM enhancement** |
+| 5 | 4.2 | [vitali87/code-graph-rag](https://github.com/vitali87/code-graph-rag) | 2,168 | Python | MIT | Graph RAG with Memgraph, multi-provider AI, code editing, semantic search, MCP server (added 2026) |
 | 6 | 4.3 | [DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) | 793 | C | MIT | Single static C binary, 64 languages (tree-sitter), 14 MCP tools, Cypher-like query language, persistent SQLite knowledge graph, 10-agent auto-installer, 3D graph visualization, HTTP route analysis. **25 days old — fastest-growing new entrant** |
 | 7 | 4.2 | [Fraunhofer-AISEC/cpg](https://github.com/Fraunhofer-AISEC/cpg) | 424 | Kotlin | Apache-2.0 | CPG library for 8+ languages with MCP module, Neo4j visualization, formal specs, LLVM IR support |
 | 8 | 4.0 | [SimplyLiz/CodeMCP (CKB)](https://github.com/SimplyLiz/CodeMCP) | 77 | Go | Custom | SCIP-based indexing, compound operations (83% token savings), CODEOWNERS, secret scanning, impact analysis, architecture mapping (v8.1.0) |
@@ -135,8 +135,8 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 1 | GitNexus | 5 | 5 | 4 | 4 | 4 | 5 |
 | 2 | joern | 5 | 5 | 3 | 4 | 5 | 5 |
 | 3 | narsil-mcp | 5 | 5 | 5 | 5 | 4 | 3 |
-| 4 | code-graph-rag | 5 | 4 | 3 | 4 | 4 | 5 |
-| **5** | **codegraph (us)** | **5** | **5** | **5** | **4** | **5** | **3** |
+| **4** | **codegraph (us)** | **5** | **5** | **5** | **4** | **5** | **3** |
+| 5 | code-graph-rag | 5 | 4 | 3 | 4 | 4 | 5 |
 | 6 | codebase-memory-mcp | 4 | 4 | 5 | 5 | 4 | 4 |
 | 7 | cpg | 5 | 5 | 2 | 5 | 5 | 3 |
 | 8 | CKB | 5 | 5 | 4 | 3 | 4 | 3 |
@@ -154,8 +154,8 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 20 | CodeGraphMCPServer | 4 | 4 | 4 | 5 | 3 | 1 |
 | 21 | stratify | 4 | 4 | 2 | 5 | 4 | 2 |
 | 22 | cie | 5 | 4 | 4 | 3 | 4 | 1 |
-| 23 | autodev-codebase | 5 | 3 | 3 | 5 | 3 | 1 |
-| 24 | Claude-code-memory | 4 | 3 | 3 | 3 | 4 | 3 |
+| 23 | Claude-code-memory | 4 | 3 | 3 | 3 | 4 | 3 |
+| 24 | autodev-codebase | 5 | 3 | 3 | 5 | 3 | 1 |
 | 25 | codexray | 5 | 4 | 4 | 4 | 3 | 1 |
 | 26 | CodeVisualizer | 4 | 3 | 5 | 3 | 3 | 2 |
 | 27 | code-health-meter | 3 | 5 | 5 | 1 | 4 | 2 |
