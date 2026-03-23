@@ -41,6 +41,12 @@ export function rolesData(
       }
     }
 
+    // NOTE: cachedStmt cannot be applied here because the SQL varies per call —
+    // the WHERE clause is built dynamically from `conditions` (role filter, file
+    // filter). A future optimisation could use a fixed SQL with CASE/COALESCE to
+    // absorb optional filters, or maintain a small Map<string, StmtCache> keyed
+    // by the unique condition combination (there are only ~4 variants). For now
+    // the dynamic prepare is acceptable given the low call frequency of `roles`.
     let rows = db
       .prepare(
         `SELECT name, kind, file, line, end_line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY role, file, line`,

@@ -5,7 +5,7 @@ import type { Tree } from 'web-tree-sitter';
 import { Language, Parser, Query } from 'web-tree-sitter';
 import { debug, warn } from '../infrastructure/logger.js';
 import { getNative, getNativePackageVersion, loadNative } from '../infrastructure/native.js';
-import type { EngineMode, LanguageRegistryEntry } from '../types.js';
+import type { EngineMode, ExtractorOutput, LanguageId, LanguageRegistryEntry } from '../types.js';
 
 // Re-export all extractors for backward compatibility
 export {
@@ -67,12 +67,10 @@ interface ResolvedEngine {
   native: any;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: extractor return types vary per language
 interface WasmExtractResult {
-  // biome-ignore lint/suspicious/noExplicitAny: extractor return shapes vary per language
-  symbols: any;
+  symbols: ExtractorOutput;
   tree: Tree;
-  langId: string;
+  langId: LanguageId;
 }
 
 // Shared patterns for all JS/TS/TSX (class_declaration excluded — name type differs)
@@ -439,7 +437,10 @@ async function backfillTypeMap(
       typeMap:
         tm instanceof Map
           ? tm
-          : new Map(tm.map((e: { name: string; typeName: string }) => [e.name, e.typeName])),
+          : new Map(
+              // biome-ignore lint/suspicious/noExplicitAny: defensive fallback for legacy array-shaped typeMap
+              (tm as any).map((e: { name: string; typeName: string }) => [e.name, e.typeName]),
+            ),
       backfilled: true,
     };
   } finally {
@@ -567,10 +568,10 @@ export async function parseFilesAuto(
                 extracted.symbols.typeMap instanceof Map
                   ? extracted.symbols.typeMap
                   : new Map(
-                      extracted.symbols.typeMap.map((e: { name: string; typeName: string }) => [
-                        e.name,
-                        e.typeName,
-                      ]),
+                      // biome-ignore lint/suspicious/noExplicitAny: defensive fallback for legacy array-shaped typeMap
+                      (extracted.symbols.typeMap as any).map(
+                        (e: { name: string; typeName: string }) => [e.name, e.typeName],
+                      ),
                     );
               symbols._typeMapBackfilled = true;
             }
