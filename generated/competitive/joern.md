@@ -2,7 +2,7 @@
 
 **Date:** 2026-03-21
 **Competitors:** `@optave/codegraph` v3.2.0 (Apache-2.0) vs `joernio/joern` v4.x (Apache-2.0)
-**Context:** Both are Apache-2.0-licensed code analysis tools with CLI interfaces. Joern is ranked #2 in our [competitive analysis](./COMPETITIVE_ANALYSIS.md) with a score of 4.5 vs codegraph's 4.5 at #5.
+**Context:** Both are Apache-2.0-licensed code analysis tools with CLI interfaces. Joern is ranked #2 in our [competitive analysis](./COMPETITIVE_ANALYSIS.md) with a score of 4.5 vs codegraph's 4.5 at #4.
 
 ---
 

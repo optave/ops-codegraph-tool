@@ -17,15 +17,15 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 2 | 4.5 | [joernio/joern](https://github.com/joernio/joern) | 3,021 | Scala | Apache-2.0 | Full CPG analysis platform for vulnerability discovery, Scala query DSL, multi-language, daily releases (v4.0.508), 75 contributors |
 | 3 | 4.5 | [postrv/narsil-mcp](https://github.com/postrv/narsil-mcp) | 129 | Rust | Apache-2.0 | 90 MCP tools, 32 languages, taint analysis, SBOM, dead code, neural semantic search, single ~30MB binary, SPA web frontend (added v1.6.0, current v1.6.1) |
 | **4** | **4.5** | **[@optave/codegraph](https://github.com/optave/codegraph)** | **32** | **JS/Rust** | **Apache-2.0** | **Sub-second incremental rebuilds (3-tier change detection), dual engine (native Rust + WASM), 11 languages, 32-tool MCP, 41 CLI commands, qualified call resolution with receiver type tracking, `context`/`audit`/`where` AI-optimized commands, dataflow + CFG + stored AST across all languages, sequence diagrams, structure/hotspot analysis, node role classification, dead code/export detection, architecture boundary enforcement, unified graph model with qualified names/scope/visibility, zero-cost core + optional LLM enhancement** |
-| 5 | 4.2 | [vitali87/code-graph-rag](https://github.com/vitali87/code-graph-rag) | 2,168 | Python | MIT | Graph RAG with Memgraph, multi-provider AI, code editing, semantic search, MCP server (added 2026) |
-| 6 | 4.3 | [DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) | 793 | C | MIT | Single static C binary, 64 languages (tree-sitter), 14 MCP tools, Cypher-like query language, persistent SQLite knowledge graph, 10-agent auto-installer, 3D graph visualization, HTTP route analysis. **25 days old — fastest-growing new entrant** |
+| 5 | 4.3 | [DeusData/codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) | 793 | C | MIT | Single static C binary, 64 languages (tree-sitter), 14 MCP tools, Cypher-like query language, persistent SQLite knowledge graph, 10-agent auto-installer, 3D graph visualization, HTTP route analysis. **25 days old — fastest-growing new entrant** |
+| 6 | 4.2 | [vitali87/code-graph-rag](https://github.com/vitali87/code-graph-rag) | 2,168 | Python | MIT | Graph RAG with Memgraph, multi-provider AI, code editing, semantic search, MCP server (added 2026) |
 | 7 | 4.2 | [Fraunhofer-AISEC/cpg](https://github.com/Fraunhofer-AISEC/cpg) | 424 | Kotlin | Apache-2.0 | CPG library for 8+ languages with MCP module, Neo4j visualization, formal specs, LLVM IR support |
-| 8 | 4.0 | [SimplyLiz/CodeMCP (CKB)](https://github.com/SimplyLiz/CodeMCP) | 77 | Go | Custom | SCIP-based indexing, compound operations (83% token savings), CODEOWNERS, secret scanning, impact analysis, architecture mapping (v8.1.0) |
-| 9 | 3.8 | [harshkedia177/axon](https://github.com/harshkedia177/axon) | 577 | Python | MIT | 11-phase pipeline, KuzuDB, Leiden community detection, dead code, change coupling, MCP + CLI, hit v1.0 milestone |
-| 10 | 3.8 | [seatedro/glimpse](https://github.com/seatedro/glimpse) | 349 | Rust | MIT | Clipboard-first codebase-to-LLM tool with call graphs, token counting, LSP resolution. **Stagnant since Jan 2026** |
-| 11 | 3.8 | [ShiftLeftSecurity/codepropertygraph](https://github.com/ShiftLeftSecurity/codepropertygraph) | 564 | Scala | Apache-2.0 | CPG specification + Tinkergraph library, Scala query DSL, protobuf serialization (Joern foundation) |
-| 12 | 3.8 | [Jakedismo/codegraph-rust](https://github.com/Jakedismo/codegraph-rust) | 142 | Rust | None | 100% Rust GraphRAG, SurrealDB, LSP-powered dataflow analysis, architecture boundary enforcement |
-| 13 | 4.2 | [Anandb71/arbor](https://github.com/Anandb71/arbor) | 85 | Rust | MIT | Native GUI, confidence scoring, architectural role classification, fuzzy search, MCP |
+| 8 | 4.2 | [Anandb71/arbor](https://github.com/Anandb71/arbor) | 85 | Rust | MIT | Native GUI, confidence scoring, architectural role classification, fuzzy search, MCP |
+| 9 | 4.0 | [SimplyLiz/CodeMCP (CKB)](https://github.com/SimplyLiz/CodeMCP) | 77 | Go | Custom | SCIP-based indexing, compound operations (83% token savings), CODEOWNERS, secret scanning, impact analysis, architecture mapping (v8.1.0) |
+| 10 | 3.8 | [harshkedia177/axon](https://github.com/harshkedia177/axon) | 577 | Python | MIT | 11-phase pipeline, KuzuDB, Leiden community detection, dead code, change coupling, MCP + CLI, hit v1.0 milestone |
+| 11 | 3.8 | [seatedro/glimpse](https://github.com/seatedro/glimpse) | 349 | Rust | MIT | Clipboard-first codebase-to-LLM tool with call graphs, token counting, LSP resolution. **Stagnant since Jan 2026** |
+| 12 | 3.8 | [ShiftLeftSecurity/codepropertygraph](https://github.com/ShiftLeftSecurity/codepropertygraph) | 564 | Scala | Apache-2.0 | CPG specification + Tinkergraph library, Scala query DSL, protobuf serialization (Joern foundation) |
+| 13 | 3.8 | [Jakedismo/codegraph-rust](https://github.com/Jakedismo/codegraph-rust) | 142 | Rust | None | 100% Rust GraphRAG, SurrealDB, LSP-powered dataflow analysis, architecture boundary enforcement |
 | 14 | 3.7 | [JudiniLabs/mcp-code-graph](https://github.com/JudiniLabs/mcp-code-graph) | 380 | JavaScript | MIT | Cloud-hosted MCP server by CodeGPT, semantic search, dependency links (requires account) |
 | 15 | 3.7 | [entrepeneur4lyf/code-graph-mcp](https://github.com/entrepeneur4lyf/code-graph-mcp) | 83 | Python | MIT | ast-grep for 25+ languages, complexity metrics, code smells, circular dependency detection. **Stagnant since Jul 2025** |
 | 16 | 3.7 | [cs-au-dk/jelly](https://github.com/cs-au-dk/jelly) | 423 | TypeScript | BSD-3 | Academic-grade JS/TS points-to analysis, call graphs, vulnerability exposure, 5 published papers |
@@ -136,15 +136,15 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 2 | joern | 5 | 5 | 3 | 4 | 5 | 5 |
 | 3 | narsil-mcp | 5 | 5 | 5 | 5 | 4 | 3 |
 | **4** | **codegraph (us)** | **5** | **5** | **5** | **4** | **5** | **3** |
-| 5 | code-graph-rag | 5 | 4 | 3 | 4 | 4 | 5 |
-| 6 | codebase-memory-mcp | 4 | 4 | 5 | 5 | 4 | 4 |
+| 5 | codebase-memory-mcp | 4 | 4 | 5 | 5 | 4 | 4 |
+| 6 | code-graph-rag | 5 | 4 | 3 | 4 | 4 | 5 |
 | 7 | cpg | 5 | 5 | 2 | 5 | 5 | 3 |
-| 8 | CKB | 5 | 5 | 4 | 3 | 4 | 3 |
-| 9 | axon | 5 | 5 | 4 | 2 | 4 | 3 |
-| 10 | glimpse | 4 | 4 | 5 | 3 | 5 | 2 |
-| 11 | codepropertygraph | 4 | 5 | 2 | 4 | 5 | 3 |
-| 12 | codegraph-rust | 5 | 5 | 2 | 4 | 4 | 3 |
-| 13 | arbor | 4 | 4 | 5 | 4 | 5 | 3 |
+| 8 | arbor | 4 | 4 | 5 | 4 | 5 | 3 |
+| 9 | CKB | 5 | 5 | 4 | 3 | 4 | 3 |
+| 10 | axon | 5 | 5 | 4 | 2 | 4 | 3 |
+| 11 | glimpse | 4 | 4 | 5 | 3 | 5 | 2 |
+| 12 | codepropertygraph | 4 | 5 | 2 | 4 | 5 | 3 |
+| 13 | codegraph-rust | 5 | 5 | 2 | 4 | 4 | 3 |
 | 14 | mcp-code-graph | 4 | 3 | 4 | 4 | 3 | 4 |
 | 15 | code-graph-mcp | 4 | 4 | 4 | 5 | 3 | 2 |
 | 16 | jelly | 4 | 5 | 4 | 1 | 5 | 3 |
@@ -224,14 +224,7 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 - **Single-binary deployment**: ~30MB Rust binary via brew/scoop/cargo/npm — as easy as ours
 - **Note**: No activity since Feb 25 (24+ day gap) — development may have paused
 
-### vs code-graph-rag (#4, 2,168 stars)
-- **Graph query expressiveness**: Memgraph + Cypher enables arbitrary graph traversals; our CLI commands are more rigid
-- **AI-powered code editing**: they can surgically edit functions via AST targeting with visual diffs
-- **Provider flexibility**: they support Gemini/OpenAI/Claude/Ollama and can mix providers per task
-- **MCP server**: now added MCP support, expanding from pure RAG into the AI agent ecosystem
-- **Community**: 2,168 stars — significant traction
-
-### vs codebase-memory-mcp (#6, 793 stars — NEW)
+### vs codebase-memory-mcp (#5, 793 stars — NEW)
 - **Explosive growth**: 793 stars in 25 days — fastest-growing new entrant in the space. Single-developer C project
 - **Zero-dependency binary**: Single static C binary (~30MB), no Node.js/JVM/runtime. Auto-installer configures 10 different AI agents in one command
 - **64 languages**: 3x our language coverage via vendored tree-sitter grammars compiled into the binary
@@ -240,31 +233,38 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 - **3D graph visualization**: Built-in web-based 3D graph viewer
 - **Where we win**: MCP-only (no standalone CLI), no semantic search/embeddings, no complexity metrics, no cycle detection, no export formats (DOT/Mermaid/GraphML), no architecture boundaries, no CI gates, no programmatic API, limited Cypher subset (no WITH/COLLECT/OPTIONAL MATCH). Very immature (v0.5.x, 25 days old, solo developer). Our analysis depth is significantly greater
 
+### vs code-graph-rag (#6, 2,168 stars)
+- **Graph query expressiveness**: Memgraph + Cypher enables arbitrary graph traversals; our CLI commands are more rigid
+- **AI-powered code editing**: they can surgically edit functions via AST targeting with visual diffs
+- **Provider flexibility**: they support Gemini/OpenAI/Claude/Ollama and can mix providers per task
+- **MCP server**: now added MCP support, expanding from pure RAG into the AI agent ecosystem
+- **Community**: 2,168 stars — significant traction
+
 ### vs cpg (#7, 424 stars)
 - **Formal CPG specification**: academic-grade graph representation (AST + CFG + PDG + DFG) with published specs
 - **MCP module**: built-in MCP support now, matching our integration
 - **LLVM IR support**: extends language coverage to any LLVM-compiled language (Rust, Swift, etc.)
 - **Type inference**: can analyze incomplete/partial code — our tree-sitter requires syntactically valid input
 
-### vs glimpse (#10, 349 stars — stagnant)
-- **LLM workflow optimization**: clipboard-first output + token counting + XML output mode — purpose-built for "code → LLM context"
-- **LSP-based call resolution**: compiler-grade accuracy vs our tree-sitter heuristic approach
-- **Web content processing**: can fetch URLs and convert HTML to markdown for context
-
-### vs CKB (#8, 77 stars)
+### vs CKB (#9, 77 stars)
 - **Indexing accuracy**: SCIP provides compiler-grade cross-file references (type-aware), fundamentally more accurate than tree-sitter for supported languages
 - **Compound operations**: `explore`/`understand`/`prepareChange` batch multiple queries into one call — 83% token reduction. *(Gap closed: our `context`, `audit`, and `batch` commands now serve the same purpose)*
 - **Now claims impact analysis and architecture mapping**: Feature convergence with v8.1.0 — they're moving into our territory
 - **Secret scanning**: enterprise feature we lack
 
-### vs axon (#9, 577 stars)
+### vs axon (#10, 577 stars)
 - **Hit v1.0 milestone**: Now a stable release with tree-sitter + KuzuDB + CLI + MCP. Growing fast (+156 stars since Feb)
 - **Leiden community detection**: More sophisticated clustering than our Louvain
 - **KuzuDB with native Cypher**: More expressive for complex graph queries than our SQLite
 - **Git change coupling**: Co-change analysis — *(Gap closed: we now have `co-change` command)*
 - **Branch structural diff**: *(Gap closed: we now have `branch-compare`)*
 
-### vs codegraph-rust (#12, 142 stars)
+### vs glimpse (#11, 349 stars — stagnant)
+- **LLM workflow optimization**: clipboard-first output + token counting + XML output mode — purpose-built for "code → LLM context"
+- **LSP-based call resolution**: compiler-grade accuracy vs our tree-sitter heuristic approach
+- **Web content processing**: can fetch URLs and convert HTML to markdown for context
+
+### vs codegraph-rust (#13, 142 stars)
 - **LSP-powered analysis**: compiler-grade cross-file references via rust-analyzer, pyright, gopls vs our tree-sitter heuristics
 - **Dataflow edges**: defines/uses/flows_to/returns/mutates relationships — *(Gap closed: we now have `flows_to`/`returns`/`mutates` across all 11 languages)*
 - **Architecture boundary enforcement**: *(Gap closed: we now have `boundaries` command with onion/hexagonal/layered/clean presets)*
