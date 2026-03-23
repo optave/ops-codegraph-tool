@@ -139,13 +139,13 @@ For **each** review comment — including minor suggestions, nits, style feedbac
    gh issue create \
      --repo optave/codegraph \
      --title "follow-up: <concise description of what needs to be done>" \
-     --body "$(cat <<'EOF'
-   Deferred from PR #<number> review.
+     --body "$(cat <<-'EOF'
+	Deferred from PR #<number> review.
 
-   **Original reviewer comment:** https://github.com/optave/codegraph/pull/<number>#discussion_r<comment-id>
+	**Original reviewer comment:** https://github.com/optave/codegraph/pull/<number>#discussion_r<comment-id>
 
-   **Context:** <why this is out of scope for the current PR and what the fix entails>
-   EOF
+	**Context:** <why this is out of scope for the current PR and what the fix entails>
+	EOF
    )" \
      --label "follow-up"
    ```
