@@ -135,7 +135,7 @@ For each **exported** symbol in changed files:
 
 ### 5b. Import resolution integrity
 
-From the `codegraph check` results already collected in Step 2 (which includes `--staged`), extract any `unresolved_import` warnings.
+From the `codegraph check` results already collected in Step 1 (which includes `--staged`), extract any `unresolved_import` warnings.
 
 If any `unresolved_import` warnings appear for files NOT changed in this commit → **FAIL**: "Change broke import resolution for <file>: <import>"
 
