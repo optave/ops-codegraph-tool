@@ -66,11 +66,16 @@ For stale worktrees with merged branches:
 
 ## Phase 2 — Delete Dirt Files
 
-Remove temporary and generated files that accumulate over time:
+Remove temporary and generated files that accumulate over time. There are two distinct categories of dirt that require different discovery commands:
+
+- **Gitignored dirt** (files matching `.gitignore` patterns — e.g. `coverage/`, `.DS_Store`, `*.log`, `.codegraph/graph.db-journal`): use `git clean -fdX --dry-run` to list them. `git ls-files --others --exclude-standard` silently omits these because `--exclude-standard` suppresses gitignored entries.
+- **Untracked non-ignored files** (stray files not in `.gitignore` — e.g. `*.tmp.*`, `*.bak`, `*.orig`): use `git ls-files --others --exclude-standard` to list them.
+
+Run both commands and union the results to get the full set of candidate dirt files.
 
 ### 2a. Known dirt patterns
 
-Search for and remove **untracked/ignored files only** (use `git ls-files --others --exclude-standard` or `git clean` to ensure tracked files are never touched):
+Search for and remove files found by the two discovery commands above (never touch tracked files):
 - `*.tmp.*`, `*.bak`, `*.orig` files in the repo (but NOT in `node_modules/`)
 - `.DS_Store` files
 - `*.log` files in repo root (not in `node_modules/`)
@@ -95,12 +100,19 @@ done
 
 ### 2b. Large untracked files
 
-Find untracked files larger than 1MB:
+Find untracked files (both gitignored and non-ignored) larger than 1MB. Use both discovery commands and union the paths:
 ```bash
+# Non-ignored untracked files
 git ls-files --others --exclude-standard | while read f; do
   size=$(stat --format='%s' "$f" 2>/dev/null || stat -f '%z' "$f" 2>/dev/null)
   [ -z "$size" ] && continue
   if [ "$size" -gt 1048576 ]; then echo "$f ($size bytes)"; fi
+done
+# Gitignored files (strip the leading "Would remove " prefix from dry-run output)
+git clean -fdX --dry-run | sed 's/^Would remove //' | while read f; do
+  size=$(stat --format='%s' "$f" 2>/dev/null || stat -f '%z' "$f" 2>/dev/null)
+  [ -z "$size" ] && continue
+  if [ "$size" -gt 1048576 ]; then echo "$f ($size bytes) [gitignored]"; fi
 done
 ```
 
