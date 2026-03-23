@@ -179,8 +179,8 @@ For each target in the current phase:
 
    **D5. Leftover check:**
    If the gauntlet recommendation mentioned specific symbols to remove/refactor, verify they were actually addressed:
-   - Dead symbols listed for removal → should be deleted in the diff
-   - Functions marked for decomposition → original should be simplified or removed
+   - Dead symbols listed for removal but still present in the diff → **DIFF WARN**: "Gauntlet listed `<symbol>` for removal but it was not deleted."
+   - Functions marked for decomposition but original is unchanged → **DIFF WARN**: "Gauntlet recommended decomposing `<symbol>` but original function was not simplified."
 
    **On DIFF FAIL:** Unstage and revert changes, add to `execution.failedTargets` with reason starting with `"diff-review: "`. Continue to next target.
    **On DIFF WARN:** Log the warning but proceed to gate. Include the warning in the gate-log entry.
