@@ -274,7 +274,6 @@ function resolveEngine(opts: ParseEngineOpts = {}): ResolvedEngine {
  *  - Backward compat for older native binaries missing js_name annotations
  *  - dataflow argFlows/mutations bindingType -> binding wrapper
  */
-// biome-ignore lint/suspicious/noExplicitAny: native result has dynamic shape
 // biome-ignore lint/suspicious/noExplicitAny: native addon result has no type declarations
 function patchNativeResult(r: any): ExtractorOutput {
   // lineCount: napi(js_name) emits "lineCount"; older binaries may emit "line_count"
@@ -307,7 +306,10 @@ function patchNativeResult(r: any): ExtractorOutput {
   // typeMap: native returns an array of {name, typeName}; normalize to Map
   if (r.typeMap && !(r.typeMap instanceof Map)) {
     r.typeMap = new Map(
-      r.typeMap.map((e: { name: string; typeName: string }) => [e.name, e.typeName]),
+      r.typeMap.map((e: { name: string; typeName: string }) => [
+        e.name,
+        { type: e.typeName, confidence: 0.9 } as TypeMapEntry,
+      ]),
     );
   }
 
