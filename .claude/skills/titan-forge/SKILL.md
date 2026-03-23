@@ -204,7 +204,7 @@ For each target in the current phase:
     - Record any diff-review warnings in `execution.diffWarnings` (if any)
     - Update `titan-state.json`
 
-13. **On failure (test, gate, or diff-review):**
+13. **On failure (test or gate):**
     ```bash
     git reset HEAD <changed files>
     git checkout -- <changed files>

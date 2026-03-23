@@ -104,7 +104,8 @@ npm run build 2>&1 || echo "BUILD_FAILED"
 (Skip if no `build` script.)
 
 ```bash
-npm test 2>&1 || echo "TEST_FAILED"
+# Detect test command from package.json scripts (npm test, yarn test, pnpm test, etc.)
+<test-runner> test 2>&1 || echo "TEST_FAILED"
 ```
 
 If any fail → overall verdict is FAIL → proceed to auto-rollback.
@@ -233,11 +234,15 @@ Compare drift warnings between snapshot and current:
 - New drift warning not in snapshot → **WARN** with details
 - Drift warning resolved → note as positive
 
-### Cleanup
+### Cleanup (MUST run even on failure or early exit)
+
+This cleanup block MUST execute regardless of the verdict — including FAIL paths and early exits. Run it before proceeding to Step 9 (verdict aggregation), not after.
 
 ```bash
-TITAN_ARCH_DIR=$(cat .codegraph/titan/.arch-tmpdir)
-rm -rf "$TITAN_ARCH_DIR"
+TITAN_ARCH_DIR=$(cat .codegraph/titan/.arch-tmpdir 2>/dev/null)
+if [ -n "$TITAN_ARCH_DIR" ]; then
+  rm -rf "$TITAN_ARCH_DIR"
+fi
 rm -f .codegraph/titan/.arch-tmpdir
 ```
 
@@ -307,7 +312,7 @@ Aggregate all checks:
 
 > "GATE FAIL: [reason]. Graph restored, changes unstaged but preserved. Fix and re-stage."
 
-For structural-only and semantic failures (Steps 1-3, 5-8), do NOT auto-rollback — report and let user decide.
+For structural-only and semantic failures (Steps 1-3, 5, 5.5, 6-8), do NOT auto-rollback — report and let user decide.
 
 ### Snapshot cleanup on pipeline completion
 
