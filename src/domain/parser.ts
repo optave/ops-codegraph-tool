@@ -5,7 +5,7 @@ import type { Tree } from 'web-tree-sitter';
 import { Language, Parser, Query } from 'web-tree-sitter';
 import { debug, warn } from '../infrastructure/logger.js';
 import { getNative, getNativePackageVersion, loadNative } from '../infrastructure/native.js';
-import type { LanguageRegistryEntry } from '../types.js';
+import type { EngineMode, LanguageRegistryEntry } from '../types.js';
 
 // Re-export all extractors for backward compatibility
 export {
@@ -55,8 +55,8 @@ const TS_BACKFILL_EXTS = new Set(['.ts', '.tsx']);
 // Re-export for backward compatibility
 export type { LanguageRegistryEntry } from '../types.js';
 
-interface EngineOpts {
-  engine?: string;
+interface ParseEngineOpts {
+  engine?: EngineMode;
   dataflow?: boolean;
   ast?: boolean;
 }
@@ -249,7 +249,7 @@ export function isWasmAvailable(): boolean {
 
 // ── Unified API ──────────────────────────────────────────────────────────────
 
-function resolveEngine(opts: EngineOpts = {}): ResolvedEngine {
+function resolveEngine(opts: ParseEngineOpts = {}): ResolvedEngine {
   const pref = opts.engine || 'auto';
   if (pref === 'wasm') return { name: 'wasm', native: null };
   if (pref === 'native' || pref === 'auto') {
@@ -489,7 +489,7 @@ function wasmExtractSymbols(
 export async function parseFileAuto(
   filePath: string,
   source: string,
-  opts: EngineOpts = {},
+  opts: ParseEngineOpts = {},
 ): Promise<any> {
   const { native } = resolveEngine(opts);
 
@@ -523,7 +523,7 @@ export async function parseFileAuto(
 export async function parseFilesAuto(
   filePaths: string[],
   rootDir: string,
-  opts: EngineOpts = {},
+  opts: ParseEngineOpts = {},
 ): Promise<Map<string, any>> {
   const { native } = resolveEngine(opts);
   // biome-ignore lint/suspicious/noExplicitAny: result values have dynamic shape from extractors
@@ -615,7 +615,7 @@ export async function parseFilesAuto(
 /**
  * Report which engine is active.
  */
-export function getActiveEngine(opts: EngineOpts = {}): {
+export function getActiveEngine(opts: ParseEngineOpts = {}): {
   name: 'native' | 'wasm';
   version: string | null;
 } {
@@ -656,7 +656,7 @@ export async function parseFileIncremental(
   cache: any,
   filePath: string,
   source: string,
-  opts: EngineOpts = {},
+  opts: ParseEngineOpts = {},
 ): Promise<any> {
   if (cache) {
     const result = cache.parseFile(filePath, source);
