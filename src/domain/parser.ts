@@ -5,7 +5,7 @@ import type { Tree } from 'web-tree-sitter';
 import { Language, Parser, Query } from 'web-tree-sitter';
 import { debug, warn } from '../infrastructure/logger.js';
 import { getNative, getNativePackageVersion, loadNative } from '../infrastructure/native.js';
-import type { EngineMode, ExtractorOutput, LanguageRegistryEntry } from '../types.js';
+import type { EngineMode, ExtractorOutput, LanguageId, LanguageRegistryEntry } from '../types.js';
 
 // Re-export all extractors for backward compatibility
 export {
@@ -70,7 +70,7 @@ interface ResolvedEngine {
 interface WasmExtractResult {
   symbols: ExtractorOutput;
   tree: Tree;
-  langId: string;
+  langId: LanguageId;
 }
 
 // Shared patterns for all JS/TS/TSX (class_declaration excluded — name type differs)
