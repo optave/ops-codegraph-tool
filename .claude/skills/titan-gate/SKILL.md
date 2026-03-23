@@ -144,11 +144,7 @@ If any `unresolved_import` warnings appear for files NOT changed in this commit 
 
 ### 5c. Dependency direction assertions
 
-From diff-impact, extract any **new** edges (imports that didn't exist before):
-
-```bash
-codegraph diff-impact --staged -T --json
-```
+From the diff-impact results already collected in Step 2, extract any **new** edges (imports that didn't exist before).
 
 For each new dependency:
 - Check against `GLOBAL_ARCH.md` layer rules (if Titan artifacts exist)
@@ -160,6 +156,13 @@ For each new dependency:
 
 If the change modifies an index/barrel file (e.g., `index.js`, `mod.rs`):
 
+Capture the pre-change export list from the committed version:
+```bash
+git show HEAD:<barrel-file> > /tmp/titan-barrel-before.tmp
+codegraph exports /tmp/titan-barrel-before.tmp -T --json
+```
+
+Then capture the current (staged) export list:
 ```bash
 codegraph exports <barrel-file> -T --json
 ```
