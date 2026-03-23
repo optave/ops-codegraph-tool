@@ -1,23 +1,39 @@
 import { iterateFunctionNodes, openReadonlyOrFail } from '../db/index.js';
 import { buildFileConditionSQL } from '../db/query-builder.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
+import type { BetterSqlite3Database, NodeRow } from '../types.js';
 import { ALL_SYMBOL_KINDS } from './kinds.js';
+
+interface ListFunctionResult {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  endLine: number | null;
+  role: string | null;
+}
+
+interface IterListOpts {
+  noTests?: boolean;
+  file?: string;
+  pattern?: string;
+}
 
 /**
  * Generator: stream functions one-by-one using .iterate() for memory efficiency.
- * @param {string} [customDbPath]
- * @param {object} [opts]
- * @param {boolean} [opts.noTests]
- * @param {string} [opts.file]
- * @param {string} [opts.pattern]
- * @yields {{ name: string, kind: string, file: string, line: number, role: string|null }}
  */
-export function* iterListFunctions(customDbPath, opts = {}) {
-  const db = openReadonlyOrFail(customDbPath);
+export function* iterListFunctions(
+  customDbPath?: string,
+  opts: IterListOpts = {},
+): Generator<ListFunctionResult> {
+  const db = openReadonlyOrFail(customDbPath) as BetterSqlite3Database;
   try {
     const noTests = opts.noTests || false;
 
-    for (const row of iterateFunctionNodes(db, { file: opts.file, pattern: opts.pattern })) {
+    for (const row of iterateFunctionNodes(db, {
+      file: opts.file,
+      pattern: opts.pattern,
+    }) as IterableIterator<NodeRow>) {
       if (noTests && isTestFile(row.file)) continue;
       yield {
         name: row.name,
@@ -33,28 +49,37 @@ export function* iterListFunctions(customDbPath, opts = {}) {
   }
 }
 
+interface RoleResult {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  endLine: number | null;
+  role: string | null;
+}
+
+interface IterRolesOpts {
+  noTests?: boolean;
+  role?: string;
+  file?: string;
+}
+
 /**
  * Generator: stream role-classified symbols one-by-one.
- * @param {string} [customDbPath]
- * @param {object} [opts]
- * @param {boolean} [opts.noTests]
- * @param {string} [opts.role]
- * @param {string} [opts.file]
- * @yields {{ name: string, kind: string, file: string, line: number, endLine: number|null, role: string }}
  */
-export function* iterRoles(customDbPath, opts = {}) {
-  const db = openReadonlyOrFail(customDbPath);
+export function* iterRoles(customDbPath?: string, opts: IterRolesOpts = {}): Generator<RoleResult> {
+  const db = openReadonlyOrFail(customDbPath) as BetterSqlite3Database;
   try {
     const noTests = opts.noTests || false;
     const conditions = ['role IS NOT NULL'];
-    const params = [];
+    const params: unknown[] = [];
 
     if (opts.role) {
       conditions.push('role = ?');
       params.push(opts.role);
     }
     {
-      const fc = buildFileConditionSQL(opts.file, 'file');
+      const fc = buildFileConditionSQL(opts.file ?? '', 'file');
       if (fc.sql) {
         conditions.push(fc.sql.replace(/^ AND /, ''));
         params.push(...fc.params);
@@ -64,7 +89,7 @@ export function* iterRoles(customDbPath, opts = {}) {
     const stmt = db.prepare(
       `SELECT name, kind, file, line, end_line, role FROM nodes WHERE ${conditions.join(' AND ')} ORDER BY role, file, line`,
     );
-    for (const row of stmt.iterate(...params)) {
+    for (const row of stmt.iterate(...params) as IterableIterator<NodeRow>) {
       if (noTests && isTestFile(row.file)) continue;
       yield {
         name: row.name,
@@ -80,16 +105,35 @@ export function* iterRoles(customDbPath, opts = {}) {
   }
 }
 
+interface WhereUse {
+  name: string;
+  file: string;
+  line: number;
+}
+
+interface WhereResult {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  role: string | null;
+  exported: boolean;
+  uses: WhereUse[];
+}
+
+interface IterWhereOpts {
+  noTests?: boolean;
+}
+
 /**
  * Generator: stream symbol lookup results one-by-one.
- * @param {string} target - Symbol name to search for (partial match)
- * @param {string} [customDbPath]
- * @param {object} [opts]
- * @param {boolean} [opts.noTests]
- * @yields {{ name: string, kind: string, file: string, line: number, role: string|null, exported: boolean, uses: object[] }}
  */
-export function* iterWhere(target, customDbPath, opts = {}) {
-  const db = openReadonlyOrFail(customDbPath);
+export function* iterWhere(
+  target: string,
+  customDbPath?: string,
+  opts: IterWhereOpts = {},
+): Generator<WhereResult> {
+  const db = openReadonlyOrFail(customDbPath) as BetterSqlite3Database;
   try {
     const noTests = opts.noTests || false;
     const placeholders = ALL_SYMBOL_KINDS.map(() => '?').join(', ');
@@ -104,13 +148,16 @@ export function* iterWhere(target, customDbPath, opts = {}) {
       `SELECT n.name, n.file, n.line FROM edges e JOIN nodes n ON e.source_id = n.id
        WHERE e.target_id = ? AND e.kind = 'calls'`,
     );
-    for (const node of stmt.iterate(`%${target}%`, ...ALL_SYMBOL_KINDS)) {
+    for (const node of stmt.iterate(
+      `%${target}%`,
+      ...ALL_SYMBOL_KINDS,
+    ) as IterableIterator<NodeRow>) {
       if (noTests && isTestFile(node.file)) continue;
 
-      const crossFileCallers = crossFileCallersStmt.get(node.id, node.file);
+      const crossFileCallers = crossFileCallersStmt.get(node.id, node.file) as { cnt: number };
       const exported = crossFileCallers.cnt > 0;
 
-      let uses = usesStmt.all(node.id);
+      let uses = usesStmt.all(node.id) as WhereUse[];
       if (noTests) uses = uses.filter((u) => !isTestFile(u.file));
 
       yield {
@@ -118,7 +165,7 @@ export function* iterWhere(target, customDbPath, opts = {}) {
         kind: node.kind,
         file: node.file,
         line: node.line,
-        role: node.role || null,
+        role: (node.role as string) || null,
         exported,
         uses: uses.map((u) => ({ name: u.name, file: u.file, line: u.line })),
       };
