@@ -120,7 +120,29 @@ For **each** review comment — including minor suggestions, nits, style feedbac
 2. **Read the relevant code** at the file and line referenced.
 3. **Make the change.** Even if the comment is marked as "nit" or "suggestion" or "minor" — address it. The goal is zero outstanding comments.
 4. **If you disagree** with a suggestion (e.g., it would introduce a bug or contradicts project conventions), do NOT silently ignore it. Reply to the comment explaining why you chose a different approach.
-5. **Reply to each comment** explaining what you did. The reply mechanism depends on where the comment lives:
+5. **If the fix is genuinely out of scope** for this PR (e.g., it affects a different module not touched by this PR, or requires a design decision beyond the PR's purpose), you MUST create a GitHub issue to track it before replying. Never reply with "acknowledged as follow-up" or "noted for later" without a tracked issue — untracked deferrals get lost and nobody will ever revisit them.
+
+   ```bash
+   # Create a tracking issue for the deferred item
+   gh issue create \
+     --title "follow-up: <concise description of what needs to be done>" \
+     --body "$(cat <<'EOF'
+   Deferred from PR #<number> review.
+
+   **Original reviewer comment:** https://github.com/optave/codegraph/pull/<number>#discussion_r<comment-id>
+
+   **Context:** <why this is out of scope for the current PR and what the fix entails>
+   EOF
+   )" \
+     --label "follow-up"
+   ```
+
+   Then reply to the reviewer comment referencing the issue:
+   ```bash
+   gh api repos/optave/codegraph/pulls/<number>/comments/<comment-id>/replies \
+     -f body="Out of scope for this PR — tracked in #<issue-number>"
+   ```
+6. **Reply to each comment** explaining what you did. The reply mechanism depends on where the comment lives:
 
    **For inline PR review comments** (from Claude, Greptile, or humans — these have a `path` and `line`):
    ```bash
@@ -220,3 +242,4 @@ After processing all PRs, output a summary table:
 - **One concern per commit** — don't lump conflict resolution with code fixes.
 - **Flag scope creep.** If a PR's diff contains files unrelated to its stated purpose (e.g., a docs PR carrying `src/` or test changes from a merged feature branch), flag it immediately. Split the unrelated changes into a separate branch and PR. Do not proceed with review until the PR is scoped correctly — scope creep is not acceptable.
 - If a PR is fundamentally broken beyond what review feedback can fix, note it in the summary and skip to the next PR.
+- **Never defer without tracking.** Do not reply "acknowledged as follow-up", "noted for later", or "tracking for follow-up" to a reviewer comment without creating a GitHub issue first. If you can't fix it now and it's genuinely out of scope, create an issue with the `follow-up` label and include the issue link in your reply. Untracked acknowledgements are the same as ignoring the comment — they will never be revisited.

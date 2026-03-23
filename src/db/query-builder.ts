@@ -1,5 +1,6 @@
 import { DbError } from '../shared/errors.js';
 import { DEAD_ROLE_PREFIX, EVERY_EDGE_KIND } from '../shared/kinds.js';
+import type { BetterSqlite3Database } from '../types.js';
 
 // ─── Validation Helpers ─────────────────────────────────────────────
 
@@ -11,19 +12,19 @@ const SAFE_ORDER_TERM_RE = /^[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)?\s*(?:asc|de
 const SAFE_SELECT_TOKEN_RE =
   /^(?:[a-z_][a-z0-9_]*(?:\.[a-z_*][a-z0-9_]*)?\s*(?:as\s+[a-z_][a-z0-9_]*)?|[a-z_]+\([^)]*\)\s*(?:as\s+[a-z_][a-z0-9_]*)?)$/i;
 
-function validateAlias(alias) {
+function validateAlias(alias: string): void {
   if (!SAFE_ALIAS_RE.test(alias)) {
     throw new DbError(`Invalid SQL alias: ${alias}`);
   }
 }
 
-function validateColumn(column) {
+function validateColumn(column: string): void {
   if (!SAFE_COLUMN_RE.test(column)) {
     throw new DbError(`Invalid SQL column: ${column}`);
   }
 }
 
-function validateOrderBy(clause) {
+function validateOrderBy(clause: string): void {
   const terms = clause.split(',').map((t) => t.trim());
   for (const term of terms) {
     if (!SAFE_ORDER_TERM_RE.test(term)) {
@@ -32,8 +33,8 @@ function validateOrderBy(clause) {
   }
 }
 
-function splitTopLevelCommas(str) {
-  const parts = [];
+function splitTopLevelCommas(str: string): string[] {
+  const parts: string[] = [];
   let depth = 0;
   let start = 0;
   for (let i = 0; i < str.length; i++) {
@@ -48,7 +49,7 @@ function splitTopLevelCommas(str) {
   return parts;
 }
 
-function validateSelectCols(cols) {
+function validateSelectCols(cols: string): void {
   const tokens = splitTopLevelCommas(cols);
   for (const token of tokens) {
     if (!SAFE_SELECT_TOKEN_RE.test(token)) {
@@ -57,8 +58,8 @@ function validateSelectCols(cols) {
   }
 }
 
-function validateEdgeKind(edgeKind) {
-  if (!EVERY_EDGE_KIND.includes(edgeKind)) {
+function validateEdgeKind(edgeKind: string): void {
+  if (!EVERY_EDGE_KIND.includes(edgeKind as never)) {
     throw new DbError(
       `Invalid edge kind: ${edgeKind} (expected one of ${EVERY_EDGE_KIND.join(', ')})`,
     );
@@ -68,17 +69,15 @@ function validateEdgeKind(edgeKind) {
 // ─── LIKE Escaping ──────────────────────────────────────────────────
 
 /** Escape LIKE wildcards in a literal string segment. */
-export function escapeLike(s) {
+export function escapeLike(s: string): string {
   return s.replace(/[%_\\]/g, '\\$&');
 }
 
 /**
  * Normalize a file filter value (string, string[], or falsy) into a flat array.
  * Returns an empty array when the input is falsy.
- * @param {string|string[]|undefined|null} file
- * @returns {string[]}
  */
-export function normalizeFileFilter(file) {
+export function normalizeFileFilter(file: string | string[] | undefined | null): string[] {
   if (!file) return [];
   return Array.isArray(file) ? file : [file];
 }
@@ -86,19 +85,18 @@ export function normalizeFileFilter(file) {
 /**
  * Build a SQL condition + params for a multi-value file LIKE filter.
  * Returns `{ sql: '', params: [] }` when the filter is empty.
- *
- * @param {string|string[]} file - One or more partial file paths
- * @param {string} [column='file'] - The column name to filter on (e.g. 'n.file', 'a.file')
- * @returns {{ sql: string, params: string[] }}
  */
-export function buildFileConditionSQL(file, column = 'file') {
+export function buildFileConditionSQL(
+  file: string | string[],
+  column = 'file',
+): { sql: string; params: string[] } {
   validateColumn(column);
   const files = normalizeFileFilter(file);
   if (files.length === 0) return { sql: '', params: [] };
   if (files.length === 1) {
     return {
       sql: ` AND ${column} LIKE ? ESCAPE '\\'`,
-      params: [`%${escapeLike(files[0])}%`],
+      params: [`%${escapeLike(files[0] as string)}%`],
     };
   }
   const clauses = files.map(() => `${column} LIKE ? ESCAPE '\\'`);
@@ -111,11 +109,8 @@ export function buildFileConditionSQL(file, column = 'file') {
 /**
  * Commander option accumulator for repeatable `--file` flag.
  * Use as: `['-f, --file <path>', 'Scope to file (partial match, repeatable)', collectFile]`
- * @param {string} val - New value from Commander
- * @param {string[]} acc - Accumulated values (undefined on first call)
- * @returns {string[]}
  */
-export function collectFile(val, acc) {
+export function collectFile(val: string, acc?: string[]): string[] {
   acc = acc || [];
   acc.push(val);
   return acc;
@@ -126,10 +121,8 @@ export function collectFile(val, acc) {
 /**
  * Return a SQL AND clause that excludes test/spec/stories files.
  * Returns empty string when disabled.
- * @param {string} [column='n.file'] - Column to filter on
- * @param {boolean} [enabled=true] - No-op when false
  */
-export function testFilterSQL(column = 'n.file', enabled = true) {
+export function testFilterSQL(column = 'n.file', enabled = true): string {
   if (!enabled) return '';
   validateColumn(column);
   return `AND ${column} NOT LIKE '%.test.%'
@@ -139,12 +132,8 @@ export function testFilterSQL(column = 'n.file', enabled = true) {
        AND ${column} NOT LIKE '%.stories.%'`;
 }
 
-/**
- * Build IN (?, ?, ?) placeholders and params array for a kind filter.
- * @param {string[]} kinds
- * @returns {{ placeholders: string, params: string[] }}
- */
-export function kindInClause(kinds) {
+/** Build IN (?, ?, ?) placeholders and params array for a kind filter. */
+export function kindInClause(kinds: string[]): { placeholders: string; params: string[] } {
   return {
     placeholders: kinds.map(() => '?').join(', '),
     params: [...kinds],
@@ -153,10 +142,8 @@ export function kindInClause(kinds) {
 
 /**
  * Return a LEFT JOIN subquery for fan-in (incoming edge count).
- * @param {string} [edgeKind='calls'] - Edge kind to count
- * @param {string} [alias='fi'] - Subquery alias
  */
-export function fanInJoinSQL(edgeKind = 'calls', alias = 'fi') {
+export function fanInJoinSQL(edgeKind = 'calls', alias = 'fi'): string {
   validateEdgeKind(edgeKind);
   validateAlias(alias);
   return `LEFT JOIN (
@@ -166,10 +153,8 @@ export function fanInJoinSQL(edgeKind = 'calls', alias = 'fi') {
 
 /**
  * Return a LEFT JOIN subquery for fan-out (outgoing edge count).
- * @param {string} [edgeKind='calls'] - Edge kind to count
- * @param {string} [alias='fo'] - Subquery alias
  */
-export function fanOutJoinSQL(edgeKind = 'calls', alias = 'fo') {
+export function fanOutJoinSQL(edgeKind = 'calls', alias = 'fo'): string {
   validateEdgeKind(edgeKind);
   validateAlias(alias);
   return `LEFT JOIN (
@@ -185,21 +170,21 @@ export function fanOutJoinSQL(edgeKind = 'calls', alias = 'fo') {
  */
 export class NodeQuery {
   #selectCols = 'n.*';
-  #joins = [];
-  #conditions = [];
-  #params = [];
+  #joins: string[] = [];
+  #conditions: string[] = [];
+  #params: (string | number)[] = [];
   #orderByClause = '';
-  #limitValue = null;
+  #limitValue: number | null = null;
 
   /** Set SELECT columns (default: `n.*`). */
-  select(cols) {
+  select(cols: string): this {
     validateSelectCols(cols);
     this.#selectCols = cols;
     return this;
   }
 
   /** WHERE n.kind IN (?, ?, ...) */
-  kinds(kindArray) {
+  kinds(kindArray: string[] | undefined | null): this {
     if (!kindArray || kindArray.length === 0) return this;
     const { placeholders, params } = kindInClause(kindArray);
     this.#conditions.push(`n.kind IN (${placeholders})`);
@@ -208,7 +193,7 @@ export class NodeQuery {
   }
 
   /** Add 5 NOT LIKE conditions to exclude test files. No-op when enabled is falsy. */
-  excludeTests(enabled) {
+  excludeTests(enabled: boolean | undefined): this {
     if (!enabled) return this;
     this.#conditions.push(
       `n.file NOT LIKE '%.test.%'`,
@@ -221,12 +206,12 @@ export class NodeQuery {
   }
 
   /** WHERE n.file LIKE ? (no-op if falsy). Accepts a single string or string[]. */
-  fileFilter(file) {
+  fileFilter(file: string | string[] | undefined | null): this {
     const files = normalizeFileFilter(file);
     if (files.length === 0) return this;
     if (files.length === 1) {
       this.#conditions.push("n.file LIKE ? ESCAPE '\\'");
-      this.#params.push(`%${escapeLike(files[0])}%`);
+      this.#params.push(`%${escapeLike(files[0] as string)}%`);
     } else {
       const clauses = files.map(() => "n.file LIKE ? ESCAPE '\\'");
       this.#conditions.push(`(${clauses.join(' OR ')})`);
@@ -236,7 +221,7 @@ export class NodeQuery {
   }
 
   /** WHERE n.kind = ? (no-op if falsy). */
-  kindFilter(kind) {
+  kindFilter(kind: string | undefined | null): this {
     if (!kind) return this;
     this.#conditions.push('n.kind = ?');
     this.#params.push(kind);
@@ -244,7 +229,7 @@ export class NodeQuery {
   }
 
   /** WHERE n.role = ? (no-op if falsy). 'dead' matches all dead-* sub-roles. */
-  roleFilter(role) {
+  roleFilter(role: string | undefined | null): this {
     if (!role) return this;
     if (role === DEAD_ROLE_PREFIX) {
       this.#conditions.push('n.role LIKE ?');
@@ -257,7 +242,7 @@ export class NodeQuery {
   }
 
   /** WHERE n.name LIKE ? (no-op if falsy). Escapes LIKE wildcards in the value. */
-  nameLike(pattern) {
+  nameLike(pattern: string | undefined | null): this {
     if (!pattern) return this;
     this.#conditions.push("n.name LIKE ? ESCAPE '\\'");
     this.#params.push(`%${escapeLike(pattern)}%`);
@@ -265,54 +250,54 @@ export class NodeQuery {
   }
 
   /** Raw WHERE condition escape hatch. */
-  where(sql, ...params) {
+  where(sql: string, ...params: (string | number)[]): this {
     this.#conditions.push(sql);
     this.#params.push(...params);
     return this;
   }
 
   /** Add fan-in LEFT JOIN subquery. */
-  withFanIn(edgeKind = 'calls') {
+  withFanIn(edgeKind = 'calls'): this {
     return this._join(fanInJoinSQL(edgeKind));
   }
 
   /** Add fan-out LEFT JOIN subquery. */
-  withFanOut(edgeKind = 'calls') {
+  withFanOut(edgeKind = 'calls'): this {
     return this._join(fanOutJoinSQL(edgeKind));
   }
 
   /** LEFT JOIN function_complexity. */
-  withComplexity() {
+  withComplexity(): this {
     return this._join('LEFT JOIN function_complexity fc ON fc.node_id = n.id');
   }
 
   /** LEFT JOIN file_commit_counts. */
-  withChurn() {
+  withChurn(): this {
     return this._join('LEFT JOIN file_commit_counts fcc ON n.file = fcc.file');
   }
 
-  /** @private Raw JOIN — internal use only; external callers should use withFanIn/withFanOut/withComplexity/withChurn. */
-  _join(sql) {
+  /** @internal Raw JOIN — internal use only; external callers should use withFanIn/withFanOut/withComplexity/withChurn. */
+  _join(sql: string): this {
     this.#joins.push(sql);
     return this;
   }
 
   /** ORDER BY clause. */
-  orderBy(clause) {
+  orderBy(clause: string): this {
     validateOrderBy(clause);
     this.#orderByClause = clause;
     return this;
   }
 
   /** LIMIT ?. */
-  limit(n) {
+  limit(n: number | undefined | null): this {
     if (n == null) return this;
     this.#limitValue = n;
     return this;
   }
 
   /** Build the SQL and params without executing. */
-  build() {
+  build(): { sql: string; params: (string | number)[] } {
     const joins = this.#joins.length > 0 ? `\n       ${this.#joins.join('\n       ')}` : '';
     const where =
       this.#conditions.length > 0 ? `\n       WHERE ${this.#conditions.join(' AND ')}` : '';
@@ -330,20 +315,20 @@ export class NodeQuery {
   }
 
   /** Execute and return all rows. */
-  all(db) {
+  all<TRow = Record<string, unknown>>(db: BetterSqlite3Database): TRow[] {
     const { sql, params } = this.build();
-    return db.prepare(sql).all(...params);
+    return db.prepare<TRow>(sql).all(...params) as TRow[];
   }
 
   /** Execute and return first row. */
-  get(db) {
+  get<TRow = Record<string, unknown>>(db: BetterSqlite3Database): TRow | undefined {
     const { sql, params } = this.build();
-    return db.prepare(sql).get(...params);
+    return db.prepare<TRow>(sql).get(...params) as TRow | undefined;
   }
 
   /** Execute and return an iterator. */
-  iterate(db) {
+  iterate<TRow = Record<string, unknown>>(db: BetterSqlite3Database): IterableIterator<TRow> {
     const { sql, params } = this.build();
-    return db.prepare(sql).iterate(...params);
+    return db.prepare<TRow>(sql).iterate(...params) as IterableIterator<TRow>;
   }
 }

@@ -1,5 +1,5 @@
 /**
- * queries.js — Barrel re-export file.
+ * queries.ts — Barrel re-export file.
  *
  * All query logic lives in the sub-modules under src/analysis/ and src/shared/.
  * This file exists purely for backward compatibility so that all existing
