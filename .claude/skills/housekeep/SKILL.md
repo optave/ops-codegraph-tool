@@ -176,41 +176,6 @@ git branch -d <branch>  # safe delete, only if fully merged
 > **Source-repo guard:** This phase is only meaningful when codegraph is installed as a *dependency* of a consumer project. Because the pre-flight confirms we are inside the codegraph *source* repo (`"name": "@optave/codegraph"`), comparing the dev version to the published release and running `npm install` would be a no-op — codegraph is not one of its own dependencies. **Skip this entire phase** when running inside the source repo and print:
 > `Codegraph: skipped (running inside source repo — update via git pull / branch sync instead)`
 
-### 5a. Check current version
-
-```bash
-node -e "console.log(require('./package.json').version)"
-```
-
-### 5b. Check latest published version
-
-```bash
-npm view @optave/codegraph version
-```
-
-### 5c. Update if needed
-
-If a newer version is available:
-- Show the version diff (current → latest)
-- Check the CHANGELOG for what changed
-- If it's a patch/minor: update automatically
-  ```bash
-  npm install
-  ```
-- If it's a major: warn the user and ask for confirmation
-
-### 5d. Rebuild
-
-After any update:
-```bash
-npm install
-```
-
-Verify the build works:
-```bash
-npx codegraph stats 2>/dev/null && echo "OK" || echo "FAILED"
-```
-
 ## Phase 6 — Verify Repo Health
 
 Quick health checks to catch issues:
