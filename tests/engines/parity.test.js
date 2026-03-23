@@ -226,7 +226,7 @@ class Document implements Printable {
     {
       name: 'C# — classes and using',
       file: 'Test.cs',
-      // TODO: re-enable once native engine extracts base_list into classes array
+      // Skip until next native binary release includes base_list extraction fix
       skip: true,
       code: `
 using System;
