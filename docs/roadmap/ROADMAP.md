@@ -1086,7 +1086,7 @@ npm workspaces (`package.json` `workspaces`), `pnpm-workspace.yaml`, and `lerna.
 
 **Why after Phase 4:** The resolution accuracy work (Phase 4) operates on the existing JS codebase and produces immediate accuracy gains. TypeScript migration builds on Phase 3's clean module boundaries to add type safety across the entire codebase. Every subsequent phase benefits from types: MCP schema auto-generation, API contracts, refactoring safety. The Phase 4 resolution improvements (receiver tracking, interface edges) establish the resolution model that TypeScript types will formalize.
 
-**Note:** `.js` and `.ts` coexist during migration (`allowJs: true` in tsconfig). PRs #553, #554, #555, #566 migrated a first wave of files across steps 5.3–5.5, but substantial work remains in each step. 13 stale `.js` files have `.ts` counterparts and need deletion.
+**Note:** `.js` and `.ts` coexist during migration (`allowJs: true` in tsconfig). PRs #553, #554, #555, #566 migrated a first wave of files across steps 5.3–5.5. Step 5.3 is complete; substantial work remains in steps 5.4–5.5. 13 stale `.js` files have `.ts` counterparts and need deletion.
 
 ### ~~5.1 -- Project Setup~~ ✅
 
@@ -1110,42 +1110,28 @@ Comprehensive TypeScript type definitions for the entire domain model — symbol
 
 **New file:** `src/types.ts` ([#516](https://github.com/optave/codegraph/pull/516))
 
-### 5.3 -- Leaf Module Migration (In Progress)
+### ~~5.3 -- Leaf Module Migration~~ ✅
 
-Migrate modules with no or minimal internal dependencies. 25 migrated, 4 remaining.
+Migrate modules with no or minimal internal dependencies. All 29 modules migrated.
 
-**Migrated (25):** `shared/errors`, `shared/kinds`, `shared/normalize`, `shared/paginate`, `shared/constants`, `shared/file-utils`, `shared/generators`, `shared/hierarchy`, `infrastructure/logger`, `infrastructure/config`, `infrastructure/native`, `infrastructure/registry`, `infrastructure/update-check`, `infrastructure/result-formatter`, `infrastructure/test-filter`, `db/repository/*` (14 files), `domain/analysis/*` (9 files), `presentation/colors`, `presentation/table` — via [#553](https://github.com/optave/codegraph/pull/553), [#566](https://github.com/optave/codegraph/pull/566)
-
-**Remaining (4):**
-
-| Module | Notes |
-|--------|-------|
-| `src/db/connection.js` | SQLite connection wrapper |
-| `src/db/index.js` | DB barrel/schema entry point |
-| `src/db/migrations.js` | Schema version management |
-| `src/db/query-builder.js` | Dynamic query builder |
+**Migrated (29):** `shared/errors`, `shared/kinds`, `shared/normalize`, `shared/paginate`, `shared/constants`, `shared/file-utils`, `shared/generators`, `shared/hierarchy`, `infrastructure/logger`, `infrastructure/config`, `infrastructure/native`, `infrastructure/registry`, `infrastructure/update-check`, `infrastructure/result-formatter`, `infrastructure/test-filter`, `db/repository/*` (14 files), `db/connection`, `db/index`, `db/migrations`, `db/query-builder`, `domain/analysis/*` (9 files), `presentation/colors`, `presentation/table` — via [#553](https://github.com/optave/codegraph/pull/553), [#566](https://github.com/optave/codegraph/pull/566)
 
 ### 5.4 -- Core Module Migration (In Progress)
 
-Migrate modules that implement domain logic and Phase 3 interfaces. Some migrated via [#554](https://github.com/optave/codegraph/pull/554), 39 files remaining.
+Migrate modules that implement domain logic and Phase 3 interfaces. Some migrated via [#554](https://github.com/optave/codegraph/pull/554), 22 files remaining.
 
-**Migrated:** `db/repository/*.ts` (14 files), `domain/parser.ts`, `domain/graph/resolve.ts`, `extractors/*.ts` (11 files), `domain/graph/builder.ts` + `context.ts` + `helpers.ts` + `pipeline.ts`, `domain/graph/watcher.ts`, `domain/search/{generator,index,models}.ts`, `graph/model.ts`, `graph/algorithms/{bfs,centrality,shortest-path,tarjan}.ts`, `graph/algorithms/leiden/rng.ts`, `graph/classifiers/{risk,roles}.ts`
+**Migrated:** `db/repository/*.ts` (14 files), `domain/parser.ts`, `domain/graph/resolve.ts`, `extractors/*.ts` (11 files), `domain/graph/builder.ts` + `context.ts` + `helpers.ts` + `pipeline.ts`, `domain/graph/watcher.ts`, `domain/search/{generator,index,models}.ts`, `graph/model.ts`, `graph/algorithms/{bfs,centrality,shortest-path,tarjan}.ts`, `graph/algorithms/leiden/*.ts` (7 files), `graph/algorithms/{louvain,index}.ts`, `graph/builders/{dependency,structure,temporal,index}.ts`, `graph/classifiers/{risk,roles,index}.ts`, `graph/index.ts`, `domain/queries.ts`
 
-**Remaining (39):**
+**Remaining (22):**
 
 | Module | Files | Notes |
 |--------|-------|-------|
 | `domain/graph/builder/stages/` | 9 | All 9 build pipeline stages (collect-files, parse-files, resolve-imports, build-edges, etc.) |
 | `domain/graph/builder/incremental.js` | 1 | Incremental rebuild logic |
 | `domain/graph/{cycles,journal,change-journal}.js` | 3 | Graph utilities |
-| `domain/queries.js` | 1 | Core query functions |
 | `domain/search/search/` | 6 | Search subsystem (hybrid, semantic, keyword, filters, cli-formatter, prepare) |
 | `domain/search/stores/` | 2 | FTS5, SQLite blob stores |
 | `domain/search/strategies/` | 3 | Source, structured, text-utils strategies |
-| `graph/algorithms/leiden/` | 6 | Leiden community detection (adapter, CPM, modularity, optimiser, partition, index) |
-| `graph/algorithms/{louvain,index}.js` | 2 | Louvain + algorithms barrel |
-| `graph/builders/` | 4 | Dependency, structure, temporal builders + barrel |
-| `graph/classifiers/index.js` + `graph/index.js` | 2 | Barrel exports |
 
 ### 5.5 -- Orchestration & Public API Migration (In Progress)
 
