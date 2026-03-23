@@ -236,6 +236,22 @@ Write a human-readable report to `generated/bench-check/BENCH_REPORT_<date>.md`.
 <!-- Full JSON output from each benchmark -->
 ```
 
+**If the ABORTED pre-condition was triggered (no valid benchmark results):** write a minimal report:
+
+```markdown
+# Benchmark Report — <date>
+
+**Version:** X.Y.Z | **Git ref:** abc1234 | **Threshold:** $THRESHOLD%
+
+## Verdict: ABORTED — no valid benchmark results
+
+All benchmark suites failed or timed out. See Phase 1 error records for details.
+
+## Raw Results
+
+<!-- Error/timeout records from each suite -->
+```
+
 **Otherwise (comparison was performed):** write the full report with comparison and verdict:
 
 ```markdown
@@ -266,7 +282,7 @@ Write a human-readable report to `generated/bench-check/BENCH_REPORT_<date>.md`.
 
 1. If report was written, print its path
 2. If baseline was updated, print confirmation
-3. Print one-line summary: `PASSED (0 regressions) | FAILED (N regressions) | BASELINE SAVED`
+3. Print one-line summary: `PASSED (0 regressions) | FAILED (N regressions) | BASELINE SAVED | ABORTED (all suites failed)`
 
 ## Rules
 
