@@ -61,7 +61,7 @@ export async function buildEmbeddings(
   options: BuildEmbeddingsOptions = {},
 ): Promise<void> {
   const strategy = options.strategy || 'structured';
-  const dbPath = customDbPath || findDbPath(null);
+  const dbPath = customDbPath || findDbPath(undefined);
 
   if (!fs.existsSync(dbPath)) {
     throw new DbError(
