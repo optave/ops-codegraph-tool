@@ -194,7 +194,7 @@ npx codegraph build
 ### 6b. Node modules integrity
 
 ```bash
-npm ls --depth=0 2>&1 | grep -c "missing\|invalid\|WARN"
+npm ls --depth=0 2>&1 | grep -cE "missing|invalid|WARN"
 ```
 
 If issues found: `npm install` to fix.

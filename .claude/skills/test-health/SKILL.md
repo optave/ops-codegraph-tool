@@ -27,7 +27,7 @@ Audit the test suite for flaky tests, dead/trivial tests, coverage gaps on recen
    - `QUICK=true` if `--quick`
 4. Discover all test files:
    ```bash
-   find tests/ -name '*.test.js' -o -name '*.test.ts' | sort
+   find tests/ \( -name '*.test.js' -o -name '*.test.ts' \) | sort
    ```
 5. Count total test files and categorize by directory (integration, parsers, graph, search, unit)
 
@@ -40,7 +40,10 @@ Run the full test suite `FLAKY_RUNS` times and track per-test pass/fail:
 ```bash
 RUN_DIR=$(mktemp -d /tmp/test-health-XXXXXX)
 for i in $(seq 1 $FLAKY_RUNS); do
-  npx vitest run --reporter=json > "$RUN_DIR/run-$i.json" 2>"$RUN_DIR/run-$i.err"
+  timeout 180 npx vitest run --reporter=json > "$RUN_DIR/run-$i.json" 2>"$RUN_DIR/run-$i.err"
+  if [ $? -eq 124 ]; then
+    echo '{"timeout":true}' > "$RUN_DIR/run-$i.json"
+  fi
 done
 ```
 
@@ -63,7 +66,7 @@ For each flaky test found:
    - **Resource-dependent**: mentions file system, network, port, or temp directory
    - **Non-deterministic**: random/Date.now/Math.random in test or source
 
-> **Timeout:** Each full suite run gets 3 minutes. If it times out, record partial results and continue.
+> **Timeout:** Each full suite run gets 3 minutes (`timeout 180`). Exit code 124 indicates timeout — the run is recorded as `{"timeout":true}` and the loop continues.
 
 ## Phase 2 — Dead & Trivial Test Detection
 

@@ -39,10 +39,11 @@ Run each benchmark script and collect results. Each script outputs JSON to stdou
 ### 1a. Build & Query Benchmark
 
 ```bash
-output=$(node scripts/benchmark.js 2>&1)
+output=$(timeout 300 node scripts/benchmark.js 2>&1)
 exit_code=$?
 ```
 
+If `exit_code` is 124: record `"timeout"` for this suite and continue.
 If `exit_code` is non-zero: record `"error: $output"` for this suite and continue.
 
 Extract:
@@ -53,10 +54,11 @@ Extract:
 ### 1b. Incremental Benchmark
 
 ```bash
-output=$(node scripts/incremental-benchmark.js 2>&1)
+output=$(timeout 300 node scripts/incremental-benchmark.js 2>&1)
 exit_code=$?
 ```
 
+If `exit_code` is 124: record `"timeout"` for this suite and continue.
 If `exit_code` is non-zero: record `"error: $output"` for this suite and continue.
 
 Extract:
@@ -67,10 +69,11 @@ Extract:
 ### 1c. Query Depth Benchmark
 
 ```bash
-output=$(node scripts/query-benchmark.js 2>&1)
+output=$(timeout 300 node scripts/query-benchmark.js 2>&1)
 exit_code=$?
 ```
 
+If `exit_code` is 124: record `"timeout"` for this suite and continue.
 If `exit_code` is non-zero: record `"error: $output"` for this suite and continue.
 
 Extract:
@@ -81,17 +84,18 @@ Extract:
 ### 1d. Embedding Benchmark (optional)
 
 ```bash
-output=$(node scripts/embedding-benchmark.js 2>&1)
+output=$(timeout 300 node scripts/embedding-benchmark.js 2>&1)
 exit_code=$?
 ```
 
+If `exit_code` is 124: record `"timeout"` for this suite and continue.
 If `exit_code` is non-zero: record `"error: $output"` for this suite and continue.
 
 Extract:
 - `embeddingTime` (ms)
 - `recall` at Hit@1, Hit@3, Hit@5, Hit@10
 
-> **Timeout:** Each benchmark gets 5 minutes max. If it times out, record `"timeout"` for that suite and continue.
+> **Timeout:** Each benchmark gets 5 minutes max (`timeout 300`). Exit code 124 indicates timeout — record `"timeout"` for that suite and continue.
 
 > **Errors:** If a benchmark script fails (non-zero exit), record `"error: <message>"` and continue with remaining benchmarks.
 
@@ -173,6 +177,8 @@ Based on comparison results:
 - Save current results as the new baseline (overwrite existing)
 
 ## Phase 5 — Save Baseline
+
+**Skip this phase if `COMPARE_ONLY` is set.** Compare-only mode never writes or commits baselines.
 
 When saving (initial run, `--save-baseline`, or passed comparison):
 
