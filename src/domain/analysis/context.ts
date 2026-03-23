@@ -44,6 +44,11 @@ import { findMatchingNodes } from './symbol-lookup.js';
 
 interface DisplayOpts {
   maxLines?: number;
+  excerptLines?: number;
+  jsdocEndScanLines?: number;
+  jsdocOpenScanLines?: number;
+  summaryMaxChars?: number;
+  signatureGatherLines?: number;
   [key: string]: unknown;
 }
 
@@ -450,7 +455,7 @@ export function contextData(
 
       const source = noSource
         ? null
-        : readSourceRange(repoRoot, node.file, node.line, node.end_line, displayOpts);
+        : readSourceRange(repoRoot, node.file, node.line, node.end_line ?? undefined, displayOpts);
 
       const signature = fileLines ? extractSignature(fileLines, node.line, displayOpts) : null;
 
