@@ -145,7 +145,7 @@ From the diff-impact results already collected in Step 1, extract any **new** ed
 
 For each new dependency:
 - Check against `GLOBAL_ARCH.md` layer rules (if Titan artifacts exist)
-- Check against `codegraph check --boundaries -T --json`
+- Check the Step 1 `codegraph check --staged --boundaries` results for violations on this edge (already collected — do not re-run)
 - New dependency from a lower layer to a higher layer → **FAIL**: "New upward dependency: `<source>` → `<target>` violates layer boundary"
 - New dependency on a module flagged in sync.json as "to be removed" or "to be split" → **WARN**: "New dependency on `<module>` which is scheduled for decomposition"
 
