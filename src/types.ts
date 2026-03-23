@@ -960,7 +960,12 @@ export interface CodegraphConfig {
     briefMediumRiskCallers: number;
   };
 
-  community: { resolution: number };
+  community: {
+    resolution: number;
+    maxLevels: number;
+    maxLocalPasses: number;
+    refinementTheta: number;
+  };
   structure: { cohesionThreshold: number };
 
   risk: {
@@ -1011,6 +1016,7 @@ export interface RiskWeights {
 }
 
 export interface McpDefaults {
+  [key: string]: number;
   list_functions: number;
   query: number;
   where: number;

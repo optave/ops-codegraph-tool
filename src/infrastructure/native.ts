@@ -9,20 +9,21 @@
 import { createRequire } from 'node:module';
 import os from 'node:os';
 import { EngineError } from '../shared/errors.js';
+import type { NativeAddon } from '../types.js';
 
-let _cached; // undefined = not yet tried, null = failed, object = module
-let _loadError = null;
+let _cached: NativeAddon | null | undefined; // undefined = not yet tried, null = failed, NativeAddon = module
+let _loadError: Error | null = null;
 const _require = createRequire(import.meta.url);
 
 /**
  * Detect whether the current Linux environment uses glibc or musl.
  * Returns 'gnu' for glibc, 'musl' for musl, 'gnu' as fallback.
  */
-function detectLibc() {
+function detectLibc(): 'gnu' | 'musl' {
   try {
-    const { readdirSync } = _require('node:fs');
+    const { readdirSync } = _require('node:fs') as typeof import('node:fs');
     const files = readdirSync('/lib');
-    if (files.some((f) => f.startsWith('ld-musl-') && f.endsWith('.so.1'))) {
+    if (files.some((f: string) => f.startsWith('ld-musl-') && f.endsWith('.so.1'))) {
       return 'musl';
     }
   } catch {}
@@ -30,7 +31,7 @@ function detectLibc() {
 }
 
 /** Map of (platform-arch[-libc]) → npm package name. */
-const PLATFORM_PACKAGES = {
+const PLATFORM_PACKAGES: Record<string, string> = {
   'linux-x64-gnu': '@optave/codegraph-linux-x64-gnu',
   'linux-x64-musl': '@optave/codegraph-linux-x64-musl',
   'linux-arm64-gnu': '@optave/codegraph-linux-arm64-gnu',
@@ -44,7 +45,7 @@ const PLATFORM_PACKAGES = {
  * Resolve the platform-specific npm package name for the native addon.
  * Returns null if the current platform is not supported.
  */
-function resolvePlatformPackage() {
+function resolvePlatformPackage(): string | null {
   const platform = os.platform();
   const arch = os.arch();
   const key = platform === 'linux' ? `${platform}-${arch}-${detectLibc()}` : `${platform}-${arch}`;
@@ -55,16 +56,16 @@ function resolvePlatformPackage() {
  * Try to load the native napi addon.
  * Returns the module on success, null on failure.
  */
-export function loadNative() {
+export function loadNative(): NativeAddon | null {
   if (_cached !== undefined) return _cached;
 
   const pkg = resolvePlatformPackage();
   if (pkg) {
     try {
-      _cached = _require(pkg);
+      _cached = _require(pkg) as NativeAddon;
       return _cached;
     } catch (err) {
-      _loadError = err;
+      _loadError = err as Error;
     }
   } else {
     _loadError = new Error(`Unsupported platform: ${os.platform()}-${os.arch()}`);
@@ -77,7 +78,7 @@ export function loadNative() {
 /**
  * Check whether the native engine is available on this platform.
  */
-export function isNativeAvailable() {
+export function isNativeAvailable(): boolean {
   return loadNative() !== null;
 }
 
@@ -85,11 +86,11 @@ export function isNativeAvailable() {
  * Read the version from the platform-specific npm package.json.
  * Returns null if the package is not installed or has no version.
  */
-export function getNativePackageVersion() {
+export function getNativePackageVersion(): string | null {
   const pkg = resolvePlatformPackage();
   if (!pkg) return null;
   try {
-    const pkgJson = _require(`${pkg}/package.json`);
+    const pkgJson = _require(`${pkg}/package.json`) as { version?: string };
     return pkgJson.version || null;
   } catch {
     return null;
@@ -99,13 +100,13 @@ export function getNativePackageVersion() {
 /**
  * Return the native module or throw if not available.
  */
-export function getNative() {
+export function getNative(): NativeAddon {
   const mod = loadNative();
   if (!mod) {
     throw new EngineError(
       `Native codegraph-core not available: ${_loadError?.message || 'unknown error'}. ` +
         'Install the platform package or use --engine wasm.',
-      { cause: _loadError },
+      { cause: _loadError ?? undefined },
     );
   }
   return mod;

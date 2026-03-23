@@ -3,22 +3,33 @@ import os from 'node:os';
 import path from 'node:path';
 import { debug, warn } from './logger.js';
 
-export const REGISTRY_PATH =
-  process.env.CODEGRAPH_REGISTRY_PATH || path.join(os.homedir(), '.codegraph', 'registry.json');
+export const REGISTRY_PATH: string =
+  process.env['CODEGRAPH_REGISTRY_PATH'] || path.join(os.homedir(), '.codegraph', 'registry.json');
 
 /** Default TTL: entries not accessed within 30 days are pruned. */
 export const DEFAULT_TTL_DAYS = 30;
+
+interface RegistryEntry {
+  path: string;
+  dbPath: string;
+  addedAt: string;
+  lastAccessedAt?: string;
+}
+
+interface Registry {
+  repos: Record<string, RegistryEntry>;
+}
 
 /**
  * Load the registry from disk.
  * Returns `{ repos: {} }` on missing or corrupt file.
  */
-export function loadRegistry(registryPath = REGISTRY_PATH) {
+export function loadRegistry(registryPath: string = REGISTRY_PATH): Registry {
   try {
     const raw = fs.readFileSync(registryPath, 'utf-8');
     const data = JSON.parse(raw);
     if (!data || typeof data.repos !== 'object') return { repos: {} };
-    return data;
+    return data as Registry;
   } catch {
     return { repos: {} };
   }
@@ -28,7 +39,7 @@ export function loadRegistry(registryPath = REGISTRY_PATH) {
  * Persist the registry to disk (atomic write via temp + rename).
  * Creates the parent directory if needed.
  */
-export function saveRegistry(registry, registryPath = REGISTRY_PATH) {
+export function saveRegistry(registry: Registry, registryPath: string = REGISTRY_PATH): void {
   const dir = path.dirname(registryPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
@@ -45,7 +56,11 @@ export function saveRegistry(registry, registryPath = REGISTRY_PATH) {
  * pointing to a different path, auto-suffixes (`api` → `api-2`, `api-3`, …).
  * Re-registering the same path updates in place. Explicit names always overwrite.
  */
-export function registerRepo(rootDir, name, registryPath = REGISTRY_PATH) {
+export function registerRepo(
+  rootDir: string,
+  name?: string,
+  registryPath: string = REGISTRY_PATH,
+): { name: string; entry: RegistryEntry } {
   const absRoot = path.resolve(rootDir);
   const baseName = name || path.basename(absRoot);
   const registry = loadRegistry(registryPath);
@@ -59,7 +74,7 @@ export function registerRepo(rootDir, name, registryPath = REGISTRY_PATH) {
       // Basename collision with a different path — find next available suffix
       let suffix = 2;
       while (registry.repos[`${baseName}-${suffix}`]) {
-        const entry = registry.repos[`${baseName}-${suffix}`];
+        const entry = registry.repos[`${baseName}-${suffix}`]!;
         if (path.resolve(entry.path) === absRoot) {
           // Already registered under this suffixed name — update in place
           repoName = `${baseName}-${suffix}`;
@@ -83,13 +98,13 @@ export function registerRepo(rootDir, name, registryPath = REGISTRY_PATH) {
 
   saveRegistry(registry, registryPath);
   debug(`Registered repo "${repoName}" at ${absRoot}`);
-  return { name: repoName, entry: registry.repos[repoName] };
+  return { name: repoName, entry: registry.repos[repoName]! };
 }
 
 /**
  * Remove a repo from the registry. Returns false if not found.
  */
-export function unregisterRepo(name, registryPath = REGISTRY_PATH) {
+export function unregisterRepo(name: string, registryPath: string = REGISTRY_PATH): boolean {
   const registry = loadRegistry(registryPath);
   if (!registry.repos[name]) return false;
   delete registry.repos[name];
@@ -97,10 +112,18 @@ export function unregisterRepo(name, registryPath = REGISTRY_PATH) {
   return true;
 }
 
+export interface RepoListEntry {
+  name: string;
+  path: string;
+  dbPath: string;
+  addedAt: string;
+  lastAccessedAt: string;
+}
+
 /**
  * List all registered repos, sorted by name.
  */
-export function listRepos(registryPath = REGISTRY_PATH) {
+export function listRepos(registryPath: string = REGISTRY_PATH): RepoListEntry[] {
   const registry = loadRegistry(registryPath);
   return Object.entries(registry.repos)
     .map(([name, entry]) => ({
@@ -117,7 +140,10 @@ export function listRepos(registryPath = REGISTRY_PATH) {
  * Resolve a repo name to its database path.
  * Returns undefined if the repo is not found or its DB file is missing.
  */
-export function resolveRepoDbPath(name, registryPath = REGISTRY_PATH) {
+export function resolveRepoDbPath(
+  name: string,
+  registryPath: string = REGISTRY_PATH,
+): string | undefined {
   const registry = loadRegistry(registryPath);
   const entry = registry.repos[name];
   if (!entry) return undefined;
@@ -131,6 +157,12 @@ export function resolveRepoDbPath(name, registryPath = REGISTRY_PATH) {
   return entry.dbPath;
 }
 
+interface PrunedEntry {
+  name: string;
+  path: string;
+  reason: 'missing' | 'expired';
+}
+
 /**
  * Remove registry entries whose repo directory no longer exists on disk,
  * or that haven't been accessed within `ttlDays` days.
@@ -139,13 +171,13 @@ export function resolveRepoDbPath(name, registryPath = REGISTRY_PATH) {
  * When `dryRun` is true, entries are identified but not removed from disk.
  */
 export function pruneRegistry(
-  registryPath = REGISTRY_PATH,
-  ttlDays = DEFAULT_TTL_DAYS,
-  excludeNames = [],
+  registryPath: string = REGISTRY_PATH,
+  ttlDays: number = DEFAULT_TTL_DAYS,
+  excludeNames: string[] = [],
   dryRun = false,
-) {
+): PrunedEntry[] {
   const registry = loadRegistry(registryPath);
-  const pruned = [];
+  const pruned: PrunedEntry[] = [];
   const cutoff = Date.now() - ttlDays * 24 * 60 * 60 * 1000;
   const excludeSet = new Set(
     excludeNames.filter((n) => typeof n === 'string' && n.trim().length > 0),

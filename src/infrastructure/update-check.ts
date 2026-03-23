@@ -3,19 +3,24 @@ import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
 
-const CACHE_PATH =
-  process.env.CODEGRAPH_UPDATE_CACHE_PATH ||
+const CACHE_PATH: string =
+  process.env['CODEGRAPH_UPDATE_CACHE_PATH'] ||
   path.join(os.homedir(), '.codegraph', 'update-check.json');
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const FETCH_TIMEOUT_MS = 3000;
 const REGISTRY_URL = 'https://registry.npmjs.org/@optave/codegraph/latest';
 
+interface UpdateCache {
+  lastCheckedAt: number;
+  latestVersion: string;
+}
+
 /**
  * Minimal semver comparison. Returns -1, 0, or 1.
  * Only handles numeric x.y.z (no pre-release tags).
  */
-export function semverCompare(a, b) {
+export function semverCompare(a: string, b: string): -1 | 0 | 1 {
   const pa = a.split('.').map(Number);
   const pb = b.split('.').map(Number);
   for (let i = 0; i < 3; i++) {
@@ -31,14 +36,14 @@ export function semverCompare(a, b) {
  * Load the cached update-check result from disk.
  * Returns null on missing or corrupt file.
  */
-function loadCache(cachePath = CACHE_PATH) {
+function loadCache(cachePath: string = CACHE_PATH): UpdateCache | null {
   try {
     const raw = fs.readFileSync(cachePath, 'utf-8');
     const data = JSON.parse(raw);
     if (!data || typeof data.lastCheckedAt !== 'number' || typeof data.latestVersion !== 'string') {
       return null;
     }
-    return data;
+    return data as UpdateCache;
   } catch {
     return null;
   }
@@ -47,7 +52,7 @@ function loadCache(cachePath = CACHE_PATH) {
 /**
  * Persist the cache to disk (atomic write via temp + rename).
  */
-function saveCache(cache, cachePath = CACHE_PATH) {
+function saveCache(cache: UpdateCache, cachePath: string = CACHE_PATH): void {
   const dir = path.dirname(cachePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
@@ -60,7 +65,7 @@ function saveCache(cache, cachePath = CACHE_PATH) {
  * Fetch the latest version string from the npm registry.
  * Returns the version string or null on failure.
  */
-function fetchLatestVersion() {
+function fetchLatestVersion(): Promise<string | null> {
   return new Promise((resolve) => {
     const req = https.get(
       REGISTRY_URL,
@@ -73,7 +78,7 @@ function fetchLatestVersion() {
         }
         let body = '';
         res.setEncoding('utf-8');
-        res.on('data', (chunk) => {
+        res.on('data', (chunk: string) => {
           body += chunk;
         });
         res.on('end', () => {
@@ -94,20 +99,29 @@ function fetchLatestVersion() {
   });
 }
 
+interface UpdateResult {
+  current: string;
+  latest: string;
+}
+
+interface CheckForUpdatesOptions {
+  cachePath?: string;
+  _fetchLatest?: () => Promise<string | null>;
+}
+
 /**
  * Check whether a newer version of codegraph is available.
  *
  * Returns `{ current, latest }` if an update is available, `null` otherwise.
  * Silently returns null on any error — never affects CLI operation.
- *
- * Options:
- *   cachePath — override cache file location (for testing)
- *   _fetchLatest — override the fetch function (for testing)
  */
-export async function checkForUpdates(currentVersion, options = {}) {
+export async function checkForUpdates(
+  currentVersion: string,
+  options: CheckForUpdatesOptions = {},
+): Promise<UpdateResult | null> {
   // Suppress in non-interactive / CI contexts
-  if (process.env.CI) return null;
-  if (process.env.NO_UPDATE_CHECK) return null;
+  if (process.env['CI']) return null;
+  if (process.env['NO_UPDATE_CHECK']) return null;
   if (!process.stderr.isTTY) return null;
   if (currentVersion.includes('-')) return null;
 
@@ -144,7 +158,7 @@ export async function checkForUpdates(currentVersion, options = {}) {
 /**
  * Print a visible update notification box to stderr.
  */
-export function printUpdateNotification(current, latest) {
+export function printUpdateNotification(current: string, latest: string): void {
   const msg1 = `Update available: ${current} → ${latest}`;
   const msg2 = 'Run `npm i -g @optave/codegraph` to update';
   const width = Math.max(msg1.length, msg2.length) + 4;
