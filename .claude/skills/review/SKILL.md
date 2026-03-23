@@ -142,7 +142,7 @@ For **each** review comment — including minor suggestions, nits, style feedbac
      --body "$(cat <<-'EOF'
 	Deferred from PR #<number> review.
 
-	**Original reviewer comment:** https://github.com/optave/codegraph/pull/<number>#discussion_r<comment-id>
+	**Original reviewer comment:** <use the correct permalink format for the comment type: inline review comment → `https://github.com/optave/codegraph/pull/<number>#discussion_r<comment-id>`, top-level review body → `https://github.com/optave/codegraph/pull/<number>#pullrequestreview-<review-id>`, issue-style comment → `https://github.com/optave/codegraph/issues/<number>#issuecomment-<comment-id>`>
 
 	**Context:** <why this is out of scope for the current PR and what the fix entails>
 	EOF

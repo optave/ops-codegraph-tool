@@ -1,7 +1,14 @@
 import { debug } from '../infrastructure/logger.js';
+import type { BetterSqlite3Database } from '../types.js';
 
 // ─── Schema Migrations ─────────────────────────────────────────────────
-export const MIGRATIONS = [
+
+interface Migration {
+  version: number;
+  up: string;
+}
+
+export const MIGRATIONS: Migration[] = [
   {
     version: 1,
     up: `
@@ -242,28 +249,43 @@ export const MIGRATIONS = [
   },
 ];
 
-function hasColumn(db, table, column) {
-  const cols = db.pragma(`table_info(${table})`);
+interface PragmaColumnInfo {
+  name: string;
+  type: string;
+  notnull: number;
+  dflt_value: unknown;
+  pk: number;
+}
+
+function hasColumn(db: BetterSqlite3Database, table: string, column: string): boolean {
+  const cols = db.pragma(`table_info(${table})`) as PragmaColumnInfo[];
   return cols.some((c) => c.name === column);
 }
 
-function hasTable(db, table) {
-  const row = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(table);
+function hasTable(db: BetterSqlite3Database, table: string): boolean {
+  const row = db
+    .prepare<{ '1': number }>("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
+    .get(table);
   return !!row;
 }
 
-export function getBuildMeta(db, key) {
+export function getBuildMeta(db: BetterSqlite3Database, key: string): string | null {
   if (!hasTable(db, 'build_meta')) return null;
   try {
-    const row = db.prepare('SELECT value FROM build_meta WHERE key = ?').get(key);
+    const row = db
+      .prepare<{ value: string }>('SELECT value FROM build_meta WHERE key = ?')
+      .get(key);
     return row ? row.value : null;
   } catch (e) {
-    debug(`getBuildMeta failed for key "${key}": ${e.message}`);
+    debug(`getBuildMeta failed for key "${key}": ${(e as Error).message}`);
     return null;
   }
 }
 
-export function setBuildMeta(db, entries) {
+export function setBuildMeta(
+  db: BetterSqlite3Database,
+  entries: Record<string, string | number>,
+): void {
   const upsert = db.prepare('INSERT OR REPLACE INTO build_meta (key, value) VALUES (?, ?)');
   const tx = db.transaction(() => {
     for (const [key, value] of Object.entries(entries)) {
@@ -273,10 +295,10 @@ export function setBuildMeta(db, entries) {
   tx();
 }
 
-export function initSchema(db) {
+export function initSchema(db: BetterSqlite3Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL DEFAULT 0)`);
 
-  const row = db.prepare('SELECT version FROM schema_version').get();
+  const row = db.prepare<{ version: number }>('SELECT version FROM schema_version').get();
   let currentVersion = row ? row.version : 0;
 
   if (!row) {
