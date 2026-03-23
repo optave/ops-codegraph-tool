@@ -252,17 +252,23 @@ After the loop completes (or on each iteration if you prefer lightweight checks)
 ```bash
 node -e "
 const fs = require('fs');
-const lines = fs.readFileSync('.codegraph/titan/gauntlet.ndjson','utf8').trim().split('\n');
+const path = '.codegraph/titan/gauntlet.ndjson';
+if (!fs.existsSync(path)) {
+  console.log(JSON.stringify({ valid: 0, corrupt: 0, total: 0, missing: true }));
+  process.exit(0);
+}
+const lines = fs.readFileSync(path,'utf8').trim().split('\n');
 let valid = 0, corrupt = 0;
 for (const line of lines) {
   try { JSON.parse(line); valid++; } catch { corrupt++; }
 }
-console.log(JSON.stringify({ valid, corrupt, total: lines.length }));
+console.log(JSON.stringify({ valid, corrupt, total: lines.length, missing: false }));
 "
 ```
 
+- If `missing == true`: treat as equivalent to `valid == 0` — the file does not exist yet (expected on first iteration, error if the loop should have produced entries).
 - If `corrupt > 0`: Print "WARNING: <corrupt> corrupt lines in gauntlet.ndjson (likely from a crashed sub-agent). These targets may need re-auditing."
-- If `valid == 0`: Stop: "gauntlet.ndjson has no valid entries. Something went wrong."
+- If `valid == 0` and `missing == false`: Stop: "gauntlet.ndjson has no valid entries. Something went wrong."
 
 ### 2d. Post-loop validation
 
