@@ -216,11 +216,12 @@ Read `.codegraph/titan/arch-snapshot.json → drift` (the pre-forge drift baseli
 **A2. Dependency direction between domains:**
 From `GLOBAL_ARCH.md`, extract the expected dependency direction between domains (e.g., "presentation depends on features, not the reverse").
 
-Check if any new cross-domain dependency violates the expected direction:
+Check if any new cross-domain dependency violates the expected direction. "New" means the edge appears in the Step 1 diff-impact results (i.e., it was introduced by the staged changes):
 ```bash
 codegraph deps <changed-file> --json
 ```
-- New upward dependency (lower layer importing higher layer) not present in snapshot → **FAIL**
+- New upward dependency (lower layer importing higher layer) introduced in this diff → **FAIL**
+- Pre-existing boundary violations not surfaced by Step 5c's staged-diff results → advisory-only (not gating)
 - New lateral dependency within the same layer → **OK**
 
 **A3. Cohesion delta:**
