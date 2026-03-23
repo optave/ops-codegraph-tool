@@ -340,6 +340,7 @@ codegraph communities --drift -T --json > .codegraph/titan/arch-snapshot-drift.j
 Combine into a single snapshot file:
 
 ```bash
+TITAN_HEAD_SHA=$(git rev-parse HEAD)
 node -e "
 const fs = require('fs');
 const communities = JSON.parse(fs.readFileSync('.codegraph/titan/arch-snapshot-communities.json','utf8'));
@@ -348,7 +349,7 @@ const drift = JSON.parse(fs.readFileSync('.codegraph/titan/arch-snapshot-drift.j
 const snapshot = {
   timestamp: new Date().toISOString(),
   capturedBefore: 'forge',
-  headSha: '$(git rev-parse HEAD)',
+  headSha: '$TITAN_HEAD_SHA',
   communities,
   structure,
   drift
