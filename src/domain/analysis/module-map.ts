@@ -1,12 +1,20 @@
 import path from 'node:path';
 import { openReadonlyOrFail, testFilterSQL } from '../../db/index.js';
+import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { loadConfig } from '../../infrastructure/config.js';
 import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { DEAD_ROLE_PREFIX } from '../../shared/kinds.js';
-import type { BetterSqlite3Database } from '../../types.js';
+import type { BetterSqlite3Database, StmtCache } from '../../types.js';
 import { findCycles } from '../graph/cycles.js';
 import { LANGUAGE_REGISTRY } from '../parser.js';
+
+// ---------------------------------------------------------------------------
+// Statement caches (one prepared statement per db instance)
+// ---------------------------------------------------------------------------
+
+const _fileNodesStmtCache: StmtCache<{ id: number; file: string }> = new WeakMap();
+const _allNodesStmtCache: StmtCache<{ id: number; file: string }> = new WeakMap();
 
 export const FALSE_POSITIVE_NAMES = new Set([
   'run',
@@ -45,10 +53,12 @@ export const FALSE_POSITIVE_CALLER_THRESHOLD = 20;
 // ---------------------------------------------------------------------------
 
 function buildTestFileIds(db: BetterSqlite3Database): Set<number> {
-  const allFileNodes = db.prepare("SELECT id, file FROM nodes WHERE kind = 'file'").all() as Array<{
-    id: number;
-    file: string;
-  }>;
+  const fileNodesStmt = cachedStmt(
+    _fileNodesStmtCache,
+    db,
+    "SELECT id, file FROM nodes WHERE kind = 'file'",
+  );
+  const allFileNodes = fileNodesStmt.all() as Array<{ id: number; file: string }>;
   const testFileIds = new Set<number>();
   const testFiles = new Set<string>();
   for (const n of allFileNodes) {
@@ -57,10 +67,8 @@ function buildTestFileIds(db: BetterSqlite3Database): Set<number> {
       testFiles.add(n.file);
     }
   }
-  const allNodes = db.prepare('SELECT id, file FROM nodes').all() as Array<{
-    id: number;
-    file: string;
-  }>;
+  const allNodesStmt = cachedStmt(_allNodesStmtCache, db, 'SELECT id, file FROM nodes');
+  const allNodes = allNodesStmt.all() as Array<{ id: number; file: string }>;
   for (const n of allNodes) {
     if (testFiles.has(n.file)) testFileIds.add(n.id);
   }
