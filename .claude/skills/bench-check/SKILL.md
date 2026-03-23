@@ -169,7 +169,7 @@ Based on comparison results:
   - Re-run individual benchmarks to confirm (not flaky)
 
 ### First run (no baseline)
-- If `COMPARE_ONLY` is set: print a warning that no baseline exists and exit without saving
+- If `COMPARE_ONLY` is set: print a warning that no baseline exists and **stop here — do not proceed to Phase 5 or Phase 6**. No baseline is saved and no report is written.
 - Otherwise: print `BENCH-CHECK — initial baseline saved` and save current results as baseline
 
 ### Save-baseline with existing baseline (`--save-baseline`)
@@ -210,6 +210,8 @@ git diff --cached --quiet -- generated/bench-check/baseline.json generated/bench
 > `git add` first so that newly created files (first run) are staged; `--cached` then detects them correctly. Without this, `git diff --quiet` ignores untracked files and the baseline is never committed on the first run.
 
 ## Phase 6 — Report
+
+**Skip this phase (write no report) if `COMPARE_ONLY` was set and no baseline existed.** That case was already handled in Phase 4 with an early exit — writing a "BASELINE SAVED" report here would be misleading since no baseline was saved.
 
 Write a human-readable report to `generated/bench-check/BENCH_REPORT_<date>.md`.
 
@@ -266,6 +268,6 @@ Write a human-readable report to `generated/bench-check/BENCH_REPORT_<date>.md`.
 - **Don't update baseline on regression** — the user must investigate first
 - **Recall/quality metrics are inverted** — a decrease is a regression
 - **Count metrics are informational** — graph growing isn't a regression
-- **The baseline file is committed to git** — it's a shared reference point; Phase 5 always commits it
+- **The baseline file is committed to git** — it's a shared reference point; Phase 5 commits it on clean (non-regressed) runs where COMPARE_ONLY is not set
 - **history.ndjson is append-only** — never truncate or rewrite it
 - Generated files go in `generated/bench-check/` — create the directory if needed
