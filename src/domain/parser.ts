@@ -5,6 +5,7 @@ import type { Tree } from 'web-tree-sitter';
 import { Language, Parser, Query } from 'web-tree-sitter';
 import { debug, warn } from '../infrastructure/logger.js';
 import { getNative, getNativePackageVersion, loadNative } from '../infrastructure/native.js';
+import type { LanguageRegistryEntry } from '../types.js';
 
 // Re-export all extractors for backward compatibility
 export {
@@ -51,17 +52,8 @@ const _queryCache: Map<string, Query> = new Map();
 // Extensions that need typeMap backfill (type annotations only exist in TS/TSX)
 const TS_BACKFILL_EXTS = new Set(['.ts', '.tsx']);
 
-/**
- * Declarative registry entry for a supported language.
- */
-export interface LanguageRegistryEntry {
-  id: string;
-  extensions: string[];
-  grammarFile: string;
-  // biome-ignore lint/suspicious/noExplicitAny: extractor signatures vary per language
-  extractor: (...args: any[]) => any;
-  required: boolean;
-}
+// Re-export for backward compatibility
+export type { LanguageRegistryEntry } from '../types.js';
 
 interface EngineOpts {
   engine?: string;
@@ -483,8 +475,10 @@ function wasmExtractSymbols(
   const ext = path.extname(filePath);
   const entry = _extToLang.get(ext);
   if (!entry) return null;
-  const query = _queryCache.get(entry.id) || null;
-  const symbols = entry.extractor(tree, filePath, query);
+  const query = _queryCache.get(entry.id) ?? undefined;
+  // Query (web-tree-sitter) is structurally compatible with TreeSitterQuery at runtime
+  // biome-ignore lint/suspicious/noExplicitAny: thin WASM wrapper type mismatch
+  const symbols = entry.extractor(tree as any, filePath, query as any);
   return symbols ? { symbols, tree, langId: entry.id } : null;
 }
 

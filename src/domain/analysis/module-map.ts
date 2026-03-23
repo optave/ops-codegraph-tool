@@ -1,10 +1,10 @@
 import path from 'node:path';
-import type BetterSqlite3 from 'better-sqlite3';
 import { openReadonlyOrFail, testFilterSQL } from '../../db/index.js';
 import { loadConfig } from '../../infrastructure/config.js';
 import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { DEAD_ROLE_PREFIX } from '../../shared/kinds.js';
+import type { BetterSqlite3Database } from '../../types.js';
 import { findCycles } from '../graph/cycles.js';
 import { LANGUAGE_REGISTRY } from '../parser.js';
 
@@ -44,7 +44,7 @@ export const FALSE_POSITIVE_CALLER_THRESHOLD = 20;
 // Section helpers
 // ---------------------------------------------------------------------------
 
-function buildTestFileIds(db: BetterSqlite3.Database): Set<number> {
+function buildTestFileIds(db: BetterSqlite3Database): Set<number> {
   const allFileNodes = db.prepare("SELECT id, file FROM nodes WHERE kind = 'file'").all() as Array<{
     id: number;
     file: string;
@@ -67,7 +67,7 @@ function buildTestFileIds(db: BetterSqlite3.Database): Set<number> {
   return testFileIds;
 }
 
-function countNodesByKind(db: BetterSqlite3.Database, testFileIds: Set<number> | null) {
+function countNodesByKind(db: BetterSqlite3Database, testFileIds: Set<number> | null) {
   let nodeRows: Array<{ kind: string; c: number }>;
   if (testFileIds) {
     const allNodes = db.prepare('SELECT id, kind, file FROM nodes').all() as Array<{
@@ -94,7 +94,7 @@ function countNodesByKind(db: BetterSqlite3.Database, testFileIds: Set<number> |
   return { total, byKind };
 }
 
-function countEdgesByKind(db: BetterSqlite3.Database, testFileIds: Set<number> | null) {
+function countEdgesByKind(db: BetterSqlite3Database, testFileIds: Set<number> | null) {
   let edgeRows: Array<{ kind: string; c: number }>;
   if (testFileIds) {
     const allEdges = db.prepare('SELECT source_id, target_id, kind FROM edges').all() as Array<{
@@ -123,7 +123,7 @@ function countEdgesByKind(db: BetterSqlite3.Database, testFileIds: Set<number> |
   return { total, byKind };
 }
 
-function countFilesByLanguage(db: BetterSqlite3.Database, noTests: boolean) {
+function countFilesByLanguage(db: BetterSqlite3Database, noTests: boolean) {
   const extToLang = new Map<string, string>();
   for (const entry of LANGUAGE_REGISTRY) {
     for (const ext of entry.extensions) {
@@ -143,7 +143,7 @@ function countFilesByLanguage(db: BetterSqlite3.Database, noTests: boolean) {
   return { total: fileNodes.length, languages: Object.keys(byLanguage).length, byLanguage };
 }
 
-function findHotspots(db: BetterSqlite3.Database, noTests: boolean, limit: number) {
+function findHotspots(db: BetterSqlite3Database, noTests: boolean, limit: number) {
   const testFilter = testFilterSQL('n.file', noTests);
   const hotspotRows = db
     .prepare(`
@@ -164,7 +164,7 @@ function findHotspots(db: BetterSqlite3.Database, noTests: boolean, limit: numbe
   }));
 }
 
-function getEmbeddingsInfo(db: BetterSqlite3.Database) {
+function getEmbeddingsInfo(db: BetterSqlite3Database) {
   try {
     const count = db.prepare('SELECT COUNT(*) as c FROM embeddings').get() as
       | { c: number }
@@ -190,7 +190,7 @@ function getEmbeddingsInfo(db: BetterSqlite3.Database) {
 }
 
 function computeQualityMetrics(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   testFilter: string,
   fpThreshold = FALSE_POSITIVE_CALLER_THRESHOLD,
 ) {
@@ -265,7 +265,7 @@ function computeQualityMetrics(
   };
 }
 
-function countRoles(db: BetterSqlite3.Database, noTests: boolean) {
+function countRoles(db: BetterSqlite3Database, noTests: boolean) {
   let roleRows: Array<{ role: string; c: number }>;
   if (noTests) {
     const allRoleNodes = db
@@ -290,7 +290,7 @@ function countRoles(db: BetterSqlite3.Database, noTests: boolean) {
   return roles;
 }
 
-function getComplexitySummary(db: BetterSqlite3.Database, testFilter: string) {
+function getComplexitySummary(db: BetterSqlite3Database, testFilter: string) {
   try {
     const cRows = db
       .prepare(

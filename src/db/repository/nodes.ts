@@ -278,7 +278,7 @@ export function findNodeByQualifiedName(
 
 // ─── Metric helpers ──────────────────────────────────────────────────────
 
-const _getLineCountForNodeStmt = new WeakMap();
+const _getLineCountForNodeStmt: StmtCache<{ line_count: number }> = new WeakMap();
 
 /**
  * Get line_count from node_metrics for a given node.
@@ -294,7 +294,7 @@ export function getLineCountForNode(db: BetterSqlite3Database, nodeId: number) {
   ).get(nodeId);
 }
 
-const _getMaxEndLineForFileStmt = new WeakMap();
+const _getMaxEndLineForFileStmt: StmtCache<{ max_end: number | null }> = new WeakMap();
 
 /**
  * Get the maximum end_line across all nodes in a file.
