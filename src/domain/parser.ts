@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { Tree } from 'web-tree-sitter';
 import { Language, Parser, Query } from 'web-tree-sitter';
 import { debug, warn } from '../infrastructure/logger.js';
 import { getNative, getNativePackageVersion, loadNative } from '../infrastructure/native.js';
-import type { EngineMode, ExtractorOutput, LanguageRegistryEntry } from '../types.js';
+import type { EngineMode, LanguageRegistryEntry } from '../types.js';
 
 // Re-export all extractors for backward compatibility
 export {
@@ -37,16 +38,42 @@ function grammarPath(name: string): string {
   return path.join(__dirname, '..', '..', 'grammars', name);
 }
 
-let _initialized = false;
+let _initialized: boolean = false;
 
 // Memoized parsers — avoids reloading WASM grammars on every createParsers() call
-let _cachedParsers: Map<string, any> | null = null;
+let _cachedParsers: Map<string, Parser | null> | null = null;
 
 // Cached Language objects — WASM-backed, must be .delete()'d explicitly
-let _cachedLanguages: Map<string, any> | null = null;
+let _cachedLanguages: Map<string, Language> | null = null;
 
 // Query cache for JS/TS/TSX extractors (populated during createParsers)
-const _queryCache: Map<string, any> = new Map();
+const _queryCache: Map<string, Query> = new Map();
+
+// Extensions that need typeMap backfill (type annotations only exist in TS/TSX)
+const TS_BACKFILL_EXTS = new Set(['.ts', '.tsx']);
+
+// Re-export for backward compatibility
+export type { LanguageRegistryEntry } from '../types.js';
+
+interface ParseEngineOpts {
+  engine?: EngineMode;
+  dataflow?: boolean;
+  ast?: boolean;
+}
+
+interface ResolvedEngine {
+  name: 'native' | 'wasm';
+  // biome-ignore lint/suspicious/noExplicitAny: native addon has no type declarations
+  native: any;
+}
+
+// biome-ignore lint/suspicious/noExplicitAny: extractor return types vary per language
+interface WasmExtractResult {
+  // biome-ignore lint/suspicious/noExplicitAny: extractor return shapes vary per language
+  symbols: any;
+  tree: Tree;
+  langId: string;
+}
 
 // Shared patterns for all JS/TS/TSX (class_declaration excluded — name type differs)
 const COMMON_QUERY_PATTERNS: string[] = [
@@ -63,7 +90,7 @@ const COMMON_QUERY_PATTERNS: string[] = [
 ];
 
 // JS: class name is (identifier)
-const JS_CLASS_PATTERN = '(class_declaration name: (identifier) @cls_name) @cls_node';
+const JS_CLASS_PATTERN: string = '(class_declaration name: (identifier) @cls_name) @cls_node';
 
 // TS/TSX: class name is (type_identifier), plus interface and type alias
 const TS_EXTRA_PATTERNS: string[] = [
@@ -72,7 +99,7 @@ const TS_EXTRA_PATTERNS: string[] = [
   '(type_alias_declaration name: (type_identifier) @type_name) @type_node',
 ];
 
-export async function createParsers(): Promise<Map<string, any>> {
+export async function createParsers(): Promise<Map<string, Parser | null>> {
   if (_cachedParsers) return _cachedParsers;
 
   if (!_initialized) {
@@ -80,8 +107,8 @@ export async function createParsers(): Promise<Map<string, any>> {
     _initialized = true;
   }
 
-  const parsers: Map<string, any> = new Map();
-  const languages: Map<string, any> = new Map();
+  const parsers = new Map<string, Parser | null>();
+  const languages = new Map<string, Language>();
   for (const entry of LANGUAGE_REGISTRY) {
     try {
       const lang = await Language.load(grammarPath(entry.grammarFile));
@@ -97,10 +124,10 @@ export async function createParsers(): Promise<Map<string, any>> {
           : [...COMMON_QUERY_PATTERNS, JS_CLASS_PATTERN];
         _queryCache.set(entry.id, new Query(lang, patterns.join('\n')));
       }
-    } catch (e: any) {
+    } catch (e: unknown) {
       if (entry.required) throw e;
       warn(
-        `${entry.id} parser failed to initialize: ${e.message}. ${entry.id} files will be skipped.`,
+        `${entry.id} parser failed to initialize: ${(e as Error).message}. ${entry.id} files will be skipped.`,
       );
       parsers.set(entry.id, null);
     }
@@ -121,8 +148,8 @@ export function disposeParsers(): void {
       if (parser && typeof parser.delete === 'function') {
         try {
           parser.delete();
-        } catch (e: any) {
-          debug(`Failed to dispose parser ${id}: ${e.message}`);
+        } catch (e: unknown) {
+          debug(`Failed to dispose parser ${id}: ${(e as Error).message}`);
         }
       }
     }
@@ -132,19 +159,20 @@ export function disposeParsers(): void {
     if (query && typeof query.delete === 'function') {
       try {
         query.delete();
-      } catch (e: any) {
-        debug(`Failed to dispose query ${id}: ${e.message}`);
+      } catch (e: unknown) {
+        debug(`Failed to dispose query ${id}: ${(e as Error).message}`);
       }
     }
   }
   _queryCache.clear();
   if (_cachedLanguages) {
     for (const [id, lang] of _cachedLanguages) {
-      if (lang && typeof lang.delete === 'function') {
+      // biome-ignore lint/suspicious/noExplicitAny: .delete() exists at runtime on WASM Language objects but is missing from typings
+      if (lang && typeof (lang as any).delete === 'function') {
         try {
-          lang.delete();
-        } catch (e: any) {
-          debug(`Failed to dispose language ${id}: ${e.message}`);
+          (lang as any).delete();
+        } catch (e: unknown) {
+          debug(`Failed to dispose language ${id}: ${(e as Error).message}`);
         }
       }
     }
@@ -153,7 +181,7 @@ export function disposeParsers(): void {
   _initialized = false;
 }
 
-export function getParser(parsers: Map<string, any>, filePath: string): any | null {
+export function getParser(parsers: Map<string, Parser | null>, filePath: string): Parser | null {
   const ext = path.extname(filePath);
   const entry = _extToLang.get(ext);
   if (!entry) return null;
@@ -165,8 +193,9 @@ export function getParser(parsers: Map<string, any>, filePath: string): any | nu
  * don't each need to create parsers and re-parse independently.
  * Only parses files whose extension is in SUPPORTED_EXTENSIONS.
  */
+// biome-ignore lint/suspicious/noExplicitAny: fileSymbols values have dynamic shape from extractors
 export async function ensureWasmTrees(
-  fileSymbols: Map<string, ExtractorOutput>,
+  fileSymbols: Map<string, any>,
   rootDir: string,
 ): Promise<void> {
   // Check if any file needs a tree
@@ -196,15 +225,15 @@ export async function ensureWasmTrees(
     let code: string;
     try {
       code = fs.readFileSync(absPath, 'utf-8');
-    } catch (e: any) {
-      debug(`ensureWasmTrees: cannot read ${relPath}: ${e.message}`);
+    } catch (e: unknown) {
+      debug(`ensureWasmTrees: cannot read ${relPath}: ${(e as Error).message}`);
       continue;
     }
     try {
       symbols._tree = parser.parse(code);
       symbols._langId = entry.id;
-    } catch (e: any) {
-      debug(`ensureWasmTrees: parse failed for ${relPath}: ${e.message}`);
+    } catch (e: unknown) {
+      debug(`ensureWasmTrees: parse failed for ${relPath}: ${(e as Error).message}`);
     }
   }
 }
@@ -220,12 +249,7 @@ export function isWasmAvailable(): boolean {
 
 // ── Unified API ──────────────────────────────────────────────────────────────
 
-interface ResolvedEngine {
-  name: string;
-  native: any;
-}
-
-function resolveEngine(opts: { engine?: EngineMode; nativeEngine?: any } = {}): ResolvedEngine {
+function resolveEngine(opts: ParseEngineOpts = {}): ResolvedEngine {
   const pref = opts.engine || 'auto';
   if (pref === 'wasm') return { name: 'wasm', native: null };
   if (pref === 'native' || pref === 'auto') {
@@ -244,8 +268,9 @@ function resolveEngine(opts: { engine?: EngineMode; nativeEngine?: any } = {}): 
  * This only handles:
  *  - _lineCount compat for builder.js
  *  - Backward compat for older native binaries missing js_name annotations
- *  - dataflow argFlows/mutations bindingType → binding wrapper
+ *  - dataflow argFlows/mutations bindingType -> binding wrapper
  */
+// biome-ignore lint/suspicious/noExplicitAny: native result has dynamic shape
 function patchNativeResult(r: any): any {
   // lineCount: napi(js_name) emits "lineCount"; older binaries may emit "line_count"
   r.lineCount = r.lineCount ?? r.line_count ?? null;
@@ -390,9 +415,10 @@ export const SUPPORTED_EXTENSIONS: Set<string> = new Set(_extToLang.keys());
  * matches inside comments and string literals.
  * TODO: Remove once all published native binaries include typeMap extraction (>= 3.2.0)
  */
+// biome-ignore lint/suspicious/noExplicitAny: return shape matches native result typeMap
 async function backfillTypeMap(
   filePath: string,
-  source: string,
+  source?: string,
 ): Promise<{ typeMap: any; backfilled: boolean }> {
   let code = source;
   if (!code) {
@@ -408,9 +434,12 @@ async function backfillTypeMap(
     if (!extracted?.symbols?.typeMap) {
       return { typeMap: [], backfilled: false };
     }
-    const tm: any = extracted.symbols.typeMap;
+    const tm = extracted.symbols.typeMap;
     return {
-      typeMap: tm instanceof Map ? tm : new Map(tm.map((e: any) => [e.name, e.typeName])),
+      typeMap:
+        tm instanceof Map
+          ? tm
+          : new Map(tm.map((e: { name: string; typeName: string }) => [e.name, e.typeName])),
       backfilled: true,
     };
   } finally {
@@ -427,45 +456,41 @@ async function backfillTypeMap(
  * WASM extraction helper: picks the right extractor based on file extension.
  */
 function wasmExtractSymbols(
-  parsers: Map<string, any>,
+  parsers: Map<string, Parser | null>,
   filePath: string,
   code: string,
-): { symbols: ExtractorOutput; tree: any; langId: string } | null {
+): WasmExtractResult | null {
   const parser = getParser(parsers, filePath);
   if (!parser) return null;
 
-  let tree: any;
+  let tree: Tree | null;
   try {
     tree = parser.parse(code);
-  } catch (e: any) {
-    warn(`Parse error in ${filePath}: ${e.message}`);
+  } catch (e: unknown) {
+    warn(`Parse error in ${filePath}: ${(e as Error).message}`);
     return null;
   }
+  if (!tree) return null;
 
   const ext = path.extname(filePath);
   const entry = _extToLang.get(ext);
   if (!entry) return null;
-  const query = _queryCache.get(entry.id) || null;
-  const symbols = entry.extractor(tree, filePath, query);
+  const query = _queryCache.get(entry.id) ?? undefined;
+  // Query (web-tree-sitter) is structurally compatible with TreeSitterQuery at runtime
+  // biome-ignore lint/suspicious/noExplicitAny: thin WASM wrapper type mismatch
+  const symbols = entry.extractor(tree as any, filePath, query as any);
   return symbols ? { symbols, tree, langId: entry.id } : null;
 }
 
 /**
  * Parse a single file and return normalized symbols.
  */
+// biome-ignore lint/suspicious/noExplicitAny: return shape varies between native and WASM engines
 export async function parseFileAuto(
   filePath: string,
   source: string,
-  opts: {
-    engine?: EngineMode;
-    nativeEngine?: any;
-    parsers?: Map<string, any>;
-    rootDir?: string;
-    aliases?: any;
-    dataflow?: boolean;
-    ast?: boolean;
-  } = {},
-): Promise<ExtractorOutput | null> {
+  opts: ParseEngineOpts = {},
+): Promise<any> {
   const { native } = resolveEngine(opts);
 
   if (native) {
@@ -474,7 +499,6 @@ export async function parseFileAuto(
     const patched = patchNativeResult(result);
     // Only backfill typeMap for TS/TSX — JS files have no type annotations,
     // and the native engine already handles `new Expr()` patterns.
-    const TS_BACKFILL_EXTS = new Set(['.ts', '.tsx']);
     if (
       (!patched.typeMap || patched.typeMap.length === 0) &&
       TS_BACKFILL_EXTS.has(path.extname(filePath))
@@ -495,21 +519,15 @@ export async function parseFileAuto(
 /**
  * Parse multiple files in bulk and return a Map<relPath, symbols>.
  */
+// biome-ignore lint/suspicious/noExplicitAny: return shape varies between native and WASM engines
 export async function parseFilesAuto(
   filePaths: string[],
   rootDir: string,
-  opts: {
-    engine?: EngineMode;
-    nativeEngine?: any;
-    parsers?: Map<string, any>;
-    aliases?: any;
-    signal?: AbortSignal;
-    dataflow?: boolean;
-    ast?: boolean;
-  } = {},
-): Promise<Map<string, ExtractorOutput>> {
+  opts: ParseEngineOpts = {},
+): Promise<Map<string, any>> {
   const { native } = resolveEngine(opts);
-  const result: Map<string, ExtractorOutput> = new Map();
+  // biome-ignore lint/suspicious/noExplicitAny: result values have dynamic shape from extractors
+  const result = new Map<string, any>();
 
   if (native) {
     const nativeResults = native.parseFiles(
@@ -532,24 +550,29 @@ export async function parseFilesAuto(
     if (needsTypeMap.length > 0) {
       // Only backfill for languages where WASM extraction can produce typeMap
       // (TS/TSX have type annotations; JS only has `new Expr()` which native already handles)
-      const TS_EXTS = new Set(['.ts', '.tsx']);
-      const tsFiles = needsTypeMap.filter(({ filePath }) => TS_EXTS.has(path.extname(filePath)));
+      const tsFiles = needsTypeMap.filter(({ filePath }) =>
+        TS_BACKFILL_EXTS.has(path.extname(filePath)),
+      );
       if (tsFiles.length > 0) {
         const parsers = await createParsers();
         for (const { filePath, relPath } of tsFiles) {
-          let extracted: { symbols: ExtractorOutput; tree: any; langId: string } | null | undefined;
+          let extracted: WasmExtractResult | null | undefined;
           try {
             const code = fs.readFileSync(filePath, 'utf-8');
             extracted = wasmExtractSymbols(parsers, filePath, code);
             if (extracted?.symbols?.typeMap) {
-              const symbols = result.get(relPath)!;
-              (symbols as any).typeMap =
+              const symbols = result.get(relPath);
+              if (!symbols) continue;
+              symbols.typeMap =
                 extracted.symbols.typeMap instanceof Map
                   ? extracted.symbols.typeMap
                   : new Map(
-                      (extracted.symbols.typeMap as any).map((e: any) => [e.name, e.typeName]),
+                      extracted.symbols.typeMap.map((e: { name: string; typeName: string }) => [
+                        e.name,
+                        e.typeName,
+                      ]),
                     );
-              (symbols as any)._typeMapBackfilled = true;
+              symbols._typeMapBackfilled = true;
             }
           } catch {
             /* skip — typeMap is a best-effort backfill */
@@ -573,15 +596,15 @@ export async function parseFilesAuto(
     let code: string;
     try {
       code = fs.readFileSync(filePath, 'utf-8');
-    } catch (err: any) {
-      warn(`Skipping ${path.relative(rootDir, filePath)}: ${err.message}`);
+    } catch (err: unknown) {
+      warn(`Skipping ${path.relative(rootDir, filePath)}: ${(err as Error).message}`);
       continue;
     }
     const extracted = wasmExtractSymbols(parsers, filePath, code);
     if (extracted) {
       const relPath = path.relative(rootDir, filePath).split(path.sep).join('/');
       extracted.symbols._tree = extracted.tree;
-      extracted.symbols._langId = extracted.langId as any;
+      extracted.symbols._langId = extracted.langId;
       extracted.symbols._lineCount = code.split('\n').length;
       result.set(relPath, extracted.symbols);
     }
@@ -592,8 +615,8 @@ export async function parseFilesAuto(
 /**
  * Report which engine is active.
  */
-export function getActiveEngine(opts: { engine?: EngineMode; nativeEngine?: any } = {}): {
-  name: string;
+export function getActiveEngine(opts: ParseEngineOpts = {}): {
+  name: 'native' | 'wasm';
   version: string | null;
 } {
   const { name, native } = resolveEngine(opts);
@@ -607,8 +630,8 @@ export function getActiveEngine(opts: { engine?: EngineMode; nativeEngine?: any 
   if (native) {
     try {
       version = getNativePackageVersion() ?? version;
-    } catch (e: any) {
-      debug(`getNativePackageVersion failed: ${e.message}`);
+    } catch (e: unknown) {
+      debug(`getNativePackageVersion failed: ${(e as Error).message}`);
     }
   }
   return { name, version };
@@ -618,6 +641,7 @@ export function getActiveEngine(opts: { engine?: EngineMode; nativeEngine?: any 
  * Create a native ParseTreeCache for incremental parsing.
  * Returns null if the native engine is unavailable (WASM fallback).
  */
+// biome-ignore lint/suspicious/noExplicitAny: native ParseTreeCache has no type declarations
 export function createParseTreeCache(): any {
   const native = loadNative();
   if (!native || !native.ParseTreeCache) return null;
@@ -627,25 +651,19 @@ export function createParseTreeCache(): any {
 /**
  * Parse a file incrementally using the cache, or fall back to full parse.
  */
+// biome-ignore lint/suspicious/noExplicitAny: cache is native ParseTreeCache with no type declarations; return shape varies
 export async function parseFileIncremental(
   cache: any,
   filePath: string,
   source: string,
-  opts: {
-    engine?: EngineMode;
-    nativeEngine?: any;
-    parsers?: Map<string, any>;
-    rootDir?: string;
-    aliases?: any;
-  } = {},
-): Promise<ExtractorOutput | null> {
+  opts: ParseEngineOpts = {},
+): Promise<any> {
   if (cache) {
     const result = cache.parseFile(filePath, source);
     if (!result) return null;
     const patched = patchNativeResult(result);
     // Only backfill typeMap for TS/TSX — JS files have no type annotations,
     // and the native engine already handles `new Expr()` patterns.
-    const TS_BACKFILL_EXTS = new Set(['.ts', '.tsx']);
     if (
       (!patched.typeMap || patched.typeMap.length === 0) &&
       TS_BACKFILL_EXTS.has(path.extname(filePath))

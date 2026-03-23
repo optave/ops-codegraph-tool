@@ -13,8 +13,11 @@ import {
   findNodeChildren,
   findNodesByFile,
   getComplexityForNode,
+  getLineCountForNode,
+  getMaxEndLineForFile,
   openReadonlyOrFail,
 } from '../../db/index.js';
+import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { loadConfig } from '../../infrastructure/config.js';
 import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
@@ -28,20 +31,39 @@ import {
 import { resolveMethodViaHierarchy } from '../../shared/hierarchy.js';
 import { normalizeSymbol } from '../../shared/normalize.js';
 import { paginateResult } from '../../shared/paginate.js';
+import type {
+  BetterSqlite3Database,
+  ChildNodeRow,
+  ImportEdgeRow,
+  IntraFileCallEdge,
+  NodeRow,
+  RelatedNodeRow,
+  StmtCache,
+} from '../../types.js';
 import { findMatchingNodes } from './symbol-lookup.js';
 
+interface DisplayOpts {
+  maxLines?: number;
+  excerptLines?: number;
+  jsdocEndScanLines?: number;
+  jsdocOpenScanLines?: number;
+  summaryMaxChars?: number;
+  signatureGatherLines?: number;
+  [key: string]: unknown;
+}
+
 function buildCallees(
-  db: any,
-  node: any,
+  db: BetterSqlite3Database,
+  node: NodeRow,
   repoRoot: string,
   getFileLines: (file: string) => string[] | null,
-  opts: { noTests: boolean; depth: number; displayOpts: Record<string, any> },
-): any[] {
+  opts: { noTests: boolean; depth: number; displayOpts: DisplayOpts },
+) {
   const { noTests, depth, displayOpts } = opts;
-  const calleeRows = findCallees(db, node.id);
-  const filteredCallees = noTests ? calleeRows.filter((c: any) => !isTestFile(c.file)) : calleeRows;
+  const calleeRows = findCallees(db, node.id) as RelatedNodeRow[];
+  const filteredCallees = noTests ? calleeRows.filter((c) => !isTestFile(c.file)) : calleeRows;
 
-  const callees = filteredCallees.map((c: any) => {
+  const callees = filteredCallees.map((c) => {
     const cLines = getFileLines(c.file);
     const summary = cLines ? extractSummary(cLines, c.line, displayOpts) : null;
     let calleeSource: string | null = null;
@@ -66,14 +88,14 @@ function buildCallees(
   });
 
   if (depth > 1) {
-    const visited = new Set(filteredCallees.map((c: any) => c.id));
+    const visited = new Set(filteredCallees.map((c) => c.id));
     visited.add(node.id);
-    let frontier = filteredCallees.map((c: any) => c.id);
+    let frontier = filteredCallees.map((c) => c.id);
     const maxDepth = Math.min(depth, 5);
     for (let d = 2; d <= maxDepth; d++) {
       const nextFrontier: number[] = [];
       for (const fid of frontier) {
-        const deeper = findCallees(db, fid);
+        const deeper = findCallees(db, fid) as RelatedNodeRow[];
         for (const c of deeper) {
           if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
             visited.add(c.id);
@@ -105,21 +127,31 @@ function buildCallees(
   return callees;
 }
 
-function buildCallers(db: any, node: any, noTests: boolean): any[] {
-  let callerRows = findCallers(db, node.id);
+function fetchCallerRows(db: BetterSqlite3Database, node: NodeRow) {
+  const callerRows: Array<RelatedNodeRow & { viaHierarchy?: string }> = findCallers(
+    db,
+    node.id,
+  ) as RelatedNodeRow[];
 
   if (node.kind === 'method' && node.name.includes('.')) {
-    const methodName = node.name.split('.').pop();
+    const methodName = node.name.split('.').pop() ?? '';
     const relatedMethods = resolveMethodViaHierarchy(db, methodName);
     for (const rm of relatedMethods) {
       if (rm.id === node.id) continue;
-      const extraCallers = findCallers(db, rm.id);
-      callerRows.push(...extraCallers.map((c: any) => ({ ...c, viaHierarchy: rm.name })));
+      const extraCallers = findCallers(db, rm.id) as RelatedNodeRow[];
+      callerRows.push(...extraCallers.map((c) => ({ ...c, viaHierarchy: rm.name })));
     }
   }
-  if (noTests) callerRows = callerRows.filter((c: any) => !isTestFile(c.file));
+  return callerRows;
+}
 
-  return callerRows.map((c: any) => ({
+function buildCallers(
+  callerRows: Array<RelatedNodeRow & { viaHierarchy?: string }>,
+  noTests: boolean,
+) {
+  const filtered = noTests ? callerRows.filter((c) => !isTestFile(c.file)) : callerRows;
+
+  return filtered.map((c) => ({
     name: c.name,
     kind: c.kind,
     file: c.file,
@@ -131,32 +163,22 @@ function buildCallers(db: any, node: any, noTests: boolean): any[] {
 const INTERFACE_LIKE_KINDS = new Set(['interface', 'trait']);
 const IMPLEMENTOR_KINDS = new Set(['class', 'struct', 'record', 'enum']);
 
-function buildImplementationInfo(db: any, node: any, noTests: boolean): object {
+function buildImplementationInfo(db: BetterSqlite3Database, node: NodeRow, noTests: boolean) {
   // For interfaces/traits: show who implements them
   if (INTERFACE_LIKE_KINDS.has(node.kind)) {
-    let impls = findImplementors(db, node.id);
-    if (noTests) impls = impls.filter((n: any) => !isTestFile(n.file));
+    let impls = findImplementors(db, node.id) as RelatedNodeRow[];
+    if (noTests) impls = impls.filter((n) => !isTestFile(n.file));
     return {
-      implementors: impls.map((n: any) => ({
-        name: n.name,
-        kind: n.kind,
-        file: n.file,
-        line: n.line,
-      })),
+      implementors: impls.map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line })),
     };
   }
   // For classes/structs: show what they implement
   if (IMPLEMENTOR_KINDS.has(node.kind)) {
-    let ifaces = findInterfaces(db, node.id);
-    if (noTests) ifaces = ifaces.filter((n: any) => !isTestFile(n.file));
+    let ifaces = findInterfaces(db, node.id) as RelatedNodeRow[];
+    if (noTests) ifaces = ifaces.filter((n) => !isTestFile(n.file));
     if (ifaces.length > 0) {
       return {
-        implements: ifaces.map((n: any) => ({
-          name: n.name,
-          kind: n.kind,
-          file: n.file,
-          line: n.line,
-        })),
+        implements: ifaces.map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line })),
       };
     }
   }
@@ -164,28 +186,31 @@ function buildImplementationInfo(db: any, node: any, noTests: boolean): object {
 }
 
 function buildRelatedTests(
-  db: any,
-  node: any,
+  callerRows: RelatedNodeRow[],
   getFileLines: (file: string) => string[] | null,
   includeTests: boolean,
-): any[] {
-  const testCallerRows = findCallers(db, node.id);
-  const testCallers = testCallerRows.filter((c: any) => isTestFile(c.file));
+) {
+  const testCallers = callerRows.filter((c) => isTestFile(c.file));
 
-  const testsByFile = new Map<string, any[]>();
+  const testsByFile = new Map<string, RelatedNodeRow[]>();
   for (const tc of testCallers) {
     if (!testsByFile.has(tc.file)) testsByFile.set(tc.file, []);
-    testsByFile.get(tc.file)?.push(tc);
+    testsByFile.get(tc.file)!.push(tc);
   }
 
-  const relatedTests: any[] = [];
+  const relatedTests: Array<{
+    file: string;
+    testCount: number;
+    testNames: string[];
+    source?: string;
+  }> = [];
   for (const [file] of testsByFile) {
     const tLines = getFileLines(file);
     const testNames: string[] = [];
     if (tLines) {
       for (const tl of tLines) {
         const tm = tl.match(/(?:it|test|describe)\s*\(\s*['"`]([^'"`]+)['"`]/);
-        if (tm && tm[1]) testNames.push(tm[1]);
+        if (tm) testNames.push(tm[1]!);
       }
     }
     const testSource = includeTests && tLines ? tLines.join('\n') : undefined;
@@ -200,7 +225,7 @@ function buildRelatedTests(
   return relatedTests;
 }
 
-function getComplexityMetrics(db: any, nodeId: number): object | null {
+function getComplexityMetrics(db: BetterSqlite3Database, nodeId: number) {
   try {
     const cRow = getComplexityForNode(db, nodeId);
     if (!cRow) return null;
@@ -211,43 +236,43 @@ function getComplexityMetrics(db: any, nodeId: number): object | null {
       maintainabilityIndex: cRow.maintainability_index || 0,
       halsteadVolume: cRow.halstead_volume || 0,
     };
-  } catch (e: any) {
-    debug(`complexity lookup failed for node ${nodeId}: ${e.message}`);
+  } catch (e: unknown) {
+    debug(`complexity lookup failed for node ${nodeId}: ${(e as Error).message}`);
     return null;
   }
 }
 
-function getNodeChildrenSafe(db: any, nodeId: number): any[] {
+function getNodeChildrenSafe(db: BetterSqlite3Database, nodeId: number) {
   try {
-    return findNodeChildren(db, nodeId).map((c: any) => ({
+    return (findNodeChildren(db, nodeId) as ChildNodeRow[]).map((c) => ({
       name: c.name,
       kind: c.kind,
       line: c.line,
       endLine: c.end_line || null,
     }));
-  } catch (e: any) {
-    debug(`findNodeChildren failed for node ${nodeId}: ${e.message}`);
+  } catch (e: unknown) {
+    debug(`findNodeChildren failed for node ${nodeId}: ${(e as Error).message}`);
     return [];
   }
 }
 
 function explainFileImpl(
-  db: any,
+  db: BetterSqlite3Database,
   target: string,
   getFileLines: (file: string) => string[] | null,
-  displayOpts: Record<string, any>,
-): any[] {
-  const fileNodes = findFileNodes(db, `%${target}%`);
+  displayOpts: DisplayOpts,
+) {
+  const fileNodes = findFileNodes(db, `%${target}%`) as NodeRow[];
   if (fileNodes.length === 0) return [];
 
-  return fileNodes.map((fn: any) => {
-    const symbols = findNodesByFile(db, fn.file);
+  return fileNodes.map((fn) => {
+    const symbols = findNodesByFile(db, fn.file) as NodeRow[];
 
     // IDs of symbols that have incoming calls from other files (public)
-    const publicIds = findCrossFileCallTargets(db, fn.file);
+    const publicIds = findCrossFileCallTargets(db, fn.file) as Set<number>;
 
     const fileLines = getFileLines(fn.file);
-    const mapSymbol = (s: any) => ({
+    const mapSymbol = (s: NodeRow) => ({
       name: s.name,
       kind: s.kind,
       line: s.line,
@@ -256,31 +281,31 @@ function explainFileImpl(
       signature: fileLines ? extractSignature(fileLines, s.line, displayOpts) : null,
     });
 
-    const publicApi = symbols.filter((s: any) => publicIds.has(s.id)).map(mapSymbol);
-    const internal = symbols.filter((s: any) => !publicIds.has(s.id)).map(mapSymbol);
+    const publicApi = symbols.filter((s) => publicIds.has(s.id)).map(mapSymbol);
+    const internal = symbols.filter((s) => !publicIds.has(s.id)).map(mapSymbol);
 
-    const imports = findImportTargets(db, fn.id).map((r: any) => ({ file: r.file }));
-    const importedBy = findImportSources(db, fn.id).map((r: any) => ({ file: r.file }));
+    const imports = (findImportTargets(db, fn.id) as ImportEdgeRow[]).map((r) => ({
+      file: r.file,
+    }));
+    const importedBy = (findImportSources(db, fn.id) as ImportEdgeRow[]).map((r) => ({
+      file: r.file,
+    }));
 
-    const intraEdges = findIntraFileCallEdges(db, fn.file);
+    const intraEdges = findIntraFileCallEdges(db, fn.file) as IntraFileCallEdge[];
     const dataFlowMap = new Map<string, string[]>();
     for (const edge of intraEdges) {
       if (!dataFlowMap.has(edge.caller_name)) dataFlowMap.set(edge.caller_name, []);
-      dataFlowMap.get(edge.caller_name)?.push(edge.callee_name);
+      dataFlowMap.get(edge.caller_name)!.push(edge.callee_name);
     }
     const dataFlow = [...dataFlowMap.entries()].map(([caller, callees]) => ({
       caller,
       callees,
     }));
 
-    const metric = db
-      .prepare(`SELECT nm.line_count FROM node_metrics nm WHERE nm.node_id = ?`)
-      .get(fn.id) as any;
-    let lineCount = metric?.line_count || null;
+    const metric = getLineCountForNode(db, fn.id) as { line_count: number } | undefined;
+    let lineCount: number | null = metric?.line_count || null;
     if (!lineCount) {
-      const maxLine = db
-        .prepare(`SELECT MAX(end_line) as max_end FROM nodes WHERE file = ?`)
-        .get(fn.file) as any;
+      const maxLine = getMaxEndLineForFile(db, fn.file) as { max_end: number | null } | undefined;
       lineCount = maxLine?.max_end || null;
     }
 
@@ -297,48 +322,49 @@ function explainFileImpl(
   });
 }
 
+const _explainNodeStmtCache: StmtCache<NodeRow> = new WeakMap();
+const _EXPLAIN_NODE_SQL = `SELECT * FROM nodes WHERE name LIKE ? AND kind IN ('function','method','class','interface','type','struct','enum','trait','record','module','constant') ORDER BY file, line`;
+
 function explainFunctionImpl(
-  db: any,
+  db: BetterSqlite3Database,
   target: string,
   noTests: boolean,
   getFileLines: (file: string) => string[] | null,
-  displayOpts: Record<string, any>,
-): any[] {
-  let nodes = db
-    .prepare(
-      `SELECT * FROM nodes WHERE name LIKE ? AND kind IN ('function','method','class','interface','type','struct','enum','trait','record','module','constant') ORDER BY file, line`,
-    )
-    .all(`%${target}%`) as any[];
-  if (noTests) nodes = nodes.filter((n: any) => !isTestFile(n.file));
+  displayOpts: DisplayOpts,
+) {
+  const stmt = cachedStmt(_explainNodeStmtCache, db, _EXPLAIN_NODE_SQL);
+  let nodes = stmt.all(`%${target}%`) as NodeRow[];
+  if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
   if (nodes.length === 0) return [];
 
   const hc = new Map();
-  return nodes.slice(0, 10).map((node: any) => {
+  return nodes.slice(0, 10).map((node) => {
     const fileLines = getFileLines(node.file);
     const lineCount = node.end_line ? node.end_line - node.line + 1 : null;
     const summary = fileLines ? extractSummary(fileLines, node.line, displayOpts) : null;
     const signature = fileLines ? extractSignature(fileLines, node.line, displayOpts) : null;
 
-    const callees = findCallees(db, node.id).map((c: any) => ({
+    const callees = (findCallees(db, node.id) as RelatedNodeRow[]).map((c) => ({
       name: c.name,
       kind: c.kind,
       file: c.file,
       line: c.line,
     }));
 
-    let callers = findCallers(db, node.id).map((c: any) => ({
+    const allCallerRows = findCallers(db, node.id) as RelatedNodeRow[];
+
+    let callers = allCallerRows.map((c) => ({
       name: c.name,
       kind: c.kind,
       file: c.file,
       line: c.line,
     }));
-    if (noTests) callers = callers.filter((c: any) => !isTestFile(c.file));
+    if (noTests) callers = callers.filter((c) => !isTestFile(c.file));
 
-    const testCallerRows = findCallers(db, node.id);
     const seenFiles = new Set<string>();
-    const relatedTests = testCallerRows
-      .filter((r: any) => isTestFile(r.file) && !seenFiles.has(r.file) && seenFiles.add(r.file))
-      .map((r: any) => ({ file: r.file }));
+    const relatedTests = allCallerRows
+      .filter((r) => isTestFile(r.file) && !seenFiles.has(r.file) && seenFiles.add(r.file))
+      .map((r) => ({ file: r.file }));
 
     return {
       ...normalizeSymbol(node, db, hc),
@@ -353,18 +379,19 @@ function explainFunctionImpl(
   });
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: explainFunctionImpl results have dynamic shape with _depth
 function explainCallees(
   parentResults: any[],
   currentDepth: number,
   visited: Set<string>,
-  db: any,
+  db: BetterSqlite3Database,
   noTests: boolean,
   getFileLines: (file: string) => string[] | null,
-  displayOpts: Record<string, any>,
+  displayOpts: DisplayOpts,
 ): void {
   if (currentDepth <= 0) return;
   for (const r of parentResults) {
-    const newCallees: any[] = [];
+    const newCallees: typeof parentResults = [];
     for (const callee of r.callees) {
       const key = `${callee.name}:${callee.file}:${callee.line}`;
       if (visited.has(key)) continue;
@@ -376,11 +403,10 @@ function explainCallees(
         getFileLines,
         displayOpts,
       );
-      const exact = calleeResults.find(
-        (cr: any) => cr.file === callee.file && cr.line === callee.line,
-      );
+      const exact = calleeResults.find((cr) => cr.file === callee.file && cr.line === callee.line);
       if (exact) {
-        exact._depth = (r._depth || 0) + 1;
+        (exact as Record<string, unknown>)['_depth'] =
+          (((r as Record<string, unknown>)['_depth'] as number) || 0) + 1;
         newCallees.push(exact);
       }
     }
@@ -391,23 +417,24 @@ function explainCallees(
   }
 }
 
-// ─── Exported functions ──────────────────────────────────────────────────
+// --- Exported functions ---
 
 export function contextData(
   name: string,
-  customDbPath: string | undefined,
+  customDbPath: string,
   opts: {
     depth?: number;
     noSource?: boolean;
     noTests?: boolean;
     includeTests?: boolean;
-    config?: any;
     file?: string;
     kind?: string;
     limit?: number;
     offset?: number;
+    // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
+    config?: any;
   } = {},
-): object {
+) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const depth = opts.depth || 0;
@@ -416,7 +443,7 @@ export function contextData(
     const includeTests = opts.includeTests || false;
 
     const config = opts.config || loadConfig();
-    const displayOpts = config.display || {};
+    const displayOpts: DisplayOpts = config.display || {};
 
     const dbPath = findDbPath(customDbPath);
     const repoRoot = path.resolve(path.dirname(dbPath), '..');
@@ -428,12 +455,12 @@ export function contextData(
 
     const getFileLines = createFileLinesReader(repoRoot);
 
-    const results = nodes.map((node: any) => {
+    const results = nodes.map((node) => {
       const fileLines = getFileLines(node.file);
 
       const source = noSource
         ? null
-        : readSourceRange(repoRoot, node.file, node.line, node.end_line, displayOpts);
+        : readSourceRange(repoRoot, node.file, node.line, node.end_line ?? undefined, displayOpts);
 
       const signature = fileLines ? extractSignature(fileLines, node.line, displayOpts) : null;
 
@@ -442,8 +469,9 @@ export function contextData(
         depth,
         displayOpts,
       });
-      const callers = buildCallers(db, node, noTests);
-      const relatedTests = buildRelatedTests(db, node, getFileLines, includeTests);
+      const allCallerRows = fetchCallerRows(db, node);
+      const callers = buildCallers(allCallerRows, noTests);
+      const relatedTests = buildRelatedTests(allCallerRows, getFileLines, includeTests);
       const complexityMetrics = getComplexityMetrics(db, node.id);
       const nodeChildren = getNodeChildrenSafe(db, node.id);
       const implInfo = buildImplementationInfo(db, node, noTests);
@@ -475,9 +503,16 @@ export function contextData(
 
 export function explainData(
   target: string,
-  customDbPath: string | undefined,
-  opts: { noTests?: boolean; depth?: number; config?: any; limit?: number; offset?: number } = {},
-): object {
+  customDbPath: string,
+  opts: {
+    noTests?: boolean;
+    depth?: number;
+    limit?: number;
+    offset?: number;
+    // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
+    config?: any;
+  } = {},
+) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
@@ -485,7 +520,7 @@ export function explainData(
     const kind = isFileLikeTarget(target) ? 'file' : 'function';
 
     const config = opts.config || loadConfig();
-    const displayOpts = config.display || {};
+    const displayOpts: DisplayOpts = config.display || {};
 
     const dbPath = findDbPath(customDbPath);
     const repoRoot = path.resolve(path.dirname(dbPath), '..');
@@ -498,7 +533,8 @@ export function explainData(
         : explainFunctionImpl(db, target, noTests, getFileLines, displayOpts);
 
     if (kind === 'function' && depth > 0 && results.length > 0) {
-      const visited = new Set(results.map((r: any) => `${r.name}:${r.file}:${r.line}`));
+      // biome-ignore lint/suspicious/noExplicitAny: results are function results when kind === 'function'
+      const visited = new Set(results.map((r: any) => `${r.name}:${r.file}:${r.line ?? ''}`));
       explainCallees(results, depth, visited, db, noTests, getFileLines, displayOpts);
     }
 

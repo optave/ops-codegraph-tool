@@ -6,6 +6,7 @@ import {
   findNodesByFile,
   openReadonlyOrFail,
 } from '../../db/index.js';
+import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { loadConfig } from '../../infrastructure/config.js';
 import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
@@ -15,13 +16,28 @@ import {
   extractSummary,
 } from '../../shared/file-utils.js';
 import { paginateResult } from '../../shared/paginate.js';
+import type { BetterSqlite3Database, NodeRow, StmtCache } from '../../types.js';
+
+/** Cache the schema probe for the `exported` column per db handle. */
+const _hasExportedColCache: WeakMap<BetterSqlite3Database, boolean> = new WeakMap();
+
+const _exportedNodesStmtCache: StmtCache<NodeRow> = new WeakMap();
+const _consumersStmtCache: StmtCache<{ name: string; file: string; line: number }> = new WeakMap();
+const _reexportsFromStmtCache: StmtCache<{ file: string }> = new WeakMap();
+const _reexportsToStmtCache: StmtCache<{ file: string }> = new WeakMap();
 
 export function exportsData(
   file: string,
-  customDbPath: string | undefined,
-  // biome-ignore lint/suspicious/noExplicitAny: config shape not yet typed
-  opts: { noTests?: boolean; config?: any; unused?: boolean; limit?: number; offset?: number } = {},
-): object {
+  customDbPath: string,
+  opts: {
+    noTests?: boolean;
+    unused?: boolean;
+    limit?: number;
+    offset?: number;
+    // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
+    config?: any;
+  } = {},
+) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
@@ -56,7 +72,7 @@ export function exportsData(
     }
 
     // For single-file match return flat; for multi-match return first (like explainData)
-    const first = fileResults[0];
+    const first = fileResults[0]!;
     const base = {
       file: first.file,
       results: first.results,
@@ -68,7 +84,7 @@ export function exportsData(
       totalReexported: first.totalReexported,
       totalReexportedUnused: first.totalReexportedUnused,
     };
-    // biome-ignore lint/suspicious/noExplicitAny: dynamic pagination shape
+    // biome-ignore lint/suspicious/noExplicitAny: paginateResult returns dynamic shape
     const paginated: any = paginateResult(base, 'results', {
       limit: opts.limit,
       offset: opts.offset,
@@ -93,56 +109,77 @@ export function exportsData(
 }
 
 function exportsFileImpl(
-  // biome-ignore lint/suspicious/noExplicitAny: db handle from better-sqlite3
-  db: any,
+  db: BetterSqlite3Database,
   target: string,
   noTests: boolean,
   getFileLines: (file: string) => string[] | null,
   unused: boolean,
-  // biome-ignore lint/suspicious/noExplicitAny: display config shape not yet typed
-  displayOpts: Record<string, any>,
-  // biome-ignore lint/suspicious/noExplicitAny: DB row types not yet migrated
-): any[] {
-  const fileNodes = findFileNodes(db, `%${target}%`);
+  displayOpts: Record<string, unknown>,
+) {
+  const fileNodes = findFileNodes(db, `%${target}%`) as NodeRow[];
   if (fileNodes.length === 0) return [];
 
-  // Detect whether exported column exists
-  let hasExportedCol = false;
-  try {
-    db.prepare('SELECT exported FROM nodes LIMIT 0').raw();
-    hasExportedCol = true;
-  } catch (e: unknown) {
-    debug(`exported column not available, using fallback: ${e instanceof Error ? e.message : e}`);
+  // Detect whether exported column exists (cached per db handle)
+  let hasExportedCol: boolean;
+  if (_hasExportedColCache.has(db)) {
+    hasExportedCol = _hasExportedColCache.get(db)!;
+  } else {
+    hasExportedCol = false;
+    try {
+      db.prepare('SELECT exported FROM nodes LIMIT 0').raw(true);
+      hasExportedCol = true;
+    } catch (e: unknown) {
+      debug(`exported column not available, using fallback: ${(e as Error).message}`);
+    }
+    _hasExportedColCache.set(db, hasExportedCol);
   }
 
-  return fileNodes.map((fn) => {
-    const symbols = findNodesByFile(db, fn.file);
+  const exportedNodesStmt = hasExportedCol
+    ? cachedStmt(
+        _exportedNodesStmtCache,
+        db,
+        "SELECT * FROM nodes WHERE file = ? AND kind != 'file' AND exported = 1 ORDER BY line",
+      )
+    : null;
+  const consumersStmt = cachedStmt(
+    _consumersStmtCache,
+    db,
+    `SELECT n.name, n.file, n.line FROM edges e JOIN nodes n ON e.source_id = n.id
+         WHERE e.target_id = ? AND e.kind = 'calls'`,
+  );
+  const reexportsFromStmt = cachedStmt(
+    _reexportsFromStmtCache,
+    db,
+    `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.source_id = n.id
+       WHERE e.target_id = ? AND e.kind = 'reexports'`,
+  );
+  const reexportsToStmt = cachedStmt(
+    _reexportsToStmtCache,
+    db,
+    `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.target_id = n.id
+       WHERE e.source_id = ? AND e.kind = 'reexports'`,
+  );
 
-    // biome-ignore lint/suspicious/noExplicitAny: DB row types not yet migrated
-    let exported: any[];
+  return fileNodes.map((fn) => {
+    const symbols = findNodesByFile(db, fn.file) as NodeRow[];
+
+    let exported: NodeRow[];
     if (hasExportedCol) {
       // Use the exported column populated during build
-      exported = db
-        .prepare(
-          "SELECT * FROM nodes WHERE file = ? AND kind != 'file' AND exported = 1 ORDER BY line",
-        )
-        .all(fn.file);
+      exported = exportedNodesStmt!.all(fn.file) as NodeRow[];
     } else {
       // Fallback: symbols that have incoming calls from other files
-      const exportedIds = findCrossFileCallTargets(db, fn.file);
+      const exportedIds = findCrossFileCallTargets(db, fn.file) as Set<number>;
       exported = symbols.filter((s) => exportedIds.has(s.id));
     }
     const internalCount = symbols.length - exported.length;
 
-    // biome-ignore lint/suspicious/noExplicitAny: DB row types not yet migrated
-    const buildSymbolResult = (s: any, fileLines: string[] | null) => {
-      let consumers = db
-        .prepare(
-          `SELECT n.name, n.file, n.line FROM edges e JOIN nodes n ON e.source_id = n.id
-           WHERE e.target_id = ? AND e.kind = 'calls'`,
-        )
-        // biome-ignore lint/suspicious/noExplicitAny: DB row types not yet migrated
-        .all(s.id) as any[];
+    const buildSymbolResult = (s: NodeRow, fileLines: string[] | null) => {
+      let consumers = consumersStmt.all(s.id) as Array<{
+        name: string;
+        file: string;
+        line: number;
+      }>;
       if (noTests) consumers = consumers.filter((c) => !isTestFile(c.file));
 
       return {
@@ -162,47 +199,31 @@ function exportsFileImpl(
 
     const totalUnused = results.filter((r) => r.consumerCount === 0).length;
 
-    // Files that re-export this file (barrel → this file)
-    const reexports = (
-      db
-        .prepare(
-          `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.source_id = n.id
-         WHERE e.target_id = ? AND e.kind = 'reexports'`,
-        )
-        // biome-ignore lint/suspicious/noExplicitAny: DB row types not yet migrated
-        .all(fn.id) as any[]
-    ).map((r) => ({ file: r.file }));
+    // Files that re-export this file (barrel -> this file)
+    const reexports = (reexportsFromStmt.all(fn.id) as Array<{ file: string }>).map((r) => ({
+      file: r.file,
+    }));
 
     // For barrel files: gather symbols re-exported from target modules
-    const reexportTargets = db
-      .prepare(
-        `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.target_id = n.id
-         WHERE e.source_id = ? AND e.kind = 'reexports'`,
-      )
-      .all(fn.id);
+    const reexportTargets = reexportsToStmt.all(fn.id) as Array<{ file: string }>;
 
-    // biome-ignore lint/suspicious/noExplicitAny: DB row types not yet migrated
-    const reexportedSymbols: any[] = [];
-    for (const target of reexportTargets) {
-      // biome-ignore lint/suspicious/noExplicitAny: DB row types not yet migrated
-      let targetExported: any[];
+    const reexportedSymbols: Array<ReturnType<typeof buildSymbolResult> & { originFile: string }> =
+      [];
+    for (const reexTarget of reexportTargets) {
+      let targetExported: NodeRow[];
       if (hasExportedCol) {
-        targetExported = db
-          .prepare(
-            "SELECT * FROM nodes WHERE file = ? AND kind != 'file' AND exported = 1 ORDER BY line",
-          )
-          .all(target.file);
+        targetExported = exportedNodesStmt!.all(reexTarget.file) as NodeRow[];
       } else {
         // Fallback: same heuristic as direct exports — symbols called from other files
-        const targetSymbols = findNodesByFile(db, target.file);
-        const exportedIds = findCrossFileCallTargets(db, target.file);
+        const targetSymbols = findNodesByFile(db, reexTarget.file) as NodeRow[];
+        const exportedIds = findCrossFileCallTargets(db, reexTarget.file) as Set<number>;
         targetExported = targetSymbols.filter((s) => exportedIds.has(s.id));
       }
       for (const s of targetExported) {
-        const fileLines = getFileLines(target.file);
+        const fileLines = getFileLines(reexTarget.file);
         reexportedSymbols.push({
           ...buildSymbolResult(s, fileLines),
-          originFile: target.file,
+          originFile: reexTarget.file,
         });
       }
     }

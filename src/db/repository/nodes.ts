@@ -275,3 +275,37 @@ export function findNodeByQualifiedName(
     'SELECT * FROM nodes WHERE qualified_name = ? ORDER BY file, line',
   ).all(qualifiedName);
 }
+
+// ─── Metric helpers ──────────────────────────────────────────────────────
+
+const _getLineCountForNodeStmt: StmtCache<{ line_count: number }> = new WeakMap();
+
+/**
+ * Get line_count from node_metrics for a given node.
+ * @param {object} db
+ * @param {number} nodeId
+ * @returns {{ line_count: number } | undefined}
+ */
+export function getLineCountForNode(db: BetterSqlite3Database, nodeId: number) {
+  return cachedStmt(
+    _getLineCountForNodeStmt,
+    db,
+    'SELECT line_count FROM node_metrics WHERE node_id = ?',
+  ).get(nodeId);
+}
+
+const _getMaxEndLineForFileStmt: StmtCache<{ max_end: number | null }> = new WeakMap();
+
+/**
+ * Get the maximum end_line across all nodes in a file.
+ * @param {object} db
+ * @param {string} file
+ * @returns {{ max_end: number | null } | undefined}
+ */
+export function getMaxEndLineForFile(db: BetterSqlite3Database, file: string) {
+  return cachedStmt(
+    _getMaxEndLineForFileStmt,
+    db,
+    'SELECT MAX(end_line) as max_end FROM nodes WHERE file = ?',
+  ).get(file);
+}
