@@ -166,7 +166,7 @@ Then capture the current (staged) export list:
 codegraph exports <barrel-file> -T --json
 ```
 
-Compare export count before and after. If exports were **accidentally dropped** (count decreased and the removed exports have callers) → **FAIL**.
+Compare export count before and after. If exports were **accidentally dropped** (count decreased and the removed exports have callers) → **FAIL**: "Barrel file `<barrel-file>` dropped <N> exports that have active callers: <export list>. Use `codegraph exports <barrel-file> -T` to review."
 
 Clean up the temp file (recover path from sidecar):
 ```bash
