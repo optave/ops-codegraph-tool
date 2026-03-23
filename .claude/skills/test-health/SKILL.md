@@ -70,6 +70,8 @@ For each flaky test found:
 
 ## Phase 2 — Dead & Trivial Test Detection
 
+**Skip if `COVERAGE_ONLY` is set.**
+
 Scan all test files for problematic patterns:
 
 ### 2a. Empty / no-assertion tests
@@ -148,6 +150,8 @@ For each changed source file, check if:
 > **Note:** If the coverage tool is not configured or fails, skip this phase and note it in the report. Coverage is a vitest plugin — it may need `@vitest/coverage-v8` installed.
 
 ## Phase 4 — Test Structure Analysis
+
+**Skip if `COVERAGE_ONLY` is set.**
 
 Analyze the test suite's structural health:
 
