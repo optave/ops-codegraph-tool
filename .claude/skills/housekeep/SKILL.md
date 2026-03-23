@@ -91,8 +91,12 @@ for f in .codegraph/*.lock; do
   age=$(( $(date +%s) - $(stat --format='%Y' "$f" 2>/dev/null || stat -f '%m' "$f" 2>/dev/null) ))
   [ -z "$age" ] && continue
   if [ "$age" -gt 3600 ] && ! lsof "$f" > /dev/null 2>&1; then
-    echo "Removing stale lock: $f"
-    rm "$f"
+    if [ "$DRY_RUN" = "true" ]; then
+      echo "[DRY RUN] Would remove stale lock: $f"
+    else
+      echo "Removing stale lock: $f"
+      rm "$f"
+    fi
   elif [ "$age" -gt 3600 ]; then
     echo "Lock file $f is old but still held by a process — ask user before removing"
   fi
