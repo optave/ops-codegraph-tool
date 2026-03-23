@@ -344,18 +344,23 @@ Combine into a single snapshot file:
 TITAN_HEAD_SHA=$(git rev-parse HEAD)
 node -e "
 const fs = require('fs');
-const communities = JSON.parse(fs.readFileSync('.codegraph/titan/arch-snapshot-communities.json','utf8'));
-const structure = JSON.parse(fs.readFileSync('.codegraph/titan/arch-snapshot-structure.json','utf8'));
-const drift = JSON.parse(fs.readFileSync('.codegraph/titan/arch-snapshot-drift.json','utf8'));
-const snapshot = {
-  timestamp: new Date().toISOString(),
-  capturedBefore: 'forge',
-  headSha: '$TITAN_HEAD_SHA',
-  communities,
-  structure,
-  drift
-};
-fs.writeFileSync('.codegraph/titan/arch-snapshot.json', JSON.stringify(snapshot, null, 2));
+try {
+  const communities = JSON.parse(fs.readFileSync('.codegraph/titan/arch-snapshot-communities.json','utf8'));
+  const structure = JSON.parse(fs.readFileSync('.codegraph/titan/arch-snapshot-structure.json','utf8'));
+  const drift = JSON.parse(fs.readFileSync('.codegraph/titan/arch-snapshot-drift.json','utf8'));
+  const snapshot = {
+    timestamp: new Date().toISOString(),
+    capturedBefore: 'forge',
+    headSha: '$TITAN_HEAD_SHA',
+    communities,
+    structure,
+    drift
+  };
+  fs.writeFileSync('.codegraph/titan/arch-snapshot.json', JSON.stringify(snapshot, null, 2));
+} catch (e) {
+  console.error('WARNING: Failed to build arch-snapshot.json: ' + e.message);
+  console.error('Architectural comparison (titan-gate A1/A3/A4) will be skipped.');
+}
 "
 ```
 
