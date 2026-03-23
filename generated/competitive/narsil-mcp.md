@@ -327,7 +327,7 @@ Codegraph's foundation document defines the problem as: *"Fast local analysis wi
 | Language support | 11 | 32 | Narsil |
 | Standalone CLI | 41 commands | Config/tools management only | Codegraph |
 | Programmatic API | Full JS API | None | Codegraph |
-| Community & maturity | New | Newer (Dec 2025), growing fast | Tie |
+| Community & maturity | New | Newer (Dec 2025); no activity since Feb 25 | Codegraph |
 | CI/CD readiness | Yes (`check --staged`) | No CI tooling | Codegraph |
 | Visualization | DOT/Mermaid/JSON/GraphML/GraphSON/Neo4j CSV + interactive HTML | Interactive Cytoscape.js web UI | Tie |
 | Search backends | FTS5 + HuggingFace local | Tantivy + TF-IDF + Voyage/OpenAI/ONNX | Narsil |
