@@ -15,7 +15,7 @@ import { runLouvainUndirectedModularity } from './optimiser.js';
 
 export type { LeidenOptions } from './optimiser.js';
 
-export interface DetectClustersOptions extends LeidenOptions {}
+export type DetectClustersOptions = LeidenOptions;
 
 export interface DetectClustersResult {
   getClass(nodeId: string | number): number | undefined;

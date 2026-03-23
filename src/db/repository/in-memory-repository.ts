@@ -25,6 +25,7 @@ import type {
   QueryOpts,
   RelatedNodeRow,
   Role,
+  TriageNodeRow,
   TriageQueryOpts,
 } from '../../types.js';
 import { escapeLike, normalizeFileFilter } from '../query-builder.js';
@@ -285,7 +286,7 @@ export class InMemoryRepository extends Repository {
     yield* this.#iterateFunctionNodesImpl(opts);
   }
 
-  findNodesForTriage(opts: TriageQueryOpts = {}): NodeRow[] {
+  findNodesForTriage(opts: TriageQueryOpts = {}): TriageNodeRow[] {
     if (opts.kind && !(EVERY_SYMBOL_KIND as readonly string[]).includes(opts.kind)) {
       throw new ConfigError(
         `Invalid kind: ${opts.kind} (expected one of ${EVERY_SYMBOL_KIND.join(', ')})`,
@@ -334,7 +335,7 @@ export class InMemoryRepository extends Repository {
           cyclomatic: cx?.cyclomatic ?? 0,
           max_nesting: cx?.max_nesting ?? 0,
           churn: 0, // no co-change data in-memory
-        } as NodeRow;
+        } as TriageNodeRow;
       });
   }
 

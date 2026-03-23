@@ -1,11 +1,20 @@
 import path from 'node:path';
 import { openReadonlyOrFail, testFilterSQL } from '../../db/index.js';
+import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { loadConfig } from '../../infrastructure/config.js';
 import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { DEAD_ROLE_PREFIX } from '../../shared/kinds.js';
+import type { BetterSqlite3Database, StmtCache } from '../../types.js';
 import { findCycles } from '../graph/cycles.js';
 import { LANGUAGE_REGISTRY } from '../parser.js';
+
+// ---------------------------------------------------------------------------
+// Statement caches (one prepared statement per db instance)
+// ---------------------------------------------------------------------------
+
+const _fileNodesStmtCache: StmtCache<{ id: number; file: string }> = new WeakMap();
+const _allNodesStmtCache: StmtCache<{ id: number; file: string }> = new WeakMap();
 
 export const FALSE_POSITIVE_NAMES = new Set([
   'run',
@@ -43,10 +52,13 @@ export const FALSE_POSITIVE_CALLER_THRESHOLD = 20;
 // Section helpers
 // ---------------------------------------------------------------------------
 
-// biome-ignore lint/suspicious/noExplicitAny: db handle from better-sqlite3
-function buildTestFileIds(db: any): Set<number> {
-  // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-  const allFileNodes = db.prepare("SELECT id, file FROM nodes WHERE kind = 'file'").all() as any[];
+function buildTestFileIds(db: BetterSqlite3Database): Set<number> {
+  const fileNodesStmt = cachedStmt(
+    _fileNodesStmtCache,
+    db,
+    "SELECT id, file FROM nodes WHERE kind = 'file'",
+  );
+  const allFileNodes = fileNodesStmt.all() as Array<{ id: number; file: string }>;
   const testFileIds = new Set<number>();
   const testFiles = new Set<string>();
   for (const n of allFileNodes) {
@@ -55,30 +67,31 @@ function buildTestFileIds(db: any): Set<number> {
       testFiles.add(n.file);
     }
   }
-  // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-  const allNodes = db.prepare('SELECT id, file FROM nodes').all() as any[];
+  const allNodesStmt = cachedStmt(_allNodesStmtCache, db, 'SELECT id, file FROM nodes');
+  const allNodes = allNodesStmt.all() as Array<{ id: number; file: string }>;
   for (const n of allNodes) {
     if (testFiles.has(n.file)) testFileIds.add(n.id);
   }
   return testFileIds;
 }
 
-function countNodesByKind(
-  // biome-ignore lint/suspicious/noExplicitAny: db handle from better-sqlite3
-  db: any,
-  testFileIds: Set<number> | null,
-): { total: number; byKind: Record<string, number> } {
-  // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-  let nodeRows: any[];
+function countNodesByKind(db: BetterSqlite3Database, testFileIds: Set<number> | null) {
+  let nodeRows: Array<{ kind: string; c: number }>;
   if (testFileIds) {
-    // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-    const allNodes = db.prepare('SELECT id, kind, file FROM nodes').all() as any[];
+    const allNodes = db.prepare('SELECT id, kind, file FROM nodes').all() as Array<{
+      id: number;
+      kind: string;
+      file: string;
+    }>;
     const filtered = allNodes.filter((n) => !testFileIds.has(n.id));
     const counts: Record<string, number> = {};
     for (const n of filtered) counts[n.kind] = (counts[n.kind] || 0) + 1;
     nodeRows = Object.entries(counts).map(([kind, c]) => ({ kind, c }));
   } else {
-    nodeRows = db.prepare('SELECT kind, COUNT(*) as c FROM nodes GROUP BY kind').all();
+    nodeRows = db.prepare('SELECT kind, COUNT(*) as c FROM nodes GROUP BY kind').all() as Array<{
+      kind: string;
+      c: number;
+    }>;
   }
   const byKind: Record<string, number> = {};
   let total = 0;
@@ -89,16 +102,14 @@ function countNodesByKind(
   return { total, byKind };
 }
 
-function countEdgesByKind(
-  // biome-ignore lint/suspicious/noExplicitAny: db handle from better-sqlite3
-  db: any,
-  testFileIds: Set<number> | null,
-): { total: number; byKind: Record<string, number> } {
-  // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-  let edgeRows: any[];
+function countEdgesByKind(db: BetterSqlite3Database, testFileIds: Set<number> | null) {
+  let edgeRows: Array<{ kind: string; c: number }>;
   if (testFileIds) {
-    // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-    const allEdges = db.prepare('SELECT source_id, target_id, kind FROM edges').all() as any[];
+    const allEdges = db.prepare('SELECT source_id, target_id, kind FROM edges').all() as Array<{
+      source_id: number;
+      target_id: number;
+      kind: string;
+    }>;
     const filtered = allEdges.filter(
       (e) => !testFileIds.has(e.source_id) && !testFileIds.has(e.target_id),
     );
@@ -106,7 +117,10 @@ function countEdgesByKind(
     for (const e of filtered) counts[e.kind] = (counts[e.kind] || 0) + 1;
     edgeRows = Object.entries(counts).map(([kind, c]) => ({ kind, c }));
   } else {
-    edgeRows = db.prepare('SELECT kind, COUNT(*) as c FROM edges GROUP BY kind').all();
+    edgeRows = db.prepare('SELECT kind, COUNT(*) as c FROM edges GROUP BY kind').all() as Array<{
+      kind: string;
+      c: number;
+    }>;
   }
   const byKind: Record<string, number> = {};
   let total = 0;
@@ -117,19 +131,16 @@ function countEdgesByKind(
   return { total, byKind };
 }
 
-function countFilesByLanguage(
-  // biome-ignore lint/suspicious/noExplicitAny: db handle from better-sqlite3
-  db: any,
-  noTests: boolean,
-): { total: number; languages: number; byLanguage: Record<string, number> } {
+function countFilesByLanguage(db: BetterSqlite3Database, noTests: boolean) {
   const extToLang = new Map<string, string>();
   for (const entry of LANGUAGE_REGISTRY) {
     for (const ext of entry.extensions) {
       extToLang.set(ext, entry.id);
     }
   }
-  // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-  let fileNodes = db.prepare("SELECT file FROM nodes WHERE kind = 'file'").all() as any[];
+  let fileNodes = db.prepare("SELECT file FROM nodes WHERE kind = 'file'").all() as Array<{
+    file: string;
+  }>;
   if (noTests) fileNodes = fileNodes.filter((n) => !isTestFile(n.file));
   const byLanguage: Record<string, number> = {};
   for (const row of fileNodes) {
@@ -140,12 +151,7 @@ function countFilesByLanguage(
   return { total: fileNodes.length, languages: Object.keys(byLanguage).length, byLanguage };
 }
 
-function findHotspots(
-  // biome-ignore lint/suspicious/noExplicitAny: db handle from better-sqlite3
-  db: any,
-  noTests: boolean,
-  limit: number,
-): { file: string; fanIn: number; fanOut: number }[] {
+function findHotspots(db: BetterSqlite3Database, noTests: boolean, limit: number) {
   const testFilter = testFilterSQL('n.file', noTests);
   const hotspotRows = db
     .prepare(`
@@ -157,8 +163,7 @@ function findHotspots(
       ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id)
              + (SELECT COUNT(*) FROM edges WHERE source_id = n.id) DESC
     `)
-    // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-    .all() as any[];
+    .all() as Array<{ file: string; fan_in: number; fan_out: number }>;
   const filtered = noTests ? hotspotRows.filter((r) => !isTestFile(r.file)) : hotspotRows;
   return filtered.slice(0, limit).map((r) => ({
     file: r.file,
@@ -167,15 +172,17 @@ function findHotspots(
   }));
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: db handle from better-sqlite3
-function getEmbeddingsInfo(db: any): object | null {
+function getEmbeddingsInfo(db: BetterSqlite3Database) {
   try {
-    // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-    const count = db.prepare('SELECT COUNT(*) as c FROM embeddings').get() as any;
+    const count = db.prepare('SELECT COUNT(*) as c FROM embeddings').get() as
+      | { c: number }
+      | undefined;
     if (count && count.c > 0) {
       const meta: { model?: string; dim?: string; built_at?: string } = {};
-      // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-      const metaRows = db.prepare('SELECT key, value FROM embedding_meta').all() as any[];
+      const metaRows = db.prepare('SELECT key, value FROM embedding_meta').all() as Array<{
+        key: string;
+        value: string;
+      }>;
       for (const r of metaRows) (meta as Record<string, string>)[r.key] = r.value;
       return {
         count: count.c,
@@ -184,38 +191,45 @@ function getEmbeddingsInfo(db: any): object | null {
         builtAt: meta.built_at || null,
       };
     }
-  } catch (e) {
+  } catch (e: unknown) {
     debug(`embeddings lookup skipped: ${(e as Error).message}`);
   }
   return null;
 }
 
 function computeQualityMetrics(
-  // biome-ignore lint/suspicious/noExplicitAny: db handle from better-sqlite3
-  db: any,
+  db: BetterSqlite3Database,
   testFilter: string,
   fpThreshold = FALSE_POSITIVE_CALLER_THRESHOLD,
-): object {
+) {
   const qualityTestFilter = testFilter.replace(/n\.file/g, 'file');
 
-  const totalCallable = db
-    .prepare(
-      `SELECT COUNT(*) as c FROM nodes WHERE kind IN ('function', 'method') ${qualityTestFilter}`,
-    )
-    .get().c;
-  const callableWithCallers = db
-    .prepare(`
+  const totalCallable = (
+    db
+      .prepare(
+        `SELECT COUNT(*) as c FROM nodes WHERE kind IN ('function', 'method') ${qualityTestFilter}`,
+      )
+      .get() as { c: number }
+  ).c;
+  const callableWithCallers = (
+    db
+      .prepare(`
       SELECT COUNT(DISTINCT e.target_id) as c FROM edges e
       JOIN nodes n ON e.target_id = n.id
       WHERE e.kind = 'calls' AND n.kind IN ('function', 'method') ${testFilter}
     `)
-    .get().c;
+      .get() as { c: number }
+  ).c;
   const callerCoverage = totalCallable > 0 ? callableWithCallers / totalCallable : 0;
 
-  const totalCallEdges = db.prepare("SELECT COUNT(*) as c FROM edges WHERE kind = 'calls'").get().c;
-  const highConfCallEdges = db
-    .prepare("SELECT COUNT(*) as c FROM edges WHERE kind = 'calls' AND confidence >= 0.7")
-    .get().c;
+  const totalCallEdges = (
+    db.prepare("SELECT COUNT(*) as c FROM edges WHERE kind = 'calls'").get() as { c: number }
+  ).c;
+  const highConfCallEdges = (
+    db
+      .prepare("SELECT COUNT(*) as c FROM edges WHERE kind = 'calls' AND confidence >= 0.7")
+      .get() as { c: number }
+  ).c;
   const callConfidence = totalCallEdges > 0 ? highConfCallEdges / totalCallEdges : 0;
 
   const fpRows = db
@@ -228,11 +242,10 @@ function computeQualityMetrics(
       HAVING caller_count > ?
       ORDER BY caller_count DESC
     `)
-    // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-    .all(fpThreshold) as any[];
+    .all(fpThreshold) as Array<{ name: string; file: string; line: number; caller_count: number }>;
   const falsePositiveWarnings = fpRows
     .filter((r) =>
-      FALSE_POSITIVE_NAMES.has(r.name.includes('.') ? r.name.split('.').pop() : r.name),
+      FALSE_POSITIVE_NAMES.has(r.name.includes('.') ? r.name.split('.').pop()! : r.name),
     )
     .map((r) => ({ name: r.name, file: r.file, line: r.line, callerCount: r.caller_count }));
 
@@ -260,15 +273,12 @@ function computeQualityMetrics(
   };
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: db handle from better-sqlite3
-function countRoles(db: any, noTests: boolean): Record<string, number> {
-  // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-  let roleRows: any[];
+function countRoles(db: BetterSqlite3Database, noTests: boolean) {
+  let roleRows: Array<{ role: string; c: number }>;
   if (noTests) {
     const allRoleNodes = db
       .prepare('SELECT role, file FROM nodes WHERE role IS NOT NULL')
-      // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-      .all() as any[];
+      .all() as Array<{ role: string; file: string }>;
     const filtered = allRoleNodes.filter((n) => !isTestFile(n.file));
     const counts: Record<string, number> = {};
     for (const n of filtered) counts[n.role] = (counts[n.role] || 0) + 1;
@@ -276,7 +286,7 @@ function countRoles(db: any, noTests: boolean): Record<string, number> {
   } else {
     roleRows = db
       .prepare('SELECT role, COUNT(*) as c FROM nodes WHERE role IS NOT NULL GROUP BY role')
-      .all();
+      .all() as Array<{ role: string; c: number }>;
   }
   const roles: Record<string, number> & { dead?: number } = {};
   let deadTotal = 0;
@@ -288,8 +298,7 @@ function countRoles(db: any, noTests: boolean): Record<string, number> {
   return roles;
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: db handle from better-sqlite3
-function getComplexitySummary(db: any, testFilter: string): object | null {
+function getComplexitySummary(db: BetterSqlite3Database, testFilter: string) {
   try {
     const cRows = db
       .prepare(
@@ -297,25 +306,25 @@ function getComplexitySummary(db: any, testFilter: string): object | null {
          FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
          WHERE n.kind IN ('function','method') ${testFilter}`,
       )
-      // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-      .all() as any[];
+      .all() as Array<{
+      cognitive: number;
+      cyclomatic: number;
+      max_nesting: number;
+      maintainability_index: number;
+    }>;
     if (cRows.length > 0) {
       const miValues = cRows.map((r) => r.maintainability_index || 0);
       return {
         analyzed: cRows.length,
-        avgCognitive: +(cRows.reduce((s: number, r) => s + r.cognitive, 0) / cRows.length).toFixed(
-          1,
-        ),
-        avgCyclomatic: +(
-          cRows.reduce((s: number, r) => s + r.cyclomatic, 0) / cRows.length
-        ).toFixed(1),
+        avgCognitive: +(cRows.reduce((s, r) => s + r.cognitive, 0) / cRows.length).toFixed(1),
+        avgCyclomatic: +(cRows.reduce((s, r) => s + r.cyclomatic, 0) / cRows.length).toFixed(1),
         maxCognitive: Math.max(...cRows.map((r) => r.cognitive)),
         maxCyclomatic: Math.max(...cRows.map((r) => r.cyclomatic)),
-        avgMI: +(miValues.reduce((s: number, v: number) => s + v, 0) / miValues.length).toFixed(1),
+        avgMI: +(miValues.reduce((s, v) => s + v, 0) / miValues.length).toFixed(1),
         minMI: +Math.min(...miValues).toFixed(1),
       };
     }
-  } catch (e) {
+  } catch (e: unknown) {
     debug(`complexity summary skipped: ${(e as Error).message}`);
   }
   return null;
@@ -325,11 +334,7 @@ function getComplexitySummary(db: any, testFilter: string): object | null {
 // Public API
 // ---------------------------------------------------------------------------
 
-export function moduleMapData(
-  customDbPath: string | undefined,
-  limit = 20,
-  opts: { noTests?: boolean } = {},
-): object {
+export function moduleMapData(customDbPath: string, limit = 20, opts: { noTests?: boolean } = {}) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
@@ -347,8 +352,7 @@ export function moduleMapData(
       ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id AND kind NOT IN ('contains', 'parameter_of', 'receiver')) DESC
       LIMIT ?
     `)
-      // biome-ignore lint/suspicious/noExplicitAny: untyped SQLite row
-      .all(limit) as any[];
+      .all(limit) as Array<{ file: string; in_edges: number; out_edges: number }>;
 
     const topNodes = nodes.map((n) => ({
       file: n.file,
@@ -358,17 +362,16 @@ export function moduleMapData(
       coupling: n.in_edges + n.out_edges,
     }));
 
-    const totalNodes = (
-      db.prepare<{ c: number }>('SELECT COUNT(*) as c FROM nodes').get() as { c: number }
-    ).c;
-    const totalEdges = (
-      db.prepare<{ c: number }>('SELECT COUNT(*) as c FROM edges').get() as { c: number }
-    ).c;
-    const totalFiles = (
-      db.prepare<{ c: number }>("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'").get() as {
-        c: number;
-      }
-    ).c;
+    const totalNodes =
+      (db.prepare('SELECT COUNT(*) as c FROM nodes').get() as { c: number } | undefined)?.c ?? 0;
+    const totalEdges =
+      (db.prepare('SELECT COUNT(*) as c FROM edges').get() as { c: number } | undefined)?.c ?? 0;
+    const totalFiles =
+      (
+        db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'").get() as
+          | { c: number }
+          | undefined
+      )?.c ?? 0;
 
     return { limit, topNodes, stats: { totalFiles, totalNodes, totalEdges } };
   } finally {
@@ -377,10 +380,10 @@ export function moduleMapData(
 }
 
 export function statsData(
-  customDbPath: string | undefined,
-  // biome-ignore lint/suspicious/noExplicitAny: config shape varies by caller
+  customDbPath: string,
+  // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
   opts: { noTests?: boolean; config?: any } = {},
-): object {
+) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;

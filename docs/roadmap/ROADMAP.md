@@ -1086,7 +1086,7 @@ npm workspaces (`package.json` `workspaces`), `pnpm-workspace.yaml`, and `lerna.
 
 **Why after Phase 4:** The resolution accuracy work (Phase 4) operates on the existing JS codebase and produces immediate accuracy gains. TypeScript migration builds on Phase 3's clean module boundaries to add type safety across the entire codebase. Every subsequent phase benefits from types: MCP schema auto-generation, API contracts, refactoring safety. The Phase 4 resolution improvements (receiver tracking, interface edges) establish the resolution model that TypeScript types will formalize.
 
-**Note:** `.js` and `.ts` coexist during migration (`allowJs: true` in tsconfig). PRs #553, #554, #555, #566 migrated a first wave of files across steps 5.3–5.5.
+**Note:** `.js` and `.ts` coexist during migration (`allowJs: true` in tsconfig). PRs #553, #554, #555, #566 migrated a first wave of files across steps 5.3–5.5, but substantial work remains in each step. 13 stale `.js` files have `.ts` counterparts and need deletion.
 
 ### ~~5.1 -- Project Setup~~ ✅
 
@@ -1127,19 +1127,25 @@ Migrate modules with no or minimal internal dependencies. 25 migrated, 4 remaini
 
 ### 5.4 -- Core Module Migration (In Progress)
 
-Migrate modules that implement domain logic and Phase 3 interfaces. Some migrated via [#554](https://github.com/optave/codegraph/pull/554), [#566](https://github.com/optave/codegraph/pull/566). 15 files remaining.
+Migrate modules that implement domain logic and Phase 3 interfaces. Some migrated via [#554](https://github.com/optave/codegraph/pull/554), 39 files remaining.
 
-**Migrated:** `db/repository/*.ts` (14 files), `domain/parser.ts`, `domain/graph/resolve.ts`, `extractors/*.ts` (11 files), `domain/graph/builder.ts` + `context.ts` + `helpers.ts` + `pipeline.ts`, `domain/graph/watcher.ts`, `domain/search/{generator,index,models}.ts`, `graph/model.ts`, `graph/algorithms/{bfs,centrality,shortest-path,tarjan}.ts`, `graph/algorithms/leiden/rng.ts`, `graph/classifiers/{risk,roles}.ts`, `domain/graph/builder/stages/*.ts` (9 files), `domain/graph/builder/incremental.ts`, `domain/graph/{cycles,journal,change-journal}.ts`, `domain/queries.ts`, `domain/search/search/*.ts` (6 files), `domain/search/stores/*.ts` (2 files), `domain/search/strategies/*.ts` (3 files), `graph/algorithms/leiden/*.ts` (6 files), `graph/algorithms/{louvain,index}.ts`, `graph/builders/*.ts` (4 files), `graph/classifiers/index.ts` + `graph/index.ts`
+**Migrated:** `db/repository/*.ts` (14 files), `domain/parser.ts`, `domain/graph/resolve.ts`, `extractors/*.ts` (11 files), `domain/graph/builder.ts` + `context.ts` + `helpers.ts` + `pipeline.ts`, `domain/graph/watcher.ts`, `domain/search/{generator,index,models}.ts`, `graph/model.ts`, `graph/algorithms/{bfs,centrality,shortest-path,tarjan}.ts`, `graph/algorithms/leiden/rng.ts`, `graph/classifiers/{risk,roles}.ts`
 
-**Remaining (15):**
+**Remaining (39):**
 
 | Module | Files | Notes |
 |--------|-------|-------|
-| `src/db/connection.js` | 1 | SQLite connection wrapper (also listed in 5.3) |
-| `src/db/index.js` | 1 | DB barrel/schema entry point (also listed in 5.3) |
-| `src/db/migrations.js` | 1 | Schema version management (also listed in 5.3) |
-| `src/db/query-builder.js` | 1 | Dynamic query builder (also listed in 5.3) |
-| Remaining 5.5 files | ~11 | See 5.5 for orchestration/features/entry points |
+| `domain/graph/builder/stages/` | 9 | All 9 build pipeline stages (collect-files, parse-files, resolve-imports, build-edges, etc.) |
+| `domain/graph/builder/incremental.js` | 1 | Incremental rebuild logic |
+| `domain/graph/{cycles,journal,change-journal}.js` | 3 | Graph utilities |
+| `domain/queries.js` | 1 | Core query functions |
+| `domain/search/search/` | 6 | Search subsystem (hybrid, semantic, keyword, filters, cli-formatter, prepare) |
+| `domain/search/stores/` | 2 | FTS5, SQLite blob stores |
+| `domain/search/strategies/` | 3 | Source, structured, text-utils strategies |
+| `graph/algorithms/leiden/` | 6 | Leiden community detection (adapter, CPM, modularity, optimiser, partition, index) |
+| `graph/algorithms/{louvain,index}.js` | 2 | Louvain + algorithms barrel |
+| `graph/builders/` | 4 | Dependency, structure, temporal builders + barrel |
+| `graph/classifiers/index.js` + `graph/index.js` | 2 | Barrel exports |
 
 ### 5.5 -- Orchestration & Public API Migration (In Progress)
 

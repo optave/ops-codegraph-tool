@@ -40,8 +40,8 @@ export interface Partition {
   getCommunityMembers(): number[][];
   getCommunityTotalSize(c: number): number;
   getCommunityNodeCount(c: number): number;
-  /** Attached by optimiser after creation */
-  graph: GraphAdapter;
+  /** Attached by optimiser after creation — undefined until set. */
+  graph?: GraphAdapter;
 }
 
 // Typed arrays always return a number for in-bounds access, but noUncheckedIndexedAccess
@@ -463,7 +463,7 @@ export function makePartition(graph: GraphAdapter): Partition {
     getCommunityMembers,
     getCommunityTotalSize: getCommunityTotalSizeFn,
     getCommunityNodeCount: getCommunityNodeCountFn,
-    graph: undefined as unknown as GraphAdapter,
+    graph: undefined,
   };
 }
 

@@ -9,6 +9,7 @@ import type {
   NodeRowWithFanIn,
   QueryOpts,
   StmtCache,
+  TriageNodeRow,
   TriageQueryOpts,
 } from '../../types.js';
 import { buildFileConditionSQL, NodeQuery } from '../query-builder.js';
@@ -45,7 +46,7 @@ export function findNodesWithFanIn(
 export function findNodesForTriage(
   db: BetterSqlite3Database,
   opts: TriageQueryOpts = {},
-): NodeRow[] {
+): TriageNodeRow[] {
   if (opts.kind && !(EVERY_SYMBOL_KIND as readonly string[]).includes(opts.kind)) {
     throw new ConfigError(
       `Invalid kind: ${opts.kind} (expected one of ${EVERY_SYMBOL_KIND.join(', ')})`,
@@ -58,7 +59,8 @@ export function findNodesForTriage(
   const kindsToUse = opts.kind ? [opts.kind] : ['function', 'method', 'class'];
   const q = new NodeQuery()
     .select(
-      `n.id, n.name, n.kind, n.file, n.line, n.end_line, n.role,
+      `n.id, n.name, n.kind, n.file, n.line, n.end_line,
+              n.parent_id, n.exported, n.qualified_name, n.scope, n.visibility, n.role,
               COALESCE(fi.cnt, 0) AS fan_in,
               COALESCE(fc.cognitive, 0) AS cognitive,
               COALESCE(fc.maintainability_index, 0) AS mi,
@@ -274,4 +276,38 @@ export function findNodeByQualifiedName(
     db,
     'SELECT * FROM nodes WHERE qualified_name = ? ORDER BY file, line',
   ).all(qualifiedName);
+}
+
+// ─── Metric helpers ──────────────────────────────────────────────────────
+
+const _getLineCountForNodeStmt: StmtCache<{ line_count: number }> = new WeakMap();
+
+/**
+ * Get line_count from node_metrics for a given node.
+ * @param {object} db
+ * @param {number} nodeId
+ * @returns {{ line_count: number } | undefined}
+ */
+export function getLineCountForNode(db: BetterSqlite3Database, nodeId: number) {
+  return cachedStmt(
+    _getLineCountForNodeStmt,
+    db,
+    'SELECT line_count FROM node_metrics WHERE node_id = ?',
+  ).get(nodeId);
+}
+
+const _getMaxEndLineForFileStmt: StmtCache<{ max_end: number | null }> = new WeakMap();
+
+/**
+ * Get the maximum end_line across all nodes in a file.
+ * @param {object} db
+ * @param {string} file
+ * @returns {{ max_end: number | null } | undefined}
+ */
+export function getMaxEndLineForFile(db: BetterSqlite3Database, file: string) {
+  return cachedStmt(
+    _getMaxEndLineForFileStmt,
+    db,
+    'SELECT MAX(end_line) as max_end FROM nodes WHERE file = ?',
+  ).get(file);
 }

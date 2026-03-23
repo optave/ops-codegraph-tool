@@ -116,6 +116,16 @@ export interface NodeRowWithFanIn extends NodeRow {
   fan_in: number;
 }
 
+/** A node row augmented with triage signals (from findNodesForTriage). */
+export interface TriageNodeRow extends NodeRow {
+  fan_in: number;
+  cognitive: number;
+  mi: number;
+  cyclomatic: number;
+  max_nesting: number;
+  churn: number;
+}
+
 /** Compact node ID row (from bulkNodeIdsByFile). */
 export interface NodeIdRow {
   id: number;
@@ -133,6 +143,7 @@ export interface ChildNodeRow {
   qualified_name: string | null;
   scope: string | null;
   visibility: 'public' | 'private' | 'protected' | null;
+  file?: string;
 }
 
 /** An edge row as stored in SQLite. */
@@ -261,7 +272,7 @@ export interface Repository {
   findNodeByQualifiedName(qualifiedName: string, opts?: { file?: string }): NodeRow[];
   listFunctionNodes(opts?: ListFunctionOpts): NodeRow[];
   iterateFunctionNodes(opts?: ListFunctionOpts): IterableIterator<NodeRow>;
-  findNodesForTriage(opts?: TriageQueryOpts): NodeRow[];
+  findNodesForTriage(opts?: TriageQueryOpts): TriageNodeRow[];
 
   // ── Edge queries ──────────────────────────────────────────────────
   findCallees(nodeId: number): RelatedNodeRow[];
@@ -1658,6 +1669,7 @@ export interface SqliteStatement<TRow = unknown> {
   all(...params: unknown[]): TRow[];
   run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
   iterate(...params: unknown[]): IterableIterator<TRow>;
+  raw(toggle?: boolean): this;
 }
 
 /** Minimal database interface matching the better-sqlite3 surface we use. */
@@ -1667,7 +1679,7 @@ export interface BetterSqlite3Database {
   close(): void;
   pragma(sql: string): unknown;
   // biome-ignore lint/suspicious/noExplicitAny: must be compatible with better-sqlite3's generic Transaction<F> return type
-  transaction<T>(fn: (...args: any[]) => T): (...args: any[]) => T;
+  transaction<F extends (...args: any[]) => any>(fn: F): F;
   readonly open: boolean;
   readonly name: string;
 }

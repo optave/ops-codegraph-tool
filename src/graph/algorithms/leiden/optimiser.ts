@@ -466,7 +466,7 @@ function splitDisconnectedCommunities(g: GraphAdapter, partition: Partition): vo
             queue.push(w);
           }
         }
-        if (g.directed && g.inEdges) {
+        if (g.directed) {
           const inc: InEdgeEntry[] = g.inEdges[v]!;
           for (let k = 0; k < inc.length; k++) {
             const w: number = inc[k]!.from;
@@ -506,13 +506,16 @@ function computeQualityGain(
   c: number,
   opts: NormalizedOptions,
 ): number {
+  if (!partition.graph) {
+    throw new Error('partition.graph must be set before computeQualityGain');
+  }
   const quality: string = (opts.quality || 'modularity').toLowerCase();
   const gamma: number = typeof opts.resolution === 'number' ? opts.resolution : 1.0;
   if (quality === 'cpm') {
-    return diffCPM(partition, partition.graph || ({} as GraphAdapter), v, c, gamma);
+    return diffCPM(partition, partition.graph, v, c, gamma);
   }
   // diffModularity dispatches to diffModularityDirected internally when g.directed is true
-  return diffModularity(partition, partition.graph || ({} as GraphAdapter), v, c, gamma);
+  return diffModularity(partition, partition.graph, v, c, gamma);
 }
 
 function shuffleArrayInPlace(arr: Int32Array, rng: () => number = Math.random): Int32Array {
