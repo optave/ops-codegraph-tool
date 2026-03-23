@@ -135,8 +135,8 @@ For **each** review comment — including minor suggestions, nits, style feedbac
    # Ensure the follow-up label exists (safe to re-run)
    gh label create "follow-up" --color "0e8a16" --description "Deferred from PR review" --repo optave/codegraph 2>/dev/null || true
 
-   # Create a tracking issue for the deferred item
-   gh issue create \
+   # Create a tracking issue for the deferred item and capture the issue number
+   issue_url=$(gh issue create \
      --repo optave/codegraph \
      --title "follow-up: <concise description of what needs to be done>" \
      --body "$(cat <<-'EOF'
@@ -147,17 +147,18 @@ For **each** review comment — including minor suggestions, nits, style feedbac
 	**Context:** <why this is out of scope for the current PR and what the fix entails>
 	EOF
    )" \
-     --label "follow-up"
+     --label "follow-up")
+   issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$')
    ```
 
-   Then reply to the reviewer comment referencing the issue. Use the same reply mechanism as step 6 below — inline PR review comments use `/pulls/<number>/comments/<comment-id>/replies`, top-level review bodies and issue-style comments use `/issues/<number>/comments`:
+   Then reply to the reviewer comment referencing the issue (using `$issue_number` captured above). Use the same reply mechanism as step 6 below — inline PR review comments use `/pulls/<number>/comments/<comment-id>/replies`, top-level review bodies and issue-style comments use `/issues/<number>/comments`:
    ```bash
    # For inline PR review comments:
    gh api repos/optave/codegraph/pulls/<number>/comments/<comment-id>/replies \
-     -f body="Out of scope for this PR — tracked in #<issue-number>"
+     -f body="Out of scope for this PR — tracked in #$issue_number"
    # For top-level review bodies or issue-style comments:
    gh api repos/optave/codegraph/issues/<number>/comments \
-     -f body="Out of scope for this PR — tracked in #<issue-number>"
+     -f body="Out of scope for this PR — tracked in #$issue_number"
    ```
 6. **Reply to each comment** explaining what you did. The reply mechanism depends on where the comment lives:
 
