@@ -303,8 +303,12 @@ function patchNativeResult(r: any): ExtractorOutput {
     }
   }
 
-  // typeMap: native returns an array of {name, typeName}; normalize to Map
-  if (r.typeMap && !(r.typeMap instanceof Map)) {
+  // typeMap: native returns an array of {name, typeName}; normalize to Map.
+  // Non-TS languages may omit typeMap entirely — default to empty Map so
+  // callers can safely access .entries()/.size without null checks.
+  if (!r.typeMap) {
+    r.typeMap = new Map();
+  } else if (!(r.typeMap instanceof Map)) {
     r.typeMap = new Map(
       r.typeMap.map((e: { name: string; typeName: string }) => [
         e.name,
