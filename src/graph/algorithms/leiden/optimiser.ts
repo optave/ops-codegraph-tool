@@ -4,44 +4,100 @@
  */
 
 import { CodeGraph } from '../../model.js';
+import type { EdgeEntry, GraphAdapter, GraphAdapterOptions, InEdgeEntry } from './adapter.js';
 import { makeGraphAdapter } from './adapter.js';
 import { diffCPM } from './cpm.js';
 import { diffModularity } from './modularity.js';
+import type { Partition } from './partition.js';
 import { makePartition } from './partition.js';
 import { createRng } from './rng.js';
 
 // Mirrored in DEFAULTS.community (src/infrastructure/config.js) for user override
-// via .codegraphrc.json. Callers (e.g. louvain.js) can pass overrides through options.
-const DEFAULT_MAX_LEVELS = 50;
-const DEFAULT_MAX_LOCAL_PASSES = 20;
-const GAIN_EPSILON = 1e-12;
+// via .codegraphrc.json. Callers (e.g. louvain.ts) can pass overrides through options.
+const DEFAULT_MAX_LEVELS: number = 50;
+const DEFAULT_MAX_LOCAL_PASSES: number = 20;
+const GAIN_EPSILON: number = 1e-12;
 
 const CandidateStrategy = {
   Neighbors: 0,
   All: 1,
   RandomAny: 2,
   RandomNeighbor: 3,
-};
+} as const;
 
-export function runLouvainUndirectedModularity(graph, optionsInput = {}) {
-  const options = normalizeOptions(optionsInput);
-  let currentGraph = graph;
-  const levels = [];
+type CandidateStrategyCode = (typeof CandidateStrategy)[keyof typeof CandidateStrategy];
+
+export interface LeidenOptions {
+  directed?: boolean;
+  randomSeed?: number;
+  maxLevels?: number;
+  maxLocalPasses?: number;
+  allowNewCommunity?: boolean;
+  candidateStrategy?: 'neighbors' | 'all' | 'random' | 'random-neighbor';
+  quality?: string;
+  resolution?: number;
+  refine?: boolean;
+  preserveLabels?: boolean | Map<number, number>;
+  maxCommunitySize?: number;
+  refinementTheta?: number;
+  fixedNodes?: Set<string> | string[];
+  linkWeight?: GraphAdapterOptions['linkWeight'];
+  nodeSize?: GraphAdapterOptions['nodeSize'];
+  baseNodeIds?: string[];
+}
+
+export interface NormalizedOptions {
+  directed: boolean;
+  randomSeed: number;
+  maxLevels: number;
+  maxLocalPasses: number;
+  allowNewCommunity: boolean;
+  candidateStrategyCode: CandidateStrategyCode;
+  quality: string;
+  resolution: number;
+  refine: boolean;
+  preserveLabels: boolean | Map<number, number> | undefined;
+  maxCommunitySize: number;
+  refinementTheta: number;
+  fixedNodes: Set<string> | string[] | undefined;
+}
+
+export interface LevelEntry {
+  graph: GraphAdapter;
+  partition: Partition;
+}
+
+export interface LouvainResult {
+  graph: GraphAdapter;
+  partition: Partition;
+  levels: LevelEntry[];
+  originalToCurrent: Int32Array;
+  originalNodeIds: string[];
+  baseGraph: GraphAdapter;
+}
+
+export function runLouvainUndirectedModularity(
+  graph: CodeGraph,
+  optionsInput: LeidenOptions = {},
+): LouvainResult {
+  const options: NormalizedOptions = normalizeOptions(optionsInput);
+  let currentGraph: CodeGraph = graph;
+  const levels: LevelEntry[] = [];
   const rngSource = createRng(options.randomSeed);
-  const random = () => rngSource.nextDouble();
+  const random: () => number = () => rngSource.nextDouble();
 
-  const baseGraphAdapter = makeGraphAdapter(currentGraph, {
+  const baseGraphAdapter: GraphAdapter = makeGraphAdapter(currentGraph, {
     directed: options.directed,
     ...optionsInput,
   });
-  const origN = baseGraphAdapter.n;
+  const origN: number = baseGraphAdapter.n;
   const originalToCurrent = new Int32Array(origN);
   for (let i = 0; i < origN; i++) originalToCurrent[i] = i;
 
-  let fixedNodeMask = null;
+  let fixedNodeMask: Uint8Array | null = null;
   if (options.fixedNodes) {
     const fixed = new Uint8Array(origN);
-    const asSet =
+    const asSet: Set<string> =
       options.fixedNodes instanceof Set ? options.fixedNodes : new Set(options.fixedNodes);
     for (const id of asSet) {
       const idx = baseGraphAdapter.idToIndex.get(String(id));
@@ -51,75 +107,77 @@ export function runLouvainUndirectedModularity(graph, optionsInput = {}) {
   }
 
   for (let level = 0; level < options.maxLevels; level++) {
-    const graphAdapter =
+    const graphAdapter: GraphAdapter =
       level === 0
         ? baseGraphAdapter
         : makeGraphAdapter(currentGraph, { directed: options.directed, ...optionsInput });
-    const partition = makePartition(graphAdapter);
+    const partition: Partition = makePartition(graphAdapter);
     partition.graph = graphAdapter;
     partition.initializeAggregates();
 
     const order = new Int32Array(graphAdapter.n);
     for (let i = 0; i < graphAdapter.n; i++) order[i] = i;
 
-    let improved = true;
-    let localPasses = 0;
-    const strategyCode = options.candidateStrategyCode;
+    let improved: boolean = true;
+    let localPasses: number = 0;
+    const strategyCode: CandidateStrategyCode = options.candidateStrategyCode;
     while (improved) {
       improved = false;
       localPasses++;
       shuffleArrayInPlace(order, random);
       for (let idx = 0; idx < order.length; idx++) {
-        const nodeIndex = order[idx];
+        const nodeIndex: number = order[idx]!;
         if (level === 0 && fixedNodeMask && fixedNodeMask[nodeIndex]) continue;
-        const candidateCount = partition.accumulateNeighborCommunityEdgeWeights(nodeIndex);
-        let bestCommunityId = partition.nodeCommunity[nodeIndex];
-        let bestGain = 0;
-        const maxCommunitySize = options.maxCommunitySize;
+        const candidateCount: number = partition.accumulateNeighborCommunityEdgeWeights(nodeIndex);
+        let bestCommunityId: number = partition.nodeCommunity[nodeIndex]!;
+        let bestGain: number = 0;
+        const maxCommunitySize: number = options.maxCommunitySize;
         if (strategyCode === CandidateStrategy.All) {
           for (let communityId = 0; communityId < partition.communityCount; communityId++) {
-            if (communityId === partition.nodeCommunity[nodeIndex]) continue;
+            if (communityId === partition.nodeCommunity[nodeIndex]!) continue;
             if (
               maxCommunitySize < Infinity &&
-              partition.getCommunityTotalSize(communityId) + graphAdapter.size[nodeIndex] >
+              partition.getCommunityTotalSize(communityId) + graphAdapter.size[nodeIndex]! >
                 maxCommunitySize
             )
               continue;
-            const gain = computeQualityGain(partition, nodeIndex, communityId, options);
+            const gain: number = computeQualityGain(partition, nodeIndex, communityId, options);
             if (gain > bestGain) {
               bestGain = gain;
               bestCommunityId = communityId;
             }
           }
         } else if (strategyCode === CandidateStrategy.RandomAny) {
-          const tries = Math.min(10, Math.max(1, partition.communityCount));
+          const tries: number = Math.min(10, Math.max(1, partition.communityCount));
           for (let trialIndex = 0; trialIndex < tries; trialIndex++) {
-            const communityId = (random() * partition.communityCount) | 0;
-            if (communityId === partition.nodeCommunity[nodeIndex]) continue;
+            const communityId: number = (random() * partition.communityCount) | 0;
+            if (communityId === partition.nodeCommunity[nodeIndex]!) continue;
             if (
               maxCommunitySize < Infinity &&
-              partition.getCommunityTotalSize(communityId) + graphAdapter.size[nodeIndex] >
+              partition.getCommunityTotalSize(communityId) + graphAdapter.size[nodeIndex]! >
                 maxCommunitySize
             )
               continue;
-            const gain = computeQualityGain(partition, nodeIndex, communityId, options);
+            const gain: number = computeQualityGain(partition, nodeIndex, communityId, options);
             if (gain > bestGain) {
               bestGain = gain;
               bestCommunityId = communityId;
             }
           }
         } else if (strategyCode === CandidateStrategy.RandomNeighbor) {
-          const tries = Math.min(10, Math.max(1, candidateCount));
+          const tries: number = Math.min(10, Math.max(1, candidateCount));
           for (let trialIndex = 0; trialIndex < tries; trialIndex++) {
-            const communityId = partition.getCandidateCommunityAt((random() * candidateCount) | 0);
-            if (communityId === partition.nodeCommunity[nodeIndex]) continue;
+            const communityId: number = partition.getCandidateCommunityAt(
+              (random() * candidateCount) | 0,
+            );
+            if (communityId === partition.nodeCommunity[nodeIndex]!) continue;
             if (
               maxCommunitySize < Infinity &&
-              partition.getCommunityTotalSize(communityId) + graphAdapter.size[nodeIndex] >
+              partition.getCommunityTotalSize(communityId) + graphAdapter.size[nodeIndex]! >
                 maxCommunitySize
             )
               continue;
-            const gain = computeQualityGain(partition, nodeIndex, communityId, options);
+            const gain: number = computeQualityGain(partition, nodeIndex, communityId, options);
             if (gain > bestGain) {
               bestGain = gain;
               bestCommunityId = communityId;
@@ -127,13 +185,13 @@ export function runLouvainUndirectedModularity(graph, optionsInput = {}) {
           }
         } else {
           for (let trialIndex = 0; trialIndex < candidateCount; trialIndex++) {
-            const communityId = partition.getCandidateCommunityAt(trialIndex);
+            const communityId: number = partition.getCandidateCommunityAt(trialIndex);
             if (maxCommunitySize < Infinity) {
-              const nextSize =
-                partition.getCommunityTotalSize(communityId) + graphAdapter.size[nodeIndex];
+              const nextSize: number =
+                partition.getCommunityTotalSize(communityId) + graphAdapter.size[nodeIndex]!;
               if (nextSize > maxCommunitySize) continue;
             }
-            const gain = computeQualityGain(partition, nodeIndex, communityId, options);
+            const gain: number = computeQualityGain(partition, nodeIndex, communityId, options);
             if (gain > bestGain) {
               bestGain = gain;
               bestCommunityId = communityId;
@@ -141,14 +199,14 @@ export function runLouvainUndirectedModularity(graph, optionsInput = {}) {
           }
         }
         if (options.allowNewCommunity) {
-          const newCommunityId = partition.communityCount;
-          const gain = computeQualityGain(partition, nodeIndex, newCommunityId, options);
+          const newCommunityId: number = partition.communityCount;
+          const gain: number = computeQualityGain(partition, nodeIndex, newCommunityId, options);
           if (gain > bestGain) {
             bestGain = gain;
             bestCommunityId = newCommunityId;
           }
         }
-        if (bestCommunityId !== partition.nodeCommunity[nodeIndex] && bestGain > GAIN_EPSILON) {
+        if (bestCommunityId !== partition.nodeCommunity[nodeIndex]! && bestGain > GAIN_EPSILON) {
           partition.moveNodeToCommunity(nodeIndex, bestCommunityId);
           improved = true;
         }
@@ -158,9 +216,9 @@ export function runLouvainUndirectedModularity(graph, optionsInput = {}) {
 
     renumberCommunities(partition, options.preserveLabels);
 
-    let effectivePartition = partition;
+    let effectivePartition: Partition = partition;
     if (options.refine) {
-      const refined = refineWithinCoarseCommunities(
+      const refined: Partition = refineWithinCoarseCommunities(
         graphAdapter,
         partition,
         random,
@@ -169,7 +227,7 @@ export function runLouvainUndirectedModularity(graph, optionsInput = {}) {
       );
       // Post-refinement: split any disconnected communities into their
       // connected components. This is the cheap O(V+E) alternative to
-      // checking γ-connectedness on every candidate during refinement.
+      // checking gamma-connectedness on every candidate during refinement.
       // A disconnected community violates even basic connectivity, so
       // splitting is always correct.
       splitDisconnectedCommunities(graphAdapter, refined);
@@ -178,15 +236,15 @@ export function runLouvainUndirectedModularity(graph, optionsInput = {}) {
     }
 
     levels.push({ graph: graphAdapter, partition: effectivePartition });
-    const fineToCoarse = effectivePartition.nodeCommunity;
+    const fineToCoarse: Int32Array = effectivePartition.nodeCommunity;
     for (let i = 0; i < originalToCurrent.length; i++) {
-      originalToCurrent[i] = fineToCoarse[originalToCurrent[i]];
+      originalToCurrent[i] = fineToCoarse[originalToCurrent[i]!]!;
     }
 
-    // Terminate when no further coarsening is possible.  Check both the
+    // Terminate when no further coarsening is possible. Check both the
     // move-phase partition (did the greedy phase find merges?) and the
     // effective partition that feeds buildCoarseGraph (would coarsening
-    // actually reduce the graph?).  When refine is enabled the refined
+    // actually reduce the graph?). When refine is enabled the refined
     // partition starts from singletons and may have more communities than
     // the move phase found, so checking only effectivePartition would
     // cause premature termination.
@@ -198,7 +256,7 @@ export function runLouvainUndirectedModularity(graph, optionsInput = {}) {
     currentGraph = buildCoarseGraph(graphAdapter, effectivePartition);
   }
 
-  const last = levels[levels.length - 1];
+  const last: LevelEntry = levels[levels.length - 1]!;
   return {
     graph: last.graph,
     partition: last.partition,
@@ -209,39 +267,35 @@ export function runLouvainUndirectedModularity(graph, optionsInput = {}) {
   };
 }
 
-/**
- * Build a coarse graph where each community becomes a node.
- * Uses CodeGraph instead of ngraph.graph.
- */
 // Build a coarse graph where each community becomes a single node.
 // Self-loops (g.selfLoop[]) don't need separate handling here because they
 // are already present in g.outEdges (directed path keeps them in both arrays).
 // When the coarse graph is fed back to makeGraphAdapter at the next level,
 // the adapter re-detects cu===cu edges as self-loops and populates selfLoop[].
-function buildCoarseGraph(g, p) {
+function buildCoarseGraph(g: GraphAdapter, p: Partition): CodeGraph {
   const coarse = new CodeGraph({ directed: g.directed });
   for (let c = 0; c < p.communityCount; c++) {
-    coarse.addNode(String(c), { size: p.communityTotalSize[c] });
+    coarse.addNode(String(c), { size: p.communityTotalSize[c]! });
   }
-  const acc = new Map();
+  const acc = new Map<string, number>();
   for (let i = 0; i < g.n; i++) {
-    const cu = p.nodeCommunity[i];
-    const list = g.outEdges[i];
+    const cu: number = p.nodeCommunity[i]!;
+    const list: EdgeEntry[] = g.outEdges[i]!;
     for (let k = 0; k < list.length; k++) {
-      const j = list[k].to;
-      const w = list[k].w;
-      const cv = p.nodeCommunity[j];
+      const j: number = list[k]!.to;
+      const w: number = list[k]!.w;
+      const cv: number = p.nodeCommunity[j]!;
       // Undirected: each non-self edge (i,j) appears in both outEdges[i] and
       // outEdges[j]. For intra-community edges (cu===cv), skip the reverse to
-      // avoid inflating the coarse self-loop weight by 2×.
+      // avoid inflating the coarse self-loop weight by 2x.
       if (!g.directed && cu === cv && j < i) continue;
       const key = `${cu}:${cv}`;
       acc.set(key, (acc.get(key) || 0) + w);
     }
   }
   for (const [key, w] of acc.entries()) {
-    const [cuStr, cvStr] = key.split(':');
-    coarse.addEdge(cuStr, cvStr, { weight: w });
+    const parts = key.split(':');
+    coarse.addEdge(parts[0]!, parts[1]!, { weight: w });
   }
   return coarse;
 }
@@ -251,32 +305,38 @@ function buildCoarseGraph(g, p) {
  *
  * Key properties that distinguish this from Louvain-style refinement:
  *
- * 1. **Singleton start** — each node begins in its own community.
- * 2. **Singleton guard** — only nodes still in singleton communities are
+ * 1. Singleton start — each node begins in its own community.
+ * 2. Singleton guard — only nodes still in singleton communities are
  *    considered for merging. Once a node joins a non-singleton community
  *    it is locked for the remainder of the pass. This prevents oscillation
- *    and is essential for the γ-connectedness guarantee.
- * 3. **Single pass** — one randomized sweep through all nodes, not an
+ *    and is essential for the gamma-connectedness guarantee.
+ * 3. Single pass — one randomized sweep through all nodes, not an
  *    iterative loop until convergence (that would be Louvain behavior).
- * 4. **Probabilistic selection** — candidate communities are sampled from
- *    a Boltzmann distribution `p(v, C) ∝ exp(ΔH / θ)`, with the "stay
- *    as singleton" option (ΔH = 0) included in the distribution. This
- *    means a node may probabilistically choose to remain alone even when
- *    positive-gain merges exist.
+ * 4. Probabilistic selection — candidate communities are sampled from
+ *    a Boltzmann distribution p(v, C) proportional to exp(deltaH / theta),
+ *    with the "stay as singleton" option (deltaH = 0) included in the
+ *    distribution. This means a node may probabilistically choose to remain
+ *    alone even when positive-gain merges exist.
  *
- * θ (refinementTheta) controls temperature: lower → more deterministic
- * (approaches greedy), higher → more exploratory. Determinism is preserved
+ * theta (refinementTheta) controls temperature: lower = more deterministic
+ * (approaches greedy), higher = more exploratory. Determinism is preserved
  * via the seeded PRNG — same seed produces the same assignments.
  */
-function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
-  const p = makePartition(g);
+function refineWithinCoarseCommunities(
+  g: GraphAdapter,
+  basePart: Partition,
+  rng: () => number,
+  opts: NormalizedOptions,
+  fixedMask0: Uint8Array | null,
+): Partition {
+  const p: Partition = makePartition(g);
   p.initializeAggregates();
   p.graph = g;
-  const macro = basePart.nodeCommunity;
+  const macro: Int32Array = basePart.nodeCommunity;
   const commMacro = new Int32Array(p.communityCount);
-  for (let i = 0; i < p.communityCount; i++) commMacro[i] = macro[i];
+  for (let i = 0; i < p.communityCount; i++) commMacro[i] = macro[i]!;
 
-  const theta = typeof opts.refinementTheta === 'number' ? opts.refinementTheta : 1.0;
+  const theta: number = typeof opts.refinementTheta === 'number' ? opts.refinementTheta : 1.0;
   if (theta <= 0) throw new RangeError(`refinementTheta must be > 0 (got ${theta})`);
 
   // Single pass in random order (Algorithm 3, step 2).
@@ -291,27 +351,29 @@ function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
   const candWeight = new Float64Array(g.n);
 
   for (let idx = 0; idx < order.length; idx++) {
-    const v = order[idx];
+    const v: number = order[idx]!;
     if (fixedMask0?.[v]) continue;
 
     // Singleton guard: only move nodes still alone in their community.
-    if (p.getCommunityNodeCount(p.nodeCommunity[v]) > 1) continue;
+    if (p.getCommunityNodeCount(p.nodeCommunity[v]!) > 1) continue;
 
-    const macroV = macro[v];
-    const touchedCount = p.accumulateNeighborCommunityEdgeWeights(v);
-    const maxSize = Number.isFinite(opts.maxCommunitySize) ? opts.maxCommunitySize : Infinity;
+    const macroV: number = macro[v]!;
+    const touchedCount: number = p.accumulateNeighborCommunityEdgeWeights(v);
+    const maxSize: number = Number.isFinite(opts.maxCommunitySize)
+      ? opts.maxCommunitySize
+      : Infinity;
 
     // Collect eligible communities and their quality gains.
-    let candLen = 0;
+    let candLen: number = 0;
     for (let t = 0; t < touchedCount; t++) {
-      const c = p.getCandidateCommunityAt(t);
-      if (c === p.nodeCommunity[v]) continue;
-      if (commMacro[c] !== macroV) continue;
+      const c: number = p.getCandidateCommunityAt(t);
+      if (c === p.nodeCommunity[v]!) continue;
+      if (commMacro[c]! !== macroV) continue;
       if (maxSize < Infinity) {
-        const nextSize = p.getCommunityTotalSize(c) + g.size[v];
+        const nextSize: number = p.getCommunityTotalSize(c) + g.size[v]!;
         if (nextSize > maxSize) continue;
       }
-      const gain = computeQualityGain(p, v, c, opts);
+      const gain: number = computeQualityGain(p, v, c, opts);
       if (gain > GAIN_EPSILON) {
         candC[candLen] = c;
         candGain[candLen] = gain;
@@ -321,30 +383,30 @@ function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
 
     if (candLen === 0) continue;
 
-    // Probabilistic selection: p(v, C) ∝ exp(ΔH / θ), with the "stay"
-    // option (ΔH = 0) included per Algorithm 3.
+    // Probabilistic selection: p(v, C) proportional to exp(deltaH / theta),
+    // with the "stay" option (deltaH = 0) included per Algorithm 3.
     // For numerical stability, subtract the max gain before exponentiation.
-    let maxGain = 0;
+    let maxGain: number = 0;
     for (let i = 0; i < candLen; i++) {
-      if (candGain[i] > maxGain) maxGain = candGain[i];
+      if (candGain[i]! > maxGain) maxGain = candGain[i]!;
     }
     // "Stay as singleton" weight: exp((0 - maxGain) / theta)
-    const stayWeight = Math.exp((0 - maxGain) / theta);
-    let totalWeight = stayWeight;
+    const stayWeight: number = Math.exp((0 - maxGain) / theta);
+    let totalWeight: number = stayWeight;
     for (let i = 0; i < candLen; i++) {
-      candWeight[i] = Math.exp((candGain[i] - maxGain) / theta);
-      totalWeight += candWeight[i];
+      candWeight[i] = Math.exp((candGain[i]! - maxGain) / theta);
+      totalWeight += candWeight[i]!;
     }
 
-    const r = rng() * totalWeight;
+    const r: number = rng() * totalWeight;
     if (r < stayWeight) continue; // node stays as singleton
 
-    let cumulative = stayWeight;
-    let chosenC = candC[candLen - 1]; // fallback
+    let cumulative: number = stayWeight;
+    let chosenC: number = candC[candLen - 1]!; // fallback
     for (let i = 0; i < candLen; i++) {
-      cumulative += candWeight[i];
+      cumulative += candWeight[i]!;
       if (r < cumulative) {
-        chosenC = candC[i];
+        chosenC = candC[i]!;
         break;
       }
     }
@@ -355,59 +417,59 @@ function refineWithinCoarseCommunities(g, basePart, rng, opts, fixedMask0) {
 }
 
 /**
- * Post-refinement connectivity check.  For each community, run a BFS on
+ * Post-refinement connectivity check. For each community, run a BFS on
  * the subgraph induced by its members (using the adapter's outEdges).
  * If a community has multiple connected components, assign secondary
  * components to new community IDs, then reinitialize aggregates once.
  *
  * O(V+E) total since communities partition V.
  *
- * This replaces the per-candidate γ-connectedness check from the paper
+ * This replaces the per-candidate gamma-connectedness check from the paper
  * with a cheaper post-step that catches the most important violation
  * (disconnected subcommunities).
  */
-function splitDisconnectedCommunities(g, partition) {
-  const n = g.n;
-  const nc = partition.nodeCommunity;
-  const members = partition.getCommunityMembers();
-  let nextC = partition.communityCount;
-  let didSplit = false;
+function splitDisconnectedCommunities(g: GraphAdapter, partition: Partition): void {
+  const n: number = g.n;
+  const nc: Int32Array = partition.nodeCommunity;
+  const members: number[][] = partition.getCommunityMembers();
+  let nextC: number = partition.communityCount;
+  let didSplit: boolean = false;
 
   const visited = new Uint8Array(n);
   const inCommunity = new Uint8Array(n);
 
   for (let c = 0; c < members.length; c++) {
-    const nodes = members[c];
+    const nodes: number[] = members[c]!;
     if (nodes.length <= 1) continue;
 
-    for (let i = 0; i < nodes.length; i++) inCommunity[nodes[i]] = 1;
+    for (let i = 0; i < nodes.length; i++) inCommunity[nodes[i]!] = 1;
 
-    let componentCount = 0;
+    let componentCount: number = 0;
     for (let i = 0; i < nodes.length; i++) {
-      const start = nodes[i];
+      const start: number = nodes[i]!;
       if (visited[start]) continue;
       componentCount++;
 
       // BFS within the community subgraph.
       // For directed graphs, traverse both outEdges and inEdges to check
       // weak connectivity (reachability ignoring edge direction).
-      const queue = [start];
+      const queue: number[] = [start];
       visited[start] = 1;
-      let head = 0;
+      let head: number = 0;
       while (head < queue.length) {
-        const v = queue[head++];
-        const out = g.outEdges[v];
+        const v: number = queue[head++]!;
+        const out: EdgeEntry[] = g.outEdges[v]!;
         for (let k = 0; k < out.length; k++) {
-          const w = out[k].to;
+          const w: number = out[k]!.to;
           if (inCommunity[w] && !visited[w]) {
             visited[w] = 1;
             queue.push(w);
           }
         }
-        if (g.directed && g.inEdges) {
-          const inc = g.inEdges[v];
+        if (g.directed) {
+          const inc: InEdgeEntry[] = g.inEdges[v]!;
           for (let k = 0; k < inc.length; k++) {
-            const w = inc[k].from;
+            const w: number = inc[k]!.from;
             if (inCommunity[w] && !visited[w]) {
               visited[w] = 1;
               queue.push(w);
@@ -418,15 +480,15 @@ function splitDisconnectedCommunities(g, partition) {
 
       if (componentCount > 1) {
         // Secondary component — assign new community ID directly.
-        const newC = nextC++;
-        for (let q = 0; q < queue.length; q++) nc[queue[q]] = newC;
+        const newC: number = nextC++;
+        for (let q = 0; q < queue.length; q++) nc[queue[q]!] = newC;
         didSplit = true;
       }
     }
 
     for (let i = 0; i < nodes.length; i++) {
-      inCommunity[nodes[i]] = 0;
-      visited[nodes[i]] = 0;
+      inCommunity[nodes[i]!] = 0;
+      visited[nodes[i]!] = 0;
     }
   }
 
@@ -438,27 +500,35 @@ function splitDisconnectedCommunities(g, partition) {
   }
 }
 
-function computeQualityGain(partition, v, c, opts) {
-  const quality = (opts.quality || 'modularity').toLowerCase();
-  const gamma = typeof opts.resolution === 'number' ? opts.resolution : 1.0;
+function computeQualityGain(
+  partition: Partition,
+  v: number,
+  c: number,
+  opts: NormalizedOptions,
+): number {
+  if (!partition.graph) {
+    throw new Error('partition.graph must be set before computeQualityGain');
+  }
+  const quality: string = (opts.quality || 'modularity').toLowerCase();
+  const gamma: number = typeof opts.resolution === 'number' ? opts.resolution : 1.0;
   if (quality === 'cpm') {
-    return diffCPM(partition, partition.graph || {}, v, c, gamma);
+    return diffCPM(partition, partition.graph, v, c, gamma);
   }
   // diffModularity dispatches to diffModularityDirected internally when g.directed is true
-  return diffModularity(partition, partition.graph || {}, v, c, gamma);
+  return diffModularity(partition, partition.graph, v, c, gamma);
 }
 
-function shuffleArrayInPlace(arr, rng = Math.random) {
+function shuffleArrayInPlace(arr: Int32Array, rng: () => number = Math.random): Int32Array {
   for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(rng() * (i + 1));
-    const t = arr[i];
-    arr[i] = arr[j];
+    const j: number = Math.floor(rng() * (i + 1));
+    const t: number = arr[i]!;
+    arr[i] = arr[j]!;
     arr[j] = t;
   }
   return arr;
 }
 
-function resolveCandidateStrategy(options) {
+function resolveCandidateStrategy(options: LeidenOptions): CandidateStrategyCode {
   const val = options.candidateStrategy;
   if (typeof val !== 'string') return CandidateStrategy.Neighbors;
   switch (val) {
@@ -475,23 +545,27 @@ function resolveCandidateStrategy(options) {
   }
 }
 
-function normalizeOptions(options = {}) {
-  const directed = !!options.directed;
-  const randomSeed = Number.isFinite(options.randomSeed) ? options.randomSeed : 42;
-  const maxLevels = Number.isFinite(options.maxLevels) ? options.maxLevels : DEFAULT_MAX_LEVELS;
-  const maxLocalPasses = Number.isFinite(options.maxLocalPasses)
-    ? options.maxLocalPasses
+function normalizeOptions(options: LeidenOptions = {}): NormalizedOptions {
+  const directed: boolean = !!options.directed;
+  const randomSeed: number = Number.isFinite(options.randomSeed)
+    ? (options.randomSeed as number)
+    : 42;
+  const maxLevels: number = Number.isFinite(options.maxLevels)
+    ? (options.maxLevels as number)
+    : DEFAULT_MAX_LEVELS;
+  const maxLocalPasses: number = Number.isFinite(options.maxLocalPasses)
+    ? (options.maxLocalPasses as number)
     : DEFAULT_MAX_LOCAL_PASSES;
-  const allowNewCommunity = !!options.allowNewCommunity;
-  const candidateStrategyCode = resolveCandidateStrategy(options);
-  const quality = (options.quality || 'modularity').toLowerCase();
-  const resolution = typeof options.resolution === 'number' ? options.resolution : 1.0;
-  const refine = options.refine !== false;
+  const allowNewCommunity: boolean = !!options.allowNewCommunity;
+  const candidateStrategyCode: CandidateStrategyCode = resolveCandidateStrategy(options);
+  const quality: string = (options.quality || 'modularity').toLowerCase();
+  const resolution: number = typeof options.resolution === 'number' ? options.resolution : 1.0;
+  const refine: boolean = options.refine !== false;
   const preserveLabels = options.preserveLabels;
-  const maxCommunitySize = Number.isFinite(options.maxCommunitySize)
-    ? options.maxCommunitySize
+  const maxCommunitySize: number = Number.isFinite(options.maxCommunitySize)
+    ? (options.maxCommunitySize as number)
     : Infinity;
-  const refinementTheta =
+  const refinementTheta: number =
     typeof options.refinementTheta === 'number' ? options.refinementTheta : 1.0;
   return {
     directed,
@@ -510,7 +584,10 @@ function normalizeOptions(options = {}) {
   };
 }
 
-function renumberCommunities(partition, preserveLabels) {
+function renumberCommunities(
+  partition: Partition,
+  preserveLabels: boolean | Map<number, number> | undefined,
+): void {
   if (preserveLabels && preserveLabels instanceof Map) {
     partition.compactCommunityIds({ preserveMap: preserveLabels });
   } else if (preserveLabels === true) {

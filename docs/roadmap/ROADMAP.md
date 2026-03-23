@@ -17,8 +17,8 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2.5**](#phase-25--analysis-expansion) | Analysis Expansion | Complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search | **Complete** (v2.7.0) |
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
 | [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names, CLI composability | **Complete** (v3.1.5) |
-| [**4**](#phase-4--resolution-accuracy) | Resolution Accuracy | Dead role sub-categories, receiver type tracking, interface/trait implementation edges, resolution precision/recall benchmarks, `package.json` exports field, monorepo workspace resolution | **In Progress** (5 of 6 complete) |
-| [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration, supply-chain security, CI coverage gates | **In Progress** (2 of 7 complete) |
+| [**4**](#phase-4--resolution-accuracy) | Resolution Accuracy | Dead role sub-categories, receiver type tracking, interface/trait implementation edges, resolution precision/recall benchmarks, `package.json` exports field, monorepo workspace resolution | **Complete** (v3.3.1) |
+| [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | **In Progress** (76 of 283 src files migrated, ~27%) |
 | [**6**](#phase-6--native-analysis-acceleration) | Native Analysis Acceleration | Move JS-only build phases (AST nodes, CFG, dataflow, insert nodes, structure, roles, complexity) to Rust; fix incremental rebuild data loss on native; sub-100ms 1-file rebuilds | Planned |
 | [**7**](#phase-7--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system, DX & onboarding, confidence annotations, shell completion | Planned |
 | [**8**](#phase-8--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
@@ -994,9 +994,9 @@ src/domain/
 
 ---
 
-## Phase 4 -- Resolution Accuracy
+## Phase 4 -- Resolution Accuracy ✅
 
-> **Status:** In Progress
+> **Status:** Complete -- all 6 sub-phases shipped across v3.2.0 → v3.3.1
 
 **Goal:** Close the most impactful gaps in call graph accuracy before investing in type safety or native acceleration. The entire value proposition — blast radius, impact analysis, dependency chains — rests on the call graph. These targeted improvements make the graph trustworthy.
 
@@ -1080,11 +1080,13 @@ npm workspaces (`package.json` `workspaces`), `pnpm-workspace.yaml`, and `lerna.
 
 ## Phase 5 -- TypeScript Migration
 
-> **Status:** In Progress
+> **Status:** In Progress — 76 of 283 source files migrated (~27%), 207 `.js` files remaining
 
 **Goal:** Migrate the codebase from plain JavaScript to TypeScript, leveraging the clean module boundaries established in Phase 3. Incremental module-by-module migration starting from leaf modules inward.
 
 **Why after Phase 4:** The resolution accuracy work (Phase 4) operates on the existing JS codebase and produces immediate accuracy gains. TypeScript migration builds on Phase 3's clean module boundaries to add type safety across the entire codebase. Every subsequent phase benefits from types: MCP schema auto-generation, API contracts, refactoring safety. The Phase 4 resolution improvements (receiver tracking, interface edges) establish the resolution model that TypeScript types will formalize.
+
+**Note:** `.js` and `.ts` coexist during migration (`allowJs: true` in tsconfig). PRs #553, #554, #555, #566 migrated a first wave of files across steps 5.3–5.5, but substantial work remains in each step. 13 stale `.js` files have `.ts` counterparts and need deletion.
 
 ### ~~5.1 -- Project Setup~~ ✅
 
@@ -1108,50 +1110,61 @@ Comprehensive TypeScript type definitions for the entire domain model — symbol
 
 **New file:** `src/types.ts` ([#516](https://github.com/optave/codegraph/pull/516))
 
-### 5.3 -- Leaf Module Migration
+### 5.3 -- Leaf Module Migration (In Progress)
 
-Migrate modules with no internal dependencies first:
+Migrate modules with no or minimal internal dependencies. 25 migrated, 4 remaining.
 
-| Module | Notes |
-|--------|-------|
-| `src/errors.ts` | Domain error hierarchy (Phase 3.7) |
-| `src/logger.ts` | Minimal, no internal deps |
-| `src/constants.ts` | Pure data |
-| `src/config.ts` | Config types derived from `.codegraphrc.json` schema |
-| `src/db/connection.ts` | SQLite connection wrapper |
-| `src/db/migrations.ts` | Schema version management |
-| `src/formatters/*.ts` | Pure input->string transforms |
-| `src/paginate.ts` | Generic pagination helpers |
+**Migrated (25):** `shared/errors`, `shared/kinds`, `shared/normalize`, `shared/paginate`, `shared/constants`, `shared/file-utils`, `shared/generators`, `shared/hierarchy`, `infrastructure/logger`, `infrastructure/config`, `infrastructure/native`, `infrastructure/registry`, `infrastructure/update-check`, `infrastructure/result-formatter`, `infrastructure/test-filter`, `db/repository/*` (14 files), `domain/analysis/*` (9 files), `presentation/colors`, `presentation/table` — via [#553](https://github.com/optave/codegraph/pull/553), [#566](https://github.com/optave/codegraph/pull/566)
 
-Allow `.js` and `.ts` to coexist during migration (`allowJs: true` in tsconfig).
-
-### 5.4 -- Core Module Migration
-
-Migrate modules that implement Phase 3 interfaces:
-
-| Module | Key types |
-|--------|-----------|
-| `src/db/repository.ts` | `Repository` interface, all prepared statements typed |
-| `src/parser/engine.ts` | `Engine` interface, native/WASM dispatch |
-| `src/parser/registry.ts` | `LanguageEntry` type, extension mapping |
-| `src/parser/tree-utils.ts` | Tree-sitter node helpers |
-| `src/parser/base-extractor.ts` | `Extractor` interface, handler map |
-| `src/parser/extractors/*.ts` | Per-language extractors |
-| `src/analysis/*.ts` | Typed analysis results (impact scores, call chains) |
-| `src/resolve.ts` | Import resolution with confidence types |
-
-### 5.5 -- Orchestration & Public API Migration
-
-Migrate top-level orchestration and entry points:
+**Remaining (4):**
 
 | Module | Notes |
 |--------|-------|
-| `src/builder.ts` | Pipeline stages with typed `PipelineStage` |
-| `src/watcher.ts` | File system events + pipeline |
-| `src/embeddings/*.ts` | Vector store interface, model registry |
-| `src/mcp/*.ts` | Tool schemas, typed handlers |
-| `src/cli/*.ts` | Command objects with typed options |
-| `src/index.ts` | Curated public API with proper export types |
+| `src/db/connection.js` | SQLite connection wrapper |
+| `src/db/index.js` | DB barrel/schema entry point |
+| `src/db/migrations.js` | Schema version management |
+| `src/db/query-builder.js` | Dynamic query builder |
+
+### 5.4 -- Core Module Migration (In Progress)
+
+Migrate modules that implement domain logic and Phase 3 interfaces. Some migrated via [#554](https://github.com/optave/codegraph/pull/554), 39 files remaining.
+
+**Migrated:** `db/repository/*.ts` (14 files), `domain/parser.ts`, `domain/graph/resolve.ts`, `extractors/*.ts` (11 files), `domain/graph/builder.ts` + `context.ts` + `helpers.ts` + `pipeline.ts`, `domain/graph/watcher.ts`, `domain/search/{generator,index,models}.ts`, `graph/model.ts`, `graph/algorithms/{bfs,centrality,shortest-path,tarjan}.ts`, `graph/algorithms/leiden/rng.ts`, `graph/classifiers/{risk,roles}.ts`
+
+**Remaining (39):**
+
+| Module | Files | Notes |
+|--------|-------|-------|
+| `domain/graph/builder/stages/` | 9 | All 9 build pipeline stages (collect-files, parse-files, resolve-imports, build-edges, etc.) |
+| `domain/graph/builder/incremental.js` | 1 | Incremental rebuild logic |
+| `domain/graph/{cycles,journal,change-journal}.js` | 3 | Graph utilities |
+| `domain/queries.js` | 1 | Core query functions |
+| `domain/search/search/` | 6 | Search subsystem (hybrid, semantic, keyword, filters, cli-formatter, prepare) |
+| `domain/search/stores/` | 2 | FTS5, SQLite blob stores |
+| `domain/search/strategies/` | 3 | Source, structured, text-utils strategies |
+| `graph/algorithms/leiden/` | 6 | Leiden community detection (adapter, CPM, modularity, optimiser, partition, index) |
+| `graph/algorithms/{louvain,index}.js` | 2 | Louvain + algorithms barrel |
+| `graph/builders/` | 4 | Dependency, structure, temporal builders + barrel |
+| `graph/classifiers/index.js` + `graph/index.js` | 2 | Barrel exports |
+
+### 5.5 -- Orchestration & Public API Migration (In Progress)
+
+Migrate top-level orchestration, features, and entry points. Some migrated via [#555](https://github.com/optave/codegraph/pull/555), 159 files remaining.
+
+**Migrated:** `domain/graph/builder.ts` + `context.ts` + `helpers.ts` + `pipeline.ts`, `domain/graph/watcher.ts`, `domain/search/{generator,index,models}.ts`, `mcp/{index,middleware,server,tool-registry}.ts`, `features/export.ts`, `index.ts`
+
+**Remaining (159):**
+
+| Module | Files | Notes |
+|--------|-------|-------|
+| `cli.js` + `cli/` | 55 | Commander entry point, 43 command handlers (`commands/`), barrel, shared CLI utilities |
+| `mcp/tools/` | 36 | Individual MCP tool handlers + barrel |
+| `presentation/` | 28 | Presentation formatters (14 files), `queries-cli/` (7 files), sequence-renderer, viewer, export, etc. |
+| `features/` | 21 | audit, batch, boundaries, cfg, check, cochange, communities, complexity, dataflow, flow, graph-enrichment, manifesto, owners, sequence, snapshot, structure, triage, ast, branch-compare, `shared/find-nodes` |
+| `ast-analysis/` | 18 | AST analysis framework, visitors (4), language-specific rules (9), engine, metrics, shared, visitor-utils |
+| `index.js` | 1 | Public API exports (stale — `.ts` exists) |
+
+**Stale `.js` counterparts to delete (13 files):** `domain/graph/builder.js`, `domain/graph/builder/{context,helpers,pipeline}.js`, `domain/graph/watcher.js`, `domain/search/{generator,index,models}.js`, `features/export.js`, `mcp/{index,middleware,server,tool-registry}.js` — these have `.ts` counterparts already
 
 ### 5.6 -- Test Migration
 
@@ -1162,7 +1175,7 @@ Migrate top-level orchestration and entry points:
 
 **Verification:** All existing tests pass. `tsc --noEmit` succeeds with zero errors. No `any` escape hatches except at FFI boundaries (napi-rs addon, tree-sitter WASM).
 
-**Affected files:** All `src/**/*.js` -> `src/**/*.ts`, all `tests/**/*.js` -> `tests/**/*.ts`, `package.json`, `biome.json`
+**Affected files:** All remaining `src/**/*.js` → `src/**/*.ts`, all `tests/**/*.js` → `tests/**/*.ts`, `package.json`, `biome.json`
 
 ---
 

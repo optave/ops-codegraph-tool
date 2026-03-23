@@ -170,17 +170,17 @@ function getEmbeddingsInfo(db: BetterSqlite3Database) {
       | { c: number }
       | undefined;
     if (count && count.c > 0) {
-      const meta: Record<string, string> = {};
+      const meta: { model?: string; dim?: string; built_at?: string } = {};
       const metaRows = db.prepare('SELECT key, value FROM embedding_meta').all() as Array<{
         key: string;
         value: string;
       }>;
-      for (const r of metaRows) meta[r.key] = r.value;
+      for (const r of metaRows) (meta as Record<string, string>)[r.key] = r.value;
       return {
         count: count.c,
-        model: meta['model'] || null,
-        dim: meta['dim'] ? parseInt(meta['dim'], 10) : null,
-        builtAt: meta['built_at'] || null,
+        model: meta.model || null,
+        dim: meta.dim ? parseInt(meta.dim, 10) : null,
+        builtAt: meta.built_at || null,
       };
     }
   } catch (e: unknown) {
@@ -280,13 +280,13 @@ function countRoles(db: BetterSqlite3Database, noTests: boolean) {
       .prepare('SELECT role, COUNT(*) as c FROM nodes WHERE role IS NOT NULL GROUP BY role')
       .all() as Array<{ role: string; c: number }>;
   }
-  const roles: Record<string, number> = {};
+  const roles: Record<string, number> & { dead?: number } = {};
   let deadTotal = 0;
   for (const r of roleRows) {
     roles[r.role] = r.c;
     if (r.role.startsWith(DEAD_ROLE_PREFIX)) deadTotal += r.c;
   }
-  if (deadTotal > 0) roles['dead'] = deadTotal;
+  if (deadTotal > 0) roles.dead = deadTotal;
   return roles;
 }
 
@@ -354,11 +354,16 @@ export function moduleMapData(customDbPath: string, limit = 20, opts: { noTests?
       coupling: n.in_edges + n.out_edges,
     }));
 
-    const totalNodes = (db.prepare('SELECT COUNT(*) as c FROM nodes').get() as { c: number }).c;
-    const totalEdges = (db.prepare('SELECT COUNT(*) as c FROM edges').get() as { c: number }).c;
-    const totalFiles = (
-      db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'").get() as { c: number }
-    ).c;
+    const totalNodes =
+      (db.prepare('SELECT COUNT(*) as c FROM nodes').get() as { c: number } | undefined)?.c ?? 0;
+    const totalEdges =
+      (db.prepare('SELECT COUNT(*) as c FROM edges').get() as { c: number } | undefined)?.c ?? 0;
+    const totalFiles =
+      (
+        db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'").get() as
+          | { c: number }
+          | undefined
+      )?.c ?? 0;
 
     return { limit, topNodes, stats: { totalFiles, totalNodes, totalEdges } };
   } finally {

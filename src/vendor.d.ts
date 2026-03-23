@@ -7,18 +7,21 @@
 declare module 'better-sqlite3' {
   namespace BetterSqlite3 {
     interface Database {
-      prepare(sql: string): Statement;
+      prepare<TRow = unknown>(sql: string): Statement<TRow>;
       exec(sql: string): Database;
-      transaction<T extends (...args: unknown[]) => unknown>(fn: T): T;
+      // biome-ignore lint/suspicious/noExplicitAny: must match better-sqlite3's generic Transaction<F>
+      transaction<F extends (...args: any[]) => any>(fn: F): F;
       close(): void;
       pragma(pragma: string, options?: { simple?: boolean }): unknown;
+      readonly open: boolean;
+      readonly name: string;
     }
 
-    interface Statement {
+    interface Statement<TRow = unknown> {
       run(...params: unknown[]): RunResult;
-      get(...params: unknown[]): unknown | undefined;
-      all(...params: unknown[]): unknown[];
-      iterate(...params: unknown[]): IterableIterator<unknown>;
+      get(...params: unknown[]): TRow | undefined;
+      all(...params: unknown[]): TRow[];
+      iterate(...params: unknown[]): IterableIterator<TRow>;
       raw(toggle?: boolean): this;
     }
 
