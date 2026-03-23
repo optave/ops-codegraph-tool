@@ -36,15 +36,15 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 21 | 3.5 | [dundalek/stratify](https://github.com/dundalek/stratify) | 102 | Clojure | MIT | Multi-backend extraction (LSP/SCIP/Joern), 10 languages, DGML/CodeCharta output, architecture linting |
 | 22 | 3.5 | [kraklabs/cie](https://github.com/kraklabs/cie) | 9 | Go | AGPL-3.0 | Code Intelligence Engine: 20+ MCP tools, tree-sitter, semantic search (Ollama), Homebrew, single Go binary |
 | 23 | 3.5 | [NeuralRays/codexray](https://github.com/NeuralRays/codexray) | 2 | TypeScript | MIT | 16 MCP tools, TF-IDF semantic search (~50MB), dead code, complexity, path finding |
-| 24 | 3.4 | [Durafen/Claude-code-memory](https://github.com/Durafen/Claude-code-memory) | 72 | Python | None | Memory Guard quality gate, persistent codebase memory, Voyage AI + Qdrant |
-| 25 | 3.3 | [anrgct/autodev-codebase](https://github.com/anrgct/autodev-codebase) | 111 | TypeScript | None | 40+ languages, 7 embedding providers, Cytoscape.js visualization, LLM reranking. **Stagnant since Jan 2026** |
-| 26 | 3.3 | [DucPhamNgoc08/CodeVisualizer](https://github.com/DucPhamNgoc08/CodeVisualizer) | 475 | TypeScript | MIT | VS Code extension, tree-sitter WASM, flowcharts + dependency graphs, 5 AI providers, 9 themes |
-| 27 | 3.3 | [helabenkhalfallah/code-health-meter](https://github.com/helabenkhalfallah/code-health-meter) | 34 | JavaScript | MIT | Formal health metrics (MI, CC, Louvain modularity), published in ACM TOSEM 2025 |
-| 28 | 3.3 | [JohT/code-graph-analysis-pipeline](https://github.com/JohT/code-graph-analysis-pipeline) | 27 | Cypher | GPL-3.0 | 200+ CSV reports, ML anomaly detection, Leiden/HashGNN, jQAssistant + Neo4j for Java |
-| 29 | 3.3 | [Lekssays/codebadger](https://github.com/Lekssays/codebadger) | 43 | Python | GPL-3.0 | Containerized MCP server using Joern CPG, 12+ languages |
-| 30 | 3.3 | [Vasu014/loregrep](https://github.com/Vasu014/loregrep) | 12 | Rust | Apache-2.0 | In-memory index library, Rust + Python bindings, AI-tool-ready schemas |
-| 31 | 3.2 | [al1-nasir/codegraph-cli](https://github.com/al1-nasir/codegraph-cli) | 11 | Python | MIT | CrewAI multi-agent system, 6 LLM providers, browser explorer, DOCX export |
-| 32 | 3.1 | [anasdayeh/claude-context-local](https://github.com/anasdayeh/claude-context-local) | 0 | Python | None | 100% local, Merkle DAG incremental indexing, sharded FAISS, hybrid BM25+vector, GPU accel |
+| 24 | 3.3 | [anrgct/autodev-codebase](https://github.com/anrgct/autodev-codebase) | 111 | TypeScript | None | 40+ languages, 7 embedding providers, Cytoscape.js visualization, LLM reranking. **Stagnant since Jan 2026** |
+| 25 | 3.3 | [DucPhamNgoc08/CodeVisualizer](https://github.com/DucPhamNgoc08/CodeVisualizer) | 475 | TypeScript | MIT | VS Code extension, tree-sitter WASM, flowcharts + dependency graphs, 5 AI providers, 9 themes |
+| 26 | 3.3 | [helabenkhalfallah/code-health-meter](https://github.com/helabenkhalfallah/code-health-meter) | 34 | JavaScript | MIT | Formal health metrics (MI, CC, Louvain modularity), published in ACM TOSEM 2025 |
+| 27 | 3.3 | [JohT/code-graph-analysis-pipeline](https://github.com/JohT/code-graph-analysis-pipeline) | 27 | Cypher | GPL-3.0 | 200+ CSV reports, ML anomaly detection, Leiden/HashGNN, jQAssistant + Neo4j for Java |
+| 28 | 3.3 | [Lekssays/codebadger](https://github.com/Lekssays/codebadger) | 43 | Python | GPL-3.0 | Containerized MCP server using Joern CPG, 12+ languages |
+| 29 | 3.3 | [Vasu014/loregrep](https://github.com/Vasu014/loregrep) | 12 | Rust | Apache-2.0 | In-memory index library, Rust + Python bindings, AI-tool-ready schemas |
+| 30 | 3.3 | [Durafen/Claude-code-memory](https://github.com/Durafen/Claude-code-memory) | 72 | Python | None | Memory Guard quality gate, persistent codebase memory, Voyage AI + Qdrant |
+| 31 | 3.2 | [anasdayeh/claude-context-local](https://github.com/anasdayeh/claude-context-local) | 0 | Python | None | 100% local, Merkle DAG incremental indexing, sharded FAISS, hybrid BM25+vector, GPU accel |
+| 32 | 3.0 | [al1-nasir/codegraph-cli](https://github.com/al1-nasir/codegraph-cli) | 11 | Python | MIT | CrewAI multi-agent system, 6 LLM providers, browser explorer, DOCX export |
 | 33 | 3.0 | [xnuinside/codegraph](https://github.com/xnuinside/codegraph) | 438 | Python | MIT | Python-only interactive HTML dependency diagrams with zoom/pan/search |
 | 34 | 3.0 | [Adrninistrator/java-all-call-graph](https://github.com/Adrninistrator/java-all-call-graph) | 551 | Java | Apache-2.0 | Complete Java bytecode call graphs, Spring/MyBatis-aware, SQL-queryable DB |
 | 35 | 3.0 | [Technologicat/pyan](https://github.com/Technologicat/pyan) | 395 | Python | GPL-2.0 | Python 3 call graph generator, module import analysis, cycle detection, interactive HTML |
@@ -155,15 +155,15 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 | 21 | stratify | 4 | 4 | 2 | 5 | 4 | 2 |
 | 22 | cie | 5 | 4 | 4 | 3 | 4 | 1 |
 | 23 | codexray | 5 | 4 | 4 | 4 | 3 | 1 |
-| 24 | Claude-code-memory | 4 | 3 | 3 | 3 | 4 | 3 |
-| 25 | autodev-codebase | 5 | 3 | 3 | 5 | 3 | 1 |
-| 26 | CodeVisualizer | 4 | 3 | 5 | 3 | 3 | 2 |
-| 27 | code-health-meter | 3 | 5 | 5 | 1 | 4 | 2 |
-| 28 | code-graph-analysis-pipeline | 5 | 5 | 1 | 2 | 5 | 2 |
-| 29 | codebadger | 4 | 4 | 3 | 5 | 3 | 1 |
-| 30 | loregrep | 3 | 3 | 4 | 3 | 5 | 2 |
-| 31 | codegraph-cli | 5 | 3 | 3 | 2 | 3 | 2 |
-| 32 | claude-context-local | 4 | 3 | 3 | 4 | 4 | 1 |
+| 24 | autodev-codebase | 5 | 3 | 3 | 5 | 3 | 1 |
+| 25 | CodeVisualizer | 4 | 3 | 5 | 3 | 3 | 2 |
+| 26 | code-health-meter | 3 | 5 | 5 | 1 | 4 | 2 |
+| 27 | code-graph-analysis-pipeline | 5 | 5 | 1 | 2 | 5 | 2 |
+| 28 | codebadger | 4 | 4 | 3 | 5 | 3 | 1 |
+| 29 | loregrep | 3 | 3 | 4 | 3 | 5 | 2 |
+| 30 | Claude-code-memory | 4 | 3 | 3 | 3 | 4 | 3 |
+| 31 | claude-context-local | 4 | 3 | 3 | 4 | 4 | 1 |
+| 32 | codegraph-cli | 5 | 3 | 3 | 2 | 3 | 2 |
 | 33 | xnuinside/codegraph | 3 | 2 | 5 | 1 | 3 | 4 |
 | 34 | java-all-call-graph | 4 | 4 | 3 | 1 | 3 | 3 |
 | 35 | pyan | 3 | 3 | 5 | 1 | 4 | 2 |
@@ -274,7 +274,7 @@ Ranked by weighted score across 6 dimensions (each 1–5):
 - **Academic rigor**: 5 published papers backing the methodology (Aarhus University)
 - **Vulnerability exposure analysis**: library usage pattern matching specific to the JS/TS ecosystem
 
-### vs aider (#39, 42,198 stars — now Aider-AI/aider)
+### vs aider (#38, 42,198 stars — now Aider-AI/aider)
 - **Different product category**: Aider is an AI pair programming CLI, not a code graph tool — but its tree-sitter repo map with PageRank-style graph ranking is a lightweight alternative to our full graph for LLM context selection
 - **Massive community**: 42,198 stars, 4,054 forks — orders of magnitude more traction than any tool in this space. Aider *is* the category leader for AI-assisted coding in the terminal. Moved to Aider-AI org
 - **100+ languages**: tree-sitter parsing covers far more languages than our 11, though only for identifier extraction (not full symbol/call resolution)
