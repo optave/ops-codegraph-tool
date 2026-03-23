@@ -6,6 +6,7 @@ import {
   findNodesByFile,
   openReadonlyOrFail,
 } from '../../db/index.js';
+import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { loadConfig } from '../../infrastructure/config.js';
 import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
@@ -15,10 +16,15 @@ import {
   extractSummary,
 } from '../../shared/file-utils.js';
 import { paginateResult } from '../../shared/paginate.js';
-import type { BetterSqlite3Database, NodeRow } from '../../types.js';
+import type { BetterSqlite3Database, NodeRow, StmtCache } from '../../types.js';
 
 /** Cache the schema probe for the `exported` column per db handle. */
 const _hasExportedColCache: WeakMap<BetterSqlite3Database, boolean> = new WeakMap();
+
+const _exportedNodesStmtCache: StmtCache<NodeRow> = new WeakMap();
+const _consumersStmtCache: StmtCache<{ name: string; file: string; line: number }> = new WeakMap();
+const _reexportsFromStmtCache: StmtCache<{ file: string }> = new WeakMap();
+const _reexportsToStmtCache: StmtCache<{ file: string }> = new WeakMap();
 
 export function exportsData(
   file: string,
@@ -128,18 +134,26 @@ function exportsFileImpl(
     _hasExportedColCache.set(db, hasExportedCol);
   }
 
-  const exportedNodesStmt = db.prepare(
+  const exportedNodesStmt = cachedStmt(
+    _exportedNodesStmtCache,
+    db,
     "SELECT * FROM nodes WHERE file = ? AND kind != 'file' AND exported = 1 ORDER BY line",
   );
-  const consumersStmt = db.prepare(
+  const consumersStmt = cachedStmt(
+    _consumersStmtCache,
+    db,
     `SELECT n.name, n.file, n.line FROM edges e JOIN nodes n ON e.source_id = n.id
          WHERE e.target_id = ? AND e.kind = 'calls'`,
   );
-  const reexportsFromStmt = db.prepare(
+  const reexportsFromStmt = cachedStmt(
+    _reexportsFromStmtCache,
+    db,
     `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.source_id = n.id
        WHERE e.target_id = ? AND e.kind = 'reexports'`,
   );
-  const reexportsToStmt = db.prepare(
+  const reexportsToStmt = cachedStmt(
+    _reexportsToStmtCache,
+    db,
     `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.target_id = n.id
        WHERE e.source_id = ? AND e.kind = 'reexports'`,
   );
