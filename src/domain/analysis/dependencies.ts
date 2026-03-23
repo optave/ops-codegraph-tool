@@ -7,40 +7,51 @@ import {
   findNodesByFile,
   openReadonlyOrFail,
 } from '../../db/index.js';
+import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { resolveMethodViaHierarchy } from '../../shared/hierarchy.js';
 import { normalizeSymbol } from '../../shared/normalize.js';
 import { paginateResult } from '../../shared/paginate.js';
+import type {
+  BetterSqlite3Database,
+  ImportEdgeRow,
+  NodeRow,
+  RelatedNodeRow,
+  StmtCache,
+} from '../../types.js';
 import { findMatchingNodes } from './symbol-lookup.js';
+
+type UpstreamRow = { id: number; name: string; kind: string; file: string; line: number };
+type NodeByIdRow = { name: string; kind: string; file: string; line: number };
+
+const _upstreamStmtCache: StmtCache<UpstreamRow> = new WeakMap();
+const _nodeByIdStmtCache: StmtCache<NodeByIdRow> = new WeakMap();
 
 export function fileDepsData(
   file: string,
-  customDbPath: string | undefined,
+  customDbPath: string,
   opts: { noTests?: boolean; limit?: number; offset?: number } = {},
-): object {
+) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
-    const fileNodes = findFileNodes(db, `%${file}%`);
+    const fileNodes = findFileNodes(db, `%${file}%`) as NodeRow[];
     if (fileNodes.length === 0) {
       return { file, results: [] };
     }
 
     const results = fileNodes.map((fn) => {
-      let importsTo = findImportTargets(db, fn.id);
+      let importsTo = findImportTargets(db, fn.id) as ImportEdgeRow[];
       if (noTests) importsTo = importsTo.filter((i) => !isTestFile(i.file));
 
-      let importedBy = findImportSources(db, fn.id);
+      let importedBy = findImportSources(db, fn.id) as ImportEdgeRow[];
       if (noTests) importedBy = importedBy.filter((i) => !isTestFile(i.file));
 
-      const defs = findNodesByFile(db, fn.file);
+      const defs = findNodesByFile(db, fn.file) as NodeRow[];
 
       return {
         file: fn.file,
-        imports: importsTo.map((i) => ({
-          file: i.file,
-          typeOnly: i.edge_kind === 'imports-type',
-        })),
+        imports: importsTo.map((i) => ({ file: i.file, typeOnly: i.edge_kind === 'imports-type' })),
         importedBy: importedBy.map((i) => ({ file: i.file })),
         definitions: defs.map((d) => ({ name: d.name, kind: d.kind, line: d.line })),
       };
@@ -55,55 +66,50 @@ export function fileDepsData(
 
 /**
  * BFS transitive caller traversal starting from `callers` of `nodeId`.
- * Returns an object keyed by depth (2..depth) → array of caller descriptors.
+ * Returns an object keyed by depth (2..depth) -> array of caller descriptors.
  */
 function buildTransitiveCallers(
-  // biome-ignore lint/suspicious/noExplicitAny: db handle from better-sqlite3
-  db: any,
-  // biome-ignore lint/suspicious/noExplicitAny: caller row shape varies
-  callers: any[],
+  db: BetterSqlite3Database,
+  callers: Array<{ id: number; name: string; kind: string; file: string; line: number }>,
   nodeId: number,
   depth: number,
   noTests: boolean,
-  // biome-ignore lint/suspicious/noExplicitAny: caller row shape varies
-): Record<number, any[]> {
-  // biome-ignore lint/suspicious/noExplicitAny: caller row shape varies
-  const transitiveCallers: Record<number, any[]> = {};
+) {
+  const transitiveCallers: Record<
+    number,
+    Array<{ name: string; kind: string; file: string; line: number }>
+  > = {};
   if (depth <= 1) return transitiveCallers;
 
   const visited = new Set([nodeId]);
-  let frontier = callers
-    .map((c) => {
-      const row = db
-        .prepare('SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? AND line = ?')
-        // biome-ignore lint/suspicious/noExplicitAny: DB row type
-        .get(c.name, c.kind, c.file, c.line) as any;
-      return row ? { ...c, id: row.id } : null;
-    })
-    // biome-ignore lint/suspicious/noExplicitAny: filtering nulls
-    .filter(Boolean) as any[];
+  let frontier = callers;
+
+  const upstreamStmt = cachedStmt(
+    _upstreamStmtCache,
+    db,
+    `
+    SELECT n.id, n.name, n.kind, n.file, n.line
+    FROM edges e JOIN nodes n ON e.source_id = n.id
+    WHERE e.target_id = ? AND e.kind = 'calls'
+  `,
+  );
 
   for (let d = 2; d <= depth; d++) {
-    // biome-ignore lint/suspicious/noExplicitAny: caller row shape varies
-    const nextFrontier: any[] = [];
+    const nextFrontier: typeof frontier = [];
     for (const f of frontier) {
       if (visited.has(f.id)) continue;
       visited.add(f.id);
-      const upstream = db
-        .prepare(`
-          SELECT n.name, n.kind, n.file, n.line
-          FROM edges e JOIN nodes n ON e.source_id = n.id
-          WHERE e.target_id = ? AND e.kind = 'calls'
-        `)
-        // biome-ignore lint/suspicious/noExplicitAny: DB row types not yet migrated
-        .all(f.id) as any[];
+      const upstream = upstreamStmt.all(f.id) as Array<{
+        id: number;
+        name: string;
+        kind: string;
+        file: string;
+        line: number;
+      }>;
       for (const u of upstream) {
         if (noTests && isTestFile(u.file)) continue;
-        const uid = db
-          .prepare('SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? AND line = ?')
-          .get(u.name, u.kind, u.file, u.line)?.id;
-        if (uid && !visited.has(uid)) {
-          nextFrontier.push({ ...u, id: uid });
+        if (!visited.has(u.id)) {
+          nextFrontier.push(u);
         }
       }
     }
@@ -124,16 +130,16 @@ function buildTransitiveCallers(
 
 export function fnDepsData(
   name: string,
-  customDbPath: string | undefined,
+  customDbPath: string,
   opts: {
+    depth?: number;
     noTests?: boolean;
     file?: string;
     kind?: string;
-    depth?: number;
     limit?: number;
     offset?: number;
   } = {},
-): object {
+) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const depth = opts.depth || 3;
@@ -146,17 +152,20 @@ export function fnDepsData(
     }
 
     const results = nodes.map((node) => {
-      const callees = findCallees(db, node.id);
+      const callees = findCallees(db, node.id) as RelatedNodeRow[];
       const filteredCallees = noTests ? callees.filter((c) => !isTestFile(c.file)) : callees;
 
-      let callers = findCallers(db, node.id);
+      let callers: Array<RelatedNodeRow & { viaHierarchy?: string }> = findCallers(
+        db,
+        node.id,
+      ) as RelatedNodeRow[];
 
       if (node.kind === 'method' && node.name.includes('.')) {
-        const methodName = node.name.split('.').pop();
+        const methodName = node.name.split('.').pop()!;
         const relatedMethods = resolveMethodViaHierarchy(db, methodName);
         for (const rm of relatedMethods) {
           if (rm.id === node.id) continue;
-          const extraCallers = findCallers(db, rm.id);
+          const extraCallers = findCallers(db, rm.id) as RelatedNodeRow[];
           callers.push(...extraCallers.map((c) => ({ ...c, viaHierarchy: rm.name })));
         }
       }
@@ -177,7 +186,7 @@ export function fnDepsData(
           kind: c.kind,
           file: c.file,
           line: c.line,
-          viaHierarchy: 'viaHierarchy' in c ? (c.viaHierarchy as string) : undefined,
+          viaHierarchy: c.viaHierarchy || undefined,
         })),
         transitiveCallers,
       };
@@ -196,22 +205,11 @@ export function fnDepsData(
  * or { earlyResult } when a caller-facing error/not-found response should be returned immediately.
  */
 function resolveEndpoints(
-  // biome-ignore lint/suspicious/noExplicitAny: db handle from better-sqlite3
-  db: any,
+  db: BetterSqlite3Database,
   from: string,
   to: string,
   opts: { noTests?: boolean; fromFile?: string; toFile?: string; kind?: string },
-): {
-  // biome-ignore lint/suspicious/noExplicitAny: node row shape varies
-  sourceNode?: any;
-  // biome-ignore lint/suspicious/noExplicitAny: node row shape varies
-  targetNode?: any;
-  // biome-ignore lint/suspicious/noExplicitAny: node row shape varies
-  fromCandidates?: any[];
-  // biome-ignore lint/suspicious/noExplicitAny: node row shape varies
-  toCandidates?: any[];
-  earlyResult?: object;
-} {
+) {
   const { noTests = false } = opts;
 
   const fromNodes = findMatchingNodes(db, from, {
@@ -270,26 +268,21 @@ function resolveEndpoints(
 /**
  * BFS from sourceId toward targetId.
  * Returns { found, parent, alternateCount, foundDepth }.
- * `parent` maps nodeId → { parentId, edgeKind }.
+ * `parent` maps nodeId -> { parentId, edgeKind }.
  */
 function bfsShortestPath(
-  db: any,
+  db: BetterSqlite3Database,
   sourceId: number,
   targetId: number,
   edgeKinds: string[],
   reverse: boolean,
   maxDepth: number,
   noTests: boolean,
-): {
-  found: boolean;
-  parent: Map<number, { parentId: number; edgeKind: string }>;
-  alternateCount: number;
-  foundDepth: number;
-} {
+) {
   const kindPlaceholders = edgeKinds.map(() => '?').join(', ');
 
-  // Forward: source_id → target_id (A calls... calls B)
-  // Reverse: target_id → source_id (B is called by... called by A)
+  // Forward: source_id -> target_id (A calls... calls B)
+  // Reverse: target_id -> source_id (B is called by... called by A)
   const neighborQuery = reverse
     ? `SELECT n.id, n.name, n.kind, n.file, n.line, e.kind AS edge_kind
        FROM edges e JOIN nodes n ON e.source_id = n.id
@@ -309,7 +302,14 @@ function bfsShortestPath(
   for (let depth = 1; depth <= maxDepth; depth++) {
     const nextQueue: number[] = [];
     for (const currentId of queue) {
-      const neighbors = neighborStmt.all(currentId, ...edgeKinds) as any[];
+      const neighbors = neighborStmt.all(currentId, ...edgeKinds) as Array<{
+        id: number;
+        name: string;
+        kind: string;
+        file: string;
+        line: number;
+        edge_kind: string;
+      }>;
       for (const n of neighbors) {
         if (noTests && isTestFile(n.file)) continue;
         if (n.id === targetId) {
@@ -338,24 +338,34 @@ function bfsShortestPath(
 
 /**
  * Walk the parent map from targetId back to sourceId and return an ordered
- * array of node IDs source → target.
+ * array of node IDs source -> target.
  */
 function reconstructPath(
-  db: any,
+  db: BetterSqlite3Database,
   pathIds: number[],
   parent: Map<number, { parentId: number; edgeKind: string }>,
-): any[] {
-  const nodeCache = new Map<number, any>();
+) {
+  const nodeCache = new Map<number, NodeByIdRow>();
+  const nodeByIdStmt = cachedStmt(
+    _nodeByIdStmtCache,
+    db,
+    'SELECT name, kind, file, line FROM nodes WHERE id = ?',
+  );
   const getNode = (id: number) => {
-    if (nodeCache.has(id)) return nodeCache.get(id);
-    const row = db.prepare('SELECT name, kind, file, line FROM nodes WHERE id = ?').get(id);
+    if (nodeCache.has(id)) return nodeCache.get(id)!;
+    const row = nodeByIdStmt.get(id) as {
+      name: string;
+      kind: string;
+      file: string;
+      line: number;
+    };
     nodeCache.set(id, row);
     return row;
   };
 
   return pathIds.map((id, idx) => {
     const node = getNode(id);
-    const edgeKind = idx === 0 ? null : parent.get(id)?.edgeKind;
+    const edgeKind = idx === 0 ? null : parent.get(id)!.edgeKind;
     return { name: node.name, kind: node.kind, file: node.file, line: node.line, edgeKind };
   });
 }
@@ -363,7 +373,7 @@ function reconstructPath(
 export function pathData(
   from: string,
   to: string,
-  customDbPath: string | undefined,
+  customDbPath: string,
   opts: {
     noTests?: boolean;
     maxDepth?: number;
@@ -373,7 +383,7 @@ export function pathData(
     toFile?: string;
     kind?: string;
   } = {},
-): object {
+) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
@@ -387,12 +397,12 @@ export function pathData(
       toFile: opts.toFile,
       kind: opts.kind,
     });
-    if (resolved.earlyResult) return resolved.earlyResult;
+    if ('earlyResult' in resolved) return resolved.earlyResult;
 
     const { sourceNode, targetNode, fromCandidates, toCandidates } = resolved;
 
     // Self-path
-    if (sourceNode.id === targetNode.id) {
+    if (sourceNode!.id === targetNode!.id) {
       return {
         from,
         to,
@@ -402,10 +412,10 @@ export function pathData(
         hops: 0,
         path: [
           {
-            name: sourceNode.name,
-            kind: sourceNode.kind,
-            file: sourceNode.file,
-            line: sourceNode.line,
+            name: sourceNode!.name,
+            kind: sourceNode!.kind,
+            file: sourceNode!.file,
+            line: sourceNode!.line,
             edgeKind: null,
           },
         ],
@@ -421,7 +431,7 @@ export function pathData(
       parent,
       alternateCount: rawAlternateCount,
       foundDepth,
-    } = bfsShortestPath(db, sourceNode.id, targetNode.id, edgeKinds, reverse, maxDepth, noTests);
+    } = bfsShortestPath(db, sourceNode!.id, targetNode!.id, edgeKinds, reverse, maxDepth, noTests);
 
     if (!found) {
       return {
@@ -443,9 +453,9 @@ export function pathData(
     const alternateCount = Math.max(0, rawAlternateCount - 1);
 
     // Reconstruct path from target back to source
-    const pathIds = [targetNode.id];
-    let cur = targetNode.id;
-    while (cur !== sourceNode.id) {
+    const pathIds = [targetNode!.id];
+    let cur = targetNode!.id;
+    while (cur !== sourceNode!.id) {
       const p = parent.get(cur)!;
       pathIds.push(p.parentId);
       cur = p.parentId;

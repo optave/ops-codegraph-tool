@@ -133,6 +133,7 @@ export interface ChildNodeRow {
   qualified_name: string | null;
   scope: string | null;
   visibility: 'public' | 'private' | 'protected' | null;
+  file?: string;
 }
 
 /** An edge row as stored in SQLite. */
@@ -1656,6 +1657,7 @@ export interface SqliteStatement<TRow = unknown> {
   all(...params: unknown[]): TRow[];
   run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
   iterate(...params: unknown[]): IterableIterator<TRow>;
+  raw(toggle?: boolean): this;
 }
 
 /** Minimal database interface matching the better-sqlite3 surface we use. */
@@ -1665,7 +1667,7 @@ export interface BetterSqlite3Database {
   close(): void;
   pragma(sql: string): unknown;
   // biome-ignore lint/suspicious/noExplicitAny: must be compatible with better-sqlite3's generic Transaction<F> return type
-  transaction<T>(fn: (...args: any[]) => T): (...args: any[]) => T;
+  transaction<F extends (...args: any[]) => any>(fn: F): F;
   readonly open: boolean;
   readonly name: string;
 }
