@@ -449,7 +449,7 @@ async function backfillTypeMap(
   const parsers = await createParsers();
   const extracted = wasmExtractSymbols(parsers, filePath, code);
   try {
-    if (!extracted?.symbols?.typeMap) {
+    if (!extracted || extracted.symbols.typeMap.size === 0) {
       return { typeMap: new Map(), backfilled: false };
     }
     return { typeMap: extracted.symbols.typeMap, backfilled: true };

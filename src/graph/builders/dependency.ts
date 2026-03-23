@@ -11,17 +11,29 @@ import {
   Repository,
 } from '../../db/index.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
+import type {
+  BetterSqlite3Database,
+  CallableNodeRow,
+  CallEdgeRow,
+  FileNodeRow,
+  ImportGraphEdgeRow,
+} from '../../types.js';
 import { CodeGraph } from '../model.js';
 
+export interface DependencyGraphOptions {
+  fileLevel?: boolean;
+  noTests?: boolean;
+  minConfidence?: number;
+}
+
 /**
- * @param {object} dbOrRepo - Open better-sqlite3 database (readonly) or a Repository instance
- * @param {object} [opts]
- * @param {boolean} [opts.fileLevel=true] - File-level (imports) or function-level (calls)
- * @param {boolean} [opts.noTests=false] - Exclude test files
- * @param {number}  [opts.minConfidence] - Minimum edge confidence (function-level only)
- * @returns {CodeGraph}
+ * Build a dependency graph from an open database or Repository instance.
+ * Supports both file-level (import edges) and function-level (call edges) graphs.
  */
-export function buildDependencyGraph(dbOrRepo, opts = {}) {
+export function buildDependencyGraph(
+  dbOrRepo: BetterSqlite3Database | Repository,
+  opts: DependencyGraphOptions = {},
+): CodeGraph {
   const fileLevel = opts.fileLevel !== false;
   const noTests = opts.noTests || false;
 
@@ -31,20 +43,23 @@ export function buildDependencyGraph(dbOrRepo, opts = {}) {
   return buildFunctionLevelGraph(dbOrRepo, noTests, opts.minConfidence);
 }
 
-function buildFileLevelGraph(dbOrRepo, noTests) {
+function buildFileLevelGraph(
+  dbOrRepo: BetterSqlite3Database | Repository,
+  noTests: boolean,
+): CodeGraph {
   const graph = new CodeGraph();
   const isRepo = dbOrRepo instanceof Repository;
 
-  let nodes = isRepo ? dbOrRepo.getFileNodesAll() : getFileNodesAll(dbOrRepo);
+  let nodes: FileNodeRow[] = isRepo ? dbOrRepo.getFileNodesAll() : getFileNodesAll(dbOrRepo);
   if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
 
-  const nodeIds = new Set();
+  const nodeIds = new Set<number>();
   for (const n of nodes) {
     graph.addNode(String(n.id), { label: n.file, file: n.file, dbId: n.id });
     nodeIds.add(n.id);
   }
 
-  const edges = isRepo ? dbOrRepo.getImportEdges() : getImportEdges(dbOrRepo);
+  const edges: ImportGraphEdgeRow[] = isRepo ? dbOrRepo.getImportEdges() : getImportEdges(dbOrRepo);
   for (const e of edges) {
     if (!nodeIds.has(e.source_id) || !nodeIds.has(e.target_id)) continue;
     const src = String(e.source_id);
@@ -58,14 +73,23 @@ function buildFileLevelGraph(dbOrRepo, noTests) {
   return graph;
 }
 
-function buildFunctionLevelGraph(dbOrRepo, noTests, minConfidence) {
+interface MinConfidenceEdgeRow {
+  source_id: number;
+  target_id: number;
+}
+
+function buildFunctionLevelGraph(
+  dbOrRepo: BetterSqlite3Database | Repository,
+  noTests: boolean,
+  minConfidence?: number,
+): CodeGraph {
   const graph = new CodeGraph();
   const isRepo = dbOrRepo instanceof Repository;
 
-  let nodes = isRepo ? dbOrRepo.getCallableNodes() : getCallableNodes(dbOrRepo);
+  let nodes: CallableNodeRow[] = isRepo ? dbOrRepo.getCallableNodes() : getCallableNodes(dbOrRepo);
   if (noTests) nodes = nodes.filter((n) => !isTestFile(n.file));
 
-  const nodeIds = new Set();
+  const nodeIds = new Set<number>();
   for (const n of nodes) {
     graph.addNode(String(n.id), {
       label: n.name,
@@ -76,7 +100,7 @@ function buildFunctionLevelGraph(dbOrRepo, noTests, minConfidence) {
     nodeIds.add(n.id);
   }
 
-  let edges;
+  let edges: CallEdgeRow[] | MinConfidenceEdgeRow[];
   if (minConfidence != null) {
     if (isRepo) {
       // Trade-off: Repository.getCallEdges() returns all call edges, so we
@@ -88,8 +112,10 @@ function buildFunctionLevelGraph(dbOrRepo, noTests, minConfidence) {
         .getCallEdges()
         .filter((e) => e.confidence != null && e.confidence >= minConfidence);
     } else {
-      edges = dbOrRepo
-        .prepare("SELECT source_id, target_id FROM edges WHERE kind = 'calls' AND confidence >= ?")
+      edges = (dbOrRepo as BetterSqlite3Database)
+        .prepare<MinConfidenceEdgeRow>(
+          "SELECT source_id, target_id FROM edges WHERE kind = 'calls' AND confidence >= ?",
+        )
         .all(minConfidence);
     }
   } else {
