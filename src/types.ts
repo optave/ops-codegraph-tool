@@ -116,6 +116,16 @@ export interface NodeRowWithFanIn extends NodeRow {
   fan_in: number;
 }
 
+/** A node row augmented with triage signals (from findNodesForTriage). */
+export interface TriageNodeRow extends NodeRow {
+  fan_in: number;
+  cognitive: number;
+  mi: number;
+  cyclomatic: number;
+  max_nesting: number;
+  churn: number;
+}
+
 /** Compact node ID row (from bulkNodeIdsByFile). */
 export interface NodeIdRow {
   id: number;
@@ -262,7 +272,7 @@ export interface Repository {
   findNodeByQualifiedName(qualifiedName: string, opts?: { file?: string }): NodeRow[];
   listFunctionNodes(opts?: ListFunctionOpts): NodeRow[];
   iterateFunctionNodes(opts?: ListFunctionOpts): IterableIterator<NodeRow>;
-  findNodesForTriage(opts?: TriageQueryOpts): NodeRow[];
+  findNodesForTriage(opts?: TriageQueryOpts): TriageNodeRow[];
 
   // ── Edge queries ──────────────────────────────────────────────────
   findCallees(nodeId: number): RelatedNodeRow[];

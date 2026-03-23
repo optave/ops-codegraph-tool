@@ -15,6 +15,7 @@ import type {
   NodeRowWithFanIn,
   QueryOpts,
   RelatedNodeRow,
+  TriageNodeRow,
   TriageQueryOpts,
 } from '../../types.js';
 import { Repository } from './base.js';
@@ -139,7 +140,7 @@ export class SqliteRepository extends Repository {
     return iterateFunctionNodes(this.#db, opts);
   }
 
-  findNodesForTriage(opts?: TriageQueryOpts): NodeRow[] {
+  findNodesForTriage(opts?: TriageQueryOpts): TriageNodeRow[] {
     return findNodesForTriage(this.#db, opts);
   }
 

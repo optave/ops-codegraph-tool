@@ -15,6 +15,7 @@ import type {
   NodeRowWithFanIn,
   QueryOpts,
   RelatedNodeRow,
+  TriageNodeRow,
   TriageQueryOpts,
 } from '../../types.js';
 
@@ -86,7 +87,7 @@ export class Repository implements IRepository {
     throw new Error('not implemented');
   }
 
-  findNodesForTriage(_opts?: TriageQueryOpts): NodeRow[] {
+  findNodesForTriage(_opts?: TriageQueryOpts): TriageNodeRow[] {
     throw new Error('not implemented');
   }
 
