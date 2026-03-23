@@ -168,7 +168,7 @@ codegraph exports <barrel-file> -T --json
 
 Compare export count before and after. If exports were **accidentally dropped** (count decreased and the removed exports have callers) → **FAIL**: "Barrel file `<barrel-file>` dropped <N> exports that have active callers: <export list>. Use `codegraph exports <barrel-file> -T` to review."
 
-Clean up the temp file (recover path from sidecar):
+Clean up the temp file (recover path from sidecar). **This MUST run even if Step 5d produced a FAIL verdict — run it before proceeding to Step 9:**
 ```bash
 BARREL_TMP=$(cat .codegraph/titan/.barrel-tmp 2>/dev/null)
 if [ -n "$BARREL_TMP" ]; then rm -f "$BARREL_TMP"; fi
