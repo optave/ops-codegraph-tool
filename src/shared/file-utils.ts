@@ -7,13 +7,23 @@ import { debug } from '../infrastructure/logger.js';
  * Resolve a file path relative to repoRoot, rejecting traversal outside the repo.
  * Returns null if the resolved path escapes repoRoot.
  */
-export function safePath(repoRoot, file) {
+export function safePath(repoRoot: string, file: string): string | null {
   const resolved = path.resolve(repoRoot, file);
   if (!resolved.startsWith(repoRoot + path.sep) && resolved !== repoRoot) return null;
   return resolved;
 }
 
-export function readSourceRange(repoRoot, file, startLine, endLine, opts = {}) {
+interface ReadSourceRangeOpts {
+  excerptLines?: number;
+}
+
+export function readSourceRange(
+  repoRoot: string,
+  file: string,
+  startLine: number | undefined,
+  endLine: number | undefined,
+  opts: ReadSourceRangeOpts = {},
+): string | null {
   try {
     const absPath = safePath(repoRoot, file);
     if (!absPath) return null;
@@ -21,15 +31,25 @@ export function readSourceRange(repoRoot, file, startLine, endLine, opts = {}) {
     const lines = content.split('\n');
     const excerptLines = opts.excerptLines ?? 50;
     const start = Math.max(0, (startLine || 1) - 1);
-    const end = Math.min(lines.length, endLine || startLine + excerptLines);
+    const end = Math.min(lines.length, endLine || (startLine || 1) + excerptLines);
     return lines.slice(start, end).join('\n');
-  } catch (e) {
-    debug(`readSourceRange failed for ${file}: ${e.message}`);
+  } catch (e: unknown) {
+    debug(`readSourceRange failed for ${file}: ${(e as Error).message}`);
     return null;
   }
 }
 
-export function extractSummary(fileLines, line, opts = {}) {
+interface ExtractSummaryOpts {
+  jsdocEndScanLines?: number;
+  jsdocOpenScanLines?: number;
+  summaryMaxChars?: number;
+}
+
+export function extractSummary(
+  fileLines: string[] | null,
+  line: number | undefined,
+  opts: ExtractSummaryOpts = {},
+): string | null {
   if (!fileLines || !line || line <= 1) return null;
   const idx = line - 2; // line above the definition (0-indexed)
   const jsdocEndScanLines = opts.jsdocEndScanLines ?? 10;
@@ -38,7 +58,7 @@ export function extractSummary(fileLines, line, opts = {}) {
   // Scan up for JSDoc or comment
   let jsdocEnd = -1;
   for (let i = idx; i >= Math.max(0, idx - jsdocEndScanLines); i--) {
-    const trimmed = fileLines[i].trim();
+    const trimmed = fileLines[i]!.trim();
     if (trimmed.endsWith('*/')) {
       jsdocEnd = i;
       break;
@@ -56,11 +76,10 @@ export function extractSummary(fileLines, line, opts = {}) {
   if (jsdocEnd >= 0) {
     // Find opening /**
     for (let i = jsdocEnd; i >= Math.max(0, jsdocEnd - jsdocOpenScanLines); i--) {
-      if (fileLines[i].trim().startsWith('/**')) {
+      if (fileLines[i]!.trim().startsWith('/**')) {
         // Extract first non-tag, non-empty line
         for (let j = i + 1; j <= jsdocEnd; j++) {
-          const docLine = fileLines[j]
-            .trim()
+          const docLine = fileLines[j]!.trim()
             .replace(/^\*\s?/, '')
             .trim();
           if (docLine && !docLine.startsWith('@') && docLine !== '/' && docLine !== '*/') {
@@ -76,7 +95,20 @@ export function extractSummary(fileLines, line, opts = {}) {
   return null;
 }
 
-export function extractSignature(fileLines, line, opts = {}) {
+interface ExtractSignatureOpts {
+  signatureGatherLines?: number;
+}
+
+interface Signature {
+  params: string | null;
+  returnType: string | null;
+}
+
+export function extractSignature(
+  fileLines: string[] | null,
+  line: number | undefined,
+  opts: ExtractSignatureOpts = {},
+): Signature | null {
   if (!fileLines || !line) return null;
   const idx = line - 1;
   const signatureGatherLines = opts.signatureGatherLines ?? 5;
@@ -91,7 +123,7 @@ export function extractSignature(fileLines, line, opts = {}) {
   );
   if (m) {
     return {
-      params: m[1].trim() || null,
+      params: m[1]!.trim() || null,
       returnType: m[2] ? m[2].trim().replace(/\s*\{$/, '') : null,
     };
   }
@@ -99,7 +131,7 @@ export function extractSignature(fileLines, line, opts = {}) {
   m = chunk.match(/=\s*(?:async\s+)?\(([^)]*)\)\s*(?::\s*([^=>\n{]+))?\s*=>/);
   if (m) {
     return {
-      params: m[1].trim() || null,
+      params: m[1]!.trim() || null,
       returnType: m[2] ? m[2].trim() : null,
     };
   }
@@ -107,7 +139,7 @@ export function extractSignature(fileLines, line, opts = {}) {
   m = chunk.match(/def\s+\w+\s*\(([^)]*)\)\s*(?:->\s*([^:\n]+))?/);
   if (m) {
     return {
-      params: m[1].trim() || null,
+      params: m[1]!.trim() || null,
       returnType: m[2] ? m[2].trim() : null,
     };
   }
@@ -115,7 +147,7 @@ export function extractSignature(fileLines, line, opts = {}) {
   m = chunk.match(/func\s+(?:\([^)]*\)\s+)?\w+\s*\(([^)]*)\)\s*(?:\(([^)]+)\)|(\w[^\n{]*))?/);
   if (m) {
     return {
-      params: m[1].trim() || null,
+      params: m[1]!.trim() || null,
       returnType: (m[2] || m[3] || '').trim() || null,
     };
   }
@@ -123,17 +155,17 @@ export function extractSignature(fileLines, line, opts = {}) {
   m = chunk.match(/fn\s+\w+\s*\(([^)]*)\)\s*(?:->\s*([^\n{]+))?/);
   if (m) {
     return {
-      params: m[1].trim() || null,
+      params: m[1]!.trim() || null,
       returnType: m[2] ? m[2].trim() : null,
     };
   }
   return null;
 }
 
-export function createFileLinesReader(repoRoot) {
-  const cache = new Map();
-  return function getFileLines(file) {
-    if (cache.has(file)) return cache.get(file);
+export function createFileLinesReader(repoRoot: string): (file: string) => string[] | null {
+  const cache = new Map<string, string[] | null>();
+  return function getFileLines(file: string): string[] | null {
+    if (cache.has(file)) return cache.get(file)!;
     try {
       const absPath = safePath(repoRoot, file);
       if (!absPath) {
@@ -143,15 +175,15 @@ export function createFileLinesReader(repoRoot) {
       const lines = fs.readFileSync(absPath, 'utf-8').split('\n');
       cache.set(file, lines);
       return lines;
-    } catch (e) {
-      debug(`getFileLines failed for ${file}: ${e.message}`);
+    } catch (e: unknown) {
+      debug(`getFileLines failed for ${file}: ${(e as Error).message}`);
       cache.set(file, null);
       return null;
     }
   };
 }
 
-export function isFileLikeTarget(target) {
+export function isFileLikeTarget(target: string): boolean {
   if (target.includes('/') || target.includes('\\')) return true;
   const ext = path.extname(target).toLowerCase();
   if (!ext) return false;

@@ -110,7 +110,7 @@ export async function startMCPServer(
 
   // Apply config-based MCP page-size overrides
   const config = options.config || loadConfig();
-  initMcpDefaults(config.mcp?.defaults);
+  initMcpDefaults(config.mcp?.defaults ? { ...config.mcp.defaults } : undefined);
 
   const { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema } =
     await loadMCPSdk();
