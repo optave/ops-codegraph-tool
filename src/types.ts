@@ -133,6 +133,7 @@ export interface ChildNodeRow {
   qualified_name: string | null;
   scope: string | null;
   visibility: 'public' | 'private' | 'protected' | null;
+  file?: string;
 }
 
 /** An edge row as stored in SQLite. */

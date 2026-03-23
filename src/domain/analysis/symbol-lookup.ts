@@ -255,10 +255,7 @@ export function childrenData(
         debug(`findNodeChildren failed for node ${node.id}: ${(e as Error).message}`);
         children = [];
       }
-      if (noTests)
-        children = children.filter(
-          (c) => !isTestFile((c as ChildNodeRow & { file?: string }).file || node.file),
-        );
+      if (noTests) children = children.filter((c) => !isTestFile(c.file || node.file));
       return {
         name: node.name,
         kind: node.kind,
