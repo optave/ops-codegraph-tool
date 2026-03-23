@@ -161,7 +161,9 @@ For each target in the current phase:
    - Test file for the target → **OK**
 
    **D2. Intent match — diff aligns with gauntlet recommendation:**
-   Read the gauntlet entry's `recommendation` field and `violations` list. Verify the diff addresses them:
+   First, check if this target is a dead-code target (present in `titan-state.json → roles.deadSymbols`). If so, the expected recommendation is "remove dead code" — skip gauntlet entry lookup (dead-code targets have no gauntlet.ndjson entry) and verify the diff shows only deletions (no new functions or logic added). If the diff contains non-trivial additions for a dead-code target → **DIFF FAIL**.
+
+   Otherwise, read the gauntlet entry's `recommendation` field and `violations` list. Verify the diff addresses them:
    - If recommendation says "split" → diff should show new functions extracted, original simplified
    - If recommendation says "remove dead code" → diff should show deletions, not additions
    - If violation was "complexity > threshold" → diff should reduce complexity, not just move code around
