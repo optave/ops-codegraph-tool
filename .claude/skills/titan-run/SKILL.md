@@ -103,7 +103,7 @@ For each phase BEFORE `startPhase`, run the corresponding V-checks:
 
 | Skipped phase | Required artifacts + checks |
 |---------------|-----------------------------|
-| `recon` | V1 (titan-state.json structure), V2 (GLOBAL_ARCH.md), V4 (cross-check counts) |
+| `recon` | V1 (titan-state.json structure), V2 (GLOBAL_ARCH.md), V3 (snapshot exists — WARN if missing), V4 (cross-check counts) |
 | `gauntlet` | V5 (coverage ≥ 50%), V6 (entry completeness sample), V7 (summary consistency); also run NDJSON integrity check (2c) |
 | `sync` | V8 (sync.json structure), V9 (targets trace to gauntlet), V10 (dependency order) |
 
@@ -230,8 +230,9 @@ while iteration < maxIterations:
     previousAuditedCount = currentAuditedCount
 
     # Efficiency check: if progress is very slow (< 2 targets per iteration), warn
+    # Only fire when stallCount == 0 — if stalled, the stall warning already covers it
     targetsThisIteration = currentAuditedCount - countBeforeUpdate
-    if targetsThisIteration == 1 and iteration > 3:
+    if targetsThisIteration == 1 and iteration > 3 and stallCount == 0:
         Print: "WARNING: Only 1 target per iteration — agent may be spending too much context. Consider increasing batch size."
 
     Print: "Gauntlet iteration <iteration>: <currentAuditedCount>/<expectedTargetCount> targets audited"
