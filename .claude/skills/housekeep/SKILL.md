@@ -88,7 +88,8 @@ Search for and remove files found by the two discovery commands above (never tou
 ```bash
 for f in .codegraph/*.lock; do
   [ -f "$f" ] || continue
-  age=$(( $(date +%s) - $(stat --format='%Y' "$f" 2>/dev/null || stat -f '%m' "$f") ))
+  age=$(( $(date +%s) - $(stat --format='%Y' "$f" 2>/dev/null || stat -f '%m' "$f" 2>/dev/null) ))
+  [ -z "$age" ] && continue
   if [ "$age" -gt 3600 ] && ! lsof "$f" > /dev/null 2>&1; then
     echo "Removing stale lock: $f"
     rm "$f"
