@@ -216,11 +216,7 @@ Read `.codegraph/titan/arch-snapshot.json → drift` (the pre-forge drift baseli
 **A2. Dependency direction between domains:**
 From `GLOBAL_ARCH.md`, extract the expected dependency direction between domains (e.g., "presentation depends on features, not the reverse").
 
-Check if any new cross-domain dependency violates the expected direction. Use the Step 1 diff-impact results to extract only the edges introduced by the staged changes — do not re-run `codegraph deps` on the full file (that returns all dependencies including pre-existing ones). For each new edge in the diff-impact output, resolve the domain/layer of the source and target endpoints:
-```bash
-codegraph deps <endpoint-symbol> --json
-```
-(Only call this to look up which domain/layer an individual edge endpoint belongs to — not to enumerate all dependencies.)
+Check if any new cross-domain dependency violates the expected direction. Use the Step 1 diff-impact results to extract only the edges introduced by the staged changes — do not re-run `codegraph deps` on the full file (that returns all dependencies including pre-existing ones). For each new edge in the diff-impact output, the source and target file paths are already present in the edge data. Resolve the domain/layer of each endpoint by matching its file path against the domain map in `GLOBAL_ARCH.md` (e.g., `src/presentation/` → presentation layer, `src/features/` → features layer). No additional codegraph command is needed — the diff-impact edge output contains the file paths directly.
 - New upward dependency (lower layer importing higher layer) introduced in this diff → **FAIL**
 - Pre-existing boundary violations not surfaced by Step 5c's staged-diff results → advisory-only (not gating)
 - New lateral dependency within the same layer → **OK**
