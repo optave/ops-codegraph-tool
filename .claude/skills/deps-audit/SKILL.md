@@ -74,7 +74,7 @@ For any package classified as **Abandoned**, check if there's a maintained fork 
 Detect dependencies declared in `package.json` but never imported:
 
 1. Read `dependencies` and `devDependencies` from `package.json`
-2. For each dependency, search for imports/requires across `src/`, `tests/`, `scripts/`, `cli.js`, `index.js`:
+2. For each dependency, search for imports/requires across `src/`, `tests/`, `scripts/`, `mcp/`, `graph/`, `ast-analysis/`, `cli.js`, `index.js`:
    - `require('<pkg>')` or `require('<pkg>/...')`
    - `import ... from '<pkg>'` or `import '<pkg>'`
    - `import('<pkg>')` (dynamic imports)

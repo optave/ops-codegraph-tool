@@ -179,6 +179,7 @@ Based on comparison results:
 ## Phase 5 — Save Baseline
 
 **Skip this phase if `COMPARE_ONLY` is set.** Compare-only mode never writes or commits baselines.
+**Skip this phase if regressions were detected in Phase 4.** The baseline is only updated on a clean run.
 
 When saving (initial run, `--save-baseline`, or passed comparison):
 
