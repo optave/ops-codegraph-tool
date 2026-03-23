@@ -42,6 +42,8 @@ export {
   findNodesForTriage,
   findNodesWithFanIn,
   getFunctionNodeId,
+  getLineCountForNode,
+  getMaxEndLineForFile,
   getNodeId,
   iterateFunctionNodes,
   listFunctionNodes,

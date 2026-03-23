@@ -139,7 +139,6 @@ const BASE_TOOLS = [
       properties: {
         file: { type: 'string', description: 'File path to analyze' },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
-        ...PAGINATION_PROPS,
       },
       required: ['file'],
     },

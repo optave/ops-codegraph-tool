@@ -19,6 +19,7 @@ declare module 'better-sqlite3' {
       get(...params: unknown[]): unknown | undefined;
       all(...params: unknown[]): unknown[];
       iterate(...params: unknown[]): IterableIterator<unknown>;
+      raw(toggle?: boolean): this;
     }
 
     interface RunResult {

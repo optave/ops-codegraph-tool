@@ -10,6 +10,7 @@ import {
   findNodeById,
   openReadonlyOrFail,
 } from '../../db/index.js';
+import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { evaluateBoundaries } from '../../features/boundaries.js';
 import { coChangeForFiles } from '../../features/cochange.js';
 import { ownersForFiles } from '../../features/owners.js';
@@ -18,9 +19,12 @@ import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { normalizeSymbol } from '../../shared/normalize.js';
 import { paginateResult } from '../../shared/paginate.js';
+import type { BetterSqlite3Database, NodeRow, RelatedNodeRow, StmtCache } from '../../types.js';
 import { findMatchingNodes } from './symbol-lookup.js';
 
-// ─── Shared BFS: transitive callers ────────────────────────────────────
+const _defsStmtCache: StmtCache<NodeRow> = new WeakMap();
+
+// --- Shared BFS: transitive callers ---
 
 const INTERFACE_LIKE_KINDS = new Set(['interface', 'trait']);
 
@@ -28,8 +32,8 @@ const INTERFACE_LIKE_KINDS = new Set(['interface', 'trait']);
  * Check whether the graph contains any 'implements' edges.
  * Cached per db handle so the query runs at most once per connection.
  */
-const _hasImplementsCache = new WeakMap<object, boolean>();
-function hasImplementsEdges(db: any): boolean {
+const _hasImplementsCache: WeakMap<BetterSqlite3Database, boolean> = new WeakMap();
+function hasImplementsEdges(db: BetterSqlite3Database): boolean {
   if (_hasImplementsCache.has(db)) return _hasImplementsCache.get(db)!;
   const row = db.prepare("SELECT 1 FROM edges WHERE kind = 'implements' LIMIT 1").get();
   const result = !!row;
@@ -44,7 +48,7 @@ function hasImplementsEdges(db: any): boolean {
  * so that changes to an interface signature propagate to all implementors.
  */
 export function bfsTransitiveCallers(
-  db: any,
+  db: BetterSqlite3Database,
   startId: number,
   {
     noTests = false,
@@ -55,23 +59,30 @@ export function bfsTransitiveCallers(
     noTests?: boolean;
     maxDepth?: number;
     includeImplementors?: boolean;
-    onVisit?: (caller: any, parentId: number, depth: number) => void;
+    onVisit?: (
+      caller: RelatedNodeRow & { viaImplements?: boolean },
+      parentId: number,
+      depth: number,
+    ) => void;
   } = {},
-): { totalDependents: number; levels: Record<number, any[]> } {
+) {
   // Skip all implementor lookups when the graph has no implements edges
   const resolveImplementors = includeImplementors && hasImplementsEdges(db);
 
   const visited = new Set([startId]);
-  const levels: Record<number, any[]> = {};
+  const levels: Record<
+    number,
+    Array<{ name: string; kind: string; file: string; line: number; viaImplements?: boolean }>
+  > = {};
   let frontier = [startId];
 
   // Seed: if start node is an interface/trait, include its implementors at depth 1.
   // Implementors go into a separate list so their callers appear at depth 2, not depth 1.
   const implNextFrontier: number[] = [];
   if (resolveImplementors) {
-    const startNode = findNodeById(db, startId);
+    const startNode = findNodeById(db, startId) as NodeRow | undefined;
     if (startNode && INTERFACE_LIKE_KINDS.has(startNode.kind)) {
-      const impls = findImplementors(db, startId);
+      const impls = findImplementors(db, startId) as RelatedNodeRow[];
       for (const impl of impls) {
         if (!visited.has(impl.id) && (!noTests || !isTestFile(impl.file))) {
           visited.add(impl.id);
@@ -97,12 +108,12 @@ export function bfsTransitiveCallers(
     }
     const nextFrontier: number[] = [];
     for (const fid of frontier) {
-      const callers = findDistinctCallers(db, fid);
+      const callers = findDistinctCallers(db, fid) as RelatedNodeRow[];
       for (const c of callers) {
         if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
           visited.add(c.id);
           nextFrontier.push(c.id);
-          levels[d] = levels[d] || [];
+          if (!levels[d]) levels[d] = [];
           levels[d]!.push({ name: c.name, kind: c.kind, file: c.file, line: c.line });
           if (onVisit) onVisit(c, fid, d);
         }
@@ -110,7 +121,7 @@ export function bfsTransitiveCallers(
         // If a caller is an interface/trait, also pull in its implementors
         // Implementors are one extra hop away, so record at d+1
         if (resolveImplementors && INTERFACE_LIKE_KINDS.has(c.kind)) {
-          const impls = findImplementors(db, c.id);
+          const impls = findImplementors(db, c.id) as RelatedNodeRow[];
           for (const impl of impls) {
             if (!visited.has(impl.id) && (!noTests || !isTestFile(impl.file))) {
               visited.add(impl.id);
@@ -139,19 +150,13 @@ export function bfsTransitiveCallers(
 
 export function impactAnalysisData(
   file: string,
-  customDbPath: string | undefined,
-  opts: {
-    noTests?: boolean;
-    maxDepth?: number;
-    config?: any;
-    limit?: number;
-    offset?: number;
-  } = {},
-): object {
+  customDbPath: string,
+  opts: { noTests?: boolean } = {},
+) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
-    const fileNodes = findFileNodes(db, `%${file}%`);
+    const fileNodes = findFileNodes(db, `%${file}%`) as NodeRow[];
     if (fileNodes.length === 0) {
       return { file, sources: [], levels: {}, totalDependents: 0 };
     }
@@ -169,7 +174,7 @@ export function impactAnalysisData(
     while (queue.length > 0) {
       const current = queue.shift()!;
       const level = levels.get(current)!;
-      const dependents = findImportDependents(db, current);
+      const dependents = findImportDependents(db, current) as RelatedNodeRow[];
       for (const dep of dependents) {
         if (!visited.has(dep.id) && (!noTests || !isTestFile(dep.file))) {
           visited.add(dep.id);
@@ -179,17 +184,17 @@ export function impactAnalysisData(
       }
     }
 
-    const byLevel: Record<number, any[]> = {};
+    const byLevel: Record<number, Array<{ file: string }>> = {};
     for (const [id, level] of levels) {
       if (level === 0) continue;
       if (!byLevel[level]) byLevel[level] = [];
-      const node = findNodeById(db, id);
+      const node = findNodeById(db, id) as NodeRow | undefined;
       if (node) byLevel[level].push({ file: node.file });
     }
 
     return {
       file,
-      sources: fileNodes.map((f: any) => f.file),
+      sources: fileNodes.map((f) => f.file),
       levels: byLevel,
       totalDependents: visited.size - fileNodes.length,
     };
@@ -200,18 +205,19 @@ export function impactAnalysisData(
 
 export function fnImpactData(
   name: string,
-  customDbPath: string | undefined,
+  customDbPath: string,
   opts: {
-    noTests?: boolean;
     depth?: number;
-    config?: any;
+    noTests?: boolean;
     file?: string;
     kind?: string;
     includeImplementors?: boolean;
     limit?: number;
     offset?: number;
+    // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
+    config?: any;
   } = {},
-): object {
+) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const config = opts.config || loadConfig();
@@ -226,7 +232,7 @@ export function fnImpactData(
 
     const includeImplementors = opts.includeImplementors !== false;
 
-    const results = nodes.map((node: any) => {
+    const results = nodes.map((node) => {
       const { levels, totalDependents } = bfsTransitiveCallers(db, node.id, {
         noTests,
         maxDepth,
@@ -246,7 +252,7 @@ export function fnImpactData(
   }
 }
 
-// ─── diffImpactData helpers ─────────────────────────────────────────────
+// --- diffImpactData helpers ---
 
 /**
  * Walk up from repoRoot until a .git directory is found.
@@ -272,7 +278,7 @@ function findGitRoot(repoRoot: string): boolean {
 function runGitDiff(
   repoRoot: string,
   opts: { staged?: boolean; ref?: string },
-): { output?: string; error?: string } {
+): { output: string; error?: never } | { error: string; output?: never } {
   try {
     const args = opts.staged
       ? ['diff', '--cached', '--unified=0', '--no-color']
@@ -284,18 +290,15 @@ function runGitDiff(
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     return { output };
-  } catch (e: any) {
-    return { error: `Failed to run git diff: ${e.message}` };
+  } catch (e: unknown) {
+    return { error: `Failed to run git diff: ${(e as Error).message}` };
   }
 }
 
 /**
  * Parse raw git diff output into a changedRanges map and newFiles set.
  */
-function parseGitDiff(diffOutput: string): {
-  changedRanges: Map<string, Array<{ start: number; end: number }>>;
-  newFiles: Set<string>;
-} {
+function parseGitDiff(diffOutput: string) {
   const changedRanges = new Map<string, Array<{ start: number; end: number }>>();
   const newFiles = new Set<string>();
   let currentFile: string | null = null;
@@ -312,9 +315,9 @@ function parseGitDiff(diffOutput: string): {
     }
     const fileMatch = line.match(/^\+\+\+ b\/(.+)/);
     if (fileMatch) {
-      currentFile = fileMatch[1] ?? null;
-      if (currentFile && !changedRanges.has(currentFile)) changedRanges.set(currentFile, []);
-      if (currentFile && prevIsDevNull) newFiles.add(currentFile);
+      currentFile = fileMatch[1]!;
+      if (!changedRanges.has(currentFile)) changedRanges.set(currentFile, []);
+      if (prevIsDevNull) newFiles.add(currentFile!);
       prevIsDevNull = false;
       continue;
     }
@@ -322,7 +325,7 @@ function parseGitDiff(diffOutput: string): {
     if (hunkMatch && currentFile) {
       const start = parseInt(hunkMatch[1]!, 10);
       const count = parseInt(hunkMatch[2] || '1', 10);
-      changedRanges.get(currentFile)?.push({ start, end: start + count - 1 });
+      changedRanges.get(currentFile)!.push({ start, end: start + count - 1 });
     }
   }
 
@@ -333,21 +336,22 @@ function parseGitDiff(diffOutput: string): {
  * Find all function/method/class nodes whose line ranges overlap any changed range.
  */
 function findAffectedFunctions(
-  db: any,
+  db: BetterSqlite3Database,
   changedRanges: Map<string, Array<{ start: number; end: number }>>,
   noTests: boolean,
-): any[] {
-  const affectedFunctions: any[] = [];
+): NodeRow[] {
+  const affectedFunctions: NodeRow[] = [];
+  const defsStmt = cachedStmt(
+    _defsStmtCache,
+    db,
+    `SELECT * FROM nodes WHERE file = ? AND kind IN ('function', 'method', 'class') ORDER BY line`,
+  );
   for (const [file, ranges] of changedRanges) {
     if (noTests && isTestFile(file)) continue;
-    const defs = db
-      .prepare(
-        `SELECT * FROM nodes WHERE file = ? AND kind IN ('function', 'method', 'class') ORDER BY line`,
-      )
-      .all(file) as any[];
+    const defs = defsStmt.all(file) as NodeRow[];
     for (let i = 0; i < defs.length; i++) {
-      const def = defs[i];
-      const endLine = def.end_line || (defs[i + 1] ? defs[i + 1].line - 1 : 999999);
+      const def = defs[i]!;
+      const endLine = def.end_line || (defs[i + 1] ? defs[i + 1]!.line - 1 : 999999);
       for (const range of ranges) {
         if (range.start <= endLine && range.end >= def.line) {
           affectedFunctions.push(def);
@@ -363,15 +367,15 @@ function findAffectedFunctions(
  * Run BFS per affected function, collecting per-function results and the full affected set.
  */
 function buildFunctionImpactResults(
-  db: any,
-  affectedFunctions: any[],
+  db: BetterSqlite3Database,
+  affectedFunctions: NodeRow[],
   noTests: boolean,
   maxDepth: number,
   includeImplementors = true,
-): { functionResults: any[]; allAffected: Set<string> } {
+) {
   const allAffected = new Set<string>();
-  const functionResults = affectedFunctions.map((fn: any) => {
-    const edges: any[] = [];
+  const functionResults = affectedFunctions.map((fn) => {
+    const edges: Array<{ from: string; to: string }> = [];
     const idToKey = new Map<number, string>();
     idToKey.set(fn.id, `${fn.file}::${fn.name}:${fn.line}`);
 
@@ -379,11 +383,11 @@ function buildFunctionImpactResults(
       noTests,
       maxDepth,
       includeImplementors,
-      onVisit(c: any, parentId: number) {
+      onVisit(c, parentId) {
         allAffected.add(`${c.file}:${c.name}`);
         const callerKey = `${c.file}::${c.name}:${c.line}`;
         idToKey.set(c.id, callerKey);
-        edges.push({ from: idToKey.get(parentId), to: callerKey });
+        edges.push({ from: idToKey.get(parentId)!, to: callerKey });
       },
     });
 
@@ -406,11 +410,11 @@ function buildFunctionImpactResults(
  * Returns an empty array if the co_changes table is unavailable.
  */
 function lookupCoChanges(
-  db: any,
-  changedRanges: Map<string, any>,
+  db: BetterSqlite3Database,
+  changedRanges: Map<string, unknown>,
   affectedFiles: Set<string>,
   noTests: boolean,
-): any[] {
+) {
   try {
     db.prepare('SELECT 1 FROM co_changes LIMIT 1').get();
     const changedFilesList = [...changedRanges.keys()];
@@ -419,9 +423,9 @@ function lookupCoChanges(
       limit: 20,
       noTests,
     });
-    return coResults.filter((r: any) => !affectedFiles.has(r.file));
-  } catch (e: any) {
-    debug(`co_changes lookup skipped: ${e.message}`);
+    return coResults.filter((r: { file: string }) => !affectedFiles.has(r.file));
+  } catch (e: unknown) {
+    debug(`co_changes lookup skipped: ${(e as Error).message}`);
     return [];
   }
 }
@@ -431,10 +435,10 @@ function lookupCoChanges(
  * Returns null if no owners are found or lookup fails.
  */
 function lookupOwnership(
-  changedRanges: Map<string, any>,
+  changedRanges: Map<string, unknown>,
   affectedFiles: Set<string>,
   repoRoot: string,
-): { owners: object; affectedOwners: string[]; suggestedReviewers: string[] } | null {
+) {
   try {
     const allFilePaths = [...new Set([...changedRanges.keys(), ...affectedFiles])];
     const ownerResult = ownersForFiles(allFilePaths, repoRoot);
@@ -446,8 +450,8 @@ function lookupOwnership(
       };
     }
     return null;
-  } catch (e: any) {
-    debug(`CODEOWNERS lookup skipped: ${e.message}`);
+  } catch (e: unknown) {
+    debug(`CODEOWNERS lookup skipped: ${(e as Error).message}`);
     return null;
   }
 }
@@ -457,12 +461,13 @@ function lookupOwnership(
  * Returns `{ boundaryViolations, boundaryViolationCount }`.
  */
 function checkBoundaryViolations(
-  db: any,
-  changedRanges: Map<string, any>,
+  db: BetterSqlite3Database,
+  changedRanges: Map<string, unknown>,
   noTests: boolean,
+  // biome-ignore lint/suspicious/noExplicitAny: opts shape varies by caller
   opts: any,
   repoRoot: string,
-): { boundaryViolations: any[]; boundaryViolationCount: number } {
+) {
   try {
     const cfg = opts.config || loadConfig(repoRoot);
     const boundaryConfig = cfg.manifesto?.boundaries;
@@ -476,31 +481,32 @@ function checkBoundaryViolations(
         boundaryViolationCount: result.violationCount,
       };
     }
-  } catch (e: any) {
-    debug(`boundary check skipped: ${e.message}`);
+  } catch (e: unknown) {
+    debug(`boundary check skipped: ${(e as Error).message}`);
   }
   return { boundaryViolations: [], boundaryViolationCount: 0 };
 }
 
-// ─── diffImpactData ─────────────────────────────────────────────────────
+// --- diffImpactData ---
 
 /**
  * Fix #2: Shell injection vulnerability.
  * Uses execFileSync instead of execSync to prevent shell interpretation of user input.
  */
 export function diffImpactData(
-  customDbPath: string | undefined,
+  customDbPath: string,
   opts: {
     noTests?: boolean;
-    config?: any;
     depth?: number;
     staged?: boolean;
     ref?: string;
     includeImplementors?: boolean;
     limit?: number;
     offset?: number;
+    // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
+    config?: any;
   } = {},
-): object {
+) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
@@ -515,9 +521,9 @@ export function diffImpactData(
     }
 
     const gitResult = runGitDiff(repoRoot, opts);
-    if (gitResult.error) return { error: gitResult.error };
+    if ('error' in gitResult) return { error: gitResult.error };
 
-    if (!gitResult.output?.trim()) {
+    if (!gitResult.output.trim()) {
       return {
         changedFiles: 0,
         newFiles: [],
@@ -527,7 +533,7 @@ export function diffImpactData(
       };
     }
 
-    const { changedRanges, newFiles } = parseGitDiff(gitResult.output!);
+    const { changedRanges, newFiles } = parseGitDiff(gitResult.output);
 
     if (changedRanges.size === 0) {
       return {
@@ -587,26 +593,28 @@ export function diffImpactData(
 }
 
 export function diffImpactMermaid(
-  customDbPath: string | undefined,
+  customDbPath: string,
   opts: {
     noTests?: boolean;
-    config?: any;
     depth?: number;
     staged?: boolean;
     ref?: string;
     includeImplementors?: boolean;
     limit?: number;
     offset?: number;
+    // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
+    config?: any;
   } = {},
-): string | object {
+): string {
+  // biome-ignore lint/suspicious/noExplicitAny: paginateResult returns dynamic shape
   const data: any = diffImpactData(customDbPath, opts);
-  if (data.error) return data.error;
+  if ('error' in data) return data.error as string;
   if (data.changedFiles === 0 || data.affectedFunctions.length === 0) {
     return 'flowchart TB\n    none["No impacted functions detected"]';
   }
 
   const newFileSet = new Set(data.newFiles || []);
-  const lines: string[] = ['flowchart TB'];
+  const lines = ['flowchart TB'];
 
   // Assign stable Mermaid node IDs
   let nodeCounter = 0;
@@ -623,8 +631,8 @@ export function diffImpactMermaid(
   // Register all nodes (changed functions + their callers)
   for (const fn of data.affectedFunctions) {
     nodeId(`${fn.file}::${fn.name}:${fn.line}`, fn.name);
-    for (const callers of Object.values(fn.levels || {}) as any[][]) {
-      for (const c of callers) {
+    for (const callers of Object.values(fn.levels || {})) {
+      for (const c of callers as Array<{ name: string; file: string; line: number }>) {
         nodeId(`${c.file}::${c.name}:${c.line}`, c.name);
       }
     }
@@ -665,10 +673,10 @@ export function diffImpactMermaid(
   }
 
   // Group changed functions by file
-  const fileGroups = new Map<string, any[]>();
+  const fileGroups = new Map<string, typeof data.affectedFunctions>();
   for (const fn of data.affectedFunctions) {
     if (!fileGroups.has(fn.file)) fileGroups.set(fn.file, []);
-    fileGroups.get(fn.file)?.push(fn);
+    fileGroups.get(fn.file)!.push(fn);
   }
 
   // Emit changed-file subgraphs

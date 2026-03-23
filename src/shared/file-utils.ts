@@ -99,7 +99,7 @@ interface ExtractSignatureOpts {
   signatureGatherLines?: number;
 }
 
-interface Signature {
+export interface Signature {
   params: string | null;
   returnType: string | null;
 }
