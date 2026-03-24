@@ -18,9 +18,10 @@ let tmpDir;
 
 function copyFixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-scoped-'));
-  for (const file of fs.readdirSync(FIXTURE_DIR)) {
-    fs.copyFileSync(path.join(FIXTURE_DIR, file), path.join(dir, file));
-  }
+  fs.cpSync(FIXTURE_DIR, dir, {
+    recursive: true,
+    filter: (src) => path.basename(src) !== '.codegraph',
+  });
   return dir;
 }
 

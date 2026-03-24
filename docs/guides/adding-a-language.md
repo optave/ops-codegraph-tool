@@ -14,23 +14,23 @@ Codegraph uses a **dual-engine** design:
 | **WASM** | `web-tree-sitter` + pre-built `.wasm` grammars | Always available (baseline) |
 | **Native** | `napi-rs` + Rust tree-sitter crates | Optional; 5-10x faster; auto-fallback to WASM |
 
-Both engines produce the same `FileSymbols` structure, so graph building and
+Both engines produce the same `ExtractorOutput` structure, so graph building and
 queries are engine-agnostic. When adding a new language you implement the
-extraction logic **twice** — once in JavaScript (WASM) and once in Rust
+extraction logic **twice** — once in TypeScript (WASM) and once in Rust
 (native) — and a parity test guarantees they agree.
 
 ### The LANGUAGE_REGISTRY
 
-`LANGUAGE_REGISTRY` in `src/parser.js` is the **single source of truth** for all
-supported languages. Each entry declares:
+`LANGUAGE_REGISTRY` in `src/domain/parser.ts` is the **single source of truth**
+for all supported languages. Each entry declares:
 
-```js
+```ts
 {
-  id: 'go',                          // Language identifier
-  extensions: ['.go'],               // File extensions (auto-derives EXTENSIONS)
-  grammarFile: 'tree-sitter-go.wasm', // WASM grammar filename
-  extractor: extractGoSymbols,       // Extraction function reference
-  required: false,                   // true = crash if missing; false = skip gracefully
+  id: '<lang>',                            // LanguageId string
+  extensions: ['.<ext>'],                  // File extensions (auto-derives EXTENSIONS)
+  grammarFile: 'tree-sitter-<lang>.wasm',  // WASM grammar filename
+  extractor: extract<Lang>Symbols,         // Extraction function reference
+  required: false,                         // true = crash if missing; false = skip gracefully
 }
 ```
 
@@ -38,26 +38,31 @@ Adding a language to the WASM engine requires **one registry entry** plus an
 extractor function. Everything else — extension routing, parser loading, dispatch
 — is automatic.
 
-- `SUPPORTED_EXTENSIONS` (re-exported as `EXTENSIONS` in `constants.js`) is
-  **derived** from the registry. You never edit it manually.
+- `SUPPORTED_EXTENSIONS` (re-exported as `EXTENSIONS` in `shared/constants.ts`)
+  is **derived** from the registry. You never edit it manually.
 - `createParsers()` iterates the registry and builds a `Map<id, Parser>`.
 - `getParser()` uses an extension→registry lookup map (`_extToLang`).
 - `wasmExtractSymbols()` calls `entry.extractor(tree, filePath)` — no ternary chains.
-- `parseFilesAuto()` in `builder.js` handles all dispatch — no per-language routing needed.
+- `parseFilesAuto()` in `parser.ts` handles all dispatch — no per-language routing needed.
 
 ---
 
 ## Symbol Model
 
-Every language extractor must return this shape:
+Every language extractor must return `ExtractorOutput` (defined in `src/types.ts`):
 
-```
-FileSymbols {
-  definitions[]   – functions, methods, classes, interfaces, types
-  calls[]         – function / method invocations
-  imports[]       – module / file imports
-  classes[]       – extends / implements relationships
-  exports[]       – named exports (mainly JS/TS)
+```ts
+interface ExtractorOutput {
+  definitions: Definition[];      // functions, methods, classes, interfaces, types
+  calls: Call[];                  // function / method invocations
+  imports: Import[];              // module / file imports
+  classes: ClassRelation[];       // extends / implements relationships
+  exports: Export[];              // named exports (mainly JS/TS)
+  typeMap: Map<string, TypeMapEntry>;  // symbol type annotations
+  _tree?: TreeSitterTree;         // retained for CFG / dataflow analysis
+  _langId?: LanguageId;           // language identifier
+  _lineCount?: number;            // line count for metrics
+  // (dataflow, astNodes, _typeMapBackfilled are populated post-extraction — do not set)
 }
 ```
 
@@ -65,14 +70,21 @@ FileSymbols {
 
 | Structure | Fields | Notes |
 |-----------|--------|-------|
-| `Definition` | `name`, `kind`, `line`, `endLine`, `decorators?` | `kind` ∈ `SYMBOL_KINDS` (see below) |
-| `Call` | `name`, `line`, `dynamic?` | |
-| `Import` | `source`, `names[]`, `line`, `<lang>Import?` | Set a language flag like `cInclude: true` |
+| `Definition` | `name`, `kind`, `line`, `endLine?`, `children?`, `visibility?`, `decorators?` | `kind` ∈ symbol kinds (see below). Methods: `ClassName.methodName`. `children` for sub-declarations (params, properties). `visibility`: `'public'` \| `'private'` \| `'protected'` |
+| `Call` | `name`, `line`, `receiver?`, `dynamic?` | `receiver` for method calls (e.g. `obj` in `obj.method()`) |
+| `Import` | `source`, `names[]`, `line`, `typeOnly?`, `reexport?`, `wildcardReexport?`, `dynamicImport?`, `<lang><Keyword>?` | Set a language flag (see note below) |
 | `ClassRelation` | `name`, `extends?`, `implements?`, `line` | |
-| `ExportInfo` | `name`, `kind`, `line` | |
+| `Export` | `name`, `kind`, `line` | |
+| `TypeMapEntry` | `type`, `confidence` | Confidence 0-1 (typically 0.9 for native) |
+
+**Language import flags** use the language's idiomatic keyword, not a fixed
+suffix. Examples: `goImport`, `pythonImport`, `rustUse`, `csharpUsing`,
+`rubyRequire`, `phpUse`. Choose whichever name matches your language's import
+statement (e.g. `swiftImport`, `kotlinImport`, `zigImport`).
 
 **Symbol kinds:** `function`, `method`, `class`, `interface`, `type`, `struct`,
-`enum`, `trait`, `record`, `module`, `parameter`, `property`, `constant`. Use the language's native kind (e.g. Go
+`enum`, `trait`, `record`, `module`, `parameter`, `property`, `constant`
+(defined in `src/shared/kinds.ts`). Use the language's native kind (e.g. Go
 structs → `struct`, Rust traits → `trait`, Ruby modules → `module`).
 
 Methods inside a class use the `ClassName.methodName` naming convention.
@@ -117,35 +129,58 @@ npm run build:wasm
 This generates `grammars/tree-sitter-<lang>.wasm` (gitignored — built from
 devDeps on `npm install`).
 
-### 3. `src/parser.js` — add extractor and registry entry
+### 3. Add extractor and registry entry
 
-This is the only source file where you need to make changes on the JS side.
-Two things to do:
+Two things to do on the TypeScript side:
 
-#### 3a. Create `extract<Lang>Symbols(tree, filePath)`
+#### 3a. Create `src/extractors/<lang>.ts`
+
+Every language extractor lives in its own file under `src/extractors/` (e.g.
+`go.ts`, `python.ts`, `rust.ts`). Create `src/extractors/<lang>.ts` and
+re-export it from `src/extractors/index.ts`. Then:
+
+1. Add `extract<Lang>Symbols` to the **re-export block** at the top of
+   `src/domain/parser.ts` (`export { ... } from '../extractors/index.js'`) so the
+   extractor is available from `parser.ts` for backward compatibility.
+2. Add `extract<Lang>Symbols` to the **import block** directly below
+   (`import { ... } from '../extractors/index.js'`) so it is in scope within
+   `parser.ts` itself. (A `export { X } from` re-export does **not** make `X`
+   available in the current file — both blocks are required.)
+3. Reference the extractor function in the `LANGUAGE_REGISTRY` array
+   in `src/domain/parser.ts` (see Step 3c).
 
 Write a recursive AST walker that matches tree-sitter node types for your
-language. Copy the pattern from an existing extractor like `extractGoSymbols` or
-`extractRustSymbols`:
+language. Copy the pattern from an existing extractor like `extractGoSymbols` in
+`src/extractors/go.ts` or `extractRustSymbols` in `src/extractors/rust.ts`:
 
-```js
+```ts
+import type {
+  ExtractorOutput,
+  TreeSitterNode,
+  TreeSitterTree,
+} from '../types.js';
+import { /* helpers you need, e.g. findChild, nodeEndLine */ } from './helpers.js';
+
 /**
  * Extract symbols from <Lang> files.
  */
-export function extract<Lang>Symbols(tree, filePath) {
-  const definitions = [];
-  const calls = [];
-  const imports = [];
-  const classes = [];
-  const exports = [];
+export function extract<Lang>Symbols(tree: TreeSitterTree, _filePath: string): ExtractorOutput {
+  const ctx: ExtractorOutput = {
+    definitions: [],
+    calls: [],
+    imports: [],
+    classes: [],
+    exports: [],
+    typeMap: new Map(),
+  };
 
-  function walk(node) {
+  function walk(node: TreeSitterNode): void {
     switch (node.type) {
       // ── Definitions ──
       case '<function_node_type>': {
         const nameNode = node.childForFieldName('name');
         if (nameNode) {
-          definitions.push({
+          ctx.definitions.push({
             name: nameNode.text,
             kind: 'function',
             line: node.startPosition.row + 1,
@@ -164,11 +199,11 @@ export function extract<Lang>Symbols(tree, filePath) {
       // ── Imports ──
       case '<import_node_type>': {
         // ...
-        imports.push({
+        ctx.imports.push({
           source: '...',
           names: [...],
           line: node.startPosition.row + 1,
-          <lang>Import: true,        // language flag
+          <lang><Keyword>: true,     // e.g. goImport, rustUse, rubyRequire
         });
         break;
       }
@@ -177,17 +212,20 @@ export function extract<Lang>Symbols(tree, filePath) {
       case 'call_expression': {
         const fn = node.childForFieldName('function');
         if (fn && fn.type === 'identifier') {
-          calls.push({ name: fn.text, line: node.startPosition.row + 1 });
+          ctx.calls.push({ name: fn.text, line: node.startPosition.row + 1 });
         }
         break;
       }
     }
 
-    for (let i = 0; i < node.childCount; i++) walk(node.child(i));
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child) walk(child);
+    }
   }
 
   walk(tree.rootNode);
-  return { definitions, calls, imports, classes, exports };
+  return ctx;
 }
 ```
 
@@ -195,11 +233,34 @@ export function extract<Lang>Symbols(tree, filePath) {
 to explore AST node types for your language. Paste sample code and inspect the
 tree to find the right `node.type` strings.
 
-#### 3b. Add an entry to `LANGUAGE_REGISTRY`
+**Visibility helpers** are available in `src/extractors/helpers.ts`:
+- `goVisibility(name)` — uppercase → public (Go convention)
+- `rustVisibility(node)` — extract from `visibility_modifier` child
+- `pythonVisibility(name)` — `__name` → private, `_name` → protected
+- `extractModifierVisibility(node, modifierTypes?)` — general modifier extraction (Java, C#, PHP). `modifierTypes` is an optional `Set<string>` of node type names; defaults cover the most common cases
 
-Add your language to the `LANGUAGE_REGISTRY` array in `src/parser.js`:
+#### 3b. Extend the `LanguageId` union in `src/types.ts`
 
-```js
+`LanguageRegistryEntry.id` is typed as `LanguageId` — a closed string union in
+`src/types.ts`. Add your language to it before referencing it in the registry:
+
+```ts
+export type LanguageId =
+  | 'javascript' | 'typescript' | 'tsx'
+  | 'python' | 'go' | 'rust'
+  | 'java' | 'csharp' | 'ruby'
+  | 'php' | 'hcl'
+  | '<lang>';              // ← add your language here
+```
+
+Without this, TypeScript will reject your `LANGUAGE_REGISTRY` entry with
+`Type '"<lang>"' is not assignable to type 'LanguageId'`.
+
+#### 3c. Add an entry to `LANGUAGE_REGISTRY`
+
+Add your language to the `LANGUAGE_REGISTRY` array in `src/domain/parser.ts`:
+
+```ts
 {
   id: '<lang>',
   extensions: ['.<ext>'],
@@ -213,21 +274,21 @@ Set `required: false` so codegraph still works when the WASM grammar isn't
 available (e.g. in CI without `npm install`). Only JS/TS/TSX are `required: true`.
 
 That's it for the WASM engine. The registry automatically:
-- Adds `.<ext>` to `SUPPORTED_EXTENSIONS` (and `EXTENSIONS` in `constants.js`)
+- Adds `.<ext>` to `SUPPORTED_EXTENSIONS` (and `EXTENSIONS` in `shared/constants.ts`)
 - Registers the parser in `createParsers()`
 - Routes `getParser()` calls via the extension map
 - Dispatches to your extractor in `wasmExtractSymbols()`
-- Handles `builder.js` routing via `parseFilesAuto()`
+- Handles `parseFilesAuto()` dispatch in `parser.ts`
 
-**You do not need to edit `constants.js` or `builder.js`.**
+**You do not need to edit `shared/constants.ts` or `domain/graph/builder.ts`.**
 
-### 4. `src/parser.js` — update `normalizeNativeSymbols` (if needed)
+### 4. `src/domain/parser.ts` — update `patchNativeResult` (if needed)
 
-If your language's imports use a language-specific flag (e.g. `c_include`), add
-the camelCase mapping in `normalizeNativeSymbols`:
+If your language's imports use a language-specific flag (e.g. `pythonImport`,
+`rustUse`), add the camelCase mapping in `patchNativeResult()`:
 
-```js
-<lang>Import: i.<lang>Import ?? i.<lang>_import,
+```ts
+if (i.<lang><Keyword> === undefined) i.<lang><Keyword> = i.<lang>_<keyword>;
 ```
 
 ---
@@ -243,7 +304,7 @@ tree-sitter-<lang> = "0.x"
 
 ### 6. `crates/codegraph-core/src/parser_registry.rs` — register the language
 
-Three changes in this file:
+Four changes in this file:
 
 ```rust
 // 1. Add enum variant
@@ -267,6 +328,14 @@ impl LanguageKind {
         match self {
             // ... existing ...
             Self::<Lang> => tree_sitter_<lang>::LANGUAGE.into(),
+        }
+    }
+
+    // 4. Return the language ID string (used by dataflow/CFG rules)
+    pub fn lang_id_str(&self) -> &'static str {
+        match self {
+            // ... existing ...
+            Self::<Lang> => "<lang>",
         }
     }
 }
@@ -336,11 +405,12 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 // 1. Declare module
 pub mod <lang>;
 
-// 2. Add dispatch arm in extract_symbols()
-pub fn extract_symbols(...) -> FileSymbols {
+// 2. Add dispatch arm in extract_symbols_with_opts()
+//    (extract_symbols() simply delegates to this function — do NOT modify it)
+pub fn extract_symbols_with_opts(..., include_ast_nodes: bool) -> FileSymbols {
     match lang {
         // ... existing ...
-        LanguageKind::<Lang> => <lang>::<Lang>Extractor.extract(tree, source, file_path),
+        LanguageKind::<Lang> => <lang>::<Lang>Extractor.extract_with_opts(tree, source, file_path, include_ast_nodes),
     }
 }
 ```
@@ -350,7 +420,7 @@ pub fn extract_symbols(...) -> FileSymbols {
 If your imports need a language-specific flag, add it to the `Import` struct:
 
 ```rust
-pub <lang>_import: Option<bool>,
+pub <lang>_<keyword>: Option<bool>,  // e.g. go_import, rust_use, ruby_require
 ```
 
 And update `Import::new()` to default it to `None`.
@@ -365,7 +435,8 @@ Follow the pattern from `tests/parsers/go.test.js`:
 
 ```js
 import { describe, it, expect, beforeAll } from 'vitest';
-import { createParsers, extract<Lang>Symbols } from '../../src/parser.js';
+import { createParsers } from '../../src/domain/parser.js';
+import { extract<Lang>Symbols } from '../../src/extractors/<lang>.js';
 
 describe('<Lang> parser', () => {
   let parsers;
@@ -393,7 +464,8 @@ describe('<Lang> parser', () => {
 ```
 
 > **Note:** `parsers` is a `Map` — use `parsers.get('<lang>')`, not
-> `parsers.<lang>Parser`.
+> `parsers.<lang>Parser`. Test imports use `.js` extension for vitest resolution
+> of TypeScript sources.
 
 **Recommended test cases:**
 - Function definitions (regular, with parameters)
@@ -402,6 +474,7 @@ describe('<Lang> parser', () => {
 - Import/include directives
 - Function calls (direct and method calls)
 - Type definitions / aliases
+- Visibility extraction (if applicable)
 - Forward declarations (if applicable)
 
 ### 11. Parity tests — native vs WASM
@@ -441,16 +514,18 @@ codegraph query someFunction
 |---|------|--------|--------|
 | 1 | `package.json` | WASM | Add `tree-sitter-<lang>` devDependency |
 | 2 | `scripts/build-wasm.js` | WASM | Add grammar entry to array |
-| 3 | `src/parser.js` | WASM | Create `extract<Lang>Symbols()` + add `LANGUAGE_REGISTRY` entry |
-| 4 | `src/parser.js` | WASM | Update `normalizeNativeSymbols` (if language flag needed) |
-| 5 | `crates/codegraph-core/Cargo.toml` | Native | Add tree-sitter crate |
-| 6 | `crates/.../parser_registry.rs` | Native | Register enum + extension + grammar |
-| 7 | `crates/.../extractors/<lang>.rs` | Native | Implement `SymbolExtractor` trait |
-| 8 | `crates/.../extractors/mod.rs` | Native | Declare module + dispatch arm |
-| 9 | `crates/.../types.rs` | Native | Add language flag to `Import` (if needed) |
-| 10 | `tests/parsers/<lang>.test.js` | WASM | Parser extraction tests |
-| 11 | `tests/engines/parity.test.js` | Both | Cross-engine validation snippets |
+| 3 | `src/extractors/<lang>.ts` + `src/domain/parser.ts` | WASM | Create extractor in `src/extractors/`, re-export via `index.ts`, add to `parser.ts` re-export block **and** import block, add `LANGUAGE_REGISTRY` entry |
+| 4 | `src/types.ts` | Both | Add `'<lang>'` to the `LanguageId` union; add language-specific flag to `Import` if needed |
+| 5 | `src/domain/parser.ts` | WASM | Update `patchNativeResult` (if language flag needed) |
+| 6 | `crates/codegraph-core/Cargo.toml` | Native | Add tree-sitter crate |
+| 7 | `crates/.../parser_registry.rs` | Native | Register enum + extension + grammar + `lang_id_str` |
+| 8 | `crates/.../extractors/<lang>.rs` | Native | Implement `SymbolExtractor` trait |
+| 9 | `crates/.../extractors/mod.rs` | Native | Declare module + dispatch arm in `extract_symbols_with_opts()` |
+| 10 | `crates/.../types.rs` | Native | Add language flag to `Import` (if needed) |
+| 11 | `tests/parsers/<lang>.test.js` | WASM | Parser extraction tests |
+| 12 | `tests/engines/parity.test.js` | Both | Cross-engine validation snippets |
 
 **Files you do NOT need to touch:**
-- `src/constants.js` — `EXTENSIONS` is derived from the registry automatically
-- `src/builder.js` — `parseFilesAuto()` uses the registry, no manual routing
+- `src/shared/constants.ts` — `EXTENSIONS` is derived from the registry automatically
+- `src/shared/kinds.ts` — symbol kinds are universal across languages
+- `src/domain/graph/builder.ts` — build pipeline uses `parseFilesAuto()` from `parser.ts`, no manual routing

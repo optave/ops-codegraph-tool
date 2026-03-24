@@ -15,9 +15,10 @@ let tmpDir;
 
 beforeAll(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-pipeline-'));
-  for (const file of fs.readdirSync(FIXTURE_DIR)) {
-    fs.copyFileSync(path.join(FIXTURE_DIR, file), path.join(tmpDir, file));
-  }
+  fs.cpSync(FIXTURE_DIR, tmpDir, {
+    recursive: true,
+    filter: (src) => path.basename(src) !== '.codegraph',
+  });
 });
 
 afterAll(() => {
