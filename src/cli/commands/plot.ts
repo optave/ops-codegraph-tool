@@ -3,6 +3,23 @@ import path from 'node:path';
 import { openGraph } from '../shared/open-graph.js';
 import type { CommandDefinition } from '../types.js';
 
+interface PlotConfig {
+  layout?: { algorithm?: string; direction?: string };
+  physics?: { enabled?: boolean; nodeDistance?: number };
+  nodeColors?: Record<string, string>;
+  roleColors?: Record<string, string>;
+  colorBy?: string;
+  edgeStyle?: { color?: string; smooth?: boolean };
+  filter?: { kinds?: string[] | null; roles?: string[] | null; files?: string[] | null };
+  title?: string;
+  seedStrategy?: string;
+  seedCount?: number;
+  clusterBy?: string;
+  sizeBy?: string;
+  overlays?: { complexity?: boolean; risk?: boolean };
+  riskThresholds?: { highBlastRadius?: number; lowMI?: number };
+}
+
 export const command: CommandDefinition = {
   name: 'plot',
   description: 'Generate an interactive HTML dependency graph viewer',
@@ -27,12 +44,12 @@ export const command: CommandDefinition = {
     const os = await import('node:os');
     const { db, close } = openGraph(opts as { db?: string });
 
-    let plotCfg: any;
+    let plotCfg: PlotConfig;
     let html: string;
     try {
       if (opts.config) {
         try {
-          plotCfg = JSON.parse(fs.readFileSync(opts.config as string, 'utf-8'));
+          plotCfg = JSON.parse(fs.readFileSync(opts.config as string, 'utf-8')) as PlotConfig;
         } catch (e: unknown) {
           const message = e instanceof Error ? e.message : String(e);
           console.error(`Failed to load config: ${message}`);
@@ -40,7 +57,7 @@ export const command: CommandDefinition = {
           return;
         }
       } else {
-        plotCfg = loadPlotConfig(process.cwd());
+        plotCfg = loadPlotConfig(process.cwd()) as PlotConfig;
       }
 
       if (opts.cluster) plotCfg.clusterBy = opts.cluster;
@@ -51,9 +68,8 @@ export const command: CommandDefinition = {
       if (opts.overlay) {
         const parts = (opts.overlay as string).split(',').map((s) => s.trim());
         if (!plotCfg.overlays) plotCfg.overlays = {};
-        const overlays = plotCfg.overlays as any;
-        if (parts.includes('complexity')) overlays.complexity = true;
-        if (parts.includes('risk')) overlays.risk = true;
+        if (parts.includes('complexity')) plotCfg.overlays.complexity = true;
+        if (parts.includes('risk')) plotCfg.overlays.risk = true;
       }
 
       html = generatePlotHTML(db, {
