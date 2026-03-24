@@ -1,7 +1,8 @@
 import { defineConfig } from 'vitest/config';
 
-const [major] = process.versions.node.split('.').map(Number);
+const [major, minor] = process.versions.node.split('.').map(Number);
 const existing = process.env.NODE_OPTIONS || '';
+const supportsStripTypes = major > 22 || (major === 22 && minor >= 6);
 const stripFlag = major >= 23 ? '--strip-types' : '--experimental-strip-types';
 
 export default defineConfig({
@@ -15,7 +16,7 @@ export default defineConfig({
     env: {
       NODE_OPTIONS: [
         existing,
-        !existing.includes('--experimental-strip-types') && !existing.includes('--strip-types')
+        supportsStripTypes && !existing.includes('--experimental-strip-types') && !existing.includes('--strip-types')
           ? stripFlag
           : '',
       ].filter(Boolean).join(' '),

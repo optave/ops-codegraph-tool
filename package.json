@@ -26,10 +26,10 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.6"
   },
   "scripts": {
-    "build": "tsc && node -e \"require('fs').writeFileSync('dist/index.cjs',require('fs').readFileSync('src/index.cjs','utf8').replace('./index.ts','./index.js'))\"",
+    "build": "tsc && node -e \"require('fs').writeFileSync('dist/index.cjs',require('fs').readFileSync('src/index.cjs','utf8').replaceAll('./index.ts','./index.js'))\"",
     "build:wasm": "node --experimental-strip-types scripts/build-wasm.ts",
     "typecheck": "tsc --noEmit",
     "verify-imports": "node --experimental-strip-types scripts/verify-imports.ts",

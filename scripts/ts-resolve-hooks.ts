@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 export async function resolve(
   specifier: string,
   context: { parentURL?: string; conditions: string[] },
-  nextResolve: Function,
+  nextResolve: (specifier: string, context?: { parentURL?: string; conditions: string[] }) => Promise<{ url: string; shortCircuit?: boolean }>,
 ): Promise<{ url: string; shortCircuit?: boolean }> {
   try {
     return await nextResolve(specifier, context);
