@@ -1,9 +1,9 @@
 import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND, VALID_ROLES } from '../../domain/queries.js';
 import { ConfigError } from '../../shared/errors.js';
-import type { CommandDefinition } from '../types.js';
+import type { CliContext, CommandDefinition, CommandOpts } from '../types.js';
 
-function validateFilters(opts: any): void {
+function validateFilters(opts: CommandOpts): void {
   if (opts.kind && !(EVERY_SYMBOL_KIND as readonly string[]).includes(opts.kind)) {
     throw new ConfigError(`Invalid kind "${opts.kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
   }
@@ -21,7 +21,7 @@ function parseWeights(raw: unknown): Record<string, number> | undefined {
   }
 }
 
-async function runHotspots(opts: any, ctx: any): Promise<void> {
+async function runHotspots(opts: CommandOpts, ctx: CliContext): Promise<void> {
   const { hotspotsData, formatHotspots } = await import('../../presentation/structure.js');
   const metric = opts.sort === 'risk' ? 'fan-in' : opts.sort;
   const data = hotspotsData(opts.db, {

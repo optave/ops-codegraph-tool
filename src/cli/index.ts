@@ -70,7 +70,7 @@ function registerCommand(parent: Command, def: CommandDefinition): Command {
   if (def.queryOpts) applyQueryOpts(cmd);
 
   for (const opt of def.options || []) {
-    cmd.option(...(opt as [string, string]));
+    cmd.option(...(opt as Parameters<Command['option']>));
   }
 
   if (def.execute) {

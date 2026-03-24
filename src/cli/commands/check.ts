@@ -2,15 +2,15 @@ import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 import { ConfigError } from '../../shared/errors.js';
 import { config } from '../shared/options.js';
-import type { CommandDefinition } from '../types.js';
+import type { CommandDefinition, CommandOpts } from '../types.js';
 
-function validateKind(kind: any): void {
+function validateKind(kind: CommandOpts): void {
   if (kind && !(EVERY_SYMBOL_KIND as readonly string[]).includes(kind)) {
     throw new ConfigError(`Invalid kind "${kind}". Valid: ${EVERY_SYMBOL_KIND.join(', ')}`);
   }
 }
 
-async function runManifesto(opts: any, qOpts: any): Promise<void> {
+async function runManifesto(opts: CommandOpts, qOpts: CommandOpts): Promise<void> {
   validateKind(opts.kind);
   const { manifesto } = await import('../../presentation/manifesto.js');
   manifesto(opts.db, {
