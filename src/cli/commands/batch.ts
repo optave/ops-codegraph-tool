@@ -6,6 +6,21 @@ import { batch } from '../../presentation/batch.js';
 import { ConfigError } from '../../shared/errors.js';
 import type { CommandDefinition } from '../types.js';
 
+interface MultiBatchItem {
+  command: string;
+  target: string;
+  opts?: Record<string, unknown>;
+}
+
+function isMultiBatch(targets: unknown[]): targets is MultiBatchItem[] {
+  return (
+    targets.length > 0 &&
+    typeof targets[0] === 'object' &&
+    targets[0] !== null &&
+    'command' in targets[0]
+  );
+}
+
 export const command: CommandDefinition = {
   name: 'batch <command> [targets...]',
   description: `Run a query against multiple targets in one call. Output is always JSON.\nValid commands: ${Object.keys(BATCH_COMMANDS).join(', ')}`,
@@ -60,10 +75,8 @@ export const command: CommandDefinition = {
       noTests: ctx.resolveNoTests(opts),
     };
 
-    const isMulti =
-      targets.length > 0 && typeof targets[0] === 'object' && (targets[0] as any).command;
-    if (isMulti) {
-      const data = multiBatchData(targets as any, opts.db, batchOpts);
+    if (isMultiBatch(targets)) {
+      const data = multiBatchData(targets as MultiBatchItem[], opts.db, batchOpts);
       console.log(JSON.stringify(data, null, 2));
     } else {
       batch(command, targets as string[], opts.db, batchOpts);
