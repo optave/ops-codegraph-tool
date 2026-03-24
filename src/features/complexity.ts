@@ -22,6 +22,7 @@ import type {
   BetterSqlite3Database,
   CodegraphConfig,
   ComplexityRules,
+  HalsteadDerivedMetrics,
   HalsteadRules,
   LOCMetrics,
   TreeSitterNode,
@@ -35,23 +36,10 @@ const COMPLEXITY_EXTENSIONS = buildExtensionSet(COMPLEXITY_RULES);
 
 // ─── Halstead Metrics Computation ─────────────────────────────────────────
 
-interface HalsteadMetrics {
-  n1: number;
-  n2: number;
-  bigN1: number;
-  bigN2: number;
-  vocabulary: number;
-  length: number;
-  volume: number;
-  difficulty: number;
-  effort: number;
-  bugs: number;
-}
-
 export function computeHalsteadMetrics(
   functionNode: TreeSitterNode,
   language: string,
-): HalsteadMetrics | null {
+): HalsteadDerivedMetrics | null {
   const rules = HALSTEAD_RULES.get(language) as HalsteadRules | undefined;
   if (!rules) return null;
 
@@ -293,7 +281,7 @@ interface AllMetricsResult {
   cognitive: number;
   cyclomatic: number;
   maxNesting: number;
-  halstead: HalsteadMetrics | null;
+  halstead: HalsteadDerivedMetrics | null;
   loc: LOCMetrics;
   mi: number;
 }
@@ -321,7 +309,7 @@ export function computeAllMetrics(
     cognitive: number;
     cyclomatic: number;
     maxNesting: number;
-    halstead: HalsteadMetrics | null;
+    halstead: HalsteadDerivedMetrics | null;
   };
 
   // The visitor's finish() in function-level mode returns the raw metrics
@@ -358,7 +346,7 @@ interface FileSymbols {
       cyclomatic: number;
       maxNesting?: number;
       maintainabilityIndex?: number;
-      halstead?: HalsteadMetrics | null;
+      halstead?: HalsteadDerivedMetrics | null;
       loc?: LOCMetrics | null;
     };
   }>;
