@@ -174,13 +174,13 @@ Every variable or placeholder in pseudocode must have a preceding assignment. If
 **Wrong:** "Run `<detected-test-command>`"
 **Correct:**
 ````markdown
-Detect the test runner:
+Detect the test runner and run in a single block:
 ```bash
 if [ -f "pnpm-lock.yaml" ]; then TEST_CMD="pnpm test"
 elif [ -f "yarn.lock" ]; then TEST_CMD="yarn test"
 else TEST_CMD="npm test"; fi
+$TEST_CMD
 ```
-Then run: `$TEST_CMD`
 ````
 
 ### Pattern 7: No internal contradictions
@@ -223,11 +223,17 @@ If the skill performs dangerous operations (from Phase 0 discovery), add explici
 - Handle network failures gracefully (don't crash the pipeline)
 - Add timeout limits
 
-**Exit condition:** Every dangerous operation identified in Phase: Discovery has a corresponding guard in the SKILL.md.
-
 ### For code modifications:
 - Run tests after changes: detect test runner per Phase: Write the Skill Body, Pattern 6
-- Run lint after changes: detect lint runner the same way (check for `biome.json` → `npx biome check`, `eslint.config.*` → `npx eslint`, fallback → `npm run lint`)
+- Run lint after changes: detect lint runner:
+  ```bash
+  if [ -f "biome.json" ]; then LINT_CMD="npx biome check"
+  elif ls eslint.config.* 2>/dev/null | grep -q .; then LINT_CMD="npx eslint ."
+  else LINT_CMD="npm run lint"; fi
+  $LINT_CMD
+  ```
+
+**Exit condition:** Every dangerous operation identified in Phase: Discovery has a corresponding guard in the SKILL.md.
 
 ---
 
