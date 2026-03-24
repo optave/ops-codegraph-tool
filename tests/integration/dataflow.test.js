@@ -323,10 +323,14 @@ describe('empty dataflow', () => {
   test('dataflowPathData returns warning', () => {
     const data = dataflowPathData('lonely', 'lonely', emptyDbPath);
     expect(data.warning).toBeDefined();
+    expect(typeof data.warning).toBe('string');
+    expect(data.warning.length).toBeGreaterThan(0);
   });
 
   test('dataflowImpactData returns warning', () => {
     const data = dataflowImpactData('lonely', emptyDbPath);
     expect(data.warning).toBeDefined();
+    expect(typeof data.warning).toBe('string');
+    expect(data.warning.length).toBeGreaterThan(0);
   });
 });

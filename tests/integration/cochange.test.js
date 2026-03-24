@@ -192,6 +192,8 @@ describe('coChangeData + coChangeTopData', () => {
     // Query for a nonexistent file
     const data = coChangeData('nonexistent.js', dbPath);
     expect(data.error).toBeDefined();
+    expect(typeof data.error).toBe('string');
+    expect(data.error.length).toBeGreaterThan(0);
   });
 
   test('meta is included in response', () => {
