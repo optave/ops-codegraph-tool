@@ -42,6 +42,7 @@ export default defineConfig({
   test: {
     globals: true,
     testTimeout: 30000,
+    hookTimeout: 30000,
     exclude: ['**/node_modules/**', '**/.git/**', '.claude/**'],
     // Register the .js→.ts resolve loader for Node's native ESM resolver.
     // This covers require() calls and child processes spawned by tests.
