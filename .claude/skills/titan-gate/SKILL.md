@@ -230,6 +230,8 @@ Compare directory cohesion scores from `structure`:
 Compare drift warnings between snapshot and current. A1 already covers new drift warnings — A4 only reports resolved ones:
 - If any drift warning that was present in the snapshot is absent from `$TITAN_ARCH_DIR/current-drift.json` → note as positive: "Symbol `<name>` community drift resolved — architecture improved"
 
+> **Note:** A3 and A4 compare the pre-forge baseline against the *committed* state at gate-run time (the graph DB does not include staged-but-uncommitted changes). They catch cumulative architectural drift across all forge commits made so far, not the individual staged change being validated in this gate run. A1 and A2 use staged-change-aware data (diff-impact) and catch per-change violations.
+
 ### Cleanup (MUST run even on failure or early exit)
 
 This cleanup block MUST execute regardless of the verdict — including FAIL paths and early exits. Run it before proceeding to Step 9 (verdict aggregation), not after.
