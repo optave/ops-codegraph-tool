@@ -175,7 +175,8 @@ Summarize all changes made:
    - For conflicts in other files, resolve them by keeping both the npm fixes and the pre-existing changes.
    If tests pass and `STASH_REF` is empty: no action needed — the npm changes are good and no stash entry exists to clean up
 4. If tests fail and `STASH_REF` is non-empty:
-   - Restore the saved manifests: `git stash pop $STASH_REF`
+   - Reset manifests to HEAD first (undoes npm changes): `git checkout HEAD -- package.json package-lock.json`
+   - Then re-apply the pre-existing changes cleanly: `git stash pop $STASH_REF`
    - Restore `node_modules/` to match the reverted lock file: `npm ci`
    - Report what failed
 5. If tests fail and `STASH_REF` is empty:
@@ -188,6 +189,6 @@ Summarize all changes made:
 - **Never run `npm audit fix --force`** — breaking changes need human review
 - **Never remove a dependency** without asking the user, even if it appears unused — flag it in the report instead
 - **Always run tests** after any auto-fix changes
-- **If `--fix` causes test failures**, restore manifests from the saved state (`git stash pop $STASH_REF` if `STASH_REF` is non-empty, or `git checkout` if nothing was stashed) then run `npm ci` to resync `node_modules/`, and report the failure
+- **If `--fix` causes test failures**, first reset manifests to HEAD (`git checkout HEAD -- package.json package-lock.json`), then re-apply pre-existing changes (`git stash pop $STASH_REF` if `STASH_REF` is non-empty, or no-op if nothing was stashed), then run `npm ci` to resync `node_modules/`, and report the failure
 - Treat `optionalDependencies` separately — they're expected to fail on some platforms
 - The report goes in `generated/deps-audit/` — create the directory if it doesn't exist
