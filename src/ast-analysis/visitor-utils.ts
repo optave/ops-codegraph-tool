@@ -4,10 +4,40 @@
  * Extracted from dataflow.js to be reusable across the visitor framework.
  */
 
+import type { TreeSitterNode } from '../types.js';
+
+interface ParamInfo {
+  name: string;
+  index: number;
+}
+
+interface LanguageRules {
+  nameField: string;
+  varAssignedFnParent?: string;
+  pairFnParent?: string;
+  assignmentFnParent?: string;
+  assignLeftField?: string;
+  paramIdentifier: string;
+  paramWrapperTypes: Set<string>;
+  defaultParamType?: string;
+  restParamType?: string;
+  objectDestructType?: string;
+  shorthandPropPattern?: string;
+  pairPatternType?: string;
+  arrayDestructType?: string;
+  extraIdentifierTypes?: Set<string>;
+  callFunctionField: string;
+  memberNode: string;
+  memberPropertyField: string;
+  memberObjectField: string;
+  optionalChainNode?: string;
+  extractParamName?(node: TreeSitterNode): string[] | null;
+}
+
 /**
  * Truncate a string to a maximum length.
  */
-export function truncate(str, max = 120) {
+export function truncate(str: string, max = 120): string {
   if (!str) return '';
   return str.length > max ? `${str.slice(0, max)}…` : str;
 }
@@ -15,7 +45,7 @@ export function truncate(str, max = 120) {
 /**
  * Get the name of a function node from the AST using rules.
  */
-export function functionName(fnNode, rules) {
+export function functionName(fnNode: TreeSitterNode | null, rules: LanguageRules): string | null {
   if (!fnNode) return null;
   const nameNode = fnNode.childForFieldName(rules.nameField);
   if (nameNode) return nameNode.text;
@@ -31,7 +61,7 @@ export function functionName(fnNode, rules) {
       return keyNode ? keyNode.text : null;
     }
     if (rules.assignmentFnParent && parent.type === rules.assignmentFnParent) {
-      const left = parent.childForFieldName(rules.assignLeftField);
+      const left = parent.childForFieldName(rules.assignLeftField!);
       return left ? left.text : null;
     }
   }
@@ -41,9 +71,12 @@ export function functionName(fnNode, rules) {
 /**
  * Extract parameter names and indices from a formal_parameters node.
  */
-export function extractParams(paramsNode, rules) {
+export function extractParams(
+  paramsNode: TreeSitterNode | null,
+  rules: LanguageRules,
+): ParamInfo[] {
   if (!paramsNode) return [];
-  const result = [];
+  const result: ParamInfo[] = [];
   let index = 0;
   for (const child of paramsNode.namedChildren) {
     const names = extractParamNames(child, rules);
@@ -58,7 +91,7 @@ export function extractParams(paramsNode, rules) {
 /**
  * Extract parameter names from a single parameter node.
  */
-export function extractParamNames(node, rules) {
+export function extractParamNames(node: TreeSitterNode | null, rules: LanguageRules): string[] {
   if (!node) return [];
   const t = node.type;
 
@@ -89,7 +122,7 @@ export function extractParamNames(node, rules) {
   }
 
   if (rules.objectDestructType && t === rules.objectDestructType) {
-    const names = [];
+    const names: string[] = [];
     for (const child of node.namedChildren) {
       if (rules.shorthandPropPattern && child.type === rules.shorthandPropPattern) {
         names.push(child.text);
@@ -104,7 +137,7 @@ export function extractParamNames(node, rules) {
   }
 
   if (rules.arrayDestructType && t === rules.arrayDestructType) {
-    const names = [];
+    const names: string[] = [];
     for (const child of node.namedChildren) {
       names.push(...extractParamNames(child, rules));
     }
@@ -117,7 +150,7 @@ export function extractParamNames(node, rules) {
 /**
  * Check if a node type is identifier-like for this language.
  */
-export function isIdent(nodeType, rules) {
+export function isIdent(nodeType: string, rules: LanguageRules): boolean {
   if (nodeType === 'identifier' || nodeType === rules.paramIdentifier) return true;
   return rules.extraIdentifierTypes ? rules.extraIdentifierTypes.has(nodeType) : false;
 }
@@ -125,7 +158,7 @@ export function isIdent(nodeType, rules) {
 /**
  * Resolve the name a call expression is calling using rules.
  */
-export function resolveCalleeName(callNode, rules) {
+export function resolveCalleeName(callNode: TreeSitterNode, rules: LanguageRules): string | null {
   const fn = callNode.childForFieldName(rules.callFunctionField);
   if (!fn) {
     const nameNode = callNode.childForFieldName('name') || callNode.childForFieldName('method');
@@ -153,7 +186,7 @@ export function resolveCalleeName(callNode, rules) {
 /**
  * Get the receiver (object) of a member expression using rules.
  */
-export function memberReceiver(memberExpr, rules) {
+export function memberReceiver(memberExpr: TreeSitterNode, rules: LanguageRules): string | null {
   const obj = memberExpr.childForFieldName(rules.memberObjectField);
   if (!obj) return null;
   if (isIdent(obj.type, rules)) return obj.text;
@@ -164,7 +197,11 @@ export function memberReceiver(memberExpr, rules) {
 /**
  * Collect all identifier names referenced within a node.
  */
-export function collectIdentifiers(node, out, rules) {
+export function collectIdentifiers(
+  node: TreeSitterNode | null,
+  out: string[],
+  rules: LanguageRules,
+): void {
   if (!node) return;
   if (isIdent(node.type, rules)) {
     out.push(node.text);

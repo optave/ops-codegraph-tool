@@ -1,12 +1,14 @@
-/**
- * Rust — AST analysis rules.
- */
-
+import type {
+  CfgRulesConfig,
+  ComplexityRules,
+  DataflowRulesConfig,
+  HalsteadRules,
+} from '../../types.js';
 import { makeCfgRules, makeDataflowRules } from '../shared.js';
 
 // ─── Complexity ───────────────────────────────────────────────────────────
 
-export const complexity = {
+export const complexity: ComplexityRules = {
   branchNodes: new Set([
     'if_expression',
     'else_clause',
@@ -40,7 +42,7 @@ export const complexity = {
 
 // ─── Halstead ─────────────────────────────────────────────────────────────
 
-export const halstead = {
+export const halstead: HalsteadRules = {
   operatorLeafTypes: new Set([
     '+',
     '-',
@@ -123,7 +125,7 @@ export const halstead = {
 
 // ─── CFG ──────────────────────────────────────────────────────────────────
 
-export const cfg = makeCfgRules({
+export const cfg: CfgRulesConfig = makeCfgRules({
   ifNode: 'if_expression',
   ifNodes: new Set(['if_let_expression']),
   elseClause: 'else_clause',
@@ -142,7 +144,7 @@ export const cfg = makeCfgRules({
 
 // ─── Dataflow ─────────────────────────────────────────────────────────────
 
-export const dataflow = makeDataflowRules({
+export const dataflow: DataflowRulesConfig = makeDataflowRules({
   functionNodes: new Set(['function_item', 'closure_expression']),
   returnNode: 'return_expression',
   varDeclaratorNode: 'let_declaration',
@@ -170,4 +172,4 @@ export const dataflow = makeDataflowRules({
 
 // ─── AST Node Types ───────────────────────────────────────────────────────
 
-export const astTypes = null;
+export const astTypes: Record<string, string> | null = null;

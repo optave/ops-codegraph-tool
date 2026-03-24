@@ -1,12 +1,14 @@
-/**
- * Ruby — AST analysis rules.
- */
-
+import type {
+  CfgRulesConfig,
+  ComplexityRules,
+  DataflowRulesConfig,
+  HalsteadRules,
+} from '../../types.js';
 import { makeCfgRules, makeDataflowRules } from '../shared.js';
 
 // ─── Complexity ───────────────────────────────────────────────────────────
 
-export const complexity = {
+export const complexity: ComplexityRules = {
   branchNodes: new Set([
     'if',
     'elsif',
@@ -34,7 +36,7 @@ export const complexity = {
 
 // ─── Halstead ─────────────────────────────────────────────────────────────
 
-export const halstead = {
+export const halstead: HalsteadRules = {
   operatorLeafTypes: new Set([
     '+',
     '-',
@@ -128,7 +130,7 @@ export const halstead = {
 
 // ─── CFG ──────────────────────────────────────────────────────────────────
 
-export const cfg = makeCfgRules({
+export const cfg: CfgRulesConfig = makeCfgRules({
   ifNode: 'if',
   elifNode: 'elsif',
   elseClause: 'else',
@@ -151,7 +153,7 @@ export const cfg = makeCfgRules({
 
 // ─── Dataflow ─────────────────────────────────────────────────────────────
 
-export const dataflow = makeDataflowRules({
+export const dataflow: DataflowRulesConfig = makeDataflowRules({
   functionNodes: new Set(['method', 'singleton_method', 'lambda']),
   paramListField: 'parameters',
   returnNode: 'return',
@@ -201,4 +203,4 @@ export const dataflow = makeDataflowRules({
 
 // ─── AST Node Types ───────────────────────────────────────────────────────
 
-export const astTypes = null;
+export const astTypes: Record<string, string> | null = null;

@@ -5,6 +5,8 @@
  * all stateless math that can be reused by visitor-based and standalone paths.
  */
 
+import type { HalsteadDerivedMetrics, LOCMetrics, TreeSitterNode } from '../types.js';
+
 // ─── Halstead Derived Metrics ─────────────────────────────────────────────
 
 /**
@@ -14,7 +16,10 @@
  * @param {Map<string, number>} operands  - operand text → count
  * @returns {{ n1: number, n2: number, bigN1: number, bigN2: number, vocabulary: number, length: number, volume: number, difficulty: number, effort: number, bugs: number }}
  */
-export function computeHalsteadDerived(operators, operands) {
+export function computeHalsteadDerived(
+  operators: Map<string, number>,
+  operands: Map<string, number>,
+): HalsteadDerivedMetrics {
   const n1 = operators.size;
   const n2 = operands.size;
   let bigN1 = 0;
@@ -47,7 +52,7 @@ export function computeHalsteadDerived(operators, operands) {
 
 const C_STYLE_PREFIXES = ['//', '/*', '*', '*/'];
 
-const COMMENT_PREFIXES = new Map([
+const COMMENT_PREFIXES = new Map<string, string[]>([
   ['javascript', C_STYLE_PREFIXES],
   ['typescript', C_STYLE_PREFIXES],
   ['tsx', C_STYLE_PREFIXES],
@@ -67,7 +72,7 @@ const COMMENT_PREFIXES = new Map([
  * @param {string} [language] - Language ID (falls back to C-style prefixes)
  * @returns {{ loc: number, sloc: number, commentLines: number }}
  */
-export function computeLOCMetrics(functionNode, language) {
+export function computeLOCMetrics(functionNode: TreeSitterNode, language?: string): LOCMetrics {
   const text = functionNode.text;
   const lines = text.split('\n');
   const loc = lines.length;
@@ -103,7 +108,12 @@ export function computeLOCMetrics(functionNode, language) {
  * @param {number} [commentRatio] - Comment ratio (0-1), optional
  * @returns {number} Normalized MI (0-100)
  */
-export function computeMaintainabilityIndex(volume, cyclomatic, sloc, commentRatio) {
+export function computeMaintainabilityIndex(
+  volume: number,
+  cyclomatic: number,
+  sloc: number,
+  commentRatio?: number,
+): number {
   const safeVolume = Math.max(volume, 1);
   const safeSLOC = Math.max(sloc, 1);
 

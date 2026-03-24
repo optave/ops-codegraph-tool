@@ -1,15 +1,4 @@
-/**
- * Visitor: Extract dataflow information (define-use chains, arg flows, mutations).
- *
- * Replaces the standalone extractDataflow() visit logic in dataflow.js with a
- * visitor that plugs into the unified walkWithVisitors framework.
- *
- * NOTE: The original dataflow walk uses `node.namedChildren` while the visitor
- * framework uses `node.child(i)` (all children). This visitor handles both
- * named and unnamed children correctly since the classification logic only
- * cares about specific node types/fields, not about traversal order.
- */
-
+import type { EnterNodeResult, TreeSitterNode, Visitor, VisitorContext } from '../../types.js';
 import {
   collectIdentifiers,
   extractParamNames,
@@ -21,24 +10,92 @@ import {
   truncate,
 } from '../visitor-utils.js';
 
-// ── Scope helpers ───────────────────────────────────────────────────────
+// biome-ignore lint/suspicious/noExplicitAny: dataflow rules are opaque language-specific objects
+type AnyRules = any;
 
-function currentScope(scopeStack) {
-  return scopeStack.length > 0 ? scopeStack[scopeStack.length - 1] : null;
+interface ScopeEntry {
+  funcName: string | null;
+  funcNode: TreeSitterNode;
+  params: Map<string, number>;
+  locals: Map<string, { type: string; callee?: string }>;
 }
 
-function findBinding(name, scopeStack) {
+interface Binding {
+  type: string;
+  index?: number;
+  source?: { type: string; callee?: string } | null;
+  funcName: string | null;
+}
+
+interface DataflowParam {
+  funcName: string;
+  paramName: string;
+  paramIndex: number;
+  line: number;
+}
+
+interface DataflowReturnEntry {
+  funcName: string;
+  expression: string;
+  referencedNames: string[];
+  line: number;
+}
+
+interface DataflowAssignment {
+  varName: string;
+  callerFunc: string;
+  sourceCallName: string;
+  expression: string;
+  line: number;
+}
+
+interface DataflowArgFlow {
+  callerFunc: string;
+  calleeName: string;
+  argIndex: number;
+  argName: string;
+  binding: Binding;
+  confidence: number;
+  expression: string;
+  line: number;
+}
+
+interface DataflowMutation {
+  funcName: string;
+  receiverName: string;
+  binding: Binding;
+  mutatingExpr: string;
+  line: number;
+}
+
+interface DataflowResultInternal {
+  parameters: DataflowParam[];
+  returns: DataflowReturnEntry[];
+  assignments: DataflowAssignment[];
+  argFlows: DataflowArgFlow[];
+  mutations: DataflowMutation[];
+}
+
+function currentScope(scopeStack: ScopeEntry[]): ScopeEntry | undefined {
+  return scopeStack[scopeStack.length - 1];
+}
+
+function findBinding(name: string, scopeStack: ScopeEntry[]): Binding | null {
   for (let i = scopeStack.length - 1; i >= 0; i--) {
-    const scope = scopeStack[i];
+    const scope = scopeStack[i]!;
     if (scope.params.has(name))
-      return { type: 'param', index: scope.params.get(name), funcName: scope.funcName };
+      return { type: 'param', index: scope.params.get(name) as number, funcName: scope.funcName };
     if (scope.locals.has(name))
-      return { type: 'local', source: scope.locals.get(name), funcName: scope.funcName };
+      return {
+        type: 'local',
+        source: scope.locals.get(name) as { type: string; callee?: string },
+        funcName: scope.funcName,
+      };
   }
   return null;
 }
 
-function bindingConfidence(binding) {
+function bindingConfidence(binding: Binding | null): number {
   if (!binding) return 0.5;
   if (binding.type === 'param') return 1.0;
   if (binding.type === 'local') {
@@ -49,29 +106,33 @@ function bindingConfidence(binding) {
   return 0.5;
 }
 
-// ── Node helpers ────────────────────────────────────────────────────────
-
-function unwrapAwait(node, rules) {
+function unwrapAwait(node: TreeSitterNode, rules: AnyRules): TreeSitterNode {
   if (rules.awaitNode && node.type === rules.awaitNode) {
     return node.namedChildren[0] || node;
   }
   return node;
 }
 
-function isCall(node, isCallNode) {
-  return node && isCallNode(node.type);
+function isCall(node: TreeSitterNode | null, isCallNode: (t: string) => boolean): boolean {
+  return node != null && isCallNode(node.type);
 }
 
-// ── Node handlers ───────────────────────────────────────────────────────
-
-function handleVarDeclarator(node, rules, scopeStack, assignments, isCallNode) {
+function handleVarDeclarator(
+  node: TreeSitterNode,
+  rules: AnyRules,
+  scopeStack: ScopeEntry[],
+  assignments: DataflowAssignment[],
+  isCallNode: (t: string) => boolean,
+): void {
   let nameNode = node.childForFieldName(rules.varNameField);
-  let valueNode = rules.varValueField ? node.childForFieldName(rules.varValueField) : null;
+  let valueNode: TreeSitterNode | null = rules.varValueField
+    ? node.childForFieldName(rules.varValueField)
+    : null;
 
   if (!valueNode && rules.equalsClauseType) {
     for (const child of node.namedChildren) {
       if (child.type === rules.equalsClauseType) {
-        valueNode = child.childForFieldName('value') || child.namedChildren[0];
+        valueNode = child.childForFieldName('value') || child.namedChildren[0] || null;
         break;
       }
     }
@@ -87,8 +148,10 @@ function handleVarDeclarator(node, rules, scopeStack, assignments, isCallNode) {
   }
 
   if (rules.expressionListType) {
-    if (nameNode?.type === rules.expressionListType) nameNode = nameNode.namedChildren[0];
-    if (valueNode?.type === rules.expressionListType) valueNode = valueNode.namedChildren[0];
+    if (nameNode && nameNode.type === rules.expressionListType)
+      nameNode = nameNode.namedChildren[0] ?? null;
+    if (valueNode && valueNode.type === rules.expressionListType)
+      valueNode = valueNode.namedChildren[0] ?? null;
   }
 
   const scope = currentScope(scopeStack);
@@ -133,7 +196,14 @@ function handleVarDeclarator(node, rules, scopeStack, assignments, isCallNode) {
   }
 }
 
-function handleAssignment(node, rules, scopeStack, assignments, mutations, isCallNode) {
+function handleAssignment(
+  node: TreeSitterNode,
+  rules: AnyRules,
+  scopeStack: ScopeEntry[],
+  assignments: DataflowAssignment[],
+  mutations: DataflowMutation[],
+  isCallNode: (t: string) => boolean,
+): void {
   const left = node.childForFieldName(rules.assignLeftField);
   const right = node.childForFieldName(rules.assignRightField);
   const scope = currentScope(scopeStack);
@@ -174,7 +244,12 @@ function handleAssignment(node, rules, scopeStack, assignments, mutations, isCal
   }
 }
 
-function handleCallExpr(node, rules, scopeStack, argFlows) {
+function handleCallExpr(
+  node: TreeSitterNode,
+  rules: AnyRules,
+  scopeStack: ScopeEntry[],
+  argFlows: DataflowArgFlow[],
+): void {
   const callee = resolveCalleeName(node, rules);
   const argsNode = node.childForFieldName(rules.callArgsField);
   const scope = currentScope(scopeStack);
@@ -218,13 +293,19 @@ function handleCallExpr(node, rules, scopeStack, argFlows) {
   }
 }
 
-function handleExprStmtMutation(node, rules, scopeStack, mutations, isCallNode) {
+function handleExprStmtMutation(
+  node: TreeSitterNode,
+  rules: AnyRules,
+  scopeStack: ScopeEntry[],
+  mutations: DataflowMutation[],
+  isCallNode: (t: string) => boolean,
+): void {
   if (rules.mutatingMethods.size === 0) return;
   const expr = node.namedChildren[0];
   if (!expr || !isCall(expr, isCallNode)) return;
 
-  let methodName = null;
-  let receiver = null;
+  let methodName: string | null = null;
+  let receiver: string | null = null;
 
   const fn = expr.childForFieldName(rules.callFunctionField);
   if (fn && fn.type === rules.memberNode) {
@@ -259,15 +340,18 @@ function handleExprStmtMutation(node, rules, scopeStack, mutations, isCallNode) 
   }
 }
 
-// ── Return statement handler ────────────────────────────────────────────
-
-function handleReturn(node, rules, scopeStack, returns) {
-  if (node.parent?.type === rules.returnNode) return; // keyword token, not statement
+function handleReturn(
+  node: TreeSitterNode,
+  rules: AnyRules,
+  scopeStack: ScopeEntry[],
+  returns: DataflowReturnEntry[],
+): void {
+  if (node.parent?.type === rules.returnNode) return;
 
   const scope = currentScope(scopeStack);
   if (scope?.funcName) {
     const expr = node.namedChildren[0];
-    const referencedNames = [];
+    const referencedNames: string[] = [];
     if (expr) collectIdentifiers(expr, referencedNames, rules);
     returns.push({
       funcName: scope.funcName,
@@ -278,33 +362,31 @@ function handleReturn(node, rules, scopeStack, returns) {
   }
 }
 
-// ── Visitor factory ─────────────────────────────────────────────────────
+export function createDataflowVisitor(rules: AnyRules): Visitor {
+  const isCallNode: (t: string) => boolean = rules.callNodes
+    ? (t: string) => rules.callNodes.has(t)
+    : (t: string) => t === rules.callNode;
 
-/**
- * Create a dataflow visitor for use with walkWithVisitors.
- *
- * @param {object} rules - DATAFLOW_RULES for the language
- * @returns {Visitor}
- */
-export function createDataflowVisitor(rules) {
-  const isCallNode = rules.callNodes ? (t) => rules.callNodes.has(t) : (t) => t === rules.callNode;
-
-  const parameters = [];
-  const returns = [];
-  const assignments = [];
-  const argFlows = [];
-  const mutations = [];
-  const scopeStack = [];
+  const parameters: DataflowParam[] = [];
+  const returns: DataflowReturnEntry[] = [];
+  const assignments: DataflowAssignment[] = [];
+  const argFlows: DataflowArgFlow[] = [];
+  const mutations: DataflowMutation[] = [];
+  const scopeStack: ScopeEntry[] = [];
 
   return {
     name: 'dataflow',
     functionNodeTypes: rules.functionNodes,
 
-    enterFunction(funcNode, _funcName, _context) {
+    enterFunction(
+      funcNode: TreeSitterNode,
+      _funcName: string | null,
+      _context: VisitorContext,
+    ): void {
       const name = functionName(funcNode, rules);
       const paramsNode = funcNode.childForFieldName(rules.paramListField);
       const paramList = extractParams(paramsNode, rules);
-      const paramMap = new Map();
+      const paramMap = new Map<string, number>();
       for (const p of paramList) {
         paramMap.set(p.name, p.index);
         if (name) {
@@ -319,11 +401,15 @@ export function createDataflowVisitor(rules) {
       scopeStack.push({ funcName: name, funcNode, params: paramMap, locals: new Map() });
     },
 
-    exitFunction(_funcNode, _funcName, _context) {
+    exitFunction(
+      _funcNode: TreeSitterNode,
+      _funcName: string | null,
+      _context: VisitorContext,
+    ): void {
       scopeStack.pop();
     },
 
-    enterNode(node, _context) {
+    enterNode(node: TreeSitterNode, _context: VisitorContext): EnterNodeResult | undefined {
       const t = node.type;
 
       if (rules.functionNodes.has(t)) return;
@@ -357,7 +443,7 @@ export function createDataflowVisitor(rules) {
       }
     },
 
-    finish() {
+    finish(): DataflowResultInternal {
       return { parameters, returns, assignments, argFlows, mutations };
     },
   };

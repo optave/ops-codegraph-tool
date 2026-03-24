@@ -1,9 +1,9 @@
-/**
- * Assembled rule maps for all AST analysis modules.
- *
- * Re-exports per-language rules as Maps keyed by language ID.
- */
-
+import type {
+  CfgRulesConfig,
+  ComplexityRules,
+  DataflowRulesConfig,
+  HalsteadRules,
+} from '../../types.js';
 import * as csharp from './csharp.js';
 import * as go from './go.js';
 import * as java from './java.js';
@@ -15,7 +15,7 @@ import * as rust from './rust.js';
 
 // ─── Complexity Rules ─────────────────────────────────────────────────────
 
-export const COMPLEXITY_RULES = new Map([
+export const COMPLEXITY_RULES: Map<string, ComplexityRules> = new Map([
   ['javascript', javascript.complexity],
   ['typescript', javascript.complexity],
   ['tsx', javascript.complexity],
@@ -30,7 +30,7 @@ export const COMPLEXITY_RULES = new Map([
 
 // ─── Halstead Rules ───────────────────────────────────────────────────────
 
-export const HALSTEAD_RULES = new Map([
+export const HALSTEAD_RULES: Map<string, HalsteadRules> = new Map([
   ['javascript', javascript.halstead],
   ['typescript', javascript.halstead],
   ['tsx', javascript.halstead],
@@ -45,7 +45,7 @@ export const HALSTEAD_RULES = new Map([
 
 // ─── CFG Rules ────────────────────────────────────────────────────────────
 
-export const CFG_RULES = new Map([
+export const CFG_RULES: Map<string, CfgRulesConfig> = new Map([
   ['javascript', javascript.cfg],
   ['typescript', javascript.cfg],
   ['tsx', javascript.cfg],
@@ -60,7 +60,7 @@ export const CFG_RULES = new Map([
 
 // ─── Dataflow Rules ──────────────────────────────────────────────────────
 
-export const DATAFLOW_RULES = new Map([
+export const DATAFLOW_RULES: Map<string, DataflowRulesConfig> = new Map([
   ['javascript', javascript.dataflow],
   ['typescript', javascript.dataflow],
   ['tsx', javascript.dataflow],
@@ -75,8 +75,8 @@ export const DATAFLOW_RULES = new Map([
 
 // ─── AST Type Maps ───────────────────────────────────────────────────────
 
-export const AST_TYPE_MAPS = new Map([
-  ['javascript', javascript.astTypes],
-  ['typescript', javascript.astTypes],
-  ['tsx', javascript.astTypes],
+export const AST_TYPE_MAPS: Map<string, Record<string, string>> = new Map([
+  ['javascript', javascript.astTypes as Record<string, string>],
+  ['typescript', javascript.astTypes as Record<string, string>],
+  ['tsx', javascript.astTypes as Record<string, string>],
 ]);

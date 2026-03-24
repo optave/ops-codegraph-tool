@@ -9,23 +9,16 @@
  *
  * The walker maintains shared context (nestingLevel, scopeStack, currentFunction)
  * so individual visitors don't need to track traversal state themselves.
- *
- * @typedef {object} VisitorContext
- * @property {number}  nestingLevel    - Current nesting depth (for complexity)
- * @property {object}  currentFunction - Enclosing function node (or null)
- * @property {string}  langId          - Language ID
- * @property {Array}   scopeStack      - Function scope stack [{funcName, funcNode, params, locals}]
- *
- * @typedef {object} Visitor
- * @property {string}   name
- * @property {function} [init](langId, rules)         - Called once before the walk
- * @property {function} [enterNode](node, context)     - Called entering each node; return { skipChildren: true } to skip this visitor's hooks for descendants
- * @property {function} [exitNode](node, context)      - Called leaving each node
- * @property {function} [enterFunction](funcNode, funcName, context) - Called entering a function
- * @property {function} [exitFunction](funcNode, funcName, context)  - Called leaving a function
- * @property {function} [finish]()                     - Called after the walk; return collected data
- * @property {Set}      [functionNodeTypes]            - Extra function node types this visitor cares about
  */
+
+import type {
+  ScopeEntry,
+  TreeSitterNode,
+  Visitor,
+  VisitorContext,
+  WalkOptions,
+  WalkResults,
+} from '../types.js';
 
 /**
  * Walk an AST root with multiple visitors in a single DFS pass.
@@ -39,10 +32,15 @@
  * @param {function} [options.getFunctionName] - (funcNode) => string|null
  * @returns {object} Map of visitor.name → finish() result
  */
-export function walkWithVisitors(rootNode, visitors, langId, options = {}) {
+export function walkWithVisitors(
+  rootNode: TreeSitterNode,
+  visitors: Visitor[],
+  langId: string,
+  options: WalkOptions = {},
+): WalkResults {
   const {
-    functionNodeTypes = new Set(),
-    nestingNodeTypes = new Set(),
+    functionNodeTypes = new Set<string>(),
+    nestingNodeTypes = new Set<string>(),
     getFunctionName = () => null,
   } = options;
 
@@ -60,8 +58,8 @@ export function walkWithVisitors(rootNode, visitors, langId, options = {}) {
   }
 
   // Shared context object (mutated during walk)
-  const scopeStack = [];
-  const context = {
+  const scopeStack: ScopeEntry[] = [];
+  const context: VisitorContext = {
     nestingLevel: 0,
     currentFunction: null,
     langId,
@@ -70,14 +68,14 @@ export function walkWithVisitors(rootNode, visitors, langId, options = {}) {
 
   // Track which visitors have requested skipChildren at each depth
   // Key: visitor index, Value: depth at which skip was requested
-  const skipDepths = new Map();
+  const skipDepths = new Map<number, number>();
 
-  function walk(node, depth) {
+  function walk(node: TreeSitterNode | null, depth: number): void {
     if (!node) return;
 
     const type = node.type;
     const isFunction = allFuncTypes.has(type);
-    let funcName = null;
+    let funcName: string | null = null;
 
     // Function boundary: enter
     if (isFunction) {
@@ -85,7 +83,7 @@ export function walkWithVisitors(rootNode, visitors, langId, options = {}) {
       context.currentFunction = node;
       scopeStack.push({ funcName, funcNode: node, params: new Map(), locals: new Map() });
       for (let i = 0; i < visitors.length; i++) {
-        const v = visitors[i];
+        const v = visitors[i]!;
         if (v.enterFunction && !isSkipped(i, depth)) {
           v.enterFunction(node, funcName, context);
         }
@@ -94,7 +92,7 @@ export function walkWithVisitors(rootNode, visitors, langId, options = {}) {
 
     // enterNode hooks
     for (let i = 0; i < visitors.length; i++) {
-      const v = visitors[i];
+      const v = visitors[i]!;
       if (v.enterNode && !isSkipped(i, depth)) {
         const result = v.enterNode(node, context);
         if (result?.skipChildren) {
@@ -117,7 +115,7 @@ export function walkWithVisitors(rootNode, visitors, langId, options = {}) {
 
     // exitNode hooks
     for (let i = 0; i < visitors.length; i++) {
-      const v = visitors[i];
+      const v = visitors[i]!;
       if (v.exitNode && !isSkipped(i, depth)) {
         v.exitNode(node, context);
       }
@@ -133,18 +131,18 @@ export function walkWithVisitors(rootNode, visitors, langId, options = {}) {
     // Function boundary: exit
     if (isFunction) {
       for (let i = 0; i < visitors.length; i++) {
-        const v = visitors[i];
+        const v = visitors[i]!;
         if (v.exitFunction && !isSkipped(i, depth)) {
           v.exitFunction(node, funcName, context);
         }
       }
       scopeStack.pop();
       context.currentFunction =
-        scopeStack.length > 0 ? scopeStack[scopeStack.length - 1].funcNode : null;
+        scopeStack.length > 0 ? scopeStack[scopeStack.length - 1]!.funcNode : null;
     }
   }
 
-  function isSkipped(visitorIndex, currentDepth) {
+  function isSkipped(visitorIndex: number, currentDepth: number): boolean {
     const skipAt = skipDepths.get(visitorIndex);
     // Skipped if skip was requested at a shallower (or equal) depth
     // We skip descendants, not the node itself, so skip when currentDepth > skipAt
@@ -154,7 +152,7 @@ export function walkWithVisitors(rootNode, visitors, langId, options = {}) {
   walk(rootNode, 0);
 
   // Collect results
-  const results = {};
+  const results: WalkResults = {};
   for (const v of visitors) {
     results[v.name] = v.finish ? v.finish() : undefined;
   }

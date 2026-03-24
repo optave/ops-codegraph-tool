@@ -1,14 +1,14 @@
-/**
- * JavaScript / TypeScript / TSX — AST analysis rules.
- *
- * Shared across: javascript, typescript, tsx language IDs.
- */
-
+import type {
+  CfgRulesConfig,
+  ComplexityRules,
+  DataflowRulesConfig,
+  HalsteadRules,
+} from '../../types.js';
 import { makeCfgRules, makeDataflowRules } from '../shared.js';
 
 // ─── Complexity ───────────────────────────────────────────────────────────
 
-export const complexity = {
+export const complexity: ComplexityRules = {
   branchNodes: new Set([
     'if_statement',
     'else_clause',
@@ -51,7 +51,7 @@ export const complexity = {
 
 // ─── Halstead ─────────────────────────────────────────────────────────────
 
-export const halstead = {
+export const halstead: HalsteadRules = {
   operatorLeafTypes: new Set([
     // Arithmetic
     '+',
@@ -160,7 +160,7 @@ export const halstead = {
 
 // ─── CFG ──────────────────────────────────────────────────────────────────
 
-export const cfg = makeCfgRules({
+export const cfg: CfgRulesConfig = makeCfgRules({
   ifNode: 'if_statement',
   elseClause: 'else_clause',
   forNodes: new Set(['for_statement', 'for_in_statement']),
@@ -205,7 +205,7 @@ const JS_TS_MUTATING = new Set([
   'clear',
 ]);
 
-export const dataflow = makeDataflowRules({
+export const dataflow: DataflowRulesConfig = makeDataflowRules({
   functionNodes: new Set([
     'function_declaration',
     'method_definition',
@@ -236,7 +236,7 @@ export const dataflow = makeDataflowRules({
 
 // ─── AST Node Types ───────────────────────────────────────────────────────
 
-export const astTypes = {
+export const astTypes: Record<string, string> | null = {
   new_expression: 'new',
   throw_statement: 'throw',
   await_expression: 'await',

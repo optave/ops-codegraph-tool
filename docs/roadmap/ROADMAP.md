@@ -1080,7 +1080,7 @@ npm workspaces (`package.json` `workspaces`), `pnpm-workspace.yaml`, and `lerna.
 
 ## Phase 5 -- TypeScript Migration
 
-> **Status:** In Progress — 76 of 283 source files migrated (~27%), 207 `.js` files remaining
+> **Status:** In Progress — 94 of 283 source files migrated (~33%), 189 `.js` files remaining
 
 **Goal:** Migrate the codebase from plain JavaScript to TypeScript, leveraging the clean module boundaries established in Phase 3. Incremental module-by-module migration starting from leaf modules inward.
 
@@ -1149,11 +1149,11 @@ Migrate modules that implement domain logic and Phase 3 interfaces. Some migrate
 
 ### 5.5 -- Orchestration & Public API Migration (In Progress)
 
-Migrate top-level orchestration, features, and entry points. Some migrated via [#555](https://github.com/optave/codegraph/pull/555), 159 files remaining.
+Migrate top-level orchestration, features, and entry points. Some migrated via [#555](https://github.com/optave/codegraph/pull/555), 141 files remaining.
 
-**Migrated:** `domain/graph/builder.ts` + `context.ts` + `helpers.ts` + `pipeline.ts`, `domain/graph/watcher.ts`, `domain/search/{generator,index,models}.ts`, `mcp/{index,middleware,server,tool-registry}.ts`, `features/export.ts`, `index.ts`
+**Migrated:** `domain/graph/builder.ts` + `context.ts` + `helpers.ts` + `pipeline.ts`, `domain/graph/watcher.ts`, `domain/search/{generator,index,models}.ts`, `mcp/{index,middleware,server,tool-registry}.ts`, `features/export.ts`, `index.ts`, `ast-analysis/` (all 18 files — engine, metrics, shared, visitor, visitor-utils, 9 language rules, 4 visitors)
 
-**Remaining (159):**
+**Remaining (141):**
 
 | Module | Files | Notes |
 |--------|-------|-------|
@@ -1161,7 +1161,6 @@ Migrate top-level orchestration, features, and entry points. Some migrated via [
 | `mcp/tools/` | 36 | Individual MCP tool handlers + barrel |
 | `presentation/` | 28 | Presentation formatters (14 files), `queries-cli/` (7 files), sequence-renderer, viewer, export, etc. |
 | `features/` | 21 | audit, batch, boundaries, cfg, check, cochange, communities, complexity, dataflow, flow, graph-enrichment, manifesto, owners, sequence, snapshot, structure, triage, ast, branch-compare, `shared/find-nodes` |
-| `ast-analysis/` | 18 | AST analysis framework, visitors (4), language-specific rules (9), engine, metrics, shared, visitor-utils |
 | `index.js` | 1 | Public API exports (stale — `.ts` exists) |
 
 **Stale `.js` counterparts to delete (13 files):** `domain/graph/builder.js`, `domain/graph/builder/{context,helpers,pipeline}.js`, `domain/graph/watcher.js`, `domain/search/{generator,index,models}.js`, `features/export.js`, `mcp/{index,middleware,server,tool-registry}.js` — these have `.ts` counterparts already

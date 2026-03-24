@@ -1,65 +1,75 @@
-/**
- * Visitor: Compute cognitive/cyclomatic complexity, max nesting, and Halstead metrics.
- *
- * Replaces the computeAllMetrics() DFS walk in complexity.js with a visitor that
- * plugs into the unified walkWithVisitors framework. Operates per-function:
- * resets accumulators on enterFunction, emits results on exitFunction.
- */
-
+import type { EnterNodeResult, TreeSitterNode, Visitor, VisitorContext } from '../../types.js';
 import {
   computeHalsteadDerived,
   computeLOCMetrics,
   computeMaintainabilityIndex,
 } from '../metrics.js';
 
-// ── Halstead classification ─────────────────────────────────────────────
+// biome-ignore lint/suspicious/noExplicitAny: complexity/halstead rules are opaque language-specific objects
+type AnyRules = any;
 
-function classifyHalstead(node, hRules, acc) {
+interface ComplexityAcc {
+  cognitive: number;
+  cyclomatic: number;
+  maxNesting: number;
+  operators: Map<string, number> | null;
+  operands: Map<string, number> | null;
+  halsteadSkipDepth: number;
+}
+
+interface PerFunctionResult {
+  funcNode: TreeSitterNode;
+  funcName: string | null;
+  metrics: ReturnType<typeof collectResult>;
+}
+
+function classifyHalstead(node: TreeSitterNode, hRules: AnyRules, acc: ComplexityAcc): void {
   const type = node.type;
   if (hRules.skipTypes.has(type)) acc.halsteadSkipDepth++;
   if (acc.halsteadSkipDepth > 0) return;
 
-  if (hRules.compoundOperators.has(type)) {
+  if (hRules.compoundOperators.has(type) && acc.operators) {
     acc.operators.set(type, (acc.operators.get(type) || 0) + 1);
   }
   if (node.childCount === 0) {
-    if (hRules.operatorLeafTypes.has(type)) {
+    if (hRules.operatorLeafTypes.has(type) && acc.operators) {
       acc.operators.set(type, (acc.operators.get(type) || 0) + 1);
-    } else if (hRules.operandLeafTypes.has(type)) {
+    } else if (hRules.operandLeafTypes.has(type) && acc.operands) {
       const text = node.text;
       acc.operands.set(text, (acc.operands.get(text) || 0) + 1);
     }
   }
 }
 
-// ── Branch complexity classification ────────────────────────────────────
-
-function classifyBranchNode(node, type, nestingLevel, cRules, acc) {
-  // Pattern A: else clause wraps if (JS/C#/Rust)
+function classifyBranchNode(
+  node: TreeSitterNode,
+  type: string,
+  nestingLevel: number,
+  cRules: AnyRules,
+  acc: ComplexityAcc,
+): void {
   if (cRules.elseNodeType && type === cRules.elseNodeType) {
     const firstChild = node.namedChild(0);
     if (firstChild && firstChild.type === cRules.ifNodeType) {
-      // else-if: the if_statement child handles its own increment
       return;
     }
     acc.cognitive++;
     return;
   }
 
-  // Pattern B: explicit elif node (Python/Ruby/PHP)
   if (cRules.elifNodeType && type === cRules.elifNodeType) {
     acc.cognitive++;
     acc.cyclomatic++;
     return;
   }
 
-  // Detect else-if via Pattern A or C
   let isElseIf = false;
   if (type === cRules.ifNodeType) {
     if (cRules.elseViaAlternative) {
       isElseIf =
         node.parent?.type === cRules.ifNodeType &&
-        node.parent.childForFieldName('alternative')?.id === node.id;
+        // biome-ignore lint/suspicious/noExplicitAny: tree-sitter node.id exists at runtime but not in our interface
+        (node.parent!.childForFieldName('alternative') as any)?.id === (node as any).id;
     } else if (cRules.elseNodeType) {
       isElseIf = node.parent?.type === cRules.elseNodeType;
     }
@@ -71,7 +81,6 @@ function classifyBranchNode(node, type, nestingLevel, cRules, acc) {
     return;
   }
 
-  // Regular branch node
   acc.cognitive += 1 + nestingLevel;
   acc.cyclomatic++;
 
@@ -80,27 +89,41 @@ function classifyBranchNode(node, type, nestingLevel, cRules, acc) {
   }
 }
 
-// ── Plain-else detection (Pattern C: Go/Java) ──────────────────────────
-
-function classifyPlainElse(node, type, cRules, acc) {
+function classifyPlainElse(
+  node: TreeSitterNode,
+  type: string,
+  cRules: AnyRules,
+  acc: ComplexityAcc,
+): void {
   if (
     cRules.elseViaAlternative &&
     type !== cRules.ifNodeType &&
     node.parent?.type === cRules.ifNodeType &&
-    node.parent.childForFieldName('alternative')?.id === node.id
+    // biome-ignore lint/suspicious/noExplicitAny: tree-sitter node.id exists at runtime but not in our interface
+    (node.parent!.childForFieldName('alternative') as any)?.id === (node as any).id
   ) {
     acc.cognitive++;
   }
 }
 
-// ── Result collection ───────────────────────────────────────────────────
-
-function collectResult(funcNode, acc, hRules, langId) {
+function collectResult(
+  funcNode: TreeSitterNode | { text: string },
+  acc: ComplexityAcc,
+  hRules: AnyRules | null | undefined,
+  langId: string | null,
+): {
+  cognitive: number;
+  cyclomatic: number;
+  maxNesting: number;
+  halstead: ReturnType<typeof computeHalsteadDerived> | null;
+  loc: ReturnType<typeof computeLOCMetrics>;
+  mi: number;
+} {
   const halstead =
     hRules && acc.operators && acc.operands
       ? computeHalsteadDerived(acc.operators, acc.operands)
       : null;
-  const loc = computeLOCMetrics(funcNode, langId);
+  const loc = computeLOCMetrics(funcNode as TreeSitterNode, langId ?? undefined);
   const volume = halstead ? halstead.volume : 0;
   const commentRatio = loc.loc > 0 ? loc.commentLines / loc.loc : 0;
   const mi = computeMaintainabilityIndex(volume, acc.cyclomatic, loc.sloc, commentRatio);
@@ -115,7 +138,7 @@ function collectResult(funcNode, acc, hRules, langId) {
   };
 }
 
-function resetAccumulators(hRules) {
+function resetAccumulators(hRules: AnyRules | null | undefined): ComplexityAcc {
   return {
     cognitive: 0,
     cyclomatic: 1,
@@ -126,35 +149,28 @@ function resetAccumulators(hRules) {
   };
 }
 
-// ── Visitor factory ─────────────────────────────────────────────────────
-
-/**
- * Create a complexity visitor for use with walkWithVisitors.
- *
- * When used in file-level mode (walking an entire file), this visitor collects
- * per-function metrics using enterFunction/exitFunction hooks. When used in
- * function-level mode (walking a single function node), it collects one result.
- *
- * @param {object} cRules  - COMPLEXITY_RULES for the language
- * @param {object} [hRules] - HALSTEAD_RULES for the language (null if unavailable)
- * @param {object} [options]
- * @param {boolean} [options.fileLevelWalk=false] - true when walking an entire file
- * @returns {Visitor}
- */
-export function createComplexityVisitor(cRules, hRules, options = {}) {
+export function createComplexityVisitor(
+  cRules: AnyRules,
+  hRules?: AnyRules | null,
+  options: { fileLevelWalk?: boolean; langId?: string | null } = {},
+): Visitor {
   const { fileLevelWalk = false, langId = null } = options;
 
   let acc = resetAccumulators(hRules);
-  let activeFuncNode = null;
-  let activeFuncName = null;
+  let activeFuncNode: TreeSitterNode | null = null;
+  let activeFuncName: string | null = null;
   let funcDepth = 0;
-  const results = [];
+  const results: PerFunctionResult[] = [];
 
   return {
     name: 'complexity',
     functionNodeTypes: cRules.functionNodes,
 
-    enterFunction(funcNode, funcName, _context) {
+    enterFunction(
+      funcNode: TreeSitterNode,
+      funcName: string | null,
+      _context: VisitorContext,
+    ): void {
       if (fileLevelWalk) {
         if (!activeFuncNode) {
           acc = resetAccumulators(hRules);
@@ -169,7 +185,11 @@ export function createComplexityVisitor(cRules, hRules, options = {}) {
       }
     },
 
-    exitFunction(funcNode, _funcName, _context) {
+    exitFunction(
+      funcNode: TreeSitterNode,
+      _funcName: string | null,
+      _context: VisitorContext,
+    ): void {
       if (fileLevelWalk) {
         if (funcNode === activeFuncNode) {
           results.push({
@@ -187,7 +207,7 @@ export function createComplexityVisitor(cRules, hRules, options = {}) {
       }
     },
 
-    enterNode(node, context) {
+    enterNode(node: TreeSitterNode, context: VisitorContext): EnterNodeResult | undefined {
       if (fileLevelWalk && !activeFuncNode) return;
 
       const type = node.type;
@@ -197,7 +217,6 @@ export function createComplexityVisitor(cRules, hRules, options = {}) {
 
       if (nestingLevel > acc.maxNesting) acc.maxNesting = nestingLevel;
 
-      // Logical operators in binary expressions
       if (type === cRules.logicalNodeType) {
         const op = node.child(1)?.type;
         if (op && cRules.logicalOperators.has(op)) {
@@ -212,28 +231,24 @@ export function createComplexityVisitor(cRules, hRules, options = {}) {
         }
       }
 
-      // Optional chaining (cyclomatic only)
       if (type === cRules.optionalChainType) acc.cyclomatic++;
 
-      // Branch/control flow nodes (skip keyword leaf tokens)
       if (cRules.branchNodes.has(type) && node.childCount > 0) {
         classifyBranchNode(node, type, nestingLevel, cRules, acc);
       }
 
-      // Pattern C plain else (Go/Java)
       classifyPlainElse(node, type, cRules, acc);
 
-      // Case nodes (cyclomatic only, skip keyword leaves)
       if (cRules.caseNodes.has(type) && node.childCount > 0) acc.cyclomatic++;
     },
 
-    exitNode(node) {
+    exitNode(node: TreeSitterNode): void {
       if (hRules?.skipTypes.has(node.type)) acc.halsteadSkipDepth--;
     },
 
-    finish() {
+    finish(): PerFunctionResult[] | ReturnType<typeof collectResult> {
       if (fileLevelWalk) return results;
-      return collectResult({ text: '' }, acc, hRules, langId);
+      return collectResult({ text: '' } as TreeSitterNode, acc, hRules, langId);
     },
   };
 }

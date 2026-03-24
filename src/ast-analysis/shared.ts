@@ -1,21 +1,19 @@
-/**
- * Shared utilities for AST analysis modules (complexity, CFG, dataflow, AST nodes).
- */
-
 import { LANGUAGE_REGISTRY } from '../domain/parser.js';
 import { ConfigError } from '../shared/errors.js';
+import type {
+  CfgRulesConfig,
+  DataflowRulesConfig,
+  LanguageRegistryEntry,
+  TreeSitterNode,
+} from '../types.js';
 
 // ─── Generic Rule Factory ─────────────────────────────────────────────────
 
-/**
- * Merge defaults with overrides, validating that all keys are known.
- *
- * @param {object} defaults - Default rule values (defines the valid key set)
- * @param {object} overrides - Language-specific overrides
- * @param {string} label - Label for error messages (e.g. "CFG", "Dataflow")
- * @returns {object} Merged rules
- */
-export function makeRules(defaults, overrides, label) {
+export function makeRules(
+  defaults: Record<string, unknown>,
+  overrides: Record<string, unknown>,
+  label: string,
+): Record<string, unknown> {
   const validKeys = new Set(Object.keys(defaults));
   for (const key of Object.keys(overrides)) {
     if (!validKeys.has(key)) {
@@ -27,7 +25,7 @@ export function makeRules(defaults, overrides, label) {
 
 // ─── CFG Defaults + Factory ───────────────────────────────────────────────
 
-export const CFG_DEFAULTS = {
+export const CFG_DEFAULTS: CfgRulesConfig = {
   ifNode: null,
   ifNodes: null,
   elifNode: null,
@@ -59,8 +57,12 @@ export const CFG_DEFAULTS = {
   functionNodes: new Set(),
 };
 
-export function makeCfgRules(overrides) {
-  const rules = makeRules(CFG_DEFAULTS, overrides, 'CFG');
+export function makeCfgRules(overrides: Partial<CfgRulesConfig>): CfgRulesConfig {
+  const rules = makeRules(
+    CFG_DEFAULTS as unknown as Record<string, unknown>,
+    overrides as unknown as Record<string, unknown>,
+    'CFG',
+  ) as unknown as CfgRulesConfig;
   if (!(rules.functionNodes instanceof Set) || rules.functionNodes.size === 0) {
     throw new ConfigError('CFG rules: functionNodes must be a non-empty Set');
   }
@@ -72,7 +74,7 @@ export function makeCfgRules(overrides) {
 
 // ─── Dataflow Defaults + Factory ──────────────────────────────────────────
 
-export const DATAFLOW_DEFAULTS = {
+export const DATAFLOW_DEFAULTS: DataflowRulesConfig = {
   // Scope entry
   functionNodes: new Set(), // REQUIRED: non-empty
 
@@ -134,8 +136,12 @@ export const DATAFLOW_DEFAULTS = {
   extraIdentifierTypes: null, // Set of additional identifier-like types (PHP: variable_name, name)
 };
 
-export function makeDataflowRules(overrides) {
-  const rules = makeRules(DATAFLOW_DEFAULTS, overrides, 'Dataflow');
+export function makeDataflowRules(overrides: Partial<DataflowRulesConfig>): DataflowRulesConfig {
+  const rules = makeRules(
+    DATAFLOW_DEFAULTS as unknown as Record<string, unknown>,
+    overrides as unknown as Record<string, unknown>,
+    'Dataflow',
+  ) as unknown as DataflowRulesConfig;
   if (!(rules.functionNodes instanceof Set) || rules.functionNodes.size === 0) {
     throw new ConfigError('Dataflow rules: functionNodes must be a non-empty Set');
   }
@@ -144,16 +150,18 @@ export function makeDataflowRules(overrides) {
 
 // ─── AST Helpers ──────────────────────────────────────────────────────────
 
-/**
- * Find the function body node in a parse tree that matches a given line range.
- */
-export function findFunctionNode(rootNode, startLine, _endLine, rules) {
+export function findFunctionNode(
+  rootNode: TreeSitterNode,
+  startLine: number,
+  _endLine: number,
+  rules: { functionNodes: Set<string> },
+): TreeSitterNode | null {
   // tree-sitter lines are 0-indexed
   const targetStart = startLine - 1;
 
-  let best = null;
+  let best: TreeSitterNode | null = null;
 
-  function search(node) {
+  function search(node: TreeSitterNode): void {
     const nodeStart = node.startPosition.row;
     const nodeEnd = node.endPosition.row;
 
@@ -168,7 +176,8 @@ export function findFunctionNode(rootNode, startLine, _endLine, rules) {
     }
 
     for (let i = 0; i < node.childCount; i++) {
-      search(node.child(i));
+      // biome-ignore lint/style/noNonNullAssertion: tree-sitter child(i) within childCount is always non-null
+      search(node.child(i)!);
     }
   }
 
@@ -178,14 +187,10 @@ export function findFunctionNode(rootNode, startLine, _endLine, rules) {
 
 // ─── Extension / Language Mapping ─────────────────────────────────────────
 
-/**
- * Build a Map from file extension → language ID using the parser registry.
- *
- * @param {Iterable} [registry=LANGUAGE_REGISTRY] - Language registry entries
- * @returns {Map<string, string>}
- */
-export function buildExtToLangMap(registry = LANGUAGE_REGISTRY) {
-  const map = new Map();
+export function buildExtToLangMap(
+  registry: LanguageRegistryEntry[] = LANGUAGE_REGISTRY as unknown as LanguageRegistryEntry[],
+): Map<string, string> {
+  const map = new Map<string, string>();
   for (const entry of registry) {
     for (const ext of entry.extensions) {
       map.set(ext, entry.id);
@@ -194,15 +199,11 @@ export function buildExtToLangMap(registry = LANGUAGE_REGISTRY) {
   return map;
 }
 
-/**
- * Build a Set of file extensions for languages that have entries in the given rules Map.
- *
- * @param {Map<string, any>} rulesMap - e.g. COMPLEXITY_RULES, CFG_RULES
- * @param {Iterable} [registry=LANGUAGE_REGISTRY] - Language registry entries
- * @returns {Set<string>}
- */
-export function buildExtensionSet(rulesMap, registry = LANGUAGE_REGISTRY) {
-  const extensions = new Set();
+export function buildExtensionSet(
+  rulesMap: Map<string, unknown>,
+  registry: LanguageRegistryEntry[] = LANGUAGE_REGISTRY as unknown as LanguageRegistryEntry[],
+): Set<string> {
+  const extensions = new Set<string>();
   for (const entry of registry) {
     if (rulesMap.has(entry.id)) {
       for (const ext of entry.extensions) extensions.add(ext);

@@ -1,12 +1,14 @@
-/**
- * Python — AST analysis rules.
- */
-
+import type {
+  CfgRulesConfig,
+  ComplexityRules,
+  DataflowRulesConfig,
+  HalsteadRules,
+} from '../../types.js';
 import { makeCfgRules, makeDataflowRules } from '../shared.js';
 
 // ─── Complexity ───────────────────────────────────────────────────────────
 
-export const complexity = {
+export const complexity: ComplexityRules = {
   branchNodes: new Set([
     'if_statement',
     'elif_clause',
@@ -38,7 +40,7 @@ export const complexity = {
 
 // ─── Halstead ─────────────────────────────────────────────────────────────
 
-export const halstead = {
+export const halstead: HalsteadRules = {
   operatorLeafTypes: new Set([
     '+',
     '-',
@@ -119,7 +121,7 @@ export const halstead = {
 
 // ─── CFG ──────────────────────────────────────────────────────────────────
 
-export const cfg = makeCfgRules({
+export const cfg: CfgRulesConfig = makeCfgRules({
   ifNode: 'if_statement',
   elifNode: 'elif_clause',
   elseClause: 'else_clause',
@@ -140,7 +142,7 @@ export const cfg = makeCfgRules({
 
 // ─── Dataflow ─────────────────────────────────────────────────────────────
 
-export const dataflow = makeDataflowRules({
+export const dataflow: DataflowRulesConfig = makeDataflowRules({
   functionNodes: new Set(['function_definition', 'lambda']),
   defaultParamType: 'default_parameter',
   restParamType: 'list_splat_pattern',
@@ -193,4 +195,4 @@ export const dataflow = makeDataflowRules({
 
 // ─── AST Node Types ───────────────────────────────────────────────────────
 
-export const astTypes = null;
+export const astTypes: Record<string, string> | null = null;

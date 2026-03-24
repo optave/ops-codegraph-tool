@@ -19,6 +19,22 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { bulkNodeIdsByFile } from '../db/index.js';
 import { debug } from '../infrastructure/logger.js';
+import type {
+  AnalysisOpts,
+  AnalysisTiming,
+  ASTNodeRow,
+  BetterSqlite3Database,
+  CfgBlock,
+  CfgEdge,
+  DataflowResult,
+  Definition,
+  EngineOpts,
+  ExtractorOutput,
+  TreeSitterNode,
+  Visitor,
+  WalkOptions,
+  WalkResults,
+} from '../types.js';
 import { computeLOCMetrics, computeMaintainabilityIndex } from './metrics.js';
 import {
   AST_TYPE_MAPS,
@@ -35,6 +51,35 @@ import { createCfgVisitor } from './visitors/cfg-visitor.js';
 import { createComplexityVisitor } from './visitors/complexity-visitor.js';
 import { createDataflowVisitor } from './visitors/dataflow-visitor.js';
 
+// ─── Visitor result shapes (internal, not exported) ──────────────────────
+
+interface ComplexityFuncResult {
+  funcNode: TreeSitterNode;
+  funcName: string | null;
+  metrics: {
+    cognitive: number;
+    cyclomatic: number;
+    maxNesting: number;
+    halstead?: { volume: number; difficulty: number; effort: number; bugs: number };
+  };
+}
+
+interface CfgFuncResult {
+  funcNode: TreeSitterNode;
+  blocks: CfgBlock[];
+  edges: CfgEdge[];
+  cyclomatic?: number;
+}
+
+interface SetupResult {
+  visitors: Visitor[];
+  walkerOpts: WalkOptions;
+  astVisitor: Visitor | null;
+  complexityVisitor: Visitor | null;
+  cfgVisitor: Visitor | null;
+  dataflowVisitor: Visitor | null;
+}
+
 // ─── Extension sets for quick language-support checks ────────────────────
 
 const CFG_EXTENSIONS = buildExtensionSet(CFG_RULES);
@@ -44,15 +89,19 @@ const WALK_EXTENSIONS = buildExtensionSet(AST_TYPE_MAPS);
 
 // ─── Lazy imports (heavy modules loaded only when needed) ────────────────
 
-let _parserModule = null;
-async function getParserModule() {
+let _parserModule: Awaited<typeof import('../domain/parser.js')> | null = null;
+async function getParserModule(): Promise<typeof import('../domain/parser.js')> {
   if (!_parserModule) _parserModule = await import('../domain/parser.js');
   return _parserModule;
 }
 
 // ─── WASM pre-parse ─────────────────────────────────────────────────────
 
-async function ensureWasmTreesIfNeeded(fileSymbols, opts, rootDir) {
+async function ensureWasmTreesIfNeeded(
+  fileSymbols: Map<string, ExtractorOutput>,
+  opts: AnalysisOpts,
+  rootDir: string,
+): Promise<void> {
   const doComplexity = opts.complexity !== false;
   const doCfg = opts.cfg !== false;
   const doDataflow = opts.dataflow !== false;
@@ -91,15 +140,21 @@ async function ensureWasmTreesIfNeeded(fileSymbols, opts, rootDir) {
     try {
       const { ensureWasmTrees } = await getParserModule();
       await ensureWasmTrees(fileSymbols, rootDir);
-    } catch (err) {
-      debug(`ensureWasmTrees failed: ${err.message}`);
+    } catch (err: unknown) {
+      debug(`ensureWasmTrees failed: ${(err as Error).message}`);
     }
   }
 }
 
 // ─── Per-file visitor setup ─────────────────────────────────────────────
 
-function setupVisitors(db, relPath, symbols, langId, opts) {
+function setupVisitors(
+  db: BetterSqlite3Database,
+  relPath: string,
+  symbols: ExtractorOutput,
+  langId: string,
+  opts: AnalysisOpts,
+): SetupResult {
   const ext = path.extname(relPath).toLowerCase();
   const defs = symbols.definitions || [];
   const doAst = opts.ast !== false;
@@ -107,18 +162,18 @@ function setupVisitors(db, relPath, symbols, langId, opts) {
   const doCfg = opts.cfg !== false;
   const doDataflow = opts.dataflow !== false;
 
-  const visitors = [];
-  const walkerOpts = {
-    functionNodeTypes: new Set(),
-    nestingNodeTypes: new Set(),
-    getFunctionName: (_node) => null,
+  const visitors: Visitor[] = [];
+  const walkerOpts: WalkOptions = {
+    functionNodeTypes: new Set<string>(),
+    nestingNodeTypes: new Set<string>(),
+    getFunctionName: (_node: TreeSitterNode) => null,
   };
 
   // AST-store visitor
-  let astVisitor = null;
+  let astVisitor: Visitor | null = null;
   const astTypeMap = AST_TYPE_MAPS.get(langId);
   if (doAst && astTypeMap && WALK_EXTENSIONS.has(ext) && !symbols.astNodes?.length) {
-    const nodeIdMap = new Map();
+    const nodeIdMap = new Map<string, number>();
     for (const row of bulkNodeIdsByFile(db, relPath)) {
       nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
     }
@@ -127,7 +182,7 @@ function setupVisitors(db, relPath, symbols, langId, opts) {
   }
 
   // Complexity visitor (file-level mode)
-  let complexityVisitor = null;
+  let complexityVisitor: Visitor | null = null;
   const cRules = COMPLEXITY_RULES.get(langId);
   const hRules = HALSTEAD_RULES.get(langId);
   if (doComplexity && cRules) {
@@ -138,20 +193,21 @@ function setupVisitors(db, relPath, symbols, langId, opts) {
       complexityVisitor = createComplexityVisitor(cRules, hRules, { fileLevelWalk: true, langId });
       visitors.push(complexityVisitor);
 
-      for (const t of cRules.nestingNodes) walkerOpts.nestingNodeTypes.add(t);
+      for (const t of cRules.nestingNodes) walkerOpts.nestingNodeTypes?.add(t);
 
       const dfRules = DATAFLOW_RULES.get(langId);
-      walkerOpts.getFunctionName = (node) => {
+      walkerOpts.getFunctionName = (node: TreeSitterNode): string | null => {
         const nameNode = node.childForFieldName('name');
         if (nameNode) return nameNode.text;
-        if (dfRules) return getFuncName(node, dfRules);
+        // biome-ignore lint/suspicious/noExplicitAny: DataflowRulesConfig is structurally compatible at runtime
+        if (dfRules) return getFuncName(node, dfRules as any);
         return null;
       };
     }
   }
 
   // CFG visitor
-  let cfgVisitor = null;
+  let cfgVisitor: Visitor | null = null;
   const cfgRulesForLang = CFG_RULES.get(langId);
   if (doCfg && cfgRulesForLang && CFG_EXTENSIONS.has(ext)) {
     const needsWasmCfg = defs.some(
@@ -168,7 +224,7 @@ function setupVisitors(db, relPath, symbols, langId, opts) {
   }
 
   // Dataflow visitor
-  let dataflowVisitor = null;
+  let dataflowVisitor: Visitor | null = null;
   const dfRules = DATAFLOW_RULES.get(langId);
   if (doDataflow && dfRules && DATAFLOW_EXTENSIONS.has(ext) && !symbols.dataflow) {
     dataflowVisitor = createDataflowVisitor(dfRules);
@@ -180,14 +236,15 @@ function setupVisitors(db, relPath, symbols, langId, opts) {
 
 // ─── Result storage helpers ─────────────────────────────────────────────
 
-function storeComplexityResults(results, defs, langId) {
-  const complexityResults = results.complexity || [];
-  const resultByLine = new Map();
+function storeComplexityResults(results: WalkResults, defs: Definition[], langId: string): void {
+  // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by noPropertyAccessFromIndexSignature
+  const complexityResults = (results['complexity'] || []) as ComplexityFuncResult[];
+  const resultByLine = new Map<number, ComplexityFuncResult[]>();
   for (const r of complexityResults) {
     if (r.funcNode) {
       const line = r.funcNode.startPosition.row + 1;
       if (!resultByLine.has(line)) resultByLine.set(line, []);
-      resultByLine.get(line).push(r);
+      resultByLine.get(line)?.push(r);
     }
   }
   for (const def of defs) {
@@ -221,14 +278,15 @@ function storeComplexityResults(results, defs, langId) {
   }
 }
 
-function storeCfgResults(results, defs) {
-  const cfgResults = results.cfg || [];
-  const cfgByLine = new Map();
+function storeCfgResults(results: WalkResults, defs: Definition[]): void {
+  // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by noPropertyAccessFromIndexSignature
+  const cfgResults = (results['cfg'] || []) as CfgFuncResult[];
+  const cfgByLine = new Map<number, CfgFuncResult[]>();
   for (const r of cfgResults) {
     if (r.funcNode) {
       const line = r.funcNode.startPosition.row + 1;
       if (!cfgByLine.has(line)) cfgByLine.set(line, []);
-      cfgByLine.get(line).push(r);
+      cfgByLine.get(line)?.push(r);
     }
   }
   for (const def of defs) {
@@ -254,7 +312,7 @@ function storeCfgResults(results, defs) {
           def.complexity.cyclomatic = cfgResult.cyclomatic;
           const { loc, halstead } = def.complexity;
           const volume = halstead ? halstead.volume : 0;
-          const commentRatio = loc?.loc > 0 ? loc.commentLines / loc.loc : 0;
+          const commentRatio = loc && loc.loc > 0 ? loc.commentLines / loc.loc : 0;
           def.complexity.maintainabilityIndex = computeMaintainabilityIndex(
             volume,
             cfgResult.cyclomatic,
@@ -269,14 +327,21 @@ function storeCfgResults(results, defs) {
 
 // ─── Build delegation ───────────────────────────────────────────────────
 
-async function delegateToBuildFunctions(db, fileSymbols, rootDir, opts, engineOpts, timing) {
+async function delegateToBuildFunctions(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, ExtractorOutput>,
+  rootDir: string,
+  opts: AnalysisOpts,
+  engineOpts: EngineOpts | undefined,
+  timing: AnalysisTiming,
+): Promise<void> {
   if (opts.ast !== false) {
     const t0 = performance.now();
     try {
       const { buildAstNodes } = await import('../features/ast.js');
       await buildAstNodes(db, fileSymbols, rootDir, engineOpts);
-    } catch (err) {
-      debug(`buildAstNodes failed: ${err.message}`);
+    } catch (err: unknown) {
+      debug(`buildAstNodes failed: ${(err as Error).message}`);
     }
     timing.astMs = performance.now() - t0;
   }
@@ -286,8 +351,8 @@ async function delegateToBuildFunctions(db, fileSymbols, rootDir, opts, engineOp
     try {
       const { buildComplexityMetrics } = await import('../features/complexity.js');
       await buildComplexityMetrics(db, fileSymbols, rootDir, engineOpts);
-    } catch (err) {
-      debug(`buildComplexityMetrics failed: ${err.message}`);
+    } catch (err: unknown) {
+      debug(`buildComplexityMetrics failed: ${(err as Error).message}`);
     }
     timing.complexityMs = performance.now() - t0;
   }
@@ -297,8 +362,8 @@ async function delegateToBuildFunctions(db, fileSymbols, rootDir, opts, engineOp
     try {
       const { buildCFGData } = await import('../features/cfg.js');
       await buildCFGData(db, fileSymbols, rootDir, engineOpts);
-    } catch (err) {
-      debug(`buildCFGData failed: ${err.message}`);
+    } catch (err: unknown) {
+      debug(`buildCFGData failed: ${(err as Error).message}`);
     }
     timing.cfgMs = performance.now() - t0;
   }
@@ -308,8 +373,8 @@ async function delegateToBuildFunctions(db, fileSymbols, rootDir, opts, engineOp
     try {
       const { buildDataflowEdges } = await import('../features/dataflow.js');
       await buildDataflowEdges(db, fileSymbols, rootDir, engineOpts);
-    } catch (err) {
-      debug(`buildDataflowEdges failed: ${err.message}`);
+    } catch (err: unknown) {
+      debug(`buildDataflowEdges failed: ${(err as Error).message}`);
     }
     timing.dataflowMs = performance.now() - t0;
   }
@@ -317,18 +382,14 @@ async function delegateToBuildFunctions(db, fileSymbols, rootDir, opts, engineOp
 
 // ─── Public API ──────────────────────────────────────────────────────────
 
-/**
- * Run all enabled AST analyses in a coordinated pass.
- *
- * @param {object} db - open better-sqlite3 database (read-write)
- * @param {Map<string, object>} fileSymbols - Map<relPath, { definitions, calls, _tree, _langId, ... }>
- * @param {string} rootDir - absolute project root path
- * @param {object} opts - build options (ast, complexity, cfg, dataflow toggles)
- * @param {object} [engineOpts] - engine options
- * @returns {Promise<{ astMs: number, complexityMs: number, cfgMs: number, dataflowMs: number }>}
- */
-export async function runAnalyses(db, fileSymbols, rootDir, opts, engineOpts) {
-  const timing = { astMs: 0, complexityMs: 0, cfgMs: 0, dataflowMs: 0 };
+export async function runAnalyses(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, ExtractorOutput>,
+  rootDir: string,
+  opts: AnalysisOpts,
+  engineOpts?: EngineOpts,
+): Promise<AnalysisTiming> {
+  const timing: AnalysisTiming = { astMs: 0, complexityMs: 0, cfgMs: 0, dataflowMs: 0 };
 
   const doAst = opts.ast !== false;
   const doComplexity = opts.complexity !== false;
@@ -361,13 +422,14 @@ export async function runAnalyses(db, fileSymbols, rootDir, opts, engineOpts) {
     const defs = symbols.definitions || [];
 
     if (astVisitor) {
-      const astRows = results['ast-store'] || [];
+      const astRows = (results['ast-store'] || []) as ASTNodeRow[];
       if (astRows.length > 0) symbols.astNodes = astRows;
     }
 
     if (complexityVisitor) storeComplexityResults(results, defs, langId);
     if (cfgVisitor) storeCfgResults(results, defs);
-    if (dataflowVisitor) symbols.dataflow = results.dataflow;
+    // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by noPropertyAccessFromIndexSignature
+    if (dataflowVisitor) symbols.dataflow = results['dataflow'] as DataflowResult;
   }
 
   timing._unifiedWalkMs = performance.now() - t0walk;

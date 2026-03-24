@@ -1,12 +1,14 @@
-/**
- * Go — AST analysis rules.
- */
-
+import type {
+  CfgRulesConfig,
+  ComplexityRules,
+  DataflowRulesConfig,
+  HalsteadRules,
+} from '../../types.js';
 import { makeCfgRules, makeDataflowRules } from '../shared.js';
 
 // ─── Complexity ───────────────────────────────────────────────────────────
 
-export const complexity = {
+export const complexity: ComplexityRules = {
   branchNodes: new Set([
     'if_statement',
     'for_statement',
@@ -35,7 +37,7 @@ export const complexity = {
 
 // ─── Halstead ─────────────────────────────────────────────────────────────
 
-export const halstead = {
+export const halstead: HalsteadRules = {
   operatorLeafTypes: new Set([
     '+',
     '-',
@@ -122,7 +124,7 @@ export const halstead = {
 
 // ─── CFG ──────────────────────────────────────────────────────────────────
 
-export const cfg = makeCfgRules({
+export const cfg: CfgRulesConfig = makeCfgRules({
   ifNode: 'if_statement',
   elseViaAlternative: true,
   forNodes: new Set(['for_statement']),
@@ -144,7 +146,7 @@ export const cfg = makeCfgRules({
 
 // ─── Dataflow ─────────────────────────────────────────────────────────────
 
-export const dataflow = makeDataflowRules({
+export const dataflow: DataflowRulesConfig = makeDataflowRules({
   functionNodes: new Set(['function_declaration', 'method_declaration', 'func_literal']),
   returnNode: 'return_statement',
   varDeclaratorNodes: new Set(['short_var_declaration', 'var_declaration']),
@@ -163,7 +165,7 @@ export const dataflow = makeDataflowRules({
   expressionListType: 'expression_list',
   extractParamName(node) {
     if (node.type === 'parameter_declaration') {
-      const names = [];
+      const names: string[] = [];
       for (const c of node.namedChildren) {
         if (c.type === 'identifier') names.push(c.text);
       }
@@ -179,4 +181,4 @@ export const dataflow = makeDataflowRules({
 
 // ─── AST Node Types ───────────────────────────────────────────────────────
 
-export const astTypes = null;
+export const astTypes: Record<string, string> | null = null;
