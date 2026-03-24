@@ -155,7 +155,11 @@ function walkAst(
   rows: AstRow[],
   nodeIdMap: Map<string, number>,
 ): void {
-  const visitor = createAstStoreVisitor(JS_TS_AST_TYPES!, defs, relPath, nodeIdMap);
+  if (!JS_TS_AST_TYPES) {
+    debug('ast-store: JS_TS_AST_TYPES not available — skipping walk');
+    return;
+  }
+  const visitor = createAstStoreVisitor(JS_TS_AST_TYPES, defs, relPath, nodeIdMap);
   const results = walkWithVisitors(rootNode, [visitor], 'javascript');
   const collected = (results['ast-store'] || []) as AstRow[];
   rows.push(...collected);

@@ -166,7 +166,8 @@ function getTreeAndLang(
     if (!langId) return null;
   }
 
-  return { tree: tree!, langId };
+  if (!tree) return null;
+  return { tree, langId };
 }
 
 interface VisitorCfgResult {

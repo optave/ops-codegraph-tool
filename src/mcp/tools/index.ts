@@ -37,7 +37,7 @@ import * as listFunctions from './list-functions.js';
 import * as listRepos from './list-repos.js';
 import * as moduleMap from './module-map.js';
 import * as nodeRoles from './node-roles.js';
-import * as path from './path.js';
+import * as pathTool from './path.js';
 import * as query from './query.js';
 import * as semanticSearch from './semantic-search.js';
 import * as sequence from './sequence.js';
@@ -48,7 +48,7 @@ import * as where from './where.js';
 
 export const TOOL_HANDLERS = new Map<string, McpToolHandler>([
   [query.name, query],
-  [path.name, path],
+  [pathTool.name, pathTool],
   [fileDeps.name, fileDeps],
   [fileExports.name, fileExports],
   [impactAnalysis.name, impactAnalysis],

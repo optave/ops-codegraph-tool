@@ -36,6 +36,12 @@ export const DATAFLOW_EXTENSIONS = buildExtensionSet(DATAFLOW_RULES);
 
 // ── extractDataflow ──────────────────────────────────────────────────────────
 
+// Note: This local DataflowResult intentionally differs from the canonical
+// DataflowResult in types.ts. The canonical type describes the visitor's raw
+// output shape, while this module's insertDataflowEdges casts fields to
+// richer local interfaces (ArgFlow, Assignment, Mutation) with additional
+// properties populated during resolution. Aligning them requires unifying
+// the visitor output and DB-insertion shapes — tracked separately.
 interface DataflowResult {
   parameters: unknown[];
   returns: unknown[];
