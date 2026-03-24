@@ -115,6 +115,8 @@ git ls-files --others --exclude-standard | while read f; do
 done
 # Gitignored files (strip the leading "Would remove " prefix from dry-run output)
 git clean -fdX --dry-run | sed 's/^Would remove //' | while read f; do
+  # Skip directory entries — stat returns inode size, not content size
+  [ -d "$f" ] && continue
   size=$(stat --format='%s' "$f" 2>/dev/null || stat -f '%z' "$f" 2>/dev/null)
   [ -z "$size" ] && continue
   if [ "$size" -gt 1048576 ]; then echo "$f ($size bytes) [gitignored]"; fi
