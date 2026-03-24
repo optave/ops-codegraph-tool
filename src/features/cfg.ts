@@ -124,7 +124,7 @@ function getTreeAndLang(
   extToLang: Map<string, string>,
   parsers: unknown,
   getParserFn: unknown,
-): { tree: { rootNode: TreeSitterNode }; langId: string } | null {
+): { tree: { rootNode: TreeSitterNode } | null; langId: string } | null {
   const ext = path.extname(relPath).toLowerCase();
   let tree = symbols._tree;
   let langId = symbols._langId;
@@ -166,8 +166,7 @@ function getTreeAndLang(
     if (!langId) return null;
   }
 
-  if (!tree) return null;
-  return { tree, langId };
+  return { tree: tree ?? null, langId };
 }
 
 interface VisitorCfgResult {
@@ -177,7 +176,7 @@ interface VisitorCfgResult {
 }
 
 function buildVisitorCfgMap(
-  tree: { rootNode: TreeSitterNode } | undefined,
+  tree: { rootNode: TreeSitterNode } | null | undefined,
   cfgRules: unknown,
   symbols: FileSymbols,
   langId: string,
