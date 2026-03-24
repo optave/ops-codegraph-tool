@@ -198,8 +198,8 @@ For each target in the current phase:
 
    **On DIFF FAIL:**
    ```bash
-   git reset HEAD <changed files>
-   git checkout -- <changed files>
+   git reset HEAD -- $(git diff --cached --name-only)
+   git checkout -- $(git diff --name-only)
    ```
    Add to `execution.failedTargets` with reason starting with `"diff-review: "`. Continue to next target.
    **On DIFF WARN:** Log the warning but proceed to gate. Include the warning in the gate-log entry.
