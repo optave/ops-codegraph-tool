@@ -278,10 +278,7 @@ export function sequenceData(
   const { repo, close } = openRepo(dbPath, opts);
   try {
     const config = opts.config || loadConfig();
-    const maxDepth =
-      opts.depth ||
-      (config as unknown as { analysis?: { sequenceDepth?: number } }).analysis?.sequenceDepth ||
-      10;
+    const maxDepth = opts.depth || config.analysis.sequenceDepth || 10;
     const noTests = opts.noTests || false;
 
     const matchNode = findEntryNode(repo, name, opts);
