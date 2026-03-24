@@ -9,33 +9,36 @@ import { performance } from 'node:perf_hooks';
 import { closeDb, getBuildMeta, setBuildMeta } from '../../../../db/index.js';
 import { debug, info, warn } from '../../../../infrastructure/logger.js';
 import { writeJournalHeader } from '../../journal.js';
+import type { PipelineContext } from '../context.js';
 
 const __builderDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'));
-const CODEGRAPH_VERSION = JSON.parse(
-  fs.readFileSync(path.join(__builderDir, '..', '..', '..', '..', '..', 'package.json'), 'utf-8'),
+const CODEGRAPH_VERSION = (
+  JSON.parse(
+    fs.readFileSync(path.join(__builderDir, '..', '..', '..', '..', '..', 'package.json'), 'utf-8'),
+  ) as { version: string }
 ).version;
 
-/**
- * @param {import('../context.js').PipelineContext} ctx
- */
-export async function finalize(ctx) {
+export async function finalize(ctx: PipelineContext): Promise<void> {
   const { db, allSymbols, rootDir, isFullBuild, hasEmbeddings, config, opts, schemaVersion } = ctx;
 
   const t0 = performance.now();
 
   // Release cached WASM trees
   for (const [, symbols] of allSymbols) {
-    if (symbols._tree && typeof symbols._tree.delete === 'function') {
+    const tree = symbols._tree as { delete?: () => void } | undefined;
+    if (tree && typeof tree.delete === 'function') {
       try {
-        symbols._tree.delete();
-      } catch {}
+        tree.delete();
+      } catch {
+        /* ignore cleanup errors */
+      }
     }
-    symbols._tree = null;
-    symbols._langId = null;
+    symbols._tree = undefined;
+    symbols._langId = undefined;
   }
 
-  const nodeCount = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c;
-  const actualEdgeCount = db.prepare('SELECT COUNT(*) as c FROM edges').get().c;
+  const nodeCount = (db.prepare('SELECT COUNT(*) as c FROM nodes').get() as { c: number }).c;
+  const actualEdgeCount = (db.prepare('SELECT COUNT(*) as c FROM edges').get() as { c: number }).c;
   info(`Graph built: ${nodeCount} nodes, ${actualEdgeCount} edges`);
   info(`Stored in ${ctx.dbPath}`);
 
@@ -49,10 +52,11 @@ export async function finalize(ctx) {
       if (prevN > 0) {
         const nodeDrift = Math.abs(nodeCount - prevN) / prevN;
         const edgeDrift = prevE > 0 ? Math.abs(actualEdgeCount - prevE) / prevE : 0;
-        const driftThreshold = config.build?.driftThreshold ?? 0.2;
+        const driftThreshold =
+          (config as { build?: { driftThreshold?: number } }).build?.driftThreshold ?? 0.2;
         if (nodeDrift > driftThreshold || edgeDrift > driftThreshold) {
           warn(
-            `Incremental build diverged significantly from previous counts (nodes: ${prevN}→${nodeCount} [${(nodeDrift * 100).toFixed(1)}%], edges: ${prevE}→${actualEdgeCount} [${(edgeDrift * 100).toFixed(1)}%], threshold: ${(driftThreshold * 100).toFixed(0)}%). Consider rebuilding with --no-incremental.`,
+            `Incremental build diverged significantly from previous counts (nodes: ${prevN}\u2192${nodeCount} [${(nodeDrift * 100).toFixed(1)}%], edges: ${prevE}\u2192${actualEdgeCount} [${(edgeDrift * 100).toFixed(1)}%], threshold: ${(driftThreshold * 100).toFixed(0)}%). Consider rebuilding with --no-incremental.`,
           );
         }
       }
@@ -62,24 +66,29 @@ export async function finalize(ctx) {
   // Orphaned embeddings warning
   if (hasEmbeddings) {
     try {
-      const orphaned = db
-        .prepare('SELECT COUNT(*) as c FROM embeddings WHERE node_id NOT IN (SELECT id FROM nodes)')
-        .get().c;
+      const orphaned = (
+        db
+          .prepare(
+            'SELECT COUNT(*) as c FROM embeddings WHERE node_id NOT IN (SELECT id FROM nodes)',
+          )
+          .get() as { c: number }
+      ).c;
       if (orphaned > 0) {
         warn(
           `${orphaned} embeddings are orphaned (nodes changed). Run "codegraph embed" to refresh.`,
         );
       }
     } catch {
-      /* ignore — embeddings table may have been dropped */
+      /* ignore - embeddings table may have been dropped */
     }
   }
 
   // Unused exports warning
   try {
-    const unusedCount = db
-      .prepare(
-        `SELECT COUNT(*) as c FROM nodes
+    const unusedCount = (
+      db
+        .prepare(
+          `SELECT COUNT(*) as c FROM nodes
        WHERE exported = 1 AND kind != 'file'
          AND id NOT IN (
            SELECT DISTINCT e.target_id FROM edges e
@@ -87,8 +96,9 @@ export async function finalize(ctx) {
            JOIN nodes target ON e.target_id = target.id
            WHERE e.kind = 'calls' AND caller.file != target.file
          )`,
-      )
-      .get().c;
+        )
+        .get() as { c: number }
+    ).c;
     if (unusedCount > 0) {
       warn(
         `${unusedCount} exported symbol${unusedCount > 1 ? 's have' : ' has'} zero cross-file consumers. Run "codegraph exports <file> --unused" to inspect.`,
@@ -110,7 +120,7 @@ export async function finalize(ctx) {
       edge_count: actualEdgeCount,
     });
   } catch (err) {
-    warn(`Failed to write build metadata: ${err.message}`);
+    warn(`Failed to write build metadata: ${(err as Error).message}`);
   }
 
   closeDb(db);
@@ -127,10 +137,12 @@ export async function finalize(ctx) {
       debug(`Skipping auto-registration for temp directory: ${resolvedRoot}`);
     } else {
       try {
-        const { registerRepo } = await import('../../../../infrastructure/registry.js');
+        const { registerRepo } = (await import('../../../../infrastructure/registry.js')) as {
+          registerRepo: (rootDir: string) => void;
+        };
         registerRepo(rootDir);
       } catch (err) {
-        debug(`Auto-registration failed: ${err.message}`);
+        debug(`Auto-registration failed: ${(err as Error).message}`);
       }
     }
   }

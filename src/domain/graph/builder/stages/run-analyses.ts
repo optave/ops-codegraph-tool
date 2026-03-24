@@ -5,18 +5,19 @@
  * Filters out reverse-dep files for incremental builds.
  */
 import { debug, warn } from '../../../../infrastructure/logger.js';
+import type { ExtractorOutput } from '../../../../types.js';
+import type { PipelineContext } from '../context.js';
 
-/**
- * @param {import('../context.js').PipelineContext} ctx
- */
-export async function runAnalyses(ctx) {
+export async function runAnalyses(ctx: PipelineContext): Promise<void> {
   const { db, allSymbols, rootDir, opts, engineOpts, isFullBuild, filesToParse } = ctx;
 
   // For incremental builds, exclude reverse-dep-only files
-  let astComplexitySymbols = allSymbols;
+  let astComplexitySymbols: Map<string, ExtractorOutput> = allSymbols;
   if (!isFullBuild) {
     const reverseDepFiles = new Set(
-      filesToParse.filter((item) => item._reverseDepOnly).map((item) => item.relPath),
+      filesToParse
+        .filter((item) => (item as { _reverseDepOnly?: boolean })._reverseDepOnly)
+        .map((item) => item.relPath),
     );
     if (reverseDepFiles.size > 0) {
       astComplexitySymbols = new Map();
@@ -39,6 +40,8 @@ export async function runAnalyses(ctx) {
     ctx.timing.cfgMs = analysisTiming.cfgMs;
     ctx.timing.dataflowMs = analysisTiming.dataflowMs;
   } catch (err) {
-    warn(`Analysis engine failed (AST/complexity/CFG/dataflow may be incomplete): ${err.message}`);
+    warn(
+      `Analysis engine failed (AST/complexity/CFG/dataflow may be incomplete): ${(err as Error).message}`,
+    );
   }
 }

@@ -6,40 +6,99 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
+import type BetterSqlite3 from 'better-sqlite3';
 import { getNodeId } from '../../../../db/index.js';
 import { loadNative } from '../../../../infrastructure/native.js';
+import type {
+  Call,
+  ClassRelation,
+  Definition,
+  ExtractorOutput,
+  Import,
+  NativeAddon,
+  NodeRow,
+  TypeMapEntry,
+} from '../../../../types.js';
 import { computeConfidence } from '../../resolve.js';
+import type { PipelineContext } from '../context.js';
 import { BUILTIN_RECEIVERS, batchInsertEdges } from '../helpers.js';
 import { getResolved, isBarrelFile, resolveBarrelExport } from './resolve-imports.js';
 
+// ── Local types ──────────────────────────────────────────────────────────
+
+type EdgeRowTuple = [number, number, string, number, number];
+
+interface NodeIdStmt {
+  get(name: string, kind: string, file: string, line: number): { id: number } | undefined;
+}
+
+/** Minimal node shape returned by the SELECT query. */
+interface QueryNodeRow {
+  id: number;
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+}
+
+/** Shape fed to the native buildCallEdges FFI. */
+interface NativeFileEntry {
+  file: string;
+  fileNodeId: number;
+  definitions: Array<{ name: string; kind: string; line: number; endLine: number | null }>;
+  calls: Call[];
+  importedNames: Array<{ name: string; file: string }>;
+  classes: ClassRelation[];
+  typeMap: Array<{ name: string; typeName: string; confidence: number }>;
+}
+
+/** Shape returned by native buildCallEdges. */
+interface NativeEdge {
+  sourceId: number;
+  targetId: number;
+  kind: string;
+  confidence: number;
+  dynamic: number;
+}
+
+/** TypeMap entry used in receiver supplement (normalized from native format). */
+interface NormalizedTypeEntry {
+  type: string;
+  confidence: number;
+}
+
 // ── Node lookup setup ───────────────────────────────────────────────────
 
-function makeGetNodeIdStmt(db) {
+function makeGetNodeIdStmt(db: BetterSqlite3.Database): NodeIdStmt {
   return {
-    get: (name, kind, file, line) => {
+    get: (name: string, kind: string, file: string, line: number) => {
       const id = getNodeId(db, name, kind, file, line);
       return id != null ? { id } : undefined;
     },
   };
 }
 
-function setupNodeLookups(ctx, allNodes) {
+function setupNodeLookups(ctx: PipelineContext, allNodes: QueryNodeRow[]): void {
   ctx.nodesByName = new Map();
   for (const node of allNodes) {
     if (!ctx.nodesByName.has(node.name)) ctx.nodesByName.set(node.name, []);
-    ctx.nodesByName.get(node.name).push(node);
+    ctx.nodesByName.get(node.name)!.push(node as unknown as NodeRow);
   }
   ctx.nodesByNameAndFile = new Map();
   for (const node of allNodes) {
     const key = `${node.name}|${node.file}`;
     if (!ctx.nodesByNameAndFile.has(key)) ctx.nodesByNameAndFile.set(key, []);
-    ctx.nodesByNameAndFile.get(key).push(node);
+    ctx.nodesByNameAndFile.get(key)!.push(node as unknown as NodeRow);
   }
 }
 
 // ── Import edges ────────────────────────────────────────────────────────
 
-function buildImportEdges(ctx, getNodeIdStmt, allEdgeRows) {
+function buildImportEdges(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+): void {
   const { fileSymbols, barrelOnlyFiles, rootDir } = ctx;
 
   for (const [relPath, symbols] of fileSymbols) {
@@ -69,8 +128,16 @@ function buildImportEdges(ctx, getNodeIdStmt, allEdgeRows) {
   }
 }
 
-function buildBarrelEdges(ctx, imp, resolvedPath, fileNodeId, edgeKind, getNodeIdStmt, edgeRows) {
-  const resolvedSources = new Set();
+function buildBarrelEdges(
+  ctx: PipelineContext,
+  imp: Import,
+  resolvedPath: string,
+  fileNodeId: number,
+  edgeKind: string,
+  getNodeIdStmt: NodeIdStmt,
+  edgeRows: EdgeRowTuple[],
+): void {
+  const resolvedSources = new Set<string>();
   for (const name of imp.names) {
     const cleanName = name.replace(/^\*\s+as\s+/, '');
     const actualSource = resolveBarrelExport(ctx, resolvedPath, cleanName);
@@ -92,9 +159,15 @@ function buildBarrelEdges(ctx, imp, resolvedPath, fileNodeId, edgeKind, getNodeI
 
 // ── Call edges (native engine) ──────────────────────────────────────────
 
-function buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodes, native) {
+function buildCallEdgesNative(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+  allNodes: QueryNodeRow[],
+  native: NativeAddon,
+): void {
   const { fileSymbols, barrelOnlyFiles, rootDir } = ctx;
-  const nativeFiles = [];
+  const nativeFiles: NativeFileEntry[] = [];
 
   for (const [relPath, symbols] of fileSymbols) {
     if (barrelOnlyFiles.has(relPath)) continue;
@@ -102,7 +175,7 @@ function buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodes, native)
     if (!fileNodeRow) continue;
 
     const importedNames = buildImportedNamesForNative(ctx, relPath, symbols, rootDir);
-    const typeMap =
+    const typeMap: Array<{ name: string; typeName: string; confidence: number }> =
       symbols.typeMap instanceof Map
         ? [...symbols.typeMap.entries()].map(([name, entry]) => ({
             name,
@@ -110,7 +183,7 @@ function buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodes, native)
             confidence: typeof entry === 'object' ? entry.confidence : 0.9,
           }))
         : Array.isArray(symbols.typeMap)
-          ? symbols.typeMap
+          ? (symbols.typeMap as Array<{ name: string; typeName: string; confidence: number }>)
           : [];
     nativeFiles.push({
       file: relPath,
@@ -128,7 +201,9 @@ function buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodes, native)
     });
   }
 
-  const nativeEdges = native.buildCallEdges(nativeFiles, allNodes, [...BUILTIN_RECEIVERS]);
+  const nativeEdges = native.buildCallEdges(nativeFiles, allNodes, [
+    ...BUILTIN_RECEIVERS,
+  ]) as NativeEdge[];
   for (const e of nativeEdges) {
     allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic]);
   }
@@ -142,8 +217,13 @@ function buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodes, native)
   }
 }
 
-function buildImportedNamesForNative(ctx, relPath, symbols, rootDir) {
-  const importedNames = [];
+function buildImportedNamesForNative(
+  ctx: PipelineContext,
+  relPath: string,
+  symbols: ExtractorOutput,
+  rootDir: string,
+): Array<{ name: string; file: string }> {
+  const importedNames: Array<{ name: string; file: string }> = [];
   for (const imp of symbols.imports) {
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
     for (const name of imp.names) {
@@ -161,8 +241,13 @@ function buildImportedNamesForNative(ctx, relPath, symbols, rootDir) {
 
 // ── Receiver edge supplement for older native binaries ──────────────────
 
-function supplementReceiverEdges(ctx, nativeFiles, getNodeIdStmt, allEdgeRows) {
-  const seenCallEdges = new Set();
+function supplementReceiverEdges(
+  ctx: PipelineContext,
+  nativeFiles: NativeFileEntry[],
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+): void {
+  const seenCallEdges = new Set<string>();
   // Collect existing edges to avoid duplicates
   for (const row of allEdgeRows) {
     seenCallEdges.add(`${row[0]}|${row[1]}|${row[2]}`);
@@ -170,7 +255,7 @@ function supplementReceiverEdges(ctx, nativeFiles, getNodeIdStmt, allEdgeRows) {
 
   for (const nf of nativeFiles) {
     const relPath = nf.file;
-    const typeMap = new Map(
+    const typeMap = new Map<string, NormalizedTypeEntry>(
       nf.typeMap.map((t) => [t.name, { type: t.typeName, confidence: t.confidence ?? 0.9 }]),
     );
     const fileNodeRow = { id: nf.fileNodeId };
@@ -208,7 +293,11 @@ function supplementReceiverEdges(ctx, nativeFiles, getNodeIdStmt, allEdgeRows) {
 
 // ── Call edges (JS fallback) ────────────────────────────────────────────
 
-function buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows) {
+function buildCallEdgesJS(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+): void {
   const { fileSymbols, barrelOnlyFiles, rootDir } = ctx;
 
   for (const [relPath, symbols] of fileSymbols) {
@@ -217,8 +306,8 @@ function buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows) {
     if (!fileNodeRow) continue;
 
     const importedNames = buildImportedNamesMap(ctx, relPath, symbols, rootDir);
-    const typeMap = symbols.typeMap || new Map();
-    const seenCallEdges = new Set();
+    const typeMap: Map<string, TypeMapEntry | string> = symbols.typeMap || new Map();
+    const seenCallEdges = new Set<string>();
 
     buildFileCallEdges(
       ctx,
@@ -235,8 +324,13 @@ function buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows) {
   }
 }
 
-function buildImportedNamesMap(ctx, relPath, symbols, rootDir) {
-  const importedNames = new Map();
+function buildImportedNamesMap(
+  ctx: PipelineContext,
+  relPath: string,
+  symbols: ExtractorOutput,
+  rootDir: string,
+): Map<string, string> {
+  const importedNames = new Map<string, string>();
   for (const imp of symbols.imports) {
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
     for (const name of imp.names) {
@@ -246,8 +340,14 @@ function buildImportedNamesMap(ctx, relPath, symbols, rootDir) {
   return importedNames;
 }
 
-function findCaller(call, definitions, relPath, getNodeIdStmt, fileNodeRow) {
-  let caller = null;
+function findCaller(
+  call: Call,
+  definitions: ReadonlyArray<{ name: string; kind: string; line: number; endLine?: number | null }>,
+  relPath: string,
+  getNodeIdStmt: NodeIdStmt,
+  fileNodeRow: { id: number },
+): { id: number } {
+  let caller: { id: number } | null = null;
   let callerSpan = Infinity;
   for (const def of definitions) {
     if (def.line <= call.line) {
@@ -270,9 +370,15 @@ function findCaller(call, definitions, relPath, getNodeIdStmt, fileNodeRow) {
   return caller || fileNodeRow;
 }
 
-function resolveCallTargets(ctx, call, relPath, importedNames, typeMap) {
+function resolveCallTargets(
+  ctx: PipelineContext,
+  call: Call,
+  relPath: string,
+  importedNames: Map<string, string>,
+  typeMap: Map<string, TypeMapEntry | string>,
+): { targets: NodeRow[]; importedFrom: string | undefined } {
   const importedFrom = importedNames.get(call.name);
-  let targets;
+  let targets: NodeRow[] | undefined;
 
   if (importedFrom) {
     targets = ctx.nodesByNameAndFile.get(`${call.name}|${importedFrom}`) || [];
@@ -293,8 +399,8 @@ function resolveCallTargets(ctx, call, relPath, importedNames, typeMap) {
 
   if (targets.length > 1) {
     targets.sort((a, b) => {
-      const confA = computeConfidence(relPath, a.file, importedFrom);
-      const confB = computeConfidence(relPath, b.file, importedFrom);
+      const confA = computeConfidence(relPath, a.file, importedFrom ?? null);
+      const confB = computeConfidence(relPath, b.file, importedFrom ?? null);
       return confB - confA;
     });
   }
@@ -302,7 +408,12 @@ function resolveCallTargets(ctx, call, relPath, importedNames, typeMap) {
   return { targets, importedFrom };
 }
 
-function resolveByMethodOrGlobal(ctx, call, relPath, typeMap) {
+function resolveByMethodOrGlobal(
+  ctx: PipelineContext,
+  call: Call,
+  relPath: string,
+  typeMap: Map<string, TypeMapEntry | string>,
+): NodeRow[] {
   // Type-aware resolution: translate variable receiver to its declared type
   if (call.receiver && typeMap) {
     const typeEntry = typeMap.get(call.receiver);
@@ -332,21 +443,21 @@ function resolveByMethodOrGlobal(ctx, call, relPath, typeMap) {
 }
 
 function buildFileCallEdges(
-  ctx,
-  relPath,
-  symbols,
-  fileNodeRow,
-  importedNames,
-  seenCallEdges,
-  getNodeIdStmt,
-  allEdgeRows,
-  typeMap,
-) {
+  ctx: PipelineContext,
+  relPath: string,
+  symbols: ExtractorOutput,
+  fileNodeRow: { id: number },
+  importedNames: Map<string, string>,
+  seenCallEdges: Set<string>,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+  typeMap: Map<string, TypeMapEntry | string>,
+): void {
   for (const call of symbols.calls) {
     if (call.receiver && BUILTIN_RECEIVERS.has(call.receiver)) continue;
 
     const caller = findCaller(call, symbols.definitions, relPath, getNodeIdStmt, fileNodeRow);
-    const isDynamic = call.dynamic ? 1 : 0;
+    const isDynamic: number = call.dynamic ? 1 : 0;
     const { targets, importedFrom } = resolveCallTargets(
       ctx,
       call,
@@ -359,7 +470,7 @@ function buildFileCallEdges(
       const edgeKey = `${caller.id}|${t.id}`;
       if (t.id !== caller.id && !seenCallEdges.has(edgeKey)) {
         seenCallEdges.add(edgeKey);
-        const confidence = computeConfidence(relPath, t.file, importedFrom);
+        const confidence = computeConfidence(relPath, t.file, importedFrom ?? null);
         allEdgeRows.push([caller.id, t.id, 'calls', confidence, isDynamic]);
       }
     }
@@ -377,17 +488,25 @@ function buildFileCallEdges(
   }
 }
 
-function buildReceiverEdge(ctx, call, caller, relPath, seenCallEdges, allEdgeRows, typeMap) {
+function buildReceiverEdge(
+  ctx: PipelineContext,
+  call: Call,
+  caller: { id: number },
+  relPath: string,
+  seenCallEdges: Set<string>,
+  allEdgeRows: EdgeRowTuple[],
+  typeMap: Map<string, TypeMapEntry | NormalizedTypeEntry | string>,
+): void {
   const receiverKinds = new Set(['class', 'struct', 'interface', 'type', 'module']);
-  const typeEntry = typeMap?.get(call.receiver);
+  const typeEntry = typeMap?.get(call.receiver!);
   const typeName = typeEntry ? (typeof typeEntry === 'string' ? typeEntry : typeEntry.type) : null;
   const typeConfidence = typeEntry && typeof typeEntry === 'object' ? typeEntry.confidence : null;
-  const effectiveReceiver = typeName || call.receiver;
+  const effectiveReceiver = typeName || call.receiver!;
   const samefile = ctx.nodesByNameAndFile.get(`${effectiveReceiver}|${relPath}`) || [];
   const candidates = samefile.length > 0 ? samefile : ctx.nodesByName.get(effectiveReceiver) || [];
   const receiverNodes = candidates.filter((n) => receiverKinds.has(n.kind));
   if (receiverNodes.length > 0 && caller) {
-    const recvTarget = receiverNodes[0];
+    const recvTarget = receiverNodes[0]!;
     const recvKey = `recv|${caller.id}|${recvTarget.id}`;
     if (!seenCallEdges.has(recvKey)) {
       seenCallEdges.add(recvKey);
@@ -404,7 +523,12 @@ const HIERARCHY_SOURCE_KINDS = new Set(['class', 'struct', 'record', 'enum']);
 const EXTENDS_TARGET_KINDS = new Set(['class', 'struct', 'trait', 'record']);
 const IMPLEMENTS_TARGET_KINDS = new Set(['interface', 'trait', 'class']);
 
-function buildClassHierarchyEdges(ctx, relPath, symbols, allEdgeRows) {
+function buildClassHierarchyEdges(
+  ctx: PipelineContext,
+  relPath: string,
+  symbols: ExtractorOutput,
+  allEdgeRows: EdgeRowTuple[],
+): void {
   for (const cls of symbols.classes) {
     if (cls.extends) {
       const sourceRow = (ctx.nodesByNameAndFile.get(`${cls.name}|${relPath}`) || []).find((n) =>
@@ -438,10 +562,7 @@ function buildClassHierarchyEdges(ctx, relPath, symbols, allEdgeRows) {
 
 // ── Main entry point ────────────────────────────────────────────────────
 
-/**
- * @param {import('../context.js').PipelineContext} ctx
- */
-export async function buildEdges(ctx) {
+export async function buildEdges(ctx: PipelineContext): Promise<void> {
   const { db, engineName } = ctx;
 
   const getNodeIdStmt = makeGetNodeIdStmt(db);
@@ -450,12 +571,12 @@ export async function buildEdges(ctx) {
     .prepare(
       `SELECT id, name, kind, file, line FROM nodes WHERE kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')`,
     )
-    .all();
+    .all() as QueryNodeRow[];
   setupNodeLookups(ctx, allNodes);
 
   const t0 = performance.now();
   const buildEdgesTx = db.transaction(() => {
-    const allEdgeRows = [];
+    const allEdgeRows: EdgeRowTuple[] = [];
 
     buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
 

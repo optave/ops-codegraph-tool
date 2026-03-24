@@ -5,7 +5,7 @@ import { info } from '../../infrastructure/logger.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from '../../shared/constants.js';
 import { DbError } from '../../shared/errors.js';
 import { createParseTreeCache, getActiveEngine } from '../parser.js';
-import { rebuildFile } from './builder/incremental.js';
+import { type IncrementalStmts, rebuildFile } from './builder/incremental.js';
 import { appendChangeEvents, buildChangeEvent, diffSymbols } from './change-journal.js';
 import { appendJournalEntries } from './journal.js';
 
@@ -28,7 +28,11 @@ export async function watchProject(rootDir: string, opts: { engine?: string } = 
   // Alias for functions expecting the project's BetterSqlite3Database interface
   const typedDb = db as unknown as import('../../types.js').BetterSqlite3Database;
   initSchema(db);
-  const engineOpts = { engine: (opts.engine || 'auto') as import('../../types.js').EngineMode };
+  const engineOpts: import('../../types.js').EngineOpts = {
+    engine: (opts.engine || 'auto') as import('../../types.js').EngineMode,
+    dataflow: false,
+    ast: false,
+  };
   const { name: engineName, version: engineVersion } = getActiveEngine(engineOpts);
   console.log(
     `Watch mode using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`,
@@ -99,9 +103,17 @@ export async function watchProject(rootDir: string, opts: { engine?: string } = 
       edgesAdded: number;
     }> = [];
     for (const filePath of files) {
-      const result = (await rebuildFile(db, rootDir, filePath, stmts, engineOpts, cache, {
-        diffSymbols,
-      })) as (typeof results)[number] | null;
+      const result = (await rebuildFile(
+        db,
+        rootDir,
+        filePath,
+        stmts as IncrementalStmts,
+        engineOpts,
+        cache,
+        {
+          diffSymbols: diffSymbols as (old: unknown[], new_: unknown[]) => unknown,
+        },
+      )) as (typeof results)[number] | null;
       if (result) results.push(result);
     }
     const updates = results;

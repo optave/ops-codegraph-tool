@@ -4,6 +4,7 @@ import type BetterSqlite3 from 'better-sqlite3';
 import { closeDb, findDbPath, openDb } from '../../db/index.js';
 import { warn } from '../../infrastructure/logger.js';
 import { DbError } from '../../shared/errors.js';
+import type { NodeRow } from '../../types.js';
 import { embed, getModelConfig } from './models.js';
 import { buildSourceText } from './strategies/source.js';
 import { buildStructuredText } from './strategies/structured.js';
@@ -81,7 +82,7 @@ export async function buildEmbeddings(
     .prepare(
       `SELECT * FROM nodes WHERE kind IN ('function', 'method', 'class') ORDER BY file, line`,
     )
-    .all() as Array<{ id: number; name: string; kind: string; file: string; line: number }>;
+    .all() as Array<NodeRow & { id: number }>;
 
   console.log(`Building embeddings for ${nodes.length} symbols (strategy: ${strategy})...`);
 

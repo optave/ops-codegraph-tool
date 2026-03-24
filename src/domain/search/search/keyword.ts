@@ -1,17 +1,47 @@
 import { openReadonlyOrFail } from '../../../db/index.js';
 import { buildFileConditionSQL } from '../../../db/query-builder.js';
+import type { BetterSqlite3Database } from '../../../types.js';
 import { normalizeSymbol } from '../../queries.js';
 import { hasFtsIndex, sanitizeFtsQuery } from '../stores/fts5.js';
 import { applyFilters } from './filters.js';
 
-/**
- * BM25 keyword search via FTS5.
- * Returns { results: [{ name, kind, file, line, bm25Score }] } or null if no FTS5 index.
- */
-export function ftsSearchData(query, customDbPath, opts = {}) {
+export interface FtsSearchOpts {
+  limit?: number;
+  kind?: string;
+  filePattern?: string | string[];
+  noTests?: boolean;
+}
+
+interface FtsRow {
+  node_id: number;
+  bm25_score: number;
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  end_line: number | null;
+  role: string | null;
+}
+
+export interface FtsSearchResult {
+  results: Array<{
+    name: string;
+    kind: string;
+    file: string;
+    line: number;
+    bm25Score: number;
+    [key: string]: unknown;
+  }>;
+}
+
+export function ftsSearchData(
+  query: string,
+  customDbPath: string | undefined,
+  opts: FtsSearchOpts = {},
+): FtsSearchResult | null {
   const limit = opts.limit || 15;
 
-  const db = openReadonlyOrFail(customDbPath);
+  const db = openReadonlyOrFail(customDbPath) as BetterSqlite3Database;
 
   try {
     if (!hasFtsIndex(db)) {
@@ -30,7 +60,7 @@ export function ftsSearchData(query, customDbPath, opts = {}) {
       JOIN nodes n ON f.rowid = n.id
       WHERE fts_index MATCH ?
     `;
-    const params = [ftsQuery];
+    const params: unknown[] = [ftsQuery];
 
     if (opts.kind) {
       sql += ' AND n.kind = ?';
@@ -40,9 +70,6 @@ export function ftsSearchData(query, customDbPath, opts = {}) {
     const fp = opts.filePattern;
     const fpArr = Array.isArray(fp) ? fp : fp ? [fp] : [];
     const isGlob = fpArr.length > 0 && fpArr.some((p) => /[*?[\]]/.test(p));
-    // For non-glob patterns, push filtering into SQL via buildFileConditionSQL
-    // (handles escapeLike + ESCAPE clause). Glob patterns are handled post-query
-    // by applyFilters.
     if (fpArr.length > 0 && !isGlob) {
       const fc = buildFileConditionSQL(fpArr, 'n.file');
       sql += fc.sql;
@@ -50,22 +77,21 @@ export function ftsSearchData(query, customDbPath, opts = {}) {
     }
 
     sql += ' ORDER BY rank LIMIT ?';
-    params.push(limit * 5); // fetch generous set for post-filtering
+    params.push(limit * 5);
 
-    let rows;
+    let rows: FtsRow[];
     try {
-      rows = db.prepare(sql).all(...params);
+      rows = db.prepare(sql).all(...params) as FtsRow[];
     } catch {
-      // Invalid FTS5 query syntax — return empty
       return { results: [] };
     }
 
     rows = applyFilters(rows, opts);
 
-    const hc = new Map();
+    const hc = new Map<string, string>();
     const results = rows.slice(0, limit).map((row) => ({
       ...normalizeSymbol(row, db, hc),
-      bm25Score: -row.bm25_score, // FTS5 rank is negative; negate for display
+      bm25Score: -row.bm25_score,
     }));
 
     return { results };

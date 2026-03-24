@@ -5,13 +5,16 @@ import { debug, warn } from '../../infrastructure/logger.js';
 export const JOURNAL_FILENAME = 'changes.journal';
 const HEADER_PREFIX = '# codegraph-journal v1 ';
 
-/**
- * Read and validate the change journal.
- * Returns { valid, timestamp, changed[], removed[] } or { valid: false }.
- */
-export function readJournal(rootDir) {
+interface JournalResult {
+  valid: boolean;
+  timestamp?: number;
+  changed?: string[];
+  removed?: string[];
+}
+
+export function readJournal(rootDir: string): JournalResult {
   const journalPath = path.join(rootDir, '.codegraph', JOURNAL_FILENAME);
-  let content;
+  let content: string;
   try {
     content = fs.readFileSync(journalPath, 'utf-8');
   } catch {
@@ -19,24 +22,24 @@ export function readJournal(rootDir) {
   }
 
   const lines = content.split('\n');
-  if (lines.length === 0 || !lines[0].startsWith(HEADER_PREFIX)) {
+  if (lines.length === 0 || !lines[0]!.startsWith(HEADER_PREFIX)) {
     debug('Journal has malformed or missing header');
     return { valid: false };
   }
 
-  const timestamp = Number(lines[0].slice(HEADER_PREFIX.length).trim());
+  const timestamp = Number(lines[0]!.slice(HEADER_PREFIX.length).trim());
   if (!Number.isFinite(timestamp) || timestamp <= 0) {
     debug('Journal has invalid timestamp');
     return { valid: false };
   }
 
-  const changed = [];
-  const removed = [];
-  const seenChanged = new Set();
-  const seenRemoved = new Set();
+  const changed: string[] = [];
+  const removed: string[] = [];
+  const seenChanged = new Set<string>();
+  const seenRemoved = new Set<string>();
 
   for (let i = 1; i < lines.length; i++) {
-    const line = lines[i].trim();
+    const line = lines[i]!.trim();
     if (!line || line.startsWith('#')) continue;
 
     if (line.startsWith('DELETED ')) {
@@ -56,11 +59,10 @@ export function readJournal(rootDir) {
   return { valid: true, timestamp, changed, removed };
 }
 
-/**
- * Append changed/deleted paths to the journal.
- * Creates the journal with a header if it doesn't exist.
- */
-export function appendJournalEntries(rootDir, entries) {
+export function appendJournalEntries(
+  rootDir: string,
+  entries: Array<{ file: string; deleted?: boolean }>,
+): void {
   const dir = path.join(rootDir, '.codegraph');
   const journalPath = path.join(dir, JOURNAL_FILENAME);
 
@@ -68,7 +70,6 @@ export function appendJournalEntries(rootDir, entries) {
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  // If journal doesn't exist, create with a placeholder header
   if (!fs.existsSync(journalPath)) {
     fs.writeFileSync(journalPath, `${HEADER_PREFIX}0\n`);
   }
@@ -81,11 +82,7 @@ export function appendJournalEntries(rootDir, entries) {
   fs.appendFileSync(journalPath, `${lines.join('\n')}\n`);
 }
 
-/**
- * Write a fresh journal header after a successful build.
- * Atomic: write to temp file then rename.
- */
-export function writeJournalHeader(rootDir, timestamp) {
+export function writeJournalHeader(rootDir: string, timestamp: number): void {
   const dir = path.join(rootDir, '.codegraph');
   const journalPath = path.join(dir, JOURNAL_FILENAME);
   const tmpPath = `${journalPath}.tmp`;
@@ -98,8 +95,7 @@ export function writeJournalHeader(rootDir, timestamp) {
     fs.writeFileSync(tmpPath, `${HEADER_PREFIX}${timestamp}\n`);
     fs.renameSync(tmpPath, journalPath);
   } catch (err) {
-    warn(`Failed to write journal header: ${err.message}`);
-    // Clean up temp file if rename failed
+    warn(`Failed to write journal header: ${(err as Error).message}`);
     try {
       fs.unlinkSync(tmpPath);
     } catch {
