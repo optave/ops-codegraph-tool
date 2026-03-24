@@ -870,6 +870,8 @@ export interface BuildGraphOpts {
   engine?: EngineMode;
   dataflow?: boolean;
   ast?: boolean;
+  complexity?: boolean;
+  cfg?: boolean;
   scope?: string[];
   skipRegistry?: boolean;
 }

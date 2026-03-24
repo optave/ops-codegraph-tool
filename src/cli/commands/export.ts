@@ -1,0 +1,79 @@
+import fs from 'node:fs';
+import {
+  exportDOT,
+  exportGraphML,
+  exportGraphSON,
+  exportJSON,
+  exportMermaid,
+  exportNeo4jCSV,
+} from '../../features/export.js';
+import { openGraph } from '../shared/open-graph.js';
+import type { CommandDefinition } from '../types.js';
+
+export const command: CommandDefinition = {
+  name: 'export',
+  description: 'Export dependency graph as DOT, Mermaid, JSON, GraphML, GraphSON, or Neo4j CSV',
+  options: [
+    ['-d, --db <path>', 'Path to graph.db'],
+    ['-f, --format <format>', 'Output format: dot, mermaid, json, graphml, graphson, neo4j', 'dot'],
+    ['--functions', 'Function-level graph instead of file-level'],
+    ['-T, --no-tests', 'Exclude test/spec files'],
+    ['--include-tests', 'Include test/spec files (overrides excludeTests config)'],
+    ['--min-confidence <score>', 'Minimum edge confidence threshold (default: 0.5)', '0.5'],
+    ['--direction <dir>', 'Flowchart direction for Mermaid: TB, LR, RL, BT', 'LR'],
+    ['-o, --output <file>', 'Write to file instead of stdout'],
+  ],
+  execute(_args, opts, ctx) {
+    const { db, close } = openGraph(opts as { db?: string });
+    const exportOpts = {
+      fileLevel: !opts.functions,
+      noTests: ctx.resolveNoTests(opts),
+      minConfidence: parseFloat(opts.minConfidence as string),
+      direction: opts.direction as string,
+    };
+
+    let output: string | undefined;
+    try {
+      switch (opts.format) {
+        case 'mermaid':
+          output = exportMermaid(db, exportOpts);
+          break;
+        case 'json':
+          output = JSON.stringify(exportJSON(db, exportOpts), null, 2);
+          break;
+        case 'graphml':
+          output = exportGraphML(db, exportOpts);
+          break;
+        case 'graphson':
+          output = JSON.stringify(exportGraphSON(db, exportOpts), null, 2);
+          break;
+        case 'neo4j': {
+          const csv = exportNeo4jCSV(db, exportOpts);
+          if (opts.output) {
+            const base = (opts.output as string).replace(/\.[^.]+$/, '') || (opts.output as string);
+            fs.writeFileSync(`${base}-nodes.csv`, csv.nodes, 'utf-8');
+            fs.writeFileSync(`${base}-relationships.csv`, csv.relationships, 'utf-8');
+            console.log(`Exported to ${base}-nodes.csv and ${base}-relationships.csv`);
+          } else {
+            output = `--- nodes.csv ---\n${csv.nodes}\n\n--- relationships.csv ---\n${csv.relationships}`;
+          }
+          break;
+        }
+        default:
+          output = exportDOT(db, exportOpts);
+          break;
+      }
+    } finally {
+      close();
+    }
+
+    if (output === undefined) return;
+
+    if (opts.output) {
+      fs.writeFileSync(opts.output as string, output, 'utf-8');
+      console.log(`Exported ${opts.format} to ${opts.output}`);
+    } else {
+      console.log(output);
+    }
+  },
+};
