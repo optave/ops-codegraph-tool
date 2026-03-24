@@ -409,6 +409,7 @@ describe('hybridSearchData', () => {
     expect(data).not.toBeNull();
     const fd = data.results.find((r) => r.name === 'formatDate');
     expect(fd).toBeDefined();
+    expect(fd.rrf).toBeGreaterThan(0);
   });
 
   test('respects rrfK parameter', async () => {
