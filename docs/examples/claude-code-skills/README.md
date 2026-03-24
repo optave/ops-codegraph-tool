@@ -207,6 +207,7 @@ All skills enforce worktree isolation as their first step. If invoked from the m
 | `codegraph diff-impact` | GATE | Impact of staged changes |
 | `codegraph snapshot save\|restore\|delete` | RECON, GAUNTLET, GATE, RESET | Graph database backup/restore |
 | `codegraph snapshot list` | RUN | Verify titan-baseline snapshot exists before forge |
+| `codegraph where` | FORGE | File symbol inventory — used by D4 to get pre-change symbol list for deletion audit |
 
 ## Further Reading
 
