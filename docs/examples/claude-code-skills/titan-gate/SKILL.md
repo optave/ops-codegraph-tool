@@ -192,14 +192,16 @@ Use `mktemp -d` to create a unique temporary directory that persists across Bash
 ```bash
 TITAN_ARCH_DIR=$(mktemp -d /tmp/titan-arch-XXXXXX)
 echo "$TITAN_ARCH_DIR" > .codegraph/titan/.arch-tmpdir
-codegraph communities -T --json > "$TITAN_ARCH_DIR/current-communities.json"
-codegraph structure --depth 2 --json > "$TITAN_ARCH_DIR/current-structure.json"
-codegraph communities --drift -T --json > "$TITAN_ARCH_DIR/current-drift.json"
+codegraph communities -T --json > "$TITAN_ARCH_DIR/current-communities.json" || echo '{"ARCH_CAPTURE_FAILED":"communities"}' > "$TITAN_ARCH_DIR/current-communities.json"
+codegraph structure --depth 2 --json > "$TITAN_ARCH_DIR/current-structure.json" || echo '{"ARCH_CAPTURE_FAILED":"structure"}' > "$TITAN_ARCH_DIR/current-structure.json"
+codegraph communities --drift -T --json > "$TITAN_ARCH_DIR/current-drift.json" || echo '{"ARCH_CAPTURE_FAILED":"drift"}' > "$TITAN_ARCH_DIR/current-drift.json"
 ```
 
 > The path is written to `.codegraph/titan/.arch-tmpdir` so subsequent Bash invocations can recover it via `TITAN_ARCH_DIR=$(cat .codegraph/titan/.arch-tmpdir)`.
 
 ### Compare
+
+> **Before comparing:** Check each captured file for `ARCH_CAPTURE_FAILED`. If a file contains this marker, skip the corresponding assertion (A1/A3/A4) and report: "Skipping <assertion> — codegraph <command> failed during capture."
 
 In a new Bash invocation, recover the temp dir path first:
 ```bash

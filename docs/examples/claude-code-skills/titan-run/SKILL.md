@@ -508,11 +508,12 @@ while iteration < maxIterations:
         # No commits but phase may have completed (all targets failed/skipped)
         Print: "Forge phase <nextPhase>: no commits (all targets failed or skipped)"
 
-    # V13. Test suite still green after forge commits
-    # Quick sanity — run tests to make sure the cumulative commits haven't broken anything
-    # Run the project's test command (detect from package.json scripts — npm test, yarn test, pnpm test, etc.)
-    <detected-test-command> 2>&1
-    if tests fail:
+    # V13. Test suite still green after forge commits (skip if no commits were made)
+    if headAfter != headBefore:
+        # Quick sanity — run tests to make sure the cumulative commits haven't broken anything
+        # Run the project's test command (detect from package.json scripts — npm test, yarn test, pnpm test, etc.)
+        <detected-test-command> 2>&1
+    if headAfter != headBefore and tests fail:
         Print: "CRITICAL: Test suite fails after forge phase <nextPhase>. Stopping pipeline."
         Print: "Commits from this phase: git log --oneline <headBefore>..<headAfter>"
         Print: "Consider reverting: git revert <headBefore>..<headAfter>"
