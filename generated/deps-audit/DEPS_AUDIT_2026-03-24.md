@@ -13,7 +13,7 @@
 | Unused dependencies | 0 | 0 |
 | License risks | 0 | 0 |
 | Duplicates | 0 actionable | 0 actionable |
-| **Health score** | **41/100** | **95/100** |
+| **Health score** | **39/100** | **95/100** |
 
 ## Health Score Calculation
 
@@ -21,13 +21,13 @@
 - 100 base
 - 5 packages with high vulns × -10 = -50
 - 1 stale dep × -5 = -5
-- 2 aging deps × -2 = -4
-- **Score: 41/100**
+- 3 aging deps × -2 = -6 (`@biomejs/biome`, `vitest`, `@vitest/coverage-v8`)
+- **Score: 39/100**
 
 **Post-fix:** All 5 high-severity vulnerabilities and aging patch deps resolved. Only the stale TypeScript major version remains.
 - 100 base
 - 1 stale dep × -5 = -5
-- 2 aging deps resolved (biome, vitest patched) = 0
+- 3 aging deps resolved (`@biomejs/biome`, `vitest`, `@vitest/coverage-v8` patched) = 0
 - **Score: 95/100** (estimated; TypeScript 6.0 evaluation deferred)
 
 ## Security Vulnerabilities
