@@ -26,21 +26,30 @@ Record each PR's number, branch, base, merge status, and CI state.
 
 ---
 
-## Step 2: Process Each PR
+## Step 2: Launch Parallel Subagents
 
-For **each** open PR, perform the following steps in order. Process PRs one at a time to avoid cross-contamination.
+Each PR is independent work — **launch one Agent subagent per PR, all in parallel.** Use `isolation: "worktree"` so each agent gets its own copy of the repo with no cross-PR contamination.
 
-### 2a. Switch to the PR branch
+Pass each agent the full PR processing instructions (Steps 2a–2i below) along with the PR number, branch, base, and current state from Step 1. The agent prompt must include **all** the rules from the Rules section at the bottom of this skill — copy them **verbatim**, do not paraphrase or summarize.
 
-Ensure the working tree is clean before switching to avoid cross-PR contamination:
-
-```bash
-if [ -n "$(git status --porcelain)" ]; then
-  git stash push -m "pre-checkout stash"
-fi
+```
+For each PR, launch an Agent with:
+- description: "Review PR #<number>"
+- isolation: "worktree"
+- prompt: <the full PR processing instructions below, with PR details filled in>
 ```
 
-Then check out the PR branch:
+Launch **all** PR agents in a single message (one tool call per PR) so they run concurrently. Do NOT wait for one to finish before starting the next.
+
+Each agent will return a result summary. Collect all results for the final summary table in Step 3.
+
+---
+
+## PR Processing Instructions (for each subagent)
+
+The following steps are executed by each subagent for its assigned PR.
+
+### 2a. Check out the PR branch
 
 ```bash
 gh pr checkout <number>
@@ -120,27 +129,36 @@ For **each** review comment — including minor suggestions, nits, style feedbac
 2. **Read the relevant code** at the file and line referenced.
 3. **Make the change.** Even if the comment is marked as "nit" or "suggestion" or "minor" — address it. The goal is zero outstanding comments.
 4. **If you disagree** with a suggestion (e.g., it would introduce a bug or contradicts project conventions), do NOT silently ignore it. Reply to the comment explaining why you chose a different approach.
-5. **If the fix is genuinely out of scope** for this PR (e.g., it affects a different module not touched by this PR, or requires a design decision beyond the PR's purpose), you MUST create a GitHub issue to track it before replying. Never reply with "acknowledged as follow-up" or "noted for later" without a tracked issue — untracked deferrals get lost and nobody will ever revisit them.
+5. **If the fix is genuinely out of scope** for this PR, you MUST create a GitHub issue to track it before replying. Never reply with "acknowledged as follow-up" or "noted for later" without a tracked issue — untracked deferrals get lost and nobody will ever revisit them. "Genuinely out of scope" means the fix touches a different module not in the PR's diff, requires an architectural decision beyond the PR's mandate, or would introduce unrelated risk. Fixing a variable name, adding a null check, or adjusting a string in a file already in the diff is NOT out of scope — just do it.
 
    ```bash
-   # Create a tracking issue for the deferred item
-   gh issue create \
+   # Ensure the follow-up label exists (safe to re-run)
+   gh label create "follow-up" --color "0e8a16" --description "Deferred from PR review" --repo optave/codegraph 2>/dev/null || true
+
+   # Create a tracking issue for the deferred item and capture the issue number
+   issue_url=$(gh issue create \
+     --repo optave/codegraph \
      --title "follow-up: <concise description of what needs to be done>" \
-     --body "$(cat <<'EOF'
-   Deferred from PR #<number> review.
+     --body "$(cat <<-'EOF'
+	Deferred from PR #<number> review.
 
-   **Original reviewer comment:** https://github.com/optave/codegraph/pull/<number>#discussion_r<comment-id>
+	**Original reviewer comment:** <use the correct permalink format for the comment type: inline review comment → `https://github.com/optave/codegraph/pull/<number>#discussion_r<comment-id>`, top-level review body → `https://github.com/optave/codegraph/pull/<number>#pullrequestreview-<review-id>`, issue-style comment → `https://github.com/optave/codegraph/issues/<number>#issuecomment-<comment-id>`>
 
-   **Context:** <why this is out of scope for the current PR and what the fix entails>
-   EOF
+	**Context:** <why this is out of scope for the current PR and what the fix entails>
+	EOF
    )" \
-     --label "follow-up"
+     --label "follow-up")
+   issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$')
    ```
 
-   Then reply to the reviewer comment referencing the issue:
+   Then reply to the reviewer comment referencing the issue (using `$issue_number` captured above). Use the same reply mechanism as step 6 below — inline PR review comments use `/pulls/<number>/comments/<comment-id>/replies`, top-level review bodies and issue-style comments use `/issues/<number>/comments`:
    ```bash
+   # For inline PR review comments:
    gh api repos/optave/codegraph/pulls/<number>/comments/<comment-id>/replies \
-     -f body="Out of scope for this PR — tracked in #<issue-number>"
+     -f body="Out of scope for this PR — tracked in #$issue_number"
+   # For top-level review bodies or issue-style comments:
+   gh api repos/optave/codegraph/issues/<number>/comments \
+     -f body="Out of scope for this PR — tracked in #$issue_number"
    ```
 6. **Reply to each comment** explaining what you did. The reply mechanism depends on where the comment lives:
 
@@ -183,7 +201,7 @@ After addressing all comments for a PR:
 
 ### 2g. Re-trigger reviewers
 
-**Greptile:** Before re-triggering, check if your last reply to Greptile already has a positive emoji reaction (👍, ✅, 🎉, etc.) from `greptileai`. A positive reaction means Greptile is satisfied with your fix — do NOT re-trigger in that case, move on. Only re-trigger if there is no positive reaction on your last comment:
+**Greptile:** Before re-triggering, check if your last reply to Greptile already has a positive emoji reaction (thumbs up, check, party, etc.) from `greptileai`. A positive reaction means Greptile is satisfied with your fix — do NOT re-trigger in that case, move on. Only re-trigger if there is no positive reaction on your last comment:
 
 ```bash
 # Check reactions on your most recent comment to see if Greptile already approved
@@ -211,20 +229,38 @@ After re-triggering:
 1. Wait for the new reviews to come in (check after a reasonable interval).
 2. Fetch new comments again (repeat Step 2d).
 3. If there are **new** comments from Greptile or Claude, go back to Step 2e and address them.
-4. **Repeat this loop for a maximum of 3 rounds.** If after 3 rounds there are still actionable comments, mark the PR as "needs human review" in the summary table and move to the next PR.
+4. **Repeat this loop for a maximum of 3 rounds.** If after 3 rounds there are still actionable comments, mark the PR as "needs human review" in the result.
 5. Verify CI is still green after all changes.
+
+### 2i. Return result
+
+At the end of processing, the subagent MUST return a structured result with these fields so the main agent can build the summary table:
+
+```
+PR: #<number>
+Branch: <branch-name>
+Conflicts: resolved | none
+CI: green | red | pending
+Comments Addressed: <count>
+Issues: <comma-separated list of #<n> follow-up issues, or "none">
+Reviewers Re-triggered: <list>
+Status: ready | needs-work | needs-human-review | skipped
+Notes: <any issues encountered>
+```
 
 ---
 
-## Step 3: Summary
+## Step 3: Collect Results and Summarize
 
-After processing all PRs, output a summary table:
+After **all** subagents complete, collect their results and output a summary table:
 
 ```
-| PR | Branch | Conflicts | CI | Comments Addressed | Reviewers Re-triggered | Status |
-|----|--------|-----------|----|--------------------|----------------------|--------|
-| #N | branch | resolved/none | green/red | N comments | greptile, claude | ready/needs-work |
+| PR | Branch | Conflicts | CI | Comments Addressed | Issues | Reviewers Re-triggered | Status |
+|----|--------|-----------|----|--------------------|--------|----------------------|--------|
+| #N | branch | resolved/none | green/red | N comments | #X, #Y or none | greptile, claude | ready/needs-work |
 ```
+
+If any subagent failed or returned an error, note it in the Status column as `agent-error` with the failure reason.
 
 ---
 
@@ -234,7 +270,7 @@ After processing all PRs, output a summary table:
 - **Never force-push** unless fixing a commit message that fails commitlint. Amend + force-push is the only way to fix a pushed commit title (messages are part of the SHA). This is safe on feature branches. For all other problems, fix with a new commit.
 - **Address ALL comments from ALL reviewers** (Claude, Greptile, and humans), even minor/nit/optional ones. Leave zero unaddressed. Do not only respond to one reviewer and skip another.
 - **Always reply to comments** explaining what was done. Don't just fix silently. Every reviewer must see a reply on their feedback.
-- **Don't re-trigger Greptile if already approved.** If your last reply to a Greptile comment has a positive emoji reaction (👍, ✅, 🎉) from `greptileai`, it's already satisfied — skip re-triggering.
+- **Don't re-trigger Greptile if already approved.** If your last reply to a Greptile comment has a positive emoji reaction from `greptileai`, it's already satisfied — skip re-triggering.
 - **Only re-trigger Claude** if you addressed Claude's feedback specifically.
 - **No co-author lines** in commit messages.
 - **No Claude Code references** in commit messages or comments.
