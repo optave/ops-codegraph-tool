@@ -6,7 +6,10 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
+import type BetterSqlite3 from 'better-sqlite3';
 import { bulkNodeIdsByFile } from '../../../../db/index.js';
+import type { ExtractorOutput, MetadataUpdate, NodeIdRow } from '../../../../types.js';
+import type { PipelineContext } from '../context.js';
 import {
   batchInsertEdges,
   batchInsertNodes,
@@ -15,10 +18,23 @@ import {
   readFileSafe,
 } from '../helpers.js';
 
+/** Shape of precomputed file data gathered from filesToParse entries. */
+interface PrecomputedFileData {
+  file: string;
+  relPath?: string;
+  content?: string;
+  hash?: string;
+  stat?: { mtime: number; size: number } | null;
+  _reverseDepOnly?: boolean;
+}
+
 // ── Phase 1: Insert file nodes, definitions, exports ────────────────────
 
-function insertDefinitionsAndExports(db, allSymbols) {
-  const phase1Rows = [];
+function insertDefinitionsAndExports(
+  db: BetterSqlite3.Database,
+  allSymbols: Map<string, ExtractorOutput>,
+): void {
+  const phase1Rows: unknown[][] = [];
   for (const [relPath, symbols] of allSymbols) {
     phase1Rows.push([relPath, 'file', relPath, 0, null, null, null, null, null]);
     for (const def of symbols.definitions) {
@@ -55,10 +71,13 @@ function insertDefinitionsAndExports(db, allSymbols) {
 
 // ── Phase 2: Insert children (needs parent IDs) ────────────────────────
 
-function insertChildren(db, allSymbols) {
-  const childRows = [];
+function insertChildren(
+  db: BetterSqlite3.Database,
+  allSymbols: Map<string, ExtractorOutput>,
+): void {
+  const childRows: unknown[][] = [];
   for (const [relPath, symbols] of allSymbols) {
-    const nodeIdMap = new Map();
+    const nodeIdMap = new Map<string, number>();
     for (const row of bulkNodeIdsByFile(db, relPath)) {
       nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
     }
@@ -87,10 +106,13 @@ function insertChildren(db, allSymbols) {
 
 // ── Phase 3: Insert containment + parameter_of edges ────────────────────
 
-function insertContainmentEdges(db, allSymbols) {
-  const edgeRows = [];
+function insertContainmentEdges(
+  db: BetterSqlite3.Database,
+  allSymbols: Map<string, ExtractorOutput>,
+): void {
+  const edgeRows: unknown[][] = [];
   for (const [relPath, symbols] of allSymbols) {
-    const nodeIdMap = new Map();
+    const nodeIdMap = new Map<string, number>();
     for (const row of bulkNodeIdsByFile(db, relPath)) {
       nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
     }
@@ -118,7 +140,14 @@ function insertContainmentEdges(db, allSymbols) {
 
 // ── Phase 4: Update file hashes ─────────────────────────────────────────
 
-function updateFileHashes(_db, allSymbols, precomputedData, metadataUpdates, rootDir, upsertHash) {
+function updateFileHashes(
+  _db: BetterSqlite3.Database,
+  allSymbols: Map<string, ExtractorOutput>,
+  precomputedData: Map<string, PrecomputedFileData>,
+  metadataUpdates: MetadataUpdate[],
+  rootDir: string,
+  upsertHash: BetterSqlite3.Statement | null,
+): void {
   if (!upsertHash) return;
 
   for (const [relPath] of allSymbols) {
@@ -126,13 +155,20 @@ function updateFileHashes(_db, allSymbols, precomputedData, metadataUpdates, roo
     if (precomputed?._reverseDepOnly) {
       // no-op: file unchanged, hash already correct
     } else if (precomputed?.hash) {
-      const stat = precomputed.stat || fileStat(path.join(rootDir, relPath));
-      const mtime = stat ? Math.floor(stat.mtimeMs) : 0;
-      const size = stat ? stat.size : 0;
+      let mtime: number;
+      let size: number;
+      if (precomputed.stat) {
+        mtime = precomputed.stat.mtime;
+        size = precomputed.stat.size;
+      } else {
+        const rawStat = fileStat(path.join(rootDir, relPath));
+        mtime = rawStat ? Math.floor(rawStat.mtimeMs) : 0;
+        size = rawStat ? rawStat.size : 0;
+      }
       upsertHash.run(relPath, precomputed.hash, mtime, size);
     } else {
       const absPath = path.join(rootDir, relPath);
-      let code;
+      let code: string | null;
       try {
         code = readFileSafe(absPath);
       } catch {
@@ -149,7 +185,7 @@ function updateFileHashes(_db, allSymbols, precomputedData, metadataUpdates, roo
 
   // Also update metadata-only entries (self-heal mtime/size without re-parse)
   for (const item of metadataUpdates) {
-    const mtime = item.stat ? Math.floor(item.stat.mtimeMs) : 0;
+    const mtime = item.stat ? Math.floor(item.stat.mtime) : 0;
     const size = item.stat ? item.stat.size : 0;
     upsertHash.run(item.relPath, item.hash, mtime, size);
   }
@@ -157,18 +193,15 @@ function updateFileHashes(_db, allSymbols, precomputedData, metadataUpdates, roo
 
 // ── Main entry point ────────────────────────────────────────────────────
 
-/**
- * @param {import('../context.js').PipelineContext} ctx
- */
-export async function insertNodes(ctx) {
+export async function insertNodes(ctx: PipelineContext): Promise<void> {
   const { db, allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
 
-  const precomputedData = new Map();
+  const precomputedData = new Map<string, PrecomputedFileData>();
   for (const item of filesToParse) {
-    if (item.relPath) precomputedData.set(item.relPath, item);
+    if (item.relPath) precomputedData.set(item.relPath, item as PrecomputedFileData);
   }
 
-  let upsertHash;
+  let upsertHash: BetterSqlite3.Statement | null;
   try {
     upsertHash = db.prepare(
       'INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)',

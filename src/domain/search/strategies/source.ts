@@ -1,9 +1,14 @@
+import type { NodeRow } from '../../../types.js';
 import { splitIdentifier } from './text-utils.js';
 
 /**
  * Build raw source-code text for a symbol (original strategy).
  */
-export function buildSourceText(node, file, lines) {
+export function buildSourceText(
+  node: Pick<NodeRow, 'name' | 'kind' | 'line' | 'end_line'>,
+  file: string,
+  lines: string[],
+): string {
   const startLine = Math.max(0, node.line - 1);
   const endLine = node.end_line
     ? Math.min(lines.length, node.end_line)

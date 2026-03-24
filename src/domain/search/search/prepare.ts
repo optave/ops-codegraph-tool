@@ -1,17 +1,39 @@
 import { openReadonlyOrFail } from '../../../db/index.js';
 import { escapeLike } from '../../../db/query-builder.js';
 import { getEmbeddingCount, getEmbeddingMeta } from '../../../db/repository/embeddings.js';
+import type { BetterSqlite3Database } from '../../../types.js';
 import { MODELS } from '../models.js';
 import { applyFilters } from './filters.js';
 
-/**
- * Shared setup for search functions: opens DB, validates embeddings/model, loads rows.
- * Returns { db, rows, modelKey, storedDim } or null on failure (prints error).
- * On null return, the DB is closed. On exception, the DB is also closed
- * (callers only need to close DB from the returned object on the happy path).
- */
-export function prepareSearch(customDbPath, opts = {}) {
-  const db = openReadonlyOrFail(customDbPath);
+export interface PreparedSearch {
+  db: BetterSqlite3Database;
+  rows: Array<{
+    node_id: number;
+    vector: Buffer;
+    text_preview: string;
+    name: string;
+    kind: string;
+    file: string;
+    line: number;
+    end_line: number | null;
+    role: string | null;
+  }>;
+  modelKey: string | null;
+  storedDim: number | null;
+}
+
+export interface PrepareSearchOpts {
+  model?: string;
+  kind?: string;
+  filePattern?: string | string[];
+  noTests?: boolean;
+}
+
+export function prepareSearch(
+  customDbPath: string | undefined,
+  opts: PrepareSearchOpts = {},
+): PreparedSearch | null {
+  const db = openReadonlyOrFail(customDbPath) as BetterSqlite3Database;
 
   try {
     const count = getEmbeddingCount(db);
@@ -35,7 +57,6 @@ export function prepareSearch(customDbPath, opts = {}) {
       }
     }
 
-    // Pre-filter: allow filtering by kind or file pattern to reduce search space
     const fp = opts.filePattern;
     const fpArr = Array.isArray(fp) ? fp : fp ? [fp] : [];
     const isGlob = fpArr.length > 0 && fpArr.some((p) => /[*?[\]]/.test(p));
@@ -44,8 +65,8 @@ export function prepareSearch(customDbPath, opts = {}) {
     FROM embeddings e
     JOIN nodes n ON e.node_id = n.id
   `;
-    const params = [];
-    const conditions = [];
+    const params: unknown[] = [];
+    const conditions: string[] = [];
     if (opts.kind) {
       conditions.push('n.kind = ?');
       params.push(opts.kind);
@@ -53,7 +74,7 @@ export function prepareSearch(customDbPath, opts = {}) {
     if (fpArr.length > 0 && !isGlob) {
       if (fpArr.length === 1) {
         conditions.push("n.file LIKE ? ESCAPE '\\'");
-        params.push(`%${escapeLike(fpArr[0])}%`);
+        params.push(`%${escapeLike(fpArr[0]!)}%`);
       } else {
         conditions.push(`(${fpArr.map(() => "n.file LIKE ? ESCAPE '\\'").join(' OR ')})`);
         params.push(...fpArr.map((f) => `%${escapeLike(f)}%`));
@@ -63,7 +84,7 @@ export function prepareSearch(customDbPath, opts = {}) {
       sql += ` WHERE ${conditions.join(' AND ')}`;
     }
 
-    let rows = db.prepare(sql).all(...params);
+    let rows = db.prepare(sql).all(...params) as PreparedSearch['rows'];
     rows = applyFilters(rows, opts);
 
     return { db, rows, modelKey, storedDim };

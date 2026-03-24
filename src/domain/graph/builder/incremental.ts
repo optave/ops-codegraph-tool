@@ -9,16 +9,44 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import type BetterSqlite3 from 'better-sqlite3';
 import { bulkNodeIdsByFile } from '../../../db/index.js';
 import { warn } from '../../../infrastructure/logger.js';
 import { normalizePath } from '../../../shared/constants.js';
+import type { EngineOpts, ExtractorOutput, PathAliases } from '../../../types.js';
 import { parseFileIncremental } from '../../parser.js';
 import { computeConfidence, resolveImportPath } from '../resolve.js';
 import { BUILTIN_RECEIVERS, readFileSafe } from './helpers.js';
 
+// ── Local types ─────────────────────────────────────────────────────────
+
+export interface IncrementalStmts {
+  insertNode: { run: (...params: unknown[]) => unknown };
+  insertEdge: { run: (...params: unknown[]) => unknown };
+  getNodeId: { get: (...params: unknown[]) => { id: number } | undefined };
+  deleteEdgesForFile: { run: (...params: unknown[]) => unknown };
+  deleteNodes: { run: (...params: unknown[]) => unknown };
+  countNodes: { get: (...params: unknown[]) => { c: number } | undefined };
+  listSymbols: { all: (...params: unknown[]) => unknown[] };
+  findNodeInFile: { all: (...params: unknown[]) => unknown[] };
+  findNodeByName: { all: (...params: unknown[]) => unknown[] };
+}
+
+interface RebuildResult {
+  file: string;
+  nodesAdded: number;
+  nodesRemoved: number;
+  edgesAdded: number;
+  deleted?: boolean;
+  event?: string;
+  symbolDiff?: unknown;
+  nodesBefore?: number;
+  nodesAfter?: number;
+}
+
 // ── Node insertion ──────────────────────────────────────────────────────
 
-function insertFileNodes(stmts, relPath, symbols) {
+function insertFileNodes(stmts: IncrementalStmts, relPath: string, symbols: ExtractorOutput): void {
   stmts.insertNode.run(relPath, 'file', relPath, 0, null);
   for (const def of symbols.definitions) {
     stmts.insertNode.run(def.name, def.kind, relPath, def.line, def.endLine || null);
@@ -35,8 +63,13 @@ function insertFileNodes(stmts, relPath, symbols) {
 
 // ── Containment edges ──────────────────────────────────────────────────
 
-function buildContainmentEdges(db, stmts, relPath, symbols) {
-  const nodeIdMap = new Map();
+function buildContainmentEdges(
+  db: BetterSqlite3.Database,
+  stmts: IncrementalStmts,
+  relPath: string,
+  symbols: ExtractorOutput,
+): number {
+  const nodeIdMap = new Map<string, number>();
   for (const row of bulkNodeIdsByFile(db, relPath)) {
     nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
   }
@@ -68,11 +101,14 @@ function buildContainmentEdges(db, stmts, relPath, symbols) {
 // ── Reverse-dep cascade ────────────────────────────────────────────────
 
 // Lazily-cached prepared statements for reverse-dep operations
-let _revDepDb = null;
-let _findRevDepsStmt = null;
-let _deleteOutEdgesStmt = null;
+let _revDepDb: BetterSqlite3.Database | null = null;
+let _findRevDepsStmt: BetterSqlite3.Statement | null = null;
+let _deleteOutEdgesStmt: BetterSqlite3.Statement | null = null;
 
-function getRevDepStmts(db) {
+function getRevDepStmts(db: BetterSqlite3.Database): {
+  findRevDepsStmt: BetterSqlite3.Statement;
+  deleteOutEdgesStmt: BetterSqlite3.Statement;
+} {
   if (_revDepDb !== db) {
     _revDepDb = db;
     _findRevDepsStmt = db.prepare(
@@ -85,24 +121,32 @@ function getRevDepStmts(db) {
       'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
     );
   }
-  return { findRevDepsStmt: _findRevDepsStmt, deleteOutEdgesStmt: _deleteOutEdgesStmt };
+  return {
+    findRevDepsStmt: _findRevDepsStmt!,
+    deleteOutEdgesStmt: _deleteOutEdgesStmt!,
+  };
 }
 
-function findReverseDeps(db, relPath) {
+function findReverseDeps(db: BetterSqlite3.Database, relPath: string): string[] {
   const { findRevDepsStmt } = getRevDepStmts(db);
-  return findRevDepsStmt.all(relPath, relPath).map((r) => r.file);
+  return (findRevDepsStmt.all(relPath, relPath) as Array<{ file: string }>).map((r) => r.file);
 }
 
-function deleteOutgoingEdges(db, relPath) {
+function deleteOutgoingEdges(db: BetterSqlite3.Database, relPath: string): void {
   const { deleteOutEdgesStmt } = getRevDepStmts(db);
   deleteOutEdgesStmt.run(relPath);
 }
 
-async function parseReverseDep(rootDir, depRelPath, engineOpts, cache) {
+async function parseReverseDep(
+  rootDir: string,
+  depRelPath: string,
+  engineOpts: EngineOpts,
+  cache: unknown,
+): Promise<ExtractorOutput | null> {
   const absPath = path.join(rootDir, depRelPath);
   if (!fs.existsSync(absPath)) return null;
 
-  let code;
+  let code: string;
   try {
     code = readFileSafe(absPath);
   } catch {
@@ -112,13 +156,20 @@ async function parseReverseDep(rootDir, depRelPath, engineOpts, cache) {
   return parseFileIncremental(cache, absPath, code, engineOpts);
 }
 
-function rebuildReverseDepEdges(db, rootDir, depRelPath, symbols, stmts, skipBarrel) {
+function rebuildReverseDepEdges(
+  db: BetterSqlite3.Database,
+  rootDir: string,
+  depRelPath: string,
+  symbols: ExtractorOutput,
+  stmts: IncrementalStmts,
+  skipBarrel: boolean,
+): number {
   const fileNodeRow = stmts.getNodeId.get(depRelPath, 'file', depRelPath, 0);
   if (!fileNodeRow) return 0;
 
-  const aliases = { baseUrl: null, paths: {} };
+  const aliases: PathAliases = { baseUrl: null, paths: {} };
   let edgesAdded = buildContainmentEdges(db, stmts, depRelPath, symbols);
-  // Don't rebuild dir→file containment for reverse-deps (it was never deleted)
+  // Don't rebuild dir->file containment for reverse-deps (it was never deleted)
   edgesAdded += buildImportEdges(
     stmts,
     depRelPath,
@@ -135,7 +186,11 @@ function rebuildReverseDepEdges(db, rootDir, depRelPath, symbols, stmts, skipBar
 
 // ── Directory containment edges ────────────────────────────────────────
 
-function rebuildDirContainment(_db, stmts, relPath) {
+function rebuildDirContainment(
+  _db: BetterSqlite3.Database,
+  stmts: IncrementalStmts,
+  relPath: string,
+): number {
   const dir = normalizePath(path.dirname(relPath));
   if (!dir || dir === '.') return 0;
   const dirRow = stmts.getNodeId.get(dir, 'directory', dir, 0);
@@ -149,12 +204,12 @@ function rebuildDirContainment(_db, stmts, relPath) {
 
 // ── Ancillary table cleanup ────────────────────────────────────────────
 
-function purgeAncillaryData(db, relPath) {
-  const tryExec = (sql, ...args) => {
+function purgeAncillaryData(db: BetterSqlite3.Database, relPath: string): void {
+  const tryExec = (sql: string, ...args: string[]): void => {
     try {
       db.prepare(sql).run(...args);
-    } catch (err) {
-      if (!err?.message?.includes('no such table')) throw err;
+    } catch (err: unknown) {
+      if (!(err as Error | undefined)?.message?.includes('no such table')) throw err;
     }
   };
   tryExec(
@@ -184,12 +239,16 @@ function purgeAncillaryData(db, relPath) {
 // ── Import edge building ────────────────────────────────────────────────
 
 // Lazily-cached prepared statements for barrel resolution (avoid re-preparing in hot loops)
-let _barrelDb = null;
-let _isBarrelStmt = null;
-let _reexportTargetsStmt = null;
-let _hasDefStmt = null;
+let _barrelDb: BetterSqlite3.Database | null = null;
+let _isBarrelStmt: BetterSqlite3.Statement | null = null;
+let _reexportTargetsStmt: BetterSqlite3.Statement | null = null;
+let _hasDefStmt: BetterSqlite3.Statement | null = null;
 
-function getBarrelStmts(db) {
+function getBarrelStmts(db: BetterSqlite3.Database): {
+  isBarrelStmt: BetterSqlite3.Statement;
+  reexportTargetsStmt: BetterSqlite3.Statement;
+  hasDefStmt: BetterSqlite3.Statement;
+} {
   if (_barrelDb !== db) {
     _barrelDb = db;
     _isBarrelStmt = db.prepare(
@@ -208,26 +267,31 @@ function getBarrelStmts(db) {
     );
   }
   return {
-    isBarrelStmt: _isBarrelStmt,
-    reexportTargetsStmt: _reexportTargetsStmt,
-    hasDefStmt: _hasDefStmt,
+    isBarrelStmt: _isBarrelStmt!,
+    reexportTargetsStmt: _reexportTargetsStmt!,
+    hasDefStmt: _hasDefStmt!,
   };
 }
 
-function isBarrelFile(db, relPath) {
+function isBarrelFile(db: BetterSqlite3.Database, relPath: string): boolean {
   const { isBarrelStmt } = getBarrelStmts(db);
-  const reexportCount = isBarrelStmt.get(relPath)?.c;
+  const reexportCount = (isBarrelStmt.get(relPath) as { c: number } | undefined)?.c;
   return (reexportCount || 0) > 0;
 }
 
-function resolveBarrelTarget(db, barrelPath, symbolName, visited = new Set()) {
+function resolveBarrelTarget(
+  db: BetterSqlite3.Database,
+  barrelPath: string,
+  symbolName: string,
+  visited: Set<string> = new Set(),
+): string | null {
   if (visited.has(barrelPath)) return null;
   visited.add(barrelPath);
 
   const { reexportTargetsStmt, hasDefStmt } = getBarrelStmts(db);
 
   // Find re-export targets from this barrel
-  const reexportTargets = reexportTargetsStmt.all(barrelPath);
+  const reexportTargets = reexportTargetsStmt.all(barrelPath) as Array<{ file: string }>;
 
   for (const { file: targetFile } of reexportTargets) {
     // Check if the symbol is defined in this target file
@@ -247,10 +311,16 @@ function resolveBarrelTarget(db, barrelPath, symbolName, visited = new Set()) {
  * Resolve barrel imports for a single import statement and create edges to actual source files.
  * Shared by buildImportEdges (primary file) and Pass 2 of the reverse-dep cascade.
  */
-function resolveBarrelImportEdges(db, stmts, fileNodeId, resolvedPath, imp) {
+function resolveBarrelImportEdges(
+  db: BetterSqlite3.Database,
+  stmts: IncrementalStmts,
+  fileNodeId: number,
+  resolvedPath: string,
+  imp: ExtractorOutput['imports'][number],
+): number {
   let edgesAdded = 0;
   if (!isBarrelFile(db, resolvedPath)) return edgesAdded;
-  const resolvedSources = new Set();
+  const resolvedSources = new Set<string>();
   for (const name of imp.names) {
     const cleanName = name.replace(/^\*\s+as\s+/, '');
     const actualSource = resolveBarrelTarget(db, resolvedPath, cleanName);
@@ -267,7 +337,15 @@ function resolveBarrelImportEdges(db, stmts, fileNodeId, resolvedPath, imp) {
   return edgesAdded;
 }
 
-function buildImportEdges(stmts, relPath, symbols, rootDir, fileNodeId, aliases, db) {
+function buildImportEdges(
+  stmts: IncrementalStmts,
+  relPath: string,
+  symbols: ExtractorOutput,
+  rootDir: string,
+  fileNodeId: number,
+  aliases: PathAliases,
+  db: BetterSqlite3.Database | null,
+): number {
   let edgesAdded = 0;
   for (const imp of symbols.imports) {
     const resolvedPath = resolveImportPath(
@@ -291,8 +369,13 @@ function buildImportEdges(stmts, relPath, symbols, rootDir, fileNodeId, aliases,
   return edgesAdded;
 }
 
-function buildImportedNamesMap(symbols, rootDir, relPath, aliases) {
-  const importedNames = new Map();
+function buildImportedNamesMap(
+  symbols: ExtractorOutput,
+  rootDir: string,
+  relPath: string,
+  aliases: PathAliases,
+): Map<string, string> {
+  const importedNames = new Map<string, string>();
   for (const imp of symbols.imports) {
     const resolvedPath = resolveImportPath(
       path.join(rootDir, relPath),
@@ -309,8 +392,13 @@ function buildImportedNamesMap(symbols, rootDir, relPath, aliases) {
 
 // ── Call edge building ──────────────────────────────────────────────────
 
-function findCaller(call, definitions, relPath, stmts) {
-  let caller = null;
+function findCaller(
+  call: ExtractorOutput['calls'][number],
+  definitions: ExtractorOutput['definitions'],
+  relPath: string,
+  stmts: IncrementalStmts,
+): { id: number } | null {
+  let caller: { id: number } | null = null;
   let callerSpan = Infinity;
   for (const def of definitions) {
     if (def.line <= call.line) {
@@ -333,16 +421,25 @@ function findCaller(call, definitions, relPath, stmts) {
   return caller;
 }
 
-function resolveCallTargets(stmts, call, relPath, importedNames, typeMap) {
+function resolveCallTargets(
+  stmts: IncrementalStmts,
+  call: ExtractorOutput['calls'][number],
+  relPath: string,
+  importedNames: Map<string, string>,
+  typeMap: Map<string, unknown>,
+): { targets: Array<{ id: number; file: string }>; importedFrom: string | undefined } {
   const importedFrom = importedNames.get(call.name);
-  let targets;
+  let targets: Array<{ id: number; file: string }> | undefined;
   if (importedFrom) {
-    targets = stmts.findNodeInFile.all(call.name, importedFrom);
+    targets = stmts.findNodeInFile.all(call.name, importedFrom) as Array<{
+      id: number;
+      file: string;
+    }>;
   }
   if (!targets || targets.length === 0) {
-    targets = stmts.findNodeInFile.all(call.name, relPath);
+    targets = stmts.findNodeInFile.all(call.name, relPath) as Array<{ id: number; file: string }>;
     if (targets.length === 0) {
-      targets = stmts.findNodeByName.all(call.name);
+      targets = stmts.findNodeByName.all(call.name) as Array<{ id: number; file: string }>;
     }
   }
   // Type-aware resolution: translate variable receiver to declared type
@@ -351,23 +448,34 @@ function resolveCallTargets(stmts, call, relPath, importedNames, typeMap) {
     const typeName = typeEntry
       ? typeof typeEntry === 'string'
         ? typeEntry
-        : typeEntry.type
+        : (typeEntry as { type?: string }).type
       : null;
     if (typeName) {
       const qualified = `${typeName}.${call.name}`;
-      targets = stmts.findNodeByName.all(qualified);
+      targets = stmts.findNodeByName.all(qualified) as Array<{ id: number; file: string }>;
     }
   }
-  return { targets, importedFrom };
+  return { targets: targets ?? [], importedFrom };
 }
 
-function buildCallEdges(stmts, relPath, symbols, fileNodeRow, importedNames) {
-  const rawTM = symbols.typeMap;
-  const typeMap =
+function buildCallEdges(
+  stmts: IncrementalStmts,
+  relPath: string,
+  symbols: ExtractorOutput,
+  fileNodeRow: { id: number },
+  importedNames: Map<string, string>,
+): number {
+  const rawTM: unknown = symbols.typeMap;
+  const typeMap: Map<string, unknown> =
     rawTM instanceof Map
       ? rawTM
       : Array.isArray(rawTM) && rawTM.length > 0
-        ? new Map(rawTM.map((e) => [e.name, e.typeName ?? e.type ?? null]))
+        ? new Map(
+            (rawTM as Array<{ name: string; typeName?: string; type?: string }>).map((e) => [
+              e.name,
+              e.typeName ?? e.type ?? null,
+            ]),
+          )
         : new Map();
   let edgesAdded = 0;
   for (const call of symbols.calls) {
@@ -397,22 +505,20 @@ function buildCallEdges(stmts, relPath, symbols, fileNodeRow, importedNames) {
 
 /**
  * Parse a single file and update the database incrementally.
- *
- * @param {import('better-sqlite3').Database} db
- * @param {string} rootDir - Absolute root directory
- * @param {string} filePath - Absolute file path
- * @param {object} stmts - Prepared DB statements
- * @param {object} engineOpts - Engine options
- * @param {object|null} cache - Parse tree cache (native only)
- * @param {object} [options]
- * @param {Function} [options.diffSymbols] - Symbol diff function
- * @returns {Promise<object|null>} Update result or null on failure
  */
-export async function rebuildFile(db, rootDir, filePath, stmts, engineOpts, cache, options = {}) {
+export async function rebuildFile(
+  db: BetterSqlite3.Database,
+  rootDir: string,
+  filePath: string,
+  stmts: IncrementalStmts,
+  engineOpts: EngineOpts,
+  cache: unknown,
+  options: { diffSymbols?: (old: unknown[], new_: unknown[]) => unknown } = {},
+): Promise<RebuildResult | null> {
   const { diffSymbols } = options;
   const relPath = normalizePath(path.relative(rootDir, filePath));
   const oldNodes = stmts.countNodes.get(relPath)?.c || 0;
-  const oldSymbols = diffSymbols ? stmts.listSymbols.all(relPath) : [];
+  const oldSymbols: unknown[] = diffSymbols ? stmts.listSymbols.all(relPath) : [];
 
   // Find reverse-deps BEFORE purging (edges still reference the old nodes)
   const reverseDeps = findReverseDeps(db, relPath);
@@ -423,7 +529,7 @@ export async function rebuildFile(db, rootDir, filePath, stmts, engineOpts, cach
   stmts.deleteNodes.run(relPath);
 
   if (!fs.existsSync(filePath)) {
-    if (cache) cache.remove(filePath);
+    if (cache) (cache as { remove(p: string): void }).remove(filePath);
     const symbolDiff = diffSymbols ? diffSymbols(oldSymbols, []) : null;
     return {
       file: relPath,
@@ -438,11 +544,11 @@ export async function rebuildFile(db, rootDir, filePath, stmts, engineOpts, cach
     };
   }
 
-  let code;
+  let code: string;
   try {
     code = readFileSafe(filePath);
   } catch (err) {
-    warn(`Cannot read ${relPath}: ${err.message}`);
+    warn(`Cannot read ${relPath}: ${(err as Error).message}`);
     return null;
   }
 
@@ -452,13 +558,13 @@ export async function rebuildFile(db, rootDir, filePath, stmts, engineOpts, cach
   insertFileNodes(stmts, relPath, symbols);
 
   const newNodes = stmts.countNodes.get(relPath)?.c || 0;
-  const newSymbols = diffSymbols ? stmts.listSymbols.all(relPath) : [];
+  const newSymbols: unknown[] = diffSymbols ? stmts.listSymbols.all(relPath) : [];
 
   const fileNodeRow = stmts.getNodeId.get(relPath, 'file', relPath, 0);
   if (!fileNodeRow)
     return { file: relPath, nodesAdded: newNodes, nodesRemoved: oldNodes, edgesAdded: 0 };
 
-  const aliases = { baseUrl: null, paths: {} };
+  const aliases: PathAliases = { baseUrl: null, paths: {} };
 
   let edgesAdded = buildContainmentEdges(db, stmts, relPath, symbols);
   edgesAdded += rebuildDirContainment(db, stmts, relPath);
@@ -469,7 +575,7 @@ export async function rebuildFile(db, rootDir, filePath, stmts, engineOpts, cach
   // Cascade: rebuild outgoing edges for reverse-dep files.
   // Two-pass approach: first rebuild direct edges (creating reexports edges for barrels),
   // then add barrel import edges (which need reexports edges to exist for resolution).
-  const depSymbols = new Map();
+  const depSymbols = new Map<string, ExtractorOutput>();
   for (const depRelPath of reverseDeps) {
     const symbols_ = await parseReverseDep(rootDir, depRelPath, engineOpts, cache);
     if (symbols_) {
@@ -485,7 +591,7 @@ export async function rebuildFile(db, rootDir, filePath, stmts, engineOpts, cach
   for (const [depRelPath, symbols_] of depSymbols) {
     const fileNodeRow_ = stmts.getNodeId.get(depRelPath, 'file', depRelPath, 0);
     if (!fileNodeRow_) continue;
-    const aliases_ = { baseUrl: null, paths: {} };
+    const aliases_: PathAliases = { baseUrl: null, paths: {} };
     for (const imp of symbols_.imports) {
       if (imp.reexport) continue;
       const resolvedPath = resolveImportPath(

@@ -464,6 +464,8 @@ export interface ExtractorOutput {
   dataflow?: DataflowResult;
   /** AST node rows, populated post-analysis. */
   astNodes?: ASTNodeRow[];
+  /** Set when typeMap was backfilled from WASM for a native parse result. */
+  _typeMapBackfilled?: boolean;
 }
 
 /** Extractor function signature. */
@@ -868,6 +870,8 @@ export interface BuildGraphOpts {
   engine?: EngineMode;
   dataflow?: boolean;
   ast?: boolean;
+  scope?: string[];
+  skipRegistry?: boolean;
 }
 
 /** Build timing result from buildGraph. */
