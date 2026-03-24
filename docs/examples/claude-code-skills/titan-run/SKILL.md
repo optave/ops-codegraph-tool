@@ -467,6 +467,7 @@ Set `stallCount = 0`, `maxStalls = 2` (forge stalls are more serious — fewer r
 ```
 previousCompletedPhases = execution.completedPhases (or [])
 previousCompletedTargets = execution.completedTargets (or [])
+previousFailedTargets = execution.failedTargets (or [])
 iteration = 0
 
 while iteration < maxIterations:
@@ -514,7 +515,11 @@ while iteration < maxIterations:
     newCompletedTargets = execution.completedTargets (or [])
     newFailedTargets = execution.failedTargets (or [])
 
-    if newCompletedPhases == previousCompletedPhases and len(newCompletedTargets) == len(previousCompletedTargets):
+    # Count total targets processed (succeeded + failed) to distinguish true stalls from all-fail phases
+    newProcessedCount = len(newCompletedTargets) + len(newFailedTargets)
+    previousProcessedCount = len(previousCompletedTargets) + len(previousFailedTargets)
+
+    if newCompletedPhases == previousCompletedPhases and newProcessedCount == previousProcessedCount:
         stallCount += 1
         Print: "WARNING: Forge iteration <iteration> made no progress (stall <stallCount>/<maxStalls>)"
         if stallCount >= maxStalls:
@@ -524,6 +529,7 @@ while iteration < maxIterations:
 
     previousCompletedPhases = newCompletedPhases
     previousCompletedTargets = newCompletedTargets
+    previousFailedTargets = newFailedTargets
 
     # V12. Commit audit — verify commits match expectations
     if headAfter != headBefore:
@@ -538,7 +544,7 @@ while iteration < maxIterations:
     # V13. Test suite still green after forge commits (skip if no commits were made)
     if headAfter != headBefore:
         # Detect test command (same detection as gate Step 4):
-        testCmd = node -e "const p=require('./package.json');const s=p.scripts||{};const cmd=s.test?'npm test':s['test:ci']?'npm run test:ci':null;console.log(cmd||'NO_TEST_SCRIPT');"
+        testCmd = node -e "const p=require('./package.json');const s=p.scripts||{};const script=s.test?'test':s['test:ci']?'test:ci':null;if(!script){console.log('NO_TEST_SCRIPT');process.exit(0);}const fs=require('fs');const runner=fs.existsSync('yarn.lock')?'yarn':fs.existsSync('pnpm-lock.yaml')?'pnpm':fs.existsSync('bun.lockb')?'bun':'npm';console.log(runner+(script==='test'?' test':' run '+script));"
         if testCmd == "NO_TEST_SCRIPT":
             Print: "V13: No test script configured — skipping post-forge test run."
         else:
