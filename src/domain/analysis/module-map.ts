@@ -52,13 +52,15 @@ export const FALSE_POSITIVE_CALLER_THRESHOLD = 20;
 // Section helpers
 // ---------------------------------------------------------------------------
 
+const _fileNodesStmt: StmtCache<{ id: number; file: string }> = new WeakMap();
+const _allNodesIdFileStmt: StmtCache<{ id: number; file: string }> = new WeakMap();
+
 function buildTestFileIds(db: BetterSqlite3Database): Set<number> {
-  const fileNodesStmt = cachedStmt(
-    _fileNodesStmtCache,
+  const allFileNodes = cachedStmt(
+    _fileNodesStmt,
     db,
     "SELECT id, file FROM nodes WHERE kind = 'file'",
-  );
-  const allFileNodes = fileNodesStmt.all() as Array<{ id: number; file: string }>;
+  ).all();
   const testFileIds = new Set<number>();
   const testFiles = new Set<string>();
   for (const n of allFileNodes) {
@@ -67,8 +69,7 @@ function buildTestFileIds(db: BetterSqlite3Database): Set<number> {
       testFiles.add(n.file);
     }
   }
-  const allNodesStmt = cachedStmt(_allNodesStmtCache, db, 'SELECT id, file FROM nodes');
-  const allNodes = allNodesStmt.all() as Array<{ id: number; file: string }>;
+  const allNodes = cachedStmt(_allNodesIdFileStmt, db, 'SELECT id, file FROM nodes').all();
   for (const n of allNodes) {
     if (testFiles.has(n.file)) testFileIds.add(n.id);
   }
