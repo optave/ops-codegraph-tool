@@ -204,11 +204,16 @@ For each target in the current phase:
    Add to `execution.failedTargets` with reason starting with `"diff-review: "`. Continue to next target.
    **On DIFF WARN:** Log the warning but proceed to gate. Include the warning in the gate-log entry.
 
-10. **Run tests** (detect the project's test command from package.json scripts — `npm test`, `yarn test`, `pnpm test`, etc.):
+10. **Run tests** — detect the project's test command from `package.json` (same detection as gate Step 4):
     ```bash
-    <detected-test-command> 2>&1
+    testCmd=$(node -e "const p=require('./package.json');const s=p.scripts||{};const cmd=s.test?'npm test':s['test:ci']?'npm run test:ci':null;console.log(cmd||'NO_TEST_SCRIPT');")
     ```
-    If tests fail → go to rollback (step 13).
+    - If `testCmd == "NO_TEST_SCRIPT"` → skip pre-gate test run (no test script configured).
+    - Otherwise:
+      ```bash
+      $testCmd 2>&1
+      ```
+      If tests fail → go to rollback (step 13).
 
     > **Note:** Gate (Step 11) also runs tests. This pre-gate test is a fast-fail optimization — it catches obvious breakage before running the full gate checks (codegraph analysis, semantic assertions, arch snapshot). For projects with fast test suites the duplication is negligible; for slow suites, the tradeoff is: catch failures ~2x faster at the cost of ~2x test time on passing targets.
 
