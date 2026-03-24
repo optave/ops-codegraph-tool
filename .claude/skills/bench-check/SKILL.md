@@ -223,21 +223,7 @@ git diff --cached --quiet -- generated/bench-check/baseline.json generated/bench
 
 Write a human-readable report to `generated/bench-check/BENCH_REPORT_<date>.md`.
 
-**If `SAVE_ONLY` is set or no prior baseline existed (first run):** write a shortened report — omit the "Comparison vs Baseline" and "Regressions" sections since no comparison was performed:
-
-```markdown
-# Benchmark Report — <date>
-
-**Version:** X.Y.Z | **Git ref:** abc1234 | **Threshold:** $THRESHOLD%
-
-## Verdict: BASELINE SAVED — no comparison performed
-
-## Raw Results
-
-<!-- Full JSON output from each benchmark -->
-```
-
-**If the ABORTED pre-condition was triggered (no valid benchmark results):** write a minimal report:
+**If the ABORTED pre-condition was triggered (no valid benchmark results):** write a minimal report — this check MUST come before the SAVE_ONLY/first-run check, because when all benchmarks fail on a `--save-baseline` or first run, SAVE_ONLY would also be true but no baseline was actually saved:
 
 ```markdown
 # Benchmark Report — <date>
@@ -251,6 +237,20 @@ All benchmark suites failed or timed out. See Phase 1 error records for details.
 ## Raw Results
 
 <!-- Error/timeout records from each suite -->
+```
+
+**If `SAVE_ONLY` is set or no prior baseline existed (first run):** write a shortened report — omit the "Comparison vs Baseline" and "Regressions" sections since no comparison was performed:
+
+```markdown
+# Benchmark Report — <date>
+
+**Version:** X.Y.Z | **Git ref:** abc1234 | **Threshold:** $THRESHOLD%
+
+## Verdict: BASELINE SAVED — no comparison performed
+
+## Raw Results
+
+<!-- Full JSON output from each benchmark -->
 ```
 
 **Otherwise (comparison was performed):** write the full report with comparison and verdict:
