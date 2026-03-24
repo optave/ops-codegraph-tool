@@ -446,7 +446,7 @@ while iteration < maxIterations:
     iteration += 1
 
     # Run Pre-Agent Gate (G1-G4) — CRITICAL for forge since it commits
-    # Also check for unexpected commits:
+    # Context: show recent commits so agent has context for V12 commit audit
     git log --oneline -5
     # Record the HEAD sha before dispatching
 
