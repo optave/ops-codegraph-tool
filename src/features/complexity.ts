@@ -461,12 +461,12 @@ function upsertAstComplexity(
   langId: string | null | undefined,
   rules: ComplexityRules | undefined,
 ): number {
-  if (!tree || !rules) return 0;
+  if (!tree || !rules || !langId) return 0;
 
   const funcNode = _findFunctionNode(tree.rootNode, def.line, def.endLine ?? def.line, rules);
   if (!funcNode) return 0;
 
-  const metrics = computeAllMetrics(funcNode, langId!);
+  const metrics = computeAllMetrics(funcNode, langId);
   if (!metrics) return 0;
 
   const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
