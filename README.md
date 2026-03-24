@@ -791,7 +791,7 @@ npm install
 npm test
 ```
 
-Looking to add a new language? Check out **[Adding a New Language](docs/guides/adding-a-language.md)**.
+Looking to add a new language? Check out **[Adding a New Language](docs/contributing/adding-a-language.md)**.
 
 ## 📄 License
 
