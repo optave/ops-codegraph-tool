@@ -1,4 +1,4 @@
-import { effectiveOffset, MCP_DEFAULTS, MCP_MAX_LIMIT } from '../middleware.js';
+import { effectiveOffset, MCP_DEFAULTS } from '../middleware.js';
 import type { McpToolContext } from '../server.js';
 
 export const name = 'semantic_search';
@@ -14,7 +14,7 @@ interface SemanticSearchArgs {
 export async function handler(args: SemanticSearchArgs, ctx: McpToolContext): Promise<unknown> {
   const mode = args.mode || 'hybrid';
   const searchOpts = {
-    limit: Math.min(args.limit ?? MCP_DEFAULTS['semantic_search'] ?? 100, MCP_MAX_LIMIT),
+    limit: Math.min(args.limit ?? MCP_DEFAULTS['semantic_search'] ?? 100, ctx.MCP_MAX_LIMIT),
     offset: effectiveOffset(args),
     minScore: args.min_score,
   };
