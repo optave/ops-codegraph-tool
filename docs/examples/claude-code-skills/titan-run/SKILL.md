@@ -110,7 +110,7 @@ For each phase BEFORE `startPhase`, run the corresponding V-checks:
 
 | Skipped phase | Required artifacts + checks |
 |---------------|-----------------------------|
-| `recon` | V1 (titan-state.json structure), V2 (GLOBAL_ARCH.md), V3 (snapshot exists — WARN if missing), V4 (cross-check counts) |
+| `recon` | V1 structural fields only (domains, batches, priorityQueue, stats — skip `currentPhase == "recon"` check since later phases advance it), V2 (GLOBAL_ARCH.md), V3 (snapshot exists — WARN if missing), V4 (cross-check counts) |
 | `gauntlet` | V5 (coverage ≥ 50%), V6 (entry completeness sample), V7 (summary consistency); also run NDJSON integrity check (2c) |
 | `sync` | V8 (sync.json structure), V9 (targets trace to gauntlet), V10 (dependency order) |
 
