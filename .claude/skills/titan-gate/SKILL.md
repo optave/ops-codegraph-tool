@@ -186,7 +186,9 @@ Compare the codebase's architectural properties before and after this change. Th
 
 ### A2. Dependency direction between domains (runs unconditionally)
 
-A2 does NOT require `arch-snapshot.json` — it uses only the Step 1 diff-impact results and `GLOBAL_ARCH.md`. Run it even on standalone gate invocations.
+A2 does NOT require `arch-snapshot.json` — it uses only the Step 1 diff-impact results and `GLOBAL_ARCH.md` (if available).
+
+If `.codegraph/titan/GLOBAL_ARCH.md` does not exist (standalone invocation without Titan artifacts), skip A2 — layer boundaries are unknown.
 
 From `GLOBAL_ARCH.md`, extract the expected dependency direction between domains (e.g., "presentation depends on features, not the reverse").
 
