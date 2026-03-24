@@ -13,22 +13,17 @@ A single AI agent cannot hold an entire large codebase in context. The Titan Par
 3. Next phase reads only those artifacts — not the original sources
 
 ```
-/titan-recon → titan-state.json + GLOBAL_ARCH.md
+/titan-run (orchestrator — runs everything below end-to-end via sub-agents)
       │
-      ▼
-/titan-gauntlet → gauntlet.ndjson (batches of 5, resumes across sessions)
+      ├─→ /titan-recon → titan-state.json + GLOBAL_ARCH.md
       │
-      ▼
-/titan-sync → sync.json (execution plan)
+      ├─→ /titan-gauntlet → gauntlet.ndjson (loops until complete)
       │
-      ▼
-/titan-forge → executes sync.json (one phase per invocation, resumable)
-      │  ├─ codegraph context/fn-impact before each change
-      │  ├─ /titan-gate validates each commit
-      │  └─ advances titan-state.json
+      ├─→ /titan-sync → sync.json (execution plan)
       │
-      ▼
-/titan-gate (validates each commit: codegraph + lint/build/test)
+      └─→ /titan-forge → code changes + commits (loops phases)
+              │
+              └─→ /titan-gate (validates each commit)
 
 /titan-reset (escape hatch: clean up everything)
 ```
@@ -37,10 +32,11 @@ A single AI agent cannot hold an entire large codebase in context. The Titan Par
 
 | Skill | Phase | What it does | Key artifact |
 |-------|-------|-------------|-------------|
+| `/titan-run` | **ORCHESTRATOR** | Runs the full pipeline end-to-end by dispatching each phase to sub-agents with fresh context windows. Loops gauntlet and forge automatically | — |
 | `/titan-recon` | RECON | Builds graph + embeddings, complexity health baseline, domains, priority queue, work batches, `GLOBAL_ARCH.md`, baseline snapshot | `titan-state.json` |
 | `/titan-gauntlet` | GAUNTLET | 4-pillar audit (17 rules) using full codegraph metrics (`cognitive`, `cyclomatic`, `halstead.bugs`, `halstead.effort`, `mi`, `loc.sloc`). Batches of 5, NDJSON writes, session resume | `gauntlet.ndjson` |
 | `/titan-sync` | GLOBAL SYNC | Dependency clusters, code ownership, shared abstractions, ordered execution plan with logical commits | `sync.json` |
-| `/titan-forge` | FORGE | Executes `sync.json` one phase at a time — makes code changes, validates with `/titan-gate`, commits, tracks progress. Resumable across sessions | `titan-state.json` (execution block) |
+| `/titan-forge` | FORGE | Executes the sync plan — makes code changes, validates with `/titan-gate`, commits, advances state. One phase per invocation | `titan-state.json` |
 | `/titan-gate` | STATE MACHINE | `codegraph check --staged --cycles --blast-radius 30 --boundaries` + lint/build/test. Snapshot restore on failure | `gate-log.ndjson` |
 | `/titan-reset` | ESCAPE HATCH | Restores baseline snapshot, deletes all artifacts and snapshots, rebuilds graph | — |
 
@@ -63,7 +59,21 @@ codegraph build .
 
 ## Usage
 
-### Full pipeline
+### Fully automated (recommended)
+
+```
+/titan-run             # Runs the entire pipeline hands-free
+```
+
+The orchestrator dispatches each phase to a sub-agent with a fresh context window. Gauntlet and forge are looped automatically until complete. You can also resume from a specific phase:
+
+```
+/titan-run --start-from gauntlet          # Skip recon, resume gauntlet
+/titan-run --start-from forge --yes       # Skip to forge, auto-confirm
+/titan-run --gauntlet-batch-size 10       # Larger batches (if context allows)
+```
+
+### Manual pipeline
 
 ```
 /titan-recon           # Map the codebase, produce priority queue + embeddings
@@ -73,14 +83,13 @@ codegraph build .
                        # (calls /titan-gate automatically per commit)
 ```
 
-If GAUNTLET runs out of context, just re-invoke `/titan-gauntlet` — it resumes from the next pending batch.
+If GAUNTLET or FORGE runs out of context, just re-invoke — they resume from where they left off.
 
 ### Standalone phases
 
 - `/titan-recon` always works standalone (builds graph fresh)
 - `/titan-gauntlet` falls back to `codegraph triage` if no RECON artifact exists
 - `/titan-sync` requires GAUNTLET artifacts (warns if missing)
-- `/titan-forge` requires SYNC artifacts (`sync.json`); supports `--phase N`, `--target <name>`, `--dry-run`
 - `/titan-gate` works with or without prior artifacts (uses default thresholds)
 - `/titan-reset` cleans up everything — use when you want to start over
 
@@ -104,11 +113,12 @@ All artifacts are written to `.codegraph/titan/` (6 files, no redundancy):
 | File | Format | Written by | Read by |
 |------|--------|-----------|---------|
 | `titan-state.json` | JSON | RECON (init), ALL (update) | ALL |
-| `GLOBAL_ARCH.md` | Markdown | RECON | GAUNTLET, SYNC |
-| `gauntlet.ndjson` | NDJSON | GAUNTLET | SYNC |
-| `gauntlet-summary.json` | JSON | GAUNTLET | SYNC, GATE |
-| `sync.json` | JSON | SYNC | FORGE, GATE |
-| `gate-log.ndjson` | NDJSON | GATE | Audit trail |
+| `GLOBAL_ARCH.md` | Markdown | RECON | GAUNTLET, SYNC, GATE |
+| `gauntlet.ndjson` | NDJSON | GAUNTLET | RUN, SYNC, FORGE (diff review) |
+| `gauntlet-summary.json` | JSON | GAUNTLET | RUN, SYNC, GATE |
+| `sync.json` | JSON | SYNC | RUN, FORGE (diff review), GATE |
+| `arch-snapshot.json` | JSON | RUN (pre-forge) | GATE (architectural comparison) |
+| `gate-log.ndjson` | NDJSON | GATE | RUN, Audit trail |
 
 NDJSON format (one JSON object per line) means partial results survive crashes mid-batch.
 
@@ -174,9 +184,9 @@ All skills enforce worktree isolation as their first step. If invoked from the m
 | `codegraph stats` | RECON | Baseline metrics |
 | `codegraph triage` | RECON, GAUNTLET (fallback) | Ranked priority queue |
 | `codegraph map` | RECON | High-traffic files |
-| `codegraph communities` | RECON | Module boundaries and drift |
+| `codegraph communities` | RECON, RUN, GATE | Module boundaries and drift |
 | `codegraph roles` | RECON, GAUNTLET | Core/dead/entry symbol classification |
-| `codegraph structure` | RECON | Directory cohesion |
+| `codegraph structure` | RECON, RUN, GATE | Directory cohesion |
 | `codegraph complexity --health` | RECON, GAUNTLET, GATE, FORGE | Full metrics: cognitive, cyclomatic, nesting, Halstead, MI |
 | `codegraph complexity --above-threshold` | RECON | Only functions exceeding thresholds |
 | `codegraph batch complexity` | GAUNTLET | Multi-target complexity in one call |
@@ -184,8 +194,8 @@ All skills enforce worktree isolation as their first step. If invoked from the m
 | `codegraph check --staged --cycles --blast-radius --boundaries` | GATE | Full validation predicates |
 | `codegraph ast --kind call\|await\|string` | GAUNTLET | AST pattern detection |
 | `codegraph dataflow` | GAUNTLET | Data flow and mutation analysis |
-| `codegraph exports` | GAUNTLET, FORGE | Per-symbol export consumers |
-| `codegraph fn-impact` | GAUNTLET, SYNC, FORGE | Blast radius |
+| `codegraph exports` | GAUNTLET, FORGE, GATE | Per-symbol export consumers |
+| `codegraph fn-impact` | GAUNTLET, SYNC, FORGE, GATE | Blast radius |
 | `codegraph search` | GAUNTLET | Duplicate code detection (needs embeddings) |
 | `codegraph co-change` | GAUNTLET, SYNC | Git history coupling |
 | `codegraph path` | SYNC | Dependency paths between targets |
@@ -196,6 +206,8 @@ All skills enforce worktree isolation as their first step. If invoked from the m
 | `codegraph branch-compare` | SYNC, GATE | Structural diff between refs |
 | `codegraph diff-impact` | GATE | Impact of staged changes |
 | `codegraph snapshot save\|restore\|delete` | RECON, GAUNTLET, GATE, RESET | Graph database backup/restore |
+| `codegraph snapshot list` | RUN | Verify titan-baseline snapshot exists before forge |
+| `codegraph where` | FORGE | File symbol inventory — used by D4 to get pre-change symbol list for deletion audit |
 
 ## Further Reading
 

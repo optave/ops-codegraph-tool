@@ -17,82 +17,25 @@ Your goal: validate staged changes against codegraph quality checks AND the proj
 
 ---
 
-## Step 0 — Pre-flight: find Titan state and validate
+## Step 0 — Pre-flight
 
-1. **Locate the Titan session (if not already in one).** If `.codegraph/titan/titan-state.json` does not exist locally, search for it:
-
-   ```bash
-   git worktree list
-   ```
-
-   For each worktree, check:
-   ```bash
-   ls <worktree-path>/.codegraph/titan/titan-state.json 2>/dev/null
-   ```
-
-   Also check branches:
-   ```bash
-   git branch -a --list '*titan*'
-   ```
-
-   **Decision logic:**
-   - **Found a worktree/branch with Titan state:** Merge its branch into your worktree to pick up the artifacts: `git merge <titan-branch> --no-edit`
-   - **Found multiple:** Pick the one with the most recent `lastUpdated` and `currentPhase` closest to `"sync"` (GATE runs after SYNC). If ambiguous, ask the user.
-   - **Found nothing:** That's fine — GATE can run standalone. Proceed with defaults.
-
-2. **Worktree check:**
+1. **Worktree check:**
    ```bash
    git rev-parse --show-toplevel && git worktree list
    ```
    If not in a worktree, stop: "Run `/worktree` first."
 
-3. **Staged changes?**
+2. **Staged changes?**
    ```bash
    git diff --cached --name-only
    ```
    If nothing staged, stop: "Nothing staged. Use `git add` first."
 
-4. **Load state (optional).** Read `.codegraph/titan/titan-state.json` if it exists — use for thresholds, baseline comparison, and sync alignment. If missing or corrupt, proceed with defaults.
+3. **Load state (optional).** Read `.codegraph/titan/titan-state.json` if it exists — use for thresholds, baseline comparison, and sync alignment. If missing or corrupt, proceed with defaults.
 
 ---
 
-## Step 1 — Drift detection: has main moved since last gate run?
-
-GATE may run many times across a long pipeline. Check for upstream changes each time.
-
-1. **Compare main SHA:**
-   ```bash
-   git rev-parse origin/main
-   ```
-   Compare against `titan-state.json → mainSHA` (if state exists). If identical, skip to Step 2.
-
-2. **If main has advanced**, find what changed:
-   ```bash
-   git diff --name-only <mainSHA>..origin/main
-   ```
-
-3. **Cross-reference with staged files:**
-   - Do any staged files also appear in the main diff? If yes, there may be **merge conflicts waiting** after the commit.
-   - Did main change files that are callers/callees of staged changes? Use diff-impact to check.
-
-4. **Classify staleness:**
-
-   | Level | Condition | Action |
-   |-------|-----------|--------|
-   | **none** | main unchanged | Continue normally |
-   | **low** | Main changed but no overlap with staged files or their callers | Continue — note drift |
-   | **moderate** | Main changed files that are callers/callees of staged changes | **Warn:** "Main has changes that interact with your staged files. Consider merging main first: `git merge origin/main`" |
-   | **high** | Main changed the same files you're staging | **Warn strongly:** "Main modified files you're about to commit. Merge main first to avoid conflicts downstream." |
-
-5. **Write/update drift report** (same schema, `"detectedBy": "gate"`).
-
-6. **Update state:** Set `titan-state.json → mainSHA` to current `origin/main`.
-
-7. **If `sync.json` exists:** Check if main's changes invalidate any execution phases. If a phase's targets were changed on main, add a drift warning to the gate-log entry.
-
----
-
-## Step 2 — Structural validation (codegraph)
+## Step 1 — Structural validation (codegraph)
 
 Run the full change validation predicates in one call:
 
@@ -112,7 +55,7 @@ Extract: changed functions (count + names), direct callers affected, transitive 
 
 ---
 
-## Step 3 — Cycle check
+## Step 2 — Cycle check
 
 ```bash
 codegraph cycles --json
@@ -124,7 +67,7 @@ Compare against RECON baseline (if `titan-state.json` exists):
 
 ---
 
-## Step 4 — Complexity delta
+## Step 3 — Complexity delta
 
 For each changed file (from diff-impact):
 
@@ -141,7 +84,7 @@ Check all metrics against thresholds:
 
 ---
 
-## Step 5 — Lint, build, and test
+## Step 4 — Lint, build, and test
 
 Detect project tools from `package.json`:
 
@@ -152,19 +95,187 @@ node -e "const p=require('./package.json');console.log(JSON.stringify(Object.key
 Run in order — stop on first failure:
 
 ```bash
-npm run lint 2>&1 || echo "LINT_FAILED"
+# Detect lint command with package-manager awareness
+lintCmd=$(node -e "const p=require('./package.json');const s=p.scripts||{};if(!s.lint){console.log('NO_LINT_SCRIPT');process.exit(0);}const fs=require('fs');const runner=fs.existsSync('yarn.lock')?'yarn':fs.existsSync('pnpm-lock.yaml')?'pnpm':fs.existsSync('bun.lockb')?'bun':'npm';console.log(runner+' run lint');")
+if [ "$lintCmd" != "NO_LINT_SCRIPT" ]; then
+  $lintCmd 2>&1 || echo "LINT_FAILED"
+fi
 ```
 
 ```bash
-npm run build 2>&1 || echo "BUILD_FAILED"
+# Detect build command with package-manager awareness
+buildCmd=$(node -e "const p=require('./package.json');const s=p.scripts||{};if(!s.build){console.log('NO_BUILD_SCRIPT');process.exit(0);}const fs=require('fs');const runner=fs.existsSync('yarn.lock')?'yarn':fs.existsSync('pnpm-lock.yaml')?'pnpm':fs.existsSync('bun.lockb')?'bun':'npm';console.log(runner+' run build');")
+if [ "$buildCmd" != "NO_BUILD_SCRIPT" ]; then
+  $buildCmd 2>&1 || echo "BUILD_FAILED"
+fi
 ```
-(Skip if no `build` script.)
 
 ```bash
-npm test 2>&1 || echo "TEST_FAILED"
+# Detect test command from package.json scripts
+testCmd=$(node -e "const p=require('./package.json');const s=p.scripts||{};const script=s.test?'test':s['test:ci']?'test:ci':null;if(!script){console.log('NO_TEST_SCRIPT');process.exit(0);}const fs=require('fs');const runner=fs.existsSync('yarn.lock')?'yarn':fs.existsSync('pnpm-lock.yaml')?'pnpm':fs.existsSync('bun.lockb')?'bun':'npm';console.log(runner+(script==='test'?' test':' run '+script));")
+if [ "$testCmd" != "NO_TEST_SCRIPT" ]; then
+  $testCmd 2>&1 || echo "TEST_FAILED"
+fi
 ```
 
 If any fail → overall verdict is FAIL → proceed to auto-rollback.
+
+---
+
+## Step 5 — Semantic assertions (API compatibility)
+
+Verify that code changes don't silently break callers by changing public contracts. This goes beyond structural checks — it catches signature changes, removed exports, and new forbidden dependencies.
+
+### 5a. Export signature stability
+
+Get the list of changed files from diff-impact (Step 1):
+
+```bash
+codegraph exports <changed-file> -T --json
+```
+
+For each changed file from diff-impact (Step 1):
+- First, check if the file existed before this commit:
+  ```bash
+  git show HEAD:<changed-file> -- 2>/dev/null | head -1
+  ```
+  If the file is **new** (command fails or returns nothing), skip 5a for this file — new exports cannot break existing callers.
+- Otherwise, for each **exported** symbol in the file:
+- Check if the symbol existed before this change: `git show HEAD:<file>` and compare function signatures
+- If a function's **parameter list changed** (added required params, removed params, changed types):
+  ```bash
+  codegraph fn-impact <symbol> -T --json
+  ```
+  Count callers. If callers > 0 and callers are NOT also staged → **FAIL**: "Signature change in `<symbol>` breaks <N> callers not updated in this commit: <caller list>"
+- If an **export was removed entirely** and callers exist → **FAIL**: "Removed export `<symbol>` still imported by <N> files"
+
+### 5b. Import resolution integrity
+
+From the diff-impact results already collected in Step 1, extract any edges where the target symbol or file no longer exists (i.e., the import points to a removed or renamed symbol).
+
+For each such broken edge where the importing file is NOT part of this commit's staged changes → **FAIL**: "Change broke import resolution for <file>: <import>"
+
+> **Note:** `codegraph check` does not include import resolution predicates — its checks cover cycles, blast-radius, boundaries, and manifesto rules. Import resolution runs during `codegraph build`. This step relies on diff-impact's edge data to detect broken imports indirectly by identifying edges that reference removed symbols.
+
+### 5c. Dependency direction assertions (codegraph boundary rules)
+
+Check the Step 1 `codegraph check --staged --boundaries` results for boundary violations (already collected — do not re-run). This covers `.codegraphrc.json` onion-architecture rules and any custom boundary predicates.
+
+Store flagged edges in `step5cViolations` — a list of `{ source, target }` pairs. For each boundary violation reported by `codegraph check`:
+- New dependency that violates a configured boundary rule → **FAIL**: "New upward dependency: `<source>` → `<target>` violates layer boundary"
+- Add `{ source, target }` to `step5cViolations`
+
+Additionally, from the diff-impact results already collected in Step 1, extract any **new** edges (imports that didn't exist before):
+- New dependency on a module flagged in sync.json as "to be removed" or "to be split" → **WARN**: "New dependency on `<module>` which is scheduled for decomposition"
+
+> **Note:** Step 5c relies exclusively on `codegraph check --boundaries` results. Domain-direction checks against `GLOBAL_ARCH.md` are handled by Step 5.5 A2 — do not duplicate them here. Pass `step5cViolations` to A2 so it can skip edges already flagged here.
+
+### 5d. Re-export chain validation
+
+If the change modifies an index/barrel file (e.g., `index.js`, `mod.rs`):
+
+Capture the pre-change export list from the committed version (write the temp path to a sidecar file so it persists across Bash invocations):
+```bash
+BARREL_EXT="${barrel_file##*.}"
+BARREL_TMP=$(mktemp "/tmp/titan-barrel-XXXXXX.${BARREL_EXT}")
+echo "$BARREL_TMP" > .codegraph/titan/.barrel-tmp
+git show HEAD:<barrel-file> > "$BARREL_TMP"
+codegraph exports "$BARREL_TMP" -T --json
+```
+
+Then capture the current (staged) export list:
+```bash
+codegraph exports <barrel-file> -T --json
+```
+
+Compare export count before and after. If exports were **accidentally dropped** (count decreased and the removed exports have callers) → **FAIL**: "Barrel file `<barrel-file>` dropped <N> exports that have active callers: <export list>. Use `codegraph exports <barrel-file> -T` to review."
+
+Clean up the temp file (recover path from sidecar). **This MUST run even if Step 5d produced a FAIL verdict — run it before proceeding to Step 9:**
+```bash
+BARREL_TMP=$(cat .codegraph/titan/.barrel-tmp 2>/dev/null)
+if [ -n "$BARREL_TMP" ]; then rm -f "$BARREL_TMP"; fi
+rm -f .codegraph/titan/.barrel-tmp
+```
+
+---
+
+## Step 5.5 — Architectural snapshot comparison
+
+Compare the codebase's architectural properties before and after this change. This catches "technically correct but architecturally wrong" changes — e.g., a valid refactor that puts code in the wrong layer.
+
+### A2. Dependency direction between domains (runs unconditionally)
+
+A2 does NOT require `arch-snapshot.json` — it uses only the Step 1 diff-impact results and `GLOBAL_ARCH.md` (if available).
+
+If `.codegraph/titan/GLOBAL_ARCH.md` does not exist (standalone invocation without Titan artifacts), skip A2 — layer boundaries are unknown.
+
+From `GLOBAL_ARCH.md`, extract the expected dependency direction between domains (e.g., "presentation depends on features, not the reverse").
+
+Check if any new cross-domain dependency violates the expected direction. Use the Step 1 diff-impact results to extract only the edges introduced by the staged changes — do not re-run `codegraph deps` on the full file (that returns all dependencies including pre-existing ones). For each new edge in the diff-impact output, the source and target file paths are already present in the edge data. Resolve the domain/layer of each endpoint by matching its file path against the domain map in `GLOBAL_ARCH.md` (e.g., `src/presentation/` → presentation layer, `src/features/` → features layer). No additional codegraph command is needed — the diff-impact edge output contains the file paths directly.
+- New upward dependency (lower layer importing higher layer) introduced in this diff → check if `{ source, target }` is already in `step5cViolations` (passed from Step 5c). If yes, skip (already reported). Otherwise → **FAIL**
+- Pre-existing boundary violations not surfaced by Step 5c's staged-diff results → advisory-only (not gating)
+- New lateral dependency within the same layer → **OK**
+
+### Load pre-forge snapshot (A1, A3, A4 — snapshot-dependent)
+
+Read `.codegraph/titan/arch-snapshot.json` if it exists (created by `/titan-run` before forge begins). If missing, skip the remaining assertions (A1, A3, A4) in this step — they require the pre-forge baseline. A2 above already ran unconditionally.
+
+### Capture current state
+
+Use `mktemp -d` to create a unique temporary directory that persists across Bash invocations (shell variables like `$TITAN_TMP_ID` do not survive between separate Bash tool calls):
+
+```bash
+TITAN_ARCH_DIR=$(mktemp -d /tmp/titan-arch-XXXXXX)
+echo "$TITAN_ARCH_DIR" > .codegraph/titan/.arch-tmpdir
+codegraph communities -T --json > "$TITAN_ARCH_DIR/current-communities.json" || echo '{"ARCH_CAPTURE_FAILED":"communities"}' > "$TITAN_ARCH_DIR/current-communities.json"
+codegraph structure --depth 2 --json > "$TITAN_ARCH_DIR/current-structure.json" || echo '{"ARCH_CAPTURE_FAILED":"structure"}' > "$TITAN_ARCH_DIR/current-structure.json"
+codegraph communities --drift -T --json > "$TITAN_ARCH_DIR/current-drift.json" || echo '{"ARCH_CAPTURE_FAILED":"drift"}' > "$TITAN_ARCH_DIR/current-drift.json"
+```
+
+> The path is written to `.codegraph/titan/.arch-tmpdir` so subsequent Bash invocations can recover it via `TITAN_ARCH_DIR=$(cat .codegraph/titan/.arch-tmpdir)`.
+
+### Compare
+
+> **Before comparing:** Check each captured file for `ARCH_CAPTURE_FAILED`. If a file contains this marker, skip the corresponding assertion (A1/A3/A4) and report: "Skipping <assertion> — codegraph <command> failed during capture."
+
+In a new Bash invocation, recover the temp dir path first:
+```bash
+TITAN_ARCH_DIR=$(cat .codegraph/titan/.arch-tmpdir)
+```
+
+**A1. Community stability:**
+Use the drift output (which uses content-based matching, not raw IDs, to track community movements across runs):
+
+Read `.codegraph/titan/arch-snapshot.json → drift` (the pre-forge drift baseline) and compare against `$TITAN_ARCH_DIR/current-drift.json`:
+- For each **new** drift warning in current that was NOT present in the snapshot: if the drifted symbol was NOT touched in the diff → **WARN**: "Symbol `<name>` drifted community as a side effect"
+- If > 5 untouched symbols appear in new drift warnings → **FAIL**: "Significant community restructuring detected — <N> symbols drifted communities. This change may have unintended architectural impact."
+
+**A3. Cohesion delta:**
+Compare directory cohesion scores in `arch-snapshot.json → structure` (baseline) against `$TITAN_ARCH_DIR/current-structure.json` (current):
+- If any directory's cohesion dropped by > 0.2 → **WARN**: "Directory `<dir>` cohesion dropped from <X> to <Y>"
+- If a directory went from above 0.5 to below 0.3 → **FAIL**: "Directory `<dir>` became tangled (cohesion <X> → <Y>)"
+
+**A4. Resolved drift warnings (positive signal):**
+Compare drift warnings between snapshot and current. A1 already covers new drift warnings — A4 only reports resolved ones:
+- If any drift warning that was present in the snapshot is absent from `$TITAN_ARCH_DIR/current-drift.json` → note as positive: "Symbol `<name>` community drift resolved — architecture improved"
+
+> **Note:** A3 and A4 compare the pre-forge baseline against the *committed* state at gate-run time (the graph DB does not include staged-but-uncommitted changes). They catch cumulative architectural drift across all forge commits made so far, not the individual staged change being validated in this gate run. A1 uses staged-change-aware data (diff-impact) and catches per-change violations. A2 runs unconditionally above (before the snapshot gate) and also uses diff-impact data.
+
+### Cleanup (MUST run even on failure or early exit)
+
+This cleanup block MUST execute regardless of the verdict — including FAIL paths and early exits. Run it before proceeding to Step 9 (verdict aggregation), not after.
+
+```bash
+TITAN_ARCH_DIR=$(cat .codegraph/titan/.arch-tmpdir 2>/dev/null)
+if [ -n "$TITAN_ARCH_DIR" ]; then
+  rm -rf "$TITAN_ARCH_DIR"
+fi
+rm -f .codegraph/titan/.arch-tmpdir
+```
+
+### Verdict integration
+
+Architectural failures are reported as part of the overall gate verdict. They participate in the PASS/WARN/FAIL aggregation like all other checks.
 
 ---
 
@@ -208,7 +319,7 @@ Aggregate all checks:
 | **WARN** | Warnings only — commit at your discretion |
 | **FAIL** | Failures present — auto-rollback triggered |
 
-### Auto-rollback on FAIL (build/test/lint failures only)
+### Auto-rollback on FAIL (cycle/build/test/lint failures)
 
 1. **Restore graph** to the most recent snapshot:
    ```bash
@@ -228,7 +339,8 @@ Aggregate all checks:
 
 > "GATE FAIL: [reason]. Graph restored, changes unstaged but preserved. Fix and re-stage."
 
-For structural-only failures (Steps 2-4, 6-8), do NOT auto-rollback — report and let user decide.
+For structural and semantic failures (Steps 1 [manifesto/blast-radius/boundary only — not cycles], 3, 5, 5.5, 6-8), do NOT auto-rollback — report the FAIL and let the user decide whether to fix in place or unstage manually.
+For Step 2 (new cycle), Step 1 cycle violations (from `--cycles` flag), and Step 4 (lint/build/test), trigger auto-rollback.
 
 ### Snapshot cleanup on pipeline completion
 
@@ -258,6 +370,8 @@ Append to `.codegraph/titan/gate-log.ndjson`:
     "manifesto": "pass|fail",
     "cycles": "pass|fail",
     "complexity": "pass|warn|fail",
+    "semanticAssertions": "pass|warn|fail|skipped",
+    "archSnapshot": "pass|warn|fail|skipped",
     "lint": "pass|fail|skipped",
     "build": "pass|fail|skipped",
     "tests": "pass|fail|skipped",
@@ -279,6 +393,7 @@ Update `titan-state.json` (if exists): increment `progress.fixed`, update `fileA
 GATE PASS — safe to commit
   Changed: 3 functions across 2 files
   Blast radius: 12 transitive callers
+  Structural: pass | Semantic: pass | Architecture: pass
   Lint: pass | Build: pass | Tests: pass
   Complexity: all within thresholds (worst: halstead.bugs 0.3)
 ```
@@ -290,9 +405,11 @@ GATE WARN — review before committing
   Warnings:
   - utils.js historically co-changes with config.js (not staged)
   - parseConfig MI improved 18 → 35 but still below 50
+  - Semantic: new dependency on module scheduled for decomposition
+  - Architecture: directory src/domain/ cohesion dropped 0.6 → 0.45
 ```
 
-**FAIL:**
+**FAIL (cycle/test/lint/build failures — rollback triggered):**
 ```
 GATE FAIL — changes unstaged, graph restored
   Failures:
@@ -301,24 +418,15 @@ GATE FAIL — changes unstaged, graph restored
   Fix issues, re-stage, re-run /titan-gate
 ```
 
----
-
-## Issue Tracking
-
-During validation, if you encounter any of the following, append a JSON line to `.codegraph/titan/issues.ndjson`:
-
-- **Codegraph bugs:** wrong diff-impact, false cycle detection, incorrect complexity after changes
-- **Tooling issues:** check command failures, snapshot errors, build tool problems
-- **Process suggestions:** threshold adjustments, missing checks, workflow improvements
-- **Codebase observations:** test gaps, flaky tests, build warnings worth noting
-
-Format (one JSON object per line, append-only):
-
-```json
-{"phase": "gate", "timestamp": "<ISO 8601>", "severity": "bug|limitation|suggestion", "category": "codegraph|tooling|process|codebase", "description": "<what happened>", "context": "<command, check, or file involved>"}
+**FAIL (structural/semantic failures — no rollback):**
 ```
-
-Log issues as they happen. The `/titan-close` phase compiles these into the final report.
+GATE FAIL — changes preserved for review — manual unstage if needed
+  Failures:
+  - Semantic: removed export `parseConfig` still imported by 3 files
+  - Architecture: new upward dependency presentation/ → domain/
+  Staged changes are intact. Fix the issues above, or manually run `git reset HEAD` to unstage.
+  Re-stage and re-run /titan-gate when ready.
+```
 
 ---
 
@@ -332,7 +440,6 @@ Log issues as they happen. The `/titan-close` phase compiles these into the fina
 - **Force mode** downgrades WARN → PASS but cannot override FAIL.
 - **Run the project's own lint/build/test** — codegraph checks are necessary but not sufficient.
 - **Use the correct check flags:** `--cycles`, `--blast-radius <n>`, `--boundaries`.
-- If any check produces unexpected output, **log it to `issues.ndjson`** before continuing.
 
 ## Self-Improvement
 
