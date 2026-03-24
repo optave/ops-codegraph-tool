@@ -230,7 +230,7 @@ For each target in the current phase:
     - Add target to `execution.completedTargets`
     - Record any diff-review warnings by **appending** to `execution.diffWarnings` (if any). Each entry must follow this schema:
       ```json
-      { "target": "<target-name>", "check": "D3|D5", "message": "<warning text>", "phase": N }
+      { "target": "<target-name>", "check": "<D3 or D5>", "message": "<warning text>", "phase": N }
       ```
     - Update `titan-state.json`
 
