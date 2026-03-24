@@ -49,8 +49,15 @@ export function flow(
     return;
   }
 
+  if (!name) {
+    console.log(
+      'Please provide a function or entry-point name. Use --list to see available entry points.',
+    );
+    return;
+  }
+
   // biome-ignore lint/suspicious/noExplicitAny: dynamic shape from flowData
-  const data = flowData(name!, dbPath, opts) as any;
+  const data = flowData(name, dbPath, opts) as any;
   if (outputResult(data, 'steps', opts)) return;
 
   if (!data.entry) {

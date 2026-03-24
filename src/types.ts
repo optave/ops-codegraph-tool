@@ -1836,8 +1836,12 @@ export interface CommandDefinition {
   name: string;
   description: string;
   queryOpts?: boolean;
-  // biome-ignore lint/suspicious/noExplicitAny: option tuples contain mixed types (strings, functions, defaults)
-  options?: Array<[string, string, ...any[]]>;
+  options?: Array<
+    | [string, string]
+    | [string, string, string | boolean | number]
+    // biome-ignore lint/suspicious/noExplicitAny: Commander parse functions accept arbitrary return types
+    | [string, string, (val: string) => any, string | boolean | number]
+  >;
   // biome-ignore lint/suspicious/noExplicitAny: Commander options are dynamically typed
   validate?: (args: any[], opts: any, ctx: CommandContext) => string | undefined | void;
   // biome-ignore lint/suspicious/noExplicitAny: Commander options are dynamically typed
