@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { buildGraph } from '../../domain/graph/builder.js';
+import type { EngineMode } from '../../types.js';
 import type { CommandDefinition } from '../types.js';
 
 export const command: CommandDefinition = {
@@ -19,7 +20,7 @@ export const command: CommandDefinition = {
       incremental: opts.incremental as boolean,
       ast: opts.ast as boolean,
       complexity: opts.complexity as boolean,
-      engine: engine as string,
+      engine: engine as EngineMode,
       dataflow: opts.dataflow as boolean,
       cfg: opts.cfg as boolean,
     });
