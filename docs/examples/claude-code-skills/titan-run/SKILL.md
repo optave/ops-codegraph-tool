@@ -571,6 +571,7 @@ FORGE:
   Targets completed: <N>
   Targets failed: <N>
   Diff review rejections: <N>
+  Diff review warnings: <N>
   Gate verdicts: <pass> PASS, <fail> FAIL
   Semantic assertion failures: <N>
   Architectural violations caught: <N>
