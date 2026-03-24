@@ -7,11 +7,9 @@
 import { performance } from 'node:perf_hooks';
 import { info } from '../../../../infrastructure/logger.js';
 import { parseFilesAuto } from '../../../parser.js';
+import type { PipelineContext } from '../context.js';
 
-/**
- * @param {import('../context.js').PipelineContext} ctx
- */
-export async function parseFiles(ctx) {
+export async function parseFiles(ctx: PipelineContext): Promise<void> {
   const { allFiles, parseChanges, isFullBuild, engineOpts, rootDir } = ctx;
 
   ctx.filesToParse = isFullBuild ? allFiles.map((f) => ({ file: f })) : parseChanges;

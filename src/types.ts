@@ -870,6 +870,8 @@ export interface BuildGraphOpts {
   engine?: EngineMode;
   dataflow?: boolean;
   ast?: boolean;
+  scope?: string[];
+  skipRegistry?: boolean;
 }
 
 /** Build timing result from buildGraph. */

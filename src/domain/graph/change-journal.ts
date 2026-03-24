@@ -5,36 +5,36 @@ import { debug, warn } from '../../infrastructure/logger.js';
 export const CHANGE_EVENTS_FILENAME = 'change-events.ndjson';
 export const DEFAULT_MAX_BYTES = 1024 * 1024; // 1 MB
 
-/**
- * Returns the absolute path to the NDJSON change events file.
- */
-export function changeEventsPath(rootDir) {
+export function changeEventsPath(rootDir: string): string {
   return path.join(rootDir, '.codegraph', CHANGE_EVENTS_FILENAME);
 }
 
-/**
- * Compare old and new symbol arrays, returning added/removed/modified sets.
- * Symbols are keyed on `name\0kind`. A symbol is "modified" if the same
- * name+kind exists in both but the line changed.
- *
- * @param {Array<{name:string, kind:string, line:number}>} oldSymbols
- * @param {Array<{name:string, kind:string, line:number}>} newSymbols
- * @returns {{ added: Array, removed: Array, modified: Array }}
- */
-export function diffSymbols(oldSymbols, newSymbols) {
-  const oldMap = new Map();
+interface SymbolEntry {
+  name: string;
+  kind: string;
+  line: number;
+}
+
+interface SymbolDiff {
+  added: Array<{ name: string; kind: string; line: number }>;
+  removed: Array<{ name: string; kind: string }>;
+  modified: Array<{ name: string; kind: string; line: number }>;
+}
+
+export function diffSymbols(oldSymbols: SymbolEntry[], newSymbols: SymbolEntry[]): SymbolDiff {
+  const oldMap = new Map<string, SymbolEntry>();
   for (const s of oldSymbols) {
     oldMap.set(`${s.name}\0${s.kind}`, s);
   }
 
-  const newMap = new Map();
+  const newMap = new Map<string, SymbolEntry>();
   for (const s of newSymbols) {
     newMap.set(`${s.name}\0${s.kind}`, s);
   }
 
-  const added = [];
-  const removed = [];
-  const modified = [];
+  const added: SymbolDiff['added'] = [];
+  const removed: SymbolDiff['removed'] = [];
+  const modified: SymbolDiff['modified'] = [];
 
   for (const [key, s] of newMap) {
     const old = oldMap.get(key);
@@ -54,10 +54,29 @@ export function diffSymbols(oldSymbols, newSymbols) {
   return { added, removed, modified };
 }
 
-/**
- * Assemble a single change event object.
- */
-export function buildChangeEvent(file, event, symbolDiff, counts) {
+interface ChangeEvent {
+  ts: string;
+  file: string;
+  event: string;
+  symbols: unknown;
+  counts: {
+    nodes: { before: number; after: number };
+    edges: { added: number };
+  };
+}
+
+interface ChangeEventCounts {
+  nodesBefore?: number;
+  nodesAfter?: number;
+  edgesAdded?: number;
+}
+
+export function buildChangeEvent(
+  file: string,
+  event: string,
+  symbolDiff: unknown,
+  counts: ChangeEventCounts,
+): ChangeEvent {
   return {
     ts: new Date().toISOString(),
     file,
@@ -70,11 +89,7 @@ export function buildChangeEvent(file, event, symbolDiff, counts) {
   };
 }
 
-/**
- * Append change events as NDJSON lines to the change events file.
- * Creates the .codegraph directory if needed. Non-fatal on failure.
- */
-export function appendChangeEvents(rootDir, events) {
+export function appendChangeEvents(rootDir: string, events: ChangeEvent[]): void {
   const filePath = changeEventsPath(rootDir);
   const dir = path.dirname(filePath);
 
@@ -86,7 +101,7 @@ export function appendChangeEvents(rootDir, events) {
     fs.appendFileSync(filePath, lines);
     debug(`Appended ${events.length} change event(s) to ${filePath}`);
   } catch (err) {
-    warn(`Failed to append change events: ${err.message}`);
+    warn(`Failed to append change events: ${(err as Error).message}`);
     return;
   }
 
@@ -97,16 +112,12 @@ export function appendChangeEvents(rootDir, events) {
   }
 }
 
-/**
- * If the file exceeds maxBytes, keep the last ~half by finding
- * the first newline at or after the midpoint and rewriting from there.
- */
-export function rotateIfNeeded(filePath, maxBytes = DEFAULT_MAX_BYTES) {
-  let stat;
+export function rotateIfNeeded(filePath: string, maxBytes: number = DEFAULT_MAX_BYTES): void {
+  let stat: fs.Stats;
   try {
     stat = fs.statSync(filePath);
   } catch {
-    return; // file doesn't exist, nothing to rotate
+    return;
   }
 
   if (stat.size <= maxBytes) return;
@@ -125,6 +136,6 @@ export function rotateIfNeeded(filePath, maxBytes = DEFAULT_MAX_BYTES) {
     fs.writeFileSync(filePath, kept);
     debug(`Rotated change events: ${stat.size} → ${kept.length} bytes`);
   } catch (err) {
-    warn(`Failed to rotate change events: ${err.message}`);
+    warn(`Failed to rotate change events: ${(err as Error).message}`);
   }
 }
