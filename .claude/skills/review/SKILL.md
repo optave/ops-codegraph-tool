@@ -242,7 +242,7 @@ Branch: <branch-name>
 Conflicts: resolved | none
 CI: green | red | pending
 Comments Addressed: <count>
-Issues Created: <comma-separated list of #<n> follow-up issues, or "none">
+Issues: <comma-separated list of #<n> follow-up issues, or "none">
 Reviewers Re-triggered: <list>
 Status: ready | needs-work | needs-human-review | skipped
 Notes: <any issues encountered>
