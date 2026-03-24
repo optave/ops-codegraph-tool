@@ -1,22 +1,41 @@
 import { openReadonlyOrFail } from '../../../db/index.js';
 import { loadConfig } from '../../../infrastructure/config.js';
+import type { BetterSqlite3Database, CodegraphConfig } from '../../../types.js';
 import { hasFtsIndex } from '../stores/fts5.js';
 import { ftsSearchData } from './keyword.js';
+import type { SemanticSearchOpts } from './semantic.js';
 import { searchData } from './semantic.js';
 
-/**
- * Hybrid BM25 + semantic search with RRF fusion.
- * Returns { results: [{ name, kind, file, line, rrf, bm25Score, bm25Rank, similarity, semanticRank }] }
- * or null if no FTS5 index (caller should fall back to semantic-only).
- */
-export async function hybridSearchData(query, customDbPath, opts = {}) {
+interface HybridResult {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  endLine: number | null;
+  role: string | null;
+  fileHash: string | null;
+  rrf: number;
+  bm25Score: number | null;
+  bm25Rank: number | null;
+  similarity: number | null;
+  semanticRank: number | null;
+}
+
+export interface HybridSearchResult {
+  results: HybridResult[];
+}
+
+export async function hybridSearchData(
+  query: string,
+  customDbPath: string | undefined,
+  opts: SemanticSearchOpts = {},
+): Promise<HybridSearchResult | null> {
   const config = opts.config || loadConfig();
-  const searchCfg = config.search || {};
+  const searchCfg = config.search || ({} as CodegraphConfig['search']);
   const limit = opts.limit ?? searchCfg.topK ?? 15;
   const k = opts.rrfK ?? searchCfg.rrfK ?? 60;
   const topK = (opts.limit ?? searchCfg.topK ?? 15) * 5;
 
-  // Split semicolons for multi-query support
   const queries =
     typeof query === 'string'
       ? query
@@ -25,30 +44,41 @@ export async function hybridSearchData(query, customDbPath, opts = {}) {
           .filter((q) => q.length > 0)
       : [query];
 
-  // Check FTS5 availability first (sync, cheap)
-  const checkDb = openReadonlyOrFail(customDbPath);
+  const checkDb = openReadonlyOrFail(customDbPath) as BetterSqlite3Database;
   const ftsAvailable = hasFtsIndex(checkDb);
   checkDb.close();
   if (!ftsAvailable) return null;
 
-  // Collect ranked lists: for each query, one BM25 list + one semantic list
-  const rankedLists = [];
+  interface RankedItem {
+    key: string;
+    rank: number;
+    source: 'bm25' | 'semantic';
+    name: string;
+    kind: string;
+    file: string;
+    line: number;
+    endLine?: number | null;
+    role?: string | null;
+    fileHash?: string | null;
+    bm25Score?: number;
+    similarity?: number;
+  }
+
+  const rankedLists: RankedItem[][] = [];
 
   for (const q of queries) {
-    // BM25 ranked list (sync)
     const bm25Data = ftsSearchData(q, customDbPath, { ...opts, limit: topK });
     if (bm25Data?.results) {
       rankedLists.push(
         bm25Data.results.map((r, idx) => ({
           key: `${r.name}:${r.file}:${r.line}`,
           rank: idx + 1,
-          source: 'bm25',
+          source: 'bm25' as const,
           ...r,
         })),
       );
     }
 
-    // Semantic ranked list (async)
     const semData = await searchData(q, customDbPath, {
       ...opts,
       limit: topK,
@@ -59,15 +89,29 @@ export async function hybridSearchData(query, customDbPath, opts = {}) {
         semData.results.map((r, idx) => ({
           key: `${r.name}:${r.file}:${r.line}`,
           rank: idx + 1,
-          source: 'semantic',
+          source: 'semantic' as const,
           ...r,
         })),
       );
     }
   }
 
-  // RRF fusion across all ranked lists
-  const fusionMap = new Map();
+  interface FusionEntry {
+    name: string;
+    kind: string;
+    file: string;
+    line: number;
+    endLine: number | null;
+    role: string | null;
+    fileHash: string | null;
+    rrfScore: number;
+    bm25Score: number | null;
+    bm25Rank: number | null;
+    similarity: number | null;
+    semanticRank: number | null;
+  }
+
+  const fusionMap = new Map<string, FusionEntry>();
   for (const list of rankedLists) {
     for (const item of list) {
       if (!fusionMap.has(item.key)) {
@@ -76,9 +120,9 @@ export async function hybridSearchData(query, customDbPath, opts = {}) {
           kind: item.kind,
           file: item.file,
           line: item.line,
-          endLine: item.endLine ?? null,
-          role: item.role ?? null,
-          fileHash: item.fileHash ?? null,
+          endLine: (item.endLine as number | null) ?? null,
+          role: (item.role as string | null) ?? null,
+          fileHash: (item.fileHash as string | null) ?? null,
           rrfScore: 0,
           bm25Score: null,
           bm25Rank: null,
@@ -86,23 +130,23 @@ export async function hybridSearchData(query, customDbPath, opts = {}) {
           semanticRank: null,
         });
       }
-      const entry = fusionMap.get(item.key);
+      const entry = fusionMap.get(item.key)!;
       entry.rrfScore += 1 / (k + item.rank);
       if (item.source === 'bm25') {
         if (entry.bm25Rank === null || item.rank < entry.bm25Rank) {
-          entry.bm25Score = item.bm25Score;
+          entry.bm25Score = (item as RankedItem & { bm25Score?: number }).bm25Score ?? null;
           entry.bm25Rank = item.rank;
         }
       } else {
         if (entry.semanticRank === null || item.rank < entry.semanticRank) {
-          entry.similarity = item.similarity;
+          entry.similarity = (item as RankedItem & { similarity?: number }).similarity ?? null;
           entry.semanticRank = item.rank;
         }
       }
     }
   }
 
-  const results = [...fusionMap.values()]
+  const results: HybridResult[] = [...fusionMap.values()]
     .sort((a, b) => b.rrfScore - a.rrfScore)
     .slice(0, limit)
     .map((e) => ({

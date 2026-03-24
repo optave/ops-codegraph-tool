@@ -1,17 +1,42 @@
 import { loadConfig } from '../../../infrastructure/config.js';
 import { warn } from '../../../infrastructure/logger.js';
+import type { BetterSqlite3Database, CodegraphConfig } from '../../../types.js';
 import { normalizeSymbol } from '../../queries.js';
 import { embed } from '../models.js';
 import { cosineSim } from '../stores/sqlite-blob.js';
 import { prepareSearch } from './prepare.js';
 
-/**
- * Single-query semantic search — returns data instead of printing.
- * Returns { results: [{ name, kind, file, line, similarity }] } or null on failure.
- */
-export async function searchData(query, customDbPath, opts = {}) {
+export interface SemanticSearchOpts {
+  config?: CodegraphConfig;
+  limit?: number;
+  minScore?: number;
+  model?: string;
+  kind?: string;
+  filePattern?: string | string[];
+  noTests?: boolean;
+  rrfK?: number;
+}
+
+interface SemanticResult {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  similarity: number;
+  [key: string]: unknown;
+}
+
+export interface SearchDataResult {
+  results: SemanticResult[];
+}
+
+export async function searchData(
+  query: string,
+  customDbPath: string | undefined,
+  opts: SemanticSearchOpts = {},
+): Promise<SearchDataResult | null> {
   const config = opts.config || loadConfig();
-  const searchCfg = config.search || {};
+  const searchCfg = config.search || ({} as CodegraphConfig['search']);
   const limit = opts.limit ?? searchCfg.topK ?? 15;
   const minScore = opts.minScore ?? searchCfg.defaultMinScore ?? 0.2;
 
@@ -23,7 +48,7 @@ export async function searchData(query, customDbPath, opts = {}) {
     const {
       vectors: [queryVec],
       dim,
-    } = await embed([query], modelKey);
+    } = await embed([query], modelKey ?? undefined);
 
     if (storedDim && dim !== storedDim) {
       console.log(
@@ -33,15 +58,15 @@ export async function searchData(query, customDbPath, opts = {}) {
       return null;
     }
 
-    const hc = new Map();
-    const results = [];
+    const hc = new Map<string, string>();
+    const results: SemanticResult[] = [];
     for (const row of rows) {
-      const vec = new Float32Array(new Uint8Array(row.vector).buffer);
-      const sim = cosineSim(queryVec, vec);
+      const vec = new Float32Array(new Uint8Array(row.vector as unknown as ArrayBuffer).buffer);
+      const sim = cosineSim(queryVec!, vec);
 
       if (sim >= minScore) {
         results.push({
-          ...normalizeSymbol(row, db, hc),
+          ...normalizeSymbol(row, db as BetterSqlite3Database, hc),
           similarity: sim,
         });
       }
@@ -54,13 +79,25 @@ export async function searchData(query, customDbPath, opts = {}) {
   }
 }
 
-/**
- * Multi-query semantic search with Reciprocal Rank Fusion (RRF).
- * Returns { results: [{ name, kind, file, line, rrf, queryScores }] } or null on failure.
- */
-export async function multiSearchData(queries, customDbPath, opts = {}) {
+export interface MultiSearchResult {
+  results: Array<{
+    name: string;
+    kind: string;
+    file: string;
+    line: number;
+    rrf: number;
+    queryScores: Array<{ query: string; similarity: number; rank: number }>;
+    [key: string]: unknown;
+  }>;
+}
+
+export async function multiSearchData(
+  queries: string[],
+  customDbPath: string | undefined,
+  opts: SemanticSearchOpts = {},
+): Promise<MultiSearchResult | null> {
   const config = opts.config || loadConfig();
-  const searchCfg = config.search || {};
+  const searchCfg = config.search || ({} as CodegraphConfig['search']);
   const limit = opts.limit ?? searchCfg.topK ?? 15;
   const minScore = opts.minScore ?? searchCfg.defaultMinScore ?? 0.2;
   const k = opts.rrfK ?? searchCfg.rrfK ?? 60;
@@ -70,13 +107,12 @@ export async function multiSearchData(queries, customDbPath, opts = {}) {
   const { db, rows, modelKey, storedDim } = prepared;
 
   try {
-    const { vectors: queryVecs, dim } = await embed(queries, modelKey);
+    const { vectors: queryVecs, dim } = await embed(queries, modelKey ?? undefined);
 
-    // Warn about similar queries that may bias RRF results
     const SIMILARITY_WARN_THRESHOLD = searchCfg.similarityWarnThreshold ?? 0.85;
     for (let i = 0; i < queryVecs.length; i++) {
       for (let j = i + 1; j < queryVecs.length; j++) {
-        const sim = cosineSim(queryVecs[i], queryVecs[j]);
+        const sim = cosineSim(queryVecs[i]!, queryVecs[j]!);
         if (sim >= SIMILARITY_WARN_THRESHOLD) {
           warn(
             `Queries "${queries[i]}" and "${queries[j]}" are very similar ` +
@@ -96,47 +132,47 @@ export async function multiSearchData(queries, customDbPath, opts = {}) {
       return null;
     }
 
-    // Parse row vectors once
-    const rowVecs = rows.map((row) => new Float32Array(new Uint8Array(row.vector).buffer));
+    const rowVecs = rows.map(
+      (row) => new Float32Array(new Uint8Array(row.vector as unknown as ArrayBuffer).buffer),
+    );
 
-    // For each query: compute similarities, filter by minScore, rank
     const perQueryRanked = queries.map((_query, qi) => {
-      const scored = [];
+      const scored: Array<{ rowIndex: number; similarity: number }> = [];
       for (let ri = 0; ri < rows.length; ri++) {
-        const sim = cosineSim(queryVecs[qi], rowVecs[ri]);
+        const sim = cosineSim(queryVecs[qi]!, rowVecs[ri]!);
         if (sim >= minScore) {
           scored.push({ rowIndex: ri, similarity: sim });
         }
       }
       scored.sort((a, b) => b.similarity - a.similarity);
-      // Assign 1-indexed ranks
       return scored.map((item, rank) => ({ ...item, rank: rank + 1 }));
     });
 
-    // Fuse results using RRF: for each unique row, sum 1/(k + rank_i) across queries
-    const fusionMap = new Map(); // rowIndex -> { rrfScore, queryScores[] }
+    const fusionMap = new Map<
+      number,
+      { rrfScore: number; queryScores: Array<{ query: string; similarity: number; rank: number }> }
+    >();
     for (let qi = 0; qi < queries.length; qi++) {
-      for (const item of perQueryRanked[qi]) {
+      for (const item of perQueryRanked[qi]!) {
         if (!fusionMap.has(item.rowIndex)) {
           fusionMap.set(item.rowIndex, { rrfScore: 0, queryScores: [] });
         }
-        const entry = fusionMap.get(item.rowIndex);
+        const entry = fusionMap.get(item.rowIndex)!;
         entry.rrfScore += 1 / (k + item.rank);
         entry.queryScores.push({
-          query: queries[qi],
+          query: queries[qi]!,
           similarity: item.similarity,
           rank: item.rank,
         });
       }
     }
 
-    // Build results sorted by RRF score
-    const hc = new Map();
-    const results = [];
+    const hc = new Map<string, string>();
+    const results: MultiSearchResult['results'] = [];
     for (const [rowIndex, entry] of fusionMap) {
-      const row = rows[rowIndex];
+      const row = rows[rowIndex]!;
       results.push({
-        ...normalizeSymbol(row, db, hc),
+        ...normalizeSymbol(row, db as BetterSqlite3Database, hc),
         rrf: entry.rrfScore,
         queryScores: entry.queryScores,
       });
