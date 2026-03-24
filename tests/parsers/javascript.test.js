@@ -196,6 +196,7 @@ describe('JavaScript parser', () => {
       const symbols = parseJS(`program.command('query <name>').action(() => { search(); });`);
       const def = symbols.definitions.find((d) => d.name === 'command:query');
       expect(def).toBeDefined();
+      expect(def.kind).toBe('function');
     });
 
     it('does not extract Commander action with named handler', () => {
@@ -223,6 +224,7 @@ describe('JavaScript parser', () => {
       const symbols = parseJS(`router.post('/api/items', async (req, res) => { save(); });`);
       const def = symbols.definitions.find((d) => d.name === 'route:POST /api/items');
       expect(def).toBeDefined();
+      expect(def.kind).toBe('function');
     });
 
     it('does not extract Map.get as Express route', () => {
@@ -243,6 +245,7 @@ describe('JavaScript parser', () => {
       const symbols = parseJS(`server.once('listening', () => { log(); });`);
       const def = symbols.definitions.find((d) => d.name === 'event:listening');
       expect(def).toBeDefined();
+      expect(def.kind).toBe('function');
     });
 
     it('does not extract event with named handler', () => {
