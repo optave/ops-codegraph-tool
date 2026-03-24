@@ -248,7 +248,7 @@ recall will be questioned during review.
 Adding a new language is one of the most impactful contributions. We have a
 dedicated step-by-step guide:
 
-**[Adding a New Language](docs/guides/adding-a-language.md)**
+**[Adding a New Language](docs/contributing/adding-a-language.md)**
 
 This covers the full dual-engine workflow (WASM + native Rust), including every
 file to modify, code templates, and a verification checklist.
