@@ -62,6 +62,7 @@ interface ExtractorOutput {
   _tree?: TreeSitterTree;         // retained for CFG / dataflow analysis
   _langId?: LanguageId;           // language identifier
   _lineCount?: number;            // line count for metrics
+  // (dataflow, astNodes, _typeMapBackfilled are populated post-extraction — do not set)
 }
 ```
 
@@ -131,9 +132,13 @@ Two things to do on the TypeScript side:
 
 Every language extractor lives in its own file under `src/extractors/` (e.g.
 `go.ts`, `python.ts`, `rust.ts`). Create `src/extractors/<lang>.ts` and
-re-export it from `src/extractors/index.ts`. Then import and reference the
-extractor function in the `LANGUAGE_REGISTRY` array in `src/domain/parser.ts`
-(see Step 3b).
+re-export it from `src/extractors/index.ts`. Then:
+
+1. Add `extract<Lang>Symbols` to the **explicit named re-export block** at the
+   top of `src/domain/parser.ts` (the `export { ... } from '../extractors/index.js'`
+   block) so the extractor is available from `parser.ts` for backward compatibility.
+2. Import and reference the extractor function in the `LANGUAGE_REGISTRY` array
+   in `src/domain/parser.ts` (see Step 3b).
 
 Write a recursive AST walker that matches tree-sitter node types for your
 language. Copy the pattern from an existing extractor like `extractGoSymbols` in
@@ -395,7 +400,8 @@ Follow the pattern from `tests/parsers/go.test.js`:
 
 ```js
 import { describe, it, expect, beforeAll } from 'vitest';
-import { createParsers, extract<Lang>Symbols } from '../../src/domain/parser.js';
+import { createParsers } from '../../src/domain/parser.js';
+import { extract<Lang>Symbols } from '../../src/extractors/<lang>.js';
 
 describe('<Lang> parser', () => {
   let parsers;
@@ -473,7 +479,7 @@ codegraph query someFunction
 |---|------|--------|--------|
 | 1 | `package.json` | WASM | Add `tree-sitter-<lang>` devDependency |
 | 2 | `scripts/build-wasm.js` | WASM | Add grammar entry to array |
-| 3 | `src/extractors/<lang>.ts` + `src/domain/parser.ts` | WASM | Create extractor in `src/extractors/`, re-export via `index.ts`, add `LANGUAGE_REGISTRY` entry |
+| 3 | `src/extractors/<lang>.ts` + `src/domain/parser.ts` | WASM | Create extractor in `src/extractors/`, re-export via `index.ts`, add to `parser.ts` re-export block, add `LANGUAGE_REGISTRY` entry |
 | 4 | `src/domain/parser.ts` | WASM | Update `patchNativeResult` (if language flag needed) |
 | 5 | `crates/codegraph-core/Cargo.toml` | Native | Add tree-sitter crate |
 | 6 | `crates/.../parser_registry.rs` | Native | Register enum + extension + grammar + `lang_id_str` |
