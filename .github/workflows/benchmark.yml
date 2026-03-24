@@ -93,11 +93,11 @@ jobs:
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
             ARGS="$ARGS --npm"
           fi
-          node scripts/benchmark.js $ARGS 2>/dev/null > benchmark-result.json
+          node --experimental-strip-types scripts/benchmark.ts $ARGS 2>/dev/null > benchmark-result.json
 
       - name: Update build report
         if: steps.existing.outputs.skip != 'true'
-        run: node scripts/update-benchmark-report.js benchmark-result.json
+        run: node --experimental-strip-types scripts/update-benchmark-report.ts benchmark-result.json
 
       - name: Upload build result
         if: steps.existing.outputs.skip != 'true'
@@ -244,11 +244,11 @@ jobs:
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
             ARGS="$ARGS --npm"
           fi
-          node scripts/embedding-benchmark.js $ARGS 2>/dev/null > embedding-benchmark-result.json
+          node --experimental-strip-types scripts/embedding-benchmark.ts $ARGS 2>/dev/null > embedding-benchmark-result.json
 
       - name: Update embedding report
         if: steps.existing.outputs.skip != 'true'
-        run: node scripts/update-embedding-report.js embedding-benchmark-result.json
+        run: node --experimental-strip-types scripts/update-embedding-report.ts embedding-benchmark-result.json
 
       - name: Upload embedding result
         if: steps.existing.outputs.skip != 'true'
@@ -381,11 +381,11 @@ jobs:
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
             ARGS="$ARGS --npm"
           fi
-          node scripts/query-benchmark.js $ARGS 2>/dev/null > query-benchmark-result.json
+          node --experimental-strip-types scripts/query-benchmark.ts $ARGS 2>/dev/null > query-benchmark-result.json
 
       - name: Update query report
         if: steps.existing.outputs.skip != 'true'
-        run: node scripts/update-query-report.js query-benchmark-result.json
+        run: node --experimental-strip-types scripts/update-query-report.ts query-benchmark-result.json
 
       - name: Upload query result
         if: steps.existing.outputs.skip != 'true'
@@ -518,11 +518,11 @@ jobs:
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
             ARGS="$ARGS --npm"
           fi
-          node scripts/incremental-benchmark.js $ARGS 2>/dev/null > incremental-benchmark-result.json
+          node --experimental-strip-types scripts/incremental-benchmark.ts $ARGS 2>/dev/null > incremental-benchmark-result.json
 
       - name: Update incremental report
         if: steps.existing.outputs.skip != 'true'
-        run: node scripts/update-incremental-report.js incremental-benchmark-result.json
+        run: node --experimental-strip-types scripts/update-incremental-report.ts incremental-benchmark-result.json
 
       - name: Upload incremental result
         if: steps.existing.outputs.skip != 'true'

@@ -32,7 +32,7 @@
     "build": "tsc",
     "build:wasm": "node scripts/build-wasm.js",
     "typecheck": "tsc --noEmit",
-    "verify-imports": "node scripts/verify-imports.js",
+    "verify-imports": "node --experimental-strip-types scripts/verify-imports.ts",
     "test": "node scripts/test.js run",
     "test:watch": "node scripts/test.js",
     "test:coverage": "node scripts/test.js run --coverage",
@@ -45,7 +45,7 @@
     "deps:tree": "node scripts/gen-deps.cjs",
     "release": "commit-and-tag-version",
     "release:dry-run": "commit-and-tag-version --dry-run",
-    "version": "node scripts/sync-native-versions.js && git add package.json crates/codegraph-core/Cargo.toml"
+    "version": "node --experimental-strip-types scripts/sync-native-versions.ts && git add package.json crates/codegraph-core/Cargo.toml"
   },
   "keywords": [
     "codegraph",

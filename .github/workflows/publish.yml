@@ -224,7 +224,7 @@ jobs:
           VERSION: ${{ needs.compute-version.outputs.version }}
         run: |
           npm version "$VERSION" --no-git-tag-version --allow-same-version
-          node scripts/sync-native-versions.js --strip
+          node --experimental-strip-types scripts/sync-native-versions.ts --strip
           echo "Packaging version $VERSION"
 
       - name: Build TypeScript
@@ -405,7 +405,7 @@ jobs:
         run: |
           git checkout -- package-lock.json
           npm version "$VERSION" --no-git-tag-version --allow-same-version
-          node scripts/sync-native-versions.js
+          node --experimental-strip-types scripts/sync-native-versions.ts
           echo "Publishing version $VERSION"
 
       - name: Build TypeScript

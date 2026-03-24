@@ -48,7 +48,7 @@ fi
 
 # Run all checks in a single Node.js process
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
-RESULT=$(node "$HOOK_DIR/pre-commit-checks.js" "$WORK_ROOT" "$EDITED_FILES" "$STAGED" 2>/dev/null) || true
+RESULT=$(node --experimental-strip-types "$HOOK_DIR/pre-commit-checks.ts" "$WORK_ROOT" "$EDITED_FILES" "$STAGED" 2>/dev/null) || true
 
 if [ -z "$RESULT" ]; then
   exit 0
