@@ -115,4 +115,4 @@ No actionable duplicates. Transitive deps are properly deduplicated by npm.
 3. ~~Update `vitest` + `@vitest/coverage-v8` 4.1.0 → 4.1.1~~ — done via `npm update`
 
 **Remaining:**
-4. TypeScript 6.0 — review breaking changes and migration guide before upgrading. Current `5.9.3` is fine for now; pin `~5.9` in `package.json` if not already
+4. TypeScript 6.0 — review breaking changes and migration guide before upgrading. Current `^5.9.3` constraint in `package.json` already blocks TypeScript 6.x (caret allows `>=5.9.3 <6.0.0`), so no additional pinning is needed
