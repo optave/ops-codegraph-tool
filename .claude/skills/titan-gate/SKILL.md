@@ -135,9 +135,11 @@ For each **exported** symbol in changed files:
 
 ### 5b. Import resolution integrity
 
-From the `codegraph check` results already collected in Step 1 (which includes `--staged`), extract any `unresolved_import` warnings.
+From the diff-impact results already collected in Step 1, extract any edges where the target symbol or file no longer exists (i.e., the import points to a removed or renamed symbol).
 
-If any `unresolved_import` warnings appear for files NOT changed in this commit → **FAIL**: "Change broke import resolution for <file>: <import>"
+For each such broken edge where the importing file is NOT part of this commit's staged changes → **FAIL**: "Change broke import resolution for <file>: <import>"
+
+> **Note:** `codegraph check` does not include import resolution predicates — its checks cover cycles, blast-radius, boundaries, and manifesto rules. Import resolution runs during `codegraph build`. This step relies on diff-impact's edge data to detect broken imports indirectly by identifying edges that reference removed symbols.
 
 ### 5c. Dependency direction assertions
 
