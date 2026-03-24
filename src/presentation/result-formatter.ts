@@ -121,7 +121,12 @@ export function outputResult(
   opts: OutputOpts,
 ): boolean {
   if (opts.ndjson) {
-    printNdjson(data, field as string);
+    if (field === null) {
+      // No field key — emit the whole object as a single NDJSON line
+      console.log(JSON.stringify(data));
+    } else {
+      printNdjson(data, field);
+    }
     return true;
   }
   if (opts.json) {
