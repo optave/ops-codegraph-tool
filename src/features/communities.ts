@@ -177,6 +177,7 @@ export function communitiesData(
     resolution,
     maxLevels,
     maxLocalPasses,
+    refinementTheta,
   });
 
   const { communities, communityDirs } = buildCommunityObjects(graph, assignments, opts);

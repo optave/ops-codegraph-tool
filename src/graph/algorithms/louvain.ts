@@ -14,6 +14,7 @@ export interface LouvainOptions {
   resolution?: number;
   maxLevels?: number;
   maxLocalPasses?: number;
+  refinementTheta?: number;
 }
 
 export interface LouvainResult {
@@ -33,6 +34,7 @@ export function louvainCommunities(graph: CodeGraph, opts: LouvainOptions = {}):
     directed: false,
     ...(opts.maxLevels != null && { maxLevels: opts.maxLevels }),
     ...(opts.maxLocalPasses != null && { maxLocalPasses: opts.maxLocalPasses }),
+    ...(opts.refinementTheta != null && { refinementTheta: opts.refinementTheta }),
   });
 
   const assignments = new Map<string, number>();
