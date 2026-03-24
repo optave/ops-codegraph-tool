@@ -15,7 +15,6 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { initSchema } from '../../src/db/index.js';
@@ -216,19 +215,14 @@ describe('batchData — complexity (dbOnly signature)', () => {
 describe.skipIf(!canStripTypes)('batch CLI', () => {
   const cliPath = path.resolve(
     path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1')),
-    '../../src/cli.ts',
+    '../../src/cli.js',
   );
 
   test('outputs valid JSON', () => {
-    const loaderPath = pathToFileURL(path.resolve('scripts/ts-resolve-loader.js')).href;
-    const out = execFileSync(
-      'node',
-      ['--import', loaderPath, cliPath, 'batch', 'query', 'authenticate', '--db', dbPath],
-      {
-        encoding: 'utf-8',
-        timeout: 30_000,
-      },
-    );
+    const out = execFileSync('node', [cliPath, 'batch', 'query', 'authenticate', '--db', dbPath], {
+      encoding: 'utf-8',
+      timeout: 30_000,
+    });
     const parsed = JSON.parse(out);
     expect(parsed.command).toBe('query');
     expect(parsed.total).toBe(1);
@@ -236,19 +230,9 @@ describe.skipIf(!canStripTypes)('batch CLI', () => {
   });
 
   test('batch accepts comma-separated positional targets', () => {
-    const loaderPath = pathToFileURL(path.resolve('scripts/ts-resolve-loader.js')).href;
     const out = execFileSync(
       'node',
-      [
-        '--import',
-        loaderPath,
-        cliPath,
-        'batch',
-        'where',
-        'authenticate,validateToken',
-        '--db',
-        dbPath,
-      ],
+      [cliPath, 'batch', 'where', 'authenticate,validateToken', '--db', dbPath],
       { encoding: 'utf-8', timeout: 30_000 },
     );
     const parsed = JSON.parse(out);
