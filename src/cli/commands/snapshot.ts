@@ -1,0 +1,67 @@
+import {
+  snapshotDelete,
+  snapshotList,
+  snapshotRestore,
+  snapshotSave,
+} from '../../features/snapshot.js';
+import type { CommandDefinition } from '../types.js';
+
+export const command: CommandDefinition = {
+  name: 'snapshot',
+  description: 'Save and restore graph database snapshots',
+  subcommands: [
+    {
+      name: 'save <name>',
+      description: 'Save a snapshot of the current graph database',
+      options: [
+        ['-d, --db <path>', 'Path to graph.db'],
+        ['--force', 'Overwrite existing snapshot'],
+      ],
+      execute([name], opts, ctx) {
+        const result = snapshotSave(name!, { dbPath: opts.db, force: opts.force });
+        console.log(`Snapshot saved: ${result.name} (${ctx.formatSize(result.size)})`);
+      },
+    },
+    {
+      name: 'restore <name>',
+      description: 'Restore a snapshot over the current graph database',
+      options: [['-d, --db <path>', 'Path to graph.db']],
+      execute([name], opts) {
+        snapshotRestore(name!, { dbPath: opts.db });
+        console.log(`Snapshot "${name}" restored.`);
+      },
+    },
+    {
+      name: 'list',
+      description: 'List all saved snapshots',
+      options: [
+        ['-d, --db <path>', 'Path to graph.db'],
+        ['-j, --json', 'Output as JSON'],
+      ],
+      execute(_args, opts, ctx) {
+        const snapshots = snapshotList({ dbPath: opts.db });
+        if (opts.json) {
+          console.log(JSON.stringify(snapshots, null, 2));
+        } else if (snapshots.length === 0) {
+          console.log('No snapshots found.');
+        } else {
+          console.log(`Snapshots (${snapshots.length}):\n`);
+          for (const s of snapshots) {
+            console.log(
+              `  ${s.name.padEnd(30)} ${ctx.formatSize(s.size).padStart(10)}  ${s.createdAt.toISOString()}`,
+            );
+          }
+        }
+      },
+    },
+    {
+      name: 'delete <name>',
+      description: 'Delete a saved snapshot',
+      options: [['-d, --db <path>', 'Path to graph.db']],
+      execute([name], opts) {
+        snapshotDelete(name!, { dbPath: opts.db });
+        console.log(`Snapshot "${name}" deleted.`);
+      },
+    },
+  ],
+};
