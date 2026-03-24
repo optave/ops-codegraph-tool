@@ -1,11 +1,3 @@
-/**
- * Stored queryable AST nodes — build-time extraction + query functions.
- *
- * Persists selected AST nodes (calls, new, string, regex, throw, await) in the
- * `ast_nodes` table during build. Queryable via CLI (`codegraph ast`), MCP
- * (`ast_query`), and programmatic API.
- */
-
 import path from 'node:path';
 import { AST_TYPE_MAPS } from '../ast-analysis/rules/index.js';
 import { buildExtensionSet } from '../ast-analysis/shared.js';
@@ -16,12 +8,13 @@ import { buildFileConditionSQL } from '../db/query-builder.js';
 import { debug } from '../infrastructure/logger.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 import { paginateResult } from '../shared/paginate.js';
+import type { ASTNodeKind, BetterSqlite3Database, Definition, TreeSitterNode } from '../types.js';
 
 // ─── Constants ────────────────────────────────────────────────────────
 
-export const AST_NODE_KINDS = ['call', 'new', 'string', 'regex', 'throw', 'await'];
+export const AST_NODE_KINDS: ASTNodeKind[] = ['call', 'new', 'string', 'regex', 'throw', 'await'];
 
-const KIND_ICONS = {
+const KIND_ICONS: Record<string, string> = {
   call: '\u0192', // ƒ
   new: '\u2295', // ⊕
   string: '"',
@@ -30,24 +23,35 @@ const KIND_ICONS = {
   await: '\u22B3', // ⊳
 };
 
-/** tree-sitter node types that map to our AST node kinds — imported from rules. */
 const JS_TS_AST_TYPES = AST_TYPE_MAPS.get('javascript');
 
-/** Extensions that support full AST walk (new/throw/await/string/regex). */
 const WALK_EXTENSIONS = buildExtensionSet(AST_TYPE_MAPS);
 
 // ─── Helpers ──────────────────────────────────────────────────────────
-// Node extraction helpers (extractNewName, extractName, etc.) moved to
-// ast-analysis/visitors/ast-store-visitor.js as part of the visitor framework.
 
-/**
- * Find the narrowest enclosing definition for a given line.
- */
-function findParentDef(defs, line) {
-  let best = null;
+interface AstRow {
+  file: string;
+  line: number;
+  kind: string;
+  name: string;
+  text: string | null;
+  receiver: string | null;
+  parentNodeId: number | null;
+}
+
+interface FileSymbols {
+  definitions: Definition[];
+  calls?: Array<{ line: number; name: string; dynamic?: boolean; receiver?: string }>;
+  astNodes?: Array<{ line: number; kind: string; name: string; text?: string; receiver?: string }>;
+  _tree?: { rootNode: TreeSitterNode };
+  _langId?: string;
+}
+
+function findParentDef(defs: Definition[], line: number): Definition | null {
+  let best: Definition | null = null;
   for (const def of defs) {
     if (def.line <= line && (def.endLine == null || def.endLine >= line)) {
-      if (!best || def.endLine - def.line < best.endLine - best.line) {
+      if (!best || (def.endLine ?? 0) - def.line < (best.endLine ?? 0) - best.line) {
         best = def;
       }
     }
@@ -57,17 +61,13 @@ function findParentDef(defs, line) {
 
 // ─── Build ────────────────────────────────────────────────────────────
 
-/**
- * Extract AST nodes from parsed files and persist to the ast_nodes table.
- *
- * @param {object} db - open better-sqlite3 database (read-write)
- * @param {Map<string, object>} fileSymbols - Map<relPath, { definitions, calls, _tree, _langId }>
- * @param {string} rootDir - absolute project root path
- * @param {object} [_engineOpts] - engine options (unused)
- */
-export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
-  // Ensure table exists (migration may not have run on older DBs)
-  let insertStmt;
+export async function buildAstNodes(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, FileSymbols>,
+  _rootDir: string,
+  _engineOpts?: unknown,
+): Promise<void> {
+  let insertStmt: ReturnType<BetterSqlite3Database['prepare']>;
   try {
     insertStmt = db.prepare(
       'INSERT INTO ast_nodes (file, line, kind, name, text, receiver, parent_node_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
@@ -77,28 +77,26 @@ export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
     return;
   }
 
-  const tx = db.transaction((rows) => {
+  const tx = db.transaction((rows: AstRow[]) => {
     for (const r of rows) {
       insertStmt.run(r.file, r.line, r.kind, r.name, r.text, r.receiver, r.parentNodeId);
     }
   });
 
-  const allRows = [];
+  const allRows: AstRow[] = [];
 
   for (const [relPath, symbols] of fileSymbols) {
     const defs = symbols.definitions || [];
 
-    // Pre-load all node IDs for this file into a map (read-only, fast)
-    const nodeIdMap = new Map();
+    const nodeIdMap = new Map<string, number>();
     for (const row of bulkNodeIdsByFile(db, relPath)) {
       nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
     }
 
-    // 1. Call nodes from symbols.calls (all languages)
     if (symbols.calls) {
       for (const call of symbols.calls) {
         const parentDef = findParentDef(defs, call.line);
-        let parentNodeId = null;
+        let parentNodeId: number | null = null;
         if (parentDef) {
           parentNodeId =
             nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
@@ -115,12 +113,10 @@ export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
       }
     }
 
-    // 2. Non-call AST nodes (new, throw, await, string, regex)
     if (symbols.astNodes?.length) {
-      // Native path: use pre-extracted AST nodes from Rust (all languages)
       for (const n of symbols.astNodes) {
         const parentDef = findParentDef(defs, n.line);
-        let parentNodeId = null;
+        let parentNodeId: number | null = null;
         if (parentDef) {
           parentNodeId =
             nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
@@ -136,10 +132,9 @@ export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
         });
       }
     } else {
-      // WASM fallback: walk the tree-sitter AST (JS/TS/TSX only)
       const ext = path.extname(relPath).toLowerCase();
       if (WALK_EXTENSIONS.has(ext) && symbols._tree) {
-        const astRows = [];
+        const astRows: AstRow[] = [];
         walkAst(symbols._tree.rootNode, defs, relPath, astRows, nodeIdMap);
         allRows.push(...astRows);
       }
@@ -153,37 +148,78 @@ export async function buildAstNodes(db, fileSymbols, _rootDir, _engineOpts) {
   debug(`AST extraction: ${allRows.length} nodes stored`);
 }
 
-/**
- * Walk a tree-sitter AST and collect new/throw/await/string/regex nodes.
- * Delegates to the ast-store visitor via the unified walker.
- */
-function walkAst(rootNode, defs, relPath, rows, nodeIdMap) {
-  const visitor = createAstStoreVisitor(JS_TS_AST_TYPES, defs, relPath, nodeIdMap);
+function walkAst(
+  rootNode: TreeSitterNode,
+  defs: Definition[],
+  relPath: string,
+  rows: AstRow[],
+  nodeIdMap: Map<string, number>,
+): void {
+  const visitor = createAstStoreVisitor(JS_TS_AST_TYPES!, defs, relPath, nodeIdMap);
   const results = walkWithVisitors(rootNode, [visitor], 'javascript');
-  const collected = results['ast-store'] || [];
+  const collected = (results['ast-store'] || []) as AstRow[];
   rows.push(...collected);
 }
 
 // ─── Query ────────────────────────────────────────────────────────────
 
-/**
- * Query AST nodes — data-returning function.
- *
- * @param {string} [pattern] - GLOB pattern for node name (auto-wrapped in *..*)
- * @param {string} [customDbPath] - path to graph.db
- * @param {object} [opts]
- * @returns {{ pattern, kind, count, results, _pagination? }}
- */
-export function astQueryData(pattern, customDbPath, opts = {}) {
+interface AstQueryRow {
+  kind: string;
+  name: string;
+  file: string;
+  line: number;
+  text: string | null;
+  receiver: string | null;
+  parent_node_id: number | null;
+  parent_name: string | null;
+  parent_kind: string | null;
+  parent_file: string | null;
+}
+
+interface AstQueryResult {
+  kind: string;
+  name: string;
+  file: string;
+  line: number;
+  text: string | null;
+  receiver: string | null;
+  parent: { name: string | null; kind: string | null; file: string | null } | null;
+}
+
+interface AstQueryOpts {
+  kind?: string;
+  file?: string | string[];
+  noTests?: boolean;
+  limit?: number;
+  offset?: number;
+  json?: boolean;
+  ndjson?: boolean;
+}
+
+export function astQueryData(
+  pattern: string | undefined,
+  customDbPath: string | undefined,
+  opts: AstQueryOpts = {},
+): {
+  pattern: string;
+  kind: string | null;
+  count: number;
+  results: AstQueryResult[];
+  _pagination?: {
+    hasMore: boolean;
+    total: number;
+    offset: number;
+    returned: number;
+    limit: number;
+  };
+} {
   const db = openReadonlyOrFail(customDbPath);
   const { kind, file, noTests, limit, offset } = opts;
 
   let where = 'WHERE 1=1';
-  const params = [];
+  const params: unknown[] = [];
 
-  // Pattern matching
   if (pattern && pattern !== '*') {
-    // If user already uses wildcards, use as-is; otherwise wrap in *..* for substring
     const globPattern = pattern.includes('*') ? pattern : `*${pattern}*`;
     where += ' AND a.name GLOB ?';
     params.push(globPattern);
@@ -195,7 +231,7 @@ export function astQueryData(pattern, customDbPath, opts = {}) {
   }
 
   {
-    const fc = buildFileConditionSQL(file, 'a.file');
+    const fc = buildFileConditionSQL(file ?? [], 'a.file');
     where += fc.sql;
     params.push(...fc.params);
   }
@@ -217,14 +253,14 @@ export function astQueryData(pattern, customDbPath, opts = {}) {
     ORDER BY a.file, a.line
   `;
 
-  let rows;
+  let rows: AstQueryRow[];
   try {
-    rows = db.prepare(sql).all(...params);
+    rows = db.prepare(sql).all(...params) as AstQueryRow[];
   } finally {
     db.close();
   }
 
-  const results = rows.map((r) => ({
+  const results: AstQueryResult[] = rows.map((r) => ({
     kind: r.kind,
     name: r.name,
     file: r.file,
@@ -246,15 +282,15 @@ export function astQueryData(pattern, customDbPath, opts = {}) {
   return paginateResult(data, 'results', { limit, offset });
 }
 
-/**
- * Query AST nodes — display function (human/json/ndjson output).
- */
-export function astQuery(pattern, customDbPath, opts = {}) {
+export function astQuery(
+  pattern: string | undefined,
+  customDbPath: string | undefined,
+  opts: AstQueryOpts = {},
+): void {
   const data = astQueryData(pattern, customDbPath, opts);
 
   if (outputResult(data, 'results', opts)) return;
 
-  // Human-readable output
   if (data.results.length === 0) {
     console.log(`No AST nodes found${pattern ? ` matching "${pattern}"` : ''}.`);
     return;

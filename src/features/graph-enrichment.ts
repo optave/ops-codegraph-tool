@@ -8,6 +8,7 @@ import {
   DEFAULT_ROLE_COLORS,
 } from '../presentation/colors.js';
 import { DEFAULT_CONFIG, renderPlotHTML } from '../presentation/viewer.js';
+import type { BetterSqlite3Database } from '../types.js';
 
 // Re-export presentation utilities for backward compatibility
 export { loadPlotConfig } from '../presentation/viewer.js';
@@ -16,23 +17,95 @@ const DEFAULT_MIN_CONFIDENCE = 0.5;
 
 // ─── Data Preparation ─────────────────────────────────────────────────
 
-/**
- * Prepare enriched graph data for the HTML viewer.
- */
-export function prepareGraphData(db, opts = {}) {
+interface PlotConfig {
+  filter: {
+    kinds?: string[] | null;
+    files?: string[] | null;
+    roles?: string[] | null;
+  };
+  colorBy?: string;
+  nodeColors: Record<string, string>;
+  roleColors: Record<string, string>;
+  riskThresholds?: { highBlastRadius?: number; lowMI?: number };
+  seedStrategy?: string;
+  seedCount?: number;
+  title?: string;
+}
+
+interface VisNode {
+  id: number | string;
+  label: string;
+  title: string;
+  color: string;
+  kind: string;
+  role: string;
+  file: string;
+  line: number;
+  community: number | null;
+  cognitive: number | null;
+  cyclomatic: number | null;
+  maintainabilityIndex: number | null;
+  fanIn: number;
+  fanOut: number;
+  directory: string;
+  risk: string[];
+}
+
+interface VisEdge {
+  id: string;
+  from: number | string;
+  to: number | string;
+}
+
+interface GraphData {
+  nodes: VisNode[];
+  edges: VisEdge[];
+  seedNodeIds: (number | string)[];
+}
+
+export function prepareGraphData(
+  db: BetterSqlite3Database,
+  opts: {
+    fileLevel?: boolean;
+    noTests?: boolean;
+    minConfidence?: number;
+    config?: PlotConfig;
+  } = {},
+): GraphData {
   const fileLevel = opts.fileLevel !== false;
   const noTests = opts.noTests || false;
   const minConf = opts.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
-  const cfg = opts.config || DEFAULT_CONFIG;
+  const cfg = opts.config || (DEFAULT_CONFIG as unknown as PlotConfig);
 
   return fileLevel
     ? prepareFileLevelData(db, noTests, minConf, cfg)
     : prepareFunctionLevelData(db, noTests, minConf, cfg);
 }
 
-function prepareFunctionLevelData(db, noTests, minConf, cfg) {
+interface FunctionEdgeRow {
+  source_id: number;
+  source_name: string;
+  source_kind: string;
+  source_file: string;
+  source_line: number;
+  source_role: string | null;
+  target_id: number;
+  target_name: string;
+  target_kind: string;
+  target_file: string;
+  target_line: number;
+  target_role: string | null;
+  edge_kind: string;
+}
+
+function prepareFunctionLevelData(
+  db: BetterSqlite3Database,
+  noTests: boolean,
+  minConf: number,
+  cfg: PlotConfig,
+): GraphData {
   let edges = db
-    .prepare(
+    .prepare<FunctionEdgeRow>(
       `
       SELECT n1.id AS source_id, n1.name AS source_name, n1.kind AS source_kind,
              n1.file AS source_file, n1.line AS source_line, n1.role AS source_role,
@@ -65,7 +138,10 @@ function prepareFunctionLevelData(db, noTests, minConf, cfg) {
     );
   }
 
-  const nodeMap = new Map();
+  const nodeMap = new Map<
+    number,
+    { id: number; name: string; kind: string; file: string; line: number; role: string | null }
+  >();
   for (const e of edges) {
     if (!nodeMap.has(e.source_id)) {
       nodeMap.set(e.source_id, {
@@ -92,17 +168,26 @@ function prepareFunctionLevelData(db, noTests, minConf, cfg) {
   if (cfg.filter.roles) {
     const roles = new Set(cfg.filter.roles);
     for (const [id, n] of nodeMap) {
-      if (!roles.has(n.role)) nodeMap.delete(id);
+      if (!roles.has(n.role!)) nodeMap.delete(id);
     }
     const nodeIds = new Set(nodeMap.keys());
     edges = edges.filter((e) => nodeIds.has(e.source_id) && nodeIds.has(e.target_id));
   }
 
   // Complexity data
-  const complexityMap = new Map();
+  const complexityMap = new Map<
+    number,
+    { cognitive: number; cyclomatic: number; maintainabilityIndex: number }
+  >();
   try {
     const rows = db
-      .prepare(
+      .prepare<{
+        node_id: number;
+        cognitive: number;
+        cyclomatic: number;
+        max_nesting: number;
+        maintainability_index: number;
+      }>(
         'SELECT node_id, cognitive, cyclomatic, max_nesting, maintainability_index FROM function_complexity',
       )
       .all();
@@ -127,24 +212,24 @@ function prepareFunctionLevelData(db, noTests, minConf, cfg) {
   }
 
   // Use DB-level fan-in/fan-out (counts ALL call edges, not just visible)
-  const fanInMap = new Map();
-  const fanOutMap = new Map();
+  const fanInMap = new Map<number, number>();
+  const fanOutMap = new Map<number, number>();
   const fanInRows = db
-    .prepare(
+    .prepare<{ node_id: number; fan_in: number }>(
       "SELECT target_id AS node_id, COUNT(*) AS fan_in FROM edges WHERE kind = 'calls' GROUP BY target_id",
     )
     .all();
   for (const r of fanInRows) fanInMap.set(r.node_id, r.fan_in);
 
   const fanOutRows = db
-    .prepare(
+    .prepare<{ node_id: number; fan_out: number }>(
       "SELECT source_id AS node_id, COUNT(*) AS fan_out FROM edges WHERE kind = 'calls' GROUP BY source_id",
     )
     .all();
   for (const r of fanOutRows) fanOutMap.set(r.node_id, r.fan_out);
 
   // Communities (Louvain) via graph subsystem
-  const communityMap = new Map();
+  const communityMap = new Map<number, number>();
   if (nodeMap.size > 0) {
     try {
       const { assignments } = louvainCommunities(fnGraph);
@@ -155,23 +240,27 @@ function prepareFunctionLevelData(db, noTests, minConf, cfg) {
   }
 
   // Build enriched nodes
-  const visNodes = [...nodeMap.values()].map((n) => {
+  const visNodes: VisNode[] = [...nodeMap.values()].map((n) => {
     const cx = complexityMap.get(n.id) || null;
     const fanIn = fanInMap.get(n.id) || 0;
     const fanOut = fanOutMap.get(n.id) || 0;
     const community = communityMap.get(n.id) ?? null;
     const directory = path.dirname(n.file);
-    const risk = [];
+    const risk: string[] = [];
     if (n.role?.startsWith('dead')) risk.push('dead-code');
     if (fanIn >= (cfg.riskThresholds?.highBlastRadius ?? 10)) risk.push('high-blast-radius');
     if (cx && cx.maintainabilityIndex < (cfg.riskThresholds?.lowMI ?? 40)) risk.push('low-mi');
 
-    const color =
+    const color: string =
       cfg.colorBy === 'role' && n.role
-        ? cfg.roleColors[n.role] || DEFAULT_ROLE_COLORS[n.role] || '#ccc'
+        ? cfg.roleColors[n.role] ||
+          (DEFAULT_ROLE_COLORS as Record<string, string>)[n.role] ||
+          '#ccc'
         : cfg.colorBy === 'community' && community !== null
-          ? COMMUNITY_COLORS[community % COMMUNITY_COLORS.length]
-          : cfg.nodeColors[n.kind] || DEFAULT_NODE_COLORS[n.kind] || '#ccc';
+          ? COMMUNITY_COLORS[community % COMMUNITY_COLORS.length] || '#ccc'
+          : cfg.nodeColors[n.kind] ||
+            (DEFAULT_NODE_COLORS as Record<string, string>)[n.kind] ||
+            '#ccc';
 
     return {
       id: n.id,
@@ -193,14 +282,14 @@ function prepareFunctionLevelData(db, noTests, minConf, cfg) {
     };
   });
 
-  const visEdges = edges.map((e, i) => ({
+  const visEdges: VisEdge[] = edges.map((e, i) => ({
     id: `e${i}`,
     from: e.source_id,
     to: e.target_id,
   }));
 
   // Seed strategy
-  let seedNodeIds;
+  let seedNodeIds: (number | string)[];
   if (cfg.seedStrategy === 'top-fanin') {
     const sorted = [...visNodes].sort((a, b) => b.fanIn - a.fanIn);
     seedNodeIds = sorted.slice(0, cfg.seedCount || 30).map((n) => n.id);
@@ -213,9 +302,19 @@ function prepareFunctionLevelData(db, noTests, minConf, cfg) {
   return { nodes: visNodes, edges: visEdges, seedNodeIds };
 }
 
-function prepareFileLevelData(db, noTests, minConf, cfg) {
+interface FileLevelEdge {
+  source: string;
+  target: string;
+}
+
+function prepareFileLevelData(
+  db: BetterSqlite3Database,
+  noTests: boolean,
+  minConf: number,
+  cfg: PlotConfig,
+): GraphData {
   let edges = db
-    .prepare(
+    .prepare<FileLevelEdge>(
       `
       SELECT DISTINCT n1.file AS source, n2.file AS target
       FROM edges e
@@ -228,26 +327,26 @@ function prepareFileLevelData(db, noTests, minConf, cfg) {
     .all(minConf);
   if (noTests) edges = edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target));
 
-  const files = new Set();
+  const files = new Set<string>();
   for (const { source, target } of edges) {
     files.add(source);
     files.add(target);
   }
 
-  const fileIds = new Map();
+  const fileIds = new Map<string, number>();
   let idx = 0;
   for (const f of files) fileIds.set(f, idx++);
 
   // Fan-in/fan-out
-  const fanInCount = new Map();
-  const fanOutCount = new Map();
+  const fanInCount = new Map<string, number>();
+  const fanOutCount = new Map<string, number>();
   for (const { source, target } of edges) {
     fanOutCount.set(source, (fanOutCount.get(source) || 0) + 1);
     fanInCount.set(target, (fanInCount.get(target) || 0) + 1);
   }
 
   // Communities via graph subsystem
-  const communityMap = new Map();
+  const communityMap = new Map<string, number>();
   if (files.size > 0) {
     try {
       const fileGraph = new CodeGraph();
@@ -263,16 +362,18 @@ function prepareFileLevelData(db, noTests, minConf, cfg) {
     }
   }
 
-  const visNodes = [...files].map((f) => {
-    const id = fileIds.get(f);
+  const visNodes: VisNode[] = [...files].map((f) => {
+    const id = fileIds.get(f)!;
     const community = communityMap.get(f) ?? null;
     const fanIn = fanInCount.get(f) || 0;
     const fanOut = fanOutCount.get(f) || 0;
     const directory = path.dirname(f);
-    const color =
+    const color: string =
       cfg.colorBy === 'community' && community !== null
-        ? COMMUNITY_COLORS[community % COMMUNITY_COLORS.length]
-        : cfg.nodeColors.file || DEFAULT_NODE_COLORS.file;
+        ? COMMUNITY_COLORS[community % COMMUNITY_COLORS.length] || '#ccc'
+        : cfg.nodeColors['file'] ||
+          (DEFAULT_NODE_COLORS as Record<string, string>)['file'] ||
+          '#ccc';
 
     return {
       id,
@@ -294,13 +395,13 @@ function prepareFileLevelData(db, noTests, minConf, cfg) {
     };
   });
 
-  const visEdges = edges.map(({ source, target }, i) => ({
+  const visEdges: VisEdge[] = edges.map(({ source, target }, i) => ({
     id: `e${i}`,
-    from: fileIds.get(source),
-    to: fileIds.get(target),
+    from: fileIds.get(source)!,
+    to: fileIds.get(target)!,
   }));
 
-  let seedNodeIds;
+  let seedNodeIds: (number | string)[];
   if (cfg.seedStrategy === 'top-fanin') {
     const sorted = [...visNodes].sort((a, b) => b.fanIn - a.fanIn);
     seedNodeIds = sorted.slice(0, cfg.seedCount || 30).map((n) => n.id);
@@ -315,13 +416,16 @@ function prepareFileLevelData(db, noTests, minConf, cfg) {
 
 // ─── HTML Generation (thin wrapper) ──────────────────────────────────
 
-/**
- * Generate a self-contained interactive HTML file with vis-network.
- *
- * Loads graph data from the DB, then delegates to the presentation layer.
- */
-export function generatePlotHTML(db, opts = {}) {
-  const cfg = opts.config || DEFAULT_CONFIG;
+export function generatePlotHTML(
+  db: BetterSqlite3Database,
+  opts: {
+    fileLevel?: boolean;
+    noTests?: boolean;
+    minConfidence?: number;
+    config?: PlotConfig;
+  } = {},
+): string {
+  const cfg = opts.config || (DEFAULT_CONFIG as unknown as PlotConfig);
   const data = prepareGraphData(db, opts);
   return renderPlotHTML(data, cfg);
 }

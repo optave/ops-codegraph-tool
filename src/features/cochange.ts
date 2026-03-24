@@ -13,16 +13,31 @@ import { warn } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { normalizePath } from '../shared/constants.js';
 import { paginateResult } from '../shared/paginate.js';
+import type { BetterSqlite3Database } from '../types.js';
 
-/**
- * Scan git history and return parsed commit data.
- * @param {string} repoRoot - Absolute path to the git repo root
- * @param {object} [opts]
- * @param {string} [opts.since] - Git date expression (e.g. "1 year ago")
- * @param {string} [opts.afterSha] - Only include commits after this SHA
- * @returns {{ commits: Array<{sha: string, epoch: number, files: string[]}> }}
- */
-export function scanGitHistory(repoRoot, opts = {}) {
+interface CommitEntry {
+  sha: string;
+  epoch: number;
+  files: string[];
+}
+
+interface CoChangePair {
+  commitCount: number;
+  jaccard: number;
+  lastEpoch: number;
+}
+
+interface CoChangeMeta {
+  analyzedAt: string | null;
+  since: string | null;
+  minSupport: number | null;
+  lastCommit: string | null;
+}
+
+export function scanGitHistory(
+  repoRoot: string,
+  opts: { since?: string; afterSha?: string | null } = {},
+): { commits: CommitEntry[] } {
   const args = [
     'log',
     '--name-only',
@@ -34,7 +49,7 @@ export function scanGitHistory(repoRoot, opts = {}) {
   if (opts.afterSha) args.push(`${opts.afterSha}..HEAD`);
   args.push('--', '.');
 
-  let output;
+  let output: string;
   try {
     output = execFileSync('git', args, {
       cwd: repoRoot,
@@ -42,21 +57,21 @@ export function scanGitHistory(repoRoot, opts = {}) {
       maxBuffer: 50 * 1024 * 1024,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-  } catch (e) {
-    warn(`Failed to scan git history: ${e.message}`);
+  } catch (e: unknown) {
+    warn(`Failed to scan git history: ${(e as Error).message}`);
     return { commits: [] };
   }
 
   if (!output.trim()) return { commits: [] };
 
-  const commits = [];
+  const commits: CommitEntry[] = [];
   // Split on double newlines to get blocks; each block is sha\nepoch\nfile1\nfile2...
   const blocks = output.trim().split(/\n\n+/);
   for (const block of blocks) {
     const lines = block.split('\n').filter((l) => l.length > 0);
     if (lines.length < 2) continue;
-    const sha = lines[0];
-    const epoch = parseInt(lines[1], 10);
+    const sha = lines[0]!;
+    const epoch = parseInt(lines[1]!, 10);
     if (Number.isNaN(epoch)) continue;
     const files = lines.slice(2).map((f) => normalizePath(f));
     if (files.length > 0) {
@@ -67,23 +82,17 @@ export function scanGitHistory(repoRoot, opts = {}) {
   return { commits };
 }
 
-/**
- * Compute co-change pairs from parsed commit data.
- * @param {Array<{sha: string, epoch: number, files: string[]}>} commits
- * @param {object} [opts]
- * @param {number} [opts.minSupport=3] - Minimum number of co-occurrences
- * @param {number} [opts.maxFilesPerCommit=50] - Skip commits with too many files
- * @param {Set<string>} [opts.knownFiles] - If provided, only include pairs where both files are in this set
- * @returns {Map<string, {commitCount: number, jaccard: number, lastEpoch: number}>}
- */
-export function computeCoChanges(commits, opts = {}) {
+export function computeCoChanges(
+  commits: CommitEntry[],
+  opts: { minSupport?: number; maxFilesPerCommit?: number; knownFiles?: Set<string> | null } = {},
+): { pairs: Map<string, CoChangePair>; fileCommitCounts: Map<string, number> } {
   const minSupport = opts.minSupport ?? 3;
   const maxFilesPerCommit = opts.maxFilesPerCommit ?? 50;
   const knownFiles = opts.knownFiles || null;
 
-  const fileCommitCounts = new Map();
-  const pairCounts = new Map();
-  const pairLastEpoch = new Map();
+  const fileCommitCounts = new Map<string, number>();
+  const pairCounts = new Map<string, number>();
+  const pairLastEpoch = new Map<string, number>();
 
   for (const commit of commits) {
     let { files } = commit;
@@ -111,10 +120,10 @@ export function computeCoChanges(commits, opts = {}) {
   }
 
   // Filter by minSupport and compute Jaccard
-  const results = new Map();
+  const results = new Map<string, CoChangePair>();
   for (const [key, count] of pairCounts) {
     if (count < minSupport) continue;
-    const [fileA, fileB] = key.split('\0');
+    const [fileA, fileB] = key.split('\0') as [string, string];
     const countA = fileCommitCounts.get(fileA) || 0;
     const countB = fileCommitCounts.get(fileB) || 0;
     const jaccard = count / (countA + countB - count);
@@ -128,17 +137,17 @@ export function computeCoChanges(commits, opts = {}) {
   return { pairs: results, fileCommitCounts };
 }
 
-/**
- * Analyze git history and populate co-change data in the database.
- * @param {string} [customDbPath] - Path to graph.db
- * @param {object} [opts]
- * @param {string} [opts.since] - Git date expression
- * @param {number} [opts.minSupport] - Minimum co-occurrence count
- * @param {number} [opts.maxFilesPerCommit] - Max files per commit
- * @param {boolean} [opts.full] - Force full re-scan
- * @returns {{ pairsFound: number, commitsScanned: number, since: string, minSupport: number }}
- */
-export function analyzeCoChanges(customDbPath, opts = {}) {
+export function analyzeCoChanges(
+  customDbPath?: string,
+  opts: {
+    since?: string;
+    minSupport?: number;
+    maxFilesPerCommit?: number;
+    full?: boolean;
+  } = {},
+):
+  | { pairsFound: number; commitsScanned: number; since: string; minSupport: number }
+  | { error: string } {
   const dbPath = findDbPath(customDbPath);
   const db = openDb(dbPath);
   initSchema(db);
@@ -155,11 +164,13 @@ export function analyzeCoChanges(customDbPath, opts = {}) {
   const maxFilesPerCommit = opts.maxFilesPerCommit ?? 50;
 
   // Check for incremental state
-  let afterSha = null;
+  let afterSha: string | null = null;
   if (!opts.full) {
     try {
       const row = db
-        .prepare("SELECT value FROM co_change_meta WHERE key = 'last_analyzed_commit'")
+        .prepare<{ value: string }>(
+          "SELECT value FROM co_change_meta WHERE key = 'last_analyzed_commit'",
+        )
         .get();
       if (row) afterSha = row.value;
     } catch {
@@ -175,9 +186,9 @@ export function analyzeCoChanges(customDbPath, opts = {}) {
   }
 
   // Collect known files from the graph for filtering
-  let knownFiles = null;
+  let knownFiles: Set<string> | null = null;
   try {
-    const rows = db.prepare('SELECT DISTINCT file FROM nodes').all();
+    const rows = db.prepare<{ file: string }>('SELECT DISTINCT file FROM nodes').all();
     knownFiles = new Set(rows.map((r) => r.file));
   } catch {
     /* nodes table may not exist */
@@ -210,7 +221,7 @@ export function analyzeCoChanges(customDbPath, opts = {}) {
       fileCountUpsert.run(file, count);
     }
     for (const [key, data] of coChanges) {
-      const [fileA, fileB] = key.split('\0');
+      const [fileA, fileB] = key.split('\0') as [string, string];
       pairUpsert.run(fileA, fileB, data.commitCount, data.lastEpoch);
     }
   });
@@ -238,13 +249,15 @@ export function analyzeCoChanges(customDbPath, opts = {}) {
     ON CONFLICT(key) DO UPDATE SET value = excluded.value
   `);
   if (commits.length > 0) {
-    metaUpsert.run('last_analyzed_commit', commits[0].sha);
+    metaUpsert.run('last_analyzed_commit', commits[0]!.sha);
   }
   metaUpsert.run('analyzed_at', new Date().toISOString());
   metaUpsert.run('since', since);
   metaUpsert.run('min_support', String(minSupport));
 
-  const totalPairs = db.prepare('SELECT COUNT(*) as cnt FROM co_changes').get().cnt;
+  const totalPairs = db
+    .prepare<{ cnt: number }>('SELECT COUNT(*) as cnt FROM co_changes')
+    .get()!.cnt;
 
   closeDb(db);
 
@@ -256,17 +269,19 @@ export function analyzeCoChanges(customDbPath, opts = {}) {
   };
 }
 
-/**
- * Query co-change partners for a specific file.
- * @param {string} file - File path (partial match supported)
- * @param {string} [customDbPath]
- * @param {object} [opts]
- * @param {number} [opts.limit=20]
- * @param {number} [opts.minJaccard=0.3]
- * @param {boolean} [opts.noTests]
- * @returns {{ file: string, partners: Array, meta: object }}
- */
-export function coChangeData(file, customDbPath, opts = {}) {
+interface CoChangeRow {
+  file_a: string;
+  file_b: string;
+  commit_count: number;
+  jaccard: number;
+  last_commit_epoch: number;
+}
+
+export function coChangeData(
+  file: string,
+  customDbPath?: string,
+  opts: { limit?: number; minJaccard?: number; noTests?: boolean; offset?: number } = {},
+): Record<string, unknown> {
   const db = openReadonlyOrFail(customDbPath);
   const limit = opts.limit || 20;
   const minJaccard = opts.minJaccard ?? 0.3;
@@ -288,7 +303,7 @@ export function coChangeData(file, customDbPath, opts = {}) {
   }
 
   const rows = db
-    .prepare(
+    .prepare<CoChangeRow>(
       `SELECT file_a, file_b, commit_count, jaccard, last_commit_epoch
        FROM co_changes
        WHERE (file_a = ? OR file_b = ?) AND jaccard >= ?
@@ -296,7 +311,12 @@ export function coChangeData(file, customDbPath, opts = {}) {
     )
     .all(resolvedFile, resolvedFile, minJaccard);
 
-  const partners = [];
+  const partners: Array<{
+    file: string;
+    commitCount: number;
+    jaccard: number;
+    lastCommitDate: string | null;
+  }> = [];
   for (const row of rows) {
     const partner = row.file_a === resolvedFile ? row.file_b : row.file_a;
     if (noTests && isTestFile(partner)) continue;
@@ -318,16 +338,10 @@ export function coChangeData(file, customDbPath, opts = {}) {
   return paginateResult(base, 'partners', { limit: opts.limit, offset: opts.offset });
 }
 
-/**
- * Query top global co-change pairs.
- * @param {string} [customDbPath]
- * @param {object} [opts]
- * @param {number} [opts.limit=20]
- * @param {number} [opts.minJaccard=0.3]
- * @param {boolean} [opts.noTests]
- * @returns {{ pairs: Array, meta: object }}
- */
-export function coChangeTopData(customDbPath, opts = {}) {
+export function coChangeTopData(
+  customDbPath?: string,
+  opts: { limit?: number; minJaccard?: number; noTests?: boolean; offset?: number } = {},
+): Record<string, unknown> {
   const db = openReadonlyOrFail(customDbPath);
   const limit = opts.limit || 20;
   const minJaccard = opts.minJaccard ?? 0.3;
@@ -341,7 +355,7 @@ export function coChangeTopData(customDbPath, opts = {}) {
   }
 
   const rows = db
-    .prepare(
+    .prepare<CoChangeRow>(
       `SELECT file_a, file_b, commit_count, jaccard, last_commit_epoch
        FROM co_changes
        WHERE jaccard >= ?
@@ -349,7 +363,13 @@ export function coChangeTopData(customDbPath, opts = {}) {
     )
     .all(minJaccard);
 
-  const pairs = [];
+  const pairs: Array<{
+    fileA: string;
+    fileB: string;
+    commitCount: number;
+    jaccard: number;
+    lastCommitDate: string | null;
+  }> = [];
   for (const row of rows) {
     if (noTests && (isTestFile(row.file_a) || isTestFile(row.file_b))) continue;
     pairs.push({
@@ -371,18 +391,11 @@ export function coChangeTopData(customDbPath, opts = {}) {
   return paginateResult(base, 'pairs', { limit: opts.limit, offset: opts.offset });
 }
 
-/**
- * Batch-query co-change partners for a set of files.
- * Takes an already-open readonly DB handle (for diff-impact integration).
- * @param {string[]} files - File paths to query
- * @param {import('better-sqlite3').Database} db - Already-open DB handle
- * @param {object} [opts]
- * @param {number} [opts.minJaccard=0.3]
- * @param {number} [opts.limit=20]
- * @param {boolean} [opts.noTests]
- * @returns {Array<{file: string, coupledWith: string, commitCount: number, jaccard: number}>}
- */
-export function coChangeForFiles(files, db, opts = {}) {
+export function coChangeForFiles(
+  files: string[],
+  db: BetterSqlite3Database,
+  opts: { minJaccard?: number; limit?: number; noTests?: boolean } = {},
+): Array<{ file: string; coupledWith: string; commitCount: number; jaccard: number }> {
   const minJaccard = opts.minJaccard ?? 0.3;
   const limit = opts.limit ?? 20;
   const noTests = opts.noTests || false;
@@ -392,7 +405,7 @@ export function coChangeForFiles(files, db, opts = {}) {
 
   const placeholders = files.map(() => '?').join(',');
   const rows = db
-    .prepare(
+    .prepare<{ file_a: string; file_b: string; commit_count: number; jaccard: number }>(
       `SELECT file_a, file_b, commit_count, jaccard
        FROM co_changes
        WHERE (file_a IN (${placeholders}) OR file_b IN (${placeholders}))
@@ -402,7 +415,12 @@ export function coChangeForFiles(files, db, opts = {}) {
     )
     .all(...files, ...files, minJaccard, limit);
 
-  const results = [];
+  const results: Array<{
+    file: string;
+    coupledWith: string;
+    commitCount: number;
+    jaccard: number;
+  }> = [];
   for (const row of rows) {
     const partner = inputSet.has(row.file_a) ? row.file_b : row.file_a;
     const source = inputSet.has(row.file_a) ? row.file_a : row.file_b;
@@ -421,10 +439,10 @@ export function coChangeForFiles(files, db, opts = {}) {
 
 // ─── Internal Helpers ────────────────────────────────────────────────────
 
-function resolveCoChangeFile(db, file) {
+function resolveCoChangeFile(db: BetterSqlite3Database, file: string): string | null {
   // Exact match first
   const exact = db
-    .prepare(
+    .prepare<{ file_a: string }>(
       'SELECT file_a FROM co_changes WHERE file_a = ? UNION SELECT file_b FROM co_changes WHERE file_b = ? LIMIT 1',
     )
     .get(file, file);
@@ -432,7 +450,7 @@ function resolveCoChangeFile(db, file) {
 
   // Partial match (ends with)
   const partial = db
-    .prepare(
+    .prepare<{ file: string }>(
       `SELECT file_a AS file FROM co_changes WHERE file_a LIKE ?
        UNION
        SELECT file_b AS file FROM co_changes WHERE file_b LIKE ?
@@ -444,18 +462,20 @@ function resolveCoChangeFile(db, file) {
   return null;
 }
 
-function getCoChangeMeta(db) {
+function getCoChangeMeta(db: BetterSqlite3Database): CoChangeMeta | null {
   try {
-    const rows = db.prepare('SELECT key, value FROM co_change_meta').all();
-    const meta = {};
+    const rows = db
+      .prepare<{ key: string; value: string }>('SELECT key, value FROM co_change_meta')
+      .all();
+    const meta: Record<string, string> = {};
     for (const row of rows) {
       meta[row.key] = row.value;
     }
     return {
-      analyzedAt: meta.analyzed_at || null,
-      since: meta.since || null,
-      minSupport: meta.min_support ? parseInt(meta.min_support, 10) : null,
-      lastCommit: meta.last_analyzed_commit || null,
+      analyzedAt: meta['analyzed_at'] || null,
+      since: meta['since'] || null,
+      minSupport: meta['min_support'] ? parseInt(meta['min_support'], 10) : null,
+      lastCommit: meta['last_analyzed_commit'] || null,
     };
   } catch {
     return null;

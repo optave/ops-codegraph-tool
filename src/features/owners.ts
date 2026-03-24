@@ -8,16 +8,21 @@ import { isTestFile } from '../infrastructure/test-filter.js';
 
 const CODEOWNERS_PATHS = ['CODEOWNERS', '.github/CODEOWNERS', 'docs/CODEOWNERS'];
 
-/** @type {Map<string, { rules: Array, path: string, mtime: number }>} */
-const codeownersCache = new Map();
+interface CodeownersRule {
+  pattern: string;
+  owners: string[];
+  regex: RegExp;
+}
 
-/**
- * Find and parse a CODEOWNERS file from the standard locations.
- * Results are cached per rootDir and invalidated when the file's mtime changes.
- * @param {string} rootDir - Repository root directory
- * @returns {{ rules: Array<{pattern: string, owners: string[], regex: RegExp}>, path: string } | null}
- */
-export function parseCodeowners(rootDir) {
+interface CodeownersCache {
+  rules: CodeownersRule[];
+  path: string;
+  mtime: number;
+}
+
+const codeownersCache = new Map<string, CodeownersCache>();
+
+export function parseCodeowners(rootDir: string): { rules: CodeownersRule[]; path: string } | null {
   const cached = codeownersCache.get(rootDir);
 
   for (const rel of CODEOWNERS_PATHS) {
@@ -37,24 +42,18 @@ export function parseCodeowners(rootDir) {
   return null;
 }
 
-/** Clear the parseCodeowners cache (for testing). */
-export function clearCodeownersCache() {
+export function clearCodeownersCache(): void {
   codeownersCache.clear();
 }
 
-/**
- * Parse CODEOWNERS file content into rules.
- * @param {string} content - Raw CODEOWNERS file content
- * @returns {Array<{pattern: string, owners: string[], regex: RegExp}>}
- */
-export function parseCodeownersContent(content) {
-  const rules = [];
+export function parseCodeownersContent(content: string): CodeownersRule[] {
+  const rules: CodeownersRule[] = [];
   for (const raw of content.split('\n')) {
     const line = raw.trim();
     if (!line || line.startsWith('#')) continue;
     const parts = line.split(/\s+/);
     if (parts.length < 2) continue;
-    const pattern = parts[0];
+    const pattern = parts[0]!;
     const owners = parts.slice(1).filter((p) => p.startsWith('@') || /^[^@\s]+@[^@\s]+$/.test(p));
     if (owners.length === 0) continue;
     rules.push({ pattern, owners, regex: patternToRegex(pattern) });
@@ -62,17 +61,7 @@ export function parseCodeownersContent(content) {
   return rules;
 }
 
-/**
- * Convert a CODEOWNERS glob pattern to a RegExp.
- *
- * CODEOWNERS semantics:
- * - Leading `/` anchors to repo root; without it, matches anywhere
- * - `*` matches anything except `/`
- * - `**` matches everything including `/`
- * - Trailing `/` matches directory contents
- * - A bare filename like `Makefile` matches anywhere
- */
-export function patternToRegex(pattern) {
+export function patternToRegex(pattern: string): RegExp {
   let p = pattern;
   const anchored = p.startsWith('/');
   if (anchored) p = p.slice(1);
@@ -112,14 +101,8 @@ export function patternToRegex(pattern) {
   return new RegExp(regex);
 }
 
-/**
- * Find the owners for a file path. CODEOWNERS uses last-match-wins semantics.
- * @param {string} filePath - Relative file path (forward slashes)
- * @param {Array<{pattern: string, owners: string[], regex: RegExp}>} rules
- * @returns {string[]}
- */
-export function matchOwners(filePath, rules) {
-  let owners = [];
+export function matchOwners(filePath: string, rules: CodeownersRule[]): string[] {
+  let owners: string[] = [];
   for (const rule of rules) {
     if (rule.regex.test(filePath)) {
       owners = rule.owners;
@@ -130,19 +113,15 @@ export function matchOwners(filePath, rules) {
 
 // ─── Data Functions ──────────────────────────────────────────────────
 
-/**
- * Lightweight helper for diff-impact integration.
- * Returns owner mapping for a list of file paths.
- * @param {string[]} filePaths - Relative file paths
- * @param {string} repoRoot - Repository root directory
- * @returns {{ owners: Map<string, string[]>, affectedOwners: string[], suggestedReviewers: string[] }}
- */
-export function ownersForFiles(filePaths, repoRoot) {
+export function ownersForFiles(
+  filePaths: string[],
+  repoRoot: string,
+): { owners: Map<string, string[]>; affectedOwners: string[]; suggestedReviewers: string[] } {
   const parsed = parseCodeowners(repoRoot);
   if (!parsed) return { owners: new Map(), affectedOwners: [], suggestedReviewers: [] };
 
-  const ownersMap = new Map();
-  const ownerSet = new Set();
+  const ownersMap = new Map<string, string[]>();
+  const ownerSet = new Set<string>();
   for (const file of filePaths) {
     const fileOwners = matchOwners(file, parsed.rules);
     ownersMap.set(file, fileOwners);
@@ -152,17 +131,35 @@ export function ownersForFiles(filePaths, repoRoot) {
   return { owners: ownersMap, affectedOwners, suggestedReviewers: affectedOwners };
 }
 
-/**
- * Full ownership data for the graph.
- * @param {string} [customDbPath]
- * @param {object} [opts]
- * @param {string} [opts.owner] - Filter to a specific owner
- * @param {string} [opts.file] - Filter by partial file path
- * @param {string} [opts.kind] - Filter by symbol kind
- * @param {boolean} [opts.noTests] - Exclude test files
- * @param {boolean} [opts.boundary] - Show cross-owner boundary edges
- */
-export function ownersData(customDbPath, opts = {}) {
+interface OwnersDataOpts {
+  owner?: string;
+  file?: string;
+  kind?: string;
+  noTests?: boolean;
+  boundary?: boolean;
+}
+
+export function ownersData(
+  customDbPath?: string,
+  opts: OwnersDataOpts = {},
+): {
+  codeownersFile: string | null;
+  files: { file: string; owners: string[] }[];
+  symbols: { name: string; kind: string; file: string; line: number; owners: string[] }[];
+  boundaries: {
+    from: { name: string; kind: string; file: string; line: number; owners: string[] };
+    to: { name: string; kind: string; file: string; line: number; owners: string[] };
+    edgeKind: string;
+  }[];
+  summary: {
+    totalFiles: number;
+    ownedFiles: number;
+    unownedFiles: number;
+    coveragePercent: number;
+    ownerCount: number;
+    byOwner: { owner: string; fileCount: number }[];
+  };
+} {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const dbPath = findDbPath(customDbPath);
@@ -187,10 +184,9 @@ export function ownersData(customDbPath, opts = {}) {
     }
 
     // Get all distinct files from nodes
-    let allFiles = db
-      .prepare('SELECT DISTINCT file FROM nodes')
-      .all()
-      .map((r) => r.file);
+    let allFiles = (db.prepare('SELECT DISTINCT file FROM nodes').all() as { file: string }[]).map(
+      (r) => r.file,
+    );
 
     if (opts.noTests) allFiles = allFiles.filter((f) => !isTestFile(f));
     const fileFilters = normalizeFileFilter(opts.file);
@@ -205,28 +201,32 @@ export function ownersData(customDbPath, opts = {}) {
     }));
 
     // Build owner-to-files index
-    const ownerIndex = new Map();
+    const ownerIndex = new Map<string, string[]>();
     let ownedCount = 0;
     for (const fo of fileOwners) {
       if (fo.owners.length > 0) ownedCount++;
       for (const o of fo.owners) {
         if (!ownerIndex.has(o)) ownerIndex.set(o, []);
-        ownerIndex.get(o).push(fo.file);
+        ownerIndex.get(o)!.push(fo.file);
       }
     }
 
     // Filter files if --owner specified
     let filteredFiles = fileOwners;
     if (opts.owner) {
-      filteredFiles = fileOwners.filter((fo) => fo.owners.includes(opts.owner));
+      filteredFiles = fileOwners.filter((fo) => fo.owners.includes(opts.owner!));
     }
 
     // Get symbols for filtered files
     const fileSet = new Set(filteredFiles.map((fo) => fo.file));
-    let symbols = db
-      .prepare('SELECT name, kind, file, line FROM nodes')
-      .all()
-      .filter((n) => fileSet.has(n.file));
+    let symbols = (
+      db.prepare('SELECT name, kind, file, line FROM nodes').all() as {
+        name: string;
+        kind: string;
+        file: string;
+        line: number;
+      }[]
+    ).filter((n) => fileSet.has(n.file));
 
     if (opts.noTests) symbols = symbols.filter((s) => !isTestFile(s.file));
     if (opts.kind) symbols = symbols.filter((s) => s.kind === opts.kind);
@@ -237,7 +237,11 @@ export function ownersData(customDbPath, opts = {}) {
     }));
 
     // Boundary analysis — cross-owner call edges
-    const boundaries = [];
+    const boundaries: {
+      from: { name: string; kind: string; file: string; line: number; owners: string[] };
+      to: { name: string; kind: string; file: string; line: number; owners: string[] };
+      edgeKind: string;
+    }[] = [];
     if (opts.boundary) {
       const edges = db
         .prepare(
@@ -249,7 +253,18 @@ export function ownersData(customDbPath, opts = {}) {
            JOIN nodes t ON e.target_id = t.id
            WHERE e.kind = 'calls'`,
         )
-        .all();
+        .all() as {
+        id: number;
+        edgeKind: string;
+        srcName: string;
+        srcKind: string;
+        srcFile: string;
+        srcLine: number;
+        tgtName: string;
+        tgtKind: string;
+        tgtFile: string;
+        tgtLine: number;
+      }[];
 
       for (const e of edges) {
         if (opts.noTests && (isTestFile(e.srcFile) || isTestFile(e.tgtFile))) continue;

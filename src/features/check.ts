@@ -6,22 +6,27 @@ import { bfsTransitiveCallers } from '../domain/analysis/impact.js';
 import { findCycles } from '../domain/graph/cycles.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
+import type { BetterSqlite3Database, CodegraphConfig } from '../types.js';
 import { matchOwners, parseCodeowners } from './owners.js';
 
 // ─── Diff Parser ──────────────────────────────────────────────────────
 
-/**
- * Parse unified diff output, extracting both new-side (+) and old-side (-) ranges.
- * Old-side ranges are needed for signature detection (DB line numbers = pre-change).
- *
- * @param {string} diffOutput - Raw `git diff --unified=0` output
- * @returns {{ changedRanges: Map<string, {start:number,end:number}[]>, oldRanges: Map<string, {start:number,end:number}[]>, newFiles: Set<string> }}
- */
-export function parseDiffOutput(diffOutput) {
-  const changedRanges = new Map();
-  const oldRanges = new Map();
-  const newFiles = new Set();
-  let currentFile = null;
+interface DiffRange {
+  start: number;
+  end: number;
+}
+
+interface ParsedDiff {
+  changedRanges: Map<string, DiffRange[]>;
+  oldRanges: Map<string, DiffRange[]>;
+  newFiles: Set<string>;
+}
+
+export function parseDiffOutput(diffOutput: string): ParsedDiff {
+  const changedRanges = new Map<string, DiffRange[]>();
+  const oldRanges = new Map<string, DiffRange[]>();
+  const newFiles = new Set<string>();
+  let currentFile: string | null = null;
   let prevIsDevNull = false;
 
   for (const line of diffOutput.split('\n')) {
@@ -35,7 +40,7 @@ export function parseDiffOutput(diffOutput) {
     }
     const fileMatch = line.match(/^\+\+\+ b\/(.+)/);
     if (fileMatch) {
-      currentFile = fileMatch[1];
+      currentFile = fileMatch[1]!;
       if (!changedRanges.has(currentFile)) changedRanges.set(currentFile, []);
       if (!oldRanges.has(currentFile)) oldRanges.set(currentFile, []);
       if (prevIsDevNull) newFiles.add(currentFile);
@@ -44,15 +49,15 @@ export function parseDiffOutput(diffOutput) {
     }
     const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
     if (hunkMatch && currentFile) {
-      const oldStart = parseInt(hunkMatch[1], 10);
+      const oldStart = parseInt(hunkMatch[1]!, 10);
       const oldCount = parseInt(hunkMatch[2] || '1', 10);
       if (oldCount > 0) {
-        oldRanges.get(currentFile).push({ start: oldStart, end: oldStart + oldCount - 1 });
+        oldRanges.get(currentFile)!.push({ start: oldStart, end: oldStart + oldCount - 1 });
       }
-      const newStart = parseInt(hunkMatch[3], 10);
+      const newStart = parseInt(hunkMatch[3]!, 10);
       const newCount = parseInt(hunkMatch[4] || '1', 10);
       if (newCount > 0) {
-        changedRanges.get(currentFile).push({ start: newStart, end: newStart + newCount - 1 });
+        changedRanges.get(currentFile)!.push({ start: newStart, end: newStart + newCount - 1 });
       }
     }
   }
@@ -61,20 +66,44 @@ export function parseDiffOutput(diffOutput) {
 
 // ─── Predicates ───────────────────────────────────────────────────────
 
-/**
- * Predicate 1: Assert no dependency cycles involve changed files.
- */
-export function checkNoNewCycles(db, changedFiles, noTests) {
+interface CyclesResult {
+  passed: boolean;
+  cycles: string[][];
+}
+
+export function checkNoNewCycles(
+  db: BetterSqlite3Database,
+  changedFiles: Set<string>,
+  noTests: boolean,
+): CyclesResult {
   const cycles = findCycles(db, { fileLevel: true, noTests });
   const involved = cycles.filter((cycle) => cycle.some((f) => changedFiles.has(f)));
   return { passed: involved.length === 0, cycles: involved };
 }
 
-/**
- * Predicate 2: Assert no function exceeds N transitive callers.
- */
-export function checkMaxBlastRadius(db, changedRanges, threshold, noTests, maxDepth) {
-  const violations = [];
+interface BlastRadiusViolation {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  transitiveCallers: number;
+}
+
+interface BlastRadiusResult {
+  passed: boolean;
+  maxFound: number;
+  threshold: number;
+  violations: BlastRadiusViolation[];
+}
+
+export function checkMaxBlastRadius(
+  db: BetterSqlite3Database,
+  changedRanges: Map<string, DiffRange[]>,
+  threshold: number,
+  noTests: boolean,
+  maxDepth: number,
+): BlastRadiusResult {
+  const violations: BlastRadiusViolation[] = [];
   let maxFound = 0;
 
   for (const [file, ranges] of changedRanges) {
@@ -83,11 +112,19 @@ export function checkMaxBlastRadius(db, changedRanges, threshold, noTests, maxDe
       .prepare(
         `SELECT * FROM nodes WHERE file = ? AND kind IN ('function', 'method', 'class') ORDER BY line`,
       )
-      .all(file);
+      .all(file) as Array<{
+      id: number;
+      name: string;
+      kind: string;
+      file: string;
+      line: number;
+      end_line: number | null;
+    }>;
 
     for (let i = 0; i < defs.length; i++) {
-      const def = defs[i];
-      const endLine = def.end_line || (defs[i + 1] ? defs[i + 1].line - 1 : 999999);
+      const def = defs[i]!;
+      const nextDef = defs[i + 1];
+      const endLine = def.end_line || (nextDef ? nextDef.line - 1 : 999999);
       let overlaps = false;
       for (const range of ranges) {
         if (range.start <= endLine && range.end >= def.line) {
@@ -118,12 +155,24 @@ export function checkMaxBlastRadius(db, changedRanges, threshold, noTests, maxDe
   return { passed: violations.length === 0, maxFound, threshold, violations };
 }
 
-/**
- * Predicate 3: Assert no function declaration lines were modified.
- * Uses old-side hunk ranges (which correspond to DB line numbers from last build).
- */
-export function checkNoSignatureChanges(db, oldRanges, noTests) {
-  const violations = [];
+interface SignatureViolation {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+}
+
+interface SignatureResult {
+  passed: boolean;
+  violations: SignatureViolation[];
+}
+
+export function checkNoSignatureChanges(
+  db: BetterSqlite3Database,
+  oldRanges: Map<string, DiffRange[]>,
+  noTests: boolean,
+): SignatureResult {
+  const violations: SignatureViolation[] = [];
 
   for (const [file, ranges] of oldRanges) {
     if (ranges.length === 0) continue;
@@ -133,7 +182,7 @@ export function checkNoSignatureChanges(db, oldRanges, noTests) {
       .prepare(
         `SELECT name, kind, file, line FROM nodes WHERE file = ? AND kind IN ('function', 'method', 'class') ORDER BY line`,
       )
-      .all(file);
+      .all(file) as SignatureViolation[];
 
     for (const def of defs) {
       for (const range of ranges) {
@@ -153,10 +202,24 @@ export function checkNoSignatureChanges(db, oldRanges, noTests) {
   return { passed: violations.length === 0, violations };
 }
 
-/**
- * Predicate 4: Assert no cross-owner boundary violations among changed files.
- */
-export function checkNoBoundaryViolations(db, changedFiles, repoRoot, noTests) {
+interface BoundaryViolation {
+  from: string;
+  to: string;
+  edgeKind: string;
+}
+
+interface BoundaryResult {
+  passed: boolean;
+  violations: BoundaryViolation[];
+  note?: string;
+}
+
+export function checkNoBoundaryViolations(
+  db: BetterSqlite3Database,
+  changedFiles: Set<string> | string[],
+  repoRoot: string,
+  noTests: boolean,
+): BoundaryResult {
   const parsed = parseCodeowners(repoRoot);
   if (!parsed) {
     return { passed: true, violations: [], note: 'No CODEOWNERS file found — skipped' };
@@ -172,9 +235,9 @@ export function checkNoBoundaryViolations(db, changedFiles, repoRoot, noTests) {
        JOIN nodes t ON e.target_id = t.id
        WHERE e.kind = 'calls'`,
     )
-    .all();
+    .all() as Array<{ edgeKind: string; srcFile: string; tgtFile: string }>;
 
-  const violations = [];
+  const violations: BoundaryViolation[] = [];
   for (const e of edges) {
     if (noTests && (isTestFile(e.srcFile) || isTestFile(e.tgtFile))) continue;
     if (!changedSet.has(e.srcFile) && !changedSet.has(e.tgtFile)) continue;
@@ -195,22 +258,40 @@ export function checkNoBoundaryViolations(db, changedFiles, repoRoot, noTests) {
 
 // ─── Main ─────────────────────────────────────────────────────────────
 
-/**
- * Run validation predicates against git changes.
- *
- * @param {string} [customDbPath] - Path to graph.db
- * @param {object} opts
- * @param {string} [opts.ref] - Git ref to diff against
- * @param {boolean} [opts.staged] - Analyze staged changes
- * @param {boolean} [opts.cycles] - Enable cycles predicate
- * @param {number} [opts.blastRadius] - Blast radius threshold
- * @param {boolean} [opts.signatures] - Enable signatures predicate
- * @param {boolean} [opts.boundaries] - Enable boundaries predicate
- * @param {number} [opts.depth] - Max BFS depth (default: 3)
- * @param {boolean} [opts.noTests] - Exclude test files
- * @returns {{ predicates: object[], summary: object, passed: boolean }}
- */
-export function checkData(customDbPath, opts = {}) {
+interface PredicateResult {
+  name: string;
+  passed: boolean;
+  [key: string]: unknown;
+}
+
+interface CheckSummary {
+  total: number;
+  passed: number;
+  failed: number;
+  changedFiles: number;
+  newFiles: number;
+}
+
+interface CheckResult {
+  error?: string;
+  predicates?: PredicateResult[];
+  summary?: CheckSummary;
+  passed?: boolean;
+}
+
+interface CheckOpts {
+  ref?: string;
+  staged?: boolean;
+  cycles?: boolean;
+  blastRadius?: number | null;
+  signatures?: boolean;
+  boundaries?: boolean;
+  depth?: number;
+  noTests?: boolean;
+  config?: CodegraphConfig;
+}
+
+export function checkData(customDbPath: string | undefined, opts: CheckOpts = {}): CheckResult {
   const db = openReadonlyOrFail(customDbPath);
 
   try {
@@ -219,20 +300,14 @@ export function checkData(customDbPath, opts = {}) {
     const noTests = opts.noTests || false;
     const maxDepth = opts.depth || 3;
 
-    // Load config defaults for check predicates
-    // NOTE: opts.config is loaded from process.cwd() at startup (via CLI context),
-    // which may differ from the DB's parent repo root when --db points to an external
-    // project. This is an acceptable trade-off to avoid duplicate I/O on the hot path.
     const config = opts.config || loadConfig(repoRoot);
-    const checkConfig = config.check || {};
+    const checkConfig = config.check || ({} as CodegraphConfig['check']);
 
-    // Resolve which predicates are enabled: CLI flags ?? config ?? built-in defaults
     const enableCycles = opts.cycles ?? checkConfig.cycles ?? true;
     const enableSignatures = opts.signatures ?? checkConfig.signatures ?? true;
     const enableBoundaries = opts.boundaries ?? checkConfig.boundaries ?? true;
     const blastRadiusThreshold = opts.blastRadius ?? checkConfig.blastRadius ?? null;
 
-    // Verify git repo
     let checkDir = repoRoot;
     let isGitRepo = false;
     while (checkDir) {
@@ -248,8 +323,7 @@ export function checkData(customDbPath, opts = {}) {
       return { error: `Not a git repository: ${repoRoot}` };
     }
 
-    // Run git diff
-    let diffOutput;
+    let diffOutput: string;
     try {
       const args = opts.staged
         ? ['diff', '--cached', '--unified=0', '--no-color']
@@ -261,7 +335,7 @@ export function checkData(customDbPath, opts = {}) {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (e) {
-      return { error: `Failed to run git diff: ${e.message}` };
+      return { error: `Failed to run git diff: ${(e as Error).message}` };
     }
 
     if (!diffOutput.trim()) {
@@ -283,8 +357,7 @@ export function checkData(customDbPath, opts = {}) {
 
     const changedFiles = new Set(changedRanges.keys());
 
-    // Execute enabled predicates
-    const predicates = [];
+    const predicates: PredicateResult[] = [];
 
     if (enableCycles) {
       const result = checkNoNewCycles(db, changedFiles, noTests);

@@ -1080,7 +1080,7 @@ npm workspaces (`package.json` `workspaces`), `pnpm-workspace.yaml`, and `lerna.
 
 ## Phase 5 -- TypeScript Migration
 
-> **Status:** In Progress — 94 of 283 source files migrated (~33%), 189 `.js` files remaining
+> **Status:** In Progress — 114 of 283 source files migrated (~40%), 169 `.js` files remaining
 
 **Goal:** Migrate the codebase from plain JavaScript to TypeScript, leveraging the clean module boundaries established in Phase 3. Incremental module-by-module migration starting from leaf modules inward.
 
@@ -1151,16 +1151,15 @@ Migrate modules that implement domain logic and Phase 3 interfaces. Some migrate
 
 Migrate top-level orchestration, features, and entry points. Some migrated via [#555](https://github.com/optave/codegraph/pull/555), 141 files remaining.
 
-**Migrated:** `domain/graph/builder.ts` + `context.ts` + `helpers.ts` + `pipeline.ts`, `domain/graph/watcher.ts`, `domain/search/{generator,index,models}.ts`, `mcp/{index,middleware,server,tool-registry}.ts`, `features/export.ts`, `index.ts`, `ast-analysis/` (all 18 files — engine, metrics, shared, visitor, visitor-utils, 9 language rules, 4 visitors)
+**Migrated:** `domain/graph/builder.ts` + `context.ts` + `helpers.ts` + `pipeline.ts`, `domain/graph/watcher.ts`, `domain/search/{generator,index,models}.ts`, `mcp/{index,middleware,server,tool-registry}.ts`, `features/export.ts`, `index.ts`, `ast-analysis/` (all 18 files), `features/` (all 20 files — ast, audit, batch, boundaries, branch-compare, cfg, check, cochange, communities, complexity, dataflow, flow, graph-enrichment, manifesto, owners, sequence, snapshot, structure, triage, shared/find-nodes)
 
-**Remaining (141):**
+**Remaining (121):**
 
 | Module | Files | Notes |
 |--------|-------|-------|
 | `cli.js` + `cli/` | 55 | Commander entry point, 43 command handlers (`commands/`), barrel, shared CLI utilities |
 | `mcp/tools/` | 36 | Individual MCP tool handlers + barrel |
 | `presentation/` | 28 | Presentation formatters (14 files), `queries-cli/` (7 files), sequence-renderer, viewer, export, etc. |
-| `features/` | 21 | audit, batch, boundaries, cfg, check, cochange, communities, complexity, dataflow, flow, graph-enrichment, manifesto, owners, sequence, snapshot, structure, triage, ast, branch-compare, `shared/find-nodes` |
 | `index.js` | 1 | Public API exports (stale — `.ts` exists) |
 
 **Stale `.js` counterparts to delete (13 files):** `domain/graph/builder.js`, `domain/graph/builder/{context,helpers,pipeline}.js`, `domain/graph/watcher.js`, `domain/search/{generator,index,models}.js`, `features/export.js`, `mcp/{index,middleware,server,tool-registry}.js` — these have `.ts` counterparts already

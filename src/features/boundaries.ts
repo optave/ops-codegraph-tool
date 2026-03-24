@@ -1,27 +1,19 @@
 import { debug } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
+import type { BetterSqlite3Database } from '../types.js';
 
 // ─── Glob-to-Regex ───────────────────────────────────────────────────
 
-/**
- * Convert a simple glob pattern to a RegExp.
- * Supports `**` (any path segment), `*` (non-slash), `?` (single non-slash char).
- * @param {string} pattern
- * @returns {RegExp}
- */
-export function globToRegex(pattern) {
+export function globToRegex(pattern: string): RegExp {
   let re = '';
   let i = 0;
   while (i < pattern.length) {
-    const ch = pattern[i];
+    const ch = pattern[i] as string;
     if (ch === '*' && pattern[i + 1] === '*') {
-      // ** matches any number of path segments
       re += '.*';
       i += 2;
-      // Skip trailing slash after **
       if (pattern[i] === '/') i++;
     } else if (ch === '*') {
-      // * matches non-slash characters
       re += '[^/]*';
       i++;
     } else if (ch === '?') {
@@ -40,12 +32,12 @@ export function globToRegex(pattern) {
 
 // ─── Presets ─────────────────────────────────────────────────────────
 
-/**
- * Built-in preset definitions.
- * Each defines layers ordered from innermost (most protected) to outermost.
- * Inner layers cannot import from outer layers.
- */
-export const PRESETS = {
+interface PresetDef {
+  layers: string[];
+  description: string;
+}
+
+export const PRESETS: Record<string, PresetDef> = {
   hexagonal: {
     layers: ['domain', 'application', 'adapters', 'infrastructure'],
     description: 'Inner layers cannot import outer layers',
@@ -66,14 +58,34 @@ export const PRESETS = {
 
 // ─── Module Resolution ───────────────────────────────────────────────
 
-/**
- * Parse module definitions into a Map of name → { regex, pattern, layer? }.
- * Supports string shorthand and object form.
- * @param {object} boundaryConfig - The `manifesto.boundaries` config object
- * @returns {Map<string, { regex: RegExp, pattern: string, layer?: string }>}
- */
-export function resolveModules(boundaryConfig) {
-  const modules = new Map();
+interface ResolvedModule {
+  regex: RegExp;
+  pattern: string;
+  layer?: string;
+}
+
+interface ModuleDef {
+  match: string;
+  layer?: string;
+}
+
+interface BoundaryRule {
+  from: string;
+  notTo?: string[];
+  onlyTo?: string[];
+  message?: string;
+}
+
+interface BoundaryConfig {
+  modules?: Record<string, string | ModuleDef>;
+  preset?: string;
+  rules?: BoundaryRule[];
+}
+
+export function resolveModules(
+  boundaryConfig: BoundaryConfig | undefined,
+): Map<string, ResolvedModule> {
+  const modules = new Map<string, ResolvedModule>();
   const defs = boundaryConfig?.modules;
   if (!defs || typeof defs !== 'object') return modules;
 
@@ -93,29 +105,20 @@ export function resolveModules(boundaryConfig) {
 
 // ─── Validation ──────────────────────────────────────────────────────
 
-/**
- * Validate the `modules` section of a boundary config.
- * @param {object} modules
- * @param {string[]} errors - Mutated: push any validation errors
- */
-function validateModules(modules, errors) {
-  if (!modules || typeof modules !== 'object' || Object.keys(modules).length === 0) {
+function validateModules(modules: unknown, errors: string[]): void {
+  if (!modules || typeof modules !== 'object' || Object.keys(modules as object).length === 0) {
     errors.push('boundaries.modules must be a non-empty object');
     return;
   }
-  for (const [name, value] of Object.entries(modules)) {
+  for (const [name, value] of Object.entries(modules as Record<string, unknown>)) {
     if (typeof value === 'string') continue;
-    if (value && typeof value === 'object' && typeof value.match === 'string') continue;
+    if (value && typeof value === 'object' && typeof (value as ModuleDef).match === 'string')
+      continue;
     errors.push(`boundaries.modules.${name}: must be a glob string or { match: "<glob>" }`);
   }
 }
 
-/**
- * Validate the `preset` field of a boundary config.
- * @param {string|null|undefined} preset
- * @param {string[]} errors - Mutated: push any validation errors
- */
-function validatePreset(preset, errors) {
+function validatePreset(preset: unknown, errors: string[]): void {
   if (preset == null) return;
   if (typeof preset !== 'string' || !PRESETS[preset]) {
     errors.push(
@@ -124,15 +127,13 @@ function validatePreset(preset, errors) {
   }
 }
 
-/**
- * Validate a single rule's target list (`notTo` or `onlyTo`).
- * @param {*} list - The target list value
- * @param {string} field - "notTo" or "onlyTo"
- * @param {number} idx - Rule index for error messages
- * @param {Set<string>} moduleNames
- * @param {string[]} errors - Mutated
- */
-function validateTargetList(list, field, idx, moduleNames, errors) {
+function validateTargetList(
+  list: unknown,
+  field: string,
+  idx: number,
+  moduleNames: Set<string>,
+  errors: string[],
+): void {
   if (!Array.isArray(list)) {
     errors.push(`boundaries.rules[${idx}]: "${field}" must be an array`);
     return;
@@ -144,21 +145,15 @@ function validateTargetList(list, field, idx, moduleNames, errors) {
   }
 }
 
-/**
- * Validate the `rules` array of a boundary config.
- * @param {Array} rules
- * @param {object|undefined} modules - The modules config (for cross-referencing names)
- * @param {string[]} errors - Mutated
- */
-function validateRules(rules, modules, errors) {
+function validateRules(rules: unknown, modules: unknown, errors: string[]): void {
   if (!rules) return;
   if (!Array.isArray(rules)) {
     errors.push('boundaries.rules must be an array');
     return;
   }
-  const moduleNames = modules ? new Set(Object.keys(modules)) : new Set();
+  const moduleNames = modules ? new Set(Object.keys(modules as object)) : new Set<string>();
   for (let i = 0; i < rules.length; i++) {
-    const rule = rules[i];
+    const rule = rules[i] as BoundaryRule;
     if (!rule.from) {
       errors.push(`boundaries.rules[${i}]: missing "from" field`);
     } else if (!moduleNames.has(rule.from)) {
@@ -175,14 +170,10 @@ function validateRules(rules, modules, errors) {
   }
 }
 
-/**
- * Validate that module layer assignments match preset layers.
- * @param {object} config
- * @param {string[]} errors - Mutated
- */
-function validateLayerAssignments(config, errors) {
+function validateLayerAssignments(config: BoundaryConfig, errors: string[]): void {
   if (!config.preset || !PRESETS[config.preset] || !config.modules) return;
-  const presetLayers = new Set(PRESETS[config.preset].layers);
+  const preset = PRESETS[config.preset]!;
+  const presetLayers = new Set(preset.layers);
   for (const [name, value] of Object.entries(config.modules)) {
     if (typeof value === 'object' && value.layer && !presetLayers.has(value.layer)) {
       errors.push(
@@ -192,53 +183,46 @@ function validateLayerAssignments(config, errors) {
   }
 }
 
-/**
- * Validate a boundary configuration object.
- * @param {object} config - The `manifesto.boundaries` config
- * @returns {{ valid: boolean, errors: string[] }}
- */
-export function validateBoundaryConfig(config) {
+export function validateBoundaryConfig(config: unknown): { valid: boolean; errors: string[] } {
   if (!config || typeof config !== 'object') {
     return { valid: false, errors: ['boundaries config must be an object'] };
   }
 
-  const errors = [];
-  validateModules(config.modules, errors);
-  validatePreset(config.preset, errors);
-  validateRules(config.rules, config.modules, errors);
-  validateLayerAssignments(config, errors);
+  const errors: string[] = [];
+  const cfg = config as BoundaryConfig;
+  validateModules(cfg.modules, errors);
+  validatePreset(cfg.preset, errors);
+  validateRules(cfg.rules, cfg.modules, errors);
+  validateLayerAssignments(cfg, errors);
   return { valid: errors.length === 0, errors };
 }
 
 // ─── Preset Rule Generation ─────────────────────────────────────────
 
-/**
- * Generate notTo rules from preset layer assignments.
- * Inner layers cannot import from outer layers.
- */
-function generatePresetRules(modules, presetName) {
+function generatePresetRules(
+  modules: Map<string, ResolvedModule>,
+  presetName: string,
+): BoundaryRule[] {
   const preset = PRESETS[presetName];
   if (!preset) return [];
 
   const layers = preset.layers;
-  const layerIndex = new Map(layers.map((l, i) => [l, i]));
+  const layerIndex = new Map<string, number>(layers.map((l, i) => [l, i]));
 
-  // Group modules by layer
-  const modulesByLayer = new Map();
+  const modulesByLayer = new Map<string, string[]>();
   for (const [name, mod] of modules) {
     if (mod.layer && layerIndex.has(mod.layer)) {
       if (!modulesByLayer.has(mod.layer)) modulesByLayer.set(mod.layer, []);
-      modulesByLayer.get(mod.layer).push(name);
+      modulesByLayer.get(mod.layer)!.push(name);
     }
   }
 
-  const rules = [];
-  // For each layer, forbid imports to any outer (higher-index) layer
+  const rules: BoundaryRule[] = [];
   for (const [layer, modNames] of modulesByLayer) {
-    const idx = layerIndex.get(layer);
-    const outerModules = [];
+    const idx = layerIndex.get(layer)!;
+    const outerModules: string[] = [];
     for (const [otherLayer, otherModNames] of modulesByLayer) {
-      if (layerIndex.get(otherLayer) > idx) {
+      if (layerIndex.get(otherLayer)! > idx) {
         outerModules.push(...otherModNames);
       }
     }
@@ -254,40 +238,45 @@ function generatePresetRules(modules, presetName) {
 
 // ─── Evaluation ──────────────────────────────────────────────────────
 
-/**
- * Classify a file path into a module name. Returns the first matching module or null.
- */
-function classifyFile(filePath, modules) {
+function classifyFile(filePath: string, modules: Map<string, ResolvedModule>): string | null {
   for (const [name, mod] of modules) {
     if (mod.regex.test(filePath)) return name;
   }
   return null;
 }
 
-/**
- * Evaluate boundary rules against the dependency graph.
- *
- * @param {object} db - Open SQLite database (readonly)
- * @param {object} boundaryConfig - The `manifesto.boundaries` config
- * @param {object} [opts]
- * @param {string[]} [opts.scopeFiles] - Only check edges from these files (diff-impact mode)
- * @param {boolean} [opts.noTests] - Exclude test files
- * @returns {{ violations: object[], violationCount: number }}
- */
-export function evaluateBoundaries(db, boundaryConfig, opts = {}) {
+interface BoundaryViolation {
+  rule: string;
+  name: string;
+  file: string;
+  targetFile: string;
+  message: string;
+  value: number;
+  threshold: number;
+}
+
+interface EvaluateBoundariesOpts {
+  scopeFiles?: string[];
+  noTests?: boolean;
+}
+
+export function evaluateBoundaries(
+  db: BetterSqlite3Database,
+  boundaryConfig: BoundaryConfig | undefined,
+  opts: EvaluateBoundariesOpts = {},
+): { violations: BoundaryViolation[]; violationCount: number } {
   if (!boundaryConfig) return { violations: [], violationCount: 0 };
 
   const { valid, errors } = validateBoundaryConfig(boundaryConfig);
   if (!valid) {
-    debug('boundary config validation failed: %s', errors.join('; '));
+    debug(`boundary config validation failed: ${errors.join('; ')}`);
     return { violations: [], violationCount: 0 };
   }
 
   const modules = resolveModules(boundaryConfig);
   if (modules.size === 0) return { violations: [], violationCount: 0 };
 
-  // Merge user rules with preset-generated rules
-  let allRules = [];
+  let allRules: BoundaryRule[] = [];
   if (boundaryConfig.preset) {
     allRules = generatePresetRules(modules, boundaryConfig.preset);
   }
@@ -296,8 +285,7 @@ export function evaluateBoundaries(db, boundaryConfig, opts = {}) {
   }
   if (allRules.length === 0) return { violations: [], violationCount: 0 };
 
-  // Query file-level import edges
-  let edges;
+  let edges: Array<{ source: string; target: string }>;
   try {
     edges = db
       .prepare(
@@ -307,13 +295,12 @@ export function evaluateBoundaries(db, boundaryConfig, opts = {}) {
          JOIN nodes n2 ON e.target_id = n2.id
          WHERE n1.file != n2.file AND e.kind IN ('imports', 'imports-type')`,
       )
-      .all();
+      .all() as Array<{ source: string; target: string }>;
   } catch (err) {
-    debug('boundary edge query failed: %s', err.message);
+    debug(`boundary edge query failed: ${(err as Error).message}`);
     return { violations: [], violationCount: 0 };
   }
 
-  // Filter by scope and tests
   if (opts.noTests) {
     edges = edges.filter((e) => !isTestFile(e.source) && !isTestFile(e.target));
   }
@@ -322,14 +309,12 @@ export function evaluateBoundaries(db, boundaryConfig, opts = {}) {
     edges = edges.filter((e) => scope.has(e.source));
   }
 
-  // Check each edge against rules
-  const violations = [];
+  const violations: BoundaryViolation[] = [];
 
   for (const edge of edges) {
     const fromModule = classifyFile(edge.source, modules);
     const toModule = classifyFile(edge.target, modules);
 
-    // Skip edges where source or target is not in any module
     if (!fromModule || !toModule) continue;
 
     for (const rule of allRules) {

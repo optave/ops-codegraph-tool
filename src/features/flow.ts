@@ -9,32 +9,30 @@ import { openReadonlyOrFail } from '../db/index.js';
 import { CORE_SYMBOL_KINDS, findMatchingNodes } from '../domain/queries.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
+import type { BetterSqlite3Database } from '../types.js';
 import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
 
-/**
- * Determine the entry point type from a node name based on framework prefixes.
- * @param {string} name
- * @returns {'route'|'event'|'command'|'exported'|null}
- */
-export function entryPointType(name) {
+export function entryPointType(name: string): 'route' | 'event' | 'command' | 'exported' | null {
   for (const prefix of FRAMEWORK_ENTRY_PREFIXES) {
     if (name.startsWith(prefix)) {
-      return prefix.slice(0, -1); // 'route:', 'event:', 'command:' → 'route', 'event', 'command'
+      return prefix.slice(0, -1) as 'route' | 'event' | 'command'; // 'route:', 'event:', 'command:' → 'route', 'event', 'command'
     }
   }
   return null;
 }
 
-/**
- * Query all entry points from the graph, grouped by type.
- * Entry points are nodes with framework prefixes or role = 'entry'.
- *
- * @param {string} [dbPath]
- * @param {object} [opts]
- * @param {boolean} [opts.noTests]
- * @returns {{ entries: object[], byType: object, count: number }}
- */
-export function listEntryPointsData(dbPath, opts = {}) {
+interface EntryPointRow {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  role: string | null;
+}
+
+export function listEntryPointsData(
+  dbPath?: string,
+  opts: { noTests?: boolean; limit?: number; offset?: number } = {},
+): Record<string, unknown> {
   const db = openReadonlyOrFail(dbPath);
   try {
     const noTests = opts.noTests || false;
@@ -44,7 +42,7 @@ export function listEntryPointsData(dbPath, opts = {}) {
     const prefixParams = FRAMEWORK_ENTRY_PREFIXES.map((p) => `${p}%`);
 
     let rows = db
-      .prepare(
+      .prepare<EntryPointRow>(
         `SELECT n.name, n.kind, n.file, n.line, n.role
          FROM nodes n
          WHERE (
@@ -67,7 +65,7 @@ export function listEntryPointsData(dbPath, opts = {}) {
       type: entryPointType(r.name) || (r.role === 'entry' ? 'exported' : null),
     }));
 
-    const byType = {};
+    const byType: Record<string, typeof entries> = {};
     for (const e of entries) {
       const t = e.type || 'other';
       if (!byType[t]) byType[t] = [];
@@ -81,24 +79,44 @@ export function listEntryPointsData(dbPath, opts = {}) {
   }
 }
 
-/**
- * Forward BFS from a matched node through callees to leaves.
- *
- * @param {string} name - Node name to trace from (supports partial/prefix-stripped matching)
- * @param {string} [dbPath]
- * @param {object} [opts]
- * @param {number} [opts.depth=10]
- * @param {boolean} [opts.noTests]
- * @param {string} [opts.file]
- * @param {string} [opts.kind]
- * @returns {{ entry: object|null, depth: number, steps: object[], leaves: object[], cycles: object[], totalReached: number, truncated: boolean }}
- */
-export function flowData(name, dbPath, opts = {}) {
+interface CalleeRow {
+  id: number;
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  role: string | null;
+}
+
+interface NodeInfo {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  role?: string | null;
+  type?: string;
+}
+
+export function flowData(
+  name: string,
+  dbPath?: string,
+  opts: {
+    depth?: number;
+    noTests?: boolean;
+    file?: string;
+    kind?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Record<string, unknown> {
   const db = openReadonlyOrFail(dbPath);
   try {
     const maxDepth = opts.depth || 10;
     const noTests = opts.noTests || false;
-    const flowOpts = { ...opts, kinds: opts.kind ? [opts.kind] : CORE_SYMBOL_KINDS };
+    const flowOpts = {
+      ...opts,
+      kinds: opts.kind ? [opts.kind] : (CORE_SYMBOL_KINDS as unknown as string[]),
+    };
 
     // Phase 1: Direct LIKE match on full name (use all 10 core symbol kinds,
     // not just FUNCTION_KINDS, so flow can trace from interfaces/types/structs/etc.)
@@ -125,7 +143,7 @@ export function flowData(name, dbPath, opts = {}) {
     }
 
     const epType = entryPointType(matchNode.name);
-    const entry = {
+    const entry: NodeInfo = {
       name: matchNode.name,
       kind: matchNode.kind,
       file: matchNode.file,
@@ -135,24 +153,24 @@ export function flowData(name, dbPath, opts = {}) {
     };
 
     // Forward BFS through callees
-    const visited = new Set([matchNode.id]);
+    const visited = new Set<number>([matchNode.id]);
     let frontier = [matchNode.id];
-    const steps = [];
-    const cycles = [];
+    const steps: Array<{ depth: number; nodes: NodeInfo[] }> = [];
+    const cycles: Array<{ from: string; to: string; depth: number }> = [];
     let truncated = false;
 
     // Track which nodes are at each depth and their depth for leaf detection
-    const nodeDepths = new Map();
-    const idToNode = new Map();
+    const nodeDepths = new Map<number, number>();
+    const idToNode = new Map<number, NodeInfo>();
     idToNode.set(matchNode.id, entry);
 
     for (let d = 1; d <= maxDepth; d++) {
-      const nextFrontier = [];
-      const levelNodes = [];
+      const nextFrontier: number[] = [];
+      const levelNodes: NodeInfo[] = [];
 
       for (const fid of frontier) {
         const callees = db
-          .prepare(
+          .prepare<CalleeRow>(
             `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line, n.role
              FROM edges e JOIN nodes n ON e.target_id = n.id
              WHERE e.source_id = ? AND e.kind = 'calls'`,
@@ -173,7 +191,7 @@ export function flowData(name, dbPath, opts = {}) {
 
           visited.add(c.id);
           nextFrontier.push(c.id);
-          const nodeInfo = { name: c.name, kind: c.kind, file: c.file, line: c.line };
+          const nodeInfo: NodeInfo = { name: c.name, kind: c.kind, file: c.file, line: c.line };
           levelNodes.push(nodeInfo);
           nodeDepths.set(c.id, d);
           idToNode.set(c.id, nodeInfo);
@@ -194,10 +212,10 @@ export function flowData(name, dbPath, opts = {}) {
 
     // Identify leaves: visited nodes that have no outgoing 'calls' edges to other visited nodes
     // (or no outgoing calls at all)
-    const leaves = [];
+    const leaves: Array<NodeInfo & { depth: number }> = [];
     for (const [id, depth] of nodeDepths) {
       const outgoing = db
-        .prepare(
+        .prepare<{ id: number }>(
           `SELECT DISTINCT n.id
            FROM edges e JOIN nodes n ON e.target_id = n.id
            WHERE e.source_id = ? AND e.kind = 'calls'`,

@@ -5,11 +5,23 @@ import { debug } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { normalizePath } from '../shared/constants.js';
 import { paginateResult } from '../shared/paginate.js';
+import type { BetterSqlite3Database, CodegraphConfig } from '../types.js';
 
 // ─── Build-time helpers ───────────────────────────────────────────────
 
-function getAncestorDirs(filePaths) {
-  const dirs = new Set();
+interface NodeIdStmt {
+  get(name: string, kind: string, file: string, line: number): { id: number } | undefined;
+}
+
+interface FileSymbolData {
+  definitions: { name: string; kind: string; line: number }[];
+  imports: unknown[];
+  exports: unknown[];
+  calls?: unknown[];
+}
+
+function getAncestorDirs(filePaths: string[]): Set<string> {
+  const dirs = new Set<string>();
   for (const f of filePaths) {
     let d = normalizePath(path.dirname(f));
     while (d && d !== '.') {
@@ -20,9 +32,14 @@ function getAncestorDirs(filePaths) {
   return dirs;
 }
 
-function cleanupPreviousData(db, getNodeIdStmt, isIncremental, changedFiles) {
+function cleanupPreviousData(
+  db: BetterSqlite3Database,
+  getNodeIdStmt: NodeIdStmt,
+  isIncremental: boolean,
+  changedFiles: string[] | null,
+): void {
   if (isIncremental) {
-    const affectedDirs = getAncestorDirs(changedFiles);
+    const affectedDirs = getAncestorDirs(changedFiles!);
     const deleteContainsForDir = db.prepare(
       "DELETE FROM edges WHERE kind = 'contains' AND source_id IN (SELECT id FROM nodes WHERE name = ? AND kind = 'directory')",
     );
@@ -31,7 +48,7 @@ function cleanupPreviousData(db, getNodeIdStmt, isIncremental, changedFiles) {
       for (const dir of affectedDirs) {
         deleteContainsForDir.run(dir);
       }
-      for (const f of changedFiles) {
+      for (const f of changedFiles!) {
         const fileRow = getNodeIdStmt.get(f, 'file', f, 0);
         if (fileRow) deleteMetricForNode.run(fileRow.id);
       }
@@ -50,8 +67,11 @@ function cleanupPreviousData(db, getNodeIdStmt, isIncremental, changedFiles) {
   }
 }
 
-function collectAllDirectories(directories, fileSymbols) {
-  const allDirs = new Set();
+function collectAllDirectories(
+  directories: Set<string> | Iterable<string>,
+  fileSymbols: Map<string, FileSymbolData>,
+): Set<string> {
+  const allDirs = new Set<string>();
   for (const dir of directories) {
     let d = dir;
     while (d && d !== '.') {
@@ -69,9 +89,20 @@ function collectAllDirectories(directories, fileSymbols) {
   return allDirs;
 }
 
-function insertContainsEdges(db, insertEdge, getNodeIdStmt, fileSymbols, allDirs, changedFiles) {
+interface SqliteStatement {
+  run(...params: unknown[]): unknown;
+}
+
+function insertContainsEdges(
+  db: BetterSqlite3Database,
+  insertEdge: SqliteStatement,
+  getNodeIdStmt: NodeIdStmt,
+  fileSymbols: Map<string, FileSymbolData>,
+  allDirs: Set<string>,
+  changedFiles: string[] | null,
+): void {
   const isIncremental = changedFiles != null && changedFiles.length > 0;
-  const affectedDirs = isIncremental ? getAncestorDirs(changedFiles) : null;
+  const affectedDirs = isIncremental ? getAncestorDirs(changedFiles!) : null;
 
   db.transaction(() => {
     for (const relPath of fileSymbols.keys()) {
@@ -97,9 +128,18 @@ function insertContainsEdges(db, insertEdge, getNodeIdStmt, fileSymbols, allDirs
   })();
 }
 
-function computeImportEdgeMaps(db) {
-  const fanInMap = new Map();
-  const fanOutMap = new Map();
+interface ImportEdge {
+  source_file: string;
+  target_file: string;
+}
+
+function computeImportEdgeMaps(db: BetterSqlite3Database): {
+  fanInMap: Map<string, number>;
+  fanOutMap: Map<string, number>;
+  importEdges: ImportEdge[];
+} {
+  const fanInMap = new Map<string, number>();
+  const fanOutMap = new Map<string, number>();
   const importEdges = db
     .prepare(`
       SELECT n1.file AS source_file, n2.file AS target_file
@@ -109,7 +149,7 @@ function computeImportEdgeMaps(db) {
       WHERE e.kind IN ('imports', 'imports-type')
         AND n1.file != n2.file
     `)
-    .all();
+    .all() as ImportEdge[];
 
   for (const { source_file, target_file } of importEdges) {
     fanOutMap.set(source_file, (fanOutMap.get(source_file) || 0) + 1);
@@ -119,21 +159,21 @@ function computeImportEdgeMaps(db) {
 }
 
 function computeFileMetrics(
-  db,
-  upsertMetric,
-  getNodeIdStmt,
-  fileSymbols,
-  lineCountMap,
-  fanInMap,
-  fanOutMap,
-) {
+  db: BetterSqlite3Database,
+  upsertMetric: SqliteStatement,
+  getNodeIdStmt: NodeIdStmt,
+  fileSymbols: Map<string, FileSymbolData>,
+  lineCountMap: Map<string, number>,
+  fanInMap: Map<string, number>,
+  fanOutMap: Map<string, number>,
+): void {
   db.transaction(() => {
     for (const [relPath, symbols] of fileSymbols) {
       const fileRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
       if (!fileRow) continue;
 
       const lineCount = lineCountMap.get(relPath) || 0;
-      const seen = new Set();
+      const seen = new Set<string>();
       let symbolCount = 0;
       for (const d of symbols.definitions) {
         const key = `${d.name}|${d.kind}|${d.line}`;
@@ -163,14 +203,14 @@ function computeFileMetrics(
 }
 
 function computeDirectoryMetrics(
-  db,
-  upsertMetric,
-  getNodeIdStmt,
-  fileSymbols,
-  allDirs,
-  importEdges,
-) {
-  const dirFiles = new Map();
+  db: BetterSqlite3Database,
+  upsertMetric: SqliteStatement,
+  getNodeIdStmt: NodeIdStmt,
+  fileSymbols: Map<string, FileSymbolData>,
+  allDirs: Set<string>,
+  importEdges: ImportEdge[],
+): void {
+  const dirFiles = new Map<string, string[]>();
   for (const dir of allDirs) {
     dirFiles.set(dir, []);
   }
@@ -178,21 +218,21 @@ function computeDirectoryMetrics(
     let d = normalizePath(path.dirname(relPath));
     while (d && d !== '.') {
       if (dirFiles.has(d)) {
-        dirFiles.get(d).push(relPath);
+        dirFiles.get(d)!.push(relPath);
       }
       d = normalizePath(path.dirname(d));
     }
   }
 
-  const fileToAncestorDirs = new Map();
+  const fileToAncestorDirs = new Map<string, Set<string>>();
   for (const [dir, files] of dirFiles) {
     for (const f of files) {
       if (!fileToAncestorDirs.has(f)) fileToAncestorDirs.set(f, new Set());
-      fileToAncestorDirs.get(f).add(dir);
+      fileToAncestorDirs.get(f)!.add(dir);
     }
   }
 
-  const dirEdgeCounts = new Map();
+  const dirEdgeCounts = new Map<string, { intra: number; fanIn: number; fanOut: number }>();
   for (const dir of allDirs) {
     dirEdgeCounts.set(dir, { intra: 0, fanIn: 0, fanOut: 0 });
   }
@@ -233,7 +273,7 @@ function computeDirectoryMetrics(
       for (const f of files) {
         const sym = fileSymbols.get(f);
         if (sym) {
-          const seen = new Set();
+          const seen = new Set<string>();
           for (const d of sym.definitions) {
             const key = `${d.name}|${d.kind}|${d.line}`;
             if (!seen.has(key)) {
@@ -265,22 +305,19 @@ function computeDirectoryMetrics(
 
 // ─── Build-time: insert directory nodes, contains edges, and metrics ────
 
-/**
- * Build directory structure nodes, containment edges, and compute metrics.
- * Called from builder.js after edge building.
- *
- * @param {import('better-sqlite3').Database} db - Open read-write database
- * @param {Map<string, object>} fileSymbols - Map of relPath → { definitions, imports, exports, calls }
- * @param {string} rootDir - Absolute root directory
- * @param {Map<string, number>} lineCountMap - Map of relPath → line count
- * @param {Set<string>} directories - Set of relative directory paths
- */
-export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, directories, changedFiles) {
+export function buildStructure(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, FileSymbolData>,
+  _rootDir: string,
+  lineCountMap: Map<string, number>,
+  directories: Set<string>,
+  changedFiles?: string[] | null,
+): void {
   const insertNode = db.prepare(
     'INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
   );
-  const getNodeIdStmt = {
-    get: (name, kind, file, line) => {
+  const getNodeIdStmt: NodeIdStmt = {
+    get: (name: string, kind: string, file: string, line: number) => {
       const id = getNodeId(db, name, kind, file, line);
       return id != null ? { id } : undefined;
     },
@@ -296,7 +333,7 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
 
   const isIncremental = changedFiles != null && changedFiles.length > 0;
 
-  cleanupPreviousData(db, getNodeIdStmt, isIncremental, changedFiles);
+  cleanupPreviousData(db, getNodeIdStmt, isIncremental, changedFiles ?? null);
 
   const allDirs = collectAllDirectories(directories, fileSymbols);
 
@@ -306,7 +343,7 @@ export function buildStructure(db, fileSymbols, _rootDir, lineCountMap, director
     }
   })();
 
-  insertContainsEdges(db, insertEdge, getNodeIdStmt, fileSymbols, allDirs, changedFiles);
+  insertContainsEdges(db, insertEdge, getNodeIdStmt, fileSymbols, allDirs, changedFiles ?? null);
 
   const { fanInMap, fanOutMap, importEdges } = computeImportEdgeMaps(db);
 
@@ -332,7 +369,22 @@ export { FRAMEWORK_ENTRY_PREFIXES } from '../graph/classifiers/roles.js';
 
 import { classifyRoles } from '../graph/classifiers/roles.js';
 
-export function classifyNodeRoles(db) {
+interface RoleSummary {
+  entry: number;
+  core: number;
+  utility: number;
+  adapter: number;
+  dead: number;
+  'dead-leaf': number;
+  'dead-entry': number;
+  'dead-ffi': number;
+  'dead-unresolved': number;
+  'test-only': number;
+  leaf: number;
+  [key: string]: number;
+}
+
+export function classifyNodeRoles(db: BetterSqlite3Database): RoleSummary {
   const rows = db
     .prepare(
       `SELECT n.id, n.name, n.kind, n.file,
@@ -347,7 +399,14 @@ export function classifyNodeRoles(db) {
       ) fo ON n.id = fo.source_id
       WHERE n.kind NOT IN ('file', 'directory')`,
     )
-    .all();
+    .all() as {
+    id: number;
+    name: string;
+    kind: string;
+    file: string;
+    fan_in: number;
+    fan_out: number;
+  }[];
 
   if (rows.length === 0) {
     return {
@@ -366,20 +425,21 @@ export function classifyNodeRoles(db) {
   }
 
   const exportedIds = new Set(
-    db
-      .prepare(
-        `SELECT DISTINCT e.target_id
+    (
+      db
+        .prepare(
+          `SELECT DISTINCT e.target_id
         FROM edges e
         JOIN nodes caller ON e.source_id = caller.id
         JOIN nodes target ON e.target_id = target.id
         WHERE e.kind = 'calls' AND caller.file != target.file`,
-      )
-      .all()
-      .map((r) => r.target_id),
+        )
+        .all() as { target_id: number }[]
+    ).map((r) => r.target_id),
   );
 
   // Compute production fan-in (excluding callers in test files)
-  const prodFanInMap = new Map();
+  const prodFanInMap = new Map<number, number>();
   const prodRows = db
     .prepare(
       `SELECT e.target_id, COUNT(*) AS cnt
@@ -389,7 +449,7 @@ export function classifyNodeRoles(db) {
         ${testFilterSQL('caller.file')}
       GROUP BY e.target_id`,
     )
-    .all();
+    .all() as { target_id: number; cnt: number }[];
   for (const r of prodRows) {
     prodFanInMap.set(r.target_id, r.cnt);
   }
@@ -409,7 +469,7 @@ export function classifyNodeRoles(db) {
   const roleMap = classifyRoles(classifierInput);
 
   // Build summary and updates
-  const summary = {
+  const summary: RoleSummary = {
     entry: 0,
     core: 0,
     utility: 0,
@@ -422,7 +482,7 @@ export function classifyNodeRoles(db) {
     'test-only': 0,
     leaf: 0,
   };
-  const updates = [];
+  const updates: { id: number; role: string }[] = [];
   for (const row of rows) {
     const role = roleMap.get(String(row.id)) || 'leaf';
     updates.push({ id: row.id, role });
@@ -445,10 +505,67 @@ export function classifyNodeRoles(db) {
 
 // ─── Query functions (read-only) ──────────────────────────────────────
 
-/**
- * Return hierarchical directory tree with metrics.
- */
-export function structureData(customDbPath, opts = {}) {
+interface DirRow {
+  id: number;
+  name: string;
+  file: string;
+  symbol_count: number | null;
+  fan_in: number | null;
+  fan_out: number | null;
+  cohesion: number | null;
+  file_count: number | null;
+}
+
+interface FileMetricRow {
+  name: string;
+  line_count: number | null;
+  symbol_count: number | null;
+  import_count: number | null;
+  export_count: number | null;
+  fan_in: number | null;
+  fan_out: number | null;
+}
+
+interface StructureDataOpts {
+  directory?: string;
+  depth?: number;
+  sort?: string;
+  noTests?: boolean;
+  full?: boolean;
+  fileLimit?: number;
+  limit?: number;
+  offset?: number;
+}
+
+interface DirectoryEntry {
+  directory: string;
+  fileCount: number;
+  symbolCount: number;
+  fanIn: number;
+  fanOut: number;
+  cohesion: number | null;
+  density: number;
+  files: {
+    file: string;
+    lineCount: number;
+    symbolCount: number;
+    importCount: number;
+    exportCount: number;
+    fanIn: number;
+    fanOut: number;
+  }[];
+  subdirectories: string[];
+}
+
+export function structureData(
+  customDbPath?: string,
+  opts: StructureDataOpts = {},
+): {
+  directories: DirectoryEntry[];
+  count: number;
+  suppressed?: number;
+  warning?: string;
+} {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const rawDir = opts.directory || null;
@@ -467,7 +584,7 @@ export function structureData(customDbPath, opts = {}) {
         LEFT JOIN node_metrics nm ON n.id = nm.node_id
         WHERE n.kind = 'directory'
       `)
-      .all();
+      .all() as DirRow[];
 
     if (filterDir) {
       const norm = normalizePath(filterDir);
@@ -487,7 +604,7 @@ export function structureData(customDbPath, opts = {}) {
     dirs.sort(sortFn);
 
     // Get file metrics for each directory
-    const result = dirs.map((d) => {
+    const result: DirectoryEntry[] = dirs.map((d) => {
       let files = db
         .prepare(`
           SELECT n.name, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count, nm.fan_in, nm.fan_out
@@ -496,7 +613,7 @@ export function structureData(customDbPath, opts = {}) {
           LEFT JOIN node_metrics nm ON n.id = nm.node_id
           WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'file'
         `)
-        .all(d.id);
+        .all(d.id) as FileMetricRow[];
       if (noTests) files = files.filter((f) => !isTestFile(f.name));
 
       const subdirs = db
@@ -506,7 +623,7 @@ export function structureData(customDbPath, opts = {}) {
           JOIN nodes n ON e.target_id = n.id
           WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'directory'
         `)
-        .all(d.id);
+        .all(d.id) as { name: string }[];
 
       const fileCount = noTests ? files.length : d.file_count || 0;
       return {
@@ -563,10 +680,36 @@ export function structureData(customDbPath, opts = {}) {
   }
 }
 
-/**
- * Return top N files or directories ranked by a chosen metric.
- */
-export function hotspotsData(customDbPath, opts = {}) {
+interface HotspotRow {
+  name: string;
+  kind: string;
+  line_count: number | null;
+  symbol_count: number | null;
+  import_count: number | null;
+  export_count: number | null;
+  fan_in: number | null;
+  fan_out: number | null;
+  cohesion: number | null;
+  file_count: number | null;
+}
+
+interface HotspotsDataOpts {
+  metric?: string;
+  level?: string;
+  limit?: number;
+  offset?: number;
+  noTests?: boolean;
+}
+
+export function hotspotsData(
+  customDbPath?: string,
+  opts: HotspotsDataOpts = {},
+): {
+  metric: string;
+  level: string;
+  limit: number;
+  hotspots: unknown[];
+} {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const metric = opts.metric || 'fan-in';
@@ -578,7 +721,7 @@ export function hotspotsData(customDbPath, opts = {}) {
 
     const testFilter = testFilterSQL('n.name', noTests && kind === 'file');
 
-    const HOTSPOT_QUERIES = {
+    const HOTSPOT_QUERIES: Record<string, { all(...params: unknown[]): HotspotRow[] }> = {
       'fan-in': db.prepare(`
         SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count,
                nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count
@@ -601,8 +744,8 @@ export function hotspotsData(customDbPath, opts = {}) {
         WHERE n.kind = ? ${testFilter} ORDER BY (COALESCE(nm.fan_in, 0) + COALESCE(nm.fan_out, 0)) DESC NULLS LAST LIMIT ?`),
     };
 
-    const stmt = HOTSPOT_QUERIES[metric] || HOTSPOT_QUERIES['fan-in'];
-    const rows = stmt.all(kind, limit);
+    const stmt = HOTSPOT_QUERIES[metric] ?? HOTSPOT_QUERIES['fan-in']!;
+    const rows = stmt!.all(kind, limit);
 
     const hotspots = rows.map((r) => ({
       name: r.name,
@@ -616,10 +759,10 @@ export function hotspotsData(customDbPath, opts = {}) {
       cohesion: r.cohesion,
       fileCount: r.file_count,
       density:
-        r.file_count > 0
-          ? (r.symbol_count || 0) / r.file_count
-          : r.line_count > 0
-            ? (r.symbol_count || 0) / r.line_count
+        (r.file_count ?? 0) > 0
+          ? (r.symbol_count || 0) / r.file_count!
+          : (r.line_count ?? 0) > 0
+            ? (r.symbol_count || 0) / r.line_count!
             : 0,
       coupling: (r.fan_in || 0) + (r.fan_out || 0),
     }));
@@ -631,14 +774,35 @@ export function hotspotsData(customDbPath, opts = {}) {
   }
 }
 
-/**
- * Return directories with cohesion above threshold, with top exports/imports.
- */
-export function moduleBoundariesData(customDbPath, opts = {}) {
+interface ModuleBoundariesOpts {
+  threshold?: number;
+  config?: CodegraphConfig;
+}
+
+export function moduleBoundariesData(
+  customDbPath?: string,
+  opts: ModuleBoundariesOpts = {},
+): {
+  threshold: number;
+  modules: {
+    directory: string;
+    cohesion: number | null;
+    fileCount: number;
+    symbolCount: number;
+    fanIn: number;
+    fanOut: number;
+    files: string[];
+  }[];
+  count: number;
+} {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const config = opts.config || loadConfig();
-    const threshold = opts.threshold ?? config.structure?.cohesionThreshold ?? 0.3;
+    const threshold =
+      opts.threshold ??
+      (config as unknown as { structure?: { cohesionThreshold?: number } }).structure
+        ?.cohesionThreshold ??
+      0.3;
 
     const dirs = db
       .prepare(`
@@ -648,18 +812,27 @@ export function moduleBoundariesData(customDbPath, opts = {}) {
         WHERE n.kind = 'directory' AND nm.cohesion IS NOT NULL AND nm.cohesion >= ?
         ORDER BY nm.cohesion DESC
       `)
-      .all(threshold);
+      .all(threshold) as {
+      id: number;
+      name: string;
+      symbol_count: number | null;
+      fan_in: number | null;
+      fan_out: number | null;
+      cohesion: number | null;
+      file_count: number | null;
+    }[];
 
     const modules = dirs.map((d) => {
       // Get files inside this directory
-      const files = db
-        .prepare(`
+      const files = (
+        db
+          .prepare(`
           SELECT n.name FROM edges e
           JOIN nodes n ON e.target_id = n.id
           WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'file'
         `)
-        .all(d.id)
-        .map((f) => f.name);
+          .all(d.id) as { name: string }[]
+      ).map((f) => f.name);
 
       return {
         directory: d.name,
@@ -680,7 +853,7 @@ export function moduleBoundariesData(customDbPath, opts = {}) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 
-function getSortFn(sortBy) {
+function getSortFn(sortBy: string): (a: DirRow, b: DirRow) => number {
   switch (sortBy) {
     case 'cohesion':
       return (a, b) => (b.cohesion ?? -1) - (a.cohesion ?? -1);
@@ -690,8 +863,8 @@ function getSortFn(sortBy) {
       return (a, b) => (b.fan_out || 0) - (a.fan_out || 0);
     case 'density':
       return (a, b) => {
-        const da = a.file_count > 0 ? (a.symbol_count || 0) / a.file_count : 0;
-        const db_ = b.file_count > 0 ? (b.symbol_count || 0) / b.file_count : 0;
+        const da = (a.file_count ?? 0) > 0 ? (a.symbol_count || 0) / a.file_count! : 0;
+        const db_ = (b.file_count ?? 0) > 0 ? (b.symbol_count || 0) / b.file_count! : 0;
         return db_ - da;
       };
     default:

@@ -24,6 +24,7 @@ import { ALL_SYMBOL_KINDS, normalizeSymbol } from '../domain/queries.js';
 import { debug, info } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
+import type { BetterSqlite3Database, NodeRow, TreeSitterNode } from '../types.js';
 import { findNodes } from './shared/find-nodes.js';
 
 // Re-export for backward compatibility
@@ -35,32 +36,45 @@ export const DATAFLOW_EXTENSIONS = buildExtensionSet(DATAFLOW_RULES);
 
 // ── extractDataflow ──────────────────────────────────────────────────────────
 
-/**
- * Extract dataflow information from a parsed AST.
- * Delegates to the dataflow visitor via the unified walker.
- *
- * @param {object} tree - tree-sitter parse tree
- * @param {string} filePath - relative file path
- * @param {object[]} definitions - symbol definitions from the parser
- * @param {string} [langId='javascript'] - language identifier for rules lookup
- * @returns {{ parameters, returns, assignments, argFlows, mutations }}
- */
-export function extractDataflow(tree, _filePath, _definitions, langId = 'javascript') {
+interface DataflowResult {
+  parameters: unknown[];
+  returns: unknown[];
+  assignments: unknown[];
+  argFlows: unknown[];
+  mutations: unknown[];
+}
+
+export function extractDataflow(
+  tree: { rootNode: TreeSitterNode },
+  _filePath: string,
+  _definitions: unknown[],
+  langId = 'javascript',
+): DataflowResult {
   const rules = DATAFLOW_RULES.get(langId);
   if (!rules) return { parameters: [], returns: [], assignments: [], argFlows: [], mutations: [] };
 
   const visitor = createDataflowVisitor(rules);
   const results = walkWithVisitors(tree.rootNode, [visitor], langId, {
-    functionNodeTypes: rules.functionNodes,
+    functionNodeTypes: (rules as { functionNodes: Set<string> }).functionNodes,
     getFunctionName: () => null, // dataflow visitor handles its own name extraction
   });
 
-  return results.dataflow;
+  return results['dataflow'] as DataflowResult;
 }
 
 // ── Build-Time Helpers ──────────────────────────────────────────────────────
 
-async function initDataflowParsers(fileSymbols) {
+interface FileSymbolsDataflow {
+  _tree?: { rootNode: TreeSitterNode } | null;
+  _langId?: string | null;
+  definitions: Array<{ name: string; kind: string; line: number }>;
+  dataflow?: DataflowResult | null;
+}
+
+async function initDataflowParsers(
+  fileSymbols: Map<string, FileSymbolsDataflow>,
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic import from parser.js
+): Promise<{ parsers: unknown; getParserFn: ((parsers: any, absPath: string) => any) | null }> {
   let needsFallback = false;
 
   for (const [relPath, symbols] of fileSymbols) {
@@ -73,8 +87,9 @@ async function initDataflowParsers(fileSymbols) {
     }
   }
 
-  let parsers = null;
-  let getParserFn = null;
+  let parsers: unknown = null;
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic import from parser.js
+  let getParserFn: ((parsers: any, absPath: string) => any) | null = null;
 
   if (needsFallback) {
     const { createParsers } = await import('../domain/parser.js');
@@ -86,7 +101,15 @@ async function initDataflowParsers(fileSymbols) {
   return { parsers, getParserFn };
 }
 
-function getDataflowForFile(symbols, relPath, rootDir, extToLang, parsers, getParserFn) {
+function getDataflowForFile(
+  symbols: FileSymbolsDataflow,
+  relPath: string,
+  rootDir: string,
+  extToLang: Map<string, string>,
+  parsers: unknown,
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic import from parser.js
+  getParserFn: ((parsers: any, absPath: string) => any) | null,
+): DataflowResult | null {
   if (symbols.dataflow) return symbols.dataflow;
 
   let tree = symbols._tree;
@@ -99,11 +122,11 @@ function getDataflowForFile(symbols, relPath, rootDir, extToLang, parsers, getPa
     if (!langId || !DATAFLOW_RULES.has(langId)) return null;
 
     const absPath = path.join(rootDir, relPath);
-    let code;
+    let code: string;
     try {
       code = fs.readFileSync(absPath, 'utf-8');
-    } catch (e) {
-      debug(`dataflow: cannot read ${relPath}: ${e.message}`);
+    } catch (e: unknown) {
+      debug(`dataflow: cannot read ${relPath}: ${(e as Error).message}`);
       return null;
     }
 
@@ -112,8 +135,8 @@ function getDataflowForFile(symbols, relPath, rootDir, extToLang, parsers, getPa
 
     try {
       tree = parser.parse(code);
-    } catch (e) {
-      debug(`dataflow: parse failed for ${relPath}: ${e.message}`);
+    } catch (e: unknown) {
+      debug(`dataflow: parse failed for ${relPath}: ${(e as Error).message}`);
       return null;
     }
   }
@@ -126,13 +149,45 @@ function getDataflowForFile(symbols, relPath, rootDir, extToLang, parsers, getPa
 
   if (!DATAFLOW_RULES.has(langId)) return null;
 
-  return extractDataflow(tree, relPath, symbols.definitions, langId);
+  return extractDataflow(
+    tree as { rootNode: TreeSitterNode },
+    relPath,
+    symbols.definitions,
+    langId,
+  );
 }
 
-function insertDataflowEdges(insert, data, resolveNode) {
+interface ArgFlow {
+  callerFunc: string;
+  calleeName: string;
+  argIndex: number;
+  expression: string;
+  line: number;
+  confidence: number;
+}
+
+interface Assignment {
+  sourceCallName: string;
+  callerFunc: string;
+  expression: string;
+  line: number;
+}
+
+interface Mutation {
+  funcName: string;
+  binding?: { type: string };
+  mutatingExpr: string;
+  line: number;
+}
+
+function insertDataflowEdges(
+  insert: { run(...params: unknown[]): unknown },
+  data: DataflowResult,
+  resolveNode: (name: string) => { id: number } | null,
+): number {
   let edgeCount = 0;
 
-  for (const flow of data.argFlows) {
+  for (const flow of data.argFlows as ArgFlow[]) {
     const sourceNode = resolveNode(flow.callerFunc);
     const targetNode = resolveNode(flow.calleeName);
     if (sourceNode && targetNode) {
@@ -149,7 +204,7 @@ function insertDataflowEdges(insert, data, resolveNode) {
     }
   }
 
-  for (const assignment of data.assignments) {
+  for (const assignment of data.assignments as Assignment[]) {
     const producerNode = resolveNode(assignment.sourceCallName);
     const consumerNode = resolveNode(assignment.callerFunc);
     if (producerNode && consumerNode) {
@@ -166,7 +221,7 @@ function insertDataflowEdges(insert, data, resolveNode) {
     }
   }
 
-  for (const mut of data.mutations) {
+  for (const mut of data.mutations as Mutation[]) {
     const mutatorNode = resolveNode(mut.funcName);
     if (mutatorNode && mut.binding?.type === 'param') {
       insert.run(mutatorNode.id, mutatorNode.id, 'mutates', null, mut.mutatingExpr, mut.line, 1.0);
@@ -179,16 +234,12 @@ function insertDataflowEdges(insert, data, resolveNode) {
 
 // ── buildDataflowEdges ──────────────────────────────────────────────────────
 
-/**
- * Build dataflow edges and insert them into the database.
- * Called during graph build when --dataflow is enabled.
- *
- * @param {object} db - better-sqlite3 database instance
- * @param {Map<string, object>} fileSymbols - map of relPath → symbols
- * @param {string} rootDir - absolute root directory
- * @param {object} engineOpts - engine options
- */
-export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) {
+export async function buildDataflowEdges(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, FileSymbolsDataflow>,
+  rootDir: string,
+  _engineOpts?: unknown,
+): Promise<void> {
   const extToLang = buildExtToLangMap();
   const { parsers, getParserFn } = await initDataflowParsers(fileSymbols);
 
@@ -197,12 +248,24 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
   );
 
-  const getNodeByNameAndFile = db.prepare(
+  const getNodeByNameAndFile = db.prepare<{
+    id: number;
+    name: string;
+    kind: string;
+    file: string;
+    line: number;
+  }>(
     `SELECT id, name, kind, file, line FROM nodes
      WHERE name = ? AND file = ? AND kind IN ('function', 'method')`,
   );
 
-  const getNodeByName = db.prepare(
+  const getNodeByName = db.prepare<{
+    id: number;
+    name: string;
+    kind: string;
+    file: string;
+    line: number;
+  }>(
     `SELECT id, name, kind, file, line FROM nodes
      WHERE name = ? AND kind IN ('function', 'method')
      ORDER BY file, line LIMIT 10`,
@@ -218,11 +281,11 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
       const data = getDataflowForFile(symbols, relPath, rootDir, extToLang, parsers, getParserFn);
       if (!data) continue;
 
-      const resolveNode = (funcName) => {
+      const resolveNode = (funcName: string): { id: number } | null => {
         const local = getNodeByNameAndFile.all(funcName, relPath);
-        if (local.length > 0) return local[0];
+        if (local.length > 0) return local[0]!;
         const global = getNodeByName.all(funcName);
-        return global.length > 0 ? global[0] : null;
+        return global.length > 0 ? global[0]! : null;
       };
 
       totalEdges += insertDataflowEdges(insert, data, resolveNode);
@@ -237,15 +300,11 @@ export async function buildDataflowEdges(db, fileSymbols, rootDir, _engineOpts) 
 
 // findNodes imported from ./shared/find-nodes.js
 
-/**
- * Return all dataflow edges for a symbol.
- *
- * @param {string} name - symbol name (partial match)
- * @param {string} [customDbPath] - path to graph.db
- * @param {object} [opts] - { noTests, file, kind, limit, offset }
- * @returns {{ name, results: object[] }}
- */
-export function dataflowData(name, customDbPath, opts = {}) {
+export function dataflowData(
+  name: string,
+  customDbPath?: string,
+  opts: { noTests?: boolean; file?: string; kind?: string; limit?: number; offset?: number } = {},
+): Record<string, unknown> {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
@@ -263,7 +322,7 @@ export function dataflowData(name, customDbPath, opts = {}) {
       db,
       name,
       { noTests, file: opts.file, kind: opts.kind },
-      ALL_SYMBOL_KINDS,
+      ALL_SYMBOL_KINDS as unknown as string[],
     );
     if (nodes.length === 0) {
       return { name, results: [] };
@@ -300,60 +359,79 @@ export function dataflowData(name, customDbPath, opts = {}) {
      WHERE d.target_id = ? AND d.kind = 'mutates'`,
     );
 
-    const hc = new Map();
-    const results = nodes.map((node) => {
+    const hc = new Map<string, string | null>();
+    const results = nodes.map((node: NodeRow) => {
       const sym = normalizeSymbol(node, db, hc);
 
-      const flowsTo = flowsToOut.all(node.id).map((r) => ({
-        target: r.target_name,
-        kind: r.target_kind,
-        file: r.target_file,
-        line: r.line,
-        paramIndex: r.param_index,
-        expression: r.expression,
-        confidence: r.confidence,
-      }));
+      const flowsTo = flowsToOut.all(node.id).map(
+        // biome-ignore lint/suspicious/noExplicitAny: raw DB row
+        (r: any) => ({
+          target: r.target_name,
+          kind: r.target_kind,
+          file: r.target_file,
+          line: r.line,
+          paramIndex: r.param_index,
+          expression: r.expression,
+          confidence: r.confidence,
+        }),
+      );
 
-      const flowsFrom = flowsToIn.all(node.id).map((r) => ({
-        source: r.source_name,
-        kind: r.source_kind,
-        file: r.source_file,
-        line: r.line,
-        paramIndex: r.param_index,
-        expression: r.expression,
-        confidence: r.confidence,
-      }));
+      const flowsFrom = flowsToIn.all(node.id).map(
+        // biome-ignore lint/suspicious/noExplicitAny: raw DB row
+        (r: any) => ({
+          source: r.source_name,
+          kind: r.source_kind,
+          file: r.source_file,
+          line: r.line,
+          paramIndex: r.param_index,
+          expression: r.expression,
+          confidence: r.confidence,
+        }),
+      );
 
-      const returnConsumers = returnsOut.all(node.id).map((r) => ({
-        consumer: r.target_name,
-        kind: r.target_kind,
-        file: r.target_file,
-        line: r.line,
-        expression: r.expression,
-      }));
+      const returnConsumers = returnsOut.all(node.id).map(
+        // biome-ignore lint/suspicious/noExplicitAny: raw DB row
+        (r: any) => ({
+          consumer: r.target_name,
+          kind: r.target_kind,
+          file: r.target_file,
+          line: r.line,
+          expression: r.expression,
+        }),
+      );
 
-      const returnedBy = returnsIn.all(node.id).map((r) => ({
-        producer: r.source_name,
-        kind: r.source_kind,
-        file: r.source_file,
-        line: r.line,
-        expression: r.expression,
-      }));
+      const returnedBy = returnsIn.all(node.id).map(
+        // biome-ignore lint/suspicious/noExplicitAny: raw DB row
+        (r: any) => ({
+          producer: r.source_name,
+          kind: r.source_kind,
+          file: r.source_file,
+          line: r.line,
+          expression: r.expression,
+        }),
+      );
 
-      const mutatesTargets = mutatesOut.all(node.id).map((r) => ({
-        target: r.target_name,
-        expression: r.expression,
-        line: r.line,
-      }));
+      const mutatesTargets = mutatesOut.all(node.id).map(
+        // biome-ignore lint/suspicious/noExplicitAny: raw DB row
+        (r: any) => ({
+          target: r.target_name,
+          expression: r.expression,
+          line: r.line,
+        }),
+      );
 
-      const mutatedBy = mutatesIn.all(node.id).map((r) => ({
-        source: r.source_name,
-        expression: r.expression,
-        line: r.line,
-      }));
+      const mutatedBy = mutatesIn.all(node.id).map(
+        // biome-ignore lint/suspicious/noExplicitAny: raw DB row
+        (r: any) => ({
+          source: r.source_name,
+          expression: r.expression,
+          line: r.line,
+        }),
+      );
 
       if (noTests) {
-        const filter = (arr) => arr.filter((r) => !isTestFile(r.file));
+        // biome-ignore lint/suspicious/noExplicitAny: raw DB row results
+        const filter = (arr: any[]) => arr.filter((r: any) => !isTestFile(r.file));
         return {
           ...sym,
           flowsTo: filter(flowsTo),
@@ -383,16 +461,20 @@ export function dataflowData(name, customDbPath, opts = {}) {
   }
 }
 
-/**
- * BFS through flows_to + returns edges to find how data gets from A to B.
- *
- * @param {string} from - source symbol name
- * @param {string} to - target symbol name
- * @param {string} [customDbPath]
- * @param {object} [opts] - { noTests, maxDepth, limit, offset }
- * @returns {{ from, to, found, hops?, path? }}
- */
-export function dataflowPathData(from, to, customDbPath, opts = {}) {
+export function dataflowPathData(
+  from: string,
+  to: string,
+  customDbPath?: string,
+  opts: {
+    noTests?: boolean;
+    maxDepth?: number;
+    fromFile?: string;
+    toFile?: string;
+    kind?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Record<string, unknown> {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
@@ -412,7 +494,7 @@ export function dataflowPathData(from, to, customDbPath, opts = {}) {
       db,
       from,
       { noTests, file: opts.fromFile, kind: opts.kind },
-      ALL_SYMBOL_KINDS,
+      ALL_SYMBOL_KINDS as unknown as string[],
     );
     if (fromNodes.length === 0) {
       return { from, to, found: false, error: `No symbol matching "${from}"` };
@@ -422,17 +504,17 @@ export function dataflowPathData(from, to, customDbPath, opts = {}) {
       db,
       to,
       { noTests, file: opts.toFile, kind: opts.kind },
-      ALL_SYMBOL_KINDS,
+      ALL_SYMBOL_KINDS as unknown as string[],
     );
     if (toNodes.length === 0) {
       return { from, to, found: false, error: `No symbol matching "${to}"` };
     }
 
-    const sourceNode = fromNodes[0];
-    const targetNode = toNodes[0];
+    const sourceNode = fromNodes[0] as NodeRow;
+    const targetNode = toNodes[0] as NodeRow;
 
     if (sourceNode.id === targetNode.id) {
-      const hc = new Map();
+      const hc = new Map<string, string | null>();
       const sym = normalizeSymbol(sourceNode, db, hc);
       return {
         from,
@@ -450,15 +532,23 @@ export function dataflowPathData(from, to, customDbPath, opts = {}) {
      WHERE d.source_id = ? AND d.kind IN ('flows_to', 'returns')`,
     );
 
-    const visited = new Set([sourceNode.id]);
-    const parent = new Map();
+    const visited = new Set<number>([sourceNode.id]);
+    const parent = new Map<number, { parentId: number; edgeKind: string; expression: string }>();
     let queue = [sourceNode.id];
     let found = false;
 
     for (let depth = 1; depth <= maxDepth; depth++) {
-      const nextQueue = [];
+      const nextQueue: number[] = [];
       for (const currentId of queue) {
-        const neighbors = neighborStmt.all(currentId);
+        const neighbors = neighborStmt.all(currentId) as Array<{
+          id: number;
+          name: string;
+          kind: string;
+          file: string;
+          line: number;
+          edge_kind: string;
+          expression: string;
+        }>;
         for (const n of neighbors) {
           if (noTests && isTestFile(n.file)) continue;
           if (n.id === targetNode.id) {
@@ -494,11 +584,11 @@ export function dataflowPathData(from, to, customDbPath, opts = {}) {
 
     // Reconstruct path
     const nodeById = db.prepare('SELECT * FROM nodes WHERE id = ?');
-    const hc = new Map();
-    const pathItems = [];
-    let cur = targetNode.id;
+    const hc = new Map<string, string | null>();
+    const pathItems: Array<Record<string, unknown>> = [];
+    let cur: number | undefined = targetNode.id;
     while (cur !== undefined) {
-      const nodeRow = nodeById.get(cur);
+      const nodeRow = nodeById.get(cur) as NodeRow;
       const parentInfo = parent.get(cur);
       pathItems.unshift({
         ...normalizeSymbol(nodeRow, db, hc),
@@ -507,7 +597,7 @@ export function dataflowPathData(from, to, customDbPath, opts = {}) {
       });
       cur = parentInfo?.parentId;
       if (cur === sourceNode.id) {
-        const srcRow = nodeById.get(cur);
+        const srcRow = nodeById.get(cur) as NodeRow;
         pathItems.unshift({
           ...normalizeSymbol(srcRow, db, hc),
           edgeKind: null,
@@ -523,15 +613,18 @@ export function dataflowPathData(from, to, customDbPath, opts = {}) {
   }
 }
 
-/**
- * Forward BFS through returns edges: "if I change this function's return value, what breaks?"
- *
- * @param {string} name - symbol name
- * @param {string} [customDbPath]
- * @param {object} [opts] - { noTests, depth, file, kind, limit, offset }
- * @returns {{ name, results: object[] }}
- */
-export function dataflowImpactData(name, customDbPath, opts = {}) {
+export function dataflowImpactData(
+  name: string,
+  customDbPath?: string,
+  opts: {
+    noTests?: boolean;
+    depth?: number;
+    file?: string;
+    kind?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Record<string, unknown> {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const maxDepth = opts.depth || 5;
@@ -550,7 +643,7 @@ export function dataflowImpactData(name, customDbPath, opts = {}) {
       db,
       name,
       { noTests, file: opts.file, kind: opts.kind },
-      ALL_SYMBOL_KINDS,
+      ALL_SYMBOL_KINDS as unknown as string[],
     );
     if (nodes.length === 0) {
       return { name, results: [] };
@@ -563,23 +656,23 @@ export function dataflowImpactData(name, customDbPath, opts = {}) {
      WHERE d.source_id = ? AND d.kind = 'returns'`,
     );
 
-    const hc = new Map();
-    const results = nodes.map((node) => {
+    const hc = new Map<string, string | null>();
+    const results = nodes.map((node: NodeRow) => {
       const sym = normalizeSymbol(node, db, hc);
-      const visited = new Set([node.id]);
-      const levels = {};
+      const visited = new Set<number>([node.id]);
+      const levels: Record<number, unknown[]> = {};
       let frontier = [node.id];
 
       for (let d = 1; d <= maxDepth; d++) {
-        const nextFrontier = [];
+        const nextFrontier: number[] = [];
         for (const fid of frontier) {
-          const consumers = consumersStmt.all(fid);
+          const consumers = consumersStmt.all(fid) as NodeRow[];
           for (const c of consumers) {
             if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
               visited.add(c.id);
               nextFrontier.push(c.id);
               if (!levels[d]) levels[d] = [];
-              levels[d].push(normalizeSymbol(c, db, hc));
+              levels[d]!.push(normalizeSymbol(c, db, hc));
             }
           }
         }

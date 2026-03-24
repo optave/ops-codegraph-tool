@@ -1,11 +1,3 @@
-/**
- * audit.js — Composite report: explain + impact + health metrics per function.
- *
- * Combines explainData (structure, callers, callees, basic complexity),
- * full function_complexity health metrics, BFS impact analysis, and
- * manifesto threshold breach detection into a single call.
- */
-
 import path from 'node:path';
 import { openReadonlyOrFail } from '../db/index.js';
 import { normalizeFileFilter } from '../db/query-builder.js';
@@ -13,25 +5,35 @@ import { bfsTransitiveCallers } from '../domain/analysis/impact.js';
 import { explainData } from '../domain/queries.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
+import type { BetterSqlite3Database, CodegraphConfig } from '../types.js';
 import { RULE_DEFS } from './manifesto.js';
 
 // ─── Threshold resolution ───────────────────────────────────────────
 
-const FUNCTION_RULES = RULE_DEFS.filter((d) => d.level === 'function');
+interface ThresholdEntry {
+  metric: string;
+  warn: number | null;
+  fail: number | null;
+}
 
-function resolveThresholds(customDbPath, config) {
+const FUNCTION_RULES = RULE_DEFS.filter((d: { level: string }) => d.level === 'function');
+
+function resolveThresholds(
+  customDbPath: string | undefined,
+  config: unknown,
+): Record<string, ThresholdEntry> {
   try {
     const cfg =
       config ||
       (() => {
-        const dbDir = path.dirname(customDbPath);
+        const dbDir = path.dirname(customDbPath!);
         const repoRoot = path.resolve(dbDir, '..');
         return loadConfig(repoRoot);
       })();
-    const userRules = cfg.manifesto || {};
-    const resolved = {};
+    const userRules = (cfg as Record<string, unknown>)['manifesto'] || {};
+    const resolved: Record<string, ThresholdEntry> = {};
     for (const def of FUNCTION_RULES) {
-      const user = userRules[def.name];
+      const user = (userRules as Record<string, { warn?: number; fail?: number }>)[def.name];
       resolved[def.name] = {
         metric: def.metric,
         warn: user?.warn !== undefined ? user.warn : def.defaults.warn,
@@ -41,7 +43,7 @@ function resolveThresholds(customDbPath, config) {
     return resolved;
   } catch {
     // Fall back to defaults if config loading fails
-    const resolved = {};
+    const resolved: Record<string, ThresholdEntry> = {};
     for (const def of FUNCTION_RULES) {
       resolved[def.name] = {
         metric: def.metric,
@@ -54,18 +56,28 @@ function resolveThresholds(customDbPath, config) {
 }
 
 // Column name in DB → threshold rule name mapping
-const METRIC_TO_RULE = {
+const METRIC_TO_RULE: Record<string, string> = {
   cognitive: 'cognitive',
   cyclomatic: 'cyclomatic',
   max_nesting: 'maxNesting',
 };
 
-function checkBreaches(row, thresholds) {
-  const breaches = [];
+interface ThresholdBreach {
+  metric: string;
+  value: number;
+  threshold: number;
+  level: 'warn' | 'fail';
+}
+
+function checkBreaches(
+  row: Record<string, unknown>,
+  thresholds: Record<string, ThresholdEntry>,
+): ThresholdBreach[] {
+  const breaches: ThresholdBreach[] = [];
   for (const [col, ruleName] of Object.entries(METRIC_TO_RULE)) {
     const t = thresholds[ruleName];
     if (!t) continue;
-    const value = row[col];
+    const value = row[col] as number | null | undefined;
     if (value == null) continue;
     if (t.fail != null && value >= t.fail) {
       breaches.push({ metric: ruleName, value, threshold: t.fail, level: 'fail' });
@@ -78,11 +90,19 @@ function checkBreaches(row, thresholds) {
 
 // ─── Phase 4.4 fields (graceful null fallback) ─────────────────────
 
-function readPhase44(db, nodeId) {
+interface Phase44Fields {
+  riskScore: number | null;
+  complexityNotes: string | null;
+  sideEffects: string | null;
+}
+
+function readPhase44(db: BetterSqlite3Database, nodeId: number): Phase44Fields {
   try {
     const row = db
       .prepare('SELECT risk_score, complexity_notes, side_effects FROM nodes WHERE id = ?')
-      .get(nodeId);
+      .get(nodeId) as
+      | { risk_score?: number; complexity_notes?: string; side_effects?: string }
+      | undefined;
     if (row) {
       return {
         riskScore: row.risk_score ?? null,
@@ -98,22 +118,59 @@ function readPhase44(db, nodeId) {
 
 // ─── auditData ──────────────────────────────────────────────────────
 
-export function auditData(target, customDbPath, opts = {}) {
+interface SymbolRef {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+}
+
+interface HealthMetrics {
+  cognitive: number | null;
+  cyclomatic: number | null;
+  maxNesting: number | null;
+  maintainabilityIndex: number | null;
+  halstead: { volume: number; difficulty: number; effort: number; bugs: number };
+  loc: number;
+  sloc: number;
+  commentLines: number;
+  thresholdBreaches: ThresholdBreach[];
+}
+
+interface AuditDataOpts {
+  noTests?: boolean;
+  config?: CodegraphConfig;
+  depth?: number;
+  file?: string;
+  kind?: string;
+}
+
+export function auditData(
+  target: string,
+  customDbPath?: string,
+  opts: AuditDataOpts = {},
+): { target: string; kind: string; functions: unknown[] } {
   const noTests = opts.noTests || false;
   const config = opts.config || loadConfig();
-  const maxDepth = opts.depth || config.analysis?.auditDepth || 3;
+  const maxDepth =
+    opts.depth ||
+    (config as unknown as { analysis?: { auditDepth?: number } }).analysis?.auditDepth ||
+    3;
   const fileFilters = normalizeFileFilter(opts.file);
   const kind = opts.kind;
 
   // 1. Get structure via explainData
-  const explained = explainData(target, customDbPath, { noTests, depth: 0 });
+  const explained = explainData(target, customDbPath!, { noTests, depth: 0 });
 
   // Apply --file and --kind filters for function targets
-  let results = explained.results;
+  // biome-ignore lint/suspicious/noExplicitAny: explainData returns a union type that varies by kind
+  let results: any[] = explained.results;
   if (explained.kind === 'function') {
     if (fileFilters.length > 0)
-      results = results.filter((r) => fileFilters.some((f) => r.file.includes(f)));
-    if (kind) results = results.filter((r) => r.kind === kind);
+      results = results.filter((r: { file: string }) =>
+        fileFilters.some((f: string) => r.file.includes(f)),
+      );
+    if (kind) results = results.filter((r: { kind: string }) => r.kind === kind);
   }
 
   if (results.length === 0) {
@@ -124,14 +181,17 @@ export function auditData(target, customDbPath, opts = {}) {
   const db = openReadonlyOrFail(customDbPath);
   const thresholds = resolveThresholds(customDbPath, opts.config);
 
-  let functions;
+  let functions: unknown[];
   try {
     if (explained.kind === 'file') {
       // File target: explainData returns file-level info with publicApi + internal
       // We need to enrich each symbol
       functions = [];
       for (const fileResult of results) {
-        const allSymbols = [...(fileResult.publicApi || []), ...(fileResult.internal || [])];
+        const allSymbols = [
+          ...(fileResult.publicApi || []),
+          ...(fileResult.internal || []),
+        ] as FileSymbol[];
         if (kind) {
           const filtered = allSymbols.filter((s) => s.kind === kind);
           for (const sym of filtered) {
@@ -145,7 +205,9 @@ export function auditData(target, customDbPath, opts = {}) {
       }
     } else {
       // Function target: explainData returns per-function results
-      functions = results.map((r) => enrichFunction(db, r, noTests, maxDepth, thresholds));
+      functions = results.map((r: ExplainResult) =>
+        enrichFunction(db, r, noTests, maxDepth, thresholds),
+      );
     }
   } finally {
     db.close();
@@ -156,10 +218,31 @@ export function auditData(target, customDbPath, opts = {}) {
 
 // ─── Enrich a function result from explainData ──────────────────────
 
-function enrichFunction(db, r, noTests, maxDepth, thresholds) {
+interface ExplainResult {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  endLine?: number | null;
+  role?: string | null;
+  lineCount?: number | null;
+  summary?: string | null;
+  signature?: string | null;
+  callees?: SymbolRef[];
+  callers?: SymbolRef[];
+  relatedTests?: { file: string }[];
+}
+
+function enrichFunction(
+  db: BetterSqlite3Database,
+  r: ExplainResult,
+  noTests: boolean,
+  maxDepth: number,
+  thresholds: Record<string, ThresholdEntry>,
+): unknown {
   const nodeRow = db
     .prepare('SELECT id FROM nodes WHERE name = ? AND file = ? AND line = ?')
-    .get(r.name, r.file, r.line);
+    .get(r.name, r.file, r.line) as { id: number } | undefined;
 
   const nodeId = nodeRow?.id;
   const health = nodeId ? buildHealth(db, nodeId, thresholds) : defaultHealth();
@@ -191,37 +274,55 @@ function enrichFunction(db, r, noTests, maxDepth, thresholds) {
 
 // ─── Enrich a symbol from file-level explainData ────────────────────
 
-function enrichSymbol(db, sym, file, noTests, maxDepth, thresholds) {
+interface FileSymbol {
+  name: string;
+  kind: string;
+  line: number;
+  role?: string | null;
+  summary?: string | null;
+  signature?: string | null;
+}
+
+function enrichSymbol(
+  db: BetterSqlite3Database,
+  sym: FileSymbol,
+  file: string,
+  noTests: boolean,
+  maxDepth: number,
+  thresholds: Record<string, ThresholdEntry>,
+): unknown {
   const nodeRow = db
     .prepare('SELECT id, end_line FROM nodes WHERE name = ? AND file = ? AND line = ?')
-    .get(sym.name, file, sym.line);
+    .get(sym.name, file, sym.line) as { id: number; end_line: number | null } | undefined;
 
   const nodeId = nodeRow?.id;
   const endLine = nodeRow?.end_line || null;
   const lineCount = endLine ? endLine - sym.line + 1 : null;
 
   // Get callers/callees for this symbol
-  let callees = [];
-  let callers = [];
-  let relatedTests = [];
+  let callees: SymbolRef[] = [];
+  let callers: SymbolRef[] = [];
+  let relatedTests: { file: string }[] = [];
   if (nodeId) {
-    callees = db
-      .prepare(
-        `SELECT n.name, n.kind, n.file, n.line
+    callees = (
+      db
+        .prepare(
+          `SELECT n.name, n.kind, n.file, n.line
          FROM edges e JOIN nodes n ON e.target_id = n.id
          WHERE e.source_id = ? AND e.kind = 'calls'`,
-      )
-      .all(nodeId)
-      .map((c) => ({ name: c.name, kind: c.kind, file: c.file, line: c.line }));
+        )
+        .all(nodeId) as SymbolRef[]
+    ).map((c) => ({ name: c.name, kind: c.kind, file: c.file, line: c.line }));
 
-    callers = db
-      .prepare(
-        `SELECT n.name, n.kind, n.file, n.line
+    callers = (
+      db
+        .prepare(
+          `SELECT n.name, n.kind, n.file, n.line
          FROM edges e JOIN nodes n ON e.source_id = n.id
          WHERE e.target_id = ? AND e.kind = 'calls'`,
-      )
-      .all(nodeId)
-      .map((c) => ({ name: c.name, kind: c.kind, file: c.file, line: c.line }));
+        )
+        .all(nodeId) as SymbolRef[]
+    ).map((c) => ({ name: c.name, kind: c.kind, file: c.file, line: c.line }));
     if (noTests) callers = callers.filter((c) => !isTestFile(c.file));
 
     const testCallerRows = db
@@ -229,7 +330,7 @@ function enrichSymbol(db, sym, file, noTests, maxDepth, thresholds) {
         `SELECT DISTINCT n.file FROM edges e JOIN nodes n ON e.source_id = n.id
          WHERE e.target_id = ? AND e.kind = 'calls'`,
       )
-      .all(nodeId);
+      .all(nodeId) as { file: string }[];
     relatedTests = testCallerRows.filter((r) => isTestFile(r.file)).map((r) => ({ file: r.file }));
   }
 
@@ -262,7 +363,25 @@ function enrichSymbol(db, sym, file, noTests, maxDepth, thresholds) {
 
 // ─── Build health metrics from function_complexity ──────────────────
 
-function buildHealth(db, nodeId, thresholds) {
+interface ComplexityRow {
+  cognitive: number;
+  cyclomatic: number;
+  max_nesting: number;
+  maintainability_index: number | null;
+  halstead_volume: number | null;
+  halstead_difficulty: number | null;
+  halstead_effort: number | null;
+  halstead_bugs: number | null;
+  loc: number | null;
+  sloc: number | null;
+  comment_lines: number | null;
+}
+
+function buildHealth(
+  db: BetterSqlite3Database,
+  nodeId: number,
+  thresholds: Record<string, ThresholdEntry>,
+): HealthMetrics {
   try {
     const row = db
       .prepare(
@@ -271,7 +390,7 @@ function buildHealth(db, nodeId, thresholds) {
                 loc, sloc, comment_lines
          FROM function_complexity WHERE node_id = ?`,
       )
-      .get(nodeId);
+      .get(nodeId) as ComplexityRow | undefined;
 
     if (!row) return defaultHealth();
 
@@ -289,7 +408,7 @@ function buildHealth(db, nodeId, thresholds) {
       loc: row.loc || 0,
       sloc: row.sloc || 0,
       commentLines: row.comment_lines || 0,
-      thresholdBreaches: checkBreaches(row, thresholds),
+      thresholdBreaches: checkBreaches(row as unknown as Record<string, unknown>, thresholds),
     };
   } catch {
     /* table may not exist */
@@ -297,7 +416,7 @@ function buildHealth(db, nodeId, thresholds) {
   }
 }
 
-function defaultHealth() {
+function defaultHealth(): HealthMetrics {
   return {
     cognitive: null,
     cyclomatic: null,

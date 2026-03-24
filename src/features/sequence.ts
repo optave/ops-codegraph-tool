@@ -1,49 +1,34 @@
-/**
- * Sequence diagram generation – Mermaid sequenceDiagram from call graph edges.
- *
- * Participants are files (not individual functions). Calls within the same file
- * become self-messages. This keeps diagrams readable and matches typical
- * sequence-diagram conventions.
- */
-
-import { openRepo } from '../db/index.js';
+import { openRepo, type Repository } from '../db/index.js';
 import { SqliteRepository } from '../db/repository/sqlite-repository.js';
 import { findMatchingNodes } from '../domain/queries.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
+import type { CodegraphConfig, NodeRowWithFanIn } from '../types.js';
 import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
 
 // ─── Alias generation ────────────────────────────────────────────────
 
-/**
- * Build short participant aliases from file paths with collision handling.
- * e.g. "src/builder.js" → "builder", but if two files share basename,
- * progressively add parent dirs: "src/builder" vs "lib/builder".
- */
-function buildAliases(files) {
-  const aliases = new Map();
-  const basenames = new Map();
+function buildAliases(files: string[]): Map<string, string> {
+  const aliases = new Map<string, string>();
+  const basenames = new Map<string, string[]>();
 
   // Group by basename
   for (const file of files) {
-    const base = file
-      .split('/')
-      .pop()
-      .replace(/\.[^.]+$/, '');
+    const base = (file.split('/').pop() ?? file).replace(/\.[^.]+$/, '');
     if (!basenames.has(base)) basenames.set(base, []);
-    basenames.get(base).push(file);
+    basenames.get(base)!.push(file);
   }
 
   for (const [base, paths] of basenames) {
     if (paths.length === 1) {
-      aliases.set(paths[0], base);
+      aliases.set(paths[0]!, base);
     } else {
       // Collision — progressively add parent dirs until aliases are unique
       for (let depth = 2; depth <= 10; depth++) {
-        const trial = new Map();
+        const trial = new Map<string, string>();
         let allUnique = true;
-        const seen = new Set();
+        const seen = new Set<string>();
 
         for (const p of paths) {
           const parts = p.replace(/\.[^.]+$/, '').split('/');
@@ -71,8 +56,16 @@ function buildAliases(files) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-function findEntryNode(repo, name, opts) {
-  let matchNode = findMatchingNodes(repo, name, opts)[0] ?? null;
+interface MatchNode extends NodeRowWithFanIn {
+  _relevance: number;
+}
+
+function findEntryNode(
+  repo: Repository,
+  name: string,
+  opts: { noTests?: boolean; file?: string; kind?: string },
+): MatchNode | null {
+  let matchNode: MatchNode | null = findMatchingNodes(repo, name, opts)[0] ?? null;
   if (!matchNode) {
     for (const prefix of FRAMEWORK_ENTRY_PREFIXES) {
       matchNode = findMatchingNodes(repo, `${prefix}${name}`, opts)[0] ?? null;
@@ -82,21 +75,44 @@ function findEntryNode(repo, name, opts) {
   return matchNode;
 }
 
-function bfsCallees(repo, matchNode, maxDepth, noTests) {
-  const visited = new Set([matchNode.id]);
+interface SequenceMessage {
+  from: string;
+  to: string;
+  label: string;
+  type: 'call' | 'return';
+  depth: number;
+}
+
+interface BfsResult {
+  messages: SequenceMessage[];
+  fileSet: Set<string>;
+  idToNode: Map<number, { id: number; name: string; file: string; kind: string; line: number }>;
+  truncated: boolean;
+}
+
+function bfsCallees(
+  repo: Repository,
+  matchNode: MatchNode,
+  maxDepth: number,
+  noTests: boolean,
+): BfsResult {
+  const visited = new Set<number>([matchNode.id]);
   let frontier = [matchNode.id];
-  const messages = [];
-  const fileSet = new Set([matchNode.file]);
-  const idToNode = new Map();
+  const messages: SequenceMessage[] = [];
+  const fileSet = new Set<string>([matchNode.file]);
+  const idToNode = new Map<
+    number,
+    { id: number; name: string; file: string; kind: string; line: number }
+  >();
   idToNode.set(matchNode.id, matchNode);
   let truncated = false;
 
   for (let d = 1; d <= maxDepth; d++) {
-    const nextFrontier = [];
+    const nextFrontier: number[] = [];
 
     for (const fid of frontier) {
       const callees = repo.findCallees(fid);
-      const caller = idToNode.get(fid);
+      const caller = idToNode.get(fid)!;
 
       for (const c of callees) {
         if (noTests && isTestFile(c.file)) continue;
@@ -130,13 +146,17 @@ function bfsCallees(repo, matchNode, maxDepth, noTests) {
   return { messages, fileSet, idToNode, truncated };
 }
 
-function annotateDataflow(repo, messages, idToNode) {
+function annotateDataflow(
+  repo: Repository,
+  messages: SequenceMessage[],
+  idToNode: Map<number, { id: number; name: string; file: string; kind: string; line: number }>,
+): void {
   const hasTable = repo.hasDataflowTable();
 
   if (!hasTable || !(repo instanceof SqliteRepository)) return;
 
   const db = repo.db;
-  const nodeByNameFile = new Map();
+  const nodeByNameFile = new Map<string, { id: number; name: string; file: string }>();
   for (const n of idToNode.values()) {
     nodeByNameFile.set(`${n.name}|${n.file}`, n);
   }
@@ -151,7 +171,7 @@ function annotateDataflow(repo, messages, idToNode) {
          ORDER BY d.param_index`,
   );
 
-  const seenReturns = new Set();
+  const seenReturns = new Set<string>();
   for (const msg of [...messages]) {
     if (msg.type !== 'call') continue;
     const targetNode = nodeByNameFile.get(`${msg.label}|${msg.to}`);
@@ -160,11 +180,11 @@ function annotateDataflow(repo, messages, idToNode) {
     const returnKey = `${msg.to}->${msg.from}:${msg.label}`;
     if (seenReturns.has(returnKey)) continue;
 
-    const returns = getReturns.all(targetNode.id);
+    const returns = getReturns.all(targetNode.id) as { expression: string }[];
 
     if (returns.length > 0) {
       seenReturns.add(returnKey);
-      const expr = returns[0].expression || 'result';
+      const expr = returns[0]!.expression || 'result';
       messages.push({
         from: msg.to,
         to: msg.from,
@@ -180,7 +200,7 @@ function annotateDataflow(repo, messages, idToNode) {
     const targetNode = nodeByNameFile.get(`${msg.label}|${msg.to}`);
     if (!targetNode) continue;
 
-    const params = getFlowsTo.all(targetNode.id);
+    const params = getFlowsTo.all(targetNode.id) as { expression: string }[];
 
     if (params.length > 0) {
       const paramNames = params
@@ -194,11 +214,20 @@ function annotateDataflow(repo, messages, idToNode) {
   }
 }
 
-function buildParticipants(fileSet, entryFile) {
+interface Participant {
+  id: string;
+  label: string;
+  file: string;
+}
+
+function buildParticipants(
+  fileSet: Set<string>,
+  entryFile: string,
+): { participants: Participant[]; aliases: Map<string, string> } {
   const aliases = buildAliases([...fileSet]);
-  const participants = [...fileSet].map((file) => ({
-    id: aliases.get(file),
-    label: file.split('/').pop(),
+  const participants: Participant[] = [...fileSet].map((file) => ({
+    id: aliases.get(file)!,
+    label: file.split('/').pop() ?? file,
     file,
   }));
 
@@ -213,26 +242,46 @@ function buildParticipants(fileSet, entryFile) {
 
 // ─── Core data function ──────────────────────────────────────────────
 
-/**
- * Build sequence diagram data by BFS-forward from an entry point.
- *
- * @param {string} name - Symbol name to trace from
- * @param {string} [dbPath]
- * @param {object} [opts]
- * @param {number} [opts.depth=10]
- * @param {boolean} [opts.noTests]
- * @param {string} [opts.file]
- * @param {string} [opts.kind]
- * @param {boolean} [opts.dataflow]
- * @param {number} [opts.limit]
- * @param {number} [opts.offset]
- * @returns {{ entry, participants, messages, depth, totalMessages, truncated }}
- */
-export function sequenceData(name, dbPath, opts = {}) {
+interface SequenceDataOpts {
+  depth?: number;
+  noTests?: boolean;
+  file?: string;
+  kind?: string;
+  dataflow?: boolean;
+  limit?: number;
+  offset?: number;
+  config?: CodegraphConfig;
+  repo?: Repository;
+}
+
+interface SequenceEntry {
+  name: string;
+  file: string;
+  kind: string;
+  line: number;
+}
+
+interface SequenceDataResult {
+  entry: SequenceEntry | null;
+  participants: Participant[];
+  messages: SequenceMessage[];
+  depth: number;
+  totalMessages: number;
+  truncated: boolean;
+}
+
+export function sequenceData(
+  name: string,
+  dbPath?: string,
+  opts: SequenceDataOpts = {},
+): SequenceDataResult {
   const { repo, close } = openRepo(dbPath, opts);
   try {
     const config = opts.config || loadConfig();
-    const maxDepth = opts.depth || config.analysis?.sequenceDepth || 10;
+    const maxDepth =
+      opts.depth ||
+      (config as unknown as { analysis?: { sequenceDepth?: number } }).analysis?.sequenceDepth ||
+      10;
     const noTests = opts.noTests || false;
 
     const matchNode = findEntryNode(repo, name, opts);
@@ -247,7 +296,7 @@ export function sequenceData(name, dbPath, opts = {}) {
       };
     }
 
-    const entry = {
+    const entry: SequenceEntry = {
       name: matchNode.name,
       file: matchNode.file,
       kind: matchNode.kind,
@@ -275,8 +324,8 @@ export function sequenceData(name, dbPath, opts = {}) {
     const { participants, aliases } = buildParticipants(fileSet, entry.file);
 
     for (const msg of messages) {
-      msg.from = aliases.get(msg.from);
-      msg.to = aliases.get(msg.to);
+      msg.from = aliases.get(msg.from)!;
+      msg.to = aliases.get(msg.to)!;
     }
 
     const base = {
@@ -287,7 +336,10 @@ export function sequenceData(name, dbPath, opts = {}) {
       totalMessages: messages.length,
       truncated,
     };
-    const result = paginateResult(base, 'messages', { limit: opts.limit, offset: opts.offset });
+    const result = paginateResult(base, 'messages', {
+      limit: opts.limit,
+      offset: opts.offset,
+    }) as SequenceDataResult;
     if (opts.limit !== undefined || opts.offset !== undefined) {
       const activeFiles = new Set(result.messages.flatMap((m) => [m.from, m.to]));
       result.participants = result.participants.filter((p) => activeFiles.has(p.id));

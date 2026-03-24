@@ -4,17 +4,20 @@ import { findCycles } from '../domain/graph/cycles.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
 import { paginateResult } from '../shared/paginate.js';
+import type { BetterSqlite3Database, CodegraphConfig, ThresholdRule } from '../types.js';
 import { evaluateBoundaries } from './boundaries.js';
 
 // ─── Rule Definitions ─────────────────────────────────────────────────
 
-/**
- * All supported manifesto rules.
- * level: 'function' | 'file' | 'graph'
- * metric: DB column or special key
- * defaults: { warn, fail } — null means disabled
- */
-export const RULE_DEFS = [
+interface RuleDef {
+  name: string;
+  level: 'function' | 'file' | 'graph';
+  metric: string;
+  defaults: { warn: number | null; fail: number | null };
+  reportOnly?: boolean;
+}
+
+export const RULE_DEFS: RuleDef[] = [
   {
     name: 'cognitive',
     level: 'function',
@@ -74,12 +77,12 @@ const NO_TEST_SQL = `
   AND n.file NOT LIKE '%__tests__%'
   AND n.file NOT LIKE '%.stories.%'`;
 
-/**
- * Deep-merge user config with RULE_DEFS defaults per rule.
- * mergeConfig in config.js is shallow for nested objects, so we do per-rule merging here.
- */
-function resolveRules(userRules) {
-  const resolved = {};
+interface ResolvedRules {
+  [name: string]: ThresholdRule;
+}
+
+function resolveRules(userRules?: Record<string, Partial<ThresholdRule>>): ResolvedRules {
+  const resolved: ResolvedRules = {};
   for (const def of RULE_DEFS) {
     const user = userRules?.[def.name];
     resolved[def.name] = {
@@ -90,17 +93,27 @@ function resolveRules(userRules) {
   return resolved;
 }
 
-/**
- * Check if a rule is enabled (has at least one non-null threshold).
- */
-function isEnabled(thresholds) {
+function isEnabled(thresholds: ThresholdRule): boolean {
   return thresholds.warn != null || thresholds.fail != null;
 }
 
-/**
- * Check a numeric value against warn/fail thresholds, push violations.
- */
-function checkThreshold(rule, thresholds, value, meta, violations) {
+interface Violation {
+  rule: string;
+  level: string;
+  value: number;
+  threshold: number;
+  name?: string;
+  file?: string;
+  line?: number | null;
+}
+
+function checkThreshold(
+  rule: string,
+  thresholds: ThresholdRule,
+  value: number,
+  meta: { name?: string; file?: string; line?: number | null },
+  violations: Violation[],
+): 'fail' | 'warn' | 'pass' {
   if (thresholds.fail != null && value >= thresholds.fail) {
     violations.push({
       rule,
@@ -126,16 +139,39 @@ function checkThreshold(rule, thresholds, value, meta, violations) {
 
 // ─── Evaluators ───────────────────────────────────────────────────────
 
-function evaluateFunctionRules(db, rules, opts, violations, ruleResults) {
+interface RuleResult {
+  name: string;
+  level: string;
+  status: string;
+  thresholds: ThresholdRule;
+  violationCount: number;
+}
+
+interface ManifestoOpts {
+  noTests?: boolean;
+  file?: string;
+  kind?: string;
+  config?: CodegraphConfig;
+  limit?: number;
+  offset?: number;
+}
+
+function evaluateFunctionRules(
+  db: BetterSqlite3Database,
+  rules: ResolvedRules,
+  opts: ManifestoOpts,
+  violations: Violation[],
+  ruleResults: RuleResult[],
+): void {
   const functionDefs = RULE_DEFS.filter((d) => d.level === 'function');
-  const activeDefs = functionDefs.filter((d) => isEnabled(rules[d.name]));
+  const activeDefs = functionDefs.filter((d) => isEnabled(rules[d.name]!));
   if (activeDefs.length === 0) {
     for (const def of functionDefs) {
       ruleResults.push({
         name: def.name,
         level: def.level,
         status: 'pass',
-        thresholds: rules[def.name],
+        thresholds: rules[def.name]!,
         violationCount: 0,
       });
     }
@@ -143,10 +179,10 @@ function evaluateFunctionRules(db, rules, opts, violations, ruleResults) {
   }
 
   let where = "WHERE n.kind IN ('function','method')";
-  const params = [];
+  const params: unknown[] = [];
   if (opts.noTests) where += NO_TEST_SQL;
   {
-    const fc = buildFileConditionSQL(opts.file, 'n.file');
+    const fc = buildFileConditionSQL(opts.file as string, 'n.file');
     where += fc.sql;
     params.push(...fc.params);
   }
@@ -155,7 +191,7 @@ function evaluateFunctionRules(db, rules, opts, violations, ruleResults) {
     params.push(opts.kind);
   }
 
-  let rows;
+  let rows: Array<Record<string, unknown>>;
   try {
     rows = db
       .prepare(
@@ -165,15 +201,15 @@ function evaluateFunctionRules(db, rules, opts, violations, ruleResults) {
          JOIN nodes n ON fc.node_id = n.id
          ${where}`,
       )
-      .all(...params);
-  } catch (err) {
-    debug('manifesto function query failed: %s', err.message);
+      .all(...params) as Array<Record<string, unknown>>;
+  } catch (err: unknown) {
+    debug(`manifesto function query failed: ${(err as Error).message}`);
     rows = [];
   }
 
   // Track worst status per rule
-  const worst = {};
-  const counts = {};
+  const worst: Record<string, string> = {};
+  const counts: Record<string, number> = {};
   for (const def of functionDefs) {
     worst[def.name] = 'pass';
     counts[def.name] = 0;
@@ -181,12 +217,16 @@ function evaluateFunctionRules(db, rules, opts, violations, ruleResults) {
 
   for (const row of rows) {
     for (const def of activeDefs) {
-      const value = row[def.metric];
+      const value = row[def.metric] as number | null;
       if (value == null) continue;
-      const meta = { name: row.name, file: row.file, line: row.line };
-      const status = checkThreshold(def.name, rules[def.name], value, meta, violations);
+      const meta = {
+        name: row['name'] as string,
+        file: row['file'] as string,
+        line: row['line'] as number,
+      };
+      const status = checkThreshold(def.name, rules[def.name]!, value, meta, violations);
       if (status !== 'pass') {
-        counts[def.name]++;
+        counts[def.name] = (counts[def.name] ?? 0) + 1;
         if (status === 'fail') worst[def.name] = 'fail';
         else if (worst[def.name] !== 'fail') worst[def.name] = 'warn';
       }
@@ -197,23 +237,29 @@ function evaluateFunctionRules(db, rules, opts, violations, ruleResults) {
     ruleResults.push({
       name: def.name,
       level: def.level,
-      status: worst[def.name],
-      thresholds: rules[def.name],
-      violationCount: counts[def.name],
+      status: worst[def.name]!,
+      thresholds: rules[def.name]!,
+      violationCount: counts[def.name] ?? 0,
     });
   }
 }
 
-function evaluateFileRules(db, rules, opts, violations, ruleResults) {
+function evaluateFileRules(
+  db: BetterSqlite3Database,
+  rules: ResolvedRules,
+  opts: ManifestoOpts,
+  violations: Violation[],
+  ruleResults: RuleResult[],
+): void {
   const fileDefs = RULE_DEFS.filter((d) => d.level === 'file');
-  const activeDefs = fileDefs.filter((d) => isEnabled(rules[d.name]));
+  const activeDefs = fileDefs.filter((d) => isEnabled(rules[d.name]!));
   if (activeDefs.length === 0) {
     for (const def of fileDefs) {
       ruleResults.push({
         name: def.name,
         level: def.level,
         status: 'pass',
-        thresholds: rules[def.name],
+        thresholds: rules[def.name]!,
         violationCount: 0,
       });
     }
@@ -221,15 +267,15 @@ function evaluateFileRules(db, rules, opts, violations, ruleResults) {
   }
 
   let where = "WHERE n.kind = 'file'";
-  const params = [];
+  const params: unknown[] = [];
   if (opts.noTests) where += NO_TEST_SQL;
   {
-    const fc = buildFileConditionSQL(opts.file, 'n.file');
+    const fc = buildFileConditionSQL(opts.file as string, 'n.file');
     where += fc.sql;
     params.push(...fc.params);
   }
 
-  let rows;
+  let rows: Array<Record<string, unknown>>;
   try {
     rows = db
       .prepare(
@@ -240,14 +286,14 @@ function evaluateFileRules(db, rules, opts, violations, ruleResults) {
          JOIN nodes n ON nm.node_id = n.id
          ${where}`,
       )
-      .all(...params);
-  } catch (err) {
-    debug('manifesto file query failed: %s', err.message);
+      .all(...params) as Array<Record<string, unknown>>;
+  } catch (err: unknown) {
+    debug(`manifesto file query failed: ${(err as Error).message}`);
     rows = [];
   }
 
-  const worst = {};
-  const counts = {};
+  const worst: Record<string, string> = {};
+  const counts: Record<string, number> = {};
   for (const def of fileDefs) {
     worst[def.name] = 'pass';
     counts[def.name] = 0;
@@ -255,12 +301,16 @@ function evaluateFileRules(db, rules, opts, violations, ruleResults) {
 
   for (const row of rows) {
     for (const def of activeDefs) {
-      const value = row[def.metric];
+      const value = row[def.metric] as number | null;
       if (value == null) continue;
-      const meta = { name: row.name, file: row.file, line: row.line };
-      const status = checkThreshold(def.name, rules[def.name], value, meta, violations);
+      const meta = {
+        name: row['name'] as string,
+        file: row['file'] as string,
+        line: row['line'] as number,
+      };
+      const status = checkThreshold(def.name, rules[def.name]!, value, meta, violations);
       if (status !== 'pass') {
-        counts[def.name]++;
+        counts[def.name] = (counts[def.name] ?? 0) + 1;
         if (status === 'fail') worst[def.name] = 'fail';
         else if (worst[def.name] !== 'fail') worst[def.name] = 'warn';
       }
@@ -271,15 +321,21 @@ function evaluateFileRules(db, rules, opts, violations, ruleResults) {
     ruleResults.push({
       name: def.name,
       level: def.level,
-      status: worst[def.name],
-      thresholds: rules[def.name],
-      violationCount: counts[def.name],
+      status: worst[def.name]!,
+      thresholds: rules[def.name]!,
+      violationCount: counts[def.name] ?? 0,
     });
   }
 }
 
-function evaluateGraphRules(db, rules, opts, violations, ruleResults) {
-  const thresholds = rules.noCycles;
+function evaluateGraphRules(
+  db: BetterSqlite3Database,
+  rules: ResolvedRules,
+  opts: ManifestoOpts,
+  violations: Violation[],
+  ruleResults: RuleResult[],
+): void {
+  const thresholds = rules['noCycles']!;
   if (!isEnabled(thresholds)) {
     ruleResults.push({
       name: 'noCycles',
@@ -329,14 +385,24 @@ function evaluateGraphRules(db, rules, opts, violations, ruleResults) {
   });
 }
 
-function evaluateBoundaryRules(db, rules, config, opts, violations, ruleResults) {
-  const thresholds = rules.boundaries;
+function evaluateBoundaryRules(
+  db: BetterSqlite3Database,
+  rules: ResolvedRules,
+  config: CodegraphConfig,
+  opts: ManifestoOpts,
+  violations: Violation[],
+  ruleResults: RuleResult[],
+): void {
+  const thresholds = rules['boundaries']!;
   const boundaryConfig = config.manifesto?.boundaries;
 
   // Auto-enable at warn level when boundary config exists but threshold not set
-  const effectiveThresholds = { ...thresholds };
+  const effectiveThresholds: ThresholdRule = {
+    warn: thresholds.warn ?? null,
+    fail: thresholds.fail ?? null,
+  };
   if (boundaryConfig && !isEnabled(thresholds)) {
-    effectiveThresholds.warn = true;
+    effectiveThresholds.warn = true as unknown as number;
   }
 
   if (!isEnabled(effectiveThresholds) || !boundaryConfig) {
@@ -384,25 +450,20 @@ function evaluateBoundaryRules(db, rules, config, opts, violations, ruleResults)
 
 // ─── Public API ───────────────────────────────────────────────────────
 
-/**
- * Evaluate all manifesto rules and return structured results.
- *
- * @param {string} [customDbPath] - Path to graph.db
- * @param {object} [opts] - Options
- * @param {boolean} [opts.noTests] - Exclude test files
- * @param {string} [opts.file] - Filter by file (partial match)
- * @param {string} [opts.kind] - Filter by symbol kind
- * @returns {{ rules: object[], violations: object[], summary: object, passed: boolean }}
- */
-export function manifestoData(customDbPath, opts = {}) {
+export function manifestoData(
+  customDbPath?: string,
+  opts: ManifestoOpts = {},
+): Record<string, unknown> {
   const db = openReadonlyOrFail(customDbPath);
 
   try {
     const config = opts.config || loadConfig(process.cwd());
-    const rules = resolveRules(config.manifesto?.rules);
+    const rules = resolveRules(
+      config.manifesto?.rules as unknown as Record<string, Partial<ThresholdRule>>,
+    );
 
-    const violations = [];
-    const ruleResults = [];
+    const violations: Violation[] = [];
+    const ruleResults: RuleResult[] = [];
 
     evaluateFunctionRules(db, rules, opts, violations, ruleResults);
     evaluateFileRules(db, rules, opts, violations, ruleResults);

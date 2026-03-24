@@ -18,6 +18,14 @@ import { loadConfig } from '../infrastructure/config.js';
 import { debug, info } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
+import type {
+  BetterSqlite3Database,
+  CodegraphConfig,
+  ComplexityRules,
+  HalsteadRules,
+  LOCMetrics,
+  TreeSitterNode,
+} from '../types.js';
 
 // Re-export rules for backward compatibility
 export { COMPLEXITY_RULES, HALSTEAD_RULES };
@@ -27,36 +35,45 @@ const COMPLEXITY_EXTENSIONS = buildExtensionSet(COMPLEXITY_RULES);
 
 // ─── Halstead Metrics Computation ─────────────────────────────────────────
 
-/**
- * Compute Halstead metrics for a function's AST subtree.
- *
- * @param {object} functionNode - tree-sitter node for the function
- * @param {string} language - Language ID
- * @returns {{ n1: number, n2: number, bigN1: number, bigN2: number, vocabulary: number, length: number, volume: number, difficulty: number, effort: number, bugs: number } | null}
- */
-export function computeHalsteadMetrics(functionNode, language) {
-  const rules = HALSTEAD_RULES.get(language);
+interface HalsteadMetrics {
+  n1: number;
+  n2: number;
+  bigN1: number;
+  bigN2: number;
+  vocabulary: number;
+  length: number;
+  volume: number;
+  difficulty: number;
+  effort: number;
+  bugs: number;
+}
+
+export function computeHalsteadMetrics(
+  functionNode: TreeSitterNode,
+  language: string,
+): HalsteadMetrics | null {
+  const rules = HALSTEAD_RULES.get(language) as HalsteadRules | undefined;
   if (!rules) return null;
 
-  const operators = new Map(); // type -> count
-  const operands = new Map(); // text -> count
+  const operators = new Map<string, number>(); // type -> count
+  const operands = new Map<string, number>(); // text -> count
 
-  function walk(node) {
+  function walk(node: TreeSitterNode | null): void {
     if (!node) return;
 
     // Skip type annotation subtrees
-    if (rules.skipTypes.has(node.type)) return;
+    if (rules!.skipTypes.has(node.type)) return;
 
     // Compound operators (non-leaf): count the node type as an operator
-    if (rules.compoundOperators.has(node.type)) {
+    if (rules!.compoundOperators.has(node.type)) {
       operators.set(node.type, (operators.get(node.type) || 0) + 1);
     }
 
     // Leaf nodes: classify as operator or operand
     if (node.childCount === 0) {
-      if (rules.operatorLeafTypes.has(node.type)) {
+      if (rules!.operatorLeafTypes.has(node.type)) {
         operators.set(node.type, (operators.get(node.type) || 0) + 1);
-      } else if (rules.operandLeafTypes.has(node.type)) {
+      } else if (rules!.operandLeafTypes.has(node.type)) {
         const text = node.text;
         operands.set(text, (operands.get(text) || 0) + 1);
       }
@@ -109,23 +126,18 @@ export const computeMaintainabilityIndex = _computeMaintainabilityIndex;
 
 // ─── Algorithm: Single-Traversal DFS ──────────────────────────────────────
 
-/**
- * Compute cognitive complexity, cyclomatic complexity, and max nesting depth
- * for a function's AST subtree in a single DFS walk.
- *
- * @param {object} functionNode - tree-sitter node for the function body
- * @param {string} language - Language ID (e.g. 'javascript', 'typescript')
- * @returns {{ cognitive: number, cyclomatic: number, maxNesting: number } | null}
- */
-export function computeFunctionComplexity(functionNode, language) {
-  const rules = COMPLEXITY_RULES.get(language);
+export function computeFunctionComplexity(
+  functionNode: TreeSitterNode,
+  language: string,
+): { cognitive: number; cyclomatic: number; maxNesting: number } | null {
+  const rules = COMPLEXITY_RULES.get(language) as ComplexityRules | undefined;
   if (!rules) return null;
 
   let cognitive = 0;
   let cyclomatic = 1; // McCabe starts at 1
   let maxNesting = 0;
 
-  function walk(node, nestingLevel, isTopFunction) {
+  function walk(node: TreeSitterNode | null, nestingLevel: number, isTopFunction: boolean): void {
     if (!node) return;
 
     const type = node.type;
@@ -134,9 +146,9 @@ export function computeFunctionComplexity(functionNode, language) {
     if (nestingLevel > maxNesting) maxNesting = nestingLevel;
 
     // Handle logical operators in binary expressions
-    if (type === rules.logicalNodeType) {
+    if (type === rules!.logicalNodeType) {
       const op = node.child(1)?.type;
-      if (op && rules.logicalOperators.has(op)) {
+      if (op && rules!.logicalOperators.has(op)) {
         // Cyclomatic: +1 for every logical operator
         cyclomatic++;
 
@@ -144,7 +156,7 @@ export function computeFunctionComplexity(functionNode, language) {
         // Walk up to check if parent is same type with same operator
         const parent = node.parent;
         let sameSequence = false;
-        if (parent && parent.type === rules.logicalNodeType) {
+        if (parent && parent.type === rules!.logicalNodeType) {
           const parentOp = parent.child(1)?.type;
           if (parentOp === op) {
             sameSequence = true;
@@ -163,16 +175,16 @@ export function computeFunctionComplexity(functionNode, language) {
     }
 
     // Handle optional chaining (cyclomatic only)
-    if (type === rules.optionalChainType) {
+    if (type === rules!.optionalChainType) {
       cyclomatic++;
     }
 
     // Handle branch/control flow nodes (skip keyword leaf tokens like Ruby's `if`)
-    if (rules.branchNodes.has(type) && node.childCount > 0) {
+    if (rules!.branchNodes.has(type) && node.childCount > 0) {
       // Pattern A: else clause wraps if (JS/C#/Rust)
-      if (rules.elseNodeType && type === rules.elseNodeType) {
+      if (rules!.elseNodeType && type === rules!.elseNodeType) {
         const firstChild = node.namedChild(0);
-        if (firstChild && firstChild.type === rules.ifNodeType) {
+        if (firstChild && firstChild.type === rules!.ifNodeType) {
           // else-if: the if_statement child handles its own increment
           for (let i = 0; i < node.childCount; i++) {
             walk(node.child(i), nestingLevel, false);
@@ -188,7 +200,7 @@ export function computeFunctionComplexity(functionNode, language) {
       }
 
       // Pattern B: explicit elif node (Python/Ruby/PHP)
-      if (rules.elifNodeType && type === rules.elifNodeType) {
+      if (rules!.elifNodeType && type === rules!.elifNodeType) {
         cognitive++;
         cyclomatic++;
         for (let i = 0; i < node.childCount; i++) {
@@ -199,15 +211,15 @@ export function computeFunctionComplexity(functionNode, language) {
 
       // Detect else-if via Pattern A or C
       let isElseIf = false;
-      if (type === rules.ifNodeType) {
-        if (rules.elseViaAlternative) {
+      if (type === rules!.ifNodeType) {
+        if (rules!.elseViaAlternative) {
           // Pattern C (Go/Java): if_statement is the alternative of parent if_statement
           isElseIf =
-            node.parent?.type === rules.ifNodeType &&
+            node.parent?.type === rules!.ifNodeType &&
             node.parent.childForFieldName('alternative')?.id === node.id;
-        } else if (rules.elseNodeType) {
+        } else if (rules!.elseNodeType) {
           // Pattern A (JS/C#/Rust): if_statement inside else_clause
-          isElseIf = node.parent?.type === rules.elseNodeType;
+          isElseIf = node.parent?.type === rules!.elseNodeType;
         }
       }
 
@@ -225,11 +237,11 @@ export function computeFunctionComplexity(functionNode, language) {
       cyclomatic++;
 
       // Switch-like nodes don't add cyclomatic themselves (cases do)
-      if (rules.switchLikeNodes?.has(type)) {
+      if (rules!.switchLikeNodes?.has(type)) {
         cyclomatic--; // Undo the ++ above; cases handle cyclomatic
       }
 
-      if (rules.nestingNodes.has(type)) {
+      if (rules!.nestingNodes.has(type)) {
         for (let i = 0; i < node.childCount; i++) {
           walk(node.child(i), nestingLevel + 1, false);
         }
@@ -239,9 +251,9 @@ export function computeFunctionComplexity(functionNode, language) {
 
     // Pattern C plain else: block that is the alternative of an if_statement (Go/Java)
     if (
-      rules.elseViaAlternative &&
-      type !== rules.ifNodeType &&
-      node.parent?.type === rules.ifNodeType &&
+      rules!.elseViaAlternative &&
+      type !== rules!.ifNodeType &&
+      node.parent?.type === rules!.ifNodeType &&
       node.parent.childForFieldName('alternative')?.id === node.id
     ) {
       cognitive++;
@@ -252,12 +264,12 @@ export function computeFunctionComplexity(functionNode, language) {
     }
 
     // Handle case nodes (cyclomatic only, skip keyword leaves)
-    if (rules.caseNodes.has(type) && node.childCount > 0) {
+    if (rules!.caseNodes.has(type) && node.childCount > 0) {
       cyclomatic++;
     }
 
     // Handle nested function definitions (increase nesting)
-    if (!isTopFunction && rules.functionNodes.has(type)) {
+    if (!isTopFunction && rules!.functionNodes.has(type)) {
       for (let i = 0; i < node.childCount; i++) {
         walk(node.child(i), nestingLevel + 1, false);
       }
@@ -277,26 +289,26 @@ export function computeFunctionComplexity(functionNode, language) {
 
 // ─── Merged Single-Pass Computation ───────────────────────────────────────
 
-/**
- * Compute all metrics (complexity + Halstead + LOC + MI) in a single DFS walk.
- * Merges computeFunctionComplexity and computeHalsteadMetrics into one tree
- * traversal, avoiding two separate DFS walks per function node at build time.
- * LOC is text-based (not tree-based) and computed separately (very cheap).
- *
- * Now delegates to the complexity visitor via the unified walker.
- *
- * @param {object} functionNode - tree-sitter node for the function
- * @param {string} langId - Language ID (e.g. 'javascript', 'python')
- * @returns {{ cognitive: number, cyclomatic: number, maxNesting: number, halstead: object|null, loc: object, mi: number } | null}
- */
-export function computeAllMetrics(functionNode, langId) {
+interface AllMetricsResult {
+  cognitive: number;
+  cyclomatic: number;
+  maxNesting: number;
+  halstead: HalsteadMetrics | null;
+  loc: LOCMetrics;
+  mi: number;
+}
+
+export function computeAllMetrics(
+  functionNode: TreeSitterNode,
+  langId: string,
+): AllMetricsResult | null {
   const cRules = COMPLEXITY_RULES.get(langId);
   if (!cRules) return null;
   const hRules = HALSTEAD_RULES.get(langId);
 
   const visitor = createComplexityVisitor(cRules, hRules, { langId });
 
-  const nestingNodes = new Set(cRules.nestingNodes);
+  const nestingNodes = new Set((cRules as ComplexityRules).nestingNodes);
   // NOTE: do NOT add functionNodes here — in function-level mode the walker
   // walks a single function node, and adding it to nestingNodeTypes would
   // inflate context.nestingLevel by +1 for the entire body.
@@ -305,7 +317,12 @@ export function computeAllMetrics(functionNode, langId) {
     nestingNodeTypes: nestingNodes,
   });
 
-  const rawResult = results.complexity;
+  const rawResult = results['complexity'] as {
+    cognitive: number;
+    cyclomatic: number;
+    maxNesting: number;
+    halstead: HalsteadMetrics | null;
+  };
 
   // The visitor's finish() in function-level mode returns the raw metrics
   // but without LOC (needs the functionNode text). Compute LOC + MI here.
@@ -326,12 +343,30 @@ export function computeAllMetrics(functionNode, langId) {
 
 // ─── Build-Time: Compute Metrics for Changed Files ────────────────────────
 
-/**
- * Find the function body node in a parse tree that matches a given line range.
- */
 export { _findFunctionNode as findFunctionNode };
 
-async function initWasmParsersIfNeeded(fileSymbols) {
+interface FileSymbols {
+  _tree?: { rootNode: TreeSitterNode } | null;
+  _langId?: string | null;
+  definitions: Array<{
+    name: string;
+    kind: string;
+    line: number;
+    endLine?: number;
+    complexity?: {
+      cognitive: number;
+      cyclomatic: number;
+      maxNesting?: number;
+      maintainabilityIndex?: number;
+      halstead?: HalsteadMetrics | null;
+      loc?: LOCMetrics | null;
+    };
+  }>;
+}
+
+async function initWasmParsersIfNeeded(
+  fileSymbols: Map<string, FileSymbols>,
+): Promise<{ parsers: unknown; extToLang: Map<string, string> | null }> {
   for (const [relPath, symbols] of fileSymbols) {
     if (!symbols._tree) {
       const ext = path.extname(relPath).toLowerCase();
@@ -350,7 +385,15 @@ async function initWasmParsersIfNeeded(fileSymbols) {
   return { parsers: null, extToLang: null };
 }
 
-function getTreeForFile(symbols, relPath, rootDir, parsers, extToLang, getParser) {
+function getTreeForFile(
+  symbols: FileSymbols,
+  relPath: string,
+  rootDir: string,
+  parsers: unknown,
+  extToLang: Map<string, string> | null,
+  // biome-ignore lint/suspicious/noExplicitAny: dynamic import from parser.js
+  getParser: (parsers: any, absPath: string) => any,
+): { tree: { rootNode: TreeSitterNode }; langId: string } | null {
   let tree = symbols._tree;
   let langId = symbols._langId;
 
@@ -366,11 +409,11 @@ function getTreeForFile(symbols, relPath, rootDir, parsers, extToLang, getParser
     if (!langId) return null;
 
     const absPath = path.join(rootDir, relPath);
-    let code;
+    let code: string;
     try {
       code = fs.readFileSync(absPath, 'utf-8');
-    } catch (e) {
-      debug(`complexity: cannot read ${relPath}: ${e.message}`);
+    } catch (e: unknown) {
+      debug(`complexity: cannot read ${relPath}: ${(e as Error).message}`);
       return null;
     }
 
@@ -379,25 +422,30 @@ function getTreeForFile(symbols, relPath, rootDir, parsers, extToLang, getParser
 
     try {
       tree = parser.parse(code);
-    } catch (e) {
-      debug(`complexity: parse failed for ${relPath}: ${e.message}`);
+    } catch (e: unknown) {
+      debug(`complexity: parse failed for ${relPath}: ${(e as Error).message}`);
       return null;
     }
   }
 
-  return { tree, langId };
+  return tree && langId ? { tree: tree as { rootNode: TreeSitterNode }, langId } : null;
 }
 
-function upsertPrecomputedComplexity(db, upsert, def, relPath) {
+function upsertPrecomputedComplexity(
+  db: BetterSqlite3Database,
+  upsert: { run(...params: unknown[]): unknown },
+  def: FileSymbols['definitions'][0],
+  relPath: string,
+): number {
   const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
   if (!nodeId) return 0;
-  const ch = def.complexity.halstead;
-  const cl = def.complexity.loc;
+  const ch = def.complexity!.halstead;
+  const cl = def.complexity!.loc;
   upsert.run(
     nodeId,
-    def.complexity.cognitive,
-    def.complexity.cyclomatic,
-    def.complexity.maxNesting ?? 0,
+    def.complexity!.cognitive,
+    def.complexity!.cyclomatic,
+    def.complexity!.maxNesting ?? 0,
     cl ? cl.loc : 0,
     cl ? cl.sloc : 0,
     cl ? cl.commentLines : 0,
@@ -411,18 +459,26 @@ function upsertPrecomputedComplexity(db, upsert, def, relPath) {
     ch ? ch.difficulty : 0,
     ch ? ch.effort : 0,
     ch ? ch.bugs : 0,
-    def.complexity.maintainabilityIndex ?? 0,
+    def.complexity!.maintainabilityIndex ?? 0,
   );
   return 1;
 }
 
-function upsertAstComplexity(db, upsert, def, relPath, tree, langId, rules) {
+function upsertAstComplexity(
+  db: BetterSqlite3Database,
+  upsert: { run(...params: unknown[]): unknown },
+  def: FileSymbols['definitions'][0],
+  relPath: string,
+  tree: { rootNode: TreeSitterNode } | null,
+  langId: string | null | undefined,
+  rules: ComplexityRules | undefined,
+): number {
   if (!tree || !rules) return 0;
 
-  const funcNode = _findFunctionNode(tree.rootNode, def.line, def.endLine, rules);
+  const funcNode = _findFunctionNode(tree.rootNode, def.line, def.endLine ?? def.line, rules);
   if (!funcNode) return 0;
 
-  const metrics = computeAllMetrics(funcNode, langId);
+  const metrics = computeAllMetrics(funcNode, langId!);
   if (!metrics) return 0;
 
   const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
@@ -452,16 +508,12 @@ function upsertAstComplexity(db, upsert, def, relPath, tree, langId, rules) {
   return 1;
 }
 
-/**
- * Re-parse changed files with WASM tree-sitter, find function AST subtrees,
- * compute complexity, and upsert into function_complexity table.
- *
- * @param {object} db - open better-sqlite3 database (read-write)
- * @param {Map<string, object>} fileSymbols - Map<relPath, { definitions, ... }>
- * @param {string} rootDir - absolute project root path
- * @param {object} [engineOpts] - engine options (unused; always uses WASM for AST)
- */
-export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOpts) {
+export async function buildComplexityMetrics(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, FileSymbols>,
+  rootDir: string,
+  _engineOpts?: unknown,
+): Promise<void> {
   const { parsers, extToLang } = await initWasmParsersIfNeeded(fileSymbols);
   const { getParser } = await import('../domain/parser.js');
 
@@ -483,7 +535,9 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
       const tree = result ? result.tree : null;
       const langId = result ? result.langId : null;
 
-      const rules = langId ? COMPLEXITY_RULES.get(langId) : null;
+      const rules = langId
+        ? (COMPLEXITY_RULES.get(langId) as ComplexityRules | undefined)
+        : undefined;
 
       for (const def of symbols.definitions) {
         if (def.kind !== 'function' && def.kind !== 'method') continue;
@@ -507,21 +561,38 @@ export async function buildComplexityMetrics(db, fileSymbols, rootDir, _engineOp
 
 // ─── Query-Time Functions ─────────────────────────────────────────────────
 
-/**
- * Return structured complexity data for querying.
- *
- * @param {string} [customDbPath] - Path to graph.db
- * @param {object} [opts] - Options
- * @param {string} [opts.target] - Function name filter (partial match)
- * @param {number} [opts.limit] - Max results (default: 20)
- * @param {string} [opts.sort] - Sort by: cognitive | cyclomatic | nesting (default: cognitive)
- * @param {boolean} [opts.aboveThreshold] - Only functions above warn thresholds
- * @param {string} [opts.file] - Filter by file (partial match)
- * @param {string} [opts.kind] - Filter by symbol kind
- * @param {boolean} [opts.noTests] - Exclude test files
- * @returns {{ functions: object[], summary: object, thresholds: object }}
- */
-export function complexityData(customDbPath, opts = {}) {
+interface ComplexityRow {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  end_line: number | null;
+  cognitive: number;
+  cyclomatic: number;
+  max_nesting: number;
+  loc: number;
+  sloc: number;
+  maintainability_index: number;
+  halstead_volume: number;
+  halstead_difficulty: number;
+  halstead_effort: number;
+  halstead_bugs: number;
+}
+
+export function complexityData(
+  customDbPath?: string,
+  opts: {
+    target?: string;
+    limit?: number;
+    sort?: string;
+    aboveThreshold?: boolean;
+    file?: string;
+    kind?: string;
+    noTests?: boolean;
+    config?: CodegraphConfig;
+    offset?: number;
+  } = {},
+): Record<string, unknown> {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const sort = opts.sort || 'cognitive';
@@ -533,7 +604,8 @@ export function complexityData(customDbPath, opts = {}) {
 
     // Load thresholds from config
     const config = opts.config || loadConfig(process.cwd());
-    const thresholds = config.manifesto?.rules || {
+    // biome-ignore lint/suspicious/noExplicitAny: thresholds come from config with dynamic keys
+    const thresholds: any = config.manifesto?.rules || {
       cognitive: { warn: 15, fail: null },
       cyclomatic: { warn: 10, fail: null },
       maxNesting: { warn: 4, fail: null },
@@ -542,7 +614,7 @@ export function complexityData(customDbPath, opts = {}) {
 
     // Build query
     let where = "WHERE n.kind IN ('function','method')";
-    const params = [];
+    const params: unknown[] = [];
 
     if (noTests) {
       where += ` AND n.file NOT LIKE '%.test.%'
@@ -556,7 +628,7 @@ export function complexityData(customDbPath, opts = {}) {
       params.push(`%${target}%`);
     }
     {
-      const fc = buildFileConditionSQL(fileFilter, 'n.file');
+      const fc = buildFileConditionSQL(fileFilter as string, 'n.file');
       where += fc.sql;
       params.push(...fc.params);
     }
@@ -565,11 +637,12 @@ export function complexityData(customDbPath, opts = {}) {
       params.push(kindFilter);
     }
 
-    const isValidThreshold = (v) => typeof v === 'number' && Number.isFinite(v);
+    const isValidThreshold = (v: unknown): v is number =>
+      typeof v === 'number' && Number.isFinite(v);
 
     let having = '';
     if (aboveThreshold) {
-      const conditions = [];
+      const conditions: string[] = [];
       if (isValidThreshold(thresholds.cognitive?.warn)) {
         conditions.push(`fc.cognitive >= ${thresholds.cognitive.warn}`);
       }
@@ -589,7 +662,7 @@ export function complexityData(customDbPath, opts = {}) {
       }
     }
 
-    const orderMap = {
+    const orderMap: Record<string, string> = {
       cognitive: 'fc.cognitive DESC',
       cyclomatic: 'fc.cyclomatic DESC',
       nesting: 'fc.max_nesting DESC',
@@ -601,10 +674,10 @@ export function complexityData(customDbPath, opts = {}) {
     };
     const orderBy = orderMap[sort] || 'fc.cognitive DESC';
 
-    let rows;
+    let rows: ComplexityRow[];
     try {
       rows = db
-        .prepare(
+        .prepare<ComplexityRow>(
           `SELECT n.name, n.kind, n.file, n.line, n.end_line,
                 fc.cognitive, fc.cyclomatic, fc.max_nesting,
                 fc.loc, fc.sloc, fc.maintainability_index,
@@ -615,14 +688,14 @@ export function complexityData(customDbPath, opts = {}) {
          ORDER BY ${orderBy}`,
         )
         .all(...params);
-    } catch (e) {
-      debug(`complexity query failed (table may not exist): ${e.message}`);
+    } catch (e: unknown) {
+      debug(`complexity query failed (table may not exist): ${(e as Error).message}`);
       // Check if graph has nodes even though complexity table is missing/empty
       let hasGraph = false;
       try {
-        hasGraph = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c > 0;
-      } catch (e2) {
-        debug(`nodes table check failed: ${e2.message}`);
+        hasGraph = db.prepare<{ c: number }>('SELECT COUNT(*) as c FROM nodes').get()!.c > 0;
+      } catch (e2: unknown) {
+        debug(`nodes table check failed: ${(e2 as Error).message}`);
       }
       return { functions: [], summary: null, thresholds, hasGraph };
     }
@@ -631,23 +704,23 @@ export function complexityData(customDbPath, opts = {}) {
     const filtered = noTests ? rows.filter((r) => !isTestFile(r.file)) : rows;
 
     const functions = filtered.map((r) => {
-      const exceeds = [];
-      if (isValidThreshold(thresholds.cognitive?.warn) && r.cognitive >= thresholds.cognitive.warn)
+      const exceeds: string[] = [];
+      if (isValidThreshold(thresholds.cognitive?.warn) && r.cognitive >= thresholds.cognitive.warn!)
         exceeds.push('cognitive');
       if (
         isValidThreshold(thresholds.cyclomatic?.warn) &&
-        r.cyclomatic >= thresholds.cyclomatic.warn
+        r.cyclomatic >= thresholds.cyclomatic.warn!
       )
         exceeds.push('cyclomatic');
       if (
         isValidThreshold(thresholds.maxNesting?.warn) &&
-        r.max_nesting >= thresholds.maxNesting.warn
+        r.max_nesting >= thresholds.maxNesting.warn!
       )
         exceeds.push('maxNesting');
       if (
         isValidThreshold(thresholds.maintainabilityIndex?.warn) &&
         r.maintainability_index > 0 &&
-        r.maintainability_index <= thresholds.maintainabilityIndex.warn
+        r.maintainability_index <= thresholds.maintainabilityIndex.warn!
       )
         exceeds.push('maintainabilityIndex');
 
@@ -674,10 +747,15 @@ export function complexityData(customDbPath, opts = {}) {
     });
 
     // Summary stats
-    let summary = null;
+    let summary: Record<string, unknown> | null = null;
     try {
       const allRows = db
-        .prepare(
+        .prepare<{
+          cognitive: number;
+          cyclomatic: number;
+          max_nesting: number;
+          maintainability_index: number;
+        }>(
           `SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.maintainability_index
          FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
          WHERE n.kind IN ('function','method')
@@ -700,28 +778,28 @@ export function complexityData(customDbPath, opts = {}) {
           aboveWarn: allRows.filter(
             (r) =>
               (isValidThreshold(thresholds.cognitive?.warn) &&
-                r.cognitive >= thresholds.cognitive.warn) ||
+                r.cognitive >= thresholds.cognitive.warn!) ||
               (isValidThreshold(thresholds.cyclomatic?.warn) &&
-                r.cyclomatic >= thresholds.cyclomatic.warn) ||
+                r.cyclomatic >= thresholds.cyclomatic.warn!) ||
               (isValidThreshold(thresholds.maxNesting?.warn) &&
-                r.max_nesting >= thresholds.maxNesting.warn) ||
+                r.max_nesting >= thresholds.maxNesting.warn!) ||
               (isValidThreshold(thresholds.maintainabilityIndex?.warn) &&
                 r.maintainability_index > 0 &&
-                r.maintainability_index <= thresholds.maintainabilityIndex.warn),
+                r.maintainability_index <= thresholds.maintainabilityIndex.warn!),
           ).length,
         };
       }
-    } catch (e) {
-      debug(`complexity summary query failed: ${e.message}`);
+    } catch (e: unknown) {
+      debug(`complexity summary query failed: ${(e as Error).message}`);
     }
 
     // When summary is null (no complexity rows), check if graph has nodes
     let hasGraph = false;
     if (summary === null) {
       try {
-        hasGraph = db.prepare('SELECT COUNT(*) as c FROM nodes').get().c > 0;
-      } catch (e) {
-        debug(`nodes table check failed: ${e.message}`);
+        hasGraph = db.prepare<{ c: number }>('SELECT COUNT(*) as c FROM nodes').get()!.c > 0;
+      } catch (e: unknown) {
+        debug(`nodes table check failed: ${(e as Error).message}`);
       }
     }
 
@@ -732,25 +810,47 @@ export function complexityData(customDbPath, opts = {}) {
   }
 }
 
-/**
- * Generator: stream complexity rows one-by-one using .iterate() for memory efficiency.
- * @param {string} [customDbPath]
- * @param {object} [opts]
- * @param {boolean} [opts.noTests]
- * @param {string} [opts.file]
- * @param {string} [opts.target]
- * @param {string} [opts.kind]
- * @param {string} [opts.sort]
- * @yields {{ name: string, kind: string, file: string, line: number, cognitive: number, cyclomatic: number, maxNesting: number, loc: number, sloc: number }}
- */
-export function* iterComplexity(customDbPath, opts = {}) {
+interface IterComplexityRow {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  end_line: number | null;
+  cognitive: number;
+  cyclomatic: number;
+  max_nesting: number;
+  loc: number;
+  sloc: number;
+}
+
+export function* iterComplexity(
+  customDbPath?: string,
+  opts: {
+    noTests?: boolean;
+    file?: string;
+    target?: string;
+    kind?: string;
+    sort?: string;
+  } = {},
+): Generator<{
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  endLine: number | null;
+  cognitive: number;
+  cyclomatic: number;
+  maxNesting: number;
+  loc: number;
+  sloc: number;
+}> {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
     const sort = opts.sort || 'cognitive';
 
     let where = "WHERE n.kind IN ('function','method')";
-    const params = [];
+    const params: unknown[] = [];
 
     if (noTests) {
       where += ` AND n.file NOT LIKE '%.test.%'
@@ -764,7 +864,7 @@ export function* iterComplexity(customDbPath, opts = {}) {
       params.push(`%${opts.target}%`);
     }
     {
-      const fc = buildFileConditionSQL(opts.file, 'n.file');
+      const fc = buildFileConditionSQL(opts.file as string, 'n.file');
       where += fc.sql;
       params.push(...fc.params);
     }
@@ -773,7 +873,7 @@ export function* iterComplexity(customDbPath, opts = {}) {
       params.push(opts.kind);
     }
 
-    const orderMap = {
+    const orderMap: Record<string, string> = {
       cognitive: 'fc.cognitive DESC',
       cyclomatic: 'fc.cyclomatic DESC',
       nesting: 'fc.max_nesting DESC',
@@ -785,7 +885,7 @@ export function* iterComplexity(customDbPath, opts = {}) {
     };
     const orderBy = orderMap[sort] || 'fc.cognitive DESC';
 
-    const stmt = db.prepare(
+    const stmt = db.prepare<IterComplexityRow>(
       `SELECT n.name, n.kind, n.file, n.line, n.end_line,
               fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.loc, fc.sloc
        FROM function_complexity fc

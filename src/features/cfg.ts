@@ -1,10 +1,3 @@
-/**
- * Intraprocedural Control Flow Graph (CFG) construction from tree-sitter AST.
- *
- * Builds basic-block CFGs for individual functions, stored in cfg_blocks + cfg_edges tables.
- * Opt-in via `build --cfg`. Supports JS/TS/TSX, Python, Go, Rust, Java, C#, Ruby, PHP.
- */
-
 import fs from 'node:fs';
 import path from 'node:path';
 import { CFG_RULES } from '../ast-analysis/rules/index.js';
@@ -25,42 +18,57 @@ import {
 } from '../db/index.js';
 import { debug, info } from '../infrastructure/logger.js';
 import { paginateResult } from '../shared/paginate.js';
+import type { BetterSqlite3Database, Definition, NodeRow, TreeSitterNode } from '../types.js';
 import { findNodes } from './shared/find-nodes.js';
 
-// Re-export for backward compatibility
 export { _makeCfgRules as makeCfgRules, CFG_RULES };
 
 const CFG_EXTENSIONS = buildExtensionSet(CFG_RULES);
 
 // ─── Core Algorithm: AST → CFG ──────────────────────────────────────────
 
-/**
- * Build a control flow graph for a single function AST node.
- *
- * Thin wrapper around the CFG visitor — runs walkWithVisitors on the function
- * node and returns the first result. All CFG construction logic lives in
- * `ast-analysis/visitors/cfg-visitor.js`.
- *
- * @param {object} functionNode - tree-sitter function AST node
- * @param {string} langId - language identifier
- * @returns {{ blocks: object[], edges: object[], cyclomatic: number }} - CFG blocks, edges, and derived cyclomatic
- */
-export function buildFunctionCFG(functionNode, langId) {
+interface CfgBuildBlock {
+  index: number;
+  type: string;
+  startLine: number;
+  endLine: number;
+  label: string;
+}
+
+interface CfgBuildEdge {
+  sourceIndex: number;
+  targetIndex: number;
+  kind: string;
+}
+
+interface CfgBuildResult {
+  blocks: CfgBuildBlock[];
+  edges: CfgBuildEdge[];
+  cyclomatic: number;
+}
+
+export function buildFunctionCFG(functionNode: TreeSitterNode, langId: string): CfgBuildResult {
   const rules = CFG_RULES.get(langId);
   if (!rules) return { blocks: [], edges: [], cyclomatic: 0 };
 
   const visitor = createCfgVisitor(rules);
   const walkerOpts = {
     functionNodeTypes: new Set(rules.functionNodes),
-    nestingNodeTypes: new Set(),
-    getFunctionName: (node) => {
-      const nameNode = node.childForFieldName('name');
+    nestingNodeTypes: new Set<string>(),
+    getFunctionName: (node: TreeSitterNode) => {
+      const nameNode = node.childForFieldName?.('name');
       return nameNode ? nameNode.text : null;
     },
   };
 
   const results = walkWithVisitors(functionNode, [visitor], langId, walkerOpts);
-  const cfgResults = results.cfg || [];
+  // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
+  const cfgResults = (results['cfg'] || []) as Array<{
+    funcNode: TreeSitterNode;
+    blocks: CfgBuildBlock[];
+    edges: CfgBuildEdge[];
+    cyclomatic: number;
+  }>;
   if (cfgResults.length === 0) return { blocks: [], edges: [], cyclomatic: 0 };
 
   const r = cfgResults.find((result) => result.funcNode === functionNode);
@@ -70,7 +78,15 @@ export function buildFunctionCFG(functionNode, langId) {
 
 // ─── Build-Time Helpers ─────────────────────────────────────────────────
 
-async function initCfgParsers(fileSymbols) {
+interface FileSymbols {
+  definitions: Definition[];
+  _tree?: { rootNode: TreeSitterNode };
+  _langId?: string;
+}
+
+async function initCfgParsers(
+  fileSymbols: Map<string, FileSymbols>,
+): Promise<{ parsers: unknown; getParserFn: unknown }> {
   let needsFallback = false;
 
   for (const [relPath, symbols] of fileSymbols) {
@@ -79,7 +95,7 @@ async function initCfgParsers(fileSymbols) {
       if (CFG_EXTENSIONS.has(ext)) {
         const hasNativeCfg = symbols.definitions
           .filter((d) => (d.kind === 'function' || d.kind === 'method') && d.line)
-          .every((d) => d.cfg === null || d.cfg?.blocks?.length);
+          .every((d) => d.cfg === null || (d.cfg?.blocks?.length ?? 0) > 0);
         if (!hasNativeCfg) {
           needsFallback = true;
           break;
@@ -88,8 +104,8 @@ async function initCfgParsers(fileSymbols) {
     }
   }
 
-  let parsers = null;
-  let getParserFn = null;
+  let parsers: unknown = null;
+  let getParserFn: unknown = null;
 
   if (needsFallback) {
     const { createParsers } = await import('../domain/parser.js');
@@ -101,14 +117,21 @@ async function initCfgParsers(fileSymbols) {
   return { parsers, getParserFn };
 }
 
-function getTreeAndLang(symbols, relPath, rootDir, extToLang, parsers, getParserFn) {
+function getTreeAndLang(
+  symbols: FileSymbols,
+  relPath: string,
+  rootDir: string,
+  extToLang: Map<string, string>,
+  parsers: unknown,
+  getParserFn: unknown,
+): { tree: { rootNode: TreeSitterNode }; langId: string } | null {
   const ext = path.extname(relPath).toLowerCase();
   let tree = symbols._tree;
   let langId = symbols._langId;
 
   const allNative = symbols.definitions
     .filter((d) => (d.kind === 'function' || d.kind === 'method') && d.line)
-    .every((d) => d.cfg === null || d.cfg?.blocks?.length);
+    .every((d) => d.cfg === null || (d.cfg?.blocks?.length ?? 0) > 0);
 
   if (!tree && !allNative) {
     if (!getParserFn) return null;
@@ -116,21 +139,24 @@ function getTreeAndLang(symbols, relPath, rootDir, extToLang, parsers, getParser
     if (!langId || !CFG_RULES.has(langId)) return null;
 
     const absPath = path.join(rootDir, relPath);
-    let code;
+    let code: string;
     try {
       code = fs.readFileSync(absPath, 'utf-8');
     } catch (e) {
-      debug(`cfg: cannot read ${relPath}: ${e.message}`);
+      debug(`cfg: cannot read ${relPath}: ${(e as Error).message}`);
       return null;
     }
 
-    const parser = getParserFn(parsers, absPath);
+    const parser = (getParserFn as (parsers: unknown, absPath: string) => unknown)(
+      parsers,
+      absPath,
+    );
     if (!parser) return null;
 
     try {
-      tree = parser.parse(code);
+      tree = (parser as { parse: (code: string) => { rootNode: TreeSitterNode } }).parse(code);
     } catch (e) {
-      debug(`cfg: parse failed for ${relPath}: ${e.message}`);
+      debug(`cfg: parse failed for ${relPath}: ${(e as Error).message}`);
       return null;
     }
   }
@@ -140,10 +166,21 @@ function getTreeAndLang(symbols, relPath, rootDir, extToLang, parsers, getParser
     if (!langId) return null;
   }
 
-  return { tree, langId };
+  return { tree: tree!, langId };
 }
 
-function buildVisitorCfgMap(tree, cfgRules, symbols, langId) {
+interface VisitorCfgResult {
+  funcNode: TreeSitterNode;
+  blocks: CfgBuildBlock[];
+  edges: CfgBuildEdge[];
+}
+
+function buildVisitorCfgMap(
+  tree: { rootNode: TreeSitterNode } | undefined,
+  cfgRules: unknown,
+  symbols: FileSymbols,
+  langId: string,
+): Map<number, VisitorCfgResult[]> | null {
   const needsVisitor =
     tree &&
     symbols.definitions.some(
@@ -156,29 +193,36 @@ function buildVisitorCfgMap(tree, cfgRules, symbols, langId) {
   if (!needsVisitor) return null;
 
   const visitor = createCfgVisitor(cfgRules);
+  const typedRules = cfgRules as { functionNodes: string[] };
   const walkerOpts = {
-    functionNodeTypes: new Set(cfgRules.functionNodes),
-    nestingNodeTypes: new Set(),
-    getFunctionName: (node) => {
-      const nameNode = node.childForFieldName('name');
+    functionNodeTypes: new Set(typedRules.functionNodes),
+    nestingNodeTypes: new Set<string>(),
+    getFunctionName: (node: TreeSitterNode) => {
+      const nameNode = node.childForFieldName?.('name');
       return nameNode ? nameNode.text : null;
     },
   };
-  const walkResults = walkWithVisitors(tree.rootNode, [visitor], langId, walkerOpts);
-  const cfgResults = walkResults.cfg || [];
-  const visitorCfgByLine = new Map();
+  const walkResults = walkWithVisitors(tree!.rootNode, [visitor], langId, walkerOpts);
+  // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
+  const cfgResults = (walkResults['cfg'] || []) as VisitorCfgResult[];
+  const visitorCfgByLine = new Map<number, VisitorCfgResult[]>();
   for (const r of cfgResults) {
     if (r.funcNode) {
       const line = r.funcNode.startPosition.row + 1;
       if (!visitorCfgByLine.has(line)) visitorCfgByLine.set(line, []);
-      visitorCfgByLine.get(line).push(r);
+      visitorCfgByLine.get(line)!.push(r);
     }
   }
   return visitorCfgByLine;
 }
 
-function persistCfg(cfg, nodeId, insertBlock, insertEdge) {
-  const blockDbIds = new Map();
+function persistCfg(
+  cfg: { blocks: CfgBuildBlock[]; edges: CfgBuildEdge[] },
+  nodeId: number,
+  insertBlock: ReturnType<BetterSqlite3Database['prepare']>,
+  insertEdge: ReturnType<BetterSqlite3Database['prepare']>,
+): void {
+  const blockDbIds = new Map<number, number | bigint>();
   for (const block of cfg.blocks) {
     const result = insertBlock.run(
       nodeId,
@@ -202,15 +246,12 @@ function persistCfg(cfg, nodeId, insertBlock, insertEdge) {
 
 // ─── Build-Time: Compute CFG for Changed Files ─────────────────────────
 
-/**
- * Build CFG data for all function/method definitions and persist to DB.
- *
- * @param {object} db - open better-sqlite3 database (read-write)
- * @param {Map<string, object>} fileSymbols - Map<relPath, { definitions, _tree, _langId }>
- * @param {string} rootDir - absolute project root path
- * @param {object} [_engineOpts] - engine options (unused; always uses WASM for AST)
- */
-export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
+export async function buildCFGData(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, FileSymbols>,
+  rootDir: string,
+  _engineOpts?: unknown,
+): Promise<void> {
   const extToLang = buildExtToLangMap();
   const { parsers, getParserFn } = await initCfgParsers(fileSymbols);
 
@@ -245,9 +286,9 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
         const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
         if (!nodeId) continue;
 
-        let cfg = null;
+        let cfg: { blocks: CfgBuildBlock[]; edges: CfgBuildEdge[] } | null = null;
         if (def.cfg?.blocks?.length) {
-          cfg = def.cfg;
+          cfg = def.cfg as unknown as { blocks: CfgBuildBlock[]; edges: CfgBuildEdge[] };
         } else if (visitorCfgByLine) {
           const candidates = visitorCfgByLine.get(def.line);
           const r = !candidates
@@ -255,7 +296,7 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
             : candidates.length === 1
               ? candidates[0]
               : (candidates.find((c) => {
-                  const n = c.funcNode.childForFieldName('name');
+                  const n = c.funcNode.childForFieldName?.('name');
                   return n && n.text === def.name;
                 }) ?? candidates[0]);
           if (r) cfg = { blocks: r.blocks, edges: r.edges };
@@ -281,15 +322,52 @@ export async function buildCFGData(db, fileSymbols, rootDir, _engineOpts) {
 
 const CFG_DEFAULT_KINDS = ['function', 'method'];
 
-/**
- * Load CFG data for a function from the database.
- *
- * @param {string} name - Function name (partial match)
- * @param {string} [customDbPath] - Path to graph.db
- * @param {object} [opts] - Options
- * @returns {{ function: object, blocks: object[], edges: object[], summary: object }}
- */
-export function cfgData(name, customDbPath, opts = {}) {
+interface CfgQueryBlock {
+  index: number;
+  type: string;
+  startLine: number;
+  endLine: number;
+  label: string | null;
+}
+
+interface CfgQueryEdge {
+  source: number;
+  sourceType: string;
+  target: number;
+  targetType: string;
+  kind: string;
+}
+
+interface CfgQueryFunctionResult {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  blocks: CfgQueryBlock[];
+  edges: CfgQueryEdge[];
+  summary: { blockCount: number; edgeCount: number };
+}
+
+interface CfgDataResult {
+  name: string;
+  results: CfgQueryFunctionResult[];
+  warning?: string;
+  _pagination?: unknown;
+}
+
+interface CfgOpts {
+  noTests?: boolean;
+  file?: string | string[];
+  kind?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export function cfgData(
+  name: string,
+  customDbPath: string | undefined,
+  opts: CfgOpts = {},
+): CfgDataResult {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
@@ -313,7 +391,7 @@ export function cfgData(name, customDbPath, opts = {}) {
       return { name, results: [] };
     }
 
-    const results = nodes.map((node) => {
+    const results: CfgQueryFunctionResult[] = nodes.map((node: NodeRow) => {
       const cfgBlocks = getCfgBlocks(db, node.id);
       const cfgEdges = getCfgEdges(db, node.id);
 
@@ -351,11 +429,8 @@ export function cfgData(name, customDbPath, opts = {}) {
 
 // ─── Export Formats ─────────────────────────────────────────────────────
 
-/**
- * Convert CFG data to DOT format for Graphviz rendering.
- */
-export function cfgToDOT(cfgResult) {
-  const lines = [];
+export function cfgToDOT(cfgResult: CfgDataResult): string {
+  const lines: string[] = [];
 
   for (const r of cfgResult.results) {
     lines.push(`digraph "${r.name}" {`);
@@ -383,11 +458,8 @@ export function cfgToDOT(cfgResult) {
   return lines.join('\n');
 }
 
-/**
- * Convert CFG data to Mermaid format.
- */
-export function cfgToMermaid(cfgResult) {
-  const lines = [];
+export function cfgToMermaid(cfgResult: CfgDataResult): string {
+  const lines: string[] = [];
 
   for (const r of cfgResult.results) {
     lines.push(`graph TD`);
@@ -415,7 +487,7 @@ export function cfgToMermaid(cfgResult) {
   return lines.join('\n');
 }
 
-function blockLabel(block) {
+function blockLabel(block: CfgQueryBlock): string {
   const loc =
     block.startLine && block.endLine
       ? ` L${block.startLine}${block.endLine !== block.startLine ? `-${block.endLine}` : ''}`
@@ -424,7 +496,7 @@ function blockLabel(block) {
   return `${block.type}${label}${loc}`;
 }
 
-function edgeStyle(kind) {
+function edgeStyle(kind: string): string {
   if (kind === 'exception') return ', color=red, fontcolor=red';
   if (kind === 'branch_true') return ', color=green, fontcolor=green';
   if (kind === 'branch_false') return ', color=red, fontcolor=red';

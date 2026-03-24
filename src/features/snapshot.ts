@@ -7,11 +7,7 @@ import { ConfigError, DbError } from '../shared/errors.js';
 
 const NAME_RE = /^[a-zA-Z0-9_-]+$/;
 
-/**
- * Validate a snapshot name (alphanumeric, hyphens, underscores only).
- * Throws on invalid input.
- */
-export function validateSnapshotName(name) {
+export function validateSnapshotName(name: string): void {
   if (!name || !NAME_RE.test(name)) {
     throw new ConfigError(
       `Invalid snapshot name "${name}". Use only letters, digits, hyphens, and underscores.`,
@@ -19,24 +15,19 @@ export function validateSnapshotName(name) {
   }
 }
 
-/**
- * Return the snapshots directory for a given DB path.
- */
-export function snapshotsDir(dbPath) {
+export function snapshotsDir(dbPath: string): string {
   return path.join(path.dirname(dbPath), 'snapshots');
 }
 
-/**
- * Save a snapshot of the current graph database.
- * Uses VACUUM INTO for an atomic, WAL-free copy.
- *
- * @param {string} name - Snapshot name
- * @param {object} [options]
- * @param {string} [options.dbPath] - Explicit path to graph.db
- * @param {boolean} [options.force] - Overwrite existing snapshot
- * @returns {{ name: string, path: string, size: number }}
- */
-export function snapshotSave(name, options = {}) {
+interface SnapshotSaveOptions {
+  dbPath?: string;
+  force?: boolean;
+}
+
+export function snapshotSave(
+  name: string,
+  options: SnapshotSaveOptions = {},
+): { name: string; path: string; size: number } {
   validateSnapshotName(name);
   const dbPath = options.dbPath || findDbPath();
   if (!fs.existsSync(dbPath)) {
@@ -56,7 +47,8 @@ export function snapshotSave(name, options = {}) {
 
   fs.mkdirSync(dir, { recursive: true });
 
-  const db = new Database(dbPath, { readonly: true });
+  // biome-ignore lint/suspicious/noExplicitAny: better-sqlite3 default export typing
+  const db = new (Database as any)(dbPath, { readonly: true });
   try {
     db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
   } finally {
@@ -68,15 +60,11 @@ export function snapshotSave(name, options = {}) {
   return { name, path: dest, size: stat.size };
 }
 
-/**
- * Restore a snapshot over the current graph database.
- * Removes WAL/SHM sidecar files before overwriting.
- *
- * @param {string} name - Snapshot name
- * @param {object} [options]
- * @param {string} [options.dbPath] - Explicit path to graph.db
- */
-export function snapshotRestore(name, options = {}) {
+interface SnapshotDbPathOptions {
+  dbPath?: string;
+}
+
+export function snapshotRestore(name: string, options: SnapshotDbPathOptions = {}): void {
   validateSnapshotName(name);
   const dbPath = options.dbPath || findDbPath();
   const dir = snapshotsDir(dbPath);
@@ -99,14 +87,14 @@ export function snapshotRestore(name, options = {}) {
   debug(`Restored snapshot "${name}" → ${dbPath}`);
 }
 
-/**
- * List all saved snapshots.
- *
- * @param {object} [options]
- * @param {string} [options.dbPath] - Explicit path to graph.db
- * @returns {Array<{ name: string, path: string, size: number, createdAt: Date }>}
- */
-export function snapshotList(options = {}) {
+interface SnapshotEntry {
+  name: string;
+  path: string;
+  size: number;
+  createdAt: Date;
+}
+
+export function snapshotList(options: SnapshotDbPathOptions = {}): SnapshotEntry[] {
   const dbPath = options.dbPath || findDbPath();
   const dir = snapshotsDir(dbPath);
 
@@ -125,17 +113,10 @@ export function snapshotList(options = {}) {
         createdAt: stat.birthtime,
       };
     })
-    .sort((a, b) => b.createdAt - a.createdAt);
+    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 }
 
-/**
- * Delete a named snapshot.
- *
- * @param {string} name - Snapshot name
- * @param {object} [options]
- * @param {string} [options.dbPath] - Explicit path to graph.db
- */
-export function snapshotDelete(name, options = {}) {
+export function snapshotDelete(name: string, options: SnapshotDbPathOptions = {}): void {
   validateSnapshotName(name);
   const dbPath = options.dbPath || findDbPath();
   const dir = snapshotsDir(dbPath);
