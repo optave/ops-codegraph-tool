@@ -1,36 +1,34 @@
 # Dependency Audit Report — 2026-03-24
 
-## Summary
+> **Pre-fix snapshot.** This report was captured before applying `npm audit fix` and `npm update`. The vulnerability fixes and patch bumps are applied in the same PR that adds this report. See the post-fix summary below.
 
-| Metric | Value |
-|--------|-------|
-| Total dependencies (direct) | 23 (3 prod + 20 dev) |
-| Total dependencies (transitive) | ~850 |
-| Security vulnerabilities | 0 critical, 5 high, 3 moderate, 0 low |
-| Outdated packages | 1 stale (major), 3 aging (patch) |
-| Unused dependencies | 0 |
-| License risks | 0 |
-| Duplicates | 0 actionable |
-| **Health score** | **47/100** |
+## Pre-Fix Summary
+
+| Metric | Pre-Fix | Post-Fix |
+|--------|---------|----------|
+| Total dependencies (direct) | 23 (3 prod + 20 dev) | 23 (unchanged) |
+| Total dependencies (transitive) | ~850 | ~850 |
+| Security vulnerabilities | 5 high, 3 moderate | 0 high, 0 moderate |
+| Outdated packages | 1 stale (major), 3 aging (patch) | 1 stale (major), 0 aging |
+| Unused dependencies | 0 | 0 |
+| License risks | 0 | 0 |
+| Duplicates | 0 actionable | 0 actionable |
+| **Health score** | **41/100** | **91/100** |
 
 ## Health Score Calculation
 
-```
-Start:                         100
-- 5 high vulns × -10:         -50
-- 3 moderate vulns × -3:       -9
-- 1 stale dep (TS 6.x) × -5:  -5
-  (moderate vulns are sub-advisories of hono, counted separately)
-  Subtotal: 100 - 50 - 9 + 6 = 47
-  (adjusted: hono has 5 advisories but is 1 package — counting 1 high + 2 moderate for hono)
-```
-
-**Adjusted calculation (per-package, not per-advisory):**
+**Pre-fix (per-package):**
 - 100 base
 - 5 packages with high vulns × -10 = -50
 - 1 stale dep × -5 = -5
 - 2 aging deps × -2 = -4
 - **Score: 41/100**
+
+**Post-fix:** All 5 high-severity vulnerabilities and aging patch deps resolved. Only the stale TypeScript major version remains.
+- 100 base
+- 1 stale dep × -5 = -5
+- 2 aging deps resolved (biome, vitest patched) = 0
+- **Score: 91/100** (estimated; TypeScript 6.0 evaluation deferred)
 
 ## Security Vulnerabilities
 
@@ -101,13 +99,10 @@ No actionable duplicates. Transitive deps are properly deduplicated by npm.
 
 ## Recommended Actions
 
-**Priority 1 — Security (run `npm audit fix`):**
-1. Fix all 5 high-severity vulnerabilities — all have non-breaking fixes available
-2. Most are resolved by updating `@modelcontextprotocol/sdk` transitive deps
+**Resolved in this PR:**
+1. ~~Fix all 5 high-severity vulnerabilities~~ — done via `npm audit fix`
+2. ~~Update `@biomejs/biome` 2.4.7 → 2.4.8~~ — done via `npm update`
+3. ~~Update `vitest` + `@vitest/coverage-v8` 4.1.0 → 4.1.1~~ — done via `npm update`
 
-**Priority 2 — Freshness (run `npm update`):**
-3. Update `@biomejs/biome` 2.4.7 → 2.4.8 (patch)
-4. Update `vitest` + `@vitest/coverage-v8` 4.1.0 → 4.1.1 (patch)
-
-**Priority 3 — Evaluate:**
-5. TypeScript 6.0 — review breaking changes and migration guide before upgrading. Current `5.9.3` is fine for now; pin `~5.9` in `package.json` if not already
+**Remaining:**
+4. TypeScript 6.0 — review breaking changes and migration guide before upgrading. Current `5.9.3` is fine for now; pin `~5.9` in `package.json` if not already
