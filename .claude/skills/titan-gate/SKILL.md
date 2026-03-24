@@ -302,7 +302,7 @@ Aggregate all checks:
 | **WARN** | Warnings only — commit at your discretion |
 | **FAIL** | Failures present — auto-rollback triggered |
 
-### Auto-rollback on FAIL (build/test/lint failures only)
+### Auto-rollback on FAIL (cycle/build/test/lint failures)
 
 1. **Restore graph** to the most recent snapshot:
    ```bash
@@ -392,7 +392,7 @@ GATE WARN — review before committing
   - Architecture: directory src/domain/ cohesion dropped 0.6 → 0.45
 ```
 
-**FAIL (test/lint/build failures — rollback triggered):**
+**FAIL (cycle/test/lint/build failures — rollback triggered):**
 ```
 GATE FAIL — changes unstaged, graph restored
   Failures:

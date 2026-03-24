@@ -219,8 +219,8 @@ For each target in the current phase:
 
 11. **Run /titan-gate:**
     Use the Skill tool to invoke `titan-gate`.
-    - If FAIL on **test/lint/build** (gate auto-rolls back staged changes) → go to rollback (step 13) to also revert working tree.
-    - If FAIL on **semantic/structural** (gate does not auto-rollback its staging area, but forge must clean up for the next target) → unstage with `git reset HEAD <files> && git checkout -- <files>`, add to `execution.failedTargets` with reason, log the gate report, and continue to the next target. Do NOT go to step 13 — that step is for test/gate failures where gate already unstaged; going there again would attempt a duplicate rollback.
+    - If FAIL on **cycle/test/lint/build** (gate auto-rolls back staged changes) → go to rollback (step 13) to also revert working tree.
+    - If FAIL on **semantic/structural** (gate does not auto-rollback its staging area, but forge must clean up for the next target) → unstage with `git reset HEAD <files> && git checkout -- <files>`, add to `execution.failedTargets` with reason, log the gate report, and continue to the next target. Do NOT go to step 13 — that step is for cycle/test/gate failures where gate already unstaged; going there again would attempt a duplicate rollback.
 
 12. **On success:**
     ```bash
