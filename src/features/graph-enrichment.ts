@@ -168,7 +168,7 @@ function prepareFunctionLevelData(
   if (cfg.filter.roles) {
     const roles = new Set(cfg.filter.roles);
     for (const [id, n] of nodeMap) {
-      if (!roles.has(n.role!)) nodeMap.delete(id);
+      if (n.role === null || !roles.has(n.role)) nodeMap.delete(id);
     }
     const nodeIds = new Set(nodeMap.keys());
     edges = edges.filter((e) => nodeIds.has(e.source_id) && nodeIds.has(e.target_id));
