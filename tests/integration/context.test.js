@@ -195,6 +195,8 @@ describe('contextData', () => {
     // Test callers should be excluded from the callers list
     // (noTests filters the result nodes themselves, not test callers specifically)
     expect(r).toBeDefined();
+    expect(r.kind).toBe('function');
+    expect(r.file).toBeTruthy();
   });
 
   test('nonexistent name returns empty results', () => {
@@ -227,6 +229,8 @@ describe('contextData', () => {
     const pfResult = validateData.results.find((r) => r.name === 'processFiles');
     // parseOne callee — has no comment above it (blank line separator)
     expect(pfResult).toBeDefined();
+    expect(pfResult.kind).toBe('function');
+    expect(pfResult.callees).toBeInstanceOf(Array);
   });
 
   test('limits results with pagination', () => {
