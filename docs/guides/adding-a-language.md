@@ -123,16 +123,21 @@ npm run build:wasm
 This generates `grammars/tree-sitter-<lang>.wasm` (gitignored — built from
 devDeps on `npm install`).
 
-### 3. `src/domain/parser.ts` — add extractor and registry entry
+### 3. Add extractor and registry entry
 
-This is the only source file where you need to make changes on the TypeScript side.
-Two things to do:
+Two things to do on the TypeScript side:
 
-#### 3a. Create `extract<Lang>Symbols(tree, filePath)`
+#### 3a. Create `src/extractors/<lang>.ts`
+
+Every language extractor lives in its own file under `src/extractors/` (e.g.
+`go.ts`, `python.ts`, `rust.ts`). Create `src/extractors/<lang>.ts` and
+re-export it from `src/extractors/index.ts`. Then import and reference the
+extractor function in the `LANGUAGE_REGISTRY` array in `src/domain/parser.ts`
+(see Step 3b).
 
 Write a recursive AST walker that matches tree-sitter node types for your
-language. Copy the pattern from an existing extractor like `extractGoSymbols` or
-`extractRustSymbols`:
+language. Copy the pattern from an existing extractor like `extractGoSymbols` in
+`src/extractors/go.ts` or `extractRustSymbols` in `src/extractors/rust.ts`:
 
 ```ts
 /**
@@ -360,8 +365,9 @@ fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 // 1. Declare module
 pub mod <lang>;
 
-// 2. Add dispatch arm in extract_symbols()
-pub fn extract_symbols(...) -> FileSymbols {
+// 2. Add dispatch arm in extract_symbols_with_opts()
+//    (extract_symbols() simply delegates to this function — do NOT modify it)
+pub fn extract_symbols_with_opts(..., include_ast_nodes: bool) -> FileSymbols {
     match lang {
         // ... existing ...
         LanguageKind::<Lang> => <lang>::<Lang>Extractor.extract_with_opts(tree, source, file_path, include_ast_nodes),
@@ -467,12 +473,12 @@ codegraph query someFunction
 |---|------|--------|--------|
 | 1 | `package.json` | WASM | Add `tree-sitter-<lang>` devDependency |
 | 2 | `scripts/build-wasm.js` | WASM | Add grammar entry to array |
-| 3 | `src/domain/parser.ts` | WASM | Create `extract<Lang>Symbols()` + add `LANGUAGE_REGISTRY` entry |
+| 3 | `src/extractors/<lang>.ts` + `src/domain/parser.ts` | WASM | Create extractor in `src/extractors/`, re-export via `index.ts`, add `LANGUAGE_REGISTRY` entry |
 | 4 | `src/domain/parser.ts` | WASM | Update `patchNativeResult` (if language flag needed) |
 | 5 | `crates/codegraph-core/Cargo.toml` | Native | Add tree-sitter crate |
 | 6 | `crates/.../parser_registry.rs` | Native | Register enum + extension + grammar + `lang_id_str` |
 | 7 | `crates/.../extractors/<lang>.rs` | Native | Implement `SymbolExtractor` trait |
-| 8 | `crates/.../extractors/mod.rs` | Native | Declare module + dispatch arm (`extract_with_opts`) |
+| 8 | `crates/.../extractors/mod.rs` | Native | Declare module + dispatch arm in `extract_symbols_with_opts()` |
 | 9 | `crates/.../types.rs` | Native | Add language flag to `Import` (if needed) |
 | 10 | `tests/parsers/<lang>.test.js` | WASM | Parser extraction tests |
 | 11 | `tests/engines/parity.test.js` | Both | Cross-engine validation snippets |
