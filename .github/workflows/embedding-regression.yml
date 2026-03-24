@@ -38,4 +38,4 @@ jobs:
           key: hf-models-minilm-v1
 
       - name: Run embedding regression tests
-        run: npx vitest run tests/search/embedding-regression.test.js
+        run: npx vitest run tests/search/embedding-regression.test.ts
