@@ -503,7 +503,7 @@ export function contextData(
 
 export function explainData(
   target: string,
-  customDbPath: string,
+  customDbPath?: string,
   opts: {
     noTests?: boolean;
     depth?: number;

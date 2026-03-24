@@ -26,7 +26,7 @@ function resolveThresholds(
     const cfg =
       config ||
       (() => {
-        const dbDir = path.dirname(customDbPath!);
+        const dbDir = customDbPath ? path.dirname(customDbPath) : process.cwd();
         const repoRoot = path.resolve(dbDir, '..');
         return loadConfig(repoRoot);
       })();
@@ -160,7 +160,7 @@ export function auditData(
   const kind = opts.kind;
 
   // 1. Get structure via explainData
-  const explained = explainData(target, customDbPath!, { noTests, depth: 0 });
+  const explained = explainData(target, customDbPath, { noTests, depth: 0 });
 
   // Apply --file and --kind filters for function targets
   // biome-ignore lint/suspicious/noExplicitAny: explainData returns a union type that varies by kind
