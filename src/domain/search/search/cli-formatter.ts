@@ -7,6 +7,8 @@ import { multiSearchData, searchData } from './semantic.js';
 interface SearchOpts extends SemanticSearchOpts {
   mode?: 'hybrid' | 'semantic' | 'keyword';
   json?: boolean;
+  ndjson?: boolean;
+  offset?: number;
 }
 
 export async function search(

@@ -121,6 +121,8 @@ interface BranchCompareCliOpts {
   repoRoot?: string;
   noTests?: boolean;
   dbPath?: string;
+  engine?: string;
+  depth?: number;
 }
 
 export async function branchCompare(

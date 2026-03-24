@@ -13,6 +13,7 @@ interface ComplexityCliOpts {
   file?: string;
   kind?: string;
   offset?: number;
+  config?: unknown;
 }
 
 interface ComplexityFunction {
@@ -48,7 +49,7 @@ interface ComplexityResult {
 }
 
 export function complexity(customDbPath: string | undefined, opts: ComplexityCliOpts = {}): void {
-  const data = complexityData(customDbPath, opts) as unknown as ComplexityResult;
+  const data = complexityData(customDbPath, opts as any) as unknown as ComplexityResult;
 
   if (outputResult(data, 'functions', opts)) return;
 

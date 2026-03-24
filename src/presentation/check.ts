@@ -7,10 +7,16 @@ interface CheckCliOpts {
   ndjson?: boolean;
   noTests?: boolean;
   base?: string;
+  ref?: string;
+  staged?: boolean;
+  cycles?: string;
+  blastRadius?: number;
+  depth?: number;
   maxCyclomatic?: number;
   maxBlastRadius?: number;
   boundaries?: boolean;
   signatures?: boolean;
+  config?: unknown;
 }
 
 interface CheckViolation {
@@ -47,7 +53,7 @@ interface CheckDataResult {
 }
 
 export function check(customDbPath: string | undefined, opts: CheckCliOpts = {}): void {
-  const data = checkData(customDbPath, opts) as CheckDataResult;
+  const data = checkData(customDbPath, opts as any) as CheckDataResult;
 
   if (data.error) {
     throw new AnalysisError(data.error);

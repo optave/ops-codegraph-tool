@@ -245,7 +245,7 @@ function classifyFile(filePath: string, modules: Map<string, ResolvedModule>): s
   return null;
 }
 
-interface BoundaryViolation {
+export interface BoundaryViolation {
   rule: string;
   name: string;
   file: string;

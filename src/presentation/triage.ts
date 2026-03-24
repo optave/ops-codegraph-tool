@@ -15,6 +15,7 @@ interface TriageOpts {
   limit?: number;
   offset?: number;
   config?: unknown;
+  weights?: Record<string, number>;
 }
 
 interface TriageItem {

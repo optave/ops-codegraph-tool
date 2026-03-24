@@ -339,7 +339,7 @@ async function delegateToBuildFunctions(
     const t0 = performance.now();
     try {
       const { buildAstNodes } = await import('../features/ast.js');
-      await buildAstNodes(db, fileSymbols, rootDir, engineOpts);
+      await buildAstNodes(db, fileSymbols as Map<string, any>, rootDir, engineOpts);
     } catch (err: unknown) {
       debug(`buildAstNodes failed: ${(err as Error).message}`);
     }
@@ -350,7 +350,7 @@ async function delegateToBuildFunctions(
     const t0 = performance.now();
     try {
       const { buildComplexityMetrics } = await import('../features/complexity.js');
-      await buildComplexityMetrics(db, fileSymbols, rootDir, engineOpts);
+      await buildComplexityMetrics(db, fileSymbols as Map<string, any>, rootDir, engineOpts);
     } catch (err: unknown) {
       debug(`buildComplexityMetrics failed: ${(err as Error).message}`);
     }

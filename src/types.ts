@@ -500,6 +500,7 @@ export interface LanguageRegistryEntry {
 
 /** tree-sitter opaque types (thin wrappers — real impl is WASM). */
 export interface TreeSitterNode {
+  id: number;
   type: string;
   text: string;
   startPosition: { row: number; column: number };
@@ -961,6 +962,8 @@ export interface BuildGraphOpts {
   engine?: EngineMode;
   dataflow?: boolean;
   ast?: boolean;
+  complexity?: boolean;
+  cfg?: boolean;
   scope?: string[];
   skipRegistry?: boolean;
 }
@@ -1808,4 +1811,36 @@ export interface NativeParseTreeCache {
   set(filePath: string, tree: unknown): void;
   delete(filePath: string): void;
   clear(): void;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// §14  CLI Command Framework
+// ════════════════════════════════════════════════════════════════════════
+
+/** Shared context passed to every CLI command's execute/validate functions. */
+export interface CommandContext {
+  // biome-ignore lint/suspicious/noExplicitAny: config is a deeply nested dynamic object
+  config: Record<string, any>;
+  // biome-ignore lint/suspicious/noExplicitAny: Commander options are dynamically typed
+  resolveNoTests: (opts: any) => boolean;
+  // biome-ignore lint/suspicious/noExplicitAny: Commander options are dynamically typed
+  resolveQueryOpts: (opts: any) => any;
+  formatSize: (bytes: number) => string;
+  // biome-ignore lint/suspicious/noExplicitAny: data shapes vary per command
+  outputResult: (data: any, key: string, opts: any) => boolean;
+  program: import('commander').Command;
+}
+
+/** Shape of a CLI command definition used by the registerCommand framework. */
+export interface CommandDefinition {
+  name: string;
+  description: string;
+  queryOpts?: boolean;
+  // biome-ignore lint/suspicious/noExplicitAny: option tuples contain mixed types (strings, functions, defaults)
+  options?: Array<[string, string, ...any[]]>;
+  // biome-ignore lint/suspicious/noExplicitAny: Commander options are dynamically typed
+  validate?: (args: any[], opts: any, ctx: CommandContext) => string | undefined | void;
+  // biome-ignore lint/suspicious/noExplicitAny: Commander options are dynamically typed
+  execute?: (args: any[], opts: any, ctx: CommandContext) => void | Promise<void>;
+  subcommands?: CommandDefinition[];
 }

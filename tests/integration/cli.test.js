@@ -13,7 +13,10 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 const [_major, _minor] = process.versions.node.split('.').map(Number);
 const canStripTypes = _major > 22 || (_major === 22 && _minor >= 6);
 
-const CLI = path.resolve('src/cli.js');
+import { pathToFileURL } from 'node:url';
+
+const CLI = path.resolve('src/cli.ts');
+const LOADER = pathToFileURL(path.resolve('scripts/ts-resolve-loader.js')).href;
 
 const FIXTURE_FILES = {
   'math.js': `
@@ -44,7 +47,7 @@ let tmpDir, tmpHome, dbPath;
 
 /** Run the CLI and return stdout as a string. Throws on non-zero exit. */
 function run(...args) {
-  return execFileSync('node', [CLI, ...args], {
+  return execFileSync('node', ['--import', LOADER, CLI, ...args], {
     cwd: tmpDir,
     encoding: 'utf-8',
     timeout: 30_000,
@@ -246,7 +249,7 @@ describe.skipIf(!canStripTypes)('Registry CLI commands', () => {
 
   /** Run CLI with isolated HOME to avoid touching real registry */
   function runReg(...args) {
-    return execFileSync('node', [CLI, ...args], {
+    return execFileSync('node', ['--import', LOADER, CLI, ...args], {
       cwd: tmpDir,
       encoding: 'utf-8',
       timeout: 30_000,

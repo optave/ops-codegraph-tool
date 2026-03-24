@@ -64,7 +64,8 @@ interface HotspotsResult {
   metric: string;
   level: string;
   limit: number;
-  hotspots: HotspotEntry[];
+  // biome-ignore lint/suspicious/noExplicitAny: hotspots shape varies by level
+  hotspots: any[];
 }
 
 export function formatHotspots(data: HotspotsResult): string {

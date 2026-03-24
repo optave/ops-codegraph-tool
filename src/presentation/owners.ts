@@ -7,6 +7,9 @@ interface OwnersOpts {
   table?: boolean;
   csv?: boolean;
   owner?: string;
+  boundary?: string;
+  file?: string | string[];
+  kind?: string;
   noTests?: boolean;
   limit?: number;
   offset?: number;
@@ -39,7 +42,7 @@ interface OwnersResult {
 }
 
 export function owners(customDbPath: string | undefined, opts: OwnersOpts = {}): void {
-  const data = ownersData(customDbPath, opts) as OwnersResult;
+  const data = ownersData(customDbPath, opts as any) as OwnersResult;
   if (outputResult(data as unknown as Record<string, unknown>, null, opts)) return;
 
   if (!data.codeownersFile) {

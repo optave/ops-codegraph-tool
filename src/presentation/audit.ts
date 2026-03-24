@@ -11,6 +11,8 @@ interface AuditOpts {
   quick?: boolean;
   limit?: number;
   offset?: number;
+  depth?: number;
+  config?: unknown;
 }
 
 export function audit(
@@ -19,7 +21,7 @@ export function audit(
   opts: AuditOpts = {},
 ): void {
   // biome-ignore lint/suspicious/noExplicitAny: audit data shape is dynamic
-  const data: any = auditData(target, customDbPath, opts);
+  const data: any = auditData(target, customDbPath, opts as any);
 
   if (outputResult(data, null, opts)) return;
 

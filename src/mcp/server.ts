@@ -154,8 +154,15 @@ export async function startMCPServer(
         return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
       }
 
-      const ctx = { dbPath, getQueries, getDatabase, findDbPath, allowedRepos, MCP_MAX_LIMIT };
-      const result = await toolEntry.handler(args, ctx);
+      const ctx: McpToolContext = {
+        dbPath: dbPath!,
+        getQueries,
+        getDatabase,
+        findDbPath,
+        allowedRepos,
+        MCP_MAX_LIMIT,
+      };
+      const result = (await toolEntry.handler(args, ctx)) as any;
       if (result?.content) return result;
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (err: unknown) {
