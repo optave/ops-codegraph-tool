@@ -242,6 +242,7 @@ Branch: <branch-name>
 Conflicts: resolved | none
 CI: green | red | pending
 Comments Addressed: <count>
+Issues Created: <comma-separated list of #<n> follow-up issues, or "none">
 Reviewers Re-triggered: <list>
 Status: ready | needs-work | needs-human-review | skipped
 Notes: <any issues encountered>
@@ -254,9 +255,9 @@ Notes: <any issues encountered>
 After **all** subagents complete, collect their results and output a summary table:
 
 ```
-| PR | Branch | Conflicts | CI | Comments Addressed | Reviewers Re-triggered | Status |
-|----|--------|-----------|----|--------------------|----------------------|--------|
-| #N | branch | resolved/none | green/red | N comments | greptile, claude | ready/needs-work |
+| PR | Branch | Conflicts | CI | Comments Addressed | Issues | Reviewers Re-triggered | Status |
+|----|--------|-----------|----|--------------------|--------|----------------------|--------|
+| #N | branch | resolved/none | green/red | N comments | #X, #Y or none | greptile, claude | ready/needs-work |
 ```
 
 If any subagent failed or returned an error, note it in the Status column as `agent-error` with the failure reason.
