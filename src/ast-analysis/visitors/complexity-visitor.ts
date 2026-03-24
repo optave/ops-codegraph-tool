@@ -68,8 +68,7 @@ function classifyBranchNode(
     if (cRules.elseViaAlternative) {
       isElseIf =
         node.parent?.type === cRules.ifNodeType &&
-        // biome-ignore lint/suspicious/noExplicitAny: tree-sitter node.id exists at runtime but not in our interface
-        (node.parent!.childForFieldName('alternative') as any)?.id === (node as any).id;
+        node.parent?.childForFieldName('alternative')?.id === node.id;
     } else if (cRules.elseNodeType) {
       isElseIf = node.parent?.type === cRules.elseNodeType;
     }
@@ -99,8 +98,7 @@ function classifyPlainElse(
     cRules.elseViaAlternative &&
     type !== cRules.ifNodeType &&
     node.parent?.type === cRules.ifNodeType &&
-    // biome-ignore lint/suspicious/noExplicitAny: tree-sitter node.id exists at runtime but not in our interface
-    (node.parent!.childForFieldName('alternative') as any)?.id === (node as any).id
+    node.parent?.childForFieldName('alternative')?.id === node.id
   ) {
     acc.cognitive++;
   }

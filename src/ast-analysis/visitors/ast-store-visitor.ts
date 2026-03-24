@@ -106,8 +106,7 @@ export function createAstStoreVisitor(
     name: 'ast-store',
 
     enterNode(node: TreeSitterNode, _context: VisitorContext): EnterNodeResult | undefined {
-      // biome-ignore lint/suspicious/noExplicitAny: tree-sitter node.id exists at runtime but not in our interface
-      if (matched.has((node as any).id)) return;
+      if (matched.has(node.id)) return;
 
       const kind = astTypeMap[node.type];
       if (!kind) return;
@@ -145,8 +144,7 @@ export function createAstStoreVisitor(
         parentNodeId: resolveParentNodeId(line),
       });
 
-      // biome-ignore lint/suspicious/noExplicitAny: tree-sitter node.id exists at runtime but not in our interface
-      matched.add((node as any).id);
+      matched.add(node.id);
 
       if (kind !== 'string' && kind !== 'regex') {
         return { skipChildren: true };
