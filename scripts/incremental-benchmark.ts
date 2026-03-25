@@ -149,7 +149,7 @@ const origLog = console.log;
 console.log = (...args) => console.error(...args);
 
 const RUNS = 3;
-const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.js');
+const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.ts');
 
 function median(arr) {
 	const sorted = [...arr].sort((a, b) => a - b);

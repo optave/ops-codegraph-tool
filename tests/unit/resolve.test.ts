@@ -10,6 +10,7 @@ import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   clearExportsCache,
+  clearJsToTsCache,
   clearWorkspaceCache,
   computeConfidence,
   computeConfidenceJS,
@@ -56,6 +57,10 @@ beforeAll(() => {
 
 afterAll(() => {
   if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+afterEach(() => {
+  clearJsToTsCache();
 });
 
 // ─── resolveImportPathJS ────────────────────────────────────────────
@@ -224,6 +229,17 @@ describe('resolveImportsBatch', () => {
     );
     // native may or may not be available
     expect(result === null || result instanceof Map).toBe(true);
+  });
+
+  it('remaps .js → .ts in batch results when .ts file exists', () => {
+    const fromFile = path.join(tmpDir, 'src', 'index.js');
+    const result = resolveImportsBatch([{ fromFile, importSource: './math.js' }], tmpDir, null);
+    // Skip when native addon is not available
+    if (result === null) return;
+    const key = `${fromFile}|./math.js`;
+    const resolved = result.get(key);
+    expect(resolved).toBeDefined();
+    expect(resolved).toMatch(/math\.ts$/);
   });
 });
 

@@ -95,7 +95,7 @@ const { fnDepsData, fnImpactData, pathData, rolesData, statsData } = await impor
 
 const INCREMENTAL_RUNS = 3;
 const QUERY_RUNS = 5;
-const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.js');
+const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.ts');
 
 function median(arr) {
 	const sorted = [...arr].sort((a, b) => a - b);
