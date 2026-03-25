@@ -93,7 +93,10 @@ export async function buildAstNodes(
       nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
     }
 
-    if (symbols.calls) {
+    // When native astNodes includes call entries, skip separate symbols.calls processing
+    // to avoid duplication. Fall back to symbols.calls for WASM or older native binaries.
+    const nativeProvidedAstNodes = Array.isArray(symbols.astNodes);
+    if (symbols.calls && !nativeProvidedAstNodes) {
       for (const call of symbols.calls) {
         const parentDef = findParentDef(defs, call.line);
         let parentNodeId: number | null = null;
@@ -113,7 +116,8 @@ export async function buildAstNodes(
       }
     }
 
-    if (symbols.astNodes?.length) {
+    if (Array.isArray(symbols.astNodes)) {
+      // Native engine provided AST nodes (may be empty for files with no AST content)
       for (const n of symbols.astNodes) {
         const parentDef = findParentDef(defs, n.line);
         let parentNodeId: number | null = null;
@@ -132,6 +136,7 @@ export async function buildAstNodes(
         });
       }
     } else {
+      // WASM fallback — walk tree if available
       const ext = path.extname(relPath).toLowerCase();
       if (WALK_EXTENSIONS.has(ext) && symbols._tree) {
         const astRows: AstRow[] = [];
