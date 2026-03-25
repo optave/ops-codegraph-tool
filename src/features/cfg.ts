@@ -84,6 +84,17 @@ interface FileSymbols {
   _langId?: string;
 }
 
+/**
+ * Check whether all function/method definitions in a single file already
+ * have native CFG data (blocks populated by the Rust extractor).
+ * cfg === null means no body (expected); cfg with empty blocks means not computed.
+ */
+function hasNativeCfgForFile(symbols: FileSymbols): boolean {
+  return symbols.definitions
+    .filter((d) => (d.kind === 'function' || d.kind === 'method') && d.line)
+    .every((d) => d.cfg === null || (d.cfg?.blocks?.length ?? 0) > 0);
+}
+
 async function initCfgParsers(
   fileSymbols: Map<string, FileSymbols>,
 ): Promise<{ parsers: unknown; getParserFn: unknown }> {
@@ -93,10 +104,7 @@ async function initCfgParsers(
     if (!symbols._tree) {
       const ext = path.extname(relPath).toLowerCase();
       if (CFG_EXTENSIONS.has(ext)) {
-        const hasNativeCfg = symbols.definitions
-          .filter((d) => (d.kind === 'function' || d.kind === 'method') && d.line)
-          .every((d) => d.cfg === null || (d.cfg?.blocks?.length ?? 0) > 0);
-        if (!hasNativeCfg) {
+        if (!hasNativeCfgForFile(symbols)) {
           needsFallback = true;
           break;
         }
@@ -129,11 +137,7 @@ function getTreeAndLang(
   let tree = symbols._tree;
   let langId = symbols._langId;
 
-  const allNative = symbols.definitions
-    .filter((d) => (d.kind === 'function' || d.kind === 'method') && d.line)
-    .every((d) => d.cfg === null || (d.cfg?.blocks?.length ?? 0) > 0);
-
-  if (!tree && !allNative) {
+  if (!tree && !hasNativeCfgForFile(symbols)) {
     if (!getParserFn) return null;
     langId = extToLang.get(ext);
     if (!langId || !CFG_RULES.has(langId)) return null;
@@ -254,17 +258,12 @@ function persistCfg(
 function allCfgNative(fileSymbols: Map<string, FileSymbols>): boolean {
   let hasCfgFile = false;
   for (const [relPath, symbols] of fileSymbols) {
-    if (symbols._tree) continue; // WASM-parsed file — needs visitor path
+    if (symbols._tree) continue; // already parsed via WASM; will use _tree in slow path
     const ext = path.extname(relPath).toLowerCase();
     if (!CFG_EXTENSIONS.has(ext)) continue;
     hasCfgFile = true;
 
-    for (const d of symbols.definitions) {
-      if (d.kind !== 'function' && d.kind !== 'method') continue;
-      if (!d.line) continue;
-      // cfg === null means no body (expected), cfg with empty blocks means not computed
-      if (d.cfg !== null && !d.cfg?.blocks?.length) return false;
-    }
+    if (!hasNativeCfgForFile(symbols)) return false;
   }
   // Return false when no CFG files found (empty map, all _tree, or all non-CFG
   // extensions) to avoid vacuously triggering the fast path.
@@ -304,7 +303,9 @@ export async function buildCFGData(
       const ext = path.extname(relPath).toLowerCase();
       if (!CFG_EXTENSIONS.has(ext)) continue;
 
-      // Native fast path: skip tree/visitor setup when all CFG is pre-computed
+      // Native fast path: skip tree/visitor setup when all CFG is pre-computed.
+      // Only apply to files without _tree — files with _tree were WASM-parsed
+      // and need the slow path (visitor) to compute CFG.
       if (allNative && !symbols._tree) {
         for (const def of symbols.definitions) {
           if (def.kind !== 'function' && def.kind !== 'method') continue;
@@ -313,7 +314,7 @@ export async function buildCFGData(
           const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
           if (!nodeId) continue;
 
-          // Always purge stale rows (handles body-removed case)
+          // Always delete stale CFG rows (handles body-removed case)
           deleteCfgForNode(db, nodeId);
           if (!def.cfg?.blocks?.length) continue;
 

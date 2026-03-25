@@ -463,6 +463,8 @@ describe.skipIf(!canTestNativeCfg || !hasFixedCfg)('native vs WASM CFG parity', 
     '.php': 'php',
   };
 
+  let hasGoRangeFix = false;
+
   beforeAll(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cfg-parity-'));
     const srcDir = path.join(tmpDir, 'src');
@@ -481,21 +483,23 @@ describe.skipIf(!canTestNativeCfg || !hasFixedCfg)('native vs WASM CFG parity', 
     }
 
     parsers = await createParsers();
+
+    // Determine if the loaded native binary includes the range_clause fix.
+    // Must be computed here (after nativeResults is populated), not at describe() registration time.
+    // Note: this heuristic checks for any loop_exit edge in the Go `process` function.
+    // If the fixture also contains a C-style for loop with a condition, that loop emits
+    // loop_exit regardless of the range_clause fix — causing a false positive (test runs
+    // instead of skipping on an unpatched binary). The current fixture only has a range loop,
+    // so this is safe. If fixture.go gains additional loop types, scope the check to
+    // range-specific block labels.
+    const goSymbols = nativeResults.get('src/fixture.go');
+    const goDef = goSymbols?.definitions.find((d: any) => d.name === 'process');
+    hasGoRangeFix = goDef?.cfg?.edges?.some((e: any) => e.kind === 'loop_exit') ?? false;
   });
 
   afterAll(() => {
     if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
   });
-
-  // Go for-range and Ruby loop parity depend on the range_clause fix in cfg.rs.
-  // Detect: a Go for-range should produce loop_exit (bounded), not just loop_back (infinite).
-  const hasGoRangeFix = (() => {
-    const symbols = nativeResults.get('src/fixture.go');
-    if (!symbols) return false;
-    const def = symbols.definitions.find((d: any) => d.name === 'process');
-    if (!def?.cfg?.edges) return false;
-    return def.cfg.edges.some((e: any) => e.kind === 'loop_exit');
-  })();
 
   const parityTests = [
     { file: 'fixture.js', ext: '.js', funcPattern: /processItems/ },
@@ -509,25 +513,40 @@ describe.skipIf(!canTestNativeCfg || !hasFixedCfg)('native vs WASM CFG parity', 
   ];
 
   for (const { file, ext, funcPattern, requiresFix } of parityTests) {
-    test(`parity: ${file} — native vs WASM block/edge counts match`, () => {
-      if (requiresFix && !hasGoRangeFix) return; // Skip until native binary has range_clause fix
+    test(`parity: ${file} — native vs WASM block/edge counts match`, (ctx) => {
+      if (requiresFix && !hasGoRangeFix) {
+        ctx.skip();
+        return;
+      }
 
       const relPath = `src/${file}`;
       const symbols = nativeResults.get(relPath);
-      if (!symbols) return;
+      if (!symbols) {
+        ctx.skip();
+        return;
+      }
 
       const langId = LANG_MAP[ext];
       const complexityRules = COMPLEXITY_RULES.get(langId);
-      if (!complexityRules) return;
+      if (!complexityRules) {
+        ctx.skip();
+        return;
+      }
 
       // Parse with WASM
       const absPath = path.join(tmpDir, relPath);
       const parser = getParser(parsers, absPath);
-      if (!parser) return;
+      if (!parser) {
+        ctx.skip();
+        return;
+      }
 
       const code = fs.readFileSync(absPath, 'utf-8');
       const tree = parser.parse(code);
-      if (!tree) return;
+      if (!tree) {
+        ctx.skip();
+        return;
+      }
 
       const funcDefs = symbols.definitions.filter(
         (d) => (d.kind === 'function' || d.kind === 'method') && funcPattern.test(d.name),
@@ -596,28 +615,40 @@ describe.skipIf(!canTestNativeCfg || !hasFixedCfg)(
     const complexTests = [
       { file: 'complex-trycatch.js', funcPattern: /handleRequest/, desc: 'try/catch/finally' },
       { file: 'complex-switch.js', funcPattern: /classify/, desc: 'switch/case/default' },
-      { file: 'complex-dowhile.js', funcPattern: /retry/, desc: 'do-while with break' },
+      { file: 'complex-dowhile.js', funcPattern: /retry/, desc: 'do-while with early return' },
       { file: 'complex-nested.js', funcPattern: /matrix/, desc: 'nested for + continue' },
       { file: 'complex-labeled.js', funcPattern: /search/, desc: 'labeled break' },
     ];
 
     for (const { file, funcPattern, desc } of complexTests) {
-      test(`parity: ${desc} — native vs WASM block/edge counts match`, () => {
+      test(`parity: ${desc} — native vs WASM block/edge counts match`, (ctx) => {
         const relPath = `src/${file}`;
         const symbols = nativeResults.get(relPath);
-        if (!symbols) return;
+        if (!symbols) {
+          ctx.skip();
+          return;
+        }
 
         const langId = 'javascript';
         const complexityRules = COMPLEXITY_RULES.get(langId);
-        if (!complexityRules) return;
+        if (!complexityRules) {
+          ctx.skip();
+          return;
+        }
 
         const absPath = path.join(tmpDir, relPath);
         const parser = getParser(parsers, absPath);
-        if (!parser) return;
+        if (!parser) {
+          ctx.skip();
+          return;
+        }
 
         const code = fs.readFileSync(absPath, 'utf-8');
         const tree = parser.parse(code);
-        if (!tree) return;
+        if (!tree) {
+          ctx.skip();
+          return;
+        }
 
         const funcDefs = symbols.definitions.filter(
           (d: any) => (d.kind === 'function' || d.kind === 'method') && funcPattern.test(d.name),
