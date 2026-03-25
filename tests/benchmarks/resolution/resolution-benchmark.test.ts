@@ -17,6 +17,42 @@ import { afterAll, beforeAll, describe, expect, test } from 'vitest';
 import { openReadonlyOrFail } from '../../../src/db/index.js';
 import { buildGraph } from '../../../src/domain/graph/builder.js';
 
+// ── Types ─────────────────────────────────────────────────────────────────
+
+interface ResolvedEdge {
+  source_name: string;
+  source_file: string;
+  target_name: string;
+  target_file: string;
+  kind: string;
+  confidence: number;
+}
+
+interface ExpectedEdge {
+  source: { name: string; file: string };
+  target: { name: string; file: string };
+  mode?: string;
+}
+
+interface ModeMetrics {
+  expected: number;
+  resolved: number;
+  recall?: number;
+}
+
+interface BenchmarkMetrics {
+  precision: number;
+  recall: number;
+  truePositives: number;
+  falsePositives: number;
+  falseNegatives: number;
+  totalResolved: number;
+  totalExpected: number;
+  byMode: Record<string, ModeMetrics>;
+  falsePositiveEdges: string[];
+  falseNegativeEdges: string[];
+}
+
 // ── Configuration ────────────────────────────────────────────────────────
 
 const FIXTURES_DIR = path.join(import.meta.dirname, 'fixtures');
@@ -40,7 +76,7 @@ const THRESHOLDS = {
  * Copy fixture to a temp directory so buildGraph can write .codegraph/ without
  * polluting the repo.
  */
-function copyFixture(lang) {
+function copyFixture(lang: string): string {
   const src = path.join(FIXTURES_DIR, lang);
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `codegraph-resolution-${lang}-`));
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
@@ -54,7 +90,7 @@ function copyFixture(lang) {
 /**
  * Build graph for a fixture directory.
  */
-async function buildFixtureGraph(fixtureDir) {
+async function buildFixtureGraph(fixtureDir: string): Promise<void> {
   await buildGraph(fixtureDir, {
     incremental: false,
     engine: 'wasm',
@@ -68,7 +104,7 @@ async function buildFixtureGraph(fixtureDir) {
  * Extract all call edges from the built graph DB.
  * Returns array of { sourceName, sourceFile, targetName, targetFile, kind, confidence }.
  */
-function extractResolvedEdges(fixtureDir) {
+function extractResolvedEdges(fixtureDir: string) {
   const dbPath = path.join(fixtureDir, '.codegraph', 'graph.db');
   const db = openReadonlyOrFail(dbPath);
   try {
@@ -97,14 +133,19 @@ function extractResolvedEdges(fixtureDir) {
 /**
  * Normalize a file path to just the basename for comparison.
  */
-function normalizeFile(filePath) {
+function normalizeFile(filePath: string): string {
   return path.basename(filePath);
 }
 
 /**
  * Build a string key for an edge to enable set-based comparison.
  */
-function edgeKey(sourceName, sourceFile, targetName, targetFile) {
+function edgeKey(
+  sourceName: string,
+  sourceFile: string,
+  targetName: string,
+  targetFile: string,
+): string {
   return `${sourceName}@${normalizeFile(sourceFile)} -> ${targetName}@${normalizeFile(targetFile)}`;
 }
 
@@ -112,7 +153,10 @@ function edgeKey(sourceName, sourceFile, targetName, targetFile) {
  * Compare resolved edges against expected edges manifest.
  * Returns precision, recall, and detailed breakdown by mode.
  */
-function computeMetrics(resolvedEdges, expectedEdges) {
+function computeMetrics(
+  resolvedEdges: ResolvedEdge[],
+  expectedEdges: ExpectedEdge[],
+): BenchmarkMetrics {
   // Build sets for overall comparison
   const resolvedSet = new Set(
     resolvedEdges.map((e) => edgeKey(e.source_name, e.source_file, e.target_name, e.target_file)),
@@ -135,7 +179,7 @@ function computeMetrics(resolvedEdges, expectedEdges) {
   const recall = expectedSet.size > 0 ? truePositives.size / expectedSet.size : 0;
 
   // Break down by resolution mode
-  const byMode = {};
+  const byMode: Record<string, ModeMetrics> = {};
   for (const edge of expectedEdges) {
     const mode = edge.mode || 'unknown';
     if (!byMode[mode]) byMode[mode] = { expected: 0, resolved: 0 };
@@ -168,7 +212,7 @@ function computeMetrics(resolvedEdges, expectedEdges) {
 /**
  * Format a metrics report for console output.
  */
-function formatReport(lang, metrics) {
+function formatReport(lang: string, metrics: BenchmarkMetrics): string {
   const lines = [
     `\n  ── ${lang.toUpperCase()} Resolution Metrics ──`,
     `  Precision: ${(metrics.precision * 100).toFixed(1)}% (${metrics.truePositives} correct / ${metrics.totalResolved} resolved)`,
@@ -208,9 +252,9 @@ function formatReport(lang, metrics) {
 /**
  * Discover all fixture languages that have an expected-edges.json manifest.
  */
-function discoverFixtures() {
+function discoverFixtures(): string[] {
   if (!fs.existsSync(FIXTURES_DIR)) return [];
-  const languages = [];
+  const languages: string[] = [];
   for (const dir of fs.readdirSync(FIXTURES_DIR)) {
     const manifestPath = path.join(FIXTURES_DIR, dir, 'expected-edges.json');
     if (fs.existsSync(manifestPath)) {
@@ -223,7 +267,7 @@ function discoverFixtures() {
 const languages = discoverFixtures();
 
 /** Stores all results for the final summary */
-const allResults = {};
+const allResults: Record<string, BenchmarkMetrics> = {};
 
 describe('Call Resolution Precision/Recall', () => {
   afterAll(() => {
@@ -243,9 +287,9 @@ describe('Call Resolution Precision/Recall', () => {
   for (const lang of languages) {
     describe(lang, () => {
       let fixtureDir: string;
-      let resolvedEdges: any[];
-      let expectedEdges: any[];
-      let metrics: any;
+      let resolvedEdges: ResolvedEdge[];
+      let expectedEdges: ExpectedEdge[];
+      let metrics: BenchmarkMetrics;
 
       beforeAll(async () => {
         fixtureDir = copyFixture(lang);

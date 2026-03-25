@@ -10,84 +10,89 @@ import { InMemoryRepository } from '../../src/db/repository/in-memory-repository
  *     .calls('authMiddleware', 'authenticate')
  *     .build();
  */
-class TestRepoBuilder {
-  #pending = { nodes: [], edges: [], complexity: [] };
+interface PendingNode {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  [key: string]: unknown;
+}
 
-  /**
-   * Add a function node.
-   * @param {string} name
-   * @param {string} file
-   * @param {number} line
-   * @param {object} [extra] - Additional node attrs (role, end_line, scope, etc.)
-   */
-  fn(name, file, line, extra = {}) {
+interface PendingEdge {
+  source: string;
+  target: string;
+  kind: string;
+}
+
+interface PendingComplexity {
+  name: string;
+  metrics: Record<string, unknown>;
+}
+
+class TestRepoBuilder {
+  #pending: { nodes: PendingNode[]; edges: PendingEdge[]; complexity: PendingComplexity[] } = {
+    nodes: [],
+    edges: [],
+    complexity: [],
+  };
+
+  /** Add a function node. */
+  fn(name: string, file: string, line: number, extra: Record<string, unknown> = {}): this {
     return this.#addNode(name, 'function', file, line, extra);
   }
 
-  /**
-   * Add a method node.
-   */
-  method(name, file, line, extra = {}) {
+  /** Add a method node. */
+  method(name: string, file: string, line: number, extra: Record<string, unknown> = {}): this {
     return this.#addNode(name, 'method', file, line, extra);
   }
 
-  /**
-   * Add a class node.
-   */
-  cls(name, file, line, extra = {}) {
+  /** Add a class node. */
+  cls(name: string, file: string, line: number, extra: Record<string, unknown> = {}): this {
     return this.#addNode(name, 'class', file, line, extra);
   }
 
-  /**
-   * Add a file node.
-   */
-  file(filePath) {
+  /** Add a file node. */
+  file(filePath: string): this {
     return this.#addNode(filePath, 'file', filePath, 0);
   }
 
-  /**
-   * Add an arbitrary node.
-   */
-  node(name, kind, file, line, extra = {}) {
+  /** Add an arbitrary node. */
+  node(
+    name: string,
+    kind: string,
+    file: string,
+    line: number,
+    extra: Record<string, unknown> = {},
+  ): this {
     return this.#addNode(name, kind, file, line, extra);
   }
 
-  /**
-   * Add a 'calls' edge between two named nodes.
-   */
-  calls(sourceName, targetName) {
+  /** Add a 'calls' edge between two named nodes. */
+  calls(sourceName: string, targetName: string): this {
     this.#pending.edges.push({ source: sourceName, target: targetName, kind: 'calls' });
     return this;
   }
 
-  /**
-   * Add an 'imports' edge.
-   */
-  imports(sourceName, targetName) {
+  /** Add an 'imports' edge. */
+  imports(sourceName: string, targetName: string): this {
     this.#pending.edges.push({ source: sourceName, target: targetName, kind: 'imports' });
     return this;
   }
 
-  /**
-   * Add an 'extends' edge.
-   */
-  extends(sourceName, targetName) {
+  /** Add an 'extends' edge. */
+  extends(sourceName: string, targetName: string): this {
     this.#pending.edges.push({ source: sourceName, target: targetName, kind: 'extends' });
     return this;
   }
 
-  /**
-   * Add an edge of any kind.
-   */
-  edge(sourceName, targetName, kind) {
+  /** Add an edge of any kind. */
+  edge(sourceName: string, targetName: string, kind: string): this {
     this.#pending.edges.push({ source: sourceName, target: targetName, kind });
     return this;
   }
 
-  /**
-   * Add complexity metrics for a named node.
-   */
-  complexity(name, metrics) {
+  /** Add complexity metrics for a named node. */
+  complexity(name: string, metrics: Record<string, unknown>): this {
     this.#pending.complexity.push({ name, metrics });
     return this;
   }
@@ -129,16 +134,19 @@ class TestRepoBuilder {
     return { repo, ids };
   }
 
-  #addNode(name, kind, file, line, extra = {}) {
+  #addNode(
+    name: string,
+    kind: string,
+    file: string,
+    line: number,
+    extra: Record<string, unknown> = {},
+  ): this {
     this.#pending.nodes.push({ name, kind, file, line, ...extra });
     return this;
   }
 }
 
-/**
- * Create a new TestRepoBuilder.
- * @returns {TestRepoBuilder}
- */
-export function createTestRepo() {
+/** Create a new TestRepoBuilder. */
+export function createTestRepo(): TestRepoBuilder {
   return new TestRepoBuilder();
 }
