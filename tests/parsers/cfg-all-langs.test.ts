@@ -559,10 +559,21 @@ describe.skipIf(!canTestNativeCfg || !hasFixedCfg)('native vs WASM CFG parity', 
         return;
       }
 
-      for (const def of defsWithCfg) {
-        const funcNode = findFunctionNode(tree.rootNode, def.line, def.endLine, complexityRules);
-        if (!funcNode) continue;
+      // Guard: skip rather than silently pass when findFunctionNode returns null for all defs
+      // (e.g., due to line-number offset mismatch between native and WASM parsers)
+      const defsWithNode = defsWithCfg
+        .map((def) => ({
+          def,
+          funcNode: findFunctionNode(tree.rootNode, def.line, def.endLine, complexityRules),
+        }))
+        .filter(({ funcNode }) => funcNode !== null);
 
+      if (defsWithNode.length === 0) {
+        ctx.skip();
+        return;
+      }
+
+      for (const { def, funcNode } of defsWithNode) {
         const wasmCfg = buildFunctionCFG(funcNode, langId);
 
         // Block counts should match
@@ -666,10 +677,20 @@ describe.skipIf(!canTestNativeCfg || !hasFixedCfg)(
           return;
         }
 
-        for (const def of defsWithCfg) {
-          const funcNode = findFunctionNode(tree.rootNode, def.line, def.endLine, complexityRules);
-          if (!funcNode) continue;
+        // Guard: skip rather than silently pass when findFunctionNode returns null for all defs
+        const defsWithNode = defsWithCfg
+          .map((def: any) => ({
+            def,
+            funcNode: findFunctionNode(tree.rootNode, def.line, def.endLine, complexityRules),
+          }))
+          .filter(({ funcNode }) => funcNode !== null);
 
+        if (defsWithNode.length === 0) {
+          ctx.skip();
+          return;
+        }
+
+        for (const { def, funcNode } of defsWithNode) {
           const wasmCfg = buildFunctionCFG(funcNode, langId);
 
           expect(def.cfg.blocks.length, `${desc}: block count mismatch`).toBe(
