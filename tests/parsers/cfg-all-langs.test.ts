@@ -552,9 +552,14 @@ describe.skipIf(!canTestNativeCfg || !hasFixedCfg)('native vs WASM CFG parity', 
         (d) => (d.kind === 'function' || d.kind === 'method') && funcPattern.test(d.name),
       );
 
-      for (const def of funcDefs) {
-        if (!def.cfg?.blocks?.length) continue;
+      // Guard: skip rather than silently pass when no defs have CFG blocks populated
+      const defsWithCfg = funcDefs.filter((d: any) => d.cfg?.blocks?.length);
+      if (defsWithCfg.length === 0) {
+        ctx.skip();
+        return;
+      }
 
+      for (const def of defsWithCfg) {
         const funcNode = findFunctionNode(tree.rootNode, def.line, def.endLine, complexityRules);
         if (!funcNode) continue;
 
@@ -654,9 +659,14 @@ describe.skipIf(!canTestNativeCfg || !hasFixedCfg)(
           (d: any) => (d.kind === 'function' || d.kind === 'method') && funcPattern.test(d.name),
         );
 
-        for (const def of funcDefs) {
-          if (!def.cfg?.blocks?.length) continue;
+        // Guard: skip rather than silently pass when no defs have CFG blocks populated
+        const defsWithCfg = funcDefs.filter((d: any) => d.cfg?.blocks?.length);
+        if (defsWithCfg.length === 0) {
+          ctx.skip();
+          return;
+        }
 
+        for (const def of defsWithCfg) {
           const funcNode = findFunctionNode(tree.rootNode, def.line, def.endLine, complexityRules);
           if (!funcNode) continue;
 
