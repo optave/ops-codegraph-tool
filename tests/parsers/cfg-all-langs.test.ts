@@ -486,6 +486,12 @@ describe.skipIf(!canTestNativeCfg || !hasFixedCfg)('native vs WASM CFG parity', 
 
     // Determine if the loaded native binary includes the range_clause fix.
     // Must be computed here (after nativeResults is populated), not at describe() registration time.
+    // Note: this heuristic checks for any loop_exit edge in the Go `process` function.
+    // If the fixture also contains a C-style for loop with a condition, that loop emits
+    // loop_exit regardless of the range_clause fix — causing a false positive (test runs
+    // instead of skipping on an unpatched binary). The current fixture only has a range loop,
+    // so this is safe. If fixture.go gains additional loop types, scope the check to
+    // range-specific block labels.
     const goSymbols = nativeResults.get('src/fixture.go');
     const goDef = goSymbols?.definitions.find((d: any) => d.name === 'process');
     hasGoRangeFix = goDef?.cfg?.edges?.some((e: any) => e.kind === 'loop_exit') ?? false;
