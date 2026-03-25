@@ -300,8 +300,10 @@ export async function buildCFGData(
       const ext = path.extname(relPath).toLowerCase();
       if (!CFG_EXTENSIONS.has(ext)) continue;
 
-      // Native fast path: skip tree/visitor setup when all CFG is pre-computed
-      if (allNative) {
+      // Native fast path: skip tree/visitor setup when all CFG is pre-computed.
+      // Only apply to files without _tree — files with _tree were WASM-parsed
+      // and need the slow path (visitor) to compute CFG.
+      if (allNative && !symbols._tree) {
         for (const def of symbols.definitions) {
           if (def.kind !== 'function' && def.kind !== 'method') continue;
           if (!def.line) continue;
