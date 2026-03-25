@@ -264,34 +264,38 @@ Several planned features would make codegraph even more powerful for the Titan P
 We've built five Claude Code skills that implement the full Titan Paradigm using codegraph. Each phase writes structured JSON artifacts to `.codegraph/titan/` that the next phase reads — this keeps context usage minimal even on large codebases.
 
 ```
-/titan-recon → titan-state.json + GLOBAL_ARCH.md
+/titan-run (orchestrator — runs everything below end-to-end via sub-agents)
       │
-      ▼
-/titan-gauntlet → gauntlet.ndjson (batches of 5, resumes across sessions)
+      ├─→ /titan-recon → titan-state.json + GLOBAL_ARCH.md
       │
-      ▼
-/titan-sync → sync.json (execution plan with logical commits)
+      ├─→ /titan-gauntlet → gauntlet.ndjson (loops until complete)
       │
-      ▼
-/titan-gate (validates each commit: codegraph + lint/build/test)
+      ├─→ /titan-sync → sync.json (execution plan with logical commits)
+      │
+      └─→ /titan-forge → code changes + commits (loops phases)
+              │
+              └─→ /titan-gate (validates each commit)
 
 /titan-reset (escape hatch: clean up all artifacts and snapshots)
 ```
 
 | Skill | Phase | What it does |
 |-------|-------|-------------|
+| `/titan-run` | **ORCHESTRATOR** | Runs the full pipeline end-to-end by dispatching each phase to sub-agents with fresh context windows. Loops gauntlet and forge automatically — one command for the entire Titan process |
 | `/titan-recon` | RECON | Builds graph + embeddings, runs complexity health baseline (`--health --above-threshold`), identifies domains, produces priority queue + work batches + `GLOBAL_ARCH.md`, saves baseline snapshot |
 | `/titan-gauntlet` | GAUNTLET | 4-pillar audit (17 rules) leveraging codegraph's full metrics (`cognitive`, `cyclomatic`, `halstead.bugs`, `halstead.effort`, `mi`, `loc.sloc`). Batches of 5 (configurable), NDJSON incremental writes, resumes across sessions via `titan-state.json` |
 | `/titan-sync` | GLOBAL SYNC | Finds dependency clusters among failures using `codegraph path` + `owners` + `branch-compare`. Plans shared abstractions, produces ordered execution plan with logical commit grouping |
+| `/titan-forge` | FORGE | Executes the sync plan — makes code changes, validates with `/titan-gate`, commits, advances state. One phase per invocation, resumable |
 | `/titan-gate` | STATE MACHINE | Validates staged changes: `codegraph check --staged --cycles --blast-radius 30 --boundaries` + project lint/build/test. Auto-rollback with snapshot restore on failure. Append-only audit trail |
 | `/titan-reset` | ESCAPE HATCH | Restores baseline snapshot, deletes all Titan artifacts and snapshots, rebuilds graph clean |
 
 ### Context window management
 
-The original Titan Paradigm prompt struggles with large codebases because a single agent cannot hold everything in context. These skills solve this two ways:
+The original Titan Paradigm prompt struggles with large codebases because a single agent cannot hold everything in context. These skills solve this three ways:
 
 1. **Artifact bridging:** each phase writes compact JSON artifacts. The next phase reads only those — not the full source. Works across separate conversations too.
 2. **Batch processing with resume:** the GAUNTLET audits 5 files at a time (configurable), writes to NDJSON between batches, and stops at ~80% context usage. Re-invoking `/titan-gauntlet` resumes from the next pending batch automatically.
+3. **Sub-agent orchestration:** `/titan-run` dispatches each phase to a sub-agent with a fresh context window. The orchestrator itself stays lightweight (only reads small JSON state files), while each sub-agent gets the full context budget for its phase. Gauntlet and forge are looped automatically — no manual re-invocation needed.
 
 ### Snapshot lifecycle
 
@@ -364,11 +368,14 @@ Copy the skills into your project and run the pipeline:
 # Install skills
 cp -r node_modules/@optave/codegraph/docs/examples/claude-code-skills/titan-* .claude/skills/
 
-# In Claude Code:
+# In Claude Code — fully automated:
+/titan-run             # Runs recon → gauntlet → sync → forge end-to-end
+
+# Or manual phase-by-phase:
 /titan-recon           # Map the codebase, produce priority queue
 /titan-gauntlet 5      # Audit top targets in batches of 5
 /titan-sync            # Plan shared abstractions and execution order
-# ... make changes ...
+/titan-forge           # Execute changes, one phase per invocation
 /titan-gate            # Validate before each commit
 ```
 

@@ -1,0 +1,289 @@
+/**
+ * Cross-engine parity tests.
+ *
+ * Parse the same source snippets with both WASM and native engines,
+ * then assert the FileSymbols output is equivalent for all 11 languages.
+ *
+ * Skipped when the native engine is not installed.
+ */
+
+import { beforeAll, describe, expect, it } from 'vitest';
+import {
+  createParsers,
+  extractCSharpSymbols,
+  extractGoSymbols,
+  extractHCLSymbols,
+  extractJavaSymbols,
+  extractPHPSymbols,
+  extractPythonSymbols,
+  extractRubySymbols,
+  extractRustSymbols,
+  extractSymbols,
+  getParser,
+} from '../../src/domain/parser.js';
+import { isNativeAvailable } from '../../src/infrastructure/native.js';
+
+let native: any;
+let parsers: any;
+
+function wasmExtract(code, filePath) {
+  const parser = getParser(parsers, filePath);
+  if (!parser) return null;
+  const tree = parser.parse(code);
+  const isHCL = filePath.endsWith('.tf') || filePath.endsWith('.hcl');
+  const isPython = filePath.endsWith('.py');
+  const isGo = filePath.endsWith('.go');
+  const isRust = filePath.endsWith('.rs');
+  const isJava = filePath.endsWith('.java');
+  const isCSharp = filePath.endsWith('.cs');
+  const isRuby = filePath.endsWith('.rb');
+  const isPHP = filePath.endsWith('.php');
+  return isHCL
+    ? extractHCLSymbols(tree, filePath)
+    : isPython
+      ? extractPythonSymbols(tree, filePath)
+      : isGo
+        ? extractGoSymbols(tree, filePath)
+        : isRust
+          ? extractRustSymbols(tree, filePath)
+          : isJava
+            ? extractJavaSymbols(tree, filePath)
+            : isCSharp
+              ? extractCSharpSymbols(tree, filePath)
+              : isRuby
+                ? extractRubySymbols(tree, filePath)
+                : isPHP
+                  ? extractPHPSymbols(tree, filePath)
+                  : extractSymbols(tree, filePath);
+}
+
+function nativeExtract(code, filePath) {
+  return native.parseFile(filePath, code);
+}
+
+/** Normalize symbols for comparison — strip undefined/null optional fields. */
+function normalize(symbols) {
+  if (!symbols) return symbols;
+  return {
+    definitions: (symbols.definitions || [])
+      .map((d) => ({
+        name: d.name,
+        kind: d.kind,
+        line: d.line,
+        endLine: d.endLine ?? d.end_line ?? null,
+        ...(() => {
+          // Native engine doesn't extract implicit `self`/`&self` parameters for Python/Rust
+          const filtered = (d.children || [])
+            .filter((c) => c.name !== 'self')
+            .map((c) => ({ name: c.name, kind: c.kind, line: c.line }));
+          return filtered.length ? { children: filtered } : {};
+        })(),
+      }))
+      // Deduplicate: interface/trait methods can be emitted twice (handler + recursive walk)
+      .filter(
+        (d, i, arr) =>
+          arr.findIndex((x) => x.name === d.name && x.kind === d.kind && x.line === d.line) === i,
+      ),
+    calls: (symbols.calls || []).map((c) => ({
+      name: c.name,
+      line: c.line,
+      ...(c.dynamic ? { dynamic: true } : {}),
+      ...(c.receiver ? { receiver: c.receiver } : {}),
+    })),
+    imports: (symbols.imports || []).map((i) => ({
+      source: i.source,
+      names: i.names || [],
+      line: i.line,
+    })),
+    classes: (symbols.classes || []).map((c) => ({
+      name: c.name,
+      ...(c.extends ? { extends: c.extends } : {}),
+      ...(c.implements ? { implements: c.implements } : {}),
+      line: c.line,
+    })),
+    exports: (symbols.exports || []).map((e) => ({
+      name: e.name,
+      kind: e.kind,
+      line: e.line,
+    })),
+  };
+}
+
+const hasNative = isNativeAvailable();
+
+const describeOrSkip = hasNative ? describe : describe.skip;
+
+describeOrSkip('Cross-engine parity', () => {
+  beforeAll(async () => {
+    if (!hasNative) return;
+    const { getNative } = await import('../../src/infrastructure/native.js');
+    native = getNative();
+    parsers = await createParsers();
+  });
+
+  const cases = [
+    {
+      name: 'JavaScript — functions and calls',
+      file: 'test.js',
+      code: `
+function greet(name) { return 'Hello ' + name; }
+const add = (a, b) => a + b;
+greet('world');
+add(1, 2);
+`,
+    },
+    {
+      name: 'JavaScript — constants',
+      file: 'const.js',
+      code: `
+const MAX_RETRIES = 3;
+const APP_NAME = "codegraph";
+const add = (a, b) => a + b;
+`,
+    },
+    {
+      name: 'TypeScript — destructured parameters',
+      file: 'destruct.ts',
+      code: `
+function greet({ name, age }: { name: string; age: number }) {
+  return name;
+}
+function update({ id }: { id: string }, value: number) {
+  return id;
+}
+`,
+    },
+    {
+      name: 'TypeScript — interfaces and types',
+      file: 'test.ts',
+      code: `
+interface Greeter { greet(name: string): string; }
+type ID = string | number;
+class MyGreeter implements Greeter {
+  greet(name: string) { return name; }
+}
+`,
+    },
+    {
+      name: 'TSX — class with extends',
+      file: 'test.tsx',
+      code: `
+import React from 'react';
+class Button extends React.Component {
+  render() { return <button />; }
+}
+export default Button;
+`,
+    },
+    {
+      name: 'Python — classes and imports',
+      file: 'test.py',
+      code: `
+import os
+from pathlib import Path
+class Animal:
+    def speak(self):
+        pass
+class Dog(Animal):
+    def speak(self):
+        print("Woof")
+`,
+    },
+    {
+      name: 'Go — structs and methods',
+      file: 'test.go',
+      code: `
+package main
+import "fmt"
+type Server struct {}
+func (s *Server) Start() { fmt.Println("started") }
+func main() { s := Server{}; s.Start() }
+`,
+    },
+    {
+      name: 'Rust — traits and impls',
+      file: 'test.rs',
+      code: `
+use std::fmt;
+trait Greet { fn hello(&self); }
+struct Person { name: String }
+impl Greet for Person {
+    fn hello(&self) { println!("{}", self.name); }
+}
+`,
+    },
+    {
+      name: 'Java — classes and interfaces',
+      file: 'Test.java',
+      code: `
+import java.util.List;
+interface Printable { void print(); }
+class Document implements Printable {
+    public void print() { System.out.println("doc"); }
+}
+`,
+    },
+    {
+      name: 'C# — classes and using',
+      file: 'Test.cs',
+      // Skip until next native binary release includes base_list extraction fix
+      skip: true,
+      code: `
+using System;
+using System.Collections.Generic;
+class Animal { public virtual void Speak() {} }
+class Dog : Animal { public override void Speak() {} }
+`,
+    },
+    {
+      name: 'Ruby — classes and require',
+      file: 'test.rb',
+      // Known native gap: native misses inherited class in classes array
+      skip: true,
+      code: `
+require 'json'
+class Animal
+  def speak; end
+end
+class Dog < Animal
+  def speak; puts "Woof"; end
+end
+`,
+    },
+    {
+      name: 'PHP — classes and use',
+      file: 'test.php',
+      // Known gap: PHP WASM grammar not always available in CI/worktrees
+      skip: true,
+      code: `<?php
+namespace App;
+use App\\Models\\User;
+class Controller {
+    public function index() { return new User(); }
+}
+`,
+    },
+    {
+      name: 'HCL — resources and modules',
+      file: 'main.tf',
+      // Known native gap: native engine does not support HCL
+      skip: true,
+      code: `
+resource "aws_instance" "web" {
+  ami = "abc-123"
+}
+module "vpc" {
+  source = "./modules/vpc"
+}
+`,
+    },
+  ];
+
+  for (const { name, file, code, skip } of cases) {
+    (skip ? it.skip : it)(`${name}`, () => {
+      const wasmResult = normalize(wasmExtract(code, file));
+      const nativeResult = normalize(nativeExtract(code, file));
+      expect(nativeResult).toEqual(wasmResult);
+    });
+  }
+});

@@ -220,4 +220,4 @@ This repo uses [Greptile](https://greptile.com) for automated PR reviews. After 
 
 ## Node Version
 
-Requires Node >= 20.
+Requires Node >= 22.6.

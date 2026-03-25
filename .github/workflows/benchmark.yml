@@ -89,15 +89,18 @@ jobs:
       - name: Run build benchmark
         if: steps.existing.outputs.skip != 'true'
         run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
           ARGS="--version ${{ steps.mode.outputs.version }}"
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
             ARGS="$ARGS --npm"
           fi
-          node scripts/benchmark.js $ARGS 2>/dev/null > benchmark-result.json
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/benchmark.ts $ARGS 2>/dev/null > benchmark-result.json
 
       - name: Update build report
         if: steps.existing.outputs.skip != 'true'
-        run: node scripts/update-benchmark-report.js benchmark-result.json
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG scripts/update-benchmark-report.ts benchmark-result.json
 
       - name: Upload build result
         if: steps.existing.outputs.skip != 'true'
@@ -240,15 +243,18 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
           ARGS="--version ${{ steps.mode.outputs.version }}"
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
             ARGS="$ARGS --npm"
           fi
-          node scripts/embedding-benchmark.js $ARGS 2>/dev/null > embedding-benchmark-result.json
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/embedding-benchmark.ts $ARGS 2>/dev/null > embedding-benchmark-result.json
 
       - name: Update embedding report
         if: steps.existing.outputs.skip != 'true'
-        run: node scripts/update-embedding-report.js embedding-benchmark-result.json
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG scripts/update-embedding-report.ts embedding-benchmark-result.json
 
       - name: Upload embedding result
         if: steps.existing.outputs.skip != 'true'
@@ -377,15 +383,18 @@ jobs:
       - name: Run query benchmark
         if: steps.existing.outputs.skip != 'true'
         run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
           ARGS="--version ${{ steps.mode.outputs.version }}"
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
             ARGS="$ARGS --npm"
           fi
-          node scripts/query-benchmark.js $ARGS 2>/dev/null > query-benchmark-result.json
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/query-benchmark.ts $ARGS 2>/dev/null > query-benchmark-result.json
 
       - name: Update query report
         if: steps.existing.outputs.skip != 'true'
-        run: node scripts/update-query-report.js query-benchmark-result.json
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG scripts/update-query-report.ts query-benchmark-result.json
 
       - name: Upload query result
         if: steps.existing.outputs.skip != 'true'
@@ -514,15 +523,18 @@ jobs:
       - name: Run incremental benchmark
         if: steps.existing.outputs.skip != 'true'
         run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
           ARGS="--version ${{ steps.mode.outputs.version }}"
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
             ARGS="$ARGS --npm"
           fi
-          node scripts/incremental-benchmark.js $ARGS 2>/dev/null > incremental-benchmark-result.json
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/incremental-benchmark.ts $ARGS 2>/dev/null > incremental-benchmark-result.json
 
       - name: Update incremental report
         if: steps.existing.outputs.skip != 'true'
-        run: node scripts/update-incremental-report.js incremental-benchmark-result.json
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG scripts/update-incremental-report.ts incremental-benchmark-result.json
 
       - name: Upload incremental result
         if: steps.existing.outputs.skip != 'true'

@@ -142,7 +142,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -224,7 +224,8 @@ jobs:
           VERSION: ${{ needs.compute-version.outputs.version }}
         run: |
           npm version "$VERSION" --no-git-tag-version --allow-same-version
-          node scripts/sync-native-versions.js --strip
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG scripts/sync-native-versions.ts --strip
           echo "Packaging version $VERSION"
 
       - name: Build TypeScript
@@ -405,7 +406,8 @@ jobs:
         run: |
           git checkout -- package-lock.json
           npm version "$VERSION" --no-git-tag-version --allow-same-version
-          node scripts/sync-native-versions.js
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG scripts/sync-native-versions.ts
           echo "Publishing version $VERSION"
 
       - name: Build TypeScript

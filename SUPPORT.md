@@ -9,7 +9,7 @@ Here are the best ways to get help with codegraph:
 - [README](README.md) — Quick start, commands, features, and configuration
 - [CONTRIBUTING.md](CONTRIBUTING.md) — Development setup and contribution guide
 - [Recommended Practices](docs/guides/recommended-practices.md) — Git hooks, CI/CD, AI agent integration
-- [Adding a New Language](docs/guides/adding-a-language.md) — Step-by-step language support guide
+- [Adding a New Language](docs/contributing/adding-a-language.md) — Step-by-step language support guide
 
 ### Questions & Discussions
 

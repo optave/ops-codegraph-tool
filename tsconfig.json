@@ -44,10 +44,6 @@
     "noPropertyAccessFromIndexSignature": true,
     "exactOptionalPropertyTypes": false,
 
-    /* Migration support */
-    "allowJs": true,
-    "checkJs": false,
-
     /* Misc */
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
