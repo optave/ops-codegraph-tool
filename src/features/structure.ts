@@ -744,7 +744,8 @@ export function hotspotsData(
     };
 
     const stmt = HOTSPOT_QUERIES[metric] ?? HOTSPOT_QUERIES['fan-in'];
-    const rows = stmt.all(kind, limit);
+    // stmt is always defined: metric is a valid key or the fallback is a concrete property
+    const rows = stmt!.all(kind, limit);
 
     const hotspots = rows.map((r) => ({
       name: r.name,

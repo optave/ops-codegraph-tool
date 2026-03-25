@@ -305,7 +305,8 @@ export function computeAllMetrics(
     nestingNodeTypes: nestingNodes,
   });
 
-  const rawResult = results.complexity as {
+  // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
+  const rawResult = results['complexity'] as {
     cognitive: number;
     cyclomatic: number;
     maxNesting: number;
@@ -689,7 +690,7 @@ export function complexityData(
       // Check if graph has nodes even though complexity table is missing/empty
       let hasGraph = false;
       try {
-        hasGraph = db.prepare<{ c: number }>('SELECT COUNT(*) as c FROM nodes').get()?.c > 0;
+        hasGraph = (db.prepare<{ c: number }>('SELECT COUNT(*) as c FROM nodes').get()?.c ?? 0) > 0;
       } catch (e2: unknown) {
         debug(`nodes table check failed: ${(e2 as Error).message}`);
       }
@@ -796,7 +797,7 @@ export function complexityData(
     let hasGraph = false;
     if (summary === null) {
       try {
-        hasGraph = db.prepare<{ c: number }>('SELECT COUNT(*) as c FROM nodes').get()?.c > 0;
+        hasGraph = (db.prepare<{ c: number }>('SELECT COUNT(*) as c FROM nodes').get()?.c ?? 0) > 0;
       } catch (e: unknown) {
         debug(`nodes table check failed: ${(e as Error).message}`);
       }
