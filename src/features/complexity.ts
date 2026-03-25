@@ -50,18 +50,18 @@ export function computeHalsteadMetrics(
     if (!node) return;
 
     // Skip type annotation subtrees
-    if (rules!.skipTypes.has(node.type)) return;
+    if (rules?.skipTypes.has(node.type)) return;
 
     // Compound operators (non-leaf): count the node type as an operator
-    if (rules!.compoundOperators.has(node.type)) {
+    if (rules?.compoundOperators.has(node.type)) {
       operators.set(node.type, (operators.get(node.type) || 0) + 1);
     }
 
     // Leaf nodes: classify as operator or operand
     if (node.childCount === 0) {
-      if (rules!.operatorLeafTypes.has(node.type)) {
+      if (rules?.operatorLeafTypes.has(node.type)) {
         operators.set(node.type, (operators.get(node.type) || 0) + 1);
-      } else if (rules!.operandLeafTypes.has(node.type)) {
+      } else if (rules?.operandLeafTypes.has(node.type)) {
         const text = node.text;
         operands.set(text, (operands.get(text) || 0) + 1);
       }
@@ -134,9 +134,9 @@ export function computeFunctionComplexity(
     if (nestingLevel > maxNesting) maxNesting = nestingLevel;
 
     // Handle logical operators in binary expressions
-    if (type === rules!.logicalNodeType) {
+    if (type === rules?.logicalNodeType) {
       const op = node.child(1)?.type;
-      if (op && rules!.logicalOperators.has(op)) {
+      if (op && rules?.logicalOperators.has(op)) {
         // Cyclomatic: +1 for every logical operator
         cyclomatic++;
 
@@ -144,7 +144,7 @@ export function computeFunctionComplexity(
         // Walk up to check if parent is same type with same operator
         const parent = node.parent;
         let sameSequence = false;
-        if (parent && parent.type === rules!.logicalNodeType) {
+        if (parent && parent.type === rules?.logicalNodeType) {
           const parentOp = parent.child(1)?.type;
           if (parentOp === op) {
             sameSequence = true;
@@ -163,16 +163,16 @@ export function computeFunctionComplexity(
     }
 
     // Handle optional chaining (cyclomatic only)
-    if (type === rules!.optionalChainType) {
+    if (type === rules?.optionalChainType) {
       cyclomatic++;
     }
 
     // Handle branch/control flow nodes (skip keyword leaf tokens like Ruby's `if`)
-    if (rules!.branchNodes.has(type) && node.childCount > 0) {
+    if (rules?.branchNodes.has(type) && node.childCount > 0) {
       // Pattern A: else clause wraps if (JS/C#/Rust)
-      if (rules!.elseNodeType && type === rules!.elseNodeType) {
+      if (rules?.elseNodeType && type === rules?.elseNodeType) {
         const firstChild = node.namedChild(0);
-        if (firstChild && firstChild.type === rules!.ifNodeType) {
+        if (firstChild && firstChild.type === rules?.ifNodeType) {
           // else-if: the if_statement child handles its own increment
           for (let i = 0; i < node.childCount; i++) {
             walk(node.child(i), nestingLevel, false);
@@ -188,7 +188,7 @@ export function computeFunctionComplexity(
       }
 
       // Pattern B: explicit elif node (Python/Ruby/PHP)
-      if (rules!.elifNodeType && type === rules!.elifNodeType) {
+      if (rules?.elifNodeType && type === rules?.elifNodeType) {
         cognitive++;
         cyclomatic++;
         for (let i = 0; i < node.childCount; i++) {
@@ -199,15 +199,15 @@ export function computeFunctionComplexity(
 
       // Detect else-if via Pattern A or C
       let isElseIf = false;
-      if (type === rules!.ifNodeType) {
-        if (rules!.elseViaAlternative) {
+      if (type === rules?.ifNodeType) {
+        if (rules?.elseViaAlternative) {
           // Pattern C (Go/Java): if_statement is the alternative of parent if_statement
           isElseIf =
-            node.parent?.type === rules!.ifNodeType &&
+            node.parent?.type === rules?.ifNodeType &&
             node.parent.childForFieldName('alternative')?.id === node.id;
-        } else if (rules!.elseNodeType) {
+        } else if (rules?.elseNodeType) {
           // Pattern A (JS/C#/Rust): if_statement inside else_clause
-          isElseIf = node.parent?.type === rules!.elseNodeType;
+          isElseIf = node.parent?.type === rules?.elseNodeType;
         }
       }
 
@@ -225,11 +225,11 @@ export function computeFunctionComplexity(
       cyclomatic++;
 
       // Switch-like nodes don't add cyclomatic themselves (cases do)
-      if (rules!.switchLikeNodes?.has(type)) {
+      if (rules?.switchLikeNodes?.has(type)) {
         cyclomatic--; // Undo the ++ above; cases handle cyclomatic
       }
 
-      if (rules!.nestingNodes.has(type)) {
+      if (rules?.nestingNodes.has(type)) {
         for (let i = 0; i < node.childCount; i++) {
           walk(node.child(i), nestingLevel + 1, false);
         }
@@ -239,9 +239,9 @@ export function computeFunctionComplexity(
 
     // Pattern C plain else: block that is the alternative of an if_statement (Go/Java)
     if (
-      rules!.elseViaAlternative &&
-      type !== rules!.ifNodeType &&
-      node.parent?.type === rules!.ifNodeType &&
+      rules?.elseViaAlternative &&
+      type !== rules?.ifNodeType &&
+      node.parent?.type === rules?.ifNodeType &&
       node.parent.childForFieldName('alternative')?.id === node.id
     ) {
       cognitive++;
@@ -252,12 +252,12 @@ export function computeFunctionComplexity(
     }
 
     // Handle case nodes (cyclomatic only, skip keyword leaves)
-    if (rules!.caseNodes.has(type) && node.childCount > 0) {
+    if (rules?.caseNodes.has(type) && node.childCount > 0) {
       cyclomatic++;
     }
 
     // Handle nested function definitions (increase nesting)
-    if (!isTopFunction && rules!.functionNodes.has(type)) {
+    if (!isTopFunction && rules?.functionNodes.has(type)) {
       for (let i = 0; i < node.childCount; i++) {
         walk(node.child(i), nestingLevel + 1, false);
       }
@@ -305,7 +305,7 @@ export function computeAllMetrics(
     nestingNodeTypes: nestingNodes,
   });
 
-  const rawResult = results['complexity'] as {
+  const rawResult = results.complexity as {
     cognitive: number;
     cyclomatic: number;
     maxNesting: number;
@@ -359,8 +359,16 @@ async function initWasmParsersIfNeeded(
     if (!symbols._tree) {
       const ext = path.extname(relPath).toLowerCase();
       if (!COMPLEXITY_EXTENSIONS.has(ext)) continue;
+      // Only consider definitions with real function bodies (non-dotted names,
+      // multi-line span). Interface/type property signatures are extracted as
+      // methods but correctly lack complexity data from the native engine.
       const hasPrecomputed = symbols.definitions.every(
-        (d) => (d.kind !== 'function' && d.kind !== 'method') || d.complexity,
+        (d) =>
+          (d.kind !== 'function' && d.kind !== 'method') ||
+          d.complexity ||
+          d.name.includes('.') ||
+          !d.endLine ||
+          d.endLine <= d.line,
       );
       if (!hasPrecomputed) {
         const { createParsers } = await import('../domain/parser.js');
@@ -427,13 +435,13 @@ function upsertPrecomputedComplexity(
 ): number {
   const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
   if (!nodeId) return 0;
-  const ch = def.complexity!.halstead;
-  const cl = def.complexity!.loc;
+  const ch = def.complexity?.halstead;
+  const cl = def.complexity?.loc;
   upsert.run(
     nodeId,
-    def.complexity!.cognitive,
-    def.complexity!.cyclomatic,
-    def.complexity!.maxNesting ?? 0,
+    def.complexity?.cognitive,
+    def.complexity?.cyclomatic,
+    def.complexity?.maxNesting ?? 0,
     cl ? cl.loc : 0,
     cl ? cl.sloc : 0,
     cl ? cl.commentLines : 0,
@@ -447,7 +455,7 @@ function upsertPrecomputedComplexity(
     ch ? ch.difficulty : 0,
     ch ? ch.effort : 0,
     ch ? ch.bugs : 0,
-    def.complexity!.maintainabilityIndex ?? 0,
+    def.complexity?.maintainabilityIndex ?? 0,
   );
   return 1;
 }
@@ -681,7 +689,7 @@ export function complexityData(
       // Check if graph has nodes even though complexity table is missing/empty
       let hasGraph = false;
       try {
-        hasGraph = db.prepare<{ c: number }>('SELECT COUNT(*) as c FROM nodes').get()!.c > 0;
+        hasGraph = db.prepare<{ c: number }>('SELECT COUNT(*) as c FROM nodes').get()?.c > 0;
       } catch (e2: unknown) {
         debug(`nodes table check failed: ${(e2 as Error).message}`);
       }
@@ -693,22 +701,25 @@ export function complexityData(
 
     const functions = filtered.map((r) => {
       const exceeds: string[] = [];
-      if (isValidThreshold(thresholds.cognitive?.warn) && r.cognitive >= thresholds.cognitive.warn!)
+      if (
+        isValidThreshold(thresholds.cognitive?.warn) &&
+        r.cognitive >= (thresholds.cognitive?.warn ?? 0)
+      )
         exceeds.push('cognitive');
       if (
         isValidThreshold(thresholds.cyclomatic?.warn) &&
-        r.cyclomatic >= thresholds.cyclomatic.warn!
+        r.cyclomatic >= (thresholds.cyclomatic?.warn ?? 0)
       )
         exceeds.push('cyclomatic');
       if (
         isValidThreshold(thresholds.maxNesting?.warn) &&
-        r.max_nesting >= thresholds.maxNesting.warn!
+        r.max_nesting >= (thresholds.maxNesting?.warn ?? 0)
       )
         exceeds.push('maxNesting');
       if (
         isValidThreshold(thresholds.maintainabilityIndex?.warn) &&
         r.maintainability_index > 0 &&
-        r.maintainability_index <= thresholds.maintainabilityIndex.warn!
+        r.maintainability_index <= (thresholds.maintainabilityIndex?.warn ?? 0)
       )
         exceeds.push('maintainabilityIndex');
 
@@ -766,14 +777,14 @@ export function complexityData(
           aboveWarn: allRows.filter(
             (r) =>
               (isValidThreshold(thresholds.cognitive?.warn) &&
-                r.cognitive >= thresholds.cognitive.warn!) ||
+                r.cognitive >= (thresholds.cognitive?.warn ?? 0)) ||
               (isValidThreshold(thresholds.cyclomatic?.warn) &&
-                r.cyclomatic >= thresholds.cyclomatic.warn!) ||
+                r.cyclomatic >= (thresholds.cyclomatic?.warn ?? 0)) ||
               (isValidThreshold(thresholds.maxNesting?.warn) &&
-                r.max_nesting >= thresholds.maxNesting.warn!) ||
+                r.max_nesting >= (thresholds.maxNesting?.warn ?? 0)) ||
               (isValidThreshold(thresholds.maintainabilityIndex?.warn) &&
                 r.maintainability_index > 0 &&
-                r.maintainability_index <= thresholds.maintainabilityIndex.warn!),
+                r.maintainability_index <= (thresholds.maintainabilityIndex?.warn ?? 0)),
           ).length,
         };
       }
@@ -785,7 +796,7 @@ export function complexityData(
     let hasGraph = false;
     if (summary === null) {
       try {
-        hasGraph = db.prepare<{ c: number }>('SELECT COUNT(*) as c FROM nodes').get()!.c > 0;
+        hasGraph = db.prepare<{ c: number }>('SELECT COUNT(*) as c FROM nodes').get()?.c > 0;
       } catch (e: unknown) {
         debug(`nodes table check failed: ${(e as Error).message}`);
       }

@@ -114,20 +114,31 @@ async function ensureWasmTreesIfNeeded(
     const ext = path.extname(relPath).toLowerCase();
     const defs = symbols.definitions || [];
 
+    // Only consider definitions with a real function body.
+    // Interface/type property signatures are extracted as methods but correctly
+    // lack complexity/CFG data from the native engine. Exclude them by:
+    // 1. Single-line span (endLine === line) — type property on one line
+    // 2. Dotted names (e.g. "Interface.prop") — child definitions of types
+    const hasFuncBody = (d: {
+      name: string;
+      kind: string;
+      line: number;
+      endLine?: number | null;
+    }) =>
+      (d.kind === 'function' || d.kind === 'method') &&
+      d.line > 0 &&
+      d.endLine != null &&
+      d.endLine > d.line &&
+      !d.name.includes('.');
+
     const needsComplexity =
       doComplexity &&
       COMPLEXITY_EXTENSIONS.has(ext) &&
-      defs.some((d) => (d.kind === 'function' || d.kind === 'method') && d.line && !d.complexity);
+      defs.some((d) => hasFuncBody(d) && !d.complexity);
     const needsCfg =
       doCfg &&
       CFG_EXTENSIONS.has(ext) &&
-      defs.some(
-        (d) =>
-          (d.kind === 'function' || d.kind === 'method') &&
-          d.line &&
-          d.cfg !== null &&
-          !Array.isArray(d.cfg?.blocks),
-      );
+      defs.some((d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks));
     const needsDataflow = doDataflow && !symbols.dataflow && DATAFLOW_EXTENSIONS.has(ext);
 
     if (needsComplexity || needsCfg || needsDataflow) {
@@ -186,8 +197,17 @@ function setupVisitors(
   const cRules = COMPLEXITY_RULES.get(langId);
   const hRules = HALSTEAD_RULES.get(langId);
   if (doComplexity && cRules) {
+    // Only trigger WASM complexity for definitions with real function bodies.
+    // Interface/type property signatures (dotted names, single-line span)
+    // correctly lack native complexity data and should not trigger a fallback.
     const needsWasmComplexity = defs.some(
-      (d) => (d.kind === 'function' || d.kind === 'method') && d.line && !d.complexity,
+      (d) =>
+        (d.kind === 'function' || d.kind === 'method') &&
+        d.line > 0 &&
+        d.endLine != null &&
+        d.endLine > d.line &&
+        !d.name.includes('.') &&
+        !d.complexity,
     );
     if (needsWasmComplexity) {
       complexityVisitor = createComplexityVisitor(cRules, hRules, { fileLevelWalk: true, langId });
@@ -213,7 +233,10 @@ function setupVisitors(
     const needsWasmCfg = defs.some(
       (d) =>
         (d.kind === 'function' || d.kind === 'method') &&
-        d.line &&
+        d.line > 0 &&
+        d.endLine != null &&
+        d.endLine > d.line &&
+        !d.name.includes('.') &&
         d.cfg !== null &&
         !Array.isArray(d.cfg?.blocks),
     );

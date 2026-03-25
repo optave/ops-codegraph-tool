@@ -39,7 +39,7 @@ function cleanupPreviousData(
   changedFiles: string[] | null,
 ): void {
   if (isIncremental) {
-    const affectedDirs = getAncestorDirs(changedFiles!);
+    const affectedDirs = getAncestorDirs(changedFiles ?? []);
     const deleteContainsForDir = db.prepare(
       "DELETE FROM edges WHERE kind = 'contains' AND source_id IN (SELECT id FROM nodes WHERE name = ? AND kind = 'directory')",
     );
@@ -48,7 +48,7 @@ function cleanupPreviousData(
       for (const dir of affectedDirs) {
         deleteContainsForDir.run(dir);
       }
-      for (const f of changedFiles!) {
+      for (const f of changedFiles ?? []) {
         const fileRow = getNodeIdStmt.get(f, 'file', f, 0);
         if (fileRow) deleteMetricForNode.run(fileRow.id);
       }
@@ -102,7 +102,7 @@ function insertContainsEdges(
   changedFiles: string[] | null,
 ): void {
   const isIncremental = changedFiles != null && changedFiles.length > 0;
-  const affectedDirs = isIncremental ? getAncestorDirs(changedFiles!) : null;
+  const affectedDirs = isIncremental ? getAncestorDirs(changedFiles ?? []) : null;
 
   db.transaction(() => {
     for (const relPath of fileSymbols.keys()) {
@@ -218,7 +218,7 @@ function computeDirectoryMetrics(
     let d = normalizePath(path.dirname(relPath));
     while (d && d !== '.') {
       if (dirFiles.has(d)) {
-        dirFiles.get(d)!.push(relPath);
+        dirFiles.get(d)?.push(relPath);
       }
       d = normalizePath(path.dirname(d));
     }
@@ -228,7 +228,7 @@ function computeDirectoryMetrics(
   for (const [dir, files] of dirFiles) {
     for (const f of files) {
       if (!fileToAncestorDirs.has(f)) fileToAncestorDirs.set(f, new Set());
-      fileToAncestorDirs.get(f)!.add(dir);
+      fileToAncestorDirs.get(f)?.add(dir);
     }
   }
 
@@ -408,21 +408,21 @@ export function classifyNodeRoles(db: BetterSqlite3Database): RoleSummary {
     fan_out: number;
   }[];
 
-  if (rows.length === 0) {
-    return {
-      entry: 0,
-      core: 0,
-      utility: 0,
-      adapter: 0,
-      dead: 0,
-      'dead-leaf': 0,
-      'dead-entry': 0,
-      'dead-ffi': 0,
-      'dead-unresolved': 0,
-      'test-only': 0,
-      leaf: 0,
-    };
-  }
+  const emptySummary: RoleSummary = {
+    entry: 0,
+    core: 0,
+    utility: 0,
+    adapter: 0,
+    dead: 0,
+    'dead-leaf': 0,
+    'dead-entry': 0,
+    'dead-ffi': 0,
+    'dead-unresolved': 0,
+    'test-only': 0,
+    leaf: 0,
+  };
+
+  if (rows.length === 0) return emptySummary;
 
   const exportedIds = new Set(
     (
@@ -468,35 +468,34 @@ export function classifyNodeRoles(db: BetterSqlite3Database): RoleSummary {
 
   const roleMap = classifyRoles(classifierInput);
 
-  // Build summary and updates
-  const summary: RoleSummary = {
-    entry: 0,
-    core: 0,
-    utility: 0,
-    adapter: 0,
-    dead: 0,
-    'dead-leaf': 0,
-    'dead-entry': 0,
-    'dead-ffi': 0,
-    'dead-unresolved': 0,
-    'test-only': 0,
-    leaf: 0,
-  };
-  const updates: { id: number; role: string }[] = [];
+  // Build summary and group updates by role for batch UPDATE
+  const summary: RoleSummary = { ...emptySummary };
+  const idsByRole = new Map<string, number[]>();
   for (const row of rows) {
     const role = roleMap.get(String(row.id)) || 'leaf';
-    updates.push({ id: row.id, role });
     if (role.startsWith('dead')) summary.dead++;
     summary[role] = (summary[role] || 0) + 1;
+    let ids = idsByRole.get(role);
+    if (!ids) {
+      ids = [];
+      idsByRole.set(role, ids);
+    }
+    ids.push(row.id);
   }
 
-  const clearRoles = db.prepare('UPDATE nodes SET role = NULL');
-  const setRole = db.prepare('UPDATE nodes SET role = ? WHERE id = ?');
-
+  // Batch UPDATE: one statement per role instead of one per node
+  const ROLE_CHUNK = 500;
   db.transaction(() => {
-    clearRoles.run();
-    for (const u of updates) {
-      setRole.run(u.role, u.id);
+    db.prepare('UPDATE nodes SET role = NULL').run();
+    for (const [role, ids] of idsByRole) {
+      for (let i = 0; i < ids.length; i += ROLE_CHUNK) {
+        const end = Math.min(i + ROLE_CHUNK, ids.length);
+        const chunkSize = end - i;
+        const placeholders = Array.from({ length: chunkSize }, () => '?').join(',');
+        const vals: unknown[] = [role];
+        for (let j = i; j < end; j++) vals.push(ids[j]);
+        db.prepare(`UPDATE nodes SET role = ? WHERE id IN (${placeholders})`).run(...vals);
+      }
     }
   })();
 
@@ -744,8 +743,8 @@ export function hotspotsData(
         WHERE n.kind = ? ${testFilter} ORDER BY (COALESCE(nm.fan_in, 0) + COALESCE(nm.fan_out, 0)) DESC NULLS LAST LIMIT ?`),
     };
 
-    const stmt = HOTSPOT_QUERIES[metric] ?? HOTSPOT_QUERIES['fan-in']!;
-    const rows = stmt!.all(kind, limit);
+    const stmt = HOTSPOT_QUERIES[metric] ?? HOTSPOT_QUERIES['fan-in'];
+    const rows = stmt?.all(kind, limit);
 
     const hotspots = rows.map((r) => ({
       name: r.name,
@@ -760,9 +759,9 @@ export function hotspotsData(
       fileCount: r.file_count,
       density:
         (r.file_count ?? 0) > 0
-          ? (r.symbol_count || 0) / r.file_count!
+          ? (r.symbol_count || 0) / (r.file_count ?? 1)
           : (r.line_count ?? 0) > 0
-            ? (r.symbol_count || 0) / r.line_count!
+            ? (r.symbol_count || 0) / (r.line_count ?? 1)
             : 0,
       coupling: (r.fan_in || 0) + (r.fan_out || 0),
     }));
@@ -863,8 +862,8 @@ function getSortFn(sortBy: string): (a: DirRow, b: DirRow) => number {
       return (a, b) => (b.fan_out || 0) - (a.fan_out || 0);
     case 'density':
       return (a, b) => {
-        const da = (a.file_count ?? 0) > 0 ? (a.symbol_count || 0) / a.file_count! : 0;
-        const db_ = (b.file_count ?? 0) > 0 ? (b.symbol_count || 0) / b.file_count! : 0;
+        const da = (a.file_count ?? 0) > 0 ? (a.symbol_count || 0) / (a.file_count ?? 1) : 0;
+        const db_ = (b.file_count ?? 0) > 0 ? (b.symbol_count || 0) / (b.file_count ?? 1) : 0;
         return db_ - da;
       };
     default:
