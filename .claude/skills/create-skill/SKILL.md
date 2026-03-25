@@ -288,7 +288,7 @@ If the skill performs dangerous operations (from Phase 0 discovery), add explici
 - Run lint after changes: detect lint runner:
   ```bash
   if [ -f "biome.json" ]; then LINT_CMD="npx biome check"
-  elif find . -maxdepth 1 -name "eslint.config.*" -print -quit | grep -q .; then LINT_CMD="npx eslint ."
+  elif find . -maxdepth 1 -name "eslint.config.*" | grep -q .; then LINT_CMD="npx eslint ."
   elif [ -f "package.json" ]; then LINT_CMD="npm run lint"
   else echo "WARN: No recognised lint runner found — skipping lint"; LINT_CMD="true"; fi
   $LINT_CMD
