@@ -90,7 +90,7 @@ describe.skipIf(!hasNative)('Import resolution parity', () => {
     assertParity(path.join(rootDir, 'index.js'), 'lodash', noAliases);
   });
 
-  // Known native engine limitation: does not normalize ../ or append extensions
+  // Un-skip once the native binary is published with the clean_path fix (#600)
   it.skip('resolves parent directory traversal', () => {
     // Create a temporary nested structure
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-parity-'));
