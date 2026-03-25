@@ -172,7 +172,7 @@ function setupVisitors(
   // AST-store visitor
   let astVisitor: Visitor | null = null;
   const astTypeMap = AST_TYPE_MAPS.get(langId);
-  if (doAst && astTypeMap && WALK_EXTENSIONS.has(ext) && !symbols.astNodes?.length) {
+  if (doAst && astTypeMap && WALK_EXTENSIONS.has(ext) && !Array.isArray(symbols.astNodes)) {
     const nodeIdMap = new Map<string, number>();
     for (const row of bulkNodeIdsByFile(db, relPath)) {
       nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
