@@ -64,7 +64,7 @@ fi
 Create the skill directory and SKILL.md with frontmatter:
 
 ```bash
-mkdir -p .claude/skills/$SKILL_NAME
+mkdir -p ".claude/skills/$SKILL_NAME"
 ```
 
 Write the SKILL.md file starting with this structure:
