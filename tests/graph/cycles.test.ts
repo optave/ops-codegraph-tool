@@ -226,11 +226,11 @@ describe.skipIf(!hasNative)('Cycle detection: native vs JS parity', () => {
 // ── Extraction-level parity gap (issue #597) ───────────────────────
 
 describe('Cycle count sensitivity to edge differences', () => {
-  it('adding a precise edge can break a false cycle', () => {
-    // Demonstrates why native (more edges) can report FEWER cycles than WASM.
+  it('resolving an ambiguous call edge to its correct target can break a false cycle', () => {
+    // Demonstrates why native (more precise edge targets) can report FEWER cycles than WASM.
     // With ambiguous resolution, a -> b -> c -> a forms a 3-node cycle.
-    // Adding a precise edge c -> d (resolving a previously ambiguous call)
-    // removes the c -> a edge, breaking the cycle.
+    // Resolving the ambiguous c -> a edge to its correct target c -> d
+    // breaks the cycle.
     const ambiguousEdges = [
       { source: 'a', target: 'b' },
       { source: 'b', target: 'c' },
