@@ -308,6 +308,48 @@ export function clearWorkspaceCache(): void {
   _workspaceResolvedPaths.clear();
 }
 
+// ── JS → TS extension remap cache ───────────────────────────────────
+
+/** Cache: absolute .js path → remapped .ts/.tsx relative path (or null if no TS file exists). */
+const _jsToTsCache: Map<string, string | null> = new Map();
+
+/**
+ * If `resolved` ends with `.js`, check whether a `.ts` or `.tsx` counterpart
+ * exists on disk and return its relative path from `rootDir`.  Results are
+ * cached for the lifetime of the process to avoid repeated stat calls in the
+ * batch hot path.
+ *
+ * Returns the remapped relative path, or the original `resolved` when no TS
+ * counterpart is found.
+ */
+function remapJsToTs(resolved: string, rootDir: string): string {
+  if (!resolved.endsWith('.js')) return resolved;
+  const abs = path.resolve(rootDir, resolved);
+  if (_jsToTsCache.has(abs)) {
+    const cached = _jsToTsCache.get(abs);
+    return cached ?? resolved;
+  }
+  const tsAbs = abs.replace(/\.js$/, '.ts');
+  if (fs.existsSync(tsAbs)) {
+    const rel = normalizePath(path.relative(rootDir, tsAbs));
+    _jsToTsCache.set(abs, rel);
+    return rel;
+  }
+  const tsxAbs = abs.replace(/\.js$/, '.tsx');
+  if (fs.existsSync(tsxAbs)) {
+    const rel = normalizePath(path.relative(rootDir, tsxAbs));
+    _jsToTsCache.set(abs, rel);
+    return rel;
+  }
+  _jsToTsCache.set(abs, null);
+  return resolved;
+}
+
+/** Clear the .js → .ts remap cache (for testing). */
+export function clearJsToTsCache(): void {
+  _jsToTsCache.clear();
+}
+
 // ── Alias format conversion ─────────────────────────────────────────
 
 /**
@@ -462,14 +504,7 @@ export function resolveImportPath(
       // The native resolver's .js → .ts remap fails when paths contain
       // unresolved ".." components (PathBuf::components().collect() doesn't
       // collapse parent refs). Apply the remap on the JS side as a fallback.
-      if (normalized.endsWith('.js')) {
-        const abs = path.resolve(rootDir, normalized);
-        const tsAbs = abs.replace(/\.js$/, '.ts');
-        if (fs.existsSync(tsAbs)) return normalizePath(path.relative(rootDir, tsAbs));
-        const tsxAbs = abs.replace(/\.js$/, '.tsx');
-        if (fs.existsSync(tsxAbs)) return normalizePath(path.relative(rootDir, tsxAbs));
-      }
-      return normalized;
+      return remapJsToTs(normalized, rootDir);
     } catch {
       // fall through to JS
     }
@@ -523,19 +558,10 @@ export function resolveImportsBatch(
     );
     const map: BatchResolvedMap = new Map();
     for (const r of results) {
-      let resolved = normalizePath(path.normalize(r.resolvedPath));
+      const normalized = normalizePath(path.normalize(r.resolvedPath));
       // Native resolver's .js → .ts remap fails on unnormalized paths —
       // apply JS-side fallback (same fix as resolveImportPath).
-      if (resolved.endsWith('.js')) {
-        const abs = path.resolve(rootDir, resolved);
-        const tsAbs = abs.replace(/\.js$/, '.ts');
-        if (fs.existsSync(tsAbs)) {
-          resolved = normalizePath(path.relative(rootDir, tsAbs));
-        } else {
-          const tsxAbs = abs.replace(/\.js$/, '.tsx');
-          if (fs.existsSync(tsxAbs)) resolved = normalizePath(path.relative(rootDir, tsxAbs));
-        }
-      }
+      const resolved = remapJsToTs(normalized, rootDir);
       map.set(`${r.fromFile}|${r.importSource}`, resolved);
     }
     return map;
