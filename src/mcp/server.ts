@@ -19,6 +19,14 @@ import { initMcpDefaults } from './middleware.js';
 import { buildToolList } from './tool-registry.js';
 import { TOOL_HANDLERS } from './tools/index.js';
 
+/**
+ * Module-level guard to register shutdown handlers only once per process.
+ * Because tests use vi.resetModules(), this module-level variable resets
+ * on each re-import — but the process-level flag on `process` persists.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: MCP SDK server type is lazy-loaded
+let _activeServer: any = null;
+
 export interface McpToolContext {
   dbPath: string | undefined;
   // biome-ignore lint/suspicious/noExplicitAny: lazy-loaded queries module
@@ -179,5 +187,63 @@ export async function startMCPServer(
 
   // biome-ignore lint/suspicious/noExplicitAny: MCP SDK types are lazy-loaded and untyped
   const transport = new (StdioServerTransport as any)();
-  await server.connect(transport);
+
+  // Graceful shutdown — when the client disconnects (e.g. session clear),
+  // close the server cleanly so the process exits without error.
+  // Track the active server at module level so handlers always reference
+  // the latest instance (matters when tests call startMCPServer repeatedly).
+  _activeServer = server;
+
+  // Register handlers once per process to avoid listener accumulation.
+  // Use a process-level flag so it survives vi.resetModules() in tests.
+  const g = globalThis as Record<string, unknown>;
+  // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by TS noPropertyAccessFromIndexSignature
+  if (!g['__codegraph_shutdown_installed']) {
+    // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by TS noPropertyAccessFromIndexSignature
+    g['__codegraph_shutdown_installed'] = true;
+
+    const shutdown = async () => {
+      try {
+        await _activeServer?.close();
+      } catch {}
+      process.exit(0);
+    };
+    const silentExit = (err: Error & { code?: string }) => {
+      // Only suppress broken-pipe errors from closed stdio transport;
+      // let real bugs surface with a non-zero exit code.
+      if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') {
+        process.exit(0);
+      }
+      process.stderr.write(`Uncaught exception: ${err.stack ?? err.message}\n`);
+      process.exit(1);
+    };
+    const silentReject = (reason: unknown) => {
+      const err = reason instanceof Error ? reason : new Error(String(reason));
+      const code = (err as Error & { code?: string }).code;
+      if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') {
+        process.exit(0);
+      }
+      process.stderr.write(`Unhandled rejection: ${err.stack ?? err.message}\n`);
+      process.exit(1);
+    };
+
+    process.on('SIGINT', shutdown);
+    process.on('SIGTERM', shutdown);
+    process.on('SIGHUP', shutdown);
+    process.on('uncaughtException', silentExit);
+    process.on('unhandledRejection', silentReject);
+  }
+
+  try {
+    await server.connect(transport);
+  } catch (err) {
+    const code = (err as Error & { code?: string }).code;
+    if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') {
+      process.exit(0);
+    }
+    process.stderr.write(
+      `MCP transport connect failed: ${(err as Error).stack ?? (err as Error).message}\n`,
+    );
+    process.exit(1);
+  }
 }
