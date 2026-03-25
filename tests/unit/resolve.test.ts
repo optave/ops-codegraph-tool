@@ -10,6 +10,7 @@ import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import {
   clearExportsCache,
+  clearJsToTsCache,
   clearWorkspaceCache,
   computeConfidence,
   computeConfidenceJS,
@@ -56,6 +57,10 @@ beforeAll(() => {
 
 afterAll(() => {
   if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+afterEach(() => {
+  clearJsToTsCache();
 });
 
 // ─── resolveImportPathJS ────────────────────────────────────────────

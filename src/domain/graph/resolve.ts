@@ -319,6 +319,12 @@ const _jsToTsCache: Map<string, string | null> = new Map();
  * cached for the lifetime of the process to avoid repeated stat calls in the
  * batch hot path.
  *
+ * The cache stores **absolute** `.ts`/`.tsx` paths (or `null`) so that the
+ * same cached entry is correct regardless of which `rootDir` is passed — the
+ * relative path is computed on every cache hit.  This is important for MCP
+ * `--multi-repo` mode where the same absolute `.js` file may be resolved with
+ * different `rootDir` values.
+ *
  * Returns the remapped relative path, or the original `resolved` when no TS
  * counterpart is found.
  */
@@ -326,20 +332,18 @@ function remapJsToTs(resolved: string, rootDir: string): string {
   if (!resolved.endsWith('.js')) return resolved;
   const abs = path.resolve(rootDir, resolved);
   if (_jsToTsCache.has(abs)) {
-    const cached = _jsToTsCache.get(abs);
-    return cached ?? resolved;
+    const cachedAbs = _jsToTsCache.get(abs);
+    return cachedAbs ? normalizePath(path.relative(rootDir, cachedAbs)) : resolved;
   }
   const tsAbs = abs.replace(/\.js$/, '.ts');
   if (fs.existsSync(tsAbs)) {
-    const rel = normalizePath(path.relative(rootDir, tsAbs));
-    _jsToTsCache.set(abs, rel);
-    return rel;
+    _jsToTsCache.set(abs, tsAbs);
+    return normalizePath(path.relative(rootDir, tsAbs));
   }
   const tsxAbs = abs.replace(/\.js$/, '.tsx');
   if (fs.existsSync(tsxAbs)) {
-    const rel = normalizePath(path.relative(rootDir, tsxAbs));
-    _jsToTsCache.set(abs, rel);
-    return rel;
+    _jsToTsCache.set(abs, tsxAbs);
+    return normalizePath(path.relative(rootDir, tsxAbs));
   }
   _jsToTsCache.set(abs, null);
   return resolved;
