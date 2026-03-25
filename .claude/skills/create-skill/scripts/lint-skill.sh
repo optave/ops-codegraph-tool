@@ -124,10 +124,15 @@ while IFS= read -r line; do
     '```'*) in_block=false; in_detect=false; detect_depth=0; continue ;;
   esac
   if $in_block; then
-    # Track if we're inside an if/elif chain (detection block) with depth
-    if echo "$line" | grep -qE '^\s*(if|elif)\s.*(-f\s|-d\s|lock|package|command -v|which\s)'; then
+    # Track if we're inside an if/elif chain (detection block) with depth.
+    # Only `if` increments depth; `elif` is a sibling branch of the same if-statement,
+    # not a new nesting level, so it sets in_detect but does NOT increment depth.
+    if echo "$line" | grep -qE '^\s*if\s.*(-f\s|-d\s|lock|package|command -v|which\s)'; then
       in_detect=true
       detect_depth=$((detect_depth + 1))
+    elif echo "$line" | grep -qE '^\s*elif\s.*(-f\s|-d\s|lock|package|command -v|which\s)'; then
+      # elif is a sibling branch — set in_detect but do NOT increment depth
+      in_detect=true
     elif echo "$line" | grep -qE '^\s*if\b'; then
       # nested if (not a detection block) — track depth only when inside detection
       [ "$in_detect" = true ] && detect_depth=$((detect_depth + 1))
