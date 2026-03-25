@@ -7,5 +7,5 @@ docs/
 *.db
 .codegraphrc.json
 .versionrc.json
-commitlint.config.js
+commitlint.config.ts
 codegraph-improvements.md

@@ -13,4 +13,4 @@
 // Note: if import() rejects (e.g. missing dependency), the rejected Promise is cached
 // by the CJS module system and every subsequent require() call will re-surface the same
 // rejection without re-attempting the load.
-module.exports = import('./index.js');
+module.exports = import('./index.ts');
