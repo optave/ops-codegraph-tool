@@ -458,7 +458,18 @@ export function resolveImportPath(
         rootDir,
         convertAliasesForNative(aliases),
       );
-      return normalizePath(path.normalize(result));
+      const normalized = normalizePath(path.normalize(result));
+      // The native resolver's .js → .ts remap fails when paths contain
+      // unresolved ".." components (PathBuf::components().collect() doesn't
+      // collapse parent refs). Apply the remap on the JS side as a fallback.
+      if (normalized.endsWith('.js')) {
+        const abs = path.resolve(rootDir, normalized);
+        const tsAbs = abs.replace(/\.js$/, '.ts');
+        if (fs.existsSync(tsAbs)) return normalizePath(path.relative(rootDir, tsAbs));
+        const tsxAbs = abs.replace(/\.js$/, '.tsx');
+        if (fs.existsSync(tsxAbs)) return normalizePath(path.relative(rootDir, tsxAbs));
+      }
+      return normalized;
     } catch {
       // fall through to JS
     }
@@ -512,7 +523,20 @@ export function resolveImportsBatch(
     );
     const map: BatchResolvedMap = new Map();
     for (const r of results) {
-      map.set(`${r.fromFile}|${r.importSource}`, normalizePath(path.normalize(r.resolvedPath)));
+      let resolved = normalizePath(path.normalize(r.resolvedPath));
+      // Native resolver's .js → .ts remap fails on unnormalized paths —
+      // apply JS-side fallback (same fix as resolveImportPath).
+      if (resolved.endsWith('.js')) {
+        const abs = path.resolve(rootDir, resolved);
+        const tsAbs = abs.replace(/\.js$/, '.ts');
+        if (fs.existsSync(tsAbs)) {
+          resolved = normalizePath(path.relative(rootDir, tsAbs));
+        } else {
+          const tsxAbs = abs.replace(/\.js$/, '.tsx');
+          if (fs.existsSync(tsxAbs)) resolved = normalizePath(path.relative(rootDir, tsxAbs));
+        }
+      }
+      map.set(`${r.fromFile}|${r.importSource}`, resolved);
     }
     return map;
   } catch {
