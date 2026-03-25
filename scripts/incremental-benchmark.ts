@@ -58,7 +58,7 @@ if (!isWorker()) {
 		function walk(dir) {
 			for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
 				if (entry.isDirectory()) { walk(path.join(dir, entry.name)); continue; }
-				if (!entry.name.endsWith('.js')) continue;
+				if (!entry.name.endsWith('.js') && !entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
 				const absFile = path.join(dir, entry.name);
 				const content = fs.readFileSync(absFile, 'utf8');
 				let match;
