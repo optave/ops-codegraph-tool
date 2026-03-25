@@ -25,8 +25,10 @@ Set `SKILL_NAME` to the provided name. Validate it is kebab-case (`^[a-z][a-z0-9
 ```bash
 for tool in git mktemp; do
   command -v "$tool" > /dev/null 2>&1 || { echo "ERROR: required tool '$tool' not found"; exit 1; }
+  # > /dev/null 2>&1: suppress command path on success and shell's "not found" on failure — the || clause provides the error message
 done
 git rev-parse --show-toplevel > /dev/null 2>&1 || { echo "ERROR: not in a git repository — run /create-skill from the repo root"; exit 1; }
+# > /dev/null 2>&1: suppress git's own "fatal: not a git repository" — our || message is more actionable
 ```
 
 Parse `$ARGUMENTS` per the Arguments section above. If validation fails, abort with a clear error.
