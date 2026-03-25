@@ -21,7 +21,7 @@ import type { BetterSqlite3Database } from '../../types.js';
  * resolved identically. The gap only manifests at function-level granularity
  * where call-site extraction differs between the Rust and WASM parsers.
  *
- * See: https://github.com/nicobailon/codegraph/issues/597
+ * See: https://github.com/optave/codegraph/issues/597
  */
 export function findCycles(
   db: BetterSqlite3Database,

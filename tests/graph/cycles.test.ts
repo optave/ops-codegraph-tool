@@ -161,7 +161,7 @@ describe('formatCycles', () => {
 // File-level cycles are unaffected because import resolution is engine-
 // independent.
 //
-// See: https://github.com/nicobailon/codegraph/issues/597
+// See: https://github.com/optave/codegraph/issues/597
 
 // ── Native vs JS parity ────────────────────────────────────────────
 
@@ -229,8 +229,8 @@ describe('Cycle count sensitivity to edge differences', () => {
   it('adding a precise edge can break a false cycle', () => {
     // Demonstrates why native (more edges) can report FEWER cycles than WASM.
     // With ambiguous resolution, a -> b -> c -> a forms a 3-node cycle.
-    // Adding a precise edge a -> d (resolving a previously ambiguous call)
-    // removes the a -> c edge, breaking the cycle.
+    // Adding a precise edge c -> d (resolving a previously ambiguous call)
+    // removes the c -> a edge, breaking the cycle.
     const ambiguousEdges = [
       { source: 'a', target: 'b' },
       { source: 'b', target: 'c' },
@@ -250,8 +250,9 @@ describe('Cycle count sensitivity to edge differences', () => {
     expect(resolvedCycles).toHaveLength(0);
   });
 
-  it('both engines agree on identical edge sets', () => {
-    // The Tarjan SCC algorithm itself is deterministic. Any cycle count
+  it('JS cycle detection is deterministic on repeated calls', () => {
+    // The Tarjan SCC algorithm is deterministic: given the same edge set,
+    // repeated calls always produce the same result. Any cycle count
     // difference between engines comes from the graph they are fed, not
     // from the algorithm.
     const edges = [
