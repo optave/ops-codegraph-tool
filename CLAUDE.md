@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > **Hooks enforce code quality.** This project uses Claude Code hooks (`.claude/hooks/`) to automatically inject file-level dependency context on reads, rebuild the graph after edits, block commits with cycles or dead exports, run lint on staged files, and show diff-impact before commits. If codegraph reports an error or produces wrong results when analyzing itself, **fix the bug in the codebase**.
 
+> **Never document bugs as expected behavior.** If two engines (native vs WASM) produce different results, that is a bug in the less-accurate engine — not an acceptable "parity gap." Adding comments or tests that frame wrong output as "expected" blocks future agents from ever fixing it. Instead: identify the root cause, file an issue, and fix the extraction/resolution layer that produces incorrect results. The correct response to "engine A reports 8 cycles, engine B reports 11" is to fix the 3 false cycles in engine B, not to document why the difference is okay.
+
 ## Codegraph Workflow
 
 Hooks handle: file-level deps on reads, graph rebuild after edits, commit-time checks (cycles, dead exports, diff-impact, lint). **You must actively run these for function-level understanding:**
@@ -138,7 +140,7 @@ Source is TypeScript in `src/`, compiled via `tsup`. The Rust native engine live
 | `ast-analysis/` | Unified AST analysis framework: shared DFS walker (`visitor.ts`), engine orchestrator (`engine.ts`), extracted metrics (`metrics.ts`), and pluggable visitors for complexity, dataflow, and AST-store |
 
 **Key design decisions:**
-- **Dual-engine architecture:** Native Rust parsing via napi-rs (`crates/codegraph-core/`) with automatic fallback to WASM. Controlled by `--engine native|wasm|auto` (default: `auto`)
+- **Dual-engine architecture:** Native Rust parsing via napi-rs (`crates/codegraph-core/`) with automatic fallback to WASM. Controlled by `--engine native|wasm|auto` (default: `auto`). **Both engines must produce identical results.** If they diverge, the less-accurate engine has a bug — fix it, don't document the gap
 - Platform-specific prebuilt binaries published as optional npm packages (`@optave/codegraph-{platform}-{arch}`)
 - WASM grammars are built from devDeps on `npm install` (via `prepare` script) and not committed to git — used as fallback when native addon is unavailable
 - **Language parser registry:** `LANGUAGE_REGISTRY` in `domain/parser.ts` is the single source of truth for all supported languages — maps each language to `{ id, extensions, grammarFile, extractor, required }`. `EXTENSIONS` in `shared/constants.ts` is derived from the registry. Adding a new language requires one registry entry + extractor function
