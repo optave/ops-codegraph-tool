@@ -1137,8 +1137,8 @@ impl<'a> CfgBuilder<'a> {
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 fn has_child_of_kind(node: &Node, kind: &str) -> bool {
-    let cursor = &mut node.walk();
-    node.children(cursor).any(|c| c.kind() == kind)
+    let mut cursor = node.walk();
+    node.children(&mut cursor).any(|c| c.kind() == kind)
 }
 
 fn node_line(node: &Node) -> u32 {
