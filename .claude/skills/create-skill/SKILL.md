@@ -85,7 +85,7 @@ allowed-tools: <from user's tool list>
 
 ## Phase 0 — Pre-flight
 
-1. Confirm environment (repo root, node version, required tools)
+1. Confirm environment (repo root, required runtime/toolchain version, required tools)
 2. Parse `$ARGUMENTS` into state variables
 3. Validate preconditions
 
@@ -285,7 +285,8 @@ If the skill performs dangerous operations (from Phase 0 discovery), add explici
   ```bash
   if [ -f "biome.json" ]; then LINT_CMD="npx biome check"
   elif find . -maxdepth 1 -name "eslint.config.*" -print -quit | grep -q .; then LINT_CMD="npx eslint ."
-  else LINT_CMD="npm run lint"; fi
+  elif [ -f "package.json" ]; then LINT_CMD="npm run lint"
+  else echo "WARN: No recognised lint runner found — skipping lint"; LINT_CMD="true"; fi
   $LINT_CMD
   ```
 
@@ -367,7 +368,7 @@ Run the skill's Phase 0 (pre-flight) logic in a temporary test directory to veri
 - Environment validation produces clear error messages on failure
 
 ```bash
-TEST_DIR=$(mktemp -d)
+TEST_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX")
 trap 'cd - > /dev/null 2>&1; rm -rf "$TEST_DIR"' EXIT
 cd "$TEST_DIR"
 git init
