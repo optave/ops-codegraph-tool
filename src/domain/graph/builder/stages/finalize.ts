@@ -83,6 +83,34 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
     }
   }
 
+  // Stale embeddings warning (built before last graph rebuild)
+  if (hasEmbeddings) {
+    try {
+      const embedBuiltAt = (
+        db.prepare("SELECT value FROM embedding_meta WHERE key = 'built_at'").get() as
+          | { value: string }
+          | undefined
+      )?.value;
+      if (embedBuiltAt) {
+        const embedTime = new Date(embedBuiltAt).getTime();
+        const now = Date.now();
+        if (embedTime < now && !Number.isNaN(embedTime)) {
+          const prevBuildAt = getBuildMeta(db, 'built_at');
+          if (prevBuildAt) {
+            const prevBuildTime = new Date(prevBuildAt).getTime();
+            if (embedTime < prevBuildTime) {
+              warn(
+                'Embeddings were built before the last graph rebuild. Run "codegraph embed" to update.',
+              );
+            }
+          }
+        }
+      }
+    } catch {
+      /* ignore - embedding_meta table may not exist */
+    }
+  }
+
   // Unused exports warning
   try {
     const unusedCount = (

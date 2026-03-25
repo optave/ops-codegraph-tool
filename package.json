@@ -43,6 +43,7 @@
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true});require('fs').rmSync('.tsbuildinfo',{force:true})\"",
     "prepare": "npm run build:wasm && npm run build && husky && npm run deps:tree",
     "deps:tree": "node scripts/node-ts.js scripts/gen-deps.ts",
+    "benchmark": "node --experimental-strip-types --import ./scripts/ts-resolve-loader.js scripts/benchmark.ts",
     "release": "commit-and-tag-version",
     "release:dry-run": "commit-and-tag-version --dry-run",
     "version": "node scripts/node-ts.js scripts/sync-native-versions.ts && git add package.json crates/codegraph-core/Cargo.toml"
