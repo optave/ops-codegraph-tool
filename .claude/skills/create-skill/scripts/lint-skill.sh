@@ -39,14 +39,17 @@ awk '
   inblock       { print blocknum "\t" $0 }
 ' "$SKILL_FILE" > "$BLOCKS_FILE"
 
-# Collect variable assignments per block
+# Collect variable assignments per block and build reassignment lookup (O(1) per check)
 declare -A VAR_BLOCK
+declare -A REASSIGNED
 while IFS=$'\t' read -r bnum line; do
   # Match UPPER_CASE_VAR= assignments (skip lowercase/mixed to reduce false positives)
-  # Store the earliest block that assigns each variable so intermediate references are caught
   for var in $(echo "$line" | grep -oE '\b[A-Z][A-Z0-9_]+=' | sed 's/=$//'); do
     if [ -z "${VAR_BLOCK[$var]+x}" ]; then
       VAR_BLOCK["$var"]="$bnum"
+    else
+      # Track re-assignments in later blocks for O(1) lookup
+      REASSIGNED["${var}:${bnum}"]=1
     fi
   done
 done < "$BLOCKS_FILE"
@@ -59,17 +62,10 @@ while IFS=$'\t' read -r bnum line; do
       # Check if this line references the variable ($VAR or ${VAR})
       if echo "$line" | grep -qE '\$'"${var}"'([^A-Za-z0-9_]|$)' \
           || echo "$line" | grep -qF "\${${var}}"; then
-        # Check if the same block also assigns it (re-assignment is fine)
-        reassigned=false
-        while IFS=$'\t' read -r bn2 ln2; do
-          if [ "$bn2" = "$bnum" ] && echo "$ln2" | grep -qF "${var}="; then
-            reassigned=true
-            break
-          fi
-        done < "$BLOCKS_FILE"
-        if [ "$reassigned" = false ]; then
+        # Check if the same block also assigns it (re-assignment is fine) — O(1) lookup
+        if [ -z "${REASSIGNED[${var}:${bnum}]+x}" ]; then
           # Check it's not read from a file (cat, $(...) with cat/read)
-          if ! echo "$line" | grep -qE 'cat |read |< '; then
+          if ! echo "$line" | grep -qE 'cat |read |< |<"|\$\(<'; then
             error "Cross-fence variable: \$$var assigned in bash block $assigned_in, referenced in block $bnum without file persistence (Pattern 1)"
           fi
         fi
@@ -128,7 +124,7 @@ while IFS= read -r line; do
   esac
   if $in_block; then
     # Track if we're inside an if/elif chain (detection block)
-    if echo "$line" | grep -qE '^\s*(if|elif)\s.*(-f\s|lock|package)'; then
+    if echo "$line" | grep -qE '^\s*(if|elif)\s.*(-f\s|-d\s|lock|package|command -v|which\s)'; then
       in_detect=true
     elif echo "$line" | grep -qE '^\s*fi\b'; then
       in_detect=false
