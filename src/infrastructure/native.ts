@@ -10,6 +10,7 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import { EngineError } from '../shared/errors.js';
 import type { NativeAddon } from '../types.js';
+import { debug } from './logger.js';
 
 let _cached: NativeAddon | null | undefined; // undefined = not yet tried, null = failed, NativeAddon = module
 let _loadError: Error | null = null;
@@ -26,7 +27,9 @@ function detectLibc(): 'gnu' | 'musl' {
     if (files.some((f: string) => f.startsWith('ld-musl-') && f.endsWith('.so.1'))) {
       return 'musl';
     }
-  } catch {}
+  } catch (e) {
+    debug(`detectLibc: failed to read /lib: ${(e as Error).message}`);
+  }
   return 'gnu';
 }
 
@@ -92,7 +95,10 @@ export function getNativePackageVersion(): string | null {
   try {
     const pkgJson = _require(`${pkg}/package.json`) as { version?: string };
     return pkgJson.version || null;
-  } catch {
+  } catch (e) {
+    debug(
+      `getNativePackageVersion: failed to read package.json for ${pkg}: ${(e as Error).message}`,
+    );
     return null;
   }
 }

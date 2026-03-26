@@ -310,8 +310,10 @@ function resolveWorkspaceEntry(pkgDir: string): string | null {
       const candidate = path.resolve(pkgDir, idx);
       if (fs.existsSync(candidate)) return candidate;
     }
-  } catch {
-    /* ignore */
+  } catch (e) {
+    debug(
+      `resolveWorkspaceEntry: package.json probe failed for ${pkgDir}: ${(e as Error).message}`,
+    );
   }
   return null;
 }
@@ -344,8 +346,8 @@ export function detectWorkspaces(rootDir: string): Map<string, WorkspaceEntry> {
           }
         }
       }
-    } catch {
-      /* ignore */
+    } catch (e) {
+      debug(`detectWorkspaces: failed to parse pnpm-workspace.yaml: ${(e as Error).message}`);
     }
   }
 
@@ -363,8 +365,8 @@ export function detectWorkspaces(rootDir: string): Map<string, WorkspaceEntry> {
           // Yarn classic format: { packages: [...], nohoist: [...] }
           patterns.push(...ws.packages);
         }
-      } catch {
-        /* ignore */
+      } catch (e) {
+        debug(`detectWorkspaces: failed to parse package.json workspaces: ${(e as Error).message}`);
       }
     }
   }
@@ -379,8 +381,8 @@ export function detectWorkspaces(rootDir: string): Map<string, WorkspaceEntry> {
         if (Array.isArray(lerna.packages)) {
           patterns.push(...lerna.packages);
         }
-      } catch {
-        /* ignore */
+      } catch (e) {
+        debug(`detectWorkspaces: failed to parse lerna.json: ${(e as Error).message}`);
       }
     }
   }

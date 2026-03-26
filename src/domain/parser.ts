@@ -442,7 +442,8 @@ async function backfillTypeMap(
   if (!code) {
     try {
       code = fs.readFileSync(filePath, 'utf-8');
-    } catch {
+    } catch (e) {
+      debug(`backfillTypeMap: failed to read ${filePath}: ${(e as Error).message}`);
       return { typeMap: new Map(), backfilled: false };
     }
   }
@@ -458,7 +459,9 @@ async function backfillTypeMap(
     if (extracted?.tree && typeof extracted.tree.delete === 'function') {
       try {
         extracted.tree.delete();
-      } catch {}
+      } catch (e) {
+        debug(`backfillTypeMap: WASM tree cleanup failed: ${(e as Error).message}`);
+      }
     }
   }
 }
@@ -571,14 +574,16 @@ export async function parseFilesAuto(
               symbols.typeMap = extracted.symbols.typeMap;
               symbols._typeMapBackfilled = true;
             }
-          } catch {
-            /* skip — typeMap is a best-effort backfill */
+          } catch (e) {
+            debug(`batchExtract: typeMap backfill failed: ${(e as Error).message}`);
           } finally {
             // Free the WASM tree to prevent memory accumulation across repeated builds
             if (extracted?.tree && typeof extracted.tree.delete === 'function') {
               try {
                 extracted.tree.delete();
-              } catch {}
+              } catch (e) {
+                debug(`batchExtract: WASM tree cleanup failed: ${(e as Error).message}`);
+              }
             }
           }
         }

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { debug } from '../../infrastructure/logger.js';
 import { loadNative } from '../../infrastructure/native.js';
 import { normalizePath } from '../../shared/constants.js';
 import type { BareSpecifier, BatchResolvedMap, ImportBatchItem, PathAliases } from '../../types.js';
@@ -64,7 +65,10 @@ function getPackageExports(packageDir: string): any {
     const exports = pkg.exports ?? null;
     _exportsCache.set(packageDir, exports);
     return exports;
-  } catch {
+  } catch (e) {
+    debug(
+      `readPackageExports: failed to read package.json in ${packageDir}: ${(e as Error).message}`,
+    );
     _exportsCache.set(packageDir, null);
     return null;
   }
@@ -515,8 +519,10 @@ export function resolveImportPath(
       // unresolved ".." components (PathBuf::components().collect() doesn't
       // collapse parent refs). Apply the remap on the JS side as a fallback.
       return remapJsToTs(normalized, rootDir);
-    } catch {
-      // fall through to JS
+    } catch (e) {
+      debug(
+        `resolveImportPath: native resolution failed, falling back to JS: ${(e as Error).message}`,
+      );
     }
   }
   return resolveImportPathJS(fromFile, importSource, rootDir, aliases);
@@ -535,8 +541,10 @@ export function computeConfidence(
   if (native) {
     try {
       return native.computeConfidence(callerFile, targetFile, importedFrom || null);
-    } catch {
-      // fall through to JS
+    } catch (e) {
+      debug(
+        `computeConfidence: native computation failed, falling back to JS: ${(e as Error).message}`,
+      );
     }
   }
   return computeConfidenceJS(callerFile, targetFile, importedFrom);
@@ -575,7 +583,8 @@ export function resolveImportsBatch(
       map.set(`${r.fromFile}|${r.importSource}`, resolved);
     }
     return map;
-  } catch {
+  } catch (e) {
+    debug(`batchResolve: native batch resolution failed: ${(e as Error).message}`);
     return null;
   }
 }
