@@ -21,9 +21,11 @@ A single AI agent cannot hold an entire large codebase in context. The Titan Par
       │
       ├─→ /titan-sync → sync.json (execution plan)
       │
-      └─→ /titan-forge → code changes + commits (loops phases)
-              │
-              └─→ /titan-gate (validates each commit)
+      ├─→ /titan-forge → code changes + commits (loops phases)
+      │       │
+      │       └─→ /titan-gate (validates each commit)
+      │
+      └─→ /titan-close → PRs + titan-report.md
 
 /titan-reset (escape hatch: clean up everything)
 ```
@@ -38,6 +40,7 @@ A single AI agent cannot hold an entire large codebase in context. The Titan Par
 | `/titan-sync` | GLOBAL SYNC | Dependency clusters, code ownership, shared abstractions, ordered execution plan with logical commits | `sync.json` |
 | `/titan-forge` | FORGE | Executes the sync plan — makes code changes, validates with `/titan-gate`, commits, advances state. One phase per invocation | `titan-state.json` |
 | `/titan-gate` | STATE MACHINE | `codegraph check --staged --cycles --blast-radius 30 --boundaries` + lint/build/test. Snapshot restore on failure | `gate-log.ndjson` |
+| `/titan-close` | CLOSE | Splits branch commits into focused PRs, captures final metrics, generates comprehensive audit report with before/after comparison | `titan-report-*.md` |
 | `/titan-reset` | ESCAPE HATCH | Restores baseline snapshot, deletes all artifacts and snapshots, rebuilds graph | — |
 
 ## Installation
@@ -118,11 +121,14 @@ All artifacts are written to `.codegraph/titan/` (6 files, no redundancy):
 | `gauntlet-summary.json` | JSON | GAUNTLET | RUN, SYNC, GATE |
 | `sync.json` | JSON | SYNC | RUN, FORGE (diff review), GATE |
 | `arch-snapshot.json` | JSON | RUN (pre-forge) | GATE (architectural comparison) |
-| `gate-log.ndjson` | NDJSON | GATE | RUN, Audit trail |
+| `gate-log.ndjson` | NDJSON | GATE | RUN, CLOSE, Audit trail |
+| `drift-report.json` | JSON | GAUNTLET, SYNC, CLOSE | RUN, CLOSE |
+| `close-summary.json` | JSON | CLOSE | — |
+| `generated/titan/titan-report-*.md` | Markdown | CLOSE | — (committed to repo) |
 
 NDJSON format (one JSON object per line) means partial results survive crashes mid-batch.
 
-**Tip:** Add `.codegraph/titan/` to `.gitignore` — these are ephemeral analysis artifacts, not source code.
+**Tip:** Add `.codegraph/titan/` to `.gitignore` — these are ephemeral analysis artifacts. The final report (`generated/titan/`) is tracked in git.
 
 ## Snapshots
 

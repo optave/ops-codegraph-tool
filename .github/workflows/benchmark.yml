@@ -94,7 +94,7 @@ jobs:
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
             ARGS="$ARGS --npm"
           fi
-          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/benchmark.ts $ARGS 2>/dev/null > benchmark-result.json
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/benchmark.ts $ARGS > benchmark-result.json
 
       - name: Update build report
         if: steps.existing.outputs.skip != 'true'
@@ -231,12 +231,14 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/huggingface
-          key: hf-models-${{ runner.os }}-${{ hashFiles('src/embeddings/**') }}
+          key: hf-models-${{ runner.os }}-${{ hashFiles('src/domain/search/**') }}
           restore-keys: hf-models-${{ runner.os }}-
 
       - name: Build graph
         if: steps.existing.outputs.skip != 'true'
-        run: node src/cli.js build .
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js src/cli.ts build .
 
       - name: Run embedding benchmark
         if: steps.existing.outputs.skip != 'true'
@@ -248,7 +250,7 @@ jobs:
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
             ARGS="$ARGS --npm"
           fi
-          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/embedding-benchmark.ts $ARGS 2>/dev/null > embedding-benchmark-result.json
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/embedding-benchmark.ts $ARGS > embedding-benchmark-result.json
 
       - name: Update embedding report
         if: steps.existing.outputs.skip != 'true'
@@ -388,7 +390,7 @@ jobs:
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
             ARGS="$ARGS --npm"
           fi
-          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/query-benchmark.ts $ARGS 2>/dev/null > query-benchmark-result.json
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/query-benchmark.ts $ARGS > query-benchmark-result.json
 
       - name: Update query report
         if: steps.existing.outputs.skip != 'true'
@@ -528,7 +530,7 @@ jobs:
           if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
             ARGS="$ARGS --npm"
           fi
-          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/incremental-benchmark.ts $ARGS 2>/dev/null > incremental-benchmark-result.json
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/incremental-benchmark.ts $ARGS > incremental-benchmark-result.json
 
       - name: Update incremental report
         if: steps.existing.outputs.skip != 'true'

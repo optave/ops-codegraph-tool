@@ -183,10 +183,20 @@ export async function resolveBenchmarkSource() {
 /**
  * Build a file:// URL suitable for dynamic import.
  *
+ * After the TypeScript migration, src/ contains .ts files while the .js
+ * extension is still used in import specifiers.  This helper checks for the
+ * .ts variant first (matching the actual source) and falls back to .js so it
+ * works in both local-dev and npm-published layouts.
+ *
  * @param {string} srcDir  Absolute path to the codegraph src/ directory
- * @param {string} file    Relative filename within src/ (e.g. 'builder.js')
+ * @param {string} file    Relative filename within src/ (e.g. 'domain/queries.js')
  * @returns {string}       file:// URL string
  */
-export function srcImport(srcDir, file) {
-	return pathToFileURL(path.join(srcDir, file)).href;
+export function srcImport(srcDir: string, file: string): string {
+	const full = path.join(srcDir, file);
+	if (file.endsWith('.js')) {
+		const tsVariant = full.replace(/\.js$/, '.ts');
+		if (fs.existsSync(tsVariant)) return pathToFileURL(tsVariant).href;
+	}
+	return pathToFileURL(full).href;
 }
