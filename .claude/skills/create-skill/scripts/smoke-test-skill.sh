@@ -5,6 +5,11 @@
 
 set -euo pipefail
 
+if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+  echo "smoke-test-skill.sh requires bash 4+ (for set -o pipefail reliability). On macOS: brew install bash" >&2
+  exit 1
+fi
+
 SKILL_FILE="${1:?Usage: smoke-test-skill.sh <path-to-SKILL.md>}"
 
 if [ ! -f "$SKILL_FILE" ]; then

@@ -39,14 +39,17 @@ awk '
   inblock       { print blocknum "\t" $0 }
 ' "$SKILL_FILE" > "$BLOCKS_FILE"
 
-# Collect variable assignments per block
+# Collect variable assignments per block and build reassignment lookup (O(1) per check)
 declare -A VAR_BLOCK
+declare -A REASSIGNED
 while IFS=$'\t' read -r bnum line; do
   # Match UPPER_CASE_VAR= assignments (skip lowercase/mixed to reduce false positives)
-  # Store the earliest block that assigns each variable so intermediate references are caught
   for var in $(echo "$line" | grep -oE '\b[A-Z][A-Z0-9_]+=' | sed 's/=$//'); do
     if [ -z "${VAR_BLOCK[$var]+x}" ]; then
       VAR_BLOCK["$var"]="$bnum"
+    else
+      # Track re-assignments in later blocks for O(1) lookup
+      REASSIGNED["${var}:${bnum}"]=1
     fi
   done
 done < "$BLOCKS_FILE"
@@ -59,17 +62,10 @@ while IFS=$'\t' read -r bnum line; do
       # Check if this line references the variable ($VAR or ${VAR})
       if echo "$line" | grep -qE '\$'"${var}"'([^A-Za-z0-9_]|$)' \
           || echo "$line" | grep -qF "\${${var}}"; then
-        # Check if the same block also assigns it (re-assignment is fine)
-        reassigned=false
-        while IFS=$'\t' read -r bn2 ln2; do
-          if [ "$bn2" = "$bnum" ] && echo "$ln2" | grep -qF "${var}="; then
-            reassigned=true
-            break
-          fi
-        done < "$BLOCKS_FILE"
-        if [ "$reassigned" = false ]; then
+        # Check if the same block also assigns it (re-assignment is fine) — O(1) lookup
+        if [ -z "${REASSIGNED[${var}:${bnum}]+x}" ]; then
           # Check it's not read from a file (cat, $(...) with cat/read)
-          if ! echo "$line" | grep -qE 'cat |read |< '; then
+          if ! echo "$line" | grep -qE 'cat |read |< |<"|\$\(<'; then
             error "Cross-fence variable: \$$var assigned in bash block $assigned_in, referenced in block $bnum without file persistence (Pattern 1)"
           fi
         fi
@@ -93,7 +89,7 @@ while IFS= read -r line; do
     '```bash'*) in_block=true; prev_line="$line"; continue ;;
     '```'*) in_block=false; prev_line="$line"; continue ;;
   esac
-  if $in_block && echo "$line" | grep -qE '2>/dev/null|> /dev/null 2>&1'; then
+  if $in_block && echo "$line" | grep -qE '2>/dev/null|>[ ]?/dev/null 2>&1'; then
     # Check same line or previous line for justification comment
     justification_re='#.*intentional|#.*tolera|#.*acceptable|#.*expected|#.*safe to ignore|#.*may fail|#.*optional|#.*fallback|#.*portable|#.*suppress|#.*provid'
     if ! echo "${prev_line}${line}" | grep -qiE "$justification_re"; then
@@ -116,6 +112,7 @@ line_num=0
 in_quad=false
 in_block=false
 in_detect=false
+detect_depth=0
 while IFS= read -r line; do
   line_num=$((line_num + 1))
   case "$line" in
@@ -123,15 +120,27 @@ while IFS= read -r line; do
   esac
   $in_quad && continue
   case "$line" in
-    '```bash'*) in_block=true; in_detect=false; continue ;;
-    '```'*) in_block=false; in_detect=false; continue ;;
+    '```bash'*) in_block=true; in_detect=false; detect_depth=0; continue ;;
+    '```'*) in_block=false; in_detect=false; detect_depth=0; continue ;;
   esac
   if $in_block; then
-    # Track if we're inside an if/elif chain (detection block)
-    if echo "$line" | grep -qE '^\s*(if|elif)\s.*(-f\s|lock|package)'; then
+    # Track if we're inside an if/elif chain (detection block) with depth.
+    # Only `if` increments depth; `elif` is a sibling branch of the same if-statement,
+    # not a new nesting level, so it sets in_detect but does NOT increment depth.
+    if echo "$line" | grep -qE '^\s*if\s.*(-f\s|-d\s|lock|package|command -v|which\s)'; then
       in_detect=true
+      detect_depth=$((detect_depth + 1))
+    elif echo "$line" | grep -qE '^\s*elif\s.*(-f\s|-d\s|lock|package|command -v|which\s)'; then
+      # elif is a sibling branch — set in_detect but do NOT increment depth
+      in_detect=true
+    elif echo "$line" | grep -qE '^\s*if\b'; then
+      # nested if (not a detection block) — track depth only when inside detection
+      [ "$in_detect" = true ] && detect_depth=$((detect_depth + 1))
     elif echo "$line" | grep -qE '^\s*fi\b'; then
-      in_detect=false
+      if [ "$detect_depth" -gt 0 ]; then
+        detect_depth=$((detect_depth - 1))
+        [ "$detect_depth" -eq 0 ] && in_detect=false
+      fi
     fi
     if ! $in_detect; then
       if echo "$line" | grep -qE '^\s*(npm test|npm run lint)\b'; then
@@ -182,7 +191,7 @@ while IFS= read -r line; do
   esac
   $in_block && continue
 
-  if echo "$line" | grep -qE '^## Phase [0-9]'; then
+  if echo "$line" | grep -qE '^## Phase [0-9]+'; then
     if [ -n "$prev_phase" ] && [ "$phase_has_exit" = false ]; then
       warn "Phase '$prev_phase' has no 'Exit condition' before the next phase"
     fi

@@ -64,7 +64,7 @@ fi
 Create the skill directory and SKILL.md with frontmatter:
 
 ```bash
-mkdir -p .claude/skills/$SKILL_NAME
+mkdir -p ".claude/skills/$SKILL_NAME"
 ```
 
 Write the SKILL.md file starting with this structure:
@@ -128,11 +128,11 @@ Each fenced code block is a **separate shell invocation**. Variables set in one 
 **Wrong:**
 ````markdown
 ```bash
-TMPDIR=$(mktemp -d)
+WORK_DIR=$(mktemp -d)
 ```
 Later:
 ```bash
-rm -rf $TMPDIR   # BUG: $TMPDIR is empty here
+rm -rf $WORK_DIR   # BUG: $WORK_DIR is empty here
 ```
 ````
 
@@ -287,6 +287,8 @@ For phases that `cd` into a temp directory, clean up both the directory and the 
 WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX")
 # > /dev/null 2>&1: suppress cd's directory-path output — cleanup should be silent
 trap 'cd - > /dev/null 2>&1; rm -rf "$WORK_DIR"' EXIT
+cd "$WORK_DIR"
+# ... operations inside the temp directory ...
 ```
 
 ### Pattern 15: Git stash safety
@@ -478,8 +480,8 @@ The self-review is purely theoretical — most real issues (wrong paths, shell s
 Run both validation scripts against the generated SKILL.md:
 
 ```bash
-bash .claude/skills/create-skill/scripts/lint-skill.sh .claude/skills/$SKILL_NAME/SKILL.md
-bash .claude/skills/create-skill/scripts/smoke-test-skill.sh .claude/skills/$SKILL_NAME/SKILL.md
+bash .claude/skills/create-skill/scripts/lint-skill.sh ".claude/skills/$SKILL_NAME/SKILL.md"
+bash .claude/skills/create-skill/scripts/smoke-test-skill.sh ".claude/skills/$SKILL_NAME/SKILL.md"
 ```
 
 - **`lint-skill.sh`** checks for cross-fence variable bugs, bare `2>/dev/null`, hardcoded `npm test`, `git add .`, missing frontmatter, missing Phase 0 / Rules, missing exit conditions, GNU-only `find -quit`, hardcoded `/tmp/` paths, and `sed -i` portability issues.
