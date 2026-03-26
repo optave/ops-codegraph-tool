@@ -49,22 +49,10 @@ export function formatStructure(data: StructureResult): string {
   return lines.join('\n');
 }
 
-interface HotspotEntry {
-  name: string;
-  kind: string;
-  fileCount?: number;
-  cohesion?: number | null;
-  lineCount?: number;
-  symbolCount?: number;
-  fanIn?: number;
-  fanOut?: number;
-}
-
 interface HotspotsResult {
   metric: string;
   level: string;
   limit: number;
-  // biome-ignore lint/suspicious/noExplicitAny: hotspots shape varies by level
   hotspots: any[];
 }
 

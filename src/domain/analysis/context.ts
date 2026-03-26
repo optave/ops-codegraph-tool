@@ -379,7 +379,6 @@ function explainFunctionImpl(
   });
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: explainFunctionImpl results have dynamic shape with _depth
 function explainCallees(
   parentResults: any[],
   currentDepth: number,
@@ -405,8 +404,8 @@ function explainCallees(
       );
       const exact = calleeResults.find((cr) => cr.file === callee.file && cr.line === callee.line);
       if (exact) {
-        (exact as Record<string, unknown>)['_depth'] =
-          (((r as Record<string, unknown>)['_depth'] as number) || 0) + 1;
+        (exact as Record<string, unknown>)._depth =
+          (((r as Record<string, unknown>)._depth as number) || 0) + 1;
         newCallees.push(exact);
       }
     }
@@ -431,7 +430,6 @@ export function contextData(
     kind?: string;
     limit?: number;
     offset?: number;
-    // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
     config?: any;
   } = {},
 ) {
@@ -509,7 +507,6 @@ export function explainData(
     depth?: number;
     limit?: number;
     offset?: number;
-    // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
     config?: any;
   } = {},
 ) {
@@ -533,7 +530,6 @@ export function explainData(
         : explainFunctionImpl(db, target, noTests, getFileLines, displayOpts);
 
     if (kind === 'function' && depth > 0 && results.length > 0) {
-      // biome-ignore lint/suspicious/noExplicitAny: results are function results when kind === 'function'
       const visited = new Set(results.map((r: any) => `${r.name}:${r.file}:${r.line ?? ''}`));
       explainCallees(results, depth, visited, db, noTests, getFileLines, displayOpts);
     }

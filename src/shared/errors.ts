@@ -72,3 +72,8 @@ export class BoundaryError extends CodegraphError {
     this.name = 'BoundaryError';
   }
 }
+
+/** Safely extract a string message from an unknown thrown value. */
+export function toErrorMessage(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
+}

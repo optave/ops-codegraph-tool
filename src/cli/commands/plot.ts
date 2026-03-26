@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { toErrorMessage } from '../../shared/errors.js';
 import { openGraph } from '../shared/open-graph.js';
 import type { CommandDefinition } from '../types.js';
 
@@ -51,8 +52,7 @@ export const command: CommandDefinition = {
         try {
           plotCfg = JSON.parse(fs.readFileSync(opts.config as string, 'utf-8')) as PlotConfig;
         } catch (e: unknown) {
-          const message = e instanceof Error ? e.message : String(e);
-          console.error(`Failed to load config: ${message}`);
+          console.error(`Failed to load config: ${toErrorMessage(e)}`);
           process.exitCode = 1;
           return;
         }

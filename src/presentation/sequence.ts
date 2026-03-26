@@ -16,7 +16,6 @@ interface SequenceOpts {
 }
 
 export function sequence(name: string, dbPath: string | undefined, opts: SequenceOpts = {}): void {
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic shape from sequenceData
   const data = sequenceData(name, dbPath, opts) as any;
 
   if (outputResult(data, 'messages', opts)) return;

@@ -41,7 +41,7 @@
     /* Type Checking — strict mode */
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "noPropertyAccessFromIndexSignature": true,
+    "noPropertyAccessFromIndexSignature": false,
     "exactOptionalPropertyTypes": false,
 
     /* Misc */

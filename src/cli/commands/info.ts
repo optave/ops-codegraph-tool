@@ -9,7 +9,7 @@ export const command: CommandDefinition = {
     );
     const { getActiveEngine } = await import('../../domain/parser.js');
 
-    const engine = ctx.program.opts()['engine'];
+    const engine = ctx.program.opts().engine;
     const { name: activeName, version: activeVersion } = getActiveEngine({ engine });
     const nativeAvailable = isNativeAvailable();
 

@@ -26,7 +26,6 @@ export function flow(
       noTests: opts.noTests,
       limit: opts.limit,
       offset: opts.offset,
-      // biome-ignore lint/suspicious/noExplicitAny: dynamic shape from listEntryPointsData
     }) as any;
     if (outputResult(data, 'entries', opts)) return;
     if (data.count === 0) {
@@ -56,7 +55,6 @@ export function flow(
     return;
   }
 
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic shape from flowData
   const data = flowData(name, dbPath, opts) as any;
   if (outputResult(data, 'steps', opts)) return;
 

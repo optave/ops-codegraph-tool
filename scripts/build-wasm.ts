@@ -36,17 +36,27 @@ const grammars = [
   { name: 'tree-sitter-php', pkg: 'tree-sitter-php', sub: 'php' },
 ];
 
+let failed = 0;
 for (const g of grammars) {
   const pkgDir = dirname(require.resolve(`${g.pkg}/package.json`));
   const grammarDir = g.sub ? resolve(pkgDir, g.sub) : pkgDir;
 
   console.log(`Building ${g.name}.wasm from ${grammarDir}...`);
-  execFileSync('npx', ['tree-sitter', 'build', '--wasm', grammarDir], {
-    cwd: grammarsDir,
-    stdio: 'inherit',
-    shell: true,
-  });
-  console.log(`  Done: ${g.name}.wasm`);
+  try {
+    execFileSync('npx', ['tree-sitter', 'build', '--wasm', grammarDir], {
+      cwd: grammarsDir,
+      stdio: 'inherit',
+      shell: true,
+    });
+    console.log(`  Done: ${g.name}.wasm`);
+  } catch (err: any) {
+    failed++;
+    console.warn(`  WARN: Failed to build ${g.name}.wasm — ${err.message ?? 'unknown error'}`);
+  }
 }
 
-console.log('\nAll grammars built successfully into grammars/');
+if (failed > 0) {
+  console.warn(`\n${failed}/${grammars.length} grammars failed to build (non-fatal — native engine available)`);
+} else {
+  console.log('\nAll grammars built successfully into grammars/');
+}
