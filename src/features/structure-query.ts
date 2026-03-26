@@ -379,6 +379,8 @@ function getSortFn(sortBy: string): (a: DirRow, b: DirRow) => number {
         const db_ = (b.file_count ?? 0) > 0 ? (b.symbol_count || 0) / (b.file_count ?? 1) : 0;
         return db_ - da;
       };
+    case 'files':
+      return (a, b) => (b.file_count || 0) - (a.file_count || 0);
     default:
       return (a, b) => a.name.localeCompare(b.name);
   }
