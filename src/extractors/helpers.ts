@@ -1,5 +1,11 @@
 import type { TreeSitterNode } from '../types.js';
 
+/**
+ * Maximum recursion depth for tree-sitter AST walkers.
+ * Shared across all language extractors to prevent stack overflow on deeply nested ASTs.
+ */
+export const MAX_WALK_DEPTH = 200;
+
 export function nodeEndLine(node: TreeSitterNode): number {
   return node.endPosition.row + 1;
 }

@@ -12,7 +12,7 @@ import type {
   TreeSitterTree,
   TypeMapEntry,
 } from '../types.js';
-import { findChild, nodeEndLine } from './helpers.js';
+import { findChild, MAX_WALK_DEPTH, nodeEndLine } from './helpers.js';
 
 /** Built-in globals that start with uppercase but are not user-defined types. */
 const BUILTIN_GLOBALS: Set<string> = new Set([
@@ -929,7 +929,7 @@ function extractTypeMapWalk(rootNode: TreeSitterNode, typeMap: Map<string, TypeM
   }
 
   function walk(node: TreeSitterNode, depth: number): void {
-    if (depth >= 200) return;
+    if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
     if (t === 'variable_declarator') {
       const nameN = node.childForFieldName('name');

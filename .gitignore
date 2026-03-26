@@ -9,8 +9,5 @@ grammars/*.wasm
 .claude/session-edits.log
 generated/DEPENDENCIES.md
 generated/DEPENDENCIES.json
-generated/titan/
 artifacts/
 pkg/
-generated/DEPENDENCIES.md
-generated/DEPENDENCIES.json

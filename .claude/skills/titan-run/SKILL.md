@@ -28,7 +28,7 @@ You are the **orchestrator** for the full Titan Paradigm pipeline. Your job is t
    ```bash
    git rev-parse --show-toplevel && git worktree list
    ```
-   If you are NOT in a worktree, **stop:** "Run `/worktree` first. The Titan pipeline writes artifacts and makes code changes — worktree isolation is required."
+   The Titan pipeline writes artifacts and makes code changes — worktree isolation is required. If you are NOT in a worktree, **create one automatically** using the `EnterWorktree` tool (fetch it via `ToolSearch` if needed) with name `titan-run`. Do NOT stop and ask the user — just enter the worktree and continue.
 
 2. **Parse arguments.** Determine:
    - `targetPath` (default: `.`)
@@ -58,7 +58,7 @@ You are the **orchestrator** for the full Titan Paradigm pipeline. Your job is t
    Forge requires explicit confirmation (analysis phases are safe to automate).
    ```
 
-   If `--yes` is NOT set, ask user to confirm before proceeding.
+   Start immediately — do NOT ask for confirmation before analysis phases. The user invoked `/titan-run`; that is the confirmation. Analysis phases (recon, gauntlet, sync) are read-only and safe to automate. The forge checkpoint (Step 3.5b) still applies unless `--yes` is set.
 
 ---
 
@@ -577,57 +577,26 @@ Print forge summary.
 
 ---
 
-## Step 5 — Final Report
+## Step 5 — CLOSE (report + PRs)
 
-Read all artifacts and produce a summary:
+After forge completes, dispatch `/titan-close` to produce the final report with before/after metrics and split commits into focused PRs.
+
+### 5a. Run Pre-Agent Gate (G1-G4)
+
+### 5b. Dispatch sub-agent
 
 ```
-============================================
-  TITAN PIPELINE COMPLETE
-============================================
-
-Target: <path>
-Duration: <first timestamp> → <last timestamp>
-
-RECON:
-  Files: <N>, Symbols: <N>, Domains: <N>
-  Quality score: <N>
-
-GAUNTLET:
-  Audited: <N>/<M> targets (<pct>% coverage)
-  Pass: <N> | Warn: <N> | Fail: <N> | Decompose: <N>
-  NDJSON integrity: <valid>/<total> lines
-
-SYNC:
-  Execution phases: <N>
-  Shared abstractions: <N>
-
-FORGE:
-  Commits: <N>
-  Targets completed: <N>
-  Targets failed: <N>
-  Diff review rejections: <N>
-  Diff review warnings: <N>
-  Gate verdicts: <pass> PASS, <fail> FAIL
-  Semantic assertion failures: <N>
-  Architectural violations caught: <N>
-
-  Failed targets (if any):
-  - <target>: <reason>
-
-Validation warnings (if any):
-  - <warning>
-
-Artifacts:
-  .codegraph/titan/titan-state.json
-  .codegraph/titan/GLOBAL_ARCH.md
-  .codegraph/titan/gauntlet.ndjson
-  .codegraph/titan/gauntlet-summary.json
-  .codegraph/titan/sync.json
-  .codegraph/titan/arch-snapshot.json
-  .codegraph/titan/gate-log.ndjson
-============================================
+Agent → "Run /titan-close. Read .claude/skills/titan-close/SKILL.md and follow it exactly.
+         Skip worktree check and main sync — already handled."
 ```
+
+### 5c. Post-phase validation
+
+After the agent returns, verify:
+- `.codegraph/titan/TITAN_REPORT.md` or `generated/titan/titan-report-*.md` exists and has content (> 20 lines)
+- Print: "CLOSE complete. Report: <report path>"
+
+If the agent created PRs, print the PR URLs.
 
 ---
 

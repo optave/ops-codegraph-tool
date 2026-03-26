@@ -6,7 +6,7 @@ import type {
   TreeSitterTree,
   TypeMapEntry,
 } from '../types.js';
-import { findChild, goVisibility, nodeEndLine } from './helpers.js';
+import { findChild, goVisibility, MAX_WALK_DEPTH, nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from Go files.
@@ -233,7 +233,7 @@ function setIfHigher(
 }
 
 function extractGoTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, depth: number): void {
-  if (depth >= 200) return;
+  if (depth >= MAX_WALK_DEPTH) return;
 
   // var x MyType = ... or var x, y MyType → var_declaration > var_spec (confidence 0.9)
   if (node.type === 'var_spec') {

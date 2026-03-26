@@ -6,7 +6,7 @@ import type {
   TreeSitterNode,
   TreeSitterTree,
 } from '../types.js';
-import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js';
+import { extractModifierVisibility, findChild, MAX_WALK_DEPTH, nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from C# files.
@@ -333,7 +333,7 @@ function extractCSharpTypeMapDepth(
   ctx: ExtractorOutput,
   depth: number,
 ): void {
-  if (depth >= 200) return;
+  if (depth >= MAX_WALK_DEPTH) return;
 
   // local_declaration_statement → variable_declaration → type + variable_declarator(s)
   if (node.type === 'variable_declaration') {

@@ -78,10 +78,11 @@ function processAlternative(
     for (let i = 0; i < alternative.namedChildCount; i++) {
       elseChildren.push(nn(alternative.namedChild(i)));
     }
-    if (elseChildren.length === 1 && isIfNode(elseChildren[0]!.type, cfgRules)) {
+    const firstChild = elseChildren[0];
+    if (elseChildren.length === 1 && firstChild && isIfNode(firstChild.type, cfgRules)) {
       const falseBlock = S.makeBlock('branch_false', null, null, 'else-if');
       S.addEdge(condBlock, falseBlock, 'branch_false');
-      const elseIfEnd = processIf(elseChildren[0]!, falseBlock, S, cfgRules, processStatements);
+      const elseIfEnd = processIf(firstChild, falseBlock, S, cfgRules, processStatements);
       if (elseIfEnd) S.addEdge(elseIfEnd, joinBlock, 'fallthrough');
     } else {
       const falseBlock = S.makeBlock('branch_false', null, null, 'else');
