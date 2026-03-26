@@ -4,6 +4,7 @@
  * This is the heart of the builder refactor (ROADMAP 3.9): the monolithic buildGraph()
  * is decomposed into independently testable stages that communicate via PipelineContext.
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { closeDb, getBuildMeta, initSchema, MIGRATIONS, openDb } from '../../../db/index.js';
@@ -24,6 +25,13 @@ import { insertNodes } from './stages/insert-nodes.js';
 import { parseFiles } from './stages/parse-files.js';
 import { resolveImports } from './stages/resolve-imports.js';
 import { runAnalyses } from './stages/run-analyses.js';
+
+const __pipelineDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'));
+const CODEGRAPH_VERSION = (
+  JSON.parse(
+    fs.readFileSync(path.join(__pipelineDir, '..', '..', '..', '..', 'package.json'), 'utf-8'),
+  ) as { version: string }
+).version;
 
 // ── Setup helpers ───────────────────────────────────────────────────────
 
@@ -54,6 +62,13 @@ function checkEngineSchemaMismatch(ctx: PipelineContext): void {
   if (prevSchema && Number(prevSchema) !== ctx.schemaVersion) {
     info(
       `Schema version changed (${prevSchema} → ${ctx.schemaVersion}), promoting to full rebuild.`,
+    );
+    ctx.forceFullRebuild = true;
+  }
+  const prevVersion = getBuildMeta(ctx.db, 'codegraph_version');
+  if (prevVersion && prevVersion !== CODEGRAPH_VERSION) {
+    info(
+      `Codegraph version changed (${prevVersion} → ${CODEGRAPH_VERSION}), promoting to full rebuild.`,
     );
     ctx.forceFullRebuild = true;
   }

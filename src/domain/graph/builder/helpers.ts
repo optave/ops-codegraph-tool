@@ -132,8 +132,8 @@ export function loadPathAliases(rootDir: string): PathAliases {
     try {
       const raw = fs
         .readFileSync(configPath, 'utf-8')
-        .replace(/\/\/.*$/gm, '')
         .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/("(?:[^"\\]|\\.)*")|\/\/.*$/gm, (_, str) => str ?? '')
         .replace(/,\s*([\]}])/g, '$1');
       const config = JSON.parse(raw) as {
         compilerOptions?: { baseUrl?: string; paths?: Record<string, string[]> };
