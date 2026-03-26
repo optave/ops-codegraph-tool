@@ -6,9 +6,13 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import type BetterSqlite3 from 'better-sqlite3';
 import { bulkNodeIdsByFile } from '../../../../db/index.js';
-import type { ExtractorOutput, MetadataUpdate } from '../../../../types.js';
+import type {
+  BetterSqlite3Database,
+  ExtractorOutput,
+  MetadataUpdate,
+  SqliteStatement,
+} from '../../../../types.js';
 import type { PipelineContext } from '../context.js';
 import {
   batchInsertEdges,
@@ -31,7 +35,7 @@ interface PrecomputedFileData {
 // ── Phase 1: Insert file nodes, definitions, exports ────────────────────
 
 function insertDefinitionsAndExports(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   allSymbols: Map<string, ExtractorOutput>,
 ): void {
   const phase1Rows: unknown[][] = [];
@@ -63,7 +67,7 @@ function insertDefinitionsAndExports(
   // Mark exported symbols in batches (cache prepared statements by chunk size)
   if (exportKeys.length > 0) {
     const EXPORT_CHUNK = 500;
-    const exportStmtCache = new Map<number, BetterSqlite3.Statement>();
+    const exportStmtCache = new Map<number, SqliteStatement>();
     for (let i = 0; i < exportKeys.length; i += EXPORT_CHUNK) {
       const end = Math.min(i + EXPORT_CHUNK, exportKeys.length);
       const chunkSize = end - i;
@@ -89,7 +93,7 @@ function insertDefinitionsAndExports(
 // ── Phase 2+3: Insert children and containment edges (two nodeIdMap passes) ──
 
 function insertChildrenAndEdges(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   allSymbols: Map<string, ExtractorOutput>,
 ): void {
   const childRows: unknown[][] = [];
@@ -164,12 +168,12 @@ function insertChildrenAndEdges(
 // ── Phase 4: Update file hashes ─────────────────────────────────────────
 
 function updateFileHashes(
-  _db: BetterSqlite3.Database,
+  _db: BetterSqlite3Database,
   allSymbols: Map<string, ExtractorOutput>,
   precomputedData: Map<string, PrecomputedFileData>,
   metadataUpdates: MetadataUpdate[],
   rootDir: string,
-  upsertHash: BetterSqlite3.Statement | null,
+  upsertHash: SqliteStatement | null,
 ): void {
   if (!upsertHash) return;
 
@@ -224,7 +228,7 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
     if (item.relPath) precomputedData.set(item.relPath, item as PrecomputedFileData);
   }
 
-  let upsertHash: BetterSqlite3.Statement | null;
+  let upsertHash: SqliteStatement | null;
   try {
     upsertHash = db.prepare(
       'INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)',

@@ -6,10 +6,10 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import type BetterSqlite3 from 'better-sqlite3';
 import { getNodeId } from '../../../../db/index.js';
 import { loadNative } from '../../../../infrastructure/native.js';
 import type {
+  BetterSqlite3Database,
   Call,
   ClassRelation,
   Definition,
@@ -69,7 +69,7 @@ interface NormalizedTypeEntry {
 
 // ── Node lookup setup ───────────────────────────────────────────────────
 
-function makeGetNodeIdStmt(db: BetterSqlite3.Database): NodeIdStmt {
+function makeGetNodeIdStmt(db: BetterSqlite3Database): NodeIdStmt {
   return {
     get: (name: string, kind: string, file: string, line: number) => {
       const id = getNodeId(db, name, kind, file, line);

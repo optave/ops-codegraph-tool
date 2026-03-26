@@ -6,11 +6,15 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type BetterSqlite3 from 'better-sqlite3';
 import { purgeFilesData } from '../../../db/index.js';
 import { debug, warn } from '../../../infrastructure/logger.js';
 import { EXTENSIONS, IGNORE_DIRS } from '../../../shared/constants.js';
-import type { BetterSqlite3Database, CodegraphConfig, PathAliases } from '../../../types.js';
+import type {
+  BetterSqlite3Database,
+  CodegraphConfig,
+  PathAliases,
+  SqliteStatement,
+} from '../../../types.js';
 
 export const BUILTIN_RECEIVERS: Set<string> = new Set([
   'console',
@@ -199,7 +203,7 @@ export function readFileSafe(filePath: string, retries: number = 2): string {
  * Purge all graph data for the specified files.
  */
 export function purgeFilesFromGraph(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   files: string[],
   options: Record<string, unknown> = {},
 ): void {
@@ -211,10 +215,10 @@ export function purgeFilesFromGraph(
 const BATCH_CHUNK = 500;
 
 // Statement caches keyed by chunk size — avoids recompiling for every batch.
-const nodeStmtCache = new WeakMap<BetterSqlite3.Database, Map<number, BetterSqlite3.Statement>>();
-const edgeStmtCache = new WeakMap<BetterSqlite3.Database, Map<number, BetterSqlite3.Statement>>();
+const nodeStmtCache = new WeakMap<BetterSqlite3Database, Map<number, SqliteStatement>>();
+const edgeStmtCache = new WeakMap<BetterSqlite3Database, Map<number, SqliteStatement>>();
 
-function getNodeStmt(db: BetterSqlite3.Database, chunkSize: number): BetterSqlite3.Statement {
+function getNodeStmt(db: BetterSqlite3Database, chunkSize: number): SqliteStatement {
   let cache = nodeStmtCache.get(db);
   if (!cache) {
     cache = new Map();
@@ -232,7 +236,7 @@ function getNodeStmt(db: BetterSqlite3.Database, chunkSize: number): BetterSqlit
   return stmt;
 }
 
-function getEdgeStmt(db: BetterSqlite3.Database, chunkSize: number): BetterSqlite3.Statement {
+function getEdgeStmt(db: BetterSqlite3Database, chunkSize: number): SqliteStatement {
   let cache = edgeStmtCache.get(db);
   if (!cache) {
     cache = new Map();
@@ -254,7 +258,7 @@ function getEdgeStmt(db: BetterSqlite3.Database, chunkSize: number): BetterSqlit
  * Batch-insert node rows via multi-value INSERT statements.
  * Each row: [name, kind, file, line, end_line, parent_id, qualified_name, scope, visibility]
  */
-export function batchInsertNodes(db: BetterSqlite3.Database, rows: unknown[][]): void {
+export function batchInsertNodes(db: BetterSqlite3Database, rows: unknown[][]): void {
   if (!rows.length) return;
   for (let i = 0; i < rows.length; i += BATCH_CHUNK) {
     const end = Math.min(i + BATCH_CHUNK, rows.length);
@@ -273,7 +277,7 @@ export function batchInsertNodes(db: BetterSqlite3.Database, rows: unknown[][]):
  * Batch-insert edge rows via multi-value INSERT statements.
  * Each row: [source_id, target_id, kind, confidence, dynamic]
  */
-export function batchInsertEdges(db: BetterSqlite3.Database, rows: unknown[][]): void {
+export function batchInsertEdges(db: BetterSqlite3Database, rows: unknown[][]): void {
   if (!rows.length) return;
   for (let i = 0; i < rows.length; i += BATCH_CHUNK) {
     const end = Math.min(i + BATCH_CHUNK, rows.length);

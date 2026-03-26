@@ -48,7 +48,7 @@ export function snapshotSave(
   fs.mkdirSync(dir, { recursive: true });
 
   // biome-ignore lint/suspicious/noExplicitAny: better-sqlite3 default export typing
-  const db = new (Database as any)(dbPath, { readonly: true });
+  const db = new Database(dbPath, { readonly: true });
   try {
     db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);
   } finally {

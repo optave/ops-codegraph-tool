@@ -146,13 +146,7 @@ export function openDb(dbPath: string): LockedDatabase {
   const dir = path.dirname(dbPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   acquireAdvisoryLock(dbPath);
-  // vendor.d.ts declares Database as a callable; cast through unknown for construct usage
-  const db = new (
-    Database as unknown as new (
-      path: string,
-      opts?: Record<string, unknown>,
-    ) => LockedDatabase
-  )(dbPath);
+  const db = new Database(dbPath) as unknown as LockedDatabase;
   db.pragma('journal_mode = WAL');
   db.pragma('busy_timeout = 5000');
   db.__lockPath = `${dbPath}.lock`;

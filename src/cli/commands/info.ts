@@ -43,7 +43,6 @@ export const command: CommandDefinition = {
       const dbPath = findDbPath();
       const fs = await import('node:fs');
       if (fs.existsSync(dbPath)) {
-        // @ts-expect-error -- better-sqlite3 default export typing
         const db = new Database(dbPath, { readonly: true });
         const buildEngine = getBuildMeta(db, 'engine');
         const buildVersion = getBuildMeta(db, 'codegraph_version');

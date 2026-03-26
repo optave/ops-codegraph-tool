@@ -1774,8 +1774,8 @@ export interface BetterSqlite3Database {
   exec(sql: string): this;
   close(): void;
   pragma(sql: string): unknown;
-  // biome-ignore lint/suspicious/noExplicitAny: must be compatible with better-sqlite3's generic Transaction<F> return type
-  transaction<F extends (...args: any[]) => any>(fn: F): F;
+  // biome-ignore lint/suspicious/noExplicitAny: wider return type accepts better-sqlite3's Transaction<F> wrapper
+  transaction<F extends (...args: any[]) => any>(fn: F): (...args: any[]) => any;
   readonly open: boolean;
   readonly name: string;
 }
