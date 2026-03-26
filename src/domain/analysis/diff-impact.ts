@@ -253,8 +253,8 @@ function checkBoundaryViolations(
 // --- diffImpactData ---
 
 /**
- * Fix #2: Shell injection vulnerability.
- * Uses execFileSync instead of execSync to prevent shell interpretation of user input.
+ * Compute diff-impact analysis between two git refs (or staged changes).
+ * Uses execFileSync (via runGitDiff) to avoid shell injection.
  */
 export function diffImpactData(
   customDbPath: string,
