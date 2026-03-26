@@ -4,11 +4,15 @@ import type { CommandDefinition } from '../types.js';
 
 export const command: CommandDefinition = {
   name: 'path <from> <to>',
-  description: 'Find shortest path between two symbols',
+  description: 'Find shortest path between two symbols (or files with --file)',
   options: [
     ['-d, --db <path>', 'Path to graph.db'],
+    ['-f, --file', 'Treat <from> and <to> as file paths instead of symbol names'],
     ['--reverse', 'Follow edges backward'],
-    ['--kinds <kinds>', 'Comma-separated edge kinds to follow (default: calls)'],
+    [
+      '--kinds <kinds>',
+      'Comma-separated edge kinds to follow (default: calls; file mode: imports,imports-type)',
+    ],
     ['--from-file <path>', 'Disambiguate source symbol by file'],
     ['--to-file <path>', 'Disambiguate target symbol by file'],
     ['--depth <n>', 'Max traversal depth', '10'],
@@ -32,6 +36,7 @@ export const command: CommandDefinition = {
       kind: opts.kind,
       noTests: ctx.resolveNoTests(opts),
       json: opts.json,
+      file: opts.file,
     });
   },
 };

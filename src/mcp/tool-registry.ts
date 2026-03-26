@@ -77,20 +77,27 @@ const BASE_TOOLS: ToolSchema[] = [
   },
   {
     name: 'path',
-    description: 'Find shortest path between two symbols in the dependency graph',
+    description:
+      'Find shortest path between two symbols (or files with file_mode) in the dependency graph',
     inputSchema: {
       type: 'object',
       properties: {
-        from: { type: 'string', description: 'Source symbol name' },
-        to: { type: 'string', description: 'Target symbol name' },
+        from: { type: 'string', description: 'Source symbol name (or file path with file_mode)' },
+        to: { type: 'string', description: 'Target symbol name (or file path with file_mode)' },
         depth: { type: 'number', description: 'Max traversal depth (default: 10)' },
         edge_kinds: {
           type: 'array',
           items: { type: 'string', enum: EVERY_EDGE_KIND },
-          description: 'Edge kinds to follow (default: ["calls"])',
+          description:
+            'Edge kinds to follow (default: ["calls"] for symbols, ["imports","imports-type"] for files)',
         },
         from_file: { type: 'string', description: 'Disambiguate source by file' },
         to_file: { type: 'string', description: 'Disambiguate target by file' },
+        file_mode: {
+          type: 'boolean',
+          description: 'Treat from/to as file paths and find file-to-file shortest path',
+          default: false,
+        },
         no_tests: { type: 'boolean', description: 'Exclude test files', default: false },
       },
       required: ['from', 'to'],

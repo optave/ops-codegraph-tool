@@ -65,7 +65,7 @@ function getPackageExports(packageDir: string): any {
     return exports;
   } catch (e) {
     debug(
-      `readPackageExports: failed to read package.json in ${packageDir}: ${(e as Error).message}`,
+      `readPackageExports: failed to read package.json in ${packageDir}: ${e instanceof Error ? e.message : String(e)}`,
     );
     _exportsCache.set(packageDir, null);
     return null;
@@ -519,7 +519,7 @@ export function resolveImportPath(
       return remapJsToTs(normalized, rootDir);
     } catch (e) {
       debug(
-        `resolveImportPath: native resolution failed, falling back to JS: ${(e as Error).message}`,
+        `resolveImportPath: native resolution failed, falling back to JS: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
@@ -541,7 +541,7 @@ export function computeConfidence(
       return native.computeConfidence(callerFile, targetFile, importedFrom || null);
     } catch (e) {
       debug(
-        `computeConfidence: native computation failed, falling back to JS: ${(e as Error).message}`,
+        `computeConfidence: native computation failed, falling back to JS: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
   }
@@ -582,7 +582,9 @@ export function resolveImportsBatch(
     }
     return map;
   } catch (e) {
-    debug(`batchResolve: native batch resolution failed: ${(e as Error).message}`);
+    debug(
+      `batchResolve: native batch resolution failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
     return null;
   }
 }

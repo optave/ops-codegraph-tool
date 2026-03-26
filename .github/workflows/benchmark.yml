@@ -236,9 +236,7 @@ jobs:
 
       - name: Build graph
         if: steps.existing.outputs.skip != 'true'
-        run: |
-          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
-          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js src/cli.ts build .
+        run: npx codegraph build .
 
       - name: Run embedding benchmark
         if: steps.existing.outputs.skip != 'true'

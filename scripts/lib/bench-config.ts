@@ -155,11 +155,14 @@ export async function resolveBenchmarkSource() {
 		console.error(`Warning: failed to install @huggingface/transformers: ${err.message}`);
 	}
 
-	const srcDir = path.join(pkgDir, 'src');
+	// v3.4.0+ publishes compiled JS in dist/ alongside raw TS in src/.
+	// Node cannot strip types from node_modules, so prefer dist/ when available.
+	const distDir = path.join(pkgDir, 'dist');
+	const srcDir = fs.existsSync(distDir) ? distDir : path.join(pkgDir, 'src');
 
 	if (!fs.existsSync(srcDir)) {
 		fs.rmSync(tmpDir, { recursive: true, force: true });
-		throw new Error(`Installed package does not contain src/ at ${srcDir}`);
+		throw new Error(`Installed package does not contain dist/ or src/ at ${pkgDir}`);
 	}
 
 	const resolvedVersion = cliVersion || installedPkg.version;

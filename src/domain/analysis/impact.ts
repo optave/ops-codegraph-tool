@@ -7,6 +7,5 @@
  * - presentation/diff-impact-mermaid.ts: diffImpactMermaid (Mermaid diagram generation)
  */
 
-export { diffImpactMermaid } from '../../presentation/diff-impact-mermaid.js';
 export { diffImpactData } from './diff-impact.js';
 export { bfsTransitiveCallers, fnImpactData, impactAnalysisData } from './fn-impact.js';
