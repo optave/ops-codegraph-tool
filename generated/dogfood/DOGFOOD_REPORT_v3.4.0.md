@@ -63,7 +63,7 @@ All 34+ commands tested without a graph. Every command that requires a graph fai
 | `deps <file>` | `-T` | PASS | Import/imported-by relationships |
 | `impact <file>` | `-T` | PASS | Transitive file dependents |
 | `diff-impact main` | `-T`, `--staged` | PASS | 121 files changed, 27 functions changed |
-| `cycles` | `--functions` | PASS | 0 file-level, 4 function-level cycles |
+| `cycles` | `--functions` | PASS | 0 file-level, 4 function-level cycles (down from 8 native / 11 WASM in v3.3.1 — reduction attributed to `findCaller` fallback removal in #607, which eliminated misattributed call edges that created false cycles; both engines now agree on 4 cycles) |
 | `structure` | `--depth 1`, `.` | PASS | 69 directories with metrics |
 | `triage` | `--level file`, `--json` | PASS | Risk-ranked audit queue |
 | `roles` | `--role dead/core/dead-leaf/dead-entry/dead-ffi/dead-unresolved` | PASS | All sub-categories work |
@@ -221,7 +221,7 @@ All 34+ commands tested without a graph. Every command that requires a graph fai
 - **PASS** — good query-level parity
 
 ### Analysis
-The native engine excels at parsing (2.2x) and complexity computation (5.5x — runs in Rust), with higher call confidence (80.9% vs 71.3%). WASM produces slightly more call edges (4,068 vs 4,000) and nodes, suggesting it finds some edges that native misses, but at lower confidence. The 0.5% edge difference is within acceptable range.
+The native engine excels at parsing (2.2x) and complexity computation (5.5x — runs in Rust), with higher call confidence (80.9% vs 71.3%). WASM produces ~68 more call edges (4,068 vs 4,000) and 101 more edges overall, indicating a divergence that needs investigation. Either native is missing legitimate call sites or WASM is over-extracting at lower confidence. Filed as #613 for investigation.
 
 ---
 
@@ -254,8 +254,8 @@ Changes tested from v3.4.0 CHANGELOG:
 | `statsData`, `whereData`, `queryNameData` | function | PASS |
 | `contextData`, `fnImpactData`, `diffImpactData` | function | PASS |
 | `rolesData`, `auditData`, `triageData`, `complexityData` | function | PASS |
-| `EXTENSIONS` | Set (19 items) | PASS (changed from Array to Set in TS migration) |
-| `IGNORE_DIRS` | Set (16 items) | PASS (changed from Array to Set in TS migration) |
+| `EXTENSIONS` | Set (19 items) | CAUTION — breaking API change: Array→Set in TS migration. Consumers using `.includes()` or `.indexOf()` will break. See Section 9.4. |
+| `IGNORE_DIRS` | Set (16 items) | CAUTION — breaking API change: Array→Set in TS migration. Consumers using `.includes()` or `.indexOf()` will break. See Section 9.4. |
 | `EVERY_SYMBOL_KIND` | Array (13 items) | PASS |
 | Total exports | 57 | PASS |
 
@@ -368,18 +368,18 @@ The programmatic API changed these from Arrays to Sets in the TypeScript migrati
 
 ## 11. Overall Assessment
 
-v3.4.0 is a **solid release**. The complete TypeScript migration is the headline change and it landed cleanly — all 462 files parsed correctly, programmatic API works, CJS compatibility maintained. The native engine shows significant improvements: 1.9x faster builds, 5.5x faster complexity computation, and 9.6% higher call confidence. Engine parity is good with <1% edge count difference and identical query results for key test cases.
+v3.4.0 is a **solid release**. The complete TypeScript migration is the headline change and it landed cleanly — all 462 files parsed correctly, programmatic API works, CJS compatibility maintained. The native engine shows significant improvements: 1.9x faster builds, 5.5x faster complexity computation, and 9.6% higher call confidence. Engine parity at the query level is good (identical results for key test cases), though the ~68 call-edge divergence needs investigation (#613).
 
 The Leiden community detection produces reasonable results (335 communities, 0.4444 modularity) and the MCP graceful shutdown fix works as expected.
 
-No blocking bugs found. The tsconfig.json parse warning is cosmetic. The DB version mismatch issue is a minor UX gap rather than a bug. The barrel file `exports` behavior is working as designed.
+No blocking bugs found, but the native/WASM call-edge divergence (~68 calls, 1.7% gap) is tracked as #613 for investigation. The tsconfig.json parse warning is cosmetic. The DB version mismatch issue is a minor UX gap rather than a bug. The barrel file `exports` behavior is working as designed.
 
 Cold start behavior is excellent — every command fails gracefully with actionable error messages. The search pipeline (embed → rebuild → search) handles staleness correctly with appropriate warnings.
 
 **Rating: 8.5/10**
-- Strong: Build performance, engine parity, error handling, TypeScript migration, native engine improvements
-- Good: Search pipeline, MCP integration, programmatic API
-- Room for improvement: DB version tracking, barrel file exports, tsconfig warning noise
+- Strong: Build performance, error handling, TypeScript migration, native engine improvements
+- Good: Search pipeline, MCP integration, programmatic API, query-level engine parity
+- Room for improvement: Call-edge engine divergence (#613), DB version tracking, barrel file exports, tsconfig warning noise
 
 ---
 
@@ -388,5 +388,6 @@ Cold start behavior is excellent — every command fails gracefully with actiona
 | Type | Number | Title | Status |
 |------|--------|-------|--------|
 | Issue | #610 | bug(benchmarks): stale queries.js reference breaks benchmarks | Closed — already fixed on main |
+| Issue | #613 | bug(native): native engine under-extracts ~68 call edges vs WASM | Open — engine parity investigation |
 
-No new bugs warranting PRs were found during this session. The v3.4.0 release is validated.
+The v3.4.0 release is validated. Issue #613 tracks the native/WASM call-edge divergence for investigation.
