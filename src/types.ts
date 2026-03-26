@@ -1774,7 +1774,6 @@ export interface BetterSqlite3Database {
   exec(sql: string): this;
   close(): void;
   pragma(sql: string): unknown;
-  // biome-ignore lint/suspicious/noExplicitAny: must be compatible with better-sqlite3's generic Transaction<F> return type
   transaction<F extends (...args: any[]) => any>(fn: F): F;
   readonly open: boolean;
   readonly name: string;
@@ -1819,14 +1818,10 @@ export interface NativeParseTreeCache {
 
 /** Shared context passed to every CLI command's execute/validate functions. */
 export interface CommandContext {
-  // biome-ignore lint/suspicious/noExplicitAny: config is a deeply nested dynamic object
   config: Record<string, any>;
-  // biome-ignore lint/suspicious/noExplicitAny: Commander options are dynamically typed
   resolveNoTests: (opts: any) => boolean;
-  // biome-ignore lint/suspicious/noExplicitAny: Commander options are dynamically typed
   resolveQueryOpts: (opts: any) => any;
   formatSize: (bytes: number) => string;
-  // biome-ignore lint/suspicious/noExplicitAny: data shapes vary per command
   outputResult: (data: any, key: string, opts: any) => boolean;
   program: import('commander').Command;
 }
@@ -1839,12 +1834,9 @@ export interface CommandDefinition {
   options?: Array<
     | [string, string]
     | [string, string, string | boolean | number]
-    // biome-ignore lint/suspicious/noExplicitAny: Commander parse functions accept arbitrary return types
     | [string, string, (val: string) => any, string | boolean | number]
   >;
-  // biome-ignore lint/suspicious/noExplicitAny: Commander options are dynamically typed
-  validate?: (args: any[], opts: any, ctx: CommandContext) => string | undefined | void;
-  // biome-ignore lint/suspicious/noExplicitAny: Commander options are dynamically typed
+  validate?: (args: any[], opts: any, ctx: CommandContext) => string | undefined | undefined;
   execute?: (args: any[], opts: any, ctx: CommandContext) => void | Promise<void>;
   subcommands?: CommandDefinition[];
 }

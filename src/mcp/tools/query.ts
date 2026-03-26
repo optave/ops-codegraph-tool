@@ -41,7 +41,7 @@ export async function handler(args: QueryArgs, ctx: McpToolContext): Promise<unk
     file: args.file,
     kind: args.kind,
     noTests: args.no_tests,
-    limit: Math.min(args.limit ?? MCP_DEFAULTS['query'] ?? 100, ctx.MCP_MAX_LIMIT),
+    limit: Math.min(args.limit ?? MCP_DEFAULTS.query ?? 100, ctx.MCP_MAX_LIMIT),
     offset: effectiveOffset(args),
   });
 }

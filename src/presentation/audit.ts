@@ -20,7 +20,6 @@ export function audit(
   customDbPath: string | undefined,
   opts: AuditOpts = {},
 ): void {
-  // biome-ignore lint/suspicious/noExplicitAny: audit data shape is dynamic
   const data: any = auditData(target, customDbPath, opts as any);
 
   if (outputResult(data, null, opts)) return;

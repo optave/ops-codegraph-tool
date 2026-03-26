@@ -7,7 +7,7 @@ export const command: CommandDefinition = {
   description: 'Watch project for file changes and incrementally update the graph',
   async execute([dir], _opts, ctx) {
     const root = path.resolve(dir || '.');
-    const engine = ctx.program.opts()['engine'];
+    const engine = ctx.program.opts().engine;
     await watchProject(root, { engine });
   },
 };

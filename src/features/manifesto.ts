@@ -220,9 +220,9 @@ function evaluateFunctionRules(
       const value = row[def.metric] as number | null;
       if (value == null) continue;
       const meta = {
-        name: row['name'] as string,
-        file: row['file'] as string,
-        line: row['line'] as number,
+        name: row.name as string,
+        file: row.file as string,
+        line: row.line as number,
       };
       const status = checkThreshold(def.name, rules[def.name]!, value, meta, violations);
       if (status !== 'pass') {
@@ -304,9 +304,9 @@ function evaluateFileRules(
       const value = row[def.metric] as number | null;
       if (value == null) continue;
       const meta = {
-        name: row['name'] as string,
-        file: row['file'] as string,
-        line: row['line'] as number,
+        name: row.name as string,
+        file: row.file as string,
+        line: row.line as number,
       };
       const status = checkThreshold(def.name, rules[def.name]!, value, meta, violations);
       if (status !== 'pass') {
@@ -335,7 +335,7 @@ function evaluateGraphRules(
   violations: Violation[],
   ruleResults: RuleResult[],
 ): void {
-  const thresholds = rules['noCycles']!;
+  const thresholds = rules.noCycles!;
   if (!isEnabled(thresholds)) {
     ruleResults.push({
       name: 'noCycles',
@@ -393,7 +393,7 @@ function evaluateBoundaryRules(
   violations: Violation[],
   ruleResults: RuleResult[],
 ): void {
-  const thresholds = rules['boundaries']!;
+  const thresholds = rules.boundaries!;
   const boundaryConfig = config.manifesto?.boundaries;
 
   // Auto-enable at warn level when boundary config exists but threshold not set

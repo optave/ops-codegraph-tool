@@ -1,6 +1,5 @@
 import type { TreeSitterNode } from '../../types.js';
 
-// biome-ignore lint/suspicious/noExplicitAny: CFG rules are opaque language-specific objects
 export type AnyRules = any;
 
 /** Callback type for the mutual recursion with processStatements in cfg-visitor. */

@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const CACHE_PATH: string =
-  process.env['CODEGRAPH_UPDATE_CACHE_PATH'] ||
+  process.env.CODEGRAPH_UPDATE_CACHE_PATH ||
   path.join(os.homedir(), '.codegraph', 'update-check.json');
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
@@ -120,8 +120,8 @@ export async function checkForUpdates(
   options: CheckForUpdatesOptions = {},
 ): Promise<UpdateResult | null> {
   // Suppress in non-interactive / CI contexts
-  if (process.env['CI']) return null;
-  if (process.env['NO_UPDATE_CHECK']) return null;
+  if (process.env.CI) return null;
+  if (process.env.NO_UPDATE_CHECK) return null;
   if (!process.stderr.isTTY) return null;
   if (currentVersion.includes('-')) return null;
 

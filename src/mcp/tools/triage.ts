@@ -30,7 +30,7 @@ export async function handler(args: TriageArgs, ctx: McpToolContext): Promise<un
     return hotspotsData(ctx.dbPath, {
       metric,
       level: args.level,
-      limit: Math.min(args.limit ?? MCP_DEFAULTS['hotspots'] ?? 100, MCP_MAX_LIMIT),
+      limit: Math.min(args.limit ?? MCP_DEFAULTS.hotspots ?? 100, MCP_MAX_LIMIT),
       offset: effectiveOffset(args),
       noTests: args.no_tests,
     });

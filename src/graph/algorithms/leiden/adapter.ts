@@ -50,7 +50,7 @@ function taAdd(a: Float64Array, i: number, v: number): void {
   a[i] = taGet(a, i) + v;
 }
 
-function taSub(a: Float64Array, i: number, v: number): void {
+function _taSub(a: Float64Array, i: number, v: number): void {
   a[i] = taGet(a, i) - v;
 }
 

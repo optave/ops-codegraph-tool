@@ -15,7 +15,7 @@ export const command: CommandDefinition = {
   ],
   async execute([dir], opts, ctx) {
     const root = path.resolve(dir || '.');
-    const engine = ctx.program.opts()['engine'];
+    const engine = ctx.program.opts().engine;
     await buildGraph(root, {
       incremental: opts.incremental as boolean,
       ast: opts.ast as boolean,

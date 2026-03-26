@@ -176,7 +176,6 @@ export function findFunctionNode(
     }
 
     for (let i = 0; i < node.childCount; i++) {
-      // biome-ignore lint/style/noNonNullAssertion: tree-sitter child(i) within childCount is always non-null
       search(node.child(i)!);
     }
   }

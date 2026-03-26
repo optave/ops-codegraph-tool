@@ -126,7 +126,7 @@ export function triageData(
     const minScore = opts.minScore != null ? Number(opts.minScore) : null;
     const sort = opts.sort || 'risk';
     const config = opts.config || loadConfig();
-    const riskConfig = ((config as unknown as Record<string, unknown>)['risk'] || {}) as {
+    const riskConfig = ((config as unknown as Record<string, unknown>).risk || {}) as {
       weights?: Partial<RiskWeights>;
       roleWeights?: Record<string, number>;
       defaultRoleWeight?: number;
@@ -163,7 +163,7 @@ export function triageData(
     const items = buildTriageItems(filtered, riskMetrics);
 
     const scored = minScore != null ? items.filter((it) => it.riskScore >= minScore) : items;
-    scored.sort(SORT_FNS[sort] || SORT_FNS['risk']!);
+    scored.sort(SORT_FNS[sort] || SORT_FNS.risk!);
 
     const result = {
       items: scored,

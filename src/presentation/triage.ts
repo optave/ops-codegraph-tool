@@ -37,7 +37,6 @@ interface TriageSummary {
 }
 
 export function triage(customDbPath: string | undefined, opts: TriageOpts = {}): void {
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic shape from triageData
   const data = triageData(customDbPath, opts as any) as {
     items: TriageItem[];
     summary: TriageSummary;

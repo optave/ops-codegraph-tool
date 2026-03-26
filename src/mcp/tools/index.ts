@@ -6,7 +6,6 @@ import type { McpToolContext } from '../server.js';
 
 export interface McpToolHandler {
   name: string;
-  // biome-ignore lint/suspicious/noExplicitAny: tool arg types vary per handler
   handler(args: any, ctx: McpToolContext): Promise<unknown>;
 }
 

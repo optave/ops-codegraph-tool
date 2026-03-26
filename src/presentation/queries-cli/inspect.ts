@@ -163,7 +163,6 @@ interface FunctionExplainResult extends SymbolRef {
 
 interface ExplainData {
   kind: 'file' | 'function';
-  // biome-ignore lint/suspicious/noExplicitAny: union of file/function results
   results: any[];
 }
 

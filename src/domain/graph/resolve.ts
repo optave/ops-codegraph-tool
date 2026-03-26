@@ -8,7 +8,6 @@ import type { BareSpecifier, BatchResolvedMap, ImportBatchItem, PathAliases } fr
 // ── package.json exports resolution ─────────────────────────────────
 
 /** Cache: packageDir → parsed exports field (or null) */
-// biome-ignore lint/suspicious/noExplicitAny: package.json exports field has no fixed schema
 const _exportsCache: Map<string, any> = new Map();
 
 /**
@@ -56,7 +55,6 @@ function findPackageDir(packageName: string, rootDir: string): string | null {
  * Read and cache the exports field from a package's package.json.
  * Returns the exports value or null.
  */
-// biome-ignore lint/suspicious/noExplicitAny: package.json exports field has no fixed schema
 function getPackageExports(packageDir: string): any {
   if (_exportsCache.has(packageDir)) return _exportsCache.get(packageDir);
   try {

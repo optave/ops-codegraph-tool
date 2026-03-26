@@ -219,7 +219,6 @@ function setupVisitors(
       walkerOpts.getFunctionName = (node: TreeSitterNode): string | null => {
         const nameNode = node.childForFieldName('name');
         if (nameNode) return nameNode.text;
-        // biome-ignore lint/suspicious/noExplicitAny: DataflowRulesConfig is structurally compatible at runtime
         if (dfRules) return getFuncName(node, dfRules as any);
         return null;
       };
@@ -362,7 +361,6 @@ async function delegateToBuildFunctions(
     const t0 = performance.now();
     try {
       const { buildAstNodes } = await import('../features/ast.js');
-      // biome-ignore lint/suspicious/noExplicitAny: ExtractorOutput is a superset of the local FileSymbols expected by buildAstNodes
       await buildAstNodes(db, fileSymbols as Map<string, any>, rootDir, engineOpts);
     } catch (err: unknown) {
       debug(`buildAstNodes failed: ${(err as Error).message}`);
@@ -374,7 +372,6 @@ async function delegateToBuildFunctions(
     const t0 = performance.now();
     try {
       const { buildComplexityMetrics } = await import('../features/complexity.js');
-      // biome-ignore lint/suspicious/noExplicitAny: ExtractorOutput is a superset of the local FileSymbols expected by buildComplexityMetrics
       await buildComplexityMetrics(db, fileSymbols as Map<string, any>, rootDir, engineOpts);
     } catch (err: unknown) {
       debug(`buildComplexityMetrics failed: ${(err as Error).message}`);

@@ -203,7 +203,6 @@ export function fnImpactData(
     includeImplementors?: boolean;
     limit?: number;
     offset?: number;
-    // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
     config?: any;
   } = {},
 ) {

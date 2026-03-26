@@ -356,9 +356,7 @@ function prepareFileLevelData(
     const color: string =
       cfg.colorBy === 'community' && community !== null
         ? COMMUNITY_COLORS[community % COMMUNITY_COLORS.length] || '#ccc'
-        : cfg.nodeColors?.['file'] ||
-          (DEFAULT_NODE_COLORS as Record<string, string>)['file'] ||
-          '#ccc';
+        : cfg.nodeColors?.file || (DEFAULT_NODE_COLORS as Record<string, string>).file || '#ccc';
 
     return {
       id,
