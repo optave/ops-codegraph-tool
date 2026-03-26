@@ -1,4 +1,4 @@
-import { kindIcon, pathData } from '../../domain/queries.js';
+import { filePathData, kindIcon, pathData } from '../../domain/queries.js';
 import { outputResult } from '../../infrastructure/result-formatter.js';
 
 interface PathCandidate {
@@ -80,6 +80,11 @@ export function symbolPath(
   customDbPath: string,
   opts: PathOpts = {},
 ): void {
+  if (opts.file) {
+    filePath(from, to, customDbPath, opts);
+    return;
+  }
+
   const data = pathData(from, to, customDbPath, opts) as PathDataResult;
   if (outputResult(data as unknown as Record<string, unknown>, null, opts)) return;
 
@@ -105,5 +110,70 @@ export function symbolPath(
     `\nPath from ${from} to ${to} (${data.hops} ${data.hops === 1 ? 'hop' : 'hops'})${dir}:\n`,
   );
   printPathSteps(data);
+  console.log();
+}
+
+// ── File-level path ──────────────────────────────────────────────────────
+
+interface FilePathDataResult {
+  error?: string;
+  found?: boolean;
+  hops?: number | null;
+  reverse?: boolean;
+  maxDepth?: number;
+  path: string[];
+  fromCandidates: string[];
+  toCandidates: string[];
+  alternateCount: number;
+}
+
+function filePath(from: string, to: string, customDbPath: string, opts: PathOpts = {}): void {
+  const data = filePathData(from, to, customDbPath, opts) as FilePathDataResult;
+  if (outputResult(data as unknown as Record<string, unknown>, null, opts)) return;
+
+  if (data.error) {
+    console.log(data.error);
+    return;
+  }
+
+  if (!data.found) {
+    const dir = data.reverse ? 'reverse ' : '';
+    console.log(`No ${dir}file path from "${from}" to "${to}" within ${data.maxDepth} hops.`);
+    if (data.fromCandidates.length > 1) {
+      console.log(
+        `\n  "${from}" matched ${data.fromCandidates.length} files — using: ${data.fromCandidates[0]}`,
+      );
+    }
+    if (data.toCandidates.length > 1) {
+      console.log(
+        `  "${to}" matched ${data.toCandidates.length} files — using: ${data.toCandidates[0]}`,
+      );
+    }
+    return;
+  }
+
+  if (data.hops === 0) {
+    console.log(`\n"${from}" and "${to}" resolve to the same file (0 hops):`);
+    console.log(`  ${data.path[0]}\n`);
+    return;
+  }
+
+  const dir = data.reverse ? ' (reverse)' : '';
+  console.log(
+    `\nFile path from ${from} to ${to} (${data.hops} ${data.hops === 1 ? 'hop' : 'hops'})${dir}:\n`,
+  );
+  for (let i = 0; i < data.path.length; i++) {
+    const indent = '  '.repeat(i + 1);
+    if (i === 0) {
+      console.log(`${indent}${data.path[i]}`);
+    } else {
+      console.log(`${indent}→ ${data.path[i]}`);
+    }
+  }
+  if (data.alternateCount > 0) {
+    console.log(
+      `\n  (${data.alternateCount} alternate shortest ${data.alternateCount === 1 ? 'path' : 'paths'} at same depth)`,
+    );
+  }
   console.log();
 }
