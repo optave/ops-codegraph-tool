@@ -96,9 +96,7 @@ export function getNativePackageVersion(): string | null {
     const pkgJson = _require(`${pkg}/package.json`) as { version?: string };
     return pkgJson.version || null;
   } catch (e) {
-    debug(
-      `getNativePackageVersion: failed to read package.json for ${pkg}: ${toErrorMessage(e)}`,
-    );
+    debug(`getNativePackageVersion: failed to read package.json for ${pkg}: ${toErrorMessage(e)}`);
     return null;
   }
 }

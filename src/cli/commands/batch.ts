@@ -58,7 +58,9 @@ export const command: CommandDefinition = {
         targets = splitTargets(positionalTargets as unknown as string[]);
       }
     } catch (err: unknown) {
-      throw new ConfigError(`Failed to parse targets: ${toErrorMessage(err)}`, { cause: err as Error });
+      throw new ConfigError(`Failed to parse targets: ${toErrorMessage(err)}`, {
+        cause: err as Error,
+      });
     }
 
     if (!targets || targets.length === 0) {

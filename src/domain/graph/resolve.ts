@@ -1,9 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { debug } from '../../infrastructure/logger.js';
-import { toErrorMessage } from '../../shared/errors.js';
 import { loadNative } from '../../infrastructure/native.js';
 import { normalizePath } from '../../shared/constants.js';
+import { toErrorMessage } from '../../shared/errors.js';
 import type { BareSpecifier, BatchResolvedMap, ImportBatchItem, PathAliases } from '../../types.js';
 
 // ── package.json exports resolution ─────────────────────────────────
@@ -67,9 +67,7 @@ function getPackageExports(packageDir: string): any {
     _exportsCache.set(packageDir, exports);
     return exports;
   } catch (e) {
-    debug(
-      `readPackageExports: failed to read package.json in ${packageDir}: ${toErrorMessage(e)}`,
-    );
+    debug(`readPackageExports: failed to read package.json in ${packageDir}: ${toErrorMessage(e)}`);
     _exportsCache.set(packageDir, null);
     return null;
   }
@@ -585,9 +583,7 @@ export function resolveImportsBatch(
     }
     return map;
   } catch (e) {
-    debug(
-      `batchResolve: native batch resolution failed: ${toErrorMessage(e)}`,
-    );
+    debug(`batchResolve: native batch resolution failed: ${toErrorMessage(e)}`);
     return null;
   }
 }
