@@ -71,6 +71,8 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 | diffImpact affected files | 0 |
 
 <!-- NOTES_START -->
+**Note (3.4.0):** The ↑136-143% fnDeps deltas for 3.4.0 vs 3.3.1 reflect codebase growth — `buildGraph` has significantly more edges in this release (new extractors, refactored domain/features layers). The mid-query target also changed from `db` to `rule`. There is no engine regression — native `diffImpact` improved 20% in the same release.
+
 **Note (3.3.1):** The ↑157-192% fnDeps/fnImpact deltas for 3.3.1 vs 3.3.0 are not comparable. PR #528 changed the hub target from auto-selected `src/types.ts` (shallow type-barrel) to pinned `buildGraph` (deep orchestration function with 2-3x more edges). There is no engine regression — `diffImpact` improved 20-44% in the same release. Future version comparisons (3.3.1+) are stable and meaningful.
 <!-- NOTES_END -->
 
