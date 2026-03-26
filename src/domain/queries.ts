@@ -28,10 +28,10 @@ export { fileDepsData, fnDepsData, pathData } from './analysis/dependencies.js';
 export { exportsData } from './analysis/exports.js';
 export {
   diffImpactData,
-  diffImpactMermaid,
   fnImpactData,
   impactAnalysisData,
 } from './analysis/impact.js';
+export { diffImpactMermaid } from '../presentation/diff-impact-mermaid.js';
 export { implementationsData, interfacesData } from './analysis/implementations.js';
 export {
   FALSE_POSITIVE_CALLER_THRESHOLD,
