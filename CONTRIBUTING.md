@@ -263,6 +263,14 @@ generics, nested types):
 2. Add a `case` in the corresponding `extract<Lang>Symbols()` function
 3. Add a test case in `tests/parsers/<lang>.test.js`
 
+### Harness Engineering (Claude Code Hooks)
+
+If you're working on the Claude Code hooks in `.claude/hooks/`, see the dedicated guide:
+
+**[Harness Engineering Guide](docs/contributing/harness-engineering.md)**
+
+This covers the principles behind AI agent harnesses, how our hooks work, and how to add or modify them.
+
 ### Documentation
 
 Documentation improvements are always welcome. The main docs live in:
