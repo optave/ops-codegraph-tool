@@ -247,6 +247,13 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_nodes_scope ON nodes(scope);
     `,
   },
+  {
+    version: 16,
+    up: `
+      CREATE INDEX IF NOT EXISTS idx_edges_kind_target ON edges(kind, target_id);
+      CREATE INDEX IF NOT EXISTS idx_edges_kind_source ON edges(kind, source_id);
+    `,
+  },
 ];
 
 interface PragmaColumnInfo {
