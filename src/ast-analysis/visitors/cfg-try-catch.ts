@@ -1,6 +1,5 @@
 import type { TreeSitterNode } from '../../types.js';
-import type { ProcessStatementsFn } from './cfg-loops.js';
-import type { AnyRules, CfgBlockInternal, FuncState } from './cfg-shared.js';
+import type { AnyRules, CfgBlockInternal, FuncState, ProcessStatementsFn } from './cfg-shared.js';
 import { getBodyStatements, nn } from './cfg-shared.js';
 
 export function processTryCatch(
@@ -57,7 +56,7 @@ export function processTryCatch(
   return joinBlock;
 }
 
-export function findTryHandlers(
+function findTryHandlers(
   tryStmt: TreeSitterNode,
   cfgRules: AnyRules,
 ): { catchHandler: TreeSitterNode | null; finallyHandler: TreeSitterNode | null } {
@@ -71,7 +70,7 @@ export function findTryHandlers(
   return { catchHandler, finallyHandler };
 }
 
-export function processCatchHandler(
+function processCatchHandler(
   catchHandler: TreeSitterNode,
   tryBlock: CfgBlockInternal,
   tryEnd: CfgBlockInternal | null,
@@ -118,7 +117,7 @@ export function processCatchHandler(
   }
 }
 
-export function processFinallyOnly(
+function processFinallyOnly(
   finallyHandler: TreeSitterNode,
   tryEnd: CfgBlockInternal | null,
   joinBlock: CfgBlockInternal,

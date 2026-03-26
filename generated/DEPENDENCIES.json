@@ -1,5 +1,5 @@
 {
-  "version": "3.3.1",
+  "version": "3.4.0",
   "name": "@optave/codegraph",
   "problems": [
     "extraneous: @emnapi/runtime@1.8.1 /home/runner/work/codegraph/codegraph/node_modules/@emnapi/runtime",
@@ -27,12 +27,12 @@
       "dependencies": {
         "@cfworker/json-schema": {},
         "@hono/node-server": {
-          "version": "1.19.9",
-          "resolved": "https://registry.npmjs.org/@hono/node-server/-/node-server-1.19.9.tgz",
+          "version": "1.19.11",
+          "resolved": "https://registry.npmjs.org/@hono/node-server/-/node-server-1.19.11.tgz",
           "overridden": false,
           "dependencies": {
             "hono": {
-              "version": "4.12.0"
+              "version": "4.12.9"
             }
           }
         },
@@ -147,16 +147,16 @@
           }
         },
         "express-rate-limit": {
-          "version": "8.2.1",
-          "resolved": "https://registry.npmjs.org/express-rate-limit/-/express-rate-limit-8.2.1.tgz",
+          "version": "8.3.1",
+          "resolved": "https://registry.npmjs.org/express-rate-limit/-/express-rate-limit-8.3.1.tgz",
           "overridden": false,
           "dependencies": {
             "express": {
               "version": "5.2.1"
             },
             "ip-address": {
-              "version": "10.0.1",
-              "resolved": "https://registry.npmjs.org/ip-address/-/ip-address-10.0.1.tgz",
+              "version": "10.1.0",
+              "resolved": "https://registry.npmjs.org/ip-address/-/ip-address-10.1.0.tgz",
               "overridden": false
             }
           }
@@ -684,8 +684,8 @@
           }
         },
         "hono": {
-          "version": "4.12.0",
-          "resolved": "https://registry.npmjs.org/hono/-/hono-4.12.0.tgz",
+          "version": "4.12.9",
+          "resolved": "https://registry.npmjs.org/hono/-/hono-4.12.9.tgz",
           "overridden": false
         },
         "jose": {
@@ -756,8 +756,8 @@
     "@optave/codegraph-darwin-x64": {},
     "@optave/codegraph-linux-arm64-gnu": {},
     "@optave/codegraph-linux-x64-gnu": {
-      "version": "3.3.1",
-      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-3.3.1.tgz",
+      "version": "3.4.0",
+      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-3.4.0.tgz",
       "overridden": false
     },
     "@optave/codegraph-linux-x64-musl": {},
@@ -1010,81 +1010,6 @@
       "resolved": "https://registry.npmjs.org/commander/-/commander-14.0.3.tgz",
       "overridden": false
     },
-    "graphology-communities-louvain": {
-      "version": "2.0.2",
-      "resolved": "https://registry.npmjs.org/graphology-communities-louvain/-/graphology-communities-louvain-2.0.2.tgz",
-      "overridden": false,
-      "dependencies": {
-        "graphology-indices": {
-          "version": "0.17.0",
-          "resolved": "https://registry.npmjs.org/graphology-indices/-/graphology-indices-0.17.0.tgz",
-          "overridden": false,
-          "dependencies": {
-            "graphology-types": {
-              "version": "0.24.8"
-            },
-            "graphology-utils": {
-              "version": "2.5.2"
-            },
-            "mnemonist": {
-              "version": "0.39.8"
-            }
-          }
-        },
-        "graphology-types": {
-          "version": "0.24.8",
-          "resolved": "https://registry.npmjs.org/graphology-types/-/graphology-types-0.24.8.tgz",
-          "overridden": false
-        },
-        "graphology-utils": {
-          "version": "2.5.2",
-          "resolved": "https://registry.npmjs.org/graphology-utils/-/graphology-utils-2.5.2.tgz",
-          "overridden": false,
-          "dependencies": {
-            "graphology-types": {
-              "version": "0.24.8"
-            }
-          }
-        },
-        "mnemonist": {
-          "version": "0.39.8",
-          "resolved": "https://registry.npmjs.org/mnemonist/-/mnemonist-0.39.8.tgz",
-          "overridden": false,
-          "dependencies": {
-            "obliterator": {
-              "version": "2.0.5",
-              "resolved": "https://registry.npmjs.org/obliterator/-/obliterator-2.0.5.tgz",
-              "overridden": false
-            }
-          }
-        },
-        "pandemonium": {
-          "version": "2.4.1",
-          "resolved": "https://registry.npmjs.org/pandemonium/-/pandemonium-2.4.1.tgz",
-          "overridden": false,
-          "dependencies": {
-            "mnemonist": {
-              "version": "0.39.8"
-            }
-          }
-        }
-      }
-    },
-    "graphology": {
-      "version": "0.26.0",
-      "resolved": "https://registry.npmjs.org/graphology/-/graphology-0.26.0.tgz",
-      "overridden": false,
-      "dependencies": {
-        "events": {
-          "version": "3.3.0",
-          "resolved": "https://registry.npmjs.org/events/-/events-3.3.0.tgz",
-          "overridden": false
-        },
-        "graphology-types": {
-          "version": "0.24.8"
-        }
-      }
-    },
     "tslib": {
       "version": "2.8.1",
       "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
@@ -1095,8 +1020,8 @@
       ]
     },
     "web-tree-sitter": {
-      "version": "0.26.6",
-      "resolved": "https://registry.npmjs.org/web-tree-sitter/-/web-tree-sitter-0.26.6.tgz",
+      "version": "0.26.7",
+      "resolved": "https://registry.npmjs.org/web-tree-sitter/-/web-tree-sitter-0.26.7.tgz",
       "overridden": false
     }
   }

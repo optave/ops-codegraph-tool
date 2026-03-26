@@ -1,14 +1,12 @@
 import type { TreeSitterNode } from '../../types.js';
-import type { AnyRules, CfgBlockInternal, FuncState, LoopCtx } from './cfg-shared.js';
+import type {
+  AnyRules,
+  CfgBlockInternal,
+  FuncState,
+  LoopCtx,
+  ProcessStatementsFn,
+} from './cfg-shared.js';
 import { getBodyStatements, registerLabelCtx } from './cfg-shared.js';
-
-/** Callback type for the mutual recursion with processStatements in cfg-visitor. */
-export type ProcessStatementsFn = (
-  stmts: TreeSitterNode[],
-  currentBlock: CfgBlockInternal,
-  S: FuncState,
-  cfgRules: AnyRules,
-) => CfgBlockInternal | null;
 
 export function processForLoop(
   forStmt: TreeSitterNode,

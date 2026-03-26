@@ -3,6 +3,14 @@ import type { TreeSitterNode } from '../../types.js';
 // biome-ignore lint/suspicious/noExplicitAny: CFG rules are opaque language-specific objects
 export type AnyRules = any;
 
+/** Callback type for the mutual recursion with processStatements in cfg-visitor. */
+export type ProcessStatementsFn = (
+  stmts: TreeSitterNode[],
+  currentBlock: CfgBlockInternal,
+  S: FuncState,
+  cfgRules: AnyRules,
+) => CfgBlockInternal | null;
+
 export function nn(node: TreeSitterNode | null, context?: string): TreeSitterNode {
   if (node === null) {
     throw new Error(`Unexpected null tree-sitter node${context ? ` (${context})` : ''}`);
