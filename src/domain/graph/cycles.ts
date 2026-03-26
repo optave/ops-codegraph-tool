@@ -16,9 +16,9 @@ export function findCycles(
   const idToLabel = new Map<string, string>();
   for (const [id, attrs] of graph.nodes()) {
     if (fileLevel) {
-      idToLabel.set(id, attrs['file'] as string);
+      idToLabel.set(id, attrs.file as string);
     } else {
-      idToLabel.set(id, `${attrs['label']}|${attrs['file']}`);
+      idToLabel.set(id, `${attrs.label}|${attrs.file}`);
     }
   }
 

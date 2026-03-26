@@ -10,7 +10,6 @@ import {
   truncate,
 } from '../visitor-utils.js';
 
-// biome-ignore lint/suspicious/noExplicitAny: dataflow rules are opaque language-specific objects
 type AnyRules = any;
 
 interface ScopeEntry {

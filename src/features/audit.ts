@@ -30,7 +30,7 @@ function resolveThresholds(
         const repoRoot = path.resolve(dbDir, '..');
         return loadConfig(repoRoot);
       })();
-    const userRules = (cfg as Record<string, unknown>)['manifesto'] || {};
+    const userRules = (cfg as Record<string, unknown>).manifesto || {};
     const resolved: Record<string, ThresholdEntry> = {};
     for (const def of FUNCTION_RULES) {
       const user = (userRules as Record<string, { warn?: number; fail?: number }>)[def.name];
@@ -163,7 +163,6 @@ export function auditData(
   const explained = explainData(target, customDbPath, { noTests, depth: 0 });
 
   // Apply --file and --kind filters for function targets
-  // biome-ignore lint/suspicious/noExplicitAny: explainData returns a union type that varies by kind
   let results: any[] = explained.results;
   if (explained.kind === 'function') {
     if (fileFilters.length > 0)

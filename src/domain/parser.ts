@@ -69,7 +69,6 @@ interface ParseEngineOpts {
 
 interface ResolvedEngine {
   name: 'native' | 'wasm';
-  // biome-ignore lint/suspicious/noExplicitAny: native addon has no type declarations
   native: any;
 }
 
@@ -171,7 +170,6 @@ export function disposeParsers(): void {
   _queryCache.clear();
   if (_cachedLanguages) {
     for (const [id, lang] of _cachedLanguages) {
-      // biome-ignore lint/suspicious/noExplicitAny: .delete() exists at runtime on WASM Language objects but is missing from typings
       if (lang && typeof (lang as any).delete === 'function') {
         try {
           (lang as any).delete();
@@ -197,7 +195,6 @@ export function getParser(parsers: Map<string, Parser | null>, filePath: string)
  * don't each need to create parsers and re-parse independently.
  * Only parses files whose extension is in SUPPORTED_EXTENSIONS.
  */
-// biome-ignore lint/suspicious/noExplicitAny: fileSymbols values have dynamic shape from extractors
 export async function ensureWasmTrees(
   fileSymbols: Map<string, any>,
   rootDir: string,
@@ -274,7 +271,6 @@ function resolveEngine(opts: ParseEngineOpts = {}): ResolvedEngine {
  *  - Backward compat for older native binaries missing js_name annotations
  *  - dataflow argFlows/mutations bindingType -> binding wrapper
  */
-// biome-ignore lint/suspicious/noExplicitAny: native addon result has no type declarations
 function patchNativeResult(r: any): ExtractorOutput {
   // lineCount: napi(js_name) emits "lineCount"; older binaries may emit "line_count"
   r.lineCount = r.lineCount ?? r.line_count ?? null;
@@ -433,7 +429,6 @@ export const SUPPORTED_EXTENSIONS: Set<string> = new Set(_extToLang.keys());
  * matches inside comments and string literals.
  * TODO: Remove once all published native binaries include typeMap extraction (>= 3.2.0)
  */
-// biome-ignore lint/suspicious/noExplicitAny: return shape matches native result typeMap
 async function backfillTypeMap(
   filePath: string,
   source?: string,
@@ -495,7 +490,6 @@ function wasmExtractSymbols(
   if (!entry) return null;
   const query = _queryCache.get(entry.id) ?? undefined;
   // Query (web-tree-sitter) is structurally compatible with TreeSitterQuery at runtime
-  // biome-ignore lint/suspicious/noExplicitAny: thin WASM wrapper type mismatch
   const symbols = entry.extractor(tree as any, filePath, query as any);
   return symbols ? { symbols, tree, langId: entry.id } : null;
 }
@@ -651,7 +645,6 @@ export function getActiveEngine(opts: ParseEngineOpts = {}): {
  * Create a native ParseTreeCache for incremental parsing.
  * Returns null if the native engine is unavailable (WASM fallback).
  */
-// biome-ignore lint/suspicious/noExplicitAny: native ParseTreeCache has no type declarations
 export function createParseTreeCache(): any {
   const native = loadNative();
   if (!native || !native.ParseTreeCache) return null;
@@ -661,7 +654,6 @@ export function createParseTreeCache(): any {
 /**
  * Parse a file incrementally using the cache, or fall back to full parse.
  */
-// biome-ignore lint/suspicious/noExplicitAny: cache is native ParseTreeCache with no type declarations
 export async function parseFileIncremental(
   cache: any,
   filePath: string,

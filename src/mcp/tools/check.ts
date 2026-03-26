@@ -28,7 +28,7 @@ export async function handler(args: CheckArgs, ctx: McpToolContext): Promise<unk
       file: args.file,
       noTests: args.no_tests,
       kind: args.kind,
-      limit: Math.min(args.limit ?? MCP_DEFAULTS['manifesto'] ?? 100, MCP_MAX_LIMIT),
+      limit: Math.min(args.limit ?? MCP_DEFAULTS.manifesto ?? 100, MCP_MAX_LIMIT),
       offset: effectiveOffset(args),
     });
   }
@@ -51,7 +51,7 @@ export async function handler(args: CheckArgs, ctx: McpToolContext): Promise<unk
       file: args.file,
       noTests: args.no_tests,
       kind: args.kind,
-      limit: Math.min(args.limit ?? MCP_DEFAULTS['manifesto'] ?? 100, MCP_MAX_LIMIT),
+      limit: Math.min(args.limit ?? MCP_DEFAULTS.manifesto ?? 100, MCP_MAX_LIMIT),
       offset: effectiveOffset(args),
     });
     return { check: checkResult, manifesto: manifestoResult };

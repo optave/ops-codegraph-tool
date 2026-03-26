@@ -9,7 +9,6 @@ declare module 'better-sqlite3' {
     interface Database {
       prepare<TRow = unknown>(sql: string): Statement<TRow>;
       exec(sql: string): Database;
-      // biome-ignore lint/suspicious/noExplicitAny: must match better-sqlite3's generic Transaction<F>
       transaction<F extends (...args: any[]) => any>(fn: F): F;
       close(): void;
       pragma(pragma: string, options?: { simple?: boolean }): unknown;

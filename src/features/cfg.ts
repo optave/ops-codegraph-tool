@@ -62,8 +62,7 @@ export function buildFunctionCFG(functionNode: TreeSitterNode, langId: string): 
   };
 
   const results = walkWithVisitors(functionNode, [visitor], langId, walkerOpts);
-  // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
-  const cfgResults = (results['cfg'] || []) as Array<{
+  const cfgResults = (results.cfg || []) as Array<{
     funcNode: TreeSitterNode;
     blocks: CfgBuildBlock[];
     edges: CfgBuildEdge[];
@@ -214,8 +213,7 @@ function buildVisitorCfgMap(
     },
   };
   const walkResults = walkWithVisitors(tree?.rootNode, [visitor], langId, walkerOpts);
-  // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
-  const cfgResults = (walkResults['cfg'] || []) as VisitorCfgResult[];
+  const cfgResults = (walkResults.cfg || []) as VisitorCfgResult[];
   const visitorCfgByLine = new Map<number, VisitorCfgResult[]>();
   for (const r of cfgResults) {
     if (r.funcNode) {

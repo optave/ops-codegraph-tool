@@ -4,7 +4,7 @@ import path from 'node:path';
 import { debug, warn } from './logger.js';
 
 export const REGISTRY_PATH: string =
-  process.env['CODEGRAPH_REGISTRY_PATH'] || path.join(os.homedir(), '.codegraph', 'registry.json');
+  process.env.CODEGRAPH_REGISTRY_PATH || path.join(os.homedir(), '.codegraph', 'registry.json');
 
 /** Default TTL: entries not accessed within 30 days are pruned. */
 export const DEFAULT_TTL_DAYS = 30;

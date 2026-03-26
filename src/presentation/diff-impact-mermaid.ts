@@ -10,11 +10,9 @@ export function diffImpactMermaid(
     includeImplementors?: boolean;
     limit?: number;
     offset?: number;
-    // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
     config?: any;
   } = {},
 ): string {
-  // biome-ignore lint/suspicious/noExplicitAny: paginateResult returns dynamic shape
   const data: any = diffImpactData(customDbPath, opts);
   if ('error' in data) return data.error as string;
   if (data.changedFiles === 0 || data.affectedFunctions.length === 0) {

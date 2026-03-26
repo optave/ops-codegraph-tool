@@ -34,7 +34,6 @@ export function exportsData(
     unused?: boolean;
     limit?: number;
     offset?: number;
-    // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
     config?: any;
   } = {},
 ) {
@@ -84,7 +83,6 @@ export function exportsData(
       totalReexported: first.totalReexported,
       totalReexportedUnused: first.totalReexportedUnused,
     };
-    // biome-ignore lint/suspicious/noExplicitAny: paginateResult returns dynamic shape
     const paginated: any = paginateResult(base, 'results', {
       limit: opts.limit,
       offset: opts.offset,

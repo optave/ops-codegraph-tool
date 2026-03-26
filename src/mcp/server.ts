@@ -24,14 +24,11 @@ import { TOOL_HANDLERS } from './tools/index.js';
  * Because tests use vi.resetModules(), this module-level variable resets
  * on each re-import — but the process-level flag on `process` persists.
  */
-// biome-ignore lint/suspicious/noExplicitAny: MCP SDK server type is lazy-loaded
 let _activeServer: any = null;
 
 export interface McpToolContext {
   dbPath: string | undefined;
-  // biome-ignore lint/suspicious/noExplicitAny: lazy-loaded queries module
   getQueries(): Promise<any>;
-  // biome-ignore lint/suspicious/noExplicitAny: lazy-loaded better-sqlite3 constructor
   getDatabase(): any;
   findDbPath: typeof findDbPath;
   allowedRepos: string[] | undefined;
@@ -140,7 +137,6 @@ export async function startMCPServer(
   // and cached for subsequent calls.
   const { getQueries, getDatabase } = createLazyLoaders();
 
-  // biome-ignore lint/suspicious/noExplicitAny: MCP SDK types are lazy-loaded and untyped
   const server = new (Server as any)(
     { name: 'codegraph', version: PKG_VERSION },
     { capabilities: { tools: {} } },
@@ -150,7 +146,6 @@ export async function startMCPServer(
     tools: buildToolList(multiRepo),
   }));
 
-  // biome-ignore lint/suspicious/noExplicitAny: MCP SDK request type is dynamic
   server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
     const { name, arguments: args } = request.params;
     try {
@@ -185,7 +180,6 @@ export async function startMCPServer(
     }
   });
 
-  // biome-ignore lint/suspicious/noExplicitAny: MCP SDK types are lazy-loaded and untyped
   const transport = new (StdioServerTransport as any)();
 
   // Graceful shutdown — when the client disconnects (e.g. session clear),
@@ -197,10 +191,8 @@ export async function startMCPServer(
   // Register handlers once per process to avoid listener accumulation.
   // Use a process-level flag so it survives vi.resetModules() in tests.
   const g = globalThis as Record<string, unknown>;
-  // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by TS noPropertyAccessFromIndexSignature
-  if (!g['__codegraph_shutdown_installed']) {
-    // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by TS noPropertyAccessFromIndexSignature
-    g['__codegraph_shutdown_installed'] = true;
+  if (!g.__codegraph_shutdown_installed) {
+    g.__codegraph_shutdown_installed = true;
 
     const shutdown = async () => {
       try {

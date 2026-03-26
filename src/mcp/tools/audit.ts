@@ -19,7 +19,7 @@ export async function handler(args: AuditArgs, ctx: McpToolContext): Promise<unk
     const { explainData } = await ctx.getQueries();
     return explainData(args.target, ctx.dbPath, {
       noTests: args.no_tests,
-      limit: Math.min(args.limit ?? MCP_DEFAULTS['explain'] ?? 100, MCP_MAX_LIMIT),
+      limit: Math.min(args.limit ?? MCP_DEFAULTS.explain ?? 100, MCP_MAX_LIMIT),
       offset: effectiveOffset(args),
     });
   }

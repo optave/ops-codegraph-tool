@@ -12,7 +12,6 @@ import { loadNative } from '../../../../infrastructure/native.js';
 import type {
   Call,
   ClassRelation,
-  Definition,
   ExtractorOutput,
   Import,
   NativeAddon,

@@ -227,7 +227,6 @@ function checkBoundaryViolations(
   db: BetterSqlite3Database,
   changedRanges: Map<string, unknown>,
   noTests: boolean,
-  // biome-ignore lint/suspicious/noExplicitAny: opts shape varies by caller
   opts: any,
   repoRoot: string,
 ) {
@@ -266,7 +265,6 @@ export function diffImpactData(
     includeImplementors?: boolean;
     limit?: number;
     offset?: number;
-    // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
     config?: any;
   } = {},
 ) {

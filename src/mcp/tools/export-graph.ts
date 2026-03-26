@@ -19,7 +19,7 @@ export async function handler(args: ExportGraphArgs, ctx: McpToolContext): Promi
   const fileLevel = args.file_level !== false;
   const exportLimit = args.limit
     ? Math.min(args.limit, MCP_MAX_LIMIT)
-    : (MCP_DEFAULTS['export_graph'] ?? 500);
+    : (MCP_DEFAULTS.export_graph ?? 500);
 
   let result: unknown;
   try {

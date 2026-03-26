@@ -170,11 +170,9 @@ export function loadConfig(cwd?: string): CodegraphConfig {
         debug(`Loaded config from ${filePath}`);
         const merged = mergeConfig(DEFAULTS as unknown as Record<string, unknown>, config);
         if ('excludeTests' in config && !(config.query && 'excludeTests' in config.query)) {
-          (merged['query'] as Record<string, unknown>)['excludeTests'] = Boolean(
-            config.excludeTests,
-          );
+          (merged.query as Record<string, unknown>).excludeTests = Boolean(config.excludeTests);
         }
-        delete merged['excludeTests'];
+        delete merged.excludeTests;
         const result = resolveSecrets(applyEnvOverrides(merged as unknown as CodegraphConfig));
         _configCache.set(cwd, structuredClone(result));
         return result;
@@ -227,7 +225,7 @@ export function resolveSecrets(config: CodegraphConfig): CodegraphConfig {
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
     if (result) {
-      (config.llm as Record<string, unknown>)['apiKey'] = result;
+      (config.llm as Record<string, unknown>).apiKey = result;
     }
   } catch (err: unknown) {
     warn(`apiKeyCommand failed: ${(err as Error).message}`);
