@@ -412,9 +412,6 @@ function findCaller(
             callerSpan = span;
           }
         }
-      } else if (!caller) {
-        const row = stmts.getNodeId.get(def.name, def.kind, relPath, def.line);
-        if (row) caller = row;
       }
     }
   }

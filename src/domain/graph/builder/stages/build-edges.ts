@@ -361,9 +361,6 @@ function findCaller(
             callerSpan = span;
           }
         }
-      } else if (!caller) {
-        const row = getNodeIdStmt.get(def.name, def.kind, relPath, def.line);
-        if (row) caller = row;
       }
     }
   }
