@@ -58,12 +58,17 @@ Your goal: analyze all commits on the current branch, split them into focused PR
 4. **Load artifacts.** Read:
    - `.codegraph/titan/titan-state.json` — session state, baseline metrics, progress
    - `.codegraph/titan/GLOBAL_ARCH.md` — architecture document
-   - `.codegraph/titan/gauntlet-summary.json` — audit results
+   - `.codegraph/titan/gauntlet.ndjson` — full per-target audit data (pillar verdicts, metrics, violations)
+   - `.codegraph/titan/gauntlet-summary.json` — audit result totals
    - `.codegraph/titan/sync.json` — execution plan (commit grouping)
-   - `.codegraph/titan/gate-log.ndjson` — validation history
+   - `.codegraph/titan/gate-log.ndjson` — validation history (may not exist if gate wasn't run)
    - `.codegraph/titan/issues.ndjson` — issue tracker from all phases
+   - `.codegraph/titan/arch-snapshot.json` — pre-forge architectural snapshot (communities, structure, drift). Use for before/after comparison in the Metrics section. May not exist if capture failed.
+   - `.codegraph/titan/drift-report.json` — cumulative drift reports from all phases. May not exist if no drift was detected.
 
    If `titan-state.json` is missing after the search, stop: "No Titan session found. Run `/titan-recon` first."
+
+   > **When called from `/titan-run`:** The orchestrator already ensured worktree isolation, synced with main, and all artifacts are in the current worktree. Steps 0.1–0.3 (worktree search, isolation check, main sync) can be skipped if the orchestrator tells you to skip them.
 
 5. **Detect version.** Extract from `package.json`:
    ```bash
@@ -192,6 +197,10 @@ codegraph complexity --health --sort effort -T --json --limit 10
 codegraph complexity --health --sort bugs -T --json --limit 10
 codegraph complexity --health --sort mi -T --json --limit 10
 ```
+
+### Architecture comparison (if arch-snapshot.json exists)
+
+If `.codegraph/titan/arch-snapshot.json` was captured before forge, compare its `structure` data against current `codegraph structure --depth 2 --json` output. Report cohesion changes per directory (improved / degraded / unchanged). Include in the "Metrics: Before & After" section of the report.
 
 ### Compute deltas
 
@@ -505,10 +514,7 @@ Write `.codegraph/titan/close-summary.json`:
    ```
    Delete any remaining batch snapshots.
 
-3. **Add report to .gitignore** if `generated/titan/` is not already ignored:
-   ```bash
-   grep -q "generated/titan/" .gitignore || echo "generated/titan/" >> .gitignore
-   ```
+3. **Titan reports are committed to the repo** (not gitignored). The `generated/titan/` directory is tracked so reports are preserved in git history.
 
 ---
 
