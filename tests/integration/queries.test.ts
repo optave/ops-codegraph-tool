@@ -31,6 +31,7 @@ import {
   explainData,
   exportsData,
   fileDepsData,
+  filePathData,
   fnDepsData,
   fnImpactData,
   impactAnalysisData,
@@ -488,6 +489,72 @@ describe('pathData', () => {
     expect(data.toCandidates.length).toBeGreaterThanOrEqual(1);
     expect(data.fromCandidates[0]).toHaveProperty('name');
     expect(data.fromCandidates[0]).toHaveProperty('file');
+  });
+});
+
+// ─── filePathData ────────────────────────────────────────────────────
+
+describe('filePathData', () => {
+  test('finds direct 1-hop file path', () => {
+    // middleware.js → auth.js (import edge)
+    const data = filePathData('middleware.js', 'auth.js', dbPath);
+    expect(data.found).toBe(true);
+    expect(data.hops).toBe(1);
+    expect(data.path).toEqual(['middleware.js', 'auth.js']);
+  });
+
+  test('finds multi-hop file path', () => {
+    // routes.js → middleware.js → auth.js
+    const data = filePathData('routes.js', 'auth.js', dbPath);
+    expect(data.found).toBe(true);
+    expect(data.hops).toBe(2);
+    expect(data.path).toEqual(['routes.js', 'middleware.js', 'auth.js']);
+  });
+
+  test('returns not found when no file path exists', () => {
+    // auth.js has no outgoing imports in the fixture
+    const data = filePathData('auth.js', 'routes.js', dbPath);
+    expect(data.found).toBe(false);
+  });
+
+  test('self-file returns 0 hops', () => {
+    const data = filePathData('middleware.js', 'middleware.js', dbPath);
+    expect(data.found).toBe(true);
+    expect(data.hops).toBe(0);
+    expect(data.path).toEqual(['middleware.js']);
+  });
+
+  test('reverse direction finds upstream file path', () => {
+    // auth.js ←(reverse)── middleware.js ←(reverse)── routes.js
+    const data = filePathData('auth.js', 'routes.js', dbPath, { reverse: true });
+    expect(data.found).toBe(true);
+    expect(data.hops).toBe(2);
+    expect(data.path).toEqual(['auth.js', 'middleware.js', 'routes.js']);
+  });
+
+  test('excludes test files with noTests', () => {
+    // auth.test.js imports auth.js, but should be excluded
+    const data = filePathData('auth.js', 'auth.test.js', dbPath, { reverse: true, noTests: true });
+    expect(data.found).toBe(false);
+  });
+
+  test('returns error for no matching from file', () => {
+    const data = filePathData('nonexistent.js', 'auth.js', dbPath);
+    expect(data.found).toBe(false);
+    expect(data.error).toMatch(/No file matching/);
+  });
+
+  test('returns error for no matching to file', () => {
+    const data = filePathData('auth.js', 'nonexistent.js', dbPath);
+    expect(data.found).toBe(false);
+    expect(data.error).toMatch(/No file matching/);
+  });
+
+  test('populates fromCandidates and toCandidates', () => {
+    const data = filePathData('middleware.js', 'auth.js', dbPath);
+    expect(data.fromCandidates.length).toBeGreaterThanOrEqual(1);
+    expect(data.toCandidates.length).toBeGreaterThanOrEqual(1);
+    expect(data.fromCandidates[0]).toBe('middleware.js');
   });
 });
 

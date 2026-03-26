@@ -86,7 +86,9 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   // Skip expensive advisory queries for incremental builds — these are
   // informational warnings that don't affect correctness and cost ~40-60ms.
   if (!isFullBuild) {
-    debug('Finalize: skipping advisory queries (orphaned/stale embeddings, unused exports) for incremental build');
+    debug(
+      'Finalize: skipping advisory queries (orphaned/stale embeddings, unused exports) for incremental build',
+    );
   } else {
     // Orphaned embeddings warning
     if (hasEmbeddings) {

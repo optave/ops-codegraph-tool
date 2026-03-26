@@ -481,3 +481,168 @@ export function pathData(
     db.close();
   }
 }
+
+// ── File-level shortest path ────────────────────────────────────────────
+
+/**
+ * BFS at the file level: find shortest import/edge path between two files.
+ * Adjacency: file A → file B if any symbol in A has an edge to any symbol in B.
+ */
+export function filePathData(
+  from: string,
+  to: string,
+  customDbPath: string,
+  opts: {
+    noTests?: boolean;
+    maxDepth?: number;
+    edgeKinds?: string[];
+    reverse?: boolean;
+  } = {},
+) {
+  const db = openReadonlyOrFail(customDbPath);
+  try {
+    const noTests = opts.noTests || false;
+    const maxDepth = opts.maxDepth || 10;
+    const edgeKinds = opts.edgeKinds || ['imports', 'imports-type'];
+    const reverse = opts.reverse || false;
+
+    // Resolve from/to as file paths (LIKE match)
+    const fromFiles = findFileNodes(db, `%${from}%`) as NodeRow[];
+    if (fromFiles.length === 0) {
+      return {
+        from,
+        to,
+        found: false,
+        error: `No file matching "${from}"`,
+        path: [],
+        fromCandidates: [],
+        toCandidates: [],
+      };
+    }
+    const toFiles = findFileNodes(db, `%${to}%`) as NodeRow[];
+    if (toFiles.length === 0) {
+      return {
+        from,
+        to,
+        found: false,
+        error: `No file matching "${to}"`,
+        path: [],
+        fromCandidates: fromFiles.slice(0, 5).map((f) => f.file),
+        toCandidates: [],
+      };
+    }
+
+    const sourceFile = fromFiles[0]!.file;
+    const targetFile = toFiles[0]!.file;
+
+    const fromCandidates = fromFiles.slice(0, 5).map((f) => f.file);
+    const toCandidates = toFiles.slice(0, 5).map((f) => f.file);
+
+    if (sourceFile === targetFile) {
+      return {
+        from,
+        to,
+        fromCandidates,
+        toCandidates,
+        found: true,
+        hops: 0,
+        path: [sourceFile],
+        alternateCount: 0,
+        edgeKinds,
+        reverse,
+        maxDepth,
+      };
+    }
+
+    // Build neighbor query: find all distinct files adjacent to a given file via edges
+    const kindPlaceholders = edgeKinds.map(() => '?').join(', ');
+    const neighborQuery = reverse
+      ? `SELECT DISTINCT n_src.file AS neighbor_file
+         FROM nodes n_tgt
+         JOIN edges e ON e.target_id = n_tgt.id
+         JOIN nodes n_src ON e.source_id = n_src.id
+         WHERE n_tgt.file = ? AND e.kind IN (${kindPlaceholders}) AND n_src.file != n_tgt.file`
+      : `SELECT DISTINCT n_tgt.file AS neighbor_file
+         FROM nodes n_src
+         JOIN edges e ON e.source_id = n_src.id
+         JOIN nodes n_tgt ON e.target_id = n_tgt.id
+         WHERE n_src.file = ? AND e.kind IN (${kindPlaceholders}) AND n_tgt.file != n_src.file`;
+    const neighborStmt = db.prepare(neighborQuery);
+
+    // BFS
+    const visited = new Set([sourceFile]);
+    const parentMap = new Map<string, string>();
+    let queue = [sourceFile];
+    let found = false;
+    let alternateCount = 0;
+
+    for (let depth = 1; depth <= maxDepth; depth++) {
+      const nextQueue: string[] = [];
+      for (const currentFile of queue) {
+        const neighbors = neighborStmt.all(currentFile, ...edgeKinds) as Array<{
+          neighbor_file: string;
+        }>;
+        for (const n of neighbors) {
+          if (noTests && isTestFile(n.neighbor_file)) continue;
+          if (n.neighbor_file === targetFile) {
+            if (!found) {
+              found = true;
+              parentMap.set(n.neighbor_file, currentFile);
+            }
+            alternateCount++;
+            continue;
+          }
+          if (!visited.has(n.neighbor_file)) {
+            visited.add(n.neighbor_file);
+            parentMap.set(n.neighbor_file, currentFile);
+            nextQueue.push(n.neighbor_file);
+          }
+        }
+      }
+      if (found) break;
+      queue = nextQueue;
+      if (queue.length === 0) break;
+    }
+
+    if (!found) {
+      return {
+        from,
+        to,
+        fromCandidates,
+        toCandidates,
+        found: false,
+        hops: null,
+        path: [],
+        alternateCount: 0,
+        edgeKinds,
+        reverse,
+        maxDepth,
+      };
+    }
+
+    // Reconstruct path
+    const filePath: string[] = [targetFile];
+    let cur = targetFile;
+    while (cur !== sourceFile) {
+      cur = parentMap.get(cur)!;
+      filePath.push(cur);
+    }
+    filePath.reverse();
+
+    return {
+      from,
+      to,
+      fromCandidates,
+      toCandidates,
+      found: true,
+      hops: filePath.length - 1,
+      path: filePath,
+      alternateCount: Math.max(0, alternateCount - 1),
+      edgeKinds,
+      reverse,
+      maxDepth,
+    };
+  } finally {
+    db.close();
+  }
+}

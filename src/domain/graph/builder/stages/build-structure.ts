@@ -146,7 +146,9 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
     const changedFileList = isFullBuild ? null : [...allSymbols.keys()];
     const roleSummary = classifyNodeRoles(db, changedFileList);
     debug(
-      `Roles${changedFileList ? ` (incremental, ${changedFileList.length} files)` : ''}: ${Object.entries(roleSummary)
+      `Roles${changedFileList ? ` (incremental, ${changedFileList.length} files)` : ''}: ${Object.entries(
+        roleSummary,
+      )
         .map(([r, c]) => `${r}=${c}`)
         .join(', ')}`,
     );
