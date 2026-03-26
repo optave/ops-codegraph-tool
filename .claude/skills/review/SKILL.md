@@ -206,26 +206,43 @@ After addressing all comments for a PR:
 1. **Check if the last `@greptileai` trigger was already approved.** Find the most recent `@greptileai` comment (from anyone), then check if Greptile reacted to it with a thumbsup (+1). If it did, check whether Greptile posted any new inline review comments *after* that reaction. If thumbsup exists AND no new inline comments AND more than 15 minutes have passed since the trigger — Greptile approved. **Skip re-triggering.**
 
    ```bash
-   # Find the last @greptileai trigger comment and its reactions
-   trigger_comment=$(gh api repos/optave/codegraph/issues/<number>/comments --paginate \
-     --jq '[.[] | select(.body | test("@greptileai"))] | last | {id: .id, created_at: .created_at}')
-   trigger_id=$(echo "$trigger_comment" | jq -r '.id')
-   trigger_time=$(echo "$trigger_comment" | jq -r '.created_at')
+   # Count prior @greptileai trigger comments (excluding Greptile's own responses)
+   trigger_count=$(gh api repos/optave/codegraph/issues/<number>/comments --paginate \
+     --jq '[.[] | select(.body | test("@greptileai")) | select(.user.login != "greptile-apps[bot]")] | length')
 
-   # Check if greptile-apps[bot] thumbsupped the trigger comment
-   gh api repos/optave/codegraph/issues/comments/$trigger_id/reactions \
-     --jq '[.[] | select(.user.login == "greptile-apps[bot]" and .content == "+1")] | length'
+   if [ "$trigger_count" -eq 0 ]; then
+     # No prior trigger exists — skip approval check, proceed to check 2
+     echo "No prior @greptileai trigger found. Proceed to re-trigger if needed."
+   else
+     # Find the last @greptileai trigger comment (excluding Greptile's own responses)
+     trigger_comment=$(gh api repos/optave/codegraph/issues/<number>/comments --paginate \
+       --jq '[.[] | select(.body | test("@greptileai")) | select(.user.login != "greptile-apps[bot]")] | last | {id: .id, created_at: .created_at}')
+     trigger_id=$(echo "$trigger_comment" | jq -r '.id')
+     trigger_time=$(echo "$trigger_comment" | jq -r '.created_at')
 
-   # Count Greptile inline comments created after the trigger
-   gh api repos/optave/codegraph/pulls/<number>/comments --paginate \
-     --jq "[.[] | select(.user.login == \"greptile-apps[bot]\" and .created_at > \"$trigger_time\")] | length"
+     # Check if greptile-apps[bot] thumbsupped the trigger comment
+     thumbsup_count=$(gh api repos/optave/codegraph/issues/comments/$trigger_id/reactions \
+       --jq '[.[] | select(.user.login == "greptile-apps[bot]" and .content == "+1")] | length')
+
+     # Count Greptile inline comments created after the trigger
+     inline_count=$(gh api repos/optave/codegraph/pulls/<number>/comments --paginate \
+       --jq "[.[] | select(.user.login == \"greptile-apps[bot]\" and .created_at > \"$trigger_time\")] | length")
+
+     # Compute elapsed minutes since the trigger
+     trigger_epoch=$(python3 -c "from datetime import datetime; print(int(datetime.fromisoformat('$trigger_time'.replace('Z','+00:00')).timestamp()))")
+     now_epoch=$(date -u +%s)
+     elapsed_minutes=$(( (now_epoch - trigger_epoch) / 60 ))
+     echo "Minutes since trigger: $elapsed_minutes"
+   fi
    ```
 
    **Decision logic:**
    - Thumbsup exists AND no new inline comments AND >15 min since trigger → **Greptile approved. Skip re-triggering.**
+   - Thumbsup exists AND new inline comments exist → **Treat inline comments as outstanding concerns. Address them (step 2e), then re-trigger.** (Greptile sometimes thumbsups but still leaves nit comments.)
    - Thumbsup exists AND no new inline comments AND <15 min since trigger → **Greptile is still processing. Wait until 15 min have passed**, then re-check. Do NOT post another `@greptileai`.
    - No thumbsup AND <15 min since trigger → **Greptile hasn't responded yet. Wait until 15 min have passed**, then re-check.
    - No thumbsup AND >15 min AND new inline comments exist → **Greptile has concerns. Address them (step 2e), then re-trigger.**
+   - No thumbsup AND >15 min AND no new inline comments → **Greptile never responded. Re-trigger once** (it may have missed the notification).
 
 2. **Check if you actually addressed any Greptile feedback.** If you made no code changes in response to Greptile comments (e.g., you only fixed CI or Claude comments), there's nothing new for Greptile to review — **skip re-triggering.**
 
