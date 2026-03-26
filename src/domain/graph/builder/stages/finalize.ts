@@ -83,70 +83,78 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
     warn(`Failed to write build metadata: ${(err as Error).message}`);
   }
 
-  // Orphaned embeddings warning
-  if (hasEmbeddings) {
+  // Skip expensive advisory queries for incremental builds — these are
+  // informational warnings that don't affect correctness and cost ~40-60ms.
+  if (!isFullBuild) {
+    debug(
+      'Finalize: skipping advisory queries (orphaned/stale embeddings, unused exports) for incremental build',
+    );
+  } else {
+    // Orphaned embeddings warning
+    if (hasEmbeddings) {
+      try {
+        const orphaned = (
+          db
+            .prepare(
+              'SELECT COUNT(*) as c FROM embeddings WHERE node_id NOT IN (SELECT id FROM nodes)',
+            )
+            .get() as { c: number }
+        ).c;
+        if (orphaned > 0) {
+          warn(
+            `${orphaned} embeddings are orphaned (nodes changed). Run "codegraph embed" to refresh.`,
+          );
+        }
+      } catch {
+        /* ignore - embeddings table may have been dropped */
+      }
+    }
+
+    // Stale embeddings warning (built before current graph rebuild)
+    if (hasEmbeddings) {
+      try {
+        const embedBuiltAt = (
+          db.prepare("SELECT value FROM embedding_meta WHERE key = 'built_at'").get() as
+            | { value: string }
+            | undefined
+        )?.value;
+        if (embedBuiltAt) {
+          const embedTime = new Date(embedBuiltAt).getTime();
+          if (!Number.isNaN(embedTime) && embedTime < buildNow.getTime()) {
+            warn(
+              'Embeddings were built before the last graph rebuild. Run "codegraph embed" to update.',
+            );
+          }
+        }
+      } catch {
+        /* ignore - embedding_meta table may not exist */
+      }
+    }
+
+    // Unused exports warning
     try {
-      const orphaned = (
+      const unusedCount = (
         db
           .prepare(
-            'SELECT COUNT(*) as c FROM embeddings WHERE node_id NOT IN (SELECT id FROM nodes)',
+            `SELECT COUNT(*) as c FROM nodes
+         WHERE exported = 1 AND kind != 'file'
+           AND id NOT IN (
+             SELECT DISTINCT e.target_id FROM edges e
+             JOIN nodes caller ON e.source_id = caller.id
+             JOIN nodes target ON e.target_id = target.id
+             WHERE e.kind = 'calls' AND caller.file != target.file
+           )`,
           )
           .get() as { c: number }
       ).c;
-      if (orphaned > 0) {
+      if (unusedCount > 0) {
         warn(
-          `${orphaned} embeddings are orphaned (nodes changed). Run "codegraph embed" to refresh.`,
+          `${unusedCount} exported symbol${unusedCount > 1 ? 's have' : ' has'} zero cross-file consumers. Run "codegraph exports <file> --unused" to inspect.`,
         );
       }
     } catch {
-      /* ignore - embeddings table may have been dropped */
+      /* exported column may not exist on older DBs */
     }
-  }
-
-  // Stale embeddings warning (built before current graph rebuild)
-  if (hasEmbeddings) {
-    try {
-      const embedBuiltAt = (
-        db.prepare("SELECT value FROM embedding_meta WHERE key = 'built_at'").get() as
-          | { value: string }
-          | undefined
-      )?.value;
-      if (embedBuiltAt) {
-        const embedTime = new Date(embedBuiltAt).getTime();
-        if (!Number.isNaN(embedTime) && embedTime < buildNow.getTime()) {
-          warn(
-            'Embeddings were built before the last graph rebuild. Run "codegraph embed" to update.',
-          );
-        }
-      }
-    } catch {
-      /* ignore - embedding_meta table may not exist */
-    }
-  }
-
-  // Unused exports warning
-  try {
-    const unusedCount = (
-      db
-        .prepare(
-          `SELECT COUNT(*) as c FROM nodes
-       WHERE exported = 1 AND kind != 'file'
-         AND id NOT IN (
-           SELECT DISTINCT e.target_id FROM edges e
-           JOIN nodes caller ON e.source_id = caller.id
-           JOIN nodes target ON e.target_id = target.id
-           WHERE e.kind = 'calls' AND caller.file != target.file
-         )`,
-        )
-        .get() as { c: number }
-    ).c;
-    if (unusedCount > 0) {
-      warn(
-        `${unusedCount} exported symbol${unusedCount > 1 ? 's have' : ' has'} zero cross-file consumers. Run "codegraph exports <file> --unused" to inspect.`,
-      );
-    }
-  } catch {
-    /* exported column may not exist on older DBs */
   }
 
   closeDb(db);
