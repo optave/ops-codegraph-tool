@@ -2,7 +2,7 @@
 
 > **Current version:** 3.4.0 | **Status:** Active development | **Updated:** 2026-03-25
 
-Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across twelve phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
+Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across thirteen phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
 **LLM strategy:** All LLM-powered features are **optional enhancements**. Everything works without an API key. When configured (OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint), users unlock richer semantic search and natural language queries.
 
@@ -1147,7 +1147,7 @@ All test files migrated from `.js` to `.ts`. Vitest TypeScript integration verif
 
 **Why its own phase:** This is a substantial Rust engineering effort — porting JS visitors to `crates/codegraph-core/`, fixing a data loss bug in incremental rebuilds, and optimizing the 1-file rebuild path. With TypeScript types (Phase 5) defining the interface contracts, the Rust ports can target well-typed boundaries. The Phase 3 module boundaries make each phase a self-contained target.
 
-**Current state (v3.3.1 benchmarks, 442 files):**
+**Current state (full-build: v3.3.1, 442 files · 1-file: v3.4.0, 473 files):**
 
 | Phase | Native (full) | WASM (full) | Speedup | Native (1-file) | WASM (1-file) | Status |
 |-------|------:|------:|:-------:|------:|------:|--------|
@@ -1162,6 +1162,8 @@ All test files migrated from `.js` to `.ts`. Vitest TypeScript integration verif
 | Roles | 52ms | 52ms | ~same | 54ms | 55ms | JS batching ✅; **no native advantage** (6.12) |
 | Structure | 22ms | 21ms | ~same | 26ms | 24ms | JS ✅ — already fast |
 | **Total** | **2.7s** | **5.0s** | **1.85×** | **466ms** | **611ms** | Parse carries most of the speedup |
+
+*Note: Phase totals above sum to ~1.85s (native) / ~3.47s (WASM) for full builds and ~168ms / ~305ms for 1-file rebuilds. The remaining time is spent in phases not listed here: startup/initialization, dependency resolution setup, build-dependencies, finalize (orphan cleanup, unused-export marking), and CLI overhead.*
 
 **Key insight:** The 1.85× native speedup comes almost entirely from the Parse phase (3.5×). The other 9 phases combined show negligible native advantage because they execute the same JS/SQL code regardless of engine. The Rust extraction work (6.1–6.3, 6.6) successfully bypasses the JS *visitors* on native, but the *DB insertion loops* that store AST nodes, CFG edges, dataflow edges, and complexity rows are identical — they iterate over the extracted data in JS either way. To unlock real native speedup on these phases, the DB writes themselves need to move to Rust or be radically restructured.
 
@@ -1197,7 +1199,7 @@ All test files migrated from `.js` to `.ts`. Vitest TypeScript integration verif
 
 Structure building is unchanged — at 22ms it's already fast.
 
-**Result:** Native full-build rolesMs **268ms → 192ms** (−28%). Native 1-file rebuild rolesMs **301ms → 36ms** (−88%).
+**Result:** Native full-build rolesMs **268ms → 192ms** (−28%) as of 6.5; further reduced to **52ms** after v3.3.1 optimizations. Native 1-file rebuild rolesMs **301ms → 36ms** (−88%) as of 6.5; further reduced to **9ms** via 6.8 incremental path (PR #622).
 
 ### 6.6 -- Complete Complexity Pre-computation ✅
 
