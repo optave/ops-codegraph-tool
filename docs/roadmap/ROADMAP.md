@@ -1216,7 +1216,7 @@ Structure building is unchanged — at 22ms it's already fast.
 **Partially complete.** Roles classification is fully optimized (255ms → 9ms via incremental path with edge-neighbour expansion, PR #622). Structure batching and finalize skip are also done. Current native 1-file rebuild is ~466ms (v3.4.0, 473 files) — down from ~802ms but still above the sub-100ms target.
 
 **Done:**
-- **Incremental roles** (255ms → 9ms): Only reclassify nodes from changed files + edge neighbours using indexed correlated subqueries. Global medians for threshold consistency. Parity-tested against full rebuild
+- **Incremental roles** (255ms → 9ms): Only reclassify nodes from changed files + edge neighbours using indexed correlated subqueries. Global medians for threshold consistency. Parity-tested against full rebuild. *Note:* The benchmark table shows ~54ms for 1-file roles because the standard benchmark runs the full roles phase; the 9ms incremental path (PR #622) is used only when the builder detects a 1-file incremental rebuild
 - **Structure batching:** Replace N+1 per-file queries with 3 batch queries regardless of file count
 - **Finalize skip:** Skip advisory queries (orphaned embeddings, unused exports) during incremental builds
 
