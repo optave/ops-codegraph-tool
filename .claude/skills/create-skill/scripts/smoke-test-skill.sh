@@ -32,8 +32,11 @@ block_start=0
 while IFS= read -r line; do
   line_num=$((line_num + 1))
 
+  # Strip leading whitespace for fence detection (indented blocks inside list items)
+  stripped="${line#"${line%%[! ]*}"}"
+
   # Track quadruple-backtick regions (example pairs)
-  case "$line" in
+  case "$stripped" in
     '````'*)
       if $in_quad; then
         in_quad=false
@@ -50,7 +53,7 @@ while IFS= read -r line; do
   fi
 
   # Track triple-backtick bash blocks
-  case "$line" in
+  case "$stripped" in
     '```bash'*)
       in_block=true
       block_start=$line_num

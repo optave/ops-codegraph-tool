@@ -484,7 +484,7 @@ bash .claude/skills/create-skill/scripts/lint-skill.sh ".claude/skills/$SKILL_NA
 bash .claude/skills/create-skill/scripts/smoke-test-skill.sh ".claude/skills/$SKILL_NAME/SKILL.md"
 ```
 
-- **`lint-skill.sh`** checks for cross-fence variable bugs, bare `2>/dev/null`, hardcoded `npm test`, `git add .`, missing frontmatter, missing Phase 0 / Rules, missing exit conditions, GNU-only `find -quit`, hardcoded `/tmp/` paths, and `sed -i` portability issues.
+- **`lint-skill.sh`** checks for cross-fence variable bugs, bare `2>/dev/null`, hardcoded `npm test` / `npm run test` / `npm run lint`, `git add .`, missing frontmatter, missing Phase 0 / Rules, missing exit conditions, GNU-only `find -quit`, hardcoded `/tmp/` paths, and `sed -i` portability issues.
 - **`smoke-test-skill.sh`** extracts every `bash` code block (skipping example regions inside quadruple backticks) and runs `bash -n` syntax checking on each.
 
 Fix all ERROR findings. Review WARN findings — fix or annotate with justification.

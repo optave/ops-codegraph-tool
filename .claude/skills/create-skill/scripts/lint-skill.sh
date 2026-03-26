@@ -30,13 +30,14 @@ warn()  { echo "WARN:  $1"; WARNINGS=$((WARNINGS + 1)); }
 BLOCKS_FILE=$(mktemp "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX.blocks")
 trap 'rm -f "$BLOCKS_FILE"' EXIT
 
-# Extract bash blocks with block index, skipping those inside ```` regions
+# Extract bash blocks with block index, skipping those inside ```` regions.
+# Patterns use ^\s* to match indented blocks (e.g. inside Markdown list items).
 awk '
-  /^````/       { quad = !quad; next }
-  quad           { next }
-  /^```bash/    { inblock = 1; blocknum++; next }
-  /^```/ && inblock { inblock = 0; next }
-  inblock       { print blocknum "\t" $0 }
+  /^\s*````/       { quad = !quad; next }
+  quad              { next }
+  /^\s*```bash/    { inblock = 1; blocknum++; next }
+  /^\s*```/ && inblock { inblock = 0; next }
+  inblock          { print blocknum "\t" $0 }
 ' "$SKILL_FILE" > "$BLOCKS_FILE"
 
 # Collect variable assignments per block and build reassignment lookup (O(1) per check)
@@ -81,11 +82,12 @@ in_block=false
 prev_line=""
 while IFS= read -r line; do
   line_num=$((line_num + 1))
-  case "$line" in
+  stripped="${line#"${line%%[! ]*}"}"
+  case "$stripped" in
     '````'*) if $in_quad; then in_quad=false; else in_quad=true; fi; prev_line="$line"; continue ;;
   esac
   $in_quad && { prev_line="$line"; continue; }
-  case "$line" in
+  case "$stripped" in
     '```bash'*) in_block=true; prev_line="$line"; continue ;;
     '```'*) in_block=false; prev_line="$line"; continue ;;
   esac
@@ -115,11 +117,12 @@ in_detect=false
 detect_depth=0
 while IFS= read -r line; do
   line_num=$((line_num + 1))
-  case "$line" in
+  stripped="${line#"${line%%[! ]*}"}"
+  case "$stripped" in
     '````'*) if $in_quad; then in_quad=false; else in_quad=true; fi; continue ;;
   esac
   $in_quad && continue
-  case "$line" in
+  case "$stripped" in
     '```bash'*) in_block=true; in_detect=false; detect_depth=0; continue ;;
     '```'*) in_block=false; in_detect=false; detect_depth=0; continue ;;
   esac
@@ -183,13 +186,14 @@ phase_has_exit=true
 in_quad=false
 in_block=false
 while IFS= read -r line; do
+  stripped="${line#"${line%%[! ]*}"}"
   # Skip content inside quadruple-backtick example regions
-  case "$line" in
+  case "$stripped" in
     '````'*) if $in_quad; then in_quad=false; else in_quad=true; fi; continue ;;
   esac
   $in_quad && continue
   # Skip content inside triple-backtick code blocks
-  case "$line" in
+  case "$stripped" in
     '```'*) if $in_block; then in_block=false; else in_block=true; fi; continue ;;
   esac
   $in_block && continue
@@ -223,11 +227,12 @@ in_quad=false
 in_block=false
 while IFS= read -r line; do
   line_num=$((line_num + 1))
-  case "$line" in
+  lstripped="${line#"${line%%[! ]*}"}"
+  case "$lstripped" in
     '````'*) if $in_quad; then in_quad=false; else in_quad=true; fi; continue ;;
   esac
   $in_quad && continue
-  case "$line" in
+  case "$lstripped" in
     '```bash'*) in_block=true; continue ;;
     '```'*) in_block=false; continue ;;
   esac
