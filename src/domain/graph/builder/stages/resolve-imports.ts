@@ -46,11 +46,6 @@ export async function resolveImports(ctx: PipelineContext): Promise<void> {
          JOIN nodes n1 ON e.source_id = n1.id
          WHERE e.kind = 'reexports' AND n1.kind = 'file'`)
       .all() as Array<{ file: string }>;
-    // Barrel-only files will have edges re-created by buildEdges; delete
-    // their outgoing edges first to prevent duplicates during incremental builds.
-    const deleteOutgoingEdges = db.prepare(
-      'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
-    );
     for (const { file: relPath } of barrelCandidates) {
       if (fileSymbols.has(relPath)) continue;
       const absPath = path.join(rootDir, relPath);
@@ -58,7 +53,6 @@ export async function resolveImports(ctx: PipelineContext): Promise<void> {
         const symbols = await parseFilesAuto([absPath], rootDir, engineOpts);
         const fileSym = symbols.get(relPath);
         if (fileSym) {
-          deleteOutgoingEdges.run(relPath);
           fileSymbols.set(relPath, fileSym);
           ctx.barrelOnlyFiles.add(relPath);
           const reexports = fileSym.imports.filter((imp: Import) => imp.reexport);
