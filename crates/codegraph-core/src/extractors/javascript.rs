@@ -587,7 +587,12 @@ fn walk_ast_nodes_depth(node: &Node, source: &[u8], ast_nodes: &mut Vec<AstNode>
                 text,
                 receiver: None,
             });
-            // Don't recurse
+            // Recurse into children to capture nested calls (e.g. await fetch(url))
+            for i in 0..node.child_count() {
+                if let Some(child) = node.child(i) {
+                    walk_ast_nodes_depth(&child, source, ast_nodes, depth + 1);
+                }
+            }
             return;
         }
         "string" | "template_string" => {
