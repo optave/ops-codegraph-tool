@@ -1,6 +1,6 @@
 # Codegraph Feature Backlog
 
-**Last updated:** 2026-03-20
+**Last updated:** 2026-03-25
 **Source:** Features derived from [COMPETITIVE_ANALYSIS.md](../../generated/competitive/COMPETITIVE_ANALYSIS.md) and internal roadmap discussions.
 
 ---
@@ -114,7 +114,7 @@ Co-change data captures historical coupling from git history. Currently only use
 
 ### Tier 1e.1 — Community leverage (build on vendored Leiden algorithm)
 
-Community detection will use a vendored Leiden optimiser (PR #545) with full control over resolution, quality functions, and refinement. Currently consumed by `communities` command and HTML viewer enrichment via `graphology-communities-louvain`. These features deepen community awareness across the analysis pipeline once the Leiden vendoring lands.
+Community detection now uses a vendored Leiden optimiser (PRs #545, #552, #556) with full control over resolution, quality functions, and true probabilistic refinement (Algorithm 3). The `graphology` dependency has been removed. Items in this tier are now **unblocked**.
 
 | ID | Title | Description | Category | Benefit | Zero-dep | Foundation-aligned | Problem-fit (1-5) | Breaking | Depends on |
 |----|-------|-------------|----------|---------|----------|-------------------|-------------------|----------|------------|
