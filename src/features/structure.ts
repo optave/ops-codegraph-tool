@@ -417,6 +417,17 @@ export function classifyNodeRoles(
 }
 
 function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSummary): RoleSummary {
+  // Leaf kinds (parameter, property) can never have callers/callees.
+  // Classify them directly as dead-leaf without the expensive fan-in/fan-out JOINs.
+  const leafRows = db
+    .prepare(
+      `SELECT n.id, n.name, n.kind, n.file
+      FROM nodes n
+      WHERE n.kind IN ('parameter', 'property')`,
+    )
+    .all() as { id: number; name: string; kind: string; file: string }[];
+
+  // Only compute fan-in/fan-out for callable/classifiable nodes
   const rows = db
     .prepare(
       `SELECT n.id, n.name, n.kind, n.file,
@@ -429,7 +440,7 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
       LEFT JOIN (
         SELECT source_id, COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY source_id
       ) fo ON n.id = fo.source_id
-      WHERE n.kind NOT IN ('file', 'directory')`,
+      WHERE n.kind NOT IN ('file', 'directory', 'parameter', 'property')`,
     )
     .all() as {
     id: number;
@@ -440,7 +451,7 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
     fan_out: number;
   }[];
 
-  if (rows.length === 0) return emptySummary;
+  if (rows.length === 0 && leafRows.length === 0) return emptySummary;
 
   const exportedIds = new Set(
     (
@@ -489,6 +500,16 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
   // Build summary and group updates by role for batch UPDATE
   const summary: RoleSummary = { ...emptySummary };
   const idsByRole = new Map<string, number[]>();
+
+  // Leaf kinds are always dead-leaf -- skip classifier
+  if (leafRows.length > 0) {
+    const leafIds: number[] = [];
+    for (const row of leafRows) leafIds.push(row.id);
+    idsByRole.set('dead-leaf', leafIds);
+    summary.dead += leafRows.length;
+    summary['dead-leaf'] += leafRows.length;
+  }
+
   for (const row of rows) {
     const role = roleMap.get(String(row.id)) || 'leaf';
     if (role.startsWith('dead')) summary.dead++;
@@ -576,14 +597,23 @@ function classifyNodeRolesIncremental(
 
   const globalMedians = { fanIn: median(fanInDist), fanOut: median(fanOutDist) };
 
-  // 2. Get affected nodes using indexed correlated subqueries (fast point lookups)
+  // 2a. Leaf kinds (parameter, property) in affected files — always dead-leaf
+  const leafRows = db
+    .prepare(
+      `SELECT n.id FROM nodes n
+      WHERE n.kind IN ('parameter', 'property')
+        AND n.file IN (${placeholders})`,
+    )
+    .all(...allAffectedFiles) as { id: number }[];
+
+  // 2b. Get callable nodes using indexed correlated subqueries (fast point lookups)
   const rows = db
     .prepare(
       `SELECT n.id, n.name, n.kind, n.file,
         (SELECT COUNT(*) FROM edges WHERE kind = 'calls' AND target_id = n.id) AS fan_in,
         (SELECT COUNT(*) FROM edges WHERE kind = 'calls' AND source_id = n.id) AS fan_out
       FROM nodes n
-      WHERE n.kind NOT IN ('file', 'directory')
+      WHERE n.kind NOT IN ('file', 'directory', 'parameter', 'property')
         AND n.file IN (${placeholders})`,
     )
     .all(...allAffectedFiles) as {
@@ -595,7 +625,7 @@ function classifyNodeRolesIncremental(
     fan_out: number;
   }[];
 
-  if (rows.length === 0) return emptySummary;
+  if (rows.length === 0 && leafRows.length === 0) return emptySummary;
 
   // 3. Get exported status for affected nodes only (scoped to changed files)
   const exportedIds = new Set(
@@ -648,6 +678,16 @@ function classifyNodeRolesIncremental(
   // 6. Build summary (only for affected nodes) and update only those nodes
   const summary: RoleSummary = { ...emptySummary };
   const idsByRole = new Map<string, number[]>();
+
+  // Leaf kinds are always dead-leaf -- skip classifier
+  if (leafRows.length > 0) {
+    const leafIds: number[] = [];
+    for (const row of leafRows) leafIds.push(row.id);
+    idsByRole.set('dead-leaf', leafIds);
+    summary.dead += leafRows.length;
+    summary['dead-leaf'] += leafRows.length;
+  }
+
   for (const row of rows) {
     const role = roleMap.get(String(row.id)) || 'leaf';
     if (role.startsWith('dead')) summary.dead++;
