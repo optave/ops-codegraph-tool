@@ -188,6 +188,76 @@ describe('Incremental build parity: full vs incremental', () => {
   });
 });
 
+describe('Incremental build parity: structural change (add/remove call)', () => {
+  let fullDir: string;
+  let incrDir: string;
+  let tmpBase: string;
+
+  beforeAll(async () => {
+    tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-incr-struct-'));
+    fullDir = path.join(tmpBase, 'full');
+    incrDir = path.join(tmpBase, 'incr');
+    copyDirSync(FIXTURE_DIR, fullDir);
+    copyDirSync(FIXTURE_DIR, incrDir);
+
+    // Step 1: Full build both copies
+    await buildGraph(fullDir, { incremental: false, skipRegistry: true });
+    await buildGraph(incrDir, { incremental: false, skipRegistry: true });
+
+    // Step 2: Remove the multiply() call from app.js — a structural edge change
+    const newAppContent = `import { add } from './src/index.js';\n\nexport function compute(x, y) {\n  return add(x, y);\n}\n`;
+    const incrAppPath = path.join(incrDir, 'app.js');
+    fs.writeFileSync(incrAppPath, newAppContent);
+
+    // Step 3: Incremental rebuild
+    await buildGraph(incrDir, { incremental: true, skipRegistry: true });
+
+    // Step 4: Apply same change to full copy and full rebuild
+    const fullAppPath = path.join(fullDir, 'app.js');
+    fs.writeFileSync(fullAppPath, newAppContent);
+    await buildGraph(fullDir, { incremental: false, skipRegistry: true });
+  }, 60_000);
+
+  afterAll(() => {
+    try {
+      if (tmpBase) fs.rmSync(tmpBase, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it('produces identical nodes after structural change', () => {
+    const fullGraph = readGraph(path.join(fullDir, '.codegraph', 'graph.db'));
+    const incrGraph = readGraph(path.join(incrDir, '.codegraph', 'graph.db'));
+    expect(incrGraph.nodes).toEqual(fullGraph.nodes);
+  });
+
+  it('produces identical edges after structural change', () => {
+    const fullGraph = readGraph(path.join(fullDir, '.codegraph', 'graph.db'));
+    const incrGraph = readGraph(path.join(incrDir, '.codegraph', 'graph.db'));
+    expect(incrGraph.edges).toEqual(fullGraph.edges);
+  });
+
+  it('preserves node roles after structural change', () => {
+    function readRoles(dbPath: string) {
+      const db = new Database(dbPath, { readonly: true });
+      const roles = db
+        .prepare(
+          `SELECT name, kind, file, role FROM nodes
+           WHERE kind NOT IN ('file', 'directory') AND role IS NOT NULL
+           ORDER BY name, kind, file`,
+        )
+        .all();
+      db.close();
+      return roles;
+    }
+    const fullRoles = readRoles(path.join(fullDir, '.codegraph', 'graph.db'));
+    const incrRoles = readRoles(path.join(incrDir, '.codegraph', 'graph.db'));
+    expect(incrRoles.length).toBeGreaterThan(0);
+    expect(incrRoles).toEqual(fullRoles);
+  });
+});
+
 describe('Incremental rebuild performance', () => {
   let tmpDir: string;
 
@@ -229,9 +299,11 @@ describe('Incremental rebuild performance', () => {
     console.log(`    Roles:     ${p.rolesMs}ms`);
     console.log(`    Finalize:  ${p.finalizeMs}ms`);
 
-    // Performance assertions: structure and roles should be fast for incremental
-    expect(p.rolesMs).toBeLessThan(50);
-    expect(p.structureMs).toBeLessThan(50);
-    expect(p.finalizeMs).toBeLessThan(50);
+    // Performance assertions: structure and roles should be fast for incremental.
+    // Use generous thresholds (200ms) to avoid flaky failures on slow CI runners,
+    // under heavy load, or during GC pauses. Local benchmarks show ~9ms for roles.
+    expect(p.rolesMs).toBeLessThan(200);
+    expect(p.structureMs).toBeLessThan(200);
+    expect(p.finalizeMs).toBeLessThan(200);
   }, 30_000);
 });

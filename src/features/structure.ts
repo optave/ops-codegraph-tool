@@ -367,7 +367,7 @@ export function buildStructure(
 // Re-export from classifier for backward compatibility
 export { FRAMEWORK_ENTRY_PREFIXES } from '../graph/classifiers/roles.js';
 
-import { classifyRoles } from '../graph/classifiers/roles.js';
+import { classifyRoles, median } from '../graph/classifiers/roles.js';
 
 interface RoleSummary {
   entry: number;
@@ -410,10 +410,7 @@ export function classifyNodeRoles(
   return classifyNodeRolesFull(db, emptySummary);
 }
 
-function classifyNodeRolesFull(
-  db: BetterSqlite3Database,
-  emptySummary: RoleSummary,
-): RoleSummary {
+function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSummary): RoleSummary {
   const rows = db
     .prepare(
       `SELECT n.id, n.name, n.kind, n.file,
@@ -524,18 +521,36 @@ function classifyNodeRolesFull(
 }
 
 /**
- * Incremental role classification: only reclassify nodes from changed files.
+ * Incremental role classification: only reclassify nodes from changed files
+ * plus their immediate edge neighbours (callers and callees in other files).
  *
  * Uses indexed point lookups for fan-in/fan-out instead of full table scans.
  * Global medians are computed from edge distribution (fast GROUP BY on index).
- * Unchanged files keep their roles from the previous build.
+ * Unchanged files not connected to changed files keep their roles from the
+ * previous build.
  */
 function classifyNodeRolesIncremental(
   db: BetterSqlite3Database,
   changedFiles: string[],
   emptySummary: RoleSummary,
 ): RoleSummary {
-  const placeholders = changedFiles.map(() => '?').join(',');
+  // Expand affected set: include files containing nodes that are edge neighbours
+  // of changed-file nodes. This ensures that removing a call from file A to a
+  // node in file B causes B's roles to be recalculated (fan_in changed).
+  const seedPlaceholders = changedFiles.map(() => '?').join(',');
+  const neighbourFiles = db
+    .prepare(
+      `SELECT DISTINCT n2.file FROM edges e
+       JOIN nodes n1 ON (e.source_id = n1.id OR e.target_id = n1.id)
+       JOIN nodes n2 ON (e.source_id = n2.id OR e.target_id = n2.id)
+       WHERE e.kind = 'calls'
+         AND n1.file IN (${seedPlaceholders})
+         AND n2.file NOT IN (${seedPlaceholders})
+         AND n2.kind NOT IN ('file', 'directory')`,
+    )
+    .all(...changedFiles, ...changedFiles) as { file: string }[];
+  const allAffectedFiles = [...changedFiles, ...neighbourFiles.map((r) => r.file)];
+  const placeholders = allAffectedFiles.map(() => '?').join(',');
 
   // 1. Compute global medians from edge distribution (fast: scans edge index, no node join)
   const fanInDist = (
@@ -553,11 +568,6 @@ function classifyNodeRolesIncremental(
     .map((r) => r.cnt)
     .sort((a, b) => a - b);
 
-  function median(sorted: number[]): number {
-    if (sorted.length === 0) return 0;
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
-  }
   const globalMedians = { fanIn: median(fanInDist), fanOut: median(fanOutDist) };
 
   // 2. Get affected nodes using indexed correlated subqueries (fast point lookups)
@@ -570,7 +580,7 @@ function classifyNodeRolesIncremental(
       WHERE n.kind NOT IN ('file', 'directory')
         AND n.file IN (${placeholders})`,
     )
-    .all(...changedFiles) as {
+    .all(...allAffectedFiles) as {
     id: number;
     name: string;
     kind: string;
@@ -593,7 +603,7 @@ function classifyNodeRolesIncremental(
           WHERE e.kind = 'calls' AND caller.file != target.file
             AND target.file IN (${placeholders})`,
         )
-        .all(...changedFiles) as { target_id: number }[]
+        .all(...allAffectedFiles) as { target_id: number }[]
     ).map((r) => r.target_id),
   );
 
@@ -610,7 +620,7 @@ function classifyNodeRolesIncremental(
         ${testFilterSQL('caller.file')}
       GROUP BY e.target_id`,
     )
-    .all(...changedFiles) as { target_id: number; cnt: number }[];
+    .all(...allAffectedFiles) as { target_id: number; cnt: number }[];
   for (const r of prodRows) {
     prodFanInMap.set(r.target_id, r.cnt);
   }
@@ -651,7 +661,7 @@ function classifyNodeRolesIncremental(
     // Reset roles only for affected files' nodes
     db.prepare(
       `UPDATE nodes SET role = NULL WHERE file IN (${placeholders}) AND kind NOT IN ('file', 'directory')`,
-    ).run(...changedFiles);
+    ).run(...allAffectedFiles);
     for (const [role, ids] of idsByRole) {
       for (let i = 0; i < ids.length; i += ROLE_CHUNK) {
         const end = Math.min(i + ROLE_CHUNK, ids.length);
