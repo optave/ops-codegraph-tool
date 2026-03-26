@@ -192,7 +192,7 @@ export async function resolveBenchmarkSource() {
  * @param {string} file    Relative filename within src/ (e.g. 'domain/queries.js')
  * @returns {string}       file:// URL string
  */
-export function srcImport(srcDir, file) {
+export function srcImport(srcDir: string, file: string): string {
 	const full = path.join(srcDir, file);
 	if (file.endsWith('.js')) {
 		const tsVariant = full.replace(/\.js$/, '.ts');
