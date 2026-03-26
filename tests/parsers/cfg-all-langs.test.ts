@@ -246,6 +246,65 @@ class Processor {
 `,
 };
 
+// Complex fixtures for deeper parity validation (try/catch, switch, do-while, nested loops)
+const COMPLEX_CFG_FIXTURES = {
+  'complex-trycatch.js': `
+function handleRequest(data) {
+  try {
+    if (!data) throw new Error("no data");
+    return JSON.parse(data);
+  } catch (err) {
+    console.error(err);
+    return null;
+  } finally {
+    console.log("done");
+  }
+}
+`,
+  'complex-switch.js': `
+function classify(x) {
+  switch (x) {
+    case 1:
+      return "one";
+    case 2:
+      return "two";
+    default:
+      return "other";
+  }
+}
+`,
+  'complex-dowhile.js': `
+function retry(fn) {
+  let attempts = 0;
+  do {
+    attempts++;
+    if (fn()) return true;
+  } while (attempts < 3);
+  return false;
+}
+`,
+  'complex-nested.js': `
+function matrix(rows, cols) {
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      if (i === j) continue;
+      console.log(i, j);
+    }
+  }
+}
+`,
+  'complex-labeled.js': `
+function search(grid) {
+  outer: for (let i = 0; i < grid.length; i++) {
+    for (let j = 0; j < grid[i].length; j++) {
+      if (grid[i][j] === 0) break outer;
+    }
+  }
+  return -1;
+}
+`,
+};
+
 function nativeSupportsCfg() {
   const native = loadNative();
   if (!native) return false;
@@ -404,6 +463,8 @@ describe.skipIf(!canTestNativeCfg || !hasFixedCfg)('native vs WASM CFG parity', 
     '.php': 'php',
   };
 
+  let hasGoRangeFix = false;
+
   beforeAll(async () => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cfg-parity-'));
     const srcDir = path.join(tmpDir, 'src');
@@ -422,6 +483,18 @@ describe.skipIf(!canTestNativeCfg || !hasFixedCfg)('native vs WASM CFG parity', 
     }
 
     parsers = await createParsers();
+
+    // Determine if the loaded native binary includes the range_clause fix.
+    // Must be computed here (after nativeResults is populated), not at describe() registration time.
+    // Note: this heuristic checks for any loop_exit edge in the Go `process` function.
+    // If the fixture also contains a C-style for loop with a condition, that loop emits
+    // loop_exit regardless of the range_clause fix — causing a false positive (test runs
+    // instead of skipping on an unpatched binary). The current fixture only has a range loop,
+    // so this is safe. If fixture.go gains additional loop types, scope the check to
+    // range-specific block labels.
+    const goSymbols = nativeResults.get('src/fixture.go');
+    const goDef = goSymbols?.definitions.find((d: any) => d.name === 'process');
+    hasGoRangeFix = goDef?.cfg?.edges?.some((e: any) => e.kind === 'loop_exit') ?? false;
   });
 
   afterAll(() => {
@@ -431,40 +504,76 @@ describe.skipIf(!canTestNativeCfg || !hasFixedCfg)('native vs WASM CFG parity', 
   const parityTests = [
     { file: 'fixture.js', ext: '.js', funcPattern: /processItems/ },
     { file: 'fixture.py', ext: '.py', funcPattern: /process/ },
+    { file: 'fixture.go', ext: '.go', funcPattern: /process/, requiresFix: true },
+    { file: 'fixture.rs', ext: '.rs', funcPattern: /process/ },
     { file: 'fixture.java', ext: '.java', funcPattern: /process/ },
     { file: 'fixture.cs', ext: '.cs', funcPattern: /Process/ },
+    { file: 'fixture.rb', ext: '.rb', funcPattern: /process/ },
     { file: 'fixture.php', ext: '.php', funcPattern: /process/ },
   ];
 
-  for (const { file, ext, funcPattern } of parityTests) {
-    test(`parity: ${file} — native vs WASM block/edge counts match`, () => {
+  for (const { file, ext, funcPattern, requiresFix } of parityTests) {
+    test(`parity: ${file} — native vs WASM block/edge counts match`, (ctx) => {
+      if (requiresFix && !hasGoRangeFix) {
+        ctx.skip();
+        return;
+      }
+
       const relPath = `src/${file}`;
       const symbols = nativeResults.get(relPath);
-      if (!symbols) return;
+      if (!symbols) {
+        ctx.skip();
+        return;
+      }
 
       const langId = LANG_MAP[ext];
       const complexityRules = COMPLEXITY_RULES.get(langId);
-      if (!complexityRules) return;
+      if (!complexityRules) {
+        ctx.skip();
+        return;
+      }
 
       // Parse with WASM
       const absPath = path.join(tmpDir, relPath);
       const parser = getParser(parsers, absPath);
-      if (!parser) return;
+      if (!parser) {
+        ctx.skip();
+        return;
+      }
 
       const code = fs.readFileSync(absPath, 'utf-8');
       const tree = parser.parse(code);
-      if (!tree) return;
+      if (!tree) {
+        ctx.skip();
+        return;
+      }
 
       const funcDefs = symbols.definitions.filter(
         (d) => (d.kind === 'function' || d.kind === 'method') && funcPattern.test(d.name),
       );
 
-      for (const def of funcDefs) {
-        if (!def.cfg?.blocks?.length) continue;
+      // Guard: skip rather than silently pass when no defs have CFG blocks populated
+      const defsWithCfg = funcDefs.filter((d: any) => d.cfg?.blocks?.length);
+      if (defsWithCfg.length === 0) {
+        ctx.skip();
+        return;
+      }
 
-        const funcNode = findFunctionNode(tree.rootNode, def.line, def.endLine, complexityRules);
-        if (!funcNode) continue;
+      // Guard: skip rather than silently pass when findFunctionNode returns null for all defs
+      // (e.g., due to line-number offset mismatch between native and WASM parsers)
+      const defsWithNode = defsWithCfg
+        .map((def) => ({
+          def,
+          funcNode: findFunctionNode(tree.rootNode, def.line, def.endLine, complexityRules),
+        }))
+        .filter(({ funcNode }) => funcNode !== null);
 
+      if (defsWithNode.length === 0) {
+        ctx.skip();
+        return;
+      }
+
+      for (const { def, funcNode } of defsWithNode) {
         const wasmCfg = buildFunctionCFG(funcNode, langId);
 
         // Block counts should match
@@ -485,3 +594,119 @@ describe.skipIf(!canTestNativeCfg || !hasFixedCfg)('native vs WASM CFG parity', 
     });
   }
 });
+
+// ─── Complex parity: try/catch, switch, do-while, nested, labeled ──────
+
+describe.skipIf(!canTestNativeCfg || !hasFixedCfg)(
+  'native vs WASM CFG parity — complex patterns',
+  () => {
+    let tmpDir: string;
+    const nativeResults = new Map<string, any>();
+    let parsers: any;
+
+    beforeAll(async () => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-cfg-complex-'));
+      const srcDir = path.join(tmpDir, 'src');
+      fs.mkdirSync(srcDir, { recursive: true });
+
+      const filePaths: string[] = [];
+      for (const [name, code] of Object.entries(COMPLEX_CFG_FIXTURES)) {
+        const fp = path.join(srcDir, name);
+        fs.writeFileSync(fp, code);
+        filePaths.push(fp);
+      }
+
+      const allSymbols = await parseFilesAuto(filePaths, tmpDir, { engine: 'native' });
+      for (const [relPath, symbols] of allSymbols) {
+        nativeResults.set(relPath, symbols);
+      }
+
+      parsers = await createParsers();
+    });
+
+    afterAll(() => {
+      if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    const complexTests = [
+      { file: 'complex-trycatch.js', funcPattern: /handleRequest/, desc: 'try/catch/finally' },
+      { file: 'complex-switch.js', funcPattern: /classify/, desc: 'switch/case/default' },
+      { file: 'complex-dowhile.js', funcPattern: /retry/, desc: 'do-while with early return' },
+      { file: 'complex-nested.js', funcPattern: /matrix/, desc: 'nested for + continue' },
+      { file: 'complex-labeled.js', funcPattern: /search/, desc: 'labeled break' },
+    ];
+
+    for (const { file, funcPattern, desc } of complexTests) {
+      test(`parity: ${desc} — native vs WASM block/edge counts match`, (ctx) => {
+        const relPath = `src/${file}`;
+        const symbols = nativeResults.get(relPath);
+        if (!symbols) {
+          ctx.skip();
+          return;
+        }
+
+        const langId = 'javascript';
+        const complexityRules = COMPLEXITY_RULES.get(langId);
+        if (!complexityRules) {
+          ctx.skip();
+          return;
+        }
+
+        const absPath = path.join(tmpDir, relPath);
+        const parser = getParser(parsers, absPath);
+        if (!parser) {
+          ctx.skip();
+          return;
+        }
+
+        const code = fs.readFileSync(absPath, 'utf-8');
+        const tree = parser.parse(code);
+        if (!tree) {
+          ctx.skip();
+          return;
+        }
+
+        const funcDefs = symbols.definitions.filter(
+          (d: any) => (d.kind === 'function' || d.kind === 'method') && funcPattern.test(d.name),
+        );
+
+        // Guard: skip rather than silently pass when no defs have CFG blocks populated
+        const defsWithCfg = funcDefs.filter((d: any) => d.cfg?.blocks?.length);
+        if (defsWithCfg.length === 0) {
+          ctx.skip();
+          return;
+        }
+
+        // Guard: skip rather than silently pass when findFunctionNode returns null for all defs
+        const defsWithNode = defsWithCfg
+          .map((def: any) => ({
+            def,
+            funcNode: findFunctionNode(tree.rootNode, def.line, def.endLine, complexityRules),
+          }))
+          .filter(({ funcNode }) => funcNode !== null);
+
+        if (defsWithNode.length === 0) {
+          ctx.skip();
+          return;
+        }
+
+        for (const { def, funcNode } of defsWithNode) {
+          const wasmCfg = buildFunctionCFG(funcNode, langId);
+
+          expect(def.cfg.blocks.length, `${desc}: block count mismatch`).toBe(
+            wasmCfg.blocks.length,
+          );
+          expect(def.cfg.edges.length, `${desc}: edge count mismatch`).toBe(wasmCfg.edges.length);
+
+          const nativeTypes = def.cfg.blocks.map((b: any) => b.type).sort();
+          const wasmTypes = wasmCfg.blocks.map((b: any) => b.type).sort();
+          expect(nativeTypes, `${desc}: block types mismatch`).toEqual(wasmTypes);
+
+          const nativeKinds = def.cfg.edges.map((e: any) => e.kind).sort();
+          const wasmKinds = wasmCfg.edges.map((e: any) => e.kind).sort();
+          expect(nativeKinds, `${desc}: edge kinds mismatch`).toEqual(wasmKinds);
+        }
+      });
+    }
+  },
+);

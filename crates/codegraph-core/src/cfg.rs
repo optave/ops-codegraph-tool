@@ -803,6 +803,8 @@ impl<'a> CfgBuilder<'a> {
                 for_stmt.child_by_field_name(field).is_some()
                     || for_stmt.child_by_field_name("right").is_some()
                     || for_stmt.child_by_field_name("value").is_some()
+                    // Go: for-range has a range_clause child (no condition/right/value fields)
+                    || has_child_of_kind(for_stmt, "range_clause")
                     // Explicit iterator-style node kinds across supported languages:
                     // JS: for_in_statement, Java: enhanced_for_statement,
                     // C#/PHP: foreach_statement, Ruby: for
@@ -1133,6 +1135,14 @@ impl<'a> CfgBuilder<'a> {
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
+
+/// Returns true if `node` has a direct child whose node kind equals `kind`.
+/// This is a shallow (one-level) check — it does not recurse into grandchildren.
+fn has_child_of_kind(node: &Node, kind: &str) -> bool {
+    let mut cursor = node.walk();
+    let result = node.children(&mut cursor).any(|c| c.kind() == kind);
+    result
+}
 
 fn node_line(node: &Node) -> u32 {
     node.start_position().row as u32 + 1

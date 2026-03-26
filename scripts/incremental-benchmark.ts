@@ -58,7 +58,7 @@ if (!isWorker()) {
 		function walk(dir) {
 			for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
 				if (entry.isDirectory()) { walk(path.join(dir, entry.name)); continue; }
-				if (!entry.name.endsWith('.js')) continue;
+				if (!entry.name.endsWith('.js') && !entry.name.endsWith('.ts') && !entry.name.endsWith('.tsx')) continue;
 				const absFile = path.join(dir, entry.name);
 				const content = fs.readFileSync(absFile, 'utf8');
 				let match;
@@ -149,7 +149,7 @@ const origLog = console.log;
 console.log = (...args) => console.error(...args);
 
 const RUNS = 3;
-const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.js');
+const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.ts');
 
 function median(arr) {
 	const sorted = [...arr].sort((a, b) => a - b);

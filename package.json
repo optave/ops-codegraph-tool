@@ -30,9 +30,9 @@
   },
   "scripts": {
     "build": "tsc && node -e \"require('fs').writeFileSync('dist/index.cjs',require('fs').readFileSync('src/index.cjs','utf8').replaceAll('./index.ts','./index.js'))\"",
-    "build:wasm": "node --experimental-strip-types scripts/build-wasm.ts",
+    "build:wasm": "node scripts/node-ts.js scripts/build-wasm.ts",
     "typecheck": "tsc --noEmit",
-    "verify-imports": "node --experimental-strip-types scripts/verify-imports.ts",
+    "verify-imports": "node scripts/node-ts.js scripts/verify-imports.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
@@ -42,10 +42,11 @@
     "prepack": "npm run build",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true});require('fs').rmSync('.tsbuildinfo',{force:true})\"",
     "prepare": "npm run build:wasm && npm run build && husky && npm run deps:tree",
-    "deps:tree": "node --experimental-strip-types scripts/gen-deps.ts",
+    "deps:tree": "node scripts/node-ts.js scripts/gen-deps.ts",
+    "benchmark": "node --experimental-strip-types --import ./scripts/ts-resolve-loader.js scripts/benchmark.ts",
     "release": "commit-and-tag-version",
     "release:dry-run": "commit-and-tag-version --dry-run",
-    "version": "node --experimental-strip-types scripts/sync-native-versions.ts && git add package.json crates/codegraph-core/Cargo.toml"
+    "version": "node scripts/node-ts.js scripts/sync-native-versions.ts && git add package.json crates/codegraph-core/Cargo.toml"
   },
   "keywords": [
     "codegraph",

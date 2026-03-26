@@ -10,10 +10,33 @@ fn file_exists(path: &str, known: Option<&HashSet<String>>) -> bool {
     known.map_or_else(|| Path::new(path).exists(), |set| set.contains(path))
 }
 
+/// Resolve `.` and `..` components in a path without touching the filesystem.
+/// Unlike `PathBuf::components().collect()`, this properly collapses `..` by
+/// popping the previous component from the result.
+///
+/// NOTE: if the path begins with more `..` components than there are preceding
+/// components to pop (e.g. a purely relative `../../foo`), the excess `..`
+/// components are silently dropped.  This function is therefore only correct
+/// when called on paths that have already been joined to a base directory with
+/// sufficient depth.
+fn clean_path(p: &Path) -> PathBuf {
+    let mut result = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                result.pop();
+            }
+            std::path::Component::CurDir => {}
+            _ => result.push(c),
+        }
+    }
+    result
+}
+
 /// Normalize a path to use forward slashes and clean `.` / `..` segments
 /// (cross-platform consistency).
 fn normalize_path(p: &str) -> String {
-    let cleaned: PathBuf = Path::new(p).components().collect();
+    let cleaned = clean_path(Path::new(p));
     cleaned.display().to_string().replace('\\', "/")
 }
 
@@ -111,7 +134,7 @@ fn resolve_import_path_inner(
 
     // Relative import — normalize immediately to remove `.` / `..` segments
     let dir = Path::new(from_file).parent().unwrap_or(Path::new(""));
-    let resolved: PathBuf = dir.join(import_source).components().collect();
+    let resolved = clean_path(&dir.join(import_source));
     let resolved_str = resolved.display().to_string().replace('\\', "/");
 
     // .js → .ts remap
@@ -245,4 +268,50 @@ pub fn resolve_imports_batch(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clean_path_collapses_parent_dirs() {
+        assert_eq!(
+            clean_path(Path::new("src/cli/commands/../../domain/graph/builder.js")),
+            PathBuf::from("src/domain/graph/builder.js")
+        );
+    }
+
+    #[test]
+    fn clean_path_skips_cur_dir() {
+        assert_eq!(
+            clean_path(Path::new("src/./foo.ts")),
+            PathBuf::from("src/foo.ts")
+        );
+    }
+
+    #[test]
+    fn clean_path_handles_absolute_root() {
+        assert_eq!(
+            clean_path(Path::new("/src/../foo.ts")),
+            PathBuf::from("/foo.ts")
+        );
+    }
+
+    #[test]
+    fn clean_path_mixed_segments() {
+        assert_eq!(
+            clean_path(Path::new("a/b/../c/./d/../e.js")),
+            PathBuf::from("a/c/e.js")
+        );
+    }
+
+    #[test]
+    fn clean_path_excess_parent_dirs_silently_dropped() {
+        // Documents the known limitation: excess leading `..` are dropped
+        assert_eq!(
+            clean_path(Path::new("../../foo")),
+            PathBuf::from("foo")
+        );
+    }
 }
