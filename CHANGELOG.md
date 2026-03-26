@@ -40,9 +40,9 @@ All notable changes to this project will be documented in this file. See [commit
 * add `npm run bench` script and stale embeddings warning ([#604](https://github.com/optave/codegraph/pull/604))
 * bump `commit-and-tag-version`, `tree-sitter-cli`, `web-tree-sitter`, `@commitlint/cli`, `@commitlint/config-conventional` ([#560](https://github.com/optave/codegraph/pull/560), [#561](https://github.com/optave/codegraph/pull/561), [#562](https://github.com/optave/codegraph/pull/562), [#563](https://github.com/optave/codegraph/pull/563), [#564](https://github.com/optave/codegraph/pull/564))
 
-### ⚠ BREAKING CHANGES (programmatic API)
+### Notes
 
-* **constants:** `EXTENSIONS` and `IGNORE_DIRS` are now `Set<string>` instead of `Array<string>`. Consumers using `.includes()`, `.indexOf()`, or array spread should migrate to `.has()` and `[...set]` respectively. Both sets expose a `.toArray()` convenience method for a quick migration path.
+* **constants:** `EXTENSIONS` and `IGNORE_DIRS` in the programmatic API are now `Set<string>` (changed during TypeScript migration). Both expose a `.toArray()` convenience method for consumers that need array semantics.
 
 ## [3.3.1](https://github.com/optave/codegraph/compare/v3.3.0...v3.3.1) (2026-03-20)
 
