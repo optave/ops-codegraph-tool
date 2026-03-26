@@ -29,6 +29,8 @@ interface NativeResult {
 let native: NativeAddon | null = null;
 /** Whether the installed native binary supports call AST nodes. */
 let nativeSupportsCallAst = false;
+/** Whether the installed native binary recurses into await children (fix for under-counted calls). */
+let nativeHasAwaitCallFix = false;
 
 function nativeExtract(code: string, filePath: string): NativeResult {
   if (!native) throw new Error('nativeExtract called with native === null');
@@ -110,6 +112,21 @@ describe('AST node parity (native vs WASM)', () => {
     if (probe) {
       const astNodes = probe.astNodes || [];
       nativeSupportsCallAst = astNodes.some((n: AstNodeLike) => n.kind === 'call');
+    }
+
+    // Detect whether this binary recurses into await_expression children.
+    // Fixed in walk_ast_nodes_depth — older binaries miss calls inside await.
+    const awaitProbe = native.parseFile(
+      '/probe-await.js',
+      'async function f() { await fetch(x); }',
+      false,
+      true,
+    ) as NativeResult | null;
+    if (awaitProbe) {
+      const astNodes = awaitProbe.astNodes || [];
+      nativeHasAwaitCallFix = astNodes.some(
+        (n: AstNodeLike) => n.kind === 'call' && n.name === 'fetch',
+      );
     }
   });
 
@@ -206,6 +223,10 @@ describe('AST node parity (native vs WASM)', () => {
 
   it.skipIf(!isNativeAvailable())('JS: native calls match legacy calls field count', () => {
     if (!nativeSupportsCallAst) return; // runtime guard — set by beforeAll
+    // walk_ast_nodes_depth didn't recurse into await_expression children,
+    // so calls inside `await expr()` were missed. Fixed in Rust source —
+    // skip until the native binary is republished with the fix.
+    if (!nativeHasAwaitCallFix) return;
 
     const nativeResult = nativeExtract(JS_SNIPPET, '/test/sample.js');
     const astNodes = nativeResult.astNodes || [];
