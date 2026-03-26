@@ -4,25 +4,6 @@ import { CodeGraph } from '../../graph/model.js';
 import { loadNative } from '../../infrastructure/native.js';
 import type { BetterSqlite3Database } from '../../types.js';
 
-/**
- * Engine parity note — function-level cycle counts
- *
- * The native (Rust) and WASM engines may report different function-level cycle
- * counts even on the same codebase. This is expected behavior, not a bug in
- * the cycle detection algorithm (Tarjan SCC is identical in both engines).
- *
- * Root cause: the native engine extracts slightly more symbols and resolves
- * more call edges than WASM (e.g. 10883 nodes / 4000 calls native vs 10857
- * nodes / 3986 calls WASM on the codegraph repo). The additional precision
- * can both create new edges and — more commonly — resolve previously ambiguous
- * calls to their correct targets, which breaks false cycles that WASM reports.
- *
- * For file-level cycles the engines are in parity because import edges are
- * resolved identically. The gap only manifests at function-level granularity
- * where call-site extraction differs between the Rust and WASM parsers.
- *
- * See: https://github.com/optave/codegraph/issues/597
- */
 export function findCycles(
   db: BetterSqlite3Database,
   opts: { fileLevel?: boolean; noTests?: boolean } = {},

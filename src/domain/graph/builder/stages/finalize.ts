@@ -37,6 +37,10 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
     symbols._langId = undefined;
   }
 
+  // Capture a single wall-clock timestamp for the current build — used for
+  // both the stale-embeddings comparison and the persisted built_at metadata.
+  const buildNow = new Date();
+
   const nodeCount = (db.prepare('SELECT COUNT(*) as c FROM nodes').get() as { c: number }).c;
   const actualEdgeCount = (db.prepare('SELECT COUNT(*) as c FROM edges').get() as { c: number }).c;
   info(`Graph built: ${nodeCount} nodes, ${actualEdgeCount} edges`);
@@ -63,6 +67,22 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
     }
   }
 
+  // Persist build metadata early so downstream checks (e.g. stale-embeddings)
+  // can read the *current* build's built_at rather than the previous one.
+  try {
+    setBuildMeta(db, {
+      engine: ctx.engineName,
+      engine_version: ctx.engineVersion || '',
+      codegraph_version: CODEGRAPH_VERSION,
+      schema_version: String(schemaVersion),
+      built_at: buildNow.toISOString(),
+      node_count: nodeCount,
+      edge_count: actualEdgeCount,
+    });
+  } catch (err) {
+    warn(`Failed to write build metadata: ${(err as Error).message}`);
+  }
+
   // Orphaned embeddings warning
   if (hasEmbeddings) {
     try {
@@ -83,7 +103,7 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
     }
   }
 
-  // Stale embeddings warning (built before last graph rebuild)
+  // Stale embeddings warning (built before current graph rebuild)
   if (hasEmbeddings) {
     try {
       const embedBuiltAt = (
@@ -93,17 +113,10 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
       )?.value;
       if (embedBuiltAt) {
         const embedTime = new Date(embedBuiltAt).getTime();
-        const now = Date.now();
-        if (embedTime < now && !Number.isNaN(embedTime)) {
-          const prevBuildAt = getBuildMeta(db, 'built_at');
-          if (prevBuildAt) {
-            const prevBuildTime = new Date(prevBuildAt).getTime();
-            if (embedTime < prevBuildTime) {
-              warn(
-                'Embeddings were built before the last graph rebuild. Run "codegraph embed" to update.',
-              );
-            }
-          }
+        if (!Number.isNaN(embedTime) && embedTime < buildNow.getTime()) {
+          warn(
+            'Embeddings were built before the last graph rebuild. Run "codegraph embed" to update.',
+          );
         }
       }
     } catch {
@@ -134,21 +147,6 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
     }
   } catch {
     /* exported column may not exist on older DBs */
-  }
-
-  // Persist build metadata
-  try {
-    setBuildMeta(db, {
-      engine: ctx.engineName,
-      engine_version: ctx.engineVersion || '',
-      codegraph_version: CODEGRAPH_VERSION,
-      schema_version: String(schemaVersion),
-      built_at: new Date().toISOString(),
-      node_count: nodeCount,
-      edge_count: actualEdgeCount,
-    });
-  } catch (err) {
-    warn(`Failed to write build metadata: ${(err as Error).message}`);
   }
 
   closeDb(db);

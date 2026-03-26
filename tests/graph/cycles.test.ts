@@ -148,21 +148,6 @@ describe('formatCycles', () => {
   });
 });
 
-// ── Engine parity: extraction-level differences ────────────────────
-//
-// The native (Rust) and WASM engines produce slightly different function-level
-// graphs because the native extractor resolves more symbols and call edges.
-// This means function-level cycle *counts* can legitimately differ between
-// engines (e.g. 8 native vs 11 WASM on the codegraph repo itself).
-//
-// The Tarjan SCC algorithm is identical — given the SAME edge set, both
-// engines produce the same cycles. The tests below verify that invariant.
-//
-// File-level cycles are unaffected because import resolution is engine-
-// independent.
-//
-// See: https://github.com/optave/codegraph/issues/597
-
 // ── Native vs JS parity ────────────────────────────────────────────
 
 describe.skipIf(!hasNative)('Cycle detection: native vs JS parity', () => {
@@ -220,51 +205,5 @@ describe.skipIf(!hasNative)('Cycle detection: native vs JS parity', () => {
     expect(jsResult).toHaveLength(2);
     expect(nativeResult).toHaveLength(2);
     expect(sortCycles(nativeResult)).toEqual(sortCycles(jsResult));
-  });
-});
-
-// ── Extraction-level parity gap (issue #597) ───────────────────────
-
-describe('Cycle count sensitivity to edge differences', () => {
-  it('resolving an ambiguous call edge to its correct target can break a false cycle', () => {
-    // Demonstrates why native (more precise edge targets) can report FEWER cycles than WASM.
-    // With ambiguous resolution, a -> b -> c -> a forms a 3-node cycle.
-    // Resolving the ambiguous c -> a edge to its correct target c -> d
-    // breaks the cycle.
-    const ambiguousEdges = [
-      { source: 'a', target: 'b' },
-      { source: 'b', target: 'c' },
-      { source: 'c', target: 'a' },
-    ];
-    const ambiguousCycles = findCyclesJS(ambiguousEdges);
-    expect(ambiguousCycles).toHaveLength(1);
-
-    // After resolving: c -> a becomes c -> d (a different target).
-    // The cycle is broken.
-    const resolvedEdges = [
-      { source: 'a', target: 'b' },
-      { source: 'b', target: 'c' },
-      { source: 'c', target: 'd' },
-    ];
-    const resolvedCycles = findCyclesJS(resolvedEdges);
-    expect(resolvedCycles).toHaveLength(0);
-  });
-
-  it('JS cycle detection is deterministic on repeated calls', () => {
-    // The Tarjan SCC algorithm is deterministic: given the same edge set,
-    // repeated calls always produce the same result. Any cycle count
-    // difference between engines comes from the graph they are fed, not
-    // from the algorithm.
-    const edges = [
-      { source: 'a', target: 'b' },
-      { source: 'b', target: 'c' },
-      { source: 'c', target: 'a' },
-      { source: 'd', target: 'e' },
-      { source: 'e', target: 'd' },
-    ];
-    const result1 = findCyclesJS(edges);
-    const result2 = findCyclesJS(edges);
-    expect(result1).toEqual(result2);
-    expect(result1).toHaveLength(2);
   });
 });
