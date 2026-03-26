@@ -9,7 +9,6 @@ import { openReadonlyOrFail } from '../db/index.js';
 import { CORE_SYMBOL_KINDS, findMatchingNodes } from '../domain/queries.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
-import type { BetterSqlite3Database } from '../types.js';
 import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
 
 export function entryPointType(name: string): 'route' | 'event' | 'command' | 'exported' | null {

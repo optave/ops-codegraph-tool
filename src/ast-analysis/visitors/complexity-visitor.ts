@@ -5,7 +5,6 @@ import {
   computeMaintainabilityIndex,
 } from '../metrics.js';
 
-// biome-ignore lint/suspicious/noExplicitAny: complexity/halstead rules are opaque language-specific objects
 type AnyRules = any;
 
 interface ComplexityAcc {

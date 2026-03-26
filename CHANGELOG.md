@@ -40,6 +40,10 @@ All notable changes to this project will be documented in this file. See [commit
 * add `npm run bench` script and stale embeddings warning ([#604](https://github.com/optave/codegraph/pull/604))
 * bump `commit-and-tag-version`, `tree-sitter-cli`, `web-tree-sitter`, `@commitlint/cli`, `@commitlint/config-conventional` ([#560](https://github.com/optave/codegraph/pull/560), [#561](https://github.com/optave/codegraph/pull/561), [#562](https://github.com/optave/codegraph/pull/562), [#563](https://github.com/optave/codegraph/pull/563), [#564](https://github.com/optave/codegraph/pull/564))
 
+### Notes
+
+* **constants:** `EXTENSIONS` and `IGNORE_DIRS` in the programmatic API are now `Set<string>` (changed during TypeScript migration). Both expose a `.toArray()` convenience method for consumers that need array semantics.
+
 ## [3.3.1](https://github.com/optave/codegraph/compare/v3.3.0...v3.3.1) (2026-03-20)
 
 **Incremental rebuild accuracy and post-3.3.0 stabilization.** This patch fixes a critical edge gap in the file watcher's single-file rebuild path where call edges were silently dropped during incremental rebuilds, aligns the native Rust engine's edge builder kind filters with the JS engine for parity, plugs a WASM tree memory leak in native engine typeMap backfill, and restores query performance to pre-3.1.4 levels. Several post-reorganization import path issues are also corrected.

@@ -3,7 +3,7 @@ import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
 import { BATCH_COMMANDS, multiBatchData, splitTargets } from '../../features/batch.js';
 import { batch } from '../../presentation/batch.js';
-import { ConfigError } from '../../shared/errors.js';
+import { ConfigError, toErrorMessage } from '../../shared/errors.js';
 import type { CommandDefinition } from '../types.js';
 
 interface MultiBatchItem {
@@ -58,8 +58,9 @@ export const command: CommandDefinition = {
         targets = splitTargets(positionalTargets as unknown as string[]);
       }
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new ConfigError(`Failed to parse targets: ${message}`, { cause: err as Error });
+      throw new ConfigError(`Failed to parse targets: ${toErrorMessage(err)}`, {
+        cause: err as Error,
+      });
     }
 
     if (!targets || targets.length === 0) {

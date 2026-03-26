@@ -8,7 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type BetterSqlite3 from 'better-sqlite3';
 import { purgeFilesData } from '../../../db/index.js';
-import { warn } from '../../../infrastructure/logger.js';
+import { debug, warn } from '../../../infrastructure/logger.js';
 import { EXTENSIONS, IGNORE_DIRS } from '../../../shared/constants.js';
 import type { BetterSqlite3Database, CodegraphConfig, PathAliases } from '../../../types.js';
 
@@ -132,8 +132,7 @@ export function loadPathAliases(rootDir: string): PathAliases {
     try {
       const raw = fs
         .readFileSync(configPath, 'utf-8')
-        .replace(/\/\/.*$/gm, '')
-        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/("(?:[^"\\]|\\.)*")|\/\*[\s\S]*?\*\/|\/\/.*$/gm, (_, str) => str ?? '')
         .replace(/,\s*([\]}])/g, '$1');
       const config = JSON.parse(raw) as {
         compilerOptions?: { baseUrl?: string; paths?: Record<string, string[]> };
@@ -149,7 +148,7 @@ export function loadPathAliases(rootDir: string): PathAliases {
       }
       break;
     } catch (err: unknown) {
-      warn(`Failed to parse ${configName}: ${(err as Error).message}`);
+      debug(`Failed to parse ${configName}: ${(err as Error).message}`);
     }
   }
   return aliases;

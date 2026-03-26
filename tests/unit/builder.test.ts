@@ -200,6 +200,28 @@ describe('loadPathAliases', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
+  it('preserves // inside string values (e.g. $schema URLs)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-jsonc-url-'));
+    fs.writeFileSync(
+      path.join(dir, 'tsconfig.json'),
+      `{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  // A comment
+  "compilerOptions": {
+    /* Language & Environment */
+    "baseUrl": "./src",
+    "paths": {
+      "@/*": ["*"]
+    }
+  }
+}`,
+    );
+    const aliases = loadPathAliases(dir);
+    expect(aliases.baseUrl).toContain('src');
+    expect(aliases.paths['@/*']).toBeDefined();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   it('prefers tsconfig.json over jsconfig.json', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-both-'));
     fs.writeFileSync(

@@ -11,7 +11,7 @@ import type BetterSqlite3 from 'better-sqlite3';
 import { closeDb } from '../../../../db/index.js';
 import { debug, info } from '../../../../infrastructure/logger.js';
 import { normalizePath } from '../../../../shared/constants.js';
-import type { EngineOpts, ExtractorOutput } from '../../../../types.js';
+import type { ExtractorOutput } from '../../../../types.js';
 import { parseFilesAuto } from '../../../parser.js';
 import { readJournal, writeJournalHeader } from '../../journal.js';
 import type { PipelineContext } from '../context.js';
@@ -227,7 +227,7 @@ function mtimeAndHashTiers(
 async function runPendingAnalysis(ctx: PipelineContext): Promise<boolean> {
   const { db, opts, engineOpts, allFiles, rootDir } = ctx;
   const needsCfg =
-    (opts as Record<string, unknown>)['cfg'] !== false &&
+    (opts as Record<string, unknown>).cfg !== false &&
     (() => {
       try {
         return (
@@ -239,7 +239,7 @@ async function runPendingAnalysis(ctx: PipelineContext): Promise<boolean> {
       }
     })();
   const needsDataflow =
-    (opts as Record<string, unknown>)['dataflow'] !== false &&
+    (opts as Record<string, unknown>).dataflow !== false &&
     (() => {
       try {
         return (
@@ -255,7 +255,7 @@ async function runPendingAnalysis(ctx: PipelineContext): Promise<boolean> {
   info('No file changes. Running pending analysis pass...');
   const analysisOpts = {
     ...engineOpts,
-    dataflow: needsDataflow && (opts as Record<string, unknown>)['dataflow'] !== false,
+    dataflow: needsDataflow && (opts as Record<string, unknown>).dataflow !== false,
   };
   const analysisSymbols: Map<string, ExtractorOutput> = await parseFilesAuto(
     allFiles,
@@ -359,7 +359,7 @@ function handleScopedBuild(ctx: PipelineContext): void {
     (item) => item.relPath || normalizePath(path.relative(rootDir, item.file)),
   );
   let reverseDeps = new Set<string>();
-  if (!(opts as Record<string, unknown>)['noReverseDeps']) {
+  if (!(opts as Record<string, unknown>).noReverseDeps) {
     const changedRelPaths = new Set<string>([...changePaths, ...ctx.removed]);
     reverseDeps = findReverseDependencies(db, changedRelPaths, rootDir);
   }
@@ -386,7 +386,7 @@ function handleIncrementalBuild(ctx: PipelineContext): void {
   const { db, rootDir, opts } = ctx;
   ctx.hasEmbeddings = detectHasEmbeddings(db);
   let reverseDeps = new Set<string>();
-  if (!(opts as Record<string, unknown>)['noReverseDeps']) {
+  if (!(opts as Record<string, unknown>).noReverseDeps) {
     const changedRelPaths = new Set<string>();
     for (const item of ctx.parseChanges) {
       changedRelPaths.add(item.relPath || normalizePath(path.relative(rootDir, item.file)));
@@ -410,7 +410,7 @@ function handleIncrementalBuild(ctx: PipelineContext): void {
 
 export async function detectChanges(ctx: PipelineContext): Promise<void> {
   const { db, allFiles, rootDir, incremental, forceFullRebuild, opts } = ctx;
-  if ((opts as Record<string, unknown>)['scope']) {
+  if ((opts as Record<string, unknown>).scope) {
     handleScopedBuild(ctx);
     return;
   }

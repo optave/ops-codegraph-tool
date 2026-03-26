@@ -27,12 +27,12 @@ program
   .option('--engine <engine>', 'Parser engine: native, wasm, or auto (default: auto)', 'auto')
   .hook('preAction', (thisCommand) => {
     const opts = thisCommand.opts();
-    if (opts['verbose']) setVerbose(true);
+    if (opts.verbose) setVerbose(true);
   })
   .hook('postAction', async (_thisCommand, actionCommand) => {
     const name = actionCommand.name();
     if (name === 'mcp' || name === 'watch') return;
-    if (actionCommand.opts()['json']) return;
+    if (actionCommand.opts().json) return;
     try {
       const result = await checkForUpdates(pkg.version);
       if (result) printUpdateNotification(result.current, result.latest);

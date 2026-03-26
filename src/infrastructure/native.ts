@@ -8,7 +8,7 @@
 
 import { createRequire } from 'node:module';
 import os from 'node:os';
-import { EngineError } from '../shared/errors.js';
+import { EngineError, toErrorMessage } from '../shared/errors.js';
 import type { NativeAddon } from '../types.js';
 import { debug } from './logger.js';
 
@@ -28,7 +28,7 @@ function detectLibc(): 'gnu' | 'musl' {
       return 'musl';
     }
   } catch (e) {
-    debug(`detectLibc: failed to read /lib: ${e instanceof Error ? e.message : String(e)}`);
+    debug(`detectLibc: failed to read /lib: ${toErrorMessage(e)}`);
   }
   return 'gnu';
 }
@@ -96,9 +96,7 @@ export function getNativePackageVersion(): string | null {
     const pkgJson = _require(`${pkg}/package.json`) as { version?: string };
     return pkgJson.version || null;
   } catch (e) {
-    debug(
-      `getNativePackageVersion: failed to read package.json for ${pkg}: ${e instanceof Error ? e.message : String(e)}`,
-    );
+    debug(`getNativePackageVersion: failed to read package.json for ${pkg}: ${toErrorMessage(e)}`);
     return null;
   }
 }

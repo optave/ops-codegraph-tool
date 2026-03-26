@@ -3,20 +3,13 @@
  *
  * WASM cleanup, stats logging, drift detection, build metadata, registry, journal.
  */
-import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { closeDb, getBuildMeta, setBuildMeta } from '../../../../db/index.js';
 import { debug, info, warn } from '../../../../infrastructure/logger.js';
+import { CODEGRAPH_VERSION } from '../../../../shared/version.js';
 import { writeJournalHeader } from '../../journal.js';
 import type { PipelineContext } from '../context.js';
-
-const __builderDir = path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/i, '$1'));
-const CODEGRAPH_VERSION = (
-  JSON.parse(
-    fs.readFileSync(path.join(__builderDir, '..', '..', '..', '..', '..', 'package.json'), 'utf-8'),
-  ) as { version: string }
-).version;
 
 export async function finalize(ctx: PipelineContext): Promise<void> {
   const { db, allSymbols, rootDir, isFullBuild, hasEmbeddings, config, opts, schemaVersion } = ctx;
