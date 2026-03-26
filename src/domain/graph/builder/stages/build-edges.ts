@@ -102,12 +102,15 @@ function buildImportEdges(
   const { fileSymbols, barrelOnlyFiles, rootDir } = ctx;
 
   for (const [relPath, symbols] of fileSymbols) {
-    if (barrelOnlyFiles.has(relPath)) continue;
+    const isBarrelOnly = barrelOnlyFiles.has(relPath);
     const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
     if (!fileNodeRow) continue;
     const fileNodeId = fileNodeRow.id;
 
     for (const imp of symbols.imports) {
+      // Barrel-only files: only emit reexport edges, skip regular imports
+      if (isBarrelOnly && !imp.reexport) continue;
+
       const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
       const targetRow = getNodeIdStmt.get(resolvedPath, 'file', resolvedPath, 0);
       if (!targetRow) continue;

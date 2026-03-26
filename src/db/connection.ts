@@ -1,12 +1,31 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { debug, warn } from '../infrastructure/logger.js';
 import { DbError } from '../shared/errors.js';
 import type { BetterSqlite3Database } from '../types.js';
 import { Repository } from './repository/base.js';
 import { SqliteRepository } from './repository/sqlite-repository.js';
+
+/** Lazy-loaded package version (read once from package.json). */
+let _packageVersion: string | undefined;
+function getPackageVersion(): string {
+  if (_packageVersion !== undefined) return _packageVersion;
+  try {
+    const connDir = path.dirname(fileURLToPath(import.meta.url));
+    const pkgPath = path.join(connDir, '..', '..', 'package.json');
+    _packageVersion = (JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as { version: string })
+      .version;
+  } catch {
+    _packageVersion = '';
+  }
+  return _packageVersion;
+}
+
+/** Warn once per process when DB version mismatches the running codegraph version. */
+let _versionWarned = false;
 
 /** DB instance with optional advisory lock path. */
 export type LockedDatabase = BetterSqlite3Database & { __lockPath?: string };
@@ -58,6 +77,11 @@ export function findRepoRoot(fromDir?: string): string | null {
 export function _resetRepoRootCache(): void {
   _cachedRepoRoot = undefined;
   _cachedRepoRootCwd = undefined;
+}
+
+/** Reset the version warning flag (for testing). */
+export function _resetVersionWarning(): void {
+  _versionWarned = false;
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -190,12 +214,33 @@ export function openReadonlyOrFail(customPath?: string): BetterSqlite3Database {
       { file: dbPath },
     );
   }
-  return new (
+  const db = new (
     Database as unknown as new (
       path: string,
       opts?: Record<string, unknown>,
     ) => BetterSqlite3Database
   )(dbPath, { readonly: true });
+
+  // Warn once if the DB was built with a different codegraph version
+  if (!_versionWarned) {
+    try {
+      const row = db
+        .prepare<{ value: string }>('SELECT value FROM build_meta WHERE key = ?')
+        .get('codegraph_version');
+      const buildVersion = row?.value;
+      const currentVersion = getPackageVersion();
+      if (buildVersion && currentVersion && buildVersion !== currentVersion) {
+        warn(
+          `DB was built with codegraph v${buildVersion}, running v${currentVersion}. Consider: codegraph build --no-incremental`,
+        );
+        _versionWarned = true;
+      }
+    } catch {
+      // build_meta table may not exist in older DBs — silently ignore
+    }
+  }
+
+  return db;
 }
 
 /**
