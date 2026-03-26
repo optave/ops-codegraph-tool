@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { purgeFilesData } from '../../../db/index.js';
-import { debug, warn } from '../../../infrastructure/logger.js';
+import { warn } from '../../../infrastructure/logger.js';
 import { EXTENSIONS, IGNORE_DIRS } from '../../../shared/constants.js';
 import type {
   BetterSqlite3Database,
@@ -152,7 +152,7 @@ export function loadPathAliases(rootDir: string): PathAliases {
       }
       break;
     } catch (err: unknown) {
-      debug(`Failed to parse ${configName}: ${(err as Error).message}`);
+      warn(`Failed to parse ${configName}: ${(err as Error).message}`);
     }
   }
   return aliases;

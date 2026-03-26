@@ -6,7 +6,7 @@ import Database from 'better-sqlite3';
 import { buildGraph } from '../domain/graph/builder.js';
 import { kindIcon } from '../domain/queries.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
-import type { BetterSqlite3Database, EngineMode } from '../types.js';
+import type { EngineMode } from '../types.js';
 
 // ─── Git Helpers ────────────────────────────────────────────────────────
 

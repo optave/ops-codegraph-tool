@@ -208,12 +208,7 @@ export function openReadonlyOrFail(customPath?: string): BetterSqlite3Database {
       { file: dbPath },
     );
   }
-  const db = new (
-    Database as unknown as new (
-      path: string,
-      opts?: Record<string, unknown>,
-    ) => BetterSqlite3Database
-  )(dbPath, { readonly: true });
+  const db = new Database(dbPath, { readonly: true }) as unknown as BetterSqlite3Database;
 
   // Warn once per process if the DB was built with a different codegraph version
   if (!_versionWarned) {
