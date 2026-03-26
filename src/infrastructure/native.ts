@@ -28,7 +28,7 @@ function detectLibc(): 'gnu' | 'musl' {
       return 'musl';
     }
   } catch (e) {
-    debug(`detectLibc: failed to read /lib: ${(e as Error).message}`);
+    debug(`detectLibc: failed to read /lib: ${e instanceof Error ? e.message : String(e)}`);
   }
   return 'gnu';
 }
@@ -97,7 +97,7 @@ export function getNativePackageVersion(): string | null {
     return pkgJson.version || null;
   } catch (e) {
     debug(
-      `getNativePackageVersion: failed to read package.json for ${pkg}: ${(e as Error).message}`,
+      `getNativePackageVersion: failed to read package.json for ${pkg}: ${e instanceof Error ? e.message : String(e)}`,
     );
     return null;
   }
