@@ -65,7 +65,7 @@ export function extractDataflow(
     getFunctionName: () => null, // dataflow visitor handles its own name extraction
   });
 
-  return results['dataflow'] as DataflowResult;
+  return results.dataflow as DataflowResult;
 }
 
 // ── Build-Time Helpers ──────────────────────────────────────────────────────
@@ -79,7 +79,6 @@ interface FileSymbolsDataflow {
 
 async function initDataflowParsers(
   fileSymbols: Map<string, FileSymbolsDataflow>,
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic import from parser.js
 ): Promise<{ parsers: unknown; getParserFn: ((parsers: any, absPath: string) => any) | null }> {
   let needsFallback = false;
 
@@ -94,7 +93,6 @@ async function initDataflowParsers(
   }
 
   let parsers: unknown = null;
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic import from parser.js
   let getParserFn: ((parsers: any, absPath: string) => any) | null = null;
 
   if (needsFallback) {
@@ -113,7 +111,6 @@ function getDataflowForFile(
   rootDir: string,
   extToLang: Map<string, string>,
   parsers: unknown,
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic import from parser.js
   getParserFn: ((parsers: any, absPath: string) => any) | null,
 ): DataflowResult | null {
   if (symbols.dataflow) return symbols.dataflow;
@@ -369,74 +366,55 @@ export function dataflowData(
     const results = nodes.map((node: NodeRow) => {
       const sym = normalizeSymbol(node, db, hc);
 
-      const flowsTo = flowsToOut.all(node.id).map(
-        // biome-ignore lint/suspicious/noExplicitAny: raw DB row
-        (r: any) => ({
-          target: r.target_name,
-          kind: r.target_kind,
-          file: r.target_file,
-          line: r.line,
-          paramIndex: r.param_index,
-          expression: r.expression,
-          confidence: r.confidence,
-        }),
-      );
+      const flowsTo = flowsToOut.all(node.id).map((r: any) => ({
+        target: r.target_name,
+        kind: r.target_kind,
+        file: r.target_file,
+        line: r.line,
+        paramIndex: r.param_index,
+        expression: r.expression,
+        confidence: r.confidence,
+      }));
 
-      const flowsFrom = flowsToIn.all(node.id).map(
-        // biome-ignore lint/suspicious/noExplicitAny: raw DB row
-        (r: any) => ({
-          source: r.source_name,
-          kind: r.source_kind,
-          file: r.source_file,
-          line: r.line,
-          paramIndex: r.param_index,
-          expression: r.expression,
-          confidence: r.confidence,
-        }),
-      );
+      const flowsFrom = flowsToIn.all(node.id).map((r: any) => ({
+        source: r.source_name,
+        kind: r.source_kind,
+        file: r.source_file,
+        line: r.line,
+        paramIndex: r.param_index,
+        expression: r.expression,
+        confidence: r.confidence,
+      }));
 
-      const returnConsumers = returnsOut.all(node.id).map(
-        // biome-ignore lint/suspicious/noExplicitAny: raw DB row
-        (r: any) => ({
-          consumer: r.target_name,
-          kind: r.target_kind,
-          file: r.target_file,
-          line: r.line,
-          expression: r.expression,
-        }),
-      );
+      const returnConsumers = returnsOut.all(node.id).map((r: any) => ({
+        consumer: r.target_name,
+        kind: r.target_kind,
+        file: r.target_file,
+        line: r.line,
+        expression: r.expression,
+      }));
 
-      const returnedBy = returnsIn.all(node.id).map(
-        // biome-ignore lint/suspicious/noExplicitAny: raw DB row
-        (r: any) => ({
-          producer: r.source_name,
-          kind: r.source_kind,
-          file: r.source_file,
-          line: r.line,
-          expression: r.expression,
-        }),
-      );
+      const returnedBy = returnsIn.all(node.id).map((r: any) => ({
+        producer: r.source_name,
+        kind: r.source_kind,
+        file: r.source_file,
+        line: r.line,
+        expression: r.expression,
+      }));
 
-      const mutatesTargets = mutatesOut.all(node.id).map(
-        // biome-ignore lint/suspicious/noExplicitAny: raw DB row
-        (r: any) => ({
-          target: r.target_name,
-          expression: r.expression,
-          line: r.line,
-        }),
-      );
+      const mutatesTargets = mutatesOut.all(node.id).map((r: any) => ({
+        target: r.target_name,
+        expression: r.expression,
+        line: r.line,
+      }));
 
-      const mutatedBy = mutatesIn.all(node.id).map(
-        // biome-ignore lint/suspicious/noExplicitAny: raw DB row
-        (r: any) => ({
-          source: r.source_name,
-          expression: r.expression,
-          line: r.line,
-        }),
-      );
+      const mutatedBy = mutatesIn.all(node.id).map((r: any) => ({
+        source: r.source_name,
+        expression: r.expression,
+        line: r.line,
+      }));
 
       if (noTests) {
-        // biome-ignore lint/suspicious/noExplicitAny: raw DB row results
         const filter = (arr: any[]) => arr.filter((r: any) => !isTestFile(r.file));
         return {
           ...sym,

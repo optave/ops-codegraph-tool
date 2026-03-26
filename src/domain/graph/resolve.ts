@@ -3,12 +3,12 @@ import path from 'node:path';
 import { debug } from '../../infrastructure/logger.js';
 import { loadNative } from '../../infrastructure/native.js';
 import { normalizePath } from '../../shared/constants.js';
+import { toErrorMessage } from '../../shared/errors.js';
 import type { BareSpecifier, BatchResolvedMap, ImportBatchItem, PathAliases } from '../../types.js';
 
 // ── package.json exports resolution ─────────────────────────────────
 
 /** Cache: packageDir → parsed exports field (or null) */
-// biome-ignore lint/suspicious/noExplicitAny: package.json exports field has no fixed schema
 const _exportsCache: Map<string, any> = new Map();
 
 /**
@@ -56,7 +56,6 @@ function findPackageDir(packageName: string, rootDir: string): string | null {
  * Read and cache the exports field from a package's package.json.
  * Returns the exports value or null.
  */
-// biome-ignore lint/suspicious/noExplicitAny: package.json exports field has no fixed schema
 function getPackageExports(packageDir: string): any {
   if (_exportsCache.has(packageDir)) return _exportsCache.get(packageDir);
   try {
@@ -66,9 +65,7 @@ function getPackageExports(packageDir: string): any {
     _exportsCache.set(packageDir, exports);
     return exports;
   } catch (e) {
-    debug(
-      `readPackageExports: failed to read package.json in ${packageDir}: ${(e as Error).message}`,
-    );
+    debug(`readPackageExports: failed to read package.json in ${packageDir}: ${toErrorMessage(e)}`);
     _exportsCache.set(packageDir, null);
     return null;
   }
@@ -521,7 +518,7 @@ export function resolveImportPath(
       return remapJsToTs(normalized, rootDir);
     } catch (e) {
       debug(
-        `resolveImportPath: native resolution failed, falling back to JS: ${(e as Error).message}`,
+        `resolveImportPath: native resolution failed, falling back to JS: ${toErrorMessage(e)}`,
       );
     }
   }
@@ -543,7 +540,7 @@ export function computeConfidence(
       return native.computeConfidence(callerFile, targetFile, importedFrom || null);
     } catch (e) {
       debug(
-        `computeConfidence: native computation failed, falling back to JS: ${(e as Error).message}`,
+        `computeConfidence: native computation failed, falling back to JS: ${toErrorMessage(e)}`,
       );
     }
   }
@@ -584,7 +581,7 @@ export function resolveImportsBatch(
     }
     return map;
   } catch (e) {
-    debug(`batchResolve: native batch resolution failed: ${(e as Error).message}`);
+    debug(`batchResolve: native batch resolution failed: ${toErrorMessage(e)}`);
     return null;
   }
 }

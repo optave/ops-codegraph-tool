@@ -23,7 +23,6 @@ interface ManifestoViolationRow {
 }
 
 export function manifesto(customDbPath: string | undefined, opts: ManifestoOpts = {}): void {
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic shape from manifestoData
   const data = manifestoData(customDbPath, opts as any) as any;
 
   if (outputResult(data, 'violations', opts)) {

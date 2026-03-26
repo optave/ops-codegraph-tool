@@ -23,7 +23,7 @@ export async function handler(args: DataflowArgs, ctx: McpToolContext): Promise<
       file: args.file,
       kind: args.kind,
       noTests: args.no_tests,
-      limit: Math.min(args.limit ?? MCP_DEFAULTS['fn_impact'] ?? 100, ctx.MCP_MAX_LIMIT),
+      limit: Math.min(args.limit ?? MCP_DEFAULTS.fn_impact ?? 100, ctx.MCP_MAX_LIMIT),
       offset: effectiveOffset(args),
     });
   }
@@ -32,7 +32,7 @@ export async function handler(args: DataflowArgs, ctx: McpToolContext): Promise<
     file: args.file,
     kind: args.kind,
     noTests: args.no_tests,
-    limit: Math.min(args.limit ?? MCP_DEFAULTS['query'] ?? 100, ctx.MCP_MAX_LIMIT),
+    limit: Math.min(args.limit ?? MCP_DEFAULTS.query ?? 100, ctx.MCP_MAX_LIMIT),
     offset: effectiveOffset(args),
   });
 }

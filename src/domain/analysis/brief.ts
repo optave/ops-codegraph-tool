@@ -113,7 +113,6 @@ function countTransitiveImporters(
 export function briefData(
   file: string,
   customDbPath: string,
-  // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
   opts: { noTests?: boolean; config?: any } = {},
 ) {
   const db = openReadonlyOrFail(customDbPath);

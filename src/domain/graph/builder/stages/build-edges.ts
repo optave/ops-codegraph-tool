@@ -12,7 +12,6 @@ import type {
   BetterSqlite3Database,
   Call,
   ClassRelation,
-  Definition,
   ExtractorOutput,
   Import,
   NativeAddon,
@@ -576,6 +575,17 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
 
   const t0 = performance.now();
   const buildEdgesTx = db.transaction(() => {
+    // Delete stale outgoing edges for barrel-only files inside the transaction
+    // so that deletion and re-creation are atomic (no edge loss on mid-build crash).
+    if (ctx.barrelOnlyFiles.size > 0) {
+      const deleteOutgoingEdges = db.prepare(
+        'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
+      );
+      for (const relPath of ctx.barrelOnlyFiles) {
+        deleteOutgoingEdges.run(relPath);
+      }
+    }
+
     const allEdgeRows: EdgeRowTuple[] = [];
 
     buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);

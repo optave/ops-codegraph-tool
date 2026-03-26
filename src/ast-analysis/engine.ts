@@ -219,7 +219,6 @@ function setupVisitors(
       walkerOpts.getFunctionName = (node: TreeSitterNode): string | null => {
         const nameNode = node.childForFieldName('name');
         if (nameNode) return nameNode.text;
-        // biome-ignore lint/suspicious/noExplicitAny: DataflowRulesConfig is structurally compatible at runtime
         if (dfRules) return getFuncName(node, dfRules as any);
         return null;
       };
@@ -260,8 +259,7 @@ function setupVisitors(
 // ─── Result storage helpers ─────────────────────────────────────────────
 
 function storeComplexityResults(results: WalkResults, defs: Definition[], langId: string): void {
-  // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by noPropertyAccessFromIndexSignature
-  const complexityResults = (results['complexity'] || []) as ComplexityFuncResult[];
+  const complexityResults = (results.complexity || []) as ComplexityFuncResult[];
   const resultByLine = new Map<number, ComplexityFuncResult[]>();
   for (const r of complexityResults) {
     if (r.funcNode) {
@@ -302,8 +300,7 @@ function storeComplexityResults(results: WalkResults, defs: Definition[], langId
 }
 
 function storeCfgResults(results: WalkResults, defs: Definition[]): void {
-  // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by noPropertyAccessFromIndexSignature
-  const cfgResults = (results['cfg'] || []) as CfgFuncResult[];
+  const cfgResults = (results.cfg || []) as CfgFuncResult[];
   const cfgByLine = new Map<number, CfgFuncResult[]>();
   for (const r of cfgResults) {
     if (r.funcNode) {
@@ -362,7 +359,6 @@ async function delegateToBuildFunctions(
     const t0 = performance.now();
     try {
       const { buildAstNodes } = await import('../features/ast.js');
-      // biome-ignore lint/suspicious/noExplicitAny: ExtractorOutput is a superset of the local FileSymbols expected by buildAstNodes
       await buildAstNodes(db, fileSymbols as Map<string, any>, rootDir, engineOpts);
     } catch (err: unknown) {
       debug(`buildAstNodes failed: ${(err as Error).message}`);
@@ -374,7 +370,6 @@ async function delegateToBuildFunctions(
     const t0 = performance.now();
     try {
       const { buildComplexityMetrics } = await import('../features/complexity.js');
-      // biome-ignore lint/suspicious/noExplicitAny: ExtractorOutput is a superset of the local FileSymbols expected by buildComplexityMetrics
       await buildComplexityMetrics(db, fileSymbols as Map<string, any>, rootDir, engineOpts);
     } catch (err: unknown) {
       debug(`buildComplexityMetrics failed: ${(err as Error).message}`);
@@ -453,8 +448,7 @@ export async function runAnalyses(
 
     if (complexityVisitor) storeComplexityResults(results, defs, langId);
     if (cfgVisitor) storeCfgResults(results, defs);
-    // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by noPropertyAccessFromIndexSignature
-    if (dataflowVisitor) symbols.dataflow = results['dataflow'] as DataflowResult;
+    if (dataflowVisitor) symbols.dataflow = results.dataflow as DataflowResult;
   }
 
   timing._unifiedWalkMs = performance.now() - t0walk;

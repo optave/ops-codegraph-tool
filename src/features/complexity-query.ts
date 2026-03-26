@@ -58,7 +58,6 @@ export function complexityData(
 
     // Load thresholds from config
     const config = opts.config || loadConfig(process.cwd());
-    // biome-ignore lint/suspicious/noExplicitAny: thresholds come from config with dynamic keys
     const thresholds: any = config.manifesto?.rules || {
       cognitive: { warn: 15, fail: null },
       cyclomatic: { warn: 10, fail: null },

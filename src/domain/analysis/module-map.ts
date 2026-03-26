@@ -380,11 +380,7 @@ export function moduleMapData(customDbPath: string, limit = 20, opts: { noTests?
   }
 }
 
-export function statsData(
-  customDbPath: string,
-  // biome-ignore lint/suspicious/noExplicitAny: config shape is dynamic
-  opts: { noTests?: boolean; config?: any } = {},
-) {
+export function statsData(customDbPath: string, opts: { noTests?: boolean; config?: any } = {}) {
   const db = openReadonlyOrFail(customDbPath);
   try {
     const noTests = opts.noTests || false;
