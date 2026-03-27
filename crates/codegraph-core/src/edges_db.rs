@@ -5,7 +5,7 @@
 //! implements edges directly to SQLite without marshaling back to JS.
 
 use napi_derive::napi;
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags};
 
 /// A single edge row to insert: [source_id, target_id, kind, confidence, dynamic].
 #[napi(object)]
@@ -66,11 +66,11 @@ fn do_insert(conn: &mut Connection, edges: &[EdgeRow]) -> rusqlite::Result<()> {
         let mut stmt = tx.prepare_cached(&sql)?;
         for (i, edge) in chunk.iter().enumerate() {
             let base = i * 5;
-            stmt.raw_bind_parameter(base as i32 + 1, edge.source_id)?;
-            stmt.raw_bind_parameter(base as i32 + 2, edge.target_id)?;
-            stmt.raw_bind_parameter(base as i32 + 3, edge.kind.as_str())?;
-            stmt.raw_bind_parameter(base as i32 + 4, edge.confidence)?;
-            stmt.raw_bind_parameter(base as i32 + 5, edge.dynamic)?;
+            stmt.raw_bind_parameter(base +1, edge.source_id)?;
+            stmt.raw_bind_parameter(base +2, edge.target_id)?;
+            stmt.raw_bind_parameter(base +3, edge.kind.as_str())?;
+            stmt.raw_bind_parameter(base +4, edge.confidence)?;
+            stmt.raw_bind_parameter(base +5, edge.dynamic)?;
         }
         stmt.raw_execute()?;
     }

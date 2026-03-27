@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use napi_derive::napi;
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags};
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -201,7 +201,7 @@ fn batch_update_roles(
             // Bind role as param 1, then each id
             stmt.raw_bind_parameter(1, *role)?;
             for (i, id) in chunk.iter().enumerate() {
-                stmt.raw_bind_parameter(i as i32 + 2, *id)?;
+                stmt.raw_bind_parameter(i + 2, *id)?;
             }
             stmt.raw_execute()?;
         }
@@ -414,7 +414,7 @@ fn do_classify_incremental(
     let leaf_ids: Vec<i64> = {
         let mut stmt = tx.prepare(&leaf_sql)?;
         for (i, f) in all_affected.iter().enumerate() {
-            stmt.raw_bind_parameter(i as i32 + 1, *f)?;
+            stmt.raw_bind_parameter(i + 1, *f)?;
         }
         let mut rows = stmt.raw_query();
         let mut result = Vec::new();
@@ -437,7 +437,7 @@ fn do_classify_incremental(
     let rows: Vec<(i64, String, String, String, u32, u32)> = {
         let mut stmt = tx.prepare(&rows_sql)?;
         for (i, f) in all_affected.iter().enumerate() {
-            stmt.raw_bind_parameter(i as i32 + 1, *f)?;
+            stmt.raw_bind_parameter(i + 1, *f)?;
         }
         let mut qrows = stmt.raw_query();
         let mut result = Vec::new();
@@ -472,7 +472,7 @@ fn do_classify_incremental(
     let exported_ids: std::collections::HashSet<i64> = {
         let mut stmt = tx.prepare(&exported_sql)?;
         for (i, f) in all_affected.iter().enumerate() {
-            stmt.raw_bind_parameter(i as i32 + 1, *f)?;
+            stmt.raw_bind_parameter(i + 1, *f)?;
         }
         let mut qrows = stmt.raw_query();
         let mut result = std::collections::HashSet::new();
@@ -502,7 +502,7 @@ fn do_classify_incremental(
     let prod_fan_in: HashMap<i64, u32> = {
         let mut stmt = tx.prepare(&prod_sql)?;
         for (i, f) in all_affected.iter().enumerate() {
-            stmt.raw_bind_parameter(i as i32 + 1, *f)?;
+            stmt.raw_bind_parameter(i + 1, *f)?;
         }
         let mut qrows = stmt.raw_query();
         let mut result = HashMap::new();
@@ -547,7 +547,7 @@ fn do_classify_incremental(
     {
         let mut stmt = tx.prepare(&reset_sql)?;
         for (i, f) in all_affected.iter().enumerate() {
-            stmt.raw_bind_parameter(i as i32 + 1, *f)?;
+            stmt.raw_bind_parameter(i + 1, *f)?;
         }
         stmt.raw_execute()?;
     }
