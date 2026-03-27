@@ -88,6 +88,15 @@ allowed-tools: <from user's tool list>
 
 ## Phase 0 — Pre-flight
 
+```bash
+for tool in git mktemp; do
+  # > /dev/null 2>&1: suppress command path on success and shell's "not found" on failure — the || clause provides the error message
+  command -v "$tool" > /dev/null 2>&1 || { echo "ERROR: required tool '$tool' not found"; exit 1; }
+done
+# > /dev/null 2>&1: suppress git's own "fatal: not a git repository" — our || message is more actionable
+git rev-parse --show-toplevel > /dev/null 2>&1 || { echo "ERROR: not in a git repository"; exit 1; }
+```
+
 1. Confirm environment (repo root, required runtime/toolchain version, required tools)
 2. Parse `$ARGUMENTS` into state variables
 3. Validate preconditions
@@ -100,13 +109,13 @@ allowed-tools: <from user's tool list>
 
 **Exit condition:** <What must be true before the next phase starts>
 
-## Rules
-
-- <Hard constraints>
-
 ## Examples
 
 - <Usage examples showing common invocations and expected behavior>
+
+## Rules
+
+- <Hard constraints>
 ```
 
 ### Structural requirements to include in every skill:
