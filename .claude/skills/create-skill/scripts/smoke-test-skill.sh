@@ -95,6 +95,11 @@ if $in_block; then
   FAIL=$((FAIL + 1))
 fi
 
+# Warn when no bash blocks were found — likely wrong path or prose-only file
+if [ "$PASS" -eq 0 ] && [ "$FAIL" -eq 0 ] && [ "$SKIP" -eq 0 ]; then
+  echo "  WARN  no bash blocks found — is this a valid SKILL.md?"
+fi
+
 echo ""
 echo "smoke-test-skill: $PASS passed, $FAIL failed, $SKIP skipped"
 if [ "$FAIL" -gt 0 ]; then

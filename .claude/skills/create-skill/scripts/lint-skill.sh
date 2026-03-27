@@ -212,6 +212,18 @@ if ! grep -qE '^## Rules' "$SKILL_FILE"; then
   error "Missing '## Rules' section"
 fi
 
+# ── Check 8b: Missing Examples section ──────────────────────────────
+if ! grep -qE '^## Examples' "$SKILL_FILE"; then
+  error "Missing '## Examples' section — every skill needs 2-3 usage examples"
+fi
+
+# ── Check 6b: name field matches directory name ─────────────────────
+expected_name=$(basename "$(dirname "$SKILL_FILE")")
+actual_name=$(grep -m1 '^name:' "$SKILL_FILE" | sed 's/^name:[[:space:]]*//')
+if [ -n "$actual_name" ] && [ "$actual_name" != "$expected_name" ]; then
+  error "Frontmatter 'name: $actual_name' does not match directory name '$expected_name' (Phase 4 checklist item 2)"
+fi
+
 # ── Check 9: Missing exit conditions between phases ──────────────────
 prev_phase=""
 phase_has_exit=true
