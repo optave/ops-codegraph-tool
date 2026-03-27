@@ -46,12 +46,12 @@ Scan **every commit message** between the last tag and HEAD. Apply these rules i
 | Condition | Bump |
 |-----------|------|
 | Any commit has a `BREAKING CHANGE:` or `BREAKING-CHANGE:` footer, **or** uses the `!` suffix (e.g. `feat!:`, `fix!:`, `refactor!:`) | **major** |
-| Any commit uses `feat:` or `feat(scope):` **with a user-facing scope** | **minor** |
+| Any `feat:` commit **or** any `feat(scope):` where the scope is **not** in the internal list below | **minor** |
 | Everything else (`fix:`, `refactor:`, `perf:`, `chore:`, `docs:`, `test:`, `ci:`, etc.) | **patch** |
 
 **Internal scopes — treat as patch, not minor:** The following scopes represent internal developer tooling and infrastructure, not user-facing features. A `feat:` commit with one of these scopes counts as a **patch**, not a minor bump:
 
-`titan`, `skills`, `hooks`, `claude`, `ci`, `bench`, `dogfood`, `release`, `housekeep`, `review`, `deps-audit`, `test-health`, `architect`
+`architect`, `bench`, `ci`, `claude`, `deps-audit`, `dogfood`, `hooks`, `housekeep`, `release`, `review`, `skills`, `test-health`, `titan`
 
 For example, `feat(titan): first full pipeline run` is internal tooling — patch. But `feat(cfg): control-flow graph generation` is user-facing — minor.
 
@@ -62,6 +62,8 @@ Given the current version `MAJOR.MINOR.PATCH` from `package.json`, compute the n
 
 Print the detected bump reason and the resolved version, e.g.:
 > Detected **minor** bump (found `feat:` commits). Version: 3.1.0 → **3.2.0**
+
+> Detected **patch** bump (all `feat` commits use internal scopes: `titan`, `skills`). Version: 3.4.0 → **3.4.1**
 
 Use the resolved version as `VERSION` for all subsequent steps.
 
