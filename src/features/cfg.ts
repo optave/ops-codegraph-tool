@@ -17,6 +17,7 @@ import {
   openReadonlyOrFail,
 } from '../db/index.js';
 import { debug, info } from '../infrastructure/logger.js';
+import { loadNative } from '../infrastructure/native.js';
 import { paginateResult } from '../shared/paginate.js';
 import type { BetterSqlite3Database, Definition, NodeRow, TreeSitterNode } from '../types.js';
 import { findNodes } from './shared/find-nodes.js';
@@ -285,6 +286,93 @@ export async function buildCFGData(
   // skip WASM parser init, tree parsing, and JS visitor entirely — just persist.
   const allNative = allCfgNative(fileSymbols);
 
+  // ── Native bulk-insert fast path ──────────────────────────────────────
+  // When all CFG data is pre-computed by Rust and no files need WASM visitor,
+  // bypass JS iteration entirely — collect batches and hand them to rusqlite.
+  if (allNative) {
+    const native = loadNative();
+    if (native?.bulkInsertCfg) {
+      let needsJsFallback = false;
+      const batches: Array<{
+        name: string;
+        file: string;
+        line: number;
+        blocks: Array<{
+          index: number;
+          type: string;
+          startLine?: number | null;
+          endLine?: number | null;
+          label?: string | null;
+        }>;
+        edges: Array<{
+          sourceIndex: number;
+          targetIndex: number;
+          kind: string;
+        }>;
+      }> = [];
+
+      for (const [relPath, symbols] of fileSymbols) {
+        const ext = path.extname(relPath).toLowerCase();
+        if (!CFG_EXTENSIONS.has(ext)) continue;
+
+        // Files with _tree were WASM-parsed and need the slow path
+        if (symbols._tree) {
+          needsJsFallback = true;
+          break;
+        }
+
+        for (const def of symbols.definitions) {
+          if (def.kind !== 'function' && def.kind !== 'method') continue;
+          if (!def.line) continue;
+
+          const cfgData = def.cfg as unknown as
+            | { blocks: CfgBuildBlock[]; edges: CfgBuildEdge[] }
+            | null
+            | undefined;
+
+          batches.push({
+            name: def.name,
+            file: relPath,
+            line: def.line,
+            blocks: cfgData?.blocks?.length
+              ? cfgData.blocks.map((b) => ({
+                  index: b.index,
+                  type: b.type,
+                  startLine: b.startLine,
+                  endLine: b.endLine,
+                  label: b.label,
+                }))
+              : [],
+            edges: cfgData?.blocks?.length
+              ? (cfgData.edges || []).map((e) => ({
+                  sourceIndex: e.sourceIndex,
+                  targetIndex: e.targetIndex,
+                  kind: e.kind,
+                }))
+              : [],
+          });
+        }
+      }
+
+      if (!needsJsFallback) {
+        const processed = native.bulkInsertCfg(db.name, batches);
+        const expectedFunctions = batches.filter((b) => b.blocks.length > 0).length;
+        if (processed === batches.length || expectedFunctions === 0) {
+          if (expectedFunctions > 0) {
+            info(`CFG: ${expectedFunctions} functions analyzed (native bulk)`);
+          }
+          return;
+        }
+        debug(
+          `CFG: bulk insert expected ${batches.length} functions, got ${processed} — falling back to JS`,
+        );
+        // fall through to JS path
+      }
+      // fall through to JS path
+    }
+  }
+
+  // ── JS fallback path ──────────────────────────────────────────────────
   const extToLang = buildExtToLangMap();
   let parsers: unknown = null;
   let getParserFn: unknown = null;
