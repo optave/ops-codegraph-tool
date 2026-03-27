@@ -3,8 +3,10 @@
 export type { LockedDatabase } from './connection.js';
 export {
   closeDb,
+  closeDbDeferred,
   findDbPath,
   findRepoRoot,
+  flushDeferredClose,
   openDb,
   openReadonlyOrFail,
   openRepo,

@@ -1,6 +1,6 @@
 {
   "name": "@optave/codegraph",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "description": "Local code graph CLI — parse codebases with tree-sitter, build dependency graphs, query them",
   "type": "module",
   "main": "dist/index.js",
@@ -94,6 +94,7 @@
     "@commitlint/config-conventional": "^20.0",
     "@huggingface/transformers": "^3.8.1",
     "@tree-sitter-grammars/tree-sitter-hcl": "^1.2.0",
+    "@types/better-sqlite3": "^7.6.13",
     "@vitest/coverage-v8": "^4.0.18",
     "commit-and-tag-version": "^12.5",
     "husky": "^9.1",

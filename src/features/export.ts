@@ -1,5 +1,4 @@
 import path from 'node:path';
-import type BetterSqlite3 from 'better-sqlite3';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import {
   renderFileLevelDOT,
@@ -12,7 +11,7 @@ import {
   renderFunctionLevelNeo4jCSV,
 } from '../presentation/export.js';
 import { paginateResult } from '../shared/paginate.js';
-import type { ExportNeo4jCSVResult, ExportOpts } from '../types.js';
+import type { BetterSqlite3Database, ExportNeo4jCSVResult, ExportOpts } from '../types.js';
 
 const DEFAULT_MIN_CONFIDENCE = 0.5;
 
@@ -73,7 +72,7 @@ interface FunctionLevelLoadOpts {
  * Load file-level edges from DB with filtering.
  */
 function loadFileLevelEdges(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   {
     noTests,
     minConfidence,
@@ -108,7 +107,7 @@ function loadFileLevelEdges(
  * Returns the maximal field set needed by any serializer.
  */
 function loadFunctionLevelEdges(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   { noTests, minConfidence, limit }: FunctionLevelLoadOpts,
 ): { edges: FunctionLevelEdge[]; totalEdges: number } {
   const minConf = minConfidence ?? DEFAULT_MIN_CONFIDENCE;
@@ -141,7 +140,7 @@ function loadFunctionLevelEdges(
  * Load directory groupings for file-level graphs.
  * Uses DB directory nodes if available, falls back to path.dirname().
  */
-function loadDirectoryGroups(db: BetterSqlite3.Database, allFiles: Set<string>): DirectoryGroup[] {
+function loadDirectoryGroups(db: BetterSqlite3Database, allFiles: Set<string>): DirectoryGroup[] {
   const hasDirectoryNodes =
     (db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'directory'").get() as { c: number })
       .c > 0;
@@ -196,7 +195,7 @@ function loadDirectoryGroups(db: BetterSqlite3.Database, allFiles: Set<string>):
  * Load directory groupings for Mermaid file-level graphs (simplified — no cohesion, string arrays).
  */
 function loadMermaidDirectoryGroups(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   allFiles: Set<string>,
 ): MermaidDirectoryGroup[] {
   const hasDirectoryNodes =
@@ -239,10 +238,7 @@ function loadMermaidDirectoryGroups(
 /**
  * Load node roles for Mermaid function-level styling.
  */
-function loadNodeRoles(
-  db: BetterSqlite3.Database,
-  edges: FunctionLevelEdge[],
-): Map<string, string> {
+function loadNodeRoles(db: BetterSqlite3Database, edges: FunctionLevelEdge[]): Map<string, string> {
   const roles = new Map<string, string>();
   const seen = new Set<string>();
   for (const e of edges) {
@@ -267,7 +263,7 @@ function loadNodeRoles(
 /**
  * Export the dependency graph in DOT (Graphviz) format.
  */
-export function exportDOT(db: BetterSqlite3.Database, opts: ExportOpts = {}): string {
+export function exportDOT(db: BetterSqlite3Database, opts: ExportOpts = {}): string {
   const fileLevel = opts.fileLevel !== false;
   const noTests = opts.noTests || false;
   const minConfidence = opts.minConfidence;
@@ -292,7 +288,7 @@ export function exportDOT(db: BetterSqlite3.Database, opts: ExportOpts = {}): st
  * Export the dependency graph in Mermaid format.
  */
 export function exportMermaid(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   opts: ExportOpts & { direction?: string } = {},
 ): string {
   const fileLevel = opts.fileLevel !== false;
@@ -332,7 +328,7 @@ export function exportMermaid(
  * Export as JSON adjacency list.
  */
 export function exportJSON(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   opts: ExportOpts = {},
 ): { nodes: unknown[]; edges: unknown[] } {
   const noTests = opts.noTests || false;
@@ -366,7 +362,7 @@ export function exportJSON(
 /**
  * Export the dependency graph in GraphML (XML) format.
  */
-export function exportGraphML(db: BetterSqlite3.Database, opts: ExportOpts = {}): string {
+export function exportGraphML(db: BetterSqlite3Database, opts: ExportOpts = {}): string {
   const fileLevel = opts.fileLevel !== false;
   const noTests = opts.noTests || false;
   const minConfidence = opts.minConfidence;
@@ -385,7 +381,7 @@ export function exportGraphML(db: BetterSqlite3.Database, opts: ExportOpts = {})
  * Export the dependency graph in TinkerPop GraphSON v3 format.
  */
 export function exportGraphSON(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   opts: ExportOpts = {},
 ): { vertices: unknown[]; edges: unknown[] } {
   const noTests = opts.noTests || false;
@@ -459,7 +455,7 @@ export function exportGraphSON(
  * Returns { nodes: string, relationships: string }.
  */
 export function exportNeo4jCSV(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   opts: ExportOpts = {},
 ): ExportNeo4jCSVResult {
   const fileLevel = opts.fileLevel !== false;

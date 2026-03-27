@@ -41,18 +41,83 @@ export async function resolveImports(ctx: PipelineContext): Promise<void> {
 
   ctx.barrelOnlyFiles = new Set<string>();
   if (!isFullBuild) {
-    const barrelCandidates = db
-      .prepare(`SELECT DISTINCT n1.file FROM edges e
+    // Collect the set of changed file paths to scope barrel re-parsing.
+    const changedRelPaths = new Set<string>(fileSymbols.keys());
+
+    // For small incremental builds (≤5 files), only re-parse barrel files
+    // that are related to the changed files — either re-exporting from them
+    // or imported by them. For larger changes, re-parse all barrels.
+    let barrelCandidates: Array<{ file: string }>;
+    if (changedRelPaths.size <= 5) {
+      // All known barrel files (has at least one reexport edge)
+      const allBarrelFiles = new Set(
+        (
+          db
+            .prepare(
+              `SELECT DISTINCT n1.file FROM edges e
+               JOIN nodes n1 ON e.source_id = n1.id
+               WHERE e.kind = 'reexports' AND n1.kind = 'file'`,
+            )
+            .all() as Array<{ file: string }>
+        ).map((r) => r.file),
+      );
+
+      const barrels = new Set<string>();
+
+      // Find barrels imported by changed files using parsed import data
+      // (can't query DB edges — they were purged for the changed files).
+      for (const relPath of changedRelPaths) {
+        const symbols = fileSymbols.get(relPath);
+        if (!symbols) continue;
+        for (const imp of symbols.imports) {
+          const resolved = ctx.batchResolved?.get(`${path.join(rootDir, relPath)}|${imp.source}`);
+          const target =
+            resolved ??
+            resolveImportPath(path.join(rootDir, relPath), imp.source, rootDir, aliases);
+          if (allBarrelFiles.has(target)) barrels.add(target);
+        }
+      }
+
+      // Also find barrels that re-export from the changed files
+      const reexportSourceStmt = db.prepare(
+        `SELECT DISTINCT n1.file FROM edges e
          JOIN nodes n1 ON e.source_id = n1.id
-         WHERE e.kind = 'reexports' AND n1.kind = 'file'`)
-      .all() as Array<{ file: string }>;
+         JOIN nodes n2 ON e.target_id = n2.id
+         WHERE e.kind = 'reexports' AND n1.kind = 'file' AND n2.file = ?`,
+      );
+      for (const relPath of changedRelPaths) {
+        for (const row of reexportSourceStmt.all(relPath) as Array<{ file: string }>) {
+          barrels.add(row.file);
+        }
+      }
+      barrelCandidates = [...barrels].map((file) => ({ file }));
+    } else {
+      barrelCandidates = db
+        .prepare(
+          `SELECT DISTINCT n1.file FROM edges e
+           JOIN nodes n1 ON e.source_id = n1.id
+           WHERE e.kind = 'reexports' AND n1.kind = 'file'`,
+        )
+        .all() as Array<{ file: string }>;
+    }
+
+    // Batch-parse all barrel candidates at once instead of one-by-one
+    const barrelPaths: string[] = [];
     for (const { file: relPath } of barrelCandidates) {
-      if (fileSymbols.has(relPath)) continue;
-      const absPath = path.join(rootDir, relPath);
+      if (!fileSymbols.has(relPath)) {
+        barrelPaths.push(path.join(rootDir, relPath));
+      }
+    }
+
+    if (barrelPaths.length > 0) {
+      const deleteOutgoingEdges = db.prepare(
+        'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
+      );
+
       try {
-        const symbols = await parseFilesAuto([absPath], rootDir, engineOpts);
-        const fileSym = symbols.get(relPath);
-        if (fileSym) {
+        const barrelSymbols = await parseFilesAuto(barrelPaths, rootDir, engineOpts);
+        for (const [relPath, fileSym] of barrelSymbols) {
+          deleteOutgoingEdges.run(relPath);
           fileSymbols.set(relPath, fileSym);
           ctx.barrelOnlyFiles.add(relPath);
           const reexports = fileSym.imports.filter((imp: Import) => imp.reexport);
@@ -60,7 +125,7 @@ export async function resolveImports(ctx: PipelineContext): Promise<void> {
             ctx.reexportMap.set(
               relPath,
               reexports.map((imp: Import) => ({
-                source: getResolved(ctx, absPath, imp.source),
+                source: getResolved(ctx, path.join(rootDir, relPath), imp.source),
                 names: imp.names,
                 wildcardReexport: imp.wildcardReexport || false,
               })),

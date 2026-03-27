@@ -4,8 +4,8 @@
  * Each stage reads what it needs and writes what it produces.
  * This replaces the closure-captured locals in the old monolithic buildGraph().
  */
-import type BetterSqlite3 from 'better-sqlite3';
 import type {
+  BetterSqlite3Database,
   BuildGraphOpts,
   CodegraphConfig,
   EngineOpts,
@@ -20,7 +20,7 @@ import type {
 export class PipelineContext {
   // ── Inputs (set during setup) ──────────────────────────────────────
   rootDir!: string;
-  db!: BetterSqlite3.Database;
+  db!: BetterSqlite3Database;
   dbPath!: string;
   config!: CodegraphConfig;
   opts!: BuildGraphOpts;

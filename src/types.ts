@@ -1774,7 +1774,9 @@ export interface BetterSqlite3Database {
   exec(sql: string): this;
   close(): void;
   pragma(sql: string): unknown;
-  transaction<F extends (...args: any[]) => any>(fn: F): F;
+  transaction<F extends (...args: any[]) => any>(
+    fn: F,
+  ): (...args: F extends (...a: infer A) => unknown ? A : never) => ReturnType<F>;
   readonly open: boolean;
   readonly name: string;
 }

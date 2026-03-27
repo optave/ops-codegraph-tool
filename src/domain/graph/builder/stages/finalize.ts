@@ -3,9 +3,10 @@
  *
  * WASM cleanup, stats logging, drift detection, build metadata, registry, journal.
  */
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { closeDb, getBuildMeta, setBuildMeta } from '../../../../db/index.js';
+import { closeDb, closeDbDeferred, getBuildMeta, setBuildMeta } from '../../../../db/index.js';
 import { debug, info, warn } from '../../../../infrastructure/logger.js';
 import { CODEGRAPH_VERSION } from '../../../../shared/version.js';
 import { writeJournalHeader } from '../../journal.js';
@@ -39,8 +40,9 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   info(`Graph built: ${nodeCount} nodes, ${actualEdgeCount} edges`);
   info(`Stored in ${ctx.dbPath}`);
 
-  // Incremental drift detection
-  if (!isFullBuild) {
+  // Incremental drift detection — skip for small incremental changes where
+  // count fluctuation is expected (reverse-dep edge churn).
+  if (!isFullBuild && allSymbols.size > 3) {
     const prevNodes = getBuildMeta(db, 'node_count');
     const prevEdges = getBuildMeta(db, 'edge_count');
     if (prevNodes && prevEdges) {
@@ -60,20 +62,25 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
     }
   }
 
-  // Persist build metadata early so downstream checks (e.g. stale-embeddings)
-  // can read the *current* build's built_at rather than the previous one.
-  try {
-    setBuildMeta(db, {
-      engine: ctx.engineName,
-      engine_version: ctx.engineVersion || '',
-      codegraph_version: CODEGRAPH_VERSION,
-      schema_version: String(schemaVersion),
-      built_at: buildNow.toISOString(),
-      node_count: nodeCount,
-      edge_count: actualEdgeCount,
-    });
-  } catch (err) {
-    warn(`Failed to write build metadata: ${(err as Error).message}`);
+  // For small incremental builds, skip persisting build metadata — the
+  // engine/version/schema haven't changed (would have triggered a full rebuild),
+  // built_at is only used by stale-embeddings check (skipped for incremental),
+  // and counts are only used by drift detection (skipped for ≤3 files).
+  // This avoids a transaction commit + WAL fsync (~15-30ms).
+  if (isFullBuild || allSymbols.size > 5) {
+    try {
+      setBuildMeta(db, {
+        engine: ctx.engineName,
+        engine_version: ctx.engineVersion || '',
+        codegraph_version: CODEGRAPH_VERSION,
+        schema_version: String(schemaVersion),
+        built_at: buildNow.toISOString(),
+        node_count: nodeCount,
+        edge_count: actualEdgeCount,
+      });
+    } catch (err) {
+      warn(`Failed to write build metadata: ${(err as Error).message}`);
+    }
   }
 
   // Skip expensive advisory queries for incremental builds — these are
@@ -150,13 +157,26 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
     }
   }
 
-  closeDb(db);
+  ctx.timing.finalizeMs = performance.now() - t0;
+
+  // For small incremental builds, defer db.close() to the next event loop tick.
+  // The WAL checkpoint in db.close() costs ~250ms on Windows NTFS due to fsync.
+  // Deferring lets buildGraph() return immediately; the checkpoint runs after.
+  // Skip for temp directories (tests) — they rmSync immediately after build.
+  const isTempDir = path.resolve(rootDir).startsWith(path.resolve(tmpdir()));
+  if (!isFullBuild && allSymbols.size <= 5 && !isTempDir) {
+    closeDbDeferred(db);
+  } else {
+    closeDb(db);
+  }
 
   // Write journal header after successful build
   writeJournalHeader(rootDir, Date.now());
 
-  // Auto-registration
-  if (!opts.skipRegistry) {
+  // Skip auto-registration for incremental builds — the repo was already
+  // registered during the initial full build. The dynamic import + file I/O
+  // costs ~100ms which dominates incremental finalize time.
+  if (!opts.skipRegistry && isFullBuild) {
     const { tmpdir } = await import('node:os');
     const tmpDir = path.resolve(tmpdir());
     const resolvedRoot = path.resolve(rootDir);
@@ -173,6 +193,4 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
       }
     }
   }
-
-  ctx.timing.finalizeMs = performance.now() - t0;
 }
