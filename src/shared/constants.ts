@@ -10,9 +10,7 @@ export interface ArrayCompatSet<T> extends Set<T> {
 }
 
 function withArrayCompat<T>(s: Set<T>): ArrayCompatSet<T> {
-  const compat = s as ArrayCompatSet<T>;
-  compat.toArray = () => [...s];
-  return compat;
+  return Object.assign(s, { toArray: () => [...s] });
 }
 
 export const IGNORE_DIRS: ArrayCompatSet<string> = withArrayCompat(

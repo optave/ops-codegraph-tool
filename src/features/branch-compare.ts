@@ -6,13 +6,7 @@ import Database from 'better-sqlite3';
 import { buildGraph } from '../domain/graph/builder.js';
 import { kindIcon } from '../domain/queries.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
-import type { BetterSqlite3Database, EngineMode } from '../types.js';
-
-type DatabaseConstructor = new (
-  path: string,
-  opts?: Record<string, unknown>,
-) => BetterSqlite3Database;
-const Db = Database as unknown as DatabaseConstructor;
+import type { EngineMode } from '../types.js';
 
 // ─── Git Helpers ────────────────────────────────────────────────────────
 
@@ -111,7 +105,7 @@ function loadSymbolsFromDb(
   changedFiles: string[],
   noTests: boolean,
 ): Map<string, SymbolInfo> {
-  const db = new Db(dbPath, { readonly: true });
+  const db = new Database(dbPath, { readonly: true });
   try {
     const symbols = new Map<string, SymbolInfo>();
 
@@ -180,7 +174,7 @@ function loadCallersFromDb(
 ): CallerInfo[] {
   if (nodeIds.length === 0) return [];
 
-  const db = new Db(dbPath, { readonly: true });
+  const db = new Database(dbPath, { readonly: true });
   try {
     const allCallers = new Set<string>();
 

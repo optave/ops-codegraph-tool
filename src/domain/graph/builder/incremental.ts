@@ -9,11 +9,16 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import type BetterSqlite3 from 'better-sqlite3';
 import { bulkNodeIdsByFile } from '../../../db/index.js';
 import { warn } from '../../../infrastructure/logger.js';
 import { normalizePath } from '../../../shared/constants.js';
-import type { EngineOpts, ExtractorOutput, PathAliases } from '../../../types.js';
+import type {
+  BetterSqlite3Database,
+  EngineOpts,
+  ExtractorOutput,
+  PathAliases,
+  SqliteStatement,
+} from '../../../types.js';
 import { parseFileIncremental } from '../../parser.js';
 import { computeConfidence, resolveImportPath } from '../resolve.js';
 import { BUILTIN_RECEIVERS, readFileSafe } from './helpers.js';
@@ -64,7 +69,7 @@ function insertFileNodes(stmts: IncrementalStmts, relPath: string, symbols: Extr
 // ── Containment edges ──────────────────────────────────────────────────
 
 function buildContainmentEdges(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   stmts: IncrementalStmts,
   relPath: string,
   symbols: ExtractorOutput,
@@ -101,13 +106,13 @@ function buildContainmentEdges(
 // ── Reverse-dep cascade ────────────────────────────────────────────────
 
 // Lazily-cached prepared statements for reverse-dep operations
-let _revDepDb: BetterSqlite3.Database | null = null;
-let _findRevDepsStmt: BetterSqlite3.Statement | null = null;
-let _deleteOutEdgesStmt: BetterSqlite3.Statement | null = null;
+let _revDepDb: BetterSqlite3Database | null = null;
+let _findRevDepsStmt: SqliteStatement | null = null;
+let _deleteOutEdgesStmt: SqliteStatement | null = null;
 
-function getRevDepStmts(db: BetterSqlite3.Database): {
-  findRevDepsStmt: BetterSqlite3.Statement;
-  deleteOutEdgesStmt: BetterSqlite3.Statement;
+function getRevDepStmts(db: BetterSqlite3Database): {
+  findRevDepsStmt: SqliteStatement;
+  deleteOutEdgesStmt: SqliteStatement;
 } {
   if (_revDepDb !== db) {
     _revDepDb = db;
@@ -127,12 +132,12 @@ function getRevDepStmts(db: BetterSqlite3.Database): {
   };
 }
 
-function findReverseDeps(db: BetterSqlite3.Database, relPath: string): string[] {
+function findReverseDeps(db: BetterSqlite3Database, relPath: string): string[] {
   const { findRevDepsStmt } = getRevDepStmts(db);
   return (findRevDepsStmt.all(relPath, relPath) as Array<{ file: string }>).map((r) => r.file);
 }
 
-function deleteOutgoingEdges(db: BetterSqlite3.Database, relPath: string): void {
+function deleteOutgoingEdges(db: BetterSqlite3Database, relPath: string): void {
   const { deleteOutEdgesStmt } = getRevDepStmts(db);
   deleteOutEdgesStmt.run(relPath);
 }
@@ -157,7 +162,7 @@ async function parseReverseDep(
 }
 
 function rebuildReverseDepEdges(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   rootDir: string,
   depRelPath: string,
   symbols: ExtractorOutput,
@@ -187,7 +192,7 @@ function rebuildReverseDepEdges(
 // ── Directory containment edges ────────────────────────────────────────
 
 function rebuildDirContainment(
-  _db: BetterSqlite3.Database,
+  _db: BetterSqlite3Database,
   stmts: IncrementalStmts,
   relPath: string,
 ): number {
@@ -204,7 +209,7 @@ function rebuildDirContainment(
 
 // ── Ancillary table cleanup ────────────────────────────────────────────
 
-function purgeAncillaryData(db: BetterSqlite3.Database, relPath: string): void {
+function purgeAncillaryData(db: BetterSqlite3Database, relPath: string): void {
   const tryExec = (sql: string, ...args: string[]): void => {
     try {
       db.prepare(sql).run(...args);
@@ -239,15 +244,15 @@ function purgeAncillaryData(db: BetterSqlite3.Database, relPath: string): void {
 // ── Import edge building ────────────────────────────────────────────────
 
 // Lazily-cached prepared statements for barrel resolution (avoid re-preparing in hot loops)
-let _barrelDb: BetterSqlite3.Database | null = null;
-let _isBarrelStmt: BetterSqlite3.Statement | null = null;
-let _reexportTargetsStmt: BetterSqlite3.Statement | null = null;
-let _hasDefStmt: BetterSqlite3.Statement | null = null;
+let _barrelDb: BetterSqlite3Database | null = null;
+let _isBarrelStmt: SqliteStatement | null = null;
+let _reexportTargetsStmt: SqliteStatement | null = null;
+let _hasDefStmt: SqliteStatement | null = null;
 
-function getBarrelStmts(db: BetterSqlite3.Database): {
-  isBarrelStmt: BetterSqlite3.Statement;
-  reexportTargetsStmt: BetterSqlite3.Statement;
-  hasDefStmt: BetterSqlite3.Statement;
+function getBarrelStmts(db: BetterSqlite3Database): {
+  isBarrelStmt: SqliteStatement;
+  reexportTargetsStmt: SqliteStatement;
+  hasDefStmt: SqliteStatement;
 } {
   if (_barrelDb !== db) {
     _barrelDb = db;
@@ -273,14 +278,14 @@ function getBarrelStmts(db: BetterSqlite3.Database): {
   };
 }
 
-function isBarrelFile(db: BetterSqlite3.Database, relPath: string): boolean {
+function isBarrelFile(db: BetterSqlite3Database, relPath: string): boolean {
   const { isBarrelStmt } = getBarrelStmts(db);
   const reexportCount = (isBarrelStmt.get(relPath) as { c: number } | undefined)?.c;
   return (reexportCount || 0) > 0;
 }
 
 function resolveBarrelTarget(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   barrelPath: string,
   symbolName: string,
   visited: Set<string> = new Set(),
@@ -312,7 +317,7 @@ function resolveBarrelTarget(
  * Shared by buildImportEdges (primary file) and Pass 2 of the reverse-dep cascade.
  */
 function resolveBarrelImportEdges(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   stmts: IncrementalStmts,
   fileNodeId: number,
   resolvedPath: string,
@@ -344,7 +349,7 @@ function buildImportEdges(
   rootDir: string,
   fileNodeId: number,
   aliases: PathAliases,
-  db: BetterSqlite3.Database | null,
+  db: BetterSqlite3Database | null,
 ): number {
   let edgesAdded = 0;
   for (const imp of symbols.imports) {
@@ -504,7 +509,7 @@ function buildCallEdges(
  * Parse a single file and update the database incrementally.
  */
 export async function rebuildFile(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   rootDir: string,
   filePath: string,
   stmts: IncrementalStmts,

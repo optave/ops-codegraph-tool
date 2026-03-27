@@ -7,11 +7,10 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import type BetterSqlite3 from 'better-sqlite3';
 import { closeDb } from '../../../../db/index.js';
 import { debug, info } from '../../../../infrastructure/logger.js';
 import { normalizePath } from '../../../../shared/constants.js';
-import type { ExtractorOutput } from '../../../../types.js';
+import type { BetterSqlite3Database, ExtractorOutput } from '../../../../types.js';
 import { parseFilesAuto } from '../../../parser.js';
 import { readJournal, writeJournalHeader } from '../../journal.js';
 import type { PipelineContext } from '../context.js';
@@ -56,7 +55,7 @@ interface NeedsHashItem {
 // ── Helpers ────────────────────────────────────────────────────────────
 
 function getChangedFiles(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   allFiles: string[],
   rootDir: string,
 ): ChangeResult {
@@ -107,7 +106,7 @@ function detectRemovedFiles(
 }
 
 function tryJournalTier(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   existing: Map<string, FileHashRow>,
   rootDir: string,
   removed: string[],
@@ -295,7 +294,7 @@ function healMetadata(ctx: PipelineContext): void {
 }
 
 function findReverseDependencies(
-  db: BetterSqlite3.Database,
+  db: BetterSqlite3Database,
   changedRelPaths: Set<string>,
   rootDir: string,
 ): Set<string> {
@@ -343,7 +342,7 @@ function purgeAndAddReverseDeps(
   }
 }
 
-function detectHasEmbeddings(db: BetterSqlite3.Database): boolean {
+function detectHasEmbeddings(db: BetterSqlite3Database): boolean {
   try {
     db.prepare('SELECT 1 FROM embeddings LIMIT 1').get();
     return true;

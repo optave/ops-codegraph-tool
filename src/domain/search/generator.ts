@@ -1,10 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type BetterSqlite3 from 'better-sqlite3';
 import { closeDb, findDbPath, openDb } from '../../db/index.js';
 import { warn } from '../../infrastructure/logger.js';
 import { DbError } from '../../shared/errors.js';
-import type { NodeRow } from '../../types.js';
+import type { BetterSqlite3Database, NodeRow } from '../../types.js';
 import { embed, getModelConfig } from './models.js';
 import { buildSourceText } from './strategies/source.js';
 import { buildStructuredText } from './strategies/structured.js';
@@ -17,7 +16,7 @@ export function estimateTokens(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
-function initEmbeddingsSchema(db: BetterSqlite3.Database): void {
+function initEmbeddingsSchema(db: BetterSqlite3Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS embeddings (
       node_id INTEGER PRIMARY KEY,
@@ -71,7 +70,7 @@ export async function buildEmbeddings(
     );
   }
 
-  const db = openDb(dbPath) as BetterSqlite3.Database;
+  const db = openDb(dbPath) as BetterSqlite3Database;
   initEmbeddingsSchema(db);
 
   db.exec('DELETE FROM embeddings');
