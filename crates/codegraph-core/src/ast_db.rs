@@ -1,0 +1,160 @@
+//! Bulk AST node insertion via rusqlite.
+//!
+//! Bypasses the JS iteration loop by opening the SQLite database directly
+//! from Rust and inserting all AST nodes in a single transaction.
+//! Parent node IDs are resolved by querying the `nodes` table.
+
+use std::collections::HashMap;
+
+use napi_derive::napi;
+use rusqlite::{params, Connection, OpenFlags};
+use serde::{Deserialize, Serialize};
+
+/// A single AST node to insert (received from JS).
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AstInsertNode {
+    pub line: u32,
+    pub kind: String,
+    pub name: String,
+    pub text: Option<String>,
+    pub receiver: Option<String>,
+}
+
+/// A batch of AST nodes for a single file.
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileAstBatch {
+    pub file: String,
+    pub nodes: Vec<AstInsertNode>,
+}
+
+/// A definition row from the `nodes` table used for parent resolution.
+struct NodeDef {
+    id: i64,
+    line: u32,
+    end_line: Option<u32>,
+}
+
+/// Find the narrowest enclosing definition for a given source line.
+/// Returns the node ID of the best match, or None if no definition encloses this line.
+fn find_parent_id(defs: &[NodeDef], line: u32) -> Option<i64> {
+    let mut best_id: Option<i64> = None;
+    let mut best_span = u32::MAX;
+    for d in defs {
+        if d.line <= line {
+            if let Some(el) = d.end_line {
+                if el >= line {
+                    let span = el - d.line;
+                    if span < best_span {
+                        best_id = Some(d.id);
+                        best_span = span;
+                    }
+                }
+            }
+        }
+    }
+    best_id
+}
+
+/// Bulk-insert AST nodes into the database, resolving `parent_node_id`
+/// from the `nodes` table. Runs all inserts in a single SQLite transaction.
+///
+/// Returns the number of rows inserted. Returns 0 on any error (DB open
+/// failure, missing table, transaction failure).
+#[napi]
+pub fn bulk_insert_ast_nodes(db_path: String, batches: Vec<FileAstBatch>) -> u32 {
+    if batches.is_empty() {
+        return 0;
+    }
+
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let mut conn = match Connection::open_with_flags(&db_path, flags) {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+
+    // Match the JS-side performance pragmas
+    let _ = conn.execute_batch("PRAGMA synchronous = NORMAL");
+
+    // Bail out if the ast_nodes table doesn't exist (schema too old)
+    let has_table: bool = conn
+        .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='ast_nodes'")
+        .and_then(|mut s| s.query_row([], |_| Ok(true)))
+        .unwrap_or(false);
+    if !has_table {
+        return 0;
+    }
+
+    // ── Phase 1: Pre-fetch node definitions for parent resolution ────────
+    let mut file_defs: HashMap<String, Vec<NodeDef>> = HashMap::new();
+    {
+        let Ok(mut stmt) =
+            conn.prepare("SELECT id, line, end_line FROM nodes WHERE file = ?1")
+        else {
+            return 0;
+        };
+
+        for batch in &batches {
+            if batch.nodes.is_empty() || file_defs.contains_key(&batch.file) {
+                continue;
+            }
+            let defs: Vec<NodeDef> = stmt
+                .query_map(params![&batch.file], |row| {
+                    Ok(NodeDef {
+                        id: row.get(0)?,
+                        line: row.get(1)?,
+                        end_line: row.get(2)?,
+                    })
+                })
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                .unwrap_or_default();
+            file_defs.insert(batch.file.clone(), defs);
+        }
+    } // `stmt` dropped — releases the immutable borrow on `conn`
+
+    // ── Phase 2: Bulk insert in a single transaction ─────────────────────
+    let Ok(tx) = conn.transaction() else {
+        return 0;
+    };
+
+    let mut total = 0u32;
+    {
+        let Ok(mut insert_stmt) = tx.prepare(
+            "INSERT INTO ast_nodes (file, line, kind, name, text, receiver, parent_node_id) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        ) else {
+            return 0;
+        };
+
+        for batch in &batches {
+            let empty = Vec::new();
+            let defs = file_defs.get(&batch.file).unwrap_or(&empty);
+
+            for node in &batch.nodes {
+                let parent_id = find_parent_id(defs, node.line);
+
+                if insert_stmt
+                    .execute(params![
+                        &batch.file,
+                        node.line,
+                        &node.kind,
+                        &node.name,
+                        &node.text,
+                        &node.receiver,
+                        parent_id,
+                    ])
+                    .is_ok()
+                {
+                    total += 1;
+                }
+            }
+        }
+    } // `insert_stmt` dropped
+
+    if tx.commit().is_err() {
+        return 0;
+    }
+
+    total
+}
