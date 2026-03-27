@@ -207,13 +207,15 @@ After addressing all comments for a PR:
 
 ```bash
 # Step 0: Verify every Greptile inline comment has at least one reply from us
-greptile_comment_ids=$(gh api repos/optave/codegraph/pulls/<number>/comments --paginate \
-  --jq '[.[] | select(.user.login == "greptile-apps[bot]")] | .[].id')
+all_comments=$(gh api repos/optave/codegraph/pulls/<number>/comments --paginate)
+
+greptile_comment_ids=$(echo "$all_comments" \
+  | jq -r '[.[] | select(.user.login == "greptile-apps[bot]" and .in_reply_to_id == null)] | .[].id')
 
 unanswered=()
 for cid in $greptile_comment_ids; do
-  reply_count=$(gh api repos/optave/codegraph/pulls/<number>/comments --paginate \
-    --jq "[.[] | select(.in_reply_to_id == $cid and .user.login != \"greptile-apps[bot]\")] | length")
+  reply_count=$(echo "$all_comments" \
+    | jq "[.[] | select(.in_reply_to_id == $cid and .user.login != \"greptile-apps[bot]\")] | length")
   if [ "$reply_count" -eq 0 ]; then
     unanswered+=("$cid")
   fi
