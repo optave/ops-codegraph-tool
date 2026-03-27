@@ -148,6 +148,15 @@ while IFS= read -r line; do
       # elif is a sibling branch — set in_detect but do NOT increment depth
       in_detect=true
       was_in_detect=true
+      # Handle inline fi on this same elif line (e.g. "elif [ -f yarn.lock ]; then CMD=yarn; fi")
+      if echo "$line" | grep -qE '\bfi\b'; then
+        if [ "$detect_depth" -gt 0 ]; then
+          detect_depth=$((detect_depth - 1))
+          [ "$detect_depth" -eq 0 ] && in_detect=false
+        else
+          in_detect=false
+        fi
+      fi
     elif echo "$line" | grep -qE '^\s*if\b'; then
       # nested if (not a detection block) — track depth only when inside detection
       [ "$in_detect" = true ] && detect_depth=$((detect_depth + 1))
