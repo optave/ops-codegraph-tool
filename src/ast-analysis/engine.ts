@@ -114,20 +114,31 @@ async function ensureWasmTreesIfNeeded(
     const ext = path.extname(relPath).toLowerCase();
     const defs = symbols.definitions || [];
 
+    // Only consider definitions with a real function body.
+    // Interface/type property signatures are extracted as methods but correctly
+    // lack complexity/CFG data from the native engine. Exclude them by:
+    // 1. Single-line span (endLine === line) — type property on one line
+    // 2. Dotted names (e.g. "Interface.prop") — child definitions of types
+    const hasFuncBody = (d: {
+      name: string;
+      kind: string;
+      line: number;
+      endLine?: number | null;
+    }) =>
+      (d.kind === 'function' || d.kind === 'method') &&
+      d.line > 0 &&
+      d.endLine != null &&
+      d.endLine > d.line &&
+      !d.name.includes('.');
+
     const needsComplexity =
       doComplexity &&
       COMPLEXITY_EXTENSIONS.has(ext) &&
-      defs.some((d) => (d.kind === 'function' || d.kind === 'method') && d.line && !d.complexity);
+      defs.some((d) => hasFuncBody(d) && !d.complexity);
     const needsCfg =
       doCfg &&
       CFG_EXTENSIONS.has(ext) &&
-      defs.some(
-        (d) =>
-          (d.kind === 'function' || d.kind === 'method') &&
-          d.line &&
-          d.cfg !== null &&
-          !Array.isArray(d.cfg?.blocks),
-      );
+      defs.some((d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks));
     const needsDataflow = doDataflow && !symbols.dataflow && DATAFLOW_EXTENSIONS.has(ext);
 
     if (needsComplexity || needsCfg || needsDataflow) {
@@ -172,7 +183,7 @@ function setupVisitors(
   // AST-store visitor
   let astVisitor: Visitor | null = null;
   const astTypeMap = AST_TYPE_MAPS.get(langId);
-  if (doAst && astTypeMap && WALK_EXTENSIONS.has(ext) && !symbols.astNodes?.length) {
+  if (doAst && astTypeMap && WALK_EXTENSIONS.has(ext) && !Array.isArray(symbols.astNodes)) {
     const nodeIdMap = new Map<string, number>();
     for (const row of bulkNodeIdsByFile(db, relPath)) {
       nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
@@ -186,8 +197,17 @@ function setupVisitors(
   const cRules = COMPLEXITY_RULES.get(langId);
   const hRules = HALSTEAD_RULES.get(langId);
   if (doComplexity && cRules) {
+    // Only trigger WASM complexity for definitions with real function bodies.
+    // Interface/type property signatures (dotted names, single-line span)
+    // correctly lack native complexity data and should not trigger a fallback.
     const needsWasmComplexity = defs.some(
-      (d) => (d.kind === 'function' || d.kind === 'method') && d.line && !d.complexity,
+      (d) =>
+        (d.kind === 'function' || d.kind === 'method') &&
+        d.line > 0 &&
+        d.endLine != null &&
+        d.endLine > d.line &&
+        !d.name.includes('.') &&
+        !d.complexity,
     );
     if (needsWasmComplexity) {
       complexityVisitor = createComplexityVisitor(cRules, hRules, { fileLevelWalk: true, langId });
@@ -199,7 +219,6 @@ function setupVisitors(
       walkerOpts.getFunctionName = (node: TreeSitterNode): string | null => {
         const nameNode = node.childForFieldName('name');
         if (nameNode) return nameNode.text;
-        // biome-ignore lint/suspicious/noExplicitAny: DataflowRulesConfig is structurally compatible at runtime
         if (dfRules) return getFuncName(node, dfRules as any);
         return null;
       };
@@ -213,7 +232,10 @@ function setupVisitors(
     const needsWasmCfg = defs.some(
       (d) =>
         (d.kind === 'function' || d.kind === 'method') &&
-        d.line &&
+        d.line > 0 &&
+        d.endLine != null &&
+        d.endLine > d.line &&
+        !d.name.includes('.') &&
         d.cfg !== null &&
         !Array.isArray(d.cfg?.blocks),
     );
@@ -237,8 +259,7 @@ function setupVisitors(
 // ─── Result storage helpers ─────────────────────────────────────────────
 
 function storeComplexityResults(results: WalkResults, defs: Definition[], langId: string): void {
-  // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by noPropertyAccessFromIndexSignature
-  const complexityResults = (results['complexity'] || []) as ComplexityFuncResult[];
+  const complexityResults = (results.complexity || []) as ComplexityFuncResult[];
   const resultByLine = new Map<number, ComplexityFuncResult[]>();
   for (const r of complexityResults) {
     if (r.funcNode) {
@@ -279,8 +300,7 @@ function storeComplexityResults(results: WalkResults, defs: Definition[], langId
 }
 
 function storeCfgResults(results: WalkResults, defs: Definition[]): void {
-  // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by noPropertyAccessFromIndexSignature
-  const cfgResults = (results['cfg'] || []) as CfgFuncResult[];
+  const cfgResults = (results.cfg || []) as CfgFuncResult[];
   const cfgByLine = new Map<number, CfgFuncResult[]>();
   for (const r of cfgResults) {
     if (r.funcNode) {
@@ -339,7 +359,6 @@ async function delegateToBuildFunctions(
     const t0 = performance.now();
     try {
       const { buildAstNodes } = await import('../features/ast.js');
-      // biome-ignore lint/suspicious/noExplicitAny: ExtractorOutput is a superset of the local FileSymbols expected by buildAstNodes
       await buildAstNodes(db, fileSymbols as Map<string, any>, rootDir, engineOpts);
     } catch (err: unknown) {
       debug(`buildAstNodes failed: ${(err as Error).message}`);
@@ -351,7 +370,6 @@ async function delegateToBuildFunctions(
     const t0 = performance.now();
     try {
       const { buildComplexityMetrics } = await import('../features/complexity.js');
-      // biome-ignore lint/suspicious/noExplicitAny: ExtractorOutput is a superset of the local FileSymbols expected by buildComplexityMetrics
       await buildComplexityMetrics(db, fileSymbols as Map<string, any>, rootDir, engineOpts);
     } catch (err: unknown) {
       debug(`buildComplexityMetrics failed: ${(err as Error).message}`);
@@ -430,8 +448,7 @@ export async function runAnalyses(
 
     if (complexityVisitor) storeComplexityResults(results, defs, langId);
     if (cfgVisitor) storeCfgResults(results, defs);
-    // biome-ignore lint/complexity/useLiteralKeys: bracket notation required by noPropertyAccessFromIndexSignature
-    if (dataflowVisitor) symbols.dataflow = results['dataflow'] as DataflowResult;
+    if (dataflowVisitor) symbols.dataflow = results.dataflow as DataflowResult;
   }
 
   timing._unifiedWalkMs = performance.now() - t0walk;

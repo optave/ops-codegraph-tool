@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.4.0](https://github.com/optave/codegraph/compare/v3.3.1...v3.4.0) (2026-03-25)
+
+**TypeScript migration complete, Leiden community detection, and native engine hardening.** The entire codebase — all 271 source files — is now TypeScript with zero `.js` files remaining. Community detection upgrades from Louvain to a vendored Leiden algorithm with true probabilistic refinement, removing the `graphology` dependency. Go gains structural interface matching and C# gets proper `implements` disambiguation. The native Rust engine now extracts call-site AST nodes and bypasses the JS CFG visitor entirely on native builds. MCP server shutdown is graceful, and several edge-attribution and WASM fallback bugs are fixed.
+
+### Features
+
+* **types:** complete TypeScript migration — all 271 source files migrated from JavaScript, zero `.js` files remaining. Covers leaf modules, core domain, graph algorithms, builder stages, search, CLI layer (48 command handlers), AST analysis, features, presentation, MCP tools, and test suite ([#553](https://github.com/optave/codegraph/pull/553), [#554](https://github.com/optave/codegraph/pull/554), [#555](https://github.com/optave/codegraph/pull/555), [#558](https://github.com/optave/codegraph/pull/558), [#566](https://github.com/optave/codegraph/pull/566), [#570](https://github.com/optave/codegraph/pull/570), [#579](https://github.com/optave/codegraph/pull/579), [#580](https://github.com/optave/codegraph/pull/580), [#581](https://github.com/optave/codegraph/pull/581), [#588](https://github.com/optave/codegraph/pull/588))
+* **communities:** vendor Leiden community detection algorithm, replacing `graphology-communities-louvain` — full control over resolution, quality functions, and probabilistic refinement ([#545](https://github.com/optave/codegraph/pull/545), [#552](https://github.com/optave/codegraph/pull/552), [#556](https://github.com/optave/codegraph/pull/556))
+* **resolution:** Go structural interface matching — post-extraction pass matches struct method sets against interface method sets; C# `implements` disambiguation via post-walk reclassification of `extends` entries targeting known interfaces ([#522](https://github.com/optave/codegraph/pull/522))
+* **native:** extract call-site AST nodes in Rust during native parse, fixing WASM fallback path for incomplete extraction ([#591](https://github.com/optave/codegraph/pull/591))
+* **native:** extract `base_list` for C# classes in the Rust engine ([#577](https://github.com/optave/codegraph/pull/577))
+* **cfg:** bypass JS CFG visitor entirely on native builds; fix Go `for-range` CFG parity between engines ([#595](https://github.com/optave/codegraph/pull/595))
+
+### Bug Fixes
+
+* **edges:** remove `findCaller` fallback that misattributed file-scope calls to unrelated functions ([#607](https://github.com/optave/codegraph/pull/607))
+* **mcp:** add graceful shutdown to prevent "MCP Failed" errors on session clear ([#598](https://github.com/optave/codegraph/pull/598))
+* **resolver:** apply JS-side `.js` → `.ts` extension remap after native resolution ([#594](https://github.com/optave/codegraph/pull/594))
+* **resolver:** normalize paths in native resolver for `.js` → `.ts` remap ([#600](https://github.com/optave/codegraph/pull/600))
+* **deps:** patch 5 high-severity transitive vulnerabilities ([#583](https://github.com/optave/codegraph/pull/583))
+* **types:** narrow parser return types, `cachedStmt` in `buildTestFileIds`, WASM parser path, and triage query results ([#569](https://github.com/optave/codegraph/pull/569), [#576](https://github.com/optave/codegraph/pull/576), [#578](https://github.com/optave/codegraph/pull/578))
+* **scripts:** use version-aware `strip-types` flag in `package.json` scripts ([#599](https://github.com/optave/codegraph/pull/599))
+* **tests:** use `fs.cpSync` for fixture copy to handle subdirectories ([#584](https://github.com/optave/codegraph/pull/584))
+
+### Performance
+
+* **native:** fix WASM fallback bypass so native builds skip redundant JS analysis passes; batch SQL inserts for node/edge operations ([#606](https://github.com/optave/codegraph/pull/606))
+* **queries:** apply `cachedStmt` to `buildTestFileIds` static SQL for faster test filtering ([#575](https://github.com/optave/codegraph/pull/575))
+
+### Tests
+
+* strengthen weak assertions and add presentation layer coverage ([#586](https://github.com/optave/codegraph/pull/586))
+
+### Chores
+
+* add `npm run bench` script and stale embeddings warning ([#604](https://github.com/optave/codegraph/pull/604))
+* bump `commit-and-tag-version`, `tree-sitter-cli`, `web-tree-sitter`, `@commitlint/cli`, `@commitlint/config-conventional` ([#560](https://github.com/optave/codegraph/pull/560), [#561](https://github.com/optave/codegraph/pull/561), [#562](https://github.com/optave/codegraph/pull/562), [#563](https://github.com/optave/codegraph/pull/563), [#564](https://github.com/optave/codegraph/pull/564))
+
+### Notes
+
+* **constants:** `EXTENSIONS` and `IGNORE_DIRS` in the programmatic API are now `Set<string>` (changed during TypeScript migration). Both expose a `.toArray()` convenience method for consumers that need array semantics.
+
 ## [3.3.1](https://github.com/optave/codegraph/compare/v3.3.0...v3.3.1) (2026-03-20)
 
 **Incremental rebuild accuracy and post-3.3.0 stabilization.** This patch fixes a critical edge gap in the file watcher's single-file rebuild path where call edges were silently dropped during incremental rebuilds, aligns the native Rust engine's edge builder kind filters with the JS engine for parity, plugs a WASM tree memory leak in native engine typeMap backfill, and restores query performance to pre-3.1.4 levels. Several post-reorganization import path issues are also corrected.

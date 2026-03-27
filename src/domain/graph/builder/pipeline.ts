@@ -9,6 +9,7 @@ import { performance } from 'node:perf_hooks';
 import { closeDb, getBuildMeta, initSchema, MIGRATIONS, openDb } from '../../../db/index.js';
 import { detectWorkspaces, loadConfig } from '../../../infrastructure/config.js';
 import { info, warn } from '../../../infrastructure/logger.js';
+import { CODEGRAPH_VERSION } from '../../../shared/version.js';
 import type { BuildGraphOpts, BuildResult } from '../../../types.js';
 import { getActiveEngine } from '../../parser.js';
 import { setWorkspaces } from '../resolve.js';
@@ -54,6 +55,13 @@ function checkEngineSchemaMismatch(ctx: PipelineContext): void {
   if (prevSchema && Number(prevSchema) !== ctx.schemaVersion) {
     info(
       `Schema version changed (${prevSchema} → ${ctx.schemaVersion}), promoting to full rebuild.`,
+    );
+    ctx.forceFullRebuild = true;
+  }
+  const prevVersion = getBuildMeta(ctx.db, 'codegraph_version');
+  if (prevVersion && prevVersion !== CODEGRAPH_VERSION) {
+    info(
+      `Codegraph version changed (${prevVersion} → ${CODEGRAPH_VERSION}), promoting to full rebuild.`,
     );
     ctx.forceFullRebuild = true;
   }

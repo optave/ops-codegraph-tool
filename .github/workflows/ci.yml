@@ -43,7 +43,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        node-version: [20, 22]
+        node-version: [22]
 
     runs-on: ${{ matrix.os }}
     name: Test Node ${{ matrix.node-version }} (${{ matrix.os }})
@@ -113,7 +113,9 @@ jobs:
           node-version: 22
 
       - name: Verify all dynamic imports resolve
-        run: node scripts/verify-imports.js
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG scripts/verify-imports.ts
 
   rust-check:
     runs-on: ubuntu-latest

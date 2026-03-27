@@ -1,8 +1,8 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.3.1 | **Status:** Active development | **Updated:** March 2026
+> **Current version:** 3.4.0 | **Status:** Active development | **Updated:** 2026-03-25
 
-Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across twelve phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
+Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across thirteen phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
 **LLM strategy:** All LLM-powered features are **optional enhancements**. Everything works without an API key. When configured (OpenAI, Anthropic, Ollama, or any OpenAI-compatible endpoint), users unlock richer semantic search and natural language queries.
 
@@ -18,14 +18,15 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**2.7**](#phase-27--deep-analysis--graph-enrichment) | Deep Analysis & Graph Enrichment | Dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, extractors refactoring, CLI consolidation, interactive viewer, exports command, normalizeSymbol | **Complete** (v3.0.0) |
 | [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names, CLI composability | **Complete** (v3.1.5) |
 | [**4**](#phase-4--resolution-accuracy) | Resolution Accuracy | Dead role sub-categories, receiver type tracking, interface/trait implementation edges, resolution precision/recall benchmarks, `package.json` exports field, monorepo workspace resolution | **Complete** (v3.3.1) |
-| [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | **In Progress** (76 of 283 src files migrated, ~27%) |
-| [**6**](#phase-6--native-analysis-acceleration) | Native Analysis Acceleration | Move JS-only build phases (AST nodes, CFG, dataflow, insert nodes, structure, roles, complexity) to Rust; fix incremental rebuild data loss on native; sub-100ms 1-file rebuilds | Planned |
-| [**7**](#phase-7--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system, DX & onboarding, confidence annotations, shell completion | Planned |
-| [**8**](#phase-8--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
-| [**9**](#phase-9--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
-| [**10**](#phase-10--expanded-language-support) | Expanded Language Support | 8 new languages (11 -> 19), parser utilities | Planned |
-| [**11**](#phase-11--github-integration--ci) | GitHub Integration & CI | Reusable GitHub Action, LLM-enhanced PR review, visual impact graphs, SARIF output | Planned |
-| [**12**](#phase-12--advanced-features) | Advanced Features | Dead code detection, monorepo, agentic search, refactoring analysis | Planned |
+| [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | **Complete** (v3.4.0) |
+| [**6**](#phase-6--native-analysis-acceleration) | Native Analysis Acceleration | Rust extraction for AST/CFG/dataflow/complexity; batch SQLite inserts; incremental rebuilds; native DB write pipeline to close the WASM parity gap on full builds | **In Progress** (7 of 12 done, 1 partial) |
+| [**7**](#phase-7--expanded-language-support) | Expanded Language Support | Parser abstraction layer, 23 new languages in 4 batches (11 → 34), dual-engine support | Planned |
+| [**8**](#phase-8--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system | Planned |
+| [**9**](#phase-9--quality-security--technical-debt) | Quality, Security & Technical Debt | Supply-chain security, test quality gates, architectural debt cleanup | Planned |
+| [**10**](#phase-10--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
+| [**11**](#phase-11--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
+| [**12**](#phase-12--github-integration--ci) | GitHub Integration & CI | Reusable GitHub Action, LLM-enhanced PR review, visual impact graphs, SARIF output | Planned |
+| [**13**](#phase-13--advanced-features) | Advanced Features | Dead code detection, monorepo, agentic search, refactoring analysis | Planned |
 
 ### Dependency graph
 
@@ -38,12 +39,12 @@ Phase 1 (Rust Core)
                               |-->  Phase 4 (Resolution Accuracy)
                                      |-->  Phase 5 (TypeScript Migration)
                                             |-->  Phase 6 (Native Analysis Acceleration)
-                                            |-->  Phase 7 (Languages)
+                                            |-->  Phase 7 (Expanded Language Support)
                                             |-->  Phase 8 (Runtime & Extensibility)
-                                            |-->  Phase 9 (Quality & Security)
-                                            |-->  Phase 10 (Embeddings + Metadata)  -->  Phase 11 (NL Queries + Narration)
-                                            |-->  Phase 12 (GitHub/CI) <-- Phase 10 (risk_score, side_effects)
-Phases 1-11 -->  Phase 13 (Advanced Features)
+                                            |-->  Phase 9 (Quality, Security & Technical Debt)
+                                            |-->  Phase 10 (Intelligent Embeddings)  -->  Phase 11 (Natural Language Queries)
+                                            |-->  Phase 12 (GitHub Integration & CI) <-- Phase 10 (risk_score, side_effects)
+Phases 1-12 -->  Phase 13 (Advanced Features)
 ```
 
 ---
@@ -1078,15 +1079,15 @@ npm workspaces (`package.json` `workspaces`), `pnpm-workspace.yaml`, and `lerna.
 
 ---
 
-## Phase 5 -- TypeScript Migration
+## Phase 5 -- TypeScript Migration ✅
 
-> **Status:** In Progress — 178 of 283 source files migrated (~63%), 105 `.js` files remaining
+> **Status:** Complete — all 271 source files migrated to TypeScript, 0 `.js` files remaining (v3.4.0)
 
 **Goal:** Migrate the codebase from plain JavaScript to TypeScript, leveraging the clean module boundaries established in Phase 3. Incremental module-by-module migration starting from leaf modules inward.
 
 **Why after Phase 4:** The resolution accuracy work (Phase 4) operates on the existing JS codebase and produces immediate accuracy gains. TypeScript migration builds on Phase 3's clean module boundaries to add type safety across the entire codebase. Every subsequent phase benefits from types: MCP schema auto-generation, API contracts, refactoring safety. The Phase 4 resolution improvements (receiver tracking, interface edges) establish the resolution model that TypeScript types will formalize.
 
-**Note:** `.js` and `.ts` coexist during migration (`allowJs: true` in tsconfig). PRs #553, #554, #555, #566 migrated a first wave of files across steps 5.3–5.5. Step 5.3 is complete; substantial work remains in steps 5.4–5.5. 13 stale `.js` files have `.ts` counterparts and need deletion.
+**Note:** Migration is complete as of v3.4.0. All 271 source files are TypeScript. The migration proceeded leaf-inward: shared utilities → core domain → graph algorithms → builder stages → search → CLI layer → AST analysis → features → presentation → MCP tools → tests.
 
 ### ~~5.1 -- Project Setup~~ ✅
 
@@ -1116,162 +1117,165 @@ Migrate modules with no or minimal internal dependencies. All 29 modules migrate
 
 **Migrated (29):** `shared/errors`, `shared/kinds`, `shared/normalize`, `shared/paginate`, `shared/constants`, `shared/file-utils`, `shared/generators`, `shared/hierarchy`, `infrastructure/logger`, `infrastructure/config`, `infrastructure/native`, `infrastructure/registry`, `infrastructure/update-check`, `infrastructure/result-formatter`, `infrastructure/test-filter`, `db/repository/*` (14 files), `db/connection`, `db/index`, `db/migrations`, `db/query-builder`, `domain/analysis/*` (9 files), `presentation/colors`, `presentation/table` — via [#553](https://github.com/optave/codegraph/pull/553), [#566](https://github.com/optave/codegraph/pull/566)
 
-### 5.4 -- Core Module Migration (In Progress)
+### ~~5.4 -- Core Module Migration~~ ✅
 
-Migrate modules that implement domain logic and Phase 3 interfaces. Some migrated via [#554](https://github.com/optave/codegraph/pull/554), 22 files remaining.
+All core domain modules migrated: builder stages, search subsystem, graph utilities, incremental rebuild logic.
 
-**Migrated:** `db/repository/*.ts` (14 files), `domain/parser.ts`, `domain/graph/resolve.ts`, `extractors/*.ts` (11 files), `domain/graph/builder.ts` + `context.ts` + `helpers.ts` + `pipeline.ts`, `domain/graph/watcher.ts`, `domain/search/{generator,index,models}.ts`, `graph/model.ts`, `graph/algorithms/{bfs,centrality,shortest-path,tarjan}.ts`, `graph/algorithms/leiden/*.ts` (7 files), `graph/algorithms/{louvain,index}.ts`, `graph/builders/{dependency,structure,temporal,index}.ts`, `graph/classifiers/{risk,roles,index}.ts`, `graph/index.ts`, `domain/queries.ts`
+**Migrated:** `db/repository/*.ts` (14 files), `domain/parser.ts`, `domain/graph/resolve.ts`, `extractors/*.ts` (11 files), `domain/graph/builder.ts` + `context.ts` + `helpers.ts` + `pipeline.ts`, `domain/graph/watcher.ts`, `domain/search/` (all files), `graph/` (all files), `domain/queries.ts`, `domain/graph/builder/stages/` (all 9 stages), `domain/graph/{cycles,journal,change-journal}.ts`
 
-**Remaining (22):**
+**Key PRs:** [#554](https://github.com/optave/codegraph/pull/554), [#570](https://github.com/optave/codegraph/pull/570), [#579](https://github.com/optave/codegraph/pull/579)
 
-| Module | Files | Notes |
-|--------|-------|-------|
-| `domain/graph/builder/stages/` | 9 | All 9 build pipeline stages (collect-files, parse-files, resolve-imports, build-edges, etc.) |
-| `domain/graph/builder/incremental.js` | 1 | Incremental rebuild logic |
-| `domain/graph/{cycles,journal,change-journal}.js` | 3 | Graph utilities |
-| `domain/search/search/` | 6 | Search subsystem (hybrid, semantic, keyword, filters, cli-formatter, prepare) |
-| `domain/search/stores/` | 2 | FTS5, SQLite blob stores |
-| `domain/search/strategies/` | 3 | Source, structured, text-utils strategies |
+### ~~5.5 -- Orchestration & Public API Migration~~ ✅
 
-### 5.5 -- Orchestration & Public API Migration (In Progress)
+All orchestration, features, presentation, MCP, and CLI modules migrated — including 48 CLI command handlers.
 
-Migrate top-level orchestration, features, and entry points. Some migrated via [#555](https://github.com/optave/codegraph/pull/555), 141 files remaining.
+**Migrated:** `cli.ts` + `cli/` (all 55 files), `index.ts`, `ast-analysis/` (all 18 files), `features/` (all 20 files), `presentation/` (all 28 files), `mcp/` + `mcp/tools/` (all files). All stale `.js` counterparts deleted.
 
-**Migrated:** `domain/graph/builder.ts` + `context.ts` + `helpers.ts` + `pipeline.ts`, `domain/graph/watcher.ts`, `domain/search/{generator,index,models}.ts`, `mcp/{index,middleware,server,tool-registry}.ts`, `features/export.ts`, `index.ts`, `ast-analysis/` (all 18 files), `features/` (all 20 files), `presentation/` (all 28 files), `mcp/tools/` (all 36 files)
+**Key PRs:** [#555](https://github.com/optave/codegraph/pull/555), [#558](https://github.com/optave/codegraph/pull/558), [#580](https://github.com/optave/codegraph/pull/580), [#581](https://github.com/optave/codegraph/pull/581)
 
-**Remaining (57):**
+### ~~5.6 -- Test Migration~~ ✅
 
-| Module | Files | Notes |
-|--------|-------|-------|
-| `cli.js` + `cli/` | 55 | Commander entry point, 43 command handlers (`commands/`), barrel, shared CLI utilities |
-| `index.js` | 1 | Public API exports (stale — `.ts` exists) |
+All test files migrated from `.js` to `.ts`. Vitest TypeScript integration verified. `tsc --noEmit` succeeds with zero errors. No `any` escape hatches except at FFI boundaries (napi-rs addon, tree-sitter WASM).
 
-**Stale `.js` counterparts to delete (13 files):** `domain/graph/builder.js`, `domain/graph/builder/{context,helpers,pipeline}.js`, `domain/graph/watcher.js`, `domain/search/{generator,index,models}.js`, `features/export.js`, `mcp/{index,middleware,server,tool-registry}.js` — these have `.ts` counterparts already
-
-### 5.6 -- Test Migration
-
-- Migrate test files from `.js` to `.ts`
-- Add type-safe test utilities and fixture builders
-- Verify vitest TypeScript integration with path aliases
-- Maintain `InMemoryRepository` (from Phase 3.2) as a typed test double
-
-**Verification:** All existing tests pass. `tsc --noEmit` succeeds with zero errors. No `any` escape hatches except at FFI boundaries (napi-rs addon, tree-sitter WASM).
-
-**Affected files:** All remaining `src/**/*.js` → `src/**/*.ts`, all `tests/**/*.js` → `tests/**/*.ts`, `package.json`, `biome.json`
+**Key PRs:** [#588](https://github.com/optave/codegraph/pull/588)
 
 ---
 
 ## Phase 6 -- Native Analysis Acceleration
 
-**Goal:** Move the remaining JS-only build phases to Rust so that `--engine native` eliminates all redundant WASM visitor walks. Today only 3 of 10 build phases (parse, resolve imports, build edges) run in Rust — the other 7 execute identical JavaScript regardless of engine, leaving ~50% of native build time on the table.
+**Goal:** Make `--engine native` meaningfully faster than WASM across every build phase. At the start of this phase, only 3 of 10 build phases (parse, resolve imports, build edges) ran in Rust — the other 7 executed identical JavaScript regardless of engine. The extraction side (6.1–6.3, 6.6) is done — Rust extracts AST nodes, CFG, dataflow, and complexity during the parse phase, and the JS visitors are bypassed on native builds. But the **DB-writing phases** that consume that extracted data still run identical JS code on both engines, so native full builds show little-to-no speedup over WASM on most phases.
 
-**Why its own phase:** This is a substantial Rust engineering effort — porting 6 JS visitors to `crates/codegraph-core/`, fixing a data loss bug in incremental rebuilds, and optimizing the 1-file rebuild path. With TypeScript types (Phase 5) defining the interface contracts, the Rust ports can target well-typed boundaries. The Phase 3 module boundaries make each phase a self-contained target.
+**Why its own phase:** This is a substantial Rust engineering effort — porting JS visitors to `crates/codegraph-core/`, fixing a data loss bug in incremental rebuilds, and optimizing the 1-file rebuild path. With TypeScript types (Phase 5) defining the interface contracts, the Rust ports can target well-typed boundaries. The Phase 3 module boundaries make each phase a self-contained target.
 
-**Evidence (v3.1.4 benchmarks on 398 files):**
+**Current state (full-build: v3.3.1, 442 files · 1-file: v3.4.0, 473 files):**
 
-| Phase | Native | WASM | Ratio | Status |
-|-------|-------:|-----:|------:|--------|
-| Parse | 468ms | 1483ms | 3.2x faster | Already Rust |
-| Build edges | 88ms | 152ms | 1.7x faster | Already Rust |
-| Resolve imports | 8ms | 9ms | ~1x | Already Rust |
-| **AST nodes** | **361ms** | **347ms** | **~1x** | JS visitor — biggest win |
-| **CFG** | **126ms** | **125ms** | **~1x** | JS visitor |
-| **Dataflow** | **100ms** | **98ms** | **~1x** | JS visitor |
-| **Insert nodes** | **143ms** | **148ms** | **~1x** | Pure SQLite batching |
-| **Roles** | **29ms** | **32ms** | **~1x** | JS classification |
-| **Structure** | **13ms** | **17ms** | **~1x** | JS directory tree |
-| Complexity | 16ms | 77ms | 5x faster | Partly pre-computed |
+| Phase | Native (full) | WASM (full) | Speedup | Native (1-file) | WASM (1-file) | Status |
+|-------|------:|------:|:-------:|------:|------:|--------|
+| Parse | 601ms | 2123ms | **3.5×** | 57ms | 201ms | Rust ✅ — real speedup |
+| Build edges | 108ms | 167ms | 1.5× | 21ms | 15ms | Rust ✅ — modest; native *slower* on 1-file |
+| Resolve imports | 12ms | 13ms | ~same | 2ms | 2ms | Rust ✅ — no meaningful difference |
+| AST nodes | **393ms** | 397ms | **~same** | 0.2ms | 0.2ms | Extraction done ✅; **DB write not optimized** (6.9) |
+| CFG | **161ms** | 155ms | **Rust slower** | 0.1ms | 0.1ms | Extraction done ✅; **DB write not optimized** (6.10) |
+| Dataflow | **125ms** | 129ms | **~same** | 0.1ms | 0.2ms | Extraction done ✅; **DB write not optimized** (6.10) |
+| Insert nodes | 206ms | 201ms | ~same | 8ms | 8ms | JS batching ✅; **no native advantage** (6.11) |
+| Complexity | 171ms | 216ms | 1.3× | 0.1ms | 0.1ms | Rust pre-computation ✅; modest speedup |
+| Roles | 52ms | 52ms | ~same | 54ms | 55ms | JS batching ✅; **no native advantage** (6.12) |
+| Structure | 22ms | 21ms | ~same | 26ms | 24ms | JS ✅ — already fast |
+| **Total** | **2.7s** | **5.0s** | **1.85×** | **466ms** | **611ms** | Parse carries most of the speedup |
 
-**Target:** Reduce native full-build time from ~1,400ms to ~700ms (2x improvement) by eliminating ~690ms of redundant JS visitor work.
+*Note: Phase totals above sum to ~1.85s (native) / ~3.47s (WASM) for full builds and ~168ms / ~305ms for 1-file rebuilds. The remaining time is spent in phases not listed here: startup/initialization, dependency resolution setup, build-dependencies, finalize (orphan cleanup, unused-export marking), and CLI overhead.*
 
-### 6.1 -- AST Node Extraction in Rust
+**Key insight:** The 1.85× native speedup comes almost entirely from the Parse phase (3.5×). The other 9 phases combined show negligible native advantage because they execute the same JS/SQL code regardless of engine. The Rust extraction work (6.1–6.3, 6.6) successfully bypasses the JS *visitors* on native, but the *DB insertion loops* that store AST nodes, CFG edges, dataflow edges, and complexity rows are identical — they iterate over the extracted data in JS either way. To unlock real native speedup on these phases, the DB writes themselves need to move to Rust or be radically restructured.
 
-The largest single opportunity. Currently the native parser returns partial AST node data, so the JS `buildAstNodes()` visitor re-walks all WASM trees anyway (~361ms).
+*Note:* The `dataflowMs`, `cfgMs`, `astMs`, and `complexityMs` timings on full builds measure the DB edge/node-building phase, not the visitor walk. On 1-file rebuilds the JS visitor is fully bypassed (0.1–0.2ms) because the data was extracted during parse.
 
-- Extend `crates/codegraph-core/` to extract all AST node types (`call`, `new`, `string`, `regex`, `throw`, `await`) during the native parse phase
-- Return complete AST node data in the `FileSymbols` result so `run-analyses.js` can skip the WASM walker entirely
-- Validate parity: ensure native extraction produces identical node counts to the WASM visitor (benchmark already tracks this via `nodes/file`)
+### 6.1 -- AST Node Extraction in Rust ✅
 
-**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/features/ast.js`, `src/domain/graph/builder/stages/run-analyses.js`
+**Complete.** All 6 AST node types (`call`, `new`, `string`, `regex`, `throw`, `await`) are extracted in Rust during the native parse phase. The JS `ast-store` visitor is bypassed when `symbols.astNodes` is already an array. Parity validated via `tests/engines/ast-parity.test.ts`.
 
-### 6.2 -- CFG Construction in Rust
+**Key PRs:** #340, #361, #591
 
-The intraprocedural control-flow graph visitor runs in JS even on native builds (~126ms).
+### 6.2 -- CFG Construction in Rust ✅
 
-- Port `createCfgVisitor()` logic to Rust: basic block detection, branch/loop edges, entry/exit nodes
-- Return CFG block data per function in `FileSymbols` so the JS visitor is fully bypassed
-- Validate parity: CFG block counts and edge counts must match the WASM visitor output
+**Complete.** `crates/codegraph-core/src/cfg.rs` computes per-function CFG blocks and edges for all 11 languages. `Definition.cfg` is populated during native parse. The JS CFG visitor is bypassed when `d.cfg?.blocks` exists. Parity validated via `tests/engines/cfg-parity.test.ts`.
 
-**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/features/cfg.js`, `src/ast-analysis/visitors/cfg-visitor.js`
+**Key PRs:** #342, #344
 
-### 6.3 -- Dataflow Analysis in Rust
+### 6.3 -- Dataflow Analysis in Rust ✅
 
-Dataflow edges are computed by a JS visitor that walks WASM trees (~100ms on native builds).
+**Complete.** `crates/codegraph-core/src/dataflow.rs` implements `extract_dataflow()` with full scope tracking, binding resolution, and confidence scoring for all 11 languages. `FileSymbols.dataflow` is populated when `include_dataflow=true`. The JS dataflow visitor is bypassed when `symbols.dataflow` exists. Parity validated via `tests/engines/dataflow-parity.test.ts` (13 tests across Go, Rust, Ruby).
 
-- Port `createDataflowVisitor()` to Rust: variable definitions, assignments, reads, def-use chains
-- Return dataflow edges in `FileSymbols`
-- Validate parity against WASM visitor output
+### 6.4 -- Batch SQLite Inserts ✅
 
-**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/features/dataflow.js`, `src/ast-analysis/visitors/dataflow-visitor.js`
+**Complete (JS-side approach).** Batch inserts use `better-sqlite3` multi-value INSERT statements with cached prepared statements (keyed by chunk size to avoid recompilation). Chunk size tuned to 500 rows. Export marking uses batched `UPDATE ... WHERE (name=? AND kind=? AND file=? AND line=?) OR ...` instead of per-export UPDATEs. The insert-nodes stage shares `bulkNodeIdsByFile` maps between children and edge phases. A Rust-side approach was evaluated but JS-side batching proved sufficient — the bottleneck is SQLite I/O, not JS↔native boundary crossings.
 
-### 6.4 -- Batch SQLite Inserts via Rust
+**Result:** Native full-build insertMs **429ms → 310ms** (−28%) as of 6.4; further reduced to **206ms** after v3.3.1 optimizations.
 
-`insertNodes` is pure SQLite work (~143ms) but runs row-by-row from JS. Batching in Rust can reduce JS↔native boundary crossings.
+**Key PRs:** #361, #434
 
-- Expose a `batchInsertNodes(nodes[])` function from Rust that uses a single prepared statement in a transaction
-- Alternatively, generate the SQL batch on the JS side and execute as a single `better-sqlite3` call (may be sufficient without Rust)
-- Benchmark both approaches; pick whichever is faster
+### 6.5 -- Role Classification & Structure Optimization ✅
 
-**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/db/index.js`, `src/domain/graph/builder/stages/insert-nodes.js`
+**Complete (JS-side approach).** Role classification stays JS/SQL-based — the bottleneck is SQL query execution, not classification logic (which is simple median-threshold comparisons). The optimization replaces row-by-row `UPDATE nodes SET role = ? WHERE id = ?` (one statement per node, ~10k nodes) with batch `UPDATE nodes SET role = ? WHERE id IN (...)` grouped by role (~10 statements total). This eliminates ~10k SQLite B-tree lookups in favor of ~10 set-based updates.
 
-### 6.5 -- Role Classification & Structure in Rust
+Structure building is unchanged — at 22ms it's already fast.
 
-Smaller wins (~42ms combined) but complete the picture of a fully native build pipeline.
+**Result:** Native full-build rolesMs **268ms → 192ms** (−28%) as of 6.5; further reduced to **52ms** after v3.3.1 optimizations. Native 1-file rebuild rolesMs **301ms → 36ms** (−88%) as of 6.5; further reduced to **9ms** via 6.8 incremental path (PR #622).
 
-- Port `classifyNodeRoles()` to Rust: hub/leaf/bridge/utility classification based on in/out degree and betweenness
-- Port directory structure building and metrics aggregation
-- Return role assignments and structure data alongside parse results
+### 6.6 -- Complete Complexity Pre-computation ✅
 
-**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/features/structure.js`, `src/domain/graph/builder/stages/build-structure.js`
+**Complete.** `crates/codegraph-core/src/complexity.rs` computes cognitive, cyclomatic, max nesting, Halstead, and LOC metrics for every function during native parse. `Definition.complexity` is populated for all functions/methods. The JS complexity visitor is bypassed when `!d.complexity` check passes. MI is computed JS-side from the pre-computed components.
 
-### 6.6 -- Complete Complexity Pre-computation
+### 6.7 -- Fix Incremental Rebuild Data Loss on Native Engine ✅
 
-Complexity is partly pre-computed by native (~16ms vs 77ms WASM) but not all functions are covered.
+**Complete.** The original bug (analysis data silently lost on native 1-file rebuilds) is fixed. The prerequisites (6.1–6.3) are done — native parse now returns complete AST nodes, CFG blocks, and dataflow edges in `FileSymbols`. The unified analysis engine (`src/ast-analysis/engine.ts`) skips per-visitor creation when native data exists, and `buildDataflowEdges`/`buildCFGData`/`buildComplexityMetrics` all check for pre-computed data before falling back to WASM. Edge parity on incremental rebuilds is validated via `tests/engines/` and CI (#539, #542).
 
-- Ensure native parse computes cognitive and cyclomatic metrics for every function, not just a subset
-- Halstead and MI are scoped by Phase 9.3 (Kill List): MI will be removed entirely; Halstead will be limited to imperative code blocks. Native acceleration should only target the metrics that survive the Kill List
-- Eliminate the WASM fallback path in `buildComplexityMetrics()` when running native
+**Key PRs:** #469, #533, #539, #542
 
-**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/features/complexity.js`
+### 6.8 -- Incremental Rebuild Performance (partial)
 
-### 6.7 -- Fix Incremental Rebuild Data Loss on Native Engine
+**Partially complete.** Roles classification is fully optimized (255ms → 9ms via incremental path with edge-neighbour expansion, PR #622). Structure batching and finalize skip are also done. Current native 1-file rebuild is ~466ms (v3.4.0, 473 files) — down from ~802ms but still above the sub-100ms target.
 
-**Bug:** On native 1-file rebuilds, complexity, CFG, and dataflow data for the changed file is **silently lost**. `purgeFilesFromGraph` removes the old data, but the analysis phases never re-compute it because:
+**Done:**
+- **Incremental roles** (255ms → 9ms): Only reclassify nodes from changed files + edge neighbours using indexed correlated subqueries. Global medians for threshold consistency. Parity-tested against full rebuild. *Note:* The benchmark table shows ~54ms for 1-file roles because the standard benchmark runs the full roles phase; the 9ms incremental path (PR #622) is used only when the builder detects a 1-file incremental rebuild
+- **Structure batching:** Replace N+1 per-file queries with 3 batch queries regardless of file count
+- **Finalize skip:** Skip advisory queries (orphaned embeddings, unused exports) during incremental builds
 
-1. The native parser does not produce a `_tree` (WASM tree-sitter tree)
-2. The unified walker at `src/ast-analysis/engine.js:108-109` skips files without `_tree`
-3. The `buildXxx` functions check for pre-computed fields (`d.complexity`, `d.cfg?.blocks`) which the native parser does not provide for these analyses
-4. Result: 0.1ms no-op — the phases run but do nothing
+**Remaining:**
+- **Incremental edge rebuild:** Only rebuild edges involving the changed file's symbols (currently edgesMs ~21ms on native, ~15ms on WASM — native is *slower* on 1-file)
+- **Parse overhead:** Native parse of 1 file takes ~57ms (vs 201ms WASM) — investigate tree-sitter incremental parsing to push below 10ms
+- **Structure/roles on 1-file:** Both still take ~25ms and ~54ms respectively on 1-file rebuilds — the full-build optimizations (6.5) don't apply to the incremental path
+- **Benchmark target:** Sub-100ms native 1-file rebuilds (current ~466ms on 473 files)
 
-This is confirmed by the v3.1.4 1-file rebuild data: complexity (0.1ms), CFG (0.1ms), dataflow (0.2ms) on native — these are just module import overhead, not actual computation. Contrast with v3.1.3 where the numbers were higher (1.3ms, 8.7ms, 4ms) because earlier versions triggered a WASM fallback tree via `ensureWasmTrees`.
+**Key PRs:** #622
 
-**Fix (prerequisite: 6.1–6.3):** Once the native parser returns complete AST nodes, CFG blocks, and dataflow edges in `FileSymbols`, the `run-analyses` stage can store them directly without needing a WASM tree. The incremental path must:
+**Affected files:** `src/domain/graph/builder/stages/build-structure.ts`, `src/domain/graph/builder/stages/build-edges.ts`, `src/domain/graph/builder/pipeline.ts`
 
-- Ensure `parseFilesAuto()` returns pre-computed analysis data for the single changed file
-- Have `run-analyses.js` store that data (currently it only stores if `_tree` exists or if pre-computed fields are present — the latter path needs to work reliably)
-- Add an integration test: rebuild 1 file on native engine, then query its complexity/CFG/dataflow and assert non-empty results
+### 6.9 -- AST Node DB Write Optimization
 
-**Affected files:** `src/ast-analysis/engine.js`, `src/domain/graph/builder/stages/run-analyses.js`, `src/domain/parser.js`, `tests/integration/`
+**Not started.** Native extraction (6.1) successfully produces AST nodes in Rust, but the `astMs` full-build phase is **393ms native vs 397ms WASM** — no speedup. The bottleneck is the JS loop that iterates over extracted AST nodes and inserts them into SQLite. The Rust extraction saves ~0ms because it merely shifts *when* the work happens (parse phase vs visitor phase), not *how much* work happens.
 
-### 6.8 -- Incremental Rebuild Performance
+**Plan:**
+- **Batch AST node inserts in Rust via napi-rs:** Pass the raw AST node array directly from Rust to a native SQLite bulk-insert function, bypassing the JS iteration loop entirely. Use `rusqlite` with a single multi-row INSERT per chunk
+- **Merge AST inserts into the parse phase:** Instead of extracting AST nodes to a JS array and then writing them in a separate phase, write them directly to SQLite during the Rust parse walk — eliminates the intermediate array allocation and JS↔native boundary crossing
+- **Target:** astMs < 50ms on native full builds (current 393ms), representing a real 8× speedup over WASM
 
-With analysis data loss fixed, optimize the 1-file rebuild path end-to-end. Current native 1-file rebuild is 265ms — dominated by parse (51ms), structure (13ms), roles (27ms), edges (13ms), insert (12ms), and finalize (12ms).
+**Affected files:** `crates/codegraph-core/src/lib.rs`, `crates/codegraph-core/src/ast_nodes.rs`, `src/domain/graph/builder/stages/build-ast-data.ts`
 
-- **Skip unchanged phases:** Structure and roles are graph-wide computations. On a 1-file change, only the changed file's nodes/edges need updating — skip full reclassification unless the file's degree changed significantly
-- **Incremental edge rebuild:** Only rebuild edges involving the changed file's symbols, not the full edge set
-- **Benchmark target:** Sub-100ms native 1-file rebuilds (from current 265ms)
+### 6.10 -- CFG & Dataflow DB Write Optimization
 
-**Affected files:** `src/domain/graph/builder/stages/build-structure.js`, `src/domain/graph/builder/stages/build-edges.js`, `src/domain/graph/builder/pipeline.js`
+**Not started.** Same problem as 6.9 — Rust extraction works (6.2, 6.3), but the DB write phases are identical JS code on both engines. CFG: **161ms native vs 155ms WASM** (Rust is *slower*). Dataflow: **125ms native vs 129ms WASM** (~same).
+
+**Plan:**
+- **Batch CFG/dataflow edge inserts in Rust:** Same approach as 6.9 — pass extracted CFG blocks and dataflow edges directly to `rusqlite` bulk inserts from the Rust side, bypassing JS iteration
+- **Investigate CFG native regression:** Profile why native CFG is 4% *slower* than WASM on full builds — likely JS↔native serialization overhead for the `cfg.blocks` structure that exceeds the extraction savings
+- **Combine with parse phase:** Like 6.9, consider writing CFG edges and dataflow edges to SQLite during the Rust parse walk rather than accumulating them for a later JS phase
+- **Target:** cfgMs + dataflowMs < 50ms combined on native full builds (current 286ms)
+
+**Affected files:** `crates/codegraph-core/src/cfg.rs`, `crates/codegraph-core/src/dataflow.rs`, `src/domain/graph/builder/stages/build-ast-data.ts`
+
+### 6.11 -- Native Insert Nodes Pipeline
+
+**Not started.** The insert-nodes phase (6.4) was optimized with JS-side batching, but native shows **no advantage** over WASM: 206ms native vs 201ms WASM. This is the single largest phase after parse on native builds.
+
+**Plan:**
+- **Rust-side SQLite writes via rusqlite:** Move the entire insert-nodes loop to Rust — receive the `FileSymbols[]` array in Rust and write nodes, children, and edge stubs directly to SQLite without crossing back to JS
+- **Parallel file processing:** Use Rayon to parallelize node insertion across files with per-file transactions (SQLite WAL mode supports concurrent readers)
+- **Eliminate intermediate JS objects:** Currently Rust → napi-rs → JS objects → better-sqlite3 → SQLite. The new path would be Rust → rusqlite → SQLite directly
+- **Target:** insertMs < 50ms on native full builds (current 206ms)
+
+**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/domain/graph/builder/stages/insert-nodes.ts`
+
+### 6.12 -- Native Roles & Edge Build Optimization
+
+**Not started.** Roles: **52ms native ≈ 52ms WASM** on full builds, **54ms on 1-file rebuilds** (incremental optimization from 6.5/6.8 doesn't cover this path). Build edges: **108ms native vs 167ms WASM** (1.5× — modest, but native is *slower* on 1-file: 21ms vs 15ms).
+
+**Plan:**
+- **Roles — move SQL to Rust:** The role classification logic (median-threshold fan-in/fan-out comparisons) is simple but issues ~10 `UPDATE ... WHERE id IN (...)` statements. Moving this to Rust with `rusqlite` eliminates JS↔SQLite round-trips and allows the fan-in/fan-out aggregation + classification to happen in a single Rust function
+- **Build edges — fix 1-file regression:** Profile why native 1-file edge building (21ms) is 40% slower than WASM (15ms). Likely cause: napi-rs deserialization overhead for the caller/callee lookup data that exceeds the savings on small workloads
+- **Build edges — Rust-side batch:** For full builds, move the edge resolution loop to Rust to avoid per-edge JS↔native boundary crossings
+- **Target:** rolesMs < 15ms, edgesMs < 30ms on native full builds
+
+**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/domain/graph/builder/stages/build-edges.ts`, `src/graph/classifiers/roles.ts`
 
 ---
 

@@ -182,10 +182,6 @@ pub fn build_call_edges(
                             caller_span = span;
                         }
                     }
-                } else if def.line <= call.line && caller_id == file_node_id {
-                    if let Some(id) = def.node_id {
-                        caller_id = id;
-                    }
                 }
             }
 

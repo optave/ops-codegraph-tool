@@ -1,13 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { debug } from '../../infrastructure/logger.js';
 import { loadNative } from '../../infrastructure/native.js';
 import { normalizePath } from '../../shared/constants.js';
+import { toErrorMessage } from '../../shared/errors.js';
 import type { BareSpecifier, BatchResolvedMap, ImportBatchItem, PathAliases } from '../../types.js';
 
 // ── package.json exports resolution ─────────────────────────────────
 
 /** Cache: packageDir → parsed exports field (or null) */
-// biome-ignore lint/suspicious/noExplicitAny: package.json exports field has no fixed schema
 const _exportsCache: Map<string, any> = new Map();
 
 /**
@@ -55,7 +56,6 @@ function findPackageDir(packageName: string, rootDir: string): string | null {
  * Read and cache the exports field from a package's package.json.
  * Returns the exports value or null.
  */
-// biome-ignore lint/suspicious/noExplicitAny: package.json exports field has no fixed schema
 function getPackageExports(packageDir: string): any {
   if (_exportsCache.has(packageDir)) return _exportsCache.get(packageDir);
   try {
@@ -64,7 +64,8 @@ function getPackageExports(packageDir: string): any {
     const exports = pkg.exports ?? null;
     _exportsCache.set(packageDir, exports);
     return exports;
-  } catch {
+  } catch (e) {
+    debug(`readPackageExports: failed to read package.json in ${packageDir}: ${toErrorMessage(e)}`);
     _exportsCache.set(packageDir, null);
     return null;
   }
@@ -308,6 +309,58 @@ export function clearWorkspaceCache(): void {
   _workspaceResolvedPaths.clear();
 }
 
+// ── JS → TS extension remap cache ───────────────────────────────────
+
+/** Cache: absolute .js path → remapped .ts/.tsx relative path (or null if no TS file exists). */
+const _jsToTsCache: Map<string, string | null> = new Map();
+
+/**
+ * If `resolved` ends with `.js`, check whether a `.ts` or `.tsx` counterpart
+ * exists on disk and return its relative path from `rootDir`.  Results are
+ * cached for the lifetime of the process to avoid repeated stat calls in the
+ * batch hot path.
+ *
+ * The cache stores **absolute** `.ts`/`.tsx` paths (or `null`) so that the
+ * same cached entry is correct regardless of which `rootDir` is passed — the
+ * relative path is computed on every cache hit.  This is important for MCP
+ * `--multi-repo` mode where the same absolute `.js` file may be resolved with
+ * different `rootDir` values.
+ *
+ * Always returns a normalised relative path from `rootDir` — both the remap
+ * branch and the fallback compute `path.relative(rootDir, abs)` to ensure a
+ * consistent format regardless of whether the native resolver returned an
+ * absolute or relative path.
+ */
+function remapJsToTs(resolved: string, rootDir: string): string {
+  if (!resolved.endsWith('.js')) return resolved;
+  const abs = path.resolve(rootDir, resolved);
+  if (_jsToTsCache.has(abs)) {
+    const cachedAbs = _jsToTsCache.get(abs);
+    return cachedAbs
+      ? normalizePath(path.relative(rootDir, cachedAbs))
+      : normalizePath(path.relative(rootDir, abs));
+  }
+  const tsAbs = abs.replace(/\.js$/, '.ts');
+  if (fs.existsSync(tsAbs)) {
+    _jsToTsCache.set(abs, tsAbs);
+    return normalizePath(path.relative(rootDir, tsAbs));
+  }
+  const tsxAbs = abs.replace(/\.js$/, '.tsx');
+  if (fs.existsSync(tsxAbs)) {
+    _jsToTsCache.set(abs, tsxAbs);
+    return normalizePath(path.relative(rootDir, tsxAbs));
+  }
+  _jsToTsCache.set(abs, null);
+  // Normalise fallback to relative to stay consistent with the remap branch —
+  // avoids a format mismatch if the native resolver ever returns an absolute path.
+  return normalizePath(path.relative(rootDir, abs));
+}
+
+/** Clear the .js → .ts remap cache (for testing). */
+export function clearJsToTsCache(): void {
+  _jsToTsCache.clear();
+}
+
 // ── Alias format conversion ─────────────────────────────────────────
 
 /**
@@ -458,9 +511,15 @@ export function resolveImportPath(
         rootDir,
         convertAliasesForNative(aliases),
       );
-      return normalizePath(path.normalize(result));
-    } catch {
-      // fall through to JS
+      const normalized = normalizePath(path.normalize(result));
+      // The native resolver's .js → .ts remap fails when paths contain
+      // unresolved ".." components (PathBuf::components().collect() doesn't
+      // collapse parent refs). Apply the remap on the JS side as a fallback.
+      return remapJsToTs(normalized, rootDir);
+    } catch (e) {
+      debug(
+        `resolveImportPath: native resolution failed, falling back to JS: ${toErrorMessage(e)}`,
+      );
     }
   }
   return resolveImportPathJS(fromFile, importSource, rootDir, aliases);
@@ -479,8 +538,10 @@ export function computeConfidence(
   if (native) {
     try {
       return native.computeConfidence(callerFile, targetFile, importedFrom || null);
-    } catch {
-      // fall through to JS
+    } catch (e) {
+      debug(
+        `computeConfidence: native computation failed, falling back to JS: ${toErrorMessage(e)}`,
+      );
     }
   }
   return computeConfidenceJS(callerFile, targetFile, importedFrom);
@@ -512,10 +573,15 @@ export function resolveImportsBatch(
     );
     const map: BatchResolvedMap = new Map();
     for (const r of results) {
-      map.set(`${r.fromFile}|${r.importSource}`, normalizePath(path.normalize(r.resolvedPath)));
+      const normalized = normalizePath(path.normalize(r.resolvedPath));
+      // Native resolver's .js → .ts remap fails on unnormalized paths —
+      // apply JS-side fallback (same fix as resolveImportPath).
+      const resolved = remapJsToTs(normalized, rootDir);
+      map.set(`${r.fromFile}|${r.importSource}`, resolved);
     }
     return map;
-  } catch {
+  } catch (e) {
+    debug(`batchResolve: native batch resolution failed: ${toErrorMessage(e)}`);
     return null;
   }
 }

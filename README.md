@@ -188,7 +188,7 @@ cd codegraph && npm install && npm link
 | ⚡ | **Always fresh** | Three-tier incremental detection — sub-second rebuilds even on large codebases |
 | 🔬 | **Data flow analysis** | Intraprocedural parameter tracking, return consumers, argument flows, and mutation detection — all 11 languages |
 | 🧮 | **Complexity metrics** | Cognitive, cyclomatic, nesting depth, Halstead, and Maintainability Index per function |
-| 🏘️ | **Community detection** | Louvain clustering to discover natural module boundaries and architectural drift |
+| 🏘️ | **Community detection** | Leiden clustering to discover natural module boundaries and architectural drift |
 | 📜 | **Manifesto rule engine** | Configurable pass/fail rules with warn/fail thresholds for CI gates via `check` (exit code 1 on fail) |
 | 👥 | **CODEOWNERS integration** | Map graph nodes to CODEOWNERS entries — see who owns each function, ownership boundaries in `diff-impact` |
 | 💾 | **Graph snapshots** | `snapshot save`/`restore` for instant DB backup and rollback — checkpoint before refactoring, restore without rebuilding |
@@ -299,7 +299,7 @@ codegraph complexity              # Per-function cognitive, cyclomatic, nesting,
 codegraph complexity --health -T  # Full Halstead health view (volume, effort, bugs, MI)
 codegraph complexity --sort mi -T # Sort by worst maintainability index
 codegraph complexity --above-threshold -T  # Only functions exceeding warn thresholds
-codegraph communities             # Louvain community detection — natural module boundaries
+codegraph communities             # Leiden community detection — natural module boundaries
 codegraph communities --drift -T  # Drift analysis only — split/merge candidates
 codegraph communities --functions # Function-level community detection
 codegraph check                   # Pass/fail rule engine (exit code 1 on fail)
@@ -553,14 +553,14 @@ Self-measured on every release via CI ([build benchmarks](generated/benchmarks/B
 
 | Metric | Latest |
 |---|---|
-| Build speed (native) | **6.1 ms/file** |
-| Build speed (WASM) | **11.2 ms/file** |
-| Query time | **7ms** |
+| Build speed (native) | **5.3 ms/file** |
+| Build speed (WASM) | **12.2 ms/file** |
+| Query time | **12ms** |
 | No-op rebuild (native) | **12ms** |
-| 1-file rebuild (native) | **353ms** |
-| Query: fn-deps | **1.4ms** |
-| Query: path | **1.3ms** |
-| ~50,000 files (est.) | **~305.0s build** |
+| 1-file rebuild (native) | **432ms** |
+| Query: fn-deps | **1.7ms** |
+| Query: path | **1.6ms** |
+| ~50,000 files (est.) | **~265.0s build** |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 
@@ -770,9 +770,9 @@ See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap a
 3. ~~**Analysis Expansion**~~ — **Complete** (v2.7.0) — complexity metrics, community detection, flow tracing, co-change, manifesto, boundary rules, check, triage, audit, batch, hybrid search
 4. ~~**Deep Analysis & Graph Enrichment**~~ — **Complete** (v3.0.0) — dataflow analysis, intraprocedural CFG, AST node storage, expanded node/edge types, interactive viewer, exports command
 5. ~~**Architectural Refactoring**~~ — **Complete** (v3.1.5) — unified AST analysis, composable MCP, domain errors, builder pipeline, graph model, qualified names, presentation layer, CLI composability
-6. **Resolution Accuracy** — **In Progress** (5 of 6 complete) — type inference, receiver type tracking, dead role sub-categories, resolution benchmarks, `package.json` exports, monorepo workspace resolution
-7. **TypeScript Migration** — **In Progress** (2 of 7 complete) — project setup, core type definitions, leaf → core → orchestration migration
-8. **Native Analysis Acceleration** — move JS-only build phases to Rust, sub-100ms 1-file rebuilds
+6. ~~**Resolution Accuracy**~~ — **Complete** (v3.3.1) — type inference, receiver type tracking, dead role sub-categories, resolution benchmarks, `package.json` exports, monorepo workspace resolution
+7. ~~**TypeScript Migration**~~ — **Complete** (v3.4.0) — all 271 source files migrated from JS to TS, zero `.js` remaining
+8. **Native Analysis Acceleration** — **In Progress** (7 of 8 complete) — JS-only build phases moved to Rust, sub-100ms 1-file rebuilds remaining
 9. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
 10. **Intelligent Embeddings** — LLM-generated descriptions, enhanced embeddings, module summaries
 11. **Natural Language Queries** — `codegraph ask` command, conversational sessions
@@ -791,7 +791,7 @@ npm install
 npm test
 ```
 
-Looking to add a new language? Check out **[Adding a New Language](docs/guides/adding-a-language.md)**.
+Looking to add a new language? Check out **[Adding a New Language](docs/contributing/adding-a-language.md)**.
 
 ## 📄 License
 

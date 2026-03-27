@@ -248,7 +248,7 @@ recall will be questioned during review.
 Adding a new language is one of the most impactful contributions. We have a
 dedicated step-by-step guide:
 
-**[Adding a New Language](docs/guides/adding-a-language.md)**
+**[Adding a New Language](docs/contributing/adding-a-language.md)**
 
 This covers the full dual-engine workflow (WASM + native Rust), including every
 file to modify, code templates, and a verification checklist.
@@ -262,6 +262,14 @@ generics, nested types):
    [tree-sitter playground](https://tree-sitter.github.io/tree-sitter/playground)
 2. Add a `case` in the corresponding `extract<Lang>Symbols()` function
 3. Add a test case in `tests/parsers/<lang>.test.js`
+
+### Harness Engineering (Claude Code Hooks)
+
+If you're working on the Claude Code hooks in `.claude/hooks/`, see the dedicated guide:
+
+**[Harness Engineering Guide](docs/contributing/harness-engineering.md)**
+
+This covers the principles behind AI agent harnesses, how our hooks work, and how to add or modify them.
 
 ### Documentation
 

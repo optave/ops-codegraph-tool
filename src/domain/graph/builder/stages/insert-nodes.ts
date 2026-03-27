@@ -8,7 +8,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type BetterSqlite3 from 'better-sqlite3';
 import { bulkNodeIdsByFile } from '../../../../db/index.js';
-import type { ExtractorOutput, MetadataUpdate, NodeIdRow } from '../../../../types.js';
+import type { ExtractorOutput, MetadataUpdate } from '../../../../types.js';
 import type { PipelineContext } from '../context.js';
 import {
   batchInsertEdges,
@@ -35,6 +35,7 @@ function insertDefinitionsAndExports(
   allSymbols: Map<string, ExtractorOutput>,
 ): void {
   const phase1Rows: unknown[][] = [];
+  const exportKeys: unknown[][] = [];
   for (const [relPath, symbols] of allSymbols) {
     phase1Rows.push([relPath, 'file', relPath, 0, null, null, null, null, null]);
     for (const def of symbols.definitions) {
@@ -54,38 +55,68 @@ function insertDefinitionsAndExports(
     }
     for (const exp of symbols.exports) {
       phase1Rows.push([exp.name, exp.kind, relPath, exp.line, null, null, exp.name, null, null]);
+      exportKeys.push([exp.name, exp.kind, relPath, exp.line]);
     }
   }
   batchInsertNodes(db, phase1Rows);
 
-  // Mark exported symbols
-  const markExported = db.prepare(
-    'UPDATE nodes SET exported = 1 WHERE name = ? AND kind = ? AND file = ? AND line = ?',
-  );
-  for (const [relPath, symbols] of allSymbols) {
-    for (const exp of symbols.exports) {
-      markExported.run(exp.name, exp.kind, relPath, exp.line);
+  // Mark exported symbols in batches (cache prepared statements by chunk size)
+  if (exportKeys.length > 0) {
+    const EXPORT_CHUNK = 500;
+    const exportStmtCache = new Map<number, BetterSqlite3.Statement>();
+    for (let i = 0; i < exportKeys.length; i += EXPORT_CHUNK) {
+      const end = Math.min(i + EXPORT_CHUNK, exportKeys.length);
+      const chunkSize = end - i;
+      let updateStmt = exportStmtCache.get(chunkSize);
+      if (!updateStmt) {
+        const conditions = Array.from(
+          { length: chunkSize },
+          () => '(name = ? AND kind = ? AND file = ? AND line = ?)',
+        ).join(' OR ');
+        updateStmt = db.prepare(`UPDATE nodes SET exported = 1 WHERE ${conditions}`);
+        exportStmtCache.set(chunkSize, updateStmt);
+      }
+      const vals: unknown[] = [];
+      for (let j = i; j < end; j++) {
+        const k = exportKeys[j] as unknown[];
+        vals.push(k[0], k[1], k[2], k[3]);
+      }
+      updateStmt.run(...vals);
     }
   }
 }
 
-// ── Phase 2: Insert children (needs parent IDs) ────────────────────────
+// ── Phase 2+3: Insert children and containment edges (two nodeIdMap passes) ──
 
-function insertChildren(
+function insertChildrenAndEdges(
   db: BetterSqlite3.Database,
   allSymbols: Map<string, ExtractorOutput>,
 ): void {
   const childRows: unknown[][] = [];
+  const edgeRows: unknown[][] = [];
+
   for (const [relPath, symbols] of allSymbols) {
+    // First pass: collect file→def edges and child rows
     const nodeIdMap = new Map<string, number>();
     for (const row of bulkNodeIdsByFile(db, relPath)) {
       nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
     }
+
+    const fileId = nodeIdMap.get(`${relPath}|file|0`);
+
     for (const def of symbols.definitions) {
-      if (!def.children?.length) continue;
       const defId = nodeIdMap.get(`${def.name}|${def.kind}|${def.line}`);
+
+      // Containment edge: file -> definition
+      if (fileId && defId) {
+        edgeRows.push([fileId, defId, 'contains', 1.0, 0]);
+      }
+
+      if (!def.children?.length) continue;
       if (!defId) continue;
+
       for (const child of def.children) {
+        // Child node
         const qualifiedName = `${def.name}.${child.name}`;
         childRows.push([
           child.name,
@@ -101,40 +132,32 @@ function insertChildren(
       }
     }
   }
+
+  // Insert children first (so they exist for edge lookup)
   batchInsertNodes(db, childRows);
-}
 
-// ── Phase 3: Insert containment + parameter_of edges ────────────────────
-
-function insertContainmentEdges(
-  db: BetterSqlite3.Database,
-  allSymbols: Map<string, ExtractorOutput>,
-): void {
-  const edgeRows: unknown[][] = [];
+  // Now re-fetch IDs to include newly-inserted children, then add child edges
   for (const [relPath, symbols] of allSymbols) {
     const nodeIdMap = new Map<string, number>();
     for (const row of bulkNodeIdsByFile(db, relPath)) {
       nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
     }
-    const fileId = nodeIdMap.get(`${relPath}|file|0`);
     for (const def of symbols.definitions) {
+      if (!def.children?.length) continue;
       const defId = nodeIdMap.get(`${def.name}|${def.kind}|${def.line}`);
-      if (fileId && defId) {
-        edgeRows.push([fileId, defId, 'contains', 1.0, 0]);
-      }
-      if (def.children?.length && defId) {
-        for (const child of def.children) {
-          const childId = nodeIdMap.get(`${child.name}|${child.kind}|${child.line}`);
-          if (childId) {
-            edgeRows.push([defId, childId, 'contains', 1.0, 0]);
-            if (child.kind === 'parameter') {
-              edgeRows.push([childId, defId, 'parameter_of', 1.0, 0]);
-            }
+      if (!defId) continue;
+      for (const child of def.children) {
+        const childId = nodeIdMap.get(`${child.name}|${child.kind}|${child.line}`);
+        if (childId) {
+          edgeRows.push([defId, childId, 'contains', 1.0, 0]);
+          if (child.kind === 'parameter') {
+            edgeRows.push([childId, defId, 'parameter_of', 1.0, 0]);
           }
         }
       }
     }
   }
+
   batchInsertEdges(db, edgeRows);
 }
 
@@ -217,8 +240,7 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
 
   const insertAll = db.transaction(() => {
     insertDefinitionsAndExports(db, allSymbols);
-    insertChildren(db, allSymbols);
-    insertContainmentEdges(db, allSymbols);
+    insertChildrenAndEdges(db, allSymbols);
     updateFileHashes(db, allSymbols, precomputedData, metadataUpdates, rootDir, upsertHash);
   });
 

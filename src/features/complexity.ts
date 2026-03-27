@@ -12,15 +12,10 @@ import {
 } from '../ast-analysis/shared.js';
 import { walkWithVisitors } from '../ast-analysis/visitor.js';
 import { createComplexityVisitor } from '../ast-analysis/visitors/complexity-visitor.js';
-import { getFunctionNodeId, openReadonlyOrFail } from '../db/index.js';
-import { buildFileConditionSQL } from '../db/query-builder.js';
-import { loadConfig } from '../infrastructure/config.js';
+import { getFunctionNodeId } from '../db/index.js';
 import { debug, info } from '../infrastructure/logger.js';
-import { isTestFile } from '../infrastructure/test-filter.js';
-import { paginateResult } from '../shared/paginate.js';
 import type {
   BetterSqlite3Database,
-  CodegraphConfig,
   ComplexityRules,
   HalsteadDerivedMetrics,
   HalsteadRules,
@@ -50,18 +45,18 @@ export function computeHalsteadMetrics(
     if (!node) return;
 
     // Skip type annotation subtrees
-    if (rules!.skipTypes.has(node.type)) return;
+    if (rules?.skipTypes.has(node.type)) return;
 
     // Compound operators (non-leaf): count the node type as an operator
-    if (rules!.compoundOperators.has(node.type)) {
+    if (rules?.compoundOperators.has(node.type)) {
       operators.set(node.type, (operators.get(node.type) || 0) + 1);
     }
 
     // Leaf nodes: classify as operator or operand
     if (node.childCount === 0) {
-      if (rules!.operatorLeafTypes.has(node.type)) {
+      if (rules?.operatorLeafTypes.has(node.type)) {
         operators.set(node.type, (operators.get(node.type) || 0) + 1);
-      } else if (rules!.operandLeafTypes.has(node.type)) {
+      } else if (rules?.operandLeafTypes.has(node.type)) {
         const text = node.text;
         operands.set(text, (operands.get(text) || 0) + 1);
       }
@@ -134,9 +129,9 @@ export function computeFunctionComplexity(
     if (nestingLevel > maxNesting) maxNesting = nestingLevel;
 
     // Handle logical operators in binary expressions
-    if (type === rules!.logicalNodeType) {
+    if (type === rules?.logicalNodeType) {
       const op = node.child(1)?.type;
-      if (op && rules!.logicalOperators.has(op)) {
+      if (op && rules?.logicalOperators.has(op)) {
         // Cyclomatic: +1 for every logical operator
         cyclomatic++;
 
@@ -144,7 +139,7 @@ export function computeFunctionComplexity(
         // Walk up to check if parent is same type with same operator
         const parent = node.parent;
         let sameSequence = false;
-        if (parent && parent.type === rules!.logicalNodeType) {
+        if (parent && parent.type === rules?.logicalNodeType) {
           const parentOp = parent.child(1)?.type;
           if (parentOp === op) {
             sameSequence = true;
@@ -163,16 +158,16 @@ export function computeFunctionComplexity(
     }
 
     // Handle optional chaining (cyclomatic only)
-    if (type === rules!.optionalChainType) {
+    if (type === rules?.optionalChainType) {
       cyclomatic++;
     }
 
     // Handle branch/control flow nodes (skip keyword leaf tokens like Ruby's `if`)
-    if (rules!.branchNodes.has(type) && node.childCount > 0) {
+    if (rules?.branchNodes.has(type) && node.childCount > 0) {
       // Pattern A: else clause wraps if (JS/C#/Rust)
-      if (rules!.elseNodeType && type === rules!.elseNodeType) {
+      if (rules?.elseNodeType && type === rules?.elseNodeType) {
         const firstChild = node.namedChild(0);
-        if (firstChild && firstChild.type === rules!.ifNodeType) {
+        if (firstChild && firstChild.type === rules?.ifNodeType) {
           // else-if: the if_statement child handles its own increment
           for (let i = 0; i < node.childCount; i++) {
             walk(node.child(i), nestingLevel, false);
@@ -188,7 +183,7 @@ export function computeFunctionComplexity(
       }
 
       // Pattern B: explicit elif node (Python/Ruby/PHP)
-      if (rules!.elifNodeType && type === rules!.elifNodeType) {
+      if (rules?.elifNodeType && type === rules?.elifNodeType) {
         cognitive++;
         cyclomatic++;
         for (let i = 0; i < node.childCount; i++) {
@@ -199,15 +194,15 @@ export function computeFunctionComplexity(
 
       // Detect else-if via Pattern A or C
       let isElseIf = false;
-      if (type === rules!.ifNodeType) {
-        if (rules!.elseViaAlternative) {
+      if (type === rules?.ifNodeType) {
+        if (rules?.elseViaAlternative) {
           // Pattern C (Go/Java): if_statement is the alternative of parent if_statement
           isElseIf =
-            node.parent?.type === rules!.ifNodeType &&
+            node.parent?.type === rules?.ifNodeType &&
             node.parent.childForFieldName('alternative')?.id === node.id;
-        } else if (rules!.elseNodeType) {
+        } else if (rules?.elseNodeType) {
           // Pattern A (JS/C#/Rust): if_statement inside else_clause
-          isElseIf = node.parent?.type === rules!.elseNodeType;
+          isElseIf = node.parent?.type === rules?.elseNodeType;
         }
       }
 
@@ -225,11 +220,11 @@ export function computeFunctionComplexity(
       cyclomatic++;
 
       // Switch-like nodes don't add cyclomatic themselves (cases do)
-      if (rules!.switchLikeNodes?.has(type)) {
+      if (rules?.switchLikeNodes?.has(type)) {
         cyclomatic--; // Undo the ++ above; cases handle cyclomatic
       }
 
-      if (rules!.nestingNodes.has(type)) {
+      if (rules?.nestingNodes.has(type)) {
         for (let i = 0; i < node.childCount; i++) {
           walk(node.child(i), nestingLevel + 1, false);
         }
@@ -239,9 +234,9 @@ export function computeFunctionComplexity(
 
     // Pattern C plain else: block that is the alternative of an if_statement (Go/Java)
     if (
-      rules!.elseViaAlternative &&
-      type !== rules!.ifNodeType &&
-      node.parent?.type === rules!.ifNodeType &&
+      rules?.elseViaAlternative &&
+      type !== rules?.ifNodeType &&
+      node.parent?.type === rules?.ifNodeType &&
       node.parent.childForFieldName('alternative')?.id === node.id
     ) {
       cognitive++;
@@ -252,12 +247,12 @@ export function computeFunctionComplexity(
     }
 
     // Handle case nodes (cyclomatic only, skip keyword leaves)
-    if (rules!.caseNodes.has(type) && node.childCount > 0) {
+    if (rules?.caseNodes.has(type) && node.childCount > 0) {
       cyclomatic++;
     }
 
     // Handle nested function definitions (increase nesting)
-    if (!isTopFunction && rules!.functionNodes.has(type)) {
+    if (!isTopFunction && rules?.functionNodes.has(type)) {
       for (let i = 0; i < node.childCount; i++) {
         walk(node.child(i), nestingLevel + 1, false);
       }
@@ -305,7 +300,7 @@ export function computeAllMetrics(
     nestingNodeTypes: nestingNodes,
   });
 
-  const rawResult = results['complexity'] as {
+  const rawResult = results.complexity as {
     cognitive: number;
     cyclomatic: number;
     maxNesting: number;
@@ -359,8 +354,16 @@ async function initWasmParsersIfNeeded(
     if (!symbols._tree) {
       const ext = path.extname(relPath).toLowerCase();
       if (!COMPLEXITY_EXTENSIONS.has(ext)) continue;
+      // Only consider definitions with real function bodies (non-dotted names,
+      // multi-line span). Interface/type property signatures are extracted as
+      // methods but correctly lack complexity data from the native engine.
       const hasPrecomputed = symbols.definitions.every(
-        (d) => (d.kind !== 'function' && d.kind !== 'method') || d.complexity,
+        (d) =>
+          (d.kind !== 'function' && d.kind !== 'method') ||
+          d.complexity ||
+          d.name.includes('.') ||
+          !d.endLine ||
+          d.endLine <= d.line,
       );
       if (!hasPrecomputed) {
         const { createParsers } = await import('../domain/parser.js');
@@ -379,7 +382,6 @@ function getTreeForFile(
   rootDir: string,
   parsers: unknown,
   extToLang: Map<string, string> | null,
-  // biome-ignore lint/suspicious/noExplicitAny: dynamic import from parser.js
   getParser: (parsers: any, absPath: string) => any,
 ): { tree: { rootNode: TreeSitterNode }; langId: string } | null {
   let tree = symbols._tree;
@@ -427,13 +429,13 @@ function upsertPrecomputedComplexity(
 ): number {
   const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
   if (!nodeId) return 0;
-  const ch = def.complexity!.halstead;
-  const cl = def.complexity!.loc;
+  const ch = def.complexity?.halstead;
+  const cl = def.complexity?.loc;
   upsert.run(
     nodeId,
-    def.complexity!.cognitive,
-    def.complexity!.cyclomatic,
-    def.complexity!.maxNesting ?? 0,
+    def.complexity?.cognitive,
+    def.complexity?.cyclomatic,
+    def.complexity?.maxNesting ?? 0,
     cl ? cl.loc : 0,
     cl ? cl.sloc : 0,
     cl ? cl.commentLines : 0,
@@ -447,7 +449,7 @@ function upsertPrecomputedComplexity(
     ch ? ch.difficulty : 0,
     ch ? ch.effort : 0,
     ch ? ch.bugs : 0,
-    def.complexity!.maintainabilityIndex ?? 0,
+    def.complexity?.maintainabilityIndex ?? 0,
   );
   return 1;
 }
@@ -547,356 +549,7 @@ export async function buildComplexityMetrics(
   }
 }
 
-// ─── Query-Time Functions ─────────────────────────────────────────────────
-
-interface ComplexityRow {
-  name: string;
-  kind: string;
-  file: string;
-  line: number;
-  end_line: number | null;
-  cognitive: number;
-  cyclomatic: number;
-  max_nesting: number;
-  loc: number;
-  sloc: number;
-  maintainability_index: number;
-  halstead_volume: number;
-  halstead_difficulty: number;
-  halstead_effort: number;
-  halstead_bugs: number;
-}
-
-export function complexityData(
-  customDbPath?: string,
-  opts: {
-    target?: string;
-    limit?: number;
-    sort?: string;
-    aboveThreshold?: boolean;
-    file?: string;
-    kind?: string;
-    noTests?: boolean;
-    config?: CodegraphConfig;
-    offset?: number;
-  } = {},
-): Record<string, unknown> {
-  const db = openReadonlyOrFail(customDbPath);
-  try {
-    const sort = opts.sort || 'cognitive';
-    const noTests = opts.noTests || false;
-    const aboveThreshold = opts.aboveThreshold || false;
-    const target = opts.target || null;
-    const fileFilter = opts.file || null;
-    const kindFilter = opts.kind || null;
-
-    // Load thresholds from config
-    const config = opts.config || loadConfig(process.cwd());
-    // biome-ignore lint/suspicious/noExplicitAny: thresholds come from config with dynamic keys
-    const thresholds: any = config.manifesto?.rules || {
-      cognitive: { warn: 15, fail: null },
-      cyclomatic: { warn: 10, fail: null },
-      maxNesting: { warn: 4, fail: null },
-      maintainabilityIndex: { warn: 20, fail: null },
-    };
-
-    // Build query
-    let where = "WHERE n.kind IN ('function','method')";
-    const params: unknown[] = [];
-
-    if (noTests) {
-      where += ` AND n.file NOT LIKE '%.test.%'
-       AND n.file NOT LIKE '%.spec.%'
-       AND n.file NOT LIKE '%__test__%'
-       AND n.file NOT LIKE '%__tests__%'
-       AND n.file NOT LIKE '%.stories.%'`;
-    }
-    if (target) {
-      where += ' AND n.name LIKE ?';
-      params.push(`%${target}%`);
-    }
-    {
-      const fc = buildFileConditionSQL(fileFilter as string, 'n.file');
-      where += fc.sql;
-      params.push(...fc.params);
-    }
-    if (kindFilter) {
-      where += ' AND n.kind = ?';
-      params.push(kindFilter);
-    }
-
-    const isValidThreshold = (v: unknown): v is number =>
-      typeof v === 'number' && Number.isFinite(v);
-
-    let having = '';
-    if (aboveThreshold) {
-      const conditions: string[] = [];
-      if (isValidThreshold(thresholds.cognitive?.warn)) {
-        conditions.push(`fc.cognitive >= ${thresholds.cognitive.warn}`);
-      }
-      if (isValidThreshold(thresholds.cyclomatic?.warn)) {
-        conditions.push(`fc.cyclomatic >= ${thresholds.cyclomatic.warn}`);
-      }
-      if (isValidThreshold(thresholds.maxNesting?.warn)) {
-        conditions.push(`fc.max_nesting >= ${thresholds.maxNesting.warn}`);
-      }
-      if (isValidThreshold(thresholds.maintainabilityIndex?.warn)) {
-        conditions.push(
-          `fc.maintainability_index > 0 AND fc.maintainability_index <= ${thresholds.maintainabilityIndex.warn}`,
-        );
-      }
-      if (conditions.length > 0) {
-        having = `AND (${conditions.join(' OR ')})`;
-      }
-    }
-
-    const orderMap: Record<string, string> = {
-      cognitive: 'fc.cognitive DESC',
-      cyclomatic: 'fc.cyclomatic DESC',
-      nesting: 'fc.max_nesting DESC',
-      mi: 'fc.maintainability_index ASC',
-      volume: 'fc.halstead_volume DESC',
-      effort: 'fc.halstead_effort DESC',
-      bugs: 'fc.halstead_bugs DESC',
-      loc: 'fc.loc DESC',
-    };
-    const orderBy = orderMap[sort] || 'fc.cognitive DESC';
-
-    let rows: ComplexityRow[];
-    try {
-      rows = db
-        .prepare<ComplexityRow>(
-          `SELECT n.name, n.kind, n.file, n.line, n.end_line,
-                fc.cognitive, fc.cyclomatic, fc.max_nesting,
-                fc.loc, fc.sloc, fc.maintainability_index,
-                fc.halstead_volume, fc.halstead_difficulty, fc.halstead_effort, fc.halstead_bugs
-         FROM function_complexity fc
-         JOIN nodes n ON fc.node_id = n.id
-         ${where} ${having}
-         ORDER BY ${orderBy}`,
-        )
-        .all(...params);
-    } catch (e: unknown) {
-      debug(`complexity query failed (table may not exist): ${(e as Error).message}`);
-      // Check if graph has nodes even though complexity table is missing/empty
-      let hasGraph = false;
-      try {
-        hasGraph = db.prepare<{ c: number }>('SELECT COUNT(*) as c FROM nodes').get()!.c > 0;
-      } catch (e2: unknown) {
-        debug(`nodes table check failed: ${(e2 as Error).message}`);
-      }
-      return { functions: [], summary: null, thresholds, hasGraph };
-    }
-
-    // Post-filter test files if needed (belt-and-suspenders for isTestFile)
-    const filtered = noTests ? rows.filter((r) => !isTestFile(r.file)) : rows;
-
-    const functions = filtered.map((r) => {
-      const exceeds: string[] = [];
-      if (isValidThreshold(thresholds.cognitive?.warn) && r.cognitive >= thresholds.cognitive.warn!)
-        exceeds.push('cognitive');
-      if (
-        isValidThreshold(thresholds.cyclomatic?.warn) &&
-        r.cyclomatic >= thresholds.cyclomatic.warn!
-      )
-        exceeds.push('cyclomatic');
-      if (
-        isValidThreshold(thresholds.maxNesting?.warn) &&
-        r.max_nesting >= thresholds.maxNesting.warn!
-      )
-        exceeds.push('maxNesting');
-      if (
-        isValidThreshold(thresholds.maintainabilityIndex?.warn) &&
-        r.maintainability_index > 0 &&
-        r.maintainability_index <= thresholds.maintainabilityIndex.warn!
-      )
-        exceeds.push('maintainabilityIndex');
-
-      return {
-        name: r.name,
-        kind: r.kind,
-        file: r.file,
-        line: r.line,
-        endLine: r.end_line || null,
-        cognitive: r.cognitive,
-        cyclomatic: r.cyclomatic,
-        maxNesting: r.max_nesting,
-        loc: r.loc || 0,
-        sloc: r.sloc || 0,
-        maintainabilityIndex: r.maintainability_index || 0,
-        halstead: {
-          volume: r.halstead_volume || 0,
-          difficulty: r.halstead_difficulty || 0,
-          effort: r.halstead_effort || 0,
-          bugs: r.halstead_bugs || 0,
-        },
-        exceeds: exceeds.length > 0 ? exceeds : undefined,
-      };
-    });
-
-    // Summary stats
-    let summary: Record<string, unknown> | null = null;
-    try {
-      const allRows = db
-        .prepare<{
-          cognitive: number;
-          cyclomatic: number;
-          max_nesting: number;
-          maintainability_index: number;
-        }>(
-          `SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.maintainability_index
-         FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id
-         WHERE n.kind IN ('function','method')
-         ${noTests ? `AND n.file NOT LIKE '%.test.%' AND n.file NOT LIKE '%.spec.%' AND n.file NOT LIKE '%__test__%' AND n.file NOT LIKE '%__tests__%' AND n.file NOT LIKE '%.stories.%'` : ''}`,
-        )
-        .all();
-
-      if (allRows.length > 0) {
-        const miValues = allRows.map((r) => r.maintainability_index || 0);
-        summary = {
-          analyzed: allRows.length,
-          avgCognitive: +(allRows.reduce((s, r) => s + r.cognitive, 0) / allRows.length).toFixed(1),
-          avgCyclomatic: +(allRows.reduce((s, r) => s + r.cyclomatic, 0) / allRows.length).toFixed(
-            1,
-          ),
-          maxCognitive: Math.max(...allRows.map((r) => r.cognitive)),
-          maxCyclomatic: Math.max(...allRows.map((r) => r.cyclomatic)),
-          avgMI: +(miValues.reduce((s, v) => s + v, 0) / miValues.length).toFixed(1),
-          minMI: +Math.min(...miValues).toFixed(1),
-          aboveWarn: allRows.filter(
-            (r) =>
-              (isValidThreshold(thresholds.cognitive?.warn) &&
-                r.cognitive >= thresholds.cognitive.warn!) ||
-              (isValidThreshold(thresholds.cyclomatic?.warn) &&
-                r.cyclomatic >= thresholds.cyclomatic.warn!) ||
-              (isValidThreshold(thresholds.maxNesting?.warn) &&
-                r.max_nesting >= thresholds.maxNesting.warn!) ||
-              (isValidThreshold(thresholds.maintainabilityIndex?.warn) &&
-                r.maintainability_index > 0 &&
-                r.maintainability_index <= thresholds.maintainabilityIndex.warn!),
-          ).length,
-        };
-      }
-    } catch (e: unknown) {
-      debug(`complexity summary query failed: ${(e as Error).message}`);
-    }
-
-    // When summary is null (no complexity rows), check if graph has nodes
-    let hasGraph = false;
-    if (summary === null) {
-      try {
-        hasGraph = db.prepare<{ c: number }>('SELECT COUNT(*) as c FROM nodes').get()!.c > 0;
-      } catch (e: unknown) {
-        debug(`nodes table check failed: ${(e as Error).message}`);
-      }
-    }
-
-    const base = { functions, summary, thresholds, hasGraph };
-    return paginateResult(base, 'functions', { limit: opts.limit, offset: opts.offset });
-  } finally {
-    db.close();
-  }
-}
-
-interface IterComplexityRow {
-  name: string;
-  kind: string;
-  file: string;
-  line: number;
-  end_line: number | null;
-  cognitive: number;
-  cyclomatic: number;
-  max_nesting: number;
-  loc: number;
-  sloc: number;
-}
-
-export function* iterComplexity(
-  customDbPath?: string,
-  opts: {
-    noTests?: boolean;
-    file?: string;
-    target?: string;
-    kind?: string;
-    sort?: string;
-  } = {},
-): Generator<{
-  name: string;
-  kind: string;
-  file: string;
-  line: number;
-  endLine: number | null;
-  cognitive: number;
-  cyclomatic: number;
-  maxNesting: number;
-  loc: number;
-  sloc: number;
-}> {
-  const db = openReadonlyOrFail(customDbPath);
-  try {
-    const noTests = opts.noTests || false;
-    const sort = opts.sort || 'cognitive';
-
-    let where = "WHERE n.kind IN ('function','method')";
-    const params: unknown[] = [];
-
-    if (noTests) {
-      where += ` AND n.file NOT LIKE '%.test.%'
-         AND n.file NOT LIKE '%.spec.%'
-         AND n.file NOT LIKE '%__test__%'
-         AND n.file NOT LIKE '%__tests__%'
-         AND n.file NOT LIKE '%.stories.%'`;
-    }
-    if (opts.target) {
-      where += ' AND n.name LIKE ?';
-      params.push(`%${opts.target}%`);
-    }
-    {
-      const fc = buildFileConditionSQL(opts.file as string, 'n.file');
-      where += fc.sql;
-      params.push(...fc.params);
-    }
-    if (opts.kind) {
-      where += ' AND n.kind = ?';
-      params.push(opts.kind);
-    }
-
-    const orderMap: Record<string, string> = {
-      cognitive: 'fc.cognitive DESC',
-      cyclomatic: 'fc.cyclomatic DESC',
-      nesting: 'fc.max_nesting DESC',
-      mi: 'fc.maintainability_index ASC',
-      volume: 'fc.halstead_volume DESC',
-      effort: 'fc.halstead_effort DESC',
-      bugs: 'fc.halstead_bugs DESC',
-      loc: 'fc.loc DESC',
-    };
-    const orderBy = orderMap[sort] || 'fc.cognitive DESC';
-
-    const stmt = db.prepare<IterComplexityRow>(
-      `SELECT n.name, n.kind, n.file, n.line, n.end_line,
-              fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.loc, fc.sloc
-       FROM function_complexity fc
-       JOIN nodes n ON fc.node_id = n.id
-       ${where}
-       ORDER BY ${orderBy}`,
-    );
-    for (const r of stmt.iterate(...params)) {
-      if (noTests && isTestFile(r.file)) continue;
-      yield {
-        name: r.name,
-        kind: r.kind,
-        file: r.file,
-        line: r.line,
-        endLine: r.end_line || null,
-        cognitive: r.cognitive,
-        cyclomatic: r.cyclomatic,
-        maxNesting: r.max_nesting,
-        loc: r.loc || 0,
-        sloc: r.sloc || 0,
-      };
-    }
-  } finally {
-    db.close();
-  }
-}
+// ─── Query-Time Functions (re-exported from complexity-query.ts) ──────────
+// Split to separate query-time concerns (DB reads, filtering, pagination)
+// from compute-time concerns (AST traversal, metric algorithms).
+export { complexityData, iterComplexity } from './complexity-query.js';

@@ -37,31 +37,54 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
     const existingFiles = db
       .prepare("SELECT DISTINCT file FROM nodes WHERE kind = 'file'")
       .all() as Array<{ file: string }>;
-    const defsByFile = db.prepare(
-      "SELECT name, kind, line FROM nodes WHERE file = ? AND kind != 'file' AND kind != 'directory'",
-    );
-    const importCountByFile = db.prepare(
-      `SELECT COUNT(DISTINCT n2.file) AS cnt FROM edges e
-       JOIN nodes n1 ON e.source_id = n1.id
-       JOIN nodes n2 ON e.target_id = n2.id
-       WHERE n1.file = ? AND e.kind = 'imports'`,
-    );
-    const lineCountByFile = db.prepare(
-      `SELECT n.name AS file, m.line_count
-       FROM node_metrics m JOIN nodes n ON m.node_id = n.id
-       WHERE n.kind = 'file'`,
-    );
+
+    // Batch load: all definitions, import counts, and line counts in single queries
+    const allDefs = db
+      .prepare(
+        "SELECT file, name, kind, line FROM nodes WHERE kind != 'file' AND kind != 'directory'",
+      )
+      .all() as Array<{ file: string; name: string; kind: string; line: number }>;
+    const defsByFileMap = new Map<string, Array<{ name: string; kind: string; line: number }>>();
+    for (const row of allDefs) {
+      let arr = defsByFileMap.get(row.file);
+      if (!arr) {
+        arr = [];
+        defsByFileMap.set(row.file, arr);
+      }
+      arr.push({ name: row.name, kind: row.kind, line: row.line });
+    }
+
+    const allImportCounts = db
+      .prepare(
+        `SELECT n1.file, COUNT(DISTINCT n2.file) AS cnt FROM edges e
+         JOIN nodes n1 ON e.source_id = n1.id
+         JOIN nodes n2 ON e.target_id = n2.id
+         WHERE e.kind = 'imports'
+         GROUP BY n1.file`,
+      )
+      .all() as Array<{ file: string; cnt: number }>;
+    const importCountMap = new Map<string, number>();
+    for (const row of allImportCounts) {
+      importCountMap.set(row.file, row.cnt);
+    }
+
     const cachedLineCounts = new Map<string, number>();
-    for (const row of lineCountByFile.all() as Array<{ file: string; line_count: number }>) {
+    for (const row of db
+      .prepare(
+        `SELECT n.name AS file, m.line_count
+         FROM node_metrics m JOIN nodes n ON m.node_id = n.id
+         WHERE n.kind = 'file'`,
+      )
+      .all() as Array<{ file: string; line_count: number }>) {
       cachedLineCounts.set(row.file, row.line_count);
     }
+
     let loadedFromDb = 0;
     for (const { file: relPath } of existingFiles) {
       if (!fileSymbols.has(relPath)) {
-        const importCount =
-          (importCountByFile.get(relPath) as { cnt: number } | undefined)?.cnt || 0;
+        const importCount = importCountMap.get(relPath) || 0;
         fileSymbols.set(relPath, {
-          definitions: defsByFile.all(relPath),
+          definitions: defsByFileMap.get(relPath) || [],
           imports: new Array(importCount) as unknown as ExtractorOutput['imports'],
           exports: [],
         } as unknown as ExtractorOutput);
@@ -111,15 +134,21 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
   }
   ctx.timing.structureMs = performance.now() - t0;
 
-  // Classify node roles
+  // Classify node roles (incremental: only reclassify changed files' nodes)
   const t1 = performance.now();
   try {
     const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
-      classifyNodeRoles: (db: PipelineContext['db']) => Record<string, number>;
+      classifyNodeRoles: (
+        db: PipelineContext['db'],
+        changedFiles?: string[] | null,
+      ) => Record<string, number>;
     };
-    const roleSummary = classifyNodeRoles(db);
+    const changedFileList = isFullBuild ? null : [...allSymbols.keys()];
+    const roleSummary = classifyNodeRoles(db, changedFileList);
     debug(
-      `Roles: ${Object.entries(roleSummary)
+      `Roles${changedFileList ? ` (incremental, ${changedFileList.length} files)` : ''}: ${Object.entries(
+        roleSummary,
+      )
         .map(([r, c]) => `${r}=${c}`)
         .join(', ')}`,
     );

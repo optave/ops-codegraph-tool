@@ -115,7 +115,6 @@ export interface OutputOpts {
 }
 
 export function outputResult(
-  // biome-ignore lint/suspicious/noExplicitAny: accepts any data shape from features
   data: Record<string, any>,
   field: string | null,
   opts: OutputOpts,

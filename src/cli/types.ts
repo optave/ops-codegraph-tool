@@ -27,7 +27,7 @@ export interface CommandDefinition {
   description: string;
   queryOpts?: boolean;
   options?: Array<[string, string, ...unknown[]]>;
-  validate?(args: string[], opts: CommandOpts, ctx: CliContext): string | void;
+  validate?(args: string[], opts: CommandOpts, ctx: CliContext): string | undefined;
   execute?(args: string[], opts: CommandOpts, ctx: CliContext): void | Promise<void>;
   subcommands?: CommandDefinition[];
 }

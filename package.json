@@ -1,6 +1,6 @@
 {
   "name": "@optave/codegraph",
-  "version": "3.3.1",
+  "version": "3.4.0",
   "description": "Local code graph CLI — parse codebases with tree-sitter, build dependency graphs, query them",
   "type": "module",
   "main": "dist/index.js",
@@ -26,26 +26,27 @@
     "README.md"
   ],
   "engines": {
-    "node": ">=20"
+    "node": ">=22.6"
   },
   "scripts": {
-    "build": "tsc",
-    "build:wasm": "node scripts/build-wasm.js",
+    "build": "tsc && node -e \"require('fs').writeFileSync('dist/index.cjs',require('fs').readFileSync('src/index.cjs','utf8').replaceAll('./index.ts','./index.js'))\"",
+    "build:wasm": "node scripts/node-ts.js scripts/build-wasm.ts",
     "typecheck": "tsc --noEmit",
-    "verify-imports": "node scripts/verify-imports.js",
-    "test": "node scripts/test.js run",
-    "test:watch": "node scripts/test.js",
-    "test:coverage": "node scripts/test.js run --coverage",
+    "verify-imports": "node scripts/node-ts.js scripts/verify-imports.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "biome check src/ tests/",
     "lint:fix": "biome check --write src/ tests/",
     "format": "biome format --write src/ tests/",
     "prepack": "npm run build",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true});require('fs').rmSync('.tsbuildinfo',{force:true})\"",
     "prepare": "npm run build:wasm && npm run build && husky && npm run deps:tree",
-    "deps:tree": "node scripts/gen-deps.cjs",
+    "deps:tree": "node scripts/node-ts.js scripts/gen-deps.ts",
+    "benchmark": "node --experimental-strip-types --import ./scripts/ts-resolve-loader.js scripts/benchmark.ts",
     "release": "commit-and-tag-version",
     "release:dry-run": "commit-and-tag-version --dry-run",
-    "version": "node scripts/sync-native-versions.js && git add package.json crates/codegraph-core/Cargo.toml"
+    "version": "node scripts/node-ts.js scripts/sync-native-versions.ts && git add package.json crates/codegraph-core/Cargo.toml"
   },
   "keywords": [
     "codegraph",
@@ -80,12 +81,12 @@
   },
   "optionalDependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@optave/codegraph-darwin-arm64": "3.3.1",
-    "@optave/codegraph-darwin-x64": "3.3.1",
-    "@optave/codegraph-linux-arm64-gnu": "3.3.1",
-    "@optave/codegraph-linux-x64-gnu": "3.3.1",
-    "@optave/codegraph-linux-x64-musl": "3.3.1",
-    "@optave/codegraph-win32-x64-msvc": "3.3.1"
+    "@optave/codegraph-darwin-arm64": "3.4.0",
+    "@optave/codegraph-darwin-x64": "3.4.0",
+    "@optave/codegraph-linux-arm64-gnu": "3.4.0",
+    "@optave/codegraph-linux-x64-gnu": "3.4.0",
+    "@optave/codegraph-linux-x64-musl": "3.4.0",
+    "@optave/codegraph-win32-x64-msvc": "3.4.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",

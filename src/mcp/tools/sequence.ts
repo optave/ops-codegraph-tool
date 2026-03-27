@@ -23,7 +23,7 @@ export async function handler(args: SequenceArgs, ctx: McpToolContext): Promise<
     kind: args.kind,
     dataflow: args.dataflow,
     noTests: args.no_tests,
-    limit: Math.min(args.limit ?? MCP_DEFAULTS['execution_flow'] ?? 100, ctx.MCP_MAX_LIMIT),
+    limit: Math.min(args.limit ?? MCP_DEFAULTS.execution_flow ?? 100, ctx.MCP_MAX_LIMIT),
     offset: effectiveOffset(args),
   });
   return args.format === 'json' ? seqResult : { text: sequenceToMermaid(seqResult), ...seqResult };

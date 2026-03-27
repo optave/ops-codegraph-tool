@@ -50,12 +50,12 @@ function buildCommunityObjects(
     const memberData: CommunityMember[] = [];
     for (const key of members) {
       const attrs = graph.getNodeAttrs(key)!;
-      const dir = getDirectory(attrs['file'] as string);
+      const dir = getDirectory(attrs.file as string);
       dirCounts[dir] = (dirCounts[dir] || 0) + 1;
       memberData.push({
-        name: attrs['label'] as string,
-        file: attrs['file'] as string,
-        ...(attrs['kind'] ? { kind: attrs['kind'] as string } : {}),
+        name: attrs.label as string,
+        file: attrs.file as string,
+        ...(attrs.kind ? { kind: attrs.kind as string } : {}),
       });
     }
 

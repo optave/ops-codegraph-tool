@@ -62,8 +62,7 @@ export function buildFunctionCFG(functionNode: TreeSitterNode, langId: string): 
   };
 
   const results = walkWithVisitors(functionNode, [visitor], langId, walkerOpts);
-  // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
-  const cfgResults = (results['cfg'] || []) as Array<{
+  const cfgResults = (results.cfg || []) as Array<{
     funcNode: TreeSitterNode;
     blocks: CfgBuildBlock[];
     edges: CfgBuildEdge[];
@@ -84,6 +83,24 @@ interface FileSymbols {
   _langId?: string;
 }
 
+/**
+ * Check whether all function/method definitions in a single file already
+ * have native CFG data (blocks populated by the Rust extractor).
+ * cfg === null means no body (expected); cfg with empty blocks means not computed.
+ */
+function hasNativeCfgForFile(symbols: FileSymbols): boolean {
+  return symbols.definitions
+    .filter(
+      (d) =>
+        (d.kind === 'function' || d.kind === 'method') &&
+        d.line > 0 &&
+        d.endLine != null &&
+        d.endLine > d.line &&
+        !d.name.includes('.'),
+    )
+    .every((d) => d.cfg === null || (d.cfg?.blocks?.length ?? 0) > 0);
+}
+
 async function initCfgParsers(
   fileSymbols: Map<string, FileSymbols>,
 ): Promise<{ parsers: unknown; getParserFn: unknown }> {
@@ -93,10 +110,7 @@ async function initCfgParsers(
     if (!symbols._tree) {
       const ext = path.extname(relPath).toLowerCase();
       if (CFG_EXTENSIONS.has(ext)) {
-        const hasNativeCfg = symbols.definitions
-          .filter((d) => (d.kind === 'function' || d.kind === 'method') && d.line)
-          .every((d) => d.cfg === null || (d.cfg?.blocks?.length ?? 0) > 0);
-        if (!hasNativeCfg) {
+        if (!hasNativeCfgForFile(symbols)) {
           needsFallback = true;
           break;
         }
@@ -129,11 +143,7 @@ function getTreeAndLang(
   let tree = symbols._tree;
   let langId = symbols._langId;
 
-  const allNative = symbols.definitions
-    .filter((d) => (d.kind === 'function' || d.kind === 'method') && d.line)
-    .every((d) => d.cfg === null || (d.cfg?.blocks?.length ?? 0) > 0);
-
-  if (!tree && !allNative) {
+  if (!tree && !hasNativeCfgForFile(symbols)) {
     if (!getParserFn) return null;
     langId = extToLang.get(ext);
     if (!langId || !CFG_RULES.has(langId)) return null;
@@ -202,15 +212,14 @@ function buildVisitorCfgMap(
       return nameNode ? nameNode.text : null;
     },
   };
-  const walkResults = walkWithVisitors(tree!.rootNode, [visitor], langId, walkerOpts);
-  // biome-ignore lint/complexity/useLiteralKeys: noPropertyAccessFromIndexSignature requires bracket notation
-  const cfgResults = (walkResults['cfg'] || []) as VisitorCfgResult[];
+  const walkResults = walkWithVisitors(tree?.rootNode, [visitor], langId, walkerOpts);
+  const cfgResults = (walkResults.cfg || []) as VisitorCfgResult[];
   const visitorCfgByLine = new Map<number, VisitorCfgResult[]>();
   for (const r of cfgResults) {
     if (r.funcNode) {
       const line = r.funcNode.startPosition.row + 1;
       if (!visitorCfgByLine.has(line)) visitorCfgByLine.set(line, []);
-      visitorCfgByLine.get(line)!.push(r);
+      visitorCfgByLine.get(line)?.push(r);
     }
   }
   return visitorCfgByLine;
@@ -246,14 +255,43 @@ function persistCfg(
 
 // ─── Build-Time: Compute CFG for Changed Files ─────────────────────────
 
+/**
+ * Check if all function/method definitions across all files already have
+ * native CFG data (blocks array populated by the Rust extractor).
+ * When true, the WASM parser and JS CFG visitor can be fully bypassed.
+ */
+function allCfgNative(fileSymbols: Map<string, FileSymbols>): boolean {
+  let hasCfgFile = false;
+  for (const [relPath, symbols] of fileSymbols) {
+    if (symbols._tree) continue; // already parsed via WASM; will use _tree in slow path
+    const ext = path.extname(relPath).toLowerCase();
+    if (!CFG_EXTENSIONS.has(ext)) continue;
+    hasCfgFile = true;
+
+    if (!hasNativeCfgForFile(symbols)) return false;
+  }
+  // Return false when no CFG files found (empty map, all _tree, or all non-CFG
+  // extensions) to avoid vacuously triggering the fast path.
+  return hasCfgFile;
+}
+
 export async function buildCFGData(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, FileSymbols>,
   rootDir: string,
   _engineOpts?: unknown,
 ): Promise<void> {
+  // Fast path: when all function/method defs already have native CFG data,
+  // skip WASM parser init, tree parsing, and JS visitor entirely — just persist.
+  const allNative = allCfgNative(fileSymbols);
+
   const extToLang = buildExtToLangMap();
-  const { parsers, getParserFn } = await initCfgParsers(fileSymbols);
+  let parsers: unknown = null;
+  let getParserFn: unknown = null;
+
+  if (!allNative) {
+    ({ parsers, getParserFn } = await initCfgParsers(fileSymbols));
+  }
 
   const insertBlock = db.prepare(
     `INSERT INTO cfg_blocks (function_node_id, block_index, block_type, start_line, end_line, label)
@@ -270,6 +308,35 @@ export async function buildCFGData(
       const ext = path.extname(relPath).toLowerCase();
       if (!CFG_EXTENSIONS.has(ext)) continue;
 
+      // Native fast path: skip tree/visitor setup when all CFG is pre-computed.
+      // Only apply to files without _tree — files with _tree were WASM-parsed
+      // and need the slow path (visitor) to compute CFG.
+      if (allNative && !symbols._tree) {
+        for (const def of symbols.definitions) {
+          if (def.kind !== 'function' && def.kind !== 'method') continue;
+          if (!def.line) continue;
+
+          const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
+          if (!nodeId) continue;
+
+          // Always delete stale CFG rows (handles body-removed case)
+          deleteCfgForNode(db, nodeId);
+          if (!def.cfg?.blocks?.length) continue;
+
+          persistCfg(
+            def.cfg as unknown as { blocks: CfgBuildBlock[]; edges: CfgBuildEdge[] },
+            nodeId,
+            insertBlock,
+            insertEdge,
+          );
+          analyzed++;
+        }
+        continue;
+      }
+
+      // When allNative=true, parsers/getParserFn are null. This is safe because
+      // _tree files use symbols._tree directly in getTreeAndLang (the parser
+      // code path is never reached). Non-_tree files are handled by the fast path above.
       const treeLang = getTreeAndLang(symbols, relPath, rootDir, extToLang, parsers, getParserFn);
       if (!treeLang) continue;
       const { tree, langId } = treeLang;
@@ -302,9 +369,10 @@ export async function buildCFGData(
           if (r) cfg = { blocks: r.blocks, edges: r.edges };
         }
 
+        // Always purge stale rows (handles body-removed case)
+        deleteCfgForNode(db, nodeId);
         if (!cfg || cfg.blocks.length === 0) continue;
 
-        deleteCfgForNode(db, nodeId);
         persistCfg(cfg, nodeId, insertBlock, insertEdge);
         analyzed++;
       }

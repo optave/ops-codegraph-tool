@@ -6,7 +6,7 @@ import type {
   TreeSitterTree,
   TypeMapEntry,
 } from '../types.js';
-import { findChild, nodeEndLine, pythonVisibility } from './helpers.js';
+import { findChild, MAX_WALK_DEPTH, nodeEndLine, pythonVisibility } from './helpers.js';
 
 /** Built-in globals that start with uppercase but are not user-defined types. */
 const BUILTIN_GLOBALS_PY: Set<string> = new Set([
@@ -365,7 +365,7 @@ function extractPythonTypeMapDepth(
   ctx: ExtractorOutput,
   depth: number,
 ): void {
-  if (depth >= 200) return;
+  if (depth >= MAX_WALK_DEPTH) return;
 
   // typed_parameter: identifier : type (confidence 0.9)
   if (node.type === 'typed_parameter') {

@@ -58,7 +58,7 @@ function classifyDeadSubRole(node: ClassifiableNode): DeadSubRole {
 
 // ── Helpers ────────────────────────────────────────────────────────
 
-function median(sorted: number[]): number {
+export function median(sorted: number[]): number {
   if (sorted.length === 0) return 0;
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
@@ -79,20 +79,29 @@ export interface RoleClassificationNode {
 /**
  * Classify nodes into architectural roles based on fan-in/fan-out metrics.
  */
-export function classifyRoles(nodes: RoleClassificationNode[]): Map<string, Role> {
+export function classifyRoles(
+  nodes: RoleClassificationNode[],
+  medianOverrides?: { fanIn: number; fanOut: number },
+): Map<string, Role> {
   if (nodes.length === 0) return new Map();
 
-  const nonZeroFanIn = nodes
-    .filter((n) => n.fanIn > 0)
-    .map((n) => n.fanIn)
-    .sort((a, b) => a - b);
-  const nonZeroFanOut = nodes
-    .filter((n) => n.fanOut > 0)
-    .map((n) => n.fanOut)
-    .sort((a, b) => a - b);
-
-  const medFanIn = median(nonZeroFanIn);
-  const medFanOut = median(nonZeroFanOut);
+  let medFanIn: number;
+  let medFanOut: number;
+  if (medianOverrides) {
+    medFanIn = medianOverrides.fanIn;
+    medFanOut = medianOverrides.fanOut;
+  } else {
+    const nonZeroFanIn = nodes
+      .filter((n) => n.fanIn > 0)
+      .map((n) => n.fanIn)
+      .sort((a, b) => a - b);
+    const nonZeroFanOut = nodes
+      .filter((n) => n.fanOut > 0)
+      .map((n) => n.fanOut)
+      .sort((a, b) => a - b);
+    medFanIn = median(nonZeroFanIn);
+    medFanOut = median(nonZeroFanOut);
+  }
 
   const result = new Map<string, Role>();
 

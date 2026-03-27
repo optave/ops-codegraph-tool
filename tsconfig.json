@@ -41,12 +41,8 @@
     /* Type Checking — strict mode */
     "strict": true,
     "noUncheckedIndexedAccess": true,
-    "noPropertyAccessFromIndexSignature": true,
+    "noPropertyAccessFromIndexSignature": false,
     "exactOptionalPropertyTypes": false,
-
-    /* Migration support */
-    "allowJs": true,
-    "checkJs": false,
 
     /* Misc */
     "skipLibCheck": true,

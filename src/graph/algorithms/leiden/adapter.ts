@@ -50,18 +50,11 @@ function taAdd(a: Float64Array, i: number, v: number): void {
   a[i] = taGet(a, i) + v;
 }
 
-function taSub(a: Float64Array, i: number, v: number): void {
-  a[i] = taGet(a, i) - v;
-}
-
 export function makeGraphAdapter(graph: CodeGraph, opts: GraphAdapterOptions = {}): GraphAdapter {
   const linkWeight: (attrs: EdgeAttrs) => number =
-    opts.linkWeight ||
-    // biome-ignore lint/complexity/useLiteralKeys: index signature requires bracket access
-    ((attrs) => (attrs && typeof attrs['weight'] === 'number' ? attrs['weight'] : 1));
+    opts.linkWeight || ((attrs) => (attrs && typeof attrs.weight === 'number' ? attrs.weight : 1));
   const nodeSize: (attrs: NodeAttrs) => number =
-    // biome-ignore lint/complexity/useLiteralKeys: index signature requires bracket access
-    opts.nodeSize || ((attrs) => (attrs && typeof attrs['size'] === 'number' ? attrs['size'] : 1));
+    opts.nodeSize || ((attrs) => (attrs && typeof attrs.size === 'number' ? attrs.size : 1));
   const directed: boolean = !!opts.directed;
   const baseNodeIds: string[] | undefined = opts.baseNodeIds;
 

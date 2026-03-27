@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { toErrorMessage } from '../shared/errors.js';
 import type { CodegraphConfig } from '../types.js';
 import { debug, warn } from './logger.js';
 
@@ -170,11 +171,9 @@ export function loadConfig(cwd?: string): CodegraphConfig {
         debug(`Loaded config from ${filePath}`);
         const merged = mergeConfig(DEFAULTS as unknown as Record<string, unknown>, config);
         if ('excludeTests' in config && !(config.query && 'excludeTests' in config.query)) {
-          (merged['query'] as Record<string, unknown>)['excludeTests'] = Boolean(
-            config.excludeTests,
-          );
+          (merged.query as Record<string, unknown>).excludeTests = Boolean(config.excludeTests);
         }
-        delete merged['excludeTests'];
+        delete merged.excludeTests;
         const result = resolveSecrets(applyEnvOverrides(merged as unknown as CodegraphConfig));
         _configCache.set(cwd, structuredClone(result));
         return result;
@@ -227,7 +226,7 @@ export function resolveSecrets(config: CodegraphConfig): CodegraphConfig {
       stdio: ['ignore', 'pipe', 'pipe'],
     }).trim();
     if (result) {
-      (config.llm as Record<string, unknown>)['apiKey'] = result;
+      (config.llm as Record<string, unknown>).apiKey = result;
     }
   } catch (err: unknown) {
     warn(`apiKeyCommand failed: ${(err as Error).message}`);
@@ -310,8 +309,8 @@ function resolveWorkspaceEntry(pkgDir: string): string | null {
       const candidate = path.resolve(pkgDir, idx);
       if (fs.existsSync(candidate)) return candidate;
     }
-  } catch {
-    /* ignore */
+  } catch (e) {
+    debug(`resolveWorkspaceEntry: package.json probe failed for ${pkgDir}: ${toErrorMessage(e)}`);
   }
   return null;
 }
@@ -344,8 +343,8 @@ export function detectWorkspaces(rootDir: string): Map<string, WorkspaceEntry> {
           }
         }
       }
-    } catch {
-      /* ignore */
+    } catch (e) {
+      debug(`detectWorkspaces: failed to parse pnpm-workspace.yaml: ${toErrorMessage(e)}`);
     }
   }
 
@@ -363,8 +362,8 @@ export function detectWorkspaces(rootDir: string): Map<string, WorkspaceEntry> {
           // Yarn classic format: { packages: [...], nohoist: [...] }
           patterns.push(...ws.packages);
         }
-      } catch {
-        /* ignore */
+      } catch (e) {
+        debug(`detectWorkspaces: failed to parse package.json workspaces: ${toErrorMessage(e)}`);
       }
     }
   }
@@ -379,8 +378,8 @@ export function detectWorkspaces(rootDir: string): Map<string, WorkspaceEntry> {
         if (Array.isArray(lerna.packages)) {
           patterns.push(...lerna.packages);
         }
-      } catch {
-        /* ignore */
+      } catch (e) {
+        debug(`detectWorkspaces: failed to parse lerna.json: ${toErrorMessage(e)}`);
       }
     }
   }

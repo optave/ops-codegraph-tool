@@ -12,7 +12,6 @@ import { loadNative } from '../../../../infrastructure/native.js';
 import type {
   Call,
   ClassRelation,
-  Definition,
   ExtractorOutput,
   Import,
   NativeAddon,
@@ -102,12 +101,15 @@ function buildImportEdges(
   const { fileSymbols, barrelOnlyFiles, rootDir } = ctx;
 
   for (const [relPath, symbols] of fileSymbols) {
-    if (barrelOnlyFiles.has(relPath)) continue;
+    const isBarrelOnly = barrelOnlyFiles.has(relPath);
     const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
     if (!fileNodeRow) continue;
     const fileNodeId = fileNodeRow.id;
 
     for (const imp of symbols.imports) {
+      // Barrel-only files: only emit reexport edges, skip regular imports
+      if (isBarrelOnly && !imp.reexport) continue;
+
       const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
       const targetRow = getNodeIdStmt.get(resolvedPath, 'file', resolvedPath, 0);
       if (!targetRow) continue;
@@ -361,9 +363,6 @@ function findCaller(
             callerSpan = span;
           }
         }
-      } else if (!caller) {
-        const row = getNodeIdStmt.get(def.name, def.kind, relPath, def.line);
-        if (row) caller = row;
       }
     }
   }
@@ -576,6 +575,17 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
 
   const t0 = performance.now();
   const buildEdgesTx = db.transaction(() => {
+    // Delete stale outgoing edges for barrel-only files inside the transaction
+    // so that deletion and re-creation are atomic (no edge loss on mid-build crash).
+    if (ctx.barrelOnlyFiles.size > 0) {
+      const deleteOutgoingEdges = db.prepare(
+        'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
+      );
+      for (const relPath of ctx.barrelOnlyFiles) {
+        deleteOutgoingEdges.run(relPath);
+      }
+    }
+
     const allEdgeRows: EdgeRowTuple[] = [];
 
     buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);

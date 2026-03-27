@@ -5,7 +5,7 @@ import type {
   TreeSitterNode,
   TreeSitterTree,
 } from '../types.js';
-import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js';
+import { extractModifierVisibility, findChild, MAX_WALK_DEPTH, nodeEndLine } from './helpers.js';
 
 function extractPhpParameters(fnNode: TreeSitterNode): SubDeclaration[] {
   const params: SubDeclaration[] = [];
@@ -340,7 +340,7 @@ function extractPhpTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function extractPhpTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, depth: number): void {
-  if (depth >= 200) return;
+  if (depth >= MAX_WALK_DEPTH) return;
 
   // Function/method parameters with type hints
   if (

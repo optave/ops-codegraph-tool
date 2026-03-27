@@ -18,7 +18,7 @@ export async function handler(args: SymbolChildrenArgs, ctx: McpToolContext): Pr
     file: args.file,
     kind: args.kind,
     noTests: args.no_tests,
-    limit: Math.min(args.limit ?? MCP_DEFAULTS['context'] ?? 100, ctx.MCP_MAX_LIMIT),
+    limit: Math.min(args.limit ?? MCP_DEFAULTS.context ?? 100, ctx.MCP_MAX_LIMIT),
     offset: effectiveOffset(args),
   });
 }

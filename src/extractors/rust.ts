@@ -5,7 +5,7 @@ import type {
   TreeSitterNode,
   TreeSitterTree,
 } from '../types.js';
-import { findChild, nodeEndLine, rustVisibility } from './helpers.js';
+import { findChild, MAX_WALK_DEPTH, nodeEndLine, rustVisibility } from './helpers.js';
 
 /**
  * Extract symbols from Rust files.
@@ -274,7 +274,7 @@ function extractRustTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function extractRustTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, depth: number): void {
-  if (depth >= 200) return;
+  if (depth >= MAX_WALK_DEPTH) return;
 
   // let x: MyType = ...
   if (node.type === 'let_declaration') {

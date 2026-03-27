@@ -472,10 +472,10 @@ function getCoChangeMeta(db: BetterSqlite3Database): CoChangeMeta | null {
       meta[row.key] = row.value;
     }
     return {
-      analyzedAt: meta['analyzed_at'] || null,
-      since: meta['since'] || null,
-      minSupport: meta['min_support'] ? parseInt(meta['min_support'], 10) : null,
-      lastCommit: meta['last_analyzed_commit'] || null,
+      analyzedAt: meta.analyzed_at || null,
+      since: meta.since || null,
+      minSupport: meta.min_support ? parseInt(meta.min_support, 10) : null,
+      lastCommit: meta.last_analyzed_commit || null,
     };
   } catch {
     return null;

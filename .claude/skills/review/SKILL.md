@@ -201,13 +201,22 @@ After addressing all comments for a PR:
 
 ### 2g. Re-trigger reviewers
 
-**Greptile:** Always re-trigger after replying to Greptile comments — whether the comment was actionable or not. The **only** exception is if Greptile already reacted to your reply with a positive emoji (thumbs up, check, etc.) — that means it's already satisfied.
+**Greptile:** Always re-trigger after replying to Greptile comments — whether the comment was actionable or not. The **only** exception is if Greptile already reacted to your most recent reply with a positive emoji (thumbs up, check, etc.), which means it is already satisfied.
 
 ```bash
-# Check if greptileai left a positive reaction on your most recent reply
-# If yes → skip re-trigger. If no → re-trigger:
-gh api repos/optave/codegraph/issues/<number>/comments \
-  -f body="@greptileai"
+# Step 1: Check if greptileai left a positive reaction on your most recent reply
+last_reply_id=$(gh api repos/optave/codegraph/issues/<number>/comments --paginate \
+  --jq '[.[] | select(.user.login != "greptile-apps[bot]")] | last | .id')
+
+positive_count=$(gh api repos/optave/codegraph/issues/comments/$last_reply_id/reactions \
+  --jq '[.[] | select(.user.login == "greptile-apps[bot]" and (.content == "+1" or .content == "hooray" or .content == "heart" or .content == "rocket"))] | length')
+
+# Step 2: If positive reaction exists → skip. Otherwise → re-trigger.
+if [ "$positive_count" -gt 0 ]; then
+  echo "Greptile already reacted positively — skipping re-trigger."
+else
+  gh api repos/optave/codegraph/issues/<number>/comments -f body="@greptileai"
+fi
 ```
 
 **Claude (claude-code-review / claude bot):** Only re-trigger if you addressed something Claude specifically suggested. If you did:
