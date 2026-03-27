@@ -201,7 +201,35 @@ After addressing all comments for a PR:
 
 ### 2g. Re-trigger reviewers
 
-**Greptile:** Always re-trigger after replying to Greptile comments — whether the comment was actionable or not. The **only** exception is if Greptile already reacted to your most recent reply with a positive emoji (thumbs up, check, etc.), which means it is already satisfied.
+**Greptile:** Always re-trigger after replying to Greptile comments — whether the comment was actionable or not. First, run the verification script below to confirm all Greptile comments have replies. Then, skip the actual trigger only if Greptile already reacted to your most recent reply with a positive emoji (thumbs up, check, etc.), which means it is already satisfied.
+
+**CRITICAL — verify all Greptile comments have replies BEFORE triggering.** Posting `@greptileai` without replying to every comment is worse than not triggering at all — it starts a new review cycle while the old one still has unanswered feedback. Run this check first:
+
+```bash
+# Step 0: Verify every Greptile inline comment has at least one reply from us
+all_comments=$(gh api repos/optave/codegraph/pulls/<number>/comments --paginate)
+
+greptile_comment_ids=$(echo "$all_comments" \
+  | jq -r '[.[] | select(.user.login == "greptile-apps[bot]" and .in_reply_to_id == null)] | .[].id')
+
+unanswered=()
+for cid in $greptile_comment_ids; do
+  reply_count=$(echo "$all_comments" \
+    | jq -s "[.[][] | select(.in_reply_to_id == $cid and .user.login != \"greptile-apps[bot]\")] | length")
+  if [ "$reply_count" -eq 0 ]; then
+    unanswered+=("$cid")
+  fi
+done
+
+if [ ${#unanswered[@]} -gt 0 ]; then
+  echo "BLOCKED — ${#unanswered[@]} Greptile comments have no reply: ${unanswered[*]}"
+  echo "Go back to Step 2e and reply to each one before re-triggering."
+  exit 1
+fi
+echo "All Greptile comments have replies — safe to re-trigger."
+```
+
+**Do NOT proceed to the re-trigger step below until the check above passes.** If any comments are unanswered, go back to Step 2e, reply to each one, then re-run this check.
 
 ```bash
 # Step 1: Check if greptileai left a positive reaction on your most recent reply
@@ -276,7 +304,7 @@ If any subagent failed or returned an error, note it in the Status column as `ag
 - **Never force-push** unless fixing a commit message that fails commitlint. Amend + force-push is the only way to fix a pushed commit title (messages are part of the SHA). This is safe on feature branches. For all other problems, fix with a new commit.
 - **Address ALL comments from ALL reviewers** (Claude, Greptile, and humans), even minor/nit/optional ones. Leave zero unaddressed. Do not only respond to one reviewer and skip another.
 - **Always reply to comments** explaining what was done. Don't just fix silently. Every reviewer must see a reply on their feedback.
-- **Always re-trigger Greptile after replying.** Every time you reply to a Greptile comment — actionable or not — post `@greptileai` to re-trigger a review. The only exception: if Greptile already reacted to your reply with a positive emoji (thumbs up), skip the re-trigger.
+- **Never trigger `@greptileai` without replying to every Greptile comment first.** Before posting the re-trigger, run the Step 2g verification script to confirm zero unanswered Greptile comments. Triggering a new review while old comments are unanswered is a blocking violation — it creates review noise and signals that feedback was ignored. Reply first, verify, then trigger.
 - **Only re-trigger Claude** if you addressed Claude's feedback specifically.
 - **No co-author lines** in commit messages.
 - **No Claude Code references** in commit messages or comments.
