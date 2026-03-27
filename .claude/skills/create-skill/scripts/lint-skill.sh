@@ -135,11 +135,14 @@ while IFS= read -r line; do
     # Save in_detect before fi-processing so inline commands on the same line
     # (e.g. "else npm test; fi") are evaluated in the correct detection context.
     was_in_detect=$in_detect
-    if echo "$line" | grep -qE '^\s*if\s.*(-f\s|-d\s|lock|package|command -v|which\s)'; then
+    if echo "$line" | grep -qE '^\s*if\s.*(-f\s|-d\s|lock|package|command -v|which\s|find\s)'; then
       in_detect=true
       was_in_detect=true
-      detect_depth=$((detect_depth + 1))
-    elif echo "$line" | grep -qE '^\s*elif\s.*(-f\s|-d\s|lock|package|command -v|which\s)'; then
+      # Only increment depth if fi does NOT also close on this line (one-liner guard)
+      if ! echo "$line" | grep -qE '\bfi\b'; then
+        detect_depth=$((detect_depth + 1))
+      fi
+    elif echo "$line" | grep -qE '^\s*elif\s.*(-f\s|-d\s|lock|package|command -v|which\s|find\s)'; then
       # elif is a sibling branch — set in_detect but do NOT increment depth
       in_detect=true
       was_in_detect=true
