@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.4.0 | **Status:** Active development | **Updated:** 2026-03-25
+> **Current version:** 3.4.1 | **Status:** Active development | **Updated:** 2026-03-26
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across thirteen phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -1213,12 +1213,13 @@ Structure building is unchanged — at 22ms it's already fast.
 
 ### 6.8 -- Incremental Rebuild Performance (partial)
 
-**Partially complete.** Roles classification is fully optimized (255ms → 9ms via incremental path with edge-neighbour expansion, PR #622). Structure batching and finalize skip are also done. Current native 1-file rebuild is ~466ms (v3.4.0, 473 files) — down from ~802ms but still above the sub-100ms target.
+**Partially complete.** Roles classification is fully optimized (255ms → 9ms via incremental path with edge-neighbour expansion, PR #622). Structure batching and finalize skip are also done. Compound DB indexes restored query performance after TS migration (PR #632). Current native 1-file rebuild is ~466ms (v3.4.0, 473 files) — down from ~802ms but still above the sub-100ms target.
 
 **Done:**
 - **Incremental roles** (255ms → 9ms): Only reclassify nodes from changed files + edge neighbours using indexed correlated subqueries. Global medians for threshold consistency. Parity-tested against full rebuild. *Note:* The benchmark table shows ~54ms for 1-file roles because the standard benchmark runs the full roles phase; the 9ms incremental path (PR #622) is used only when the builder detects a 1-file incremental rebuild
 - **Structure batching:** Replace N+1 per-file queries with 3 batch queries regardless of file count
 - **Finalize skip:** Skip advisory queries (orphaned embeddings, unused exports) during incremental builds
+- **DB index regression:** Compound indexes on nodes/edges tables restored after TS migration (PR #632)
 
 **Remaining:**
 - **Incremental edge rebuild:** Only rebuild edges involving the changed file's symbols (currently edgesMs ~21ms on native, ~15ms on WASM — native is *slower* on 1-file)
@@ -1226,7 +1227,7 @@ Structure building is unchanged — at 22ms it's already fast.
 - **Structure/roles on 1-file:** Both still take ~25ms and ~54ms respectively on 1-file rebuilds — the full-build optimizations (6.5) don't apply to the incremental path
 - **Benchmark target:** Sub-100ms native 1-file rebuilds (current ~466ms on 473 files)
 
-**Key PRs:** #622
+**Key PRs:** #622, #632
 
 **Affected files:** `src/domain/graph/builder/stages/build-structure.ts`, `src/domain/graph/builder/stages/build-edges.ts`, `src/domain/graph/builder/pipeline.ts`
 

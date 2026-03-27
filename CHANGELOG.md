@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.4.1](https://github.com/optave/codegraph/compare/v3.4.0...v3.4.1) (2026-03-26)
+
+**Post-migration stabilization and native engine accuracy.** This release fixes a Rust `findCaller` bug that misattributed 68 call edges, adds compound database indexes to restore query performance after the TypeScript migration, and delivers a 96% speedup to incremental role classification (255ms → 9ms). WASM builds are more resilient, incremental rebuilds handle JSONC and version changes correctly, and error handling is safer across the board.
+
+### Bug Fixes
+
+* **native:** remove spurious else-if in Rust `findCaller` that misattributed 68 call edges ([#637](https://github.com/optave/codegraph/pull/637))
+* **native:** recurse into `await_expression` children in `walk_ast_nodes` ([#618](https://github.com/optave/codegraph/pull/618))
+* **build:** JSONC parse and version-aware incremental rebuilds ([#631](https://github.com/optave/codegraph/pull/631))
+* WASM build resilience and lint cleanup from TypeScript migration ([#629](https://github.com/optave/codegraph/pull/629))
+* dogfood fixes 9.1–9.4 — version warning, barrel exports, quieter tsconfig, Set compatibility ([#634](https://github.com/optave/codegraph/pull/634))
+* use safe error coercion in debug catch blocks ([#630](https://github.com/optave/codegraph/pull/630))
+* add debug logging to empty catch blocks across infrastructure and domain layers ([#616](https://github.com/optave/codegraph/pull/616))
+* **bench:** use `dist/` for npm benchmark installs to avoid Node type-stripping error ([#624](https://github.com/optave/codegraph/pull/624))
+* **bench:** repair benchmark workflow broken by TypeScript migration ([#612](https://github.com/optave/codegraph/pull/612))
+* **skills:** prevent `/review` from spamming `@greptileai` when already approved ([#628](https://github.com/optave/codegraph/pull/628))
+
+### Performance
+
+* **db:** add compound indexes to fix query regression from TypeScript migration ([#632](https://github.com/optave/codegraph/pull/632))
+* **build:** incremental rebuild optimizations — roles 255ms → 9ms ([#622](https://github.com/optave/codegraph/pull/622))
+
+### Refactors
+
+* **errors:** extract shared `toErrorMessage` helper ([#633](https://github.com/optave/codegraph/pull/633))
+* extract `MAX_WALK_DEPTH` constant to extractors helpers ([#620](https://github.com/optave/codegraph/pull/620))
+* address SLOC warnings in domain and features layers ([#621](https://github.com/optave/codegraph/pull/621))
+* split `cfg-visitor.ts` by control-flow construct ([#619](https://github.com/optave/codegraph/pull/619))
+
+### Chores
+
+* **titan:** first full Titan Paradigm pipeline run — audit report generation and skill improvements ([#623](https://github.com/optave/codegraph/pull/623))
+
 ## [3.4.0](https://github.com/optave/codegraph/compare/v3.3.1...v3.4.0) (2026-03-25)
 
 **TypeScript migration complete, Leiden community detection, and native engine hardening.** The entire codebase — all 271 source files — is now TypeScript with zero `.js` files remaining. Community detection upgrades from Louvain to a vendored Leiden algorithm with true probabilistic refinement, removing the `graphology` dependency. Go gains structural interface matching and C# gets proper `implements` disambiguation. The native Rust engine now extracts call-site AST nodes and bypasses the JS CFG visitor entirely on native builds. MCP server shutdown is graceful, and several edge-attribution and WASM fallback bugs are fixed.
