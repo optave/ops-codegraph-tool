@@ -6,6 +6,7 @@ import { createAstStoreVisitor } from '../ast-analysis/visitors/ast-store-visito
 import { bulkNodeIdsByFile, openReadonlyOrFail } from '../db/index.js';
 import { buildFileConditionSQL } from '../db/query-builder.js';
 import { debug } from '../infrastructure/logger.js';
+import { loadNative } from '../infrastructure/native.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 import { paginateResult } from '../shared/paginate.js';
 import type { ASTNodeKind, BetterSqlite3Database, Definition, TreeSitterNode } from '../types.js';
@@ -67,6 +68,54 @@ export async function buildAstNodes(
   _rootDir: string,
   _engineOpts?: unknown,
 ): Promise<void> {
+  // ── Native bulk-insert fast path ──────────────────────────────────────
+  const native = loadNative();
+  if (native?.bulkInsertAstNodes) {
+    let needsJsFallback = false;
+    const batches: Array<{
+      file: string;
+      nodes: Array<{
+        line: number;
+        kind: string;
+        name: string;
+        text?: string | null;
+        receiver?: string | null;
+      }>;
+    }> = [];
+
+    for (const [relPath, symbols] of fileSymbols) {
+      if (Array.isArray(symbols.astNodes)) {
+        batches.push({
+          file: relPath,
+          nodes: symbols.astNodes.map((n) => ({
+            line: n.line,
+            kind: n.kind,
+            name: n.name,
+            text: n.text,
+            receiver: n.receiver,
+          })),
+        });
+      } else if (symbols.calls || symbols._tree) {
+        needsJsFallback = true;
+        break;
+      }
+    }
+
+    if (!needsJsFallback) {
+      const expectedNodes = batches.reduce((s, b) => s + b.nodes.length, 0);
+      const inserted = native.bulkInsertAstNodes(db.name, batches);
+      if (inserted === expectedNodes) {
+        debug(`AST extraction (native bulk): ${inserted} nodes stored`);
+        return;
+      }
+      debug(
+        `AST extraction (native bulk): expected ${expectedNodes}, got ${inserted} — falling back to JS`,
+      );
+      // fall through to JS path
+    }
+  }
+
+  // ── JS fallback path ──────────────────────────────────────────────────
   let insertStmt: ReturnType<BetterSqlite3Database['prepare']>;
   try {
     insertStmt = db.prepare(
