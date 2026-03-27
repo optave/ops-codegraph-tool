@@ -102,9 +102,16 @@ export async function buildAstNodes(
     }
 
     if (!needsJsFallback) {
+      const expectedNodes = batches.reduce((s, b) => s + b.nodes.length, 0);
       const inserted = native.bulkInsertAstNodes(db.name, batches);
-      debug(`AST extraction (native bulk): ${inserted} nodes stored`);
-      return;
+      if (inserted === expectedNodes) {
+        debug(`AST extraction (native bulk): ${inserted} nodes stored`);
+        return;
+      }
+      debug(
+        `AST extraction (native bulk): expected ${expectedNodes}, got ${inserted} — falling back to JS`,
+      );
+      // fall through to JS path
     }
   }
 
