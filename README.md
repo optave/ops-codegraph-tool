@@ -12,7 +12,7 @@
   <a href="https://www.npmjs.com/package/@optave/codegraph"><img src="https://img.shields.io/npm/v/@optave/codegraph?style=flat-square&logo=npm&logoColor=white&label=npm" alt="npm version" /></a>
   <a href="https://github.com/optave/codegraph/blob/main/LICENSE"><img src="https://img.shields.io/github/license/optave/codegraph?style=flat-square&logo=opensourceinitiative&logoColor=white" alt="Apache-2.0 License" /></a>
   <a href="https://github.com/optave/codegraph/actions"><img src="https://img.shields.io/github/actions/workflow/status/optave/codegraph/codegraph-impact.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI" alt="CI" /></a>
-  <img src="https://img.shields.io/badge/node-%3E%3D20-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node >= 20" />
+  <img src="https://img.shields.io/badge/node-%3E%3D22.6-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node >= 22.6" />
 </p>
 
 <p align="center">
@@ -553,14 +553,14 @@ Self-measured on every release via CI ([build benchmarks](generated/benchmarks/B
 
 | Metric | Latest |
 |---|---|
-| Build speed (native) | **5.3 ms/file** |
-| Build speed (WASM) | **12.2 ms/file** |
+| Build speed (native) | **5.7 ms/file** |
+| Build speed (WASM) | **11.9 ms/file** |
 | Query time | **12ms** |
-| No-op rebuild (native) | **12ms** |
-| 1-file rebuild (native) | **432ms** |
-| Query: fn-deps | **1.7ms** |
-| Query: path | **1.6ms** |
-| ~50,000 files (est.) | **~265.0s build** |
+| No-op rebuild (native) | **14ms** |
+| 1-file rebuild (native) | **316ms** |
+| Query: fn-deps | **1.9ms** |
+| Query: path | **1.9ms** |
+| ~50,000 files (est.) | **~285.0s build** |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 
@@ -773,12 +773,13 @@ See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap a
 6. ~~**Resolution Accuracy**~~ — **Complete** (v3.3.1) — type inference, receiver type tracking, dead role sub-categories, resolution benchmarks, `package.json` exports, monorepo workspace resolution
 7. ~~**TypeScript Migration**~~ — **Complete** (v3.4.0) — all 271 source files migrated from JS to TS, zero `.js` remaining
 8. **Native Analysis Acceleration** — **In Progress** (7 of 8 complete) — JS-only build phases moved to Rust, sub-100ms 1-file rebuilds remaining
-9. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
-10. **Intelligent Embeddings** — LLM-generated descriptions, enhanced embeddings, module summaries
-11. **Natural Language Queries** — `codegraph ask` command, conversational sessions
-12. **Expanded Language Support** — 8 new languages (11 → 19)
-13. **GitHub Integration & CI** — reusable GitHub Action, LLM-enhanced PR review, SARIF output
-14. **Visualization & Advanced** — web UI, dead code detection, monorepo, agentic search
+9. **Expanded Language Support** — 8 new languages (11 → 19)
+10. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
+11. **Quality, Security & Technical Debt** — supply-chain security (SBOM, SLSA), CI coverage gates, timer cleanup, tech debt kill list
+12. **Intelligent Embeddings** — LLM-generated descriptions, enhanced embeddings, module summaries
+13. **Natural Language Queries** — `codegraph ask` command, conversational sessions
+14. **GitHub Integration & CI** — reusable GitHub Action, LLM-enhanced PR review, SARIF output
+15. **Advanced Features** — dead code detection, monorepo support, agentic search
 
 ## 🤝 Contributing
 
