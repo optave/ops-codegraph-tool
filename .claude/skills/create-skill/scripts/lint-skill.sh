@@ -143,6 +143,9 @@ while IFS= read -r line; do
       # Only increment depth if fi does NOT also close on this line (one-liner guard)
       if ! echo "$line" | grep -qE '\bfi\b'; then
         detect_depth=$((detect_depth + 1))
+      else
+        # One-liner: detection block is self-contained — reset so subsequent lines are checked normally
+        in_detect=false
       fi
     elif echo "$line" | grep -qE '^\s*elif\s.*(-f\s|-d\s|\block\b|\bpackage\b|command -v|which\s|find\s)'; then
       # elif is a sibling branch — set in_detect but do NOT increment depth
@@ -219,7 +222,7 @@ fi
 
 # ── Check 6b: name field matches directory name ─────────────────────
 expected_name=$(basename "$(dirname "$SKILL_FILE")")
-actual_name=$(grep -m1 '^name:' "$SKILL_FILE" | sed 's/^name:[[:space:]]*//')
+actual_name=$(head -20 "$SKILL_FILE" | grep -m1 '^name:' | sed 's/^name:[[:space:]]*//')
 if [ -n "$actual_name" ] && [ "$actual_name" != "$expected_name" ]; then
   error "Frontmatter 'name: $actual_name' does not match directory name '$expected_name' (Phase 4 checklist item 2)"
 fi
@@ -236,7 +239,10 @@ while IFS= read -r line; do
     '````'*) if $in_quad; then in_quad=false; else in_quad=true; fi; continue ;;
   esac
   $in_quad && continue
-  # Skip content inside triple-backtick code blocks
+  # Skip content inside triple-backtick code blocks.
+  # Limitation: nested fences inside ```markdown blocks (e.g. scaffold templates
+  # containing ```bash examples) will toggle in_block incorrectly. Wrap such
+  # regions in quadruple-backtick ```` fences to avoid false positives.
   case "$stripped" in
     '```'*) if $in_block; then in_block=false; else in_block=true; fi; continue ;;
   esac
