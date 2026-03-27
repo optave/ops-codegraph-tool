@@ -561,17 +561,81 @@ function buildClassHierarchyEdges(
 
 // ── Main entry point ────────────────────────────────────────────────────
 
+/**
+ * For small incremental builds (≤5 changed files on a large codebase), scope
+ * the node loading query to only files that are relevant: changed files +
+ * their import targets. Falls back to loading ALL nodes for full builds or
+ * larger incremental changes.
+ */
+function loadNodes(ctx: PipelineContext): QueryNodeRow[] {
+  const { db, fileSymbols, isFullBuild, batchResolved } = ctx;
+  const nodeKindFilter = `kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')`;
+
+  // Gate: only scope for small incremental on large codebases
+  if (!isFullBuild && fileSymbols.size <= 5) {
+    const existingFileCount = (
+      db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'").get() as { c: number }
+    ).c;
+    if (existingFileCount > 20) {
+      // Collect relevant files: changed files + their import targets
+      const relevantFiles = new Set<string>(fileSymbols.keys());
+      if (batchResolved) {
+        for (const resolvedPath of batchResolved.values()) {
+          relevantFiles.add(resolvedPath);
+        }
+      }
+      // Also add barrel-only files
+      for (const barrelPath of ctx.barrelOnlyFiles) {
+        relevantFiles.add(barrelPath);
+      }
+
+      const placeholders = [...relevantFiles].map(() => '?').join(',');
+      return db
+        .prepare(
+          `SELECT id, name, kind, file, line FROM nodes WHERE ${nodeKindFilter} AND file IN (${placeholders})`,
+        )
+        .all(...relevantFiles) as QueryNodeRow[];
+    }
+  }
+
+  return db
+    .prepare(`SELECT id, name, kind, file, line FROM nodes WHERE ${nodeKindFilter}`)
+    .all() as QueryNodeRow[];
+}
+
+/**
+ * For scoped node loading, patch nodesByName.get with a lazy SQL fallback
+ * so global name-only lookups (resolveByMethodOrGlobal, supplementReceiverEdges)
+ * can still find nodes outside the scoped set.
+ */
+function addLazyFallback(ctx: PipelineContext, scopedLoad: boolean): void {
+  if (!scopedLoad) return;
+  const { db } = ctx;
+  const fallbackStmt = db.prepare(
+    `SELECT id, name, kind, file, line FROM nodes WHERE name = ? AND kind != 'file'`,
+  );
+  const originalGet = ctx.nodesByName.get.bind(ctx.nodesByName);
+  ctx.nodesByName.get = (name: string) => {
+    const result = originalGet(name);
+    if (result !== undefined) return result;
+    const rows = fallbackStmt.all(name) as unknown as NodeRow[];
+    if (rows.length > 0) {
+      ctx.nodesByName.set(name, rows);
+      return rows;
+    }
+    return undefined;
+  };
+}
+
 export async function buildEdges(ctx: PipelineContext): Promise<void> {
   const { db, engineName } = ctx;
 
   const getNodeIdStmt = makeGetNodeIdStmt(db);
 
-  const allNodes = db
-    .prepare(
-      `SELECT id, name, kind, file, line FROM nodes WHERE kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')`,
-    )
-    .all() as QueryNodeRow[];
-  setupNodeLookups(ctx, allNodes);
+  const allNodesBefore = loadNodes(ctx);
+  const scopedLoad = !ctx.isFullBuild && ctx.fileSymbols.size <= 5 && allNodesBefore.length < 5000;
+  setupNodeLookups(ctx, allNodesBefore);
+  addLazyFallback(ctx, scopedLoad);
 
   const t0 = performance.now();
   const buildEdgesTx = db.transaction(() => {
@@ -592,7 +656,7 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
 
     const native = engineName === 'native' ? loadNative() : null;
     if (native?.buildCallEdges) {
-      buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodes, native);
+      buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodesBefore, native);
     } else {
       buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows);
     }
