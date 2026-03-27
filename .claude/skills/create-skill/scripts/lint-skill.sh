@@ -93,7 +93,7 @@ while IFS= read -r line; do
     '```bash'*) in_block=true; prev_line="$line"; continue ;;
     '```'*) in_block=false; prev_line="$line"; continue ;;
   esac
-  if $in_block && echo "$line" | grep -qE '2>/dev/null|>[ ]?/dev/null 2>&1'; then
+  if $in_block && echo "$line" | grep -qE '2>/dev/null|>[ ]?/dev/null 2>&1|&>/dev/null'; then
     # Check same line or previous line for justification comment
     justification_re='#.*intentional|#.*tolera|#.*acceptable|#.*expected|#.*safe to ignore|#.*may fail|#.*optional|#.*fallback|#.*portable|#.*suppress|#.*provid'
     if ! echo "${prev_line}${line}" | grep -qiE "$justification_re"; then
@@ -147,6 +147,14 @@ while IFS= read -r line; do
         [ "$detect_depth" -eq 0 ] && in_detect=false
       else
         # Safety reset: in_detect was set by an elif without a preceding detection if
+        in_detect=false
+      fi
+    elif $in_detect && echo "$line" | grep -qE '\bfi\b'; then
+      # fi appears inline (e.g. "else ...; fi") — still closes the outermost detection block
+      if [ "$detect_depth" -gt 0 ]; then
+        detect_depth=$((detect_depth - 1))
+        [ "$detect_depth" -eq 0 ] && in_detect=false
+      else
         in_detect=false
       fi
     fi
