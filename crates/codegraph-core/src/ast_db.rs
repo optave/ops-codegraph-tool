@@ -141,19 +141,17 @@ pub fn bulk_insert_ast_nodes(db_path: String, batches: Vec<FileAstBatch>) -> u32
             for node in &batch.nodes {
                 let parent_id = find_parent_id(defs, node.line);
 
-                if insert_stmt
-                    .execute(params![
-                        &batch.file,
-                        node.line,
-                        &node.kind,
-                        &node.name,
-                        &node.text,
-                        &node.receiver,
-                        parent_id,
-                    ])
-                    .is_ok()
-                {
-                    total += 1;
+                match insert_stmt.execute(params![
+                    &batch.file,
+                    node.line,
+                    &node.kind,
+                    &node.name,
+                    &node.text,
+                    &node.receiver,
+                    parent_id,
+                ]) {
+                    Ok(_) => total += 1,
+                    Err(_) => return 0, // abort; tx rolls back on drop
                 }
             }
         }
