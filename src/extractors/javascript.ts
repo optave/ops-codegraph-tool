@@ -319,8 +319,10 @@ function extractConstantsWalk(node: TreeSitterNode, definitions: Definition[]): 
       }
     }
 
-    // Recurse into non-function children (blocks, if-statements, etc.)
-    extractConstantsWalk(child, definitions);
+    // Recurse into non-function, non-export-statement children (blocks, if-statements, etc.)
+    if (child.type !== 'export_statement') {
+      extractConstantsWalk(child, definitions);
+    }
   }
 }
 
