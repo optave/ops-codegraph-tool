@@ -16,6 +16,25 @@ const FRAMEWORK_ENTRY_PREFIXES: &[&str] = &["route:", "event:", "command:"];
 
 const LEAF_KINDS: &[&str] = &["parameter", "property", "constant"];
 
+/// Path patterns indicating framework-dispatched entry points (matches JS
+/// `ENTRY_PATH_PATTERNS` in `graph/classifiers/roles.ts`).
+const ENTRY_PATH_PATTERNS: &[&str] = &[
+    "cli/commands/",
+    "cli\\commands\\",
+    "mcp/",
+    "mcp\\",
+    "routes/",
+    "routes\\",
+    "route/",
+    "route\\",
+    "handlers/",
+    "handlers\\",
+    "handler/",
+    "handler\\",
+    "middleware/",
+    "middleware\\",
+];
+
 const TEST_FILE_PATTERNS: &[&str] = &[
     "%.test.%",
     "%.spec.%",
@@ -89,21 +108,19 @@ fn median(sorted: &[u32]) -> u32 {
 }
 
 /// Dead sub-role classification matching JS `classifyDeadSubRole`.
-fn classify_dead_sub_role(name: &str, kind: &str, file: &str) -> &'static str {
+fn classify_dead_sub_role(_name: &str, kind: &str, file: &str) -> &'static str {
     // Leaf kinds
     if LEAF_KINDS.iter().any(|k| *k == kind) {
         return "dead-leaf";
     }
-    // FFI boundary
+    // FFI boundary (checked before dead-entry — an FFI boundary is a more
+    // fundamental classification than a path-based hint, matching JS priority)
     let ffi_exts = [".rs", ".c", ".cpp", ".h", ".go", ".java", ".cs"];
     if ffi_exts.iter().any(|ext| file.ends_with(ext)) {
         return "dead-ffi";
     }
-    // Framework entry points
-    if FRAMEWORK_ENTRY_PREFIXES
-        .iter()
-        .any(|p| name.starts_with(p))
-    {
+    // Framework-dispatched entry points (CLI commands, MCP tools, routes)
+    if ENTRY_PATH_PATTERNS.iter().any(|p| file.contains(p)) {
         return "dead-entry";
     }
     "dead-unresolved"
