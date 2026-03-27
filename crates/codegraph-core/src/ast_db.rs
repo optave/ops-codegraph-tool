@@ -38,19 +38,24 @@ struct NodeDef {
 
 /// Find the narrowest enclosing definition for a given source line.
 /// Returns the node ID of the best match, or None if no definition encloses this line.
+///
+/// Mirrors the JS `findParentDef` semantics: a definition with `end_line = NULL`
+/// is treated as always enclosing, with a negative sentinel span so it is preferred
+/// over definitions that have an explicit (wider) `end_line`.
 fn find_parent_id(defs: &[NodeDef], line: u32) -> Option<i64> {
     let mut best_id: Option<i64> = None;
-    let mut best_span = u32::MAX;
+    let mut best_span: i64 = i64::MAX;
     for d in defs {
         if d.line <= line {
-            if let Some(el) = d.end_line {
-                if el >= line {
-                    let span = el - d.line;
-                    if span < best_span {
-                        best_id = Some(d.id);
-                        best_span = span;
-                    }
-                }
+            let span: i64 = match d.end_line {
+                Some(el) if el >= line => (el - d.line) as i64,
+                Some(_) => continue,
+                // JS: (def.endLine ?? 0) - def.line → negative, always preferred
+                None => -(d.line as i64),
+            };
+            if span < best_span {
+                best_id = Some(d.id);
+                best_span = span;
             }
         }
     }
