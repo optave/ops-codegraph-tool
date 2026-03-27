@@ -19,7 +19,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**3**](#phase-3--architectural-refactoring) | Architectural Refactoring (Vertical Slice) | Unified AST analysis framework, command/query separation, repository pattern, queries.js decomposition, composable MCP, CLI commands, domain errors, builder pipeline, presentation layer, domain grouping, curated API, unified graph model, qualified names, CLI composability | **Complete** (v3.1.5) |
 | [**4**](#phase-4--resolution-accuracy) | Resolution Accuracy | Dead role sub-categories, receiver type tracking, interface/trait implementation edges, resolution precision/recall benchmarks, `package.json` exports field, monorepo workspace resolution | **Complete** (v3.3.1) |
 | [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | **Complete** (v3.4.0) |
-| [**6**](#phase-6--native-analysis-acceleration) | Native Analysis Acceleration | Rust extraction for AST/CFG/dataflow/complexity; batch SQLite inserts; incremental rebuilds; native DB write pipeline to close the WASM parity gap on full builds | **In Progress** (7 of 12 done, 1 partial) |
+| [**6**](#phase-6--native-analysis-acceleration) | Native Analysis Acceleration | Rust extraction for AST/CFG/dataflow/complexity; batch SQLite inserts; incremental rebuilds; native DB write pipeline; full rusqlite migration so native engine never touches better-sqlite3 | **In Progress** (7 of 17 done, 1 partial) |
 | [**7**](#phase-7--expanded-language-support) | Expanded Language Support | Parser abstraction layer, 23 new languages in 4 batches (11 → 34), dual-engine support | Planned |
 | [**8**](#phase-8--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system | Planned |
 | [**9**](#phase-9--quality-security--technical-debt) | Quality, Security & Technical Debt | Supply-chain security, test quality gates, architectural debt cleanup | Planned |
@@ -1277,6 +1277,74 @@ Structure building is unchanged — at 22ms it's already fast.
 - **Target:** rolesMs < 15ms, edgesMs < 30ms on native full builds
 
 **Affected files:** `crates/codegraph-core/src/lib.rs`, `src/domain/graph/builder/stages/build-edges.ts`, `src/graph/classifiers/roles.ts`
+
+### 6.13 -- NativeDatabase Class (rusqlite Connection Lifecycle)
+
+**Not started.** Foundation for moving all DB operations to `rusqlite` on the native engine path. Currently `better-sqlite3` (JS) handles all DB operations for both engines, and `rusqlite` is only used for bulk AST node insertion (6.9/PR #651). The goal is: **native engine → rusqlite for all DB; WASM engine → better-sqlite3 for all DB** — eliminating the dual-SQLite-in-one-process problem and unlocking Rust-speed for every query.
+
+**Plan:**
+- **Create `NativeDatabase` napi-rs class** in `crates/codegraph-core/src/native_db.rs` holding a `rusqlite::Connection`
+- **Expose lifecycle methods:** `openReadWrite(dbPath)`, `openReadonly(dbPath)`, `close()`, `exec(sql)`, `pragma(sql)`
+- **Implement `initSchema()`** — embed migration DDL strings in Rust, run via `rusqlite`
+- **Implement `getBuildMeta(key)` / `setBuildMeta(entries)`** — metadata KV operations
+- **Add `NativeDatabase` to `NativeAddon` interface** in `src/types.ts`
+- **Wire `src/db/connection.ts`** to return `NativeDatabase` when native engine is active, `better-sqlite3` otherwise
+
+**Affected files:** `crates/codegraph-core/src/native_db.rs` (new), `crates/codegraph-core/src/lib.rs`, `src/types.ts`, `src/db/connection.ts`, `src/db/migrations.ts`
+
+### 6.14 -- Native Read Queries (Repository Migration)
+
+**Not started.** Migrate all 41 `Repository` read methods to Rust, so every query runs via `rusqlite` on the native engine. The existing `Repository` abstract class and `SqliteRepository` provide the exact seam — each method is a fixed SQL query with typed parameters and results.
+
+**Plan:**
+- **Implement each Repository method as a Rust method on `NativeDatabase`:** Start with simple ones (`countNodes`, `countEdges`, `countFiles`, `findNodeById`), then fixed-SQL edge queries (16 methods), then parameterized queries with dynamic filtering
+- **Replicate `NodeQuery` fluent builder in Rust:** The dynamic SQL builder used by `findNodesWithFanIn`, `findNodesForTriage`, `listFunctionNodes` must produce identical SQL and results
+- **Create `NativeRepository extends Repository`** in `src/db/repository/native-repository.ts` — delegates all 41 methods to `NativeDatabase` napi calls
+- **Wire `openRepo()` to return `NativeRepository`** when native engine is available
+- **Parity test suite:** Run every Repository method on both `SqliteRepository` and `NativeRepository` against the same DB, assert identical output
+
+**Affected files:** `crates/codegraph-core/src/native_db.rs`, `src/db/repository/native-repository.ts` (new), `src/db/repository/index.ts`, `src/db/query-builder.ts`
+
+### 6.15 -- Native Write Operations (Build Pipeline)
+
+**Not started.** Migrate all build-pipeline write operations to `rusqlite`, so the entire build (parse → insert → finalize) uses a single Rust-side DB connection on native. This consolidates the scattered rusqlite usage from 6.9–6.12 into the `NativeDatabase` class and adds the remaining write paths.
+
+**Plan:**
+- **Migrate `batchInsertNodes` and `batchInsertEdges`** — high-value; currently the hottest build path after parse
+- **Migrate `purgeFilesData`** — cascade DELETE across 10 tables during incremental rebuilds
+- **Migrate complexity/CFG/dataflow/co-change writes** — consolidate the per-phase Rust inserts from 6.9/6.10 into `NativeDatabase` methods
+- **Migrate `upsertFileHashes` and `updateExportedFlags`** — finalize-phase operations
+- **Consolidate `bulk_insert_ast_nodes`** into `NativeDatabase` (currently opens its own separate connection)
+- **Update `PipelineContext`** to thread `NativeDatabase` through all build stages when native engine is active
+- **Transactional parity testing:** Verify that partial failures, rollbacks, and WAL behavior are identical between engines
+
+**Affected files:** `crates/codegraph-core/src/native_db.rs`, `crates/codegraph-core/src/ast_db.rs`, `src/domain/graph/builder/context.ts`, `src/domain/graph/builder/helpers.ts`, `src/domain/graph/builder/stages/*.ts`
+
+### 6.16 -- Dynamic SQL & Edge Cases
+
+**Not started.** Handle the remaining non-trivial DB patterns that don't map cleanly to fixed Repository methods.
+
+**Plan:**
+- **`NodeQuery` builder edge cases:** Ensure the Rust-side replica handles all filter combinations, JOIN paths, ORDER BY variations, and LIMIT/OFFSET correctly — fuzz-test with random filter combinations against the JS builder
+- **`openReadonlyOrFail` version-check logic:** Port the schema-version validation that runs on read-only DB opens
+- **Advisory lock mechanism:** Keep in JS (filesystem-based, not SQLite) — ensure `NativeDatabase.close()` integrates with the existing lock lifecycle
+- **`closeDbDeferred` / WAL checkpoint deferral:** Keep deferred-close logic in JS, call `NativeDatabase.close()` when ready
+- **Raw `db.prepare()` stragglers:** Audit all 383 callers of `.prepare()` and ensure every one routes through either `Repository` or `NativeDatabase` methods — no direct better-sqlite3 usage on the native path
+
+**Affected files:** `crates/codegraph-core/src/native_db.rs`, `src/db/connection.ts`, `src/db/query-builder.ts`, `src/db/repository/sqlite-repository.ts`
+
+### 6.17 -- Cleanup & better-sqlite3 Isolation
+
+**Not started.** Final step: ensure `better-sqlite3` is only loaded when running the WASM engine. Update documentation and dependency claims.
+
+**Plan:**
+- **Lazy-load `better-sqlite3`** — only `require()` it when engine is WASM; native path never touches it
+- **Remove the double-connection pattern** — `bulk_insert_ast_nodes` (6.9) and any other Rust functions that open their own `rusqlite::Connection` should use the shared `NativeDatabase` instance
+- **Profile and tune:** Enable `rusqlite` statement caching, optimize batch sizes, tune WAL settings for the unified Rust connection
+- **Update README.md** — change "3 runtime dependencies" to "4 runtime dependencies" with the claim: `better-sqlite3` is WASM-engine only, `rusqlite` is native-engine only
+- **Update verification strategy:** Add a parity gate that runs the full test suite on both engines and diffs the resulting DBs row-by-row
+
+**Affected files:** `README.md`, `src/db/connection.ts`, `src/infrastructure/native.ts`, `crates/codegraph-core/src/native_db.rs`, `crates/codegraph-core/src/ast_db.rs`
 
 ---
 
