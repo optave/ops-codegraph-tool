@@ -24,6 +24,9 @@ tree-sitter-ruby = "0.23"
 tree-sitter-php = "0.23"
 tree-sitter-hcl = "1"
 rayon = "1"
+# `bundled` embeds a second SQLite copy (better-sqlite3 already bundles one).
+# This is intentional: Windows CI lacks a system SQLite, and WAL coordination
+# between the two instances is handled safely at the OS level.
 rusqlite = { version = "0.32", features = ["bundled"] }
 send_wrapper = "0.6"
 
