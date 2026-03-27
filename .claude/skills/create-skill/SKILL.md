@@ -516,7 +516,19 @@ TEST_DIR=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXXXX")
 trap 'cd - > /dev/null 2>&1; rm -rf "$TEST_DIR"' EXIT
 cd "$TEST_DIR"
 git init --quiet
-# Simulate the Phase 0 checks from the skill here
+
+# --- Happy path: valid skill name and all tools present ---
+# Simulate: ARGUMENTS="deploy-check"; run the Phase 0 pre-flight checks
+
+# --- Failure path 1: not in a git repo ---
+# (run checks from a non-git directory — expect ERROR message + non-zero exit)
+
+# --- Failure path 2: invalid skill name ---
+# ARGUMENTS="BadName!"; run argument validation — expect rejection
+
+# --- Failure path 3: missing required tool ---
+# (temporarily hide a required tool — expect clear error message + non-zero exit)
+
 # > /dev/null 2>&1: suppress cd's directory-path output — returning to original directory
 cd - > /dev/null 2>&1
 rm -rf "$TEST_DIR"
