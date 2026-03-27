@@ -146,8 +146,13 @@ Read `README.md` and check if any new user-facing features from this release nee
 2. **MCP tools table** — if new MCP tools were added, add them to the AI integration section
 3. **Feature descriptions** — if a major new capability was added (new analysis type, new output format, etc.), add it to the relevant section
 4. **Roadmap section** — if a phase status changed, update the roadmap summary at the bottom
-5. **Version references** — only update version-specific references (e.g., install commands). Historical milestone markers like "Complete (v3.0.0)" should stay as-is
-6. If nothing user-facing changed (pure refactors, bug fixes, internal improvements), no README update is needed
+5. **Roadmap ordering cross-check** — verify the README roadmap list matches `docs/roadmap/ROADMAP.md` in **phase order, phase names, and phase count**. ROADMAP.md is the source of truth. Specifically:
+   - Extract the phase sequence from both files
+   - If any phases are reordered, missing, renamed, or merged in README relative to ROADMAP.md, fix README to match
+   - Completed phases should keep their historical version markers (e.g., "Complete (v3.0.0)")
+   - This check runs every release, not only when phase status changes — drift accumulates silently
+6. **Version references** — only update version-specific references (e.g., install commands). Historical milestone markers like "Complete (v3.0.0)" should stay as-is
+7. If nothing user-facing changed (pure refactors, bug fixes, internal improvements), no README update is needed — **but still run the roadmap ordering cross-check (item 5)**
 
 ## Step 7: Verify package-lock.json
 
