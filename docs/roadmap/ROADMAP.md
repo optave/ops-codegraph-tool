@@ -1341,7 +1341,7 @@ Structure building is unchanged — at 22ms it's already fast.
 - **Lazy-load `better-sqlite3`** — only `require()` it when engine is WASM; native path never touches it
 - **Remove the double-connection pattern** — `bulk_insert_ast_nodes` (6.9) and any other Rust functions that open their own `rusqlite::Connection` should use the shared `NativeDatabase` instance
 - **Profile and tune:** Enable `rusqlite` statement caching, optimize batch sizes, tune WAL settings for the unified Rust connection
-- **Update README.md** — change "3 runtime dependencies" to "4 runtime dependencies" with the claim: `better-sqlite3` is WASM-engine only, `rusqlite` is native-engine only
+- **Update README.md** — clarify that `better-sqlite3` is now WASM-engine only (the "3 runtime dependencies" count stays the same because `rusqlite` is compiled into the native addon, not a separate npm dependency)
 - **Update verification strategy:** Add a parity gate that runs the full test suite on both engines and diffs the resulting DBs row-by-row
 
 **Affected files:** `README.md`, `src/db/connection.ts`, `src/infrastructure/native.ts`, `crates/codegraph-core/src/native_db.rs`, `crates/codegraph-core/src/ast_db.rs`
