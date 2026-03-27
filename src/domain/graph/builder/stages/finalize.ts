@@ -67,7 +67,9 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   // built_at is only used by stale-embeddings check (skipped for incremental),
   // and counts are only used by drift detection (skipped for ≤3 files).
   // This avoids a transaction commit + WAL fsync (~15-30ms).
-  if (isFullBuild || allSymbols.size > 5) {
+  // Threshold aligned with drift detection gate (allSymbols.size > 3) so stored
+  // counts stay fresh whenever drift detection reads them.
+  if (isFullBuild || allSymbols.size > 3) {
     try {
       setBuildMeta(db, {
         engine: ctx.engineName,
@@ -157,6 +159,10 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
     }
   }
 
+  // Intentionally measured before closeDb / writeJournalHeader / auto-registration:
+  // for the deferred-close path the close is async (setImmediate), and for full
+  // builds the metric captures finalize logic only — DB close cost is tracked
+  // separately via timing.closeDbMs when available.
   ctx.timing.finalizeMs = performance.now() - t0;
 
   // For small incremental builds, defer db.close() to the next event loop tick.
@@ -177,7 +183,6 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   // registered during the initial full build. The dynamic import + file I/O
   // costs ~100ms which dominates incremental finalize time.
   if (!opts.skipRegistry && isFullBuild) {
-    const { tmpdir } = await import('node:os');
     const tmpDir = path.resolve(tmpdir());
     const resolvedRoot = path.resolve(rootDir);
     if (resolvedRoot.startsWith(tmpDir)) {
