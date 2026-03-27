@@ -478,6 +478,8 @@ Before finalizing, audit the SKILL.md against every item below. **Do not skip an
 
 Read through the entire SKILL.md one more time after checking all items. Fix anything found.
 
+**Exit condition:** All checklist items pass. The SKILL.md has no unresolved structure, anti-pattern, robustness, completeness, or safety violations.
+
 ---
 
 ## Phase 5 — Smoke Test
