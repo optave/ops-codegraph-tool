@@ -260,50 +260,68 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   return { definitions, calls, imports, classes, exports: exps, typeMap };
 }
 
-/**
- * Walk program-level children to extract `const x = <literal>` as constants.
- * The query-based fast path has no pattern for lexical_declaration/variable_declaration,
- * so constants are missed. This targeted walk fills that gap without a full tree traversal.
- */
-function extractConstantsWalk(rootNode: TreeSitterNode, definitions: Definition[]): void {
-  for (let i = 0; i < rootNode.childCount; i++) {
-    const node = rootNode.child(i);
-    if (!node) continue;
+/** Node types that define a function scope — constants inside these are skipped. */
+const FUNCTION_SCOPE_TYPES = new Set([
+  'function_declaration',
+  'arrow_function',
+  'function_expression',
+  'method_definition',
+  'generator_function_declaration',
+  'generator_function',
+]);
 
-    let declNode = node;
+/**
+ * Recursively walk the AST to extract `const x = <literal>` as constants.
+ * Skips nodes inside function scopes so only file-level / block-level constants
+ * are captured — matching the native engine's behaviour.
+ */
+function extractConstantsWalk(node: TreeSitterNode, definitions: Definition[]): void {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+
+    // Don't descend into function scopes
+    if (FUNCTION_SCOPE_TYPES.has(child.type)) continue;
+
+    let declNode = child;
     // Handle `export const …` — unwrap the export_statement to its declaration child
-    if (node.type === 'export_statement') {
-      const inner = node.childForFieldName('declaration');
-      if (!inner) continue;
-      declNode = inner;
+    if (child.type === 'export_statement') {
+      const inner = child.childForFieldName('declaration');
+      if (inner) declNode = inner;
     }
 
     const t = declNode.type;
-    if (t !== 'lexical_declaration' && t !== 'variable_declaration') continue;
-    if (!declNode.text.startsWith('const ')) continue;
-
-    for (let j = 0; j < declNode.childCount; j++) {
-      const declarator = declNode.child(j);
-      if (!declarator || declarator.type !== 'variable_declarator') continue;
-      const nameN = declarator.childForFieldName('name');
-      const valueN = declarator.childForFieldName('value');
-      if (!nameN || nameN.type !== 'identifier' || !valueN) continue;
-      // Skip functions — already captured by query patterns
-      const valType = valueN.type;
-      if (
-        valType === 'arrow_function' ||
-        valType === 'function_expression' ||
-        valType === 'function'
-      )
-        continue;
-      if (isConstantValue(valueN)) {
-        definitions.push({
-          name: nameN.text,
-          kind: 'constant',
-          line: declNode.startPosition.row + 1,
-          endLine: nodeEndLine(declNode),
-        });
+    if (t === 'lexical_declaration' || t === 'variable_declaration') {
+      if (declNode.text.startsWith('const ')) {
+        for (let j = 0; j < declNode.childCount; j++) {
+          const declarator = declNode.child(j);
+          if (!declarator || declarator.type !== 'variable_declarator') continue;
+          const nameN = declarator.childForFieldName('name');
+          const valueN = declarator.childForFieldName('value');
+          if (!nameN || nameN.type !== 'identifier' || !valueN) continue;
+          // Skip functions — already captured by query patterns
+          const valType = valueN.type;
+          if (
+            valType === 'arrow_function' ||
+            valType === 'function_expression' ||
+            valType === 'function'
+          )
+            continue;
+          if (isConstantValue(valueN)) {
+            definitions.push({
+              name: nameN.text,
+              kind: 'constant',
+              line: declNode.startPosition.row + 1,
+              endLine: nodeEndLine(declNode),
+            });
+          }
+        }
       }
+    }
+
+    // Recurse into non-function, non-export-statement children (blocks, if-statements, etc.)
+    if (child.type !== 'export_statement') {
+      extractConstantsWalk(child, definitions);
     }
   }
 }

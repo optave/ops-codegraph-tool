@@ -40,7 +40,13 @@ fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth:
     }
     match node.kind() {
         "function_item" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
+            // Skip default-impl functions inside traits — already emitted by trait_item handler
+            if node.parent()
+                .and_then(|p| p.parent())
+                .map_or(false, |gp| gp.kind() == "trait_item")
+            {
+                // still recurse into children below
+            } else if let Some(name_node) = node.child_by_field_name("name") {
                 let name = node_text(&name_node, source);
                 let impl_type = find_current_impl(node, source);
                 let (full_name, kind) = match &impl_type {

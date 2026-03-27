@@ -295,6 +295,7 @@ fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth:
                                 && find_parent_of_types(node, &[
                                     "function_declaration", "arrow_function",
                                     "function_expression", "method_definition",
+                                    "generator_function_declaration", "generator_function",
                                 ]).is_none()
                             {
                                 symbols.definitions.push(Definition {

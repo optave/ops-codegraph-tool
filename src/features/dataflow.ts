@@ -22,7 +22,6 @@ import { createDataflowVisitor } from '../ast-analysis/visitors/dataflow-visitor
 import { hasDataflowTable, openReadonlyOrFail } from '../db/index.js';
 import { ALL_SYMBOL_KINDS, normalizeSymbol } from '../domain/queries.js';
 import { debug, info } from '../infrastructure/logger.js';
-import { loadNative } from '../infrastructure/native.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
 import type { BetterSqlite3Database, NodeRow, TreeSitterNode } from '../types.js';
@@ -245,109 +244,6 @@ export async function buildDataflowEdges(
   _engineOpts?: unknown,
 ): Promise<void> {
   const extToLang = buildExtToLangMap();
-
-  // ── Native bulk-insert fast path ──────────────────────────────────────
-  const native = loadNative();
-  if (native?.bulkInsertDataflow) {
-    let needsJsFallback = false;
-    const batches: Array<{
-      file: string;
-      edges: Array<{
-        sourceName: string;
-        targetName: string;
-        kind: string;
-        paramIndex?: number | null;
-        expression?: string | null;
-        line?: number | null;
-        confidence: number;
-      }>;
-    }> = [];
-
-    for (const [relPath, symbols] of fileSymbols) {
-      const ext = path.extname(relPath).toLowerCase();
-      if (!DATAFLOW_EXTENSIONS.has(ext)) continue;
-
-      // If we have pre-computed dataflow (from native extraction or unified walk),
-      // collect the edges directly
-      const data = symbols.dataflow;
-      if (!data) {
-        // Need WASM fallback for this file
-        if (!symbols._tree) {
-          needsJsFallback = true;
-          break;
-        }
-        // Has _tree but no dataflow — will be handled by visitor in engine,
-        // but if we got here the engine already ran. Skip this file.
-        continue;
-      }
-
-      const fileEdges: (typeof batches)[0]['edges'] = [];
-
-      for (const flow of data.argFlows as ArgFlow[]) {
-        if (flow.callerFunc && flow.calleeName) {
-          fileEdges.push({
-            sourceName: flow.callerFunc,
-            targetName: flow.calleeName,
-            kind: 'flows_to',
-            paramIndex: flow.argIndex,
-            expression: flow.expression,
-            line: flow.line,
-            confidence: flow.confidence,
-          });
-        }
-      }
-
-      for (const assignment of data.assignments as Assignment[]) {
-        if (assignment.sourceCallName && assignment.callerFunc) {
-          fileEdges.push({
-            sourceName: assignment.sourceCallName,
-            targetName: assignment.callerFunc,
-            kind: 'returns',
-            paramIndex: null,
-            expression: assignment.expression,
-            line: assignment.line,
-            confidence: 1.0,
-          });
-        }
-      }
-
-      for (const mut of data.mutations as Mutation[]) {
-        if (mut.funcName && mut.binding?.type === 'param') {
-          fileEdges.push({
-            sourceName: mut.funcName,
-            targetName: mut.funcName,
-            kind: 'mutates',
-            paramIndex: null,
-            expression: mut.mutatingExpr,
-            line: mut.line,
-            confidence: 1.0,
-          });
-        }
-      }
-
-      if (fileEdges.length > 0) {
-        batches.push({ file: relPath, edges: fileEdges });
-      }
-    }
-
-    if (!needsJsFallback) {
-      const inserted = native.bulkInsertDataflow(db.name, batches);
-      const expectedEdges = batches.reduce((s, b) => s + b.edges.length, 0);
-      if (inserted === expectedEdges || expectedEdges === 0) {
-        if (inserted > 0) {
-          info(`Dataflow: ${inserted} edges inserted (native bulk)`);
-        }
-        return;
-      }
-      debug(
-        `Dataflow: bulk insert expected ${expectedEdges} edges, got ${inserted} — falling back to JS`,
-      );
-      // fall through to JS path
-    }
-    // fall through to JS path
-  }
-
-  // ── JS fallback path ──────────────────────────────────────────────────
   const { parsers, getParserFn } = await initDataflowParsers(fileSymbols);
 
   const insert = db.prepare(

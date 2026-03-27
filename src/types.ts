@@ -1815,41 +1815,29 @@ export interface NativeAddon {
       }>;
     }>,
   ): number;
-  bulkInsertCfg(
+  bulkInsertNodes(
     dbPath: string,
     batches: Array<{
-      name: string;
       file: string;
-      line: number;
-      blocks: Array<{
-        index: number;
-        type: string;
-        startLine?: number | null;
+      definitions: Array<{
+        name: string;
+        kind: string;
+        line: number;
         endLine?: number | null;
-        label?: string | null;
+        visibility?: string | null;
+        children: Array<{
+          name: string;
+          kind: string;
+          line: number;
+          endLine?: number | null;
+          visibility?: string | null;
+        }>;
       }>;
-      edges: Array<{
-        sourceIndex: number;
-        targetIndex: number;
-        kind: string;
-      }>;
+      exports: Array<{ name: string; kind: string; line: number }>;
     }>,
-  ): number;
-  bulkInsertDataflow(
-    dbPath: string,
-    batches: Array<{
-      file: string;
-      edges: Array<{
-        sourceName: string;
-        targetName: string;
-        kind: string;
-        paramIndex?: number | null;
-        expression?: string | null;
-        line?: number | null;
-        confidence: number;
-      }>;
-    }>,
-  ): number;
+    fileHashes: Array<{ file: string; hash: string; mtime: number; size: number }>,
+    removedFiles: string[],
+  ): boolean;
   engineVersion(): string;
   ParseTreeCache: new () => NativeParseTreeCache;
 }

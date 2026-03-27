@@ -3,10 +3,15 @@
  *
  * Batch-inserts file nodes, definitions, exports, children, and contains/parameter_of edges.
  * Updates file hashes for incremental builds.
+ *
+ * When the native engine is available, delegates all SQLite writes to Rust via
+ * `bulkInsertNodes` — eliminating JS↔C boundary overhead. Falls back to the
+ * JS implementation on failure or when native is unavailable.
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { bulkNodeIdsByFile } from '../../../../db/index.js';
+import { loadNative } from '../../../../infrastructure/native.js';
 import type {
   BetterSqlite3Database,
   ExtractorOutput,
@@ -32,7 +37,112 @@ interface PrecomputedFileData {
   _reverseDepOnly?: boolean;
 }
 
-// ── Phase 1: Insert file nodes, definitions, exports ────────────────────
+// ── Native fast-path ─────────────────────────────────────────────────
+
+function tryNativeInsert(ctx: PipelineContext): boolean {
+  const native = loadNative();
+  if (!native?.bulkInsertNodes) return false;
+
+  const { dbPath, allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
+  if (!dbPath) return false;
+
+  // Marshal allSymbols → InsertNodesBatch[]
+  const batches: Array<{
+    file: string;
+    definitions: Array<{
+      name: string;
+      kind: string;
+      line: number;
+      endLine?: number | null;
+      visibility?: string | null;
+      children: Array<{
+        name: string;
+        kind: string;
+        line: number;
+        endLine?: number | null;
+        visibility?: string | null;
+      }>;
+    }>;
+    exports: Array<{ name: string; kind: string; line: number }>;
+  }> = [];
+
+  for (const [relPath, symbols] of allSymbols) {
+    batches.push({
+      file: relPath,
+      definitions: symbols.definitions.map((def) => ({
+        name: def.name,
+        kind: def.kind,
+        line: def.line,
+        endLine: def.endLine ?? null,
+        visibility: def.visibility ?? null,
+        children: (def.children ?? []).map((c) => ({
+          name: c.name,
+          kind: c.kind,
+          line: c.line,
+          endLine: c.endLine ?? null,
+          visibility: c.visibility ?? null,
+        })),
+      })),
+      exports: symbols.exports.map((exp) => ({
+        name: exp.name,
+        kind: exp.kind,
+        line: exp.line,
+      })),
+    });
+  }
+
+  // Build file hash entries
+  const precomputedData = new Map<string, PrecomputedFileData>();
+  for (const item of filesToParse) {
+    if (item.relPath) precomputedData.set(item.relPath, item as PrecomputedFileData);
+  }
+
+  const fileHashes: Array<{ file: string; hash: string; mtime: number; size: number }> = [];
+  for (const [relPath] of allSymbols) {
+    const precomputed = precomputedData.get(relPath);
+    if (precomputed?._reverseDepOnly) {
+      continue; // file unchanged, hash already correct
+    }
+    if (precomputed?.hash) {
+      let mtime: number;
+      let size: number;
+      if (precomputed.stat) {
+        mtime = precomputed.stat.mtime;
+        size = precomputed.stat.size;
+      } else {
+        const rawStat = fileStat(path.join(rootDir, relPath));
+        mtime = rawStat ? Math.floor(rawStat.mtimeMs) : 0;
+        size = rawStat ? rawStat.size : 0;
+      }
+      fileHashes.push({ file: relPath, hash: precomputed.hash, mtime, size });
+    } else {
+      const absPath = path.join(rootDir, relPath);
+      let code: string | null;
+      try {
+        code = readFileSafe(absPath);
+      } catch {
+        code = null;
+      }
+      if (code !== null) {
+        const stat = fileStat(absPath);
+        const mtime = stat ? Math.floor(stat.mtimeMs) : 0;
+        const size = stat ? stat.size : 0;
+        fileHashes.push({ file: relPath, hash: fileHash(code), mtime, size });
+      }
+    }
+  }
+
+  // Also include metadata-only updates (self-heal mtime/size without re-parse)
+  for (const item of metadataUpdates) {
+    const mtime = item.stat ? Math.floor(item.stat.mtime) : 0;
+    const size = item.stat ? item.stat.size : 0;
+    fileHashes.push({ file: item.relPath, hash: item.hash, mtime, size });
+  }
+
+  return native.bulkInsertNodes(dbPath, batches, fileHashes, removed);
+}
+
+// ── JS fallback: Phase 1 ────────────────────────────────────────────
 
 function insertDefinitionsAndExports(
   db: BetterSqlite3Database,
@@ -90,7 +200,7 @@ function insertDefinitionsAndExports(
   }
 }
 
-// ── Phase 2+3: Insert children and containment edges (two nodeIdMap passes) ──
+// ── JS fallback: Phase 2+3 ──────────────────────────────────────────
 
 function insertChildrenAndEdges(
   db: BetterSqlite3Database,
@@ -165,7 +275,7 @@ function insertChildrenAndEdges(
   batchInsertEdges(db, edgeRows);
 }
 
-// ── Phase 4: Update file hashes ─────────────────────────────────────────
+// ── JS fallback: Phase 4 ────────────────────────────────────────────
 
 function updateFileHashes(
   _db: BetterSqlite3Database,
@@ -218,11 +328,27 @@ function updateFileHashes(
   }
 }
 
-// ── Main entry point ────────────────────────────────────────────────────
+// ── Main entry point ────────────────────────────────────────────────
 
 export async function insertNodes(ctx: PipelineContext): Promise<void> {
   const { db, allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
 
+  // Populate fileSymbols before any DB writes (used by later stages)
+  for (const [relPath, symbols] of allSymbols) {
+    ctx.fileSymbols.set(relPath, symbols);
+  }
+
+  const t0 = performance.now();
+
+  // Try native Rust path first — single transaction, no JS↔C overhead
+  if (ctx.engineName === 'native' && tryNativeInsert(ctx)) {
+    ctx.timing.insertMs = performance.now() - t0;
+
+    // Removed-file hash cleanup is handled inside the native call
+    return;
+  }
+
+  // JS fallback
   const precomputedData = new Map<string, PrecomputedFileData>();
   for (const item of filesToParse) {
     if (item.relPath) precomputedData.set(item.relPath, item as PrecomputedFileData);
@@ -237,18 +363,12 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
     upsertHash = null;
   }
 
-  // Populate fileSymbols before the transaction so it is a pure input
-  for (const [relPath, symbols] of allSymbols) {
-    ctx.fileSymbols.set(relPath, symbols);
-  }
-
   const insertAll = db.transaction(() => {
     insertDefinitionsAndExports(db, allSymbols);
     insertChildrenAndEdges(db, allSymbols);
     updateFileHashes(db, allSymbols, precomputedData, metadataUpdates, rootDir, upsertHash);
   });
 
-  const t0 = performance.now();
   insertAll();
   ctx.timing.insertMs = performance.now() - t0;
 
