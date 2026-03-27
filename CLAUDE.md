@@ -17,7 +17,7 @@ Pick the commands that fit the situation — don't run all four mechanically:
 - `codegraph context <name> -T` — get full context (source, deps, callers)
 - `codegraph fn-impact <name> -T` — check blast radius before editing
 
-Skip these for non-code files, trivial edits, or when you already have sufficient context.
+Skip the above commands for non-code files, trivial edits, or when you already have sufficient context.
 
 ### After modifying code:
 - `codegraph diff-impact --staged -T` — verify impact before committing
