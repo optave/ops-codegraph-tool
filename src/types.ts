@@ -881,6 +881,8 @@ export interface EngineOpts {
   engine: EngineMode;
   dataflow: boolean;
   ast: boolean;
+  /** Persistent NativeDatabase connection for build writes (Phase 6.15). */
+  nativeDb?: NativeDatabase;
 }
 
 /** A file change detected during incremental builds. */
@@ -1893,8 +1895,9 @@ export interface NativeParseTreeCache {
   clear(): void;
 }
 
-/** Native rusqlite database wrapper instance (Phase 6.13). */
+/** Native rusqlite database wrapper instance (Phase 6.13 + 6.15). */
 export interface NativeDatabase {
+  // ── Lifecycle (6.13) ────────────────────────────────────────────────
   initSchema(): void;
   getBuildMeta(key: string): string | null;
   setBuildMeta(entries: Array<{ key: string; value: string }>): void;
@@ -1903,6 +1906,78 @@ export interface NativeDatabase {
   close(): void;
   readonly dbPath: string;
   readonly isOpen: boolean;
+
+  // ── Build pipeline writes (6.15) ───────────────────────────────────
+  bulkInsertNodes(
+    batches: Array<{
+      file: string;
+      definitions: Array<{
+        name: string;
+        kind: string;
+        line: number;
+        endLine?: number | null;
+        visibility?: string | null;
+        children: Array<{
+          name: string;
+          kind: string;
+          line: number;
+          endLine?: number | null;
+          visibility?: string | null;
+        }>;
+      }>;
+      exports: Array<{ name: string; kind: string; line: number }>;
+    }>,
+    fileHashes: Array<{ file: string; hash: string; mtime: number; size: number }>,
+    removedFiles: string[],
+  ): boolean;
+  bulkInsertEdges(
+    edges: Array<{
+      sourceId: number;
+      targetId: number;
+      kind: string;
+      confidence: number;
+      dynamic: number;
+    }>,
+  ): boolean;
+  bulkInsertAstNodes(
+    batches: Array<{
+      file: string;
+      nodes: Array<{
+        line: number;
+        kind: string;
+        name: string;
+        text?: string | null;
+        receiver?: string | null;
+      }>;
+    }>,
+  ): number;
+  classifyRolesFull(): {
+    entry: number;
+    core: number;
+    utility: number;
+    adapter: number;
+    dead: number;
+    deadLeaf: number;
+    deadEntry: number;
+    deadFfi: number;
+    deadUnresolved: number;
+    testOnly: number;
+    leaf: number;
+  } | null;
+  classifyRolesIncremental(changedFiles: string[]): {
+    entry: number;
+    core: number;
+    utility: number;
+    adapter: number;
+    dead: number;
+    deadLeaf: number;
+    deadEntry: number;
+    deadFfi: number;
+    deadUnresolved: number;
+    testOnly: number;
+    leaf: number;
+  } | null;
+  purgeFilesData(files: string[], purgeHashes?: boolean): void;
 }
 
 // ════════════════════════════════════════════════════════════════════════

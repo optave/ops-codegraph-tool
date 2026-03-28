@@ -326,7 +326,13 @@ function purgeAndAddReverseDeps(
 ): void {
   const { db, rootDir } = ctx;
   if (changePaths.length > 0 || ctx.removed.length > 0) {
-    purgeFilesFromGraph(db, [...ctx.removed, ...changePaths], { purgeHashes: false });
+    const filesToPurge = [...ctx.removed, ...changePaths];
+    // Prefer NativeDatabase persistent connection for purge (6.15)
+    if (ctx.nativeDb?.purgeFilesData) {
+      ctx.nativeDb.purgeFilesData(filesToPurge, false);
+    } else {
+      purgeFilesFromGraph(db, filesToPurge, { purgeHashes: false });
+    }
   }
   if (reverseDeps.size > 0) {
     const deleteOutgoingEdgesForFile = db.prepare(

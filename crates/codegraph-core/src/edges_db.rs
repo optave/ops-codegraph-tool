@@ -32,20 +32,20 @@ pub fn bulk_insert_edges(db_path: String, edges: Vec<EdgeRow>) -> bool {
         return true;
     }
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let mut conn = match Connection::open_with_flags(&db_path, flags) {
+    let conn = match Connection::open_with_flags(&db_path, flags) {
         Ok(c) => c,
         Err(_) => return false,
     };
     let _ = conn.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000");
-    do_insert(&mut conn, &edges).is_ok()
+    do_insert_edges(&conn, &edges).is_ok()
 }
 
 /// 199 rows × 5 params = 995 bind parameters per statement, safely under
 /// the legacy `SQLITE_MAX_VARIABLE_NUMBER` default of 999.
 const CHUNK: usize = 199;
 
-fn do_insert(conn: &mut Connection, edges: &[EdgeRow]) -> rusqlite::Result<()> {
-    let tx = conn.transaction()?;
+pub(crate) fn do_insert_edges(conn: &Connection, edges: &[EdgeRow]) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
 
     for chunk in edges.chunks(CHUNK) {
         let placeholders: Vec<String> = (0..chunk.len())

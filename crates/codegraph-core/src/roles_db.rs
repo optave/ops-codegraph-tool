@@ -74,9 +74,9 @@ pub struct RoleSummary {
 #[napi]
 pub fn classify_roles_full(db_path: String) -> Option<RoleSummary> {
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let mut conn = Connection::open_with_flags(&db_path, flags).ok()?;
+    let conn = Connection::open_with_flags(&db_path, flags).ok()?;
     let _ = conn.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000");
-    do_classify_full(&mut conn).ok()
+    do_classify_full(&conn).ok()
 }
 
 /// Incremental role classification: only reclassifies nodes from changed files
@@ -88,9 +88,9 @@ pub fn classify_roles_incremental(
     changed_files: Vec<String>,
 ) -> Option<RoleSummary> {
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let mut conn = Connection::open_with_flags(&db_path, flags).ok()?;
+    let conn = Connection::open_with_flags(&db_path, flags).ok()?;
     let _ = conn.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000");
-    do_classify_incremental(&mut conn, &changed_files).ok()
+    do_classify_incremental(&conn, &changed_files).ok()
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────
@@ -228,8 +228,8 @@ fn batch_update_roles(
 
 // ── Full classification ──────────────────────────────────────────────
 
-fn do_classify_full(conn: &mut Connection) -> rusqlite::Result<RoleSummary> {
-    let tx = conn.transaction()?;
+pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummary> {
+    let tx = conn.unchecked_transaction()?;
     let mut summary = RoleSummary::default();
 
     // 1. Leaf kinds → dead-leaf (skip expensive fan-in/fan-out JOINs)
@@ -351,11 +351,11 @@ fn do_classify_full(conn: &mut Connection) -> rusqlite::Result<RoleSummary> {
 
 // ── Incremental classification ───────────────────────────────────────
 
-fn do_classify_incremental(
-    conn: &mut Connection,
+pub(crate) fn do_classify_incremental(
+    conn: &Connection,
     changed_files: &[String],
 ) -> rusqlite::Result<RoleSummary> {
-    let tx = conn.transaction()?;
+    let tx = conn.unchecked_transaction()?;
     let mut summary = RoleSummary::default();
 
     // Build placeholders for changed files

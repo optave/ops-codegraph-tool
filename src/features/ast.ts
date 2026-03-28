@@ -66,11 +66,28 @@ export async function buildAstNodes(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, FileSymbols>,
   _rootDir: string,
-  _engineOpts?: unknown,
+  engineOpts?: {
+    nativeDb?: {
+      bulkInsertAstNodes(
+        batches: Array<{
+          file: string;
+          nodes: Array<{
+            line: number;
+            kind: string;
+            name: string;
+            text?: string | null;
+            receiver?: string | null;
+          }>;
+        }>,
+      ): number;
+    };
+  },
 ): Promise<void> {
   // ── Native bulk-insert fast path ──────────────────────────────────────
-  const native = loadNative();
-  if (native?.bulkInsertAstNodes) {
+  // Prefer NativeDatabase persistent connection (6.15), then standalone (6.12)
+  const nativeDb = engineOpts?.nativeDb;
+  const native = nativeDb ? null : loadNative();
+  if (nativeDb?.bulkInsertAstNodes || native?.bulkInsertAstNodes) {
     let needsJsFallback = false;
     const batches: Array<{
       file: string;
@@ -103,7 +120,9 @@ export async function buildAstNodes(
 
     if (!needsJsFallback) {
       const expectedNodes = batches.reduce((s, b) => s + b.nodes.length, 0);
-      const inserted = native.bulkInsertAstNodes(db.name, batches);
+      const inserted = nativeDb
+        ? nativeDb.bulkInsertAstNodes(batches)
+        : native!.bulkInsertAstNodes(db.name, batches);
       if (inserted === expectedNodes) {
         debug(`AST extraction (native bulk): ${inserted} nodes stored`);
         return;

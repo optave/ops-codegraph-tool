@@ -11,6 +11,11 @@ use napi_derive::napi;
 use rusqlite::{params, Connection, OpenFlags};
 use send_wrapper::SendWrapper;
 
+use crate::ast_db::{self, FileAstBatch};
+use crate::edges_db::{self, EdgeRow};
+use crate::insert_nodes::{self, FileHashEntry, InsertNodesBatch};
+use crate::roles_db::{self, RoleSummary};
+
 // ── Migration DDL (mirrored from src/db/migrations.ts) ──────────────────
 
 struct Migration {
@@ -524,6 +529,116 @@ impl NativeDatabase {
         }
         tx.commit()
             .map_err(|e| napi::Error::from_reason(format!("commit setBuildMeta failed: {e}")))?;
+        Ok(())
+    }
+
+    // ── Phase 6.15: Build pipeline write operations ─────────────────────
+
+    /// Bulk-insert nodes, children, containment edges, exports, and file hashes.
+    /// Reuses the persistent connection instead of opening a new one.
+    /// Returns `true` on success, `false` on failure.
+    #[napi]
+    pub fn bulk_insert_nodes(
+        &self,
+        batches: Vec<InsertNodesBatch>,
+        file_hashes: Vec<FileHashEntry>,
+        removed_files: Vec<String>,
+    ) -> napi::Result<bool> {
+        let conn = self.conn()?;
+        Ok(insert_nodes::do_insert(conn, &batches, &file_hashes, &removed_files).is_ok())
+    }
+
+    /// Bulk-insert edge rows using chunked multi-value INSERT statements.
+    /// Returns `true` on success, `false` on failure.
+    #[napi]
+    pub fn bulk_insert_edges(&self, edges: Vec<EdgeRow>) -> napi::Result<bool> {
+        if edges.is_empty() {
+            return Ok(true);
+        }
+        let conn = self.conn()?;
+        Ok(edges_db::do_insert_edges(conn, &edges).is_ok())
+    }
+
+    /// Bulk-insert AST nodes, resolving parent_node_id from the nodes table.
+    /// Returns the number of rows inserted (0 on failure).
+    #[napi]
+    pub fn bulk_insert_ast_nodes(&self, batches: Vec<FileAstBatch>) -> napi::Result<u32> {
+        let conn = self.conn()?;
+        Ok(ast_db::do_insert_ast_nodes(conn, &batches).unwrap_or(0))
+    }
+
+    /// Full role classification: queries all nodes, computes fan-in/fan-out,
+    /// classifies roles, and batch-updates the `role` column.
+    #[napi]
+    pub fn classify_roles_full(&self) -> napi::Result<Option<RoleSummary>> {
+        let conn = self.conn()?;
+        Ok(roles_db::do_classify_full(conn).ok())
+    }
+
+    /// Incremental role classification: only reclassifies nodes from changed
+    /// files plus their immediate edge neighbours.
+    #[napi]
+    pub fn classify_roles_incremental(
+        &self,
+        changed_files: Vec<String>,
+    ) -> napi::Result<Option<RoleSummary>> {
+        let conn = self.conn()?;
+        Ok(roles_db::do_classify_incremental(conn, &changed_files).ok())
+    }
+
+    /// Cascade-delete all graph data for the specified files across all tables.
+    /// Order: dependent tables first (embeddings, cfg, dataflow, complexity,
+    /// metrics, ast_nodes), then edges, then nodes, then optionally file_hashes.
+    #[napi]
+    pub fn purge_files_data(
+        &self,
+        files: Vec<String>,
+        purge_hashes: Option<bool>,
+    ) -> napi::Result<()> {
+        if files.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn()?;
+        let purge_hashes = purge_hashes.unwrap_or(true);
+
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| napi::Error::from_reason(format!("purge transaction failed: {e}")))?;
+
+        // Purge each file across all tables. Optional tables are silently
+        // skipped if they don't exist. Order: dependents → edges → nodes → hashes.
+        let purge_sql: &[(&str, bool)] = &[
+            ("DELETE FROM embeddings WHERE node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+            ("DELETE FROM cfg_edges WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+            ("DELETE FROM cfg_blocks WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+            ("DELETE FROM dataflow WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1) OR target_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+            ("DELETE FROM function_complexity WHERE node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+            ("DELETE FROM node_metrics WHERE node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+            ("DELETE FROM ast_nodes WHERE file = ?1", false),
+            // Core tables — errors propagated
+            ("DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1) OR target_id IN (SELECT id FROM nodes WHERE file = ?1)", true),
+            ("DELETE FROM nodes WHERE file = ?1", true),
+        ];
+
+        for file in &files {
+            for &(sql, required) in purge_sql {
+                match tx.execute(sql, params![file]) {
+                    Ok(_) => {}
+                    Err(e) if required => {
+                        return Err(napi::Error::from_reason(format!(
+                            "purge failed for \"{file}\": {e}"
+                        )));
+                    }
+                    Err(_) => {} // optional table missing — skip
+                }
+            }
+            if purge_hashes {
+                let _ = tx.execute("DELETE FROM file_hashes WHERE file = ?1", params![file]);
+            }
+        }
+
+        tx.commit()
+            .map_err(|e| napi::Error::from_reason(format!("purge commit failed: {e}")))?;
         Ok(())
     }
 }

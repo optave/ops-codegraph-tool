@@ -76,14 +76,14 @@ pub fn bulk_insert_nodes(
     removed_files: Vec<String>,
 ) -> bool {
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let mut conn = match Connection::open_with_flags(&db_path, flags) {
+    let conn = match Connection::open_with_flags(&db_path, flags) {
         Ok(c) => c,
         Err(_) => return false,
     };
 
     let _ = conn.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000");
 
-    do_insert(&mut conn, &batches, &file_hashes, &removed_files).is_ok()
+    do_insert(&conn, &batches, &file_hashes, &removed_files).is_ok()
 }
 
 // ── Internal implementation ─────────────────────────────────────────
@@ -108,13 +108,13 @@ fn query_node_ids(
     Ok(map)
 }
 
-fn do_insert(
-    conn: &mut Connection,
+pub(crate) fn do_insert(
+    conn: &Connection,
     batches: &[InsertNodesBatch],
     file_hashes: &[FileHashEntry],
     removed_files: &[String],
 ) -> rusqlite::Result<()> {
-    let tx = conn.transaction()?;
+    let tx = conn.unchecked_transaction()?;
 
     // ── Phase 1: Insert file nodes + definitions + export nodes ──────
     {

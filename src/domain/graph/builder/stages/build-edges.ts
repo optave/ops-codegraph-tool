@@ -673,15 +673,17 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
 
     // When using native edge insert, skip JS insert here — do it after tx commits.
     // Otherwise insert edges within this transaction for atomicity.
-    if (!native?.bulkInsertEdges) {
+    const useNativeEdgeInsert = !!(ctx.nativeDb?.bulkInsertEdges || native?.bulkInsertEdges);
+    if (!useNativeEdgeInsert) {
       batchInsertEdges(db, allEdgeRows);
     }
   });
   computeEdgesTx();
 
   // Phase 2: Native rusqlite bulk insert (outside better-sqlite3 transaction
-  // since rusqlite opens its own connection — avoids SQLITE_BUSY contention)
-  if (native?.bulkInsertEdges && allEdgeRows.length > 0) {
+  // to avoid SQLITE_BUSY contention). Prefer NativeDatabase persistent
+  // connection (6.15), fall back to standalone function (6.12).
+  if ((ctx.nativeDb?.bulkInsertEdges || native?.bulkInsertEdges) && allEdgeRows.length > 0) {
     const nativeEdges = allEdgeRows.map((r) => ({
       sourceId: r[0],
       targetId: r[1],
@@ -689,7 +691,12 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       confidence: r[3],
       dynamic: r[4],
     }));
-    const ok = native.bulkInsertEdges(db.name, nativeEdges);
+    let ok: boolean;
+    if (ctx.nativeDb?.bulkInsertEdges) {
+      ok = ctx.nativeDb.bulkInsertEdges(nativeEdges);
+    } else {
+      ok = native!.bulkInsertEdges(db.name, nativeEdges);
+    }
     if (!ok) {
       debug('Native bulkInsertEdges failed — falling back to JS batchInsertEdges');
       batchInsertEdges(db, allEdgeRows);

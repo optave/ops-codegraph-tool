@@ -89,8 +89,28 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
   try {
     let roleSummary: Record<string, number> | null = null;
 
-    // Try native rusqlite path first (eliminates JS<->SQLite round-trips)
-    if (ctx.engineName === 'native') {
+    // Try NativeDatabase persistent connection first (6.15), then standalone (6.12)
+    if (ctx.nativeDb?.classifyRolesFull) {
+      const nativeResult =
+        changedFileList && changedFileList.length > 0
+          ? ctx.nativeDb.classifyRolesIncremental(changedFileList)
+          : ctx.nativeDb.classifyRolesFull();
+      if (nativeResult) {
+        roleSummary = {
+          entry: nativeResult.entry,
+          core: nativeResult.core,
+          utility: nativeResult.utility,
+          adapter: nativeResult.adapter,
+          dead: nativeResult.dead,
+          'dead-leaf': nativeResult.deadLeaf,
+          'dead-entry': nativeResult.deadEntry,
+          'dead-ffi': nativeResult.deadFfi,
+          'dead-unresolved': nativeResult.deadUnresolved,
+          'test-only': nativeResult.testOnly,
+          leaf: nativeResult.leaf,
+        };
+      }
+    } else if (ctx.engineName === 'native') {
       const native = loadNative();
       if (native?.classifyRolesFull) {
         const dbPath = db.name;
