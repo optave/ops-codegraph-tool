@@ -69,7 +69,7 @@ mkdir -p ".claude/skills/$SKILL_NAME"
 
 Write the SKILL.md file starting with this structure:
 
-```markdown
+````markdown
 ---
 name: $SKILL_NAME
 description: <one-line from user's purpose>
@@ -116,7 +116,7 @@ git rev-parse --show-toplevel > /dev/null 2>&1 || { echo "ERROR: not in a git re
 ## Rules
 
 - <Hard constraints>
-```
+````
 
 ### Structural requirements to include in every skill:
 
