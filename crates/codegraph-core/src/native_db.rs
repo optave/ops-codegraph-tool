@@ -332,7 +332,7 @@ impl NativeDatabase {
     /// Close the database connection. Idempotent — safe to call multiple times.
     #[napi]
     pub fn close(&mut self) {
-        self.conn.take();
+        (*self.conn).take();
     }
 
     /// The path this database was opened with.
@@ -355,8 +355,12 @@ impl NativeDatabase {
             .map_err(|e| napi::Error::from_reason(format!("exec failed: {e}")))
     }
 
-    /// Execute a PRAGMA statement and return the first result as a string.
+    /// Execute a read-only PRAGMA statement and return the first result as a string.
     /// Returns `null` if the pragma produces no output.
+    ///
+    /// **Note:** This method is intended for read-only PRAGMAs (e.g. `journal_mode`,
+    /// `page_count`). Write-mode PRAGMAs (e.g. `journal_mode = DELETE`) should use
+    /// `exec()` instead. No validation is performed — callers are trusted internal code.
     #[napi]
     pub fn pragma(&self, sql: String) -> napi::Result<Option<String>> {
         let conn = self.conn()?;
@@ -390,7 +394,11 @@ impl NativeDatabase {
         .map_err(|e| napi::Error::from_reason(format!("create schema_version failed: {e}")))?;
 
         let mut current_version: u32 = conn
-            .query_row("SELECT version FROM schema_version", [], |row| row.get(0))
+            .query_row(
+                "SELECT version FROM schema_version ORDER BY rowid DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
             .unwrap_or(0);
 
         // Insert version 0 if table was just created (empty)
@@ -406,18 +414,27 @@ impl NativeDatabase {
 
         for migration in MIGRATIONS {
             if migration.version > current_version {
-                conn.execute_batch(migration.up).map_err(|e| {
+                let tx = conn.unchecked_transaction().map_err(|e| {
+                    napi::Error::from_reason(format!("begin migration tx failed: {e}"))
+                })?;
+                tx.execute_batch(migration.up).map_err(|e| {
                     napi::Error::from_reason(format!(
                         "migration v{} failed: {e}",
                         migration.version
                     ))
                 })?;
-                conn.execute(
+                tx.execute(
                     "UPDATE schema_version SET version = ?1",
                     params![migration.version],
                 )
                 .map_err(|e| {
                     napi::Error::from_reason(format!("update schema_version failed: {e}"))
+                })?;
+                tx.commit().map_err(|e| {
+                    napi::Error::from_reason(format!(
+                        "commit migration v{} failed: {e}",
+                        migration.version
+                    ))
                 })?;
                 current_version = migration.version;
             }
