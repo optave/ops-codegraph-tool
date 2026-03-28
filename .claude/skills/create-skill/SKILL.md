@@ -2,7 +2,7 @@
 name: create-skill
 description: Scaffold, write, and validate a new Claude Code skill — enforces quality standards derived from 250+ review comments
 argument-hint: "<skill-name>  (kebab-case, e.g. deploy-check)"
-allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Agent
+allowed-tools: Bash, Read, Write, Edit, Glob, Grep
 ---
 
 # /create-skill — Skill Factory

@@ -289,8 +289,8 @@ while IFS= read -r line; do
     '```'*) in_block=false; continue ;;
   esac
   if $in_block; then
-    # Skip comments and mktemp template syntax
-    stripped=$(echo "$line" | sed 's/#.*//')
+    # Strip shell comments (# preceded by whitespace) but not # inside strings
+    stripped=$(echo "$line" | sed 's/[[:space:]]#.*//')
     if echo "$stripped" | grep -qE '"/tmp/[a-zA-Z]|/tmp/[a-zA-Z]'; then
       # Allow ${TMPDIR:-/tmp} pattern
       if ! echo "$stripped" | grep -qE '\$\{TMPDIR:-/tmp\}'; then
