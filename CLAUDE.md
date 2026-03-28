@@ -2,22 +2,25 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-> **Hooks enforce code quality.** This project uses Claude Code hooks (`.claude/hooks/`) to automatically inject file-level dependency context on reads, rebuild the graph after edits, block commits with cycles or dead exports, run lint on staged files, and show diff-impact before commits. If codegraph reports an error or produces wrong results when analyzing itself, **fix the bug in the codebase**.
+> **Hooks enforce code quality.** This project uses Claude Code hooks (`.claude/hooks/`) to automatically inject file-level dependency context on reads, rebuild the graph after edits, block commits with cycles or dead exports, run lint on staged files, and show diff-impact before commits. If codegraph reports an error or produces wrong results when analyzing itself, **that's a real bug** — don't work around it or ignore it. Flag it to the user and, if it's blocking the current task, fix it.
 
 > **Never document bugs as expected behavior.** If two engines (native vs WASM) produce different results, that is a bug in the less-accurate engine — not an acceptable "parity gap." Adding comments or tests that frame wrong output as "expected" blocks future agents from ever fixing it. Instead: identify the root cause, file an issue, and fix the extraction/resolution layer that produces incorrect results. The correct response to "engine A reports 8 cycles, engine B reports 11" is to fix the 3 false cycles in engine B, not to document why the difference is okay.
 
 ## Codegraph Workflow
 
-Hooks handle: file-level deps on reads, graph rebuild after edits, commit-time checks (cycles, dead exports, diff-impact, lint). **You must actively run these for function-level understanding:**
+Hooks handle: file-level deps on reads, graph rebuild after edits, commit-time checks (cycles, dead exports, diff-impact, lint). **Use these for function-level understanding when modifying source code:**
 
 ### Before modifying code:
-1. `codegraph where <name>` — find where the symbol lives
-2. `codegraph audit --quick <target>` — understand the structure
-3. `codegraph context <name> -T` — get full context (source, deps, callers)
-4. `codegraph fn-impact <name> -T` — check blast radius before editing
+Pick the commands that fit the situation — don't run all four mechanically:
+- `codegraph where <name>` — find where the symbol lives
+- `codegraph audit --quick <target>` — understand the structure
+- `codegraph context <name> -T` — get full context (source, deps, callers)
+- `codegraph fn-impact <name> -T` — check blast radius before editing
+
+Skip the above commands for non-code files, trivial edits, or when you already have sufficient context.
 
 ### After modifying code:
-5. `codegraph diff-impact --staged -T` — verify impact before committing
+- `codegraph diff-impact --staged -T` — verify impact before committing
 
 ### Navigation
 - `codegraph where --file <path>` — file inventory (symbols, imports, exports)
@@ -196,13 +199,13 @@ See `docs/examples/claude-code-hooks/README.md` for details.
 
 ## Parallel Sessions
 
-Multiple Claude Code instances run concurrently in this repo. **Every session must start with `/worktree`** to get an isolated copy of the repo before making any changes. This prevents cross-session interference entirely.
+Multiple Claude Code instances may run concurrently in this repo. **Before making any code changes, run `/worktree`** to get an isolated copy. This prevents cross-session interference. Skip the worktree for read-only tasks (reviews, analysis, questions).
 
 **Safety hooks** enforce these rules automatically — see the Hooks section above.
 
 **Rules:**
-- Run `/worktree` before starting work
-- **Always sync with `origin/main` before starting feature work.** Run `git fetch origin && git log --oneline origin/main -10` to check recent merges. If the current branch is behind main, create a new branch from `origin/main`. Never implement features on stale branches — the work may already exist on main.
+- Run `/worktree` before making changes (not needed for read-only tasks)
+- **Sync with `origin/main` before starting new feature work.** Run `git fetch origin && git log --oneline origin/main -10` to check recent merges. If starting fresh and the branch is behind main, create a new branch from `origin/main`. When continuing existing PR work, sync only if needed.
 - Stage only files you explicitly changed
 - Commit with specific file paths: `git commit <files> -m "msg"`
 - Ignore unexpected dirty files — they belong to another session
