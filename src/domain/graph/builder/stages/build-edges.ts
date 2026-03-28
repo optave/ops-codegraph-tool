@@ -7,6 +7,7 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { getNodeId } from '../../../../db/index.js';
+import { debug } from '../../../../infrastructure/logger.js';
 import { loadNative } from '../../../../infrastructure/native.js';
 import type {
   BetterSqlite3Database,
@@ -690,7 +691,7 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
     }));
     const ok = native.bulkInsertEdges(db.name, nativeEdges);
     if (!ok) {
-      // Fall back to JS path on native failure
+      debug('Native bulkInsertEdges failed — falling back to JS batchInsertEdges');
       batchInsertEdges(db, allEdgeRows);
     }
   }
