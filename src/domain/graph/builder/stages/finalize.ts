@@ -43,8 +43,12 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   // Incremental drift detection — skip for small incremental changes where
   // count fluctuation is expected (reverse-dep edge churn).
   if (!isFullBuild && allSymbols.size > 3) {
-    const prevNodes = getBuildMeta(db, 'node_count');
-    const prevEdges = getBuildMeta(db, 'edge_count');
+    const prevNodes = ctx.nativeDb
+      ? ctx.nativeDb.getBuildMeta('node_count')
+      : getBuildMeta(db, 'node_count');
+    const prevEdges = ctx.nativeDb
+      ? ctx.nativeDb.getBuildMeta('edge_count')
+      : getBuildMeta(db, 'edge_count');
     if (prevNodes && prevEdges) {
       const prevN = Number(prevNodes);
       const prevE = Number(prevEdges);
@@ -71,15 +75,29 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   // counts stay fresh whenever drift detection reads them.
   if (isFullBuild || allSymbols.size > 3) {
     try {
-      setBuildMeta(db, {
-        engine: ctx.engineName,
-        engine_version: ctx.engineVersion || '',
-        codegraph_version: CODEGRAPH_VERSION,
-        schema_version: String(schemaVersion),
-        built_at: buildNow.toISOString(),
-        node_count: nodeCount,
-        edge_count: actualEdgeCount,
-      });
+      if (ctx.nativeDb) {
+        ctx.nativeDb.setBuildMeta(
+          Object.entries({
+            engine: ctx.engineName,
+            engine_version: ctx.engineVersion || '',
+            codegraph_version: CODEGRAPH_VERSION,
+            schema_version: String(schemaVersion),
+            built_at: buildNow.toISOString(),
+            node_count: String(nodeCount),
+            edge_count: String(actualEdgeCount),
+          }).map(([key, value]) => ({ key, value })),
+        );
+      } else {
+        setBuildMeta(db, {
+          engine: ctx.engineName,
+          engine_version: ctx.engineVersion || '',
+          codegraph_version: CODEGRAPH_VERSION,
+          schema_version: String(schemaVersion),
+          built_at: buildNow.toISOString(),
+          node_count: nodeCount,
+          edge_count: actualEdgeCount,
+        });
+      }
     } catch (err) {
       warn(`Failed to write build metadata: ${(err as Error).message}`);
     }
@@ -164,6 +182,15 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   // builds the metric captures finalize logic only — DB close cost is tracked
   // separately via timing.closeDbMs when available.
   ctx.timing.finalizeMs = performance.now() - t0;
+
+  // Close NativeDatabase before better-sqlite3 (Phase 6.13)
+  if (ctx.nativeDb) {
+    try {
+      ctx.nativeDb.close();
+    } catch {
+      /* ignore */
+    }
+  }
 
   // For small incremental builds, defer db.close() to the next event loop tick.
   // The WAL checkpoint in db.close() costs ~250ms on Windows NTFS due to fsync.
