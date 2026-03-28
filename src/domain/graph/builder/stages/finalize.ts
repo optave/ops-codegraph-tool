@@ -85,7 +85,7 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
             built_at: buildNow.toISOString(),
             node_count: String(nodeCount),
             edge_count: String(actualEdgeCount),
-          }).map(([key, value]) => ({ key, value: String(value) })),
+          }).map(([key, value]) => ({ key, value })),
         );
       } else {
         setBuildMeta(db, {
