@@ -83,7 +83,7 @@ pub fn bulk_insert_nodes(
 
     let _ = conn.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000");
 
-    do_insert(&conn, &batches, &file_hashes, &removed_files).is_ok()
+    do_insert_nodes(&conn, &batches, &file_hashes, &removed_files).is_ok()
 }
 
 // ── Internal implementation ─────────────────────────────────────────
@@ -108,7 +108,7 @@ fn query_node_ids(
     Ok(map)
 }
 
-pub(crate) fn do_insert(
+pub(crate) fn do_insert_nodes(
     conn: &Connection,
     batches: &[InsertNodesBatch],
     file_hashes: &[FileHashEntry],

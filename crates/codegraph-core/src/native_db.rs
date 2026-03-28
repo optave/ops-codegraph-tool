@@ -562,7 +562,9 @@ impl NativeDatabase {
         removed_files: Vec<String>,
     ) -> napi::Result<bool> {
         let conn = self.conn()?;
-        Ok(insert_nodes::do_insert(conn, &batches, &file_hashes, &removed_files).is_ok())
+        Ok(insert_nodes::do_insert_nodes(conn, &batches, &file_hashes, &removed_files)
+            .inspect_err(|e| eprintln!("[NativeDatabase] bulk_insert_nodes failed: {e}"))
+            .is_ok())
     }
 
     /// Bulk-insert edge rows using chunked multi-value INSERT statements.
@@ -573,7 +575,9 @@ impl NativeDatabase {
             return Ok(true);
         }
         let conn = self.conn()?;
-        Ok(edges_db::do_insert_edges(conn, &edges).is_ok())
+        Ok(edges_db::do_insert_edges(conn, &edges)
+            .inspect_err(|e| eprintln!("[NativeDatabase] bulk_insert_edges failed: {e}"))
+            .is_ok())
     }
 
     /// Bulk-insert AST nodes, resolving parent_node_id from the nodes table.
