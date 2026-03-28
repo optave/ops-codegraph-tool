@@ -1,5 +1,5 @@
 ---
-name: review
+name: sweep
 description: Check all open PRs, resolve conflicts, update branches, address Claude and Greptile review concerns, fix CI failures, and retrigger reviewers until clean
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Agent
 ---

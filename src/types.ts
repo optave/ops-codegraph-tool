@@ -1838,6 +1838,45 @@ export interface NativeAddon {
     fileHashes: Array<{ file: string; hash: string; mtime: number; size: number }>,
     removedFiles: string[],
   ): boolean;
+  bulkInsertEdges(
+    dbPath: string,
+    edges: Array<{
+      sourceId: number;
+      targetId: number;
+      kind: string;
+      confidence: number;
+      dynamic: number;
+    }>,
+  ): boolean;
+  classifyRolesFull(dbPath: string): {
+    entry: number;
+    core: number;
+    utility: number;
+    adapter: number;
+    dead: number;
+    deadLeaf: number;
+    deadEntry: number;
+    deadFfi: number;
+    deadUnresolved: number;
+    testOnly: number;
+    leaf: number;
+  } | null;
+  classifyRolesIncremental(
+    dbPath: string,
+    changedFiles: string[],
+  ): {
+    entry: number;
+    core: number;
+    utility: number;
+    adapter: number;
+    dead: number;
+    deadLeaf: number;
+    deadEntry: number;
+    deadFfi: number;
+    deadUnresolved: number;
+    testOnly: number;
+    leaf: number;
+  } | null;
   engineVersion(): string;
   ParseTreeCache: new () => NativeParseTreeCache;
 }

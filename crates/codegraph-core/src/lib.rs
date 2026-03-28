@@ -5,12 +5,14 @@ pub mod constants;
 pub mod cycles;
 pub mod dataflow;
 pub mod edge_builder;
+pub mod edges_db;
 pub mod extractors;
 pub mod import_resolution;
 pub mod incremental;
 pub mod insert_nodes;
 pub mod parallel;
 pub mod parser_registry;
+pub mod roles_db;
 pub mod types;
 
 use napi_derive::napi;
