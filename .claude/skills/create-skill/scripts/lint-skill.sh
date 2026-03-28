@@ -2,6 +2,10 @@
 # lint-skill.sh — Static analysis for SKILL.md files
 # Catches the most common issues found in 250+ Greptile review comments.
 # Exit 0 = warnings only, Exit 1 = errors found.
+#
+# Performance note: all inner-loop checks use bash builtins ([[ =~ ]], case,
+# parameter expansion) instead of echo|grep subshells. This keeps runtime
+# under 5 s even on Windows, where process creation is ~100x slower than Linux.
 
 set -euo pipefail
 
@@ -45,7 +49,7 @@ declare -A VAR_BLOCK
 declare -A REASSIGNED
 while IFS=$'\t' read -r bnum line; do
   # Skip comment lines — they document context but don't register variable assignments
-  echo "$line" | grep -qE '^\s*#' && continue
+  [[ "$line" =~ ^[[:space:]]*# ]] && continue
   # Match UPPER_CASE_VAR= assignments (skip lowercase/mixed to reduce false positives)
   # Use while-read instead of for-in-$() to avoid empty-string iteration when grep matches nothing
   while IFS= read -r var; do
@@ -62,18 +66,22 @@ done < "$BLOCKS_FILE"
 # Check for references in later blocks without file persistence
 while IFS=$'\t' read -r bnum line; do
   # Skip comment lines — they document context but don't execute variables at runtime
-  echo "$line" | grep -qE '^\s*#' && continue
+  [[ "$line" =~ ^[[:space:]]*# ]] && continue
   for var in "${!VAR_BLOCK[@]}"; do
     assigned_in="${VAR_BLOCK[$var]}"
     if [ "$bnum" -gt "$assigned_in" ]; then
-      # Check if this line references the variable ($VAR or ${VAR})
-      if echo "$line" | grep -qE '\$'"${var}"'([^A-Za-z0-9_]|$)' \
-          || echo "$line" | grep -qF "\${${var}}"; then
-        # Check if the same block also assigns it (re-assignment is fine) — O(1) lookup
-        if [ -z "${REASSIGNED[${var}:${bnum}]+x}" ]; then
-          # Check it's not read from a file (cat, $(...) with cat/read)
-          if ! echo "$line" | grep -qE 'cat |read |< |<"|\$\(<'; then
-            error "Cross-fence variable: \$$var assigned in bash block $assigned_in, referenced in block $bnum without file persistence (Pattern 1)"
+      # Check if this line references the variable ($VAR or ${VAR}) using bash builtins
+      if [[ "$line" == *'$'"${var}"* ]] || [[ "$line" == *'${'"${var}"'}'* ]]; then
+        # Narrow check: ensure the $VAR reference isn't followed by [A-Za-z0-9_]
+        # (which would mean it's a different, longer variable name)
+        if [[ "$line" =~ \$${var}([^A-Za-z0-9_]|$) ]] || [[ "$line" == *'${'"${var}"'}'* ]]; then
+          # Check if the same block also assigns it (re-assignment is fine) — O(1) lookup
+          if [ -z "${REASSIGNED[${var}:${bnum}]+x}" ]; then
+            # Check it's not read from a file (cat, $(...) with cat/read)
+            if [[ "$line" != *'cat '* ]] && [[ "$line" != *'read '* ]] && \
+               [[ "$line" != *'< '* ]] && [[ "$line" != *'<"'* ]] && [[ "$line" != *'$(<'* ]]; then
+              error "Cross-fence variable: \$$var assigned in bash block $assigned_in, referenced in block $bnum without file persistence (Pattern 1)"
+            fi
           fi
         fi
       fi
@@ -97,11 +105,25 @@ while IFS= read -r line; do
     '```bash'*) in_block=true; prev_line="$line"; continue ;;
     '```'*) in_block=false; prev_line="$line"; continue ;;
   esac
-  if $in_block && echo "$line" | grep -qE '2>/dev/null|>[ ]*/dev/null 2>&1|&>/dev/null'; then
-    # Check same line or previous line for justification comment
-    justification_re='#.*intentional|#.*tolera|#.*acceptable|#.*expected|#.*safe to ignore|#.*may fail|#.*optional|#.*fallback|#.*portable|#.*suppress|#.*provid'
-    if ! echo "${prev_line}${line}" | grep -qiE "$justification_re"; then
-      warn "Line $line_num: '2>/dev/null' without justification comment (Pattern 2)"
+  if $in_block; then
+    if [[ "$line" =~ 2\>/dev/null ]] || [[ "$line" =~ \>[[:space:]]*/dev/null\ 2\>\&1 ]] || [[ "$line" == *'&>/dev/null'* ]]; then
+      # Check same line or previous line for justification comment (case-insensitive via ,, lowercasing)
+      combined="${prev_line}${line}"
+      combined_lower="${combined,,}"
+      if [[ "$combined_lower" != *'# '* ]] || {
+        [[ "$combined_lower" != *'#'*'intentional'* ]] &&
+        [[ "$combined_lower" != *'#'*'tolera'* ]] &&
+        [[ "$combined_lower" != *'#'*'acceptable'* ]] &&
+        [[ "$combined_lower" != *'#'*'expected'* ]] &&
+        [[ "$combined_lower" != *'#'*'safe to ignore'* ]] &&
+        [[ "$combined_lower" != *'#'*'may fail'* ]] &&
+        [[ "$combined_lower" != *'#'*'optional'* ]] &&
+        [[ "$combined_lower" != *'#'*'fallback'* ]] &&
+        [[ "$combined_lower" != *'#'*'portable'* ]] &&
+        [[ "$combined_lower" != *'#'*'suppress'* ]] &&
+        [[ "$combined_lower" != *'#'*'provid'* ]]; }; then
+        warn "Line $line_num: '2>/dev/null' without justification comment (Pattern 2)"
+      fi
     fi
   fi
   prev_line="$line"
@@ -109,7 +131,7 @@ done < "$SKILL_FILE"
 
 # ── Check 3: git add . or git add -A (inside bash blocks only) ───────
 while IFS=$'\t' read -r bnum line; do
-  if echo "$line" | grep -qE '^\s*git add (--\s+\.([ \t;#]|$)|\.([ \t;#]|$)|(-A|--all)([ \t;#]|$))'; then
+  if [[ "$line" =~ ^[[:space:]]*git[[:space:]]+add[[:space:]]+(--[[:space:]]+\.|\.|-A|--all)([[:space:]\;\#]|$) ]]; then
     error "bash block $bnum: 'git add .' or 'git add -A' — stage named files only"
   fi
 done < "$BLOCKS_FILE"
@@ -139,22 +161,22 @@ while IFS= read -r line; do
     # Save in_detect before fi-processing so inline commands on the same line
     # (e.g. "else npm test; fi") are evaluated in the correct detection context.
     was_in_detect=$in_detect
-    if echo "$line" | grep -qE '^\s*if\s.*(-f\s|-d\s|\block\b|\bpackage\b|command -v|which\s|find\s)'; then
+    if [[ "$line" =~ ^[[:space:]]*if[[:space:]] ]] && [[ "$line" =~ (-f[[:space:]]|-d[[:space:]]|lock|package|command\ -v|which[[:space:]]|find[[:space:]]) ]]; then
       in_detect=true
       was_in_detect=true
       # Only increment depth if fi does NOT also close on this line (one-liner guard)
-      if ! echo "$line" | grep -qE '\bfi\b'; then
-        detect_depth=$((detect_depth + 1))
-      else
+      if [[ "$line" =~ (^|[^A-Za-z0-9_])fi([^A-Za-z0-9_]|$) ]]; then
         # One-liner: detection block is self-contained — reset so subsequent lines are checked normally
         in_detect=false
+      else
+        detect_depth=$((detect_depth + 1))
       fi
-    elif echo "$line" | grep -qE '^\s*elif\s.*(-f\s|-d\s|\block\b|\bpackage\b|command -v|which\s|find\s)'; then
+    elif [[ "$line" =~ ^[[:space:]]*elif[[:space:]] ]] && [[ "$line" =~ (-f[[:space:]]|-d[[:space:]]|lock|package|command\ -v|which[[:space:]]|find[[:space:]]) ]]; then
       # elif is a sibling branch — set in_detect but do NOT increment depth
       in_detect=true
       was_in_detect=true
       # Handle inline fi on this same elif line (e.g. "elif [ -f yarn.lock ]; then CMD=yarn; fi")
-      if echo "$line" | grep -qE '\bfi\b'; then
+      if [[ "$line" =~ (^|[^A-Za-z0-9_])fi([^A-Za-z0-9_]|$) ]]; then
         if [ "$detect_depth" -gt 0 ]; then
           detect_depth=$((detect_depth - 1))
           [ "$detect_depth" -eq 0 ] && in_detect=false
@@ -162,10 +184,10 @@ while IFS= read -r line; do
           in_detect=false
         fi
       fi
-    elif echo "$line" | grep -qE '^\s*if\b'; then
+    elif [[ "$line" =~ ^[[:space:]]*if([^A-Za-z0-9_]|$) ]]; then
       # nested if (not a detection block) — track depth only when inside detection
       [ "$in_detect" = true ] && detect_depth=$((detect_depth + 1))
-    elif echo "$line" | grep -qE '^\s*fi\b'; then
+    elif [[ "$line" =~ ^[[:space:]]*fi([^A-Za-z0-9_]|$) ]]; then
       if [ "$detect_depth" -gt 0 ]; then
         detect_depth=$((detect_depth - 1))
         [ "$detect_depth" -eq 0 ] && in_detect=false
@@ -173,7 +195,7 @@ while IFS= read -r line; do
         # Safety reset: in_detect was set by an elif without a preceding detection if
         in_detect=false
       fi
-    elif $in_detect && echo "$line" | grep -qE '\bfi\b'; then
+    elif $in_detect && [[ "$line" =~ (^|[^A-Za-z0-9_])fi([^A-Za-z0-9_]|$) ]]; then
       # fi appears inline (e.g. "else ...; fi") — still closes the outermost detection block
       if [ "$detect_depth" -gt 0 ]; then
         detect_depth=$((detect_depth - 1))
@@ -186,8 +208,9 @@ while IFS= read -r line; do
     # (e.g. "else npm test; fi") are not falsely flagged — the command
     # was part of the detection block, not after it.
     if ! $was_in_detect; then
-      if echo "$line" | grep -qE '^\s*((npm|yarn|pnpm) test|(npm|yarn|pnpm) run (test|lint))([^:A-Za-z0-9_]|$)'; then
-        warn "Line $line_num: Hardcoded '$(echo "$line" | sed 's/^[[:space:]]*//')' — detect package manager first (Pattern 6)"
+      if [[ "$line" =~ ^[[:space:]]*((npm|yarn|pnpm)\ test|(npm|yarn|pnpm)\ run\ (test|lint))([^:A-Za-z0-9_]|$) ]]; then
+        trimmed="${line#"${line%%[! ]*}"}"
+        warn "Line $line_num: Hardcoded '$trimmed' — detect package manager first (Pattern 6)"
       fi
     fi
   fi
@@ -195,7 +218,7 @@ done < "$SKILL_FILE"
 
 # ── Check 5: sed -i without .bak (inside bash blocks only) ──────────
 while IFS=$'\t' read -r bnum line; do
-  if echo "$line" | grep -qE "sed\s+-i\s*(''|\"|[^.])"; then
+  if [[ "$line" =~ sed[[:space:]]+-i[[:space:]]*(\'\'|\"|[^.]) ]]; then
     warn "bash block $bnum: 'sed -i' without .bak extension — GNU/BSD incompatibility (Pattern 13)"
   fi
 done < "$BLOCKS_FILE"
@@ -250,14 +273,14 @@ while IFS= read -r line; do
   esac
   $in_block && continue
 
-  if echo "$line" | grep -qE '^## Phase [0-9]+'; then
+  if [[ "$line" =~ ^##\ Phase\ [0-9]+ ]]; then
     if [ -n "$prev_phase" ] && [ "$phase_has_exit" = false ]; then
       warn "Phase '$prev_phase' has no 'Exit condition' before the next phase"
     fi
     prev_phase="$line"
     phase_has_exit=false
   fi
-  if echo "$line" | grep -qiE '\*\*Exit condition'; then
+  if [[ "${line,,}" == *'**exit condition'* ]]; then
     phase_has_exit=true
   fi
 done < "$SKILL_FILE"
@@ -268,7 +291,7 @@ fi
 
 # ── Check 10: find with -quit (inside bash blocks only) ──────────────
 while IFS=$'\t' read -r bnum line; do
-  if echo "$line" | grep -qE 'find\s+.*-quit'; then
+  if [[ "$line" =~ find[[:space:]].*-quit ]]; then
     warn "bash block $bnum: 'find -quit' is GNU-only — use 'head -1' or 'grep -q' instead (Pattern 13)"
   fi
 done < "$BLOCKS_FILE"
@@ -290,10 +313,10 @@ while IFS= read -r line; do
   esac
   if $in_block; then
     # Strip shell comments (# preceded by whitespace) but not # inside strings
-    stripped=$(echo "$line" | sed 's/[[:space:]]#.*//')
-    if echo "$stripped" | grep -qE '"/tmp/[a-zA-Z]|/tmp/[a-zA-Z]'; then
+    stripped="${line%%[[:space:]]#*}"
+    if [[ "$stripped" =~ [\"/]/tmp/[a-zA-Z] ]]; then
       # Allow ${TMPDIR:-/tmp} pattern
-      if ! echo "$stripped" | grep -qE '\$\{TMPDIR:-/tmp\}'; then
+      if [[ "$stripped" != *'${TMPDIR:-/tmp}'* ]]; then
         warn "Line $line_num: Hardcoded '/tmp/' path — use mktemp instead (Pattern 4)"
       fi
     fi
