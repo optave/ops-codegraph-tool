@@ -641,11 +641,14 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
   const t0 = performance.now();
   const native = engineName === 'native' ? loadNative() : null;
 
-  // Phase 1: Compute edges (inside better-sqlite3 transaction for barrel cleanup atomicity)
+  // Phase 1: Compute edges inside a better-sqlite3 transaction.
+  // Barrel-edge deletion lives here so that the JS path (which also inserts
+  // edges in this transaction) keeps deletion + insertion atomic.
+  // When using the native rusqlite path, insertion happens in Phase 2 on a
+  // separate connection — a crash between Phase 1 and Phase 2 would leave
+  // barrel edges missing until the next incremental rebuild re-creates them.
   const allEdgeRows: EdgeRowTuple[] = [];
   const computeEdgesTx = db.transaction(() => {
-    // Delete stale outgoing edges for barrel-only files inside the transaction
-    // so that deletion and re-creation are atomic (no edge loss on mid-build crash).
     if (ctx.barrelOnlyFiles.size > 0) {
       const deleteOutgoingEdges = db.prepare(
         'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
