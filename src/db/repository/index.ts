@@ -28,6 +28,7 @@ export {
 export { getEmbeddingCount, getEmbeddingMeta, hasEmbeddings } from './embeddings.js';
 export { getCallableNodes, getCallEdges, getFileNodesAll, getImportEdges } from './graph-read.js';
 export { InMemoryRepository } from './in-memory-repository.js';
+export { NativeRepository } from './native-repository.js';
 export {
   bulkNodeIdsByFile,
   countEdges,

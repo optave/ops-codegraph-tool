@@ -4,9 +4,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
 import { debug, warn } from '../infrastructure/logger.js';
+import { getNative, isNativeAvailable } from '../infrastructure/native.js';
 import { DbError } from '../shared/errors.js';
 import type { BetterSqlite3Database } from '../types.js';
 import { Repository } from './repository/base.js';
+import { NativeRepository } from './repository/native-repository.js';
 import { SqliteRepository } from './repository/sqlite-repository.js';
 
 /** Lazy-loaded package version (read once from package.json). */
@@ -286,7 +288,9 @@ export function openReadonlyOrFail(customPath?: string): BetterSqlite3Database {
  * Open a Repository from either an injected instance or a DB path.
  *
  * When `opts.repo` is a Repository instance, returns it directly (no DB opened).
- * Otherwise opens a readonly SQLite DB and wraps it in SqliteRepository.
+ * When the native engine is available, opens a NativeDatabase (rusqlite) and
+ * wraps it in NativeRepository. Otherwise falls back to better-sqlite3 via
+ * SqliteRepository.
  */
 export function openRepo(
   customDbPath?: string,
@@ -300,6 +304,50 @@ export function openRepo(
     }
     return { repo: opts.repo, close() {} };
   }
+
+  // Try native rusqlite path first (Phase 6.14)
+  if (isNativeAvailable()) {
+    try {
+      const dbPath = findDbPath(customDbPath);
+      if (!fs.existsSync(dbPath)) {
+        throw new DbError(
+          `No codegraph database found at ${dbPath}.\nRun "codegraph build" first to analyze your codebase.`,
+          { file: dbPath },
+        );
+      }
+      const native = getNative();
+      const ndb = native.NativeDatabase.openReadonly(dbPath);
+
+      // Version check (same logic as openReadonlyOrFail)
+      if (!_versionWarned) {
+        try {
+          const buildVersion = ndb.getBuildMeta('codegraph_version');
+          const currentVersion = getPackageVersion();
+          if (buildVersion && currentVersion && buildVersion !== currentVersion) {
+            warn(
+              `DB was built with codegraph v${buildVersion}, running v${currentVersion}. Consider: codegraph build --no-incremental`,
+            );
+          }
+        } catch {
+          // build_meta table may not exist in older DBs
+        }
+        _versionWarned = true;
+      }
+
+      return {
+        repo: new NativeRepository(ndb),
+        close() {
+          ndb.close();
+        },
+      };
+    } catch (e) {
+      // If native open fails (e.g. incompatible DB), fall through to better-sqlite3
+      debug(
+        `openRepo: native path failed, falling back to better-sqlite3: ${(e as Error).message}`,
+      );
+    }
+  }
+
   const db = openReadonlyOrFail(customDbPath);
   return {
     repo: new SqliteRepository(db),
