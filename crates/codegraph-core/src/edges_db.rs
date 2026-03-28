@@ -40,7 +40,9 @@ pub fn bulk_insert_edges(db_path: String, edges: Vec<EdgeRow>) -> bool {
     do_insert(&mut conn, &edges).is_ok()
 }
 
-const CHUNK: usize = 200;
+/// 199 rows × 5 params = 995 bind parameters per statement, safely under
+/// the legacy `SQLITE_MAX_VARIABLE_NUMBER` default of 999.
+const CHUNK: usize = 199;
 
 fn do_insert(conn: &mut Connection, edges: &[EdgeRow]) -> rusqlite::Result<()> {
     let tx = conn.transaction()?;
