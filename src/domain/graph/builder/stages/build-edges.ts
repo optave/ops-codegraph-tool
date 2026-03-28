@@ -7,6 +7,7 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { getNodeId } from '../../../../db/index.js';
+import { debug } from '../../../../infrastructure/logger.js';
 import { loadNative } from '../../../../infrastructure/native.js';
 import type {
   BetterSqlite3Database,
@@ -639,9 +640,16 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
   addLazyFallback(ctx, scopedLoad);
 
   const t0 = performance.now();
-  const buildEdgesTx = db.transaction(() => {
-    // Delete stale outgoing edges for barrel-only files inside the transaction
-    // so that deletion and re-creation are atomic (no edge loss on mid-build crash).
+  const native = engineName === 'native' ? loadNative() : null;
+
+  // Phase 1: Compute edges inside a better-sqlite3 transaction.
+  // Barrel-edge deletion lives here so that the JS path (which also inserts
+  // edges in this transaction) keeps deletion + insertion atomic.
+  // When using the native rusqlite path, insertion happens in Phase 2 on a
+  // separate connection — a crash between Phase 1 and Phase 2 would leave
+  // barrel edges missing until the next incremental rebuild re-creates them.
+  const allEdgeRows: EdgeRowTuple[] = [];
+  const computeEdgesTx = db.transaction(() => {
     if (ctx.barrelOnlyFiles.size > 0) {
       const deleteOutgoingEdges = db.prepare(
         'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
@@ -651,19 +659,42 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       }
     }
 
-    const allEdgeRows: EdgeRowTuple[] = [];
-
     buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
 
-    const native = engineName === 'native' ? loadNative() : null;
-    if (native?.buildCallEdges) {
-      buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodesBefore, native);
+    // Skip native call-edge path for small incremental builds (≤3 files):
+    // napi-rs marshaling overhead for allNodes exceeds computation savings.
+    const useNativeCallEdges =
+      native?.buildCallEdges && (ctx.isFullBuild || ctx.fileSymbols.size > 3);
+    if (useNativeCallEdges) {
+      buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodesBefore, native!);
     } else {
       buildCallEdgesJS(ctx, getNodeIdStmt, allEdgeRows);
     }
 
-    batchInsertEdges(db, allEdgeRows);
+    // When using native edge insert, skip JS insert here — do it after tx commits.
+    // Otherwise insert edges within this transaction for atomicity.
+    if (!native?.bulkInsertEdges) {
+      batchInsertEdges(db, allEdgeRows);
+    }
   });
-  buildEdgesTx();
+  computeEdgesTx();
+
+  // Phase 2: Native rusqlite bulk insert (outside better-sqlite3 transaction
+  // since rusqlite opens its own connection — avoids SQLITE_BUSY contention)
+  if (native?.bulkInsertEdges && allEdgeRows.length > 0) {
+    const nativeEdges = allEdgeRows.map((r) => ({
+      sourceId: r[0],
+      targetId: r[1],
+      kind: r[2],
+      confidence: r[3],
+      dynamic: r[4],
+    }));
+    const ok = native.bulkInsertEdges(db.name, nativeEdges);
+    if (!ok) {
+      debug('Native bulkInsertEdges failed — falling back to JS batchInsertEdges');
+      batchInsertEdges(db, allEdgeRows);
+    }
+  }
+
   ctx.timing.edgesMs = performance.now() - t0;
 }

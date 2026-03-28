@@ -6,6 +6,7 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { debug } from '../../../../infrastructure/logger.js';
+import { loadNative } from '../../../../infrastructure/native.js';
 import { normalizePath } from '../../../../shared/constants.js';
 import type { ExtractorOutput } from '../../../../types.js';
 import type { PipelineContext } from '../context.js';
@@ -86,13 +87,46 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
   // Classify node roles (incremental: only reclassify changed files' nodes)
   const t1 = performance.now();
   try {
-    const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
-      classifyNodeRoles: (
-        db: PipelineContext['db'],
-        changedFiles?: string[] | null,
-      ) => Record<string, number>;
-    };
-    const roleSummary = classifyNodeRoles(db, changedFileList);
+    let roleSummary: Record<string, number> | null = null;
+
+    // Try native rusqlite path first (eliminates JS<->SQLite round-trips)
+    if (ctx.engineName === 'native') {
+      const native = loadNative();
+      if (native?.classifyRolesFull) {
+        const dbPath = db.name;
+        const nativeResult =
+          changedFileList && changedFileList.length > 0
+            ? native.classifyRolesIncremental?.(dbPath, changedFileList)
+            : native.classifyRolesFull(dbPath);
+        if (nativeResult) {
+          roleSummary = {
+            entry: nativeResult.entry,
+            core: nativeResult.core,
+            utility: nativeResult.utility,
+            adapter: nativeResult.adapter,
+            dead: nativeResult.dead,
+            'dead-leaf': nativeResult.deadLeaf,
+            'dead-entry': nativeResult.deadEntry,
+            'dead-ffi': nativeResult.deadFfi,
+            'dead-unresolved': nativeResult.deadUnresolved,
+            'test-only': nativeResult.testOnly,
+            leaf: nativeResult.leaf,
+          };
+        }
+      }
+    }
+
+    // Fall back to JS path
+    if (!roleSummary) {
+      const { classifyNodeRoles } = (await import('../../../../features/structure.js')) as {
+        classifyNodeRoles: (
+          db: PipelineContext['db'],
+          changedFiles?: string[] | null,
+        ) => Record<string, number>;
+      };
+      roleSummary = classifyNodeRoles(db, changedFileList);
+    }
+
     debug(
       `Roles${changedFileList ? ` (incremental, ${changedFileList.length} files)` : ''}: ${Object.entries(
         roleSummary,
