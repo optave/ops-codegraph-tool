@@ -9,18 +9,6 @@
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "rootDir": "./src",
-    "baseUrl": "./src",
-    "paths": {
-      "#shared/*": ["./shared/*"],
-      "#infrastructure/*": ["./infrastructure/*"],
-      "#db/*": ["./db/*"],
-      "#domain/*": ["./domain/*"],
-      "#features/*": ["./features/*"],
-      "#presentation/*": ["./presentation/*"],
-      "#graph/*": ["./graph/*"],
-      "#mcp/*": ["./mcp/*"],
-      "#ast-analysis/*": ["./ast-analysis/*"]
-    },
 
     /* Emit */
     "outDir": "./dist",
