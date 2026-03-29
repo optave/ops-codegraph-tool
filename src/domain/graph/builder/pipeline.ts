@@ -34,6 +34,7 @@ function initializeEngine(ctx: PipelineContext): void {
     engine: ctx.opts.engine || 'auto',
     dataflow: ctx.opts.dataflow !== false,
     ast: ctx.opts.ast !== false,
+    nativeDb: ctx.nativeDb,
   };
   const { name: engineName, version: engineVersion } = getActiveEngine(ctx.engineOpts);
   ctx.engineName = engineName as 'native' | 'wasm';

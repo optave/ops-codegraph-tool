@@ -74,15 +74,26 @@ pub fn bulk_insert_ast_nodes(db_path: String, batches: Vec<FileAstBatch>) -> u32
     }
 
     let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let mut conn = match Connection::open_with_flags(&db_path, flags) {
+    let conn = match Connection::open_with_flags(&db_path, flags) {
         Ok(c) => c,
         Err(_) => return 0,
     };
 
     // Match the JS-side performance pragmas (including busy_timeout for WAL contention)
-    let _ = conn.execute_batch(
-        "PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000",
-    );
+    let _ = conn.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000");
+
+    do_insert_ast_nodes(&conn, &batches).unwrap_or(0)
+}
+
+/// Internal implementation: insert AST nodes using an existing connection.
+/// Used by both the standalone `bulk_insert_ast_nodes` function and `NativeDatabase`.
+pub(crate) fn do_insert_ast_nodes(
+    conn: &Connection,
+    batches: &[FileAstBatch],
+) -> rusqlite::Result<u32> {
+    if batches.is_empty() {
+        return Ok(0);
+    }
 
     // Bail out if the ast_nodes table doesn't exist (schema too old)
     let has_table: bool = conn
@@ -90,19 +101,15 @@ pub fn bulk_insert_ast_nodes(db_path: String, batches: Vec<FileAstBatch>) -> u32
         .and_then(|mut s| s.query_row([], |_| Ok(true)))
         .unwrap_or(false);
     if !has_table {
-        return 0;
+        return Ok(0);
     }
 
     // ── Phase 1: Pre-fetch node definitions for parent resolution ────────
     let mut file_defs: HashMap<String, Vec<NodeDef>> = HashMap::new();
     {
-        let Ok(mut stmt) =
-            conn.prepare("SELECT id, line, end_line FROM nodes WHERE file = ?1")
-        else {
-            return 0;
-        };
+        let mut stmt = conn.prepare("SELECT id, line, end_line FROM nodes WHERE file = ?1")?;
 
-        for batch in &batches {
+        for batch in batches {
             if batch.nodes.is_empty() || file_defs.contains_key(&batch.file) {
                 continue;
             }
@@ -118,30 +125,26 @@ pub fn bulk_insert_ast_nodes(db_path: String, batches: Vec<FileAstBatch>) -> u32
                 .unwrap_or_default();
             file_defs.insert(batch.file.clone(), defs);
         }
-    } // `stmt` dropped — releases the immutable borrow on `conn`
+    }
 
     // ── Phase 2: Bulk insert in a single transaction ─────────────────────
-    let Ok(tx) = conn.transaction() else {
-        return 0;
-    };
+    let tx = conn.unchecked_transaction()?;
 
     let mut total = 0u32;
     {
-        let Ok(mut insert_stmt) = tx.prepare(
+        let mut insert_stmt = tx.prepare(
             "INSERT INTO ast_nodes (file, line, kind, name, text, receiver, parent_node_id) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        ) else {
-            return 0;
-        };
+        )?;
 
-        for batch in &batches {
+        for batch in batches {
             let empty = Vec::new();
             let defs = file_defs.get(&batch.file).unwrap_or(&empty);
 
             for node in &batch.nodes {
                 let parent_id = find_parent_id(defs, node.line);
 
-                match insert_stmt.execute(params![
+                insert_stmt.execute(params![
                     &batch.file,
                     node.line,
                     &node.kind,
@@ -149,17 +152,12 @@ pub fn bulk_insert_ast_nodes(db_path: String, batches: Vec<FileAstBatch>) -> u32
                     &node.text,
                     &node.receiver,
                     parent_id,
-                ]) {
-                    Ok(_) => total += 1,
-                    Err(_) => return 0, // abort; tx rolls back on drop
-                }
+                ])?;
+                total += 1;
             }
         }
-    } // `insert_stmt` dropped
-
-    if tx.commit().is_err() {
-        return 0;
     }
 
-    total
+    tx.commit()?;
+    Ok(total)
 }
