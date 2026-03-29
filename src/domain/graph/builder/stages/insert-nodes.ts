@@ -11,7 +11,6 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { bulkNodeIdsByFile } from '../../../../db/index.js';
-import { loadNative } from '../../../../infrastructure/native.js';
 import type {
   BetterSqlite3Database,
   ExtractorOutput,
@@ -40,13 +39,11 @@ interface PrecomputedFileData {
 // ── Native fast-path ─────────────────────────────────────────────────
 
 function tryNativeInsert(ctx: PipelineContext): boolean {
-  // Prefer NativeDatabase persistent connection (6.15), fall back to standalone (6.12)
-  const hasNativeDb = !!ctx.nativeDb?.bulkInsertNodes;
-  const native = hasNativeDb ? null : loadNative();
-  if (!hasNativeDb && !native?.bulkInsertNodes) return false;
+  // Use NativeDatabase persistent connection (Phase 6.15+).
+  // Standalone napi functions were removed in 6.17 — falls through to JS if nativeDb unavailable.
+  if (!ctx.nativeDb?.bulkInsertNodes) return false;
 
-  const { dbPath, allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
-  if (!hasNativeDb && !dbPath) return false;
+  const { allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
 
   // Marshal allSymbols → InsertNodesBatch[]
   const batches: Array<{
@@ -141,11 +138,7 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
     fileHashes.push({ file: item.relPath, hash: item.hash, mtime, size });
   }
 
-  // Route through persistent NativeDatabase when available (6.15)
-  if (ctx.nativeDb?.bulkInsertNodes) {
-    return ctx.nativeDb.bulkInsertNodes(batches, fileHashes, removed);
-  }
-  return native!.bulkInsertNodes(dbPath!, batches, fileHashes, removed);
+  return ctx.nativeDb.bulkInsertNodes(batches, fileHashes, removed);
 }
 
 // ── JS fallback: Phase 1 ────────────────────────────────────────────

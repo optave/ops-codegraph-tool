@@ -572,7 +572,7 @@ Only **3 runtime dependencies** — everything else is optional or a devDependen
 
 | Dependency | What it does | | |
 |---|---|---|---|
-| [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | Fast, synchronous SQLite driver | ![GitHub stars](https://img.shields.io/github/stars/WiseLibs/better-sqlite3?style=flat-square&label=%E2%AD%90) | ![npm downloads](https://img.shields.io/npm/dw/better-sqlite3?style=flat-square&label=%F0%9F%93%A5%2Fwk) |
+| [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) | SQLite driver (WASM engine; lazy-loaded, not used for native-engine reads) | ![GitHub stars](https://img.shields.io/github/stars/WiseLibs/better-sqlite3?style=flat-square&label=%E2%AD%90) | ![npm downloads](https://img.shields.io/npm/dw/better-sqlite3?style=flat-square&label=%F0%9F%93%A5%2Fwk) |
 | [commander](https://github.com/tj/commander.js) | CLI argument parsing | ![GitHub stars](https://img.shields.io/github/stars/tj/commander.js?style=flat-square&label=%E2%AD%90) | ![npm downloads](https://img.shields.io/npm/dw/commander?style=flat-square&label=%F0%9F%93%A5%2Fwk) |
 | [web-tree-sitter](https://github.com/tree-sitter/tree-sitter) | WASM tree-sitter bindings | ![GitHub stars](https://img.shields.io/github/stars/tree-sitter/tree-sitter?style=flat-square&label=%E2%AD%90) | ![npm downloads](https://img.shields.io/npm/dw/web-tree-sitter?style=flat-square&label=%F0%9F%93%A5%2Fwk) |
 

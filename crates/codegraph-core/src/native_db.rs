@@ -305,8 +305,15 @@ impl NativeDatabase {
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = Connection::open_with_flags(&db_path, flags)
             .map_err(|e| napi::Error::from_reason(format!("Failed to open DB: {e}")))?;
+        // 64 entries comfortably holds the 40+ prepare_cached() queries in read_queries.rs
+        // plus build-path queries, avoiding LRU eviction (default is 16).
+        conn.set_prepared_statement_cache_capacity(64);
         conn.execute_batch(
-            "PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;",
+            "PRAGMA journal_mode = WAL; \
+             PRAGMA synchronous = NORMAL; \
+             PRAGMA busy_timeout = 5000; \
+             PRAGMA mmap_size = 268435456; \
+             PRAGMA temp_store = MEMORY;",
         )
         .map_err(|e| napi::Error::from_reason(format!("Failed to set pragmas: {e}")))?;
         Ok(Self {
@@ -321,8 +328,13 @@ impl NativeDatabase {
         let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = Connection::open_with_flags(&db_path, flags)
             .map_err(|e| napi::Error::from_reason(format!("Failed to open DB readonly: {e}")))?;
-        conn.execute_batch("PRAGMA busy_timeout = 5000;")
-            .map_err(|e| napi::Error::from_reason(format!("Failed to set pragmas: {e}")))?;
+        conn.set_prepared_statement_cache_capacity(64);
+        conn.execute_batch(
+            "PRAGMA busy_timeout = 5000; \
+             PRAGMA mmap_size = 268435456; \
+             PRAGMA temp_store = MEMORY;",
+        )
+        .map_err(|e| napi::Error::from_reason(format!("Failed to set pragmas: {e}")))?;
         Ok(Self {
             conn: SendWrapper::new(Some(conn)),
             db_path,

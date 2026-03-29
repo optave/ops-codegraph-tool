@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use napi_derive::napi;
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
 // ── Input types (received from JS via napi) ─────────────────────────
@@ -63,28 +63,9 @@ pub struct FileHashEntry {
 
 // ── Public napi entry point ─────────────────────────────────────────
 
-/// Bulk-insert nodes, children, containment edges, exports, and file hashes
-/// into the database. Runs all writes in a single SQLite transaction.
-///
-/// Returns `true` on success, `false` on any error (DB open failure,
-/// missing table, transaction failure) so the JS caller can fall back.
-#[napi]
-pub fn bulk_insert_nodes(
-    db_path: String,
-    batches: Vec<InsertNodesBatch>,
-    file_hashes: Vec<FileHashEntry>,
-    removed_files: Vec<String>,
-) -> bool {
-    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let conn = match Connection::open_with_flags(&db_path, flags) {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-
-    let _ = conn.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000");
-
-    do_insert_nodes(&conn, &batches, &file_hashes, &removed_files).is_ok()
-}
+// NOTE: The standalone `bulk_insert_nodes` napi export was removed in Phase 6.17.
+// All callers now use `NativeDatabase::bulk_insert_nodes()` which reuses the
+// persistent connection, eliminating the double-connection antipattern.
 
 // ── Internal implementation ─────────────────────────────────────────
 
