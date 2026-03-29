@@ -208,7 +208,7 @@ while IFS= read -r line; do
     # (e.g. "else npm test; fi") are not falsely flagged — the command
     # was part of the detection block, not after it.
     if ! $was_in_detect; then
-      if [[ "$line" =~ ^[[:space:]]*((npm|yarn|pnpm)\ test|(npm|yarn|pnpm)\ run\ (test|lint))([^:A-Za-z0-9_]|$) ]]; then
+      if [[ "$line" =~ ^[[:space:]]*((npm|yarn|pnpm)\ test|(npm|yarn|pnpm)\ run\ (test|lint))([^:A-Za-z0-9_-]|$) ]]; then
         trimmed="${line#"${line%%[! ]*}"}"
         warn "Line $line_num: Hardcoded '$trimmed' — detect package manager first (Pattern 6)"
       fi
@@ -314,7 +314,7 @@ while IFS= read -r line; do
   if $in_block; then
     # Strip shell comments (# preceded by whitespace) but not # inside strings
     stripped="${line%%[[:space:]]#*}"
-    if [[ "$stripped" =~ [\"/]/tmp/[a-zA-Z] ]]; then
+    if [[ "$stripped" =~ [\"\'\/]/tmp/[a-zA-Z] ]]; then
       # Allow ${TMPDIR:-/tmp} pattern
       if [[ "$stripped" != *'${TMPDIR:-/tmp}'* ]]; then
         warn "Line $line_num: Hardcoded '/tmp/' path — use mktemp instead (Pattern 4)"
