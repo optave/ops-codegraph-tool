@@ -1879,6 +1879,10 @@ export interface NativeAddon {
   } | null;
   engineVersion(): string;
   ParseTreeCache: new () => NativeParseTreeCache;
+  NativeDatabase: {
+    openReadWrite(dbPath: string): NativeDatabase;
+    openReadonly(dbPath: string): NativeDatabase;
+  };
 }
 
 /** Native parse-tree cache instance. */
@@ -1887,6 +1891,18 @@ export interface NativeParseTreeCache {
   set(filePath: string, tree: unknown): void;
   delete(filePath: string): void;
   clear(): void;
+}
+
+/** Native rusqlite database wrapper instance (Phase 6.13). */
+export interface NativeDatabase {
+  initSchema(): void;
+  getBuildMeta(key: string): string | null;
+  setBuildMeta(entries: Array<{ key: string; value: string }>): void;
+  exec(sql: string): void;
+  pragma(sql: string): string | null;
+  close(): void;
+  readonly dbPath: string;
+  readonly isOpen: boolean;
 }
 
 // ════════════════════════════════════════════════════════════════════════

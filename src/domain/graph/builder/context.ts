@@ -12,6 +12,7 @@ import type {
   ExtractorOutput,
   FileToParse,
   MetadataUpdate,
+  NativeDatabase,
   NodeRow,
   ParseChange,
   PathAliases,
@@ -31,6 +32,7 @@ export class PipelineContext {
   incremental!: boolean;
   forceFullRebuild: boolean = false;
   schemaVersion!: number;
+  nativeDb?: NativeDatabase;
 
   // ── File collection (set by collectFiles stage) ────────────────────
   allFiles!: string[];
