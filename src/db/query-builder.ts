@@ -1,6 +1,6 @@
 import { DbError } from '../shared/errors.js';
 import { DEAD_ROLE_PREFIX, EVERY_EDGE_KIND } from '../shared/kinds.js';
-import type { BetterSqlite3Database } from '../types.js';
+import type { BetterSqlite3Database, NativeDatabase } from '../types.js';
 
 // ─── Validation Helpers ─────────────────────────────────────────────
 
@@ -64,6 +64,17 @@ function validateEdgeKind(edgeKind: string): void {
       `Invalid edge kind: ${edgeKind} (expected one of ${EVERY_EDGE_KIND.join(', ')})`,
     );
   }
+}
+
+/** Runtime-validate that every param is string, number, or null before sending to nativeDb. */
+function validateNativeParams(params: (string | number)[]): Array<string | number | null> {
+  for (let i = 0; i < params.length; i++) {
+    const p = params[i];
+    if (p !== null && typeof p !== 'string' && typeof p !== 'number') {
+      throw new DbError(`NodeQuery param[${i}] has unsupported type: ${typeof p}`);
+    }
+  }
+  return params as Array<string | number | null>;
 }
 
 // ─── LIKE Escaping ──────────────────────────────────────────────────
@@ -314,15 +325,29 @@ export class NodeQuery {
     return { sql, params };
   }
 
-  /** Execute and return all rows. */
-  all<TRow = Record<string, unknown>>(db: BetterSqlite3Database): TRow[] {
+  /** Execute and return all rows. When `nativeDb` is provided, dispatches through rusqlite. */
+  all<TRow = Record<string, unknown>>(
+    db: BetterSqlite3Database,
+    nativeDb?: NativeDatabase,
+  ): TRow[] {
     const { sql, params } = this.build();
+    if (nativeDb) {
+      return nativeDb.queryAll(sql, validateNativeParams(params)) as TRow[];
+    }
     return db.prepare<TRow>(sql).all(...params) as TRow[];
   }
 
-  /** Execute and return first row. */
-  get<TRow = Record<string, unknown>>(db: BetterSqlite3Database): TRow | undefined {
+  /** Execute and return first row. When `nativeDb` is provided, dispatches through rusqlite. */
+  get<TRow = Record<string, unknown>>(
+    db: BetterSqlite3Database,
+    nativeDb?: NativeDatabase,
+  ): TRow | undefined {
     const { sql, params } = this.build();
+    if (nativeDb) {
+      return (nativeDb.queryGet(sql, validateNativeParams(params)) ?? undefined) as
+        | TRow
+        | undefined;
+    }
     return db.prepare<TRow>(sql).get(...params) as TRow | undefined;
   }
 

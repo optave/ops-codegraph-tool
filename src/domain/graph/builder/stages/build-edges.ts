@@ -6,9 +6,9 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { getNodeId } from '../../../../db/index.js';
-import { debug } from '../../../../infrastructure/logger.js';
-import { loadNative } from '../../../../infrastructure/native.js';
+import { getNodeId } from '#db/index.js';
+import { debug } from '#infrastructure/logger.js';
+import { loadNative } from '#infrastructure/native.js';
 import type {
   BetterSqlite3Database,
   Call,
@@ -18,7 +18,7 @@ import type {
   NativeAddon,
   NodeRow,
   TypeMapEntry,
-} from '../../../../types.js';
+} from '#types';
 import { computeConfidence } from '../../resolve.js';
 import type { PipelineContext } from '../context.js';
 import { BUILTIN_RECEIVERS, batchInsertEdges } from '../helpers.js';

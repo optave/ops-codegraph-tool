@@ -17,7 +17,37 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const srcDir = resolve(__dirname, '..', 'src');
+const projectRoot = resolve(__dirname, '..');
+const srcDir = resolve(projectRoot, 'src');
+
+// ── load package.json subpath imports ───────────────────────────────────
+const pkg = JSON.parse(readFileSync(resolve(projectRoot, 'package.json'), 'utf8'));
+const subpathImports: Record<string, unknown> = pkg.imports || {};
+
+/** Resolve a #-prefixed subpath import to an absolute file path (source condition). */
+function resolveSubpathImport(specifier: string): string | null {
+  for (const [pattern, mapping] of Object.entries(subpathImports)) {
+    const target =
+      typeof mapping === 'string'
+        ? mapping
+        : (mapping as Record<string, string>)['@codegraph/source'] ??
+          (mapping as Record<string, string>).default;
+    if (!target) continue;
+
+    // Exact match (e.g., "#types")
+    if (pattern === specifier) return resolve(projectRoot, target);
+
+    // Wildcard match (e.g., "#shared/*")
+    if (pattern.includes('*')) {
+      const prefix = pattern.slice(0, pattern.indexOf('*'));
+      if (specifier.startsWith(prefix)) {
+        const rest = specifier.slice(prefix.length);
+        return resolve(projectRoot, target.replace('*', rest));
+      }
+    }
+  }
+  return null;
+}
 
 // ── collect source files ────────────────────────────────────────────────
 function walk(dir) {
@@ -102,6 +132,18 @@ function extractDynamicImports(filePath) {
 
 // ── resolve a specifier to a file on disk ───────────────────────────────
 function resolveSpecifier(specifier, fromFile) {
+  // Handle #-prefixed subpath imports via package.json "imports" field
+  if (specifier.startsWith('#')) {
+    const resolved = resolveSubpathImport(specifier);
+    if (!resolved) return specifier; // no matching pattern — broken
+    if (existsSync(resolved) && statSync(resolved).isFile()) return null;
+    if (resolved.endsWith('.js')) {
+      const tsTarget = resolved.replace(/\.js$/, '.ts');
+      if (existsSync(tsTarget) && statSync(tsTarget).isFile()) return null;
+    }
+    return specifier; // mapped but file missing — broken
+  }
+
   // Skip bare specifiers (packages): 'node:*', '@scope/pkg', 'pkg'
   if (!specifier.startsWith('.') && !specifier.startsWith('/')) return null;
 

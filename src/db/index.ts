@@ -1,9 +1,11 @@
 // Barrel re-export — keeps all existing `import { ... } from '…/db/index.js'` working.
 
-export type { LockedDatabase } from './connection.js';
+export type { LockedDatabase, LockedDatabasePair } from './connection.js';
 export {
   closeDb,
   closeDbDeferred,
+  closeDbPair,
+  closeDbPairDeferred,
   findDbPath,
   findRepoRoot,
   flushDeferredClose,

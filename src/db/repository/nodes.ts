@@ -4,6 +4,7 @@ import type {
   BetterSqlite3Database,
   ChildNodeRow,
   ListFunctionOpts,
+  NativeDatabase,
   NodeIdRow,
   NodeRow,
   NodeRowWithFanIn,
@@ -24,6 +25,7 @@ export function findNodesWithFanIn(
   db: BetterSqlite3Database,
   namePattern: string,
   opts: QueryOpts = {},
+  nativeDb?: NativeDatabase,
 ): NodeRowWithFanIn[] {
   const q = new NodeQuery()
     .select('n.*, COALESCE(fi.cnt, 0) AS fan_in')
@@ -37,7 +39,7 @@ export function findNodesWithFanIn(
     q.fileFilter(opts.file);
   }
 
-  return q.all(db);
+  return q.all(db, nativeDb);
 }
 
 /**
@@ -46,6 +48,7 @@ export function findNodesWithFanIn(
 export function findNodesForTriage(
   db: BetterSqlite3Database,
   opts: TriageQueryOpts = {},
+  nativeDb?: NativeDatabase,
 ): TriageNodeRow[] {
   if (opts.kind && !(EVERY_SYMBOL_KIND as readonly string[]).includes(opts.kind)) {
     throw new ConfigError(
@@ -77,7 +80,7 @@ export function findNodesForTriage(
     .roleFilter(opts.role)
     .orderBy('n.file, n.line');
 
-  return q.all(db);
+  return q.all(db, nativeDb);
 }
 
 /**
@@ -99,8 +102,9 @@ function _functionNodeQuery(opts: ListFunctionOpts = {}): InstanceType<typeof No
 export function listFunctionNodes(
   db: BetterSqlite3Database,
   opts: ListFunctionOpts = {},
+  nativeDb?: NativeDatabase,
 ): NodeRow[] {
-  return _functionNodeQuery(opts).all(db);
+  return _functionNodeQuery(opts).all(db, nativeDb);
 }
 
 /**

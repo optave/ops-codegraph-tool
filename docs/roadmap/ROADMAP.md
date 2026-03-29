@@ -1322,16 +1322,17 @@ Structure building is unchanged — at 22ms it's already fast.
 
 ### 6.16 -- Dynamic SQL & Edge Cases
 
-**Not started.** Handle the remaining non-trivial DB patterns that don't map cleanly to fixed Repository methods.
+**Done.** Generic parameterized query execution on NativeDatabase, connection lifecycle helpers, version validation, and `db.prepare()` audit.
 
-**Plan:**
-- **`NodeQuery` builder edge cases:** Ensure the Rust-side replica handles all filter combinations, JOIN paths, ORDER BY variations, and LIMIT/OFFSET correctly — fuzz-test with random filter combinations against the JS builder
-- **`openReadonlyOrFail` version-check logic:** Port the schema-version validation that runs on read-only DB opens
-- **Advisory lock mechanism:** Keep in JS (filesystem-based, not SQLite) — ensure `NativeDatabase.close()` integrates with the existing lock lifecycle
-- **`closeDbDeferred` / WAL checkpoint deferral:** Keep deferred-close logic in JS, call `NativeDatabase.close()` when ready
-- **Raw `db.prepare()` stragglers:** Audit all 383 callers of `.prepare()` and ensure every one routes through either `Repository` or `NativeDatabase` methods — no direct better-sqlite3 usage on the native path
+**Delivered:**
+- **`NativeDatabase.queryAll` / `queryGet`:** Generic parameterized SELECT execution via rusqlite, returning rows as JSON objects. Uses `serde_json::Value` for dynamic column support
+- **`NodeQuery` native dispatch:** `all()` and `get()` accept optional `nativeDb` parameter for rusqlite execution. Combinatorial parity test suite covers all filter/JOIN/ORDER BY combinations
+- **`NativeDatabase.validateSchemaVersion`:** Schema version check for future read-path callers
+- **`closeDbPair` / `closeDbPairDeferred`:** Unified connection lifecycle helpers — close NativeDatabase first (fast), then better-sqlite3 (WAL checkpoint). Replaces manual close sequences in `finalize.ts` and `pipeline.ts`
+- **Starter straggler migrations:** 3 build-pipeline reads in `detect-changes.ts` and `build-structure.ts` dispatch through `nativeDb` when available
+- **`db.prepare()` audit:** 194 calls across 43 files documented in `docs/migration/db-prepare-audit.md` with tiered migration path (Tier 0 done, Tier 1 build pipeline next, Tiers 2-3 blocked on read-path NativeDatabase)
 
-**Affected files:** `crates/codegraph-core/src/native_db.rs`, `src/db/connection.ts`, `src/db/query-builder.ts`, `src/db/repository/sqlite-repository.ts`
+**Affected files:** `crates/codegraph-core/src/native_db.rs`, `src/db/connection.ts`, `src/db/query-builder.ts`, `src/db/repository/nodes.ts`, `src/types.ts`, `src/domain/graph/builder/stages/finalize.ts`, `src/domain/graph/builder/pipeline.ts`, `src/domain/graph/builder/stages/detect-changes.ts`, `src/domain/graph/builder/stages/build-structure.ts`
 
 ### 6.17 -- Cleanup & better-sqlite3 Isolation
 
