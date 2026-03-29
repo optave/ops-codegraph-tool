@@ -1154,12 +1154,12 @@ All test files migrated from `.js` to `.ts`. Vitest TypeScript integration verif
 | Parse | 601ms | 2123ms | **3.5×** | 57ms | 201ms | Rust ✅ — real speedup |
 | Build edges | 108ms | 167ms | 1.5× | 21ms | 15ms | Rust ✅ — modest; native *slower* on 1-file |
 | Resolve imports | 12ms | 13ms | ~same | 2ms | 2ms | Rust ✅ — no meaningful difference |
-| AST nodes | **393ms** | 397ms | **~same** | 0.2ms | 0.2ms | Extraction done ✅; **DB write not optimized** (6.9) |
-| CFG | **161ms** | 155ms | **Rust slower** | 0.1ms | 0.1ms | Extraction done ✅; **DB write not optimized** (6.10) |
-| Dataflow | **125ms** | 129ms | **~same** | 0.1ms | 0.2ms | Extraction done ✅; **DB write not optimized** (6.10) |
-| Insert nodes | 206ms | 201ms | ~same | 8ms | 8ms | JS batching ✅; **no native advantage** (6.11) |
+| AST nodes | **393ms** | 397ms | **~same** | 0.2ms | 0.2ms | Rust ✅ — native rusqlite bulk insert (PR #651) |
+| CFG | **161ms** | 155ms | **Rust slower** | 0.1ms | 0.1ms | Rust ✅ — native rusqlite bulk insert (PR #653) |
+| Dataflow | **125ms** | 129ms | **~same** | 0.1ms | 0.2ms | Rust ✅ — native rusqlite bulk insert (PR #653) |
+| Insert nodes | 206ms | 201ms | ~same | 8ms | 8ms | Rust ✅ — native rusqlite pipeline (PR #654) |
 | Complexity | 171ms | 216ms | 1.3× | 0.1ms | 0.1ms | Rust pre-computation ✅; modest speedup |
-| Roles | 52ms | 52ms | ~same | 54ms | 55ms | JS batching ✅; **no native advantage** (6.12) |
+| Roles | 52ms | 52ms | ~same | 54ms | 55ms | Rust ✅ — native rusqlite roles + edges (PR #658) |
 | Structure | 22ms | 21ms | ~same | 26ms | 24ms | JS ✅ — already fast |
 | **Total** | **2.7s** | **5.0s** | **1.85×** | **466ms** | **611ms** | Parse carries most of the speedup |
 
@@ -1211,9 +1211,9 @@ Structure building is unchanged — at 22ms it's already fast.
 
 **Key PRs:** #469, #533, #539, #542
 
-### 6.8 -- Incremental Rebuild Performance (partial)
+### 6.8 -- Incremental Rebuild Performance ✅
 
-**Partially complete.** Roles classification is fully optimized (255ms → 9ms via incremental path with edge-neighbour expansion, PR #622). Structure batching and finalize skip are also done. Compound DB indexes restored query performance after TS migration (PR #632). Current native 1-file rebuild is ~466ms (v3.4.0, 473 files) — down from ~802ms but still above the sub-100ms target.
+**Complete.** Sub-100ms incremental rebuilds achieved: **466ms → 67–80ms** on 473 files (PR #644). Roles classification optimized (255ms → 9ms via incremental path, PR #622). Structure batching, finalize skip, and compound DB indexes all done (PR #632).
 
 **Done:**
 - **Incremental roles** (255ms → 9ms): Only reclassify nodes from changed files + edge neighbours using indexed correlated subqueries. Global medians for threshold consistency. Parity-tested against full rebuild. *Note:* The benchmark table shows ~54ms for 1-file roles because the standard benchmark runs the full roles phase; the 9ms incremental path (PR #622) is used only when the builder detects a 1-file incremental rebuild
@@ -1221,104 +1221,53 @@ Structure building is unchanged — at 22ms it's already fast.
 - **Finalize skip:** Skip advisory queries (orphaned embeddings, unused exports) during incremental builds
 - **DB index regression:** Compound indexes on nodes/edges tables restored after TS migration (PR #632)
 
-**Remaining:**
-- **Incremental edge rebuild:** Only rebuild edges involving the changed file's symbols (currently edgesMs ~21ms on native, ~15ms on WASM — native is *slower* on 1-file)
-- **Parse overhead:** Native parse of 1 file takes ~57ms (vs 201ms WASM) — investigate tree-sitter incremental parsing to push below 10ms
-- **Structure/roles on 1-file:** Both still take ~25ms and ~54ms respectively on 1-file rebuilds — the full-build optimizations (6.5) don't apply to the incremental path
-- **Benchmark target:** Sub-100ms native 1-file rebuilds (current ~466ms on 473 files)
+**Result:** Native 1-file incremental rebuilds: **466ms → 67–80ms** (target was sub-100ms). Roles incremental path: **255ms → 9ms** via edge-neighbour expansion with indexed correlated subqueries.
 
-**Key PRs:** #622, #632
+**Key PRs:** #622, #632, #644
 
 **Affected files:** `src/domain/graph/builder/stages/build-structure.ts`, `src/domain/graph/builder/stages/build-edges.ts`, `src/domain/graph/builder/pipeline.ts`
 
-### 6.9 -- AST Node DB Write Optimization
+### 6.9 -- AST Node DB Write Optimization ✅
 
-**Not started.** Native extraction (6.1) successfully produces AST nodes in Rust, but the `astMs` full-build phase is **393ms native vs 397ms WASM** — no speedup. The bottleneck is the JS loop that iterates over extracted AST nodes and inserts them into SQLite. The Rust extraction saves ~0ms because it merely shifts *when* the work happens (parse phase vs visitor phase), not *how much* work happens.
+**Complete.** Bulk AST node inserts via native Rust/rusqlite. The `bulk_insert_ast_nodes` napi-rs function receives the AST node array and writes directly to SQLite via `rusqlite` multi-row INSERTs, bypassing the JS iteration loop entirely.
 
-**Plan:**
-- **Batch AST node inserts in Rust via napi-rs:** Pass the raw AST node array directly from Rust to a native SQLite bulk-insert function, bypassing the JS iteration loop entirely. Use `rusqlite` with a single multi-row INSERT per chunk
-- **Merge AST inserts into the parse phase:** Instead of extracting AST nodes to a JS array and then writing them in a separate phase, write them directly to SQLite during the Rust parse walk — eliminates the intermediate array allocation and JS↔native boundary crossing
-- **Target:** astMs < 50ms on native full builds (current 393ms), representing a real 8× speedup over WASM
+**Key PRs:** #651
 
-**Affected files:** `crates/codegraph-core/src/lib.rs`, `crates/codegraph-core/src/ast_nodes.rs`, `src/domain/graph/builder/stages/build-ast-data.ts`
+### 6.10 -- CFG & Dataflow DB Write Optimization ✅
 
-### 6.10 -- CFG & Dataflow DB Write Optimization
+**Complete.** Bulk CFG block/edge and dataflow edge inserts via native Rust/rusqlite. Same approach as 6.9 — `rusqlite` multi-row INSERTs bypass the JS iteration loop for both CFG and dataflow writes.
 
-**Not started.** Same problem as 6.9 — Rust extraction works (6.2, 6.3), but the DB write phases are identical JS code on both engines. CFG: **161ms native vs 155ms WASM** (Rust is *slower*). Dataflow: **125ms native vs 129ms WASM** (~same).
+**Key PRs:** #653
 
-**Plan:**
-- **Batch CFG/dataflow edge inserts in Rust:** Same approach as 6.9 — pass extracted CFG blocks and dataflow edges directly to `rusqlite` bulk inserts from the Rust side, bypassing JS iteration
-- **Investigate CFG native regression:** Profile why native CFG is 4% *slower* than WASM on full builds — likely JS↔native serialization overhead for the `cfg.blocks` structure that exceeds the extraction savings
-- **Combine with parse phase:** Like 6.9, consider writing CFG edges and dataflow edges to SQLite during the Rust parse walk rather than accumulating them for a later JS phase
-- **Target:** cfgMs + dataflowMs < 50ms combined on native full builds (current 286ms)
+### 6.11 -- Native Insert Nodes Pipeline ✅
 
-**Affected files:** `crates/codegraph-core/src/cfg.rs`, `crates/codegraph-core/src/dataflow.rs`, `src/domain/graph/builder/stages/build-ast-data.ts`
+**Complete.** Native Rust/rusqlite pipeline for node insertion. The entire insert-nodes loop runs in Rust — receives `FileSymbols[]` via napi-rs and writes nodes, children, and edge stubs directly to SQLite via `rusqlite`, eliminating JS↔native boundary crossings.
 
-### 6.11 -- Native Insert Nodes Pipeline
+**Key PRs:** #654
 
-**Not started.** The insert-nodes phase (6.4) was optimized with JS-side batching, but native shows **no advantage** over WASM: 206ms native vs 201ms WASM. This is the single largest phase after parse on native builds.
+### 6.12 -- Native Roles & Edge Build Optimization ✅
 
-**Plan:**
-- **Rust-side SQLite writes via rusqlite:** Move the entire insert-nodes loop to Rust — receive the `FileSymbols[]` array in Rust and write nodes, children, and edge stubs directly to SQLite without crossing back to JS
-- **Parallel file processing:** Use Rayon to parallelize node insertion across files with per-file transactions (SQLite WAL mode supports concurrent readers)
-- **Eliminate intermediate JS objects:** Currently Rust → napi-rs → JS objects → better-sqlite3 → SQLite. The new path would be Rust → rusqlite → SQLite directly
-- **Target:** insertMs < 50ms on native full builds (current 206ms)
+**Complete.** Native Rust/rusqlite for both role classification and edge insertion. Role classification SQL moved to Rust — fan-in/fan-out aggregation + median-threshold classification in a single Rust function. Edge building uses `bulkInsertEdges` via rusqlite with chunked multi-row INSERTs. Includes `classifyRolesIncremental` for the 1-file rebuild path and `classify_dead_sub_role` for dead-entry detection.
 
-**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/domain/graph/builder/stages/insert-nodes.ts`
+**Key PRs:** #658
 
-### 6.12 -- Native Roles & Edge Build Optimization
+### 6.13 -- NativeDatabase Class (rusqlite Connection Lifecycle) ✅
 
-**Not started.** Roles: **52ms native ≈ 52ms WASM** on full builds, **54ms on 1-file rebuilds** (incremental optimization from 6.5/6.8 doesn't cover this path). Build edges: **108ms native vs 167ms WASM** (1.5× — modest, but native is *slower* on 1-file: 21ms vs 15ms).
+**Complete.** `NativeDatabase` napi-rs class in `crates/codegraph-core/src/native_db.rs` holding a persistent `rusqlite::Connection`. Factory methods (`openReadWrite`/`openReadonly`), lifecycle (`close`/`exec`/`pragma`), schema migrations (`initSchema` with all 16 migrations embedded), and build metadata KV (`getBuildMeta`/`setBuildMeta`). Wired into the build pipeline: when native engine is available, `NativeDatabase` handles schema init and metadata reads/writes. Foundation for 6.14+ which migrates all query and write operations to rusqlite on the native path.
 
-**Plan:**
-- **Roles — move SQL to Rust:** The role classification logic (median-threshold fan-in/fan-out comparisons) is simple but issues ~10 `UPDATE ... WHERE id IN (...)` statements. Moving this to Rust with `rusqlite` eliminates JS↔SQLite round-trips and allows the fan-in/fan-out aggregation + classification to happen in a single Rust function
-- **Build edges — fix 1-file regression:** Profile why native 1-file edge building (21ms) is 40% slower than WASM (15ms). Likely cause: napi-rs deserialization overhead for the caller/callee lookup data that exceeds the savings on small workloads
-- **Build edges — Rust-side batch:** For full builds, move the edge resolution loop to Rust to avoid per-edge JS↔native boundary crossings
-- **Target:** rolesMs < 15ms, edgesMs < 30ms on native full builds
+**Key PRs:** #666
 
-**Affected files:** `crates/codegraph-core/src/lib.rs`, `src/domain/graph/builder/stages/build-edges.ts`, `src/graph/classifiers/roles.ts`
+### 6.14 -- Native Read Queries (Repository Migration) ✅
 
-### 6.13 -- NativeDatabase Class (rusqlite Connection Lifecycle)
+**Complete.** All Repository read methods migrated to Rust via `NativeDatabase`. `NativeRepository extends Repository` delegates all methods to `NativeDatabase` napi calls. `NodeQuery` fluent builder replicated in Rust for dynamic filtering. `openRepo()` returns `NativeRepository` when native engine is available.
 
-**Not started.** Foundation for moving all DB operations to `rusqlite` on the native engine path. Currently `better-sqlite3` (JS) handles all DB operations for both engines, and `rusqlite` is only used for bulk AST node insertion (6.9/PR #651). The goal is: **native engine → rusqlite for all DB; WASM engine → better-sqlite3 for all DB** — eliminating the dual-SQLite-in-one-process problem and unlocking Rust-speed for every query.
+**Key PRs:** #671
 
-**Plan:**
-- **Create `NativeDatabase` napi-rs class** in `crates/codegraph-core/src/native_db.rs` holding a `rusqlite::Connection`
-- **Expose lifecycle methods:** `openReadWrite(dbPath)`, `openReadonly(dbPath)`, `close()`, `exec(sql)`, `pragma(sql)`
-- **Implement `initSchema()`** — embed migration DDL strings in Rust, run via `rusqlite`
-- **Implement `getBuildMeta(key)` / `setBuildMeta(entries)`** — metadata KV operations
-- **Add `NativeDatabase` to `NativeAddon` interface** in `src/types.ts`
-- **Wire `src/db/connection.ts`** to return `NativeDatabase` when native engine is active, `better-sqlite3` otherwise
+### 6.15 -- Native Write Operations (Build Pipeline) ✅
 
-**Affected files:** `crates/codegraph-core/src/native_db.rs` (new), `crates/codegraph-core/src/lib.rs`, `src/types.ts`, `src/db/connection.ts`, `src/db/migrations.ts`
+**Complete.** All build-pipeline write operations migrated to `NativeDatabase` rusqlite. Consolidated scattered rusqlite usage from 6.9–6.12 into `NativeDatabase` methods. `batchInsertNodes`, `batchInsertEdges`, `purgeFilesData`, complexity/CFG/dataflow/co-change writes, `upsertFileHashes`, and `updateExportedFlags` all run via rusqlite on native. `PipelineContext` threads `NativeDatabase` through all build stages.
 
-### 6.14 -- Native Read Queries (Repository Migration)
-
-**Not started.** Migrate all 41 `Repository` read methods to Rust, so every query runs via `rusqlite` on the native engine. The existing `Repository` abstract class and `SqliteRepository` provide the exact seam — each method is a fixed SQL query with typed parameters and results.
-
-**Plan:**
-- **Implement each Repository method as a Rust method on `NativeDatabase`:** Start with simple ones (`countNodes`, `countEdges`, `countFiles`, `findNodeById`), then fixed-SQL edge queries (16 methods), then parameterized queries with dynamic filtering
-- **Replicate `NodeQuery` fluent builder in Rust:** The dynamic SQL builder used by `findNodesWithFanIn`, `findNodesForTriage`, `listFunctionNodes` must produce identical SQL and results
-- **Create `NativeRepository extends Repository`** in `src/db/repository/native-repository.ts` — delegates all 41 methods to `NativeDatabase` napi calls
-- **Wire `openRepo()` to return `NativeRepository`** when native engine is available
-- **Parity test suite:** Run every Repository method on both `SqliteRepository` and `NativeRepository` against the same DB, assert identical output
-
-**Affected files:** `crates/codegraph-core/src/native_db.rs`, `src/db/repository/native-repository.ts` (new), `src/db/repository/index.ts`, `src/db/query-builder.ts`
-
-### 6.15 -- Native Write Operations (Build Pipeline)
-
-**Not started.** Migrate all build-pipeline write operations to `rusqlite`, so the entire build (parse → insert → finalize) uses a single Rust-side DB connection on native. This consolidates the scattered rusqlite usage from 6.9–6.12 into the `NativeDatabase` class and adds the remaining write paths.
-
-**Plan:**
-- **Migrate `batchInsertNodes` and `batchInsertEdges`** — high-value; currently the hottest build path after parse
-- **Migrate `purgeFilesData`** — cascade DELETE across 10 tables during incremental rebuilds
-- **Migrate complexity/CFG/dataflow/co-change writes** — consolidate the per-phase Rust inserts from 6.9/6.10 into `NativeDatabase` methods
-- **Migrate `upsertFileHashes` and `updateExportedFlags`** — finalize-phase operations
-- **Consolidate `bulk_insert_ast_nodes`** into `NativeDatabase` (currently opens its own separate connection)
-- **Update `PipelineContext`** to thread `NativeDatabase` through all build stages when native engine is active
-- **Transactional parity testing:** Verify that partial failures, rollbacks, and WAL behavior are identical between engines
-
-**Affected files:** `crates/codegraph-core/src/native_db.rs`, `crates/codegraph-core/src/ast_db.rs`, `src/domain/graph/builder/context.ts`, `src/domain/graph/builder/helpers.ts`, `src/domain/graph/builder/stages/*.ts`
+**Key PRs:** #669
 
 ### 6.16 -- Dynamic SQL & Edge Cases
 
