@@ -106,7 +106,7 @@ while IFS= read -r line; do
     '```'*) in_block=false; prev_line="$line"; continue ;;
   esac
   if $in_block; then
-    if [[ "$line" =~ 2\>/dev/null ]] || [[ "$line" =~ \>[[:space:]]*/dev/null\ 2\>\&1 ]] || [[ "$line" == *'&>/dev/null'* ]]; then
+    if [[ "$line" =~ 2\>/dev/null ]] || [[ "$line" =~ \>[[:space:]]*/dev/null[[:space:]]+2\>\&1 ]] || [[ "$line" == *'&>/dev/null'* ]]; then
       # Check same line or previous line for justification comment (case-insensitive via ,, lowercasing)
       combined="${prev_line}${line}"
       combined_lower="${combined,,}"
