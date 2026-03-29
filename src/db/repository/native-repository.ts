@@ -81,7 +81,7 @@ function toTriageNodeRow(r: NativeTriageNodeRow): TriageNodeRow {
 }
 
 function toNodeIdRow(r: NativeNodeIdRow): NodeIdRow {
-  return { id: r.id, name: r.name, kind: r.kind, line: r.line };
+  return { id: r.id, name: r.name, kind: r.kind, line: r.line ?? 0 };
 }
 
 function toChildNodeRow(r: NativeChildNodeRow): ChildNodeRow {
@@ -102,7 +102,7 @@ function toRelatedNodeRow(r: NativeRelatedNodeRow): RelatedNodeRow {
     name: r.name,
     kind: r.kind,
     file: r.file,
-    line: r.line,
+    line: r.line ?? 0,
     end_line: r.endLine,
   };
 }
@@ -112,7 +112,7 @@ function toAdjacentEdgeRow(r: NativeAdjacentEdgeRow): AdjacentEdgeRow {
     name: r.name,
     kind: r.kind,
     file: r.file,
-    line: r.line,
+    line: r.line ?? 0,
     edge_kind: r.edgeKind as AdjacentEdgeRow['edge_kind'],
   };
 }

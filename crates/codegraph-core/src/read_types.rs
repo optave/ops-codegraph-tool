@@ -73,7 +73,7 @@ pub struct NativeNodeIdRow {
     pub id: i32,
     pub name: String,
     pub kind: String,
-    pub line: i32,
+    pub line: Option<i32>,
 }
 
 /// Child node row — mirrors `ChildNodeRow`.
@@ -97,7 +97,7 @@ pub struct NativeRelatedNodeRow {
     pub name: String,
     pub kind: String,
     pub file: String,
-    pub line: i32,
+    pub line: Option<i32>,
     pub end_line: Option<i32>,
 }
 
@@ -108,7 +108,7 @@ pub struct NativeAdjacentEdgeRow {
     pub name: String,
     pub kind: String,
     pub file: String,
-    pub line: i32,
+    pub line: Option<i32>,
     pub edge_kind: String,
 }
 

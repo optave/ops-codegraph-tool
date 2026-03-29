@@ -1928,7 +1928,7 @@ export interface NativeNodeIdRow {
   id: number;
   name: string;
   kind: string;
-  line: number;
+  line: number | null;
 }
 
 export interface NativeChildNodeRow {
@@ -1946,7 +1946,7 @@ export interface NativeRelatedNodeRow {
   name: string;
   kind: string;
   file: string;
-  line: number;
+  line: number | null;
   endLine: number | null;
 }
 
@@ -1954,7 +1954,7 @@ export interface NativeAdjacentEdgeRow {
   name: string;
   kind: string;
   file: string;
-  line: number;
+  line: number | null;
   edgeKind: string;
 }
 
