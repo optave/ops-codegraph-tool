@@ -317,31 +317,37 @@ export function openRepo(
       }
       const native = getNative();
       const ndb = native.NativeDatabase.openReadonly(dbPath);
-
-      // Version check (same logic as openReadonlyOrFail)
-      if (!_versionWarned) {
-        try {
-          const buildVersion = ndb.getBuildMeta('codegraph_version');
-          const currentVersion = getPackageVersion();
-          if (buildVersion && currentVersion && buildVersion !== currentVersion) {
-            warn(
-              `DB was built with codegraph v${buildVersion}, running v${currentVersion}. Consider: codegraph build --no-incremental`,
-            );
+      try {
+        // Version check (same logic as openReadonlyOrFail)
+        if (!_versionWarned) {
+          try {
+            const buildVersion = ndb.getBuildMeta('codegraph_version');
+            const currentVersion = getPackageVersion();
+            if (buildVersion && currentVersion && buildVersion !== currentVersion) {
+              warn(
+                `DB was built with codegraph v${buildVersion}, running v${currentVersion}. Consider: codegraph build --no-incremental`,
+              );
+            }
+          } catch {
+            // build_meta table may not exist in older DBs
           }
-        } catch {
-          // build_meta table may not exist in older DBs
+          _versionWarned = true;
         }
-        _versionWarned = true;
-      }
 
-      return {
-        repo: new NativeRepository(ndb),
-        close() {
-          ndb.close();
-        },
-      };
+        return {
+          repo: new NativeRepository(ndb),
+          close() {
+            ndb.close();
+          },
+        };
+      } catch (innerErr) {
+        ndb.close();
+        throw innerErr;
+      }
     } catch (e) {
-      // If native open fails (e.g. incompatible DB), fall through to better-sqlite3
+      // Re-throw user-visible errors (e.g. DB not found) — only silently
+      // fall back for native-engine failures (e.g. incompatible native binary).
+      if (e instanceof DbError) throw e;
       debug(
         `openRepo: native path failed, falling back to better-sqlite3: ${(e as Error).message}`,
       );
