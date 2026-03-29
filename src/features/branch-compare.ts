@@ -1,12 +1,21 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import Database from 'better-sqlite3';
 import { buildGraph } from '../domain/graph/builder.js';
 import { kindIcon } from '../domain/queries.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import type { EngineMode } from '../types.js';
+
+const _require = createRequire(import.meta.url);
+let _Database: any;
+function getDatabase(): new (...args: any[]) => any {
+  if (!_Database) {
+    _Database = _require('better-sqlite3');
+  }
+  return _Database;
+}
 
 // ─── Git Helpers ────────────────────────────────────────────────────────
 
@@ -105,6 +114,7 @@ function loadSymbolsFromDb(
   changedFiles: string[],
   noTests: boolean,
 ): Map<string, SymbolInfo> {
+  const Database = getDatabase();
   const db = new Database(dbPath, { readonly: true });
   try {
     const symbols = new Map<string, SymbolInfo>();
@@ -174,6 +184,7 @@ function loadCallersFromDb(
 ): CallerInfo[] {
   if (nodeIds.length === 0) return [];
 
+  const Database = getDatabase();
   const db = new Database(dbPath, { readonly: true });
   try {
     const allCallers = new Set<string>();

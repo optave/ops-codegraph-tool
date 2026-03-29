@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use napi_derive::napi;
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::Connection;
 
 // ── Constants ────────────────────────────────────────────────────────
 
@@ -68,30 +68,10 @@ pub struct RoleSummary {
 
 // ── Public napi entry points ─────────────────────────────────────────
 
-/// Full role classification: queries all nodes, computes fan-in/fan-out,
-/// classifies roles, and batch-updates the `role` column.
-/// Returns a summary of role counts, or null on failure.
-#[napi]
-pub fn classify_roles_full(db_path: String) -> Option<RoleSummary> {
-    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let conn = Connection::open_with_flags(&db_path, flags).ok()?;
-    let _ = conn.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000");
-    do_classify_full(&conn).ok()
-}
-
-/// Incremental role classification: only reclassifies nodes from changed files
-/// plus their immediate edge neighbours.
-/// Returns a summary of role counts for the affected nodes, or null on failure.
-#[napi]
-pub fn classify_roles_incremental(
-    db_path: String,
-    changed_files: Vec<String>,
-) -> Option<RoleSummary> {
-    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let conn = Connection::open_with_flags(&db_path, flags).ok()?;
-    let _ = conn.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000");
-    do_classify_incremental(&conn, &changed_files).ok()
-}
+// NOTE: The standalone `classify_roles_full` and `classify_roles_incremental`
+// napi exports were removed in Phase 6.17. All callers now use the corresponding
+// NativeDatabase methods which reuse the persistent connection, eliminating the
+// double-connection antipattern.
 
 // ── Shared helpers ───────────────────────────────────────────────────
 

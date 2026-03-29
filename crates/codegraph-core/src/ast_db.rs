@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use napi_derive::napi;
-use rusqlite::{params, Connection, OpenFlags};
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
 /// A single AST node to insert (received from JS).
@@ -62,28 +62,9 @@ fn find_parent_id(defs: &[NodeDef], line: u32) -> Option<i64> {
     best_id
 }
 
-/// Bulk-insert AST nodes into the database, resolving `parent_node_id`
-/// from the `nodes` table. Runs all inserts in a single SQLite transaction.
-///
-/// Returns the number of rows inserted. Returns 0 on any error (DB open
-/// failure, missing table, transaction failure).
-#[napi]
-pub fn bulk_insert_ast_nodes(db_path: String, batches: Vec<FileAstBatch>) -> u32 {
-    if batches.is_empty() {
-        return 0;
-    }
-
-    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let conn = match Connection::open_with_flags(&db_path, flags) {
-        Ok(c) => c,
-        Err(_) => return 0,
-    };
-
-    // Match the JS-side performance pragmas (including busy_timeout for WAL contention)
-    let _ = conn.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000");
-
-    do_insert_ast_nodes(&conn, &batches).unwrap_or(0)
-}
+// NOTE: The standalone `bulk_insert_ast_nodes` napi export was removed in Phase 6.17.
+// All callers now use `NativeDatabase::bulk_insert_ast_nodes()` which reuses the
+// persistent connection, eliminating the double-connection antipattern.
 
 /// Internal implementation: insert AST nodes using an existing connection.
 /// Used by both the standalone `bulk_insert_ast_nodes` function and `NativeDatabase`.

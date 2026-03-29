@@ -6,7 +6,6 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { debug } from '#infrastructure/logger.js';
-import { loadNative } from '#infrastructure/native.js';
 import { normalizePath } from '#shared/constants.js';
 import type { ExtractorOutput } from '#types';
 import type { PipelineContext } from '../context.js';
@@ -95,7 +94,8 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
   try {
     let roleSummary: Record<string, number> | null = null;
 
-    // Try NativeDatabase persistent connection first (6.15), then standalone (6.12)
+    // Use NativeDatabase persistent connection (Phase 6.15+).
+    // Standalone napi functions were removed in 6.17 — falls through to JS if nativeDb unavailable.
     if (ctx.nativeDb?.classifyRolesFull) {
       const nativeResult =
         changedFileList && changedFileList.length > 0
@@ -115,30 +115,6 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
           'test-only': nativeResult.testOnly,
           leaf: nativeResult.leaf,
         };
-      }
-    } else if (ctx.engineName === 'native') {
-      const native = loadNative();
-      if (native?.classifyRolesFull) {
-        const dbPath = db.name;
-        const nativeResult =
-          changedFileList && changedFileList.length > 0
-            ? native.classifyRolesIncremental?.(dbPath, changedFileList)
-            : native.classifyRolesFull(dbPath);
-        if (nativeResult) {
-          roleSummary = {
-            entry: nativeResult.entry,
-            core: nativeResult.core,
-            utility: nativeResult.utility,
-            adapter: nativeResult.adapter,
-            dead: nativeResult.dead,
-            'dead-leaf': nativeResult.deadLeaf,
-            'dead-entry': nativeResult.deadEntry,
-            'dead-ffi': nativeResult.deadFfi,
-            'dead-unresolved': nativeResult.deadUnresolved,
-            'test-only': nativeResult.testOnly,
-            leaf: nativeResult.leaf,
-          };
-        }
       }
     }
 

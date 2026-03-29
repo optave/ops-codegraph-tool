@@ -6,7 +6,6 @@ import { createAstStoreVisitor } from '../ast-analysis/visitors/ast-store-visito
 import { bulkNodeIdsByFile, openReadonlyOrFail } from '../db/index.js';
 import { buildFileConditionSQL } from '../db/query-builder.js';
 import { debug } from '../infrastructure/logger.js';
-import { loadNative } from '../infrastructure/native.js';
 import { outputResult } from '../infrastructure/result-formatter.js';
 import { paginateResult } from '../shared/paginate.js';
 import type { ASTNodeKind, BetterSqlite3Database, Definition, TreeSitterNode } from '../types.js';
@@ -84,10 +83,10 @@ export async function buildAstNodes(
   },
 ): Promise<void> {
   // ── Native bulk-insert fast path ──────────────────────────────────────
-  // Prefer NativeDatabase persistent connection (6.15), then standalone (6.12)
+  // Uses NativeDatabase persistent connection (Phase 6.15+).
+  // Standalone napi functions were removed in 6.17.
   const nativeDb = engineOpts?.nativeDb;
-  const native = nativeDb ? null : loadNative();
-  if (nativeDb?.bulkInsertAstNodes || native?.bulkInsertAstNodes) {
+  if (nativeDb?.bulkInsertAstNodes) {
     let needsJsFallback = false;
     const batches: Array<{
       file: string;
@@ -120,9 +119,7 @@ export async function buildAstNodes(
 
     if (!needsJsFallback) {
       const expectedNodes = batches.reduce((s, b) => s + b.nodes.length, 0);
-      const inserted = nativeDb
-        ? nativeDb.bulkInsertAstNodes(batches)
-        : native!.bulkInsertAstNodes(db.name, batches);
+      const inserted = nativeDb.bulkInsertAstNodes(batches);
       if (inserted === expectedNodes) {
         debug(`AST extraction (native bulk): ${inserted} nodes stored`);
         return;

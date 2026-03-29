@@ -56,8 +56,29 @@ function readGraph(dbPath) {
     ORDER BY n1.name, n2.name, e.kind
   `)
     .all();
+  const roles = db
+    .prepare(
+      "SELECT name, role FROM nodes WHERE role IS NOT NULL AND kind != 'constant' ORDER BY name, role",
+    )
+    .all();
+
+  // ast_nodes may not exist on older schemas — read if available
+  // Exclude 'call' kind — the native engine extracts call-site AST nodes that
+  // the WASM visitor does not yet populate in ast_nodes. This is a parity bug.
+  // TODO: Remove kind != 'call' exclusion once WASM ast visitor extracts call sites
+  let astNodes: unknown[] = [];
+  try {
+    astNodes = db
+      .prepare(
+        "SELECT file, line, kind, name FROM ast_nodes WHERE kind != 'call' ORDER BY file, line, kind, name",
+      )
+      .all();
+  } catch {
+    /* table may not exist */
+  }
+
   db.close();
-  return { nodes, edges };
+  return { nodes, edges, roles, astNodes };
 }
 
 describeOrSkip('Build parity: native vs WASM', () => {
@@ -97,5 +118,17 @@ describeOrSkip('Build parity: native vs WASM', () => {
     const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
     const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
     expect(nativeGraph.edges).toEqual(wasmGraph.edges);
+  });
+
+  it('produces identical roles', () => {
+    const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
+    const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
+    expect(nativeGraph.roles).toEqual(wasmGraph.roles);
+  });
+
+  it('produces identical ast_nodes', () => {
+    const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
+    const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
+    expect(nativeGraph.astNodes).toEqual(wasmGraph.astNodes);
   });
 });

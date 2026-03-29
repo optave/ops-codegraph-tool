@@ -5,7 +5,7 @@
 //! implements edges directly to SQLite without marshaling back to JS.
 
 use napi_derive::napi;
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::Connection;
 
 /// A single edge row to insert: [source_id, target_id, kind, confidence, dynamic].
 #[napi(object)]
@@ -20,25 +20,9 @@ pub struct EdgeRow {
     pub dynamic: u32,
 }
 
-/// Bulk-insert edge rows into the database via rusqlite.
-/// Runs all writes in a single SQLite transaction with chunked multi-value
-/// INSERT statements for maximum throughput.
-///
-/// Returns `true` on success, `false` on any error so the JS caller can
-/// fall back to the JS batch insert path.
-#[napi]
-pub fn bulk_insert_edges(db_path: String, edges: Vec<EdgeRow>) -> bool {
-    if edges.is_empty() {
-        return true;
-    }
-    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let conn = match Connection::open_with_flags(&db_path, flags) {
-        Ok(c) => c,
-        Err(_) => return false,
-    };
-    let _ = conn.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000");
-    do_insert_edges(&conn, &edges).is_ok()
-}
+// NOTE: The standalone `bulk_insert_edges` napi export was removed in Phase 6.17.
+// All callers now use `NativeDatabase::bulk_insert_edges()` which reuses the
+// persistent connection, eliminating the double-connection antipattern.
 
 /// 199 rows × 5 params = 995 bind parameters per statement, safely under
 /// the legacy `SQLITE_MAX_VARIABLE_NUMBER` default of 999.
