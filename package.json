@@ -4,6 +4,20 @@
   "description": "Local code graph CLI — parse codebases with tree-sitter, build dependency graphs, query them",
   "type": "module",
   "main": "dist/index.js",
+  "imports": {
+    "#shared/*": { "@codegraph/source": "./src/shared/*", "default": "./dist/shared/*" },
+    "#infrastructure/*": { "@codegraph/source": "./src/infrastructure/*", "default": "./dist/infrastructure/*" },
+    "#db/*": { "@codegraph/source": "./src/db/*", "default": "./dist/db/*" },
+    "#domain/*": { "@codegraph/source": "./src/domain/*", "default": "./dist/domain/*" },
+    "#features/*": { "@codegraph/source": "./src/features/*", "default": "./dist/features/*" },
+    "#presentation/*": { "@codegraph/source": "./src/presentation/*", "default": "./dist/presentation/*" },
+    "#graph/*": { "@codegraph/source": "./src/graph/*", "default": "./dist/graph/*" },
+    "#mcp/*": { "@codegraph/source": "./src/mcp/*", "default": "./dist/mcp/*" },
+    "#ast-analysis/*": { "@codegraph/source": "./src/ast-analysis/*", "default": "./dist/ast-analysis/*" },
+    "#extractors/*": { "@codegraph/source": "./src/extractors/*", "default": "./dist/extractors/*" },
+    "#cli/*": { "@codegraph/source": "./src/cli/*", "default": "./dist/cli/*" },
+    "#types": { "@codegraph/source": "./src/types.ts", "default": "./dist/types.js" }
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",

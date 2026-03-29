@@ -5,10 +5,10 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { debug } from '../../../../infrastructure/logger.js';
-import { loadNative } from '../../../../infrastructure/native.js';
-import { normalizePath } from '../../../../shared/constants.js';
-import type { ExtractorOutput } from '../../../../types.js';
+import { debug } from '#infrastructure/logger.js';
+import { loadNative } from '#infrastructure/native.js';
+import { normalizePath } from '#shared/constants.js';
+import type { ExtractorOutput } from '#types';
 import type { PipelineContext } from '../context.js';
 import { readFileSafe } from '../helpers.js';
 

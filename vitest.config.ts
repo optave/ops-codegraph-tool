@@ -6,6 +6,9 @@ const supportsStripTypes = major > 22 || (major === 22 && minor >= 6);
 const stripFlag = major >= 23 ? '--strip-types' : '--experimental-strip-types';
 
 export default defineConfig({
+  resolve: {
+    conditions: ['@codegraph/source'],
+  },
   test: {
     globals: true,
     testTimeout: 30000,
