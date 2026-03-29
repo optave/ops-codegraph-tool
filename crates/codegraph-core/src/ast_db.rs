@@ -67,7 +67,7 @@ fn find_parent_id(defs: &[NodeDef], line: u32) -> Option<i64> {
 // persistent connection, eliminating the double-connection antipattern.
 
 /// Internal implementation: insert AST nodes using an existing connection.
-/// Used by both the standalone `bulk_insert_ast_nodes` function and `NativeDatabase`.
+/// Used by `NativeDatabase::bulk_insert_ast_nodes()`.
 pub(crate) fn do_insert_ast_nodes(
     conn: &Connection,
     batches: &[FileAstBatch],

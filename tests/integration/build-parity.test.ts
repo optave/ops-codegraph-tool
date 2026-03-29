@@ -36,11 +36,10 @@ function copyDirSync(src, dest) {
 
 function readGraph(dbPath) {
   const db = new Database(dbPath, { readonly: true });
-  // Exclude constant nodes — the native engine has a known scope bug where it
-  // extracts local `const` variables inside functions as top-level constants,
-  // while WASM correctly limits constant extraction to program-level declarations.
-  // TODO: Remove kind != 'constant' exclusion once native binary >= 3.0.4 ships
+  // PARITY BUG (#676): Native engine extracts local `const` variables inside
+  // functions as top-level constants; WASM correctly limits to program-level.
   // Fix: crates/codegraph-core/src/extractors/javascript.rs (find_parent_of_types guard)
+  // Remove this exclusion once #676 is resolved.
   const nodes = db
     .prepare(
       "SELECT name, kind, file, line FROM nodes WHERE kind != 'constant' ORDER BY name, kind, file, line",
