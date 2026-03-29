@@ -8,6 +8,7 @@
     /* Modules */
     "module": "nodenext",
     "moduleResolution": "nodenext",
+    "customConditions": ["@codegraph/source"],
     "rootDir": "./src",
 
     /* Emit */
