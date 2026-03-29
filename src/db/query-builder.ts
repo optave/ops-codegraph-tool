@@ -1,6 +1,6 @@
 import { DbError } from '../shared/errors.js';
 import { DEAD_ROLE_PREFIX, EVERY_EDGE_KIND } from '../shared/kinds.js';
-import type { BetterSqlite3Database } from '../types.js';
+import type { BetterSqlite3Database, NativeDatabase } from '../types.js';
 
 // ─── Validation Helpers ─────────────────────────────────────────────
 
@@ -314,15 +314,29 @@ export class NodeQuery {
     return { sql, params };
   }
 
-  /** Execute and return all rows. */
-  all<TRow = Record<string, unknown>>(db: BetterSqlite3Database): TRow[] {
+  /** Execute and return all rows. When `nativeDb` is provided, dispatches through rusqlite. */
+  all<TRow = Record<string, unknown>>(
+    db: BetterSqlite3Database,
+    nativeDb?: NativeDatabase,
+  ): TRow[] {
     const { sql, params } = this.build();
+    if (nativeDb) {
+      return nativeDb.queryAll(sql, params as Array<string | number | null>) as TRow[];
+    }
     return db.prepare<TRow>(sql).all(...params) as TRow[];
   }
 
-  /** Execute and return first row. */
-  get<TRow = Record<string, unknown>>(db: BetterSqlite3Database): TRow | undefined {
+  /** Execute and return first row. When `nativeDb` is provided, dispatches through rusqlite. */
+  get<TRow = Record<string, unknown>>(
+    db: BetterSqlite3Database,
+    nativeDb?: NativeDatabase,
+  ): TRow | undefined {
     const { sql, params } = this.build();
+    if (nativeDb) {
+      return (nativeDb.queryGet(sql, params as Array<string | number | null>) ?? undefined) as
+        | TRow
+        | undefined;
+    }
     return db.prepare<TRow>(sql).get(...params) as TRow | undefined;
   }
 

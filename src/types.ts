@@ -1978,6 +1978,14 @@ export interface NativeDatabase {
     leaf: number;
   } | null;
   purgeFilesData(files: string[], purgeHashes?: boolean): void;
+
+  // ── Generic query execution & version validation (6.16) ─────────────
+  /** Execute a parameterized SELECT and return all rows as objects. */
+  queryAll(sql: string, params: Array<string | number | null>): Record<string, unknown>[];
+  /** Execute a parameterized SELECT and return the first row, or null. */
+  queryGet(sql: string, params: Array<string | number | null>): Record<string, unknown> | null;
+  /** Validate DB codegraph_version matches expected. Warns on mismatch. */
+  validateSchemaVersion(expectedVersion: string): boolean;
 }
 
 // ════════════════════════════════════════════════════════════════════════

@@ -6,7 +6,7 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { closeDb, getBuildMeta, initSchema, MIGRATIONS, openDb } from '../../../db/index.js';
+import { closeDbPair, getBuildMeta, initSchema, MIGRATIONS, openDb } from '../../../db/index.js';
 import { detectWorkspaces, loadConfig } from '../../../infrastructure/config.js';
 import { info, warn } from '../../../infrastructure/logger.js';
 import { loadNative } from '../../../infrastructure/native.js';
@@ -190,14 +190,8 @@ export async function buildGraph(
     setupPipeline(ctx);
     await runPipelineStages(ctx);
   } catch (err) {
-    if (!ctx.earlyExit) {
-      if (ctx.nativeDb)
-        try {
-          ctx.nativeDb.close();
-        } catch {
-          /* ignore */
-        }
-      if (ctx.db) closeDb(ctx.db);
+    if (!ctx.earlyExit && ctx.db) {
+      closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
     }
     throw err;
   }

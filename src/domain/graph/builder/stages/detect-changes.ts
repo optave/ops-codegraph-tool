@@ -10,7 +10,7 @@ import path from 'node:path';
 import { closeDb } from '../../../../db/index.js';
 import { debug, info } from '../../../../infrastructure/logger.js';
 import { normalizePath } from '../../../../shared/constants.js';
-import type { BetterSqlite3Database, ExtractorOutput } from '../../../../types.js';
+import type { BetterSqlite3Database, ExtractorOutput, NativeDatabase } from '../../../../types.js';
 import { parseFilesAuto } from '../../../parser.js';
 import { readJournal, writeJournalHeader } from '../../journal.js';
 import type { PipelineContext } from '../context.js';
@@ -58,11 +58,14 @@ function getChangedFiles(
   db: BetterSqlite3Database,
   allFiles: string[],
   rootDir: string,
+  nativeDb?: NativeDatabase,
 ): ChangeResult {
   let hasTable = false;
   try {
-    db.prepare('SELECT 1 FROM file_hashes LIMIT 1').get();
-    hasTable = true;
+    const probe = nativeDb
+      ? nativeDb.queryGet('SELECT 1 FROM file_hashes LIMIT 1', [])
+      : db.prepare('SELECT 1 FROM file_hashes LIMIT 1').get();
+    if (probe) hasTable = true;
   } catch {
     /* table doesn't exist */
   }
@@ -75,11 +78,11 @@ function getChangedFiles(
     };
   }
 
-  const existing = new Map<string, FileHashRow>(
-    (db.prepare('SELECT file, hash, mtime, size FROM file_hashes').all() as FileHashRow[]).map(
-      (r) => [r.file, r],
-    ),
-  );
+  const sql = 'SELECT file, hash, mtime, size FROM file_hashes';
+  const rows = nativeDb
+    ? (nativeDb.queryAll(sql, []) as unknown as FileHashRow[])
+    : (db.prepare(sql).all() as FileHashRow[]);
+  const existing = new Map<string, FileHashRow>(rows.map((r) => [r.file, r]));
 
   const removed = detectRemovedFiles(existing, allFiles, rootDir);
   const journalResult = tryJournalTier(db, existing, rootDir, removed);
@@ -421,7 +424,7 @@ export async function detectChanges(ctx: PipelineContext): Promise<void> {
   }
   const increResult =
     incremental && !forceFullRebuild
-      ? getChangedFiles(db, allFiles, rootDir)
+      ? getChangedFiles(db, allFiles, rootDir, ctx.nativeDb)
       : {
           changed: allFiles.map((f): ChangedFile => ({ file: f })),
           removed: [] as string[],

@@ -41,7 +41,13 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
   // Gate: ≤5 changed files AND significantly more existing files (>20) to
   // avoid triggering on small test fixtures where directory metrics matter.
   const existingFileCount = !isFullBuild
-    ? (db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'").get() as { c: number }).c
+    ? (
+        (ctx.nativeDb
+          ? ctx.nativeDb.queryGet("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'", [])
+          : db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'").get()) as {
+          c: number;
+        }
+      ).c
     : 0;
   const useSmallIncrementalFastPath =
     !isFullBuild &&
