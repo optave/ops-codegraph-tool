@@ -66,6 +66,17 @@ function validateEdgeKind(edgeKind: string): void {
   }
 }
 
+/** Runtime-validate that every param is string, number, or null before sending to nativeDb. */
+function validateNativeParams(params: (string | number)[]): Array<string | number | null> {
+  for (let i = 0; i < params.length; i++) {
+    const p = params[i];
+    if (p !== null && typeof p !== 'string' && typeof p !== 'number') {
+      throw new DbError(`NodeQuery param[${i}] has unsupported type: ${typeof p}`);
+    }
+  }
+  return params as Array<string | number | null>;
+}
+
 // ─── LIKE Escaping ──────────────────────────────────────────────────
 
 /** Escape LIKE wildcards in a literal string segment. */
@@ -321,7 +332,7 @@ export class NodeQuery {
   ): TRow[] {
     const { sql, params } = this.build();
     if (nativeDb) {
-      return nativeDb.queryAll(sql, params as Array<string | number | null>) as TRow[];
+      return nativeDb.queryAll(sql, validateNativeParams(params)) as TRow[];
     }
     return db.prepare<TRow>(sql).all(...params) as TRow[];
   }
@@ -333,7 +344,7 @@ export class NodeQuery {
   ): TRow | undefined {
     const { sql, params } = this.build();
     if (nativeDb) {
-      return (nativeDb.queryGet(sql, params as Array<string | number | null>) ?? undefined) as
+      return (nativeDb.queryGet(sql, validateNativeParams(params)) ?? undefined) as
         | TRow
         | undefined;
     }
