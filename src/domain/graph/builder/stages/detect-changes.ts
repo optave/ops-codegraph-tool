@@ -62,10 +62,13 @@ function getChangedFiles(
 ): ChangeResult {
   let hasTable = false;
   try {
-    const probe = nativeDb
-      ? nativeDb.queryGet('SELECT 1 FROM file_hashes LIMIT 1', [])
-      : db.prepare('SELECT 1 FROM file_hashes LIMIT 1').get();
-    if (probe) hasTable = true;
+    if (nativeDb) {
+      nativeDb.queryGet('SELECT 1 FROM file_hashes LIMIT 1', []);
+    } else {
+      db.prepare('SELECT 1 FROM file_hashes LIMIT 1').get();
+    }
+    // Query succeeded → table exists (result may be undefined if table is empty)
+    hasTable = true;
   } catch {
     /* table doesn't exist */
   }
