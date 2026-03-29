@@ -11,6 +11,8 @@ pub mod import_resolution;
 pub mod incremental;
 pub mod insert_nodes;
 pub mod native_db;
+pub mod read_queries;
+pub mod read_types;
 pub mod parallel;
 pub mod parser_registry;
 pub mod roles_db;

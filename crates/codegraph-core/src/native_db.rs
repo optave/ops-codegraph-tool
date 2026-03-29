@@ -668,7 +668,7 @@ impl NativeDatabase {
 
 impl NativeDatabase {
     /// Get a reference to the open connection, or error if closed.
-    fn conn(&self) -> napi::Result<&Connection> {
+    pub(crate) fn conn(&self) -> napi::Result<&Connection> {
         self.conn
             .as_ref()
             .ok_or_else(|| napi::Error::from_reason("NativeDatabase is closed"))
