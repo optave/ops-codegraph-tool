@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import Database from 'better-sqlite3';
+import { getDatabase } from '../db/better-sqlite3.js';
 import { findDbPath } from '../db/index.js';
 import { debug } from '../infrastructure/logger.js';
 import { ConfigError, DbError } from '../shared/errors.js';
@@ -47,6 +47,7 @@ export function snapshotSave(
 
   fs.mkdirSync(dir, { recursive: true });
 
+  const Database = getDatabase();
   const db = new Database(dbPath, { readonly: true });
   try {
     db.exec(`VACUUM INTO '${dest.replace(/'/g, "''")}'`);

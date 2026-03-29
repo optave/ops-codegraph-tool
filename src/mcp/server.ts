@@ -10,6 +10,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { version: PKG_VERSION } = require('../../package.json') as { version: string };
 
+import { getDatabase } from '../db/better-sqlite3.js';
 import { findDbPath } from '../db/index.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { CodegraphError, ConfigError } from '../shared/errors.js';
@@ -64,21 +65,12 @@ async function loadMCPSdk(): Promise<{
 
 function createLazyLoaders(): {
   getQueries(): Promise<unknown>;
-  getDatabase(): unknown;
 } {
   let _queries: unknown;
-  let _Database: unknown;
   return {
     async getQueries(): Promise<unknown> {
       if (!_queries) _queries = await import('../domain/queries.js');
       return _queries;
-    },
-    getDatabase(): unknown {
-      if (!_Database) {
-        const require = createRequire(import.meta.url);
-        _Database = require('better-sqlite3');
-      }
-      return _Database;
     },
   };
 }
@@ -135,7 +127,7 @@ export async function startMCPServer(
   // `initialize` request while heavy modules (queries, better-sqlite3)
   // are still loading.  These are lazy-loaded on the first tool call
   // and cached for subsequent calls.
-  const { getQueries, getDatabase } = createLazyLoaders();
+  const { getQueries } = createLazyLoaders();
 
   const server = new (Server as any)(
     { name: 'codegraph', version: PKG_VERSION },
