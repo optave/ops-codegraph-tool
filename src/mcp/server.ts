@@ -109,6 +109,51 @@ function validateMultiRepoAccess(multiRepo: boolean, name: string, args: { repo?
   }
 }
 
+/**
+ * Register process-level shutdown and error handlers once per process.
+ * Ensures graceful cleanup when the MCP client disconnects or the transport
+ * encounters broken-pipe errors. Uses a globalThis flag to survive
+ * vi.resetModules() in tests.
+ */
+function registerShutdownHandlers(): void {
+  const g = globalThis as Record<string, unknown>;
+  if (g.__codegraph_shutdown_installed) return;
+  g.__codegraph_shutdown_installed = true;
+
+  const shutdown = async () => {
+    try {
+      await _activeServer?.close();
+    } catch (_shutdownErr: unknown) {
+      // Ignore close errors during shutdown — the transport may already be gone.
+    }
+    process.exit(0);
+  };
+  const silentExit = (err: Error & { code?: string }) => {
+    // Only suppress broken-pipe errors from closed stdio transport;
+    // let real bugs surface with a non-zero exit code.
+    if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') {
+      process.exit(0);
+    }
+    process.stderr.write(`Uncaught exception: ${err.stack ?? err.message}\n`);
+    process.exit(1);
+  };
+  const silentReject = (reason: unknown) => {
+    const err = reason instanceof Error ? reason : new Error(String(reason));
+    const code = (err as Error & { code?: string }).code;
+    if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') {
+      process.exit(0);
+    }
+    process.stderr.write(`Unhandled rejection: ${err.stack ?? err.message}\n`);
+    process.exit(1);
+  };
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+  process.on('SIGHUP', shutdown);
+  process.on('uncaughtException', silentExit);
+  process.on('unhandledRejection', silentReject);
+}
+
 export async function startMCPServer(
   customDbPath?: string,
   options: MCPServerOptionsInternal = {},
@@ -180,43 +225,7 @@ export async function startMCPServer(
   // the latest instance (matters when tests call startMCPServer repeatedly).
   _activeServer = server;
 
-  // Register handlers once per process to avoid listener accumulation.
-  // Use a process-level flag so it survives vi.resetModules() in tests.
-  const g = globalThis as Record<string, unknown>;
-  if (!g.__codegraph_shutdown_installed) {
-    g.__codegraph_shutdown_installed = true;
-
-    const shutdown = async () => {
-      try {
-        await _activeServer?.close();
-      } catch {}
-      process.exit(0);
-    };
-    const silentExit = (err: Error & { code?: string }) => {
-      // Only suppress broken-pipe errors from closed stdio transport;
-      // let real bugs surface with a non-zero exit code.
-      if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') {
-        process.exit(0);
-      }
-      process.stderr.write(`Uncaught exception: ${err.stack ?? err.message}\n`);
-      process.exit(1);
-    };
-    const silentReject = (reason: unknown) => {
-      const err = reason instanceof Error ? reason : new Error(String(reason));
-      const code = (err as Error & { code?: string }).code;
-      if (code === 'EPIPE' || code === 'ERR_STREAM_DESTROYED') {
-        process.exit(0);
-      }
-      process.stderr.write(`Unhandled rejection: ${err.stack ?? err.message}\n`);
-      process.exit(1);
-    };
-
-    process.on('SIGINT', shutdown);
-    process.on('SIGTERM', shutdown);
-    process.on('SIGHUP', shutdown);
-    process.on('uncaughtException', silentExit);
-    process.on('unhandledRejection', silentReject);
-  }
+  registerShutdownHandlers();
 
   try {
     await server.connect(transport);
