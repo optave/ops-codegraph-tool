@@ -185,6 +185,11 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
       /* ignore close errors */
     }
     ctx.nativeDb = undefined;
+    // Also clear stale reference in engineOpts to prevent stages from
+    // calling methods on the closed NativeDatabase.
+    if (ctx.engineOpts?.nativeDb) {
+      ctx.engineOpts.nativeDb = undefined;
+    }
   }
 
   await collectFiles(ctx);

@@ -100,9 +100,15 @@ function queryAllAstNodes() {
 // ─── Tests ────────────────────────────────────────────────────────────
 
 describe('buildAstNodes — JS extraction', () => {
-  test('call kind AST nodes are no longer stored (dead code removed)', () => {
+  test('captures call_expression as kind:call', () => {
     const calls = queryAstNodes('call');
-    expect(calls.length).toBe(0);
+    // eval(input), result.set('data', data), console.log(result)
+    // Note: fetch('/api/data') is inside await — captured as kind:await, not kind:call
+    expect(calls.length).toBe(3);
+    const names = calls.map((n) => n.name);
+    expect(names).toContain('eval');
+    expect(names).toContain('result.set');
+    expect(names).toContain('console.log');
   });
 
   test('captures new_expression as kind:new', () => {

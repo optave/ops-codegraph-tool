@@ -427,17 +427,6 @@ export async function runAnalyses(
 
   if (!doAst && !doComplexity && !doCfg && !doDataflow) return timing;
 
-  // Strip dead 'call' kind from native astNodes upfront. Call AST nodes are no
-  // longer extracted by the WASM visitor; native binaries still emit them until
-  // the Rust extractors are updated (see #701). Clear the array when only calls
-  // remain so the WASM visitor runs and extracts non-call kinds.
-  for (const [, symbols] of fileSymbols) {
-    if (Array.isArray(symbols.astNodes)) {
-      const filtered = symbols.astNodes.filter((n) => n.kind !== 'call');
-      symbols.astNodes = filtered.length > 0 ? (filtered as typeof symbols.astNodes) : undefined;
-    }
-  }
-
   const extToLang = buildExtToLangMap();
 
   // WASM pre-parse for files that need it

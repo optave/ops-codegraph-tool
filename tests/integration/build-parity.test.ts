@@ -114,6 +114,18 @@ describeOrSkip('Build parity: native vs WASM', () => {
   it('produces identical ast_nodes', () => {
     const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
     const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
+    // Diagnostic: log counts to help debug CI-only parity failures
+    if (nativeGraph.astNodes.length !== wasmGraph.astNodes.length) {
+      console.error(
+        `[parity-diag] native astNodes: ${nativeGraph.astNodes.length}, wasm astNodes: ${wasmGraph.astNodes.length}`,
+      );
+      console.error(
+        `[parity-diag] native kinds: ${JSON.stringify([...new Set((nativeGraph.astNodes as any[]).map((n: any) => n.kind))])}`,
+      );
+      console.error(
+        `[parity-diag] wasm kinds: ${JSON.stringify([...new Set((wasmGraph.astNodes as any[]).map((n: any) => n.kind))])}`,
+      );
+    }
     expect(nativeGraph.astNodes).toEqual(wasmGraph.astNodes);
   });
 });

@@ -5,9 +5,9 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { debug } from '#infrastructure/logger.js';
-import { normalizePath } from '#shared/constants.js';
-import type { ExtractorOutput } from '#types';
+import { debug } from '../../../../infrastructure/logger.js';
+import { normalizePath } from '../../../../shared/constants.js';
+import type { ExtractorOutput } from '../../../../types.js';
 import type { PipelineContext } from '../context.js';
 import { readFileSafe } from '../helpers.js';
 
