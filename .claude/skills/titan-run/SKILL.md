@@ -43,8 +43,8 @@ You are the **orchestrator** for the full Titan Paradigm pipeline. Your job is t
    **Initialize the phase timestamps helper.** Throughout the pipeline, you will record wall-clock timestamps for each phase. Use this helper to write them into `titan-state.json`:
 
    ```bash
-   # Record phase start:
-   node -e "const fs=require('fs');const s=JSON.parse(fs.readFileSync('.codegraph/titan/titan-state.json','utf8'));s.phaseTimestamps=s.phaseTimestamps||{};s.phaseTimestamps['<PHASE>']=s.phaseTimestamps['<PHASE>']||{};s.phaseTimestamps['<PHASE>'].startedAt=new Date().toISOString();fs.writeFileSync('.codegraph/titan/titan-state.json',JSON.stringify(s,null,2));"
+   # Record phase start (safe for resume — only sets startedAt if not already present):
+   node -e "const fs=require('fs');const s=JSON.parse(fs.readFileSync('.codegraph/titan/titan-state.json','utf8'));s.phaseTimestamps=s.phaseTimestamps||{};s.phaseTimestamps['<PHASE>']=s.phaseTimestamps['<PHASE>']||{};if(!s.phaseTimestamps['<PHASE>'].startedAt){s.phaseTimestamps['<PHASE>'].startedAt=new Date().toISOString();fs.writeFileSync('.codegraph/titan/titan-state.json',JSON.stringify(s,null,2));}"
 
    # Record phase completion:
    node -e "const fs=require('fs');const s=JSON.parse(fs.readFileSync('.codegraph/titan/titan-state.json','utf8'));s.phaseTimestamps=s.phaseTimestamps||{};s.phaseTimestamps['<PHASE>']=s.phaseTimestamps['<PHASE>']||{};s.phaseTimestamps['<PHASE>'].completedAt=new Date().toISOString();fs.writeFileSync('.codegraph/titan/titan-state.json',JSON.stringify(s,null,2));"

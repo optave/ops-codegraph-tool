@@ -241,7 +241,8 @@ If `GH_UNAVAILABLE`, skip issue creation entirely and note in the report: "GitHu
 For each issue with severity `bug` or `limitation`, create a GitHub issue using `gh`:
 
 ```bash
-gh issue create --title "<category>: <short description>" --body "$(cat <<'EOF'
+BODY=$(mktemp)
+cat > "$BODY" <<'ISSUE_BODY'
 ## Context
 Discovered during Titan audit (phase: <phase>, date: <timestamp>).
 
@@ -255,9 +256,12 @@ Discovered during Titan audit (phase: <phase>, date: <timestamp>).
 - **Titan phase:** <phase>
 - **Severity:** <severity>
 - **Category:** <category>
-EOF
-)" --label "titan-audit"
+ISSUE_BODY
+gh issue create --title "<category>: <short description>" --body-file "$BODY" --label "titan-audit"
+rm -f "$BODY"
 ```
+
+Using `--body-file` with a temp file avoids quoting/expansion issues that can arise when issue descriptions contain backticks, `$()` sequences, or literal `EOF` strings.
 
 **Rules for issue creation:**
 - **Only open issues for `bug` and `limitation` severity.** Suggestions and observations go in the report only — they are not actionable enough for standalone issues.
@@ -265,7 +269,7 @@ EOF
 - **Label:** Use `titan-audit` label. If the label doesn't exist, create it: `gh label create titan-audit --description "Issues discovered during Titan audit" --color "d4c5f9" 2>/dev/null || true`
 - **Record each created issue number** for inclusion in the report's Issues section.
 
-For `suggestion` and `codebase` severity entries, include them in the report's Issues section but do NOT create GitHub issues.
+For `suggestion` severity entries and entries with `category: "codebase"`, include them in the report's Issues section but do NOT create GitHub issues.
 
 ---
 
