@@ -89,23 +89,23 @@ export function extractSymbols(
 
 /** Handle function_declaration capture. */
 function handleFnCapture(c: Record<string, TreeSitterNode>, definitions: Definition[]): void {
-  const fnChildren = extractParameters(c.fn_node);
+  const fnChildren = extractParameters(c.fn_node!);
   definitions.push({
     name: c.fn_name!.text,
     kind: 'function',
-    line: c.fn_node.startPosition.row + 1,
-    endLine: nodeEndLine(c.fn_node),
+    line: c.fn_node!.startPosition.row + 1,
+    endLine: nodeEndLine(c.fn_node!),
     children: fnChildren.length > 0 ? fnChildren : undefined,
   });
 }
 
 /** Handle variable_declarator with arrow_function / function_expression capture. */
 function handleVarFnCapture(c: Record<string, TreeSitterNode>, definitions: Definition[]): void {
-  const declNode = c.varfn_name.parent?.parent;
-  const line = declNode ? declNode.startPosition.row + 1 : c.varfn_name.startPosition.row + 1;
+  const declNode = c.varfn_name!.parent?.parent;
+  const line = declNode ? declNode.startPosition.row + 1 : c.varfn_name!.startPosition.row + 1;
   const varFnChildren = extractParameters(c.varfn_value!);
   definitions.push({
-    name: c.varfn_name.text,
+    name: c.varfn_name!.text,
     kind: 'function',
     line,
     endLine: nodeEndLine(c.varfn_value!),
@@ -120,17 +120,17 @@ function handleClassCapture(
   classes: ClassRelation[],
 ): void {
   const className = c.cls_name!.text;
-  const startLine = c.cls_node.startPosition.row + 1;
-  const clsChildren = extractClassProperties(c.cls_node);
+  const startLine = c.cls_node!.startPosition.row + 1;
+  const clsChildren = extractClassProperties(c.cls_node!);
   definitions.push({
     name: className,
     kind: 'class',
     line: startLine,
-    endLine: nodeEndLine(c.cls_node),
+    endLine: nodeEndLine(c.cls_node!),
     children: clsChildren.length > 0 ? clsChildren : undefined,
   });
   const heritage =
-    c.cls_node.childForFieldName('heritage') || findChild(c.cls_node, 'class_heritage');
+    c.cls_node!.childForFieldName('heritage') || findChild(c.cls_node!, 'class_heritage');
   if (heritage) {
     const superName = extractSuperclass(heritage);
     if (superName) classes.push({ name: className, extends: superName, line: startLine });
@@ -144,15 +144,15 @@ function handleClassCapture(
 /** Handle method_definition capture. */
 function handleMethodCapture(c: Record<string, TreeSitterNode>, definitions: Definition[]): void {
   const methName = c.meth_name!.text;
-  const parentClass = findParentClass(c.meth_node);
+  const parentClass = findParentClass(c.meth_node!);
   const fullName = parentClass ? `${parentClass}.${methName}` : methName;
-  const methChildren = extractParameters(c.meth_node);
-  const methVis = extractVisibility(c.meth_node);
+  const methChildren = extractParameters(c.meth_node!);
+  const methVis = extractVisibility(c.meth_node!);
   definitions.push({
     name: fullName,
     kind: 'method',
-    line: c.meth_node.startPosition.row + 1,
-    endLine: nodeEndLine(c.meth_node),
+    line: c.meth_node!.startPosition.row + 1,
+    endLine: nodeEndLine(c.meth_node!),
     children: methChildren.length > 0 ? methChildren : undefined,
     visibility: methVis,
   });
@@ -164,8 +164,8 @@ function handleExportCapture(
   exps: Export[],
   imports: Import[],
 ): void {
-  const exportLine = c.exp_node.startPosition.row + 1;
-  const decl = c.exp_node.childForFieldName('declaration');
+  const exportLine = c.exp_node!.startPosition.row + 1;
+  const decl = c.exp_node!.childForFieldName('declaration');
   if (decl) {
     const declType = decl.type;
     const kindMap: Record<string, string> = {
@@ -180,11 +180,11 @@ function handleExportCapture(
       if (n) exps.push({ name: n.text, kind: kind as Export['kind'], line: exportLine });
     }
   }
-  const source = c.exp_node.childForFieldName('source') || findChild(c.exp_node, 'string');
+  const source = c.exp_node!.childForFieldName('source') || findChild(c.exp_node!, 'string');
   if (source && !decl) {
     const modPath = source.text.replace(/['"]/g, '');
-    const reexportNames = extractImportNames(c.exp_node);
-    const nodeText = c.exp_node.text;
+    const reexportNames = extractImportNames(c.exp_node!);
+    const nodeText = c.exp_node!.text;
     const isWildcard = nodeText.includes('export *') || nodeText.includes('export*');
     imports.push({
       source: modPath,

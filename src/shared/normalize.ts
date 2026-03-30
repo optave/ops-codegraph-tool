@@ -35,7 +35,7 @@ export function kindIcon(kind: string): string {
   }
 }
 
-interface NormalizedSymbol {
+export interface NormalizedSymbol {
   name: string;
   kind: string;
   file: string;
