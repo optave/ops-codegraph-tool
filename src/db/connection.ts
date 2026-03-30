@@ -399,3 +399,44 @@ export function openRepo(
     },
   };
 }
+
+/**
+ * Open a readonly DB with an optional NativeDatabase alongside it.
+ *
+ * Returns the better-sqlite3 handle (for backwards compat) plus an optional
+ * NativeDatabase for modules that can use batched Rust query methods.
+ * Callers should use nativeDb when available and fall back to db.prepare().
+ */
+export function openReadonlyWithNative(customPath?: string): {
+  db: BetterSqlite3Database;
+  nativeDb: NativeDatabase | undefined;
+  close(): void;
+} {
+  const db = openReadonlyOrFail(customPath);
+
+  let nativeDb: NativeDatabase | undefined;
+  if (isNativeAvailable()) {
+    try {
+      const dbPath = findDbPath(customPath);
+      const native = getNative();
+      nativeDb = native.NativeDatabase.openReadonly(dbPath);
+    } catch (e) {
+      debug(`openReadonlyWithNative: native path failed: ${(e as Error).message}`);
+    }
+  }
+
+  return {
+    db,
+    nativeDb,
+    close() {
+      db.close();
+      if (nativeDb) {
+        try {
+          nativeDb.close();
+        } catch {
+          // already closed or not closeable
+        }
+      }
+    },
+  };
+}

@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { openReadonlyOrFail, testFilterSQL } from '../../db/index.js';
+import { openReadonlyOrFail, openReadonlyWithNative, testFilterSQL } from '../../db/index.js';
 import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { loadConfig } from '../../infrastructure/config.js';
 import { debug } from '../../infrastructure/logger.js';
@@ -381,20 +381,115 @@ export function moduleMapData(customDbPath: string, limit = 20, opts: { noTests?
 }
 
 export function statsData(customDbPath: string, opts: { noTests?: boolean; config?: any } = {}) {
-  const db = openReadonlyOrFail(customDbPath);
+  const { db, nativeDb, close } = openReadonlyWithNative(customDbPath);
   try {
     const noTests = opts.noTests || false;
     const config = opts.config || loadConfig();
-    const testFilter = testFilterSQL('n.file', noTests);
 
+    // These always need JS (non-SQL logic)
+    const files = countFilesByLanguage(db, noTests);
+    const fileCycles = findCycles(db, { fileLevel: true, noTests });
+    const fnCycles = findCycles(db, { fileLevel: false, noTests });
+
+    // ── Native fast path: batch all SQL aggregations in one napi call ──
+    if (nativeDb?.getGraphStats) {
+      const s = nativeDb.getGraphStats(noTests);
+      const nodesByKind: Record<string, number> = {};
+      for (const k of s.nodesByKind) nodesByKind[k.kind] = k.count;
+      const edgesByKind: Record<string, number> = {};
+      for (const k of s.edgesByKind) edgesByKind[k.kind] = k.count;
+      const roles: Record<string, number> & { dead?: number } = {};
+      let deadTotal = 0;
+      for (const r of s.roleCounts) {
+        roles[r.role] = r.count;
+        if (r.role.startsWith(DEAD_ROLE_PREFIX)) deadTotal += r.count;
+      }
+      if (deadTotal > 0) roles.dead = deadTotal;
+
+      const callerCoverage =
+        s.quality.callableTotal > 0 ? s.quality.callableWithCallers / s.quality.callableTotal : 0;
+      const callConfidence =
+        s.quality.callEdges > 0 ? s.quality.highConfCallEdges / s.quality.callEdges : 0;
+
+      // False-positive analysis still uses JS (needs FALSE_POSITIVE_NAMES set)
+      const fpThreshold = config.analysis?.falsePositiveCallers ?? FALSE_POSITIVE_CALLER_THRESHOLD;
+      const fpRows = db
+        .prepare(`
+          SELECT n.name, n.file, n.line, COUNT(e.source_id) as caller_count
+          FROM nodes n
+          LEFT JOIN edges e ON n.id = e.target_id AND e.kind = 'calls'
+          WHERE n.kind IN ('function', 'method')
+          GROUP BY n.id
+          HAVING caller_count > ?
+          ORDER BY caller_count DESC
+        `)
+        .all(fpThreshold) as Array<{
+        name: string;
+        file: string;
+        line: number;
+        caller_count: number;
+      }>;
+      const falsePositiveWarnings = fpRows
+        .filter((r) =>
+          FALSE_POSITIVE_NAMES.has(r.name.includes('.') ? r.name.split('.').pop()! : r.name),
+        )
+        .map((r) => ({ name: r.name, file: r.file, line: r.line, callerCount: r.caller_count }));
+      let fpEdgeCount = 0;
+      for (const fp of falsePositiveWarnings) fpEdgeCount += fp.callerCount;
+      const falsePositiveRatio = s.quality.callEdges > 0 ? fpEdgeCount / s.quality.callEdges : 0;
+      const score = Math.round(
+        callerCoverage * 40 + callConfidence * 40 + (1 - falsePositiveRatio) * 20,
+      );
+
+      return {
+        nodes: { total: s.totalNodes, byKind: nodesByKind },
+        edges: { total: s.totalEdges, byKind: edgesByKind },
+        files,
+        cycles: { fileLevel: fileCycles.length, functionLevel: fnCycles.length },
+        hotspots: s.hotspots.map((h) => ({ file: h.file, fanIn: h.fanIn, fanOut: h.fanOut })),
+        embeddings: s.embeddings
+          ? {
+              count: s.embeddings.count,
+              model: s.embeddings.model,
+              dim: s.embeddings.dim,
+              builtAt: s.embeddings.builtAt,
+            }
+          : null,
+        quality: {
+          score,
+          callerCoverage: {
+            ratio: callerCoverage,
+            covered: s.quality.callableWithCallers,
+            total: s.quality.callableTotal,
+          },
+          callConfidence: {
+            ratio: callConfidence,
+            highConf: s.quality.highConfCallEdges,
+            total: s.quality.callEdges,
+          },
+          falsePositiveWarnings,
+        },
+        roles,
+        complexity: s.complexity
+          ? {
+              analyzed: s.complexity.analyzed,
+              avgCognitive: s.complexity.avgCognitive,
+              avgCyclomatic: s.complexity.avgCyclomatic,
+              maxCognitive: s.complexity.maxCognitive,
+              maxCyclomatic: s.complexity.maxCyclomatic,
+              avgMI: s.complexity.avgMi,
+              minMI: s.complexity.minMi,
+            }
+          : null,
+      };
+    }
+
+    // ── JS fallback ───────────────────────────────────────────────────
+    const testFilter = testFilterSQL('n.file', noTests);
     const testFileIds = noTests ? buildTestFileIds(db) : null;
 
     const { total: totalNodes, byKind: nodesByKind } = countNodesByKind(db, testFileIds);
     const { total: totalEdges, byKind: edgesByKind } = countEdgesByKind(db, testFileIds);
-    const files = countFilesByLanguage(db, noTests);
-
-    const fileCycles = findCycles(db, { fileLevel: true, noTests });
-    const fnCycles = findCycles(db, { fileLevel: false, noTests });
 
     const hotspots = findHotspots(db, noTests, 5);
     const embeddings = getEmbeddingsInfo(db);
@@ -415,6 +510,6 @@ export function statsData(customDbPath: string, opts: { noTests?: boolean; confi
       complexity,
     };
   } finally {
-    db.close();
+    close();
   }
 }

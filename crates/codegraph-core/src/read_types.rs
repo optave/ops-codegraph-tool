@@ -175,3 +175,128 @@ pub struct NativeComplexityMetrics {
     pub maintainability_index: Option<f64>,
     pub halstead_volume: Option<f64>,
 }
+
+// ── Batched query return types ─────────────────────────────────────────
+
+/// Kind + count pair for GROUP BY queries.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct KindCount {
+    pub kind: String,
+    pub count: i32,
+}
+
+/// Role + count pair for role distribution queries.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct RoleCount {
+    pub role: String,
+    pub count: i32,
+}
+
+/// File hotspot entry with fan-in/fan-out.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct FileHotspot {
+    pub file: String,
+    pub fan_in: i32,
+    pub fan_out: i32,
+}
+
+/// Complexity summary statistics.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct ComplexitySummary {
+    pub analyzed: i32,
+    pub avg_cognitive: f64,
+    pub avg_cyclomatic: f64,
+    pub max_cognitive: i32,
+    pub max_cyclomatic: i32,
+    pub avg_mi: f64,
+    pub min_mi: f64,
+}
+
+/// Embedding metadata.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct EmbeddingInfo {
+    pub count: i32,
+    pub model: Option<String>,
+    pub dim: Option<i32>,
+    pub built_at: Option<String>,
+}
+
+/// Quality metrics for graph stats.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct QualityMetrics {
+    pub callable_total: i32,
+    pub callable_with_callers: i32,
+    pub call_edges: i32,
+    pub high_conf_call_edges: i32,
+}
+
+/// Combined graph statistics — replaces ~11 separate queries in module-map.ts.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct GraphStats {
+    pub total_nodes: i32,
+    pub total_edges: i32,
+    pub nodes_by_kind: Vec<KindCount>,
+    pub edges_by_kind: Vec<KindCount>,
+    pub role_counts: Vec<RoleCount>,
+    pub quality: QualityMetrics,
+    pub hotspots: Vec<FileHotspot>,
+    pub complexity: Option<ComplexitySummary>,
+    pub embeddings: Option<EmbeddingInfo>,
+}
+
+/// Dataflow edge with joined node info.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct DataflowQueryEdge {
+    pub name: String,
+    pub kind: String,
+    pub file: String,
+    pub line: Option<i32>,
+    pub param_index: Option<i32>,
+    pub expression: Option<String>,
+    pub confidence: Option<f64>,
+}
+
+/// All 6 directional dataflow edge sets for a node.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct DataflowEdgesResult {
+    pub flows_to_out: Vec<DataflowQueryEdge>,
+    pub flows_to_in: Vec<DataflowQueryEdge>,
+    pub returns_out: Vec<DataflowQueryEdge>,
+    pub returns_in: Vec<DataflowQueryEdge>,
+    pub mutates_out: Vec<DataflowQueryEdge>,
+    pub mutates_in: Vec<DataflowQueryEdge>,
+}
+
+/// Hotspot row from node_metrics join.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct NativeHotspotRow {
+    pub name: String,
+    pub kind: String,
+    pub line_count: Option<i32>,
+    pub symbol_count: Option<i32>,
+    pub import_count: Option<i32>,
+    pub export_count: Option<i32>,
+    pub fan_in: Option<i32>,
+    pub fan_out: Option<i32>,
+    pub cohesion: Option<f64>,
+    pub file_count: Option<i32>,
+}
+
+/// Fan-in/fan-out metrics for a single node.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct FanMetric {
+    pub node_id: i32,
+    pub fan_in: i32,
+    pub fan_out: i32,
+}

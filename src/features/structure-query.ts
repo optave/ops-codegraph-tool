@@ -7,7 +7,7 @@
  * role classification).
  */
 
-import { openReadonlyOrFail, testFilterSQL } from '../db/index.js';
+import { openReadonlyOrFail, openReadonlyWithNative, testFilterSQL } from '../db/index.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { normalizePath } from '../shared/constants.js';
@@ -221,7 +221,7 @@ export function hotspotsData(
   limit: number;
   hotspots: unknown[];
 } {
-  const db = openReadonlyOrFail(customDbPath);
+  const { db, nativeDb, close } = openReadonlyWithNative(customDbPath);
   try {
     const metric = opts.metric || 'fan-in';
     const level = opts.level || 'file';
@@ -230,6 +230,46 @@ export function hotspotsData(
 
     const kind = level === 'directory' ? 'directory' : 'file';
 
+    const mapRow = (r: {
+      name: string;
+      kind: string;
+      lineCount: number | null;
+      symbolCount: number | null;
+      importCount: number | null;
+      exportCount: number | null;
+      fanIn: number | null;
+      fanOut: number | null;
+      cohesion: number | null;
+      fileCount: number | null;
+    }) => ({
+      name: r.name,
+      kind: r.kind,
+      lineCount: r.lineCount,
+      symbolCount: r.symbolCount,
+      importCount: r.importCount,
+      exportCount: r.exportCount,
+      fanIn: r.fanIn,
+      fanOut: r.fanOut,
+      cohesion: r.cohesion,
+      fileCount: r.fileCount,
+      density:
+        (r.fileCount ?? 0) > 0
+          ? (r.symbolCount || 0) / (r.fileCount ?? 1)
+          : (r.lineCount ?? 0) > 0
+            ? (r.symbolCount || 0) / (r.lineCount ?? 1)
+            : 0,
+      coupling: (r.fanIn || 0) + (r.fanOut || 0),
+    });
+
+    // ── Native fast path: single query instead of 4 eagerly prepared ──
+    if (nativeDb?.getHotspots) {
+      const rows = nativeDb.getHotspots(kind, metric, noTests, limit);
+      const hotspots = rows.map(mapRow);
+      const base = { metric, level, limit, hotspots };
+      return paginateResult(base, 'hotspots', { limit: opts.limit, offset: opts.offset });
+    }
+
+    // ── JS fallback ───────────────────────────────────────────────────
     const testFilter = testFilterSQL('n.name', noTests && kind === 'file');
 
     const HOTSPOT_QUERIES: Record<string, { all(...params: unknown[]): HotspotRow[] }> = {
@@ -256,7 +296,6 @@ export function hotspotsData(
     };
 
     const stmt = HOTSPOT_QUERIES[metric] ?? HOTSPOT_QUERIES['fan-in'];
-    // stmt is always defined: metric is a valid key or the fallback is a concrete property
     const rows = stmt!.all(kind, limit);
 
     const hotspots = rows.map((r) => ({
@@ -282,7 +321,7 @@ export function hotspotsData(
     const base = { metric, level, limit, hotspots };
     return paginateResult(base, 'hotspots', { limit: opts.limit, offset: opts.offset });
   } finally {
-    db.close();
+    close();
   }
 }
 
