@@ -65,7 +65,6 @@ function hasKeywordChild(node: TreeSitterNode, keyword: string): boolean {
 function handleSwiftClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const isStruct = hasKeywordChild(node, 'struct');
   const isEnum = hasKeywordChild(node, 'enum');
-  const isClass = hasKeywordChild(node, 'class');
 
   // Name is a type_identifier direct child
   const nameNode = findChild(node, 'type_identifier');
@@ -147,6 +146,8 @@ function handleSwiftClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void 
   }
 
   // Inheritance: inheritance_specifier nodes are DIRECT children of class_declaration
+  // First specifier is the superclass (extends), rest are protocol conformances (implements)
+  let first = true;
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child || child.type !== 'inheritance_specifier') continue;
@@ -155,11 +156,20 @@ function handleSwiftClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void 
     if (userType) {
       const typeId = findChild(userType, 'type_identifier');
       if (typeId) {
-        ctx.classes.push({
-          name,
-          extends: typeId.text,
-          line: node.startPosition.row + 1,
-        });
+        if (first) {
+          ctx.classes.push({
+            name,
+            extends: typeId.text,
+            line: node.startPosition.row + 1,
+          });
+          first = false;
+        } else {
+          ctx.classes.push({
+            name,
+            implements: typeId.text,
+            line: node.startPosition.row + 1,
+          });
+        }
       }
     }
   }
@@ -267,9 +277,12 @@ function handleSwiftPropertyDecl(node: TreeSitterNode, ctx: ExtractorOutput): vo
   if (!pattern) return;
   const nameNode = findChild(pattern, 'simple_identifier');
   if (!nameNode) return;
+  // let → constant, var → variable
+  const isLet = hasKeywordChild(node, 'let');
+  const kind = isLet ? 'constant' : 'variable';
   ctx.definitions.push({
     name: nameNode.text,
-    kind: 'function',
+    kind,
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
   });
