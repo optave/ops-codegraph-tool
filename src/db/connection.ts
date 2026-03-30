@@ -29,6 +29,23 @@ function getPackageVersion(): string {
 /** Warn once per process when DB version mismatches the running codegraph version. */
 let _versionWarned = false;
 
+/** Check and warn (once) if the running codegraph version differs from the DB build version. */
+function warnOnVersionMismatch(getBuildVersion: () => string | undefined | null): void {
+  if (_versionWarned) return;
+  _versionWarned = true;
+  try {
+    const buildVersion = getBuildVersion();
+    const currentVersion = getPackageVersion();
+    if (buildVersion && currentVersion && buildVersion !== currentVersion) {
+      warn(
+        `DB was built with codegraph v${buildVersion}, running v${currentVersion}. Consider: codegraph build --no-incremental`,
+      );
+    }
+  } catch {
+    // build_meta table may not exist in older DBs — silently ignore
+  }
+}
+
 /** DB instance with optional advisory lock path. */
 export type LockedDatabase = BetterSqlite3Database & { __lockPath?: string };
 
@@ -79,11 +96,6 @@ export function findRepoRoot(fromDir?: string): string | null {
 export function _resetRepoRootCache(): void {
   _cachedRepoRoot = undefined;
   _cachedRepoRootCwd = undefined;
-}
-
-/** Reset the version warning flag (for testing). */
-export function _resetVersionWarning(): void {
-  _versionWarned = false;
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -299,26 +311,39 @@ export function openReadonlyOrFail(customPath?: string): BetterSqlite3Database {
   const Database = getDatabase();
   const db = new Database(dbPath, { readonly: true }) as unknown as BetterSqlite3Database;
 
-  // Warn once per process if the DB was built with a different codegraph version
-  if (!_versionWarned) {
-    try {
-      const row = db
-        .prepare<{ value: string }>('SELECT value FROM build_meta WHERE key = ?')
-        .get('codegraph_version');
-      const buildVersion = row?.value;
-      const currentVersion = getPackageVersion();
-      if (buildVersion && currentVersion && buildVersion !== currentVersion) {
-        warn(
-          `DB was built with codegraph v${buildVersion}, running v${currentVersion}. Consider: codegraph build --no-incremental`,
-        );
-      }
-    } catch {
-      // build_meta table may not exist in older DBs — silently ignore
-    }
-    _versionWarned = true;
-  }
+  warnOnVersionMismatch(() => {
+    const row = db
+      .prepare<{ value: string }>('SELECT value FROM build_meta WHERE key = ?')
+      .get('codegraph_version');
+    return row?.value;
+  });
 
   return db;
+}
+
+/** Open a NativeRepository via rusqlite, throwing DbError if the DB file is missing. */
+function openRepoNative(customDbPath?: string): { repo: Repository; close(): void } {
+  const dbPath = findDbPath(customDbPath);
+  if (!fs.existsSync(dbPath)) {
+    throw new DbError(
+      `No codegraph database found at ${dbPath}.\nRun "codegraph build" first to analyze your codebase.`,
+      { file: dbPath },
+    );
+  }
+  const native = getNative();
+  const ndb = native.NativeDatabase.openReadonly(dbPath);
+  try {
+    warnOnVersionMismatch(() => ndb.getBuildMeta('codegraph_version'));
+    return {
+      repo: new NativeRepository(ndb),
+      close() {
+        ndb.close();
+      },
+    };
+  } catch (innerErr) {
+    ndb.close();
+    throw innerErr;
+  }
 }
 
 /**
@@ -345,42 +370,7 @@ export function openRepo(
   // Try native rusqlite path first (Phase 6.14)
   if (isNativeAvailable()) {
     try {
-      const dbPath = findDbPath(customDbPath);
-      if (!fs.existsSync(dbPath)) {
-        throw new DbError(
-          `No codegraph database found at ${dbPath}.\nRun "codegraph build" first to analyze your codebase.`,
-          { file: dbPath },
-        );
-      }
-      const native = getNative();
-      const ndb = native.NativeDatabase.openReadonly(dbPath);
-      try {
-        // Version check (same logic as openReadonlyOrFail)
-        if (!_versionWarned) {
-          try {
-            const buildVersion = ndb.getBuildMeta('codegraph_version');
-            const currentVersion = getPackageVersion();
-            if (buildVersion && currentVersion && buildVersion !== currentVersion) {
-              warn(
-                `DB was built with codegraph v${buildVersion}, running v${currentVersion}. Consider: codegraph build --no-incremental`,
-              );
-            }
-          } catch {
-            // build_meta table may not exist in older DBs
-          }
-          _versionWarned = true;
-        }
-
-        return {
-          repo: new NativeRepository(ndb),
-          close() {
-            ndb.close();
-          },
-        };
-      } catch (innerErr) {
-        ndb.close();
-        throw innerErr;
-      }
+      return openRepoNative(customDbPath);
     } catch (e) {
       // Re-throw user-visible errors (e.g. DB not found) — only silently
       // fall back for native-engine failures (e.g. incompatible native binary).

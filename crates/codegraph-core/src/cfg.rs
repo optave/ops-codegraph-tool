@@ -452,168 +452,209 @@ impl<'a> CfgBuilder<'a> {
         cur
     }
 
-    /// Process a single statement.
+    /// Process a single statement — thin dispatcher delegating to focused handlers.
     fn process_statement(&mut self, stmt: &Node, current: u32) -> Option<u32> {
         let kind = stmt.kind();
 
         // Unwrap expression_statement (Rust uses expressions for control flow)
-        if kind == "expression_statement" && stmt.named_child_count() == 1 {
-            if let Some(inner) = stmt.named_child(0) {
-                let t = inner.kind();
-                if matches_opt(t, self.rules.if_node)
-                    || matches_slice(t, self.rules.if_nodes)
-                    || matches_slice(t, self.rules.for_nodes)
-                    || matches_opt(t, self.rules.while_node)
-                    || matches_slice(t, self.rules.while_nodes)
-                    || matches_opt(t, self.rules.do_node)
-                    || matches_opt(t, self.rules.infinite_loop_node)
-                    || matches_opt(t, self.rules.switch_node)
-                    || matches_slice(t, self.rules.switch_nodes)
-                    || matches_opt(t, self.rules.return_node)
-                    || matches_opt(t, self.rules.throw_node)
-                    || matches_opt(t, self.rules.break_node)
-                    || matches_opt(t, self.rules.continue_node)
-                    || matches_opt(t, self.rules.unless_node)
-                    || matches_opt(t, self.rules.until_node)
-                {
-                    return self.process_statement(&inner, current);
-                }
-            }
+        if let Some(result) = self.try_unwrap_expr_stmt(stmt, kind, current) {
+            return result;
         }
 
         // Labeled statement
-        if matches_opt(kind, self.rules.labeled_node) {
-            let label_node = stmt.child_by_field_name("label");
-            let body = stmt.child_by_field_name("body");
-            if let (Some(label_node), Some(body)) = (label_node, body) {
-                let label_name = label_node.utf8_text(self.source).unwrap_or("").to_string();
-                // We can't know the loop blocks yet — push a placeholder
-                self.label_map.push((label_name.clone(), LabelCtx { header_idx: None, exit_idx: None }));
-                let result = self.process_statement(&body, current);
-                self.label_map.retain(|(n, _)| n != &label_name);
-                return result;
-            }
-            return Some(current);
+        if let Some(result) = self.try_process_labeled(stmt, kind, current) {
+            return result;
         }
 
-        // If statement
-        if matches_opt(kind, self.rules.if_node) || matches_slice(kind, self.rules.if_nodes) {
-            return self.process_if(stmt, current);
+        // Compound control flow
+        if let Some(result) = self.try_process_control_flow(stmt, kind, current) {
+            return result;
         }
 
-        // Unless (Ruby)
-        if matches_opt(kind, self.rules.unless_node) {
-            return self.process_if(stmt, current);
-        }
-
-        // For loops
-        if matches_slice(kind, self.rules.for_nodes) {
-            return self.process_for_loop(stmt, current);
-        }
-
-        // While loop
-        if matches_opt(kind, self.rules.while_node) || matches_slice(kind, self.rules.while_nodes) {
-            return self.process_while_loop(stmt, current);
-        }
-
-        // Until (Ruby)
-        if matches_opt(kind, self.rules.until_node) {
-            return self.process_while_loop(stmt, current);
-        }
-
-        // Do-while
-        if matches_opt(kind, self.rules.do_node) {
-            return self.process_do_while_loop(stmt, current);
-        }
-
-        // Infinite loop (Rust loop {})
-        if matches_opt(kind, self.rules.infinite_loop_node) {
-            return self.process_infinite_loop(stmt, current);
-        }
-
-        // Switch/match
-        if matches_opt(kind, self.rules.switch_node) || matches_slice(kind, self.rules.switch_nodes) {
-            return self.process_switch(stmt, current);
-        }
-
-        // Try/catch/finally
-        if matches_opt(kind, self.rules.try_node) {
-            return self.process_try_catch(stmt, current);
-        }
-        // Additional try nodes (e.g. Ruby body_statement with rescue)
-        if matches_slice(kind, self.rules.try_nodes) {
-            // Only treat as try if it actually contains a catch/rescue child
-            let cursor = &mut stmt.walk();
-            let has_rescue = stmt.named_children(cursor)
-                .any(|c| matches_opt(c.kind(), self.rules.catch_node));
-            if has_rescue {
-                return self.process_try_catch(stmt, current);
-            }
-        }
-
-        // Return
-        if matches_opt(kind, self.rules.return_node) {
-            self.set_end_line(current, node_line(stmt));
-            self.add_edge(current, self.exit_idx, "return");
-            return None;
-        }
-
-        // Throw
-        if matches_opt(kind, self.rules.throw_node) {
-            self.set_end_line(current, node_line(stmt));
-            self.add_edge(current, self.exit_idx, "exception");
-            return None;
-        }
-
-        // Break
-        if matches_opt(kind, self.rules.break_node) {
-            let label_name = stmt.child_by_field_name("label")
-                .map(|n| n.utf8_text(self.source).unwrap_or("").to_string());
-
-            let target = if let Some(ref name) = label_name {
-                self.label_map.iter().rev()
-                    .find(|(n, _)| n == name)
-                    .and_then(|(_, ctx)| ctx.exit_idx)
-            } else {
-                self.loop_stack.last().map(|ctx| ctx.exit_idx)
-            };
-
-            if let Some(target) = target {
-                self.set_end_line(current, node_line(stmt));
-                self.add_edge(current, target, "break");
-                return None;
-            }
-            return Some(current);
-        }
-
-        // Continue
-        if matches_opt(kind, self.rules.continue_node) {
-            let label_name = stmt.child_by_field_name("label")
-                .map(|n| n.utf8_text(self.source).unwrap_or("").to_string());
-
-            let target = if let Some(ref name) = label_name {
-                self.label_map.iter().rev()
-                    .find(|(n, _)| n == name)
-                    .and_then(|(_, ctx)| ctx.header_idx)
-            } else {
-                // Walk back to find the nearest actual loop (skip switch entries)
-                self.loop_stack.iter().rev()
-                    .find(|ctx| ctx.is_loop)
-                    .map(|ctx| ctx.header_idx)
-            };
-
-            if let Some(target) = target {
-                self.set_end_line(current, node_line(stmt));
-                self.add_edge(current, target, "continue");
-                return None;
-            }
-            return Some(current);
+        // Terminal statements (return, throw, break, continue)
+        if let Some(result) = self.try_process_terminal(stmt, kind, current) {
+            return result;
         }
 
         // Regular statement — extend current block
         self.set_start_line_if_empty(current, node_line(stmt));
         self.set_end_line(current, node_end_line(stmt));
         Some(current)
+    }
+
+    /// Unwrap expression_statement wrappers (Rust uses expressions for control flow).
+    /// Returns `Some(result)` if unwrapped and processed, `None` if not applicable.
+    fn try_unwrap_expr_stmt(&mut self, stmt: &Node, kind: &str, current: u32) -> Option<Option<u32>> {
+        if kind != "expression_statement" || stmt.named_child_count() != 1 {
+            return None;
+        }
+        let inner = stmt.named_child(0)?;
+        let t = inner.kind();
+        let is_control = matches_opt(t, self.rules.if_node)
+            || matches_slice(t, self.rules.if_nodes)
+            || matches_slice(t, self.rules.for_nodes)
+            || matches_opt(t, self.rules.while_node)
+            || matches_slice(t, self.rules.while_nodes)
+            || matches_opt(t, self.rules.do_node)
+            || matches_opt(t, self.rules.infinite_loop_node)
+            || matches_opt(t, self.rules.switch_node)
+            || matches_slice(t, self.rules.switch_nodes)
+            || matches_opt(t, self.rules.return_node)
+            || matches_opt(t, self.rules.throw_node)
+            || matches_opt(t, self.rules.break_node)
+            || matches_opt(t, self.rules.continue_node)
+            || matches_opt(t, self.rules.unless_node)
+            || matches_opt(t, self.rules.until_node);
+        if is_control {
+            Some(self.process_statement(&inner, current))
+        } else {
+            None
+        }
+    }
+
+    /// Process labeled statements. Returns `Some(result)` if this was a labeled
+    /// statement, `None` otherwise.
+    fn try_process_labeled(&mut self, stmt: &Node, kind: &str, current: u32) -> Option<Option<u32>> {
+        if !matches_opt(kind, self.rules.labeled_node) {
+            return None;
+        }
+        let label_node = stmt.child_by_field_name("label");
+        let body = stmt.child_by_field_name("body");
+        if let (Some(label_node), Some(body)) = (label_node, body) {
+            let label_name = label_node.utf8_text(self.source).unwrap_or("").to_string();
+            self.label_map.push((label_name.clone(), LabelCtx { header_idx: None, exit_idx: None }));
+            let result = self.process_statement(&body, current);
+            self.label_map.retain(|(n, _)| n != &label_name);
+            Some(result)
+        } else {
+            Some(Some(current))
+        }
+    }
+
+    /// Dispatch compound control flow (if, for, while, switch, try, etc.).
+    /// Returns `Some(result)` if handled, `None` if not a control flow node.
+    fn try_process_control_flow(&mut self, stmt: &Node, kind: &str, current: u32) -> Option<Option<u32>> {
+        // If / unless
+        if matches_opt(kind, self.rules.if_node) || matches_slice(kind, self.rules.if_nodes)
+            || matches_opt(kind, self.rules.unless_node)
+        {
+            return Some(self.process_if(stmt, current));
+        }
+
+        // For loops
+        if matches_slice(kind, self.rules.for_nodes) {
+            return Some(self.process_for_loop(stmt, current));
+        }
+
+        // While / until
+        if matches_opt(kind, self.rules.while_node) || matches_slice(kind, self.rules.while_nodes)
+            || matches_opt(kind, self.rules.until_node)
+        {
+            return Some(self.process_while_loop(stmt, current));
+        }
+
+        // Do-while
+        if matches_opt(kind, self.rules.do_node) {
+            return Some(self.process_do_while_loop(stmt, current));
+        }
+
+        // Infinite loop (Rust loop {})
+        if matches_opt(kind, self.rules.infinite_loop_node) {
+            return Some(self.process_infinite_loop(stmt, current));
+        }
+
+        // Switch/match
+        if matches_opt(kind, self.rules.switch_node) || matches_slice(kind, self.rules.switch_nodes) {
+            return Some(self.process_switch(stmt, current));
+        }
+
+        // Try/catch/finally
+        if matches_opt(kind, self.rules.try_node) {
+            return Some(self.process_try_catch(stmt, current));
+        }
+        // Additional try nodes (e.g. Ruby body_statement with rescue)
+        if matches_slice(kind, self.rules.try_nodes) {
+            let cursor = &mut stmt.walk();
+            let has_rescue = stmt.named_children(cursor)
+                .any(|c| matches_opt(c.kind(), self.rules.catch_node));
+            if has_rescue {
+                return Some(self.process_try_catch(stmt, current));
+            }
+        }
+
+        None
+    }
+
+    /// Handle terminal statements: return, throw, break, continue.
+    /// Returns `Some(result)` if handled, `None` if not a terminal node.
+    fn try_process_terminal(&mut self, stmt: &Node, kind: &str, current: u32) -> Option<Option<u32>> {
+        if matches_opt(kind, self.rules.return_node) {
+            self.set_end_line(current, node_line(stmt));
+            self.add_edge(current, self.exit_idx, "return");
+            return Some(None);
+        }
+
+        if matches_opt(kind, self.rules.throw_node) {
+            self.set_end_line(current, node_line(stmt));
+            self.add_edge(current, self.exit_idx, "exception");
+            return Some(None);
+        }
+
+        if matches_opt(kind, self.rules.break_node) {
+            return Some(self.process_break(stmt, current));
+        }
+
+        if matches_opt(kind, self.rules.continue_node) {
+            return Some(self.process_continue(stmt, current));
+        }
+
+        None
+    }
+
+    /// Process a break statement: resolve label or loop target.
+    fn process_break(&mut self, stmt: &Node, current: u32) -> Option<u32> {
+        let label_name = stmt.child_by_field_name("label")
+            .map(|n| n.utf8_text(self.source).unwrap_or("").to_string());
+
+        let target = if let Some(ref name) = label_name {
+            self.label_map.iter().rev()
+                .find(|(n, _)| n == name)
+                .and_then(|(_, ctx)| ctx.exit_idx)
+        } else {
+            self.loop_stack.last().map(|ctx| ctx.exit_idx)
+        };
+
+        if let Some(target) = target {
+            self.set_end_line(current, node_line(stmt));
+            self.add_edge(current, target, "break");
+            None
+        } else {
+            Some(current)
+        }
+    }
+
+    /// Process a continue statement: resolve label or nearest loop header.
+    fn process_continue(&mut self, stmt: &Node, current: u32) -> Option<u32> {
+        let label_name = stmt.child_by_field_name("label")
+            .map(|n| n.utf8_text(self.source).unwrap_or("").to_string());
+
+        let target = if let Some(ref name) = label_name {
+            self.label_map.iter().rev()
+                .find(|(n, _)| n == name)
+                .and_then(|(_, ctx)| ctx.header_idx)
+        } else {
+            self.loop_stack.iter().rev()
+                .find(|ctx| ctx.is_loop)
+                .map(|ctx| ctx.header_idx)
+        };
+
+        if let Some(target) = target {
+            self.set_end_line(current, node_line(stmt));
+            self.add_edge(current, target, "continue");
+            None
+        } else {
+            Some(current)
+        }
     }
 
     /// Process if/else-if/else chain (handles patterns A, B, C).

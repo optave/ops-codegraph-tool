@@ -1,5 +1,5 @@
-use tree_sitter::Node;
 use crate::types::{AstNode, Definition, FileSymbols};
+use tree_sitter::Node;
 
 // Re-export so extractors that `use super::helpers::*` still see it.
 pub use crate::constants::MAX_WALK_DEPTH;
@@ -58,6 +58,26 @@ pub fn find_parent_of_types<'a>(node: &Node<'a>, kinds: &[&str]) -> Option<Node<
     while let Some(parent) = current {
         if kinds.contains(&parent.kind()) {
             return Some(parent);
+        }
+        current = parent.parent();
+    }
+    None
+}
+
+/// Walk up the tree to find an enclosing type declaration (class, struct, etc.)
+/// and return its name. `kinds` specifies which node types count as type declarations
+/// for the target language (e.g. `&["class_declaration", "class"]` for JS,
+/// `&["class_definition"]` for Python, etc.).
+///
+/// This replaces the duplicated `find_*_parent_class` helpers that existed in
+/// every language extractor with identical logic but different kind lists.
+pub fn find_enclosing_type_name(node: &Node, kinds: &[&str], source: &[u8]) -> Option<String> {
+    let mut current = node.parent();
+    while let Some(parent) = current {
+        if kinds.contains(&parent.kind()) {
+            return parent
+                .child_by_field_name("name")
+                .map(|n| node_text(&n, source).to_string());
         }
         current = parent.parent();
     }

@@ -56,6 +56,22 @@ export function saveRegistry(registry: Registry, registryPath: string = REGISTRY
  * pointing to a different path, auto-suffixes (`api` → `api-2`, `api-3`, …).
  * Re-registering the same path updates in place. Explicit names always overwrite.
  */
+
+/** Find a unique suffixed name when the base name collides with a different path. */
+function findAvailableName(
+  baseName: string,
+  absRoot: string,
+  repos: Record<string, RegistryEntry>,
+): string {
+  let suffix = 2;
+  while (repos[`${baseName}-${suffix}`]) {
+    const entry = repos[`${baseName}-${suffix}`]!;
+    if (path.resolve(entry.path) === absRoot) return `${baseName}-${suffix}`;
+    suffix++;
+  }
+  return `${baseName}-${suffix}`;
+}
+
 export function registerRepo(
   rootDir: string,
   name?: string,
@@ -71,20 +87,7 @@ export function registerRepo(
   if (!name) {
     const existing = registry.repos[baseName];
     if (existing && path.resolve(existing.path) !== absRoot) {
-      // Basename collision with a different path — find next available suffix
-      let suffix = 2;
-      while (registry.repos[`${baseName}-${suffix}`]) {
-        const entry = registry.repos[`${baseName}-${suffix}`]!;
-        if (path.resolve(entry.path) === absRoot) {
-          // Already registered under this suffixed name — update in place
-          repoName = `${baseName}-${suffix}`;
-          break;
-        }
-        suffix++;
-      }
-      if (repoName === baseName) {
-        repoName = `${baseName}-${suffix}`;
-      }
+      repoName = findAvailableName(baseName, absRoot, registry.repos);
     }
   }
 

@@ -47,6 +47,17 @@ export const BUILTIN_RECEIVERS: Set<string> = new Set([
   'require',
 ]);
 
+/** Check if a directory entry should be skipped (ignored dirs, dotfiles). */
+function shouldSkipEntry(entry: fs.Dirent, extraIgnore: Set<string> | null): boolean {
+  if (entry.name.startsWith('.') && entry.name !== '.') {
+    if (IGNORE_DIRS.has(entry.name)) return true;
+    if (entry.isDirectory()) return true;
+  }
+  if (IGNORE_DIRS.has(entry.name)) return true;
+  if (extraIgnore?.has(entry.name)) return true;
+  return false;
+}
+
 /**
  * Recursively collect all source files under `dir`.
  * When `directories` is a Set, also tracks which directories contain files.
@@ -100,12 +111,7 @@ export function collectFiles(
   }
 
   for (const entry of entries) {
-    if (entry.name.startsWith('.') && entry.name !== '.') {
-      if (IGNORE_DIRS.has(entry.name)) continue;
-      if (entry.isDirectory()) continue;
-    }
-    if (IGNORE_DIRS.has(entry.name)) continue;
-    if (extraIgnore?.has(entry.name)) continue;
+    if (shouldSkipEntry(entry, extraIgnore)) continue;
 
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {

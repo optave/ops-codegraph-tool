@@ -291,6 +291,85 @@ interface CheckOpts {
   config?: CodegraphConfig;
 }
 
+/** Walk up from repoRoot to find the nearest .git directory. */
+function findGitRoot(repoRoot: string): string | null {
+  let dir = repoRoot;
+  while (dir) {
+    if (fs.existsSync(path.join(dir, '.git'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/** Run git diff and return the raw output string. */
+function getGitDiff(repoRoot: string, opts: { staged?: boolean; ref?: string }): string {
+  const args = opts.staged
+    ? ['diff', '--cached', '--unified=0', '--no-color']
+    : ['diff', opts.ref || 'HEAD', '--unified=0', '--no-color'];
+  return execFileSync('git', args, {
+    cwd: repoRoot,
+    encoding: 'utf-8',
+    maxBuffer: 10 * 1024 * 1024,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+}
+
+/** Resolve which check predicates are enabled from opts + config. */
+function resolveCheckFlags(opts: CheckOpts, config: CodegraphConfig) {
+  const checkConfig = config.check || ({} as CodegraphConfig['check']);
+  return {
+    enableCycles: opts.cycles ?? checkConfig.cycles ?? true,
+    enableSignatures: opts.signatures ?? checkConfig.signatures ?? true,
+    enableBoundaries: opts.boundaries ?? checkConfig.boundaries ?? true,
+    blastRadiusThreshold: opts.blastRadius ?? checkConfig.blastRadius ?? null,
+  };
+}
+
+/** Run all enabled check predicates and return the results. */
+function runPredicates(
+  db: BetterSqlite3Database,
+  diff: ParsedDiff,
+  flags: ReturnType<typeof resolveCheckFlags>,
+  repoRoot: string,
+  noTests: boolean,
+  maxDepth: number,
+): PredicateResult[] {
+  const changedFiles = new Set(diff.changedRanges.keys());
+  const predicates: PredicateResult[] = [];
+
+  if (flags.enableCycles) {
+    predicates.push({ name: 'cycles', ...checkNoNewCycles(db, changedFiles, noTests) });
+  }
+  if (flags.blastRadiusThreshold != null) {
+    predicates.push({
+      name: 'blast-radius',
+      ...checkMaxBlastRadius(db, diff.changedRanges, flags.blastRadiusThreshold, noTests, maxDepth),
+    });
+  }
+  if (flags.enableSignatures) {
+    predicates.push({
+      name: 'signatures',
+      ...checkNoSignatureChanges(db, diff.oldRanges, noTests),
+    });
+  }
+  if (flags.enableBoundaries) {
+    predicates.push({
+      name: 'boundaries',
+      ...checkNoBoundaryViolations(db, changedFiles, repoRoot, noTests),
+    });
+  }
+
+  return predicates;
+}
+
+const EMPTY_CHECK: CheckResult = {
+  predicates: [],
+  summary: { total: 0, passed: 0, failed: 0, changedFiles: 0, newFiles: 0 },
+  passed: true,
+};
+
 export function checkData(customDbPath: string | undefined, opts: CheckOpts = {}): CheckResult {
   const db = openReadonlyOrFail(customDbPath);
 
@@ -301,89 +380,26 @@ export function checkData(customDbPath: string | undefined, opts: CheckOpts = {}
     const maxDepth = opts.depth || 3;
 
     const config = opts.config || loadConfig(repoRoot);
-    const checkConfig = config.check || ({} as CodegraphConfig['check']);
+    const flags = resolveCheckFlags(opts, config);
 
-    const enableCycles = opts.cycles ?? checkConfig.cycles ?? true;
-    const enableSignatures = opts.signatures ?? checkConfig.signatures ?? true;
-    const enableBoundaries = opts.boundaries ?? checkConfig.boundaries ?? true;
-    const blastRadiusThreshold = opts.blastRadius ?? checkConfig.blastRadius ?? null;
-
-    let checkDir = repoRoot;
-    let isGitRepo = false;
-    while (checkDir) {
-      if (fs.existsSync(path.join(checkDir, '.git'))) {
-        isGitRepo = true;
-        break;
-      }
-      const parent = path.dirname(checkDir);
-      if (parent === checkDir) break;
-      checkDir = parent;
-    }
-    if (!isGitRepo) {
+    const gitRoot = findGitRoot(repoRoot);
+    if (!gitRoot) {
       return { error: `Not a git repository: ${repoRoot}` };
     }
 
     let diffOutput: string;
     try {
-      const args = opts.staged
-        ? ['diff', '--cached', '--unified=0', '--no-color']
-        : ['diff', opts.ref || 'HEAD', '--unified=0', '--no-color'];
-      diffOutput = execFileSync('git', args, {
-        cwd: repoRoot,
-        encoding: 'utf-8',
-        maxBuffer: 10 * 1024 * 1024,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      diffOutput = getGitDiff(repoRoot, opts);
     } catch (e) {
       return { error: `Failed to run git diff: ${(e as Error).message}` };
     }
 
-    if (!diffOutput.trim()) {
-      return {
-        predicates: [],
-        summary: { total: 0, passed: 0, failed: 0, changedFiles: 0, newFiles: 0 },
-        passed: true,
-      };
-    }
+    if (!diffOutput.trim()) return EMPTY_CHECK;
 
-    const { changedRanges, oldRanges, newFiles } = parseDiffOutput(diffOutput);
-    if (changedRanges.size === 0) {
-      return {
-        predicates: [],
-        summary: { total: 0, passed: 0, failed: 0, changedFiles: 0, newFiles: 0 },
-        passed: true,
-      };
-    }
+    const diff = parseDiffOutput(diffOutput);
+    if (diff.changedRanges.size === 0) return EMPTY_CHECK;
 
-    const changedFiles = new Set(changedRanges.keys());
-
-    const predicates: PredicateResult[] = [];
-
-    if (enableCycles) {
-      const result = checkNoNewCycles(db, changedFiles, noTests);
-      predicates.push({ name: 'cycles', ...result });
-    }
-
-    if (blastRadiusThreshold != null) {
-      const result = checkMaxBlastRadius(
-        db,
-        changedRanges,
-        blastRadiusThreshold,
-        noTests,
-        maxDepth,
-      );
-      predicates.push({ name: 'blast-radius', ...result });
-    }
-
-    if (enableSignatures) {
-      const result = checkNoSignatureChanges(db, oldRanges, noTests);
-      predicates.push({ name: 'signatures', ...result });
-    }
-
-    if (enableBoundaries) {
-      const result = checkNoBoundaryViolations(db, changedFiles, repoRoot, noTests);
-      predicates.push({ name: 'boundaries', ...result });
-    }
+    const predicates = runPredicates(db, diff, flags, repoRoot, noTests, maxDepth);
 
     const passedCount = predicates.filter((p) => p.passed).length;
     const failedCount = predicates.length - passedCount;
@@ -394,8 +410,8 @@ export function checkData(customDbPath: string | undefined, opts: CheckOpts = {}
         total: predicates.length,
         passed: passedCount,
         failed: failedCount,
-        changedFiles: changedFiles.size,
-        newFiles: newFiles.size,
+        changedFiles: diff.changedRanges.size,
+        newFiles: diff.newFiles.size,
       },
       passed: failedCount === 0,
     };

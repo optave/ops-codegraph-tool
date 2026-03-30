@@ -1,9 +1,9 @@
-use tree_sitter::{Node, Tree};
+use super::helpers::*;
+use super::SymbolExtractor;
 use crate::cfg::build_function_cfg;
 use crate::complexity::compute_all_metrics;
 use crate::types::*;
-use super::helpers::*;
-use super::SymbolExtractor;
+use tree_sitter::{Node, Tree};
 
 pub struct RubyExtractor;
 
@@ -16,162 +16,147 @@ impl SymbolExtractor for RubyExtractor {
     }
 }
 
-fn find_ruby_parent_class<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> {
-    let mut current = node.parent();
-    while let Some(parent) = current {
-        match parent.kind() {
-            "class" | "module" => {
-                return parent
-                    .child_by_field_name("name")
-                    .map(|n| node_text(&n, source).to_string());
-            }
-            _ => {}
-        }
-        current = parent.parent();
-    }
-    None
+const RUBY_CLASS_KINDS: &[&str] = &["class", "module"];
+
+fn find_ruby_parent_class(node: &Node, source: &[u8]) -> Option<String> {
+    find_enclosing_type_name(node, RUBY_CLASS_KINDS, source)
 }
 
 fn match_ruby_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
-        "class" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let class_name = node_text(&name_node, source).to_string();
-                let children = extract_ruby_class_children(node, source);
-                symbols.definitions.push(Definition {
-                    name: class_name.clone(),
-                    kind: "class".to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: None,
-                    cfg: None,
-                    children: opt_children(children),
-                });
-                if let Some(superclass) = node.child_by_field_name("superclass") {
-                    extract_ruby_superclass(&superclass, &class_name, node, source, symbols);
-                }
-            }
-        }
-
-        "module" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                symbols.definitions.push(Definition {
-                    name: node_text(&name_node, source).to_string(),
-                    kind: "module".to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: None,
-                    cfg: None,
-                    children: None,
-                });
-            }
-        }
-
-        "method" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let parent_class = find_ruby_parent_class(node, source);
-                let name = node_text(&name_node, source);
-                let full_name = match &parent_class {
-                    Some(cls) => format!("{}.{}", cls, name),
-                    None => name.to_string(),
-                };
-                let children = extract_ruby_parameters(node, source);
-                symbols.definitions.push(Definition {
-                    name: full_name,
-                    kind: "method".to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: compute_all_metrics(node, source, "ruby"),
-                    cfg: build_function_cfg(node, "ruby", source),
-                    children: opt_children(children),
-                });
-            }
-        }
-
-        "singleton_method" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let parent_class = find_ruby_parent_class(node, source);
-                let name = node_text(&name_node, source);
-                let full_name = match &parent_class {
-                    Some(cls) => format!("{}.{}", cls, name),
-                    None => name.to_string(),
-                };
-                symbols.definitions.push(Definition {
-                    name: full_name,
-                    kind: "function".to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: compute_all_metrics(node, source, "ruby"),
-                    cfg: build_function_cfg(node, "ruby", source),
-                    children: None,
-                });
-            }
-        }
-
-        "call" => {
-            if let Some(method_node) = node.child_by_field_name("method") {
-                let method_text = node_text(&method_node, source);
-
-                if method_text == "require" || method_text == "require_relative" {
-                    let args = node.child_by_field_name("arguments");
-                    if let Some(args) = args {
-                        for i in 0..args.child_count() {
-                            if let Some(arg) = args.child(i) {
-                                let str_content = extract_ruby_string_content(&arg, source);
-                                if let Some(content) = str_content {
-                                    let last = content.split('/').last().unwrap_or("").to_string();
-                                    let mut imp =
-                                        Import::new(content, vec![last], start_line(node));
-                                    imp.ruby_require = Some(true);
-                                    symbols.imports.push(imp);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                } else if method_text == "include"
-                    || method_text == "extend"
-                    || method_text == "prepend"
-                {
-                    let parent_class = find_ruby_parent_class(node, source);
-                    if let Some(parent_class) = parent_class {
-                        if let Some(args) = node.child_by_field_name("arguments") {
-                            for i in 0..args.child_count() {
-                                if let Some(arg) = args.child(i) {
-                                    if arg.kind() == "constant"
-                                        || arg.kind() == "scope_resolution"
-                                    {
-                                        symbols.classes.push(ClassRelation {
-                                            name: parent_class.clone(),
-                                            extends: None,
-                                            implements: Some(
-                                                node_text(&arg, source).to_string(),
-                                            ),
-                                            line: start_line(node),
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    let receiver = node.child_by_field_name("receiver")
-                        .map(|r| node_text(&r, source).to_string());
-                    symbols.calls.push(Call {
-                        name: method_text.to_string(),
-                        line: start_line(node),
-                        dynamic: None,
-                        receiver,
-                    });
-                }
-            }
-        }
-
+        "class" => handle_class(node, source, symbols),
+        "module" => handle_module(node, source, symbols),
+        "method" => handle_method(node, source, symbols),
+        "singleton_method" => handle_singleton_method(node, source, symbols),
+        "call" => handle_call(node, source, symbols),
         _ => {}
+    }
+}
+
+// ── Per-node-kind handlers for walk_node_depth ───────────────────────────────
+
+fn handle_class(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(name_node) = node.child_by_field_name("name") else { return };
+    let class_name = node_text(&name_node, source).to_string();
+    let children = extract_ruby_class_children(node, source);
+    symbols.definitions.push(Definition {
+        name: class_name.clone(),
+        kind: "class".to_string(),
+        line: start_line(node),
+        end_line: Some(end_line(node)),
+        decorators: None,
+        complexity: None,
+        cfg: None,
+        children: opt_children(children),
+    });
+    if let Some(superclass) = node.child_by_field_name("superclass") {
+        extract_ruby_superclass(&superclass, &class_name, node, source, symbols);
+    }
+}
+
+fn handle_module(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if let Some(name_node) = node.child_by_field_name("name") {
+        symbols.definitions.push(Definition {
+            name: node_text(&name_node, source).to_string(),
+            kind: "module".to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: None,
+            cfg: None,
+            children: None,
+        });
+    }
+}
+
+fn handle_method(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(name_node) = node.child_by_field_name("name") else { return };
+    let parent_class = find_ruby_parent_class(node, source);
+    let name = node_text(&name_node, source);
+    let full_name = match &parent_class {
+        Some(cls) => format!("{}.{}", cls, name),
+        None => name.to_string(),
+    };
+    let children = extract_ruby_parameters(node, source);
+    symbols.definitions.push(Definition {
+        name: full_name,
+        kind: "method".to_string(),
+        line: start_line(node),
+        end_line: Some(end_line(node)),
+        decorators: None,
+        complexity: compute_all_metrics(node, source, "ruby"),
+        cfg: build_function_cfg(node, "ruby", source),
+        children: opt_children(children),
+    });
+}
+
+fn handle_singleton_method(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(name_node) = node.child_by_field_name("name") else { return };
+    let parent_class = find_ruby_parent_class(node, source);
+    let name = node_text(&name_node, source);
+    let full_name = match &parent_class {
+        Some(cls) => format!("{}.{}", cls, name),
+        None => name.to_string(),
+    };
+    symbols.definitions.push(Definition {
+        name: full_name,
+        kind: "function".to_string(),
+        line: start_line(node),
+        end_line: Some(end_line(node)),
+        decorators: None,
+        complexity: compute_all_metrics(node, source, "ruby"),
+        cfg: build_function_cfg(node, "ruby", source),
+        children: None,
+    });
+}
+
+fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(method_node) = node.child_by_field_name("method") else { return };
+    let method_text = node_text(&method_node, source);
+
+    if method_text == "require" || method_text == "require_relative" {
+        handle_require_call(node, source, symbols);
+    } else if method_text == "include" || method_text == "extend" || method_text == "prepend" {
+        handle_mixin_call(node, source, symbols);
+    } else {
+        let receiver = node.child_by_field_name("receiver")
+            .map(|r| node_text(&r, source).to_string());
+        symbols.calls.push(Call {
+            name: method_text.to_string(),
+            line: start_line(node),
+            dynamic: None,
+            receiver,
+        });
+    }
+}
+
+fn handle_require_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(args) = node.child_by_field_name("arguments") else { return };
+    for i in 0..args.child_count() {
+        let Some(arg) = args.child(i) else { continue };
+        if let Some(content) = extract_ruby_string_content(&arg, source) {
+            let last = content.split('/').last().unwrap_or("").to_string();
+            let mut imp = Import::new(content, vec![last], start_line(node));
+            imp.ruby_require = Some(true);
+            symbols.imports.push(imp);
+            break;
+        }
+    }
+}
+
+fn handle_mixin_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(parent_class) = find_ruby_parent_class(node, source) else { return };
+    let Some(args) = node.child_by_field_name("arguments") else { return };
+    for i in 0..args.child_count() {
+        let Some(arg) = args.child(i) else { continue };
+        if arg.kind() == "constant" || arg.kind() == "scope_resolution" {
+            symbols.classes.push(ClassRelation {
+                name: parent_class.clone(),
+                extends: None,
+                implements: Some(node_text(&arg, source).to_string()),
+                line: start_line(node),
+            });
+        }
     }
 }
 

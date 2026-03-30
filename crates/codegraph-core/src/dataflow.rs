@@ -918,11 +918,13 @@ fn binding_confidence(binding: &Option<BindingInfo>) -> f64 {
 pub fn extract_dataflow(tree: &Tree, source: &[u8], lang_id: &str) -> Option<DataflowResult> {
     let rules = get_dataflow_rules(lang_id)?;
 
-    let mut parameters = Vec::new();
-    let mut returns = Vec::new();
-    let mut assignments = Vec::new();
-    let mut arg_flows = Vec::new();
-    let mut mutations = Vec::new();
+    let mut out = DataflowOutput {
+        parameters: Vec::new(),
+        returns: Vec::new(),
+        assignments: Vec::new(),
+        arg_flows: Vec::new(),
+        mutations: Vec::new(),
+    };
 
     let mut scope_stack: Vec<ScopeFrame> = Vec::new();
 
@@ -931,21 +933,26 @@ pub fn extract_dataflow(tree: &Tree, source: &[u8], lang_id: &str) -> Option<Dat
         rules,
         source,
         &mut scope_stack,
-        &mut parameters,
-        &mut returns,
-        &mut assignments,
-        &mut arg_flows,
-        &mut mutations,
+        &mut out,
         0,
     );
 
     Some(DataflowResult {
-        parameters,
-        returns,
-        assignments,
-        arg_flows,
-        mutations,
+        parameters: out.parameters,
+        returns: out.returns,
+        assignments: out.assignments,
+        arg_flows: out.arg_flows,
+        mutations: out.mutations,
     })
+}
+
+/// Collected output vectors passed through the DFS — avoids 5+ mutable refs.
+struct DataflowOutput {
+    parameters: Vec<DataflowParam>,
+    returns: Vec<DataflowReturn>,
+    assignments: Vec<DataflowAssignment>,
+    arg_flows: Vec<DataflowArgFlow>,
+    mutations: Vec<DataflowMutation>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -954,11 +961,7 @@ fn visit(
     rules: &DataflowRules,
     source: &[u8],
     scope_stack: &mut Vec<ScopeFrame>,
-    parameters: &mut Vec<DataflowParam>,
-    returns: &mut Vec<DataflowReturn>,
-    assignments: &mut Vec<DataflowAssignment>,
-    arg_flows: &mut Vec<DataflowArgFlow>,
-    mutations: &mut Vec<DataflowMutation>,
+    out: &mut DataflowOutput,
     depth: usize,
 ) {
     if depth >= MAX_WALK_DEPTH {
@@ -969,92 +972,91 @@ fn visit(
 
     // Enter function scope
     if is_function_node(rules, t) {
-        enter_scope(node, rules, source, scope_stack, parameters);
-        let cursor = &mut node.walk();
-        for child in node.named_children(cursor) {
-            visit(&child, rules, source, scope_stack, parameters, returns, assignments, arg_flows, mutations, depth + 1);
-        }
+        enter_scope(node, rules, source, scope_stack, &mut out.parameters);
+        visit_children(node, rules, source, scope_stack, out, depth);
         scope_stack.pop();
         return;
     }
 
     // Return statements
     if rules.return_node.is_some_and(|r| r == t) {
-        if let Some(scope) = scope_stack.last() {
-            if let Some(ref func_name) = scope.func_name {
-                let expr = node.named_child(0);
-                let mut referenced_names = Vec::new();
-                if let Some(ref e) = expr {
-                    collect_identifiers(e, &mut referenced_names, rules, source, depth + 1);
-                }
-                returns.push(DataflowReturn {
-                    func_name: func_name.clone(),
-                    expression: truncate(
-                        expr.map(|e| node_text(&e, source)).unwrap_or(""),
-                        120,
-                    ),
-                    referenced_names,
-                    line: node_line(node),
-                });
-            }
-        }
-        let cursor = &mut node.walk();
-        for child in node.named_children(cursor) {
-            visit(&child, rules, source, scope_stack, parameters, returns, assignments, arg_flows, mutations, depth + 1);
-        }
+        handle_return_stmt(node, rules, source, scope_stack, &mut out.returns, depth);
+        visit_children(node, rules, source, scope_stack, out, depth);
         return;
     }
 
-    // Variable declarations (single type)
-    if rules.var_declarator_node.is_some_and(|v| v == t) {
-        handle_var_declarator(node, rules, source, scope_stack, assignments);
-        let cursor = &mut node.walk();
-        for child in node.named_children(cursor) {
-            visit(&child, rules, source, scope_stack, parameters, returns, assignments, arg_flows, mutations, depth + 1);
-        }
-        return;
-    }
-
-    // Variable declarations (multi-type, e.g., Go)
-    if !rules.var_declarator_nodes.is_empty() && rules.var_declarator_nodes.contains(&t) {
-        handle_var_declarator(node, rules, source, scope_stack, assignments);
-        let cursor = &mut node.walk();
-        for child in node.named_children(cursor) {
-            visit(&child, rules, source, scope_stack, parameters, returns, assignments, arg_flows, mutations, depth + 1);
-        }
+    // Variable declarations (single or multi-type)
+    if rules.var_declarator_node.is_some_and(|v| v == t)
+        || (!rules.var_declarator_nodes.is_empty() && rules.var_declarator_nodes.contains(&t))
+    {
+        handle_var_declarator(node, rules, source, scope_stack, &mut out.assignments);
+        visit_children(node, rules, source, scope_stack, out, depth);
         return;
     }
 
     // Call expressions
     if is_call_node(rules, t) {
-        handle_call_expr(node, rules, source, scope_stack, arg_flows);
-        let cursor = &mut node.walk();
-        for child in node.named_children(cursor) {
-            visit(&child, rules, source, scope_stack, parameters, returns, assignments, arg_flows, mutations, depth + 1);
-        }
+        handle_call_expr(node, rules, source, scope_stack, &mut out.arg_flows);
+        visit_children(node, rules, source, scope_stack, out, depth);
         return;
     }
 
     // Assignment expressions
     if rules.assignment_node.is_some_and(|a| a == t) {
-        handle_assignment(node, rules, source, scope_stack, assignments, mutations);
-        let cursor = &mut node.walk();
-        for child in node.named_children(cursor) {
-            visit(&child, rules, source, scope_stack, parameters, returns, assignments, arg_flows, mutations, depth + 1);
-        }
+        handle_assignment(node, rules, source, scope_stack, &mut out.assignments, &mut out.mutations);
+        visit_children(node, rules, source, scope_stack, out, depth);
         return;
     }
 
     // Mutation detection via expression_statement
     if t == rules.expression_stmt_node {
-        handle_expr_stmt_mutation(node, rules, source, scope_stack, mutations);
+        handle_expr_stmt_mutation(node, rules, source, scope_stack, &mut out.mutations);
     }
 
-    // Default: visit children
+    visit_children(node, rules, source, scope_stack, out, depth);
+}
+
+/// Visit all named children of a node (shared DFS recursion helper).
+fn visit_children(
+    node: &Node,
+    rules: &DataflowRules,
+    source: &[u8],
+    scope_stack: &mut Vec<ScopeFrame>,
+    out: &mut DataflowOutput,
+    depth: usize,
+) {
     let cursor = &mut node.walk();
     for child in node.named_children(cursor) {
-        visit(&child, rules, source, scope_stack, parameters, returns, assignments, arg_flows, mutations, depth + 1);
+        visit(&child, rules, source, scope_stack, out, depth + 1);
     }
+}
+
+/// Handle a return statement: extract expression and referenced names.
+fn handle_return_stmt(
+    node: &Node,
+    rules: &DataflowRules,
+    source: &[u8],
+    scope_stack: &[ScopeFrame],
+    returns: &mut Vec<DataflowReturn>,
+    depth: usize,
+) {
+    let Some(scope) = scope_stack.last() else { return };
+    let Some(ref func_name) = scope.func_name else { return };
+
+    let expr = node.named_child(0);
+    let mut referenced_names = Vec::new();
+    if let Some(ref e) = expr {
+        collect_identifiers(e, &mut referenced_names, rules, source, depth + 1);
+    }
+    returns.push(DataflowReturn {
+        func_name: func_name.clone(),
+        expression: truncate(
+            expr.map(|e| node_text(&e, source)).unwrap_or(""),
+            120,
+        ),
+        referenced_names,
+        line: node_line(node),
+    });
 }
 
 fn enter_scope(

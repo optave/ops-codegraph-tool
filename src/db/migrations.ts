@@ -304,7 +304,8 @@ export function setBuildMeta(
   tx();
 }
 
-export function initSchema(db: BetterSqlite3Database): void {
+/** Run numbered migrations that haven't been applied yet. */
+function applyMigrations(db: BetterSqlite3Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL DEFAULT 0)`);
 
   const row = db.prepare<{ version: number }>('SELECT version FROM schema_version').get();
@@ -322,40 +323,43 @@ export function initSchema(db: BetterSqlite3Database): void {
       currentVersion = migration.version;
     }
   }
+}
 
-  // Legacy column compat — add columns that may be missing from pre-migration DBs
+/** Ensure columns and indexes exist for pre-migration DBs (legacy compat). */
+function ensureLegacyColumns(db: BetterSqlite3Database): void {
   if (hasTable(db, 'nodes')) {
-    if (!hasColumn(db, 'nodes', 'end_line')) {
-      db.exec('ALTER TABLE nodes ADD COLUMN end_line INTEGER');
-    }
-    if (!hasColumn(db, 'nodes', 'role')) {
-      db.exec('ALTER TABLE nodes ADD COLUMN role TEXT');
-    }
-    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_role ON nodes(role)');
-    if (!hasColumn(db, 'nodes', 'parent_id')) {
-      db.exec('ALTER TABLE nodes ADD COLUMN parent_id INTEGER REFERENCES nodes(id)');
-    }
-    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)');
-    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_kind_parent ON nodes(kind, parent_id)');
-    if (!hasColumn(db, 'nodes', 'qualified_name')) {
-      db.exec('ALTER TABLE nodes ADD COLUMN qualified_name TEXT');
-    }
-    if (!hasColumn(db, 'nodes', 'scope')) {
-      db.exec('ALTER TABLE nodes ADD COLUMN scope TEXT');
-    }
-    if (!hasColumn(db, 'nodes', 'visibility')) {
-      db.exec('ALTER TABLE nodes ADD COLUMN visibility TEXT');
-    }
-    db.exec('UPDATE nodes SET qualified_name = name WHERE qualified_name IS NULL');
-    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_qualified_name ON nodes(qualified_name)');
-    db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_scope ON nodes(scope)');
+    ensureNodeColumns(db);
   }
   if (hasTable(db, 'edges')) {
-    if (!hasColumn(db, 'edges', 'confidence')) {
-      db.exec('ALTER TABLE edges ADD COLUMN confidence REAL DEFAULT 1.0');
-    }
-    if (!hasColumn(db, 'edges', 'dynamic')) {
-      db.exec('ALTER TABLE edges ADD COLUMN dynamic INTEGER DEFAULT 0');
-    }
+    ensureEdgeColumns(db);
   }
+}
+
+function ensureNodeColumns(db: BetterSqlite3Database): void {
+  const missing = (col: string) => !hasColumn(db, 'nodes', col);
+  if (missing('end_line')) db.exec('ALTER TABLE nodes ADD COLUMN end_line INTEGER');
+  if (missing('role')) db.exec('ALTER TABLE nodes ADD COLUMN role TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_role ON nodes(role)');
+  if (missing('parent_id'))
+    db.exec('ALTER TABLE nodes ADD COLUMN parent_id INTEGER REFERENCES nodes(id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_parent ON nodes(parent_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_kind_parent ON nodes(kind, parent_id)');
+  if (missing('qualified_name')) db.exec('ALTER TABLE nodes ADD COLUMN qualified_name TEXT');
+  if (missing('scope')) db.exec('ALTER TABLE nodes ADD COLUMN scope TEXT');
+  if (missing('visibility')) db.exec('ALTER TABLE nodes ADD COLUMN visibility TEXT');
+  db.exec('UPDATE nodes SET qualified_name = name WHERE qualified_name IS NULL');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_qualified_name ON nodes(qualified_name)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_nodes_scope ON nodes(scope)');
+}
+
+function ensureEdgeColumns(db: BetterSqlite3Database): void {
+  if (!hasColumn(db, 'edges', 'confidence'))
+    db.exec('ALTER TABLE edges ADD COLUMN confidence REAL DEFAULT 1.0');
+  if (!hasColumn(db, 'edges', 'dynamic'))
+    db.exec('ALTER TABLE edges ADD COLUMN dynamic INTEGER DEFAULT 0');
+}
+
+export function initSchema(db: BetterSqlite3Database): void {
+  applyMigrations(db);
+  ensureLegacyColumns(db);
 }

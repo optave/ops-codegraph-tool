@@ -97,6 +97,22 @@ function printReexportedSymbols(reexportedSymbols: ReexportedSymbol[]): void {
   }
 }
 
+function printReexportedSection(data: ExportsDataResult, opts: ExportsOpts): void {
+  const totalReexported = opts.unused
+    ? (data.totalReexportedUnused ?? data.reexportedSymbols.length)
+    : (data.totalReexported ?? data.reexportedSymbols.length);
+  const plural = totalReexported !== 1 ? 's' : '';
+  if (data.results.length === 0) {
+    const label = opts.unused ? 'unused re-exported' : 're-exported';
+    console.log(
+      `\n# ${data.file} — barrel file (${totalReexported} ${label} symbol${plural} from sub-modules)\n`,
+    );
+  } else {
+    console.log(`\n  Re-exported symbols (${totalReexported} from sub-modules):`);
+  }
+  printReexportedSymbols(data.reexportedSymbols);
+}
+
 export function fileExports(file: string, customDbPath: string, opts: ExportsOpts = {}): void {
   const data = exportsData(file, customDbPath, opts) as ExportsDataResult;
   if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
@@ -118,23 +134,7 @@ export function fileExports(file: string, customDbPath: string, opts: ExportsOpt
   }
 
   if (hasReexported) {
-    const totalReexported = opts.unused
-      ? (data.totalReexportedUnused ?? data.reexportedSymbols.length)
-      : (data.totalReexported ?? data.reexportedSymbols.length);
-    if (data.results.length === 0) {
-      if (opts.unused) {
-        console.log(
-          `\n# ${data.file} — barrel file (${totalReexported} unused re-exported symbol${totalReexported !== 1 ? 's' : ''} from sub-modules)\n`,
-        );
-      } else {
-        console.log(
-          `\n# ${data.file} — barrel file (${totalReexported} re-exported symbol${totalReexported !== 1 ? 's' : ''} from sub-modules)\n`,
-        );
-      }
-    } else {
-      console.log(`\n  Re-exported symbols (${totalReexported} from sub-modules):`);
-    }
-    printReexportedSymbols(data.reexportedSymbols);
+    printReexportedSection(data, opts);
   }
 
   if (data.reexports.length > 0) {

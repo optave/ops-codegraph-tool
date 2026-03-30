@@ -36,6 +36,57 @@ interface BranchCompareFormatData {
   summary: BranchCompareSummary;
 }
 
+/** Format impact annotation for a symbol. */
+function formatImpactLine(impact: unknown[] | undefined): string | null {
+  if (!impact || impact.length === 0) return null;
+  return `      ^ ${impact.length} transitive caller${impact.length !== 1 ? 's' : ''} affected`;
+}
+
+/** Format added symbols section. */
+function formatAddedSection(added: BranchCompareSymbol[]): string[] {
+  if (added.length === 0) return [];
+  const lines = ['', `  + Added (${added.length} symbol${added.length !== 1 ? 's' : ''}):`];
+  for (const sym of added) {
+    lines.push(`    [${kindIcon(sym.kind)}] ${sym.name} -- ${sym.file}:${sym.line}`);
+  }
+  return lines;
+}
+
+/** Format removed symbols section. */
+function formatRemovedSection(removed: BranchCompareSymbol[]): string[] {
+  if (removed.length === 0) return [];
+  const lines = ['', `  - Removed (${removed.length} symbol${removed.length !== 1 ? 's' : ''}):`];
+  for (const sym of removed) {
+    lines.push(`    [${kindIcon(sym.kind)}] ${sym.name} -- ${sym.file}:${sym.line}`);
+    const impact = formatImpactLine(sym.impact);
+    if (impact) lines.push(impact);
+  }
+  return lines;
+}
+
+/** Format changed symbols section with delta details. */
+function formatChangedSection(changed: BranchCompareSymbol[]): string[] {
+  if (changed.length === 0) return [];
+  const lines = ['', `  ~ Changed (${changed.length} symbol${changed.length !== 1 ? 's' : ''}):`];
+  for (const sym of changed) {
+    const parts: string[] = [];
+    if (sym.changes?.lineCount !== 0) {
+      parts.push(`lines: ${sym.base?.lineCount} -> ${sym.target?.lineCount}`);
+    }
+    if (sym.changes?.fanIn !== 0) {
+      parts.push(`fan_in: ${sym.base?.fanIn} -> ${sym.target?.fanIn}`);
+    }
+    if (sym.changes?.fanOut !== 0) {
+      parts.push(`fan_out: ${sym.base?.fanOut} -> ${sym.target?.fanOut}`);
+    }
+    const detail = parts.length > 0 ? `  (${parts.join(', ')})` : '';
+    lines.push(`    [${kindIcon(sym.kind)}] ${sym.name} -- ${sym.file}:${sym.base?.line}${detail}`);
+    const impact = formatImpactLine(sym.impact);
+    if (impact) lines.push(impact);
+  }
+  return lines;
+}
+
 function formatText(data: BranchCompareFormatData): string {
   if (data.error) return `Error: ${data.error}`;
 
@@ -48,56 +99,9 @@ function formatText(data: BranchCompareFormatData): string {
   lines.push(`  Target: ${data.targetRef} (${shortTarget})`);
   lines.push(`  Files changed: ${data.changedFiles.length}`);
 
-  if (data.added.length > 0) {
-    lines.push('');
-    lines.push(`  + Added (${data.added.length} symbol${data.added.length !== 1 ? 's' : ''}):`);
-    for (const sym of data.added) {
-      lines.push(`    [${kindIcon(sym.kind)}] ${sym.name} -- ${sym.file}:${sym.line}`);
-    }
-  }
-
-  if (data.removed.length > 0) {
-    lines.push('');
-    lines.push(
-      `  - Removed (${data.removed.length} symbol${data.removed.length !== 1 ? 's' : ''}):`,
-    );
-    for (const sym of data.removed) {
-      lines.push(`    [${kindIcon(sym.kind)}] ${sym.name} -- ${sym.file}:${sym.line}`);
-      if (sym.impact && sym.impact.length > 0) {
-        lines.push(
-          `      ^ ${sym.impact.length} transitive caller${sym.impact.length !== 1 ? 's' : ''} affected`,
-        );
-      }
-    }
-  }
-
-  if (data.changed.length > 0) {
-    lines.push('');
-    lines.push(
-      `  ~ Changed (${data.changed.length} symbol${data.changed.length !== 1 ? 's' : ''}):`,
-    );
-    for (const sym of data.changed) {
-      const parts: string[] = [];
-      if (sym.changes?.lineCount !== 0) {
-        parts.push(`lines: ${sym.base?.lineCount} -> ${sym.target?.lineCount}`);
-      }
-      if (sym.changes?.fanIn !== 0) {
-        parts.push(`fan_in: ${sym.base?.fanIn} -> ${sym.target?.fanIn}`);
-      }
-      if (sym.changes?.fanOut !== 0) {
-        parts.push(`fan_out: ${sym.base?.fanOut} -> ${sym.target?.fanOut}`);
-      }
-      const detail = parts.length > 0 ? `  (${parts.join(', ')})` : '';
-      lines.push(
-        `    [${kindIcon(sym.kind)}] ${sym.name} -- ${sym.file}:${sym.base?.line}${detail}`,
-      );
-      if (sym.impact && sym.impact.length > 0) {
-        lines.push(
-          `      ^ ${sym.impact.length} transitive caller${sym.impact.length !== 1 ? 's' : ''} affected`,
-        );
-      }
-    }
-  }
+  lines.push(...formatAddedSection(data.added));
+  lines.push(...formatRemovedSection(data.removed));
+  lines.push(...formatChangedSection(data.changed));
 
   const s = data.summary;
   lines.push('');

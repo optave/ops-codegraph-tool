@@ -50,6 +50,111 @@ function taAdd(a: Float64Array, i: number, v: number): void {
   a[i] = taGet(a, i) + v;
 }
 
+/**
+ * Populate edge arrays for a directed graph. Each edge is stored once in
+ * outEdges[from] and inEdges[to]. Self-loops are tracked in both the selfLoop
+ * array and the adjacency lists (partition.ts accounts for this).
+ */
+function populateDirectedEdges(
+  graph: CodeGraph,
+  idToIndex: Map<string, number>,
+  linkWeight: (attrs: EdgeAttrs) => number,
+  selfLoop: Float64Array,
+  outEdges: EdgeEntry[][],
+  inEdges: InEdgeEntry[][],
+  strengthOut: Float64Array,
+  strengthIn: Float64Array,
+): void {
+  for (const [src, tgt, attrs] of graph.edges()) {
+    const from = idToIndex.get(src);
+    const to = idToIndex.get(tgt);
+    if (from == null || to == null) continue;
+    const w: number = +linkWeight(attrs) || 0;
+    if (from === to) {
+      taAdd(selfLoop, from, w);
+      // Self-loop is intentionally kept in outEdges/inEdges as well.
+      // partition.ts's moveNodeToCommunity (directed path) accounts for this
+      // by subtracting selfLoopWeight once from outToOld+inFromOld to avoid
+      // triple-counting (see partition.ts moveNodeToCommunity directed block).
+    }
+    (outEdges[from] as EdgeEntry[]).push({ to, w });
+    (inEdges[to] as InEdgeEntry[]).push({ from, w });
+    taAdd(strengthOut, from, w);
+    taAdd(strengthIn, to, w);
+  }
+}
+
+/**
+ * Populate edge arrays for an undirected graph. Reciprocal pairs are
+ * symmetrized and averaged to produce a single weight per undirected edge.
+ * Self-loops use single-w convention (matching modularity.ts formulas).
+ */
+function populateUndirectedEdges(
+  graph: CodeGraph,
+  idToIndex: Map<string, number>,
+  linkWeight: (attrs: EdgeAttrs) => number,
+  n: number,
+  selfLoop: Float64Array,
+  outEdges: EdgeEntry[][],
+  inEdges: InEdgeEntry[][],
+  strengthOut: Float64Array,
+  strengthIn: Float64Array,
+): void {
+  const pairAgg = new Map<string, { sum: number; seenAB: number; seenBA: number }>();
+
+  for (const [src, tgt, attrs] of graph.edges()) {
+    const a = idToIndex.get(src);
+    const b = idToIndex.get(tgt);
+    if (a == null || b == null) continue;
+    const w: number = +linkWeight(attrs) || 0;
+    if (a === b) {
+      taAdd(selfLoop, a, w);
+      continue;
+    }
+    const i = a < b ? a : b;
+    const j = a < b ? b : a;
+    const key = `${i}:${j}`;
+    let rec = pairAgg.get(key);
+    if (!rec) {
+      rec = { sum: 0, seenAB: 0, seenBA: 0 };
+      pairAgg.set(key, rec);
+    }
+    rec.sum += w;
+    if (a === i) rec.seenAB = 1;
+    else rec.seenBA = 1;
+  }
+
+  for (const [key, rec] of pairAgg.entries()) {
+    const parts = key.split(':');
+    const i = +(parts[0] as string);
+    const j = +(parts[1] as string);
+    const dirCount: number = (rec.seenAB ? 1 : 0) + (rec.seenBA ? 1 : 0);
+    const w: number = dirCount > 0 ? rec.sum / dirCount : 0;
+    if (w === 0) continue;
+    (outEdges[i] as EdgeEntry[]).push({ to: j, w });
+    (outEdges[j] as EdgeEntry[]).push({ to: i, w });
+    (inEdges[i] as InEdgeEntry[]).push({ from: j, w });
+    (inEdges[j] as InEdgeEntry[]).push({ from: i, w });
+    taAdd(strengthOut, i, w);
+    taAdd(strengthOut, j, w);
+    taAdd(strengthIn, i, w);
+    taAdd(strengthIn, j, w);
+  }
+
+  // Add self-loops into adjacency and strengths.
+  // Note: uses single-w convention (not standard 2w) — the modularity formulas in
+  // modularity.ts are written to match this convention, keeping the system self-consistent.
+  for (let v = 0; v < n; v++) {
+    const w: number = taGet(selfLoop, v);
+    if (w !== 0) {
+      (outEdges[v] as EdgeEntry[]).push({ to: v, w });
+      (inEdges[v] as InEdgeEntry[]).push({ from: v, w });
+      taAdd(strengthOut, v, w);
+      taAdd(strengthIn, v, w);
+    }
+  }
+}
+
 export function makeGraphAdapter(graph: CodeGraph, opts: GraphAdapterOptions = {}): GraphAdapter {
   const linkWeight: (attrs: EdgeAttrs) => number =
     opts.linkWeight || ((attrs) => (attrs && typeof attrs.weight === 'number' ? attrs.weight : 1));
@@ -92,78 +197,28 @@ export function makeGraphAdapter(graph: CodeGraph, opts: GraphAdapterOptions = {
 
   // Populate from graph
   if (directed) {
-    for (const [src, tgt, attrs] of graph.edges()) {
-      const from = idToIndex.get(src);
-      const to = idToIndex.get(tgt);
-      if (from == null || to == null) continue;
-      const w: number = +linkWeight(attrs) || 0;
-      if (from === to) {
-        taAdd(selfLoop, from, w);
-        // Self-loop is intentionally kept in outEdges/inEdges as well.
-        // partition.ts's moveNodeToCommunity (directed path) accounts for this
-        // by subtracting selfLoopWeight once from outToOld+inFromOld to avoid
-        // triple-counting (see partition.ts moveNodeToCommunity directed block).
-      }
-      (outEdges[from] as EdgeEntry[]).push({ to, w });
-      (inEdges[to] as InEdgeEntry[]).push({ from, w });
-      taAdd(strengthOut, from, w);
-      taAdd(strengthIn, to, w);
-    }
+    populateDirectedEdges(
+      graph,
+      idToIndex,
+      linkWeight,
+      selfLoop,
+      outEdges,
+      inEdges,
+      strengthOut,
+      strengthIn,
+    );
   } else {
-    // Undirected: symmetrize and average reciprocal pairs
-    const pairAgg = new Map<string, { sum: number; seenAB: number; seenBA: number }>();
-
-    for (const [src, tgt, attrs] of graph.edges()) {
-      const a = idToIndex.get(src);
-      const b = idToIndex.get(tgt);
-      if (a == null || b == null) continue;
-      const w: number = +linkWeight(attrs) || 0;
-      if (a === b) {
-        taAdd(selfLoop, a, w);
-        continue;
-      }
-      const i = a < b ? a : b;
-      const j = a < b ? b : a;
-      const key = `${i}:${j}`;
-      let rec = pairAgg.get(key);
-      if (!rec) {
-        rec = { sum: 0, seenAB: 0, seenBA: 0 };
-        pairAgg.set(key, rec);
-      }
-      rec.sum += w;
-      if (a === i) rec.seenAB = 1;
-      else rec.seenBA = 1;
-    }
-
-    for (const [key, rec] of pairAgg.entries()) {
-      const parts = key.split(':');
-      const i = +(parts[0] as string);
-      const j = +(parts[1] as string);
-      const dirCount: number = (rec.seenAB ? 1 : 0) + (rec.seenBA ? 1 : 0);
-      const w: number = dirCount > 0 ? rec.sum / dirCount : 0;
-      if (w === 0) continue;
-      (outEdges[i] as EdgeEntry[]).push({ to: j, w });
-      (outEdges[j] as EdgeEntry[]).push({ to: i, w });
-      (inEdges[i] as InEdgeEntry[]).push({ from: j, w });
-      (inEdges[j] as InEdgeEntry[]).push({ from: i, w });
-      taAdd(strengthOut, i, w);
-      taAdd(strengthOut, j, w);
-      taAdd(strengthIn, i, w);
-      taAdd(strengthIn, j, w);
-    }
-
-    // Add self-loops into adjacency and strengths.
-    // Note: uses single-w convention (not standard 2w) — the modularity formulas in
-    // modularity.ts are written to match this convention, keeping the system self-consistent.
-    for (let v = 0; v < n; v++) {
-      const w: number = taGet(selfLoop, v);
-      if (w !== 0) {
-        (outEdges[v] as EdgeEntry[]).push({ to: v, w });
-        (inEdges[v] as InEdgeEntry[]).push({ from: v, w });
-        taAdd(strengthOut, v, w);
-        taAdd(strengthIn, v, w);
-      }
-    }
+    populateUndirectedEdges(
+      graph,
+      idToIndex,
+      linkWeight,
+      n,
+      selfLoop,
+      outEdges,
+      inEdges,
+      strengthOut,
+      strengthIn,
+    );
   }
 
   // Node sizes

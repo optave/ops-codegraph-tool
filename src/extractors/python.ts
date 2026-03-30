@@ -4,7 +4,6 @@ import type {
   SubDeclaration,
   TreeSitterNode,
   TreeSitterTree,
-  TypeMapEntry,
 } from '../types.js';
 import {
   findChild,
@@ -12,6 +11,7 @@ import {
   MAX_WALK_DEPTH,
   nodeEndLine,
   pythonVisibility,
+  setTypeMapEntry,
 } from './helpers.js';
 
 /** Built-in globals that start with uppercase but are not user-defined types. */
@@ -274,6 +274,37 @@ function extractPythonParameters(fnNode: TreeSitterNode): SubDeclaration[] {
   return params;
 }
 
+/** Extract class-level assignment properties from expression statements. */
+function extractClassAssignment(
+  child: TreeSitterNode,
+  seen: Set<string>,
+  props: SubDeclaration[],
+): void {
+  const assignment = findChild(child, 'assignment');
+  if (!assignment) return;
+  const left = assignment.childForFieldName('left');
+  if (!left || left.type !== 'identifier' || seen.has(left.text)) return;
+  seen.add(left.text);
+  props.push({
+    name: left.text,
+    kind: 'property',
+    line: child.startPosition.row + 1,
+    visibility: pythonVisibility(left.text),
+  });
+}
+
+/** If node is an __init__ method, walk its body for self.x assignments. */
+function extractInitProperties(
+  node: TreeSitterNode,
+  seen: Set<string>,
+  props: SubDeclaration[],
+): void {
+  const fnName = node.childForFieldName('name');
+  if (!fnName || fnName.text !== '__init__') return;
+  const initBody = node.childForFieldName('body') || findChild(node, 'block');
+  if (initBody) walkInitBody(initBody, seen, props);
+}
+
 function extractPythonClassProperties(classNode: TreeSitterNode): SubDeclaration[] {
   const props: SubDeclaration[] = [];
   const seen = new Set<string>();
@@ -285,42 +316,14 @@ function extractPythonClassProperties(classNode: TreeSitterNode): SubDeclaration
     if (!child) continue;
 
     if (child.type === 'expression_statement') {
-      const assignment = findChild(child, 'assignment');
-      if (assignment) {
-        const left = assignment.childForFieldName('left');
-        if (left && left.type === 'identifier' && !seen.has(left.text)) {
-          seen.add(left.text);
-          props.push({
-            name: left.text,
-            kind: 'property',
-            line: child.startPosition.row + 1,
-            visibility: pythonVisibility(left.text),
-          });
-        }
-      }
-    }
-
-    if (child.type === 'function_definition') {
-      const fnName = child.childForFieldName('name');
-      if (fnName && fnName.text === '__init__') {
-        const initBody = child.childForFieldName('body') || findChild(child, 'block');
-        if (initBody) {
-          walkInitBody(initBody, seen, props);
-        }
-      }
-    }
-
-    if (child.type === 'decorated_definition') {
+      extractClassAssignment(child, seen, props);
+    } else if (child.type === 'function_definition') {
+      extractInitProperties(child, seen, props);
+    } else if (child.type === 'decorated_definition') {
       for (let j = 0; j < child.childCount; j++) {
         const inner = child.child(j);
         if (inner && inner.type === 'function_definition') {
-          const fnName = inner.childForFieldName('name');
-          if (fnName && fnName.text === '__init__') {
-            const initBody = inner.childForFieldName('body') || findChild(inner, 'block');
-            if (initBody) {
-              walkInitBody(initBody, seen, props);
-            }
-          }
+          extractInitProperties(inner, seen, props);
         }
       }
     }
@@ -354,15 +357,37 @@ function extractPythonTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void 
   extractPythonTypeMapDepth(node, ctx, 0);
 }
 
-function setIfHigherPy(
-  typeMap: Map<string, TypeMapEntry>,
-  name: string,
-  type: string,
-  confidence: number,
-): void {
-  const existing = typeMap.get(name);
-  if (!existing || confidence > existing.confidence) {
-    typeMap.set(name, { type, confidence });
+/** Handle typed_parameter or typed_default_parameter for type map. */
+function handlePyTypedParam(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const isDefault = node.type === 'typed_default_parameter';
+  const nameNode = isDefault ? node.childForFieldName('name') : node.child(0);
+  const typeNode = node.childForFieldName('type');
+  if (!nameNode || nameNode.type !== 'identifier' || !typeNode) return;
+  if (nameNode.text === 'self' || nameNode.text === 'cls') return;
+  const typeName = extractPythonTypeName(typeNode);
+  if (typeName && ctx.typeMap) setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
+}
+
+/** Handle assignment for constructor/factory type inference. */
+function handlePyAssignmentType(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const left = node.childForFieldName('left');
+  const right = node.childForFieldName('right');
+  if (!left || left.type !== 'identifier' || !right || right.type !== 'call') return;
+
+  const fn = right.childForFieldName('function');
+  if (!fn) return;
+  if (fn.type === 'identifier') {
+    const name = fn.text;
+    if (name[0] && name[0] !== name[0].toLowerCase()) {
+      if (ctx.typeMap) setTypeMapEntry(ctx.typeMap, left.text, name, 1.0);
+    }
+  } else if (fn.type === 'attribute') {
+    const obj = fn.childForFieldName('object');
+    if (!obj || obj.type !== 'identifier') return;
+    const objName = obj.text;
+    if (objName[0] && objName[0] !== objName[0].toLowerCase() && !BUILTIN_GLOBALS_PY.has(objName)) {
+      if (ctx.typeMap) setTypeMapEntry(ctx.typeMap, left.text, objName, 0.7);
+    }
   }
 }
 
@@ -373,57 +398,10 @@ function extractPythonTypeMapDepth(
 ): void {
   if (depth >= MAX_WALK_DEPTH) return;
 
-  // typed_parameter: identifier : type (confidence 0.9)
-  if (node.type === 'typed_parameter') {
-    const nameNode = node.child(0);
-    const typeNode = node.childForFieldName('type');
-    if (nameNode && nameNode.type === 'identifier' && typeNode) {
-      const typeName = extractPythonTypeName(typeNode);
-      if (typeName && nameNode.text !== 'self' && nameNode.text !== 'cls') {
-        if (ctx.typeMap) setIfHigherPy(ctx.typeMap, nameNode.text, typeName, 0.9);
-      }
-    }
-  }
-
-  // typed_default_parameter: name : type = default (confidence 0.9)
-  if (node.type === 'typed_default_parameter') {
-    const nameNode = node.childForFieldName('name');
-    const typeNode = node.childForFieldName('type');
-    if (nameNode && nameNode.type === 'identifier' && typeNode) {
-      const typeName = extractPythonTypeName(typeNode);
-      if (typeName && nameNode.text !== 'self' && nameNode.text !== 'cls') {
-        if (ctx.typeMap) setIfHigherPy(ctx.typeMap, nameNode.text, typeName, 0.9);
-      }
-    }
-  }
-
-  // assignment: x = SomeClass(...) → constructor (confidence 1.0)
-  //             x = SomeClass.create(...) → factory (confidence 0.7)
-  if (node.type === 'assignment') {
-    const left = node.childForFieldName('left');
-    const right = node.childForFieldName('right');
-    if (left && left.type === 'identifier' && right && right.type === 'call') {
-      const fn = right.childForFieldName('function');
-      if (fn && fn.type === 'identifier') {
-        const name = fn.text;
-        if (name[0] && name[0] !== name[0].toLowerCase()) {
-          if (ctx.typeMap) setIfHigherPy(ctx.typeMap, left.text, name, 1.0);
-        }
-      }
-      if (fn && fn.type === 'attribute') {
-        const obj = fn.childForFieldName('object');
-        if (obj && obj.type === 'identifier') {
-          const objName = obj.text;
-          if (
-            objName[0] &&
-            objName[0] !== objName[0].toLowerCase() &&
-            !BUILTIN_GLOBALS_PY.has(objName)
-          ) {
-            if (ctx.typeMap) setIfHigherPy(ctx.typeMap, left.text, objName, 0.7);
-          }
-        }
-      }
-    }
+  if (node.type === 'typed_parameter' || node.type === 'typed_default_parameter') {
+    handlePyTypedParam(node, ctx);
+  } else if (node.type === 'assignment') {
+    handlePyAssignmentType(node, ctx);
   }
 
   for (let i = 0; i < node.childCount; i++) {

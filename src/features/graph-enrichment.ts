@@ -83,6 +83,166 @@ interface FunctionEdgeRow {
   edge_kind: string;
 }
 
+type NodeInfo = {
+  id: number;
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  role: string | null;
+};
+
+/** Build node map from edge rows, collecting unique source/target nodes. */
+function buildNodeMapFromEdges(edges: FunctionEdgeRow[]): Map<number, NodeInfo> {
+  const nodeMap = new Map<number, NodeInfo>();
+  for (const e of edges) {
+    if (!nodeMap.has(e.source_id)) {
+      nodeMap.set(e.source_id, {
+        id: e.source_id,
+        name: e.source_name,
+        kind: e.source_kind,
+        file: e.source_file,
+        line: e.source_line,
+        role: e.source_role,
+      });
+    }
+    if (!nodeMap.has(e.target_id)) {
+      nodeMap.set(e.target_id, {
+        id: e.target_id,
+        name: e.target_name,
+        kind: e.target_kind,
+        file: e.target_file,
+        line: e.target_line,
+        role: e.target_role,
+      });
+    }
+  }
+  return nodeMap;
+}
+
+/** Load complexity data from function_complexity table. */
+function loadComplexityMap(
+  db: BetterSqlite3Database,
+): Map<number, { cognitive: number; cyclomatic: number; maintainabilityIndex: number }> {
+  const complexityMap = new Map<
+    number,
+    { cognitive: number; cyclomatic: number; maintainabilityIndex: number }
+  >();
+  try {
+    const rows = db
+      .prepare<{
+        node_id: number;
+        cognitive: number;
+        cyclomatic: number;
+        max_nesting: number;
+        maintainability_index: number;
+      }>(
+        'SELECT node_id, cognitive, cyclomatic, max_nesting, maintainability_index FROM function_complexity',
+      )
+      .all();
+    for (const r of rows) {
+      complexityMap.set(r.node_id, {
+        cognitive: r.cognitive,
+        cyclomatic: r.cyclomatic,
+        maintainabilityIndex: r.maintainability_index,
+      });
+    }
+  } catch {
+    // table may not exist in old DBs
+  }
+  return complexityMap;
+}
+
+/** Load fan-in and fan-out maps from edges table. */
+function loadFanMaps(db: BetterSqlite3Database): {
+  fanInMap: Map<number, number>;
+  fanOutMap: Map<number, number>;
+} {
+  const fanInMap = new Map<number, number>();
+  const fanOutMap = new Map<number, number>();
+
+  const fanInRows = db
+    .prepare<{ node_id: number; fan_in: number }>(
+      "SELECT target_id AS node_id, COUNT(*) AS fan_in FROM edges WHERE kind = 'calls' GROUP BY target_id",
+    )
+    .all();
+  for (const r of fanInRows) fanInMap.set(r.node_id, r.fan_in);
+
+  const fanOutRows = db
+    .prepare<{ node_id: number; fan_out: number }>(
+      "SELECT source_id AS node_id, COUNT(*) AS fan_out FROM edges WHERE kind = 'calls' GROUP BY source_id",
+    )
+    .all();
+  for (const r of fanOutRows) fanOutMap.set(r.node_id, r.fan_out);
+
+  return { fanInMap, fanOutMap };
+}
+
+/** Build an enriched VisNode from raw node info and computed maps. */
+function buildEnrichedVisNode(
+  n: NodeInfo,
+  complexityMap: Map<
+    number,
+    { cognitive: number; cyclomatic: number; maintainabilityIndex: number }
+  >,
+  fanInMap: Map<number, number>,
+  fanOutMap: Map<number, number>,
+  communityMap: Map<number, number>,
+  cfg: PlotConfig,
+): VisNode {
+  const cx = complexityMap.get(n.id) || null;
+  const fanIn = fanInMap.get(n.id) || 0;
+  const fanOut = fanOutMap.get(n.id) || 0;
+  const community = communityMap.get(n.id) ?? null;
+  const directory = path.dirname(n.file);
+  const risk: string[] = [];
+  if (n.role?.startsWith('dead')) risk.push('dead-code');
+  if (fanIn >= (cfg.riskThresholds?.highBlastRadius ?? 10)) risk.push('high-blast-radius');
+  if (cx && cx.maintainabilityIndex < (cfg.riskThresholds?.lowMI ?? 40)) risk.push('low-mi');
+
+  const color: string =
+    cfg.colorBy === 'role' && n.role
+      ? cfg.roleColors?.[n.role] ||
+        (DEFAULT_ROLE_COLORS as Record<string, string>)[n.role] ||
+        '#ccc'
+      : cfg.colorBy === 'community' && community !== null
+        ? COMMUNITY_COLORS[community % COMMUNITY_COLORS.length] || '#ccc'
+        : cfg.nodeColors?.[n.kind] ||
+          (DEFAULT_NODE_COLORS as Record<string, string>)[n.kind] ||
+          '#ccc';
+
+  return {
+    id: n.id,
+    label: n.name,
+    title: `${n.file}:${n.line} (${n.kind}${n.role ? `, ${n.role}` : ''})`,
+    color,
+    kind: n.kind,
+    role: n.role || '',
+    file: n.file,
+    line: n.line,
+    community,
+    cognitive: cx?.cognitive ?? null,
+    cyclomatic: cx?.cyclomatic ?? null,
+    maintainabilityIndex: cx?.maintainabilityIndex ?? null,
+    fanIn,
+    fanOut,
+    directory,
+    risk,
+  };
+}
+
+/** Select seed node IDs based on configured strategy. */
+function selectSeedNodes(visNodes: VisNode[], cfg: PlotConfig): (number | string)[] {
+  if (cfg.seedStrategy === 'top-fanin') {
+    const sorted = [...visNodes].sort((a, b) => b.fanIn - a.fanIn);
+    return sorted.slice(0, cfg.seedCount || 30).map((n) => n.id);
+  }
+  if (cfg.seedStrategy === 'entry') {
+    return visNodes.filter((n) => n.role === 'entry').map((n) => n.id);
+  }
+  return visNodes.map((n) => n.id);
+}
+
 function prepareFunctionLevelData(
   db: BetterSqlite3Database,
   noTests: boolean,
@@ -123,32 +283,7 @@ function prepareFunctionLevelData(
     );
   }
 
-  const nodeMap = new Map<
-    number,
-    { id: number; name: string; kind: string; file: string; line: number; role: string | null }
-  >();
-  for (const e of edges) {
-    if (!nodeMap.has(e.source_id)) {
-      nodeMap.set(e.source_id, {
-        id: e.source_id,
-        name: e.source_name,
-        kind: e.source_kind,
-        file: e.source_file,
-        line: e.source_line,
-        role: e.source_role,
-      });
-    }
-    if (!nodeMap.has(e.target_id)) {
-      nodeMap.set(e.target_id, {
-        id: e.target_id,
-        name: e.target_name,
-        kind: e.target_kind,
-        file: e.target_file,
-        line: e.target_line,
-        role: e.target_role,
-      });
-    }
-  }
+  const nodeMap = buildNodeMapFromEdges(edges);
 
   if (cfg.filter?.roles) {
     const roles = new Set(cfg.filter.roles);
@@ -159,35 +294,9 @@ function prepareFunctionLevelData(
     edges = edges.filter((e) => nodeIds.has(e.source_id) && nodeIds.has(e.target_id));
   }
 
-  // Complexity data
-  const complexityMap = new Map<
-    number,
-    { cognitive: number; cyclomatic: number; maintainabilityIndex: number }
-  >();
-  try {
-    const rows = db
-      .prepare<{
-        node_id: number;
-        cognitive: number;
-        cyclomatic: number;
-        max_nesting: number;
-        maintainability_index: number;
-      }>(
-        'SELECT node_id, cognitive, cyclomatic, max_nesting, maintainability_index FROM function_complexity',
-      )
-      .all();
-    for (const r of rows) {
-      complexityMap.set(r.node_id, {
-        cognitive: r.cognitive,
-        cyclomatic: r.cyclomatic,
-        maintainabilityIndex: r.maintainability_index,
-      });
-    }
-  } catch {
-    // table may not exist in old DBs
-  }
+  const complexityMap = loadComplexityMap(db);
 
-  // Fan-in / fan-out via graph subsystem
+  // Build CodeGraph for Louvain community detection
   const fnGraph = new CodeGraph();
   for (const [id] of nodeMap) fnGraph.addNode(String(id));
   for (const e of edges) {
@@ -196,22 +305,7 @@ function prepareFunctionLevelData(
     if (src !== tgt && !fnGraph.hasEdge(src, tgt)) fnGraph.addEdge(src, tgt);
   }
 
-  // Use DB-level fan-in/fan-out (counts ALL call edges, not just visible)
-  const fanInMap = new Map<number, number>();
-  const fanOutMap = new Map<number, number>();
-  const fanInRows = db
-    .prepare<{ node_id: number; fan_in: number }>(
-      "SELECT target_id AS node_id, COUNT(*) AS fan_in FROM edges WHERE kind = 'calls' GROUP BY target_id",
-    )
-    .all();
-  for (const r of fanInRows) fanInMap.set(r.node_id, r.fan_in);
-
-  const fanOutRows = db
-    .prepare<{ node_id: number; fan_out: number }>(
-      "SELECT source_id AS node_id, COUNT(*) AS fan_out FROM edges WHERE kind = 'calls' GROUP BY source_id",
-    )
-    .all();
-  for (const r of fanOutRows) fanOutMap.set(r.node_id, r.fan_out);
+  const { fanInMap, fanOutMap } = loadFanMaps(db);
 
   // Communities (Louvain) via graph subsystem
   const communityMap = new Map<number, number>();
@@ -224,48 +318,9 @@ function prepareFunctionLevelData(
     }
   }
 
-  // Build enriched nodes
-  const visNodes: VisNode[] = [...nodeMap.values()].map((n) => {
-    const cx = complexityMap.get(n.id) || null;
-    const fanIn = fanInMap.get(n.id) || 0;
-    const fanOut = fanOutMap.get(n.id) || 0;
-    const community = communityMap.get(n.id) ?? null;
-    const directory = path.dirname(n.file);
-    const risk: string[] = [];
-    if (n.role?.startsWith('dead')) risk.push('dead-code');
-    if (fanIn >= (cfg.riskThresholds?.highBlastRadius ?? 10)) risk.push('high-blast-radius');
-    if (cx && cx.maintainabilityIndex < (cfg.riskThresholds?.lowMI ?? 40)) risk.push('low-mi');
-
-    const color: string =
-      cfg.colorBy === 'role' && n.role
-        ? cfg.roleColors?.[n.role] ||
-          (DEFAULT_ROLE_COLORS as Record<string, string>)[n.role] ||
-          '#ccc'
-        : cfg.colorBy === 'community' && community !== null
-          ? COMMUNITY_COLORS[community % COMMUNITY_COLORS.length] || '#ccc'
-          : cfg.nodeColors?.[n.kind] ||
-            (DEFAULT_NODE_COLORS as Record<string, string>)[n.kind] ||
-            '#ccc';
-
-    return {
-      id: n.id,
-      label: n.name,
-      title: `${n.file}:${n.line} (${n.kind}${n.role ? `, ${n.role}` : ''})`,
-      color,
-      kind: n.kind,
-      role: n.role || '',
-      file: n.file,
-      line: n.line,
-      community,
-      cognitive: cx?.cognitive ?? null,
-      cyclomatic: cx?.cyclomatic ?? null,
-      maintainabilityIndex: cx?.maintainabilityIndex ?? null,
-      fanIn,
-      fanOut,
-      directory,
-      risk,
-    };
-  });
+  const visNodes: VisNode[] = [...nodeMap.values()].map((n) =>
+    buildEnrichedVisNode(n, complexityMap, fanInMap, fanOutMap, communityMap, cfg),
+  );
 
   const visEdges: VisEdge[] = edges.map((e, i) => ({
     id: `e${i}`,
@@ -273,18 +328,7 @@ function prepareFunctionLevelData(
     to: e.target_id,
   }));
 
-  // Seed strategy
-  let seedNodeIds: (number | string)[];
-  if (cfg.seedStrategy === 'top-fanin') {
-    const sorted = [...visNodes].sort((a, b) => b.fanIn - a.fanIn);
-    seedNodeIds = sorted.slice(0, cfg.seedCount || 30).map((n) => n.id);
-  } else if (cfg.seedStrategy === 'entry') {
-    seedNodeIds = visNodes.filter((n) => n.role === 'entry').map((n) => n.id);
-  } else {
-    seedNodeIds = visNodes.map((n) => n.id);
-  }
-
-  return { nodes: visNodes, edges: visEdges, seedNodeIds };
+  return { nodes: visNodes, edges: visEdges, seedNodeIds: selectSeedNodes(visNodes, cfg) };
 }
 
 interface FileLevelEdge {

@@ -151,6 +151,33 @@ export function fileDeps(file: string, customDbPath: string, opts: OutputOpts = 
   }
 }
 
+function printFnDepsCallees(callees: SymbolRef[]): void {
+  if (callees.length === 0) return;
+  console.log(`  -> Calls (${callees.length}):`);
+  for (const c of callees) console.log(`    -> ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}`);
+}
+
+function printFnDepsCallers(callers: CallerRef[]): void {
+  if (callers.length === 0) return;
+  console.log(`\n  <- Called by (${callers.length}):`);
+  for (const c of callers) {
+    const via = c.viaHierarchy ? ` (via ${c.viaHierarchy})` : '';
+    console.log(`    <- ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}${via}`);
+  }
+}
+
+function printFnDepsTransitive(transitiveCallers: Record<string, SymbolRef[]>): void {
+  for (const [d, fns] of Object.entries(transitiveCallers)) {
+    const depth = parseInt(d, 10);
+    console.log(`\n  ${'<-'.repeat(depth)} Transitive callers (depth ${d}, ${fns.length}):`);
+    for (const n of fns.slice(0, 20))
+      console.log(
+        `    ${'  '.repeat(depth - 1)}<- ${kindIcon(n.kind)} ${n.name}  ${n.file}:${n.line}`,
+      );
+    if (fns.length > 20) console.log(`    ... and ${fns.length - 20} more`);
+  }
+}
+
 export function fnDeps(name: string, customDbPath: string, opts: OutputOpts = {}): void {
   const data = fnDepsData(name, customDbPath, opts) as unknown as FnDepsData;
   if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
@@ -162,28 +189,9 @@ export function fnDeps(name: string, customDbPath: string, opts: OutputOpts = {}
 
   for (const r of data.results) {
     console.log(`\n${kindIcon(r.kind)} ${r.name} (${r.kind}) -- ${r.file}:${r.line}\n`);
-    if (r.callees.length > 0) {
-      console.log(`  -> Calls (${r.callees.length}):`);
-      for (const c of r.callees)
-        console.log(`    -> ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}`);
-    }
-    if (r.callers.length > 0) {
-      console.log(`\n  <- Called by (${r.callers.length}):`);
-      for (const c of r.callers) {
-        const via = c.viaHierarchy ? ` (via ${c.viaHierarchy})` : '';
-        console.log(`    <- ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}${via}`);
-      }
-    }
-    for (const [d, fns] of Object.entries(r.transitiveCallers)) {
-      console.log(
-        `\n  ${'<-'.repeat(parseInt(d, 10))} Transitive callers (depth ${d}, ${fns.length}):`,
-      );
-      for (const n of fns.slice(0, 20))
-        console.log(
-          `    ${'  '.repeat(parseInt(d, 10) - 1)}<- ${kindIcon(n.kind)} ${n.name}  ${n.file}:${n.line}`,
-        );
-      if (fns.length > 20) console.log(`    ... and ${fns.length - 20} more`);
-    }
+    printFnDepsCallees(r.callees);
+    printFnDepsCallers(r.callers);
+    printFnDepsTransitive(r.transitiveCallers);
     if (r.callees.length === 0 && r.callers.length === 0) {
       console.log(`  (no call edges found -- may be invoked dynamically or via re-exports)`);
     }
