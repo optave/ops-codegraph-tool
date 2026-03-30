@@ -42,7 +42,7 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
   // Disabled: bulkInsertNodes corrupts the DB when both the JS (better-sqlite3)
   // and Rust (rusqlite) connections are open to the same WAL-mode file.
   // The native path was never operational before — it always crashed on null
-  // visibility serialisation. See #688 for the dual-connection fix.
+  // visibility serialisation. See #694 for the dual-connection fix.
   if (ctx.db) return false;
 
   // Use NativeDatabase persistent connection (Phase 6.15+).
@@ -78,14 +78,14 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
         name: def.name,
         kind: def.kind,
         line: def.line,
-        endLine: def.endLine,
-        visibility: def.visibility,
+        endLine: def.endLine ?? undefined,
+        visibility: def.visibility ?? undefined,
         children: (def.children ?? []).map((c) => ({
           name: c.name,
           kind: c.kind,
           line: c.line,
-          endLine: c.endLine,
-          visibility: c.visibility,
+          endLine: c.endLine ?? undefined,
+          visibility: c.visibility ?? undefined,
         })),
       })),
       exports: symbols.exports.map((exp) => ({

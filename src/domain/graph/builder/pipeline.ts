@@ -162,7 +162,7 @@ function formatTimingResult(ctx: PipelineContext): BuildResult {
 async function runPipelineStages(ctx: PipelineContext): Promise<void> {
   // Prevent dual-connection WAL corruption: when both better-sqlite3 (ctx.db)
   // and rusqlite (ctx.nativeDb) are open to the same file, Rust writes corrupt
-  // the DB. Clear nativeDb so all stages use JS fallback paths. See #688.
+  // the DB. Clear nativeDb so all stages use JS fallback paths. See #694.
   if (ctx.db && ctx.nativeDb) {
     try {
       (ctx.nativeDb as { close?: () => void }).close?.();
