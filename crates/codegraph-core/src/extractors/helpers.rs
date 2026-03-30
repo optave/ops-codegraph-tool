@@ -316,6 +316,72 @@ pub const BASH_AST_CONFIG: LangAstConfig = LangAstConfig {
     string_prefixes: &[],
 };
 
+pub const ELIXIR_AST_CONFIG: LangAstConfig = LangAstConfig {
+    call_types: &["call"],
+    new_types: &[],
+    throw_types: &[],
+    await_types: &[],
+    string_types: &["string"],
+    regex_types: &["sigil"],
+    quote_chars: &['"'],
+    string_prefixes: &[],
+};
+
+pub const LUA_AST_CONFIG: LangAstConfig = LangAstConfig {
+    call_types: &["function_call"],
+    new_types: &[],
+    throw_types: &[],
+    await_types: &[],
+    string_types: &["string"],
+    regex_types: &[],
+    quote_chars: &['\'', '"'],
+    string_prefixes: &[],
+};
+
+pub const DART_AST_CONFIG: LangAstConfig = LangAstConfig {
+    call_types: &["selector"],
+    new_types: &["new_expression", "constructor_invocation"],
+    throw_types: &["throw_expression"],
+    await_types: &["await_expression"],
+    string_types: &["string_literal"],
+    regex_types: &[],
+    quote_chars: &['\'', '"'],
+    string_prefixes: &[],
+};
+
+pub const ZIG_AST_CONFIG: LangAstConfig = LangAstConfig {
+    call_types: &["call_expression", "builtin_function"],
+    new_types: &[],
+    throw_types: &[],
+    await_types: &[],
+    string_types: &["string_literal"],
+    regex_types: &[],
+    quote_chars: &['"'],
+    string_prefixes: &[],
+};
+
+pub const HASKELL_AST_CONFIG: LangAstConfig = LangAstConfig {
+    call_types: &["apply"],
+    new_types: &[],
+    throw_types: &[],
+    await_types: &[],
+    string_types: &["string", "char"],
+    regex_types: &[],
+    quote_chars: &['"', '\''],
+    string_prefixes: &[],
+};
+
+pub const OCAML_AST_CONFIG: LangAstConfig = LangAstConfig {
+    call_types: &["application_expression"],
+    new_types: &[],
+    throw_types: &[],
+    await_types: &[],
+    string_types: &["string"],
+    regex_types: &[],
+    quote_chars: &['"'],
+    string_prefixes: &[],
+};
+
 // ── Generic AST node walker ──────────────────────────────────────────────────
 
 /// Node types that represent identifiers across languages.
