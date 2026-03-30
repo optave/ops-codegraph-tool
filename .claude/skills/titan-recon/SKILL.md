@@ -215,6 +215,14 @@ Create `.codegraph/titan/titan-state.json` — the single source of truth for th
 mkdir -p .codegraph/titan
 ```
 
+**Important:** Before writing, check if `titan-state.json` already exists (the orchestrator may have written `phaseTimestamps.recon.startedAt` before dispatching this sub-agent). If it does, read the existing `phaseTimestamps` and merge them into the new state object so the start timestamp is preserved:
+
+```bash
+node -e "const fs=require('fs');const p='.codegraph/titan/titan-state.json';let existing={};try{existing=JSON.parse(fs.readFileSync(p,'utf8'));}catch{}console.log(JSON.stringify(existing.phaseTimestamps||{}));"
+```
+
+Include the preserved `phaseTimestamps` in the state file below.
+
 ```json
 {
   "version": 1,
@@ -282,6 +290,7 @@ mkdir -p .codegraph/titan
   },
   "hotFiles": ["<top 30>"],
   "tangledDirs": ["<cohesion < 0.3>"],
+  "phaseTimestamps": "<merged from existing file — see above>",
   "fileAudits": {},
   "progress": {
     "totalFiles": 0,

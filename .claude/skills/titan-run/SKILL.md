@@ -149,6 +149,14 @@ WARN-level V-checks from skipped phases are surfaced as prefixed warnings: "[ski
 ### 1a.1. Record phase start timestamp
 Record `phaseTimestamps.recon.startedAt` (only if not already set — it may exist from a prior crashed run).
 
+**Note:** On a fresh run, `titan-state.json` does not yet exist (titan-recon creates it in Step 12). Use this safe variant that creates a minimal stub if the file is missing:
+
+```bash
+node -e "const fs=require('fs');const p='.codegraph/titan/titan-state.json';let s;try{s=JSON.parse(fs.readFileSync(p,'utf8'));}catch{fs.mkdirSync('.codegraph/titan',{recursive:true});s={};}s.phaseTimestamps=s.phaseTimestamps||{};s.phaseTimestamps['recon']=s.phaseTimestamps['recon']||{};if(!s.phaseTimestamps['recon'].startedAt){s.phaseTimestamps['recon'].startedAt=new Date().toISOString();fs.writeFileSync(p,JSON.stringify(s,null,2));}"
+```
+
+This ensures `recon.startedAt` is recorded even on first-time runs. titan-recon Step 12 merges any existing `phaseTimestamps` into the full state file it writes.
+
 ### 1b. Dispatch sub-agent
 
 Use the **Agent tool** to spawn a sub-agent:
