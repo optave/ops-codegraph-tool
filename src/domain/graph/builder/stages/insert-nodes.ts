@@ -39,6 +39,12 @@ interface PrecomputedFileData {
 // ── Native fast-path ─────────────────────────────────────────────────
 
 function tryNativeInsert(ctx: PipelineContext): boolean {
+  // Disabled: bulkInsertNodes corrupts the DB when both the JS (better-sqlite3)
+  // and Rust (rusqlite) connections are open to the same WAL-mode file.
+  // The native path was never operational before — it always crashed on null
+  // visibility serialisation. See #694 for the dual-connection fix.
+  if (ctx.db) return false;
+
   // Use NativeDatabase persistent connection (Phase 6.15+).
   // Standalone napi functions were removed in 6.17 — falls through to JS if nativeDb unavailable.
   if (!ctx.nativeDb?.bulkInsertNodes) return false;
@@ -52,14 +58,14 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
       name: string;
       kind: string;
       line: number;
-      endLine?: number | null;
-      visibility?: string | null;
+      endLine?: number;
+      visibility?: string;
       children: Array<{
         name: string;
         kind: string;
         line: number;
-        endLine?: number | null;
-        visibility?: string | null;
+        endLine?: number;
+        visibility?: string;
       }>;
     }>;
     exports: Array<{ name: string; kind: string; line: number }>;
@@ -72,14 +78,14 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
         name: def.name,
         kind: def.kind,
         line: def.line,
-        endLine: def.endLine ?? null,
-        visibility: def.visibility ?? null,
+        endLine: def.endLine ?? undefined,
+        visibility: def.visibility ?? undefined,
         children: (def.children ?? []).map((c) => ({
           name: c.name,
           kind: c.kind,
           line: c.line,
-          endLine: c.endLine ?? null,
-          visibility: c.visibility ?? null,
+          endLine: c.endLine ?? undefined,
+          visibility: c.visibility ?? undefined,
         })),
       })),
       exports: symbols.exports.map((exp) => ({
@@ -340,11 +346,16 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
   const t0 = performance.now();
 
   // Try native Rust path first — single transaction, no JS↔C overhead
-  if (ctx.engineName === 'native' && tryNativeInsert(ctx)) {
-    ctx.timing.insertMs = performance.now() - t0;
-
-    // Removed-file hash cleanup is handled inside the native call
-    return;
+  if (ctx.engineName === 'native') {
+    try {
+      if (tryNativeInsert(ctx)) {
+        ctx.timing.insertMs = performance.now() - t0;
+        // Removed-file hash cleanup is handled inside the native call
+        return;
+      }
+    } catch {
+      // Native insert failed — fall through to JS implementation
+    }
   }
 
   // JS fallback

@@ -1,10 +1,11 @@
+import Database from 'better-sqlite3';
 import { openRepo, type Repository } from '../db/index.js';
 import { SqliteRepository } from '../db/repository/sqlite-repository.js';
 import { findMatchingNodes } from '../domain/queries.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { paginateResult } from '../shared/paginate.js';
-import type { CodegraphConfig, NodeRowWithFanIn } from '../types.js';
+import type { BetterSqlite3Database, CodegraphConfig, NodeRowWithFanIn } from '../types.js';
 import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
 
 // ─── Alias generation ────────────────────────────────────────────────
@@ -150,12 +151,34 @@ function annotateDataflow(
   repo: Repository,
   messages: SequenceMessage[],
   idToNode: Map<number, { id: number; name: string; file: string; kind: string; line: number }>,
+  dbPath?: string,
 ): void {
   const hasTable = repo.hasDataflowTable();
+  if (!hasTable) return;
 
-  if (!hasTable || !(repo instanceof SqliteRepository)) return;
+  let db: BetterSqlite3Database;
+  let ownDb = false;
+  if (repo instanceof SqliteRepository) {
+    db = repo.db;
+  } else if (dbPath) {
+    db = new Database(dbPath, { readonly: true }) as unknown as BetterSqlite3Database;
+    ownDb = true;
+  } else {
+    return;
+  }
 
-  const db = repo.db;
+  try {
+    _annotateDataflowImpl(db, messages, idToNode);
+  } finally {
+    if (ownDb) db.close();
+  }
+}
+
+function _annotateDataflowImpl(
+  db: BetterSqlite3Database,
+  messages: SequenceMessage[],
+  idToNode: Map<number, { id: number; name: string; file: string; kind: string; line: number }>,
+): void {
   const nodeByNameFile = new Map<string, { id: number; name: string; file: string }>();
   for (const n of idToNode.values()) {
     nodeByNameFile.set(`${n.name}|${n.file}`, n);
@@ -308,7 +331,7 @@ export function sequenceData(
     );
 
     if (opts.dataflow && messages.length > 0) {
-      annotateDataflow(repo, messages, idToNode);
+      annotateDataflow(repo, messages, idToNode, dbPath);
     }
 
     messages.sort((a, b) => {
