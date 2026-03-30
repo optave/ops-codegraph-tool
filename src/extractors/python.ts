@@ -6,7 +6,13 @@ import type {
   TreeSitterTree,
   TypeMapEntry,
 } from '../types.js';
-import { findChild, MAX_WALK_DEPTH, nodeEndLine, pythonVisibility } from './helpers.js';
+import {
+  findChild,
+  findParentNode,
+  MAX_WALK_DEPTH,
+  nodeEndLine,
+  pythonVisibility,
+} from './helpers.js';
 
 /** Built-in globals that start with uppercase but are not user-defined types. */
 const BUILTIN_GLOBALS_PY: Set<string> = new Set([
@@ -441,14 +447,7 @@ function extractPythonTypeName(typeNode: TreeSitterNode): string | null {
   return null;
 }
 
+const PY_CLASS_TYPES = ['class_definition'] as const;
 function findPythonParentClass(node: TreeSitterNode): string | null {
-  let current = node.parent;
-  while (current) {
-    if (current.type === 'class_definition') {
-      const nameNode = current.childForFieldName('name');
-      return nameNode ? nameNode.text : null;
-    }
-    current = current.parent;
-  }
-  return null;
+  return findParentNode(node, PY_CLASS_TYPES);
 }

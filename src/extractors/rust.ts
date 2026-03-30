@@ -5,7 +5,14 @@ import type {
   TreeSitterNode,
   TreeSitterTree,
 } from '../types.js';
-import { findChild, MAX_WALK_DEPTH, nodeEndLine, rustVisibility } from './helpers.js';
+import {
+  extractBodyMembers,
+  findParentNode,
+  lastPathSegment,
+  MAX_WALK_DEPTH,
+  nodeEndLine,
+  rustVisibility,
+} from './helpers.js';
 
 /**
  * Extract symbols from Rust files.
@@ -206,16 +213,9 @@ function handleRustMacroInvocation(node: TreeSitterNode, ctx: ExtractorOutput): 
   }
 }
 
+const RUST_IMPL_TYPES = ['impl_item'] as const;
 function findCurrentImpl(node: TreeSitterNode): string | null {
-  let current = node.parent;
-  while (current) {
-    if (current.type === 'impl_item') {
-      const typeNode = current.childForFieldName('type');
-      return typeNode ? typeNode.text : null;
-    }
-    current = current.parent;
-  }
-  return null;
+  return findParentNode(node, RUST_IMPL_TYPES, 'type');
 }
 
 // ── Child extraction helpers ────────────────────────────────────────────────
@@ -227,8 +227,6 @@ function extractRustParameters(paramListNode: TreeSitterNode | null): SubDeclara
     const param = paramListNode.child(i);
     if (!param) continue;
     if (param.type === 'self_parameter') {
-      // Skip self parameters — matches native engine behaviour
-      continue;
     } else if (param.type === 'parameter') {
       const pattern = param.childForFieldName('pattern');
       if (pattern) {
@@ -240,34 +238,16 @@ function extractRustParameters(paramListNode: TreeSitterNode | null): SubDeclara
 }
 
 function extractStructFields(structNode: TreeSitterNode): SubDeclaration[] {
-  const fields: SubDeclaration[] = [];
-  const fieldList =
-    structNode.childForFieldName('body') || findChild(structNode, 'field_declaration_list');
-  if (!fieldList) return fields;
-  for (let i = 0; i < fieldList.childCount; i++) {
-    const field = fieldList.child(i);
-    if (!field || field.type !== 'field_declaration') continue;
-    const nameNode = field.childForFieldName('name');
-    if (nameNode) {
-      fields.push({ name: nameNode.text, kind: 'property', line: field.startPosition.row + 1 });
-    }
-  }
-  return fields;
+  return extractBodyMembers(
+    structNode,
+    ['body', 'field_declaration_list'],
+    'field_declaration',
+    'property',
+  );
 }
 
 function extractEnumVariants(enumNode: TreeSitterNode): SubDeclaration[] {
-  const variants: SubDeclaration[] = [];
-  const body = enumNode.childForFieldName('body') || findChild(enumNode, 'enum_variant_list');
-  if (!body) return variants;
-  for (let i = 0; i < body.childCount; i++) {
-    const variant = body.child(i);
-    if (!variant || variant.type !== 'enum_variant') continue;
-    const nameNode = variant.childForFieldName('name');
-    if (nameNode) {
-      variants.push({ name: nameNode.text, kind: 'constant', line: variant.startPosition.row + 1 });
-    }
-  }
-  return variants;
+  return extractBodyMembers(enumNode, ['body', 'enum_variant_list'], 'enum_variant', 'constant');
 }
 
 function extractRustTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void {
@@ -375,7 +355,7 @@ function extractRustUsePath(node: TreeSitterNode | null): { source: string; name
 
   if (node.type === 'scoped_identifier' || node.type === 'identifier') {
     const text = node.text;
-    const lastName = text.split('::').pop() ?? text;
+    const lastName = lastPathSegment(text, '::');
     return [{ source: text, names: [lastName] }];
   }
 

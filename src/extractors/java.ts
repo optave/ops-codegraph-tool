@@ -6,7 +6,14 @@ import type {
   TreeSitterTree,
   TypeMapEntry,
 } from '../types.js';
-import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js';
+import {
+  extractBodyMembers,
+  extractModifierVisibility,
+  findChild,
+  findParentNode,
+  lastPathSegment,
+  nodeEndLine,
+} from './helpers.js';
 
 /**
  * Extract symbols from Java files.
@@ -218,7 +225,7 @@ function handleJavaImportDecl(node: TreeSitterNode, ctx: ExtractorOutput): void 
     const child = node.child(i);
     if (child && (child.type === 'scoped_identifier' || child.type === 'identifier')) {
       const fullPath = child.text;
-      const lastName = fullPath.split('.').pop() ?? fullPath;
+      const lastName = lastPathSegment(fullPath, '.');
       ctx.imports.push({
         source: fullPath,
         names: [lastName],
@@ -263,20 +270,13 @@ function handleJavaObjectCreation(node: TreeSitterNode, ctx: ExtractorOutput): v
   if (typeName) ctx.calls.push({ name: typeName, line: node.startPosition.row + 1 });
 }
 
+const JAVA_PARENT_TYPES = [
+  'class_declaration',
+  'enum_declaration',
+  'interface_declaration',
+] as const;
 function findJavaParentClass(node: TreeSitterNode): string | null {
-  let current = node.parent;
-  while (current) {
-    if (
-      current.type === 'class_declaration' ||
-      current.type === 'enum_declaration' ||
-      current.type === 'interface_declaration'
-    ) {
-      const nameNode = current.childForFieldName('name');
-      return nameNode ? nameNode.text : null;
-    }
-    current = current.parent;
-  }
-  return null;
+  return findParentNode(node, JAVA_PARENT_TYPES);
 }
 
 // ── Child extraction helpers ────────────────────────────────────────────────
@@ -333,16 +333,5 @@ function extractClassFields(classNode: TreeSitterNode): SubDeclaration[] {
 }
 
 function extractEnumConstants(enumNode: TreeSitterNode): SubDeclaration[] {
-  const constants: SubDeclaration[] = [];
-  const body = enumNode.childForFieldName('body') || findChild(enumNode, 'enum_body');
-  if (!body) return constants;
-  for (let i = 0; i < body.childCount; i++) {
-    const member = body.child(i);
-    if (!member || member.type !== 'enum_constant') continue;
-    const nameNode = member.childForFieldName('name');
-    if (nameNode) {
-      constants.push({ name: nameNode.text, kind: 'constant', line: member.startPosition.row + 1 });
-    }
-  }
-  return constants;
+  return extractBodyMembers(enumNode, ['body', 'enum_body'], 'enum_constant', 'constant');
 }

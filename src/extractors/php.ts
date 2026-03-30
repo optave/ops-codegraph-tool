@@ -5,7 +5,14 @@ import type {
   TreeSitterNode,
   TreeSitterTree,
 } from '../types.js';
-import { extractModifierVisibility, findChild, MAX_WALK_DEPTH, nodeEndLine } from './helpers.js';
+import {
+  extractBodyMembers,
+  extractModifierVisibility,
+  findChild,
+  lastPathSegment,
+  MAX_WALK_DEPTH,
+  nodeEndLine,
+} from './helpers.js';
 
 function extractPhpParameters(fnNode: TreeSitterNode): SubDeclaration[] {
   const params: SubDeclaration[] = [];
@@ -65,18 +72,7 @@ function extractPhpClassChildren(classNode: TreeSitterNode): SubDeclaration[] {
 }
 
 function extractPhpEnumCases(enumNode: TreeSitterNode): SubDeclaration[] {
-  const children: SubDeclaration[] = [];
-  const body = enumNode.childForFieldName('body') || findChild(enumNode, 'enum_declaration_list');
-  if (!body) return children;
-  for (let i = 0; i < body.childCount; i++) {
-    const member = body.child(i);
-    if (!member || member.type !== 'enum_case') continue;
-    const nameNode = member.childForFieldName('name');
-    if (nameNode) {
-      children.push({ name: nameNode.text, kind: 'constant', line: member.startPosition.row + 1 });
-    }
-  }
-  return children;
+  return extractBodyMembers(enumNode, ['body', 'enum_declaration_list'], 'enum_case', 'constant');
 }
 
 /**
@@ -272,7 +268,7 @@ function handlePhpNamespaceUse(node: TreeSitterNode, ctx: ExtractorOutput): void
       const nameNode = findChild(child, 'qualified_name') || findChild(child, 'name');
       if (nameNode) {
         const fullPath = nameNode.text;
-        const lastName = fullPath.split('\\').pop() ?? fullPath;
+        const lastName = lastPathSegment(fullPath, '\\');
         const alias = child.childForFieldName('alias');
         ctx.imports.push({
           source: fullPath,
@@ -284,7 +280,7 @@ function handlePhpNamespaceUse(node: TreeSitterNode, ctx: ExtractorOutput): void
     }
     if (child && (child.type === 'qualified_name' || child.type === 'name')) {
       const fullPath = child.text;
-      const lastName = fullPath.split('\\').pop() ?? fullPath;
+      const lastName = lastPathSegment(fullPath, '\\');
       ctx.imports.push({
         source: fullPath,
         names: [lastName],

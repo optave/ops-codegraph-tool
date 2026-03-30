@@ -5,7 +5,7 @@ import type {
   TreeSitterNode,
   TreeSitterTree,
 } from '../types.js';
-import { findChild, nodeEndLine } from './helpers.js';
+import { findChild, findParentNode, lastPathSegment, nodeEndLine, stripQuotes } from './helpers.js';
 
 /**
  * Extract symbols from Ruby files.
@@ -176,10 +176,10 @@ function handleRubyRequire(node: TreeSitterNode, ctx: ExtractorOutput): void {
   for (let i = 0; i < args.childCount; i++) {
     const arg = args.child(i);
     if (arg && (arg.type === 'string' || arg.type === 'string_content')) {
-      const strContent = arg.text.replace(/^['"]|['"]$/g, '');
+      const strContent = stripQuotes(arg.text);
       ctx.imports.push({
         source: strContent,
-        names: [strContent.split('/').pop() ?? strContent],
+        names: [lastPathSegment(strContent)],
         line: node.startPosition.row + 1,
         rubyRequire: true,
       });
@@ -190,7 +190,7 @@ function handleRubyRequire(node: TreeSitterNode, ctx: ExtractorOutput): void {
       if (content) {
         ctx.imports.push({
           source: content.text,
-          names: [content.text.split('/').pop() ?? content.text],
+          names: [lastPathSegment(content.text)],
           line: node.startPosition.row + 1,
           rubyRequire: true,
         });
@@ -221,16 +221,9 @@ function handleRubyModuleInclusion(
   }
 }
 
+const RUBY_PARENT_TYPES = ['class', 'module'] as const;
 function findRubyParentClass(node: TreeSitterNode): string | null {
-  let current = node.parent;
-  while (current) {
-    if (current.type === 'class' || current.type === 'module') {
-      const nameNode = current.childForFieldName('name');
-      return nameNode ? nameNode.text : null;
-    }
-    current = current.parent;
-  }
-  return null;
+  return findParentNode(node, RUBY_PARENT_TYPES);
 }
 
 // ── Child extraction helpers ────────────────────────────────────────────────
