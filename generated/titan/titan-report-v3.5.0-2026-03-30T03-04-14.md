@@ -136,18 +136,24 @@ The worst offenders from the baseline (`walk_node_depth` variants across extract
 
 ### PR Split Plan
 
-| PR # | Title | Concern | Domain | Commits | Files | Depends On |
-|------|-------|---------|--------|---------|-------|------------|
-| 1 | chore: remove dead code from shared, types, and database | dead_code | shared/db | 2 | 3 | -- |
-| 2 | refactor: extract shared helpers for native and WASM extractors | abstraction | extractors | 3 | 19 | -- |
-| 3 | refactor: decompose Leiden partition and optimiser | decomposition | graph-engine | 2 | 4 | -- |
-| 4 | refactor: decompose MCP server, search formatter, graph builder, and AST engine | decomposition | domain | 3 | 4 | -- |
-| 5 | refactor: decompose WASM extractors (javascript.ts, go.ts) | decomposition | wasm-extractors | 2 | 4 | PR #2 |
-| 6 | refactor: decompose features and presentation formatters | decomposition | features/presentation | 4 | 7 | -- |
-| 7 | refactor: decompose native Rust extractors | decomposition | native-extractors | 4 | 8 | PR #2 |
-| 8 | refactor: decompose native engine core (edge_builder, complexity, cfg, dataflow) | decomposition | native-engine | 2 | 4 | PR #2 |
-| 9 | fix: reduce complexity across domain, extractors, and features | quality_fix | cross-cutting | 7 | 28 | PR #1, PR #2 |
-| 10 | refactor: address warn-level issues in shared, domain, presentation, infra | warning | cross-cutting | 3 | 7 | PR #1 |
+All 32 commits were submitted as a single PR due to extensive cross-file dependencies between commits that make cherry-pick splitting fragile:
+
+**PR:** [#699](https://github.com/optave/ops-codegraph-tool/pull/699) -- refactor: Titan audit -- decompose, reduce complexity, remove dead code
+
+The logical grouping for review purposes:
+
+| Group | Title | Concern | Domain | Commits | Files |
+|-------|-------|---------|--------|---------|-------|
+| 1 | Remove dead code from shared, types, and database | dead_code | shared/db | 2 | 3 |
+| 2 | Extract shared helpers for native and WASM extractors | abstraction | extractors | 3 | 19 |
+| 3 | Decompose Leiden partition and optimiser | decomposition | graph-engine | 2 | 4 |
+| 4 | Decompose MCP server, search formatter, graph builder, AST engine | decomposition | domain | 3 | 4 |
+| 5 | Decompose WASM extractors (javascript.ts, go.ts) | decomposition | wasm-extractors | 2 | 4 |
+| 6 | Decompose features and presentation formatters | decomposition | features/presentation | 4 | 7 |
+| 7 | Decompose native Rust extractors | decomposition | native-extractors | 4 | 8 |
+| 8 | Decompose native engine core (edge_builder, complexity, cfg, dataflow) | decomposition | native-engine | 2 | 4 |
+| 9 | Reduce complexity across domain, extractors, and features | quality_fix | cross-cutting | 7 | 28 |
+| 10 | Address warn-level issues in shared, domain, presentation, infra | warning | cross-cutting | 3 | 7 |
 
 ---
 
