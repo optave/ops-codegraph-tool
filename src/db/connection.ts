@@ -81,11 +81,6 @@ export function _resetRepoRootCache(): void {
   _cachedRepoRootCwd = undefined;
 }
 
-/** Reset the version warning flag (for testing). */
-export function _resetVersionWarning(): void {
-  _versionWarned = false;
-}
-
 function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
