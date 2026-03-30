@@ -108,8 +108,8 @@ function handleDefmodule(node: TreeSitterNode, ctx: ExtractorOutput): void {
 
 function collectModuleMembers(
   doBlock: TreeSitterNode,
-  ctx: ExtractorOutput,
-  moduleName: string,
+  _ctx: ExtractorOutput,
+  _moduleName: string,
   children: SubDeclaration[],
 ): void {
   for (let i = 0; i < doBlock.childCount; i++) {

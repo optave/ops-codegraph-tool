@@ -1,11 +1,10 @@
 import type {
-  Call,
   ExtractorOutput,
   SubDeclaration,
   TreeSitterNode,
   TreeSitterTree,
 } from '../types.js';
-import { extractModifierVisibility, findChild, nodeEndLine } from './helpers.js';
+import { findChild, nodeEndLine } from './helpers.js';
 
 /**
  * Extract symbols from Dart files.
