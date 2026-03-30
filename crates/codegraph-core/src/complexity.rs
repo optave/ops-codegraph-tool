@@ -409,6 +409,142 @@ fn walk_children(
     }
 }
 
+// ─── Shared complexity classification helpers ────────────────────────────
+
+/// Detect whether this node is an else-if via Pattern A (JS/C#/Rust: if inside
+/// else_clause), Pattern B (Python/Ruby/PHP: explicit elif node), or Pattern C
+/// (Go/Java: if_statement as `alternative` of parent if).
+///
+/// Returns a `BranchAction` telling the caller what cognitive/cyclomatic
+/// adjustments to make and what nesting delta to apply to children.
+enum BranchAction {
+    /// Node handled — walk children at the given nesting delta, then return.
+    Handled { cognitive_delta: u32, cyclomatic_delta: u32, nesting_delta: u32 },
+    /// Not a special branch pattern — fall through to normal processing.
+    NotHandled,
+}
+
+/// Classify a branch node (one where `rules.is_branch(kind)` is true).
+fn classify_branch(node: &Node, kind: &str, rules: &LangRules, nesting_level: u32) -> BranchAction {
+    // Pattern A: else clause wraps if (JS/C#/Rust)
+    if let Some(else_type) = rules.else_node_type {
+        if kind == else_type {
+            let is_else_if = node.named_child(0).map_or(false, |c| {
+                rules.if_node_type.map_or(false, |if_t| c.kind() == if_t)
+            });
+            if is_else_if {
+                // else-if: the if_statement child handles its own increment
+                return BranchAction::Handled { cognitive_delta: 0, cyclomatic_delta: 0, nesting_delta: 0 };
+            }
+            // Plain else
+            return BranchAction::Handled { cognitive_delta: 1, cyclomatic_delta: 0, nesting_delta: 0 };
+        }
+    }
+
+    // Pattern B: explicit elif node (Python/Ruby/PHP)
+    if let Some(elif_type) = rules.elif_node_type {
+        if kind == elif_type {
+            return BranchAction::Handled { cognitive_delta: 1, cyclomatic_delta: 1, nesting_delta: 0 };
+        }
+    }
+
+    // Detect else-if via Pattern A or C
+    if detect_else_if(node, kind, rules) {
+        return BranchAction::Handled { cognitive_delta: 1, cyclomatic_delta: 1, nesting_delta: 0 };
+    }
+
+    // Regular branch node
+    let mut cyc = 1u32;
+    if rules.is_switch_like(kind) {
+        cyc = 0; // Cases handle cyclomatic, not the switch itself
+    }
+    let nest = if rules.is_nesting(kind) { 1u32 } else { 0u32 };
+    BranchAction::Handled {
+        cognitive_delta: 1 + nesting_level,
+        cyclomatic_delta: cyc,
+        nesting_delta: nest,
+    }
+}
+
+/// Detect whether an if-node is actually an else-if (Pattern A or C).
+fn detect_else_if(node: &Node, kind: &str, rules: &LangRules) -> bool {
+    if !rules.if_node_type.map_or(false, |if_t| kind == if_t) {
+        return false;
+    }
+    if rules.else_via_alternative {
+        // Pattern C (Go/Java): if_statement is the alternative of parent if_statement
+        if let Some(parent) = node.parent() {
+            if rules.if_node_type.map_or(false, |if_t| parent.kind() == if_t) {
+                if let Some(alt) = parent.child_by_field_name("alternative") {
+                    if alt.id() == node.id() {
+                        return true;
+                    }
+                }
+            }
+        }
+    } else if rules.else_node_type.is_some() {
+        // Pattern A (JS/C#/Rust): if_statement inside else_clause
+        if let Some(parent) = node.parent() {
+            if rules.else_node_type.map_or(false, |else_t| parent.kind() == else_t) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Detect Pattern C plain else: a non-if block that is the `alternative` of an
+/// if_statement (Go/Java).
+fn is_pattern_c_else(node: &Node, kind: &str, rules: &LangRules) -> bool {
+    if !rules.else_via_alternative {
+        return false;
+    }
+    if rules.if_node_type.map_or(false, |if_t| kind == if_t) {
+        return false; // This is an if, not a plain else block
+    }
+    if let Some(parent) = node.parent() {
+        if rules.if_node_type.map_or(false, |if_t| parent.kind() == if_t) {
+            if let Some(alt) = parent.child_by_field_name("alternative") {
+                return alt.id() == node.id();
+            }
+        }
+    }
+    false
+}
+
+/// Handle logical operator nodes: returns true if the node was a logical op
+/// (caller should walk children and return).
+fn handle_logical_op(
+    node: &Node,
+    kind: &str,
+    rules: &LangRules,
+    cognitive: &mut u32,
+    cyclomatic: &mut u32,
+) -> bool {
+    if kind != rules.logical_node_type {
+        return false;
+    }
+    let Some(op_node) = node.child(1) else { return false };
+    let op = op_node.kind();
+    if !rules.is_logical_op(op) {
+        return false;
+    }
+
+    *cyclomatic += 1;
+
+    // Cognitive: +1 only when operator changes from the previous sibling sequence
+    let same_sequence = node.parent().map_or(false, |parent| {
+        parent.kind() == rules.logical_node_type
+            && parent.child(1).map_or(false, |pop| pop.kind() == op)
+    });
+    if !same_sequence {
+        *cognitive += 1;
+    }
+    true
+}
+
+// ─── walk (complexity-only DFS) ─────────────────────────────────────────
+
 fn walk(
     node: &Node,
     nesting_level: u32,
@@ -424,244 +560,54 @@ fn walk(
     }
     let kind = node.kind();
 
-    // Track nesting depth
     if nesting_level > *max_nesting {
         *max_nesting = nesting_level;
     }
 
-    // Handle logical operators in binary expressions
-    if kind == rules.logical_node_type {
-        if let Some(op_node) = node.child(1) {
-            let op = op_node.kind();
-            if rules.is_logical_op(op) {
-                // Cyclomatic: +1 for every logical operator
-                *cyclomatic += 1;
-
-                // Cognitive: +1 only when operator changes from the previous sibling sequence
-                let mut same_sequence = false;
-                if let Some(parent) = node.parent() {
-                    if parent.kind() == rules.logical_node_type {
-                        if let Some(parent_op) = parent.child(1) {
-                            if parent_op.kind() == op {
-                                same_sequence = true;
-                            }
-                        }
-                    }
-                }
-                if !same_sequence {
-                    *cognitive += 1;
-                }
-
-                // Walk children manually to avoid double-counting
-                walk_children(
-                    node,
-                    nesting_level,
-                    false,
-                    rules,
-                    cognitive,
-                    cyclomatic,
-                    max_nesting,
-                    depth,
-                );
-                return;
-            }
-        }
+    // Logical operators
+    if handle_logical_op(node, kind, rules, cognitive, cyclomatic) {
+        walk_children(node, nesting_level, false, rules, cognitive, cyclomatic, max_nesting, depth);
+        return;
     }
 
-    // Handle optional chaining (cyclomatic only)
+    // Optional chaining (cyclomatic only)
     if let Some(opt_type) = rules.optional_chain_type {
         if kind == opt_type {
             *cyclomatic += 1;
         }
     }
 
-    // Handle branch/control flow nodes (skip keyword leaf tokens — childCount > 0 guard)
+    // Branch/control flow nodes (skip keyword leaf tokens)
     if rules.is_branch(kind) && node.child_count() > 0 {
-        // Pattern A: else clause wraps if (JS/C#/Rust)
-        if let Some(else_type) = rules.else_node_type {
-            if kind == else_type {
-                let first_child = node.named_child(0);
-                if first_child.map_or(false, |c| {
-                    rules.if_node_type.map_or(false, |if_t| c.kind() == if_t)
-                }) {
-                    // else-if: the if_statement child handles its own increment
-                    walk_children(
-                        node,
-                        nesting_level,
-                        false,
-                        rules,
-                        cognitive,
-                        cyclomatic,
-                        max_nesting,
-                        depth,
-                    );
-                    return;
-                }
-                // Plain else
-                *cognitive += 1;
-                walk_children(
-                    node,
-                    nesting_level,
-                    false,
-                    rules,
-                    cognitive,
-                    cyclomatic,
-                    max_nesting,
-                    depth,
-                );
-                return;
-            }
-        }
-
-        // Pattern B: explicit elif node (Python/Ruby/PHP)
-        if let Some(elif_type) = rules.elif_node_type {
-            if kind == elif_type {
-                *cognitive += 1;
-                *cyclomatic += 1;
-                walk_children(
-                    node,
-                    nesting_level,
-                    false,
-                    rules,
-                    cognitive,
-                    cyclomatic,
-                    max_nesting,
-                    depth,
-                );
-                return;
-            }
-        }
-
-        // Detect else-if via Pattern A or C
-        let mut is_else_if = false;
-        if rules.if_node_type.map_or(false, |if_t| kind == if_t) {
-            if rules.else_via_alternative {
-                // Pattern C (Go/Java): if_statement is the alternative of parent if_statement
-                if let Some(parent) = node.parent() {
-                    if rules
-                        .if_node_type
-                        .map_or(false, |if_t| parent.kind() == if_t)
-                    {
-                        if let Some(alt) = parent.child_by_field_name("alternative") {
-                            if alt.id() == node.id() {
-                                is_else_if = true;
-                            }
-                        }
-                    }
-                }
-            } else if rules.else_node_type.is_some() {
-                // Pattern A (JS/C#/Rust): if_statement inside else_clause
-                if let Some(parent) = node.parent() {
-                    if rules
-                        .else_node_type
-                        .map_or(false, |else_t| parent.kind() == else_t)
-                    {
-                        is_else_if = true;
-                    }
-                }
-            }
-        }
-
-        if is_else_if {
-            *cognitive += 1;
-            *cyclomatic += 1;
-            walk_children(
-                node,
-                nesting_level,
-                false,
-                rules,
-                cognitive,
-                cyclomatic,
-                max_nesting,
-                depth,
-            );
-            return;
-        }
-
-        // Regular branch node
-        *cognitive += 1 + nesting_level; // structural + nesting
-        *cyclomatic += 1;
-
-        // Switch-like nodes don't add cyclomatic themselves (cases do)
-        if rules.is_switch_like(kind) {
-            *cyclomatic -= 1; // Undo the ++ above; cases handle cyclomatic
-        }
-
-        if rules.is_nesting(kind) {
-            walk_children(
-                node,
-                nesting_level + 1,
-                false,
-                rules,
-                cognitive,
-                cyclomatic,
-                max_nesting,
-                depth,
-            );
+        if let BranchAction::Handled { cognitive_delta, cyclomatic_delta, nesting_delta } =
+            classify_branch(node, kind, rules, nesting_level)
+        {
+            *cognitive += cognitive_delta;
+            *cyclomatic += cyclomatic_delta;
+            walk_children(node, nesting_level + nesting_delta, false, rules, cognitive, cyclomatic, max_nesting, depth);
             return;
         }
     }
 
-    // Pattern C plain else: block that is the alternative of an if_statement (Go/Java)
-    if rules.else_via_alternative {
-        if rules.if_node_type.map_or(false, |if_t| kind != if_t) {
-            if let Some(parent) = node.parent() {
-                if rules
-                    .if_node_type
-                    .map_or(false, |if_t| parent.kind() == if_t)
-                {
-                    if let Some(alt) = parent.child_by_field_name("alternative") {
-                        if alt.id() == node.id() {
-                            *cognitive += 1;
-                            walk_children(
-                                node,
-                                nesting_level,
-                                false,
-                                rules,
-                                cognitive,
-                                cyclomatic,
-                                max_nesting,
-                                depth,
-                            );
-                            return;
-                        }
-                    }
-                }
-            }
-        }
+    // Pattern C plain else (Go/Java)
+    if is_pattern_c_else(node, kind, rules) {
+        *cognitive += 1;
+        walk_children(node, nesting_level, false, rules, cognitive, cyclomatic, max_nesting, depth);
+        return;
     }
 
-    // Handle case nodes (cyclomatic only, skip keyword leaves)
+    // Case nodes (cyclomatic only, skip keyword leaves)
     if rules.is_case(kind) && node.child_count() > 0 {
         *cyclomatic += 1;
     }
 
-    // Handle nested function definitions (increase nesting)
+    // Nested function definitions (increase nesting)
     if !is_top_function && rules.is_function(kind) {
-        walk_children(
-            node,
-            nesting_level + 1,
-            false,
-            rules,
-            cognitive,
-            cyclomatic,
-            max_nesting,
-            depth,
-        );
+        walk_children(node, nesting_level + 1, false, rules, cognitive, cyclomatic, max_nesting, depth);
         return;
     }
 
-    // Walk children
-    walk_children(
-        node,
-        nesting_level,
-        false,
-        rules,
-        cognitive,
-        cyclomatic,
-        max_nesting,
-        depth,
-    );
+    walk_children(node, nesting_level, false, rules, cognitive, cyclomatic, max_nesting, depth);
 }
 
 // ─── Halstead Operator/Operand Classification ─────────────────────────────
@@ -1070,6 +1016,34 @@ fn walk_all_children(
     }
 }
 
+/// Classify a single node for Halstead operator/operand counting.
+fn classify_halstead(
+    node: &Node,
+    kind: &str,
+    source: &[u8],
+    hr: &HalsteadRules,
+    operators: &mut HashMap<String, u32>,
+    operands: &mut HashMap<String, u32>,
+) {
+    // Compound operators (non-leaf): count node type as operator
+    if hr.compound_operators.contains(&kind) {
+        *operators.entry(kind.to_string()).or_insert(0) += 1;
+    }
+    // Leaf nodes: classify as operator or operand
+    if node.child_count() == 0 {
+        if hr.operator_leaf_types.contains(&kind) {
+            *operators.entry(kind.to_string()).or_insert(0) += 1;
+        } else if hr.operand_leaf_types.contains(&kind) {
+            let start = node.start_byte();
+            let end = node.end_byte().min(source.len());
+            let text = String::from_utf8_lossy(&source[start..end]).to_string();
+            *operands.entry(text).or_insert(0) += 1;
+        }
+    }
+}
+
+// ─── walk_all (merged complexity + Halstead DFS) ────────────────────────
+
 #[allow(clippy::too_many_arguments)]
 fn walk_all(
     node: &Node,
@@ -1093,21 +1067,7 @@ fn walk_all(
 
     if let Some(hr) = h_rules {
         if !skip_h {
-            // Compound operators (non-leaf): count node type as operator
-            if hr.compound_operators.contains(&kind) {
-                *operators.entry(kind.to_string()).or_insert(0) += 1;
-            }
-            // Leaf nodes: classify as operator or operand
-            if node.child_count() == 0 {
-                if hr.operator_leaf_types.contains(&kind) {
-                    *operators.entry(kind.to_string()).or_insert(0) += 1;
-                } else if hr.operand_leaf_types.contains(&kind) {
-                    let start = node.start_byte();
-                    let end = node.end_byte().min(source.len());
-                    let text = String::from_utf8_lossy(&source[start..end]).to_string();
-                    *operands.entry(text).or_insert(0) += 1;
-                }
-            }
+            classify_halstead(node, kind, source, hr, operators, operands);
         }
     }
 
@@ -1116,155 +1076,53 @@ fn walk_all(
         *max_nesting = nesting_level;
     }
 
-    // Handle logical operators in binary expressions
-    if kind == c_rules.logical_node_type {
-        if let Some(op_node) = node.child(1) {
-            let op = op_node.kind();
-            if c_rules.is_logical_op(op) {
-                *cyclomatic += 1;
-
-                let mut same_sequence = false;
-                if let Some(parent) = node.parent() {
-                    if parent.kind() == c_rules.logical_node_type {
-                        if let Some(parent_op) = parent.child(1) {
-                            if parent_op.kind() == op {
-                                same_sequence = true;
-                            }
-                        }
-                    }
-                }
-                if !same_sequence {
-                    *cognitive += 1;
-                }
-
-                walk_all_children(
-                    node, source, nesting_level, false, skip_h,
-                    c_rules, h_rules, cognitive, cyclomatic, max_nesting, operators, operands,
-                );
-                return;
-            }
-        }
+    // Logical operators
+    if handle_logical_op(node, kind, c_rules, cognitive, cyclomatic) {
+        walk_all_children(
+            node, source, nesting_level, false, skip_h,
+            c_rules, h_rules, cognitive, cyclomatic, max_nesting, operators, operands,
+        );
+        return;
     }
 
-    // Handle optional chaining (cyclomatic only)
+    // Optional chaining (cyclomatic only)
     if let Some(opt_type) = c_rules.optional_chain_type {
         if kind == opt_type {
             *cyclomatic += 1;
         }
     }
 
-    // Handle branch/control flow nodes (skip keyword leaf tokens — childCount > 0 guard)
+    // Branch/control flow nodes (skip keyword leaf tokens)
     if c_rules.is_branch(kind) && node.child_count() > 0 {
-        // Pattern A: else clause wraps if (JS/C#/Rust)
-        if let Some(else_type) = c_rules.else_node_type {
-            if kind == else_type {
-                let first_child = node.named_child(0);
-                if first_child.map_or(false, |c| {
-                    c_rules.if_node_type.map_or(false, |if_t| c.kind() == if_t)
-                }) {
-                    walk_all_children(
-                        node, source, nesting_level, false, skip_h,
-                        c_rules, h_rules, cognitive, cyclomatic, max_nesting, operators, operands,
-                    );
-                    return;
-                }
-                *cognitive += 1;
-                walk_all_children(
-                    node, source, nesting_level, false, skip_h,
-                    c_rules, h_rules, cognitive, cyclomatic, max_nesting, operators, operands,
-                );
-                return;
-            }
-        }
-
-        // Pattern B: explicit elif node (Python/Ruby/PHP)
-        if let Some(elif_type) = c_rules.elif_node_type {
-            if kind == elif_type {
-                *cognitive += 1;
-                *cyclomatic += 1;
-                walk_all_children(
-                    node, source, nesting_level, false, skip_h,
-                    c_rules, h_rules, cognitive, cyclomatic, max_nesting, operators, operands,
-                );
-                return;
-            }
-        }
-
-        // Detect else-if via Pattern A or C
-        let mut is_else_if = false;
-        if c_rules.if_node_type.map_or(false, |if_t| kind == if_t) {
-            if c_rules.else_via_alternative {
-                if let Some(parent) = node.parent() {
-                    if c_rules.if_node_type.map_or(false, |if_t| parent.kind() == if_t) {
-                        if let Some(alt) = parent.child_by_field_name("alternative") {
-                            if alt.id() == node.id() {
-                                is_else_if = true;
-                            }
-                        }
-                    }
-                }
-            } else if c_rules.else_node_type.is_some() {
-                if let Some(parent) = node.parent() {
-                    if c_rules.else_node_type.map_or(false, |else_t| parent.kind() == else_t) {
-                        is_else_if = true;
-                    }
-                }
-            }
-        }
-
-        if is_else_if {
-            *cognitive += 1;
-            *cyclomatic += 1;
+        if let BranchAction::Handled { cognitive_delta, cyclomatic_delta, nesting_delta } =
+            classify_branch(node, kind, c_rules, nesting_level)
+        {
+            *cognitive += cognitive_delta;
+            *cyclomatic += cyclomatic_delta;
             walk_all_children(
-                node, source, nesting_level, false, skip_h,
-                c_rules, h_rules, cognitive, cyclomatic, max_nesting, operators, operands,
-            );
-            return;
-        }
-
-        // Regular branch node
-        *cognitive += 1 + nesting_level;
-        *cyclomatic += 1;
-
-        if c_rules.is_switch_like(kind) {
-            *cyclomatic -= 1;
-        }
-
-        if c_rules.is_nesting(kind) {
-            walk_all_children(
-                node, source, nesting_level + 1, false, skip_h,
+                node, source, nesting_level + nesting_delta, false, skip_h,
                 c_rules, h_rules, cognitive, cyclomatic, max_nesting, operators, operands,
             );
             return;
         }
     }
 
-    // Pattern C plain else: block that is the alternative of an if_statement (Go/Java)
-    if c_rules.else_via_alternative {
-        if c_rules.if_node_type.map_or(false, |if_t| kind != if_t) {
-            if let Some(parent) = node.parent() {
-                if c_rules.if_node_type.map_or(false, |if_t| parent.kind() == if_t) {
-                    if let Some(alt) = parent.child_by_field_name("alternative") {
-                        if alt.id() == node.id() {
-                            *cognitive += 1;
-                            walk_all_children(
-                                node, source, nesting_level, false, skip_h,
-                                c_rules, h_rules, cognitive, cyclomatic, max_nesting, operators, operands,
-                            );
-                            return;
-                        }
-                    }
-                }
-            }
-        }
+    // Pattern C plain else (Go/Java)
+    if is_pattern_c_else(node, kind, c_rules) {
+        *cognitive += 1;
+        walk_all_children(
+            node, source, nesting_level, false, skip_h,
+            c_rules, h_rules, cognitive, cyclomatic, max_nesting, operators, operands,
+        );
+        return;
     }
 
-    // Handle case nodes (cyclomatic only, skip keyword leaves)
+    // Case nodes (cyclomatic only, skip keyword leaves)
     if c_rules.is_case(kind) && node.child_count() > 0 {
         *cyclomatic += 1;
     }
 
-    // Handle nested function definitions (increase nesting)
+    // Nested function definitions (increase nesting)
     if !is_top_function && c_rules.is_function(kind) {
         walk_all_children(
             node, source, nesting_level + 1, false, skip_h,
@@ -1273,7 +1131,6 @@ fn walk_all(
         return;
     }
 
-    // Walk children
     walk_all_children(
         node, source, nesting_level, false, skip_h,
         c_rules, h_rules, cognitive, cyclomatic, max_nesting, operators, operands,
