@@ -176,12 +176,12 @@ function handleScalaValVarDef(node: TreeSitterNode, ctx: ExtractorOutput): void 
   if (node.parent?.type === 'template_body') return;
   const pattern = node.childForFieldName('pattern');
   if (!pattern) return;
-  const nameNode =
-    pattern.type === 'identifier' ? pattern : findChild(pattern, 'identifier');
+  const nameNode = pattern.type === 'identifier' ? pattern : findChild(pattern, 'identifier');
   if (!nameNode) return;
+  const kind = node.type === 'val_definition' ? 'constant' : 'variable';
   ctx.definitions.push({
     name: nameNode.text,
-    kind: 'function',
+    kind,
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
   });
@@ -189,11 +189,7 @@ function handleScalaValVarDef(node: TreeSitterNode, ctx: ExtractorOutput): void 
 
 // ── Inheritance helpers ─────────────────────────────────────────────────────
 
-function extractScalaInheritance(
-  node: TreeSitterNode,
-  name: string,
-  ctx: ExtractorOutput,
-): void {
+function extractScalaInheritance(node: TreeSitterNode, name: string, ctx: ExtractorOutput): void {
   const extendsClause = findChild(node, 'extends_clause');
   if (!extendsClause) return;
   for (let i = 0; i < extendsClause.childCount; i++) {
@@ -238,8 +234,7 @@ function extractScalaBodyMembers(
     } else if (member.type === 'val_definition' || member.type === 'var_definition') {
       const pattern = member.childForFieldName('pattern');
       if (pattern) {
-        const nameNode =
-          pattern.type === 'identifier' ? pattern : findChild(pattern, 'identifier');
+        const nameNode = pattern.type === 'identifier' ? pattern : findChild(pattern, 'identifier');
         if (nameNode) {
           children.push({
             name: nameNode.text,
