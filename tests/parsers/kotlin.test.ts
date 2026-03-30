@@ -51,7 +51,7 @@ describe('Kotlin parser', () => {
   it('extracts object declarations', () => {
     const symbols = parseKotlin(`object Config { }`);
     expect(symbols.definitions).toContainEqual(
-      expect.objectContaining({ name: 'Config', kind: 'module', line: 1 }),
+      expect.objectContaining({ name: 'Config', kind: 'class', line: 1 }),
     );
   });
 
@@ -64,9 +64,7 @@ describe('Kotlin parser', () => {
 
   it('extracts imports', () => {
     const symbols = parseKotlin(`import kotlin.collections.Map\nclass Foo { }`);
-    expect(symbols.imports).toContainEqual(
-      expect.objectContaining({ kotlinImport: true }),
-    );
+    expect(symbols.imports).toContainEqual(expect.objectContaining({ kotlinImport: true }));
   });
 
   it('extracts function calls', () => {

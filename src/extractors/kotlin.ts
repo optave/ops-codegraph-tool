@@ -194,7 +194,7 @@ function handleKotlinObjectDecl(node: TreeSitterNode, ctx: ExtractorOutput): voi
   if (!nameNode) return;
   ctx.definitions.push({
     name: nameNode.text,
-    kind: 'module',
+    kind: 'class',
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
   });
