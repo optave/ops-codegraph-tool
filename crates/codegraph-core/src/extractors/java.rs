@@ -10,9 +10,9 @@ pub struct JavaExtractor;
 impl SymbolExtractor for JavaExtractor {
     fn extract(&self, tree: &Tree, source: &[u8], file_path: &str) -> FileSymbols {
         let mut symbols = FileSymbols::new(file_path.to_string());
-        walk_node(&tree.root_node(), source, &mut symbols);
+        walk_tree(&tree.root_node(), source, &mut symbols, match_java_node);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &JAVA_AST_CONFIG);
-        extract_java_type_map(&tree.root_node(), source, &mut symbols);
+        walk_tree(&tree.root_node(), source, &mut symbols, match_java_type_map);
         symbols
     }
 }
@@ -27,14 +27,7 @@ fn extract_java_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Option<
     }
 }
 
-fn extract_java_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    extract_java_type_map_depth(node, source, symbols, 0);
-}
-
-fn extract_java_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
-    if depth >= MAX_WALK_DEPTH {
-        return;
-    }
+fn match_java_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "local_variable_declaration" => {
             if let Some(type_node) = node.child_by_field_name("type") {
@@ -68,11 +61,6 @@ fn extract_java_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSym
         }
         _ => {}
     }
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            extract_java_type_map_depth(&child, source, symbols, depth + 1);
-        }
-    }
 }
 
 fn find_java_parent_class<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> {
@@ -91,14 +79,7 @@ fn find_java_parent_class<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> 
     None
 }
 
-fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    walk_node_depth(node, source, symbols, 0);
-}
-
-fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
-    if depth >= MAX_WALK_DEPTH {
-        return;
-    }
+fn match_java_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "class_declaration" => {
             if let Some(name_node) = node.child_by_field_name("name") {
@@ -314,12 +295,6 @@ fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth:
         }
 
         _ => {}
-    }
-
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_node_depth(&child, source, symbols, depth + 1);
-        }
     }
 }
 

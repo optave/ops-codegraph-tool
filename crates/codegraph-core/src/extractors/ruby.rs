@@ -10,7 +10,7 @@ pub struct RubyExtractor;
 impl SymbolExtractor for RubyExtractor {
     fn extract(&self, tree: &Tree, source: &[u8], file_path: &str) -> FileSymbols {
         let mut symbols = FileSymbols::new(file_path.to_string());
-        walk_node(&tree.root_node(), source, &mut symbols);
+        walk_tree(&tree.root_node(), source, &mut symbols, match_ruby_node);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &RUBY_AST_CONFIG);
         symbols
     }
@@ -32,14 +32,7 @@ fn find_ruby_parent_class<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> 
     None
 }
 
-fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    walk_node_depth(node, source, symbols, 0);
-}
-
-fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
-    if depth >= MAX_WALK_DEPTH {
-        return;
-    }
+fn match_ruby_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "class" => {
             if let Some(name_node) = node.child_by_field_name("name") {
@@ -179,12 +172,6 @@ fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth:
         }
 
         _ => {}
-    }
-
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_node_depth(&child, source, symbols, depth + 1);
-        }
     }
 }
 
