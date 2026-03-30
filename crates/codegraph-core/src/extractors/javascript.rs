@@ -1184,18 +1184,10 @@ fn extract_superclass(heritage: &Node, source: &[u8]) -> Option<String> {
     None
 }
 
-fn find_parent_class<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> {
-    let mut current = node.parent();
-    while let Some(parent) = current {
-        if parent.kind() == "class_declaration" || parent.kind() == "class" {
-            if let Some(name_node) = parent.child_by_field_name("name") {
-                return Some(node_text(&name_node, source).to_string());
-            }
-            return None;
-        }
-        current = parent.parent();
-    }
-    None
+const JS_CLASS_KINDS: &[&str] = &["class_declaration", "class"];
+
+fn find_parent_class(node: &Node, source: &[u8]) -> Option<String> {
+    find_enclosing_type_name(node, JS_CLASS_KINDS, source)
 }
 
 /// Extract named bindings from a dynamic `import()` call expression.

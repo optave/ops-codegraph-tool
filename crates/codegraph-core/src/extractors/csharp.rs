@@ -17,21 +17,13 @@ impl SymbolExtractor for CSharpExtractor {
     }
 }
 
-fn find_csharp_parent_type<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> {
-    let mut current = node.parent();
-    while let Some(parent) = current {
-        match parent.kind() {
-            "class_declaration" | "struct_declaration" | "interface_declaration"
-            | "enum_declaration" | "record_declaration" => {
-                return parent
-                    .child_by_field_name("name")
-                    .map(|n| node_text(&n, source).to_string());
-            }
-            _ => {}
-        }
-        current = parent.parent();
-    }
-    None
+const CSHARP_TYPE_KINDS: &[&str] = &[
+    "class_declaration", "struct_declaration", "interface_declaration",
+    "enum_declaration", "record_declaration",
+];
+
+fn find_csharp_parent_type(node: &Node, source: &[u8]) -> Option<String> {
+    find_enclosing_type_name(node, CSHARP_TYPE_KINDS, source)
 }
 
 fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {

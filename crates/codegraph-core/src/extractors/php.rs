@@ -17,20 +17,10 @@ impl SymbolExtractor for PhpExtractor {
     }
 }
 
-fn find_php_parent_class<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> {
-    let mut current = node.parent();
-    while let Some(parent) = current {
-        match parent.kind() {
-            "class_declaration" | "trait_declaration" | "enum_declaration" => {
-                return parent
-                    .child_by_field_name("name")
-                    .map(|n| node_text(&n, source).to_string());
-            }
-            _ => {}
-        }
-        current = parent.parent();
-    }
-    None
+const PHP_CLASS_KINDS: &[&str] = &["class_declaration", "trait_declaration", "enum_declaration"];
+
+fn find_php_parent_class(node: &Node, source: &[u8]) -> Option<String> {
+    find_enclosing_type_name(node, PHP_CLASS_KINDS, source)
 }
 
 fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {

@@ -342,17 +342,10 @@ fn is_upper_snake_case(s: &str) -> bool {
 
 // ── Existing helpers ────────────────────────────────────────────────────────
 
-fn find_python_parent_class<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> {
-    let mut current = node.parent();
-    while let Some(parent) = current {
-        if parent.kind() == "class_definition" {
-            return parent
-                .child_by_field_name("name")
-                .map(|n| node_text(&n, source).to_string());
-        }
-        current = parent.parent();
-    }
-    None
+const PYTHON_CLASS_KINDS: &[&str] = &["class_definition"];
+
+fn find_python_parent_class(node: &Node, source: &[u8]) -> Option<String> {
+    find_enclosing_type_name(node, PYTHON_CLASS_KINDS, source)
 }
 
 fn extract_python_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {

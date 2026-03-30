@@ -75,20 +75,10 @@ fn extract_java_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSym
     }
 }
 
-fn find_java_parent_class<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> {
-    let mut current = node.parent();
-    while let Some(parent) = current {
-        match parent.kind() {
-            "class_declaration" | "enum_declaration" | "interface_declaration" => {
-                return parent
-                    .child_by_field_name("name")
-                    .map(|n| node_text(&n, source).to_string());
-            }
-            _ => {}
-        }
-        current = parent.parent();
-    }
-    None
+const JAVA_CLASS_KINDS: &[&str] = &["class_declaration", "enum_declaration", "interface_declaration"];
+
+fn find_java_parent_class(node: &Node, source: &[u8]) -> Option<String> {
+    find_enclosing_type_name(node, JAVA_CLASS_KINDS, source)
 }
 
 fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
