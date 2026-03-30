@@ -80,6 +80,8 @@ export async function buildAstNodes(
         }>,
       ): number;
     };
+    suspendJsDb?: () => void;
+    resumeJsDb?: () => void;
   },
 ): Promise<void> {
   console.error(
@@ -123,7 +125,13 @@ export async function buildAstNodes(
 
     if (!needsJsFallback) {
       const expectedNodes = batches.reduce((s, b) => s + b.nodes.length, 0);
-      const inserted = nativeDb.bulkInsertAstNodes(batches);
+      let inserted: number;
+      try {
+        engineOpts?.suspendJsDb?.();
+        inserted = nativeDb.bulkInsertAstNodes(batches);
+      } finally {
+        engineOpts?.resumeJsDb?.();
+      }
       if (inserted === expectedNodes) {
         debug(`AST extraction (native bulk): ${inserted} nodes stored`);
         return;

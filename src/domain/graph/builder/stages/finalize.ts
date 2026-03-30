@@ -187,7 +187,7 @@ function runAdvisoryChecks(
 }
 
 export async function finalize(ctx: PipelineContext): Promise<void> {
-  const { db, allSymbols, rootDir, isFullBuild, hasEmbeddings, opts } = ctx;
+  const { allSymbols, rootDir, isFullBuild, hasEmbeddings, opts } = ctx;
 
   const t0 = performance.now();
 
@@ -197,8 +197,9 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   // both the stale-embeddings comparison and the persisted built_at metadata.
   const buildNow = new Date();
 
-  const nodeCount = (db.prepare('SELECT COUNT(*) as c FROM nodes').get() as { c: number }).c;
-  const actualEdgeCount = (db.prepare('SELECT COUNT(*) as c FROM edges').get() as { c: number }).c;
+  const nodeCount = (ctx.db.prepare('SELECT COUNT(*) as c FROM nodes').get() as { c: number }).c;
+  const actualEdgeCount = (ctx.db.prepare('SELECT COUNT(*) as c FROM edges').get() as { c: number })
+    .c;
   info(`Graph built: ${nodeCount} nodes, ${actualEdgeCount} edges`);
   info(`Stored in ${ctx.dbPath}`);
 
@@ -212,7 +213,7 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
       'Finalize: skipping advisory queries (orphaned/stale embeddings, unused exports) for incremental build',
     );
   } else {
-    runAdvisoryChecks(db, hasEmbeddings, buildNow);
+    runAdvisoryChecks(ctx.db, hasEmbeddings, buildNow);
   }
 
   // Intentionally measured before closeDb / writeJournalHeader / auto-registration:
@@ -225,7 +226,7 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   // For small incremental builds, defer the expensive WAL checkpoint to the
   // next event loop tick. Skip for temp directories (tests) — they rmSync
   // immediately after build.
-  const pair = { db, nativeDb: ctx.nativeDb };
+  const pair = { db: ctx.db, nativeDb: ctx.nativeDb };
   const isTempDir = path.resolve(rootDir).startsWith(path.resolve(tmpdir()));
   if (!isFullBuild && allSymbols.size <= 5 && !isTempDir) {
     closeDbPairDeferred(pair);

@@ -35,6 +35,18 @@ function initializeEngine(ctx: PipelineContext): void {
     dataflow: ctx.opts.dataflow !== false,
     ast: ctx.opts.ast !== false,
     nativeDb: ctx.nativeDb,
+    // WAL checkpoint callbacks for dual-connection WAL guard (#696).
+    // Feature modules (ast, cfg, complexity, dataflow) receive `db` as a
+    // parameter and cannot tolerate close/reopen (stale reference). Instead,
+    // checkpoint the WAL so native writes start with a clean slate. Features
+    // return early on native success and never read native-written WAL data
+    // through the JS connection, so a post-write checkpoint is unnecessary.
+    suspendJsDb: ctx.nativeDb
+      ? () => {
+          ctx.db.pragma('wal_checkpoint(TRUNCATE)');
+        }
+      : undefined,
+    resumeJsDb: ctx.nativeDb ? () => {} : undefined,
   };
   const { name: engineName, version: engineVersion } = getActiveEngine(ctx.engineOpts);
   ctx.engineName = engineName as 'native' | 'wasm';
@@ -113,7 +125,7 @@ function setupPipeline(ctx: PipelineContext): void {
       ctx.nativeDb = undefined;
     }
     // Always run JS initSchema so better-sqlite3 sees the schema —
-    // nativeDb is closed before pipeline stages run (dual-connection guard).
+    // nativeDb is closed during pipeline stages and reopened for analyses.
     initSchema(ctx.db);
   } else {
     initSchema(ctx.db);
@@ -160,12 +172,15 @@ function formatTimingResult(ctx: PipelineContext): BuildResult {
 // ── Pipeline stages execution ───────────────────────────────────────────
 
 async function runPipelineStages(ctx: PipelineContext): Promise<void> {
-  // Prevent dual-connection WAL corruption: when both better-sqlite3 (ctx.db)
-  // and rusqlite (ctx.nativeDb) are open to the same file, Rust writes corrupt
-  // the DB. Clear nativeDb so all stages use JS fallback paths. See #694.
+  // Prevent dual-connection WAL corruption during pipeline stages: when both
+  // better-sqlite3 (ctx.db) and rusqlite (ctx.nativeDb) are open to the same
+  // WAL-mode file, native writes corrupt the DB. Close nativeDb so stages
+  // use JS fallback paths. Reopened before runAnalyses for feature modules
+  // that use suspendJsDb/resumeJsDb WAL checkpoint pattern (#696).
+  const hadNativeDb = !!ctx.nativeDb;
   if (ctx.db && ctx.nativeDb) {
     try {
-      (ctx.nativeDb as { close?: () => void }).close?.();
+      ctx.nativeDb.close();
     } catch {
       /* ignore close errors */
     }
@@ -187,7 +202,39 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
   await resolveImports(ctx);
   await buildEdges(ctx);
   await buildStructure(ctx);
+
+  // Reopen nativeDb for feature modules (ast, cfg, complexity, dataflow)
+  // which use suspendJsDb/resumeJsDb WAL checkpoint before native writes.
+  if (hadNativeDb) {
+    const native = loadNative();
+    if (native?.NativeDatabase) {
+      try {
+        ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+        if (ctx.engineOpts) {
+          ctx.engineOpts.nativeDb = ctx.nativeDb;
+        }
+      } catch {
+        ctx.nativeDb = undefined;
+        if (ctx.engineOpts) {
+          ctx.engineOpts.nativeDb = undefined;
+        }
+      }
+    }
+  }
+
   await runAnalyses(ctx);
+
+  // Close nativeDb after analyses — finalize uses JS paths for setBuildMeta
+  // and closeDbPair handles cleanup. Avoids dual-connection during finalize.
+  if (ctx.nativeDb) {
+    try {
+      ctx.nativeDb.close();
+    } catch {
+      /* ignore close errors */
+    }
+    ctx.nativeDb = undefined;
+  }
+
   await finalize(ctx);
 }
 

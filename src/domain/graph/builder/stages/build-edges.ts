@@ -22,6 +22,7 @@ import type {
 import { computeConfidence } from '../../resolve.js';
 import type { PipelineContext } from '../context.js';
 import { BUILTIN_RECEIVERS, batchInsertEdges } from '../helpers.js';
+
 import { getResolved, isBarrelFile, resolveBarrelExport } from './resolve-imports.js';
 
 // ── Local types ──────────────────────────────────────────────────────────
@@ -628,7 +629,7 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
     const ok = ctx.nativeDb.bulkInsertEdges(nativeEdges);
     if (!ok) {
       debug('Native bulkInsertEdges failed — falling back to JS batchInsertEdges');
-      batchInsertEdges(db, allEdgeRows);
+      batchInsertEdges(ctx.db, allEdgeRows);
     }
   }
 

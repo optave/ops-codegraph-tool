@@ -42,7 +42,7 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
   // Disabled: bulkInsertNodes corrupts the DB when both the JS (better-sqlite3)
   // and Rust (rusqlite) connections are open to the same WAL-mode file.
   // The native path was never operational before — it always crashed on null
-  // visibility serialisation. See #694 for the dual-connection fix.
+  // visibility serialisation. See #696 for the dual-connection fix.
   if (ctx.db) return false;
 
   // Use NativeDatabase persistent connection (Phase 6.15+).
@@ -144,7 +144,7 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
     fileHashes.push({ file: item.relPath, hash: item.hash, mtime, size });
   }
 
-  return ctx.nativeDb.bulkInsertNodes(batches, fileHashes, removed);
+  return ctx.nativeDb!.bulkInsertNodes(batches, fileHashes, removed);
 }
 
 // ── JS fallback: Phase 1 ────────────────────────────────────────────
@@ -336,7 +336,7 @@ function updateFileHashes(
 // ── Main entry point ────────────────────────────────────────────────
 
 export async function insertNodes(ctx: PipelineContext): Promise<void> {
-  const { db, allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
+  const { allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
 
   // Populate fileSymbols before any DB writes (used by later stages)
   for (const [relPath, symbols] of allSymbols) {
@@ -366,17 +366,17 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
 
   let upsertHash: SqliteStatement | null;
   try {
-    upsertHash = db.prepare(
+    upsertHash = ctx.db.prepare(
       'INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)',
     );
   } catch {
     upsertHash = null;
   }
 
-  const insertAll = db.transaction(() => {
-    insertDefinitionsAndExports(db, allSymbols);
-    insertChildrenAndEdges(db, allSymbols);
-    updateFileHashes(db, allSymbols, precomputedData, metadataUpdates, rootDir, upsertHash);
+  const insertAll = ctx.db.transaction(() => {
+    insertDefinitionsAndExports(ctx.db, allSymbols);
+    insertChildrenAndEdges(ctx.db, allSymbols);
+    updateFileHashes(ctx.db, allSymbols, precomputedData, metadataUpdates, rootDir, upsertHash);
   });
 
   insertAll();
@@ -384,7 +384,7 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
 
   // Clean up removed file hashes
   if (upsertHash && removed.length > 0) {
-    const deleteHash = db.prepare('DELETE FROM file_hashes WHERE file = ?');
+    const deleteHash = ctx.db.prepare('DELETE FROM file_hashes WHERE file = ?');
     for (const relPath of removed) {
       deleteHash.run(relPath);
     }

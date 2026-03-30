@@ -216,7 +216,7 @@ Compare final metrics against `titan-state.json` baseline:
 
 ---
 
-## Step 5 — Compile the issue tracker
+## Step 5 — Compile the issue tracker and open GitHub issues
 
 Read `.codegraph/titan/issues.ndjson`. Each line is a JSON object:
 
@@ -229,6 +229,47 @@ Group issues by category and severity. Summarize:
 - **Tooling issues:** problems with the Titan pipeline or other tools
 - **Process notes:** suggestions for improving the Titan workflow
 - **Codebase observations:** structural concerns beyond what the audit covered
+
+### 5b. Open GitHub issues
+
+**Pre-check:** Verify `gh` is available and authenticated before attempting issue creation:
+```bash
+gh auth status 2>&1 || echo "GH_UNAVAILABLE"
+```
+If `GH_UNAVAILABLE`, skip issue creation entirely and note in the report: "GitHub issues were not created — `gh` CLI is not available or not authenticated. Create them manually from the Issues section below."
+
+For each issue with severity `bug` or `limitation`, create a GitHub issue using `gh`:
+
+```bash
+BODY=$(mktemp)
+cat > "$BODY" <<'ISSUE_BODY'
+## Context
+Discovered during Titan audit (phase: <phase>, date: <timestamp>).
+
+## Description
+<description>
+
+## Additional Context
+<context field, if present>
+
+## Source
+- **Titan phase:** <phase>
+- **Severity:** <severity>
+- **Category:** <category>
+ISSUE_BODY
+gh issue create --title "<category>: <short description>" --body-file "$BODY" --label "titan-audit"
+rm -f "$BODY"
+```
+
+Using `--body-file` with a temp file avoids quoting/expansion issues that can arise when issue descriptions contain backticks, `$()` sequences, or literal `EOF` strings.
+
+**Rules for issue creation:**
+- **Only open issues for `bug` and `limitation` severity.** Suggestions and observations go in the report only — they are not actionable enough for standalone issues.
+- **Check for duplicates first:** Run `gh issue list --search "<short description>" --state open --limit 5` before creating. If a matching open issue exists, skip it and note "existing issue #N" in the report.
+- **Label:** Use `titan-audit` label. If the label doesn't exist, create it: `gh label create titan-audit --description "Issues discovered during Titan audit" --color "d4c5f9" 2>/dev/null || true`
+- **Record each created issue number** for inclusion in the report's Issues section.
+
+For `suggestion` severity entries and entries with `category: "codebase"`, include them in the report's Issues section but do NOT create GitHub issues.
 
 ---
 
@@ -243,6 +284,14 @@ Read `.codegraph/titan/gate-log.ndjson`. Summarize:
 ---
 
 ## Step 7 — Generate the report
+
+### Record CLOSE completion timestamp
+
+Before writing the report, record `phaseTimestamps.close.completedAt` so the Pipeline Timeline has accurate data for the CLOSE row. (titan-run also records this after titan-close returns as a safety backstop, but by then the report is already written.)
+
+```bash
+node -e "const fs=require('fs');const s=JSON.parse(fs.readFileSync('.codegraph/titan/titan-state.json','utf8'));s.phaseTimestamps=s.phaseTimestamps||{};s.phaseTimestamps['close']=s.phaseTimestamps['close']||{};s.phaseTimestamps['close'].completedAt=new Date().toISOString();fs.writeFileSync('.codegraph/titan/titan-state.json',JSON.stringify(s,null,2));"
+```
 
 ### Report path
 
@@ -283,13 +332,21 @@ Write the report as Markdown:
 
 ## Pipeline Timeline
 
-| Phase | Started | Completed | Duration |
-|-------|---------|-----------|----------|
-| RECON | <from state> | <from state> | — |
-| GAUNTLET | — | — | — |
-| SYNC | — | — | — |
-| GATE (runs) | — | — | — |
-| CLOSE | <now> | <now> | — |
+Read `titan-state.json → phaseTimestamps` for real wall-clock data. If `phaseTimestamps` exists, use the recorded ISO 8601 timestamps to compute durations. If it does not exist (older pipeline run), derive timing from git commit timestamps as a fallback — **never invent or guess timestamps.**
+
+**Duration computation:** For each phase with `startedAt` and `completedAt`, compute duration as the difference in minutes/hours. For forge, also note the first and last commit timestamps from `git log`.
+
+| Phase | Duration | Notes |
+|-------|----------|-------|
+| RECON | <computed from phaseTimestamps.recon> | — |
+| GAUNTLET | <computed from phaseTimestamps.gauntlet> | <iterations count if resuming> |
+| SYNC | <computed from phaseTimestamps.sync> | — |
+| FORGE | <computed from phaseTimestamps.forge> | <commit count>, first at <time>, last at <time> |
+| GATE | across forge | <total runs> inline with forge commits |
+| CLOSE | <computed from phaseTimestamps.close> | — |
+| **Total** | <sum of all phases> | — |
+
+**If `phaseTimestamps` is missing:** Fall back to git log timestamps. Use the earliest and latest commit timestamps from `git log main..HEAD --format="%ai"` to bound the forge phase. For analysis phases (recon, gauntlet, sync), use `titan-state.json → initialized` and `lastUpdated` as rough bounds. Mark the durations as "~approximate" in the table.
 
 ---
 

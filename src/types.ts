@@ -883,6 +883,13 @@ export interface EngineOpts {
   ast: boolean;
   /** Persistent NativeDatabase connection for build writes (Phase 6.15). */
   nativeDb?: NativeDatabase;
+  /**
+   * Suspend the JS (better-sqlite3) connection before a native write to avoid
+   * dual-connection WAL corruption. Call `resumeJsDb()` after the write completes.
+   * Only set during pipeline builds where both connections coexist.
+   */
+  suspendJsDb?: () => void;
+  resumeJsDb?: () => void;
 }
 
 /** A file change detected during incremental builds. */

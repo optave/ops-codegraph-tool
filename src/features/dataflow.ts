@@ -243,6 +243,8 @@ export async function buildDataflowEdges(
   rootDir: string,
   engineOpts?: {
     nativeDb?: { bulkInsertDataflow?(edges: Array<Record<string, unknown>>): number };
+    suspendJsDb?: () => void;
+    resumeJsDb?: () => void;
   },
 ): Promise<void> {
   const extToLang = buildExtToLangMap();
@@ -339,7 +341,13 @@ export async function buildDataflowEdges(
 
     if (!needsJsFallback) {
       if (nativeEdges.length > 0) {
-        const inserted = nativeDb.bulkInsertDataflow(nativeEdges);
+        let inserted: number;
+        try {
+          engineOpts?.suspendJsDb?.();
+          inserted = nativeDb.bulkInsertDataflow(nativeEdges);
+        } finally {
+          engineOpts?.resumeJsDb?.();
+        }
         info(`Dataflow (native bulk): ${inserted} edges inserted`);
       }
       return;

@@ -504,6 +504,8 @@ export async function buildComplexityMetrics(
   rootDir: string,
   engineOpts?: {
     nativeDb?: { bulkInsertComplexity?(rows: Array<Record<string, unknown>>): number };
+    suspendJsDb?: () => void;
+    resumeJsDb?: () => void;
   },
 ): Promise<void> {
   // ── Native bulk-insert fast path ──────────────────────────────────────
@@ -549,7 +551,13 @@ export async function buildComplexityMetrics(
     }
 
     if (!needsJsFallback && rows.length > 0) {
-      const inserted = nativeDb.bulkInsertComplexity(rows);
+      let inserted: number;
+      try {
+        engineOpts?.suspendJsDb?.();
+        inserted = nativeDb.bulkInsertComplexity(rows);
+      } finally {
+        engineOpts?.resumeJsDb?.();
+      }
       if (inserted === rows.length) {
         info(`Complexity (native bulk): ${inserted} functions analyzed`);
         return;
