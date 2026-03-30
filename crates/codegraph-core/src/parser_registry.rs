@@ -96,7 +96,7 @@ impl LanguageKind {
             Self::Hcl => tree_sitter_hcl::LANGUAGE.into(),
             Self::C => tree_sitter_c::LANGUAGE.into(),
             Self::Cpp => tree_sitter_cpp::LANGUAGE.into(),
-            Self::Kotlin => tree_sitter_kotlin::LANGUAGE.into(),
+            Self::Kotlin => tree_sitter_kotlin::language().into(),
             Self::Swift => tree_sitter_swift::LANGUAGE.into(),
             Self::Scala => tree_sitter_scala::LANGUAGE.into(),
             Self::Bash => tree_sitter_bash::LANGUAGE.into(),
