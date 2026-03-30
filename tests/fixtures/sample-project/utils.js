@@ -10,4 +10,9 @@ class Calculator {
   }
 }
 
-module.exports = { sumOfSquares, Calculator };
+// Chained call — exercises call-in-function-field (a().b()) parity
+function formatResults(items) {
+  return items.filter(Boolean).map(String);
+}
+
+module.exports = { sumOfSquares, Calculator, formatResults };

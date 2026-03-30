@@ -331,26 +331,32 @@ function purgeAndAddReverseDeps(
   reverseDeps: Set<string>,
 ): void {
   const { db, rootDir } = ctx;
-  if (changePaths.length > 0 || ctx.removed.length > 0) {
-    const filesToPurge = [...ctx.removed, ...changePaths];
-    // Prefer NativeDatabase persistent connection for purge (6.15)
+  const hasPurge = changePaths.length > 0 || ctx.removed.length > 0;
+  const hasReverseDeps = reverseDeps.size > 0;
+  const reverseDepList = hasReverseDeps ? [...reverseDeps] : [];
+
+  if (hasPurge || hasReverseDeps) {
+    const filesToPurge = hasPurge ? [...ctx.removed, ...changePaths] : [];
+    // Prefer NativeDatabase: purge + reverse-dep edge deletion in one transaction (#670)
     if (ctx.nativeDb?.purgeFilesData) {
-      ctx.nativeDb.purgeFilesData(filesToPurge, false);
+      ctx.nativeDb.purgeFilesData(filesToPurge, false, hasReverseDeps ? reverseDepList : undefined);
     } else {
-      purgeFilesFromGraph(db, filesToPurge, { purgeHashes: false });
+      if (hasPurge) {
+        purgeFilesFromGraph(db, filesToPurge, { purgeHashes: false });
+      }
+      if (hasReverseDeps) {
+        const deleteOutgoingEdgesForFile = db.prepare(
+          'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
+        );
+        for (const relPath of reverseDepList) {
+          deleteOutgoingEdgesForFile.run(relPath);
+        }
+      }
     }
   }
-  if (reverseDeps.size > 0) {
-    const deleteOutgoingEdgesForFile = db.prepare(
-      'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
-    );
-    for (const relPath of reverseDeps) {
-      deleteOutgoingEdgesForFile.run(relPath);
-    }
-    for (const relPath of reverseDeps) {
-      const absPath = path.join(rootDir, relPath);
-      ctx.parseChanges.push({ file: absPath, relPath, _reverseDepOnly: true });
-    }
+  for (const relPath of reverseDeps) {
+    const absPath = path.join(rootDir, relPath);
+    ctx.parseChanges.push({ file: absPath, relPath, _reverseDepOnly: true });
   }
 }
 

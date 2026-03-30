@@ -1269,9 +1269,9 @@ Structure building is unchanged — at 22ms it's already fast.
 
 **Key PRs:** #669
 
-### 6.16 -- Dynamic SQL & Edge Cases
+### 6.16 -- Dynamic SQL & Edge Cases ✅
 
-**Done.** Generic parameterized query execution on NativeDatabase, connection lifecycle helpers, version validation, and `db.prepare()` audit.
+**Complete.** Generic parameterized query execution on NativeDatabase, connection lifecycle helpers, version validation, and `db.prepare()` audit.
 
 **Delivered:**
 - **`NativeDatabase.queryAll` / `queryGet`:** Generic parameterized SELECT execution via rusqlite, returning rows as JSON objects. Uses `serde_json::Value` for dynamic column support
@@ -1283,18 +1283,11 @@ Structure building is unchanged — at 22ms it's already fast.
 
 **Affected files:** `crates/codegraph-core/src/native_db.rs`, `src/db/connection.ts`, `src/db/query-builder.ts`, `src/db/repository/nodes.ts`, `src/types.ts`, `src/domain/graph/builder/stages/finalize.ts`, `src/domain/graph/builder/pipeline.ts`, `src/domain/graph/builder/stages/detect-changes.ts`, `src/domain/graph/builder/stages/build-structure.ts`
 
-### 6.17 -- Cleanup & better-sqlite3 Isolation
+### 6.17 -- Cleanup & better-sqlite3 Isolation ✅
 
-**Not started.** Final step: ensure `better-sqlite3` is only loaded when running the WASM engine. Update documentation and dependency claims.
+**Complete.** Lazy-load `better-sqlite3` via `createRequire` so it's never loaded on native-engine read paths. Removed 5 standalone `#[napi]` Rust functions (`bulk_insert_nodes`, `bulk_insert_edges`, `bulk_insert_ast_nodes`, `classify_roles_full`, `classify_roles_incremental`) — `NativeDatabase` methods delegate to the same `do_*` internals. Simplified fallback chains from 3-tier to 2-tier (NativeDatabase → JS). Tuned rusqlite: statement cache capacity 64, `mmap_size = 256MB`, `temp_store = MEMORY`. Extended build-parity test with roles and ast_nodes checks.
 
-**Plan:**
-- **Lazy-load `better-sqlite3`** — only `require()` it when engine is WASM; native path never touches it
-- **Remove the double-connection pattern** — `bulk_insert_ast_nodes` (6.9) and any other Rust functions that open their own `rusqlite::Connection` should use the shared `NativeDatabase` instance
-- **Profile and tune:** Enable `rusqlite` statement caching, optimize batch sizes, tune WAL settings for the unified Rust connection
-- **Update README.md** — clarify that `better-sqlite3` is now WASM-engine only (the "3 runtime dependencies" count stays the same because `rusqlite` is compiled into the native addon, not a separate npm dependency)
-- **Update verification strategy:** Add a parity gate that runs the full test suite on both engines and diffs the resulting DBs row-by-row
-
-**Affected files:** `README.md`, `src/db/connection.ts`, `src/infrastructure/native.ts`, `crates/codegraph-core/src/native_db.rs`, `crates/codegraph-core/src/ast_db.rs`
+**Key PRs:** #673
 
 ---
 

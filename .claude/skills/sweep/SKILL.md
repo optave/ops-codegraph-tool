@@ -77,7 +77,15 @@ If `CONFLICTING`:
    - Compare the PR's diff against its merge base (`git diff $(git merge-base origin/<base-branch> HEAD) HEAD -- <file>`) to see which side introduced an intentional change vs. which side carried stale code.
    - Only then choose the correct resolution. If the PR deliberately changed a line and main still has the old version, keep the PR's version. If main introduced a fix or new feature the PR doesn't have, keep main's version. If both sides made intentional changes, merge them together manually.
 3. After resolving, stage the resolved files by name (not `git add .`), commit with: `fix: resolve merge conflicts with <base-branch>`
-4. Push the updated branch.
+4. **Verify nothing was lost from either side.** For every file that had conflicts, diff the merge result against both parent commits:
+   ```bash
+   # Check nothing was lost from the base branch (main)
+   git diff origin/<base-branch> -- <file>
+   # Check nothing was lost from the PR branch (ORIG_HEAD = pre-merge HEAD, set by git automatically)
+   git diff ORIG_HEAD -- <file>
+   ```
+   Review each diff to confirm that intentional changes from both sides survived the merge. If content was dropped, amend the resolution before pushing.
+5. Push the updated branch.
 
 ### 2c. Check CI status
 

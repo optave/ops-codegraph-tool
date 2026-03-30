@@ -111,8 +111,7 @@ describeOrSkip('Build parity: native vs WASM', () => {
     expect(nativeGraph.roles).toEqual(wasmGraph.roles);
   });
 
-  // Skip: WASM ast-store-visitor does not extract call-site AST nodes (#674)
-  it.skip('produces identical ast_nodes', () => {
+  it('produces identical ast_nodes', () => {
     const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
     const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
     expect(nativeGraph.astNodes).toEqual(wasmGraph.astNodes);

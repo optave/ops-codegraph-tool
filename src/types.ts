@@ -2076,7 +2076,7 @@ export interface NativeDatabase {
     testOnly: number;
     leaf: number;
   } | null;
-  purgeFilesData(files: string[], purgeHashes?: boolean): void;
+  purgeFilesData(files: string[], purgeHashes?: boolean, reverseDepFiles?: string[]): void;
 
   // ── Generic query execution & version validation (6.16) ─────────────
   /** Execute a parameterized SELECT and return all rows as objects. */

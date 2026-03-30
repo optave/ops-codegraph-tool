@@ -720,13 +720,18 @@ impl NativeDatabase {
     /// Cascade-delete all graph data for the specified files across all tables.
     /// Order: dependent tables first (embeddings, cfg, dataflow, complexity,
     /// metrics, ast_nodes), then edges, then nodes, then optionally file_hashes.
+    ///
+    /// When `reverse_dep_files` is provided, outgoing edges for those files are
+    /// also deleted in the same transaction, closing the atomicity gap between
+    /// purge and reverse-dependency edge cleanup (see #670).
     #[napi]
     pub fn purge_files_data(
         &self,
         files: Vec<String>,
         purge_hashes: Option<bool>,
+        reverse_dep_files: Option<Vec<String>>,
     ) -> napi::Result<()> {
-        if files.is_empty() {
+        if files.is_empty() && reverse_dep_files.as_ref().map_or(true, |v| v.is_empty()) {
             return Ok(());
         }
         let conn = self.conn()?;
@@ -765,6 +770,22 @@ impl NativeDatabase {
             }
             if purge_hashes {
                 let _ = tx.execute("DELETE FROM file_hashes WHERE file = ?1", params![file]);
+            }
+        }
+
+        // Delete outgoing edges for reverse-dep files in the same transaction (#670).
+        // These files keep their nodes but need outgoing edges rebuilt.
+        if let Some(ref rev_files) = reverse_dep_files {
+            for file in rev_files {
+                tx.execute(
+                    "DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1)",
+                    params![file],
+                )
+                .map_err(|e| {
+                    napi::Error::from_reason(format!(
+                        "reverse-dep edge purge failed for \"{file}\": {e}"
+                    ))
+                })?;
             }
         }
 
