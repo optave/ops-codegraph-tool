@@ -2,6 +2,33 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.6.0](https://github.com/optave/ops-codegraph-tool/compare/v3.5.0...v3.6.0) (2026-03-30)
+
+**Six new languages and a parser abstraction layer.** This release adds first-class support for C, C++, Kotlin, Swift, Scala, and Bash — bringing the total supported languages to 14. A new parser abstraction layer decouples language extractors from tree-sitter internals, making it straightforward to add more languages. The native Rust engine gains batched query methods for the read path, WAL corruption is fixed when native and JS connections overlap, and WASM call-AST extraction is restored for full engine parity.
+
+### Features
+
+* add C, C++, Kotlin, Swift, Scala, Bash language support ([#708](https://github.com/optave/ops-codegraph-tool/pull/708))
+
+### Bug Fixes
+
+* **parity:** restore call AST node extraction in WASM engine ([#705](https://github.com/optave/ops-codegraph-tool/pull/705))
+* **native:** suspend JS connection around native writes to prevent WAL corruption ([#704](https://github.com/optave/ops-codegraph-tool/pull/704))
+* native visibility crash and dual-SQLite WAL corruption in benchmarks ([#689](https://github.com/optave/ops-codegraph-tool/pull/689))
+* **ci:** resolve visibility null crash and sequence dataflow annotation ([#693](https://github.com/optave/ops-codegraph-tool/pull/693))
+* **publish:** update repository URLs for npm provenance ([#682](https://github.com/optave/ops-codegraph-tool/pull/682))
+
+### Performance
+
+* **queries:** batched native Rust query methods for read path ([#698](https://github.com/optave/ops-codegraph-tool/pull/698))
+
+### Refactors
+
+* **extractors:** parser abstraction layer (Phase 7.1) ([#700](https://github.com/optave/ops-codegraph-tool/pull/700))
+* **native:** extract generic walk_tree to eliminate walk_node_depth duplication ([#703](https://github.com/optave/ops-codegraph-tool/pull/703))
+* remove dead WASM call-AST extraction and pre-3.2 edge shim ([#686](https://github.com/optave/ops-codegraph-tool/pull/686))
+* Titan audit — decompose, reduce complexity, remove dead code ([#699](https://github.com/optave/ops-codegraph-tool/pull/699))
+
 ## [3.5.0](https://github.com/optave/ops-codegraph-tool/compare/v3.4.1...v3.5.0) (2026-03-29)
 
 **Full rusqlite database migration and sub-100ms incremental rebuilds.** This release completes the migration of all SQLite operations from better-sqlite3 to native Rust/rusqlite via napi-rs, delivering major performance gains across the entire build pipeline. Incremental rebuilds drop from 466ms to 67–80ms, and bulk inserts for nodes, edges, roles, AST nodes, CFG, and dataflow all run through the native engine. better-sqlite3 is now lazy-loaded only as a fallback. Path aliases are restored with TS 6.x-compatible subpath imports, and several WASM/native parity bugs are fixed.

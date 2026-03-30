@@ -80,7 +80,7 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 
 | Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [axon](https://github.com/harshkedia177/axon) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Languages | **11** | ~12 | **32** | ~10 | 3 | 13 |
+| Languages | **17** | ~12 | **32** | ~10 | 3 | 13 |
 | MCP server | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** |
 | Dataflow + CFG + AST querying | **Yes** | **Yes** | **Yes**¹ | **Yes** | — | — |
 | Hybrid search (BM25 + semantic) | **Yes** | — | — | — | **Yes** | **Yes** |
@@ -106,7 +106,7 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 | **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — enriched with historically coupled files from git co-change analysis. Ships with a GitHub Actions workflow |
 | **🌐** | **Multi-language, one graph** | JS/TS + Python + Go + Rust + Java + C# + PHP + Ruby + HCL in a single graph — agents don't need per-language tools |
 | **🧠** | **Hybrid search** | BM25 keyword + semantic embeddings fused via RRF — `hybrid` (default), `semantic`, or `keyword` mode; multi-query via `"auth; token; JWT"` |
-| **🔬** | **Dataflow + CFG** | Track how data flows through functions (`flows_to`, `returns`, `mutates`) and visualize intraprocedural control flow graphs for all 11 languages |
+| **🔬** | **Dataflow + CFG** | Track how data flows through functions (`flows_to`, `returns`, `mutates`) and visualize intraprocedural control flow graphs for all 17 languages |
 | **🔓** | **Fully local, zero cost** | No API keys, no accounts, no network calls. Optionally bring your own LLM provider — your code only goes where you choose |
 
 ---
@@ -186,7 +186,7 @@ cd codegraph && npm install && npm link
 | 🧠 | **Semantic search** | Embeddings-powered natural language search with multi-query RRF ranking |
 | 👀 | **Watch mode** | Incrementally update the graph as files change |
 | ⚡ | **Always fresh** | Three-tier incremental detection — sub-second rebuilds even on large codebases |
-| 🔬 | **Data flow analysis** | Intraprocedural parameter tracking, return consumers, argument flows, and mutation detection — all 11 languages |
+| 🔬 | **Data flow analysis** | Intraprocedural parameter tracking, return consumers, argument flows, and mutation detection — all 17 languages |
 | 🧮 | **Complexity metrics** | Cognitive, cyclomatic, nesting depth, Halstead, and Maintainability Index per function |
 | 🏘️ | **Community detection** | Leiden clustering to discover natural module boundaries and architectural drift |
 | 📜 | **Manifesto rule engine** | Configurable pass/fail rules with warn/fail thresholds for CI gates via `check` (exit code 1 on fail) |
@@ -199,8 +199,8 @@ cd codegraph && npm install && npm link
 | ✅ | **CI validation predicates** | `check` command with configurable gates: complexity, blast radius, cycles, boundary violations — exit code 0/1 for CI |
 | 📋 | **Composite audit** | Single `audit` command combining explain + impact + health metrics per function — one call instead of 3-4 |
 | 🚦 | **Triage queue** | `triage` merges connectivity, hotspots, roles, and complexity into a ranked audit priority queue |
-| 🔬 | **Dataflow analysis** | Track how data moves through functions with `flows_to`, `returns`, and `mutates` edges — all 11 languages, included by default, skip with `--no-dataflow` |
-| 🧩 | **Control flow graph** | Intraprocedural CFG construction for all 11 languages — `cfg` command with text/DOT/Mermaid output, included by default, skip with `--no-cfg` |
+| 🔬 | **Dataflow analysis** | Track how data moves through functions with `flows_to`, `returns`, and `mutates` edges — all 17 languages, included by default, skip with `--no-dataflow` |
+| 🧩 | **Control flow graph** | Intraprocedural CFG construction for all 17 languages — `cfg` command with text/DOT/Mermaid output, included by default, skip with `--no-cfg` |
 | 🔎 | **AST node querying** | Stored queryable AST nodes (calls, `new`, string, regex, throw, await) — `ast` command with SQL GLOB pattern matching |
 | 🧬 | **Expanded node/edge types** | `parameter`, `property`, `constant` node kinds with `parent_id` for sub-declaration queries; `contains`, `parameter_of`, `receiver` edge kinds |
 | 📊 | **Exports analysis** | `exports <file>` shows all exported symbols with per-symbol consumers, re-export detection, and counts |
@@ -320,7 +320,7 @@ codegraph ast -k call                 # Filter by kind: call, new, string, regex
 codegraph ast -k throw --file src/    # Combine kind and file filters
 ```
 
-> **Note:** Dataflow and CFG are included by default for all 11 languages. Use `--no-dataflow` / `--no-cfg` for faster builds.
+> **Note:** Dataflow and CFG are included by default for all 17 languages. Use `--no-dataflow` / `--no-cfg` for faster builds.
 
 
 ### Audit, Triage & Batch
@@ -482,11 +482,18 @@ codegraph registry remove <name>  # Unregister
 | ![C#](https://img.shields.io/badge/-C%23-512BD4?style=flat-square&logo=dotnet&logoColor=white) | `.cs` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | ![PHP](https://img.shields.io/badge/-PHP-777BB4?style=flat-square&logo=php&logoColor=white) | `.php`, `.phtml` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | ![Ruby](https://img.shields.io/badge/-Ruby-CC342D?style=flat-square&logo=ruby&logoColor=white) | `.rb`, `.rake`, `.gemspec` | ✓ | ✓ | ✓ | ✓ | —³ | ✓ |
+| ![C](https://img.shields.io/badge/-C-A8B9CC?style=flat-square&logo=c&logoColor=black) | `.c`, `.h` | ✓ | ✓ | ✓ | —⁴ | —⁴ | ✓ |
+| ![C++](https://img.shields.io/badge/-C++-00599C?style=flat-square&logo=cplusplus&logoColor=white) | `.cpp`, `.hpp`, `.cc`, `.cxx` | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| ![Kotlin](https://img.shields.io/badge/-Kotlin-7F52FF?style=flat-square&logo=kotlin&logoColor=white) | `.kt`, `.kts` | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| ![Swift](https://img.shields.io/badge/-Swift-F05138?style=flat-square&logo=swift&logoColor=white) | `.swift` | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| ![Scala](https://img.shields.io/badge/-Scala-DC322F?style=flat-square&logo=scala&logoColor=white) | `.scala`, `.sc` | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| ![Bash](https://img.shields.io/badge/-Bash-4EAA25?style=flat-square&logo=gnubash&logoColor=white) | `.sh`, `.bash` | ✓ | ✓ | ✓ | —⁴ | —⁴ | ✓ |
 | ![Terraform](https://img.shields.io/badge/-Terraform-844FBA?style=flat-square&logo=terraform&logoColor=white) | `.tf`, `.hcl` | ✓ | —³ | —³ | —³ | —³ | —³ |
 
 > ¹ **Heritage** = `extends`, `implements`, `include`/`extend` (Ruby), trait `impl` (Rust), receiver methods (Go).
 > ² **Type Inference** extracts a per-file type map from annotations (`const x: Router`, `MyType x`, `x: MyType`) and `new` expressions, enabling the edge resolver to connect `x.method()` → `Type.method()`.
 > ³ Not applicable — Ruby is dynamically typed; Terraform/HCL is declarative (no functions, classes, or type system).
+> ⁴ Not applicable — C and Bash have no class/inheritance system.
 > All languages have full **parity** between the native Rust engine and the WASM fallback.
 
 ## ⚙️ How It Works
@@ -786,13 +793,14 @@ See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap a
 6. ~~**Resolution Accuracy**~~ — **Complete** (v3.3.1) — type inference, receiver type tracking, dead role sub-categories, resolution benchmarks, `package.json` exports, monorepo workspace resolution
 7. ~~**TypeScript Migration**~~ — **Complete** (v3.4.0) — all 271 source files migrated from JS to TS, zero `.js` remaining
 8. ~~**Native Analysis Acceleration**~~ — **Complete** (v3.5.0) — all build phases in Rust/rusqlite, sub-100ms incremental rebuilds, better-sqlite3 lazy-loaded as fallback only
-9. **Expanded Language Support** — 23 new languages in 4 batches (11 → 34)
-10. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
-11. **Quality, Security & Technical Debt** — supply-chain security (SBOM, SLSA), CI coverage gates, timer cleanup, tech debt kill list
-12. **Intelligent Embeddings** — LLM-generated descriptions, enhanced embeddings, module summaries
-13. **Natural Language Queries** — `codegraph ask` command, conversational sessions
-14. **GitHub Integration & CI** — reusable GitHub Action, LLM-enhanced PR review, SARIF output
-15. **Advanced Features** — dead code detection, monorepo support, agentic search
+9. **Expanded Language Support** — **In Progress** (v3.6.0) — Batch 1 shipped (C, C++, Kotlin, Swift, Scala, Bash); 17 remaining in 3 batches (17 → 34)
+10. **Analysis Depth** — TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis
+11. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
+12. **Quality, Security & Technical Debt** — supply-chain security (SBOM, SLSA), CI coverage gates, timer cleanup, tech debt kill list
+13. **Intelligent Embeddings** — LLM-generated descriptions, enhanced embeddings, module summaries
+14. **Natural Language Queries** — `codegraph ask` command, conversational sessions
+15. **GitHub Integration & CI** — reusable GitHub Action, LLM-enhanced PR review, SARIF output
+16. **Advanced Features** — dead code detection, monorepo support, agentic search
 
 ## 🤝 Contributing
 
