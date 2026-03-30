@@ -16,26 +16,38 @@ import type {
 
 // Re-export all extractors for backward compatibility
 export {
+  extractBashSymbols,
+  extractCSymbols,
+  extractCppSymbols,
   extractCSharpSymbols,
   extractGoSymbols,
   extractHCLSymbols,
   extractJavaSymbols,
+  extractKotlinSymbols,
   extractPHPSymbols,
   extractPythonSymbols,
   extractRubySymbols,
   extractRustSymbols,
+  extractScalaSymbols,
+  extractSwiftSymbols,
   extractSymbols,
 } from '../extractors/index.js';
 
 import {
+  extractBashSymbols,
+  extractCSymbols,
+  extractCppSymbols,
   extractCSharpSymbols,
   extractGoSymbols,
   extractHCLSymbols,
   extractJavaSymbols,
+  extractKotlinSymbols,
   extractPHPSymbols,
   extractPythonSymbols,
   extractRubySymbols,
   extractRustSymbols,
+  extractScalaSymbols,
+  extractSwiftSymbols,
   extractSymbols,
 } from '../extractors/index.js';
 
@@ -297,6 +309,11 @@ function patchNativeResult(r: any): ExtractorOutput {
       if (i.csharpUsing === undefined) i.csharpUsing = i.csharp_using;
       if (i.rubyRequire === undefined) i.rubyRequire = i.ruby_require;
       if (i.phpUse === undefined) i.phpUse = i.php_use;
+      if (i.cInclude === undefined) i.cInclude = i.c_include;
+      if (i.kotlinImport === undefined) i.kotlinImport = i.kotlin_import;
+      if (i.swiftImport === undefined) i.swiftImport = i.swift_import;
+      if (i.scalaImport === undefined) i.scalaImport = i.scala_import;
+      if (i.bashSource === undefined) i.bashSource = i.bash_source;
       if (i.dynamicImport === undefined) i.dynamicImport = i.dynamic_import;
     }
   }
@@ -412,6 +429,48 @@ export const LANGUAGE_REGISTRY: LanguageRegistryEntry[] = [
     extensions: ['.php', '.phtml'],
     grammarFile: 'tree-sitter-php.wasm',
     extractor: extractPHPSymbols,
+    required: false,
+  },
+  {
+    id: 'c',
+    extensions: ['.c', '.h'],
+    grammarFile: 'tree-sitter-c.wasm',
+    extractor: extractCSymbols,
+    required: false,
+  },
+  {
+    id: 'cpp',
+    extensions: ['.cpp', '.cc', '.cxx', '.hpp'],
+    grammarFile: 'tree-sitter-cpp.wasm',
+    extractor: extractCppSymbols,
+    required: false,
+  },
+  {
+    id: 'kotlin',
+    extensions: ['.kt', '.kts'],
+    grammarFile: 'tree-sitter-kotlin.wasm',
+    extractor: extractKotlinSymbols,
+    required: false,
+  },
+  {
+    id: 'swift',
+    extensions: ['.swift'],
+    grammarFile: 'tree-sitter-swift.wasm',
+    extractor: extractSwiftSymbols,
+    required: false,
+  },
+  {
+    id: 'scala',
+    extensions: ['.scala'],
+    grammarFile: 'tree-sitter-scala.wasm',
+    extractor: extractScalaSymbols,
+    required: false,
+  },
+  {
+    id: 'bash',
+    extensions: ['.sh', '.bash'],
+    grammarFile: 'tree-sitter-bash.wasm',
+    extractor: extractBashSymbols,
     required: false,
   },
 ];

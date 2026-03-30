@@ -138,6 +138,16 @@ pub struct Import {
     pub php_use: Option<bool>,
     #[napi(js_name = "dynamicImport")]
     pub dynamic_import: Option<bool>,
+    #[napi(js_name = "cInclude")]
+    pub c_include: Option<bool>,
+    #[napi(js_name = "kotlinImport")]
+    pub kotlin_import: Option<bool>,
+    #[napi(js_name = "swiftImport")]
+    pub swift_import: Option<bool>,
+    #[napi(js_name = "scalaImport")]
+    pub scala_import: Option<bool>,
+    #[napi(js_name = "bashSource")]
+    pub bash_source: Option<bool>,
 }
 
 impl Import {
@@ -157,6 +167,11 @@ impl Import {
             ruby_require: None,
             php_use: None,
             dynamic_import: None,
+            c_include: None,
+            kotlin_import: None,
+            swift_import: None,
+            scala_import: None,
+            bash_source: None,
         }
     }
 }

@@ -230,6 +230,72 @@ pub const PHP_AST_CONFIG: LangAstConfig = LangAstConfig {
     string_prefixes: &[],
 };
 
+pub const C_AST_CONFIG: LangAstConfig = LangAstConfig {
+    call_types: &["call_expression"],
+    new_types: &[],
+    throw_types: &[],
+    await_types: &[],
+    string_types: &["string_literal"],
+    regex_types: &[],
+    quote_chars: &['"'],
+    string_prefixes: &[],
+};
+
+pub const CPP_AST_CONFIG: LangAstConfig = LangAstConfig {
+    call_types: &["call_expression"],
+    new_types: &["new_expression"],
+    throw_types: &["throw_statement"],
+    await_types: &["co_await_expression"],
+    string_types: &["string_literal", "raw_string_literal"],
+    regex_types: &[],
+    quote_chars: &['"'],
+    string_prefixes: &['L', 'u', 'U', 'R'],
+};
+
+pub const KOTLIN_AST_CONFIG: LangAstConfig = LangAstConfig {
+    call_types: &["call_expression"],
+    new_types: &[],
+    throw_types: &["throw_expression"],
+    await_types: &[],
+    string_types: &["string_literal"],
+    regex_types: &[],
+    quote_chars: &['"'],
+    string_prefixes: &[],
+};
+
+pub const SWIFT_AST_CONFIG: LangAstConfig = LangAstConfig {
+    call_types: &["call_expression"],
+    new_types: &[],
+    throw_types: &["throw_statement"],
+    await_types: &["await_expression"],
+    string_types: &["string_literal"],
+    regex_types: &[],
+    quote_chars: &['"'],
+    string_prefixes: &[],
+};
+
+pub const SCALA_AST_CONFIG: LangAstConfig = LangAstConfig {
+    call_types: &["call_expression"],
+    new_types: &["object_creation_expression"],
+    throw_types: &["throw_expression"],
+    await_types: &[],
+    string_types: &["string_literal"],
+    regex_types: &[],
+    quote_chars: &['"'],
+    string_prefixes: &[],
+};
+
+pub const BASH_AST_CONFIG: LangAstConfig = LangAstConfig {
+    call_types: &["command", "command_substitution"],
+    new_types: &[],
+    throw_types: &[],
+    await_types: &[],
+    string_types: &["string", "expansion"],
+    regex_types: &[],
+    quote_chars: &['"', '\''],
+    string_prefixes: &[],
+};
+
 // ── Generic AST node walker ──────────────────────────────────────────────────
 
 /// Node types that represent identifiers across languages.

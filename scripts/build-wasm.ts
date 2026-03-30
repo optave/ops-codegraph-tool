@@ -34,6 +34,12 @@ const grammars = [
   { name: 'tree-sitter-c-sharp', pkg: 'tree-sitter-c-sharp', sub: null },
   { name: 'tree-sitter-ruby', pkg: 'tree-sitter-ruby', sub: null },
   { name: 'tree-sitter-php', pkg: 'tree-sitter-php', sub: 'php' },
+  { name: 'tree-sitter-c', pkg: 'tree-sitter-c', sub: null },
+  { name: 'tree-sitter-cpp', pkg: 'tree-sitter-cpp', sub: null },
+  { name: 'tree-sitter-kotlin', pkg: 'tree-sitter-kotlin', sub: null },
+  { name: 'tree-sitter-swift', pkg: 'tree-sitter-swift', sub: null },
+  { name: 'tree-sitter-scala', pkg: 'tree-sitter-scala', sub: null },
+  { name: 'tree-sitter-bash', pkg: 'tree-sitter-bash', sub: null },
 ];
 
 let failed = 0;

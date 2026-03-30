@@ -83,7 +83,13 @@ export type LanguageId =
   | 'csharp'
   | 'ruby'
   | 'php'
-  | 'hcl';
+  | 'hcl'
+  | 'c'
+  | 'cpp'
+  | 'kotlin'
+  | 'swift'
+  | 'scala'
+  | 'bash';
 
 /** Engine mode selector. */
 export type EngineMode = 'native' | 'wasm' | 'auto';
@@ -433,6 +439,11 @@ export interface Import {
   csharpUsing?: boolean;
   rubyRequire?: boolean;
   phpUse?: boolean;
+  cInclude?: boolean;
+  kotlinImport?: boolean;
+  swiftImport?: boolean;
+  scalaImport?: boolean;
+  bashSource?: boolean;
 }
 
 /** A class/struct/trait relationship (extends or implements). */
