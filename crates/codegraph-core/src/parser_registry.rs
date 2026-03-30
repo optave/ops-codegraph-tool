@@ -1,16 +1,12 @@
 use std::path::Path;
 use tree_sitter::Language;
-use tree_sitter_language::LanguageFn;
 
 // tree-sitter-kotlin 0.3.x uses the old tree-sitter 0.20 API (language() -> Language)
-// instead of the new 0.24 API (LANGUAGE: LanguageFn). We declare the extern C function
-// directly and wrap it with LanguageFn to bridge the version gap.
-extern "C" {
-    fn tree_sitter_kotlin() -> *const ();
-}
+// instead of the new 0.24 API (LANGUAGE: LanguageFn). Both Language types are
+// repr-transparent wrappers around *const TSLanguage, so transmute is safe.
 fn kotlin_language() -> Language {
-    let lang_fn = unsafe { LanguageFn::from_raw(tree_sitter_kotlin) };
-    lang_fn.into()
+    let old_lang = tree_sitter_kotlin::language();
+    unsafe { std::mem::transmute(old_lang) }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

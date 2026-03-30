@@ -22,10 +22,11 @@ export type CoreSymbolKind =
   | 'enum'
   | 'trait'
   | 'record'
-  | 'module';
+  | 'module'
+  | 'namespace';
 
 /** Sub-declaration kinds (Phase 1). Includes 'method' for class child nodes. */
-export type ExtendedSymbolKind = 'parameter' | 'property' | 'constant' | 'method';
+export type ExtendedSymbolKind = 'parameter' | 'property' | 'constant' | 'variable' | 'method';
 
 /** All queryable symbol kinds. */
 export type SymbolKind = CoreSymbolKind | ExtendedSymbolKind;

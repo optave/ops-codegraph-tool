@@ -354,7 +354,7 @@ mod tests {
     fn parse_kotlin(code: &str) -> FileSymbols {
         let mut parser = Parser::new();
         parser
-            .set_language(&tree_sitter_kotlin::LANGUAGE.into())
+            .set_language(&crate::parser_registry::LanguageKind::Kotlin.tree_sitter_language())
             .unwrap();
         let tree = parser.parse(code.as_bytes(), None).unwrap();
         KotlinExtractor.extract(&tree, code.as_bytes(), "Test.kt")
