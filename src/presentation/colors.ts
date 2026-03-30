@@ -23,6 +23,8 @@ export const DEFAULT_NODE_COLORS: Record<AnyNodeKind, string> = {
   parameter: '#B0BEC5',
   property: '#B0BEC5',
   constant: '#B0BEC5',
+  namespace: '#78909C',
+  variable: '#B0BEC5',
 };
 
 export const DEFAULT_ROLE_COLORS: Partial<Record<CoreRole, string>> = {

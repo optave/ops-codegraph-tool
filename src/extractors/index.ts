@@ -1,9 +1,15 @@
+export { extractBashSymbols } from './bash.js';
+export { extractCSymbols } from './c.js';
+export { extractCppSymbols } from './cpp.js';
 export { extractCSharpSymbols } from './csharp.js';
 export { extractGoSymbols } from './go.js';
 export { extractHCLSymbols } from './hcl.js';
 export { extractJavaSymbols } from './java.js';
 export { extractSymbols } from './javascript.js';
+export { extractKotlinSymbols } from './kotlin.js';
 export { extractPHPSymbols } from './php.js';
 export { extractPythonSymbols } from './python.js';
 export { extractRubySymbols } from './ruby.js';
 export { extractRustSymbols } from './rust.js';
+export { extractScalaSymbols } from './scala.js';
+export { extractSwiftSymbols } from './swift.js';

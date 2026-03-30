@@ -22,10 +22,11 @@ export type CoreSymbolKind =
   | 'enum'
   | 'trait'
   | 'record'
-  | 'module';
+  | 'module'
+  | 'namespace';
 
 /** Sub-declaration kinds (Phase 1). Includes 'method' for class child nodes. */
-export type ExtendedSymbolKind = 'parameter' | 'property' | 'constant' | 'method';
+export type ExtendedSymbolKind = 'parameter' | 'property' | 'constant' | 'variable' | 'method';
 
 /** All queryable symbol kinds. */
 export type SymbolKind = CoreSymbolKind | ExtendedSymbolKind;
@@ -83,7 +84,13 @@ export type LanguageId =
   | 'csharp'
   | 'ruby'
   | 'php'
-  | 'hcl';
+  | 'hcl'
+  | 'c'
+  | 'cpp'
+  | 'kotlin'
+  | 'swift'
+  | 'scala'
+  | 'bash';
 
 /** Engine mode selector. */
 export type EngineMode = 'native' | 'wasm' | 'auto';
@@ -433,6 +440,11 @@ export interface Import {
   csharpUsing?: boolean;
   rubyRequire?: boolean;
   phpUse?: boolean;
+  cInclude?: boolean;
+  kotlinImport?: boolean;
+  swiftImport?: boolean;
+  scalaImport?: boolean;
+  bashSource?: boolean;
 }
 
 /** A class/struct/trait relationship (extends or implements). */

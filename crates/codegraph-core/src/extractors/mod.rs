@@ -1,13 +1,19 @@
+pub mod bash;
+pub mod c;
+pub mod cpp;
 pub mod csharp;
 pub mod go;
 pub mod hcl;
 pub mod helpers;
 pub mod java;
 pub mod javascript;
+pub mod kotlin;
 pub mod php;
 pub mod python;
 pub mod ruby;
 pub mod rust_lang;
+pub mod scala;
+pub mod swift;
 
 use crate::parser_registry::LanguageKind;
 use crate::types::FileSymbols;
@@ -77,6 +83,24 @@ pub fn extract_symbols_with_opts(
         }
         LanguageKind::Hcl => {
             hcl::HclExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::C => {
+            c::CExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Cpp => {
+            cpp::CppExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Kotlin => {
+            kotlin::KotlinExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Swift => {
+            swift::SwiftExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Scala => {
+            scala::ScalaExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Bash => {
+            bash::BashExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
         }
     }
 }

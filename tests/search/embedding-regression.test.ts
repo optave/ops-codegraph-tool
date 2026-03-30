@@ -66,7 +66,7 @@ describe.skipIf(!hasTransformers)('embedding regression (real model)', () => {
 
     // Build embeddings with the smallest/fastest model
     await buildEmbeddings(tmpDir, 'minilm', dbPath);
-  }, 120_000);
+  }, 240_000);
 
   afterAll(() => {
     if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });

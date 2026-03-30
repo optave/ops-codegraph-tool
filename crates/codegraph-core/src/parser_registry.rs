@@ -14,6 +14,12 @@ pub enum LanguageKind {
     Ruby,
     Php,
     Hcl,
+    C,
+    Cpp,
+    Kotlin,
+    Swift,
+    Scala,
+    Bash,
 }
 
 impl LanguageKind {
@@ -32,6 +38,12 @@ impl LanguageKind {
             Self::Ruby => "ruby",
             Self::Php => "php",
             Self::Hcl => "hcl",
+            Self::C => "c",
+            Self::Cpp => "cpp",
+            Self::Kotlin => "kotlin",
+            Self::Swift => "swift",
+            Self::Scala => "scala",
+            Self::Bash => "bash",
         }
     }
 
@@ -58,6 +70,12 @@ impl LanguageKind {
             "cs" => Some(Self::CSharp),
             "rb" | "rake" | "gemspec" => Some(Self::Ruby),
             "php" | "phtml" => Some(Self::Php),
+            "c" | "h" => Some(Self::C),
+            "cpp" | "cc" | "cxx" | "hpp" => Some(Self::Cpp),
+            "kt" | "kts" => Some(Self::Kotlin),
+            "swift" => Some(Self::Swift),
+            "scala" => Some(Self::Scala),
+            "sh" | "bash" => Some(Self::Bash),
             _ => None,
         }
     }
@@ -76,6 +94,12 @@ impl LanguageKind {
             Self::Ruby => tree_sitter_ruby::LANGUAGE.into(),
             Self::Php => tree_sitter_php::LANGUAGE_PHP.into(),
             Self::Hcl => tree_sitter_hcl::LANGUAGE.into(),
+            Self::C => tree_sitter_c::LANGUAGE.into(),
+            Self::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+            Self::Kotlin => tree_sitter_kotlin_sg::LANGUAGE.into(),
+            Self::Swift => tree_sitter_swift::LANGUAGE.into(),
+            Self::Scala => tree_sitter_scala::LANGUAGE.into(),
+            Self::Bash => tree_sitter_bash::LANGUAGE.into(),
         }
     }
 }

@@ -11,7 +11,7 @@ pub struct LangRules {
     pub branch_nodes: &'static [&'static str],
     pub case_nodes: &'static [&'static str],
     pub logical_operators: &'static [&'static str],
-    pub logical_node_type: &'static str,
+    pub logical_node_types: &'static [&'static str],
     pub optional_chain_type: Option<&'static str>,
     pub nesting_nodes: &'static [&'static str],
     pub function_nodes: &'static [&'static str],
@@ -59,7 +59,7 @@ pub static JS_TS_RULES: LangRules = LangRules {
     ],
     case_nodes: &["switch_case"],
     logical_operators: &["&&", "||", "??"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: Some("optional_chain_expression"),
     nesting_nodes: &[
         "if_statement",
@@ -99,7 +99,7 @@ pub static PYTHON_RULES: LangRules = LangRules {
     ],
     case_nodes: &["case_clause"],
     logical_operators: &["and", "or"],
-    logical_node_type: "boolean_operator",
+    logical_node_types: &["boolean_operator"],
     optional_chain_type: None,
     nesting_nodes: &[
         "if_statement",
@@ -131,7 +131,7 @@ pub static GO_RULES: LangRules = LangRules {
         "communication_case",
     ],
     logical_operators: &["&&", "||"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: None,
     nesting_nodes: &[
         "if_statement",
@@ -168,7 +168,7 @@ pub static RUST_LANG_RULES: LangRules = LangRules {
     ],
     case_nodes: &["match_arm"],
     logical_operators: &["&&", "||"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: None,
     nesting_nodes: &[
         "if_expression",
@@ -200,7 +200,7 @@ pub static JAVA_RULES: LangRules = LangRules {
     ],
     case_nodes: &["switch_label"],
     logical_operators: &["&&", "||"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: None,
     nesting_nodes: &[
         "if_statement",
@@ -237,7 +237,7 @@ pub static CSHARP_RULES: LangRules = LangRules {
     ],
     case_nodes: &["switch_section"],
     logical_operators: &["&&", "||", "??"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: Some("conditional_access_expression"),
     nesting_nodes: &[
         "if_statement",
@@ -277,7 +277,7 @@ pub static RUBY_RULES: LangRules = LangRules {
     ],
     case_nodes: &["when"],
     logical_operators: &["and", "or", "&&", "||"],
-    logical_node_type: "binary",
+    logical_node_types: &["binary"],
     optional_chain_type: None,
     nesting_nodes: &[
         "if",
@@ -312,7 +312,7 @@ pub static PHP_RULES: LangRules = LangRules {
     ],
     case_nodes: &["case_statement", "default_statement"],
     logical_operators: &["&&", "||", "and", "or", "??"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: Some("nullsafe_member_access_expression"),
     nesting_nodes: &[
         "if_statement",
@@ -337,6 +337,96 @@ pub static PHP_RULES: LangRules = LangRules {
     switch_like_nodes: &["switch_statement"],
 };
 
+pub static C_RULES: LangRules = LangRules {
+    branch_nodes: &["if_statement", "for_statement", "while_statement", "do_statement", "case_statement", "conditional_expression"],
+    case_nodes: &["case_statement"],
+    logical_operators: &["&&", "||"],
+    logical_node_types: &["binary_expression"],
+    optional_chain_type: None,
+    nesting_nodes: &["if_statement", "for_statement", "while_statement", "do_statement", "conditional_expression"],
+    function_nodes: &["function_definition"],
+    if_node_type: Some("if_statement"),
+    else_node_type: None,
+    elif_node_type: None,
+    else_via_alternative: true,
+    switch_like_nodes: &["switch_statement"],
+};
+
+pub static CPP_RULES: LangRules = LangRules {
+    branch_nodes: &["if_statement", "for_statement", "for_range_loop", "while_statement", "do_statement", "case_statement", "conditional_expression", "catch_clause"],
+    case_nodes: &["case_statement"],
+    logical_operators: &["&&", "||"],
+    logical_node_types: &["binary_expression"],
+    optional_chain_type: None,
+    nesting_nodes: &["if_statement", "for_statement", "for_range_loop", "while_statement", "do_statement", "catch_clause", "conditional_expression"],
+    function_nodes: &["function_definition"],
+    if_node_type: Some("if_statement"),
+    else_node_type: None,
+    elif_node_type: None,
+    else_via_alternative: true,
+    switch_like_nodes: &["switch_statement"],
+};
+
+pub static KOTLIN_RULES: LangRules = LangRules {
+    branch_nodes: &["if_expression", "for_statement", "while_statement", "do_while_statement", "catch_block", "when_expression", "when_entry"],
+    case_nodes: &["when_entry"],
+    logical_operators: &["&&", "||"],
+    logical_node_types: &["conjunction_expression", "disjunction_expression"],
+    optional_chain_type: Some("safe_navigation"),
+    nesting_nodes: &["if_expression", "for_statement", "while_statement", "do_while_statement", "catch_block", "when_expression"],
+    function_nodes: &["function_declaration"],
+    if_node_type: Some("if_expression"),
+    else_node_type: None,
+    elif_node_type: None,
+    else_via_alternative: true,
+    switch_like_nodes: &["when_expression"],
+};
+
+pub static SWIFT_RULES: LangRules = LangRules {
+    branch_nodes: &["if_statement", "for_in_statement", "while_statement", "repeat_while_statement", "catch_clause", "switch_entry", "ternary_expression", "guard_statement"],
+    case_nodes: &["switch_entry"],
+    logical_operators: &["&&", "||"],
+    logical_node_types: &["binary_expression"],
+    optional_chain_type: Some("optional_chaining_expression"),
+    nesting_nodes: &["if_statement", "for_in_statement", "while_statement", "repeat_while_statement", "catch_clause", "ternary_expression", "guard_statement"],
+    function_nodes: &["function_declaration", "init_declaration"],
+    if_node_type: Some("if_statement"),
+    else_node_type: None,
+    elif_node_type: None,
+    else_via_alternative: true,
+    switch_like_nodes: &["switch_statement"],
+};
+
+pub static SCALA_RULES: LangRules = LangRules {
+    branch_nodes: &["if_expression", "for_expression", "while_expression", "do_while_expression", "catch_clause", "case_clause", "match_expression"],
+    case_nodes: &["case_clause"],
+    logical_operators: &["&&", "||"],
+    logical_node_types: &["infix_expression"],
+    optional_chain_type: None,
+    nesting_nodes: &["if_expression", "for_expression", "while_expression", "do_while_expression", "catch_clause", "match_expression"],
+    function_nodes: &["function_definition"],
+    if_node_type: Some("if_expression"),
+    else_node_type: None,
+    elif_node_type: None,
+    else_via_alternative: true,
+    switch_like_nodes: &["match_expression"],
+};
+
+pub static BASH_RULES: LangRules = LangRules {
+    branch_nodes: &["if_statement", "for_statement", "while_statement", "case_statement", "elif_clause"],
+    case_nodes: &["case_item"],
+    logical_operators: &["&&", "||"],
+    logical_node_types: &["binary_expression"],
+    optional_chain_type: None,
+    nesting_nodes: &["if_statement", "for_statement", "while_statement", "case_statement"],
+    function_nodes: &["function_definition"],
+    if_node_type: Some("if_statement"),
+    else_node_type: Some("else_clause"),
+    elif_node_type: Some("elif_clause"),
+    else_via_alternative: false,
+    switch_like_nodes: &["case_statement"],
+};
+
 /// Look up complexity rules by language ID (matches `COMPLEXITY_RULES` keys in JS).
 pub fn lang_rules(lang_id: &str) -> Option<&'static LangRules> {
     match lang_id {
@@ -348,6 +438,12 @@ pub fn lang_rules(lang_id: &str) -> Option<&'static LangRules> {
         "csharp" => Some(&CSHARP_RULES),
         "ruby" => Some(&RUBY_RULES),
         "php" => Some(&PHP_RULES),
+        "c" => Some(&C_RULES),
+        "cpp" => Some(&CPP_RULES),
+        "kotlin" => Some(&KOTLIN_RULES),
+        "swift" => Some(&SWIFT_RULES),
+        "scala" => Some(&SCALA_RULES),
+        "bash" => Some(&BASH_RULES),
         _ => None,
     }
 }
@@ -521,7 +617,7 @@ fn handle_logical_op(
     cognitive: &mut u32,
     cyclomatic: &mut u32,
 ) -> bool {
-    if kind != rules.logical_node_type {
+    if !rules.logical_node_types.contains(&kind) {
         return false;
     }
     let Some(op_node) = node.child(1) else { return false };
@@ -534,7 +630,7 @@ fn handle_logical_op(
 
     // Cognitive: +1 only when operator changes from the previous sibling sequence
     let same_sequence = node.parent().map_or(false, |parent| {
-        parent.kind() == rules.logical_node_type
+        rules.logical_node_types.contains(&parent.kind())
             && parent.child(1).map_or(false, |pop| pop.kind() == op)
     });
     if !same_sequence {
@@ -808,6 +904,128 @@ pub static PHP_HALSTEAD: HalsteadRules = HalsteadRules {
     skip_types: &[],
 };
 
+pub static C_HALSTEAD: HalsteadRules = HalsteadRules {
+    operator_leaf_types: &[
+        "+", "-", "*", "/", "%", "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
+        "==", "!=", "<", ">", "<=", ">=", "&&", "||", "!",
+        "&", "|", "^", "~", "<<", ">>", "++", "--",
+        "sizeof", "if", "else", "for", "while", "do", "switch", "case",
+        "return", "break", "continue", "goto",
+        ".", "->", ",", ";", ":", "?",
+    ],
+    operand_leaf_types: &[
+        "identifier", "type_identifier", "field_identifier", "number_literal", "string_literal",
+        "char_literal", "true", "false", "null",
+    ],
+    compound_operators: &["call_expression", "subscript_expression"],
+    skip_types: &[],
+};
+
+pub static CPP_HALSTEAD: HalsteadRules = HalsteadRules {
+    operator_leaf_types: &[
+        "+", "-", "*", "/", "%", "=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>=",
+        "==", "!=", "<", ">", "<=", ">=", "&&", "||", "!",
+        "&", "|", "^", "~", "<<", ">>", "++", "--",
+        "sizeof", "new", "delete", "throw",
+        "if", "else", "for", "while", "do", "switch", "case",
+        "return", "break", "continue",
+        "try", "catch",
+        ".", "->", "::", ",", ";", ":", "?",
+    ],
+    operand_leaf_types: &[
+        "identifier", "type_identifier", "field_identifier", "namespace_identifier",
+        "number_literal", "string_literal", "raw_string_literal", "char_literal",
+        "true", "false", "nullptr", "this",
+    ],
+    compound_operators: &["call_expression", "subscript_expression", "new_expression"],
+    skip_types: &["template_argument_list", "template_parameter_list"],
+};
+
+pub static KOTLIN_HALSTEAD: HalsteadRules = HalsteadRules {
+    operator_leaf_types: &[
+        "+", "-", "*", "/", "%", "=", "+=", "-=", "*=", "/=", "%=",
+        "==", "!=", "<", ">", "<=", ">=", "===", "!==",
+        "&&", "||", "!",
+        "++", "--", "..", "?:", "?.",
+        "is", "as", "as?", "in", "!in",
+        "if", "else", "for", "while", "do", "when",
+        "return", "throw", "break", "continue",
+        "try", "catch", "finally",
+        ".", ",", ";", ":", "?", "->",
+    ],
+    operand_leaf_types: &[
+        "simple_identifier", "type_identifier",
+        "integer_literal", "long_literal", "real_literal", "hex_literal", "bin_literal",
+        "string_literal", "character_literal",
+        "true", "false", "null", "this", "super",
+    ],
+    compound_operators: &["call_expression", "indexing_expression"],
+    skip_types: &["type_arguments", "type_parameters"],
+};
+
+pub static SWIFT_HALSTEAD: HalsteadRules = HalsteadRules {
+    operator_leaf_types: &[
+        "+", "-", "*", "/", "%", "=", "+=", "-=", "*=", "/=", "%=",
+        "==", "!=", "<", ">", "<=", ">=", "===", "!==",
+        "&&", "||", "!",
+        "?", "??", "...", "..<",
+        "is", "as", "as?", "as!",
+        "if", "else", "for", "while", "repeat", "switch", "guard",
+        "return", "throw", "break", "continue",
+        "try", "catch",
+        ".", ",", ";", ":", "->",
+    ],
+    operand_leaf_types: &[
+        "simple_identifier", "type_identifier",
+        "integer_literal", "real_literal", "hex_literal", "oct_literal", "bin_literal",
+        "string_literal", "true", "false", "nil", "self", "super",
+    ],
+    compound_operators: &["call_expression", "subscript_expression"],
+    skip_types: &["type_arguments", "type_parameters"],
+};
+
+pub static SCALA_HALSTEAD: HalsteadRules = HalsteadRules {
+    operator_leaf_types: &[
+        "+", "-", "*", "/", "%", "=", "+=", "-=", "*=", "/=", "%=",
+        "==", "!=", "<", ">", "<=", ">=",
+        "&&", "||", "!",
+        "::", "++", ":+", "+:",
+        "if", "else", "for", "while", "do", "match", "case",
+        "return", "throw", "yield",
+        "try", "catch", "finally",
+        ".", ",", ";", ":", "=>", "<-",
+    ],
+    operand_leaf_types: &[
+        "identifier", "type_identifier",
+        "integer_literal", "floating_point_literal",
+        "string_literal", "character_literal", "symbol_literal",
+        "true", "false", "null", "this", "super",
+    ],
+    compound_operators: &["call_expression", "field_expression"],
+    skip_types: &["type_arguments", "type_parameters"],
+};
+
+pub static BASH_HALSTEAD: HalsteadRules = HalsteadRules {
+    operator_leaf_types: &[
+        "=", "==", "!=", "-eq", "-ne", "-lt", "-gt", "-le", "-ge",
+        "-z", "-n", "-f", "-d", "-e", "-r", "-w", "-x",
+        "&&", "||", "!",
+        "|", ">>", ">", "<", "<<",
+        "if", "then", "else", "elif", "fi",
+        "for", "while", "until", "do", "done",
+        "case", "esac", "in",
+        "return", "exit", "break", "continue",
+        ";", ";;",
+    ],
+    operand_leaf_types: &[
+        "word", "variable_name", "string", "number",
+        "raw_string", "simple_expansion", "expansion",
+        "command_name",
+    ],
+    compound_operators: &["command", "command_substitution", "pipeline"],
+    skip_types: &[],
+};
+
 /// Look up Halstead rules by language ID.
 pub fn halstead_rules(lang_id: &str) -> Option<&'static HalsteadRules> {
     match lang_id {
@@ -819,6 +1037,12 @@ pub fn halstead_rules(lang_id: &str) -> Option<&'static HalsteadRules> {
         "csharp" => Some(&CSHARP_HALSTEAD),
         "ruby" => Some(&RUBY_HALSTEAD),
         "php" => Some(&PHP_HALSTEAD),
+        "c" => Some(&C_HALSTEAD),
+        "cpp" => Some(&CPP_HALSTEAD),
+        "kotlin" => Some(&KOTLIN_HALSTEAD),
+        "swift" => Some(&SWIFT_HALSTEAD),
+        "scala" => Some(&SCALA_HALSTEAD),
+        "bash" => Some(&BASH_HALSTEAD),
         _ => None,
     }
 }
@@ -831,6 +1055,11 @@ pub fn comment_prefixes(lang_id: &str) -> &'static [&'static str] {
         }
         "python" | "ruby" => &["#"],
         "php" => &["//", "#", "/*", "*", "*/"],
+        "c" | "cpp" => &["//", "/*"],
+        "kotlin" => &["//", "/*"],
+        "swift" => &["//", "/*"],
+        "scala" => &["//", "/*"],
+        "bash" => &["#"],
         _ => &["//", "/*", "*", "*/"],
     }
 }
