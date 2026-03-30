@@ -11,7 +11,7 @@ pub struct LangRules {
     pub branch_nodes: &'static [&'static str],
     pub case_nodes: &'static [&'static str],
     pub logical_operators: &'static [&'static str],
-    pub logical_node_type: &'static str,
+    pub logical_node_types: &'static [&'static str],
     pub optional_chain_type: Option<&'static str>,
     pub nesting_nodes: &'static [&'static str],
     pub function_nodes: &'static [&'static str],
@@ -59,7 +59,7 @@ pub static JS_TS_RULES: LangRules = LangRules {
     ],
     case_nodes: &["switch_case"],
     logical_operators: &["&&", "||", "??"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: Some("optional_chain_expression"),
     nesting_nodes: &[
         "if_statement",
@@ -99,7 +99,7 @@ pub static PYTHON_RULES: LangRules = LangRules {
     ],
     case_nodes: &["case_clause"],
     logical_operators: &["and", "or"],
-    logical_node_type: "boolean_operator",
+    logical_node_types: &["boolean_operator"],
     optional_chain_type: None,
     nesting_nodes: &[
         "if_statement",
@@ -131,7 +131,7 @@ pub static GO_RULES: LangRules = LangRules {
         "communication_case",
     ],
     logical_operators: &["&&", "||"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: None,
     nesting_nodes: &[
         "if_statement",
@@ -168,7 +168,7 @@ pub static RUST_LANG_RULES: LangRules = LangRules {
     ],
     case_nodes: &["match_arm"],
     logical_operators: &["&&", "||"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: None,
     nesting_nodes: &[
         "if_expression",
@@ -200,7 +200,7 @@ pub static JAVA_RULES: LangRules = LangRules {
     ],
     case_nodes: &["switch_label"],
     logical_operators: &["&&", "||"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: None,
     nesting_nodes: &[
         "if_statement",
@@ -237,7 +237,7 @@ pub static CSHARP_RULES: LangRules = LangRules {
     ],
     case_nodes: &["switch_section"],
     logical_operators: &["&&", "||", "??"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: Some("conditional_access_expression"),
     nesting_nodes: &[
         "if_statement",
@@ -277,7 +277,7 @@ pub static RUBY_RULES: LangRules = LangRules {
     ],
     case_nodes: &["when"],
     logical_operators: &["and", "or", "&&", "||"],
-    logical_node_type: "binary",
+    logical_node_types: &["binary"],
     optional_chain_type: None,
     nesting_nodes: &[
         "if",
@@ -312,7 +312,7 @@ pub static PHP_RULES: LangRules = LangRules {
     ],
     case_nodes: &["case_statement", "default_statement"],
     logical_operators: &["&&", "||", "and", "or", "??"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: Some("nullsafe_member_access_expression"),
     nesting_nodes: &[
         "if_statement",
@@ -341,7 +341,7 @@ pub static C_RULES: LangRules = LangRules {
     branch_nodes: &["if_statement", "for_statement", "while_statement", "do_statement", "case_statement", "conditional_expression"],
     case_nodes: &["case_statement"],
     logical_operators: &["&&", "||"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: None,
     nesting_nodes: &["if_statement", "for_statement", "while_statement", "do_statement", "conditional_expression"],
     function_nodes: &["function_definition"],
@@ -356,7 +356,7 @@ pub static CPP_RULES: LangRules = LangRules {
     branch_nodes: &["if_statement", "for_statement", "for_range_loop", "while_statement", "do_statement", "case_statement", "conditional_expression", "catch_clause"],
     case_nodes: &["case_statement"],
     logical_operators: &["&&", "||"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: None,
     nesting_nodes: &["if_statement", "for_statement", "for_range_loop", "while_statement", "do_statement", "catch_clause", "conditional_expression"],
     function_nodes: &["function_definition"],
@@ -371,7 +371,7 @@ pub static KOTLIN_RULES: LangRules = LangRules {
     branch_nodes: &["if_expression", "for_statement", "while_statement", "do_while_statement", "catch_block", "when_expression", "when_entry"],
     case_nodes: &["when_entry"],
     logical_operators: &["&&", "||"],
-    logical_node_type: "conjunction_expression",
+    logical_node_types: &["conjunction_expression", "disjunction_expression"],
     optional_chain_type: Some("safe_navigation"),
     nesting_nodes: &["if_expression", "for_statement", "while_statement", "do_while_statement", "catch_block", "when_expression"],
     function_nodes: &["function_declaration"],
@@ -386,7 +386,7 @@ pub static SWIFT_RULES: LangRules = LangRules {
     branch_nodes: &["if_statement", "for_in_statement", "while_statement", "repeat_while_statement", "catch_clause", "switch_entry", "ternary_expression", "guard_statement"],
     case_nodes: &["switch_entry"],
     logical_operators: &["&&", "||"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: Some("optional_chaining_expression"),
     nesting_nodes: &["if_statement", "for_in_statement", "while_statement", "repeat_while_statement", "catch_clause", "ternary_expression", "guard_statement"],
     function_nodes: &["function_declaration", "init_declaration"],
@@ -401,7 +401,7 @@ pub static SCALA_RULES: LangRules = LangRules {
     branch_nodes: &["if_expression", "for_expression", "while_expression", "do_while_expression", "catch_clause", "case_clause", "match_expression"],
     case_nodes: &["case_clause"],
     logical_operators: &["&&", "||"],
-    logical_node_type: "infix_expression",
+    logical_node_types: &["infix_expression"],
     optional_chain_type: None,
     nesting_nodes: &["if_expression", "for_expression", "while_expression", "do_while_expression", "catch_clause", "match_expression"],
     function_nodes: &["function_definition"],
@@ -416,7 +416,7 @@ pub static BASH_RULES: LangRules = LangRules {
     branch_nodes: &["if_statement", "for_statement", "while_statement", "case_statement", "elif_clause"],
     case_nodes: &["case_item"],
     logical_operators: &["&&", "||"],
-    logical_node_type: "binary_expression",
+    logical_node_types: &["binary_expression"],
     optional_chain_type: None,
     nesting_nodes: &["if_statement", "for_statement", "while_statement", "case_statement"],
     function_nodes: &["function_definition"],
@@ -617,7 +617,7 @@ fn handle_logical_op(
     cognitive: &mut u32,
     cyclomatic: &mut u32,
 ) -> bool {
-    if kind != rules.logical_node_type {
+    if !rules.logical_node_types.contains(&kind) {
         return false;
     }
     let Some(op_node) = node.child(1) else { return false };
@@ -630,7 +630,7 @@ fn handle_logical_op(
 
     // Cognitive: +1 only when operator changes from the previous sibling sequence
     let same_sequence = node.parent().map_or(false, |parent| {
-        parent.kind() == rules.logical_node_type
+        rules.logical_node_types.contains(&parent.kind())
             && parent.child(1).map_or(false, |pop| pop.kind() == op)
     });
     if !same_sequence {
