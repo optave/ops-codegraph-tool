@@ -227,6 +227,7 @@ function extractRustParameters(paramListNode: TreeSitterNode | null): SubDeclara
     const param = paramListNode.child(i);
     if (!param) continue;
     if (param.type === 'self_parameter') {
+      // Skip self — matches native engine behaviour
     } else if (param.type === 'parameter') {
       const pattern = param.childForFieldName('pattern');
       if (pattern) {

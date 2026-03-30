@@ -132,6 +132,7 @@ export function extractBodyMembers(
 
 /**
  * Strip leading/trailing quotes (single, double, or backtick) from a string.
+ * Strips only the leading/trailing delimiter; interior quotes are untouched.
  */
 export function stripQuotes(text: string): string {
   return text.replace(/^['"`]|['"`]$/g, '');
