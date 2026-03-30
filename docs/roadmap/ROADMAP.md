@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.5.0 | **Status:** Active development | **Updated:** 2026-03-29
+> **Current version:** 3.5.0 | **Status:** Active development | **Updated:** 2026-03-30
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across thirteen phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -1297,17 +1297,22 @@ Structure building is unchanged — at 22ms it's already fast.
 
 **Why after Phase 6:** The native analysis acceleration work (Phase 6) establishes the dual-engine pipeline that new language grammars plug into. Adding languages before the engine is complete would mean porting extractors twice. With Phase 6 done, each new language needs only a `LANGUAGE_REGISTRY` entry + extractor function, and both engines support it automatically.
 
-### 7.1 -- Parser Abstraction Layer
+### 7.1 -- Parser Abstraction Layer ✅
 
 Extract shared patterns from existing extractors into reusable helpers to reduce per-language boilerplate from ~200 lines to ~80 lines.
 
 | Helper | Purpose |
 |--------|---------|
-| `findParentNode(node, typeNames)` | Walk parent chain to find enclosing class/struct |
-| `extractBodyMethods(bodyNode, parentName)` | Extract method definitions from a body block |
-| `normalizeImportPath(importText)` | Cross-language import path normalization |
+| ✅ `findParentNode(node, typeNames, nameField?)` | Walk parent chain to find enclosing class/struct |
+| ✅ `extractBodyMembers(node, bodyFields, memberType, kind, nameField?, visibility?)` | Extract child declarations from a body block |
+| ✅ `stripQuotes(text)` | Strip leading/trailing quotes from string literals |
+| ✅ `lastPathSegment(path, separator?)` | Extract last segment of a delimited import path |
 
-**New file:** `src/parser-utils.js`
+**File:** `src/extractors/helpers.ts` (extended existing helper module)
+
+- `findParentNode` replaces 6 per-language `findParent*` functions (JS, Python, Java, C#, Ruby, Rust)
+- `extractBodyMembers` replaces 5 body-iteration patterns (Rust struct/enum, Java enum, C# enum, PHP enum)
+- `stripQuotes` + `lastPathSegment` replace inline `.replace(/"/g, '')` and `.split('.').pop()` patterns across 7 extractors
 
 ### 7.2 -- Batch 1: High Demand
 

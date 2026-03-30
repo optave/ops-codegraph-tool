@@ -8,9 +8,11 @@ import type {
 import {
   findChild,
   goVisibility,
+  lastPathSegment,
   MAX_WALK_DEPTH,
   nodeEndLine,
   setTypeMapEntry,
+  stripQuotes,
 } from './helpers.js';
 
 /**
@@ -195,9 +197,9 @@ function handleGoImportDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 function extractGoImportSpec(spec: TreeSitterNode, ctx: ExtractorOutput): void {
   const pathNode = spec.childForFieldName('path');
   if (pathNode) {
-    const importPath = pathNode.text.replace(/"/g, '');
+    const importPath = stripQuotes(pathNode.text);
     const nameNode = spec.childForFieldName('name');
-    const alias = nameNode ? nameNode.text : (importPath.split('/').pop() ?? importPath);
+    const alias = nameNode ? nameNode.text : lastPathSegment(importPath);
     ctx.imports.push({
       source: importPath,
       names: [alias],

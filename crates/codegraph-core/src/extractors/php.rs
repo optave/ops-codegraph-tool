@@ -1,17 +1,17 @@
-use tree_sitter::{Node, Tree};
+use super::helpers::*;
+use super::SymbolExtractor;
 use crate::cfg::build_function_cfg;
 use crate::complexity::compute_all_metrics;
 use crate::types::*;
-use super::helpers::*;
-use super::SymbolExtractor;
+use tree_sitter::{Node, Tree};
 
 pub struct PhpExtractor;
 
 impl SymbolExtractor for PhpExtractor {
     fn extract(&self, tree: &Tree, source: &[u8], file_path: &str) -> FileSymbols {
         let mut symbols = FileSymbols::new(file_path.to_string());
-        walk_node(&tree.root_node(), source, &mut symbols);
-        extract_php_type_map(&tree.root_node(), source, &mut symbols);
+        walk_tree(&tree.root_node(), source, &mut symbols, match_php_node);
+        walk_tree(&tree.root_node(), source, &mut symbols, match_php_type_map);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &PHP_AST_CONFIG);
         symbols
     }
@@ -23,14 +23,7 @@ fn find_php_parent_class(node: &Node, source: &[u8]) -> Option<String> {
     find_enclosing_type_name(node, PHP_CLASS_KINDS, source)
 }
 
-fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    walk_node_depth(node, source, symbols, 0);
-}
-
-fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
-    if depth >= MAX_WALK_DEPTH {
-        return;
-    }
+fn match_php_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "function_definition" => handle_function_def(node, source, symbols),
         "class_declaration" => handle_class_decl(node, source, symbols),
@@ -44,12 +37,6 @@ fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth:
         "scoped_call_expression" => handle_scoped_call(node, source, symbols),
         "object_creation_expression" => handle_object_creation(node, source, symbols),
         _ => {}
-    }
-
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_node_depth(&child, source, symbols, depth + 1);
-        }
     }
 }
 
@@ -400,14 +387,7 @@ fn extract_php_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Option<&
     }
 }
 
-fn extract_php_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    extract_php_type_map_depth(node, source, symbols, 0);
-}
-
-fn extract_php_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
-    if depth >= MAX_WALK_DEPTH {
-        return;
-    }
+fn match_php_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "simple_parameter" | "variadic_parameter" | "property_promotion_parameter" => {
             if let Some(type_node) = node.child_by_field_name("type") {
@@ -424,10 +404,5 @@ fn extract_php_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSymb
             }
         }
         _ => {}
-    }
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            extract_php_type_map_depth(&child, source, symbols, depth + 1);
-        }
     }
 }

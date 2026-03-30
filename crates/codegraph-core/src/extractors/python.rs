@@ -10,43 +10,22 @@ pub struct PythonExtractor;
 impl SymbolExtractor for PythonExtractor {
     fn extract(&self, tree: &Tree, source: &[u8], file_path: &str) -> FileSymbols {
         let mut symbols = FileSymbols::new(file_path.to_string());
-        walk_node(&tree.root_node(), source, &mut symbols);
+        walk_tree(&tree.root_node(), source, &mut symbols, match_python_node);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &PYTHON_AST_CONFIG);
-        extract_python_type_map(&tree.root_node(), source, &mut symbols);
+        walk_tree(&tree.root_node(), source, &mut symbols, match_python_type_map);
         symbols
     }
 }
 
-fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    walk_node_depth(node, source, symbols, 0);
-}
-
-fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
-    if depth >= MAX_WALK_DEPTH {
-        return;
-    }
+fn match_python_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "function_definition" => handle_function_def(node, source, symbols),
         "class_definition" => handle_class_def(node, source, symbols),
-        "decorated_definition" => {
-            for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
-                    walk_node_depth(&child, source, symbols, depth + 1);
-                }
-            }
-            return;
-        }
         "expression_statement" => handle_expr_stmt(node, source, symbols),
         "call" => handle_call(node, source, symbols),
         "import_statement" => handle_import_stmt(node, source, symbols),
         "import_from_statement" => handle_import_from_stmt(node, source, symbols),
         _ => {}
-    }
-
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_node_depth(&child, source, symbols, depth + 1);
-        }
     }
 }
 
@@ -350,19 +329,7 @@ fn extract_python_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Optio
     }
 }
 
-fn extract_python_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    extract_python_type_map_depth(node, source, symbols, 0);
-}
-
-fn extract_python_type_map_depth(
-    node: &Node,
-    source: &[u8],
-    symbols: &mut FileSymbols,
-    depth: usize,
-) {
-    if depth >= MAX_WALK_DEPTH {
-        return;
-    }
+fn match_python_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "typed_parameter" => {
             // first child is identifier, type field is the type
@@ -401,11 +368,6 @@ fn extract_python_type_map_depth(
             }
         }
         _ => {}
-    }
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            extract_python_type_map_depth(&child, source, symbols, depth + 1);
-        }
     }
 }
 

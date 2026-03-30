@@ -7,8 +7,11 @@ import type {
   TreeSitterTree,
 } from '../types.js';
 import {
+  extractBodyMembers,
   extractModifierVisibility,
   findChild,
+  findParentNode,
+  lastPathSegment,
   MAX_WALK_DEPTH,
   nodeEndLine,
   setTypeMapEntry,
@@ -214,7 +217,7 @@ function handleCsUsingDirective(node: TreeSitterNode, ctx: ExtractorOutput): voi
     findChild(node, 'identifier');
   if (!nameNode) return;
   const fullPath = nameNode.text;
-  const lastName = fullPath.split('.').pop() ?? fullPath;
+  const lastName = lastPathSegment(fullPath, '.');
   ctx.imports.push({
     source: fullPath,
     names: [lastName],
@@ -252,22 +255,15 @@ function handleCsObjectCreation(node: TreeSitterNode, ctx: ExtractorOutput): voi
   if (typeName) ctx.calls.push({ name: typeName, line: node.startPosition.row + 1 });
 }
 
+const CS_PARENT_TYPES = [
+  'class_declaration',
+  'struct_declaration',
+  'interface_declaration',
+  'enum_declaration',
+  'record_declaration',
+] as const;
 function findCSharpParentType(node: TreeSitterNode): string | null {
-  let current = node.parent;
-  while (current) {
-    if (
-      current.type === 'class_declaration' ||
-      current.type === 'struct_declaration' ||
-      current.type === 'interface_declaration' ||
-      current.type === 'enum_declaration' ||
-      current.type === 'record_declaration'
-    ) {
-      const nameNode = current.childForFieldName('name');
-      return nameNode ? nameNode.text : null;
-    }
-    current = current.parent;
-  }
-  return null;
+  return findParentNode(node, CS_PARENT_TYPES);
 }
 
 // ── Child extraction helpers ────────────────────────────────────────────────
@@ -313,19 +309,12 @@ function extractCSharpClassFields(classNode: TreeSitterNode): SubDeclaration[] {
 }
 
 function extractCSharpEnumMembers(enumNode: TreeSitterNode): SubDeclaration[] {
-  const constants: SubDeclaration[] = [];
-  const body =
-    enumNode.childForFieldName('body') || findChild(enumNode, 'enum_member_declaration_list');
-  if (!body) return constants;
-  for (let i = 0; i < body.childCount; i++) {
-    const member = body.child(i);
-    if (!member || member.type !== 'enum_member_declaration') continue;
-    const nameNode = member.childForFieldName('name');
-    if (nameNode) {
-      constants.push({ name: nameNode.text, kind: 'constant', line: member.startPosition.row + 1 });
-    }
-  }
-  return constants;
+  return extractBodyMembers(
+    enumNode,
+    ['body', 'enum_member_declaration_list'],
+    'enum_member_declaration',
+    'constant',
+  );
 }
 
 // ── Type map extraction ──────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import type { TreeSitterNode, TypeMapEntry } from '../types.js';
+import type { SubDeclaration, TreeSitterNode, TypeMapEntry } from '../types.js';
 
 /**
  * Maximum recursion depth for tree-sitter AST walkers.
@@ -84,6 +84,82 @@ export function rustVisibility(node: TreeSitterNode): 'public' | 'private' {
     }
   }
   return 'private';
+}
+
+// ── Parser abstraction helpers ─────────────────────────────────────────────
+
+/**
+ * Walk up the parent chain to find an enclosing node whose type is in `typeNames`.
+ * Returns the text of `nameField` (default `'name'`) on the matching ancestor, or null.
+ *
+ * Replaces per-language `findParentClass` / `findParentType` / `findCurrentImpl` helpers.
+ */
+export function findParentNode(
+  node: TreeSitterNode,
+  typeNames: readonly string[],
+  nameField: string = 'name',
+): string | null {
+  let current = node.parent;
+  while (current) {
+    if (typeNames.includes(current.type)) {
+      const nameNode = current.childForFieldName(nameField);
+      return nameNode ? nameNode.text : null;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+/**
+ * Extract child declarations from a container node's body.
+ * Finds the body via `bodyFields` (tries childForFieldName then findChild for each),
+ * iterates its children, filters by `memberType`, extracts `nameField`, and returns SubDeclarations.
+ *
+ * Replaces per-language extractStructFields / extractEnumVariants / extractEnumConstants helpers
+ * for the common case where each member has a direct name field.
+ */
+export function extractBodyMembers(
+  containerNode: TreeSitterNode,
+  bodyFields: readonly string[],
+  memberType: string,
+  kind: SubDeclaration['kind'],
+  nameField: string = 'name',
+  visibility?: (member: TreeSitterNode) => SubDeclaration['visibility'],
+): SubDeclaration[] {
+  const members: SubDeclaration[] = [];
+  let body: TreeSitterNode | null = null;
+  for (const field of bodyFields) {
+    body = containerNode.childForFieldName(field) || findChild(containerNode, field);
+    if (body) break;
+  }
+  if (!body) return members;
+  for (let i = 0; i < body.childCount; i++) {
+    const member = body.child(i);
+    if (!member || member.type !== memberType) continue;
+    const nn = member.childForFieldName(nameField);
+    if (nn) {
+      const entry: SubDeclaration = { name: nn.text, kind, line: member.startPosition.row + 1 };
+      if (visibility) entry.visibility = visibility(member);
+      members.push(entry);
+    }
+  }
+  return members;
+}
+
+/**
+ * Strip leading/trailing quotes (single, double, or backtick) from a string.
+ * Strips only the leading/trailing delimiter; interior quotes are untouched.
+ */
+export function stripQuotes(text: string): string {
+  return text.replace(/^['"`]|['"`]$/g, '');
+}
+
+/**
+ * Extract the last segment of a delimited path.
+ * e.g. `lastPathSegment('java.util.List', '.')` → `'List'`
+ */
+export function lastPathSegment(path: string, separator: string = '/'): string {
+  return path.split(separator).pop() ?? path;
 }
 
 export function extractModifierVisibility(

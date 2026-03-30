@@ -1,16 +1,16 @@
-use tree_sitter::{Node, Tree};
+use super::helpers::*;
+use super::SymbolExtractor;
 use crate::cfg::build_function_cfg;
 use crate::complexity::compute_all_metrics;
 use crate::types::*;
-use super::helpers::*;
-use super::SymbolExtractor;
+use tree_sitter::{Node, Tree};
 
 pub struct RubyExtractor;
 
 impl SymbolExtractor for RubyExtractor {
     fn extract(&self, tree: &Tree, source: &[u8], file_path: &str) -> FileSymbols {
         let mut symbols = FileSymbols::new(file_path.to_string());
-        walk_node(&tree.root_node(), source, &mut symbols);
+        walk_tree(&tree.root_node(), source, &mut symbols, match_ruby_node);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &RUBY_AST_CONFIG);
         symbols
     }
@@ -22,14 +22,7 @@ fn find_ruby_parent_class(node: &Node, source: &[u8]) -> Option<String> {
     find_enclosing_type_name(node, RUBY_CLASS_KINDS, source)
 }
 
-fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    walk_node_depth(node, source, symbols, 0);
-}
-
-fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
-    if depth >= MAX_WALK_DEPTH {
-        return;
-    }
+fn match_ruby_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "class" => handle_class(node, source, symbols),
         "module" => handle_module(node, source, symbols),
@@ -37,12 +30,6 @@ fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth:
         "singleton_method" => handle_singleton_method(node, source, symbols),
         "call" => handle_call(node, source, symbols),
         _ => {}
-    }
-
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_node_depth(&child, source, symbols, depth + 1);
-        }
     }
 }
 

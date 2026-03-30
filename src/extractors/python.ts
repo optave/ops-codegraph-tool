@@ -7,6 +7,7 @@ import type {
 } from '../types.js';
 import {
   findChild,
+  findParentNode,
   MAX_WALK_DEPTH,
   nodeEndLine,
   pythonVisibility,
@@ -424,14 +425,7 @@ function extractPythonTypeName(typeNode: TreeSitterNode): string | null {
   return null;
 }
 
+const PY_CLASS_TYPES = ['class_definition'] as const;
 function findPythonParentClass(node: TreeSitterNode): string | null {
-  let current = node.parent;
-  while (current) {
-    if (current.type === 'class_definition') {
-      const nameNode = current.childForFieldName('name');
-      return nameNode ? nameNode.text : null;
-    }
-    current = current.parent;
-  }
-  return null;
+  return findParentNode(node, PY_CLASS_TYPES);
 }

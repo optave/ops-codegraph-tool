@@ -1,18 +1,18 @@
-use tree_sitter::{Node, Tree};
+use super::helpers::*;
+use super::SymbolExtractor;
 use crate::cfg::build_function_cfg;
 use crate::complexity::compute_all_metrics;
 use crate::types::*;
-use super::helpers::*;
-use super::SymbolExtractor;
+use tree_sitter::{Node, Tree};
 
 pub struct JsExtractor;
 
 impl SymbolExtractor for JsExtractor {
     fn extract(&self, tree: &Tree, source: &[u8], file_path: &str) -> FileSymbols {
         let mut symbols = FileSymbols::new(file_path.to_string());
-        walk_node(&tree.root_node(), source, &mut symbols);
+        walk_tree(&tree.root_node(), source, &mut symbols, match_js_node);
         walk_ast_nodes(&tree.root_node(), source, &mut symbols.ast_nodes);
-        extract_type_map(&tree.root_node(), source, &mut symbols);
+        walk_tree(&tree.root_node(), source, &mut symbols, match_js_type_map);
         symbols
     }
 }
@@ -52,15 +52,7 @@ fn extract_new_expr_type_name<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&
     }
 }
 
-/// Walk the entire tree to extract type annotations and new-expression type inferences.
-fn extract_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    extract_type_map_depth(node, source, symbols, 0);
-}
-
-fn extract_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
-    if depth >= MAX_WALK_DEPTH {
-        return;
-    }
+fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "variable_declarator" => {
             if let Some(name_n) = node.child_by_field_name("name") {
@@ -73,8 +65,7 @@ fn extract_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols,
                                 name: var_name.to_string(),
                                 type_name: type_name.to_string(),
                             });
-                            // Skip new_expression check — annotation wins
-                            return walk_type_map_children(node, source, symbols, depth);
+                            return; // Skip new_expression check — annotation wins
                         }
                     }
                     // Fall back to new expression inference
@@ -110,25 +101,9 @@ fn extract_type_map_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols,
         }
         _ => {}
     }
-    walk_type_map_children(node, source, symbols, depth);
 }
 
-fn walk_type_map_children(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            extract_type_map_depth(&child, source, symbols, depth + 1);
-        }
-    }
-}
-
-fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    walk_node_depth(node, source, symbols, 0);
-}
-
-fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
-    if depth >= MAX_WALK_DEPTH {
-        return;
-    }
+fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "function_declaration" => handle_function_decl(node, source, symbols),
         "class_declaration" => handle_class_decl(node, source, symbols),
@@ -142,12 +117,6 @@ fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth:
         "export_statement" => handle_export_stmt(node, source, symbols),
         "expression_statement" => handle_expr_stmt(node, source, symbols),
         _ => {}
-    }
-
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_node_depth(&child, source, symbols, depth + 1);
-        }
     }
 }
 
