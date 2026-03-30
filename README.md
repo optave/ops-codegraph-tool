@@ -10,8 +10,8 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@optave/codegraph"><img src="https://img.shields.io/npm/v/@optave/codegraph?style=flat-square&logo=npm&logoColor=white&label=npm" alt="npm version" /></a>
-  <a href="https://github.com/optave/codegraph/blob/main/LICENSE"><img src="https://img.shields.io/github/license/optave/codegraph?style=flat-square&logo=opensourceinitiative&logoColor=white" alt="Apache-2.0 License" /></a>
-  <a href="https://github.com/optave/codegraph/actions"><img src="https://img.shields.io/github/actions/workflow/status/optave/codegraph/codegraph-impact.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI" alt="CI" /></a>
+  <a href="https://github.com/optave/ops-codegraph-tool/blob/main/LICENSE"><img src="https://img.shields.io/github/license/optave/codegraph?style=flat-square&logo=opensourceinitiative&logoColor=white" alt="Apache-2.0 License" /></a>
+  <a href="https://github.com/optave/ops-codegraph-tool/actions"><img src="https://img.shields.io/github/actions/workflow/status/optave/codegraph/codegraph-impact.yml?style=flat-square&logo=githubactions&logoColor=white&label=CI" alt="CI" /></a>
   <img src="https://img.shields.io/badge/node-%3E%3D22.6-339933?style=flat-square&logo=node.js&logoColor=white" alt="Node >= 22.6" />
 </p>
 
@@ -156,11 +156,11 @@ codegraph deps src/index.ts  # file-level import/export map
 Or install from source:
 
 ```bash
-git clone https://github.com/optave/codegraph.git
+git clone https://github.com/optave/ops-codegraph-tool.git
 cd codegraph && npm install && npm link
 ```
 
-> **Dev builds:** Pre-release tarballs are attached to [GitHub Releases](https://github.com/optave/codegraph/releases). Install with `npm install -g <path-to-tarball>`. Note that `npm install -g <tarball-url>` does not work because npm cannot resolve optional platform-specific dependencies from a URL — download the `.tgz` first, then install from the local file.
+> **Dev builds:** Pre-release tarballs are attached to [GitHub Releases](https://github.com/optave/ops-codegraph-tool/releases). Install with `npm install -g <path-to-tarball>`. Note that `npm install -g <tarball-url>` does not work because npm cannot resolve optional platform-specific dependencies from a URL — download the `.tgz` first, then install from the local file.
 
 ---
 
@@ -786,7 +786,7 @@ See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap a
 Contributions are welcome! See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the full guide — setup, workflow, commit convention, testing, and architecture notes.
 
 ```bash
-git clone https://github.com/optave/codegraph.git
+git clone https://github.com/optave/ops-codegraph-tool.git
 cd codegraph
 npm install
 npm test

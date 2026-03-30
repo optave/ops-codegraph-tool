@@ -74,12 +74,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/optave/codegraph.git"
+    "url": "https://github.com/optave/ops-codegraph-tool.git"
   },
   "bugs": {
-    "url": "https://github.com/optave/codegraph/issues"
+    "url": "https://github.com/optave/ops-codegraph-tool/issues"
   },
-  "homepage": "https://github.com/optave/codegraph#readme",
+  "homepage": "https://github.com/optave/ops-codegraph-tool#readme",
   "dependencies": {
     "better-sqlite3": "^12.6.2",
     "commander": "^14.0.3",

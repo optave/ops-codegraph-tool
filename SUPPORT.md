@@ -13,12 +13,12 @@ Here are the best ways to get help with codegraph:
 
 ### Questions & Discussions
 
-- **GitHub Issues** — For bug reports and feature requests, use [GitHub Issues](https://github.com/optave/codegraph/issues) with the provided templates
-- **GitHub Discussions** — For general questions, ideas, and community conversation, use [GitHub Discussions](https://github.com/optave/codegraph/discussions)
+- **GitHub Issues** — For bug reports and feature requests, use [GitHub Issues](https://github.com/optave/ops-codegraph-tool/issues) with the provided templates
+- **GitHub Discussions** — For general questions, ideas, and community conversation, use [GitHub Discussions](https://github.com/optave/ops-codegraph-tool/discussions)
 
 ### Bug Reports
 
-If you've found a bug, please [open an issue](https://github.com/optave/codegraph/issues/new?template=bug_report.yml) with:
+If you've found a bug, please [open an issue](https://github.com/optave/ops-codegraph-tool/issues/new?template=bug_report.yml) with:
 
 - Steps to reproduce
 - Expected vs. actual behavior
@@ -27,7 +27,7 @@ If you've found a bug, please [open an issue](https://github.com/optave/codegrap
 
 ### Feature Requests
 
-Have an idea? [Open a feature request](https://github.com/optave/codegraph/issues/new?template=feature_request.yml) describing:
+Have an idea? [Open a feature request](https://github.com/optave/ops-codegraph-tool/issues/new?template=feature_request.yml) describing:
 
 - The problem you're trying to solve
 - Your proposed solution

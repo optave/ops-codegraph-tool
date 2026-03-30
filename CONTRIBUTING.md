@@ -9,7 +9,7 @@ kinds — bug fixes, new features, documentation, and new language support.
 ## Getting Started
 
 ```bash
-git clone https://github.com/optave/codegraph.git
+git clone https://github.com/optave/ops-codegraph-tool.git
 cd codegraph
 npm install                      # also installs git hooks via husky
 npm test                         # run the full test suite
@@ -308,7 +308,7 @@ npm run build:wasm
 
 ## Reporting Issues
 
-Use [GitHub Issues](https://github.com/optave/codegraph/issues) with:
+Use [GitHub Issues](https://github.com/optave/ops-codegraph-tool/issues) with:
 
 - A clear title describing the problem
 - Steps to reproduce (if a bug)

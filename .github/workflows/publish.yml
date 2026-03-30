@@ -292,7 +292,7 @@ jobs:
             "license": "Apache-2.0",
             "repository": {
               "type": "git",
-              "url": "https://github.com/optave/codegraph.git"
+              "url": "https://github.com/optave/ops-codegraph-tool.git"
             }
           }
           PKGJSON
@@ -488,7 +488,7 @@ jobs:
             "license": "Apache-2.0",
             "repository": {
               "type": "git",
-              "url": "https://github.com/optave/codegraph.git"
+              "url": "https://github.com/optave/ops-codegraph-tool.git"
             }
           }
           PKGJSON

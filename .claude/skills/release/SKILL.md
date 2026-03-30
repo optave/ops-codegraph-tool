@@ -87,7 +87,7 @@ The CHANGELOG doubles as **release notes** — it's what users see on the GitHub
 Add a new section at the top (below the header) following the existing format:
 
 ```
-## [X.Y.Z](https://github.com/optave/codegraph/compare/vPREVIOUS...vX.Y.Z) (YYYY-MM-DD)
+## [X.Y.Z](https://github.com/optave/ops-codegraph-tool/compare/vPREVIOUS...vX.Y.Z) (YYYY-MM-DD)
 
 **One-line summary.** Expanded description of the release highlights — what's new, what's better, what's fixed. This paragraph should tell a user whether they should upgrade and why.
 

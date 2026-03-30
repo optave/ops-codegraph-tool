@@ -13,7 +13,7 @@ If you discover a security vulnerability in codegraph, please report it responsi
 
 **Do NOT open a public GitHub issue for security vulnerabilities.**
 
-Instead, please report vulnerabilities through [GitHub's private vulnerability reporting](https://github.com/optave/codegraph/security/advisories/new).
+Instead, please report vulnerabilities through [GitHub's private vulnerability reporting](https://github.com/optave/ops-codegraph-tool/security/advisories/new).
 
 ### What to Include
 

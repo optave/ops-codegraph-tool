@@ -30,17 +30,17 @@ Your goal is to install the published package, exercise every feature, compare e
    npm init -y
 
    # Main package
-   npm install https://github.com/optave/codegraph/releases/download/dev-v$ARGUMENTS/optave-codegraph-$ARGUMENTS.tgz
+   npm install https://github.com/optave/ops-codegraph-tool/releases/download/dev-v$ARGUMENTS/optave-codegraph-$ARGUMENTS.tgz
 
    # Platform-specific native binary (pick one for the current platform):
    # Windows x64:
-   npm install https://github.com/optave/codegraph/releases/download/dev-v$ARGUMENTS/optave-codegraph-win32-x64-msvc-$ARGUMENTS.tgz
+   npm install https://github.com/optave/ops-codegraph-tool/releases/download/dev-v$ARGUMENTS/optave-codegraph-win32-x64-msvc-$ARGUMENTS.tgz
    # macOS ARM:
-   npm install https://github.com/optave/codegraph/releases/download/dev-v$ARGUMENTS/optave-codegraph-darwin-arm64-$ARGUMENTS.tgz
+   npm install https://github.com/optave/ops-codegraph-tool/releases/download/dev-v$ARGUMENTS/optave-codegraph-darwin-arm64-$ARGUMENTS.tgz
    # macOS x64:
-   npm install https://github.com/optave/codegraph/releases/download/dev-v$ARGUMENTS/optave-codegraph-darwin-x64-$ARGUMENTS.tgz
+   npm install https://github.com/optave/ops-codegraph-tool/releases/download/dev-v$ARGUMENTS/optave-codegraph-darwin-x64-$ARGUMENTS.tgz
    # Linux x64:
-   npm install https://github.com/optave/codegraph/releases/download/dev-v$ARGUMENTS/optave-codegraph-linux-x64-gnu-$ARGUMENTS.tgz
+   npm install https://github.com/optave/ops-codegraph-tool/releases/download/dev-v$ARGUMENTS/optave-codegraph-linux-x64-gnu-$ARGUMENTS.tgz
    ```
 
    > **Tip:** To find the latest dev version, run:
@@ -76,7 +76,7 @@ Your goal is to install the published package, exercise every feature, compare e
    ```
    If the version does **not** match `$ARGUMENTS`, install the correct binary now:
    - **Stable release:** `npm install @optave/codegraph-win32-x64-msvc@$ARGUMENTS` (adjust platform suffix)
-   - **Dev build:** `npm install https://github.com/optave/codegraph/releases/download/dev-v$ARGUMENTS/optave-codegraph-win32-x64-msvc-$ARGUMENTS.tgz`
+   - **Dev build:** `npm install https://github.com/optave/ops-codegraph-tool/releases/download/dev-v$ARGUMENTS/optave-codegraph-win32-x64-msvc-$ARGUMENTS.tgz`
 
    Verify with `npx codegraph info` in the source repo. Revert `package.json` / `package-lock.json` changes after the session (do not commit them on the fix branch).
 7. **Do NOT rebuild the graph yet.** The first phase tests commands against the codegraph source repo without a pre-existing graph.

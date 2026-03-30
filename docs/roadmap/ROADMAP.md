@@ -596,7 +596,7 @@ Key principles:
 
 Unify the independent AST analysis engines (complexity, CFG, dataflow) plus AST node storage into a shared visitor framework. These four modules independently implement the same pattern: per-language rules map → AST walk → collect data → write to DB → query → format.
 
-**Completed:** All 4 analyses (complexity, CFG, dataflow, AST-store) now run in a single DFS walk via `walkWithVisitors`. The CFG visitor rewrite ([#392](https://github.com/optave/codegraph/pull/392)) eliminated the Mode A/B split, replaced the 813-line `buildFunctionCFG` with a node-level visitor, and derives cyclomatic complexity directly from CFG structure (`E - N + 2`). `cfg.js` reduced from 1,242 → 518 lines.
+**Completed:** All 4 analyses (complexity, CFG, dataflow, AST-store) now run in a single DFS walk via `walkWithVisitors`. The CFG visitor rewrite ([#392](https://github.com/optave/ops-codegraph-tool/pull/392)) eliminated the Mode A/B split, replaced the 813-line `buildFunctionCFG` with a node-level visitor, and derives cyclomatic complexity directly from CFG structure (`E - N + 2`). `cfg.js` reduced from 1,242 → 518 lines.
 
 ```
 src/
@@ -622,14 +622,14 @@ src/
 - ✅ `builder.js` → single `runAnalyses` call replaces 4 sequential blocks + WASM pre-parse
 - ✅ Extracted pure computations to `metrics.js` (Halstead derived math, LOC, MI)
 - ✅ Extracted shared helpers to `visitor-utils.js` (from dataflow.js)
-- ✅ CFG visitor rewrite — node-level DFS visitor replaces statement-level `buildFunctionCFG`, Mode A/B split eliminated ([#392](https://github.com/optave/codegraph/pull/392))
-- ✅ Cyclomatic complexity derived from CFG (`E - N + 2`) — single source of truth for control flow metrics ([#392](https://github.com/optave/codegraph/pull/392))
+- ✅ CFG visitor rewrite — node-level DFS visitor replaces statement-level `buildFunctionCFG`, Mode A/B split eliminated ([#392](https://github.com/optave/ops-codegraph-tool/pull/392))
+- ✅ Cyclomatic complexity derived from CFG (`E - N + 2`) — single source of truth for control flow metrics ([#392](https://github.com/optave/ops-codegraph-tool/pull/392))
 
 **Affected files:** `src/complexity.js`, `src/cfg.js`, `src/dataflow.js`, `src/ast.js` → split into `src/ast-analysis/`
 
 ### 3.2 -- Command/Query Separation ★ Critical ✅
 
-CLI display wrappers extracted from all 19 analysis modules into dedicated `src/commands/` files. Shared infrastructure (`result-formatter.js`, `test-filter.js`) moved to `src/infrastructure/`. `*Data()` functions remain in original modules — MCP dynamic imports unchanged. ~1,059 lines of CLI formatting code separated from analysis logic ([#373](https://github.com/optave/codegraph/pull/373), [#393](https://github.com/optave/codegraph/pull/393)).
+CLI display wrappers extracted from all 19 analysis modules into dedicated `src/commands/` files. Shared infrastructure (`result-formatter.js`, `test-filter.js`) moved to `src/infrastructure/`. `*Data()` functions remain in original modules — MCP dynamic imports unchanged. ~1,059 lines of CLI formatting code separated from analysis logic ([#373](https://github.com/optave/ops-codegraph-tool/pull/373), [#393](https://github.com/optave/ops-codegraph-tool/pull/393)).
 
 ```
 src/
@@ -646,20 +646,20 @@ src/
 - ✅ `queries.js` CLI wrappers → `queries-cli.js` (15 functions)
 - ✅ Shared `result-formatter.js` (`outputResult` for JSON/NDJSON dispatch)
 - ✅ Shared `test-filter.js` (`isTestFile` predicate)
-- ✅ CLI wrappers extracted from remaining 15 modules into `src/commands/` ([#393](https://github.com/optave/codegraph/pull/393))
-- ✅ Per-command `src/commands/` directory structure ([#393](https://github.com/optave/codegraph/pull/393))
-- ✅ `src/infrastructure/` directory for shared utilities ([#393](https://github.com/optave/codegraph/pull/393))
+- ✅ CLI wrappers extracted from remaining 15 modules into `src/commands/` ([#393](https://github.com/optave/ops-codegraph-tool/pull/393))
+- ✅ Per-command `src/commands/` directory structure ([#393](https://github.com/optave/ops-codegraph-tool/pull/393))
+- ✅ `src/infrastructure/` directory for shared utilities ([#393](https://github.com/optave/ops-codegraph-tool/pull/393))
 - ⏭️ `CommandRunner` shared lifecycle — deferred (command files vary too much for a single pattern today)
 
 **Affected files:** All 19 modules with dual-function pattern, `src/cli.js`, `src/mcp.js`
 
 ### 3.3 -- Repository Pattern for Data Access ★ Critical ✅
 
-> **v3.1.1 progress:** `src/db/` directory created with `repository.js` (134 lines), `query-builder.js` (280 lines), and `migrations.js` (312 lines). All db usage across the codebase wrapped in try/finally for reliable `db.close()` ([#371](https://github.com/optave/codegraph/pull/371), [#384](https://github.com/optave/codegraph/pull/384), [#383](https://github.com/optave/codegraph/pull/383)).
+> **v3.1.1 progress:** `src/db/` directory created with `repository.js` (134 lines), `query-builder.js` (280 lines), and `migrations.js` (312 lines). All db usage across the codebase wrapped in try/finally for reliable `db.close()` ([#371](https://github.com/optave/ops-codegraph-tool/pull/371), [#384](https://github.com/optave/ops-codegraph-tool/pull/384), [#383](https://github.com/optave/ops-codegraph-tool/pull/383)).
 >
 > **v3.1.2 progress:** `repository.js` split into `src/db/repository/` directory with 10 domain files (nodes, edges, build-stmts, complexity, cfg, dataflow, cochange, embeddings, graph-read, barrel). Raw SQL migrated from 14 src/ modules into repository layer. `connection.js` already complete (89 lines handling open/close/WAL/pragma/locks/readonly).
 >
-> **v3.1.3 progress:** Extracted `cachedStmt` utility into `src/db/repository/cached-stmt.js` — reusable prepared statement caching for hot-path repository functions ([#417](https://github.com/optave/codegraph/pull/417), [#402](https://github.com/optave/codegraph/pull/402)).
+> **v3.1.3 progress:** Extracted `cachedStmt` utility into `src/db/repository/cached-stmt.js` — reusable prepared statement caching for hot-path repository functions ([#417](https://github.com/optave/ops-codegraph-tool/pull/417), [#402](https://github.com/optave/ops-codegraph-tool/pull/402)).
 
 - ✅ `src/db/` directory structure created
 - ✅ `repository/` — domain-split repository (nodes, edges, build-stmts, complexity, cfg, dataflow, cochange, embeddings, graph-read)
@@ -692,7 +692,7 @@ src/
 
 ### 3.4 -- Decompose queries.js (3,395 Lines) ✅
 
-> **v3.1.1 progress:** `queries.js` reduced from 3,395 → 2,490 lines by extracting all CLI formatting to `queries-cli.js` (3.2). Symbol kind constants extracted to `kinds.js` (49 lines) ([#378](https://github.com/optave/codegraph/pull/378)).
+> **v3.1.1 progress:** `queries.js` reduced from 3,395 → 2,490 lines by extracting all CLI formatting to `queries-cli.js` (3.2). Symbol kind constants extracted to `kinds.js` (49 lines) ([#378](https://github.com/optave/ops-codegraph-tool/pull/378)).
 
 - ✅ CLI formatting separated → `queries-cli.js` (via 3.2)
 - ✅ `kinds.js` — symbol kind constants extracted
@@ -747,7 +747,7 @@ Adding a new MCP tool = adding a file + one line in the barrel. No other files c
 
 ### 3.6 -- CLI Command Objects ✅
 
-Monolithic 1,525-line `src/cli.js` split into `src/cli/` with auto-discovery of command modules. 40 independently testable command files in `src/cli/commands/`, each exporting `{ name, description, options, queryOpts, validate, execute }`. Shared utilities extracted to `src/cli/shared/` (query options, output formatting). `src/cli/index.js` provides `registerCommand()` + `discoverCommands()` — new commands are added by dropping a file into `commands/`. `src/cli.js` reduced to an 8-line thin wrapper ([#427](https://github.com/optave/codegraph/pull/427)).
+Monolithic 1,525-line `src/cli.js` split into `src/cli/` with auto-discovery of command modules. 40 independently testable command files in `src/cli/commands/`, each exporting `{ name, description, options, queryOpts, validate, execute }`. Shared utilities extracted to `src/cli/shared/` (query options, output formatting). `src/cli/index.js` provides `registerCommand()` + `discoverCommands()` — new commands are added by dropping a file into `commands/`. `src/cli.js` reduced to an 8-line thin wrapper ([#427](https://github.com/optave/ops-codegraph-tool/pull/427)).
 
 ```
 src/
@@ -858,7 +858,7 @@ src/
 
 The pluggable store interface enables future O(log n) ANN search (e.g., `hnswlib-node`) when symbol counts reach 50K+.
 
-- ✅ Extracted into `src/embeddings/` with `index.js`, `models.js`, `generator.js` (v3.1.4, [#433](https://github.com/optave/codegraph/pull/433))
+- ✅ Extracted into `src/embeddings/` with `index.js`, `models.js`, `generator.js` (v3.1.4, [#433](https://github.com/optave/ops-codegraph-tool/pull/433))
 - ✅ Pluggable stores: `sqlite-blob.js`, `fts5.js`
 - ✅ Search engines: `semantic.js`, `keyword.js`, `hybrid.js`
 - ✅ Text preparation strategies: `structured.js`, `source.js`
@@ -934,7 +934,7 @@ CREATE INDEX idx_nodes_scope ON nodes(scope);
 
 The repository pattern (3.3) enables true unit testing. `InMemoryRepository` provides an in-memory backend that implements the same interface as `SqliteRepository`, enabling fast unit tests without SQLite.
 
-- ✅ `InMemoryRepository` at `src/db/repository/in-memory-repository.js` (v3.1.4, [#444](https://github.com/optave/codegraph/pull/444))
+- ✅ `InMemoryRepository` at `src/db/repository/in-memory-repository.js` (v3.1.4, [#444](https://github.com/optave/ops-codegraph-tool/pull/444))
 - ✅ Pure unit tests for graph algorithms (pass adjacency list, assert result)
 - ✅ Pure unit tests for risk/confidence scoring (pass parameters, assert score)
 - ✅ Migrate existing integration tests that only need query data to use `InMemoryRepository`
@@ -954,7 +954,7 @@ src/
     colors.js              # Shared color/style utilities
 ```
 
-- ✅ Extract rendering logic from `viewer.js` (v3.1.4, [#443](https://github.com/optave/codegraph/pull/443))
+- ✅ Extract rendering logic from `viewer.js` (v3.1.4, [#443](https://github.com/optave/ops-codegraph-tool/pull/443))
 - ✅ Extract serialization from `export.js` — DOT/Mermaid/JSON writers become pure data → string transforms
 - ✅ Extract table formatting helpers used across `queries-cli.js`, `complexity`, `stats`
 - ✅ Move `result-formatter.js` from `infrastructure/` to `presentation/`
@@ -964,7 +964,7 @@ src/
 
 ### 3.15 -- Domain Directory Grouping ✅
 
-**Completed:** `src/` reorganized into `domain/`, `features/`, and `presentation/` layers ([#456](https://github.com/optave/codegraph/pull/456), [#458](https://github.com/optave/codegraph/pull/458)). Three post-reorganization issues (circular imports, barrel exports, path corrections) resolved in [#459](https://github.com/optave/codegraph/pull/459). MCP server import path fixed in [#466](https://github.com/optave/codegraph/pull/466). Complexity/CFG/dataflow analysis restored after the move in [#469](https://github.com/optave/codegraph/pull/469).
+**Completed:** `src/` reorganized into `domain/`, `features/`, and `presentation/` layers ([#456](https://github.com/optave/ops-codegraph-tool/pull/456), [#458](https://github.com/optave/ops-codegraph-tool/pull/458)). Three post-reorganization issues (circular imports, barrel exports, path corrections) resolved in [#459](https://github.com/optave/ops-codegraph-tool/pull/459). MCP server import path fixed in [#466](https://github.com/optave/ops-codegraph-tool/pull/466). Complexity/CFG/dataflow analysis restored after the move in [#469](https://github.com/optave/ops-codegraph-tool/pull/469).
 
 ```
 src/domain/
@@ -976,20 +976,20 @@ src/domain/
   queries.js             # Query functions (symbol search, file deps, impact analysis)
 ```
 
-- ✅ Move builder pipeline modules to `domain/graph/` ([#456](https://github.com/optave/codegraph/pull/456))
-- ✅ Move decomposed query modules (from 3.4) to `domain/analysis/` ([#456](https://github.com/optave/codegraph/pull/456))
-- ✅ Move embedder subsystem (from 3.10) to `domain/search/` ([#456](https://github.com/optave/codegraph/pull/456))
-- ✅ Move remaining flat files (`features/`, `presentation/`, `infrastructure/`, `shared/`) into subdirectories ([#458](https://github.com/optave/codegraph/pull/458))
-- ✅ Update all import paths across codebase ([#456](https://github.com/optave/codegraph/pull/456), [#458](https://github.com/optave/codegraph/pull/458), [#459](https://github.com/optave/codegraph/pull/459))
+- ✅ Move builder pipeline modules to `domain/graph/` ([#456](https://github.com/optave/ops-codegraph-tool/pull/456))
+- ✅ Move decomposed query modules (from 3.4) to `domain/analysis/` ([#456](https://github.com/optave/ops-codegraph-tool/pull/456))
+- ✅ Move embedder subsystem (from 3.10) to `domain/search/` ([#456](https://github.com/optave/ops-codegraph-tool/pull/456))
+- ✅ Move remaining flat files (`features/`, `presentation/`, `infrastructure/`, `shared/`) into subdirectories ([#458](https://github.com/optave/ops-codegraph-tool/pull/458))
+- ✅ Update all import paths across codebase ([#456](https://github.com/optave/ops-codegraph-tool/pull/456), [#458](https://github.com/optave/ops-codegraph-tool/pull/458), [#459](https://github.com/optave/ops-codegraph-tool/pull/459))
 
 **Prerequisite:** 3.2, 3.4, 3.9, 3.10 should be complete before this step — it organizes the results of those decompositions.
 
 ### 3.16 -- CLI Composability ✅
 
-**Completed:** `openGraph(opts)` helper eliminates DB-open/close boilerplate across CLI commands. `resolveQueryOpts(opts)` extracts the 5 repeated option fields into one call, refactoring 20 command files. Universal output formatter extended with `--table` (auto-column aligned) and `--csv` (RFC 4180 with nested object flattening) output formats ([#461](https://github.com/optave/codegraph/pull/461)).
+**Completed:** `openGraph(opts)` helper eliminates DB-open/close boilerplate across CLI commands. `resolveQueryOpts(opts)` extracts the 5 repeated option fields into one call, refactoring 20 command files. Universal output formatter extended with `--table` (auto-column aligned) and `--csv` (RFC 4180 with nested object flattening) output formats ([#461](https://github.com/optave/ops-codegraph-tool/pull/461)).
 
-- ✅ **`openGraph()` helper** — single helper returning `{ db, rootDir, config }` with engine selection, config loading, and cleanup ([#461](https://github.com/optave/codegraph/pull/461))
-- ✅ **Universal output formatter** — `outputResult()` extended with `--table` and `--csv` formats; `resolveQueryOpts()` extracts repeated option fields ([#461](https://github.com/optave/codegraph/pull/461))
+- ✅ **`openGraph()` helper** — single helper returning `{ db, rootDir, config }` with engine selection, config loading, and cleanup ([#461](https://github.com/optave/ops-codegraph-tool/pull/461))
+- ✅ **Universal output formatter** — `outputResult()` extended with `--table` and `--csv` formats; `resolveQueryOpts()` extracts repeated option fields ([#461](https://github.com/optave/ops-codegraph-tool/pull/461))
 
 **Affected files:** `src/cli/commands/*.js`, `src/cli/shared/`, `src/presentation/result-formatter.js`
 
@@ -1050,9 +1050,9 @@ Hand-annotated fixture projects per language with `expected-edges.json` manifest
 - ✅ `tests/benchmarks/resolution/` with per-language fixtures and expected-edges manifests
 - ✅ Benchmark runner with precision/recall reporting per language and resolution mode
 - ✅ CI gate on accuracy regression
-- ✅ Child-process isolation for benchmark builds ([#512](https://github.com/optave/codegraph/pull/512))
+- ✅ Child-process isolation for benchmark builds ([#512](https://github.com/optave/ops-codegraph-tool/pull/512))
 
-**New directory:** `tests/benchmarks/resolution/` ([#507](https://github.com/optave/codegraph/pull/507))
+**New directory:** `tests/benchmarks/resolution/` ([#507](https://github.com/optave/ops-codegraph-tool/pull/507))
 
 ### ~~4.5 -- `package.json` Exports Field Resolution~~ ✅
 
@@ -1063,7 +1063,7 @@ Import resolution now reads `package.json` `exports` field for conditional expor
 - ✅ Support conditional exports (`"import"`, `"require"`, `"default"`)
 - ✅ Fallback to filesystem probing when `exports` field is absent
 
-**Affected files:** `src/domain/graph/resolve.js` ([#509](https://github.com/optave/codegraph/pull/509))
+**Affected files:** `src/domain/graph/resolve.js` ([#509](https://github.com/optave/ops-codegraph-tool/pull/509))
 
 ### ~~4.6 -- Monorepo Workspace Resolution~~ ✅
 
@@ -1075,7 +1075,7 @@ npm workspaces (`package.json` `workspaces`), `pnpm-workspace.yaml`, and `lerna.
 - ✅ Resolve internal package imports to actual source files within the monorepo
 - ✅ High confidence (0.95) for workspace-resolved imports
 
-**Affected files:** `src/domain/graph/resolve.js`, `src/infrastructure/config.js` ([#509](https://github.com/optave/codegraph/pull/509))
+**Affected files:** `src/domain/graph/resolve.js`, `src/infrastructure/config.js` ([#509](https://github.com/optave/ops-codegraph-tool/pull/509))
 
 ---
 
@@ -1098,7 +1098,7 @@ TypeScript project configured with strict mode, ES module output, path aliases, 
 - ✅ `tsc --noEmit` CI type-checking gate
 - ✅ Incremental compilation enabled
 
-**Affected files:** `package.json`, `biome.json`, new `tsconfig.json` ([#508](https://github.com/optave/codegraph/pull/508))
+**Affected files:** `package.json`, `biome.json`, new `tsconfig.json` ([#508](https://github.com/optave/ops-codegraph-tool/pull/508))
 
 ### ~~5.2 -- Core Type Definitions~~ ✅
 
@@ -1109,13 +1109,13 @@ Comprehensive TypeScript type definitions for the entire domain model — symbol
 - ✅ Config, query options, analysis result types
 - ✅ Narrowed edge kind types and `ExtendedSymbolKind` method
 
-**New file:** `src/types.ts` ([#516](https://github.com/optave/codegraph/pull/516))
+**New file:** `src/types.ts` ([#516](https://github.com/optave/ops-codegraph-tool/pull/516))
 
 ### ~~5.3 -- Leaf Module Migration~~ ✅
 
 Migrate modules with no or minimal internal dependencies. All 29 modules migrated.
 
-**Migrated (29):** `shared/errors`, `shared/kinds`, `shared/normalize`, `shared/paginate`, `shared/constants`, `shared/file-utils`, `shared/generators`, `shared/hierarchy`, `infrastructure/logger`, `infrastructure/config`, `infrastructure/native`, `infrastructure/registry`, `infrastructure/update-check`, `infrastructure/result-formatter`, `infrastructure/test-filter`, `db/repository/*` (14 files), `db/connection`, `db/index`, `db/migrations`, `db/query-builder`, `domain/analysis/*` (9 files), `presentation/colors`, `presentation/table` — via [#553](https://github.com/optave/codegraph/pull/553), [#566](https://github.com/optave/codegraph/pull/566)
+**Migrated (29):** `shared/errors`, `shared/kinds`, `shared/normalize`, `shared/paginate`, `shared/constants`, `shared/file-utils`, `shared/generators`, `shared/hierarchy`, `infrastructure/logger`, `infrastructure/config`, `infrastructure/native`, `infrastructure/registry`, `infrastructure/update-check`, `infrastructure/result-formatter`, `infrastructure/test-filter`, `db/repository/*` (14 files), `db/connection`, `db/index`, `db/migrations`, `db/query-builder`, `domain/analysis/*` (9 files), `presentation/colors`, `presentation/table` — via [#553](https://github.com/optave/ops-codegraph-tool/pull/553), [#566](https://github.com/optave/ops-codegraph-tool/pull/566)
 
 ### ~~5.4 -- Core Module Migration~~ ✅
 
@@ -1123,7 +1123,7 @@ All core domain modules migrated: builder stages, search subsystem, graph utilit
 
 **Migrated:** `db/repository/*.ts` (14 files), `domain/parser.ts`, `domain/graph/resolve.ts`, `extractors/*.ts` (11 files), `domain/graph/builder.ts` + `context.ts` + `helpers.ts` + `pipeline.ts`, `domain/graph/watcher.ts`, `domain/search/` (all files), `graph/` (all files), `domain/queries.ts`, `domain/graph/builder/stages/` (all 9 stages), `domain/graph/{cycles,journal,change-journal}.ts`
 
-**Key PRs:** [#554](https://github.com/optave/codegraph/pull/554), [#570](https://github.com/optave/codegraph/pull/570), [#579](https://github.com/optave/codegraph/pull/579)
+**Key PRs:** [#554](https://github.com/optave/ops-codegraph-tool/pull/554), [#570](https://github.com/optave/ops-codegraph-tool/pull/570), [#579](https://github.com/optave/ops-codegraph-tool/pull/579)
 
 ### ~~5.5 -- Orchestration & Public API Migration~~ ✅
 
@@ -1131,13 +1131,13 @@ All orchestration, features, presentation, MCP, and CLI modules migrated — inc
 
 **Migrated:** `cli.ts` + `cli/` (all 55 files), `index.ts`, `ast-analysis/` (all 18 files), `features/` (all 20 files), `presentation/` (all 28 files), `mcp/` + `mcp/tools/` (all files). All stale `.js` counterparts deleted.
 
-**Key PRs:** [#555](https://github.com/optave/codegraph/pull/555), [#558](https://github.com/optave/codegraph/pull/558), [#580](https://github.com/optave/codegraph/pull/580), [#581](https://github.com/optave/codegraph/pull/581)
+**Key PRs:** [#555](https://github.com/optave/ops-codegraph-tool/pull/555), [#558](https://github.com/optave/ops-codegraph-tool/pull/558), [#580](https://github.com/optave/ops-codegraph-tool/pull/580), [#581](https://github.com/optave/ops-codegraph-tool/pull/581)
 
 ### ~~5.6 -- Test Migration~~ ✅
 
 All test files migrated from `.js` to `.ts`. Vitest TypeScript integration verified. `tsc --noEmit` succeeds with zero errors. No `any` escape hatches except at FFI boundaries (napi-rs addon, tree-sitter WASM).
 
-**Key PRs:** [#588](https://github.com/optave/codegraph/pull/588)
+**Key PRs:** [#588](https://github.com/optave/ops-codegraph-tool/pull/588)
 
 ---
 
