@@ -101,9 +101,11 @@ export async function buildAstNodes(
 
     for (const [relPath, symbols] of fileSymbols) {
       if (Array.isArray(symbols.astNodes)) {
+        // Filter out 'call' kind — dead AST node type, see JS fallback path comment.
+        const filtered = symbols.astNodes.filter((n) => n.kind !== 'call');
         batches.push({
           file: relPath,
-          nodes: symbols.astNodes.map((n) => ({
+          nodes: filtered.map((n) => ({
             line: n.line,
             kind: n.kind,
             name: n.name,
@@ -158,32 +160,17 @@ export async function buildAstNodes(
       nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
     }
 
-    // When native astNodes includes call entries, skip separate symbols.calls processing
-    // to avoid duplication. Fall back to symbols.calls for WASM or older native binaries.
+    // Call AST nodes were removed — 'call' kind entries in ast_nodes are dead
+    // (never queried by any feature or command). symbols.calls are still used
+    // for call *edges* but no longer written to ast_nodes.
     const nativeProvidedAstNodes = Array.isArray(symbols.astNodes);
-    if (symbols.calls && !nativeProvidedAstNodes) {
-      for (const call of symbols.calls) {
-        const parentDef = findParentDef(defs, call.line);
-        let parentNodeId: number | null = null;
-        if (parentDef) {
-          parentNodeId =
-            nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
-        }
-        allRows.push({
-          file: relPath,
-          line: call.line,
-          kind: 'call',
-          name: call.name,
-          text: call.dynamic ? `[dynamic] ${call.name}` : null,
-          receiver: call.receiver || null,
-          parentNodeId,
-        });
-      }
-    }
 
     if (Array.isArray(symbols.astNodes)) {
-      // Native engine provided AST nodes (may be empty for files with no AST content)
-      for (const n of symbols.astNodes) {
+      // Native engine provided AST nodes (may be empty for files with no AST content).
+      // Filter out 'call' kind — call AST nodes are dead (never queried by any feature).
+      // The WASM visitor no longer extracts them; native binaries still emit them until
+      // the next Rust release strips them from the extractor.
+      for (const n of symbols.astNodes.filter((n) => n.kind !== 'call')) {
         const parentDef = findParentDef(defs, n.line);
         let parentNodeId: number | null = null;
         if (parentDef) {
