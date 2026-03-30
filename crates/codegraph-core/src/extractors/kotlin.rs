@@ -17,17 +17,6 @@ impl SymbolExtractor for KotlinExtractor {
     }
 }
 
-const KOTLIN_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["call_expression"],
-    new_types: &[],
-    throw_types: &["throw_expression"],
-    await_types: &[],
-    string_types: &["string_literal"],
-    regex_types: &[],
-    quote_chars: &['"'],
-    string_prefixes: &[],
-};
-
 // ── Type inference ──────────────────────────────────────────────────────────
 
 fn match_kotlin_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
@@ -84,7 +73,7 @@ fn is_kotlin_enum(node: &Node) -> bool {
             if child.kind() == "modifiers" {
                 for j in 0..child.child_count() {
                     if let Some(mod_child) = child.child(j) {
-                        if node_text_raw(&mod_child) == "enum" {
+                        if mod_child.kind() == "enum" {
                             return true;
                         }
                     }
@@ -97,11 +86,6 @@ fn is_kotlin_enum(node: &Node) -> bool {
         }
     }
     false
-}
-
-fn node_text_raw(node: &Node) -> &str {
-    // We only check kind, not text content for keywords
-    node.kind()
 }
 
 fn find_kotlin_parent_class<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> {

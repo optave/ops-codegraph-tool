@@ -17,17 +17,6 @@ impl SymbolExtractor for CppExtractor {
     }
 }
 
-const CPP_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["call_expression"],
-    new_types: &["new_expression"],
-    throw_types: &["throw_statement"],
-    await_types: &[],
-    string_types: &["string_literal", "raw_string_literal"],
-    regex_types: &[],
-    quote_chars: &['"'],
-    string_prefixes: &[],
-};
-
 // ── Type inference ──────────────────────────────────────────────────────────
 
 fn match_cpp_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {

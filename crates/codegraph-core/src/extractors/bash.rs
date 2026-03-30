@@ -16,17 +16,6 @@ impl SymbolExtractor for BashExtractor {
     }
 }
 
-const BASH_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["command", "command_substitution"],
-    new_types: &[],
-    throw_types: &[],
-    await_types: &[],
-    string_types: &["string", "expansion"],
-    regex_types: &[],
-    quote_chars: &['"', '\''],
-    string_prefixes: &[],
-};
-
 fn match_bash_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
         "function_definition" => {

@@ -17,17 +17,6 @@ impl SymbolExtractor for CExtractor {
     }
 }
 
-const C_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["call_expression"],
-    new_types: &[],
-    throw_types: &[],
-    await_types: &[],
-    string_types: &["string_literal"],
-    regex_types: &[],
-    quote_chars: &['"'],
-    string_prefixes: &[],
-};
-
 // ── Type inference helpers ──────────────────────────────────────────────────
 
 fn match_c_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
