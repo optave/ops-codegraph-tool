@@ -14,7 +14,7 @@ interface AstStoreRow {
   kind: string;
   name: string | null | undefined;
   text: string | null;
-  receiver: null;
+  receiver: string | null;
   parentNodeId: number | null;
 }
 
@@ -42,6 +42,22 @@ function extractExpressionText(node: TreeSitterNode): string | null {
     }
   }
   return truncate(node.text);
+}
+
+function extractCallName(node: TreeSitterNode): string {
+  for (const field of ['function', 'method', 'name']) {
+    const fn = node.childForFieldName(field);
+    if (fn) return fn.text;
+  }
+  return node.text?.split('(')[0] || '?';
+}
+
+/** Extract receiver for call expressions (e.g. "obj" in "obj.method()"). */
+function extractCallReceiver(node: TreeSitterNode): string | null {
+  const fn = node.childForFieldName('function');
+  if (!fn || fn.type !== 'member_expression') return null;
+  const obj = fn.childForFieldName('object');
+  return obj ? obj.text : null;
 }
 
 function extractName(kind: string, node: TreeSitterNode): string | null {
@@ -82,6 +98,7 @@ export function createAstStoreVisitor(
   nodeIdMap: Map<string, number>,
 ): Visitor {
   const rows: AstStoreRow[] = [];
+  const matched = new Set<number>();
 
   function findParentDef(line: number): Definition | null {
     let best: Definition | null = null;
@@ -101,45 +118,115 @@ export function createAstStoreVisitor(
     return nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
   }
 
+  /** Recursively walk a subtree collecting AST nodes — used for arguments-only traversal. */
+  function walkSubtree(node: TreeSitterNode | null): void {
+    if (!node) return;
+    if (matched.has(node.id)) return;
+
+    const kind = astTypeMap[node.type];
+    if (kind === 'call') {
+      // Capture this call and recurse only into its arguments
+      collectNode(node, kind);
+      walkCallArguments(node);
+      return;
+    }
+    if (kind) {
+      collectNode(node, kind);
+      if (kind !== 'string' && kind !== 'regex') return; // skipChildren for non-leaf kinds
+    }
+    for (let i = 0; i < node.childCount; i++) {
+      walkSubtree(node.child(i));
+    }
+  }
+
+  /**
+   * Recurse into only the arguments of a call node — mirrors the native engine's
+   * strategy that prevents double-counting nested calls in the function field
+   * (e.g. chained calls like `a().b()`).
+   */
+  function walkCallArguments(callNode: TreeSitterNode): void {
+    // Try field-based lookup first, fall back to kind-based matching
+    const argsNode =
+      callNode.childForFieldName('arguments') ??
+      findChildByKind(callNode, ['arguments', 'argument_list', 'method_arguments']);
+    if (!argsNode) return;
+    for (let i = 0; i < argsNode.childCount; i++) {
+      walkSubtree(argsNode.child(i));
+    }
+  }
+
+  function findChildByKind(node: TreeSitterNode, kinds: string[]): TreeSitterNode | null {
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child && kinds.includes(child.type)) return child;
+    }
+    return null;
+  }
+
+  function collectNode(node: TreeSitterNode, kind: string): void {
+    if (matched.has(node.id)) return;
+
+    const line = node.startPosition.row + 1;
+    let name: string | null | undefined;
+    let text: string | null = null;
+    let receiver: string | null = null;
+
+    if (kind === 'call') {
+      name = extractCallName(node);
+      text = truncate(node.text);
+      receiver = extractCallReceiver(node);
+    } else if (kind === 'new') {
+      name = extractNewName(node);
+      text = truncate(node.text);
+    } else if (kind === 'throw') {
+      name = extractName('throw', node);
+      text = extractExpressionText(node);
+    } else if (kind === 'await') {
+      name = extractName('await', node);
+      text = extractExpressionText(node);
+    } else if (kind === 'string') {
+      const content = node.text?.replace(/^['"`]|['"`]$/g, '') || '';
+      if (content.length < 2) return;
+      name = truncate(content, 100);
+      text = truncate(node.text);
+    } else if (kind === 'regex') {
+      name = node.text || '?';
+      text = truncate(node.text);
+    }
+
+    rows.push({
+      file: relPath,
+      line,
+      kind,
+      name,
+      text,
+      receiver,
+      parentNodeId: resolveParentNodeId(line),
+    });
+
+    matched.add(node.id);
+  }
+
   return {
     name: 'ast-store',
 
     enterNode(node: TreeSitterNode, _context: VisitorContext): EnterNodeResult | undefined {
+      // Guard: skip re-collection but do NOT skipChildren — node.id (memory address)
+      // can be reused by tree-sitter, so a collision would incorrectly suppress an
+      // unrelated subtree. The parent call's skipChildren handles the intended case.
+      if (matched.has(node.id)) return;
+
       const kind = astTypeMap[node.type];
       if (!kind) return;
 
-      const line = node.startPosition.row + 1;
-      let name: string | null | undefined;
-      let text: string | null = null;
+      collectNode(node, kind);
 
-      if (kind === 'new') {
-        name = extractNewName(node);
-        text = truncate(node.text);
-      } else if (kind === 'throw') {
-        name = extractName('throw', node);
-        text = extractExpressionText(node);
-      } else if (kind === 'await') {
-        name = extractName('await', node);
-        text = extractExpressionText(node);
-      } else if (kind === 'string') {
-        const content = node.text?.replace(/^['"`]|['"`]$/g, '') || '';
-        if (content.length < 2) return;
-        name = truncate(content, 100);
-        text = truncate(node.text);
-      } else if (kind === 'regex') {
-        name = node.text || '?';
-        text = truncate(node.text);
+      if (kind === 'call') {
+        // Mirror native: skip full subtree, recurse only into arguments.
+        // Prevents double-counting chained calls like service.getUser().getName().
+        walkCallArguments(node);
+        return { skipChildren: true };
       }
-
-      rows.push({
-        file: relPath,
-        line,
-        kind,
-        name,
-        text,
-        receiver: null,
-        parentNodeId: resolveParentNodeId(line),
-      });
 
       if (kind !== 'string' && kind !== 'regex') {
         return { skipChildren: true };

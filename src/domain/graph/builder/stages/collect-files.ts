@@ -7,8 +7,8 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { debug, info } from '#infrastructure/logger.js';
-import { normalizePath } from '#shared/constants.js';
+import { debug, info } from '../../../../infrastructure/logger.js';
+import { normalizePath } from '../../../../shared/constants.js';
 import { readJournal } from '../../journal.js';
 import type { PipelineContext } from '../context.js';
 import { collectFiles as collectFilesUtil } from '../helpers.js';
