@@ -334,6 +334,31 @@ function extractCSharpTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void 
   extractCSharpTypeMapDepth(node, ctx, 0);
 }
 
+/** Extract type info from a variable_declaration node (local vars with explicit types). */
+function handleCSharpVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const typeNode = node.childForFieldName('type') || node.child(0);
+  if (!typeNode || typeNode.type === 'var_keyword') return;
+  const typeName = extractCSharpTypeName(typeNode);
+  if (!typeName) return;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child || child.type !== 'variable_declarator') continue;
+    const nameNode = child.childForFieldName('name') || child.child(0);
+    if (nameNode && nameNode.type === 'identifier' && ctx.typeMap) {
+      setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
+    }
+  }
+}
+
+/** Extract type info from a parameter node. */
+function handleCSharpParam(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const typeNode = node.childForFieldName('type');
+  const nameNode = node.childForFieldName('name');
+  if (!typeNode || !nameNode) return;
+  const typeName = extractCSharpTypeName(typeNode);
+  if (typeName && ctx.typeMap) setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
+}
+
 function extractCSharpTypeMapDepth(
   node: TreeSitterNode,
   ctx: ExtractorOutput,
@@ -341,33 +366,10 @@ function extractCSharpTypeMapDepth(
 ): void {
   if (depth >= MAX_WALK_DEPTH) return;
 
-  // local_declaration_statement → variable_declaration → type + variable_declarator(s)
   if (node.type === 'variable_declaration') {
-    const typeNode = node.childForFieldName('type') || node.child(0);
-    if (typeNode && typeNode.type !== 'var_keyword') {
-      const typeName = extractCSharpTypeName(typeNode);
-      if (typeName) {
-        for (let i = 0; i < node.childCount; i++) {
-          const child = node.child(i);
-          if (child && child.type === 'variable_declarator') {
-            const nameNode = child.childForFieldName('name') || child.child(0);
-            if (nameNode && nameNode.type === 'identifier') {
-              if (ctx.typeMap) setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // Method/constructor parameter: parameter node has type + name fields
-  if (node.type === 'parameter') {
-    const typeNode = node.childForFieldName('type');
-    const nameNode = node.childForFieldName('name');
-    if (typeNode && nameNode) {
-      const typeName = extractCSharpTypeName(typeNode);
-      if (typeName && ctx.typeMap) setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
-    }
+    handleCSharpVarDecl(node, ctx);
+  } else if (node.type === 'parameter') {
+    handleCSharpParam(node, ctx);
   }
 
   for (let i = 0; i < node.childCount; i++) {

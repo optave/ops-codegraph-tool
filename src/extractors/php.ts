@@ -25,6 +25,39 @@ function extractPhpParameters(fnNode: TreeSitterNode): SubDeclaration[] {
   return params;
 }
 
+/** Extract property declarations from a PHP class member. */
+function extractPhpProperties(member: TreeSitterNode, children: SubDeclaration[]): void {
+  for (let j = 0; j < member.childCount; j++) {
+    const el = member.child(j);
+    if (!el || el.type !== 'property_element') continue;
+    const varNode = findChild(el, 'variable_name');
+    if (varNode) {
+      children.push({
+        name: varNode.text,
+        kind: 'property',
+        line: member.startPosition.row + 1,
+        visibility: extractModifierVisibility(member),
+      });
+    }
+  }
+}
+
+/** Extract constant declarations from a PHP class member. */
+function extractPhpConstants(member: TreeSitterNode, children: SubDeclaration[]): void {
+  for (let j = 0; j < member.childCount; j++) {
+    const el = member.child(j);
+    if (!el || el.type !== 'const_element') continue;
+    const nameNode = el.childForFieldName('name') || findChild(el, 'name');
+    if (nameNode) {
+      children.push({
+        name: nameNode.text,
+        kind: 'constant',
+        line: member.startPosition.row + 1,
+      });
+    }
+  }
+}
+
 function extractPhpClassChildren(classNode: TreeSitterNode): SubDeclaration[] {
   const children: SubDeclaration[] = [];
   const body = classNode.childForFieldName('body') || findChild(classNode, 'declaration_list');
@@ -33,32 +66,9 @@ function extractPhpClassChildren(classNode: TreeSitterNode): SubDeclaration[] {
     const member = body.child(i);
     if (!member) continue;
     if (member.type === 'property_declaration') {
-      for (let j = 0; j < member.childCount; j++) {
-        const el = member.child(j);
-        if (!el || el.type !== 'property_element') continue;
-        const varNode = findChild(el, 'variable_name');
-        if (varNode) {
-          children.push({
-            name: varNode.text,
-            kind: 'property',
-            line: member.startPosition.row + 1,
-            visibility: extractModifierVisibility(member),
-          });
-        }
-      }
+      extractPhpProperties(member, children);
     } else if (member.type === 'const_declaration') {
-      for (let j = 0; j < member.childCount; j++) {
-        const el = member.child(j);
-        if (!el || el.type !== 'const_element') continue;
-        const nameNode = el.childForFieldName('name') || findChild(el, 'name');
-        if (nameNode) {
-          children.push({
-            name: nameNode.text,
-            kind: 'constant',
-            line: member.startPosition.row + 1,
-          });
-        }
-      }
+      extractPhpConstants(member, children);
     }
   }
   return children;
