@@ -42,6 +42,12 @@ Import resolution: native batch vs JS fallback throughput.
 
 **Version:** 3.6.0 | **Files:** 514 | **Date:** 2026-03-30
 
+> **Note:** The native engine is absent for 3.6.0 because the native worker
+> crashed with `SQLITE_CORRUPT` during the incremental rebuild tier
+> (WAL corruption in `detect-changes` → `purgeAndAddReverseDeps`).
+> WASM results are unaffected. Tracked as a known WAL race condition
+> between native and JS connections.
+
 #### WASM
 
 | Metric | Value |
