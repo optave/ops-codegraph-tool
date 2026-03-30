@@ -72,14 +72,14 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
         name: def.name,
         kind: def.kind,
         line: def.line,
-        endLine: def.endLine ?? null,
-        visibility: def.visibility ?? null,
+        endLine: def.endLine,
+        visibility: def.visibility,
         children: (def.children ?? []).map((c) => ({
           name: c.name,
           kind: c.kind,
           line: c.line,
-          endLine: c.endLine ?? null,
-          visibility: c.visibility ?? null,
+          endLine: c.endLine,
+          visibility: c.visibility,
         })),
       })),
       exports: symbols.exports.map((exp) => ({
