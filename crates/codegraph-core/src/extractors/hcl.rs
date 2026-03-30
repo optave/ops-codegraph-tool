@@ -8,19 +8,12 @@ pub struct HclExtractor;
 impl SymbolExtractor for HclExtractor {
     fn extract(&self, tree: &Tree, source: &[u8], file_path: &str) -> FileSymbols {
         let mut symbols = FileSymbols::new(file_path.to_string());
-        walk_node(&tree.root_node(), source, &mut symbols);
+        walk_tree(&tree.root_node(), source, &mut symbols, match_hcl_node);
         symbols
     }
 }
 
-fn walk_node(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    walk_node_depth(node, source, symbols, 0);
-}
-
-fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth: usize) {
-    if depth >= MAX_WALK_DEPTH {
-        return;
-    }
+fn match_hcl_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     if node.kind() == "block" {
         let mut identifiers = Vec::new();
         let mut strings = Vec::new();
@@ -113,12 +106,6 @@ fn walk_node_depth(node: &Node, source: &[u8], symbols: &mut FileSymbols, depth:
                     }
                 }
             }
-        }
-    }
-
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            walk_node_depth(&child, source, symbols, depth + 1);
         }
     }
 }

@@ -1,5 +1,5 @@
 use tree_sitter::Node;
-use crate::types::{AstNode, Definition};
+use crate::types::{AstNode, Definition, FileSymbols};
 
 // Re-export so extractors that `use super::helpers::*` still see it.
 pub use crate::constants::MAX_WALK_DEPTH;
@@ -91,6 +91,38 @@ pub fn truncate(s: &str, max: usize) -> String {
         end -= 1;
     }
     format!("{}\u{2026}", &s[..end])
+}
+
+// ── Generic tree walker ─────────────────────────────────────────────────────
+
+/// Generic depth-limited tree walker. Calls `match_node` on each node,
+/// then recurses into children. Eliminates the walk_node/walk_node_depth
+/// boilerplate duplicated across all language extractors.
+pub fn walk_tree<F>(node: &Node, source: &[u8], symbols: &mut FileSymbols, match_node: F)
+where
+    F: Fn(&Node, &[u8], &mut FileSymbols, usize),
+{
+    walk_tree_depth(node, source, symbols, 0, &match_node);
+}
+
+fn walk_tree_depth<F>(
+    node: &Node,
+    source: &[u8],
+    symbols: &mut FileSymbols,
+    depth: usize,
+    match_node: &F,
+) where
+    F: Fn(&Node, &[u8], &mut FileSymbols, usize),
+{
+    if depth >= MAX_WALK_DEPTH {
+        return;
+    }
+    match_node(node, source, symbols, depth);
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            walk_tree_depth(&child, source, symbols, depth + 1, match_node);
+        }
+    }
 }
 
 // ── AST node extraction (shared across all languages) ────────────────────────
