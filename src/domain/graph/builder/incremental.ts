@@ -155,7 +155,7 @@ async function parseReverseDep(
   try {
     code = readFileSafe(absPath);
   } catch (e: unknown) {
-    debug(`parseReverseDep: cannot read ${absPath}: ${(e as Error).message}`);
+    debug(`parseReverseDep: cannot read ${absPath}: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
 

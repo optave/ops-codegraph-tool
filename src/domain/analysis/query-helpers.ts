@@ -1,6 +1,6 @@
 import { openReadonlyOrFail } from '../../db/index.js';
 import { loadConfig } from '../../infrastructure/config.js';
-import type { BetterSqlite3Database } from '../../types.js';
+import type { BetterSqlite3Database, CodegraphConfig } from '../../types.js';
 
 /**
  * Open a readonly DB connection, run `fn`, and close the DB on completion.
@@ -23,9 +23,9 @@ export function withReadonlyDb<T>(
  * Resolve common analysis options into a normalized form.
  * Shared across fn-impact, context, dependencies, and exports modules.
  */
-export function resolveAnalysisOpts(opts: { noTests?: boolean; config?: any }): {
+export function resolveAnalysisOpts(opts: { noTests?: boolean; config?: CodegraphConfig }): {
   noTests: boolean;
-  config: any;
+  config: CodegraphConfig;
   displayOpts: Record<string, unknown>;
 } {
   const noTests = opts.noTests || false;

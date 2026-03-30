@@ -132,7 +132,7 @@ function buildSortedCommunityIds(
   opts: CompactOptions,
   communityTotalSize: Float64Array,
   communityNodeCount: Int32Array,
-): number[] {
+): void {
   if (opts.keepOldOrder) {
     ids.sort((a, b) => a - b);
   } else if (opts.preserveMap instanceof Map) {
@@ -157,7 +157,6 @@ function buildSortedCommunityIds(
         a - b,
     );
   }
-  return ids;
 }
 
 export function makePartition(graph: GraphAdapter): Partition {
