@@ -19,6 +19,7 @@ import type { PipelineContext } from '../context.js';
 
 export async function finalize(ctx: PipelineContext): Promise<void> {
   const { db, allSymbols, rootDir, isFullBuild, hasEmbeddings, config, opts, schemaVersion } = ctx;
+  const useNativeDb = ctx.engineName === 'native' && !!ctx.nativeDb;
 
   const t0 = performance.now();
 
@@ -48,11 +49,11 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   // Incremental drift detection — skip for small incremental changes where
   // count fluctuation is expected (reverse-dep edge churn).
   if (!isFullBuild && allSymbols.size > 3) {
-    const prevNodes = ctx.nativeDb
-      ? ctx.nativeDb.getBuildMeta('node_count')
+    const prevNodes = useNativeDb
+      ? ctx.nativeDb!.getBuildMeta('node_count')
       : getBuildMeta(db, 'node_count');
-    const prevEdges = ctx.nativeDb
-      ? ctx.nativeDb.getBuildMeta('edge_count')
+    const prevEdges = useNativeDb
+      ? ctx.nativeDb!.getBuildMeta('edge_count')
       : getBuildMeta(db, 'edge_count');
     if (prevNodes && prevEdges) {
       const prevN = Number(prevNodes);
@@ -80,8 +81,8 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   // counts stay fresh whenever drift detection reads them.
   if (isFullBuild || allSymbols.size > 3) {
     try {
-      if (ctx.nativeDb) {
-        ctx.nativeDb.setBuildMeta(
+      if (useNativeDb) {
+        ctx.nativeDb!.setBuildMeta(
           Object.entries({
             engine: ctx.engineName,
             engine_version: ctx.engineVersion || '',

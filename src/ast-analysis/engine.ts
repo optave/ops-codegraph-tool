@@ -102,11 +102,12 @@ async function ensureWasmTreesIfNeeded(
   opts: AnalysisOpts,
   rootDir: string,
 ): Promise<void> {
+  const doAst = opts.ast !== false;
   const doComplexity = opts.complexity !== false;
   const doCfg = opts.cfg !== false;
   const doDataflow = opts.dataflow !== false;
 
-  if (!doComplexity && !doCfg && !doDataflow) return;
+  if (!doAst && !doComplexity && !doCfg && !doDataflow) return;
 
   let needsWasmTrees = false;
   for (const [relPath, symbols] of fileSymbols) {
@@ -131,6 +132,8 @@ async function ensureWasmTreesIfNeeded(
       d.endLine > d.line &&
       !d.name.includes('.');
 
+    // AST: need tree when native didn't provide non-call astNodes
+    const needsAst = doAst && !Array.isArray(symbols.astNodes) && WALK_EXTENSIONS.has(ext);
     const needsComplexity =
       doComplexity &&
       COMPLEXITY_EXTENSIONS.has(ext) &&
@@ -141,7 +144,7 @@ async function ensureWasmTreesIfNeeded(
       defs.some((d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks));
     const needsDataflow = doDataflow && !symbols.dataflow && DATAFLOW_EXTENSIONS.has(ext);
 
-    if (needsComplexity || needsCfg || needsDataflow) {
+    if (needsAst || needsComplexity || needsCfg || needsDataflow) {
       needsWasmTrees = true;
       break;
     }
@@ -180,7 +183,7 @@ function setupVisitors(
     getFunctionName: (_node: TreeSitterNode) => null,
   };
 
-  // AST-store visitor
+  // AST-store visitor (call kind already filtered in runAnalyses upfront)
   let astVisitor: Visitor | null = null;
   const astTypeMap = AST_TYPE_MAPS.get(langId);
   if (doAst && astTypeMap && WALK_EXTENSIONS.has(ext) && !Array.isArray(symbols.astNodes)) {
@@ -417,6 +420,17 @@ export async function runAnalyses(
   const doDataflow = opts.dataflow !== false;
 
   if (!doAst && !doComplexity && !doCfg && !doDataflow) return timing;
+
+  // Strip dead 'call' kind from native astNodes upfront. Call AST nodes are no
+  // longer extracted by the WASM visitor; native binaries still emit them until
+  // the Rust extractors are updated (see #701). Clear the array when only calls
+  // remain so the WASM visitor runs and extracts non-call kinds.
+  for (const [, symbols] of fileSymbols) {
+    if (Array.isArray(symbols.astNodes)) {
+      const filtered = symbols.astNodes.filter((n) => n.kind !== 'call');
+      symbols.astNodes = filtered.length > 0 ? (filtered as typeof symbols.astNodes) : undefined;
+    }
+  }
 
   const extToLang = buildExtToLangMap();
 

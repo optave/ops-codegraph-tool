@@ -338,7 +338,7 @@ function purgeAndAddReverseDeps(
   if (hasPurge || hasReverseDeps) {
     const filesToPurge = hasPurge ? [...ctx.removed, ...changePaths] : [];
     // Prefer NativeDatabase: purge + reverse-dep edge deletion in one transaction (#670)
-    if (ctx.nativeDb?.purgeFilesData) {
+    if (ctx.engineName === 'native' && ctx.nativeDb?.purgeFilesData) {
       ctx.nativeDb.purgeFilesData(filesToPurge, false, hasReverseDeps ? reverseDepList : undefined);
     } else {
       if (hasPurge) {
@@ -433,7 +433,12 @@ export async function detectChanges(ctx: PipelineContext): Promise<void> {
   }
   const increResult =
     incremental && !forceFullRebuild
-      ? getChangedFiles(db, allFiles, rootDir, ctx.nativeDb)
+      ? getChangedFiles(
+          db,
+          allFiles,
+          rootDir,
+          ctx.engineName === 'native' ? ctx.nativeDb : undefined,
+        )
       : {
           changed: allFiles.map((f): ChangedFile => ({ file: f })),
           removed: [] as string[],

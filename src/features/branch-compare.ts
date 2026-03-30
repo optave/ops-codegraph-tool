@@ -5,8 +5,10 @@ import path from 'node:path';
 import { getDatabase } from '../db/better-sqlite3.js';
 import { buildGraph } from '../domain/graph/builder.js';
 import { kindIcon } from '../domain/queries.js';
+import { debug } from '../infrastructure/logger.js';
+import { getNative, isNativeAvailable } from '../infrastructure/native.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
-import type { EngineMode } from '../types.js';
+import type { EngineMode, NativeDatabase } from '../types.js';
 
 // ─── Git Helpers ────────────────────────────────────────────────────────
 
@@ -107,6 +109,18 @@ function loadSymbolsFromDb(
 ): Map<string, SymbolInfo> {
   const Database = getDatabase();
   const db = new Database(dbPath, { readonly: true });
+
+  // Try opening a NativeDatabase for batched fan metrics
+  let nativeDb: NativeDatabase | undefined;
+  if (isNativeAvailable()) {
+    try {
+      const native = getNative();
+      nativeDb = native.NativeDatabase.openReadonly(dbPath);
+    } catch (e) {
+      debug(`loadSymbolsFromDb: native path failed: ${(e as Error).message}`);
+    }
+  }
+
   try {
     const symbols = new Map<string, SymbolInfo>();
 
@@ -132,6 +146,34 @@ function loadSymbolsFromDb(
       end_line: number | null;
     }>;
 
+    // Filter first, then batch fan metrics for all surviving rows
+    const filtered = noTests ? rows.filter((r) => !isTestFile(r.file)) : rows;
+
+    // ── Native fast path: batch all fan-in/fan-out in one napi call ──
+    if (nativeDb?.batchFanMetrics && filtered.length > 0) {
+      const nodeIds = filtered.map((r) => r.id);
+      const metrics = nativeDb.batchFanMetrics(nodeIds);
+      const metricsMap = new Map(metrics.map((m) => [m.nodeId, m]));
+
+      for (const row of filtered) {
+        const lineCount = row.end_line ? row.end_line - row.line + 1 : 0;
+        const m = metricsMap.get(row.id);
+        const key = makeSymbolKey(row.kind, row.file, row.name);
+        symbols.set(key, {
+          id: row.id,
+          name: row.name,
+          kind: row.kind,
+          file: row.file,
+          line: row.line,
+          lineCount,
+          fanIn: m?.fanIn ?? 0,
+          fanOut: m?.fanOut ?? 0,
+        });
+      }
+      return symbols;
+    }
+
+    // ── JS fallback ───────────────────────────────────────────────────
     const fanInStmt = db.prepare(
       `SELECT COUNT(*) AS cnt FROM edges WHERE target_id = ? AND kind = 'calls'`,
     );
@@ -139,9 +181,7 @@ function loadSymbolsFromDb(
       `SELECT COUNT(*) AS cnt FROM edges WHERE source_id = ? AND kind = 'calls'`,
     );
 
-    for (const row of rows) {
-      if (noTests && isTestFile(row.file)) continue;
-
+    for (const row of filtered) {
       const lineCount = row.end_line ? row.end_line - row.line + 1 : 0;
       const fanIn = (fanInStmt.get(row.id) as { cnt: number }).cnt;
       const fanOut = (fanOutStmt.get(row.id) as { cnt: number }).cnt;
@@ -162,6 +202,13 @@ function loadSymbolsFromDb(
     return symbols;
   } finally {
     db.close();
+    if (nativeDb) {
+      try {
+        nativeDb.close();
+      } catch {
+        /* already closed */
+      }
+    }
   }
 }
 
