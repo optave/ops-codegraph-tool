@@ -82,6 +82,10 @@ export async function buildAstNodes(
     };
   },
 ): Promise<void> {
+  console.error(
+    `[parity-diag:buildAstEntry] nativeDb=${!!engineOpts?.nativeDb}, bulkInsert=${!!engineOpts?.nativeDb?.bulkInsertAstNodes}, files=${fileSymbols.size}`,
+  );
+
   // ── Native bulk-insert fast path ──────────────────────────────────────
   // Uses NativeDatabase persistent connection (Phase 6.15+).
   // Standalone napi functions were removed in 6.17.
@@ -132,12 +136,14 @@ export async function buildAstNodes(
   }
 
   // ── JS fallback path ──────────────────────────────────────────────────
+  console.error('[parity-diag:buildAst] entering JS fallback path');
   let insertStmt: ReturnType<BetterSqlite3Database['prepare']>;
   try {
     insertStmt = db.prepare(
       'INSERT INTO ast_nodes (file, line, kind, name, text, receiver, parent_node_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
     );
-  } catch {
+  } catch (e) {
+    console.error(`[parity-diag:buildAst] prepare failed: ${(e as Error).message}`);
     debug('ast_nodes table not found — skipping AST extraction');
     return;
   }
@@ -192,6 +198,7 @@ export async function buildAstNodes(
     }
   }
 
+  console.error(`[parity-diag:buildAst] total allRows=${allRows.length}`);
   if (allRows.length > 0) {
     tx(allRows);
   }

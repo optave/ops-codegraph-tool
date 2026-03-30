@@ -368,8 +368,12 @@ async function delegateToBuildFunctions(
     const t0 = performance.now();
     try {
       const { buildAstNodes } = await import('../features/ast.js');
+      console.error(
+        `[parity-diag:delegate] calling buildAstNodes, files=${fileSymbols.size}, nativeDb=${!!engineOpts?.nativeDb}`,
+      );
       await buildAstNodes(db, fileSymbols as Map<string, any>, rootDir, engineOpts);
     } catch (err: unknown) {
+      console.error(`[parity-diag:delegate] buildAstNodes THREW: ${(err as Error).message}`);
       debug(`buildAstNodes failed: ${(err as Error).message}`);
     }
     timing.astMs = performance.now() - t0;
