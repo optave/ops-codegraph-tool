@@ -52,6 +52,10 @@ Import resolution: native batch vs JS fallback throughput.
 | Per-import (JS) | 0ms |
 | Speedup ratio | 2.7x |
 
+<!-- NOTES_START -->
+**Note (3.5.0):** No build/rebuild metrics for this release (both engines null, files: 0) — only import resolution data was collected. The native engine crashed during `insertNodes` due to a napi-rs serialization bug where null `visibility` fields on parameter/child nodes fail conversion at the Rust boundary (`Failed to convert JavaScript value 'Null' into rust type 'String' on InsertNodesDefinition.visibility`). The WASM engine crashed during `buildStructure` with `database disk image is malformed` — a WAL deferred-close race condition in the benchmark's forked child processes where the first child's async `db.close()` corrupts the WAL for subsequent processes. Import resolution metrics are unaffected as they don't depend on a full build. Both issues will be fixed in the next release.
+<!-- NOTES_END -->
+
 <!-- INCREMENTAL_BENCHMARK_DATA
 [
   {
