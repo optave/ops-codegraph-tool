@@ -10,9 +10,8 @@ import type {
   TreeSitterNode,
   TreeSitterQuery,
   TreeSitterTree,
-  TypeMapEntry,
 } from '../types.js';
-import { findChild, MAX_WALK_DEPTH, nodeEndLine } from './helpers.js';
+import { findChild, MAX_WALK_DEPTH, nodeEndLine, setTypeMapEntry } from './helpers.js';
 
 /** Built-in globals that start with uppercase but are not user-defined types. */
 const BUILTIN_GLOBALS: Set<string> = new Set([
@@ -936,13 +935,6 @@ function extractNewExprTypeName(newExprNode: TreeSitterNode): string | null {
  * Higher-confidence entries take priority when the same variable is seen twice.
  */
 function extractTypeMapWalk(rootNode: TreeSitterNode, typeMap: Map<string, TypeMapEntry>): void {
-  function setIfHigher(name: string, type: string, confidence: number): void {
-    const existing = typeMap.get(name);
-    if (!existing || confidence > existing.confidence) {
-      typeMap.set(name, { type, confidence });
-    }
-  }
-
   function walk(node: TreeSitterNode, depth: number): void {
     if (depth >= MAX_WALK_DEPTH) return;
     const t = node.type;
@@ -952,14 +944,14 @@ function extractTypeMapWalk(rootNode: TreeSitterNode, typeMap: Map<string, TypeM
         const typeAnno = findChild(node, 'type_annotation');
         if (typeAnno) {
           const typeName = extractSimpleTypeName(typeAnno);
-          if (typeName) setIfHigher(nameN.text, typeName, 0.9);
+          if (typeName) setTypeMapEntry(typeMap, nameN.text, typeName, 0.9);
         }
         const valueN = node.childForFieldName('value');
         if (valueN) {
           // Constructor: const x = new Foo() → confidence 1.0
           if (valueN.type === 'new_expression') {
             const ctorType = extractNewExprTypeName(valueN);
-            if (ctorType) setIfHigher(nameN.text, ctorType, 1.0);
+            if (ctorType) setTypeMapEntry(typeMap, nameN.text, ctorType, 1.0);
           }
           // Factory method: const x = Foo.create() → confidence 0.7
           else if (valueN.type === 'call_expression') {
@@ -969,7 +961,7 @@ function extractTypeMapWalk(rootNode: TreeSitterNode, typeMap: Map<string, TypeM
               if (obj && obj.type === 'identifier') {
                 const objName = obj.text;
                 if (objName[0]! !== objName[0]!.toLowerCase() && !BUILTIN_GLOBALS.has(objName)) {
-                  setIfHigher(nameN.text, objName, 0.7);
+                  setTypeMapEntry(typeMap, nameN.text, objName, 0.7);
                 }
               }
             }
@@ -983,7 +975,7 @@ function extractTypeMapWalk(rootNode: TreeSitterNode, typeMap: Map<string, TypeM
         const typeAnno = findChild(node, 'type_annotation');
         if (typeAnno) {
           const typeName = extractSimpleTypeName(typeAnno);
-          if (typeName) setIfHigher(nameNode.text, typeName, 0.9);
+          if (typeName) setTypeMapEntry(typeMap, nameNode.text, typeName, 0.9);
         }
       }
     }

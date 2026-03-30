@@ -6,7 +6,13 @@ import type {
   TreeSitterNode,
   TreeSitterTree,
 } from '../types.js';
-import { extractModifierVisibility, findChild, MAX_WALK_DEPTH, nodeEndLine } from './helpers.js';
+import {
+  extractModifierVisibility,
+  findChild,
+  MAX_WALK_DEPTH,
+  nodeEndLine,
+  setTypeMapEntry,
+} from './helpers.js';
 
 /**
  * Extract symbols from C# files.
@@ -346,7 +352,7 @@ function extractCSharpTypeMapDepth(
           if (child && child.type === 'variable_declarator') {
             const nameNode = child.childForFieldName('name') || child.child(0);
             if (nameNode && nameNode.type === 'identifier') {
-              ctx.typeMap?.set(nameNode.text, { type: typeName, confidence: 0.9 });
+              if (ctx.typeMap) setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
             }
           }
         }
@@ -360,7 +366,7 @@ function extractCSharpTypeMapDepth(
     const nameNode = node.childForFieldName('name');
     if (typeNode && nameNode) {
       const typeName = extractCSharpTypeName(typeNode);
-      if (typeName) ctx.typeMap?.set(nameNode.text, { type: typeName, confidence: 0.9 });
+      if (typeName && ctx.typeMap) setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
     }
   }
 

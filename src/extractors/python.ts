@@ -4,9 +4,14 @@ import type {
   SubDeclaration,
   TreeSitterNode,
   TreeSitterTree,
-  TypeMapEntry,
 } from '../types.js';
-import { findChild, MAX_WALK_DEPTH, nodeEndLine, pythonVisibility } from './helpers.js';
+import {
+  findChild,
+  MAX_WALK_DEPTH,
+  nodeEndLine,
+  pythonVisibility,
+  setTypeMapEntry,
+} from './helpers.js';
 
 /** Built-in globals that start with uppercase but are not user-defined types. */
 const BUILTIN_GLOBALS_PY: Set<string> = new Set([
@@ -348,18 +353,6 @@ function extractPythonTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void 
   extractPythonTypeMapDepth(node, ctx, 0);
 }
 
-function setIfHigherPy(
-  typeMap: Map<string, TypeMapEntry>,
-  name: string,
-  type: string,
-  confidence: number,
-): void {
-  const existing = typeMap.get(name);
-  if (!existing || confidence > existing.confidence) {
-    typeMap.set(name, { type, confidence });
-  }
-}
-
 function extractPythonTypeMapDepth(
   node: TreeSitterNode,
   ctx: ExtractorOutput,
@@ -374,7 +367,7 @@ function extractPythonTypeMapDepth(
     if (nameNode && nameNode.type === 'identifier' && typeNode) {
       const typeName = extractPythonTypeName(typeNode);
       if (typeName && nameNode.text !== 'self' && nameNode.text !== 'cls') {
-        if (ctx.typeMap) setIfHigherPy(ctx.typeMap, nameNode.text, typeName, 0.9);
+        if (ctx.typeMap) setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
       }
     }
   }
@@ -386,7 +379,7 @@ function extractPythonTypeMapDepth(
     if (nameNode && nameNode.type === 'identifier' && typeNode) {
       const typeName = extractPythonTypeName(typeNode);
       if (typeName && nameNode.text !== 'self' && nameNode.text !== 'cls') {
-        if (ctx.typeMap) setIfHigherPy(ctx.typeMap, nameNode.text, typeName, 0.9);
+        if (ctx.typeMap) setTypeMapEntry(ctx.typeMap, nameNode.text, typeName, 0.9);
       }
     }
   }
@@ -401,7 +394,7 @@ function extractPythonTypeMapDepth(
       if (fn && fn.type === 'identifier') {
         const name = fn.text;
         if (name[0] && name[0] !== name[0].toLowerCase()) {
-          if (ctx.typeMap) setIfHigherPy(ctx.typeMap, left.text, name, 1.0);
+          if (ctx.typeMap) setTypeMapEntry(ctx.typeMap, left.text, name, 1.0);
         }
       }
       if (fn && fn.type === 'attribute') {
@@ -413,7 +406,7 @@ function extractPythonTypeMapDepth(
             objName[0] !== objName[0].toLowerCase() &&
             !BUILTIN_GLOBALS_PY.has(objName)
           ) {
-            if (ctx.typeMap) setIfHigherPy(ctx.typeMap, left.text, objName, 0.7);
+            if (ctx.typeMap) setTypeMapEntry(ctx.typeMap, left.text, objName, 0.7);
           }
         }
       }

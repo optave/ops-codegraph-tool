@@ -4,9 +4,14 @@ import type {
   SubDeclaration,
   TreeSitterNode,
   TreeSitterTree,
-  TypeMapEntry,
 } from '../types.js';
-import { findChild, goVisibility, MAX_WALK_DEPTH, nodeEndLine } from './helpers.js';
+import {
+  findChild,
+  goVisibility,
+  MAX_WALK_DEPTH,
+  nodeEndLine,
+  setTypeMapEntry,
+} from './helpers.js';
 
 /**
  * Extract symbols from Go files.
@@ -220,18 +225,6 @@ function extractGoTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void {
   extractGoTypeMapDepth(node, ctx, 0);
 }
 
-function setIfHigher(
-  typeMap: Map<string, TypeMapEntry>,
-  name: string,
-  type: string,
-  confidence: number,
-): void {
-  const existing = typeMap.get(name);
-  if (!existing || confidence > existing.confidence) {
-    typeMap.set(name, { type, confidence });
-  }
-}
-
 function extractGoTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, depth: number): void {
   if (depth >= MAX_WALK_DEPTH) return;
 
@@ -244,7 +237,7 @@ function extractGoTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, depth
         for (let i = 0; i < node.childCount; i++) {
           const child = node.child(i);
           if (child && child.type === 'identifier') {
-            if (ctx.typeMap) setIfHigher(ctx.typeMap, child.text, typeName, 0.9);
+            if (ctx.typeMap) setTypeMapEntry(ctx.typeMap, child.text, typeName, 0.9);
           }
         }
       }
@@ -260,7 +253,7 @@ function extractGoTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, depth
         for (let i = 0; i < node.childCount; i++) {
           const child = node.child(i);
           if (child && child.type === 'identifier') {
-            if (ctx.typeMap) setIfHigher(ctx.typeMap, child.text, typeName, 0.9);
+            if (ctx.typeMap) setTypeMapEntry(ctx.typeMap, child.text, typeName, 0.9);
           }
         }
       }
@@ -298,7 +291,7 @@ function extractGoTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, depth
           const typeNode = rhs.childForFieldName('type');
           if (typeNode) {
             const typeName = extractGoTypeName(typeNode);
-            if (typeName && ctx.typeMap) setIfHigher(ctx.typeMap, varNode.text, typeName, 1.0);
+            if (typeName && ctx.typeMap) setTypeMapEntry(ctx.typeMap, varNode.text, typeName, 1.0);
           }
         }
         // x := &Struct{...} — address-of composite literal (confidence 1.0)
@@ -308,7 +301,8 @@ function extractGoTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, depth
             const typeNode = operand.childForFieldName('type');
             if (typeNode) {
               const typeName = extractGoTypeName(typeNode);
-              if (typeName && ctx.typeMap) setIfHigher(ctx.typeMap, varNode.text, typeName, 1.0);
+              if (typeName && ctx.typeMap)
+                setTypeMapEntry(ctx.typeMap, varNode.text, typeName, 1.0);
             }
           }
         }
@@ -319,11 +313,12 @@ function extractGoTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, depth
             const field = fn.childForFieldName('field');
             if (field?.text.startsWith('New')) {
               const typeName = field.text.slice(3);
-              if (typeName && ctx.typeMap) setIfHigher(ctx.typeMap, varNode.text, typeName, 0.7);
+              if (typeName && ctx.typeMap)
+                setTypeMapEntry(ctx.typeMap, varNode.text, typeName, 0.7);
             }
           } else if (fn && fn.type === 'identifier' && fn.text.startsWith('New')) {
             const typeName = fn.text.slice(3);
-            if (typeName && ctx.typeMap) setIfHigher(ctx.typeMap, varNode.text, typeName, 0.7);
+            if (typeName && ctx.typeMap) setTypeMapEntry(ctx.typeMap, varNode.text, typeName, 0.7);
           }
         }
       }
