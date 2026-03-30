@@ -30,19 +30,26 @@ import { runAnalyses } from './stages/run-analyses.js';
 // ── Dual-connection WAL guard ───────────────────────────────────────────
 
 /**
- * Flush the JS (better-sqlite3) WAL so a native (rusqlite) write can proceed
- * without dual-connection WAL corruption (#696).
+ * Temporarily close the JS (better-sqlite3) connection so a native (rusqlite)
+ * write can proceed without dual-connection WAL corruption (#696).
  *
- * Previous approach closed and reopened the JS connection, but that broke all
- * code holding destructured `db` references (stale handle → "connection not
- * open" errors). Instead we checkpoint the WAL to move pending data into the
- * main DB file, leaving the JS connection valid and all existing references
- * intact. TRUNCATE mode resets the WAL file so rusqlite starts with a clean
- * slate.
+ * Two different SQLite library compilations (better-sqlite3 and rusqlite)
+ * cannot safely share a WAL-mode database file. Closing the JS connection
+ * triggers a WAL checkpoint and releases all locks so rusqlite has exclusive
+ * access. The JS connection is reopened after the native write completes.
+ *
+ * IMPORTANT: After this function returns, `ctx.db` is a NEW connection object.
+ * Any local variables captured via destructuring (`const { db } = ctx`) before
+ * this call will be stale. Always access `ctx.db` for operations after a
+ * native write.
  */
 export function withExclusiveNativeWrite<T>(ctx: PipelineContext, fn: () => T): T {
-  ctx.db.pragma('wal_checkpoint(TRUNCATE)');
-  return fn();
+  ctx.db.close();
+  try {
+    return fn();
+  } finally {
+    ctx.db = openDb(ctx.dbPath);
+  }
 }
 
 // ── Setup helpers ───────────────────────────────────────────────────────
@@ -53,9 +60,12 @@ function initializeEngine(ctx: PipelineContext): void {
     dataflow: ctx.opts.dataflow !== false,
     ast: ctx.opts.ast !== false,
     nativeDb: ctx.nativeDb,
-    // WAL checkpoint callback for dual-connection WAL guard (#696).
-    // Features that do native writes call suspendJsDb before the write to flush
-    // the WAL. resumeJsDb is a no-op since the connection stays open.
+    // WAL checkpoint callbacks for dual-connection WAL guard (#696).
+    // Feature modules (ast, cfg, complexity, dataflow) receive `db` as a
+    // parameter and cannot tolerate close/reopen (stale reference). Instead,
+    // checkpoint the WAL so native writes start with a clean slate. Features
+    // return early on native success and never read native-written WAL data
+    // through the JS connection, so a post-write checkpoint is unnecessary.
     suspendJsDb: ctx.nativeDb
       ? () => {
           ctx.db.pragma('wal_checkpoint(TRUNCATE)');

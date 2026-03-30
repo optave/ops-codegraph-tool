@@ -333,7 +333,7 @@ function updateFileHashes(
 // ── Main entry point ────────────────────────────────────────────────
 
 export async function insertNodes(ctx: PipelineContext): Promise<void> {
-  const { db, allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
+  const { allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
 
   // Populate fileSymbols before any DB writes (used by later stages)
   for (const [relPath, symbols] of allSymbols) {
@@ -355,7 +355,8 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
     }
   }
 
-  // JS fallback
+  // JS fallback — use ctx.db (not destructured db) because withExclusiveNativeWrite
+  // may have closed and reopened the connection if tryNativeInsert ran.
   const precomputedData = new Map<string, PrecomputedFileData>();
   for (const item of filesToParse) {
     if (item.relPath) precomputedData.set(item.relPath, item as PrecomputedFileData);
@@ -363,17 +364,17 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
 
   let upsertHash: SqliteStatement | null;
   try {
-    upsertHash = db.prepare(
+    upsertHash = ctx.db.prepare(
       'INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)',
     );
   } catch {
     upsertHash = null;
   }
 
-  const insertAll = db.transaction(() => {
-    insertDefinitionsAndExports(db, allSymbols);
-    insertChildrenAndEdges(db, allSymbols);
-    updateFileHashes(db, allSymbols, precomputedData, metadataUpdates, rootDir, upsertHash);
+  const insertAll = ctx.db.transaction(() => {
+    insertDefinitionsAndExports(ctx.db, allSymbols);
+    insertChildrenAndEdges(ctx.db, allSymbols);
+    updateFileHashes(ctx.db, allSymbols, precomputedData, metadataUpdates, rootDir, upsertHash);
   });
 
   insertAll();
@@ -381,7 +382,7 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
 
   // Clean up removed file hashes
   if (upsertHash && removed.length > 0) {
-    const deleteHash = db.prepare('DELETE FROM file_hashes WHERE file = ?');
+    const deleteHash = ctx.db.prepare('DELETE FROM file_hashes WHERE file = ?');
     for (const relPath of removed) {
       deleteHash.run(relPath);
     }

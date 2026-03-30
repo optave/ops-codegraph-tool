@@ -629,7 +629,7 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
     const ok = withExclusiveNativeWrite(ctx, () => ctx.nativeDb!.bulkInsertEdges(nativeEdges));
     if (!ok) {
       debug('Native bulkInsertEdges failed — falling back to JS batchInsertEdges');
-      batchInsertEdges(db, allEdgeRows);
+      batchInsertEdges(ctx.db, allEdgeRows);
     }
   }
 

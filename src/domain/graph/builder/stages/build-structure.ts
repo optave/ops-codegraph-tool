@@ -130,7 +130,7 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
           changedFiles?: string[] | null,
         ) => Record<string, number>;
       };
-      roleSummary = classifyNodeRoles(db, changedFileList);
+      roleSummary = classifyNodeRoles(ctx.db, changedFileList);
     }
 
     debug(

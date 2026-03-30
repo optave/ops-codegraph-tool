@@ -19,7 +19,7 @@ import type { PipelineContext } from '../context.js';
 import { withExclusiveNativeWrite } from '../pipeline.js';
 
 export async function finalize(ctx: PipelineContext): Promise<void> {
-  const { db, allSymbols, rootDir, isFullBuild, hasEmbeddings, config, opts, schemaVersion } = ctx;
+  const { allSymbols, rootDir, isFullBuild, hasEmbeddings, config, opts, schemaVersion } = ctx;
   const useNativeDb = ctx.engineName === 'native' && !!ctx.nativeDb;
 
   const t0 = performance.now();
@@ -42,8 +42,9 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   // both the stale-embeddings comparison and the persisted built_at metadata.
   const buildNow = new Date();
 
-  const nodeCount = (db.prepare('SELECT COUNT(*) as c FROM nodes').get() as { c: number }).c;
-  const actualEdgeCount = (db.prepare('SELECT COUNT(*) as c FROM edges').get() as { c: number }).c;
+  const nodeCount = (ctx.db.prepare('SELECT COUNT(*) as c FROM nodes').get() as { c: number }).c;
+  const actualEdgeCount = (ctx.db.prepare('SELECT COUNT(*) as c FROM edges').get() as { c: number })
+    .c;
   info(`Graph built: ${nodeCount} nodes, ${actualEdgeCount} edges`);
   info(`Stored in ${ctx.dbPath}`);
 
@@ -52,10 +53,10 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   if (!isFullBuild && allSymbols.size > 3) {
     const prevNodes = useNativeDb
       ? ctx.nativeDb!.getBuildMeta('node_count')
-      : getBuildMeta(db, 'node_count');
+      : getBuildMeta(ctx.db, 'node_count');
     const prevEdges = useNativeDb
       ? ctx.nativeDb!.getBuildMeta('edge_count')
-      : getBuildMeta(db, 'edge_count');
+      : getBuildMeta(ctx.db, 'edge_count');
     if (prevNodes && prevEdges) {
       const prevN = Number(prevNodes);
       const prevE = Number(prevEdges);
@@ -97,7 +98,7 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
           ),
         );
       } else {
-        setBuildMeta(db, {
+        setBuildMeta(ctx.db, {
           engine: ctx.engineName,
           engine_version: ctx.engineVersion || '',
           codegraph_version: CODEGRAPH_VERSION,
@@ -123,7 +124,7 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
     if (hasEmbeddings) {
       try {
         const orphaned = (
-          db
+          ctx.db
             .prepare(
               'SELECT COUNT(*) as c FROM embeddings WHERE node_id NOT IN (SELECT id FROM nodes)',
             )
@@ -143,7 +144,7 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
     if (hasEmbeddings) {
       try {
         const embedBuiltAt = (
-          db.prepare("SELECT value FROM embedding_meta WHERE key = 'built_at'").get() as
+          ctx.db.prepare("SELECT value FROM embedding_meta WHERE key = 'built_at'").get() as
             | { value: string }
             | undefined
         )?.value;
@@ -163,7 +164,7 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
     // Unused exports warning
     try {
       const unusedCount = (
-        db
+        ctx.db
           .prepare(
             `SELECT COUNT(*) as c FROM nodes
          WHERE exported = 1 AND kind != 'file'
@@ -196,7 +197,7 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   // For small incremental builds, defer the expensive WAL checkpoint to the
   // next event loop tick. Skip for temp directories (tests) — they rmSync
   // immediately after build.
-  const pair = { db, nativeDb: ctx.nativeDb };
+  const pair = { db: ctx.db, nativeDb: ctx.nativeDb };
   const isTempDir = path.resolve(rootDir).startsWith(path.resolve(tmpdir()));
   if (!isFullBuild && allSymbols.size <= 5 && !isTempDir) {
     closeDbPairDeferred(pair);
