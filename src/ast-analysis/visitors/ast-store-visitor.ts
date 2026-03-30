@@ -44,6 +44,12 @@ function extractExpressionText(node: TreeSitterNode): string | null {
   return truncate(node.text);
 }
 
+function extractCallName(node: TreeSitterNode): string {
+  const fn = node.childForFieldName('function');
+  if (fn) return fn.text;
+  return node.text?.split('(')[0] || '?';
+}
+
 function extractName(kind: string, node: TreeSitterNode): string | null {
   if (kind === 'throw') {
     for (let i = 0; i < node.childCount; i++) {
@@ -115,7 +121,10 @@ export function createAstStoreVisitor(
       let name: string | null | undefined;
       let text: string | null = null;
 
-      if (kind === 'new') {
+      if (kind === 'call') {
+        name = extractCallName(node);
+        text = truncate(node.text);
+      } else if (kind === 'new') {
         name = extractNewName(node);
         text = truncate(node.text);
       } else if (kind === 'throw') {
@@ -146,7 +155,7 @@ export function createAstStoreVisitor(
 
       matched.add(node.id);
 
-      if (kind !== 'string' && kind !== 'regex') {
+      if (kind !== 'string' && kind !== 'regex' && kind !== 'call') {
         return { skipChildren: true };
       }
     },
