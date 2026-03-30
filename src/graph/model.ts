@@ -103,15 +103,27 @@ export class CodeGraph {
   }
 
   *edges(): Generator<[string, string, EdgeAttrs]> {
-    const seen = this._directed ? null : new Set<string>();
+    if (this._directed) {
+      yield* this._directedEdges();
+    } else {
+      yield* this._undirectedEdges();
+    }
+  }
+
+  private *_directedEdges(): Generator<[string, string, EdgeAttrs]> {
+    for (const [src, targets] of this._successors) {
+      for (const [tgt, attrs] of targets) yield [src, tgt, attrs];
+    }
+  }
+
+  private *_undirectedEdges(): Generator<[string, string, EdgeAttrs]> {
+    // \0 is safe as separator — node IDs are file paths/symbols, never contain null bytes
+    const seen = new Set<string>();
     for (const [src, targets] of this._successors) {
       for (const [tgt, attrs] of targets) {
-        if (!this._directed) {
-          // \0 is safe as separator — node IDs are file paths/symbols, never contain null bytes
-          const key = src < tgt ? `${src}\0${tgt}` : `${tgt}\0${src}`;
-          if (seen!.has(key)) continue;
-          seen!.add(key);
-        }
+        const key = src < tgt ? `${src}\0${tgt}` : `${tgt}\0${src}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
         yield [src, tgt, attrs];
       }
     }

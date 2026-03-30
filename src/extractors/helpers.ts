@@ -1,4 +1,4 @@
-import type { SubDeclaration, TreeSitterNode } from '../types.js';
+import type { SubDeclaration, TreeSitterNode, TypeMapEntry } from '../types.js';
 
 /**
  * Maximum recursion depth for tree-sitter AST walkers.
@@ -16,6 +16,22 @@ export function findChild(node: TreeSitterNode, type: string): TreeSitterNode | 
     if (child && child.type === type) return child;
   }
   return null;
+}
+
+/**
+ * Merge a type-map entry, keeping the higher-confidence one.
+ * Shared across all language extractors that build type maps for call resolution.
+ */
+export function setTypeMapEntry(
+  typeMap: Map<string, TypeMapEntry>,
+  name: string,
+  type: string,
+  confidence: number,
+): void {
+  const existing = typeMap.get(name);
+  if (!existing || confidence > existing.confidence) {
+    typeMap.set(name, { type, confidence });
+  }
 }
 
 /**

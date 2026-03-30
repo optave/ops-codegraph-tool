@@ -119,10 +119,7 @@ fn classify_node(
     median_fan_out: u32,
 ) -> &'static str {
     // Framework entry
-    if FRAMEWORK_ENTRY_PREFIXES
-        .iter()
-        .any(|p| name.starts_with(p))
-    {
+    if FRAMEWORK_ENTRY_PREFIXES.iter().any(|p| name.starts_with(p)) {
         return "entry";
     }
 
@@ -212,7 +209,7 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
     let tx = conn.unchecked_transaction()?;
     let mut summary = RoleSummary::default();
 
-    // 1. Leaf kinds → dead-leaf (skip expensive fan-in/fan-out JOINs)
+    // 1. Leaf kinds -> dead-leaf
     let leaf_ids: Vec<i64> = {
         let mut stmt =
             tx.prepare("SELECT id FROM nodes WHERE kind IN ('parameter', 'property')")?;
@@ -220,7 +217,7 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
         rows.filter_map(|r| r.ok()).collect()
     };
 
-    // 2. Fan-in/fan-out for callable nodes
+    // 2. Fan-in/fan-out for callable nodes (uses JOIN approach for full scan)
     let rows: Vec<(i64, String, String, String, u32, u32)> = {
         let mut stmt = tx.prepare(
             "SELECT n.id, n.name, n.kind, n.file,
@@ -268,21 +265,17 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
 
     // 4. Production fan-in (excluding test files)
     let prod_fan_in: HashMap<i64, u32> = {
-        let test_filter = TEST_FILE_PATTERNS
-            .iter()
-            .map(|p| format!("AND caller.file NOT LIKE '{}'", p))
-            .collect::<Vec<_>>()
-            .join(" ");
         let sql = format!(
             "SELECT e.target_id, COUNT(*) AS cnt
              FROM edges e
              JOIN nodes caller ON e.source_id = caller.id
              WHERE e.kind = 'calls' {}
              GROUP BY e.target_id",
-            test_filter
+            test_file_filter()
         );
         let mut stmt = tx.prepare(&sql)?;
-        let mapped = stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, u32>(1)?)))?;
+        let mapped =
+            stmt.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, u32>(1)?)))?;
         mapped.filter_map(|r| r.ok()).collect()
     };
 
@@ -303,7 +296,105 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
         ids_by_role.insert("dead-leaf", leaf_ids);
     }
 
-    for (id, name, kind, file, fan_in, fan_out) in &rows {
+    classify_rows(
+        &rows,
+        &exported_ids,
+        &prod_fan_in,
+        median_fan_in,
+        median_fan_out,
+        &mut ids_by_role,
+        &mut summary,
+    );
+
+    // 7. Batch UPDATE: reset all roles then set per-role
+    tx.execute("UPDATE nodes SET role = NULL", [])?;
+    batch_update_roles(&tx, &ids_by_role)?;
+
+    tx.commit()?;
+    Ok(summary)
+}
+
+/// Build the test-file exclusion filter for SQL queries.
+fn test_file_filter() -> String {
+    TEST_FILE_PATTERNS
+        .iter()
+        .map(|p| format!("AND caller.file NOT LIKE '{}'", p))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Compute global median fan-in and fan-out from the edge distribution.
+fn compute_global_medians(tx: &rusqlite::Transaction) -> rusqlite::Result<(u32, u32)> {
+    let median_fan_in = {
+        let mut stmt = tx
+            .prepare("SELECT COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY target_id")?;
+        let mut vals: Vec<u32> = stmt
+            .query_map([], |row| row.get::<_, u32>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        vals.sort_unstable();
+        median(&vals)
+    };
+    let median_fan_out = {
+        let mut stmt = tx
+            .prepare("SELECT COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY source_id")?;
+        let mut vals: Vec<u32> = stmt
+            .query_map([], |row| row.get::<_, u32>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        vals.sort_unstable();
+        median(&vals)
+    };
+    Ok((median_fan_in, median_fan_out))
+}
+
+/// Execute a query with bound file parameters and collect i64 results into a HashSet.
+fn query_id_set(
+    tx: &rusqlite::Transaction,
+    sql: &str,
+    files: &[&str],
+) -> rusqlite::Result<std::collections::HashSet<i64>> {
+    let mut stmt = tx.prepare(sql)?;
+    for (i, f) in files.iter().enumerate() {
+        stmt.raw_bind_parameter(i + 1, *f)?;
+    }
+    let mut rows = stmt.raw_query();
+    let mut result = std::collections::HashSet::new();
+    while let Some(row) = rows.next()? {
+        result.insert(row.get::<_, i64>(0)?);
+    }
+    Ok(result)
+}
+
+/// Execute a query with bound file parameters and collect (id, count) into a HashMap.
+fn query_id_counts(
+    tx: &rusqlite::Transaction,
+    sql: &str,
+    files: &[&str],
+) -> rusqlite::Result<HashMap<i64, u32>> {
+    let mut stmt = tx.prepare(sql)?;
+    for (i, f) in files.iter().enumerate() {
+        stmt.raw_bind_parameter(i + 1, *f)?;
+    }
+    let mut rows = stmt.raw_query();
+    let mut result = HashMap::new();
+    while let Some(row) = rows.next()? {
+        result.insert(row.get::<_, i64>(0)?, row.get::<_, u32>(1)?);
+    }
+    Ok(result)
+}
+
+/// Classify rows and accumulate into ids_by_role and summary.
+fn classify_rows(
+    rows: &[(i64, String, String, String, u32, u32)],
+    exported_ids: &std::collections::HashSet<i64>,
+    prod_fan_in: &HashMap<i64, u32>,
+    median_fan_in: u32,
+    median_fan_out: u32,
+    ids_by_role: &mut HashMap<&'static str, Vec<i64>>,
+    summary: &mut RoleSummary,
+) {
+    for (id, name, kind, file, fan_in, fan_out) in rows {
         let is_exported = exported_ids.contains(id);
         let prod_fi = prod_fan_in.get(id).copied().unwrap_or(0);
         let role = classify_node(
@@ -317,32 +408,22 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
             median_fan_in,
             median_fan_out,
         );
-        increment_summary(&mut summary, role);
+        increment_summary(summary, role);
         ids_by_role.entry(role).or_default().push(*id);
     }
-
-    // 7. Batch UPDATE: reset all roles then set per-role
-    tx.execute("UPDATE nodes SET role = NULL", [])?;
-    batch_update_roles(&tx, &ids_by_role)?;
-
-    tx.commit()?;
-    Ok(summary)
 }
 
-// ── Incremental classification ───────────────────────────────────────
-
-pub(crate) fn do_classify_incremental(
-    conn: &Connection,
+/// Find neighbouring files connected by call edges to the changed files.
+fn find_neighbour_files(
+    tx: &rusqlite::Transaction,
     changed_files: &[String],
-) -> rusqlite::Result<RoleSummary> {
-    let tx = conn.unchecked_transaction()?;
-    let mut summary = RoleSummary::default();
-
-    // Build placeholders for changed files
-    let seed_ph: String = changed_files.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-
-    // Expand affected set: include edge neighbours
-    let neighbour_sql = format!(
+) -> rusqlite::Result<Vec<String>> {
+    let seed_ph: String = changed_files
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
         "SELECT DISTINCT n2.file FROM edges e
          JOIN nodes n1 ON (e.source_id = n1.id OR e.target_id = n1.id)
          JOIN nodes n2 ON (e.source_id = n2.id OR e.target_id = n2.id)
@@ -352,65 +433,38 @@ pub(crate) fn do_classify_incremental(
            AND n2.kind NOT IN ('file', 'directory')",
         seed_ph, seed_ph
     );
-    let neighbour_files: Vec<String> = {
-        let mut stmt = tx.prepare(&neighbour_sql)?;
-        // Bind changed_files twice (for both IN clauses)
-        let mut idx = 1;
-        for f in changed_files {
-            stmt.raw_bind_parameter(idx, f.as_str())?;
-            idx += 1;
-        }
-        for f in changed_files {
-            stmt.raw_bind_parameter(idx, f.as_str())?;
-            idx += 1;
-        }
-        let rows = stmt.raw_query();
-        let mut result = Vec::new();
-        let mut rows = rows;
-        while let Some(row) = rows.next()? {
-            result.push(row.get::<_, String>(0)?);
-        }
-        result
-    };
-
-    let mut all_affected: Vec<&str> = changed_files.iter().map(|s| s.as_str()).collect();
-    for f in &neighbour_files {
-        all_affected.push(f.as_str());
+    let mut stmt = tx.prepare(&sql)?;
+    let mut idx = 1;
+    for f in changed_files {
+        stmt.raw_bind_parameter(idx, f.as_str())?;
+        idx += 1;
     }
-    let affected_ph: String = all_affected.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    for f in changed_files {
+        stmt.raw_bind_parameter(idx, f.as_str())?;
+        idx += 1;
+    }
+    let mut rows = stmt.raw_query();
+    let mut result = Vec::new();
+    while let Some(row) = rows.next()? {
+        result.push(row.get::<_, String>(0)?);
+    }
+    Ok(result)
+}
 
-    // 1. Global medians from edge distribution
-    let median_fan_in = {
-        let mut stmt = tx.prepare(
-            "SELECT COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY target_id",
-        )?;
-        let mut vals: Vec<u32> = stmt
-            .query_map([], |row| row.get::<_, u32>(0))?
-            .filter_map(|r| r.ok())
-            .collect();
-        vals.sort_unstable();
-        median(&vals)
-    };
-    let median_fan_out = {
-        let mut stmt = tx.prepare(
-            "SELECT COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY source_id",
-        )?;
-        let mut vals: Vec<u32> = stmt
-            .query_map([], |row| row.get::<_, u32>(0))?
-            .filter_map(|r| r.ok())
-            .collect();
-        vals.sort_unstable();
-        median(&vals)
-    };
+/// Query leaf kind node IDs and callable node rows for a set of files.
+fn query_nodes_for_files(
+    tx: &rusqlite::Transaction,
+    files: &[&str],
+) -> rusqlite::Result<(Vec<i64>, Vec<(i64, String, String, String, u32, u32)>)> {
+    let ph: String = files.iter().map(|_| "?").collect::<Vec<_>>().join(",");
 
-    // 2a. Leaf kinds in affected files
     let leaf_sql = format!(
         "SELECT id FROM nodes WHERE kind IN ('parameter', 'property') AND file IN ({})",
-        affected_ph
+        ph
     );
     let leaf_ids: Vec<i64> = {
         let mut stmt = tx.prepare(&leaf_sql)?;
-        for (i, f) in all_affected.iter().enumerate() {
+        for (i, f) in files.iter().enumerate() {
             stmt.raw_bind_parameter(i + 1, *f)?;
         }
         let mut rows = stmt.raw_query();
@@ -421,7 +475,6 @@ pub(crate) fn do_classify_incremental(
         result
     };
 
-    // 2b. Callable nodes with correlated subquery fan-in/fan-out
     let rows_sql = format!(
         "SELECT n.id, n.name, n.kind, n.file,
             (SELECT COUNT(*) FROM edges WHERE kind = 'calls' AND target_id = n.id) AS fan_in,
@@ -429,11 +482,11 @@ pub(crate) fn do_classify_incremental(
          FROM nodes n
          WHERE n.kind NOT IN ('file', 'directory', 'parameter', 'property')
            AND n.file IN ({})",
-        affected_ph
+        ph
     );
     let rows: Vec<(i64, String, String, String, u32, u32)> = {
         let mut stmt = tx.prepare(&rows_sql)?;
-        for (i, f) in all_affected.iter().enumerate() {
+        for (i, f) in files.iter().enumerate() {
             stmt.raw_bind_parameter(i + 1, *f)?;
         }
         let mut qrows = stmt.raw_query();
@@ -451,12 +504,39 @@ pub(crate) fn do_classify_incremental(
         result
     };
 
+    Ok((leaf_ids, rows))
+}
+
+// ── Incremental classification ───────────────────────────────────────
+
+pub(crate) fn do_classify_incremental(
+    conn: &Connection,
+    changed_files: &[String],
+) -> rusqlite::Result<RoleSummary> {
+    let tx = conn.unchecked_transaction()?;
+    let mut summary = RoleSummary::default();
+
+    let neighbour_files = find_neighbour_files(&tx, changed_files)?;
+
+    let mut all_affected: Vec<&str> = changed_files.iter().map(|s| s.as_str()).collect();
+    for f in &neighbour_files {
+        all_affected.push(f.as_str());
+    }
+    let affected_ph: String = all_affected
+        .iter()
+        .map(|_| "?")
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let (median_fan_in, median_fan_out) = compute_global_medians(&tx)?;
+
+    let (leaf_ids, rows) = query_nodes_for_files(&tx, &all_affected)?;
+
     if rows.is_empty() && leaf_ids.is_empty() {
         tx.commit()?;
         return Ok(summary);
     }
 
-    // 3. Exported IDs for affected nodes
     let exported_sql = format!(
         "SELECT DISTINCT e.target_id
          FROM edges e
@@ -466,25 +546,8 @@ pub(crate) fn do_classify_incremental(
            AND target.file IN ({})",
         affected_ph
     );
-    let exported_ids: std::collections::HashSet<i64> = {
-        let mut stmt = tx.prepare(&exported_sql)?;
-        for (i, f) in all_affected.iter().enumerate() {
-            stmt.raw_bind_parameter(i + 1, *f)?;
-        }
-        let mut qrows = stmt.raw_query();
-        let mut result = std::collections::HashSet::new();
-        while let Some(row) = qrows.next()? {
-            result.insert(row.get::<_, i64>(0)?);
-        }
-        result
-    };
+    let exported_ids = query_id_set(&tx, &exported_sql, &all_affected)?;
 
-    // 4. Production fan-in for affected nodes
-    let test_filter = TEST_FILE_PATTERNS
-        .iter()
-        .map(|p| format!("AND caller.file NOT LIKE '{}'", p))
-        .collect::<Vec<_>>()
-        .join(" ");
     let prod_sql = format!(
         "SELECT e.target_id, COUNT(*) AS cnt
          FROM edges e
@@ -494,22 +557,11 @@ pub(crate) fn do_classify_incremental(
            AND target.file IN ({})
            {}
          GROUP BY e.target_id",
-        affected_ph, test_filter
+        affected_ph,
+        test_file_filter()
     );
-    let prod_fan_in: HashMap<i64, u32> = {
-        let mut stmt = tx.prepare(&prod_sql)?;
-        for (i, f) in all_affected.iter().enumerate() {
-            stmt.raw_bind_parameter(i + 1, *f)?;
-        }
-        let mut qrows = stmt.raw_query();
-        let mut result = HashMap::new();
-        while let Some(row) = qrows.next()? {
-            result.insert(row.get::<_, i64>(0)?, row.get::<_, u32>(1)?);
-        }
-        result
-    };
+    let prod_fan_in = query_id_counts(&tx, &prod_sql, &all_affected)?;
 
-    // 5. Classify
     let mut ids_by_role: HashMap<&str, Vec<i64>> = HashMap::new();
 
     if !leaf_ids.is_empty() {
@@ -518,25 +570,17 @@ pub(crate) fn do_classify_incremental(
         ids_by_role.insert("dead-leaf", leaf_ids);
     }
 
-    for (id, name, kind, file, fan_in, fan_out) in &rows {
-        let is_exported = exported_ids.contains(id);
-        let prod_fi = prod_fan_in.get(id).copied().unwrap_or(0);
-        let role = classify_node(
-            name,
-            kind,
-            file,
-            *fan_in,
-            *fan_out,
-            is_exported,
-            prod_fi,
-            median_fan_in,
-            median_fan_out,
-        );
-        increment_summary(&mut summary, role);
-        ids_by_role.entry(role).or_default().push(*id);
-    }
+    classify_rows(
+        &rows,
+        &exported_ids,
+        &prod_fan_in,
+        median_fan_in,
+        median_fan_out,
+        &mut ids_by_role,
+        &mut summary,
+    );
 
-    // 6. Reset roles for affected files only, then update
+    // Reset roles for affected files only, then update
     let reset_sql = format!(
         "UPDATE nodes SET role = NULL WHERE file IN ({}) AND kind NOT IN ('file', 'directory')",
         affected_ph

@@ -199,14 +199,11 @@ function computeFileMetrics(
   })();
 }
 
-function computeDirectoryMetrics(
-  db: BetterSqlite3Database,
-  upsertMetric: SqliteStatement,
-  getNodeIdStmt: NodeIdStmt,
-  fileSymbols: Map<string, FileSymbolData>,
+/** Map each directory to the files it transitively contains. */
+function buildDirFilesMap(
   allDirs: Set<string>,
-  importEdges: ImportEdge[],
-): void {
+  fileSymbols: Map<string, FileSymbolData>,
+): Map<string, string[]> {
   const dirFiles = new Map<string, string[]>();
   for (const dir of allDirs) {
     dirFiles.set(dir, []);
@@ -220,7 +217,11 @@ function computeDirectoryMetrics(
       d = normalizePath(path.dirname(d));
     }
   }
+  return dirFiles;
+}
 
+/** Build reverse map: file -> set of ancestor directories. */
+function buildFileToAncestorDirs(dirFiles: Map<string, string[]>): Map<string, Set<string>> {
   const fileToAncestorDirs = new Map<string, Set<string>>();
   for (const [dir, files] of dirFiles) {
     for (const f of files) {
@@ -228,7 +229,15 @@ function computeDirectoryMetrics(
       fileToAncestorDirs.get(f)?.add(dir);
     }
   }
+  return fileToAncestorDirs;
+}
 
+/** Count intra-directory, fan-in, and fan-out edges per directory. */
+function countDirectoryEdges(
+  allDirs: Set<string>,
+  importEdges: ImportEdge[],
+  fileToAncestorDirs: Map<string, Set<string>>,
+): Map<string, { intra: number; fanIn: number; fanOut: number }> {
   const dirEdgeCounts = new Map<string, { intra: number; fanIn: number; fanOut: number }>();
   for (const dir of allDirs) {
     dirEdgeCounts.set(dir, { intra: 0, fanIn: 0, fanOut: 0 });
@@ -258,6 +267,39 @@ function computeDirectoryMetrics(
       }
     }
   }
+  return dirEdgeCounts;
+}
+
+/** Count unique symbols in a list of files. */
+function countSymbolsInFiles(files: string[], fileSymbols: Map<string, FileSymbolData>): number {
+  let symbolCount = 0;
+  for (const f of files) {
+    const sym = fileSymbols.get(f);
+    if (sym) {
+      const seen = new Set<string>();
+      for (const d of sym.definitions) {
+        const key = `${d.name}|${d.kind}|${d.line}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          symbolCount++;
+        }
+      }
+    }
+  }
+  return symbolCount;
+}
+
+function computeDirectoryMetrics(
+  db: BetterSqlite3Database,
+  upsertMetric: SqliteStatement,
+  getNodeIdStmt: NodeIdStmt,
+  fileSymbols: Map<string, FileSymbolData>,
+  allDirs: Set<string>,
+  importEdges: ImportEdge[],
+): void {
+  const dirFiles = buildDirFilesMap(allDirs, fileSymbols);
+  const fileToAncestorDirs = buildFileToAncestorDirs(dirFiles);
+  const dirEdgeCounts = countDirectoryEdges(allDirs, importEdges, fileToAncestorDirs);
 
   db.transaction(() => {
     for (const [dir, files] of dirFiles) {
@@ -265,21 +307,7 @@ function computeDirectoryMetrics(
       if (!dirRow) continue;
 
       const fileCount = files.length;
-      let symbolCount = 0;
-
-      for (const f of files) {
-        const sym = fileSymbols.get(f);
-        if (sym) {
-          const seen = new Set<string>();
-          for (const d of sym.definitions) {
-            const key = `${d.name}|${d.kind}|${d.line}`;
-            if (!seen.has(key)) {
-              seen.add(key);
-              symbolCount++;
-            }
-          }
-        }
-      }
+      const symbolCount = countSymbolsInFiles(files, fileSymbols);
 
       const counts = dirEdgeCounts.get(dir) || { intra: 0, fanIn: 0, fanOut: 0 };
       const totalEdges = counts.intra + counts.fanIn + counts.fanOut;

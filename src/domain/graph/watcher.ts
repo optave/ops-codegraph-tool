@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { closeDb, getNodeId as getNodeIdQuery, initSchema, openDb } from '../../db/index.js';
-import { info } from '../../infrastructure/logger.js';
+import { debug, info } from '../../infrastructure/logger.js';
 import { EXTENSIONS, IGNORE_DIRS, normalizePath } from '../../shared/constants.js';
 import { DbError } from '../../shared/errors.js';
 import { createParseTreeCache, getActiveEngine } from '../parser.js';
@@ -32,12 +32,10 @@ export async function watchProject(rootDir: string, opts: { engine?: string } = 
     ast: false,
   };
   const { name: engineName, version: engineVersion } = getActiveEngine(engineOpts);
-  console.log(
-    `Watch mode using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`,
-  );
+  info(`Watch mode using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
 
   const cache = createParseTreeCache();
-  console.log(
+  info(
     cache
       ? 'Incremental parsing enabled (native tree cache)'
       : 'Incremental parsing unavailable (full re-parse)',
@@ -124,8 +122,8 @@ export async function watchProject(rootDir: string, opts: { engine?: string } = 
       }));
       try {
         appendJournalEntries(rootDir, entries);
-      } catch {
-        /* journal write failure is non-fatal */
+      } catch (e: unknown) {
+        debug(`Journal write failed (non-fatal): ${(e as Error).message}`);
       }
 
       const changeEvents = updates.map((r) =>
@@ -137,8 +135,8 @@ export async function watchProject(rootDir: string, opts: { engine?: string } = 
       );
       try {
         appendChangeEvents(rootDir, changeEvents);
-      } catch {
-        /* change event write failure is non-fatal */
+      } catch (e: unknown) {
+        debug(`Change event write failed (non-fatal): ${(e as Error).message}`);
       }
     }
 
@@ -153,8 +151,8 @@ export async function watchProject(rootDir: string, opts: { engine?: string } = 
     }
   }
 
-  console.log(`Watching ${rootDir} for changes...`);
-  console.log('Press Ctrl+C to stop.\n');
+  info(`Watching ${rootDir} for changes...`);
+  info('Press Ctrl+C to stop.');
 
   const watcher = fs.watch(rootDir, { recursive: true }, (_eventType, filename) => {
     if (!filename) return;
@@ -169,7 +167,7 @@ export async function watchProject(rootDir: string, opts: { engine?: string } = 
   });
 
   process.on('SIGINT', () => {
-    console.log('\nStopping watcher...');
+    info('Stopping watcher...');
     watcher.close();
     // Flush any pending file paths to journal before exit
     if (pending.size > 0) {
@@ -178,8 +176,8 @@ export async function watchProject(rootDir: string, opts: { engine?: string } = 
       }));
       try {
         appendJournalEntries(rootDir, entries);
-      } catch {
-        /* best-effort */
+      } catch (e: unknown) {
+        debug(`Journal flush on exit failed (non-fatal): ${(e as Error).message}`);
       }
     }
     if (cache) cache.clear();

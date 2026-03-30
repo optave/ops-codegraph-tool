@@ -111,6 +111,25 @@ function handleJavaClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   }
 }
 
+const JAVA_TYPE_NODE_TYPES = new Set(['type_identifier', 'identifier', 'generic_type']);
+
+/** Resolve interface name from a type node (handles generic_type unwrapping). */
+function resolveJavaIfaceName(node: TreeSitterNode): string | undefined {
+  return node.type === 'generic_type' ? node.child(0)?.text : node.text;
+}
+
+/** Push a single interface type node as an implements entry. */
+function pushJavaIface(
+  node: TreeSitterNode,
+  className: string,
+  line: number,
+  ctx: ExtractorOutput,
+): void {
+  if (!JAVA_TYPE_NODE_TYPES.has(node.type)) return;
+  const ifaceName = resolveJavaIfaceName(node);
+  if (ifaceName) ctx.classes.push({ name: className, implements: ifaceName, line });
+}
+
 function extractJavaInterfaces(
   interfaces: TreeSitterNode,
   className: string,
@@ -119,28 +138,15 @@ function extractJavaInterfaces(
 ): void {
   for (let i = 0; i < interfaces.childCount; i++) {
     const child = interfaces.child(i);
-    if (
-      child &&
-      (child.type === 'type_identifier' ||
-        child.type === 'identifier' ||
-        child.type === 'type_list' ||
-        child.type === 'generic_type')
-    ) {
-      if (child.type === 'type_list') {
-        for (let j = 0; j < child.childCount; j++) {
-          const t = child.child(j);
-          if (
-            t &&
-            (t.type === 'type_identifier' || t.type === 'identifier' || t.type === 'generic_type')
-          ) {
-            const ifaceName = t.type === 'generic_type' ? t.child(0)?.text : t.text;
-            if (ifaceName) ctx.classes.push({ name: className, implements: ifaceName, line });
-          }
-        }
-      } else {
-        const ifaceName = child.type === 'generic_type' ? child.child(0)?.text : child.text;
-        if (ifaceName) ctx.classes.push({ name: className, implements: ifaceName, line });
+    if (!child) continue;
+
+    if (child.type === 'type_list') {
+      for (let j = 0; j < child.childCount; j++) {
+        const t = child.child(j);
+        if (t) pushJavaIface(t, className, line, ctx);
       }
+    } else {
+      pushJavaIface(child, className, line, ctx);
     }
   }
 }

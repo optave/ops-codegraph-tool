@@ -5,7 +5,6 @@ import {
   findImportSources,
   findImportTargets,
   findNodesByFile,
-  openReadonlyOrFail,
 } from '../../db/index.js';
 import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
@@ -19,6 +18,7 @@ import type {
   RelatedNodeRow,
   StmtCache,
 } from '../../types.js';
+import { withReadonlyDb } from './query-helpers.js';
 import { findMatchingNodes } from './symbol-lookup.js';
 
 type UpstreamRow = { id: number; name: string; kind: string; file: string; line: number };
@@ -32,8 +32,7 @@ export function fileDepsData(
   customDbPath: string,
   opts: { noTests?: boolean; limit?: number; offset?: number } = {},
 ) {
-  const db = openReadonlyOrFail(customDbPath);
-  try {
+  return withReadonlyDb(customDbPath, (db) => {
     const noTests = opts.noTests || false;
     const fileNodes = findFileNodes(db, `%${file}%`) as NodeRow[];
     if (fileNodes.length === 0) {
@@ -59,9 +58,7 @@ export function fileDepsData(
 
     const base = { file, results };
     return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
-  } finally {
-    db.close();
-  }
+  });
 }
 
 /**
@@ -140,8 +137,7 @@ export function fnDepsData(
     offset?: number;
   } = {},
 ) {
-  const db = openReadonlyOrFail(customDbPath);
-  try {
+  return withReadonlyDb(customDbPath, (db) => {
     const depth = opts.depth || 3;
     const noTests = opts.noTests || false;
     const hc = new Map();
@@ -194,9 +190,7 @@ export function fnDepsData(
 
     const base = { name, results };
     return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
-  } finally {
-    db.close();
-  }
+  });
 }
 
 /**
@@ -384,8 +378,7 @@ export function pathData(
     kind?: string;
   } = {},
 ) {
-  const db = openReadonlyOrFail(customDbPath);
-  try {
+  return withReadonlyDb(customDbPath, (db) => {
     const noTests = opts.noTests || false;
     const maxDepth = opts.maxDepth || 10;
     const edgeKinds = opts.edgeKinds || ['calls'];
@@ -477,12 +470,66 @@ export function pathData(
       reverse,
       maxDepth,
     };
-  } finally {
-    db.close();
-  }
+  });
 }
 
 // ── File-level shortest path ────────────────────────────────────────────
+
+/** BFS over file adjacency graph to find shortest path. */
+function bfsFilePath(
+  neighborStmt: ReturnType<BetterSqlite3Database['prepare']>,
+  sourceFile: string,
+  targetFile: string,
+  edgeKinds: string[],
+  maxDepth: number,
+  noTests: boolean,
+): { found: boolean; path: string[]; alternateCount: number } {
+  const visited = new Set([sourceFile]);
+  const parentMap = new Map<string, string>();
+  let queue = [sourceFile];
+  let found = false;
+  let alternateCount = 0;
+
+  for (let depth = 1; depth <= maxDepth; depth++) {
+    const nextQueue: string[] = [];
+    for (const currentFile of queue) {
+      const neighbors = neighborStmt.all(currentFile, ...edgeKinds) as Array<{
+        neighbor_file: string;
+      }>;
+      for (const n of neighbors) {
+        if (noTests && isTestFile(n.neighbor_file)) continue;
+        if (n.neighbor_file === targetFile) {
+          if (!found) {
+            found = true;
+            parentMap.set(n.neighbor_file, currentFile);
+          }
+          alternateCount++;
+          continue;
+        }
+        if (!visited.has(n.neighbor_file)) {
+          visited.add(n.neighbor_file);
+          parentMap.set(n.neighbor_file, currentFile);
+          nextQueue.push(n.neighbor_file);
+        }
+      }
+    }
+    if (found) break;
+    queue = nextQueue;
+    if (queue.length === 0) break;
+  }
+
+  if (!found) return { found: false, path: [], alternateCount: 0 };
+
+  // Reconstruct path
+  const filePath: string[] = [targetFile];
+  let cur = targetFile;
+  while (cur !== sourceFile) {
+    cur = parentMap.get(cur)!;
+    filePath.push(cur);
+  }
+  filePath.reverse();
+  return { found: true, path: filePath, alternateCount: Math.max(0, alternateCount - 1) };
+}
 
 /**
  * BFS at the file level: find shortest import/edge path between two files.
@@ -499,8 +546,7 @@ export function filePathData(
     reverse?: boolean;
   } = {},
 ) {
-  const db = openReadonlyOrFail(customDbPath);
-  try {
+  return withReadonlyDb(customDbPath, (db) => {
     const noTests = opts.noTests || false;
     const maxDepth = opts.maxDepth || 10;
     const edgeKinds = opts.edgeKinds || ['imports', 'imports-type'];
@@ -569,42 +615,17 @@ export function filePathData(
          WHERE n_src.file = ? AND e.kind IN (${kindPlaceholders}) AND n_tgt.file != n_src.file`;
     const neighborStmt = db.prepare(neighborQuery);
 
-    // BFS
-    const visited = new Set([sourceFile]);
-    const parentMap = new Map<string, string>();
-    let queue = [sourceFile];
-    let found = false;
-    let alternateCount = 0;
+    // BFS to find shortest file path
+    const bfsResult = bfsFilePath(
+      neighborStmt,
+      sourceFile,
+      targetFile,
+      edgeKinds,
+      maxDepth,
+      noTests,
+    );
 
-    for (let depth = 1; depth <= maxDepth; depth++) {
-      const nextQueue: string[] = [];
-      for (const currentFile of queue) {
-        const neighbors = neighborStmt.all(currentFile, ...edgeKinds) as Array<{
-          neighbor_file: string;
-        }>;
-        for (const n of neighbors) {
-          if (noTests && isTestFile(n.neighbor_file)) continue;
-          if (n.neighbor_file === targetFile) {
-            if (!found) {
-              found = true;
-              parentMap.set(n.neighbor_file, currentFile);
-            }
-            alternateCount++;
-            continue;
-          }
-          if (!visited.has(n.neighbor_file)) {
-            visited.add(n.neighbor_file);
-            parentMap.set(n.neighbor_file, currentFile);
-            nextQueue.push(n.neighbor_file);
-          }
-        }
-      }
-      if (found) break;
-      queue = nextQueue;
-      if (queue.length === 0) break;
-    }
-
-    if (!found) {
+    if (!bfsResult.found) {
       return {
         from,
         to,
@@ -620,29 +641,18 @@ export function filePathData(
       };
     }
 
-    // Reconstruct path
-    const filePath: string[] = [targetFile];
-    let cur = targetFile;
-    while (cur !== sourceFile) {
-      cur = parentMap.get(cur)!;
-      filePath.push(cur);
-    }
-    filePath.reverse();
-
     return {
       from,
       to,
       fromCandidates,
       toCandidates,
       found: true,
-      hops: filePath.length - 1,
-      path: filePath,
-      alternateCount: Math.max(0, alternateCount - 1),
+      hops: bfsResult.path.length - 1,
+      path: bfsResult.path,
+      alternateCount: bfsResult.alternateCount,
       edgeKinds,
       reverse,
       maxDepth,
     };
-  } finally {
-    db.close();
-  }
+  });
 }

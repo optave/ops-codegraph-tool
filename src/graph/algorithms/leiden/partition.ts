@@ -56,6 +56,109 @@ function u8get(a: Uint8Array, i: number): number {
   return a[i] as number;
 }
 
+/**
+ * Accumulate per-community node-level totals (size, count, strength) into the
+ * provided aggregate arrays. Both `initializeAggregates` and `compactCommunityIds`
+ * share this logic — extracting it eliminates the duplication.
+ */
+function accumulateNodeAggregates(
+  graph: GraphAdapter,
+  nodeCommunity: Int32Array,
+  n: number,
+  totalSize: Float64Array,
+  nodeCount: Int32Array,
+  internalEdgeWeight: Float64Array,
+  totalStrength: Float64Array,
+  totalOutStrength: Float64Array,
+  totalInStrength: Float64Array,
+): void {
+  for (let i = 0; i < n; i++) {
+    const c: number = iget(nodeCommunity, i);
+    totalSize[c] = fget(totalSize, c) + fget(graph.size, i);
+    nodeCount[c] = iget(nodeCount, c) + 1;
+    if (graph.directed) {
+      totalOutStrength[c] = fget(totalOutStrength, c) + fget(graph.strengthOut, i);
+      totalInStrength[c] = fget(totalInStrength, c) + fget(graph.strengthIn, i);
+    } else {
+      totalStrength[c] = fget(totalStrength, c) + fget(graph.strengthOut, i);
+    }
+    if (fget(graph.selfLoop, i) !== 0)
+      internalEdgeWeight[c] = fget(internalEdgeWeight, c) + fget(graph.selfLoop, i);
+  }
+}
+
+/**
+ * Accumulate intra-community edge weights. For directed graphs, counts all
+ * intra-community non-self edges. For undirected, counts each edge once (j > i).
+ */
+function accumulateInternalEdgeWeights(
+  graph: GraphAdapter,
+  nodeCommunity: Int32Array,
+  n: number,
+  internalEdgeWeight: Float64Array,
+): void {
+  if (graph.directed) {
+    for (let i = 0; i < n; i++) {
+      const ci: number = iget(nodeCommunity, i);
+      const neighbors = graph.outEdges[i]!;
+      for (let k = 0; k < neighbors.length; k++) {
+        const { to: j, w } = neighbors[k]!;
+        if (i === j) continue; // self-loop already counted via graph.selfLoop[i]
+        if (ci === iget(nodeCommunity, j))
+          internalEdgeWeight[ci] = fget(internalEdgeWeight, ci) + w;
+      }
+    }
+  } else {
+    for (let i = 0; i < n; i++) {
+      const ci: number = iget(nodeCommunity, i);
+      const neighbors = graph.outEdges[i]!;
+      for (let k = 0; k < neighbors.length; k++) {
+        const { to: j, w } = neighbors[k]!;
+        if (j <= i) continue;
+        if (ci === iget(nodeCommunity, j))
+          internalEdgeWeight[ci] = fget(internalEdgeWeight, ci) + w;
+      }
+    }
+  }
+}
+
+/**
+ * Sort community IDs according to the compaction options: preserve original
+ * order, respect a user-provided label map, or sort by descending size.
+ * Returns the sorted list of non-empty community IDs.
+ */
+function buildSortedCommunityIds(
+  ids: number[],
+  opts: CompactOptions,
+  communityTotalSize: Float64Array,
+  communityNodeCount: Int32Array,
+): void {
+  if (opts.keepOldOrder) {
+    ids.sort((a, b) => a - b);
+  } else if (opts.preserveMap instanceof Map) {
+    const preserveMap = opts.preserveMap;
+    ids.sort((a, b) => {
+      const pa = preserveMap.get(a);
+      const pb = preserveMap.get(b);
+      if (pa != null && pb != null && pa !== pb) return pa - pb;
+      if (pa != null && pb == null) return -1;
+      if (pb != null && pa == null) return 1;
+      return (
+        fget(communityTotalSize, b) - fget(communityTotalSize, a) ||
+        iget(communityNodeCount, b) - iget(communityNodeCount, a) ||
+        a - b
+      );
+    });
+  } else {
+    ids.sort(
+      (a, b) =>
+        fget(communityTotalSize, b) - fget(communityTotalSize, a) ||
+        iget(communityNodeCount, b) - iget(communityNodeCount, a) ||
+        a - b,
+    );
+  }
+}
+
 export function makePartition(graph: GraphAdapter): Partition {
   const n: number = graph.n;
   const nodeCommunity = new Int32Array(n);
@@ -94,44 +197,18 @@ export function makePartition(graph: GraphAdapter): Partition {
     communityTotalStrength.fill(0);
     communityTotalOutStrength.fill(0);
     communityTotalInStrength.fill(0);
-    for (let i = 0; i < n; i++) {
-      const c: number = iget(nodeCommunity, i);
-      communityTotalSize[c] = fget(communityTotalSize, c) + fget(graph.size, i);
-      communityNodeCount[c] = iget(communityNodeCount, c) + 1;
-      if (graph.directed) {
-        communityTotalOutStrength[c] =
-          fget(communityTotalOutStrength, c) + fget(graph.strengthOut, i);
-        communityTotalInStrength[c] = fget(communityTotalInStrength, c) + fget(graph.strengthIn, i);
-      } else {
-        communityTotalStrength[c] = fget(communityTotalStrength, c) + fget(graph.strengthOut, i);
-      }
-      if (fget(graph.selfLoop, i) !== 0)
-        communityInternalEdgeWeight[c] =
-          fget(communityInternalEdgeWeight, c) + fget(graph.selfLoop, i);
-    }
-    if (graph.directed) {
-      for (let i = 0; i < n; i++) {
-        const ci: number = iget(nodeCommunity, i);
-        const neighbors = graph.outEdges[i]!;
-        for (let k = 0; k < neighbors.length; k++) {
-          const { to: j, w } = neighbors[k]!;
-          if (i === j) continue; // self-loop already counted via graph.selfLoop[i]
-          if (ci === iget(nodeCommunity, j))
-            communityInternalEdgeWeight[ci] = fget(communityInternalEdgeWeight, ci) + w;
-        }
-      }
-    } else {
-      for (let i = 0; i < n; i++) {
-        const ci: number = iget(nodeCommunity, i);
-        const neighbors = graph.outEdges[i]!;
-        for (let k = 0; k < neighbors.length; k++) {
-          const { to: j, w } = neighbors[k]!;
-          if (j <= i) continue;
-          if (ci === iget(nodeCommunity, j))
-            communityInternalEdgeWeight[ci] = fget(communityInternalEdgeWeight, ci) + w;
-        }
-      }
-    }
+    accumulateNodeAggregates(
+      graph,
+      nodeCommunity,
+      n,
+      communityTotalSize,
+      communityNodeCount,
+      communityInternalEdgeWeight,
+      communityTotalStrength,
+      communityTotalOutStrength,
+      communityTotalInStrength,
+    );
+    accumulateInternalEdgeWeights(graph, nodeCommunity, n, communityInternalEdgeWeight);
   }
 
   function resetScratch(): void {
@@ -323,36 +400,15 @@ export function makePartition(graph: GraphAdapter): Partition {
   function compactCommunityIds(opts: CompactOptions = {}): void {
     const ids: number[] = [];
     for (let c = 0; c < communityCount; c++) if (iget(communityNodeCount, c) > 0) ids.push(c);
-    if (opts.keepOldOrder) {
-      ids.sort((a, b) => a - b);
-    } else if (opts.preserveMap instanceof Map) {
-      const preserveMap = opts.preserveMap;
-      ids.sort((a, b) => {
-        const pa = preserveMap.get(a);
-        const pb = preserveMap.get(b);
-        if (pa != null && pb != null && pa !== pb) return pa - pb;
-        if (pa != null && pb == null) return -1;
-        if (pb != null && pa == null) return 1;
-        return (
-          fget(communityTotalSize, b) - fget(communityTotalSize, a) ||
-          iget(communityNodeCount, b) - iget(communityNodeCount, a) ||
-          a - b
-        );
-      });
-    } else {
-      ids.sort(
-        (a, b) =>
-          fget(communityTotalSize, b) - fget(communityTotalSize, a) ||
-          iget(communityNodeCount, b) - iget(communityNodeCount, a) ||
-          a - b,
-      );
-    }
+    buildSortedCommunityIds(ids, opts, communityTotalSize, communityNodeCount);
+
     const newId = new Int32Array(communityCount).fill(-1);
     ids.forEach((c, i) => {
       newId[c] = i;
     });
     for (let i = 0; i < nodeCommunity.length; i++)
       nodeCommunity[i] = iget(newId, iget(nodeCommunity, i));
+
     const remappedCount: number = ids.length;
     const newTotalSize = new Float64Array(remappedCount);
     const newNodeCount = new Int32Array(remappedCount);
@@ -360,42 +416,19 @@ export function makePartition(graph: GraphAdapter): Partition {
     const newTotalStrength = new Float64Array(remappedCount);
     const newTotalOutStrength = new Float64Array(remappedCount);
     const newTotalInStrength = new Float64Array(remappedCount);
-    for (let i = 0; i < n; i++) {
-      const c: number = iget(nodeCommunity, i);
-      newTotalSize[c] = fget(newTotalSize, c) + fget(graph.size, i);
-      newNodeCount[c] = iget(newNodeCount, c) + 1;
-      if (graph.directed) {
-        newTotalOutStrength[c] = fget(newTotalOutStrength, c) + fget(graph.strengthOut, i);
-        newTotalInStrength[c] = fget(newTotalInStrength, c) + fget(graph.strengthIn, i);
-      } else {
-        newTotalStrength[c] = fget(newTotalStrength, c) + fget(graph.strengthOut, i);
-      }
-      if (fget(graph.selfLoop, i) !== 0)
-        newInternalEdgeWeight[c] = fget(newInternalEdgeWeight, c) + fget(graph.selfLoop, i);
-    }
-    if (graph.directed) {
-      for (let i = 0; i < n; i++) {
-        const ci: number = iget(nodeCommunity, i);
-        const list = graph.outEdges[i]!;
-        for (let k = 0; k < list.length; k++) {
-          const { to: j, w } = list[k]!;
-          if (i === j) continue; // self-loop already counted via graph.selfLoop[i]
-          if (ci === iget(nodeCommunity, j))
-            newInternalEdgeWeight[ci] = fget(newInternalEdgeWeight, ci) + w;
-        }
-      }
-    } else {
-      for (let i = 0; i < n; i++) {
-        const ci: number = iget(nodeCommunity, i);
-        const list = graph.outEdges[i]!;
-        for (let k = 0; k < list.length; k++) {
-          const { to: j, w } = list[k]!;
-          if (j <= i) continue;
-          if (ci === iget(nodeCommunity, j))
-            newInternalEdgeWeight[ci] = fget(newInternalEdgeWeight, ci) + w;
-        }
-      }
-    }
+    accumulateNodeAggregates(
+      graph,
+      nodeCommunity,
+      n,
+      newTotalSize,
+      newNodeCount,
+      newInternalEdgeWeight,
+      newTotalStrength,
+      newTotalOutStrength,
+      newTotalInStrength,
+    );
+    accumulateInternalEdgeWeights(graph, nodeCommunity, n, newInternalEdgeWeight);
+
     communityCount = remappedCount;
     communityTotalSize = newTotalSize;
     communityNodeCount = newNodeCount;

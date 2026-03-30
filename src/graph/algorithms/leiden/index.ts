@@ -119,34 +119,17 @@ interface OriginalPartition {
   getInEdgeWeightFromCommunity(c: number): number;
 }
 
-function buildOriginalPartition(g: GraphAdapter, communityMap: Int32Array): OriginalPartition {
-  const n: number = g.n;
-  let maxC: number = 0;
-  for (let i = 0; i < n; i++) {
-    const ci = iget(communityMap, i);
-    if (ci > maxC) maxC = ci;
-  }
-  const cc: number = maxC + 1;
-
-  const nodeCommunity = communityMap;
-  const internalWeight = new Float64Array(cc);
-  const totalStr = new Float64Array(cc);
-  const totalOutStr = new Float64Array(cc);
-  const totalInStr = new Float64Array(cc);
-  const totalSize = new Float64Array(cc);
-
-  for (let i = 0; i < n; i++) {
-    const c: number = iget(communityMap, i);
-    totalSize[c] = fget(totalSize, c) + fget(g.size, i);
-    if (g.directed) {
-      totalOutStr[c] = fget(totalOutStr, c) + fget(g.strengthOut, i);
-      totalInStr[c] = fget(totalInStr, c) + fget(g.strengthIn, i);
-    } else {
-      totalStr[c] = fget(totalStr, c) + fget(g.strengthOut, i);
-    }
-    if (fget(g.selfLoop, i)) internalWeight[c] = fget(internalWeight, c) + fget(g.selfLoop, i);
-  }
-
+/**
+ * Accumulate intra-community edge weights for quality evaluation.
+ * For directed graphs, counts all intra-community non-self edges.
+ * For undirected, counts each edge once (j > i) to avoid double-counting.
+ */
+function accumulateInternalEdgeWeights(
+  g: GraphAdapter,
+  communityMap: Int32Array,
+  n: number,
+  internalWeight: Float64Array,
+): void {
   if (g.directed) {
     for (let i = 0; i < n; i++) {
       const ci: number = iget(communityMap, i);
@@ -168,6 +151,62 @@ function buildOriginalPartition(g: GraphAdapter, communityMap: Int32Array): Orig
       }
     }
   }
+}
+
+/**
+ * Accumulate per-community node-level aggregates (size, strength) from
+ * the graph adapter and community mapping.
+ */
+function accumulateNodeAggregates(
+  g: GraphAdapter,
+  communityMap: Int32Array,
+  n: number,
+  totalSize: Float64Array,
+  totalStr: Float64Array,
+  totalOutStr: Float64Array,
+  totalInStr: Float64Array,
+  internalWeight: Float64Array,
+): void {
+  for (let i = 0; i < n; i++) {
+    const c: number = iget(communityMap, i);
+    totalSize[c] = fget(totalSize, c) + fget(g.size, i);
+    if (g.directed) {
+      totalOutStr[c] = fget(totalOutStr, c) + fget(g.strengthOut, i);
+      totalInStr[c] = fget(totalInStr, c) + fget(g.strengthIn, i);
+    } else {
+      totalStr[c] = fget(totalStr, c) + fget(g.strengthOut, i);
+    }
+    if (fget(g.selfLoop, i)) internalWeight[c] = fget(internalWeight, c) + fget(g.selfLoop, i);
+  }
+}
+
+function buildOriginalPartition(g: GraphAdapter, communityMap: Int32Array): OriginalPartition {
+  const n: number = g.n;
+  let maxC: number = 0;
+  for (let i = 0; i < n; i++) {
+    const ci = iget(communityMap, i);
+    if (ci > maxC) maxC = ci;
+  }
+  const cc: number = maxC + 1;
+
+  const nodeCommunity = communityMap;
+  const internalWeight = new Float64Array(cc);
+  const totalStr = new Float64Array(cc);
+  const totalOutStr = new Float64Array(cc);
+  const totalInStr = new Float64Array(cc);
+  const totalSize = new Float64Array(cc);
+
+  accumulateNodeAggregates(
+    g,
+    communityMap,
+    n,
+    totalSize,
+    totalStr,
+    totalOutStr,
+    totalInStr,
+    internalWeight,
+  );
+  accumulateInternalEdgeWeights(g, communityMap, n, internalWeight);
 
   return {
     communityCount: cc,

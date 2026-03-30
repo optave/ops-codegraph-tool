@@ -52,6 +52,39 @@ interface CheckDataResult {
   };
 }
 
+/** Print violation details for a failed predicate (max 10 items). */
+function formatPredicateViolations(pred: CheckPredicate): void {
+  const MAX_SHOWN = 10;
+
+  if (pred.name === 'cycles' && pred.cycles) {
+    for (const cycle of pred.cycles.slice(0, MAX_SHOWN)) {
+      console.log(`         ${cycle.join(' -> ')}`);
+    }
+    if (pred.cycles.length > MAX_SHOWN) {
+      console.log(`         ... and ${pred.cycles.length - MAX_SHOWN} more`);
+    }
+  }
+
+  if (!pred.violations) return;
+
+  const formatViolation = (v: CheckViolation): string => {
+    if (pred.name === 'blast-radius') {
+      return `${v.name} (${v.kind}) at ${v.file}:${v.line} — ${v.transitiveCallers} callers (max: ${pred.threshold})`;
+    }
+    if (pred.name === 'boundaries') {
+      return `${v.from} -> ${v.to} (${v.edgeKind})`;
+    }
+    return `${v.name} (${v.kind}) at ${v.file}:${v.line}`;
+  };
+
+  for (const v of pred.violations.slice(0, MAX_SHOWN)) {
+    console.log(`         ${formatViolation(v)}`);
+  }
+  if (pred.violations.length > MAX_SHOWN) {
+    console.log(`         ... and ${pred.violations.length - MAX_SHOWN} more`);
+  }
+}
+
 export function check(customDbPath: string | undefined, opts: CheckCliOpts = {}): void {
   const data = checkData(customDbPath, {
     ref: opts.ref,
@@ -89,40 +122,7 @@ export function check(customDbPath: string | undefined, opts: CheckCliOpts = {})
     console.log(`  [${icon}] ${pred.name}`);
 
     if (!pred.passed) {
-      if (pred.name === 'cycles' && pred.cycles) {
-        for (const cycle of pred.cycles.slice(0, 10)) {
-          console.log(`         ${cycle.join(' -> ')}`);
-        }
-        if (pred.cycles.length > 10) {
-          console.log(`         ... and ${pred.cycles.length - 10} more`);
-        }
-      }
-      if (pred.name === 'blast-radius' && pred.violations) {
-        for (const v of pred.violations.slice(0, 10)) {
-          console.log(
-            `         ${v.name} (${v.kind}) at ${v.file}:${v.line} — ${v.transitiveCallers} callers (max: ${pred.threshold})`,
-          );
-        }
-        if (pred.violations.length > 10) {
-          console.log(`         ... and ${pred.violations.length - 10} more`);
-        }
-      }
-      if (pred.name === 'signatures' && pred.violations) {
-        for (const v of pred.violations.slice(0, 10)) {
-          console.log(`         ${v.name} (${v.kind}) at ${v.file}:${v.line}`);
-        }
-        if (pred.violations.length > 10) {
-          console.log(`         ... and ${pred.violations.length - 10} more`);
-        }
-      }
-      if (pred.name === 'boundaries' && pred.violations) {
-        for (const v of pred.violations.slice(0, 10)) {
-          console.log(`         ${v.from} -> ${v.to} (${v.edgeKind})`);
-        }
-        if (pred.violations.length > 10) {
-          console.log(`         ... and ${pred.violations.length - 10} more`);
-        }
-      }
+      formatPredicateViolations(pred);
     }
     if (pred.note) {
       console.log(`         ${pred.note}`);

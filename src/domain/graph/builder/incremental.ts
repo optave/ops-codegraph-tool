@@ -10,7 +10,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { bulkNodeIdsByFile } from '../../../db/index.js';
-import { warn } from '../../../infrastructure/logger.js';
+import { debug, warn } from '../../../infrastructure/logger.js';
 import { normalizePath } from '../../../shared/constants.js';
 import type {
   BetterSqlite3Database,
@@ -154,7 +154,8 @@ async function parseReverseDep(
   let code: string;
   try {
     code = readFileSafe(absPath);
-  } catch {
+  } catch (e: unknown) {
+    debug(`parseReverseDep: cannot read ${absPath}: ${e instanceof Error ? e.message : String(e)}`);
     return null;
   }
 

@@ -129,83 +129,15 @@ export function runLouvainUndirectedModularity(
         const nodeIndex: number = order[idx]!;
         if (level === 0 && fixedNodeMask && fixedNodeMask[nodeIndex]) continue;
         const candidateCount: number = partition.accumulateNeighborCommunityEdgeWeights(nodeIndex);
-        let bestCommunityId: number = partition.nodeCommunity[nodeIndex]!;
-        let bestGain: number = 0;
-        const maxCommunitySize: number = options.maxCommunitySize;
-        if (strategyCode === CandidateStrategy.All) {
-          for (let communityId = 0; communityId < partition.communityCount; communityId++) {
-            if (communityId === partition.nodeCommunity[nodeIndex]!) continue;
-            if (
-              maxCommunitySize < Infinity &&
-              partition.getCommunityTotalSize(communityId) + graphAdapter.size[nodeIndex]! >
-                maxCommunitySize
-            )
-              continue;
-            const gain: number = computeQualityGain(partition, nodeIndex, communityId, options);
-            if (gain > bestGain) {
-              bestGain = gain;
-              bestCommunityId = communityId;
-            }
-          }
-        } else if (strategyCode === CandidateStrategy.RandomAny) {
-          const tries: number = Math.min(10, Math.max(1, partition.communityCount));
-          for (let trialIndex = 0; trialIndex < tries; trialIndex++) {
-            const communityId: number = (random() * partition.communityCount) | 0;
-            if (communityId === partition.nodeCommunity[nodeIndex]!) continue;
-            if (
-              maxCommunitySize < Infinity &&
-              partition.getCommunityTotalSize(communityId) + graphAdapter.size[nodeIndex]! >
-                maxCommunitySize
-            )
-              continue;
-            const gain: number = computeQualityGain(partition, nodeIndex, communityId, options);
-            if (gain > bestGain) {
-              bestGain = gain;
-              bestCommunityId = communityId;
-            }
-          }
-        } else if (strategyCode === CandidateStrategy.RandomNeighbor) {
-          const tries: number = Math.min(10, Math.max(1, candidateCount));
-          for (let trialIndex = 0; trialIndex < tries; trialIndex++) {
-            const communityId: number = partition.getCandidateCommunityAt(
-              (random() * candidateCount) | 0,
-            );
-            if (communityId === partition.nodeCommunity[nodeIndex]!) continue;
-            if (
-              maxCommunitySize < Infinity &&
-              partition.getCommunityTotalSize(communityId) + graphAdapter.size[nodeIndex]! >
-                maxCommunitySize
-            )
-              continue;
-            const gain: number = computeQualityGain(partition, nodeIndex, communityId, options);
-            if (gain > bestGain) {
-              bestGain = gain;
-              bestCommunityId = communityId;
-            }
-          }
-        } else {
-          for (let trialIndex = 0; trialIndex < candidateCount; trialIndex++) {
-            const communityId: number = partition.getCandidateCommunityAt(trialIndex);
-            if (maxCommunitySize < Infinity) {
-              const nextSize: number =
-                partition.getCommunityTotalSize(communityId) + graphAdapter.size[nodeIndex]!;
-              if (nextSize > maxCommunitySize) continue;
-            }
-            const gain: number = computeQualityGain(partition, nodeIndex, communityId, options);
-            if (gain > bestGain) {
-              bestGain = gain;
-              bestCommunityId = communityId;
-            }
-          }
-        }
-        if (options.allowNewCommunity) {
-          const newCommunityId: number = partition.communityCount;
-          const gain: number = computeQualityGain(partition, nodeIndex, newCommunityId, options);
-          if (gain > bestGain) {
-            bestGain = gain;
-            bestCommunityId = newCommunityId;
-          }
-        }
+        const { bestCommunityId, bestGain } = findBestCommunityMove(
+          partition,
+          graphAdapter,
+          nodeIndex,
+          candidateCount,
+          strategyCode,
+          options,
+          random,
+        );
         if (bestCommunityId !== partition.nodeCommunity[nodeIndex]! && bestGain > GAIN_EPSILON) {
           partition.moveNodeToCommunity(nodeIndex, bestCommunityId);
           improved = true;
@@ -265,6 +197,109 @@ export function runLouvainUndirectedModularity(
     originalNodeIds: baseGraphAdapter.nodeIds,
     baseGraph: baseGraphAdapter,
   };
+}
+
+/**
+ * Evaluate all candidate communities for a node and return the best move.
+ * Encapsulates the four candidate-selection strategies (All, RandomAny,
+ * RandomNeighbor, Neighbors) and the optional new-community probe.
+ */
+function findBestCommunityMove(
+  partition: Partition,
+  graphAdapter: GraphAdapter,
+  nodeIndex: number,
+  candidateCount: number,
+  strategyCode: CandidateStrategyCode,
+  options: NormalizedOptions,
+  random: () => number,
+): { bestCommunityId: number; bestGain: number } {
+  let bestCommunityId: number = partition.nodeCommunity[nodeIndex]!;
+  let bestGain: number = 0;
+  const maxCommunitySize: number = options.maxCommunitySize;
+
+  const evaluateCandidate = (communityId: number): void => {
+    if (communityId === partition.nodeCommunity[nodeIndex]!) return;
+    if (
+      maxCommunitySize < Infinity &&
+      partition.getCommunityTotalSize(communityId) + graphAdapter.size[nodeIndex]! >
+        maxCommunitySize
+    )
+      return;
+    const gain: number = computeQualityGain(partition, nodeIndex, communityId, options);
+    if (gain > bestGain) {
+      bestGain = gain;
+      bestCommunityId = communityId;
+    }
+  };
+
+  if (strategyCode === CandidateStrategy.All) {
+    for (let communityId = 0; communityId < partition.communityCount; communityId++) {
+      evaluateCandidate(communityId);
+    }
+  } else if (strategyCode === CandidateStrategy.RandomAny) {
+    const tries: number = Math.min(10, Math.max(1, partition.communityCount));
+    for (let trialIndex = 0; trialIndex < tries; trialIndex++) {
+      evaluateCandidate((random() * partition.communityCount) | 0);
+    }
+  } else if (strategyCode === CandidateStrategy.RandomNeighbor) {
+    const tries: number = Math.min(10, Math.max(1, candidateCount));
+    for (let trialIndex = 0; trialIndex < tries; trialIndex++) {
+      evaluateCandidate(partition.getCandidateCommunityAt((random() * candidateCount) | 0));
+    }
+  } else {
+    for (let trialIndex = 0; trialIndex < candidateCount; trialIndex++) {
+      evaluateCandidate(partition.getCandidateCommunityAt(trialIndex));
+    }
+  }
+
+  if (options.allowNewCommunity) {
+    const newCommunityId: number = partition.communityCount;
+    const gain: number = computeQualityGain(partition, nodeIndex, newCommunityId, options);
+    if (gain > bestGain) {
+      bestGain = gain;
+      bestCommunityId = newCommunityId;
+    }
+  }
+
+  return { bestCommunityId, bestGain };
+}
+
+/**
+ * Run a BFS on the subgraph induced by `inCommunity` starting from `start`.
+ * Returns the list of visited nodes. Works on both directed (weak connectivity
+ * via both outEdges and inEdges) and undirected graphs.
+ */
+function bfsComponent(
+  g: GraphAdapter,
+  start: number,
+  inCommunity: Uint8Array,
+  visited: Uint8Array,
+): number[] {
+  const queue: number[] = [start];
+  visited[start] = 1;
+  let head: number = 0;
+  while (head < queue.length) {
+    const v: number = queue[head++]!;
+    const out: EdgeEntry[] = g.outEdges[v]!;
+    for (let k = 0; k < out.length; k++) {
+      const w: number = out[k]!.to;
+      if (inCommunity[w] && !visited[w]) {
+        visited[w] = 1;
+        queue.push(w);
+      }
+    }
+    if (g.directed) {
+      const inc: InEdgeEntry[] = g.inEdges[v]!;
+      for (let k = 0; k < inc.length; k++) {
+        const w: number = inc[k]!.from;
+        if (inCommunity[w] && !visited[w]) {
+          visited[w] = 1;
+          queue.push(w);
+        }
+      }
+    }
+  }
+  return queue;
 }
 
 // Build a coarse graph where each community becomes a single node.
@@ -450,38 +485,12 @@ function splitDisconnectedCommunities(g: GraphAdapter, partition: Partition): vo
       if (visited[start]) continue;
       componentCount++;
 
-      // BFS within the community subgraph.
-      // For directed graphs, traverse both outEdges and inEdges to check
-      // weak connectivity (reachability ignoring edge direction).
-      const queue: number[] = [start];
-      visited[start] = 1;
-      let head: number = 0;
-      while (head < queue.length) {
-        const v: number = queue[head++]!;
-        const out: EdgeEntry[] = g.outEdges[v]!;
-        for (let k = 0; k < out.length; k++) {
-          const w: number = out[k]!.to;
-          if (inCommunity[w] && !visited[w]) {
-            visited[w] = 1;
-            queue.push(w);
-          }
-        }
-        if (g.directed) {
-          const inc: InEdgeEntry[] = g.inEdges[v]!;
-          for (let k = 0; k < inc.length; k++) {
-            const w: number = inc[k]!.from;
-            if (inCommunity[w] && !visited[w]) {
-              visited[w] = 1;
-              queue.push(w);
-            }
-          }
-        }
-      }
+      const component: number[] = bfsComponent(g, start, inCommunity, visited);
 
       if (componentCount > 1) {
         // Secondary component — assign new community ID directly.
         const newC: number = nextC++;
-        for (let q = 0; q < queue.length; q++) nc[queue[q]!] = newC;
+        for (let q = 0; q < component.length; q++) nc[component[q]!] = newC;
         didSplit = true;
       }
     }

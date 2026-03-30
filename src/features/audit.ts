@@ -183,27 +183,8 @@ export function auditData(
   let functions: unknown[];
   try {
     if (explained.kind === 'file') {
-      // File target: explainData returns file-level info with publicApi + internal
-      // We need to enrich each symbol
-      functions = [];
-      for (const fileResult of results) {
-        const allSymbols = [
-          ...(fileResult.publicApi || []),
-          ...(fileResult.internal || []),
-        ] as FileSymbol[];
-        if (kind) {
-          const filtered = allSymbols.filter((s) => s.kind === kind);
-          for (const sym of filtered) {
-            functions.push(enrichSymbol(db, sym, fileResult.file, noTests, maxDepth, thresholds));
-          }
-        } else {
-          for (const sym of allSymbols) {
-            functions.push(enrichSymbol(db, sym, fileResult.file, noTests, maxDepth, thresholds));
-          }
-        }
-      }
+      functions = enrichFileResults(db, results, kind, noTests, maxDepth, thresholds);
     } else {
-      // Function target: explainData returns per-function results
       functions = results.map((r: ExplainResult) =>
         enrichFunction(db, r, noTests, maxDepth, thresholds),
       );
@@ -230,6 +211,29 @@ interface ExplainResult {
   callees?: SymbolRef[];
   callers?: SymbolRef[];
   relatedTests?: { file: string }[];
+}
+
+/** Enrich all symbols from file-target results. */
+function enrichFileResults(
+  db: BetterSqlite3Database,
+  results: any[],
+  kind: string | undefined,
+  noTests: boolean,
+  maxDepth: number,
+  thresholds: Record<string, ThresholdEntry>,
+): unknown[] {
+  const functions: unknown[] = [];
+  for (const fileResult of results) {
+    let allSymbols = [
+      ...(fileResult.publicApi || []),
+      ...(fileResult.internal || []),
+    ] as FileSymbol[];
+    if (kind) allSymbols = allSymbols.filter((s) => s.kind === kind);
+    for (const sym of allSymbols) {
+      functions.push(enrichSymbol(db, sym, fileResult.file, noTests, maxDepth, thresholds));
+    }
+  }
+  return functions;
 }
 
 function enrichFunction(

@@ -4,7 +4,6 @@ import type {
   SubDeclaration,
   TreeSitterNode,
   TreeSitterTree,
-  TypeMapEntry,
 } from '../types.js';
 import {
   findChild,
@@ -12,6 +11,7 @@ import {
   lastPathSegment,
   MAX_WALK_DEPTH,
   nodeEndLine,
+  setTypeMapEntry,
   stripQuotes,
 } from './helpers.js';
 
@@ -113,43 +113,63 @@ function handleGoTypeDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
     if (!spec || spec.type !== 'type_spec') continue;
     const nameNode = spec.childForFieldName('name');
     const typeNode = spec.childForFieldName('type');
-    if (nameNode && typeNode) {
-      if (typeNode.type === 'struct_type') {
-        const fields = extractStructFields(typeNode);
+    if (!nameNode || !typeNode) continue;
+
+    if (typeNode.type === 'struct_type') {
+      handleGoStructType(node, nameNode, typeNode, ctx);
+    } else if (typeNode.type === 'interface_type') {
+      handleGoInterfaceType(node, nameNode, typeNode, ctx);
+    } else {
+      ctx.definitions.push({
+        name: nameNode.text,
+        kind: 'type',
+        line: node.startPosition.row + 1,
+        endLine: nodeEndLine(node),
+      });
+    }
+  }
+}
+
+/** Handle a struct type_spec: emit struct definition with field children. */
+function handleGoStructType(
+  declNode: TreeSitterNode,
+  nameNode: TreeSitterNode,
+  typeNode: TreeSitterNode,
+  ctx: ExtractorOutput,
+): void {
+  const fields = extractStructFields(typeNode);
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'struct',
+    line: declNode.startPosition.row + 1,
+    endLine: nodeEndLine(declNode),
+    children: fields.length > 0 ? fields : undefined,
+  });
+}
+
+/** Handle an interface type_spec: emit interface definition + method definitions. */
+function handleGoInterfaceType(
+  declNode: TreeSitterNode,
+  nameNode: TreeSitterNode,
+  typeNode: TreeSitterNode,
+  ctx: ExtractorOutput,
+): void {
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'interface',
+    line: declNode.startPosition.row + 1,
+    endLine: nodeEndLine(declNode),
+  });
+  for (let j = 0; j < typeNode.childCount; j++) {
+    const member = typeNode.child(j);
+    if (member && member.type === 'method_elem') {
+      const methName = member.childForFieldName('name');
+      if (methName) {
         ctx.definitions.push({
-          name: nameNode.text,
-          kind: 'struct',
-          line: node.startPosition.row + 1,
-          endLine: nodeEndLine(node),
-          children: fields.length > 0 ? fields : undefined,
-        });
-      } else if (typeNode.type === 'interface_type') {
-        ctx.definitions.push({
-          name: nameNode.text,
-          kind: 'interface',
-          line: node.startPosition.row + 1,
-          endLine: nodeEndLine(node),
-        });
-        for (let j = 0; j < typeNode.childCount; j++) {
-          const member = typeNode.child(j);
-          if (member && member.type === 'method_elem') {
-            const methName = member.childForFieldName('name');
-            if (methName) {
-              ctx.definitions.push({
-                name: `${nameNode.text}.${methName.text}`,
-                kind: 'method',
-                line: member.startPosition.row + 1,
-                endLine: member.endPosition.row + 1,
-              });
-            }
-          }
-        }
-      } else {
-        ctx.definitions.push({
-          name: nameNode.text,
-          kind: 'type',
-          line: node.startPosition.row + 1,
-          endLine: nodeEndLine(node),
+          name: `${nameNode.text}.${methName.text}`,
+          kind: 'method',
+          line: member.startPosition.row + 1,
+          endLine: member.endPosition.row + 1,
         });
       }
     }
@@ -227,113 +247,104 @@ function extractGoTypeMap(node: TreeSitterNode, ctx: ExtractorOutput): void {
   extractGoTypeMapDepth(node, ctx, 0);
 }
 
-function setIfHigher(
-  typeMap: Map<string, TypeMapEntry>,
-  name: string,
-  type: string,
-  confidence: number,
+/** Map identifiers in a typed declaration node to their type (confidence 0.9). */
+function handleTypedIdentifiers(
+  node: TreeSitterNode,
+  typeMap: Map<string, { type: string; confidence: number }>,
 ): void {
-  const existing = typeMap.get(name);
-  if (!existing || confidence > existing.confidence) {
-    typeMap.set(name, { type, confidence });
+  const typeNode = node.childForFieldName('type');
+  if (!typeNode) return;
+  const typeName = extractGoTypeName(typeNode);
+  if (!typeName) return;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child && child.type === 'identifier') {
+      setTypeMapEntry(typeMap, child.text, typeName, 0.9);
+    }
+  }
+}
+
+/** Infer type from a single RHS expression in a short var declaration. */
+function inferShortVarType(
+  varNode: TreeSitterNode,
+  rhs: TreeSitterNode,
+  typeMap: Map<string, { type: string; confidence: number }>,
+): void {
+  // x := Struct{...} — composite literal (confidence 1.0)
+  if (rhs.type === 'composite_literal') {
+    const typeNode = rhs.childForFieldName('type');
+    if (typeNode) {
+      const typeName = extractGoTypeName(typeNode);
+      if (typeName) setTypeMapEntry(typeMap, varNode.text, typeName, 1.0);
+    }
+  }
+  // x := &Struct{...} — address-of composite literal (confidence 1.0)
+  if (rhs.type === 'unary_expression') {
+    const operand = rhs.childForFieldName('operand');
+    if (operand && operand.type === 'composite_literal') {
+      const typeNode = operand.childForFieldName('type');
+      if (typeNode) {
+        const typeName = extractGoTypeName(typeNode);
+        if (typeName) setTypeMapEntry(typeMap, varNode.text, typeName, 1.0);
+      }
+    }
+  }
+  // x := NewFoo() or x := pkg.NewFoo() — factory function (confidence 0.7)
+  if (rhs.type === 'call_expression') {
+    const fn = rhs.childForFieldName('function');
+    if (fn && fn.type === 'selector_expression') {
+      const field = fn.childForFieldName('field');
+      if (field?.text.startsWith('New')) {
+        const typeName = field.text.slice(3);
+        if (typeName) setTypeMapEntry(typeMap, varNode.text, typeName, 0.7);
+      }
+    } else if (fn && fn.type === 'identifier' && fn.text.startsWith('New')) {
+      const typeName = fn.text.slice(3);
+      if (typeName) setTypeMapEntry(typeMap, varNode.text, typeName, 0.7);
+    }
+  }
+}
+
+/** Handle short_var_declaration: x := Struct{}, x := &Struct{}, x := NewFoo(). */
+function handleShortVarDecl(
+  node: TreeSitterNode,
+  typeMap: Map<string, { type: string; confidence: number }>,
+): void {
+  const left = node.childForFieldName('left');
+  const right = node.childForFieldName('right');
+  if (!left || !right) return;
+
+  const lefts =
+    left.type === 'expression_list'
+      ? Array.from({ length: left.childCount }, (_, i) => left.child(i)).filter(
+          (c): c is TreeSitterNode => c?.type === 'identifier',
+        )
+      : left.type === 'identifier'
+        ? [left]
+        : [];
+  const rights =
+    right.type === 'expression_list'
+      ? Array.from({ length: right.childCount }, (_, i) => right.child(i)).filter(
+          (c): c is TreeSitterNode => !!c?.type,
+        )
+      : [right];
+
+  for (let idx = 0; idx < lefts.length; idx++) {
+    const varNode = lefts[idx];
+    const rhs = rights[idx];
+    if (!varNode || !rhs) continue;
+    inferShortVarType(varNode, rhs, typeMap);
   }
 }
 
 function extractGoTypeMapDepth(node: TreeSitterNode, ctx: ExtractorOutput, depth: number): void {
   if (depth >= MAX_WALK_DEPTH) return;
 
-  // var x MyType = ... or var x, y MyType → var_declaration > var_spec (confidence 0.9)
-  if (node.type === 'var_spec') {
-    const typeNode = node.childForFieldName('type');
-    if (typeNode) {
-      const typeName = extractGoTypeName(typeNode);
-      if (typeName) {
-        for (let i = 0; i < node.childCount; i++) {
-          const child = node.child(i);
-          if (child && child.type === 'identifier') {
-            if (ctx.typeMap) setIfHigher(ctx.typeMap, child.text, typeName, 0.9);
-          }
-        }
-      }
-    }
-  }
-
-  // Function/method parameter types: parameter_declaration (confidence 0.9)
-  if (node.type === 'parameter_declaration') {
-    const typeNode = node.childForFieldName('type');
-    if (typeNode) {
-      const typeName = extractGoTypeName(typeNode);
-      if (typeName) {
-        for (let i = 0; i < node.childCount; i++) {
-          const child = node.child(i);
-          if (child && child.type === 'identifier') {
-            if (ctx.typeMap) setIfHigher(ctx.typeMap, child.text, typeName, 0.9);
-          }
-        }
-      }
-    }
-  }
-
-  // short_var_declaration: x := Struct{}, x := &Struct{}, x := NewFoo()
-  // Handles multi-variable forms: x, y := A{}, B{}
-  if (node.type === 'short_var_declaration') {
-    const left = node.childForFieldName('left');
-    const right = node.childForFieldName('right');
-    if (left && right) {
-      const lefts =
-        left.type === 'expression_list'
-          ? Array.from({ length: left.childCount }, (_, i) => left.child(i)).filter(
-              (c): c is TreeSitterNode => c?.type === 'identifier',
-            )
-          : left.type === 'identifier'
-            ? [left]
-            : [];
-      const rights =
-        right.type === 'expression_list'
-          ? Array.from({ length: right.childCount }, (_, i) => right.child(i)).filter(
-              (c): c is TreeSitterNode => !!c?.type,
-            )
-          : [right];
-
-      for (let idx = 0; idx < lefts.length; idx++) {
-        const varNode = lefts[idx];
-        const rhs = rights[idx];
-        if (!varNode || !rhs) continue;
-
-        // x := Struct{...} — composite literal (confidence 1.0)
-        if (rhs.type === 'composite_literal') {
-          const typeNode = rhs.childForFieldName('type');
-          if (typeNode) {
-            const typeName = extractGoTypeName(typeNode);
-            if (typeName && ctx.typeMap) setIfHigher(ctx.typeMap, varNode.text, typeName, 1.0);
-          }
-        }
-        // x := &Struct{...} — address-of composite literal (confidence 1.0)
-        if (rhs.type === 'unary_expression') {
-          const operand = rhs.childForFieldName('operand');
-          if (operand && operand.type === 'composite_literal') {
-            const typeNode = operand.childForFieldName('type');
-            if (typeNode) {
-              const typeName = extractGoTypeName(typeNode);
-              if (typeName && ctx.typeMap) setIfHigher(ctx.typeMap, varNode.text, typeName, 1.0);
-            }
-          }
-        }
-        // x := NewFoo() or x := pkg.NewFoo() — factory function (confidence 0.7)
-        if (rhs.type === 'call_expression') {
-          const fn = rhs.childForFieldName('function');
-          if (fn && fn.type === 'selector_expression') {
-            const field = fn.childForFieldName('field');
-            if (field?.text.startsWith('New')) {
-              const typeName = field.text.slice(3);
-              if (typeName && ctx.typeMap) setIfHigher(ctx.typeMap, varNode.text, typeName, 0.7);
-            }
-          } else if (fn && fn.type === 'identifier' && fn.text.startsWith('New')) {
-            const typeName = fn.text.slice(3);
-            if (typeName && ctx.typeMap) setIfHigher(ctx.typeMap, varNode.text, typeName, 0.7);
-          }
-        }
-      }
+  if (ctx.typeMap) {
+    if (node.type === 'var_spec' || node.type === 'parameter_declaration') {
+      handleTypedIdentifiers(node, ctx.typeMap);
+    } else if (node.type === 'short_var_declaration') {
+      handleShortVarDecl(node, ctx.typeMap);
     }
   }
 

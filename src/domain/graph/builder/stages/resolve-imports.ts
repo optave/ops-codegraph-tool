@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { debug } from '../../../../infrastructure/logger.js';
 import type { Import } from '../../../../types.js';
 import { parseFilesAuto } from '../../../parser.js';
 import { resolveImportPath, resolveImportsBatch } from '../../resolve.js';
@@ -132,8 +133,8 @@ export async function resolveImports(ctx: PipelineContext): Promise<void> {
             );
           }
         }
-      } catch {
-        /* skip if unreadable */
+      } catch (e: unknown) {
+        debug(`Barrel re-parse failed (non-fatal): ${(e as Error).message}`);
       }
     }
   }

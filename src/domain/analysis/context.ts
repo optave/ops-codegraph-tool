@@ -15,10 +15,8 @@ import {
   getComplexityForNode,
   getLineCountForNode,
   getMaxEndLineForFile,
-  openReadonlyOrFail,
 } from '../../db/index.js';
 import { cachedStmt } from '../../db/repository/cached-stmt.js';
-import { loadConfig } from '../../infrastructure/config.js';
 import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import {
@@ -40,6 +38,7 @@ import type {
   RelatedNodeRow,
   StmtCache,
 } from '../../types.js';
+import { resolveAnalysisOpts, withReadonlyDb } from './query-helpers.js';
 import { findMatchingNodes } from './symbol-lookup.js';
 
 interface DisplayOpts {
@@ -50,6 +49,60 @@ interface DisplayOpts {
   summaryMaxChars?: number;
   signatureGatherLines?: number;
   [key: string]: unknown;
+}
+
+/** Format a callee row into the output shape with summary and source. */
+function formatCalleeRow(
+  c: RelatedNodeRow,
+  repoRoot: string,
+  getFileLines: (file: string) => string[] | null,
+  displayOpts: DisplayOpts,
+  includeSource: boolean,
+) {
+  const cLines = getFileLines(c.file);
+  return {
+    name: c.name,
+    kind: c.kind,
+    file: c.file,
+    line: c.line,
+    endLine: c.end_line || null,
+    summary: cLines ? extractSummary(cLines, c.line, displayOpts) : null,
+    source: includeSource
+      ? readSourceRange(repoRoot, c.file, c.line, c.end_line ?? undefined, displayOpts)
+      : null,
+  };
+}
+
+/** BFS to collect deeper callees beyond the first level. */
+function collectDeeperCallees(
+  db: BetterSqlite3Database,
+  startIds: number[],
+  rootId: number,
+  repoRoot: string,
+  getFileLines: (file: string) => string[] | null,
+  opts: { noTests: boolean; maxDepth: number; displayOpts: DisplayOpts },
+) {
+  const { noTests, maxDepth, displayOpts } = opts;
+  const visited = new Set(startIds);
+  visited.add(rootId);
+  let frontier = [...startIds];
+  const result: ReturnType<typeof formatCalleeRow>[] = [];
+
+  for (let d = 2; d <= maxDepth; d++) {
+    const nextFrontier: number[] = [];
+    for (const fid of frontier) {
+      const deeper = findCallees(db, fid) as RelatedNodeRow[];
+      for (const c of deeper) {
+        if (visited.has(c.id) || (noTests && isTestFile(c.file))) continue;
+        visited.add(c.id);
+        nextFrontier.push(c.id);
+        result.push(formatCalleeRow(c, repoRoot, getFileLines, displayOpts, true));
+      }
+    }
+    frontier = nextFrontier;
+    if (frontier.length === 0) break;
+  }
+  return result;
 }
 
 function buildCallees(
@@ -63,65 +116,20 @@ function buildCallees(
   const calleeRows = findCallees(db, node.id) as RelatedNodeRow[];
   const filteredCallees = noTests ? calleeRows.filter((c) => !isTestFile(c.file)) : calleeRows;
 
-  const callees = filteredCallees.map((c) => {
-    const cLines = getFileLines(c.file);
-    const summary = cLines ? extractSummary(cLines, c.line, displayOpts) : null;
-    let calleeSource: string | null = null;
-    if (depth >= 1) {
-      calleeSource = readSourceRange(
-        repoRoot,
-        c.file,
-        c.line,
-        c.end_line ?? undefined,
-        displayOpts,
-      );
-    }
-    return {
-      name: c.name,
-      kind: c.kind,
-      file: c.file,
-      line: c.line,
-      endLine: c.end_line || null,
-      summary,
-      source: calleeSource,
-    };
-  });
+  const callees = filteredCallees.map((c) =>
+    formatCalleeRow(c, repoRoot, getFileLines, displayOpts, depth >= 1),
+  );
 
   if (depth > 1) {
-    const visited = new Set(filteredCallees.map((c) => c.id));
-    visited.add(node.id);
-    let frontier = filteredCallees.map((c) => c.id);
-    const maxDepth = Math.min(depth, 5);
-    for (let d = 2; d <= maxDepth; d++) {
-      const nextFrontier: number[] = [];
-      for (const fid of frontier) {
-        const deeper = findCallees(db, fid) as RelatedNodeRow[];
-        for (const c of deeper) {
-          if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
-            visited.add(c.id);
-            nextFrontier.push(c.id);
-            const cLines = getFileLines(c.file);
-            callees.push({
-              name: c.name,
-              kind: c.kind,
-              file: c.file,
-              line: c.line,
-              endLine: c.end_line || null,
-              summary: cLines ? extractSummary(cLines, c.line, displayOpts) : null,
-              source: readSourceRange(
-                repoRoot,
-                c.file,
-                c.line,
-                c.end_line ?? undefined,
-                displayOpts,
-              ),
-            });
-          }
-        }
-      }
-      frontier = nextFrontier;
-      if (frontier.length === 0) break;
-    }
+    const deeper = collectDeeperCallees(
+      db,
+      filteredCallees.map((c) => c.id),
+      node.id,
+      repoRoot,
+      getFileLines,
+      { noTests, maxDepth: Math.min(depth, 5), displayOpts },
+    );
+    callees.push(...deeper);
   }
 
   return callees;
@@ -433,15 +441,12 @@ export function contextData(
     config?: any;
   } = {},
 ) {
-  const db = openReadonlyOrFail(customDbPath);
-  try {
+  return withReadonlyDb(customDbPath, (db) => {
     const depth = opts.depth || 0;
     const noSource = opts.noSource || false;
-    const noTests = opts.noTests || false;
     const includeTests = opts.includeTests || false;
 
-    const config = opts.config || loadConfig();
-    const displayOpts: DisplayOpts = config.display || {};
+    const { noTests, displayOpts } = resolveAnalysisOpts(opts);
 
     const dbPath = findDbPath(customDbPath);
     const repoRoot = path.resolve(path.dirname(dbPath), '..');
@@ -494,9 +499,7 @@ export function contextData(
 
     const base = { name, results };
     return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
-  } finally {
-    db.close();
-  }
+  });
 }
 
 export function explainData(
@@ -510,14 +513,11 @@ export function explainData(
     config?: any;
   } = {},
 ) {
-  const db = openReadonlyOrFail(customDbPath);
-  try {
-    const noTests = opts.noTests || false;
+  return withReadonlyDb(customDbPath, (db) => {
     const depth = opts.depth || 0;
     const kind = isFileLikeTarget(target) ? 'file' : 'function';
 
-    const config = opts.config || loadConfig();
-    const displayOpts: DisplayOpts = config.display || {};
+    const { noTests, displayOpts } = resolveAnalysisOpts(opts);
 
     const dbPath = findDbPath(customDbPath);
     const repoRoot = path.resolve(path.dirname(dbPath), '..');
@@ -536,7 +536,5 @@ export function explainData(
 
     const base = { target, kind, results };
     return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
-  } finally {
-    db.close();
-  }
+  });
 }

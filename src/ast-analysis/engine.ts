@@ -162,6 +162,80 @@ async function ensureWasmTreesIfNeeded(
 
 // ─── Per-file visitor setup ─────────────────────────────────────────────
 
+/** Check if a definition has a real function body (not a type signature). */
+function hasFuncBody(d: {
+  name: string;
+  kind: string;
+  line: number;
+  endLine?: number | null;
+}): boolean {
+  return (
+    (d.kind === 'function' || d.kind === 'method') &&
+    d.line > 0 &&
+    d.endLine != null &&
+    d.endLine > d.line &&
+    !d.name.includes('.')
+  );
+}
+
+/** Set up AST-store visitor if applicable. */
+function setupAstVisitor(
+  db: BetterSqlite3Database,
+  relPath: string,
+  symbols: ExtractorOutput,
+  langId: string,
+  ext: string,
+): Visitor | null {
+  const astTypeMap = AST_TYPE_MAPS.get(langId);
+  if (!astTypeMap || !WALK_EXTENSIONS.has(ext) || Array.isArray(symbols.astNodes)) return null;
+  const nodeIdMap = new Map<string, number>();
+  for (const row of bulkNodeIdsByFile(db, relPath)) {
+    nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
+  }
+  return createAstStoreVisitor(astTypeMap, symbols.definitions || [], relPath, nodeIdMap);
+}
+
+/** Set up complexity visitor if any definitions need WASM complexity analysis. */
+function setupComplexityVisitorForFile(
+  defs: Definition[],
+  langId: string,
+  walkerOpts: WalkOptions,
+): Visitor | null {
+  const cRules = COMPLEXITY_RULES.get(langId);
+  if (!cRules) return null;
+
+  const hRules = HALSTEAD_RULES.get(langId);
+  const needsWasmComplexity = defs.some((d) => hasFuncBody(d) && !d.complexity);
+  if (!needsWasmComplexity) return null;
+
+  const visitor = createComplexityVisitor(cRules, hRules, { fileLevelWalk: true, langId });
+
+  for (const t of cRules.nestingNodes) walkerOpts.nestingNodeTypes?.add(t);
+
+  const dfRules = DATAFLOW_RULES.get(langId);
+  walkerOpts.getFunctionName = (node: TreeSitterNode): string | null => {
+    const nameNode = node.childForFieldName('name');
+    if (nameNode) return nameNode.text;
+    if (dfRules) return getFuncName(node, dfRules as any);
+    return null;
+  };
+
+  return visitor;
+}
+
+/** Set up CFG visitor if any definitions need WASM CFG analysis. */
+function setupCfgVisitorForFile(defs: Definition[], langId: string, ext: string): Visitor | null {
+  const cfgRulesForLang = CFG_RULES.get(langId);
+  if (!cfgRulesForLang || !CFG_EXTENSIONS.has(ext)) return null;
+
+  const needsWasmCfg = defs.some(
+    (d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks),
+  );
+  if (!needsWasmCfg) return null;
+
+  return createCfgVisitor(cfgRulesForLang);
+}
+
 function setupVisitors(
   db: BetterSqlite3Database,
   relPath: string,
@@ -171,10 +245,6 @@ function setupVisitors(
 ): SetupResult {
   const ext = path.extname(relPath).toLowerCase();
   const defs = symbols.definitions || [];
-  const doAst = opts.ast !== false;
-  const doComplexity = opts.complexity !== false;
-  const doCfg = opts.cfg !== false;
-  const doDataflow = opts.dataflow !== false;
 
   const visitors: Visitor[] = [];
   const walkerOpts: WalkOptions = {
@@ -183,75 +253,19 @@ function setupVisitors(
     getFunctionName: (_node: TreeSitterNode) => null,
   };
 
-  // AST-store visitor (call kind already filtered in runAnalyses upfront)
-  let astVisitor: Visitor | null = null;
-  const astTypeMap = AST_TYPE_MAPS.get(langId);
-  if (doAst && astTypeMap && WALK_EXTENSIONS.has(ext) && !Array.isArray(symbols.astNodes)) {
-    const nodeIdMap = new Map<string, number>();
-    for (const row of bulkNodeIdsByFile(db, relPath)) {
-      nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
-    }
-    astVisitor = createAstStoreVisitor(astTypeMap, defs, relPath, nodeIdMap);
-    visitors.push(astVisitor);
-  }
+  const astVisitor = opts.ast !== false ? setupAstVisitor(db, relPath, symbols, langId, ext) : null;
+  if (astVisitor) visitors.push(astVisitor);
 
-  // Complexity visitor (file-level mode)
-  let complexityVisitor: Visitor | null = null;
-  const cRules = COMPLEXITY_RULES.get(langId);
-  const hRules = HALSTEAD_RULES.get(langId);
-  if (doComplexity && cRules) {
-    // Only trigger WASM complexity for definitions with real function bodies.
-    // Interface/type property signatures (dotted names, single-line span)
-    // correctly lack native complexity data and should not trigger a fallback.
-    const needsWasmComplexity = defs.some(
-      (d) =>
-        (d.kind === 'function' || d.kind === 'method') &&
-        d.line > 0 &&
-        d.endLine != null &&
-        d.endLine > d.line &&
-        !d.name.includes('.') &&
-        !d.complexity,
-    );
-    if (needsWasmComplexity) {
-      complexityVisitor = createComplexityVisitor(cRules, hRules, { fileLevelWalk: true, langId });
-      visitors.push(complexityVisitor);
+  const complexityVisitor =
+    opts.complexity !== false ? setupComplexityVisitorForFile(defs, langId, walkerOpts) : null;
+  if (complexityVisitor) visitors.push(complexityVisitor);
 
-      for (const t of cRules.nestingNodes) walkerOpts.nestingNodeTypes?.add(t);
+  const cfgVisitor = opts.cfg !== false ? setupCfgVisitorForFile(defs, langId, ext) : null;
+  if (cfgVisitor) visitors.push(cfgVisitor);
 
-      const dfRules = DATAFLOW_RULES.get(langId);
-      walkerOpts.getFunctionName = (node: TreeSitterNode): string | null => {
-        const nameNode = node.childForFieldName('name');
-        if (nameNode) return nameNode.text;
-        if (dfRules) return getFuncName(node, dfRules as any);
-        return null;
-      };
-    }
-  }
-
-  // CFG visitor
-  let cfgVisitor: Visitor | null = null;
-  const cfgRulesForLang = CFG_RULES.get(langId);
-  if (doCfg && cfgRulesForLang && CFG_EXTENSIONS.has(ext)) {
-    const needsWasmCfg = defs.some(
-      (d) =>
-        (d.kind === 'function' || d.kind === 'method') &&
-        d.line > 0 &&
-        d.endLine != null &&
-        d.endLine > d.line &&
-        !d.name.includes('.') &&
-        d.cfg !== null &&
-        !Array.isArray(d.cfg?.blocks),
-    );
-    if (needsWasmCfg) {
-      cfgVisitor = createCfgVisitor(cfgRulesForLang);
-      visitors.push(cfgVisitor);
-    }
-  }
-
-  // Dataflow visitor
   let dataflowVisitor: Visitor | null = null;
   const dfRules = DATAFLOW_RULES.get(langId);
-  if (doDataflow && dfRules && DATAFLOW_EXTENSIONS.has(ext) && !symbols.dataflow) {
+  if (opts.dataflow !== false && dfRules && DATAFLOW_EXTENSIONS.has(ext) && !symbols.dataflow) {
     dataflowVisitor = createDataflowVisitor(dfRules);
     visitors.push(dataflowVisitor);
   }
@@ -261,88 +275,80 @@ function setupVisitors(
 
 // ─── Result storage helpers ─────────────────────────────────────────────
 
-function storeComplexityResults(results: WalkResults, defs: Definition[], langId: string): void {
-  const complexityResults = (results.complexity || []) as ComplexityFuncResult[];
-  const resultByLine = new Map<number, ComplexityFuncResult[]>();
-  for (const r of complexityResults) {
-    if (r.funcNode) {
-      const line = r.funcNode.startPosition.row + 1;
-      if (!resultByLine.has(line)) resultByLine.set(line, []);
-      resultByLine.get(line)?.push(r);
-    }
+/** Index per-function results by start line for O(1) lookup. */
+function indexByLine<T extends { funcNode: TreeSitterNode }>(results: T[]): Map<number, T[]> {
+  const byLine = new Map<number, T[]>();
+  for (const r of results) {
+    if (!r.funcNode) continue;
+    const line = r.funcNode.startPosition.row + 1;
+    if (!byLine.has(line)) byLine.set(line, []);
+    byLine.get(line)?.push(r);
   }
+  return byLine;
+}
+
+/** Find the best matching result for a definition by line + name. */
+function matchResultToDef<T extends { funcNode: TreeSitterNode }>(
+  candidates: T[] | undefined,
+  defName: string,
+): T | undefined {
+  if (!candidates) return undefined;
+  if (candidates.length === 1) return candidates[0];
+  return (
+    candidates.find((r) => {
+      const n = r.funcNode.childForFieldName('name');
+      return n && n.text === defName;
+    }) ?? candidates[0]
+  );
+}
+
+function storeComplexityResults(results: WalkResults, defs: Definition[], langId: string): void {
+  const byLine = indexByLine((results.complexity || []) as ComplexityFuncResult[]);
   for (const def of defs) {
     if ((def.kind === 'function' || def.kind === 'method') && def.line && !def.complexity) {
-      const candidates = resultByLine.get(def.line);
-      const funcResult = !candidates
-        ? undefined
-        : candidates.length === 1
-          ? candidates[0]
-          : (candidates.find((r) => {
-              const n = r.funcNode.childForFieldName('name');
-              return n && n.text === def.name;
-            }) ?? candidates[0]);
-      if (funcResult) {
-        const { metrics } = funcResult;
-        const loc = computeLOCMetrics(funcResult.funcNode, langId);
-        const volume = metrics.halstead ? metrics.halstead.volume : 0;
-        const commentRatio = loc.loc > 0 ? loc.commentLines / loc.loc : 0;
-        const mi = computeMaintainabilityIndex(volume, metrics.cyclomatic, loc.sloc, commentRatio);
-
-        def.complexity = {
-          cognitive: metrics.cognitive,
-          cyclomatic: metrics.cyclomatic,
-          maxNesting: metrics.maxNesting,
-          halstead: metrics.halstead,
-          loc,
-          maintainabilityIndex: mi,
-        };
-      }
+      const funcResult = matchResultToDef(byLine.get(def.line), def.name);
+      if (!funcResult) continue;
+      const { metrics } = funcResult;
+      const loc = computeLOCMetrics(funcResult.funcNode, langId);
+      const volume = metrics.halstead ? metrics.halstead.volume : 0;
+      const commentRatio = loc.loc > 0 ? loc.commentLines / loc.loc : 0;
+      const mi = computeMaintainabilityIndex(volume, metrics.cyclomatic, loc.sloc, commentRatio);
+      def.complexity = {
+        cognitive: metrics.cognitive,
+        cyclomatic: metrics.cyclomatic,
+        maxNesting: metrics.maxNesting,
+        halstead: metrics.halstead,
+        loc,
+        maintainabilityIndex: mi,
+      };
     }
   }
 }
 
 function storeCfgResults(results: WalkResults, defs: Definition[]): void {
-  const cfgResults = (results.cfg || []) as CfgFuncResult[];
-  const cfgByLine = new Map<number, CfgFuncResult[]>();
-  for (const r of cfgResults) {
-    if (r.funcNode) {
-      const line = r.funcNode.startPosition.row + 1;
-      if (!cfgByLine.has(line)) cfgByLine.set(line, []);
-      cfgByLine.get(line)?.push(r);
-    }
-  }
+  const byLine = indexByLine((results.cfg || []) as CfgFuncResult[]);
   for (const def of defs) {
     if (
       (def.kind === 'function' || def.kind === 'method') &&
       def.line &&
       !def.cfg?.blocks?.length
     ) {
-      const candidates = cfgByLine.get(def.line);
-      const cfgResult = !candidates
-        ? undefined
-        : candidates.length === 1
-          ? candidates[0]
-          : (candidates.find((r) => {
-              const n = r.funcNode.childForFieldName('name');
-              return n && n.text === def.name;
-            }) ?? candidates[0]);
-      if (cfgResult) {
-        def.cfg = { blocks: cfgResult.blocks, edges: cfgResult.edges };
+      const cfgResult = matchResultToDef(byLine.get(def.line), def.name);
+      if (!cfgResult) continue;
+      def.cfg = { blocks: cfgResult.blocks, edges: cfgResult.edges };
 
-        // Override complexity's cyclomatic with CFG-derived value (single source of truth)
-        if (def.complexity && cfgResult.cyclomatic != null) {
-          def.complexity.cyclomatic = cfgResult.cyclomatic;
-          const { loc, halstead } = def.complexity;
-          const volume = halstead ? halstead.volume : 0;
-          const commentRatio = loc && loc.loc > 0 ? loc.commentLines / loc.loc : 0;
-          def.complexity.maintainabilityIndex = computeMaintainabilityIndex(
-            volume,
-            cfgResult.cyclomatic,
-            loc?.sloc ?? 0,
-            commentRatio,
-          );
-        }
+      // Override complexity's cyclomatic with CFG-derived value (single source of truth)
+      if (def.complexity && cfgResult.cyclomatic != null) {
+        def.complexity.cyclomatic = cfgResult.cyclomatic;
+        const { loc, halstead } = def.complexity;
+        const volume = halstead ? halstead.volume : 0;
+        const commentRatio = loc && loc.loc > 0 ? loc.commentLines / loc.loc : 0;
+        def.complexity.maintainabilityIndex = computeMaintainabilityIndex(
+          volume,
+          cfgResult.cyclomatic,
+          loc?.sloc ?? 0,
+          commentRatio,
+        );
       }
     }
   }

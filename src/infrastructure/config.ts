@@ -323,79 +323,70 @@ function resolveWorkspaceEntry(pkgDir: string): string | null {
  *   2. package.json — `workspaces` field (npm/yarn)
  *   3. lerna.json — `packages` array
  */
-export function detectWorkspaces(rootDir: string): Map<string, WorkspaceEntry> {
-  const workspaces = new Map<string, WorkspaceEntry>();
-  const patterns: string[] = [];
-
-  // 1. pnpm-workspace.yaml
+/** Read pnpm-workspace.yaml and return workspace glob patterns. */
+function readPnpmWorkspacePatterns(rootDir: string): string[] {
   const pnpmPath = path.join(rootDir, 'pnpm-workspace.yaml');
-  if (fs.existsSync(pnpmPath)) {
-    try {
-      const raw = fs.readFileSync(pnpmPath, 'utf-8');
-      // Simple YAML parse for `packages:` array — no dependency needed
-      const packagesMatch = raw.match(/^packages:\s*\n((?:\s+-\s+.+\n?)*)/m);
-      if (packagesMatch) {
-        const lines = packagesMatch[1]!.match(/^\s+-\s+['"]?([^'"#\n]+)['"]?\s*$/gm);
-        if (lines) {
-          for (const line of lines) {
-            const m = line.match(/^\s+-\s+['"]?([^'"#\n]+?)['"]?\s*$/);
-            if (m) patterns.push(m[1]!.trim());
-          }
-        }
-      }
-    } catch (e) {
-      debug(`detectWorkspaces: failed to parse pnpm-workspace.yaml: ${toErrorMessage(e)}`);
+  if (!fs.existsSync(pnpmPath)) return [];
+  try {
+    const raw = fs.readFileSync(pnpmPath, 'utf-8');
+    const packagesMatch = raw.match(/^packages:\s*\n((?:\s+-\s+.+\n?)*)/m);
+    if (!packagesMatch) return [];
+    const lines = packagesMatch[1]!.match(/^\s+-\s+['"]?([^'"#\n]+)['"]?\s*$/gm);
+    if (!lines) return [];
+    const patterns: string[] = [];
+    for (const line of lines) {
+      const m = line.match(/^\s+-\s+['"]?([^'"#\n]+?)['"]?\s*$/);
+      if (m) patterns.push(m[1]!.trim());
     }
+    return patterns;
+  } catch (e) {
+    debug(`detectWorkspaces: failed to parse pnpm-workspace.yaml: ${toErrorMessage(e)}`);
+    return [];
   }
+}
 
-  // 2. package.json workspaces (npm/yarn)
-  if (patterns.length === 0) {
-    const rootPkgPath = path.join(rootDir, 'package.json');
-    if (fs.existsSync(rootPkgPath)) {
-      try {
-        const raw = fs.readFileSync(rootPkgPath, 'utf-8');
-        const pkg = JSON.parse(raw);
-        const ws = pkg.workspaces;
-        if (Array.isArray(ws)) {
-          patterns.push(...ws);
-        } else if (ws && Array.isArray(ws.packages)) {
-          // Yarn classic format: { packages: [...], nohoist: [...] }
-          patterns.push(...ws.packages);
-        }
-      } catch (e) {
-        debug(`detectWorkspaces: failed to parse package.json workspaces: ${toErrorMessage(e)}`);
-      }
-    }
+/** Read package.json workspaces field (npm/yarn) and return glob patterns. */
+function readNpmWorkspacePatterns(rootDir: string): string[] {
+  const rootPkgPath = path.join(rootDir, 'package.json');
+  if (!fs.existsSync(rootPkgPath)) return [];
+  try {
+    const raw = fs.readFileSync(rootPkgPath, 'utf-8');
+    const pkg = JSON.parse(raw);
+    const ws = pkg.workspaces;
+    if (Array.isArray(ws)) return ws;
+    if (ws && Array.isArray(ws.packages)) return ws.packages;
+    return [];
+  } catch (e) {
+    debug(`detectWorkspaces: failed to parse package.json workspaces: ${toErrorMessage(e)}`);
+    return [];
   }
+}
 
-  // 3. lerna.json
-  if (patterns.length === 0) {
-    const lernaPath = path.join(rootDir, 'lerna.json');
-    if (fs.existsSync(lernaPath)) {
-      try {
-        const raw = fs.readFileSync(lernaPath, 'utf-8');
-        const lerna = JSON.parse(raw);
-        if (Array.isArray(lerna.packages)) {
-          patterns.push(...lerna.packages);
-        }
-      } catch (e) {
-        debug(`detectWorkspaces: failed to parse lerna.json: ${toErrorMessage(e)}`);
-      }
-    }
+/** Read lerna.json packages field and return glob patterns. */
+function readLernaPatterns(rootDir: string): string[] {
+  const lernaPath = path.join(rootDir, 'lerna.json');
+  if (!fs.existsSync(lernaPath)) return [];
+  try {
+    const raw = fs.readFileSync(lernaPath, 'utf-8');
+    const lerna = JSON.parse(raw);
+    if (Array.isArray(lerna.packages)) return lerna.packages;
+    return [];
+  } catch (e) {
+    debug(`detectWorkspaces: failed to parse lerna.json: ${toErrorMessage(e)}`);
+    return [];
   }
+}
 
-  if (patterns.length === 0) return workspaces;
-
-  // Expand glob patterns and collect packages
+/** Expand workspace patterns into concrete package entries. */
+function expandWorkspacePatterns(patterns: string[], rootDir: string): Map<string, WorkspaceEntry> {
+  const workspaces = new Map<string, WorkspaceEntry>();
   for (const pattern of patterns) {
-    // Check if pattern is a direct path (no glob) or a glob
     if (pattern.includes('*')) {
       for (const dir of expandWorkspaceGlob(pattern, rootDir)) {
         const name = readPackageName(dir);
         if (name) workspaces.set(name, { dir, entry: resolveWorkspaceEntry(dir) });
       }
     } else {
-      // Direct path like "packages/core"
       const dir = path.resolve(rootDir, pattern);
       if (fs.existsSync(path.join(dir, 'package.json'))) {
         const name = readPackageName(dir);
@@ -403,6 +394,17 @@ export function detectWorkspaces(rootDir: string): Map<string, WorkspaceEntry> {
       }
     }
   }
+  return workspaces;
+}
+
+export function detectWorkspaces(rootDir: string): Map<string, WorkspaceEntry> {
+  // Try each package manager in priority order — first match wins
+  let patterns = readPnpmWorkspacePatterns(rootDir);
+  if (patterns.length === 0) patterns = readNpmWorkspacePatterns(rootDir);
+  if (patterns.length === 0) patterns = readLernaPatterns(rootDir);
+  if (patterns.length === 0) return new Map();
+
+  const workspaces = expandWorkspacePatterns(patterns, rootDir);
 
   if (workspaces.size > 0) {
     debug(`Detected ${workspaces.size} workspace packages: ${[...workspaces.keys()].join(', ')}`);

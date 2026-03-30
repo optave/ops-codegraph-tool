@@ -275,6 +275,96 @@ function allCfgNative(fileSymbols: Map<string, FileSymbols>): boolean {
   return hasCfgFile;
 }
 
+/** Persist native CFG data for a single file (fast path — no tree/visitor needed). */
+function persistNativeFileCfg(
+  db: BetterSqlite3Database,
+  symbols: FileSymbols,
+  relPath: string,
+  insertBlock: ReturnType<BetterSqlite3Database['prepare']>,
+  insertEdge: ReturnType<BetterSqlite3Database['prepare']>,
+): number {
+  let count = 0;
+  for (const def of symbols.definitions) {
+    if (def.kind !== 'function' && def.kind !== 'method') continue;
+    if (!def.line) continue;
+
+    const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
+    if (!nodeId) continue;
+
+    deleteCfgForNode(db, nodeId);
+    if (!def.cfg?.blocks?.length) continue;
+
+    persistCfg(
+      def.cfg as unknown as { blocks: CfgBuildBlock[]; edges: CfgBuildEdge[] },
+      nodeId,
+      insertBlock,
+      insertEdge,
+    );
+    count++;
+  }
+  return count;
+}
+
+/** Resolve CFG for a definition from native data or visitor results. */
+function resolveCfgForDef(
+  def: Definition,
+  visitorCfgByLine: Map<number, VisitorCfgResult[]> | null,
+): { blocks: CfgBuildBlock[]; edges: CfgBuildEdge[] } | null {
+  if (def.cfg?.blocks?.length) {
+    return def.cfg as unknown as { blocks: CfgBuildBlock[]; edges: CfgBuildEdge[] };
+  }
+  if (!visitorCfgByLine) return null;
+  const candidates = visitorCfgByLine.get(def.line);
+  if (!candidates) return null;
+  const r =
+    candidates.length === 1
+      ? candidates[0]
+      : (candidates.find((c) => {
+          const n = c.funcNode.childForFieldName?.('name');
+          return n && n.text === def.name;
+        }) ?? candidates[0]);
+  return r ? { blocks: r.blocks, edges: r.edges } : null;
+}
+
+/** Persist CFG data for a single file using visitor/native hybrid path. */
+function persistVisitorFileCfg(
+  db: BetterSqlite3Database,
+  symbols: FileSymbols,
+  relPath: string,
+  rootDir: string,
+  extToLang: Map<string, string>,
+  parsers: unknown,
+  getParserFn: unknown,
+  insertBlock: ReturnType<BetterSqlite3Database['prepare']>,
+  insertEdge: ReturnType<BetterSqlite3Database['prepare']>,
+): number {
+  const treeLang = getTreeAndLang(symbols, relPath, rootDir, extToLang, parsers, getParserFn);
+  if (!treeLang) return 0;
+  const { tree, langId } = treeLang;
+
+  const cfgRules = CFG_RULES.get(langId);
+  if (!cfgRules) return 0;
+
+  const visitorCfgByLine = buildVisitorCfgMap(tree, cfgRules, symbols, langId);
+  let count = 0;
+
+  for (const def of symbols.definitions) {
+    if (def.kind !== 'function' && def.kind !== 'method') continue;
+    if (!def.line) continue;
+
+    const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
+    if (!nodeId) continue;
+
+    const cfg = resolveCfgForDef(def, visitorCfgByLine);
+    deleteCfgForNode(db, nodeId);
+    if (!cfg || cfg.blocks.length === 0) continue;
+
+    persistCfg(cfg, nodeId, insertBlock, insertEdge);
+    count++;
+  }
+  return count;
+}
+
 export async function buildCFGData(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, FileSymbols>,
@@ -353,74 +443,22 @@ export async function buildCFGData(
       const ext = path.extname(relPath).toLowerCase();
       if (!CFG_EXTENSIONS.has(ext)) continue;
 
-      // Native fast path: skip tree/visitor setup when all CFG is pre-computed.
-      // Only apply to files without _tree — files with _tree were WASM-parsed
-      // and need the slow path (visitor) to compute CFG.
       if (allNative && !symbols._tree) {
-        for (const def of symbols.definitions) {
-          if (def.kind !== 'function' && def.kind !== 'method') continue;
-          if (!def.line) continue;
-
-          const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
-          if (!nodeId) continue;
-
-          // Always delete stale CFG rows (handles body-removed case)
-          deleteCfgForNode(db, nodeId);
-          if (!def.cfg?.blocks?.length) continue;
-
-          persistCfg(
-            def.cfg as unknown as { blocks: CfgBuildBlock[]; edges: CfgBuildEdge[] },
-            nodeId,
-            insertBlock,
-            insertEdge,
-          );
-          analyzed++;
-        }
+        analyzed += persistNativeFileCfg(db, symbols, relPath, insertBlock, insertEdge);
         continue;
       }
 
-      // When allNative=true, parsers/getParserFn are null. This is safe because
-      // _tree files use symbols._tree directly in getTreeAndLang (the parser
-      // code path is never reached). Non-_tree files are handled by the fast path above.
-      const treeLang = getTreeAndLang(symbols, relPath, rootDir, extToLang, parsers, getParserFn);
-      if (!treeLang) continue;
-      const { tree, langId } = treeLang;
-
-      const cfgRules = CFG_RULES.get(langId);
-      if (!cfgRules) continue;
-
-      const visitorCfgByLine = buildVisitorCfgMap(tree, cfgRules, symbols, langId);
-
-      for (const def of symbols.definitions) {
-        if (def.kind !== 'function' && def.kind !== 'method') continue;
-        if (!def.line) continue;
-
-        const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
-        if (!nodeId) continue;
-
-        let cfg: { blocks: CfgBuildBlock[]; edges: CfgBuildEdge[] } | null = null;
-        if (def.cfg?.blocks?.length) {
-          cfg = def.cfg as unknown as { blocks: CfgBuildBlock[]; edges: CfgBuildEdge[] };
-        } else if (visitorCfgByLine) {
-          const candidates = visitorCfgByLine.get(def.line);
-          const r = !candidates
-            ? undefined
-            : candidates.length === 1
-              ? candidates[0]
-              : (candidates.find((c) => {
-                  const n = c.funcNode.childForFieldName?.('name');
-                  return n && n.text === def.name;
-                }) ?? candidates[0]);
-          if (r) cfg = { blocks: r.blocks, edges: r.edges };
-        }
-
-        // Always purge stale rows (handles body-removed case)
-        deleteCfgForNode(db, nodeId);
-        if (!cfg || cfg.blocks.length === 0) continue;
-
-        persistCfg(cfg, nodeId, insertBlock, insertEdge);
-        analyzed++;
-      }
+      analyzed += persistVisitorFileCfg(
+        db,
+        symbols,
+        relPath,
+        rootDir,
+        extToLang,
+        parsers,
+        getParserFn,
+        insertBlock,
+        insertEdge,
+      );
     }
   });
 

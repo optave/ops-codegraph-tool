@@ -4,10 +4,8 @@ import {
   findDbPath,
   findFileNodes,
   findNodesByFile,
-  openReadonlyOrFail,
 } from '../../db/index.js';
 import { cachedStmt } from '../../db/repository/cached-stmt.js';
-import { loadConfig } from '../../infrastructure/config.js';
 import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import {
@@ -17,6 +15,7 @@ import {
 } from '../../shared/file-utils.js';
 import { paginateResult } from '../../shared/paginate.js';
 import type { BetterSqlite3Database, NodeRow, StmtCache } from '../../types.js';
+import { resolveAnalysisOpts, withReadonlyDb } from './query-helpers.js';
 
 /** Cache the schema probe for the `exported` column per db handle. */
 const _hasExportedColCache: WeakMap<BetterSqlite3Database, boolean> = new WeakMap();
@@ -37,12 +36,8 @@ export function exportsData(
     config?: any;
   } = {},
 ) {
-  const db = openReadonlyOrFail(customDbPath);
-  try {
-    const noTests = opts.noTests || false;
-
-    const config = opts.config || loadConfig();
-    const displayOpts = config.display || {};
+  return withReadonlyDb(customDbPath, (db) => {
+    const { noTests, displayOpts } = resolveAnalysisOpts(opts);
 
     const dbFilePath = findDbPath(customDbPath);
     const repoRoot = path.resolve(path.dirname(dbFilePath), '..');
@@ -101,9 +96,39 @@ export function exportsData(
       }
     }
     return paginated;
-  } finally {
-    db.close();
+  });
+}
+
+/** Collect symbols re-exported through barrel files. */
+function collectReexportedSymbols(
+  db: BetterSqlite3Database,
+  fileNodeId: number,
+  reexportsToStmt: ReturnType<BetterSqlite3Database['prepare']>,
+  exportedNodesStmt: ReturnType<BetterSqlite3Database['prepare']> | null,
+  hasExportedCol: boolean,
+  getFileLines: (file: string) => string[] | null,
+  buildSymbolResult: (s: NodeRow, fileLines: string[] | null) => any,
+) {
+  const reexportTargets = reexportsToStmt.all(fileNodeId) as Array<{ file: string }>;
+  const reexportedSymbols: Array<ReturnType<typeof buildSymbolResult> & { originFile: string }> =
+    [];
+  for (const reexTarget of reexportTargets) {
+    let targetExported: NodeRow[];
+    if (hasExportedCol) {
+      targetExported = exportedNodesStmt!.all(reexTarget.file) as NodeRow[];
+    } else {
+      const targetSymbols = findNodesByFile(db, reexTarget.file) as NodeRow[];
+      const exportedIds = findCrossFileCallTargets(db, reexTarget.file) as Set<number>;
+      targetExported = targetSymbols.filter((s) => exportedIds.has(s.id));
+    }
+    for (const s of targetExported) {
+      reexportedSymbols.push({
+        ...buildSymbolResult(s, getFileLines(reexTarget.file)),
+        originFile: reexTarget.file,
+      });
+    }
   }
+  return reexportedSymbols;
 }
 
 function exportsFileImpl(
@@ -197,34 +222,20 @@ function exportsFileImpl(
 
     const totalUnused = results.filter((r) => r.consumerCount === 0).length;
 
-    // Files that re-export this file (barrel -> this file)
     const reexports = (reexportsFromStmt.all(fn.id) as Array<{ file: string }>).map((r) => ({
       file: r.file,
     }));
 
-    // For barrel files: gather symbols re-exported from target modules
-    const reexportTargets = reexportsToStmt.all(fn.id) as Array<{ file: string }>;
-
-    const reexportedSymbols: Array<ReturnType<typeof buildSymbolResult> & { originFile: string }> =
-      [];
-    for (const reexTarget of reexportTargets) {
-      let targetExported: NodeRow[];
-      if (hasExportedCol) {
-        targetExported = exportedNodesStmt!.all(reexTarget.file) as NodeRow[];
-      } else {
-        // Fallback: same heuristic as direct exports — symbols called from other files
-        const targetSymbols = findNodesByFile(db, reexTarget.file) as NodeRow[];
-        const exportedIds = findCrossFileCallTargets(db, reexTarget.file) as Set<number>;
-        targetExported = targetSymbols.filter((s) => exportedIds.has(s.id));
-      }
-      for (const s of targetExported) {
-        const fileLines = getFileLines(reexTarget.file);
-        reexportedSymbols.push({
-          ...buildSymbolResult(s, fileLines),
-          originFile: reexTarget.file,
-        });
-      }
-    }
+    // Gather symbols re-exported from target modules (barrel file support)
+    const reexportedSymbols = collectReexportedSymbols(
+      db,
+      fn.id,
+      reexportsToStmt,
+      exportedNodesStmt,
+      hasExportedCol,
+      getFileLines,
+      buildSymbolResult,
+    );
 
     let filteredResults = results;
     let filteredReexported = reexportedSymbols;

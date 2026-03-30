@@ -87,6 +87,16 @@ function classifyBranchNode(
   }
 }
 
+function classifyLogicalOp(node: TreeSitterNode, cRules: AnyRules, acc: ComplexityAcc): void {
+  const op = node.child(1)?.type;
+  if (!op || !cRules.logicalOperators.has(op)) return;
+  acc.cyclomatic++;
+  const parent = node.parent;
+  const sameSequence =
+    parent != null && parent.type === cRules.logicalNodeType && parent.child(1)?.type === op;
+  if (!sameSequence) acc.cognitive++;
+}
+
 function classifyPlainElse(
   node: TreeSitterNode,
   type: string,
@@ -215,17 +225,7 @@ export function createComplexityVisitor(
       if (nestingLevel > acc.maxNesting) acc.maxNesting = nestingLevel;
 
       if (type === cRules.logicalNodeType) {
-        const op = node.child(1)?.type;
-        if (op && cRules.logicalOperators.has(op)) {
-          acc.cyclomatic++;
-          const parent = node.parent;
-          let sameSequence = false;
-          if (parent && parent.type === cRules.logicalNodeType) {
-            const parentOp = parent.child(1)?.type;
-            if (parentOp === op) sameSequence = true;
-          }
-          if (!sameSequence) acc.cognitive++;
-        }
+        classifyLogicalOp(node, cRules, acc);
       }
 
       if (type === cRules.optionalChainType) acc.cyclomatic++;

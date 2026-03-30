@@ -117,6 +117,35 @@ function matchSubpathPattern(pattern: string, subpath: string): string | null {
  * Resolve a bare specifier through the package.json exports field.
  * Returns an absolute path or null.
  */
+/** Try to resolve a condition target to a file path in packageDir. */
+function tryResolveTarget(target: string | null, packageDir: string): string | null {
+  if (!target) return null;
+  const resolved = path.resolve(packageDir, target);
+  return fs.existsSync(resolved) ? resolved : null;
+}
+
+/** Resolve subpath against a subpath map (object with "." keys). */
+function resolveSubpathMap(
+  exports: Record<string, unknown>,
+  subpath: string,
+  packageDir: string,
+): string | null {
+  // Exact match first
+  if (subpath in exports) {
+    return tryResolveTarget(resolveCondition(exports[subpath]), packageDir);
+  }
+  // Pattern matching (keys with *)
+  for (const [pattern, value] of Object.entries(exports)) {
+    if (!pattern.includes('*')) continue;
+    const matched = matchSubpathPattern(pattern, subpath);
+    if (matched == null) continue;
+    const rawTarget = resolveCondition(value);
+    if (!rawTarget) continue;
+    return tryResolveTarget(rawTarget.replace(/\*/g, matched), packageDir);
+  }
+  return null;
+}
+
 export function resolveViaExports(specifier: string, rootDir: string): string | null {
   const parsed = parseBareSpecifier(specifier);
   if (!parsed) return null;
@@ -131,66 +160,25 @@ export function resolveViaExports(specifier: string, rootDir: string): string | 
 
   // Simple string exports: "exports": "./index.js"
   if (typeof exports === 'string') {
-    if (subpath === '.') {
-      const resolved = path.resolve(packageDir, exports);
-      return fs.existsSync(resolved) ? resolved : null;
-    }
-    return null;
+    return subpath === '.' ? tryResolveTarget(exports, packageDir) : null;
   }
 
   // Array form at top level
   if (Array.isArray(exports)) {
-    if (subpath === '.') {
-      const target = resolveCondition(exports);
-      if (target) {
-        const resolved = path.resolve(packageDir, target);
-        return fs.existsSync(resolved) ? resolved : null;
-      }
-    }
-    return null;
+    return subpath === '.' ? tryResolveTarget(resolveCondition(exports), packageDir) : null;
   }
 
   if (typeof exports !== 'object') return null;
 
-  // Determine if exports is a conditions object (no keys start with ".")
-  // or a subpath map (keys start with ".")
+  // Determine if exports is a conditions object or a subpath map
   const keys = Object.keys(exports);
   const isSubpathMap = keys.length > 0 && keys.some((k) => k.startsWith('.'));
 
   if (!isSubpathMap) {
-    // Conditions object at top level → applies to "." subpath only
-    if (subpath === '.') {
-      const target = resolveCondition(exports);
-      if (target) {
-        const resolved = path.resolve(packageDir, target);
-        return fs.existsSync(resolved) ? resolved : null;
-      }
-    }
-    return null;
+    return subpath === '.' ? tryResolveTarget(resolveCondition(exports), packageDir) : null;
   }
 
-  // Subpath map: try exact match first, then pattern match
-  if (subpath in exports) {
-    const target = resolveCondition(exports[subpath]);
-    if (target) {
-      const resolved = path.resolve(packageDir, target);
-      return fs.existsSync(resolved) ? resolved : null;
-    }
-  }
-
-  // Pattern matching (keys with *)
-  for (const [pattern, value] of Object.entries(exports)) {
-    if (!pattern.includes('*')) continue;
-    const matched = matchSubpathPattern(pattern, subpath);
-    if (matched == null) continue;
-    const rawTarget = resolveCondition(value);
-    if (!rawTarget) continue;
-    const target = rawTarget.replace(/\*/g, matched);
-    const resolved = path.resolve(packageDir, target);
-    if (fs.existsSync(resolved)) return resolved;
-  }
-
-  return null;
+  return resolveSubpathMap(exports as Record<string, unknown>, subpath, packageDir);
 }
 
 /** Clear the exports cache (for testing). */

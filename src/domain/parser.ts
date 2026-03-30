@@ -273,37 +273,33 @@ function resolveEngine(opts: ParseEngineOpts = {}): ResolvedEngine {
  *  - Backward compat for older native binaries missing js_name annotations
  *  - dataflow argFlows/mutations bindingType -> binding wrapper
  */
-function patchNativeResult(r: any): ExtractorOutput {
-  // lineCount: napi(js_name) emits "lineCount"; older binaries may emit "line_count"
-  r.lineCount = r.lineCount ?? r.line_count ?? null;
-  r._lineCount = r.lineCount;
-
-  // Backward compat for older binaries missing js_name annotations
-  if (r.definitions) {
-    for (const d of r.definitions) {
-      if (d.endLine === undefined && d.end_line !== undefined) {
-        d.endLine = d.end_line;
-      }
+/** Patch definition fields for backward compat with older native binaries. */
+function patchDefinitions(definitions: any[]): void {
+  for (const d of definitions) {
+    if (d.endLine === undefined && d.end_line !== undefined) {
+      d.endLine = d.end_line;
     }
   }
-  if (r.imports) {
-    for (const i of r.imports) {
-      if (i.typeOnly === undefined) i.typeOnly = i.type_only;
-      if (i.wildcardReexport === undefined) i.wildcardReexport = i.wildcard_reexport;
-      if (i.pythonImport === undefined) i.pythonImport = i.python_import;
-      if (i.goImport === undefined) i.goImport = i.go_import;
-      if (i.rustUse === undefined) i.rustUse = i.rust_use;
-      if (i.javaImport === undefined) i.javaImport = i.java_import;
-      if (i.csharpUsing === undefined) i.csharpUsing = i.csharp_using;
-      if (i.rubyRequire === undefined) i.rubyRequire = i.ruby_require;
-      if (i.phpUse === undefined) i.phpUse = i.php_use;
-      if (i.dynamicImport === undefined) i.dynamicImport = i.dynamic_import;
-    }
-  }
+}
 
-  // typeMap: native returns an array of {name, typeName}; normalize to Map.
-  // Non-TS languages may omit typeMap entirely — default to empty Map so
-  // callers can safely access .entries()/.size without null checks.
+/** Patch import fields for backward compat with older native binaries. */
+function patchImports(imports: any[]): void {
+  for (const i of imports) {
+    if (i.typeOnly === undefined) i.typeOnly = i.type_only;
+    if (i.wildcardReexport === undefined) i.wildcardReexport = i.wildcard_reexport;
+    if (i.pythonImport === undefined) i.pythonImport = i.python_import;
+    if (i.goImport === undefined) i.goImport = i.go_import;
+    if (i.rustUse === undefined) i.rustUse = i.rust_use;
+    if (i.javaImport === undefined) i.javaImport = i.java_import;
+    if (i.csharpUsing === undefined) i.csharpUsing = i.csharp_using;
+    if (i.rubyRequire === undefined) i.rubyRequire = i.ruby_require;
+    if (i.phpUse === undefined) i.phpUse = i.php_use;
+    if (i.dynamicImport === undefined) i.dynamicImport = i.dynamic_import;
+  }
+}
+
+/** Normalize native typeMap array to a Map instance. */
+function patchTypeMap(r: any): void {
   if (!r.typeMap) {
     r.typeMap = new Map();
   } else if (!(r.typeMap instanceof Map)) {
@@ -314,20 +310,31 @@ function patchNativeResult(r: any): ExtractorOutput {
       ]),
     );
   }
+}
 
-  // dataflow: wrap bindingType into binding object for argFlows and mutations
-  if (r.dataflow) {
-    if (r.dataflow.argFlows) {
-      for (const f of r.dataflow.argFlows) {
-        f.binding = f.bindingType ? { type: f.bindingType } : null;
-      }
-    }
-    if (r.dataflow.mutations) {
-      for (const m of r.dataflow.mutations) {
-        m.binding = m.bindingType ? { type: m.bindingType } : null;
-      }
+/** Wrap bindingType into binding object for dataflow argFlows and mutations. */
+function patchDataflow(dataflow: any): void {
+  if (dataflow.argFlows) {
+    for (const f of dataflow.argFlows) {
+      f.binding = f.bindingType ? { type: f.bindingType } : null;
     }
   }
+  if (dataflow.mutations) {
+    for (const m of dataflow.mutations) {
+      m.binding = m.bindingType ? { type: m.bindingType } : null;
+    }
+  }
+}
+
+function patchNativeResult(r: any): ExtractorOutput {
+  // lineCount: napi(js_name) emits "lineCount"; older binaries may emit "line_count"
+  r.lineCount = r.lineCount ?? r.line_count ?? null;
+  r._lineCount = r.lineCount;
+
+  if (r.definitions) patchDefinitions(r.definitions);
+  if (r.imports) patchImports(r.imports);
+  patchTypeMap(r);
+  if (r.dataflow) patchDataflow(r.dataflow);
 
   return r;
 }
@@ -522,73 +529,48 @@ export async function parseFileAuto(
   return extracted ? extracted.symbols : null;
 }
 
-/**
- * Parse multiple files in bulk and return a Map<relPath, symbols>.
- */
-export async function parseFilesAuto(
-  filePaths: string[],
-  rootDir: string,
-  opts: ParseEngineOpts = {},
-): Promise<Map<string, ExtractorOutput>> {
-  const { native } = resolveEngine(opts);
-  const result = new Map<string, ExtractorOutput>();
+/** Backfill typeMap via WASM for files missing type-map data from native engine. */
+async function backfillTypeMapBatch(
+  needsTypeMap: { filePath: string; relPath: string }[],
+  result: Map<string, ExtractorOutput>,
+): Promise<void> {
+  const tsFiles = needsTypeMap.filter(({ filePath }) =>
+    TS_BACKFILL_EXTS.has(path.extname(filePath)),
+  );
+  if (tsFiles.length === 0) return;
 
-  if (native) {
-    const nativeResults = native.parseFiles(
-      filePaths,
-      rootDir,
-      !!opts.dataflow,
-      opts.ast !== false,
-    );
-    const needsTypeMap: { filePath: string; relPath: string }[] = [];
-    for (const r of nativeResults) {
-      if (!r) continue;
-      const patched = patchNativeResult(r);
-      const relPath = path.relative(rootDir, r.file).split(path.sep).join('/');
-      result.set(relPath, patched);
-      if (patched.typeMap.size === 0) {
-        needsTypeMap.push({ filePath: r.file, relPath });
+  const parsers = await createParsers();
+  for (const { filePath, relPath } of tsFiles) {
+    let extracted: WasmExtractResult | null | undefined;
+    try {
+      const code = fs.readFileSync(filePath, 'utf-8');
+      extracted = wasmExtractSymbols(parsers, filePath, code);
+      if (extracted?.symbols && extracted.symbols.typeMap.size > 0) {
+        const symbols = result.get(relPath);
+        if (!symbols) continue;
+        symbols.typeMap = extracted.symbols.typeMap;
+        symbols._typeMapBackfilled = true;
       }
-    }
-    // Backfill typeMap via WASM for native binaries that predate the type-map feature
-    if (needsTypeMap.length > 0) {
-      // Only backfill for languages where WASM extraction can produce typeMap
-      // (TS/TSX have type annotations; JS only has `new Expr()` which native already handles)
-      const tsFiles = needsTypeMap.filter(({ filePath }) =>
-        TS_BACKFILL_EXTS.has(path.extname(filePath)),
-      );
-      if (tsFiles.length > 0) {
-        const parsers = await createParsers();
-        for (const { filePath, relPath } of tsFiles) {
-          let extracted: WasmExtractResult | null | undefined;
-          try {
-            const code = fs.readFileSync(filePath, 'utf-8');
-            extracted = wasmExtractSymbols(parsers, filePath, code);
-            if (extracted?.symbols && extracted.symbols.typeMap.size > 0) {
-              const symbols = result.get(relPath);
-              if (!symbols) continue;
-              symbols.typeMap = extracted.symbols.typeMap;
-              symbols._typeMapBackfilled = true;
-            }
-          } catch (e) {
-            debug(`batchExtract: typeMap backfill failed: ${toErrorMessage(e)}`);
-          } finally {
-            // Free the WASM tree to prevent memory accumulation across repeated builds
-            if (extracted?.tree && typeof extracted.tree.delete === 'function') {
-              try {
-                extracted.tree.delete();
-              } catch (e) {
-                debug(`batchExtract: WASM tree cleanup failed: ${toErrorMessage(e)}`);
-              }
-            }
-          }
+    } catch (e) {
+      debug(`batchExtract: typeMap backfill failed: ${toErrorMessage(e)}`);
+    } finally {
+      if (extracted?.tree && typeof extracted.tree.delete === 'function') {
+        try {
+          extracted.tree.delete();
+        } catch (e) {
+          debug(`batchExtract: WASM tree cleanup failed: ${toErrorMessage(e)}`);
         }
       }
     }
-    return result;
   }
+}
 
-  // WASM path
+/** Parse files via WASM engine, returning a Map<relPath, symbols>. */
+async function parseFilesWasm(
+  filePaths: string[],
+  rootDir: string,
+): Promise<Map<string, ExtractorOutput>> {
+  const result = new Map<string, ExtractorOutput>();
   const parsers = await createParsers();
   for (const filePath of filePaths) {
     let code: string;
@@ -606,6 +588,36 @@ export async function parseFilesAuto(
       extracted.symbols._lineCount = code.split('\n').length;
       result.set(relPath, extracted.symbols);
     }
+  }
+  return result;
+}
+
+/**
+ * Parse multiple files in bulk and return a Map<relPath, symbols>.
+ */
+export async function parseFilesAuto(
+  filePaths: string[],
+  rootDir: string,
+  opts: ParseEngineOpts = {},
+): Promise<Map<string, ExtractorOutput>> {
+  const { native } = resolveEngine(opts);
+
+  if (!native) return parseFilesWasm(filePaths, rootDir);
+
+  const result = new Map<string, ExtractorOutput>();
+  const nativeResults = native.parseFiles(filePaths, rootDir, !!opts.dataflow, opts.ast !== false);
+  const needsTypeMap: { filePath: string; relPath: string }[] = [];
+  for (const r of nativeResults) {
+    if (!r) continue;
+    const patched = patchNativeResult(r);
+    const relPath = path.relative(rootDir, r.file).split(path.sep).join('/');
+    result.set(relPath, patched);
+    if (patched.typeMap.size === 0) {
+      needsTypeMap.push({ filePath: r.file, relPath });
+    }
+  }
+  if (needsTypeMap.length > 0) {
+    await backfillTypeMapBatch(needsTypeMap, result);
   }
   return result;
 }

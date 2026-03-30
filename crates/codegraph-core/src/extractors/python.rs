@@ -19,186 +19,177 @@ impl SymbolExtractor for PythonExtractor {
 
 fn match_python_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
-        "function_definition" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let name_text = node_text(&name_node, source);
-                let mut decorators = Vec::new();
-                if let Some(prev) = node.prev_sibling() {
-                    if prev.kind() == "decorator" {
-                        decorators.push(node_text(&prev, source).to_string());
-                    }
-                }
-                let parent_class = find_python_parent_class(node, source);
-                let (full_name, kind) = match &parent_class {
-                    Some(cls) => (format!("{}.{}", cls, name_text), "method".to_string()),
-                    None => (name_text.to_string(), "function".to_string()),
-                };
-                let children = extract_python_parameters(node, source, parent_class.is_some());
-                symbols.definitions.push(Definition {
-                    name: full_name,
-                    kind,
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: if decorators.is_empty() {
-                        None
-                    } else {
-                        Some(decorators)
-                    },
-                    complexity: compute_all_metrics(node, source, "python"),
-                    cfg: build_function_cfg(node, "python", source),
-                    children: opt_children(children),
-                });
-            }
-        }
+        "function_definition" => handle_function_def(node, source, symbols),
+        "class_definition" => handle_class_def(node, source, symbols),
+        "expression_statement" => handle_expr_stmt(node, source, symbols),
+        "call" => handle_call(node, source, symbols),
+        "import_statement" => handle_import_stmt(node, source, symbols),
+        "import_from_statement" => handle_import_from_stmt(node, source, symbols),
+        _ => {}
+    }
+}
 
-        "class_definition" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let class_name = node_text(&name_node, source).to_string();
-                let children = extract_python_class_properties(node, source);
-                symbols.definitions.push(Definition {
-                    name: class_name.clone(),
-                    kind: "class".to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: None,
-                    cfg: None,
-                    children: opt_children(children),
-                });
-                let superclasses = node
-                    .child_by_field_name("superclasses")
-                    .or_else(|| find_child(node, "argument_list"));
-                if let Some(superclasses) = superclasses {
-                    for i in 0..superclasses.child_count() {
-                        if let Some(child) = superclasses.child(i) {
-                            if child.kind() == "identifier" {
-                                symbols.classes.push(ClassRelation {
-                                    name: class_name.clone(),
-                                    extends: Some(node_text(&child, source).to_string()),
-                                    implements: None,
-                                    line: start_line(node),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
+// ── Per-node-kind handlers for walk_node_depth ───────────────────────────────
 
-        "expression_statement" => {
-            // Module-level UPPER_CASE = literal → constant
-            if is_module_level(node) {
-                if let Some(expr) = node.child(0) {
-                    if expr.kind() == "assignment" {
-                        if let Some(left) = expr.child_by_field_name("left") {
-                            if left.kind() == "identifier" {
-                                let name = node_text(&left, source);
-                                if is_upper_snake_case(name) {
-                                    symbols.definitions.push(Definition {
-                                        name: name.to_string(),
-                                        kind: "constant".to_string(),
-                                        line: start_line(node),
-                                        end_line: Some(end_line(node)),
-                                        decorators: None,
-                                        complexity: None,
-                                        cfg: None,
-                                        children: None,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+fn handle_function_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(name_node) = node.child_by_field_name("name") else { return };
+    let name_text = node_text(&name_node, source);
+    let mut decorators = Vec::new();
+    if let Some(prev) = node.prev_sibling() {
+        if prev.kind() == "decorator" {
+            decorators.push(node_text(&prev, source).to_string());
         }
+    }
+    let parent_class = find_python_parent_class(node, source);
+    let (full_name, kind) = match &parent_class {
+        Some(cls) => (format!("{}.{}", cls, name_text), "method".to_string()),
+        None => (name_text.to_string(), "function".to_string()),
+    };
+    let children = extract_python_parameters(node, source, parent_class.is_some());
+    symbols.definitions.push(Definition {
+        name: full_name,
+        kind,
+        line: start_line(node),
+        end_line: Some(end_line(node)),
+        decorators: if decorators.is_empty() { None } else { Some(decorators) },
+        complexity: compute_all_metrics(node, source, "python"),
+        cfg: build_function_cfg(node, "python", source),
+        children: opt_children(children),
+    });
+}
 
-        "call" => {
-            if let Some(fn_node) = node.child_by_field_name("function") {
-                let (call_name, receiver) = match fn_node.kind() {
-                    "identifier" => (Some(node_text(&fn_node, source).to_string()), None),
-                    "attribute" => {
-                        let name = fn_node
-                            .child_by_field_name("attribute")
-                            .map(|a| node_text(&a, source).to_string());
-                        let recv = fn_node.child_by_field_name("object")
-                            .map(|obj| node_text(&obj, source).to_string());
-                        (name, recv)
-                    }
-                    _ => (None, None),
-                };
-                if let Some(name) = call_name {
-                    symbols.calls.push(Call {
-                        name,
+fn handle_class_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(name_node) = node.child_by_field_name("name") else { return };
+    let class_name = node_text(&name_node, source).to_string();
+    let children = extract_python_class_properties(node, source);
+    symbols.definitions.push(Definition {
+        name: class_name.clone(),
+        kind: "class".to_string(),
+        line: start_line(node),
+        end_line: Some(end_line(node)),
+        decorators: None,
+        complexity: None,
+        cfg: None,
+        children: opt_children(children),
+    });
+    let superclasses = node
+        .child_by_field_name("superclasses")
+        .or_else(|| find_child(node, "argument_list"));
+    if let Some(superclasses) = superclasses {
+        for i in 0..superclasses.child_count() {
+            if let Some(child) = superclasses.child(i) {
+                if child.kind() == "identifier" {
+                    symbols.classes.push(ClassRelation {
+                        name: class_name.clone(),
+                        extends: Some(node_text(&child, source).to_string()),
+                        implements: None,
                         line: start_line(node),
-                        dynamic: None,
-                        receiver,
                     });
                 }
             }
         }
+    }
+}
 
-        "import_statement" => {
-            let mut names = Vec::new();
-            for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
-                    if child.kind() == "dotted_name" || child.kind() == "aliased_import" {
-                        let name = if child.kind() == "aliased_import" {
-                            child
-                                .child_by_field_name("alias")
-                                .or_else(|| child.child_by_field_name("name"))
-                                .map(|n| node_text(&n, source).to_string())
-                        } else {
-                            Some(node_text(&child, source).to_string())
-                        };
-                        if let Some(name) = name {
-                            names.push(name);
-                        }
-                    }
+fn handle_expr_stmt(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if !is_module_level(node) { return; }
+    let Some(expr) = node.child(0) else { return };
+    if expr.kind() != "assignment" { return; }
+    let Some(left) = expr.child_by_field_name("left") else { return };
+    if left.kind() != "identifier" { return; }
+    let name = node_text(&left, source);
+    if !is_upper_snake_case(name) { return; }
+    symbols.definitions.push(Definition {
+        name: name.to_string(),
+        kind: "constant".to_string(),
+        line: start_line(node),
+        end_line: Some(end_line(node)),
+        decorators: None,
+        complexity: None,
+        cfg: None,
+        children: None,
+    });
+}
+
+fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let Some(fn_node) = node.child_by_field_name("function") else { return };
+    let (call_name, receiver) = match fn_node.kind() {
+        "identifier" => (Some(node_text(&fn_node, source).to_string()), None),
+        "attribute" => {
+            let name = fn_node
+                .child_by_field_name("attribute")
+                .map(|a| node_text(&a, source).to_string());
+            let recv = fn_node.child_by_field_name("object")
+                .map(|obj| node_text(&obj, source).to_string());
+            (name, recv)
+        }
+        _ => (None, None),
+    };
+    if let Some(name) = call_name {
+        symbols.calls.push(Call {
+            name,
+            line: start_line(node),
+            dynamic: None,
+            receiver,
+        });
+    }
+}
+
+fn handle_import_stmt(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let mut names = Vec::new();
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else { continue };
+        if child.kind() != "dotted_name" && child.kind() != "aliased_import" { continue; }
+        let name = if child.kind() == "aliased_import" {
+            child
+                .child_by_field_name("alias")
+                .or_else(|| child.child_by_field_name("name"))
+                .map(|n| node_text(&n, source).to_string())
+        } else {
+            Some(node_text(&child, source).to_string())
+        };
+        if let Some(name) = name {
+            names.push(name);
+        }
+    }
+    if !names.is_empty() {
+        let mut imp = Import::new(names[0].clone(), names, start_line(node));
+        imp.python_import = Some(true);
+        symbols.imports.push(imp);
+    }
+}
+
+fn handle_import_from_stmt(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let mut source_str = String::new();
+    let mut names = Vec::new();
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else { continue };
+        match child.kind() {
+            "dotted_name" | "relative_import" => {
+                if source_str.is_empty() {
+                    source_str = node_text(&child, source).to_string();
+                } else {
+                    names.push(node_text(&child, source).to_string());
                 }
             }
-            if !names.is_empty() {
-                let mut imp = Import::new(names[0].clone(), names, start_line(node));
-                imp.python_import = Some(true);
-                symbols.imports.push(imp);
-            }
-        }
-
-        "import_from_statement" => {
-            let mut source_str = String::new();
-            let mut names = Vec::new();
-            for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
-                    match child.kind() {
-                        "dotted_name" | "relative_import" => {
-                            if source_str.is_empty() {
-                                source_str = node_text(&child, source).to_string();
-                            } else {
-                                names.push(node_text(&child, source).to_string());
-                            }
-                        }
-                        "aliased_import" => {
-                            let n = child
-                                .child_by_field_name("name")
-                                .or_else(|| child.child(0));
-                            if let Some(n) = n {
-                                names.push(node_text(&n, source).to_string());
-                            }
-                        }
-                        "wildcard_import" => {
-                            names.push("*".to_string());
-                        }
-                        _ => {}
-                    }
+            "aliased_import" => {
+                let n = child
+                    .child_by_field_name("name")
+                    .or_else(|| child.child(0));
+                if let Some(n) = n {
+                    names.push(node_text(&n, source).to_string());
                 }
             }
-            if !source_str.is_empty() {
-                let mut imp = Import::new(source_str, names, start_line(node));
-                imp.python_import = Some(true);
-                symbols.imports.push(imp);
+            "wildcard_import" => {
+                names.push("*".to_string());
             }
+            _ => {}
         }
-
-        _ => {}
+    }
+    if !source_str.is_empty() {
+        let mut imp = Import::new(source_str, names, start_line(node));
+        imp.python_import = Some(true);
+        symbols.imports.push(imp);
     }
 }
 
@@ -319,17 +310,10 @@ fn is_upper_snake_case(s: &str) -> bool {
 
 // ── Existing helpers ────────────────────────────────────────────────────────
 
-fn find_python_parent_class<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> {
-    let mut current = node.parent();
-    while let Some(parent) = current {
-        if parent.kind() == "class_definition" {
-            return parent
-                .child_by_field_name("name")
-                .map(|n| node_text(&n, source).to_string());
-        }
-        current = parent.parent();
-    }
-    None
+const PYTHON_CLASS_KINDS: &[&str] = &["class_definition"];
+
+fn find_python_parent_class(node: &Node, source: &[u8]) -> Option<String> {
+    find_enclosing_type_name(node, PYTHON_CLASS_KINDS, source)
 }
 
 fn extract_python_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {

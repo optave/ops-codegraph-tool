@@ -407,6 +407,131 @@ export async function buildDataflowEdges(
 
 // findNodes imported from ./shared/find-nodes.js
 
+interface DataflowStmts {
+  flowsToOut: ReturnType<BetterSqlite3Database['prepare']>;
+  flowsToIn: ReturnType<BetterSqlite3Database['prepare']>;
+  returnsOut: ReturnType<BetterSqlite3Database['prepare']>;
+  returnsIn: ReturnType<BetterSqlite3Database['prepare']>;
+  mutatesOut: ReturnType<BetterSqlite3Database['prepare']>;
+  mutatesIn: ReturnType<BetterSqlite3Database['prepare']>;
+}
+
+function prepareDataflowStmts(db: BetterSqlite3Database): DataflowStmts {
+  return {
+    flowsToOut: db.prepare(
+      `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
+     FROM dataflow d JOIN nodes n ON d.target_id = n.id
+     WHERE d.source_id = ? AND d.kind = 'flows_to'`,
+    ),
+    flowsToIn: db.prepare(
+      `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
+     FROM dataflow d JOIN nodes n ON d.source_id = n.id
+     WHERE d.target_id = ? AND d.kind = 'flows_to'`,
+    ),
+    returnsOut: db.prepare(
+      `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
+     FROM dataflow d JOIN nodes n ON d.target_id = n.id
+     WHERE d.source_id = ? AND d.kind = 'returns'`,
+    ),
+    returnsIn: db.prepare(
+      `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
+     FROM dataflow d JOIN nodes n ON d.source_id = n.id
+     WHERE d.target_id = ? AND d.kind = 'returns'`,
+    ),
+    mutatesOut: db.prepare(
+      `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
+     FROM dataflow d JOIN nodes n ON d.target_id = n.id
+     WHERE d.source_id = ? AND d.kind = 'mutates'`,
+    ),
+    mutatesIn: db.prepare(
+      `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
+     FROM dataflow d JOIN nodes n ON d.source_id = n.id
+     WHERE d.target_id = ? AND d.kind = 'mutates'`,
+    ),
+  };
+}
+
+function buildNodeDataflowResult(
+  node: NodeRow,
+  stmts: DataflowStmts,
+  db: BetterSqlite3Database,
+  hc: Map<string, string | null>,
+  noTests: boolean,
+): Record<string, unknown> {
+  const sym = normalizeSymbol(node, db, hc);
+
+  const flowsTo = stmts.flowsToOut.all(node.id).map((r: any) => ({
+    target: r.target_name,
+    kind: r.target_kind,
+    file: r.target_file,
+    line: r.line,
+    paramIndex: r.param_index,
+    expression: r.expression,
+    confidence: r.confidence,
+  }));
+
+  const flowsFrom = stmts.flowsToIn.all(node.id).map((r: any) => ({
+    source: r.source_name,
+    kind: r.source_kind,
+    file: r.source_file,
+    line: r.line,
+    paramIndex: r.param_index,
+    expression: r.expression,
+    confidence: r.confidence,
+  }));
+
+  const returnConsumers = stmts.returnsOut.all(node.id).map((r: any) => ({
+    consumer: r.target_name,
+    kind: r.target_kind,
+    file: r.target_file,
+    line: r.line,
+    expression: r.expression,
+  }));
+
+  const returnedBy = stmts.returnsIn.all(node.id).map((r: any) => ({
+    producer: r.source_name,
+    kind: r.source_kind,
+    file: r.source_file,
+    line: r.line,
+    expression: r.expression,
+  }));
+
+  const mutatesTargets = stmts.mutatesOut.all(node.id).map((r: any) => ({
+    target: r.target_name,
+    expression: r.expression,
+    line: r.line,
+  }));
+
+  const mutatedBy = stmts.mutatesIn.all(node.id).map((r: any) => ({
+    source: r.source_name,
+    expression: r.expression,
+    line: r.line,
+  }));
+
+  if (noTests) {
+    const filter = (arr: any[]) => arr.filter((r: any) => !isTestFile(r.file));
+    return {
+      ...sym,
+      flowsTo: filter(flowsTo),
+      flowsFrom: filter(flowsFrom),
+      returns: returnConsumers.filter((r) => !isTestFile(r.file)),
+      returnedBy: returnedBy.filter((r) => !isTestFile(r.file)),
+      mutates: mutatesTargets,
+      mutatedBy,
+    };
+  }
+
+  return {
+    ...sym,
+    flowsTo,
+    flowsFrom,
+    returns: returnConsumers,
+    returnedBy,
+    mutates: mutatesTargets,
+    mutatedBy,
+  };
+}
+
 export function dataflowData(
   name: string,
   customDbPath?: string,
@@ -512,113 +637,116 @@ export function dataflowData(
     }
 
     // ── JS fallback ───────────────────────────────────────────────────
-    const flowsToOut = db.prepare(
-      `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
-     FROM dataflow d JOIN nodes n ON d.target_id = n.id
-     WHERE d.source_id = ? AND d.kind = 'flows_to'`,
-    );
-    const flowsToIn = db.prepare(
-      `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
-     FROM dataflow d JOIN nodes n ON d.source_id = n.id
-     WHERE d.target_id = ? AND d.kind = 'flows_to'`,
-    );
-    const returnsOut = db.prepare(
-      `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
-     FROM dataflow d JOIN nodes n ON d.target_id = n.id
-     WHERE d.source_id = ? AND d.kind = 'returns'`,
-    );
-    const returnsIn = db.prepare(
-      `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
-     FROM dataflow d JOIN nodes n ON d.source_id = n.id
-     WHERE d.target_id = ? AND d.kind = 'returns'`,
-    );
-    const mutatesOut = db.prepare(
-      `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
-     FROM dataflow d JOIN nodes n ON d.target_id = n.id
-     WHERE d.source_id = ? AND d.kind = 'mutates'`,
-    );
-    const mutatesIn = db.prepare(
-      `SELECT d.*, n.name AS source_name, n.kind AS source_kind, n.file AS source_file, n.line AS source_line
-     FROM dataflow d JOIN nodes n ON d.source_id = n.id
-     WHERE d.target_id = ? AND d.kind = 'mutates'`,
-    );
-
+    const stmts = prepareDataflowStmts(db);
     const hc = new Map<string, string | null>();
-    const results = nodes.map((node: NodeRow) => {
-      const sym = normalizeSymbol(node, db, hc);
-
-      const flowsTo = flowsToOut.all(node.id).map((r: any) => ({
-        target: r.target_name,
-        kind: r.target_kind,
-        file: r.target_file,
-        line: r.line,
-        paramIndex: r.param_index,
-        expression: r.expression,
-        confidence: r.confidence,
-      }));
-      const flowsFrom = flowsToIn.all(node.id).map((r: any) => ({
-        source: r.source_name,
-        kind: r.source_kind,
-        file: r.source_file,
-        line: r.line,
-        paramIndex: r.param_index,
-        expression: r.expression,
-        confidence: r.confidence,
-      }));
-      const returnConsumers = returnsOut.all(node.id).map((r: any) => ({
-        consumer: r.target_name,
-        kind: r.target_kind,
-        file: r.target_file,
-        line: r.line,
-        expression: r.expression,
-      }));
-      const returnedBy = returnsIn.all(node.id).map((r: any) => ({
-        producer: r.source_name,
-        kind: r.source_kind,
-        file: r.source_file,
-        line: r.line,
-        expression: r.expression,
-      }));
-      const mutatesTargets = mutatesOut.all(node.id).map((r: any) => ({
-        target: r.target_name,
-        expression: r.expression,
-        line: r.line,
-      }));
-      const mutatedBy = mutatesIn.all(node.id).map((r: any) => ({
-        source: r.source_name,
-        expression: r.expression,
-        line: r.line,
-      }));
-
-      if (noTests) {
-        const filter = (arr: any[]) => arr.filter((r: any) => !isTestFile(r.file));
-        return {
-          ...sym,
-          flowsTo: filter(flowsTo),
-          flowsFrom: filter(flowsFrom),
-          returns: returnConsumers.filter((r) => !isTestFile(r.file)),
-          returnedBy: returnedBy.filter((r) => !isTestFile(r.file)),
-          mutates: mutatesTargets,
-          mutatedBy,
-        };
-      }
-
-      return {
-        ...sym,
-        flowsTo,
-        flowsFrom,
-        returns: returnConsumers,
-        returnedBy,
-        mutates: mutatesTargets,
-        mutatedBy,
-      };
-    });
+    const results = nodes.map((node: NodeRow) =>
+      buildNodeDataflowResult(node, stmts, db, hc, noTests),
+    );
 
     const base = { name, results };
     return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
   } finally {
     close();
   }
+}
+
+interface BfsParentEntry {
+  parentId: number;
+  edgeKind: string;
+  expression: string;
+}
+
+/** BFS through dataflow edges to find a path from source to target. */
+function bfsDataflowPath(
+  db: BetterSqlite3Database,
+  sourceId: number,
+  targetId: number,
+  maxDepth: number,
+  noTests: boolean,
+): Map<number, BfsParentEntry> | null {
+  const neighborStmt = db.prepare(
+    `SELECT n.id, n.name, n.kind, n.file, n.line, d.kind AS edge_kind, d.expression
+     FROM dataflow d JOIN nodes n ON d.target_id = n.id
+     WHERE d.source_id = ? AND d.kind IN ('flows_to', 'returns')`,
+  );
+
+  const visited = new Set<number>([sourceId]);
+  const parent = new Map<number, BfsParentEntry>();
+  let queue = [sourceId];
+  let found = false;
+
+  for (let depth = 1; depth <= maxDepth; depth++) {
+    const nextQueue: number[] = [];
+    for (const currentId of queue) {
+      const neighbors = neighborStmt.all(currentId) as Array<{
+        id: number;
+        file: string;
+        edge_kind: string;
+        expression: string;
+      }>;
+      for (const n of neighbors) {
+        if (noTests && isTestFile(n.file)) continue;
+        if (n.id === targetId) {
+          if (!found) {
+            found = true;
+            parent.set(n.id, {
+              parentId: currentId,
+              edgeKind: n.edge_kind,
+              expression: n.expression,
+            });
+          }
+          continue;
+        }
+        if (!visited.has(n.id)) {
+          visited.add(n.id);
+          parent.set(n.id, {
+            parentId: currentId,
+            edgeKind: n.edge_kind,
+            expression: n.expression,
+          });
+          nextQueue.push(n.id);
+        }
+      }
+    }
+    if (found) break;
+    queue = nextQueue;
+    if (queue.length === 0) break;
+  }
+
+  return found ? parent : null;
+}
+
+/** Reconstruct a path from BFS parent map. */
+function reconstructDataflowPath(
+  db: BetterSqlite3Database,
+  parent: Map<number, BfsParentEntry>,
+  sourceId: number,
+  targetId: number,
+): Array<Record<string, unknown>> {
+  const nodeById = db.prepare('SELECT * FROM nodes WHERE id = ?');
+  const hc = new Map<string, string | null>();
+  const pathItems: Array<Record<string, unknown>> = [];
+  let cur: number | undefined = targetId;
+  while (cur !== undefined) {
+    const nodeRow = nodeById.get(cur) as NodeRow;
+    const parentInfo = parent.get(cur);
+    pathItems.unshift({
+      ...normalizeSymbol(nodeRow, db, hc),
+      edgeKind: parentInfo?.edgeKind ?? null,
+      expression: parentInfo?.expression ?? null,
+    });
+    cur = parentInfo?.parentId;
+    if (cur === sourceId) {
+      const srcRow = nodeById.get(cur) as NodeRow;
+      pathItems.unshift({
+        ...normalizeSymbol(srcRow, db, hc),
+        edgeKind: null,
+        expression: null,
+      });
+      break;
+    }
+  }
+  return pathItems;
 }
 
 export function dataflowPathData(
@@ -676,101 +804,52 @@ export function dataflowPathData(
     if (sourceNode.id === targetNode.id) {
       const hc = new Map<string, string | null>();
       const sym = normalizeSymbol(sourceNode, db, hc);
-      return {
-        from,
-        to,
-        found: true,
-        hops: 0,
-        path: [{ ...sym, edgeKind: null }],
-      };
+      return { from, to, found: true, hops: 0, path: [{ ...sym, edgeKind: null }] };
     }
 
-    // BFS through flows_to and returns edges
-    const neighborStmt = db.prepare(
-      `SELECT n.id, n.name, n.kind, n.file, n.line, d.kind AS edge_kind, d.expression
-     FROM dataflow d JOIN nodes n ON d.target_id = n.id
-     WHERE d.source_id = ? AND d.kind IN ('flows_to', 'returns')`,
-    );
-
-    const visited = new Set<number>([sourceNode.id]);
-    const parent = new Map<number, { parentId: number; edgeKind: string; expression: string }>();
-    let queue = [sourceNode.id];
-    let found = false;
-
-    for (let depth = 1; depth <= maxDepth; depth++) {
-      const nextQueue: number[] = [];
-      for (const currentId of queue) {
-        const neighbors = neighborStmt.all(currentId) as Array<{
-          id: number;
-          name: string;
-          kind: string;
-          file: string;
-          line: number;
-          edge_kind: string;
-          expression: string;
-        }>;
-        for (const n of neighbors) {
-          if (noTests && isTestFile(n.file)) continue;
-          if (n.id === targetNode.id) {
-            if (!found) {
-              found = true;
-              parent.set(n.id, {
-                parentId: currentId,
-                edgeKind: n.edge_kind,
-                expression: n.expression,
-              });
-            }
-            continue;
-          }
-          if (!visited.has(n.id)) {
-            visited.add(n.id);
-            parent.set(n.id, {
-              parentId: currentId,
-              edgeKind: n.edge_kind,
-              expression: n.expression,
-            });
-            nextQueue.push(n.id);
-          }
-        }
-      }
-      if (found) break;
-      queue = nextQueue;
-      if (queue.length === 0) break;
-    }
-
-    if (!found) {
+    const parent = bfsDataflowPath(db, sourceNode.id, targetNode.id, maxDepth, noTests);
+    if (!parent) {
       return { from, to, found: false };
     }
 
-    // Reconstruct path
-    const nodeById = db.prepare('SELECT * FROM nodes WHERE id = ?');
-    const hc = new Map<string, string | null>();
-    const pathItems: Array<Record<string, unknown>> = [];
-    let cur: number | undefined = targetNode.id;
-    while (cur !== undefined) {
-      const nodeRow = nodeById.get(cur) as NodeRow;
-      const parentInfo = parent.get(cur);
-      pathItems.unshift({
-        ...normalizeSymbol(nodeRow, db, hc),
-        edgeKind: parentInfo?.edgeKind ?? null,
-        expression: parentInfo?.expression ?? null,
-      });
-      cur = parentInfo?.parentId;
-      if (cur === sourceNode.id) {
-        const srcRow = nodeById.get(cur) as NodeRow;
-        pathItems.unshift({
-          ...normalizeSymbol(srcRow, db, hc),
-          edgeKind: null,
-          expression: null,
-        });
-        break;
-      }
-    }
-
+    const pathItems = reconstructDataflowPath(db, parent, sourceNode.id, targetNode.id);
     return { from, to, found: true, hops: pathItems.length - 1, path: pathItems };
   } finally {
     db.close();
   }
+}
+
+/** BFS forward through return-value consumers to build impact levels. */
+function bfsReturnConsumers(
+  node: NodeRow,
+  consumersStmt: ReturnType<BetterSqlite3Database['prepare']>,
+  db: BetterSqlite3Database,
+  hc: Map<string, string | null>,
+  maxDepth: number,
+  noTests: boolean,
+): { levels: Record<number, unknown[]>; totalAffected: number } {
+  const visited = new Set<number>([node.id]);
+  const levels: Record<number, unknown[]> = {};
+  let frontier = [node.id];
+
+  for (let d = 1; d <= maxDepth; d++) {
+    const nextFrontier: number[] = [];
+    for (const fid of frontier) {
+      const consumers = consumersStmt.all(fid) as NodeRow[];
+      for (const c of consumers) {
+        if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
+          visited.add(c.id);
+          nextFrontier.push(c.id);
+          if (!levels[d]) levels[d] = [];
+          levels[d]!.push(normalizeSymbol(c, db, hc));
+        }
+      }
+    }
+    frontier = nextFrontier;
+    if (frontier.length === 0) break;
+  }
+
+  return { levels, totalAffected: visited.size - 1 };
 }
 
 export function dataflowImpactData(
@@ -809,7 +888,6 @@ export function dataflowImpactData(
       return { name, results: [] };
     }
 
-    // Forward BFS: who consumes this function's return value (directly or transitively)?
     const consumersStmt = db.prepare(
       `SELECT DISTINCT n.*
      FROM dataflow d JOIN nodes n ON d.target_id = n.id
@@ -819,32 +897,15 @@ export function dataflowImpactData(
     const hc = new Map<string, string | null>();
     const results = nodes.map((node: NodeRow) => {
       const sym = normalizeSymbol(node, db, hc);
-      const visited = new Set<number>([node.id]);
-      const levels: Record<number, unknown[]> = {};
-      let frontier = [node.id];
-
-      for (let d = 1; d <= maxDepth; d++) {
-        const nextFrontier: number[] = [];
-        for (const fid of frontier) {
-          const consumers = consumersStmt.all(fid) as NodeRow[];
-          for (const c of consumers) {
-            if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
-              visited.add(c.id);
-              nextFrontier.push(c.id);
-              if (!levels[d]) levels[d] = [];
-              levels[d]!.push(normalizeSymbol(c, db, hc));
-            }
-          }
-        }
-        frontier = nextFrontier;
-        if (frontier.length === 0) break;
-      }
-
-      return {
-        ...sym,
-        levels,
-        totalAffected: visited.size - 1,
-      };
+      const { levels, totalAffected } = bfsReturnConsumers(
+        node,
+        consumersStmt,
+        db,
+        hc,
+        maxDepth,
+        noTests,
+      );
+      return { ...sym, levels, totalAffected };
     });
 
     const base = { name, results };
