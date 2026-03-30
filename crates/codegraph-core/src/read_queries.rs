@@ -1491,7 +1491,7 @@ impl NativeDatabase {
         }
 
         fn query_outgoing(
-            conn: &Connection,
+            conn: &rusqlite::Connection,
             node_id: i32,
             kind: &str,
         ) -> napi::Result<Vec<DataflowQueryEdge>> {
@@ -1500,7 +1500,7 @@ impl NativeDatabase {
                  WHERE d.source_id = ?1 AND d.kind = ?2";
             let mut stmt = conn.prepare_cached(sql)
                 .map_err(|e| napi::Error::from_reason(format!("get_dataflow_edges out {kind}: {e}")))?;
-            let rows = stmt.query_map(params![node_id, kind], |row| {
+            let rows = stmt.query_map(params![node_id, kind], |row: &rusqlite::Row| {
                 Ok(DataflowQueryEdge {
                     name: row.get(0)?,
                     kind: row.get(1)?,
@@ -1516,7 +1516,7 @@ impl NativeDatabase {
         }
 
         fn query_incoming(
-            conn: &Connection,
+            conn: &rusqlite::Connection,
             node_id: i32,
             kind: &str,
         ) -> napi::Result<Vec<DataflowQueryEdge>> {
@@ -1525,7 +1525,7 @@ impl NativeDatabase {
                  WHERE d.target_id = ?1 AND d.kind = ?2";
             let mut stmt = conn.prepare_cached(sql)
                 .map_err(|e| napi::Error::from_reason(format!("get_dataflow_edges in {kind}: {e}")))?;
-            let rows = stmt.query_map(params![node_id, kind], |row| {
+            let rows = stmt.query_map(params![node_id, kind], |row: &rusqlite::Row| {
                 Ok(DataflowQueryEdge {
                     name: row.get(0)?,
                     kind: row.get(1)?,
