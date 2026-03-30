@@ -807,7 +807,7 @@ impl NativeDatabase {
 }
 
 /// Check if a table exists in the database.
-fn has_table(conn: &Connection, table: &str) -> bool {
+pub(crate) fn has_table(conn: &Connection, table: &str) -> bool {
     conn.query_row(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",
         params![table],

@@ -8,7 +8,7 @@ use std::collections::{HashSet, VecDeque};
 use napi_derive::napi;
 use rusqlite::params;
 
-use crate::native_db::NativeDatabase;
+use crate::native_db::{has_table, NativeDatabase};
 use crate::read_types::*;
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -1226,5 +1226,430 @@ impl NativeDatabase {
             .map_err(|e| {
                 napi::Error::from_reason(format!("query_function_nodes collect: {e}"))
             })
+    }
+
+    // ── Batched query methods ──────────────────────────────────────────
+
+    /// Get all graph statistics in a single napi call.
+    /// Replaces ~11 separate queries in module-map.ts `statsData()`.
+    #[napi]
+    pub fn get_graph_stats(&self, no_tests: bool) -> napi::Result<GraphStats> {
+        let conn = self.conn()?;
+        let tf = if no_tests {
+            test_filter_clauses("file")
+        } else {
+            String::new()
+        };
+        let tf_n = if no_tests {
+            test_filter_clauses("n.file")
+        } else {
+            String::new()
+        };
+
+        // ── Node counts by kind ────────────────────────────────────
+        let nodes_by_kind = {
+            let sql = format!(
+                "SELECT kind, COUNT(*) as c FROM nodes WHERE 1=1 {} GROUP BY kind",
+                tf
+            );
+            let mut stmt = conn.prepare_cached(&sql)
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats nodes_by_kind: {e}")))?;
+            let rows = stmt.query_map([], |row| {
+                Ok(KindCount {
+                    kind: row.get::<_, String>(0)?,
+                    count: row.get::<_, i32>(1)?,
+                })
+            }).map_err(|e| napi::Error::from_reason(format!("get_graph_stats nodes_by_kind query: {e}")))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats nodes_by_kind collect: {e}")))?
+        };
+        let total_nodes: i32 = nodes_by_kind.iter().map(|k| k.count).sum();
+
+        // ── Edge counts by kind ────────────────────────────────────
+        let edges_by_kind = {
+            let sql = if no_tests {
+                format!(
+                    "SELECT e.kind, COUNT(*) as c FROM edges e \
+                     JOIN nodes ns ON e.source_id = ns.id \
+                     JOIN nodes nt ON e.target_id = nt.id \
+                     WHERE 1=1 {} {} GROUP BY e.kind",
+                    test_filter_clauses("ns.file"),
+                    test_filter_clauses("nt.file"),
+                )
+            } else {
+                "SELECT kind, COUNT(*) as c FROM edges GROUP BY kind".to_string()
+            };
+            let mut stmt = conn.prepare_cached(&sql)
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats edges_by_kind: {e}")))?;
+            let rows = stmt.query_map([], |row| {
+                Ok(KindCount {
+                    kind: row.get::<_, String>(0)?,
+                    count: row.get::<_, i32>(1)?,
+                })
+            }).map_err(|e| napi::Error::from_reason(format!("get_graph_stats edges_by_kind query: {e}")))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats edges_by_kind collect: {e}")))?
+        };
+        let total_edges: i32 = edges_by_kind.iter().map(|k| k.count).sum();
+
+        // ── File count ─────────────────────────────────────────────
+        let total_files: i32 = {
+            let sql = format!(
+                "SELECT COUNT(*) FROM nodes WHERE kind = 'file' {}",
+                tf
+            );
+            conn.prepare_cached(&sql)
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats total_files: {e}")))?
+                .query_row([], |row| row.get(0))
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats total_files query: {e}")))?
+        };
+
+        // ── Role counts ────────────────────────────────────────────
+        let role_counts = {
+            let sql = format!(
+                "SELECT role, COUNT(*) as c FROM nodes WHERE role IS NOT NULL {} GROUP BY role",
+                tf
+            );
+            let mut stmt = conn.prepare_cached(&sql)
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats role_counts: {e}")))?;
+            let rows = stmt.query_map([], |row| {
+                Ok(RoleCount {
+                    role: row.get::<_, String>(0)?,
+                    count: row.get::<_, i32>(1)?,
+                })
+            }).map_err(|e| napi::Error::from_reason(format!("get_graph_stats role_counts query: {e}")))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats role_counts collect: {e}")))?
+        };
+
+        // ── Quality metrics ────────────────────────────────────────
+        let callable_total: i32 = {
+            let sql = format!(
+                "SELECT COUNT(*) FROM nodes WHERE kind IN ('function', 'method') {}",
+                tf
+            );
+            conn.prepare_cached(&sql)
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats callable_total: {e}")))?
+                .query_row([], |row| row.get(0))
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats callable_total query: {e}")))?
+        };
+        let callable_with_callers: i32 = {
+            let sql = format!(
+                "SELECT COUNT(DISTINCT e.target_id) FROM edges e \
+                 JOIN nodes n ON e.target_id = n.id \
+                 WHERE e.kind = 'calls' AND n.kind IN ('function', 'method') {}",
+                tf_n
+            );
+            conn.prepare_cached(&sql)
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats callable_with_callers: {e}")))?
+                .query_row([], |row| row.get(0))
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats callable_with_callers query: {e}")))?
+        };
+        let call_edges: i32 = conn
+            .prepare_cached("SELECT COUNT(*) FROM edges WHERE kind = 'calls'")
+            .map_err(|e| napi::Error::from_reason(format!("get_graph_stats call_edges: {e}")))?
+            .query_row([], |row| row.get(0))
+            .map_err(|e| napi::Error::from_reason(format!("get_graph_stats call_edges query: {e}")))?;
+        let high_conf_call_edges: i32 = conn
+            .prepare_cached("SELECT COUNT(*) FROM edges WHERE kind = 'calls' AND confidence >= 0.7")
+            .map_err(|e| napi::Error::from_reason(format!("get_graph_stats high_conf: {e}")))?
+            .query_row([], |row| row.get(0))
+            .map_err(|e| napi::Error::from_reason(format!("get_graph_stats high_conf query: {e}")))?;
+
+        // ── Hotspots (top 5 files by coupling) ─────────────────────
+        let hotspots = {
+            let sql = format!(
+                "SELECT n.file, \
+                 (SELECT COUNT(*) FROM edges WHERE target_id = n.id) as fan_in, \
+                 (SELECT COUNT(*) FROM edges WHERE source_id = n.id) as fan_out \
+                 FROM nodes n WHERE n.kind = 'file' {} \
+                 ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id) \
+                        + (SELECT COUNT(*) FROM edges WHERE source_id = n.id) DESC \
+                 LIMIT 5",
+                tf_n
+            );
+            let mut stmt = conn.prepare_cached(&sql)
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats hotspots: {e}")))?;
+            let rows = stmt.query_map([], |row| {
+                Ok(FileHotspot {
+                    file: row.get(0)?,
+                    fan_in: row.get(1)?,
+                    fan_out: row.get(2)?,
+                })
+            }).map_err(|e| napi::Error::from_reason(format!("get_graph_stats hotspots query: {e}")))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats hotspots collect: {e}")))?
+        };
+
+        // ── Complexity summary ─────────────────────────────────────
+        let complexity = if has_table(conn, "function_complexity") {
+            let sql = format!(
+                "SELECT fc.cognitive, fc.cyclomatic, fc.max_nesting, fc.maintainability_index \
+                 FROM function_complexity fc JOIN nodes n ON fc.node_id = n.id \
+                 WHERE n.kind IN ('function','method') {}",
+                tf_n
+            );
+            let mut stmt = conn.prepare_cached(&sql)
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats complexity: {e}")))?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, i32>(0)?,
+                    row.get::<_, i32>(1)?,
+                    row.get::<_, i32>(2)?,
+                    row.get::<_, f64>(3).unwrap_or(0.0),
+                ))
+            }).map_err(|e| napi::Error::from_reason(format!("get_graph_stats complexity query: {e}")))?;
+            let data: Vec<(i32, i32, i32, f64)> = rows
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats complexity collect: {e}")))?;
+            if data.is_empty() {
+                None
+            } else {
+                let n = data.len() as f64;
+                let sum_cog: i32 = data.iter().map(|d| d.0).sum();
+                let sum_cyc: i32 = data.iter().map(|d| d.1).sum();
+                let max_cog = data.iter().map(|d| d.0).max().unwrap_or(0);
+                let max_cyc = data.iter().map(|d| d.1).max().unwrap_or(0);
+                let sum_mi: f64 = data.iter().map(|d| d.3).sum();
+                let min_mi = data.iter().map(|d| d.3).fold(f64::INFINITY, f64::min);
+                Some(ComplexitySummary {
+                    analyzed: data.len() as i32,
+                    avg_cognitive: (sum_cog as f64 / n * 10.0).round() / 10.0,
+                    avg_cyclomatic: (sum_cyc as f64 / n * 10.0).round() / 10.0,
+                    max_cognitive: max_cog,
+                    max_cyclomatic: max_cyc,
+                    avg_mi: (sum_mi / n * 10.0).round() / 10.0,
+                    min_mi: (min_mi * 10.0).round() / 10.0,
+                })
+            }
+        } else {
+            None
+        };
+
+        // ── Embeddings info ────────────────────────────────────────
+        let embeddings = if has_table(conn, "embeddings") {
+            let count: i32 = conn
+                .prepare_cached("SELECT COUNT(*) FROM embeddings")
+                .map_err(|e| napi::Error::from_reason(format!("get_graph_stats embeddings: {e}")))?
+                .query_row([], |row| row.get(0))
+                .unwrap_or(0);
+            if count > 0 && has_table(conn, "embedding_meta") {
+                let mut model: Option<String> = None;
+                let mut dim: Option<i32> = None;
+                let mut built_at: Option<String> = None;
+                let mut stmt = conn
+                    .prepare_cached("SELECT key, value FROM embedding_meta")
+                    .map_err(|e| napi::Error::from_reason(format!("get_graph_stats embedding_meta: {e}")))?;
+                let rows = stmt.query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                }).map_err(|e| napi::Error::from_reason(format!("get_graph_stats embedding_meta query: {e}")))?;
+                for row in rows {
+                    if let Ok((k, v)) = row {
+                        match k.as_str() {
+                            "model" => model = Some(v),
+                            "dim" => dim = v.parse().ok(),
+                            "built_at" => built_at = Some(v),
+                            _ => {}
+                        }
+                    }
+                }
+                Some(EmbeddingInfo { count, model, dim, built_at })
+            } else if count > 0 {
+                Some(EmbeddingInfo { count, model: None, dim: None, built_at: None })
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        Ok(GraphStats {
+            total_nodes,
+            total_edges,
+            total_files,
+            nodes_by_kind,
+            edges_by_kind,
+            role_counts,
+            quality: QualityMetrics {
+                callable_total,
+                callable_with_callers,
+                call_edges,
+                high_conf_call_edges,
+            },
+            hotspots,
+            complexity,
+            embeddings,
+        })
+    }
+
+    /// Get all 6 directional dataflow edge sets for a node in a single napi call.
+    /// Replaces 6 separate db.prepare() calls in dataflow.ts `dataflowData()`.
+    #[napi]
+    pub fn get_dataflow_edges(&self, node_id: i32) -> napi::Result<DataflowEdgesResult> {
+        let conn = self.conn()?;
+
+        if !has_table(conn, "dataflow") {
+            return Ok(DataflowEdgesResult {
+                flows_to_out: vec![],
+                flows_to_in: vec![],
+                returns_out: vec![],
+                returns_in: vec![],
+                mutates_out: vec![],
+                mutates_in: vec![],
+            });
+        }
+
+        fn query_outgoing(
+            conn: &Connection,
+            node_id: i32,
+            kind: &str,
+        ) -> napi::Result<Vec<DataflowQueryEdge>> {
+            let sql = format!(
+                "SELECT n.name, n.kind, n.file, d.line, d.param_index, d.expression, d.confidence \
+                 FROM dataflow d JOIN nodes n ON d.target_id = n.id \
+                 WHERE d.source_id = ?1 AND d.kind = '{}'",
+                kind
+            );
+            let mut stmt = conn.prepare_cached(&sql)
+                .map_err(|e| napi::Error::from_reason(format!("get_dataflow_edges out {kind}: {e}")))?;
+            let rows = stmt.query_map(params![node_id], |row| {
+                Ok(DataflowQueryEdge {
+                    name: row.get(0)?,
+                    kind: row.get(1)?,
+                    file: row.get(2)?,
+                    line: row.get(3)?,
+                    param_index: row.get(4)?,
+                    expression: row.get(5)?,
+                    confidence: row.get(6)?,
+                })
+            }).map_err(|e| napi::Error::from_reason(format!("get_dataflow_edges out {kind} query: {e}")))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| napi::Error::from_reason(format!("get_dataflow_edges out {kind} collect: {e}")))
+        }
+
+        fn query_incoming(
+            conn: &Connection,
+            node_id: i32,
+            kind: &str,
+        ) -> napi::Result<Vec<DataflowQueryEdge>> {
+            let sql = format!(
+                "SELECT n.name, n.kind, n.file, d.line, d.param_index, d.expression, d.confidence \
+                 FROM dataflow d JOIN nodes n ON d.source_id = n.id \
+                 WHERE d.target_id = ?1 AND d.kind = '{}'",
+                kind
+            );
+            let mut stmt = conn.prepare_cached(&sql)
+                .map_err(|e| napi::Error::from_reason(format!("get_dataflow_edges in {kind}: {e}")))?;
+            let rows = stmt.query_map(params![node_id], |row| {
+                Ok(DataflowQueryEdge {
+                    name: row.get(0)?,
+                    kind: row.get(1)?,
+                    file: row.get(2)?,
+                    line: row.get(3)?,
+                    param_index: row.get(4)?,
+                    expression: row.get(5)?,
+                    confidence: row.get(6)?,
+                })
+            }).map_err(|e| napi::Error::from_reason(format!("get_dataflow_edges in {kind} query: {e}")))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| napi::Error::from_reason(format!("get_dataflow_edges in {kind} collect: {e}")))
+        }
+
+        Ok(DataflowEdgesResult {
+            flows_to_out: query_outgoing(conn, node_id, "flows_to")?,
+            flows_to_in: query_incoming(conn, node_id, "flows_to")?,
+            returns_out: query_outgoing(conn, node_id, "returns")?,
+            returns_in: query_incoming(conn, node_id, "returns")?,
+            mutates_out: query_outgoing(conn, node_id, "mutates")?,
+            mutates_in: query_incoming(conn, node_id, "mutates")?,
+        })
+    }
+
+    /// Get hotspot rows for a given metric, kind, and limit in a single napi call.
+    /// Replaces 4 eagerly-prepared queries in structure-query.ts `hotspotsData()`.
+    #[napi]
+    pub fn get_hotspots(
+        &self,
+        kind: String,
+        metric: String,
+        no_tests: bool,
+        limit: i32,
+    ) -> napi::Result<Vec<NativeHotspotRow>> {
+        let conn = self.conn()?;
+
+        if !has_table(conn, "node_metrics") {
+            return Ok(vec![]);
+        }
+
+        let test_filter = if no_tests && kind == "file" {
+            test_filter_clauses("n.name")
+        } else {
+            String::new()
+        };
+
+        let order_by = match metric.as_str() {
+            "fan-out" => "nm.fan_out DESC NULLS LAST",
+            "density" => "nm.symbol_count DESC NULLS LAST",
+            "coupling" => "(COALESCE(nm.fan_in, 0) + COALESCE(nm.fan_out, 0)) DESC NULLS LAST",
+            _ => "nm.fan_in DESC NULLS LAST", // default: fan-in
+        };
+
+        let sql = format!(
+            "SELECT n.name, n.kind, nm.line_count, nm.symbol_count, nm.import_count, \
+             nm.export_count, nm.fan_in, nm.fan_out, nm.cohesion, nm.file_count \
+             FROM nodes n JOIN node_metrics nm ON n.id = nm.node_id \
+             WHERE n.kind = ?1 {} ORDER BY {} LIMIT ?2",
+            test_filter, order_by
+        );
+
+        let mut stmt = conn.prepare_cached(&sql)
+            .map_err(|e| napi::Error::from_reason(format!("get_hotspots: {e}")))?;
+        let rows = stmt.query_map(params![kind, limit], |row| {
+            Ok(NativeHotspotRow {
+                name: row.get(0)?,
+                kind: row.get(1)?,
+                line_count: row.get(2)?,
+                symbol_count: row.get(3)?,
+                import_count: row.get(4)?,
+                export_count: row.get(5)?,
+                fan_in: row.get(6)?,
+                fan_out: row.get(7)?,
+                cohesion: row.get(8)?,
+                file_count: row.get(9)?,
+            })
+        }).map_err(|e| napi::Error::from_reason(format!("get_hotspots query: {e}")))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| napi::Error::from_reason(format!("get_hotspots collect: {e}")))
+    }
+
+    /// Batch fan-in/fan-out metrics for multiple node IDs in a single napi call.
+    /// Replaces N*2 queries in branch-compare.ts `loadSymbolsFromDb()`.
+    #[napi]
+    pub fn batch_fan_metrics(&self, node_ids: Vec<i32>) -> napi::Result<Vec<FanMetric>> {
+        let conn = self.conn()?;
+
+        let mut fan_in_stmt = conn
+            .prepare_cached("SELECT COUNT(*) FROM edges WHERE target_id = ?1 AND kind = 'calls'")
+            .map_err(|e| napi::Error::from_reason(format!("batch_fan_metrics fan_in prepare: {e}")))?;
+        let mut fan_out_stmt = conn
+            .prepare_cached("SELECT COUNT(*) FROM edges WHERE source_id = ?1 AND kind = 'calls'")
+            .map_err(|e| napi::Error::from_reason(format!("batch_fan_metrics fan_out prepare: {e}")))?;
+
+        let mut results = Vec::with_capacity(node_ids.len());
+        for &nid in &node_ids {
+            let fan_in: i32 = fan_in_stmt
+                .query_row(params![nid], |row| row.get(0))
+                .unwrap_or(0);
+            let fan_out: i32 = fan_out_stmt
+                .query_row(params![nid], |row| row.get(0))
+                .unwrap_or(0);
+            results.push(FanMetric {
+                node_id: nid,
+                fan_in,
+                fan_out,
+            });
+        }
+
+        Ok(results)
     }
 }

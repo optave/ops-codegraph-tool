@@ -19,7 +19,7 @@ import {
 } from '../ast-analysis/shared.js';
 import { walkWithVisitors } from '../ast-analysis/visitor.js';
 import { createDataflowVisitor } from '../ast-analysis/visitors/dataflow-visitor.js';
-import { hasDataflowTable, openReadonlyOrFail } from '../db/index.js';
+import { hasDataflowTable, openReadonlyOrFail, openReadonlyWithNative } from '../db/index.js';
 import { ALL_SYMBOL_KINDS, normalizeSymbol } from '../domain/queries.js';
 import { debug, info } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
@@ -308,7 +308,7 @@ export function dataflowData(
   customDbPath?: string,
   opts: { noTests?: boolean; file?: string; kind?: string; limit?: number; offset?: number } = {},
 ): Record<string, unknown> {
-  const db = openReadonlyOrFail(customDbPath);
+  const { db, nativeDb, close } = openReadonlyWithNative(customDbPath);
   try {
     const noTests = opts.noTests || false;
 
@@ -331,6 +331,83 @@ export function dataflowData(
       return { name, results: [] };
     }
 
+    // ── Native fast path: 6 queries per node → 1 napi call per node ──
+    if (nativeDb?.getDataflowEdges) {
+      const hc = new Map<string, string | null>();
+      const results = nodes.map((node: NodeRow) => {
+        const sym = normalizeSymbol(node, db, hc);
+        const d = nativeDb.getDataflowEdges!(node.id);
+
+        const flowsTo = d.flowsToOut.map((r) => ({
+          target: r.name,
+          kind: r.kind,
+          file: r.file,
+          line: r.line,
+          paramIndex: r.paramIndex,
+          expression: r.expression,
+          confidence: r.confidence,
+        }));
+        const flowsFrom = d.flowsToIn.map((r) => ({
+          source: r.name,
+          kind: r.kind,
+          file: r.file,
+          line: r.line,
+          paramIndex: r.paramIndex,
+          expression: r.expression,
+          confidence: r.confidence,
+        }));
+        const returnConsumers = d.returnsOut.map((r) => ({
+          consumer: r.name,
+          kind: r.kind,
+          file: r.file,
+          line: r.line,
+          expression: r.expression,
+        }));
+        const returnedBy = d.returnsIn.map((r) => ({
+          producer: r.name,
+          kind: r.kind,
+          file: r.file,
+          line: r.line,
+          expression: r.expression,
+        }));
+        const mutatesTargets = d.mutatesOut.map((r) => ({
+          target: r.name,
+          expression: r.expression,
+          line: r.line,
+        }));
+        const mutatedBy = d.mutatesIn.map((r) => ({
+          source: r.name,
+          expression: r.expression,
+          line: r.line,
+        }));
+
+        if (noTests) {
+          const filter = (arr: any[]) => arr.filter((r: any) => !isTestFile(r.file));
+          return {
+            ...sym,
+            flowsTo: filter(flowsTo),
+            flowsFrom: filter(flowsFrom),
+            returns: returnConsumers.filter((r) => !isTestFile(r.file)),
+            returnedBy: returnedBy.filter((r) => !isTestFile(r.file)),
+            mutates: mutatesTargets,
+            mutatedBy,
+          };
+        }
+        return {
+          ...sym,
+          flowsTo,
+          flowsFrom,
+          returns: returnConsumers,
+          returnedBy,
+          mutates: mutatesTargets,
+          mutatedBy,
+        };
+      });
+      const base = { name, results };
+      return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    }
+
+    // ── JS fallback ───────────────────────────────────────────────────
     const flowsToOut = db.prepare(
       `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
      FROM dataflow d JOIN nodes n ON d.target_id = n.id
@@ -375,7 +452,6 @@ export function dataflowData(
         expression: r.expression,
         confidence: r.confidence,
       }));
-
       const flowsFrom = flowsToIn.all(node.id).map((r: any) => ({
         source: r.source_name,
         kind: r.source_kind,
@@ -385,7 +461,6 @@ export function dataflowData(
         expression: r.expression,
         confidence: r.confidence,
       }));
-
       const returnConsumers = returnsOut.all(node.id).map((r: any) => ({
         consumer: r.target_name,
         kind: r.target_kind,
@@ -393,7 +468,6 @@ export function dataflowData(
         line: r.line,
         expression: r.expression,
       }));
-
       const returnedBy = returnsIn.all(node.id).map((r: any) => ({
         producer: r.source_name,
         kind: r.source_kind,
@@ -401,13 +475,11 @@ export function dataflowData(
         line: r.line,
         expression: r.expression,
       }));
-
       const mutatesTargets = mutatesOut.all(node.id).map((r: any) => ({
         target: r.target_name,
         expression: r.expression,
         line: r.line,
       }));
-
       const mutatedBy = mutatesIn.all(node.id).map((r: any) => ({
         source: r.source_name,
         expression: r.expression,
@@ -441,7 +513,7 @@ export function dataflowData(
     const base = { name, results };
     return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
   } finally {
-    db.close();
+    close();
   }
 }
 
