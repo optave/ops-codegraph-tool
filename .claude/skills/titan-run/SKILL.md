@@ -40,6 +40,18 @@ You are the **orchestrator** for the full Titan Paradigm pipeline. Your job is t
    - If state exists and `--start-from` not specified, ask user: "Existing Titan state found (phase: `<currentPhase>`). Resume from current state, or start fresh with `/titan-reset` first?"
    - If `--yes` is set, resume automatically.
 
+   **Initialize the phase timestamps helper.** Throughout the pipeline, you will record wall-clock timestamps for each phase. Use this helper to write them into `titan-state.json`:
+
+   ```bash
+   # Record phase start:
+   node -e "const fs=require('fs');const s=JSON.parse(fs.readFileSync('.codegraph/titan/titan-state.json','utf8'));s.phaseTimestamps=s.phaseTimestamps||{};s.phaseTimestamps['<PHASE>']=s.phaseTimestamps['<PHASE>']||{};s.phaseTimestamps['<PHASE>'].startedAt=new Date().toISOString();fs.writeFileSync('.codegraph/titan/titan-state.json',JSON.stringify(s,null,2));"
+
+   # Record phase completion:
+   node -e "const fs=require('fs');const s=JSON.parse(fs.readFileSync('.codegraph/titan/titan-state.json','utf8'));s.phaseTimestamps=s.phaseTimestamps||{};s.phaseTimestamps['<PHASE>']=s.phaseTimestamps['<PHASE>']||{};s.phaseTimestamps['<PHASE>'].completedAt=new Date().toISOString();fs.writeFileSync('.codegraph/titan/titan-state.json',JSON.stringify(s,null,2));"
+   ```
+
+   Replace `<PHASE>` with `recon`, `gauntlet`, `sync`, `forge`, or `close`. **Run the start command immediately before dispatching each phase's first sub-agent, and the completion command immediately after post-phase validation passes.** If resuming a phase (e.g., gauntlet loop iteration 2+), do NOT overwrite `startedAt` — only set it if it doesn't already exist.
+
 4. **Sync with main** (once, before any sub-agent runs):
    ```bash
    git fetch origin main && git merge origin/main --no-edit
@@ -128,6 +140,9 @@ WARN-level V-checks from skipped phases are surfaced as prefixed warnings: "[ski
 
 ### 1a. Run Pre-Agent Gate (G1-G4)
 
+### 1a.1. Record phase start timestamp
+Record `phaseTimestamps.recon.startedAt` (only if not already set — it may exist from a prior crashed run).
+
 ### 1b. Dispatch sub-agent
 
 Use the **Agent tool** to spawn a sub-agent:
@@ -177,10 +192,13 @@ If `NO_SNAPSHOT` → **WARN** (not fatal, but note it: "No baseline snapshot —
 **V4. Cross-check counts:**
 - `titan-state.json → stats.totalFiles` should roughly match the number of targets across all batches (batches are subsets of files, so `sum(batch.files.length)` should be ≤ `totalFiles`)
 - `priorityQueue.length` should be > 0 and ≤ `totalNodes`
+- **Batch size check:** Every batch must have ≤ 5 files. If any batch exceeds 5, **WARN**: "Batch <id> has <N> files (max 5). Large batches cause context overload in gauntlet sub-agents."
 
 If wildly inconsistent (e.g., 0 batches but 500 nodes) → **WARN** with details.
 
 Print: `RECON validated. Domains: <count>, Batches: <count>, Priority targets: <count>, Quality score: <score>`
+
+Record `phaseTimestamps.recon.completedAt`.
 
 ---
 
@@ -189,6 +207,8 @@ Print: `RECON validated. Domains: <count>, Batches: <count>, Priority targets: <
 **Skip if:** `--skip-gauntlet` or `--start-from` is after gauntlet.
 
 ### 2a. Pre-loop check
+
+Record `phaseTimestamps.gauntlet.startedAt` (only if not already set — gauntlet may be resuming).
 
 Read `.codegraph/titan/gauntlet-summary.json` if it exists:
 - If `"complete": true` → run gauntlet post-validation (2d) and skip loop if it passes
@@ -298,6 +318,8 @@ If mismatched → **WARN** with details (not fatal — the NDJSON is the source 
 
 Print: `GAUNTLET validated. Audited: <N>/<M> targets. Pass: <N>, Warn: <N>, Fail: <N>, Decompose: <N>. NDJSON integrity: <valid>/<total> lines OK.`
 
+Record `phaseTimestamps.gauntlet.completedAt`.
+
 ---
 
 ## Step 3 — SYNC
@@ -305,6 +327,9 @@ Print: `GAUNTLET validated. Audited: <N>/<M> targets. Pass: <N>, Warn: <N>, Fail
 **Skip if:** `--start-from` is after sync, or `titan-state.json` has `currentPhase: "sync"` with existing `sync.json`.
 
 ### 3a. Run Pre-Agent Gate (G1-G4)
+
+### 3a.1. Record phase start timestamp
+Record `phaseTimestamps.sync.startedAt`.
 
 ### 3b. Dispatch sub-agent
 
@@ -336,6 +361,8 @@ If > 20% of sync targets have no gauntlet entry and aren't dead symbols → **WA
 For entries with `dependencies` arrays, verify that each dependency phase number exists in `executionOrder` and has a lower phase number. Circular dependencies in the execution plan → **VALIDATION FAILED.**
 
 Print: `SYNC validated. Execution phases: <N>, Total targets: <N>, Estimated commits: <N>.`
+
+Record `phaseTimestamps.sync.completedAt`.
 
 ---
 
@@ -452,6 +479,8 @@ Once the user confirms (or `--yes` was set), `autoConfirm` is already `true` (se
 ## Step 4 — FORGE (loop)
 
 ### 4a. Pre-loop check
+
+Record `phaseTimestamps.forge.startedAt` (only if not already set — forge may be resuming).
 
 Read `.codegraph/titan/sync.json` → count total phases in `executionOrder`.
 Read `.codegraph/titan/titan-state.json` → check `execution.completedPhases` (may not exist yet if forge hasn't started).
@@ -575,6 +604,8 @@ If `.codegraph/titan/gate-log.ndjson` exists:
 
 Print forge summary.
 
+Record `phaseTimestamps.forge.completedAt`.
+
 ---
 
 ## Step 5 — CLOSE (report + PRs)
@@ -582,6 +613,9 @@ Print forge summary.
 After forge completes, dispatch `/titan-close` to produce the final report with before/after metrics and split commits into focused PRs.
 
 ### 5a. Run Pre-Agent Gate (G1-G4)
+
+### 5a.1. Record phase start timestamp
+Record `phaseTimestamps.close.startedAt`.
 
 ### 5b. Dispatch sub-agent
 
@@ -597,6 +631,8 @@ After the agent returns, verify:
 - Print: "CLOSE complete. Report: <report path>"
 
 If the agent created PRs, print the PR URLs.
+
+Record `phaseTimestamps.close.completedAt`.
 
 ---
 

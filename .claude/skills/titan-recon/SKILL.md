@@ -188,7 +188,8 @@ Write `.codegraph/titan/GLOBAL_ARCH.md`:
 
 ## Step 10 — Propose work batches
 
-Decompose the priority queue into **work batches** of ~5-15 files each:
+Decompose the priority queue into **work batches** of **at most 5 files each**:
+- **Hard limit: 5 files per batch.** If a domain has more than 5 files, split it into multiple batches (e.g., "domain-parser-1", "domain-parser-2"). This keeps each gauntlet iteration focused and prevents context overload in sub-agents.
 - Stay within a single domain where possible
 - Group tightly-coupled files together (from communities)
 - Order by priority: highest-risk domains first
