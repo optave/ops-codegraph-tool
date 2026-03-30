@@ -279,11 +279,56 @@ export async function buildCFGData(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, FileSymbols>,
   rootDir: string,
-  _engineOpts?: unknown,
+  engineOpts?: { nativeDb?: { bulkInsertCfg?(entries: Array<Record<string, unknown>>): number } },
 ): Promise<void> {
   // Fast path: when all function/method defs already have native CFG data,
   // skip WASM parser init, tree parsing, and JS visitor entirely — just persist.
   const allNative = allCfgNative(fileSymbols);
+
+  // ── Native bulk-insert fast path ──────────────────────────────────────
+  const nativeDb = engineOpts?.nativeDb;
+  if (allNative && nativeDb?.bulkInsertCfg) {
+    const entries: Array<Record<string, unknown>> = [];
+
+    for (const [relPath, symbols] of fileSymbols) {
+      const ext = path.extname(relPath).toLowerCase();
+      if (!CFG_EXTENSIONS.has(ext)) continue;
+
+      for (const def of symbols.definitions) {
+        if (def.kind !== 'function' && def.kind !== 'method') continue;
+        if (!def.line) continue;
+
+        const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
+        if (!nodeId) continue;
+
+        deleteCfgForNode(db, nodeId);
+        if (!def.cfg?.blocks?.length) continue;
+
+        const cfg = def.cfg as unknown as { blocks: CfgBuildBlock[]; edges: CfgBuildEdge[] };
+        entries.push({
+          nodeId,
+          blocks: cfg.blocks.map((b) => ({
+            index: b.index,
+            blockType: b.type,
+            startLine: b.startLine ?? null,
+            endLine: b.endLine ?? null,
+            label: b.label ?? null,
+          })),
+          edges: cfg.edges.map((e) => ({
+            sourceIndex: e.sourceIndex,
+            targetIndex: e.targetIndex,
+            kind: e.kind,
+          })),
+        });
+      }
+    }
+
+    if (entries.length > 0) {
+      const inserted = nativeDb.bulkInsertCfg(entries);
+      info(`CFG (native bulk): ${inserted} blocks across ${entries.length} functions`);
+    }
+    return;
+  }
 
   const extToLang = buildExtToLangMap();
   let parsers: unknown = null;

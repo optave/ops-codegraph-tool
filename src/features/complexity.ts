@@ -502,8 +502,63 @@ export async function buildComplexityMetrics(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, FileSymbols>,
   rootDir: string,
-  _engineOpts?: unknown,
+  engineOpts?: {
+    nativeDb?: { bulkInsertComplexity?(rows: Array<Record<string, unknown>>): number };
+  },
 ): Promise<void> {
+  // ── Native bulk-insert fast path ──────────────────────────────────────
+  const nativeDb = engineOpts?.nativeDb;
+  if (nativeDb?.bulkInsertComplexity) {
+    const rows: Array<Record<string, unknown>> = [];
+    let needsJsFallback = false;
+
+    for (const [relPath, symbols] of fileSymbols) {
+      for (const def of symbols.definitions) {
+        if (def.kind !== 'function' && def.kind !== 'method') continue;
+        if (!def.line) continue;
+        if (!def.complexity) {
+          needsJsFallback = true;
+          break;
+        }
+        const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
+        if (!nodeId) continue;
+        const ch = def.complexity.halstead;
+        const cl = def.complexity.loc;
+        rows.push({
+          nodeId,
+          cognitive: def.complexity.cognitive ?? 0,
+          cyclomatic: def.complexity.cyclomatic ?? 0,
+          maxNesting: def.complexity.maxNesting ?? 0,
+          loc: cl ? cl.loc : 0,
+          sloc: cl ? cl.sloc : 0,
+          commentLines: cl ? cl.commentLines : 0,
+          halsteadN1: ch ? ch.n1 : 0,
+          halsteadN2: ch ? ch.n2 : 0,
+          halsteadBigN1: ch ? ch.bigN1 : 0,
+          halsteadBigN2: ch ? ch.bigN2 : 0,
+          halsteadVocabulary: ch ? ch.vocabulary : 0,
+          halsteadLength: ch ? ch.length : 0,
+          halsteadVolume: ch ? ch.volume : 0,
+          halsteadDifficulty: ch ? ch.difficulty : 0,
+          halsteadEffort: ch ? ch.effort : 0,
+          halsteadBugs: ch ? ch.bugs : 0,
+          maintainabilityIndex: def.complexity.maintainabilityIndex ?? 0,
+        });
+      }
+      if (needsJsFallback) break;
+    }
+
+    if (!needsJsFallback && rows.length > 0) {
+      const inserted = nativeDb.bulkInsertComplexity(rows);
+      if (inserted === rows.length) {
+        info(`Complexity (native bulk): ${inserted} functions analyzed`);
+        return;
+      }
+      debug(`Native bulkInsertComplexity partial: ${inserted}/${rows.length} — falling back to JS`);
+    }
+  }
+
+  // ── JS fallback path ─────────────────────────────────────────────────
   const { parsers, extToLang } = await initWasmParsersIfNeeded(fileSymbols);
   const { getParser } = await import('../domain/parser.js');
 

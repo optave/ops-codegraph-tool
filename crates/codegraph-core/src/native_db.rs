@@ -281,6 +281,74 @@ pub struct BuildMetaEntry {
     pub value: String,
 }
 
+// ── Bulk-insert input types ────────────────────────────────────────────
+
+/// A single complexity metrics row for bulk insertion.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct ComplexityRow {
+    pub node_id: i64,
+    pub cognitive: u32,
+    pub cyclomatic: u32,
+    pub max_nesting: u32,
+    pub loc: u32,
+    pub sloc: u32,
+    pub comment_lines: u32,
+    pub halstead_n1: u32,
+    pub halstead_n2: u32,
+    pub halstead_big_n1: u32,
+    pub halstead_big_n2: u32,
+    pub halstead_vocabulary: u32,
+    pub halstead_length: u32,
+    pub halstead_volume: f64,
+    pub halstead_difficulty: f64,
+    pub halstead_effort: f64,
+    pub halstead_bugs: f64,
+    pub maintainability_index: f64,
+}
+
+/// A CFG entry for a single function: blocks + edges.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct CfgEntry {
+    pub node_id: i64,
+    pub blocks: Vec<CfgBlockRow>,
+    pub edges: Vec<CfgEdgeRow>,
+}
+
+/// A single CFG block for bulk insertion.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct CfgBlockRow {
+    pub index: u32,
+    pub block_type: String,
+    pub start_line: Option<u32>,
+    pub end_line: Option<u32>,
+    pub label: Option<String>,
+}
+
+/// A single CFG edge for bulk insertion.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct CfgEdgeRow {
+    pub source_index: u32,
+    pub target_index: u32,
+    pub kind: String,
+}
+
+/// A single dataflow edge for bulk insertion.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct DataflowEdge {
+    pub source_id: i64,
+    pub target_id: i64,
+    pub kind: String,
+    pub param_index: Option<u32>,
+    pub expression: Option<String>,
+    pub line: Option<u32>,
+    pub confidence: f64,
+}
+
 // ── NativeDatabase class ────────────────────────────────────────────────
 
 /// Persistent rusqlite Connection wrapper exposed to JS via napi-rs.
@@ -696,6 +764,174 @@ impl NativeDatabase {
     pub fn bulk_insert_ast_nodes(&self, batches: Vec<FileAstBatch>) -> napi::Result<u32> {
         let conn = self.conn()?;
         Ok(ast_db::do_insert_ast_nodes(conn, &batches).unwrap_or(0))
+    }
+
+    /// Bulk-insert complexity metrics for functions/methods.
+    /// Each row maps a node_id to its complexity metrics.
+    /// Returns the number of rows inserted (0 on failure).
+    #[napi]
+    pub fn bulk_insert_complexity(&self, rows: Vec<ComplexityRow>) -> napi::Result<u32> {
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn()?;
+        if !has_table(conn, "function_complexity") {
+            return Ok(0);
+        }
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| napi::Error::from_reason(format!("complexity tx failed: {e}")))?;
+        let mut total = 0u32;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT OR REPLACE INTO function_complexity \
+                 (node_id, cognitive, cyclomatic, max_nesting, \
+                  loc, sloc, comment_lines, \
+                  halstead_n1, halstead_n2, halstead_big_n1, halstead_big_n2, \
+                  halstead_vocabulary, halstead_length, halstead_volume, \
+                  halstead_difficulty, halstead_effort, halstead_bugs, \
+                  maintainability_index) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+            )
+            .map_err(|e| napi::Error::from_reason(format!("complexity prepare failed: {e}")))?;
+
+            for r in &rows {
+                if stmt
+                    .execute(params![
+                        r.node_id,
+                        r.cognitive,
+                        r.cyclomatic,
+                        r.max_nesting,
+                        r.loc,
+                        r.sloc,
+                        r.comment_lines,
+                        r.halstead_n1,
+                        r.halstead_n2,
+                        r.halstead_big_n1,
+                        r.halstead_big_n2,
+                        r.halstead_vocabulary,
+                        r.halstead_length,
+                        r.halstead_volume,
+                        r.halstead_difficulty,
+                        r.halstead_effort,
+                        r.halstead_bugs,
+                        r.maintainability_index,
+                    ])
+                    .is_ok()
+                {
+                    total += 1;
+                }
+            }
+        }
+        tx.commit()
+            .map_err(|e| napi::Error::from_reason(format!("complexity commit failed: {e}")))?;
+        Ok(total)
+    }
+
+    /// Bulk-insert CFG blocks and edges for functions/methods.
+    /// Returns the number of blocks inserted (0 on failure).
+    #[napi]
+    pub fn bulk_insert_cfg(&self, entries: Vec<CfgEntry>) -> napi::Result<u32> {
+        if entries.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn()?;
+        if !has_table(conn, "cfg_blocks") {
+            return Ok(0);
+        }
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| napi::Error::from_reason(format!("cfg tx failed: {e}")))?;
+        let mut total = 0u32;
+        {
+            let mut block_stmt = tx.prepare(
+                "INSERT INTO cfg_blocks \
+                 (function_node_id, block_index, block_type, start_line, end_line, label) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            )
+            .map_err(|e| napi::Error::from_reason(format!("cfg_blocks prepare failed: {e}")))?;
+
+            let mut edge_stmt = tx.prepare(
+                "INSERT INTO cfg_edges \
+                 (function_node_id, source_block_id, target_block_id, kind) \
+                 VALUES (?1, ?2, ?3, ?4)",
+            )
+            .map_err(|e| napi::Error::from_reason(format!("cfg_edges prepare failed: {e}")))?;
+
+            for entry in &entries {
+                let mut block_db_ids: std::collections::HashMap<u32, i64> =
+                    std::collections::HashMap::new();
+                for block in &entry.blocks {
+                    if let Ok(_) = block_stmt.execute(params![
+                        entry.node_id,
+                        block.index,
+                        &block.block_type,
+                        block.start_line,
+                        block.end_line,
+                        &block.label,
+                    ]) {
+                        block_db_ids.insert(block.index, tx.last_insert_rowid());
+                        total += 1;
+                    }
+                }
+                for edge in &entry.edges {
+                    if let (Some(&src), Some(&tgt)) = (
+                        block_db_ids.get(&edge.source_index),
+                        block_db_ids.get(&edge.target_index),
+                    ) {
+                        let _ = edge_stmt.execute(params![entry.node_id, src, tgt, &edge.kind]);
+                    }
+                }
+            }
+        }
+        tx.commit()
+            .map_err(|e| napi::Error::from_reason(format!("cfg commit failed: {e}")))?;
+        Ok(total)
+    }
+
+    /// Bulk-insert dataflow edges (flows_to, returns, mutates).
+    /// Returns the number of edges inserted (0 on failure).
+    #[napi]
+    pub fn bulk_insert_dataflow(&self, edges: Vec<DataflowEdge>) -> napi::Result<u32> {
+        if edges.is_empty() {
+            return Ok(0);
+        }
+        let conn = self.conn()?;
+        if !has_table(conn, "dataflow") {
+            return Ok(0);
+        }
+        let tx = conn
+            .unchecked_transaction()
+            .map_err(|e| napi::Error::from_reason(format!("dataflow tx failed: {e}")))?;
+        let mut total = 0u32;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO dataflow \
+                 (source_id, target_id, kind, param_index, expression, line, confidence) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            )
+            .map_err(|e| napi::Error::from_reason(format!("dataflow prepare failed: {e}")))?;
+
+            for e in &edges {
+                if stmt
+                    .execute(params![
+                        e.source_id,
+                        e.target_id,
+                        &e.kind,
+                        e.param_index,
+                        &e.expression,
+                        e.line,
+                        e.confidence,
+                    ])
+                    .is_ok()
+                {
+                    total += 1;
+                }
+            }
+        }
+        tx.commit()
+            .map_err(|e| napi::Error::from_reason(format!("dataflow commit failed: {e}")))?;
+        Ok(total)
     }
 
     /// Full role classification: queries all nodes, computes fan-in/fan-out,

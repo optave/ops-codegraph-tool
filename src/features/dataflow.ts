@@ -241,9 +241,113 @@ export async function buildDataflowEdges(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, FileSymbolsDataflow>,
   rootDir: string,
-  _engineOpts?: unknown,
+  engineOpts?: {
+    nativeDb?: { bulkInsertDataflow?(edges: Array<Record<string, unknown>>): number };
+  },
 ): Promise<void> {
   const extToLang = buildExtToLangMap();
+
+  // ── Native bulk-insert fast path ──────────────────────────────────────
+  const nativeDb = engineOpts?.nativeDb;
+  if (nativeDb?.bulkInsertDataflow) {
+    let needsJsFallback = false;
+    const nativeEdges: Array<Record<string, unknown>> = [];
+
+    const getNodeByNameAndFile = db.prepare<{
+      id: number;
+      name: string;
+      kind: string;
+      file: string;
+      line: number;
+    }>(
+      `SELECT id, name, kind, file, line FROM nodes
+       WHERE name = ? AND file = ? AND kind IN ('function', 'method')`,
+    );
+    const getNodeByName = db.prepare<{
+      id: number;
+      name: string;
+      kind: string;
+      file: string;
+      line: number;
+    }>(
+      `SELECT id, name, kind, file, line FROM nodes
+       WHERE name = ? AND kind IN ('function', 'method')
+       ORDER BY file, line LIMIT 10`,
+    );
+
+    for (const [relPath, symbols] of fileSymbols) {
+      const ext = path.extname(relPath).toLowerCase();
+      if (!DATAFLOW_EXTENSIONS.has(ext)) continue;
+      if (!symbols.dataflow) {
+        needsJsFallback = true;
+        break;
+      }
+
+      const resolveNode = (funcName: string): { id: number } | null => {
+        const local = getNodeByNameAndFile.all(funcName, relPath);
+        if (local.length > 0) return local[0]!;
+        const global = getNodeByName.all(funcName);
+        return global.length > 0 ? global[0]! : null;
+      };
+
+      const data = symbols.dataflow;
+      for (const flow of data.argFlows as ArgFlow[]) {
+        const sourceNode = resolveNode(flow.callerFunc);
+        const targetNode = resolveNode(flow.calleeName);
+        if (sourceNode && targetNode) {
+          nativeEdges.push({
+            sourceId: sourceNode.id,
+            targetId: targetNode.id,
+            kind: 'flows_to',
+            paramIndex: flow.argIndex,
+            expression: flow.expression,
+            line: flow.line,
+            confidence: flow.confidence,
+          });
+        }
+      }
+      for (const assignment of data.assignments as Assignment[]) {
+        const producerNode = resolveNode(assignment.sourceCallName);
+        const consumerNode = resolveNode(assignment.callerFunc);
+        if (producerNode && consumerNode) {
+          nativeEdges.push({
+            sourceId: producerNode.id,
+            targetId: consumerNode.id,
+            kind: 'returns',
+            paramIndex: null,
+            expression: assignment.expression,
+            line: assignment.line,
+            confidence: 1.0,
+          });
+        }
+      }
+      for (const mut of data.mutations as Mutation[]) {
+        const mutatorNode = resolveNode(mut.funcName);
+        if (mutatorNode && mut.binding?.type === 'param') {
+          nativeEdges.push({
+            sourceId: mutatorNode.id,
+            targetId: mutatorNode.id,
+            kind: 'mutates',
+            paramIndex: null,
+            expression: mut.mutatingExpr,
+            line: mut.line,
+            confidence: 1.0,
+          });
+        }
+      }
+    }
+
+    if (!needsJsFallback) {
+      if (nativeEdges.length > 0) {
+        const inserted = nativeDb.bulkInsertDataflow(nativeEdges);
+        info(`Dataflow (native bulk): ${inserted} edges inserted`);
+      }
+      return;
+    }
+    debug('Dataflow: some files lack pre-computed data — falling back to JS');
+  }
+
+  // ── JS fallback path ─────────────────────────────────────────────────
   const { parsers, getParserFn } = await initDataflowParsers(fileSymbols);
 
   const insert = db.prepare(

@@ -100,12 +100,9 @@ function queryAllAstNodes() {
 // ─── Tests ────────────────────────────────────────────────────────────
 
 describe('buildAstNodes — JS extraction', () => {
-  test('captures call nodes from symbols.calls', () => {
+  test('call kind AST nodes are no longer stored (dead code removed)', () => {
     const calls = queryAstNodes('call');
-    expect(calls.length).toBeGreaterThanOrEqual(1);
-    const callNames = calls.map((c) => c.name);
-    // eval, fetch, console.log should be among calls (depending on parser extraction)
-    expect(callNames.some((n) => n === 'eval' || n === 'fetch' || n === 'console.log')).toBe(true);
+    expect(calls.length).toBe(0);
   });
 
   test('captures new_expression as kind:new', () => {
