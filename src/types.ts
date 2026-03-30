@@ -2014,14 +2014,14 @@ export interface NativeDatabase {
         name: string;
         kind: string;
         line: number;
-        endLine?: number | null;
-        visibility?: string | null;
+        endLine?: number;
+        visibility?: string;
         children: Array<{
           name: string;
           kind: string;
           line: number;
-          endLine?: number | null;
-          visibility?: string | null;
+          endLine?: number;
+          visibility?: string;
         }>;
       }>;
       exports: Array<{ name: string; kind: string; line: number }>;
@@ -2048,6 +2048,56 @@ export interface NativeDatabase {
         text?: string | null;
         receiver?: string | null;
       }>;
+    }>,
+  ): number;
+  bulkInsertComplexity?(
+    rows: Array<{
+      nodeId: number;
+      cognitive: number;
+      cyclomatic: number;
+      maxNesting: number;
+      loc: number;
+      sloc: number;
+      commentLines: number;
+      halsteadN1: number;
+      halsteadN2: number;
+      halsteadBigN1: number;
+      halsteadBigN2: number;
+      halsteadVocabulary: number;
+      halsteadLength: number;
+      halsteadVolume: number;
+      halsteadDifficulty: number;
+      halsteadEffort: number;
+      halsteadBugs: number;
+      maintainabilityIndex: number;
+    }>,
+  ): number;
+  bulkInsertCfg?(
+    entries: Array<{
+      nodeId: number;
+      blocks: Array<{
+        index: number;
+        blockType: string;
+        startLine?: number | null;
+        endLine?: number | null;
+        label?: string | null;
+      }>;
+      edges: Array<{
+        sourceIndex: number;
+        targetIndex: number;
+        kind: string;
+      }>;
+    }>,
+  ): number;
+  bulkInsertDataflow?(
+    edges: Array<{
+      sourceId: number;
+      targetId: number;
+      kind: string;
+      paramIndex?: number | null;
+      expression?: string | null;
+      line?: number | null;
+      confidence: number;
     }>,
   ): number;
   classifyRolesFull(): {
@@ -2077,6 +2127,119 @@ export interface NativeDatabase {
     leaf: number;
   } | null;
   purgeFilesData(files: string[], purgeHashes?: boolean, reverseDepFiles?: string[]): void;
+
+  // ── Batched query methods ────────────────────────────────────────────
+  /** All graph statistics in a single napi call (replaces ~11 queries in module-map). */
+  getGraphStats?(noTests: boolean): {
+    totalNodes: number;
+    totalEdges: number;
+    nodesByKind: Array<{ kind: string; count: number }>;
+    edgesByKind: Array<{ kind: string; count: number }>;
+    roleCounts: Array<{ role: string; count: number }>;
+    quality: {
+      callableTotal: number;
+      callableWithCallers: number;
+      callEdges: number;
+      highConfCallEdges: number;
+    };
+    hotspots: Array<{ file: string; fanIn: number; fanOut: number }>;
+    complexity: {
+      analyzed: number;
+      avgCognitive: number;
+      avgCyclomatic: number;
+      maxCognitive: number;
+      maxCyclomatic: number;
+      avgMi: number;
+      minMi: number;
+    } | null;
+    embeddings: {
+      count: number;
+      model: string | null;
+      dim: number | null;
+      builtAt: string | null;
+    } | null;
+  };
+  /** All 6 directional dataflow edge sets for a node in one call. */
+  getDataflowEdges?(nodeId: number): {
+    flowsToOut: Array<{
+      name: string;
+      kind: string;
+      file: string;
+      line: number | null;
+      paramIndex: number | null;
+      expression: string | null;
+      confidence: number | null;
+    }>;
+    flowsToIn: Array<{
+      name: string;
+      kind: string;
+      file: string;
+      line: number | null;
+      paramIndex: number | null;
+      expression: string | null;
+      confidence: number | null;
+    }>;
+    returnsOut: Array<{
+      name: string;
+      kind: string;
+      file: string;
+      line: number | null;
+      paramIndex: number | null;
+      expression: string | null;
+      confidence: number | null;
+    }>;
+    returnsIn: Array<{
+      name: string;
+      kind: string;
+      file: string;
+      line: number | null;
+      paramIndex: number | null;
+      expression: string | null;
+      confidence: number | null;
+    }>;
+    mutatesOut: Array<{
+      name: string;
+      kind: string;
+      file: string;
+      line: number | null;
+      paramIndex: number | null;
+      expression: string | null;
+      confidence: number | null;
+    }>;
+    mutatesIn: Array<{
+      name: string;
+      kind: string;
+      file: string;
+      line: number | null;
+      paramIndex: number | null;
+      expression: string | null;
+      confidence: number | null;
+    }>;
+  };
+  /** Hotspot rows for a metric/kind/limit in one call. */
+  getHotspots?(
+    kind: string,
+    metric: string,
+    noTests: boolean,
+    limit: number,
+  ): Array<{
+    name: string;
+    kind: string;
+    lineCount: number | null;
+    symbolCount: number | null;
+    importCount: number | null;
+    exportCount: number | null;
+    fanIn: number | null;
+    fanOut: number | null;
+    cohesion: number | null;
+    fileCount: number | null;
+  }>;
+  /** Batch fan-in/fan-out for multiple node IDs in one call. */
+  batchFanMetrics?(nodeIds: number[]): Array<{
+    nodeId: number;
+    fanIn: number;
+    fanOut: number;
+  }>;
 
   // ── Generic query execution & version validation (6.16) ─────────────
   /** Execute a parameterized SELECT and return all rows as objects. */

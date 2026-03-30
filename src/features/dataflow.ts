@@ -19,7 +19,7 @@ import {
 } from '../ast-analysis/shared.js';
 import { walkWithVisitors } from '../ast-analysis/visitor.js';
 import { createDataflowVisitor } from '../ast-analysis/visitors/dataflow-visitor.js';
-import { hasDataflowTable, openReadonlyOrFail } from '../db/index.js';
+import { hasDataflowTable, openReadonlyOrFail, openReadonlyWithNative } from '../db/index.js';
 import { ALL_SYMBOL_KINDS, normalizeSymbol } from '../domain/queries.js';
 import { debug, info } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
@@ -241,9 +241,113 @@ export async function buildDataflowEdges(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, FileSymbolsDataflow>,
   rootDir: string,
-  _engineOpts?: unknown,
+  engineOpts?: {
+    nativeDb?: { bulkInsertDataflow?(edges: Array<Record<string, unknown>>): number };
+  },
 ): Promise<void> {
   const extToLang = buildExtToLangMap();
+
+  // ── Native bulk-insert fast path ──────────────────────────────────────
+  const nativeDb = engineOpts?.nativeDb;
+  if (nativeDb?.bulkInsertDataflow) {
+    let needsJsFallback = false;
+    const nativeEdges: Array<Record<string, unknown>> = [];
+
+    const getNodeByNameAndFile = db.prepare<{
+      id: number;
+      name: string;
+      kind: string;
+      file: string;
+      line: number;
+    }>(
+      `SELECT id, name, kind, file, line FROM nodes
+       WHERE name = ? AND file = ? AND kind IN ('function', 'method')`,
+    );
+    const getNodeByName = db.prepare<{
+      id: number;
+      name: string;
+      kind: string;
+      file: string;
+      line: number;
+    }>(
+      `SELECT id, name, kind, file, line FROM nodes
+       WHERE name = ? AND kind IN ('function', 'method')
+       ORDER BY file, line LIMIT 10`,
+    );
+
+    for (const [relPath, symbols] of fileSymbols) {
+      const ext = path.extname(relPath).toLowerCase();
+      if (!DATAFLOW_EXTENSIONS.has(ext)) continue;
+      if (!symbols.dataflow) {
+        needsJsFallback = true;
+        break;
+      }
+
+      const resolveNode = (funcName: string): { id: number } | null => {
+        const local = getNodeByNameAndFile.all(funcName, relPath);
+        if (local.length > 0) return local[0]!;
+        const global = getNodeByName.all(funcName);
+        return global.length > 0 ? global[0]! : null;
+      };
+
+      const data = symbols.dataflow;
+      for (const flow of data.argFlows as ArgFlow[]) {
+        const sourceNode = resolveNode(flow.callerFunc);
+        const targetNode = resolveNode(flow.calleeName);
+        if (sourceNode && targetNode) {
+          nativeEdges.push({
+            sourceId: sourceNode.id,
+            targetId: targetNode.id,
+            kind: 'flows_to',
+            paramIndex: flow.argIndex,
+            expression: flow.expression,
+            line: flow.line,
+            confidence: flow.confidence,
+          });
+        }
+      }
+      for (const assignment of data.assignments as Assignment[]) {
+        const producerNode = resolveNode(assignment.sourceCallName);
+        const consumerNode = resolveNode(assignment.callerFunc);
+        if (producerNode && consumerNode) {
+          nativeEdges.push({
+            sourceId: producerNode.id,
+            targetId: consumerNode.id,
+            kind: 'returns',
+            paramIndex: null,
+            expression: assignment.expression,
+            line: assignment.line,
+            confidence: 1.0,
+          });
+        }
+      }
+      for (const mut of data.mutations as Mutation[]) {
+        const mutatorNode = resolveNode(mut.funcName);
+        if (mutatorNode && mut.binding?.type === 'param') {
+          nativeEdges.push({
+            sourceId: mutatorNode.id,
+            targetId: mutatorNode.id,
+            kind: 'mutates',
+            paramIndex: null,
+            expression: mut.mutatingExpr,
+            line: mut.line,
+            confidence: 1.0,
+          });
+        }
+      }
+    }
+
+    if (!needsJsFallback) {
+      if (nativeEdges.length > 0) {
+        const inserted = nativeDb.bulkInsertDataflow(nativeEdges);
+        info(`Dataflow (native bulk): ${inserted} edges inserted`);
+      }
+      return;
+    }
+    debug('Dataflow: some files lack pre-computed data — falling back to JS');
+  }
+
+  // ── JS fallback path ─────────────────────────────────────────────────
   const { parsers, getParserFn } = await initDataflowParsers(fileSymbols);
 
   const insert = db.prepare(
@@ -308,7 +412,7 @@ export function dataflowData(
   customDbPath?: string,
   opts: { noTests?: boolean; file?: string; kind?: string; limit?: number; offset?: number } = {},
 ): Record<string, unknown> {
-  const db = openReadonlyOrFail(customDbPath);
+  const { db, nativeDb, close } = openReadonlyWithNative(customDbPath);
   try {
     const noTests = opts.noTests || false;
 
@@ -331,6 +435,83 @@ export function dataflowData(
       return { name, results: [] };
     }
 
+    // ── Native fast path: 6 queries per node → 1 napi call per node ──
+    if (nativeDb?.getDataflowEdges) {
+      const hc = new Map<string, string | null>();
+      const results = nodes.map((node: NodeRow) => {
+        const sym = normalizeSymbol(node, db, hc);
+        const d = nativeDb.getDataflowEdges!(node.id);
+
+        const flowsTo = d.flowsToOut.map((r) => ({
+          target: r.name,
+          kind: r.kind,
+          file: r.file,
+          line: r.line,
+          paramIndex: r.paramIndex,
+          expression: r.expression,
+          confidence: r.confidence,
+        }));
+        const flowsFrom = d.flowsToIn.map((r) => ({
+          source: r.name,
+          kind: r.kind,
+          file: r.file,
+          line: r.line,
+          paramIndex: r.paramIndex,
+          expression: r.expression,
+          confidence: r.confidence,
+        }));
+        const returnConsumers = d.returnsOut.map((r) => ({
+          consumer: r.name,
+          kind: r.kind,
+          file: r.file,
+          line: r.line,
+          expression: r.expression,
+        }));
+        const returnedBy = d.returnsIn.map((r) => ({
+          producer: r.name,
+          kind: r.kind,
+          file: r.file,
+          line: r.line,
+          expression: r.expression,
+        }));
+        const mutatesTargets = d.mutatesOut.map((r) => ({
+          target: r.name,
+          expression: r.expression,
+          line: r.line,
+        }));
+        const mutatedBy = d.mutatesIn.map((r) => ({
+          source: r.name,
+          expression: r.expression,
+          line: r.line,
+        }));
+
+        if (noTests) {
+          const filter = (arr: any[]) => arr.filter((r: any) => !isTestFile(r.file));
+          return {
+            ...sym,
+            flowsTo: filter(flowsTo),
+            flowsFrom: filter(flowsFrom),
+            returns: returnConsumers.filter((r) => !isTestFile(r.file)),
+            returnedBy: returnedBy.filter((r) => !isTestFile(r.file)),
+            mutates: mutatesTargets,
+            mutatedBy,
+          };
+        }
+        return {
+          ...sym,
+          flowsTo,
+          flowsFrom,
+          returns: returnConsumers,
+          returnedBy,
+          mutates: mutatesTargets,
+          mutatedBy,
+        };
+      });
+      const base = { name, results };
+      return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    }
+
+    // ── JS fallback ───────────────────────────────────────────────────
     const flowsToOut = db.prepare(
       `SELECT d.*, n.name AS target_name, n.kind AS target_kind, n.file AS target_file, n.line AS target_line
      FROM dataflow d JOIN nodes n ON d.target_id = n.id
@@ -375,7 +556,6 @@ export function dataflowData(
         expression: r.expression,
         confidence: r.confidence,
       }));
-
       const flowsFrom = flowsToIn.all(node.id).map((r: any) => ({
         source: r.source_name,
         kind: r.source_kind,
@@ -385,7 +565,6 @@ export function dataflowData(
         expression: r.expression,
         confidence: r.confidence,
       }));
-
       const returnConsumers = returnsOut.all(node.id).map((r: any) => ({
         consumer: r.target_name,
         kind: r.target_kind,
@@ -393,7 +572,6 @@ export function dataflowData(
         line: r.line,
         expression: r.expression,
       }));
-
       const returnedBy = returnsIn.all(node.id).map((r: any) => ({
         producer: r.source_name,
         kind: r.source_kind,
@@ -401,13 +579,11 @@ export function dataflowData(
         line: r.line,
         expression: r.expression,
       }));
-
       const mutatesTargets = mutatesOut.all(node.id).map((r: any) => ({
         target: r.target_name,
         expression: r.expression,
         line: r.line,
       }));
-
       const mutatedBy = mutatesIn.all(node.id).map((r: any) => ({
         source: r.source_name,
         expression: r.expression,
@@ -441,7 +617,7 @@ export function dataflowData(
     const base = { name, results };
     return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
   } finally {
-    db.close();
+    close();
   }
 }
 

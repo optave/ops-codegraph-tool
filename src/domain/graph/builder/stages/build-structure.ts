@@ -39,10 +39,11 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
   // loading ALL definitions from DB (~8ms) and recomputing ALL metrics (~15ms).
   // Gate: ≤5 changed files AND significantly more existing files (>20) to
   // avoid triggering on small test fixtures where directory metrics matter.
+  const useNativeReads = ctx.engineName === 'native' && !!ctx.nativeDb;
   const existingFileCount = !isFullBuild
     ? (
-        (ctx.nativeDb
-          ? ctx.nativeDb.queryGet("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'", [])
+        (useNativeReads
+          ? ctx.nativeDb!.queryGet("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'", [])
           : db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'").get()) as {
           c: number;
         }
@@ -96,7 +97,7 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
 
     // Use NativeDatabase persistent connection (Phase 6.15+).
     // Standalone napi functions were removed in 6.17 — falls through to JS if nativeDb unavailable.
-    if (ctx.nativeDb?.classifyRolesFull) {
+    if (useNativeReads && ctx.nativeDb?.classifyRolesFull) {
       const nativeResult =
         changedFileList && changedFileList.length > 0
           ? ctx.nativeDb.classifyRolesIncremental(changedFileList)

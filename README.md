@@ -531,6 +531,19 @@ Codegraph ships with two parsing engines:
 
 Both engines produce identical output. Use `--engine native|wasm|auto` to control selection (default: `auto`).
 
+On the native path, Rust handles the entire hot pipeline end-to-end:
+
+| Phase | What Rust does |
+|-------|---------------|
+| **Parse** | Parallel multi-file tree-sitter parsing via rayon (3.5× faster than WASM) |
+| **Extract** | Symbols, imports, calls, classes, type maps, AST nodes — all in one pass |
+| **Analyze** | Complexity (cognitive, cyclomatic, Halstead), CFG, and dataflow pre-computed per function during parse |
+| **Resolve** | Import resolution with 6-level priority system and confidence scoring |
+| **Edges** | Call, receiver, extends, and implements edge inference |
+| **DB writes** | All inserts (nodes, edges, AST nodes, complexity, CFG, dataflow) via rusqlite — `better-sqlite3` is lazy-loaded only for the WASM fallback path |
+
+The Rust crate (`crates/codegraph-core/`) exposes a `NativeDatabase` napi-rs class that holds a persistent `rusqlite::Connection` for the full build lifecycle, eliminating JS↔SQLite round-trips on every operation.
+
 ### Call Resolution
 
 Calls are resolved with **qualified resolution** — method calls (`obj.method()`) are distinguished from standalone function calls, and built-in receivers (`console`, `Math`, `JSON`, `Array`, `Promise`, etc.) are filtered out automatically. Import scope is respected: a call to `foo()` only resolves to functions that are actually imported or defined in the same file, eliminating false positives from name collisions.

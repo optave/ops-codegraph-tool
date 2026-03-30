@@ -48,9 +48,11 @@ function checkEngineSchemaMismatch(ctx: PipelineContext): void {
   ctx.forceFullRebuild = false;
   if (!ctx.incremental) return;
 
-  // Route metadata reads through NativeDatabase when available (Phase 6.13)
+  // Route metadata reads through NativeDatabase only when using the native engine,
+  // to avoid dual-SQLite WAL conflicts (rusqlite + better-sqlite3 on same file).
+  const useNativeDb = ctx.engineName === 'native' && !!ctx.nativeDb;
   const meta = (key: string): string | null =>
-    ctx.nativeDb ? ctx.nativeDb.getBuildMeta(key) : getBuildMeta(ctx.db, key);
+    useNativeDb ? ctx.nativeDb!.getBuildMeta(key) : getBuildMeta(ctx.db, key);
 
   const prevEngine = meta('engine');
   if (prevEngine && prevEngine !== ctx.engineName) {
