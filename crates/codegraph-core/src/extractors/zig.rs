@@ -41,8 +41,6 @@ fn handle_zig_function(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     };
 
     let params = extract_zig_params(node, source);
-    let is_pub = is_zig_pub(node, source);
-
     symbols.definitions.push(Definition {
         name: full_name,
         kind: kind.to_string(),
@@ -299,6 +297,8 @@ fn find_zig_parent_struct<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> 
     None
 }
 
+// TODO: wire into Definition once the struct gains a `visibility` field
+#[allow(dead_code)]
 fn is_zig_pub(node: &Node, source: &[u8]) -> bool {
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {

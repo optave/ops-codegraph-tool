@@ -52,7 +52,18 @@ function walkZigNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
   }
 }
 
+function isInsideZigContainer(node: TreeSitterNode): boolean {
+  let current = node.parent;
+  while (current) {
+    if (current.type === 'struct_declaration' || current.type === 'union_declaration') return true;
+    current = current.parent;
+  }
+  return false;
+}
+
 function handleZigFunction(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  if (isInsideZigContainer(node)) return; // already emitted by extractZigContainerMethods
+
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
 
