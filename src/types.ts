@@ -2050,6 +2050,56 @@ export interface NativeDatabase {
       }>;
     }>,
   ): number;
+  bulkInsertComplexity?(
+    rows: Array<{
+      nodeId: number;
+      cognitive: number;
+      cyclomatic: number;
+      maxNesting: number;
+      loc: number;
+      sloc: number;
+      commentLines: number;
+      halsteadN1: number;
+      halsteadN2: number;
+      halsteadBigN1: number;
+      halsteadBigN2: number;
+      halsteadVocabulary: number;
+      halsteadLength: number;
+      halsteadVolume: number;
+      halsteadDifficulty: number;
+      halsteadEffort: number;
+      halsteadBugs: number;
+      maintainabilityIndex: number;
+    }>,
+  ): number;
+  bulkInsertCfg?(
+    entries: Array<{
+      nodeId: number;
+      blocks: Array<{
+        index: number;
+        blockType: string;
+        startLine?: number | null;
+        endLine?: number | null;
+        label?: string | null;
+      }>;
+      edges: Array<{
+        sourceIndex: number;
+        targetIndex: number;
+        kind: string;
+      }>;
+    }>,
+  ): number;
+  bulkInsertDataflow?(
+    edges: Array<{
+      sourceId: number;
+      targetId: number;
+      kind: string;
+      paramIndex?: number | null;
+      expression?: string | null;
+      line?: number | null;
+      confidence: number;
+    }>,
+  ): number;
   classifyRolesFull(): {
     entry: number;
     core: number;

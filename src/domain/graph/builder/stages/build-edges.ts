@@ -61,12 +61,6 @@ interface NativeEdge {
   dynamic: number;
 }
 
-/** TypeMap entry used in receiver supplement (normalized from native format). */
-interface NormalizedTypeEntry {
-  type: string;
-  confidence: number;
-}
-
 // ── Node lookup setup ───────────────────────────────────────────────────
 
 function makeGetNodeIdStmt(db: BetterSqlite3Database): NodeIdStmt {
@@ -210,14 +204,6 @@ function buildCallEdgesNative(
   for (const e of nativeEdges) {
     allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic]);
   }
-
-  // Older native binaries (< 3.2.0) don't emit receiver or type-resolved method-call
-  // edges. Supplement them on the JS side if the native binary missed them.
-  // TODO: Remove once all published native binaries handle receivers (>= 3.2.0)
-  const hasReceiver = nativeEdges.some((e) => e.kind === 'receiver');
-  if (!hasReceiver) {
-    supplementReceiverEdges(ctx, nativeFiles, getNodeIdStmt, allEdgeRows);
-  }
 }
 
 function buildImportedNamesForNative(
@@ -240,58 +226,6 @@ function buildImportedNamesForNative(
     }
   }
   return importedNames;
-}
-
-// ── Receiver edge supplement for older native binaries ──────────────────
-
-function supplementReceiverEdges(
-  ctx: PipelineContext,
-  nativeFiles: NativeFileEntry[],
-  getNodeIdStmt: NodeIdStmt,
-  allEdgeRows: EdgeRowTuple[],
-): void {
-  const seenCallEdges = new Set<string>();
-  // Collect existing edges to avoid duplicates
-  for (const row of allEdgeRows) {
-    seenCallEdges.add(`${row[0]}|${row[1]}|${row[2]}`);
-  }
-
-  for (const nf of nativeFiles) {
-    const relPath = nf.file;
-    const typeMap = new Map<string, NormalizedTypeEntry>(
-      nf.typeMap.map((t) => [t.name, { type: t.typeName, confidence: t.confidence ?? 0.9 }]),
-    );
-    const fileNodeRow = { id: nf.fileNodeId };
-
-    for (const call of nf.calls) {
-      if (!call.receiver || BUILTIN_RECEIVERS.has(call.receiver)) continue;
-      if (call.receiver === 'this' || call.receiver === 'self' || call.receiver === 'super')
-        continue;
-
-      const caller = findCaller(call, nf.definitions, relPath, getNodeIdStmt, fileNodeRow);
-
-      // Receiver edge: caller → receiver type node
-      buildReceiverEdge(ctx, call, caller, relPath, seenCallEdges, allEdgeRows, typeMap);
-
-      // Type-resolved method call: caller → Type.method
-      const typeEntry = typeMap.get(call.receiver);
-      const typeName = typeEntry ? typeEntry.type : null;
-      if (typeName) {
-        const qualifiedName = `${typeName}.${call.name}`;
-        const targets = (ctx.nodesByName.get(qualifiedName) || []).filter(
-          (n) => n.kind === 'method',
-        );
-        for (const t of targets) {
-          const key = `${caller.id}|${t.id}|calls`;
-          if (t.id !== caller.id && !seenCallEdges.has(key)) {
-            seenCallEdges.add(key);
-            const confidence = computeConfidence(relPath, t.file, null);
-            allEdgeRows.push([caller.id, t.id, 'calls', confidence, call.dynamic ? 1 : 0]);
-          }
-        }
-      }
-    }
-  }
 }
 
 // ── Call edges (JS fallback) ────────────────────────────────────────────
@@ -495,7 +429,7 @@ function buildReceiverEdge(
   relPath: string,
   seenCallEdges: Set<string>,
   allEdgeRows: EdgeRowTuple[],
-  typeMap: Map<string, TypeMapEntry | NormalizedTypeEntry | string>,
+  typeMap: Map<string, TypeMapEntry | string>,
 ): void {
   const receiverKinds = new Set(['class', 'struct', 'interface', 'type', 'module']);
   const typeEntry = typeMap?.get(call.receiver!);
@@ -608,7 +542,7 @@ function loadNodes(ctx: PipelineContext): { rows: QueryNodeRow[]; scoped: boolea
 
 /**
  * For scoped node loading, patch nodesByName.get with a lazy SQL fallback
- * so global name-only lookups (resolveByMethodOrGlobal, supplementReceiverEdges)
+ * so global name-only lookups (resolveByMethodOrGlobal)
  * can still find nodes outside the scoped set.
  */
 function addLazyFallback(ctx: PipelineContext, scopedLoad: boolean): void {
