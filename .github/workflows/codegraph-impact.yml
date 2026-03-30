@@ -28,7 +28,8 @@ jobs:
           path: .codegraph/
           key: codegraph-${{ hashFiles('src/**', 'package.json') }}
           restore-keys: codegraph-
-      - run: npx codegraph build
+      - name: Build codegraph
+        run: npx codegraph build || (rm -rf .codegraph && npx codegraph build --no-incremental)
       - name: Run impact analysis
         run: |
           npx codegraph diff-impact --ref origin/${{ github.base_ref }} --json -T > impact.json || echo '{"affectedFiles":[],"summary":null}' > impact.json
