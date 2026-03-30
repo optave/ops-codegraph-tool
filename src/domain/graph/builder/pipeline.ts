@@ -109,8 +109,10 @@ function setupPipeline(ctx: PipelineContext): void {
     } catch (err) {
       warn(`NativeDatabase init failed, falling back to JS: ${(err as Error).message}`);
       ctx.nativeDb = undefined;
-      initSchema(ctx.db);
     }
+    // Always run JS initSchema so better-sqlite3 sees the schema —
+    // nativeDb is closed before pipeline stages run (dual-connection guard).
+    initSchema(ctx.db);
   } else {
     initSchema(ctx.db);
   }
@@ -156,6 +158,18 @@ function formatTimingResult(ctx: PipelineContext): BuildResult {
 // ── Pipeline stages execution ───────────────────────────────────────────
 
 async function runPipelineStages(ctx: PipelineContext): Promise<void> {
+  // Prevent dual-connection WAL corruption: when both better-sqlite3 (ctx.db)
+  // and rusqlite (ctx.nativeDb) are open to the same file, Rust writes corrupt
+  // the DB. Clear nativeDb so all stages use JS fallback paths. See #694.
+  if (ctx.db && ctx.nativeDb) {
+    try {
+      (ctx.nativeDb as { close?: () => void }).close?.();
+    } catch {
+      /* ignore close errors */
+    }
+    ctx.nativeDb = undefined;
+  }
+
   await collectFiles(ctx);
   await detectChanges(ctx);
 

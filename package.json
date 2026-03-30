@@ -5,18 +5,54 @@
   "type": "module",
   "main": "dist/index.js",
   "imports": {
-    "#shared/*": { "@codegraph/source": "./src/shared/*", "default": "./dist/shared/*" },
-    "#infrastructure/*": { "@codegraph/source": "./src/infrastructure/*", "default": "./dist/infrastructure/*" },
-    "#db/*": { "@codegraph/source": "./src/db/*", "default": "./dist/db/*" },
-    "#domain/*": { "@codegraph/source": "./src/domain/*", "default": "./dist/domain/*" },
-    "#features/*": { "@codegraph/source": "./src/features/*", "default": "./dist/features/*" },
-    "#presentation/*": { "@codegraph/source": "./src/presentation/*", "default": "./dist/presentation/*" },
-    "#graph/*": { "@codegraph/source": "./src/graph/*", "default": "./dist/graph/*" },
-    "#mcp/*": { "@codegraph/source": "./src/mcp/*", "default": "./dist/mcp/*" },
-    "#ast-analysis/*": { "@codegraph/source": "./src/ast-analysis/*", "default": "./dist/ast-analysis/*" },
-    "#extractors/*": { "@codegraph/source": "./src/extractors/*", "default": "./dist/extractors/*" },
-    "#cli/*": { "@codegraph/source": "./src/cli/*", "default": "./dist/cli/*" },
-    "#types": { "@codegraph/source": "./src/types.ts", "default": "./dist/types.js" }
+    "#shared/*": {
+      "@codegraph/source": "./src/shared/*",
+      "default": "./dist/shared/*"
+    },
+    "#infrastructure/*": {
+      "@codegraph/source": "./src/infrastructure/*",
+      "default": "./dist/infrastructure/*"
+    },
+    "#db/*": {
+      "@codegraph/source": "./src/db/*",
+      "default": "./dist/db/*"
+    },
+    "#domain/*": {
+      "@codegraph/source": "./src/domain/*",
+      "default": "./dist/domain/*"
+    },
+    "#features/*": {
+      "@codegraph/source": "./src/features/*",
+      "default": "./dist/features/*"
+    },
+    "#presentation/*": {
+      "@codegraph/source": "./src/presentation/*",
+      "default": "./dist/presentation/*"
+    },
+    "#graph/*": {
+      "@codegraph/source": "./src/graph/*",
+      "default": "./dist/graph/*"
+    },
+    "#mcp/*": {
+      "@codegraph/source": "./src/mcp/*",
+      "default": "./dist/mcp/*"
+    },
+    "#ast-analysis/*": {
+      "@codegraph/source": "./src/ast-analysis/*",
+      "default": "./dist/ast-analysis/*"
+    },
+    "#extractors/*": {
+      "@codegraph/source": "./src/extractors/*",
+      "default": "./dist/extractors/*"
+    },
+    "#cli/*": {
+      "@codegraph/source": "./src/cli/*",
+      "default": "./dist/cli/*"
+    },
+    "#types": {
+      "@codegraph/source": "./src/types.ts",
+      "default": "./dist/types.js"
+    }
   },
   "exports": {
     ".": {
@@ -95,12 +131,12 @@
   },
   "optionalDependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
-    "@optave/codegraph-darwin-arm64": "3.4.1",
-    "@optave/codegraph-darwin-x64": "3.4.1",
-    "@optave/codegraph-linux-arm64-gnu": "3.4.1",
-    "@optave/codegraph-linux-x64-gnu": "3.4.1",
-    "@optave/codegraph-linux-x64-musl": "3.4.1",
-    "@optave/codegraph-win32-x64-msvc": "3.4.1"
+    "@optave/codegraph-darwin-arm64": "3.5.0",
+    "@optave/codegraph-darwin-x64": "3.5.0",
+    "@optave/codegraph-linux-arm64-gnu": "3.5.0",
+    "@optave/codegraph-linux-x64-gnu": "3.5.0",
+    "@optave/codegraph-linux-x64-musl": "3.5.0",
+    "@optave/codegraph-win32-x64-msvc": "3.5.0"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.4",

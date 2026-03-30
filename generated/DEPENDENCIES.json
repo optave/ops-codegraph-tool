@@ -1,9 +1,9 @@
 {
-  "version": "3.4.1",
+  "version": "3.5.0",
   "name": "@optave/codegraph",
   "problems": [
-    "extraneous: @emnapi/runtime@1.8.1 /home/runner/work/codegraph/codegraph/node_modules/@emnapi/runtime",
-    "extraneous: tslib@2.8.1 /home/runner/work/codegraph/codegraph/node_modules/tslib"
+    "extraneous: @emnapi/runtime@1.8.1 /home/runner/work/ops-codegraph-tool/ops-codegraph-tool/node_modules/@emnapi/runtime",
+    "extraneous: tslib@2.8.1 /home/runner/work/ops-codegraph-tool/ops-codegraph-tool/node_modules/tslib"
   ],
   "dependencies": {
     "@emnapi/runtime": {
@@ -12,7 +12,7 @@
       "overridden": false,
       "extraneous": true,
       "problems": [
-        "extraneous: @emnapi/runtime@1.8.1 /home/runner/work/codegraph/codegraph/node_modules/@emnapi/runtime"
+        "extraneous: @emnapi/runtime@1.8.1 /home/runner/work/ops-codegraph-tool/ops-codegraph-tool/node_modules/@emnapi/runtime"
       ],
       "dependencies": {
         "tslib": {
@@ -21,8 +21,8 @@
       }
     },
     "@modelcontextprotocol/sdk": {
-      "version": "1.27.1",
-      "resolved": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.27.1.tgz",
+      "version": "1.28.0",
+      "resolved": "https://registry.npmjs.org/@modelcontextprotocol/sdk/-/sdk-1.28.0.tgz",
       "overridden": false,
       "dependencies": {
         "@cfworker/json-schema": {},
@@ -756,8 +756,8 @@
     "@optave/codegraph-darwin-x64": {},
     "@optave/codegraph-linux-arm64-gnu": {},
     "@optave/codegraph-linux-x64-gnu": {
-      "version": "3.4.1",
-      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-3.4.1.tgz",
+      "version": "3.5.0",
+      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-3.5.0.tgz",
       "overridden": false
     },
     "@optave/codegraph-linux-x64-musl": {},
@@ -1016,7 +1016,7 @@
       "overridden": false,
       "extraneous": true,
       "problems": [
-        "extraneous: tslib@2.8.1 /home/runner/work/codegraph/codegraph/node_modules/tslib"
+        "extraneous: tslib@2.8.1 /home/runner/work/ops-codegraph-tool/ops-codegraph-tool/node_modules/tslib"
       ]
     },
     "web-tree-sitter": {
