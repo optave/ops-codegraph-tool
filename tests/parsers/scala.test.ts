@@ -44,14 +44,14 @@ describe('Scala parser', () => {
   it('extracts trait definitions', () => {
     const symbols = parseScala(`trait Serializable { def serialize(): String }`);
     expect(symbols.definitions).toContainEqual(
-      expect.objectContaining({ name: 'Serializable', kind: 'trait', line: 1 }),
+      expect.objectContaining({ name: 'Serializable', kind: 'interface', line: 1 }),
     );
   });
 
   it('extracts object definitions', () => {
     const symbols = parseScala(`object Config { }`);
     expect(symbols.definitions).toContainEqual(
-      expect.objectContaining({ name: 'Config', kind: 'module', line: 1 }),
+      expect.objectContaining({ name: 'Config', kind: 'class', line: 1 }),
     );
   });
 

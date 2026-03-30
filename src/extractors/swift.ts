@@ -273,6 +273,10 @@ function handleSwiftPropertyDecl(node: TreeSitterNode, ctx: ExtractorOutput): vo
   ) {
     return;
   }
+  // Skip function-local let/var bindings
+  if (node.parent?.type === 'statements' || node.parent?.type === 'function_body') {
+    return;
+  }
   const pattern = findChild(node, 'pattern');
   if (!pattern) return;
   const nameNode = findChild(pattern, 'simple_identifier');

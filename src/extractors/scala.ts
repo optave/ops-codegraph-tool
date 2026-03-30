@@ -83,7 +83,7 @@ function handleScalaTraitDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
 
   ctx.definitions.push({
     name,
-    kind: 'trait',
+    kind: 'interface',
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
     children: children.length > 0 ? children : undefined,
@@ -100,7 +100,7 @@ function handleScalaObjectDef(node: TreeSitterNode, ctx: ExtractorOutput): void 
 
   ctx.definitions.push({
     name,
-    kind: 'module',
+    kind: 'class',
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
     children: children.length > 0 ? children : undefined,
@@ -172,8 +172,9 @@ function handleScalaCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): 
 }
 
 function handleScalaValVarDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  // Only handle top-level vals/vars
+  // Only handle top-level vals/vars — skip class members and function-local bindings
   if (node.parent?.type === 'template_body') return;
+  if (node.parent?.type === 'block' || node.parent?.type === 'indented_block') return;
   const pattern = node.childForFieldName('pattern');
   if (!pattern) return;
   const nameNode = pattern.type === 'identifier' ? pattern : findChild(pattern, 'identifier');
@@ -192,15 +193,31 @@ function handleScalaValVarDef(node: TreeSitterNode, ctx: ExtractorOutput): void 
 function extractScalaInheritance(node: TreeSitterNode, name: string, ctx: ExtractorOutput): void {
   const extendsClause = findChild(node, 'extends_clause');
   if (!extendsClause) return;
+  let foundExtends = false;
   for (let i = 0; i < extendsClause.childCount; i++) {
     const child = extendsClause.child(i);
     if (!child) continue;
-    if (child.type === 'type_identifier' || child.type === 'identifier') {
-      ctx.classes.push({
-        name,
-        extends: child.text,
-        line: node.startPosition.row + 1,
-      });
+    if (
+      child.type === 'type_identifier' ||
+      child.type === 'generic_type' ||
+      child.type === 'identifier'
+    ) {
+      const typeName = child.type === 'generic_type' ? child.child(0)?.text : child.text;
+      if (!typeName) continue;
+      if (!foundExtends) {
+        ctx.classes.push({
+          name,
+          extends: typeName,
+          line: node.startPosition.row + 1,
+        });
+        foundExtends = true;
+      } else {
+        ctx.classes.push({
+          name,
+          implements: typeName,
+          line: node.startPosition.row + 1,
+        });
+      }
     }
   }
 }
