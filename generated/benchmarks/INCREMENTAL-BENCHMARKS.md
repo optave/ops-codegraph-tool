@@ -6,6 +6,7 @@ Import resolution: native batch vs JS fallback throughput.
 
 | Version | Engine | Files | Full Build | No-op | 1-File | Resolve (native) | Resolve (JS) |
 |---------|--------|------:|-----------:|------:|-------:|------------------:|-------------:|
+| 3.6.0 | wasm | 514 | 6.1s | 13ms | 545ms | 4ms ↓3% | 12ms ↑9% |
 | 3.4.1 | native | 473 | 2.4s ↑3% | 13ms ↑8% | 331ms ↓26% | 4ms ~ | 13ms ↑8% |
 | 3.4.1 | wasm | 473 | 5.1s ~ | 13ms ↑8% | 511ms ↓17% | 4ms ~ | 13ms ↑8% |
 | 3.4.0 | native | 473 | 2.3s ↓4% | 12ms ↑9% | 448ms ↑29% | 4ms ↓58% | 12ms ↓54% |
@@ -39,25 +40,61 @@ Import resolution: native batch vs JS fallback throughput.
 
 ### Latest results
 
-**Version:** 3.5.0 | **Files:** 0 | **Date:** 2026-03-30
+**Version:** 3.6.0 | **Files:** 514 | **Date:** 2026-03-30
+
+#### WASM
+
+| Metric | Value |
+|--------|------:|
+| Full build | 6.1s |
+| No-op rebuild | 13ms |
+| 1-file rebuild | 545ms |
 
 #### Import Resolution
 
 | Metric | Value |
 |--------|------:|
-| Import pairs | 896 |
+| Import pairs | 904 |
 | Native batch | 4ms |
-| JS fallback | 11ms |
+| JS fallback | 12ms |
 | Per-import (native) | 0ms |
 | Per-import (JS) | 0ms |
-| Speedup ratio | 2.7x |
-
-<!-- NOTES_START -->
-**Note (3.5.0):** No build/rebuild metrics for this release (both engines null, files: 0) — only import resolution data was collected. The native engine crashed during `insertNodes` due to a napi-rs serialization bug where null `visibility` fields on parameter/child nodes fail conversion at the Rust boundary (`Failed to convert JavaScript value 'Null' into rust type 'String' on InsertNodesDefinition.visibility`). The WASM engine crashed during `buildStructure` with `database disk image is malformed` — a WAL deferred-close race condition in the benchmark's forked child processes where the first child's async `db.close()` corrupts the WAL for subsequent processes. Import resolution metrics are unaffected as they don't depend on a full build. Both issues will be fixed in the next release.
-<!-- NOTES_END -->
+| Speedup ratio | 3.0x |
 
 <!-- INCREMENTAL_BENCHMARK_DATA
 [
+  {
+    "version": "3.6.0",
+    "date": "2026-03-30",
+    "files": 514,
+    "wasm": {
+      "fullBuildMs": 6128,
+      "noopRebuildMs": 13,
+      "oneFileRebuildMs": 545,
+      "oneFilePhases": {
+        "setupMs": 2.5,
+        "parseMs": 246.6,
+        "insertMs": 17.7,
+        "resolveMs": 1.6,
+        "edgesMs": 19,
+        "structureMs": 28.8,
+        "rolesMs": 45.2,
+        "astMs": 12.9,
+        "complexityMs": 0.6,
+        "cfgMs": 0.3,
+        "dataflowMs": 0.3,
+        "finalizeMs": 4.3
+      }
+    },
+    "native": null,
+    "resolve": {
+      "imports": 904,
+      "nativeBatchMs": 3.9,
+      "jsFallbackMs": 11.7,
+      "perImportNativeMs": 0,
+      "perImportJsMs": 0
+    }
+  },
   {
     "version": "3.5.0",
     "date": "2026-03-30",
