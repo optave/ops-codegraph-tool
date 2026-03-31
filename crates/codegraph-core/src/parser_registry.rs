@@ -20,6 +20,12 @@ pub enum LanguageKind {
     Swift,
     Scala,
     Bash,
+    Elixir,
+    Lua,
+    Dart,
+    Zig,
+    Haskell,
+    Ocaml,
 }
 
 impl LanguageKind {
@@ -44,6 +50,12 @@ impl LanguageKind {
             Self::Swift => "swift",
             Self::Scala => "scala",
             Self::Bash => "bash",
+            Self::Elixir => "elixir",
+            Self::Lua => "lua",
+            Self::Dart => "dart",
+            Self::Zig => "zig",
+            Self::Haskell => "haskell",
+            Self::Ocaml => "ocaml",
         }
     }
 
@@ -76,6 +88,12 @@ impl LanguageKind {
             "swift" => Some(Self::Swift),
             "scala" => Some(Self::Scala),
             "sh" | "bash" => Some(Self::Bash),
+            "ex" | "exs" => Some(Self::Elixir),
+            "lua" => Some(Self::Lua),
+            "dart" => Some(Self::Dart),
+            "zig" => Some(Self::Zig),
+            "hs" => Some(Self::Haskell),
+            "ml" | "mli" => Some(Self::Ocaml),
             _ => None,
         }
     }
@@ -100,6 +118,12 @@ impl LanguageKind {
             Self::Swift => tree_sitter_swift::LANGUAGE.into(),
             Self::Scala => tree_sitter_scala::LANGUAGE.into(),
             Self::Bash => tree_sitter_bash::LANGUAGE.into(),
+            Self::Elixir => tree_sitter_elixir::LANGUAGE.into(),
+            Self::Lua => tree_sitter_lua::LANGUAGE.into(),
+            Self::Dart => tree_sitter_dart::language().into(),
+            Self::Zig => tree_sitter_zig::LANGUAGE.into(),
+            Self::Haskell => tree_sitter_haskell::LANGUAGE.into(),
+            Self::Ocaml => tree_sitter_ocaml::LANGUAGE_OCAML.into(),
         }
     }
 }

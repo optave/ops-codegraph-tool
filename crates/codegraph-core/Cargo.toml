@@ -29,6 +29,12 @@ tree-sitter-swift = "0.7"
 tree-sitter-scala = "0.25"
 tree-sitter-bash = "0.23"
 tree-sitter-hcl = "1"
+tree-sitter-elixir = "0.3"
+tree-sitter-lua = "0.2"
+tree-sitter-dart = "0.0.4"
+tree-sitter-zig = "1"
+tree-sitter-haskell = "0.23"
+tree-sitter-ocaml = "0.24"
 rayon = "1"
 # `bundled` embeds a second SQLite copy (better-sqlite3 already bundles one).
 # This is intentional: Windows CI lacks a system SQLite, and WAL coordination

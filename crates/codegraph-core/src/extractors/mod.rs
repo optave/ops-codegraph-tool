@@ -2,18 +2,24 @@ pub mod bash;
 pub mod c;
 pub mod cpp;
 pub mod csharp;
+pub mod dart;
+pub mod elixir;
 pub mod go;
+pub mod haskell;
 pub mod hcl;
 pub mod helpers;
 pub mod java;
 pub mod javascript;
 pub mod kotlin;
+pub mod lua;
+pub mod ocaml;
 pub mod php;
 pub mod python;
 pub mod ruby;
 pub mod rust_lang;
 pub mod scala;
 pub mod swift;
+pub mod zig;
 
 use crate::parser_registry::LanguageKind;
 use crate::types::FileSymbols;
@@ -101,6 +107,24 @@ pub fn extract_symbols_with_opts(
         }
         LanguageKind::Bash => {
             bash::BashExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Elixir => {
+            elixir::ElixirExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Lua => {
+            lua::LuaExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Dart => {
+            dart::DartExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Zig => {
+            zig::ZigExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Haskell => {
+            haskell::HaskellExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Ocaml => {
+            ocaml::OcamlExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
         }
     }
 }

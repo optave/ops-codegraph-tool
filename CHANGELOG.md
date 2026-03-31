@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file. See [commit
 
 ## [3.6.0](https://github.com/optave/ops-codegraph-tool/compare/v3.5.0...v3.6.0) (2026-03-30)
 
-**Six new languages and a parser abstraction layer.** This release adds first-class support for C, C++, Kotlin, Swift, Scala, and Bash — bringing the total supported languages to 17. A new parser abstraction layer decouples language extractors from tree-sitter internals, making it straightforward to add more languages. The native Rust engine gains batched query methods for the read path, WAL corruption is fixed when native and JS connections overlap, and WASM call-AST extraction is restored for full engine parity.
+**Six new languages: Elixir, Lua, Dart, Zig, Haskell, OCaml.** This release adds first-class support for Elixir, Lua, Dart, Zig, Haskell, and OCaml — bringing the total supported languages to 23. Each language ships with dual-engine extractors (WASM TypeScript + native Rust), AST configs, and parser tests. The native Rust engine gains batched query methods for the read path, WAL corruption is fixed when native and JS connections overlap, and WASM call-AST extraction is restored for full engine parity.
 
 ### Features
 

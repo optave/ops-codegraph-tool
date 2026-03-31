@@ -40,6 +40,12 @@ const grammars = [
   { name: 'tree-sitter-swift', pkg: 'tree-sitter-swift', sub: null },
   { name: 'tree-sitter-scala', pkg: 'tree-sitter-scala', sub: null },
   { name: 'tree-sitter-bash', pkg: 'tree-sitter-bash', sub: null },
+  { name: 'tree-sitter-elixir', pkg: 'tree-sitter-elixir', sub: null },
+  { name: 'tree-sitter-lua', pkg: '@tree-sitter-grammars/tree-sitter-lua', sub: null },
+  { name: 'tree-sitter-dart', pkg: 'tree-sitter-dart', sub: null },
+  { name: 'tree-sitter-zig', pkg: '@tree-sitter-grammars/tree-sitter-zig', sub: null },
+  { name: 'tree-sitter-haskell', pkg: 'tree-sitter-haskell', sub: null },
+  { name: 'tree-sitter-ocaml', pkg: 'tree-sitter-ocaml', sub: 'grammars/ocaml' },
 ];
 
 let failed = 0;

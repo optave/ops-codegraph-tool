@@ -90,7 +90,13 @@ export type LanguageId =
   | 'kotlin'
   | 'swift'
   | 'scala'
-  | 'bash';
+  | 'bash'
+  | 'elixir'
+  | 'lua'
+  | 'dart'
+  | 'zig'
+  | 'haskell'
+  | 'ocaml';
 
 /** Engine mode selector. */
 export type EngineMode = 'native' | 'wasm' | 'auto';
