@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.7.0](https://github.com/optave/ops-codegraph-tool/compare/v3.6.0...v3.7.0) (2026-03-30)
+
+**Six more languages and a CFG stability fix.** Codegraph now supports Elixir, Lua, Dart, Zig, Haskell, and OCaml — bringing the total to 23 languages with dual-engine extractors. A WAL conflict in the native CFG bulk-insert path is also fixed, preventing database corruption when JS and native connections overlap during control-flow graph writes.
+
+### Features
+
+* add Elixir, Lua, Dart, Zig, Haskell, OCaml language support ([#718](https://github.com/optave/ops-codegraph-tool/pull/718))
+
+### Bug Fixes
+
+* **cfg:** avoid dual-connection WAL conflict in native bulkInsertCfg ([#719](https://github.com/optave/ops-codegraph-tool/pull/719))
+
 ## [3.6.0](https://github.com/optave/ops-codegraph-tool/compare/v3.5.0...v3.6.0) (2026-03-30)
 
 **Six new languages: Elixir, Lua, Dart, Zig, Haskell, OCaml.** This release adds first-class support for Elixir, Lua, Dart, Zig, Haskell, and OCaml — bringing the total supported languages to 23. Each language ships with dual-engine extractors (WASM TypeScript + native Rust), AST configs, and parser tests. The native Rust engine gains batched query methods for the read path, WAL corruption is fixed when native and JS connections overlap, and WASM call-AST extraction is restored for full engine parity.

@@ -488,6 +488,12 @@ codegraph registry remove <name>  # Unregister
 | ![Swift](https://img.shields.io/badge/-Swift-F05138?style=flat-square&logo=swift&logoColor=white) | `.swift` | ✓ | ✓ | ✓ | ✓ | — | ✓ |
 | ![Scala](https://img.shields.io/badge/-Scala-DC322F?style=flat-square&logo=scala&logoColor=white) | `.scala`, `.sc` | ✓ | ✓ | ✓ | ✓ | — | ✓ |
 | ![Bash](https://img.shields.io/badge/-Bash-4EAA25?style=flat-square&logo=gnubash&logoColor=white) | `.sh`, `.bash` | ✓ | ✓ | ✓ | —⁴ | —⁴ | ✓ |
+| ![Elixir](https://img.shields.io/badge/-Elixir-4B275F?style=flat-square&logo=elixir&logoColor=white) | `.ex`, `.exs` | ✓ | ✓ | ✓ | — | — | ✓ |
+| ![Lua](https://img.shields.io/badge/-Lua-2C2D72?style=flat-square&logo=lua&logoColor=white) | `.lua` | ✓ | ✓ | ✓ | — | — | ✓ |
+| ![Dart](https://img.shields.io/badge/-Dart-0175C2?style=flat-square&logo=dart&logoColor=white) | `.dart` | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| ![Zig](https://img.shields.io/badge/-Zig-F7A41D?style=flat-square&logo=zig&logoColor=white) | `.zig` | ✓ | ✓ | ✓ | — | — | ✓ |
+| ![Haskell](https://img.shields.io/badge/-Haskell-5D4F85?style=flat-square&logo=haskell&logoColor=white) | `.hs` | ✓ | ✓ | ✓ | — | — | ✓ |
+| ![OCaml](https://img.shields.io/badge/-OCaml-EC6813?style=flat-square&logo=ocaml&logoColor=white) | `.ml`, `.mli` | ✓ | ✓ | ✓ | — | — | ✓ |
 | ![Terraform](https://img.shields.io/badge/-Terraform-844FBA?style=flat-square&logo=terraform&logoColor=white) | `.tf`, `.hcl` | ✓ | —³ | —³ | —³ | —³ | —³ |
 
 > ¹ **Heritage** = `extends`, `implements`, `include`/`extend` (Ruby), trait `impl` (Rust), receiver methods (Go).
@@ -792,7 +798,7 @@ See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap a
 6. ~~**Resolution Accuracy**~~ — **Complete** (v3.3.1) — type inference, receiver type tracking, dead role sub-categories, resolution benchmarks, `package.json` exports, monorepo workspace resolution
 7. ~~**TypeScript Migration**~~ — **Complete** (v3.4.0) — all 271 source files migrated from JS to TS, zero `.js` remaining
 8. ~~**Native Analysis Acceleration**~~ — **Complete** (v3.5.0) — all build phases in Rust/rusqlite, sub-100ms incremental rebuilds, better-sqlite3 lazy-loaded as fallback only
-9. **Expanded Language Support** — **In Progress** (v3.6.0) — Batch 1 shipped (C, C++, Kotlin, Swift, Scala, Bash); 17 remaining in 3 batches (17 → 34)
+9. **Expanded Language Support** — **In Progress** (v3.7.0) — Batch 1 shipped (C, C++, Kotlin, Swift, Scala, Bash), Batch 2 shipped (Elixir, Lua, Dart, Zig, Haskell, OCaml); 11 remaining in 2 batches (23 → 34)
 10. **Analysis Depth** — TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis
 11. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
 12. **Quality, Security & Technical Debt** — supply-chain security (SBOM, SLSA), CI coverage gates, timer cleanup, tech debt kill list

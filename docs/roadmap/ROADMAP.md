@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.6.0 | **Status:** Active development | **Updated:** 2026-03-30
+> **Current version:** 3.7.0 | **Status:** Active development | **Updated:** 2026-03-30
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across fourteen phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -20,7 +20,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**4**](#phase-4--resolution-accuracy) | Resolution Accuracy | Dead role sub-categories, receiver type tracking, interface/trait implementation edges, resolution precision/recall benchmarks, `package.json` exports field, monorepo workspace resolution | **Complete** (v3.3.1) |
 | [**5**](#phase-5--typescript-migration) | TypeScript Migration | Project setup, core type definitions, leaf -> core -> orchestration module migration, test migration | **Complete** (v3.4.0) |
 | [**6**](#phase-6--native-analysis-acceleration) | Native Analysis Acceleration | Rust extraction for AST/CFG/dataflow/complexity; batch SQLite inserts; incremental rebuilds; native DB write pipeline; full rusqlite migration so native engine never touches better-sqlite3 | **Complete** (v3.5.0) |
-| [**7**](#phase-7--expanded-language-support) | Expanded Language Support | Parser abstraction layer, 23 new languages in 4 batches (11 → 34), dual-engine support — Batch 1 + 2 (12 languages) shipped in v3.6.0; 11 remaining in 2 batches (23 → 34) | **In Progress** (v3.6.0) |
+| [**7**](#phase-7--expanded-language-support) | Expanded Language Support | Parser abstraction layer, 23 new languages in 4 batches (11 → 34), dual-engine support — Batch 1 (6 languages) shipped in v3.6.0, Batch 2 (6 languages) shipped in v3.7.0; 11 remaining in 2 batches (23 → 34) | **In Progress** (v3.7.0) |
 | [**8**](#phase-8--analysis-depth) | Analysis Depth | TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis, enhanced dynamic dispatch, barrel file resolution, precision/recall CI gates | Planned |
 | [**9**](#phase-9--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system | Planned |
 | [**10**](#phase-10--quality-security--technical-debt) | Quality, Security & Technical Debt | Supply-chain security, test quality gates, architectural debt cleanup | Planned |
@@ -1330,9 +1330,11 @@ Major languages with official or widely-adopted tree-sitter grammars (millions o
 | Scala | `.scala`, `.sc` | `tree-sitter-scala` | Official | JVM ecosystem, 1.5M crate downloads |
 | Bash | `.sh`, `.bash` | `tree-sitter-bash` | Official | 2.6M crate downloads |
 
-### 7.3 -- Batch 2: Growing Ecosystems
+### 7.3 -- Batch 2: Growing Ecosystems ✅
 
 Actively maintained grammars with both npm and Rust packages available.
+
+- ✅ All 6 languages shipped in v3.7.0 ([#718](https://github.com/optave/ops-codegraph-tool/pull/718))
 
 | Language | Extensions | Grammar | Org | Notes |
 |----------|-----------|---------|-----|-------|
