@@ -59,6 +59,9 @@ fn handle_defmodule(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     };
     let name = node_text(&alias_node, source).to_string();
 
+    // Collect child function definitions from the module's do_block
+    let children = collect_module_children(node, source);
+
     symbols.definitions.push(Definition {
         name,
         kind: "module".to_string(),
@@ -67,8 +70,39 @@ fn handle_defmodule(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         decorators: None,
         complexity: None,
         cfg: None,
-        children: None,
+        children: opt_children(children),
     });
+}
+
+fn collect_module_children(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut children = Vec::new();
+    let do_block = match find_child(node, "do_block") {
+        Some(b) => b,
+        None => return children,
+    };
+
+    for i in 0..do_block.child_count() {
+        let child = match do_block.child(i) {
+            Some(c) if c.kind() == "call" => c,
+            _ => continue,
+        };
+        let target = match child.child_by_field_name("target").or_else(|| child.child(0)) {
+            Some(t) if t.kind() == "identifier" => t,
+            _ => continue,
+        };
+        let kw = node_text(&target, source);
+        if kw != "def" && kw != "defp" {
+            continue;
+        }
+        let args = match find_child(&child, "arguments") {
+            Some(a) => a,
+            None => continue,
+        };
+        if let Some(fn_name) = extract_elixir_fn_name(&args, source) {
+            children.push(child_def(fn_name, "property", start_line(&child)));
+        }
+    }
+    children
 }
 
 fn handle_def_function(node: &Node, source: &[u8], symbols: &mut FileSymbols, keyword: &str) {
@@ -91,7 +125,9 @@ fn handle_def_function(node: &Node, source: &[u8], symbols: &mut FileSymbols, ke
         None => fn_name,
     };
 
-    let visibility = if keyword == "defp" { Some("private".to_string()) } else { Some("public".to_string()) };
+    // Note: visibility (public/private) is determined by keyword but the
+    // Definition struct does not yet have a visibility field. When it does,
+    // wire `keyword == "defp"` → private, else → public.
 
     symbols.definitions.push(Definition {
         name: full_name,
