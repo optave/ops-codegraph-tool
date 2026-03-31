@@ -369,7 +369,7 @@ export async function buildCFGData(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, FileSymbols>,
   rootDir: string,
-  engineOpts?: {
+  _engineOpts?: {
     nativeDb?: { bulkInsertCfg?(entries: Array<Record<string, unknown>>): number };
     suspendJsDb?: () => void;
     resumeJsDb?: () => void;
@@ -379,56 +379,11 @@ export async function buildCFGData(
   // skip WASM parser init, tree parsing, and JS visitor entirely — just persist.
   const allNative = allCfgNative(fileSymbols);
 
-  // ── Native bulk-insert fast path ──────────────────────────────────────
-  const nativeDb = engineOpts?.nativeDb;
-  if (allNative && nativeDb?.bulkInsertCfg) {
-    const entries: Array<Record<string, unknown>> = [];
-
-    for (const [relPath, symbols] of fileSymbols) {
-      const ext = path.extname(relPath).toLowerCase();
-      if (!CFG_EXTENSIONS.has(ext)) continue;
-
-      for (const def of symbols.definitions) {
-        if (def.kind !== 'function' && def.kind !== 'method') continue;
-        if (!def.line) continue;
-
-        const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
-        if (!nodeId) continue;
-
-        deleteCfgForNode(db, nodeId);
-        if (!def.cfg?.blocks?.length) continue;
-
-        const cfg = def.cfg as unknown as { blocks: CfgBuildBlock[]; edges: CfgBuildEdge[] };
-        entries.push({
-          nodeId,
-          blocks: cfg.blocks.map((b) => ({
-            index: b.index,
-            blockType: b.type,
-            startLine: b.startLine ?? null,
-            endLine: b.endLine ?? null,
-            label: b.label ?? null,
-          })),
-          edges: cfg.edges.map((e) => ({
-            sourceIndex: e.sourceIndex,
-            targetIndex: e.targetIndex,
-            kind: e.kind,
-          })),
-        });
-      }
-    }
-
-    if (entries.length > 0) {
-      let inserted: number;
-      try {
-        engineOpts?.suspendJsDb?.();
-        inserted = nativeDb.bulkInsertCfg(entries);
-      } finally {
-        engineOpts?.resumeJsDb?.();
-      }
-      info(`CFG (native bulk): ${inserted} blocks across ${entries.length} functions`);
-    }
-    return;
-  }
+  // NOTE: nativeDb.bulkInsertCfg is intentionally NOT used here.
+  // The CFG path requires delete-before-insert (deleteCfgForNode) which creates
+  // a dual-connection WAL conflict when deletes go through JS (better-sqlite3)
+  // and inserts go through native (rusqlite). The JS-only persistNativeFileCfg
+  // path below handles both on a single connection safely.
 
   const extToLang = buildExtToLangMap();
   let parsers: unknown = null;
