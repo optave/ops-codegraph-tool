@@ -43,13 +43,6 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
   // Standalone napi functions were removed in 6.17 — falls through to JS if nativeDb unavailable.
   if (!ctx.nativeDb?.bulkInsertNodes) return false;
 
-  // WAL checkpoint: flush WAL to main DB file so the native (rusqlite) connection
-  // sees a clean slate. This is the same dual-connection guard used by feature
-  // modules (ast, cfg, complexity, dataflow). See #696, #709.
-  if (ctx.db) {
-    ctx.db.pragma('wal_checkpoint(TRUNCATE)');
-  }
-
   const { allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
 
   // Marshal allSymbols → InsertNodesBatch[]
@@ -145,7 +138,24 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
     fileHashes.push({ file: item.relPath, hash: item.hash, mtime, size });
   }
 
-  return ctx.nativeDb!.bulkInsertNodes(batches, fileHashes, removed);
+  // WAL guard: same suspendJsDb/resumeJsDb pattern used by feature modules
+  // (ast, cfg, complexity, dataflow). Checkpoint JS side before native write,
+  // then checkpoint native side after, so neither library reads WAL frames
+  // written by the other (#696, #709, #715, #717).
+  let result: boolean;
+  try {
+    if (ctx.db) {
+      ctx.db.pragma('wal_checkpoint(TRUNCATE)');
+    }
+    result = ctx.nativeDb!.bulkInsertNodes(batches, fileHashes, removed);
+  } finally {
+    try {
+      ctx.nativeDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch {
+      /* ignore — nativeDb may already be closed */
+    }
+  }
+  return result;
 }
 
 // ── JS fallback: Phase 1 ────────────────────────────────────────────
