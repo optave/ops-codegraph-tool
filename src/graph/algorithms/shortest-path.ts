@@ -1,7 +1,10 @@
+import { loadNative } from '../../infrastructure/native.js';
 import type { CodeGraph } from '../model.js';
 
 /**
  * BFS-based shortest path on a CodeGraph.
+ *
+ * Tries the native Rust implementation first, falls back to JS.
  *
  * @returns Path from fromId to toId (inclusive), or null if unreachable
  */
@@ -12,6 +15,18 @@ export function shortestPath(graph: CodeGraph, fromId: string, toId: string): st
   if (!graph.hasNode(from) || !graph.hasNode(to)) return null;
   if (from === to) return [from];
 
+  const native = loadNative();
+  if (native?.shortestPath) {
+    const edges = graph.toEdgeArray();
+    const result = native.shortestPath(edges, from, to);
+    return result.length > 0 ? result : null;
+  }
+
+  return shortestPathJS(graph, from, to);
+}
+
+/** Pure JS fallback for shortest path. */
+function shortestPathJS(graph: CodeGraph, from: string, to: string): string[] | null {
   const parent = new Map<string, string | null>();
   parent.set(from, null);
   const queue = [from];
@@ -23,7 +38,6 @@ export function shortestPath(graph: CodeGraph, fromId: string, toId: string): st
       if (parent.has(neighbor)) continue;
       parent.set(neighbor, current);
       if (neighbor === to) {
-        // Reconstruct path
         const path: string[] = [];
         let node: string | null = to;
         while (node !== null) {

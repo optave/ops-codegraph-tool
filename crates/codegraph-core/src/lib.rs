@@ -7,6 +7,7 @@ pub mod dataflow;
 pub mod edge_builder;
 pub mod edges_db;
 pub mod extractors;
+pub mod graph_algorithms;
 pub mod import_resolution;
 pub mod incremental;
 pub mod insert_nodes;

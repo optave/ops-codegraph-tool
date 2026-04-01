@@ -1840,6 +1840,29 @@ export interface NativeAddon {
   ): Array<{ fromFile: string; importSource: string; resolvedPath: string }>;
   computeConfidence(callerFile: string, targetFile: string, importedFrom: string | null): number;
   detectCycles(edges: Array<{ source: string; target: string }>): string[][];
+  bfsTraversal(
+    edges: Array<{ source: string; target: string }>,
+    startIds: string[],
+    maxDepth?: number | null,
+    direction?: string | null,
+  ): Array<{ node: string; depth: number }>;
+  shortestPath(
+    edges: Array<{ source: string; target: string }>,
+    fromId: string,
+    toId: string,
+  ): string[];
+  fanInOut(
+    edges: Array<{ source: string; target: string }>,
+  ): Array<{ node: string; fanIn: number; fanOut: number }>;
+  louvainCommunities(
+    edges: Array<{ source: string; target: string }>,
+    nodeIds: string[],
+    resolution?: number | null,
+    randomSeed?: number | null,
+  ): {
+    assignments: Array<{ node: string; community: number }>;
+    modularity: number;
+  };
   buildCallEdges(files: unknown[], nodes: unknown[], builtinReceivers: string[]): unknown[];
   engineVersion(): string;
   ParseTreeCache: new () => NativeParseTreeCache;
