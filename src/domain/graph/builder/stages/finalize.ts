@@ -114,11 +114,33 @@ function persistBuildMetadata(
  * Run advisory checks on full builds: orphaned embeddings, stale embeddings,
  * and unused exports. Informational only — does not affect correctness.
  */
-function runAdvisoryChecks(
-  db: PipelineContext['db'],
-  hasEmbeddings: boolean,
-  buildNow: Date,
-): void {
+function runAdvisoryChecks(ctx: PipelineContext, hasEmbeddings: boolean, buildNow: Date): void {
+  // Batched native path: single napi call for all 3 advisory checks
+  if (ctx.engineName === 'native' && ctx.nativeDb?.runAdvisoryChecks) {
+    const result = ctx.nativeDb.runAdvisoryChecks(hasEmbeddings);
+    if (result.orphanedEmbeddings > 0) {
+      warn(
+        `${result.orphanedEmbeddings} embeddings are orphaned (nodes changed). Run "codegraph embed" to refresh.`,
+      );
+    }
+    if (result.embedBuiltAt) {
+      const embedTime = new Date(result.embedBuiltAt).getTime();
+      if (!Number.isNaN(embedTime) && embedTime < buildNow.getTime()) {
+        warn(
+          'Embeddings were built before the last graph rebuild. Run "codegraph embed" to update.',
+        );
+      }
+    }
+    if (result.unusedExports > 0) {
+      warn(
+        `${result.unusedExports} exported symbol${result.unusedExports > 1 ? 's have' : ' has'} zero cross-file consumers. Run "codegraph exports <file> --unused" to inspect.`,
+      );
+    }
+    return;
+  }
+
+  const { db } = ctx;
+
   // Orphaned embeddings warning
   if (hasEmbeddings) {
     try {
@@ -197,9 +219,17 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   // both the stale-embeddings comparison and the persisted built_at metadata.
   const buildNow = new Date();
 
-  const nodeCount = (ctx.db.prepare('SELECT COUNT(*) as c FROM nodes').get() as { c: number }).c;
-  const actualEdgeCount = (ctx.db.prepare('SELECT COUNT(*) as c FROM edges').get() as { c: number })
-    .c;
+  const useNative = ctx.engineName === 'native' && !!ctx.nativeDb?.getFinalizeCounts;
+  let nodeCount: number;
+  let actualEdgeCount: number;
+  if (useNative) {
+    const counts = ctx.nativeDb!.getFinalizeCounts!();
+    nodeCount = counts.nodeCount;
+    actualEdgeCount = counts.edgeCount;
+  } else {
+    nodeCount = (ctx.db.prepare('SELECT COUNT(*) as c FROM nodes').get() as { c: number }).c;
+    actualEdgeCount = (ctx.db.prepare('SELECT COUNT(*) as c FROM edges').get() as { c: number }).c;
+  }
   info(`Graph built: ${nodeCount} nodes, ${actualEdgeCount} edges`);
   info(`Stored in ${ctx.dbPath}`);
 
@@ -213,7 +243,7 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
       'Finalize: skipping advisory queries (orphaned/stale embeddings, unused exports) for incremental build',
     );
   } else {
-    runAdvisoryChecks(ctx.db, hasEmbeddings, buildNow);
+    runAdvisoryChecks(ctx, hasEmbeddings, buildNow);
   }
 
   // Intentionally measured before closeDb / writeJournalHeader / auto-registration:
