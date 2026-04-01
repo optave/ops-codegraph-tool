@@ -1,5 +1,4 @@
 import type {
-  Call,
   ExtractorOutput,
   SubDeclaration,
   TreeSitterNode,
