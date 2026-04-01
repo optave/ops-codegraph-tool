@@ -15,7 +15,7 @@ use crate::parser_registry::LanguageKind;
 use crate::types::{DataflowResult, FunctionCfgResult, FunctionComplexityResult};
 
 /// Extract the name of a function/method node via the "name" field.
-fn function_name<'a>(node: &'a Node, source: &'a [u8]) -> String {
+fn function_name(node: &Node, source: &[u8]) -> String {
     node.child_by_field_name("name")
         .map(|n| n.utf8_text(source).unwrap_or("<anonymous>").to_string())
         .unwrap_or_else(|| "<anonymous>".to_string())
@@ -24,7 +24,7 @@ fn function_name<'a>(node: &'a Node, source: &'a [u8]) -> String {
 /// Collect all function/method nodes from the AST using a DFS walk.
 /// Uses the complexity rules' `function_nodes` list to identify function node types.
 fn collect_function_nodes<'a>(
-    root: &'a Node<'a>,
+    root: Node<'a>,
     function_types: &[&str],
     depth: usize,
 ) -> Vec<Node<'a>> {
@@ -33,11 +33,11 @@ fn collect_function_nodes<'a>(
         return result;
     }
     if function_types.contains(&root.kind()) {
-        result.push(*root);
+        result.push(root);
     }
     for i in 0..root.child_count() {
         if let Some(child) = root.child(i) {
-            result.extend(collect_function_nodes(&child, function_types, depth + 1));
+            result.extend(collect_function_nodes(child, function_types, depth + 1));
         }
     }
     result
@@ -45,8 +45,7 @@ fn collect_function_nodes<'a>(
 
 /// Parse source code and return a tree + language kind, or None if unsupported.
 fn parse_source(source: &str, file_path: &str) -> Option<(tree_sitter::Tree, LanguageKind)> {
-    let lang = LanguageKind::from_extension(file_path)
-        .or_else(|| LanguageKind::from_lang_id(file_path))?;
+    let lang = LanguageKind::from_extension(file_path)?;
     let mut parser = Parser::new();
     parser.set_language(&lang.tree_sitter_language()).ok()?;
     let tree = parser.parse(source.as_bytes(), None)?;
@@ -70,7 +69,7 @@ pub fn analyze_complexity_standalone(
     };
 
     let root = tree.root_node();
-    let func_nodes = collect_function_nodes(&root, rules.function_nodes, 0);
+    let func_nodes = collect_function_nodes(root,rules.function_nodes, 0);
     let source_bytes = source.as_bytes();
 
     func_nodes
@@ -109,7 +108,7 @@ pub fn build_cfg_standalone(source: &str, file_path: &str) -> Vec<FunctionCfgRes
     };
 
     let root = tree.root_node();
-    let func_nodes = collect_function_nodes(&root, func_types, 0);
+    let func_nodes = collect_function_nodes(root,func_types, 0);
     let source_bytes = source.as_bytes();
 
     func_nodes
