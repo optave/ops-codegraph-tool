@@ -127,6 +127,9 @@ pub(crate) fn do_insert_nodes(
             // Definitions
             for def in &batch.definitions {
                 let scope: Option<&str> = def.name.rfind('.').map(|i| &def.name[..i]);
+                // .as_deref() converts Option<String> → Option<&str> so rusqlite
+                // serialises None as SQL NULL unambiguously (#709).
+                let vis = def.visibility.as_deref();
                 stmt.execute(params![
                     &def.name,
                     &def.kind,
@@ -136,7 +139,7 @@ pub(crate) fn do_insert_nodes(
                     None::<i64>,
                     &def.name,
                     scope,
-                    &def.visibility
+                    vis
                 ])?;
             }
 
@@ -203,6 +206,7 @@ pub(crate) fn do_insert_nodes(
 
                 for child in &def.children {
                     let qname = format!("{}.{}", def.name, child.name);
+                    let child_vis = child.visibility.as_deref();
                     child_stmt.execute(params![
                         &child.name,
                         &child.kind,
@@ -212,7 +216,7 @@ pub(crate) fn do_insert_nodes(
                         def_id,
                         &qname,
                         &def.name,
-                        &child.visibility
+                        child_vis
                     ])?;
                 }
             }
