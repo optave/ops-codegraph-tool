@@ -148,20 +148,16 @@ function handleStructDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   if (!nameNode) return;
 
   const members: SubDeclaration[] = [];
-  const body = findChild(node, 'struct_member') ? node : null;
-  if (!body) {
-    // Iterate direct children looking for member declarations
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i);
-      if (child && child.type === 'struct_member') {
-        const memberName = child.childForFieldName('name');
-        if (memberName) {
-          members.push({
-            name: memberName.text,
-            kind: 'property',
-            line: child.startPosition.row + 1,
-          });
-        }
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child && child.type === 'struct_member') {
+      const memberName = child.childForFieldName('name');
+      if (memberName) {
+        members.push({
+          name: memberName.text,
+          kind: 'property',
+          line: child.startPosition.row + 1,
+        });
       }
     }
   }
@@ -273,7 +269,7 @@ function handleStateVarDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 
   ctx.definitions.push({
     name: fullName,
-    kind: 'function',
+    kind: 'variable',
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
     visibility: extractSolVisibility(node),
