@@ -2285,6 +2285,14 @@ export interface NativeDatabase {
   queryGet(sql: string, params: Array<string | number | null>): Record<string, unknown> | null;
   /** Validate DB codegraph_version matches expected. Warns on mismatch. */
   validateSchemaVersion(expectedVersion: string): boolean;
+
+  // ── Full Rust build orchestration (#695) ─────────────────────────────
+  /**
+   * Run the entire build pipeline in Rust with zero napi boundary crossings.
+   * Returns a JSON string with timing and build result data.
+   * When unavailable, the JS pipeline (runPipelineStages) is used as fallback.
+   */
+  buildGraph?(rootDir: string, configJson: string, aliasesJson: string, optsJson: string): string;
 }
 
 // ════════════════════════════════════════════════════════════════════════

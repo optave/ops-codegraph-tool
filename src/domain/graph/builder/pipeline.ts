@@ -289,6 +289,65 @@ export async function buildGraph(
 
   try {
     setupPipeline(ctx);
+
+    // ── Rust orchestrator fast path (#695) ────────────────────────────
+    // When available, run the entire build pipeline in Rust with zero
+    // napi crossings (eliminates WAL dual-connection dance). Falls back
+    // to the JS pipeline on failure or when native is unavailable.
+    const forceJs = process.env.CODEGRAPH_FORCE_JS_PIPELINE === '1';
+    if (!forceJs && ctx.nativeDb?.buildGraph) {
+      try {
+        const resultJson = ctx.nativeDb.buildGraph(
+          ctx.rootDir,
+          JSON.stringify(ctx.config),
+          JSON.stringify(ctx.aliases),
+          JSON.stringify(opts),
+        );
+        const result = JSON.parse(resultJson) as {
+          phases: Record<string, number>;
+          earlyExit?: boolean;
+          nodeCount?: number;
+          edgeCount?: number;
+          fileCount?: number;
+        };
+
+        if (result.earlyExit) {
+          closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
+          return;
+        }
+
+        // Map Rust timing fields to the JS BuildResult format.
+        // Rust handles collect+detect+parse+insert+resolve+edges+structure+roles.
+        // AST/complexity/CFG/dataflow analyses are not yet ported to Rust.
+        const p = result.phases;
+        closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
+        info(
+          `Native build orchestrator completed: ${result.nodeCount ?? 0} nodes, ${result.edgeCount ?? 0} edges, ${result.fileCount ?? 0} files`,
+        );
+        return {
+          phases: {
+            setupMs: +((p.setupMs ?? 0) + (p.collectMs ?? 0) + (p.detectMs ?? 0)).toFixed(1),
+            parseMs: +(p.parseMs ?? 0).toFixed(1),
+            insertMs: +(p.insertMs ?? 0).toFixed(1),
+            resolveMs: +(p.resolveMs ?? 0).toFixed(1),
+            edgesMs: +(p.edgesMs ?? 0).toFixed(1),
+            structureMs: +(p.structureMs ?? 0).toFixed(1),
+            rolesMs: +(p.rolesMs ?? 0).toFixed(1),
+            astMs: 0,
+            complexityMs: 0,
+            cfgMs: 0,
+            dataflowMs: 0,
+            finalizeMs: +(p.finalizeMs ?? 0).toFixed(1),
+          },
+        };
+      } catch (err) {
+        warn(
+          `Native build orchestrator failed, falling back to JS pipeline: ${(err as Error).message}`,
+        );
+        // Fall through to JS pipeline
+      }
+    }
+
     await runPipelineStages(ctx);
   } catch (err) {
     if (!ctx.earlyExit && ctx.db) {

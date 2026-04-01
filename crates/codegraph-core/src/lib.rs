@@ -1,21 +1,28 @@
 pub mod ast_db;
+pub mod build_pipeline;
+pub mod change_detection;
 pub mod cfg;
 pub mod complexity;
+pub mod config;
 pub mod constants;
 pub mod cycles;
 pub mod dataflow;
 pub mod edge_builder;
 pub mod edges_db;
 pub mod extractors;
+pub mod file_collector;
+pub mod import_edges;
 pub mod import_resolution;
 pub mod incremental;
 pub mod insert_nodes;
+pub mod journal;
 pub mod native_db;
 pub mod read_queries;
 pub mod read_types;
 pub mod parallel;
 pub mod parser_registry;
 pub mod roles_db;
+pub mod structure;
 pub mod types;
 
 use napi_derive::napi;

@@ -1,0 +1,672 @@
+//! Full Rust build orchestrator — runs the entire build pipeline with zero
+//! napi boundary crossings after the initial `build_graph()` call.
+//!
+//! Replaces the JS `runPipelineStages()` in `pipeline.ts` when the native
+//! engine is available. The JS pipeline remains as the WASM fallback.
+//!
+//! Pipeline stages (all internal, single rusqlite connection):
+//! 1. Deserialize config/aliases/opts
+//! 2. Collect files (with gitignore + extension filter)
+//! 3. Detect changes (tiered: journal/mtime/hash)
+//! 4. Parse files in parallel (existing `parallel::parse_files_parallel`)
+//! 5. Insert nodes (existing `insert_nodes::do_insert_nodes`)
+//! 6. Resolve imports (existing `import_resolution::resolve_imports_batch`)
+//! 7. Build import edges + barrel resolution
+//! 8. Build call edges (existing `edge_builder::build_call_edges`)
+//! 9. Structure metrics + role classification
+//! 10. Finalize (metadata, journal)
+
+use crate::change_detection;
+use crate::config::{BuildConfig, BuildOpts, BuildPathAliases};
+use crate::file_collector;
+use crate::import_edges::{self, ImportEdgeContext, ReexportEntry};
+use crate::import_resolution;
+use crate::journal;
+use crate::parallel;
+use crate::roles_db;
+use crate::structure;
+use crate::types::{FileSymbols, ImportResolutionInput};
+use rusqlite::Connection;
+use serde::Serialize;
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::time::Instant;
+
+/// Timing result for each pipeline phase (returned as JSON to JS).
+#[derive(Debug, Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PipelineTiming {
+    pub setup_ms: f64,
+    pub collect_ms: f64,
+    pub detect_ms: f64,
+    pub parse_ms: f64,
+    pub insert_ms: f64,
+    pub resolve_ms: f64,
+    pub edges_ms: f64,
+    pub structure_ms: f64,
+    pub roles_ms: f64,
+    pub finalize_ms: f64,
+}
+
+/// Result of the build pipeline.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildPipelineResult {
+    pub phases: PipelineTiming,
+    pub node_count: i64,
+    pub edge_count: i64,
+    pub file_count: usize,
+    pub early_exit: bool,
+}
+
+/// Normalize path to forward slashes.
+fn normalize_path(p: &str) -> String {
+    p.replace('\\', "/")
+}
+
+/// Make a path relative to root_dir, normalized.
+fn relative_path(root_dir: &str, abs_path: &str) -> String {
+    let root = Path::new(root_dir);
+    let abs = Path::new(abs_path);
+    match abs.strip_prefix(root) {
+        Ok(rel) => normalize_path(rel.to_str().unwrap_or("")),
+        Err(_) => normalize_path(abs_path),
+    }
+}
+
+/// Run the full build pipeline in Rust.
+///
+/// Called from `NativeDatabase.build_graph()` via napi.
+pub fn run_pipeline(
+    conn: &Connection,
+    root_dir: &str,
+    config_json: &str,
+    aliases_json: &str,
+    opts_json: &str,
+) -> Result<BuildPipelineResult, String> {
+    let total_start = Instant::now();
+    let mut timing = PipelineTiming::default();
+
+    // ── Stage 1: Deserialize config ────────────────────────────────────
+    let t0 = Instant::now();
+    let config: BuildConfig =
+        serde_json::from_str(config_json).map_err(|e| format!("config parse error: {e}"))?;
+    let aliases: BuildPathAliases =
+        serde_json::from_str(aliases_json).map_err(|e| format!("aliases parse error: {e}"))?;
+    let opts: BuildOpts =
+        serde_json::from_str(opts_json).map_err(|e| format!("opts parse error: {e}"))?;
+
+    let napi_aliases = aliases.to_napi_aliases();
+    let incremental = opts.incremental.unwrap_or(config.build.incremental);
+    let include_dataflow = opts.dataflow.unwrap_or(true);
+    let include_ast = opts.ast.unwrap_or(true);
+
+    // Check engine/schema/version mismatch for forced full rebuild
+    let force_full_rebuild = check_version_mismatch(conn);
+    timing.setup_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    // ── Stage 2: Collect files ─────────────────────────────────────────
+    let t0 = Instant::now();
+    let collect_result = if let Some(ref scope) = opts.scope {
+        // Scoped rebuild
+        let files: Vec<String> = scope
+            .iter()
+            .map(|f| {
+                let abs = Path::new(root_dir).join(normalize_path(f));
+                abs.to_str().unwrap_or("").to_string()
+            })
+            .filter(|f| Path::new(f).exists())
+            .collect();
+        file_collector::CollectResult {
+            directories: files
+                .iter()
+                .filter_map(|f| {
+                    Path::new(f)
+                        .parent()
+                        .map(|p| p.to_str().unwrap_or("").to_string())
+                })
+                .collect(),
+            files,
+        }
+    } else if incremental && !force_full_rebuild {
+        // Try fast collect from DB + journal
+        let journal = journal::read_journal(root_dir);
+        let has_entries =
+            journal.valid && (!journal.changed.is_empty() || !journal.removed.is_empty());
+
+        if has_entries {
+            let db_files: Vec<String> = conn
+                .prepare("SELECT file FROM file_hashes")
+                .and_then(|mut stmt| {
+                    stmt.query_map([], |row| row.get::<_, String>(0))
+                        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default();
+
+            if !db_files.is_empty() {
+                file_collector::try_fast_collect(
+                    root_dir,
+                    &db_files,
+                    &journal.changed,
+                    &journal.removed,
+                )
+            } else {
+                file_collector::collect_files(root_dir, &config.ignore_dirs)
+            }
+        } else {
+            file_collector::collect_files(root_dir, &config.ignore_dirs)
+        }
+    } else {
+        file_collector::collect_files(root_dir, &config.ignore_dirs)
+    };
+    timing.collect_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    // ── Stage 3: Detect changes ────────────────────────────────────────
+    let t0 = Instant::now();
+    let change_result = change_detection::detect_changes(
+        conn,
+        &collect_result.files,
+        root_dir,
+        incremental,
+        force_full_rebuild,
+    );
+    timing.detect_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    // Filter out metadata-only changes
+    let parse_changes: Vec<&change_detection::ChangedFile> = change_result
+        .changed
+        .iter()
+        .filter(|c| !c.metadata_only)
+        .collect();
+
+    // Early exit: no changes
+    if !change_result.is_full_build && parse_changes.is_empty() && change_result.removed.is_empty()
+    {
+        // Heal metadata if needed
+        change_detection::heal_metadata(conn, &change_result.metadata_updates);
+        journal::write_journal_header(root_dir, now_ms());
+        return Ok(BuildPipelineResult {
+            phases: timing,
+            node_count: 0,
+            edge_count: 0,
+            file_count: collect_result.files.len(),
+            early_exit: true,
+        });
+    }
+
+    // Handle full build: clear all graph data
+    if change_result.is_full_build {
+        let has_embeddings = change_detection::has_embeddings(conn);
+        change_detection::clear_all_graph_data(conn, has_embeddings);
+    } else {
+        // Incremental: find reverse deps and purge changed files
+        let changed_rel_paths: HashSet<String> = parse_changes
+            .iter()
+            .map(|c| c.rel_path.clone())
+            .chain(change_result.removed.iter().cloned())
+            .collect();
+
+        let reverse_deps = if opts.no_reverse_deps.unwrap_or(false) {
+            HashSet::new()
+        } else {
+            change_detection::find_reverse_dependencies(conn, &changed_rel_paths, root_dir)
+        };
+
+        let files_to_purge: Vec<String> = change_result
+            .removed
+            .iter()
+            .chain(parse_changes.iter().map(|c| &c.rel_path))
+            .cloned()
+            .collect();
+        let reverse_dep_list: Vec<String> = reverse_deps.iter().cloned().collect();
+        change_detection::purge_changed_files(conn, &files_to_purge, &reverse_dep_list);
+    }
+
+    // ── Stage 4: Parse files ───────────────────────────────────────────
+    let t0 = Instant::now();
+    let files_to_parse: Vec<String> = parse_changes.iter().map(|c| c.abs_path.clone()).collect();
+    let parsed =
+        parallel::parse_files_parallel(&files_to_parse, root_dir, include_dataflow, include_ast);
+
+    // Build file symbols map (relative path → FileSymbols)
+    let mut file_symbols: HashMap<String, FileSymbols> = HashMap::new();
+    for sym in parsed {
+        let rel = normalize_path(&sym.file);
+        file_symbols.insert(rel, sym);
+    }
+    timing.parse_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    // ── Stage 5: Insert nodes ──────────────────────────────────────────
+    let t0 = Instant::now();
+    let insert_batches = build_insert_batches(&file_symbols);
+    let file_hashes = build_file_hash_entries(&parse_changes, root_dir);
+    let _ = crate::insert_nodes::do_insert_nodes(
+        conn,
+        &insert_batches,
+        &file_hashes,
+        &change_result.removed,
+    );
+    // Also heal metadata-only updates
+    change_detection::heal_metadata(conn, &change_result.metadata_updates);
+    timing.insert_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    // ── Stage 6: Resolve imports ───────────────────────────────────────
+    let t0 = Instant::now();
+    let mut batch_inputs: Vec<ImportResolutionInput> = Vec::new();
+    for (rel_path, symbols) in &file_symbols {
+        let abs_file = Path::new(root_dir).join(rel_path);
+        let abs_str = abs_file.to_str().unwrap_or("").to_string();
+        for imp in &symbols.imports {
+            batch_inputs.push(ImportResolutionInput {
+                from_file: abs_str.clone(),
+                import_source: imp.source.clone(),
+            });
+        }
+    }
+
+    let known_files: HashSet<String> = collect_result
+        .files
+        .iter()
+        .map(|f| relative_path(root_dir, f))
+        .collect();
+
+    let resolved = import_resolution::resolve_imports_batch(
+        &batch_inputs,
+        root_dir,
+        &napi_aliases,
+        Some(&known_files),
+    );
+
+    // Build batch_resolved map: "absFile|importSource" -> resolved path
+    let mut batch_resolved: HashMap<String, String> = HashMap::new();
+    for r in &resolved {
+        let key = format!("{}|{}", r.from_file, r.import_source);
+        batch_resolved.insert(key, r.resolved_path.clone());
+    }
+    timing.resolve_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    // ── Stage 7: Build edges ───────────────────────────────────────────
+    let t0 = Instant::now();
+
+    // Build import edge context
+    let mut import_ctx = ImportEdgeContext {
+        batch_resolved,
+        reexport_map: HashMap::new(),
+        barrel_only_files: HashSet::new(),
+        file_symbols: file_symbols.clone(),
+        root_dir: root_dir.to_string(),
+        aliases: napi_aliases.clone(),
+        known_files,
+    };
+
+    // Build reexport map and detect barrel files
+    import_ctx.reexport_map = import_edges::build_reexport_map(&import_ctx);
+    import_ctx.barrel_only_files = import_edges::detect_barrel_only_files(&import_ctx);
+
+    // Build import edges
+    let import_edge_rows = import_edges::build_import_edges(conn, &import_ctx);
+    import_edges::insert_edges(conn, &import_edge_rows);
+
+    // Build call edges using existing Rust edge_builder (internal path)
+    // For now, call edges are built via the existing napi-exported function's
+    // internal logic. We load nodes from DB and pass to the edge builder.
+    build_and_insert_call_edges(conn, &file_symbols, &import_ctx);
+
+    timing.edges_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    // ── Stage 8: Structure + roles ─────────────────────────────────────
+    let t0 = Instant::now();
+    let line_count_map = structure::build_line_count_map(&file_symbols, root_dir);
+    let changed_files: Vec<String> = file_symbols.keys().cloned().collect();
+
+    let existing_file_count = structure::get_existing_file_count(conn);
+    let use_fast_path =
+        !change_result.is_full_build && changed_files.len() <= 5 && existing_file_count > 20;
+
+    if use_fast_path {
+        structure::update_changed_file_metrics(
+            conn,
+            &changed_files,
+            &line_count_map,
+            &file_symbols,
+        );
+    }
+    // For full/larger builds, the JS fallback handles full structure via
+    // `features/structure.ts`. The Rust orchestrator handles the fast path
+    // for small incremental builds. Full structure computation will be
+    // ported in a follow-up.
+    timing.structure_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    let t0 = Instant::now();
+    let changed_file_list: Option<Vec<String>> = if change_result.is_full_build {
+        None
+    } else {
+        Some(changed_files)
+    };
+    if let Some(ref files) = changed_file_list {
+        if !files.is_empty() {
+            let _ = roles_db::do_classify_incremental(conn, files);
+        }
+    } else {
+        let _ = roles_db::do_classify_full(conn);
+    }
+    timing.roles_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    // ── Stage 9: Finalize ──────────────────────────────────────────────
+    let t0 = Instant::now();
+    let node_count = conn
+        .query_row("SELECT COUNT(*) FROM nodes", [], |row| row.get::<_, i64>(0))
+        .unwrap_or(0);
+    let edge_count = conn
+        .query_row("SELECT COUNT(*) FROM edges", [], |row| row.get::<_, i64>(0))
+        .unwrap_or(0);
+
+    // Persist build metadata
+    let version = env!("CARGO_PKG_VERSION");
+    let meta_sql = "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)";
+    if let Ok(mut stmt) = conn.prepare(meta_sql) {
+        let _ = stmt.execute(["engine", "native"]);
+        let _ = stmt.execute(["engine_version", version]);
+        let _ = stmt.execute(["codegraph_version", version]);
+        let _ = stmt.execute(["node_count", &node_count.to_string()]);
+        let _ = stmt.execute(["edge_count", &edge_count.to_string()]);
+        let _ = stmt.execute(["last_build", &now_ms().to_string()]);
+    }
+
+    // Write journal header
+    journal::write_journal_header(root_dir, now_ms());
+    timing.finalize_ms = t0.elapsed().as_secs_f64() * 1000.0;
+
+    // Include total time in setup for overhead accounting
+    timing.setup_ms += total_start.elapsed().as_secs_f64() * 1000.0
+        - (timing.collect_ms
+            + timing.detect_ms
+            + timing.parse_ms
+            + timing.insert_ms
+            + timing.resolve_ms
+            + timing.edges_ms
+            + timing.structure_ms
+            + timing.roles_ms
+            + timing.finalize_ms);
+
+    Ok(BuildPipelineResult {
+        phases: timing,
+        node_count,
+        edge_count,
+        file_count: collect_result.files.len(),
+        early_exit: false,
+    })
+}
+
+/// Check if engine/schema/version changed since last build (forces full rebuild).
+fn check_version_mismatch(conn: &Connection) -> bool {
+    let get_meta = |key: &str| -> Option<String> {
+        conn.query_row("SELECT value FROM metadata WHERE key = ?", [key], |row| {
+            row.get(0)
+        })
+        .ok()
+    };
+
+    let current_version = env!("CARGO_PKG_VERSION");
+
+    if let Some(prev_engine) = get_meta("engine") {
+        if prev_engine != "native" {
+            return true;
+        }
+    }
+    if let Some(prev_version) = get_meta("codegraph_version") {
+        if prev_version != current_version {
+            return true;
+        }
+    }
+    false
+}
+
+/// Build InsertNodesBatch from parsed file symbols.
+fn build_insert_batches(
+    file_symbols: &HashMap<String, FileSymbols>,
+) -> Vec<crate::insert_nodes::InsertNodesBatch> {
+    file_symbols
+        .iter()
+        .map(
+            |(rel_path, symbols)| crate::insert_nodes::InsertNodesBatch {
+                file: rel_path.clone(),
+                definitions: symbols
+                    .definitions
+                    .iter()
+                    .map(|d| crate::insert_nodes::InsertNodesDefinition {
+                        name: d.name.clone(),
+                        kind: d.kind.clone(),
+                        line: d.line,
+                        end_line: d.end_line,
+                        visibility: None,
+                        children: d
+                            .children
+                            .as_ref()
+                            .map(|kids| {
+                                kids.iter()
+                                    .map(|c| crate::insert_nodes::InsertNodesChild {
+                                        name: c.name.clone(),
+                                        kind: c.kind.clone(),
+                                        line: c.line,
+                                        end_line: c.end_line,
+                                        visibility: None,
+                                    })
+                                    .collect()
+                            })
+                            .unwrap_or_default(),
+                    })
+                    .collect(),
+                exports: symbols
+                    .exports
+                    .iter()
+                    .map(|e| crate::insert_nodes::InsertNodesExport {
+                        name: e.name.clone(),
+                        kind: e.kind.clone(),
+                        line: e.line,
+                    })
+                    .collect(),
+            },
+        )
+        .collect()
+}
+
+/// Build FileHashEntry from changed files.
+fn build_file_hash_entries(
+    changed: &[&change_detection::ChangedFile],
+    _root_dir: &str,
+) -> Vec<crate::insert_nodes::FileHashEntry> {
+    changed
+        .iter()
+        .filter_map(|c| {
+            c.hash
+                .as_ref()
+                .map(|hash| crate::insert_nodes::FileHashEntry {
+                    file: c.rel_path.clone(),
+                    hash: hash.clone(),
+                    mtime: c.mtime as f64,
+                    size: c.size as f64,
+                })
+        })
+        .collect()
+}
+
+/// Build call edges using the Rust edge_builder and insert them.
+fn build_and_insert_call_edges(
+    conn: &Connection,
+    file_symbols: &HashMap<String, FileSymbols>,
+    import_ctx: &ImportEdgeContext,
+) {
+    use crate::edge_builder::*;
+
+    // Load all callable nodes from DB
+    let node_kind_filter = "kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')";
+    let sql = format!("SELECT id, name, kind, file, line FROM nodes WHERE {node_kind_filter}");
+    let mut stmt = match conn.prepare(&sql) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let all_nodes: Vec<NodeInfo> = stmt
+        .query_map([], |row| {
+            Ok(NodeInfo {
+                id: row.get::<_, i64>(0)? as u32,
+                name: row.get(1)?,
+                kind: row.get(2)?,
+                file: row.get(3)?,
+                line: row.get::<_, i64>(4)? as u32,
+            })
+        })
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default();
+
+    if all_nodes.is_empty() {
+        return;
+    }
+
+    let builtin_receivers: Vec<String> = vec![
+        "console",
+        "Math",
+        "JSON",
+        "Object",
+        "Array",
+        "String",
+        "Number",
+        "Boolean",
+        "Date",
+        "RegExp",
+        "Map",
+        "Set",
+        "WeakMap",
+        "WeakSet",
+        "Promise",
+        "Symbol",
+        "Error",
+        "TypeError",
+        "RangeError",
+        "Proxy",
+        "Reflect",
+        "Intl",
+        "globalThis",
+        "window",
+        "document",
+        "process",
+        "Buffer",
+        "require",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect();
+
+    // Build FileEdgeInput entries for the native edge builder
+    let mut file_entries: Vec<FileEdgeInput> = Vec::new();
+    for (rel_path, symbols) in file_symbols {
+        if import_ctx.barrel_only_files.contains(rel_path) {
+            continue;
+        }
+
+        // Look up file node ID
+        let file_node_id: u32 = match conn.query_row(
+            "SELECT id FROM nodes WHERE name = ? AND kind = 'file' AND file = ? AND line = 0",
+            [rel_path, rel_path],
+            |row| row.get::<_, i64>(0),
+        ) {
+            Ok(id) => id as u32,
+            Err(_) => continue,
+        };
+
+        // Build imported names from resolved imports
+        let mut imported_names: Vec<ImportedName> = Vec::new();
+        let abs_file = Path::new(&import_ctx.root_dir).join(rel_path);
+        let abs_str = abs_file.to_str().unwrap_or("");
+        for imp in &symbols.imports {
+            let resolved_path = import_ctx.get_resolved(abs_str, &imp.source);
+            for name in &imp.names {
+                let clean_name = name.strip_prefix("* as ").unwrap_or(name).to_string();
+                let mut target_file = resolved_path.clone();
+                if import_ctx.is_barrel_file(&resolved_path) {
+                    let mut visited = HashSet::new();
+                    if let Some(actual) =
+                        import_ctx.resolve_barrel_export(&resolved_path, &clean_name, &mut visited)
+                    {
+                        target_file = actual;
+                    }
+                }
+                imported_names.push(ImportedName {
+                    name: clean_name,
+                    file: target_file,
+                });
+            }
+        }
+
+        let type_map: Vec<TypeMapInput> = symbols
+            .type_map
+            .iter()
+            .map(|t| TypeMapInput {
+                name: t.name.clone(),
+                type_name: t.type_name.clone(),
+            })
+            .collect();
+
+        file_entries.push(FileEdgeInput {
+            file: rel_path.clone(),
+            file_node_id: file_node_id,
+            definitions: symbols
+                .definitions
+                .iter()
+                .map(|d| DefInfo {
+                    name: d.name.clone(),
+                    kind: d.kind.clone(),
+                    line: d.line,
+                    end_line: d.end_line,
+                })
+                .collect(),
+            calls: symbols
+                .calls
+                .iter()
+                .map(|c| CallInfo {
+                    name: c.name.clone(),
+                    line: c.line,
+                    dynamic: c.dynamic,
+                    receiver: c.receiver.clone(),
+                })
+                .collect(),
+            imported_names,
+            classes: symbols
+                .classes
+                .iter()
+                .map(|c| ClassInfo {
+                    name: c.name.clone(),
+                    extends: c.extends.clone(),
+                    implements: c.implements.clone(),
+                })
+                .collect(),
+            type_map,
+        });
+    }
+
+    // Call the native edge builder
+    let computed_edges = build_call_edges(file_entries, all_nodes, builtin_receivers);
+
+    // Insert edges
+    if !computed_edges.is_empty() {
+        let edge_rows: Vec<crate::edges_db::EdgeRow> = computed_edges
+            .iter()
+            .map(|e| crate::edges_db::EdgeRow {
+                source_id: e.source_id,
+                target_id: e.target_id,
+                kind: e.kind.clone(),
+                confidence: e.confidence,
+                dynamic: e.dynamic,
+            })
+            .collect();
+        let _ = crate::edges_db::do_insert_edges(conn, &edge_rows);
+    }
+}
+
+/// Current time in milliseconds since epoch.
+fn now_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0)
+}

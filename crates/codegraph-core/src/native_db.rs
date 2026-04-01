@@ -1052,6 +1052,37 @@ impl NativeDatabase {
     }
 }
 
+// ── Full Rust build orchestration ───────────────────────────────────────
+
+#[napi]
+impl NativeDatabase {
+    /// Run the full build pipeline in Rust — zero napi boundary crossings
+    /// after this call. Returns a JSON string with timing and result data.
+    ///
+    /// The JS caller falls back to `runPipelineStages()` when this method
+    /// is unavailable or throws.
+    #[napi]
+    pub fn build_graph(
+        &self,
+        root_dir: String,
+        config_json: String,
+        aliases_json: String,
+        opts_json: String,
+    ) -> napi::Result<String> {
+        let conn = self.conn()?;
+        let result = crate::build_pipeline::run_pipeline(
+            conn,
+            &root_dir,
+            &config_json,
+            &aliases_json,
+            &opts_json,
+        )
+        .map_err(|e| napi::Error::from_reason(format!("build_graph failed: {e}")))?;
+        serde_json::to_string(&result)
+            .map_err(|e| napi::Error::from_reason(format!("result serialization failed: {e}")))
+    }
+}
+
 // ── Private helpers ─────────────────────────────────────────────────────
 
 impl NativeDatabase {
