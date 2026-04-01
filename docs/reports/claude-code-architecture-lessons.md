@@ -392,6 +392,8 @@ Valuable for CI templates, team conventions, and MCP agent prompts.
 | 17 | Startup parallelism | Low | Medium | **P3** |
 | 18 | Generation counter for watch mode | Low | Low | **P3** |
 | 21 | Stale-while-error for native loader | Low | Low | **P3** |
+| 7 | Streaming tool executor pattern | Low | High | **P4** |
+| 13 | Append-only JSONL for change journal | Medium | Low | **P2** |
 | 5 | AsyncGenerator for watch/MCP streaming | Medium | High | **P4** |
 | 22 | Recipe/preset system | High | High | **P4** |
 | 8 | Coordinator pattern for batch | Medium | High | **P4** |
