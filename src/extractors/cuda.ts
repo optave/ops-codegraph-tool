@@ -226,12 +226,14 @@ function extractCudaQualifiers(node: TreeSitterNode): string[] {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child) continue;
-    if (CUDA_QUALIFIERS.has(child.text)) {
-      qualifiers.push(child.text);
-    }
-    // Also check storage_class_specifier or attribute children
+    // Check direct text match for bare qualifier tokens, or look inside
+    // storage_class_specifier / attribute_specifier wrapper nodes.
+    // Use `else if` to avoid pushing the same qualifier twice when
+    // wrapper-node text also matches CUDA_QUALIFIERS directly.
     if (child.type === 'storage_class_specifier' || child.type === 'attribute_specifier') {
       if (CUDA_QUALIFIERS.has(child.text)) qualifiers.push(child.text);
+    } else if (CUDA_QUALIFIERS.has(child.text)) {
+      qualifiers.push(child.text);
     }
   }
   return qualifiers;

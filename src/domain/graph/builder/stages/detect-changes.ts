@@ -60,14 +60,27 @@ function getChangedFiles(
   rootDir: string,
   nativeDb?: NativeDatabase,
 ): ChangeResult {
+  // Batched native path: single napi call for table check + all rows + max mtime
+  if (nativeDb?.getFileHashData) {
+    const data = nativeDb.getFileHashData();
+    if (!data.exists) {
+      return {
+        changed: allFiles.map((f) => ({ file: f })),
+        removed: [],
+        isFullBuild: true,
+      };
+    }
+    const existing = new Map<string, FileHashRow>(data.rows.map((r) => [r.file, r]));
+    const removed = detectRemovedFiles(existing, allFiles, rootDir);
+    const journalResult = tryJournalTier(db, existing, rootDir, removed, data.maxMtime);
+    if (journalResult) return journalResult;
+    return mtimeAndHashTiers(existing, allFiles, rootDir, removed);
+  }
+
+  // WASM / fallback path
   let hasTable = false;
   try {
-    if (nativeDb) {
-      nativeDb.queryGet('SELECT 1 FROM file_hashes LIMIT 1', []);
-    } else {
-      db.prepare('SELECT 1 FROM file_hashes LIMIT 1').get();
-    }
-    // Query succeeded → table exists (result may be undefined if table is empty)
+    db.prepare('SELECT 1 FROM file_hashes LIMIT 1').get();
     hasTable = true;
   } catch {
     /* table doesn't exist */
@@ -81,10 +94,7 @@ function getChangedFiles(
     };
   }
 
-  const sql = 'SELECT file, hash, mtime, size FROM file_hashes';
-  const rows = nativeDb
-    ? (nativeDb.queryAll(sql, []) as unknown as FileHashRow[])
-    : (db.prepare(sql).all() as FileHashRow[]);
+  const rows = db.prepare('SELECT file, hash, mtime, size FROM file_hashes').all() as FileHashRow[];
   const existing = new Map<string, FileHashRow>(rows.map((r) => [r.file, r]));
 
   const removed = detectRemovedFiles(existing, allFiles, rootDir);
@@ -116,14 +126,19 @@ function tryJournalTier(
   existing: Map<string, FileHashRow>,
   rootDir: string,
   removed: string[],
+  precomputedMaxMtime?: number,
 ): ChangeResult | null {
   const journal = readJournal(rootDir);
   if (!journal.valid) return null;
 
-  const dbMtimes = db.prepare('SELECT MAX(mtime) as latest FROM file_hashes').get() as
-    | { latest: number | null }
-    | undefined;
-  const latestDbMtime = dbMtimes?.latest || 0;
+  const latestDbMtime =
+    precomputedMaxMtime ??
+    ((
+      db.prepare('SELECT MAX(mtime) as latest FROM file_hashes').get() as
+        | { latest: number | null }
+        | undefined
+    )?.latest ||
+      0);
   const hasJournalEntries = journal.changed!.length > 0 || journal.removed!.length > 0;
 
   if (!hasJournalEntries || journal.timestamp! < latestDbMtime) {
@@ -231,30 +246,42 @@ function mtimeAndHashTiers(
 
 async function runPendingAnalysis(ctx: PipelineContext): Promise<boolean> {
   const { db, opts, engineOpts, allFiles, rootDir } = ctx;
-  const needsCfg =
-    (opts as Record<string, unknown>).cfg !== false &&
-    (() => {
-      try {
-        return (
-          (db.prepare('SELECT COUNT(*) as c FROM cfg_blocks').get() as { c: number } | undefined)
-            ?.c === 0
-        );
-      } catch {
-        return true;
-      }
-    })();
-  const needsDataflow =
-    (opts as Record<string, unknown>).dataflow !== false &&
-    (() => {
-      try {
-        return (
-          (db.prepare('SELECT COUNT(*) as c FROM dataflow').get() as { c: number } | undefined)
-            ?.c === 0
-        );
-      } catch {
-        return true;
-      }
-    })();
+  const useNative = ctx.engineName === 'native' && !!ctx.nativeDb?.checkPendingAnalysis;
+
+  let needsCfg: boolean;
+  let needsDataflow: boolean;
+
+  if (useNative) {
+    const counts = ctx.nativeDb!.checkPendingAnalysis!();
+    needsCfg = (opts as Record<string, unknown>).cfg !== false && counts.cfgCount <= 0;
+    needsDataflow =
+      (opts as Record<string, unknown>).dataflow !== false && counts.dataflowCount <= 0;
+  } else {
+    needsCfg =
+      (opts as Record<string, unknown>).cfg !== false &&
+      (() => {
+        try {
+          return (
+            (db.prepare('SELECT COUNT(*) as c FROM cfg_blocks').get() as { c: number } | undefined)
+              ?.c === 0
+          );
+        } catch {
+          return true;
+        }
+      })();
+    needsDataflow =
+      (opts as Record<string, unknown>).dataflow !== false &&
+      (() => {
+        try {
+          return (
+            (db.prepare('SELECT COUNT(*) as c FROM dataflow').get() as { c: number } | undefined)
+              ?.c === 0
+          );
+        } catch {
+          return true;
+        }
+      })();
+  }
   if (!needsCfg && !needsDataflow) return false;
 
   info('No file changes. Running pending analysis pass...');
@@ -282,17 +309,27 @@ function healMetadata(ctx: PipelineContext): void {
   const { db, metadataUpdates } = ctx;
   if (!metadataUpdates || metadataUpdates.length === 0) return;
   try {
-    const healHash = db.prepare(
-      'INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)',
-    );
-    const healTx = db.transaction(() => {
-      for (const item of metadataUpdates) {
-        const mtime = item.stat ? Math.floor(item.stat.mtime) : 0;
-        const size = item.stat ? item.stat.size : 0;
-        healHash.run(item.relPath, item.hash, mtime, size);
-      }
-    });
-    healTx();
+    if (ctx.engineName === 'native' && ctx.nativeDb?.healFileMetadata) {
+      const entries = metadataUpdates.map((item) => ({
+        file: item.relPath,
+        hash: item.hash,
+        mtime: item.stat ? Math.floor(item.stat.mtime) : 0,
+        size: item.stat ? item.stat.size : 0,
+      }));
+      ctx.nativeDb.healFileMetadata(entries);
+    } else {
+      const healHash = db.prepare(
+        'INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)',
+      );
+      const healTx = db.transaction(() => {
+        for (const item of metadataUpdates) {
+          const mtime = item.stat ? Math.floor(item.stat.mtime) : 0;
+          const size = item.stat ? item.stat.size : 0;
+          healHash.run(item.relPath, item.hash, mtime, size);
+        }
+      });
+      healTx();
+    }
     debug(`Self-healed mtime/size for ${metadataUpdates.length} files`);
   } catch {
     /* ignore heal errors */
@@ -303,9 +340,23 @@ function findReverseDependencies(
   db: BetterSqlite3Database,
   changedRelPaths: Set<string>,
   rootDir: string,
+  nativeDb?: NativeDatabase,
 ): Set<string> {
   const reverseDeps = new Set<string>();
   if (changedRelPaths.size === 0) return reverseDeps;
+
+  if (nativeDb?.findReverseDependencies) {
+    const changedArray = [...changedRelPaths];
+    const nativeResults = nativeDb.findReverseDependencies(changedArray);
+    for (const dep of nativeResults) {
+      const absPath = path.join(rootDir, dep);
+      if (fs.existsSync(absPath)) {
+        reverseDeps.add(dep);
+      }
+    }
+    return reverseDeps;
+  }
+
   const findReverseDepsStmt = db.prepare(`
     SELECT DISTINCT n_src.file FROM edges e
     JOIN nodes n_src ON e.source_id = n_src.id
@@ -360,7 +411,10 @@ function purgeAndAddReverseDeps(
   }
 }
 
-function detectHasEmbeddings(db: BetterSqlite3Database): boolean {
+function detectHasEmbeddings(db: BetterSqlite3Database, nativeDb?: NativeDatabase): boolean {
+  if (nativeDb?.hasEmbeddings) {
+    return nativeDb.hasEmbeddings();
+  }
   try {
     db.prepare('SELECT 1 FROM embeddings LIMIT 1').get();
     return true;
@@ -371,14 +425,14 @@ function detectHasEmbeddings(db: BetterSqlite3Database): boolean {
 
 function handleScopedBuild(ctx: PipelineContext): void {
   const { db, rootDir, opts } = ctx;
-  ctx.hasEmbeddings = detectHasEmbeddings(db);
+  ctx.hasEmbeddings = detectHasEmbeddings(db, ctx.nativeDb);
   const changePaths = ctx.parseChanges.map(
     (item) => item.relPath || normalizePath(path.relative(rootDir, item.file)),
   );
   let reverseDeps = new Set<string>();
   if (!(opts as Record<string, unknown>).noReverseDeps) {
     const changedRelPaths = new Set<string>([...changePaths, ...ctx.removed]);
-    reverseDeps = findReverseDependencies(db, changedRelPaths, rootDir);
+    reverseDeps = findReverseDependencies(db, changedRelPaths, rootDir, ctx.nativeDb);
   }
   purgeAndAddReverseDeps(ctx, changePaths, reverseDeps);
   info(
@@ -388,7 +442,7 @@ function handleScopedBuild(ctx: PipelineContext): void {
 
 function handleFullBuild(ctx: PipelineContext): void {
   const { db } = ctx;
-  const hasEmbeddings = detectHasEmbeddings(db);
+  const hasEmbeddings = detectHasEmbeddings(db, ctx.nativeDb);
   ctx.hasEmbeddings = hasEmbeddings;
   const deletions =
     'PRAGMA foreign_keys = OFF; DELETE FROM cfg_edges; DELETE FROM cfg_blocks; DELETE FROM node_metrics; DELETE FROM edges; DELETE FROM function_complexity; DELETE FROM dataflow; DELETE FROM ast_nodes; DELETE FROM nodes; PRAGMA foreign_keys = ON;';
@@ -401,7 +455,7 @@ function handleFullBuild(ctx: PipelineContext): void {
 
 function handleIncrementalBuild(ctx: PipelineContext): void {
   const { db, rootDir, opts } = ctx;
-  ctx.hasEmbeddings = detectHasEmbeddings(db);
+  ctx.hasEmbeddings = detectHasEmbeddings(db, ctx.nativeDb);
   let reverseDeps = new Set<string>();
   if (!(opts as Record<string, unknown>).noReverseDeps) {
     const changedRelPaths = new Set<string>();
@@ -411,7 +465,7 @@ function handleIncrementalBuild(ctx: PipelineContext): void {
     for (const relPath of ctx.removed) {
       changedRelPaths.add(relPath);
     }
-    reverseDeps = findReverseDependencies(db, changedRelPaths, rootDir);
+    reverseDeps = findReverseDependencies(db, changedRelPaths, rootDir, ctx.nativeDb);
   }
   info(
     `Incremental: ${ctx.parseChanges.length} changed, ${ctx.removed.length} removed${reverseDeps.size > 0 ? `, ${reverseDeps.size} reverse-deps` : ''}`,
