@@ -281,7 +281,7 @@ pub fn insert_edges(conn: &Connection, edges: &[EdgeRow]) {
         Err(_) => return,
     };
     if let Ok(mut stmt) = tx.prepare(
-        "INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?, ?, ?, ?, ?)",
     ) {
         for e in edges {
             let _ = stmt.execute(rusqlite::params![

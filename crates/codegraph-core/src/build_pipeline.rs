@@ -337,8 +337,11 @@ pub fn run_pipeline(
     let changed_files: Vec<String> = file_symbols.keys().cloned().collect();
 
     let existing_file_count = structure::get_existing_file_count(conn);
+    // Use parse_changes.len() for the threshold — changed_files includes
+    // reverse-dep files added for edge rebuilding, which inflates the count
+    // and would skip the fast path even for single-file incremental builds.
     let use_fast_path =
-        !change_result.is_full_build && changed_files.len() <= 5 && existing_file_count > 20;
+        !change_result.is_full_build && parse_changes.len() <= 5 && existing_file_count > 20;
 
     if use_fast_path {
         structure::update_changed_file_metrics(
@@ -346,6 +349,15 @@ pub fn run_pipeline(
             &changed_files,
             &line_count_map,
             &file_symbols,
+        );
+    } else {
+        // Emit a debug-level warning so users of `codegraph stats` know
+        // structure metrics were not updated on this build path.
+        eprintln!(
+            "[codegraph] note: structure metrics skipped (native fast-path not applicable — \
+             {} changed files, full_build={}). Run JS pipeline for full structure.",
+            parse_changes.len(),
+            change_result.is_full_build,
         );
     }
     // For full/larger builds, the JS fallback handles full structure via
@@ -394,17 +406,19 @@ pub fn run_pipeline(
     journal::write_journal_header(root_dir, now_ms());
     timing.finalize_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
-    // Include total time in setup for overhead accounting
-    timing.setup_ms += total_start.elapsed().as_secs_f64() * 1000.0
-        - (timing.collect_ms
-            + timing.detect_ms
-            + timing.parse_ms
-            + timing.insert_ms
-            + timing.resolve_ms
-            + timing.edges_ms
-            + timing.structure_ms
-            + timing.roles_ms
-            + timing.finalize_ms);
+    // Include total time in setup for overhead accounting.
+    // Clamp to 0.0 to avoid negative values from floating-point rounding.
+    let stage_sum = timing.collect_ms
+        + timing.detect_ms
+        + timing.parse_ms
+        + timing.insert_ms
+        + timing.resolve_ms
+        + timing.edges_ms
+        + timing.structure_ms
+        + timing.roles_ms
+        + timing.finalize_ms;
+    let overhead = total_start.elapsed().as_secs_f64() * 1000.0 - stage_sum;
+    timing.setup_ms += overhead.max(0.0);
 
     Ok(BuildPipelineResult {
         phases: timing,
