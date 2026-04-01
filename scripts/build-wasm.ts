@@ -53,6 +53,11 @@ const grammars = [
   { name: 'tree-sitter-julia', pkg: 'tree-sitter-julia', sub: null },
   { name: 'tree-sitter-r', pkg: '@eagleoutice/tree-sitter-r', sub: null },
   { name: 'tree-sitter-erlang', pkg: 'tree-sitter-erlang', sub: null },
+  { name: 'tree-sitter-solidity', pkg: 'tree-sitter-solidity', sub: null },
+  { name: 'tree-sitter-objc', pkg: 'tree-sitter-objc', sub: null },
+  { name: 'tree-sitter-cuda', pkg: 'tree-sitter-cuda', sub: null },
+  { name: 'tree-sitter-groovy', pkg: 'tree-sitter-groovy', sub: null },
+  { name: 'tree-sitter-verilog', pkg: 'tree-sitter-verilog', sub: null },
 ];
 
 let failed = 0;

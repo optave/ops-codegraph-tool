@@ -21,18 +21,21 @@ export {
   extractCppSymbols,
   extractCSharpSymbols,
   extractCSymbols,
+  extractCudaSymbols,
   extractDartSymbols,
   extractElixirSymbols,
   extractErlangSymbols,
   extractFSharpSymbols,
   extractGleamSymbols,
   extractGoSymbols,
+  extractGroovySymbols,
   extractHaskellSymbols,
   extractHCLSymbols,
   extractJavaSymbols,
   extractJuliaSymbols,
   extractKotlinSymbols,
   extractLuaSymbols,
+  extractObjCSymbols,
   extractOCamlSymbols,
   extractPHPSymbols,
   extractPythonSymbols,
@@ -40,8 +43,10 @@ export {
   extractRubySymbols,
   extractRustSymbols,
   extractScalaSymbols,
+  extractSoliditySymbols,
   extractSwiftSymbols,
   extractSymbols,
+  extractVerilogSymbols,
   extractZigSymbols,
 } from '../extractors/index.js';
 
@@ -51,18 +56,21 @@ import {
   extractCppSymbols,
   extractCSharpSymbols,
   extractCSymbols,
+  extractCudaSymbols,
   extractDartSymbols,
   extractElixirSymbols,
   extractErlangSymbols,
   extractFSharpSymbols,
   extractGleamSymbols,
   extractGoSymbols,
+  extractGroovySymbols,
   extractHaskellSymbols,
   extractHCLSymbols,
   extractJavaSymbols,
   extractJuliaSymbols,
   extractKotlinSymbols,
   extractLuaSymbols,
+  extractObjCSymbols,
   extractOCamlSymbols,
   extractPHPSymbols,
   extractPythonSymbols,
@@ -70,8 +78,10 @@ import {
   extractRubySymbols,
   extractRustSymbols,
   extractScalaSymbols,
+  extractSoliditySymbols,
   extractSwiftSymbols,
   extractSymbols,
+  extractVerilogSymbols,
   extractZigSymbols,
 } from '../extractors/index.js';
 
@@ -595,6 +605,41 @@ export const LANGUAGE_REGISTRY: LanguageRegistryEntry[] = [
     extractor: extractErlangSymbols,
     required: false,
   },
+  {
+    id: 'solidity',
+    extensions: ['.sol'],
+    grammarFile: 'tree-sitter-solidity.wasm',
+    extractor: extractSoliditySymbols,
+    required: false,
+  },
+  {
+    id: 'objc',
+    extensions: ['.m'],
+    grammarFile: 'tree-sitter-objc.wasm',
+    extractor: extractObjCSymbols,
+    required: false,
+  },
+  {
+    id: 'cuda',
+    extensions: ['.cu', '.cuh'],
+    grammarFile: 'tree-sitter-cuda.wasm',
+    extractor: extractCudaSymbols,
+    required: false,
+  },
+  {
+    id: 'groovy',
+    extensions: ['.groovy', '.gvy'],
+    grammarFile: 'tree-sitter-groovy.wasm',
+    extractor: extractGroovySymbols,
+    required: false,
+  },
+  {
+    id: 'verilog',
+    extensions: ['.v', '.sv'],
+    grammarFile: 'tree-sitter-verilog.wasm',
+    extractor: extractVerilogSymbols,
+    required: false,
+  },
 ];
 
 const _extToLang: Map<string, LanguageRegistryEntry> = new Map();
@@ -827,7 +872,7 @@ export function getActiveEngine(opts: ParseEngineOpts = {}): {
  */
 export function createParseTreeCache(): any {
   const native = loadNative();
-  if (!native || !native.ParseTreeCache) return null;
+  if (!native?.ParseTreeCache) return null;
   return new native.ParseTreeCache();
 }
 
