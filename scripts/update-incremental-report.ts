@@ -90,11 +90,14 @@ function engineRow(h, prev, engineKey) {
 	const natT = r.nativeBatchMs != null ? trend(r.nativeBatchMs, pr?.nativeBatchMs) : '';
 	const jsT = trend(r.jsFallbackMs, pr?.jsFallbackMs);
 
+	const noopCell = e.noopRebuildMs != null ? `${formatMs(e.noopRebuildMs)}${noopT}` : 'n/a';
+	const oneFileCell = e.oneFileRebuildMs != null ? `${formatMs(e.oneFileRebuildMs)}${oneT}` : 'n/a';
+
 	return (
 		`| ${h.version} | ${engineKey} | ${h.files} ` +
 		`| ${formatMs(e.fullBuildMs)}${fullT} ` +
-		`| ${formatMs(e.noopRebuildMs)}${noopT} ` +
-		`| ${formatMs(e.oneFileRebuildMs)}${oneT} ` +
+		`| ${noopCell} ` +
+		`| ${oneFileCell} ` +
 		`| ${r.nativeBatchMs != null ? formatMs(r.nativeBatchMs) + natT : 'n/a'} ` +
 		`| ${formatMs(r.jsFallbackMs)}${jsT} |`
 	);
@@ -134,8 +137,8 @@ for (const engineKey of ['native', 'wasm']) {
 	md += '| Metric | Value |\n';
 	md += '|--------|------:|\n';
 	md += `| Full build | ${formatMs(e.fullBuildMs)} |\n`;
-	md += `| No-op rebuild | ${formatMs(e.noopRebuildMs)} |\n`;
-	md += `| 1-file rebuild | ${formatMs(e.oneFileRebuildMs)} |\n\n`;
+	md += `| No-op rebuild | ${e.noopRebuildMs != null ? formatMs(e.noopRebuildMs) : 'n/a'} |\n`;
+	md += `| 1-file rebuild | ${e.oneFileRebuildMs != null ? formatMs(e.oneFileRebuildMs) : 'n/a'} |\n\n`;
 }
 
 const r = latest.resolve;
@@ -182,8 +185,12 @@ if (prev) {
 		if (!e || !p) continue;
 		const tag = `[${engineKey}]`;
 		checkRegression(`${tag} Full build`, e.fullBuildMs, p.fullBuildMs);
-		checkRegression(`${tag} No-op rebuild`, e.noopRebuildMs, p.noopRebuildMs);
-		checkRegression(`${tag} 1-file rebuild`, e.oneFileRebuildMs, p.oneFileRebuildMs);
+		if (e.noopRebuildMs != null && p.noopRebuildMs != null) {
+			checkRegression(`${tag} No-op rebuild`, e.noopRebuildMs, p.noopRebuildMs);
+		}
+		if (e.oneFileRebuildMs != null && p.oneFileRebuildMs != null) {
+			checkRegression(`${tag} 1-file rebuild`, e.oneFileRebuildMs, p.oneFileRebuildMs);
+		}
 	}
 	const re = latest.resolve;
 	const rp = prev.resolve;

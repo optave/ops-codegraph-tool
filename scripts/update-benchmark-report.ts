@@ -223,9 +223,11 @@ if (hasIncremental) {
 			const p = prev?.[engineKey] || null;
 
 			const noopTrend = trend(e.noopRebuildMs, p?.noopRebuildMs);
+			const noopCell = e.noopRebuildMs != null ? `${e.noopRebuildMs}${noopTrend}` : 'n/a';
 			const oneFileTrend = trend(e.oneFileRebuildMs, p?.oneFileRebuildMs);
+			const oneFileCell = e.oneFileRebuildMs != null ? `${e.oneFileRebuildMs}${oneFileTrend}` : 'n/a';
 
-			md += `| ${h.version} | ${engineKey} | ${e.noopRebuildMs}${noopTrend} | ${e.oneFileRebuildMs}${oneFileTrend} |\n`;
+			md += `| ${h.version} | ${engineKey} | ${noopCell} | ${oneFileCell} |\n`;
 		}
 	}
 	md += '\n';
@@ -334,6 +336,8 @@ if (fs.existsSync(readmePath)) {
 	// Incremental rebuild rows (prefer native, fallback to WASM)
 	if (pref.noopRebuildMs != null) {
 		rows += `| No-op rebuild${prefLabel} | **${formatMs(pref.noopRebuildMs)}** |\n`;
+	}
+	if (pref.oneFileRebuildMs != null) {
 		rows += `| 1-file rebuild${prefLabel} | **${formatMs(pref.oneFileRebuildMs)}** |\n`;
 	}
 
