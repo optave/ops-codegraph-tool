@@ -64,8 +64,9 @@ pub struct FileHashEntry {
 // ── Public napi entry point ─────────────────────────────────────────
 
 // NOTE: The standalone `bulk_insert_nodes` napi export was removed in Phase 6.17.
-// All callers now use `NativeDatabase::bulk_insert_nodes()` which reuses the
-// persistent connection, eliminating the double-connection antipattern.
+// Callers use `NativeDatabase::bulk_insert_nodes()` — either through the
+// persistent pipeline connection or a temporary connection opened by the
+// insert-nodes stage with its own WAL checkpoint coordination (#709).
 
 // ── Internal implementation ─────────────────────────────────────────
 

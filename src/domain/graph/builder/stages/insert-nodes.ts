@@ -159,12 +159,16 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
     fileHashes.push({ file: item.relPath, hash: item.hash, mtime, size });
   }
 
-  // WAL checkpoint dance — same pattern as suspendJsDb/resumeJsDb in pipeline.ts:
+  // WAL checkpoint dance — extends the suspendJsDb/resumeJsDb pattern from
+  // pipeline.ts, adapted for a temporary native connection:
   //   1. Flush JS WAL (ctx.db) so the native connection starts with a clean DB
-  //   2. Native write
-  //   3. Flush native WAL (nativeDb) so better-sqlite3 never reads WAL frames
-  //      written by a different SQLite library (#715, #717)
+  //   2. Native write via bulkInsertNodes
+  //   3. Flush native WAL (nativeDb) so its frames move to the main DB file —
+  //      better-sqlite3 never reads WAL frames from a different SQLite library
   //   4. Close nativeDb
+  //   5. PASSIVE checkpoint through ctx.db to refresh better-sqlite3's stale
+  //      SHM/WAL index — without this, ctx.db may read from a cached WAL
+  //      mapping that doesn't reflect rusqlite's writes (#709, #737)
   try {
     const cpResult = ctx.db.pragma('wal_checkpoint(TRUNCATE)') as { busy: number }[] | undefined;
     if (cpResult?.[0]?.busy) {
@@ -186,6 +190,16 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
       nativeDb!.close();
     } catch {
       /* ignore close errors */
+    }
+    // After nativeDb is fully closed, force better-sqlite3 to refresh its
+    // WAL index.  Rusqlite's TRUNCATE checkpoint already moved all frames
+    // to the main DB file, but better-sqlite3 may have a stale cached SHM
+    // mapping.  A checkpoint through ctx.db forces it to re-read the WAL
+    // header/SHM and see the updated page map (#709, #737).
+    try {
+      ctx.db.pragma('wal_checkpoint(PASSIVE)');
+    } catch {
+      /* ignore — non-fatal */
     }
   }
 }
