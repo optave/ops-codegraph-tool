@@ -1118,12 +1118,9 @@ impl NativeDatabase {
                 )
                 .map_err(|e| napi::Error::from_reason(format!("heal prepare failed: {e}")))?;
             for entry in &entries {
-                if stmt
-                    .execute(params![entry.file, entry.hash, entry.mtime, entry.size])
-                    .is_ok()
-                {
-                    count += 1;
-                }
+                stmt.execute(params![entry.file, entry.hash, entry.mtime, entry.size])
+                    .map_err(|e| napi::Error::from_reason(format!("heal row failed: {e}")))?;
+                count += 1;
             }
         }
         tx.commit()
@@ -1166,7 +1163,9 @@ impl NativeDatabase {
                 }
             }
         }
-        Ok(result_set.into_iter().collect())
+        let mut result_vec: Vec<String> = result_set.into_iter().collect();
+        result_vec.sort_unstable();
+        Ok(result_vec)
     }
 
     /// Get node and edge counts in a single napi call.
@@ -1246,15 +1245,6 @@ impl NativeDatabase {
                 files: vec![],
             });
         }
-        let count = conn
-            .query_row("SELECT COUNT(*) FROM file_hashes", [], |r| r.get::<_, i64>(0))
-            .unwrap_or(0);
-        if count == 0 {
-            return Ok(CollectFilesData {
-                count: 0,
-                files: vec![],
-            });
-        }
         let mut stmt = conn
             .prepare_cached("SELECT file FROM file_hashes")
             .map_err(|e| napi::Error::from_reason(format!("collectFiles prepare failed: {e}")))?;
@@ -1262,6 +1252,7 @@ impl NativeDatabase {
             .query_map([], |row| row.get::<_, String>(0))
             .map_err(|e| napi::Error::from_reason(format!("collectFiles query failed: {e}")))?;
         let files: Vec<String> = rows.filter_map(|r| r.ok()).collect();
+        let count = files.len() as i64;
         Ok(CollectFilesData {
             count,
             files,
