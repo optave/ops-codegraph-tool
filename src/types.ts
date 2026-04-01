@@ -1841,6 +1841,14 @@ export interface NativeAddon {
   computeConfidence(callerFile: string, targetFile: string, importedFrom: string | null): number;
   detectCycles(edges: Array<{ source: string; target: string }>): string[][];
   buildCallEdges(files: unknown[], nodes: unknown[], builtinReceivers: string[]): unknown[];
+  buildImportEdges?(
+    files: unknown[],
+    resolvedImports: unknown[],
+    fileReexports: unknown[],
+    fileNodeIds: unknown[],
+    barrelFiles: string[],
+    rootDir: string,
+  ): unknown[];
   engineVersion(): string;
   ParseTreeCache: new () => NativeParseTreeCache;
   NativeDatabase: {

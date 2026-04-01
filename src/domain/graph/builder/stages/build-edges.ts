@@ -155,6 +155,154 @@ function buildBarrelEdges(
   }
 }
 
+// ── Import edges (native engine) ────────────────────────────────────────
+
+function buildImportEdgesNative(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+  native: NativeAddon,
+): void {
+  const { fileSymbols, barrelOnlyFiles, rootDir } = ctx;
+
+  // 1. Build per-file input data
+  const files: Array<{
+    file: string;
+    fileNodeId: number;
+    isBarrelOnly: boolean;
+    imports: Array<{
+      source: string;
+      names: string[];
+      reexport: boolean;
+      typeOnly: boolean;
+      dynamicImport: boolean;
+      wildcardReexport: boolean;
+    }>;
+    definitionNames: string[];
+  }> = [];
+
+  // Collect all file node IDs we'll need (sources + targets)
+  const fileNodeIds: Array<{ file: string; nodeId: number }> = [];
+  const seenNodeFiles = new Set<string>();
+
+  const addFileNodeId = (relPath: string) => {
+    if (seenNodeFiles.has(relPath)) return;
+    const row = getNodeIdStmt.get(relPath, 'file', relPath, 0);
+    if (row) {
+      seenNodeFiles.add(relPath);
+      fileNodeIds.push({ file: relPath, nodeId: row.id });
+    }
+  };
+
+  // 2. Pre-resolve all imports and collect supplemental resolved entries
+  const supplementalResolved: Array<{ key: string; resolvedPath: string }> = [];
+
+  for (const [relPath, symbols] of fileSymbols) {
+    addFileNodeId(relPath);
+
+    const fileNodeRow = getNodeIdStmt.get(relPath, 'file', relPath, 0);
+    if (!fileNodeRow) continue;
+
+    const importInfos: Array<{
+      source: string;
+      names: string[];
+      reexport: boolean;
+      typeOnly: boolean;
+      dynamicImport: boolean;
+      wildcardReexport: boolean;
+    }> = [];
+
+    for (const imp of symbols.imports) {
+      // Pre-resolve and register target file node
+      const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
+      addFileNodeId(resolvedPath);
+
+      // Check if this resolution is in batchResolved; if not, add supplemental
+      const resolveKey = `${path.join(rootDir, relPath)}|${imp.source}`;
+      if (!ctx.batchResolved?.has(resolveKey)) {
+        supplementalResolved.push({ key: resolveKey, resolvedPath });
+      }
+
+      importInfos.push({
+        source: imp.source,
+        names: imp.names,
+        reexport: !!imp.reexport,
+        typeOnly: !!imp.typeOnly,
+        dynamicImport: !!imp.dynamicImport,
+        wildcardReexport: !!imp.wildcardReexport,
+      });
+    }
+
+    files.push({
+      file: relPath,
+      fileNodeId: fileNodeRow.id,
+      isBarrelOnly: barrelOnlyFiles.has(relPath),
+      imports: importInfos,
+      definitionNames: symbols.definitions.map((d) => d.name),
+    });
+  }
+
+  // 3. Flatten batchResolved + supplemental into resolved imports array
+  const resolvedImports: Array<{ key: string; resolvedPath: string }> = [];
+  if (ctx.batchResolved) {
+    for (const [key, resolvedPath] of ctx.batchResolved) {
+      resolvedImports.push({ key, resolvedPath });
+    }
+  }
+  for (const entry of supplementalResolved) {
+    resolvedImports.push(entry);
+  }
+
+  // 4. Flatten reexportMap
+  const fileReexports: Array<{
+    file: string;
+    reexports: Array<{
+      source: string;
+      names: string[];
+      wildcardReexport: boolean;
+    }>;
+  }> = [];
+  if (ctx.reexportMap) {
+    for (const [file, entries] of ctx.reexportMap) {
+      const reexports = (
+        entries as Array<{ source: string; names: string[]; wildcardReexport: boolean }>
+      ).map((re) => ({
+        source: re.source,
+        names: re.names,
+        wildcardReexport: !!re.wildcardReexport,
+      }));
+      fileReexports.push({ file, reexports });
+
+      // Register reexport target files for node ID lookup
+      for (const re of reexports) {
+        addFileNodeId(re.source);
+      }
+    }
+  }
+
+  // 5. Compute barrel file list
+  const barrelFiles: string[] = [];
+  for (const [relPath] of fileSymbols) {
+    if (isBarrelFile(ctx, relPath)) {
+      barrelFiles.push(relPath);
+    }
+  }
+
+  // 6. Call native
+  const nativeEdges = native.buildImportEdges!(
+    files,
+    resolvedImports,
+    fileReexports,
+    fileNodeIds,
+    barrelFiles,
+    rootDir,
+  ) as NativeEdge[];
+
+  for (const e of nativeEdges) {
+    allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic]);
+  }
+}
+
 // ── Call edges (native engine) ──────────────────────────────────────────
 
 function buildCallEdgesNative(
@@ -594,7 +742,15 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       }
     }
 
-    buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
+    // Skip native import-edge path for small incremental builds (≤3 files):
+    // napi-rs marshaling overhead exceeds computation savings.
+    const useNativeImportEdges =
+      native?.buildImportEdges && (ctx.isFullBuild || ctx.fileSymbols.size > 3);
+    if (useNativeImportEdges) {
+      buildImportEdgesNative(ctx, getNodeIdStmt, allEdgeRows, native!);
+    } else {
+      buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
+    }
 
     // Skip native call-edge path for small incremental builds (≤3 files):
     // napi-rs marshaling overhead for allNodes exceeds computation savings.
