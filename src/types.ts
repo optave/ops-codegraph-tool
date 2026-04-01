@@ -96,7 +96,13 @@ export type LanguageId =
   | 'dart'
   | 'zig'
   | 'haskell'
-  | 'ocaml';
+  | 'ocaml'
+  | 'fsharp'
+  | 'gleam'
+  | 'clojure'
+  | 'julia'
+  | 'r'
+  | 'erlang';
 
 /** Engine mode selector. */
 export type EngineMode = 'native' | 'wasm' | 'auto';
