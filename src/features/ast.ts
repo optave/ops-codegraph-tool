@@ -12,10 +12,9 @@ import type { ASTNodeKind, BetterSqlite3Database, Definition, TreeSitterNode } f
 
 // ─── Constants ────────────────────────────────────────────────────────
 
-export const AST_NODE_KINDS: ASTNodeKind[] = ['call', 'new', 'string', 'regex', 'throw', 'await'];
+export const AST_NODE_KINDS: ASTNodeKind[] = ['new', 'string', 'regex', 'throw', 'await'];
 
 const KIND_ICONS: Record<string, string> = {
-  call: '\u0192', // ƒ
   new: '\u2295', // ⊕
   string: '"',
   regex: '/',

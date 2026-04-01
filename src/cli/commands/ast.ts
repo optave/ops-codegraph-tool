@@ -4,10 +4,10 @@ import type { CommandDefinition } from '../types.js';
 
 export const command: CommandDefinition = {
   name: 'ast [pattern]',
-  description: 'Search stored AST nodes (calls, new, string, regex, throw, await) by pattern',
+  description: 'Search stored AST nodes (new, string, regex, throw, await) by pattern',
   queryOpts: true,
   options: [
-    ['-k, --kind <kind>', 'Filter by AST node kind (call, new, string, regex, throw, await)'],
+    ['-k, --kind <kind>', 'Filter by AST node kind (new, string, regex, throw, await)'],
     ['-f, --file <path>', 'Scope to file (partial match, repeatable)', collectFile],
   ],
   async execute([pattern], opts, ctx) {

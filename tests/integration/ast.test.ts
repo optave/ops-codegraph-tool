@@ -48,13 +48,6 @@ beforeAll(() => {
   const defaultsId = insertNode(db, 'defaults', 'function', 'src/config.js', 1);
   const testFnId = insertNode(db, 'testUtils', 'function', 'tests/utils.test.js', 1);
 
-  // Calls
-  insertAstNode(db, 'src/utils.js', 42, 'call', 'eval', null, null, processId);
-  insertAstNode(db, 'src/loader.js', 8, 'call', 'require', null, null, loaderId);
-  insertAstNode(db, 'src/handler.js', 25, 'call', 'console.log', null, 'console', handlerId);
-  insertAstNode(db, 'src/handler.js', 30, 'call', 'console.error', null, 'console', handlerId);
-  insertAstNode(db, 'src/utils.js', 50, 'call', 'fetch', null, null, processId);
-
   // new expressions
   insertAstNode(db, 'src/handler.js', 30, 'new', 'Error', 'new Error("bad")', null, handlerId);
   insertAstNode(db, 'src/loader.js', 12, 'new', 'Map', 'new Map()', null, loaderId);
@@ -100,7 +93,16 @@ beforeAll(() => {
   insertAstNode(db, 'src/utils.js', 60, 'regex', '/\\d+/g', '/\\d+/g', null, processId);
 
   // Test file nodes (should be excluded by noTests)
-  insertAstNode(db, 'tests/utils.test.js', 5, 'call', 'eval', null, null, testFnId);
+  insertAstNode(
+    db,
+    'tests/utils.test.js',
+    5,
+    'new',
+    'TestError',
+    'new TestError()',
+    null,
+    testFnId,
+  );
 
   db.close();
 });
@@ -113,7 +115,7 @@ afterAll(() => {
 
 describe('AST_NODE_KINDS', () => {
   test('exports all expected kinds', () => {
-    expect(AST_NODE_KINDS).toEqual(['call', 'new', 'string', 'regex', 'throw', 'await']);
+    expect(AST_NODE_KINDS).toEqual(['new', 'string', 'regex', 'throw', 'await']);
   });
 });
 
@@ -125,27 +127,21 @@ describe('astQueryData', () => {
   });
 
   test('substring pattern match', () => {
-    const data = astQueryData('eval', dbPath);
-    // Should match 'eval' in src/utils.js and tests/utils.test.js
+    const data = astQueryData('Error', dbPath);
+    // Should match 'Error' in handler (new) and handler (throw) and test file (new TestError)
     expect(data.results.length).toBeGreaterThanOrEqual(2);
-    expect(data.results.every((r) => r.name.includes('eval'))).toBe(true);
+    expect(data.results.every((r) => r.name.includes('Error'))).toBe(true);
   });
 
   test('glob wildcard pattern', () => {
-    const data = astQueryData('console.*', dbPath);
-    expect(data.results.length).toBe(2);
-    expect(data.results.every((r) => r.name.startsWith('console.'))).toBe(true);
+    const data = astQueryData('*host*', dbPath);
+    expect(data.results.length).toBe(1);
+    expect(data.results.every((r) => r.name.includes('host'))).toBe(true);
   });
 
   test('exact pattern with star', () => {
     const data = astQueryData('*', dbPath);
     expect(data.count).toBeGreaterThan(0);
-  });
-
-  test('kind filter — call', () => {
-    const data = astQueryData(undefined, dbPath, { kind: 'call' });
-    expect(data.results.every((r) => r.kind === 'call')).toBe(true);
-    expect(data.results.length).toBeGreaterThanOrEqual(5);
   });
 
   test('kind filter — string', () => {
@@ -157,7 +153,7 @@ describe('astQueryData', () => {
   test('kind filter — new', () => {
     const data = astQueryData(undefined, dbPath, { kind: 'new' });
     expect(data.results.every((r) => r.kind === 'new')).toBe(true);
-    expect(data.results.length).toBe(2);
+    expect(data.results.length).toBe(3);
   });
 
   test('kind filter — throw', () => {
@@ -185,9 +181,9 @@ describe('astQueryData', () => {
   });
 
   test('noTests excludes test files', () => {
-    const withTests = astQueryData('eval', dbPath);
-    const noTests = astQueryData('eval', dbPath, { noTests: true });
-    expect(noTests.results.length).toBeLessThan(withTests.results.length);
+    const withTests = astQueryData('*Error*', dbPath, { kind: 'new' });
+    const noTests = astQueryData('*Error*', dbPath, { kind: 'new', noTests: true });
+    expect(withTests.results.length).toBeGreaterThan(noTests.results.length);
     expect(noTests.results.every((r) => !r.file.includes('.test.'))).toBe(true);
   });
 
@@ -206,18 +202,12 @@ describe('astQueryData', () => {
   });
 
   test('parent node resolution', () => {
-    const data = astQueryData('eval', dbPath, { noTests: true });
+    const data = astQueryData('Error', dbPath, { kind: 'new', file: 'handler' });
     expect(data.results.length).toBe(1);
     const r = data.results[0];
     expect(r.parent).toBeDefined();
-    expect(r.parent.name).toBe('processInput');
+    expect(r.parent.name).toBe('handleRequest');
     expect(r.parent.kind).toBe('function');
-  });
-
-  test('receiver field for calls', () => {
-    const data = astQueryData('console.log', dbPath);
-    expect(data.results.length).toBe(1);
-    expect(data.results[0].receiver).toBe('console');
   });
 
   test('empty results for non-matching pattern', () => {
@@ -227,8 +217,8 @@ describe('astQueryData', () => {
   });
 
   test('combined kind + file filter', () => {
-    const data = astQueryData(undefined, dbPath, { kind: 'call', file: 'handler' });
-    expect(data.results.every((r) => r.kind === 'call' && r.file.includes('handler'))).toBe(true);
-    expect(data.results.length).toBe(2);
+    const data = astQueryData(undefined, dbPath, { kind: 'new', file: 'handler' });
+    expect(data.results.every((r) => r.kind === 'new' && r.file.includes('handler'))).toBe(true);
+    expect(data.results.length).toBe(1);
   });
 });

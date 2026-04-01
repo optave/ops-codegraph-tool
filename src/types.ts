@@ -61,7 +61,7 @@ export type EdgeKind = CoreEdgeKind | StructuralEdgeKind;
 export type AnyEdgeKind = EdgeKind | DataflowEdgeKind;
 
 /** AST node kinds extracted during analysis. */
-export type ASTNodeKind = 'call' | 'new' | 'string' | 'regex' | 'throw' | 'await';
+export type ASTNodeKind = 'new' | 'string' | 'regex' | 'throw' | 'await';
 
 /** Coarse role classifications for symbols based on connectivity. */
 export type CoreRole = 'entry' | 'core' | 'utility' | 'adapter' | 'dead' | 'test-only' | 'leaf';

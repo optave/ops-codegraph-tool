@@ -152,8 +152,6 @@ pub const AST_TEXT_MAX: usize = 200;
 
 /// Language-specific AST node type configuration.
 pub struct LangAstConfig {
-    /// Node types mapping to `"call"` kind (e.g. `call_expression`, `method_invocation`)
-    pub call_types: &'static [&'static str],
     /// Node types mapping to `"new"` kind (e.g. `new_expression`, `object_creation_expression`)
     pub new_types: &'static [&'static str],
     /// Node types mapping to `"throw"` kind (e.g. `throw_statement`, `raise_statement`)
@@ -174,7 +172,6 @@ pub struct LangAstConfig {
 // ── Per-language configs ─────────────────────────────────────────────────────
 
 pub const PYTHON_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["call"],
     new_types: &[],
     throw_types: &["raise_statement"],
     await_types: &["await"],
@@ -185,7 +182,6 @@ pub const PYTHON_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const GO_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["call_expression"],
     new_types: &[],
     throw_types: &[],
     await_types: &[],
@@ -196,7 +192,6 @@ pub const GO_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const RUST_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["call_expression", "method_call_expression"],
     new_types: &[],
     throw_types: &[],
     await_types: &["await_expression"],
@@ -207,7 +202,6 @@ pub const RUST_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const JAVA_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["method_invocation"],
     new_types: &["object_creation_expression"],
     throw_types: &["throw_statement"],
     await_types: &[],
@@ -218,7 +212,6 @@ pub const JAVA_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const CSHARP_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["invocation_expression"],
     new_types: &["object_creation_expression"],
     throw_types: &["throw_statement", "throw_expression"],
     await_types: &["await_expression"],
@@ -229,7 +222,6 @@ pub const CSHARP_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const RUBY_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["call", "method_call"],
     new_types: &[],
     throw_types: &[],
     await_types: &[],
@@ -240,7 +232,6 @@ pub const RUBY_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const PHP_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["function_call_expression", "member_call_expression", "scoped_call_expression"],
     new_types: &["object_creation_expression"],
     throw_types: &["throw_expression"],
     await_types: &[],
@@ -251,7 +242,6 @@ pub const PHP_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const C_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["call_expression"],
     new_types: &[],
     throw_types: &[],
     await_types: &[],
@@ -262,7 +252,6 @@ pub const C_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const CPP_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["call_expression"],
     new_types: &["new_expression"],
     throw_types: &["throw_statement"],
     await_types: &["co_await_expression"],
@@ -273,7 +262,6 @@ pub const CPP_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const KOTLIN_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["call_expression"],
     new_types: &[],
     throw_types: &["throw_expression"],
     await_types: &[],
@@ -284,7 +272,6 @@ pub const KOTLIN_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const SWIFT_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["call_expression"],
     new_types: &[],
     throw_types: &["throw_statement"],
     await_types: &["await_expression"],
@@ -295,7 +282,6 @@ pub const SWIFT_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const SCALA_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["call_expression"],
     new_types: &["object_creation_expression"],
     throw_types: &["throw_expression"],
     await_types: &[],
@@ -306,7 +292,6 @@ pub const SCALA_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const BASH_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["command", "command_substitution"],
     new_types: &[],
     throw_types: &[],
     await_types: &[],
@@ -317,7 +302,6 @@ pub const BASH_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const ELIXIR_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["call"],
     new_types: &[],
     throw_types: &[],
     await_types: &[],
@@ -328,7 +312,6 @@ pub const ELIXIR_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const LUA_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["function_call"],
     new_types: &[],
     throw_types: &[],
     await_types: &[],
@@ -339,7 +322,6 @@ pub const LUA_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const DART_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["selector"],
     new_types: &["new_expression", "constructor_invocation"],
     throw_types: &["throw_expression"],
     await_types: &["await_expression"],
@@ -350,7 +332,6 @@ pub const DART_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const ZIG_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["call_expression", "builtin_function"],
     new_types: &[],
     throw_types: &[],
     await_types: &[],
@@ -361,7 +342,6 @@ pub const ZIG_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const HASKELL_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["apply"],
     new_types: &[],
     throw_types: &[],
     await_types: &[],
@@ -372,7 +352,6 @@ pub const HASKELL_AST_CONFIG: LangAstConfig = LangAstConfig {
 };
 
 pub const OCAML_AST_CONFIG: LangAstConfig = LangAstConfig {
-    call_types: &["application_expression"],
     new_types: &[],
     throw_types: &[],
     await_types: &[],
@@ -422,43 +401,6 @@ fn walk_ast_nodes_with_config_depth(
     }
     let kind = node.kind();
 
-    // Call extraction — checked first since calls are the most common AST node kind.
-    // Do NOT recurse children: prevents double-counting nested calls like `a(b())`.
-    if config.call_types.contains(&kind) {
-        let name = extract_call_name(node, source);
-        let receiver = extract_call_receiver(node, source);
-        let text = truncate(node_text(node, source), AST_TEXT_MAX);
-        ast_nodes.push(AstNode {
-            kind: "call".to_string(),
-            name,
-            line: start_line(node),
-            text: Some(text),
-            receiver,
-        });
-        // Recurse into arguments only — nested calls in args should be captured.
-        // Use child_by_field_name("arguments") — immune to kind-name variation across grammars.
-        // Falls back to kind-based matching for grammars that don't expose a field name.
-        let args_node = node.child_by_field_name("arguments").or_else(|| {
-            for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
-                    let ck = child.kind();
-                    if ck == "arguments" || ck == "argument_list" || ck == "method_arguments" {
-                        return Some(child);
-                    }
-                }
-            }
-            None
-        });
-        if let Some(args) = args_node {
-            for j in 0..args.child_count() {
-                if let Some(arg) = args.child(j) {
-                    walk_ast_nodes_with_config_depth(&arg, source, ast_nodes, config, depth + 1);
-                }
-            }
-        }
-        return;
-    }
-
     if config.new_types.contains(&kind) {
         let name = extract_constructor_name(node, source);
         let text = truncate(node_text(node, source), AST_TEXT_MAX);
@@ -491,9 +433,7 @@ fn walk_ast_nodes_with_config_depth(
             text,
             receiver: None,
         });
-        // Fall through to recurse children — captures strings, calls, etc. inside await expr.
-        // The call_types guard at the top of the function already handles `call_expression`
-        // nodes correctly (recurse-into-args-only), so there is no double-counting risk here.
+        // Fall through to recurse children — captures strings, etc. inside await expr.
     } else if config.string_types.contains(&kind) {
         let raw = node_text(node, source);
         let is_raw_string = kind.contains("raw_string");
@@ -630,42 +570,6 @@ fn extract_call_name(node: &Node, source: &[u8]) -> String {
     }
     let text = node_text(node, source);
     text.split('(').next().unwrap_or("?").to_string()
-}
-
-/// Extract receiver from a call node (e.g. `obj` from `obj.method()`).
-/// Looks for a member-expression-like function child and extracts the object part.
-fn extract_call_receiver(node: &Node, source: &[u8]) -> Option<String> {
-    // PHP: scoped_call_expression — receiver is the "scope" field (e.g. MyClass in MyClass::method())
-    if let Some(scope) = node.child_by_field_name("scope") {
-        return Some(node_text(&scope, source).to_string());
-    }
-    // Try "function" field first (JS/TS: call_expression -> member_expression)
-    // Then "object" (Go, Python), then "receiver" (Ruby)
-    for field in &["function", "object", "receiver"] {
-        if let Some(fn_node) = node.child_by_field_name(field) {
-            // JS/TS/Python: member_expression / attribute with "object" field
-            if let Some(obj) = fn_node.child_by_field_name("object") {
-                return Some(node_text(&obj, source).to_string());
-            }
-            // Go: selector_expression uses "operand" not "object"
-            if fn_node.kind() == "selector_expression" {
-                if let Some(operand) = fn_node.child_by_field_name("operand") {
-                    return Some(node_text(&operand, source).to_string());
-                }
-            }
-            // C#: member_access_expression uses "expression" not "object"
-            if fn_node.kind() == "member_access_expression" {
-                if let Some(expr) = fn_node.child_by_field_name("expression") {
-                    return Some(node_text(&expr, source).to_string());
-                }
-            }
-            // For Ruby/Go where the receiver is directly a field
-            if *field == "object" || *field == "receiver" {
-                return Some(node_text(&fn_node, source).to_string());
-            }
-        }
-    }
-    None
 }
 
 /// Extract expression text from throw/await — skip the keyword child.
