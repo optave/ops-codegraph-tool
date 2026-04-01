@@ -35,18 +35,26 @@ function initializeEngine(ctx: PipelineContext): void {
     dataflow: ctx.opts.dataflow !== false,
     ast: ctx.opts.ast !== false,
     nativeDb: ctx.nativeDb,
-    // WAL checkpoint callbacks for dual-connection WAL guard (#696).
+    // WAL checkpoint callbacks for dual-connection WAL guard (#696, #715).
     // Feature modules (ast, cfg, complexity, dataflow) receive `db` as a
     // parameter and cannot tolerate close/reopen (stale reference). Instead,
-    // checkpoint the WAL so native writes start with a clean slate. Features
-    // return early on native success and never read native-written WAL data
-    // through the JS connection, so a post-write checkpoint is unnecessary.
+    // checkpoint the WAL so native writes start with a clean slate.
+    // After native writes, resumeJsDb checkpoints through rusqlite so
+    // better-sqlite3 never reads WAL frames from a different SQLite library.
     suspendJsDb: ctx.nativeDb
       ? () => {
           ctx.db.pragma('wal_checkpoint(TRUNCATE)');
         }
       : undefined,
-    resumeJsDb: ctx.nativeDb ? () => {} : undefined,
+    resumeJsDb: ctx.nativeDb
+      ? () => {
+          try {
+            ctx.nativeDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+          } catch {
+            /* ignore — nativeDb may already be closed */
+          }
+        }
+      : undefined,
   };
   const { name: engineName, version: engineVersion } = getActiveEngine(ctx.engineOpts);
   ctx.engineName = engineName as 'native' | 'wasm';
@@ -120,8 +128,16 @@ function setupPipeline(ctx: PipelineContext): void {
     try {
       ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
       ctx.nativeDb.initSchema();
+      // Checkpoint WAL through rusqlite so better-sqlite3 sees a clean DB
+      // with no cross-library WAL frames (#715, #717).
+      ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     } catch (err) {
-      warn(`NativeDatabase init failed, falling back to JS: ${(err as Error).message}`);
+      warn(`NativeDatabase setup failed, falling back to JS: ${(err as Error).message}`);
+      try {
+        ctx.nativeDb?.close();
+      } catch {
+        /* ignore close errors */
+      }
       ctx.nativeDb = undefined;
     }
     // Always run JS initSchema so better-sqlite3 sees the schema —
@@ -179,6 +195,15 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
   // that use suspendJsDb/resumeJsDb WAL checkpoint pattern (#696).
   const hadNativeDb = !!ctx.nativeDb;
   if (ctx.db && ctx.nativeDb) {
+    // Checkpoint WAL through rusqlite before closing so better-sqlite3 never
+    // needs to apply WAL frames written by a different SQLite library (#715, #717).
+    // Separate try/catch blocks ensure close() always runs even if checkpoint throws,
+    // preventing a live rusqlite connection from lingering until GC.
+    try {
+      ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch {
+      /* ignore checkpoint errors */
+    }
     try {
       ctx.nativeDb.close();
     } catch {
@@ -227,6 +252,14 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
   // Close nativeDb after analyses — finalize uses JS paths for setBuildMeta
   // and closeDbPair handles cleanup. Avoids dual-connection during finalize.
   if (ctx.nativeDb) {
+    // Checkpoint WAL through rusqlite before closing so better-sqlite3 never
+    // needs to apply WAL frames written by a different SQLite library (#715, #717).
+    // Separate try/catch blocks ensure close() always runs even if checkpoint throws.
+    try {
+      ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch {
+      /* ignore checkpoint errors */
+    }
     try {
       ctx.nativeDb.close();
     } catch {

@@ -376,11 +376,15 @@ impl NativeDatabase {
         // 64 entries comfortably holds the 40+ prepare_cached() queries in read_queries.rs
         // plus build-path queries, avoiding LRU eviction (default is 16).
         conn.set_prepared_statement_cache_capacity(64);
+        // Disable mmap for read-write connections: when both rusqlite and
+        // better-sqlite3 share the same WAL-mode file, mmap and regular I/O
+        // are not cache-coherent on Windows, leading to SQLITE_CORRUPT (#715).
+        // Read-only connections keep mmap since they don't share a WAL file
+        // with a concurrent writer from a different library.
         conn.execute_batch(
             "PRAGMA journal_mode = WAL; \
              PRAGMA synchronous = NORMAL; \
              PRAGMA busy_timeout = 5000; \
-             PRAGMA mmap_size = 268435456; \
              PRAGMA temp_store = MEMORY;",
         )
         .map_err(|e| napi::Error::from_reason(format!("Failed to set pragmas: {e}")))?;
