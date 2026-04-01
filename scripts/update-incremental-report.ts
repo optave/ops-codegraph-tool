@@ -62,7 +62,7 @@ function findPrevRelease(hist, fromIdx) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 function trend(current, previous, lowerIsBetter = true) {
-	if (previous == null) return '';
+	if (current == null || previous == null) return '';
 	const pct = ((current - previous) / previous) * 100;
 	if (Math.abs(pct) < 2) return ' ~';
 	if (lowerIsBetter) {

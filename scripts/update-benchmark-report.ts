@@ -69,7 +69,7 @@ function findPrevRelease(hist, fromIdx) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 function trend(current, previous, lowerIsBetter = true) {
-	if (previous == null) return '';
+	if (current == null || previous == null) return '';
 	const pct = ((current - previous) / previous) * 100;
 	if (Math.abs(pct) < 2) return ' ~';
 	if (lowerIsBetter) {
@@ -207,7 +207,13 @@ md += `| Nodes | ${estNative ? Math.round(estNative.nodes * ESTIMATE_FILES).toLo
 md += `| Edges | ${estNative ? Math.round(estNative.edges * ESTIMATE_FILES).toLocaleString() : 'n/a'} | ${Math.round(estWasm.edges * ESTIMATE_FILES).toLocaleString()} |\n\n`;
 
 // ── Incremental Rebuilds section ──────────────────────────────────────────
-const hasIncremental = history.some((h) => h.wasm?.noopRebuildMs != null || h.native?.noopRebuildMs != null);
+const hasIncremental = history.some(
+	(h) =>
+		h.wasm?.noopRebuildMs != null ||
+		h.native?.noopRebuildMs != null ||
+		h.wasm?.oneFileRebuildMs != null ||
+		h.native?.oneFileRebuildMs != null,
+);
 if (hasIncremental) {
 	md += '### Incremental Rebuilds\n\n';
 	md += '| Version | Engine | No-op (ms) | 1-file (ms) |\n';
@@ -219,7 +225,7 @@ if (hasIncremental) {
 
 		for (const engineKey of ['native', 'wasm']) {
 			const e = h[engineKey];
-			if (!e || e.noopRebuildMs == null) continue;
+			if (!e || (e.noopRebuildMs == null && e.oneFileRebuildMs == null)) continue;
 			const p = prev?.[engineKey] || null;
 
 			const noopTrend = trend(e.noopRebuildMs, p?.noopRebuildMs);
