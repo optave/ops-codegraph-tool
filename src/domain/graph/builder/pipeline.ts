@@ -223,7 +223,51 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
   if (ctx.earlyExit) return;
 
   await parseFiles(ctx);
+
+  // Temporarily reopen nativeDb for insertNodes — it uses the WAL checkpoint
+  // guard internally (same pattern as feature modules). Closed again before
+  // resolveImports/buildEdges which don't yet have the guard (#709).
+  if (hadNativeDb && ctx.engineName === 'native') {
+    const native = loadNative();
+    if (native?.NativeDatabase) {
+      try {
+        ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+      } catch {
+        ctx.nativeDb = undefined;
+      }
+    }
+  }
+
   await insertNodes(ctx);
+
+  // Close nativeDb after insertNodes — remaining pipeline stages use JS paths.
+  if (ctx.nativeDb && ctx.db) {
+    // Checkpoint WAL through rusqlite before closing so better-sqlite3 never
+    // needs to apply WAL frames written by a different SQLite library (#715, #717).
+    try {
+      ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch {
+      /* ignore checkpoint errors */
+    }
+    try {
+      ctx.nativeDb.close();
+    } catch {
+      /* ignore close errors */
+    }
+    ctx.nativeDb = undefined;
+    // Reopen better-sqlite3 connection to get a fresh page cache.
+    // After rusqlite truncates the WAL, better-sqlite3's internal WAL index
+    // (shared-memory mapping) may reference frames that no longer exist,
+    // causing SQLITE_CORRUPT on the next read. Closing and reopening
+    // forces a clean slate — the only reliable cross-library handoff (#715, #736).
+    try {
+      ctx.db.close();
+    } catch {
+      /* ignore close errors */
+    }
+    ctx.db = openDb(ctx.dbPath);
+  }
+
   await resolveImports(ctx);
   await buildEdges(ctx);
   await buildStructure(ctx);
@@ -289,6 +333,65 @@ export async function buildGraph(
 
   try {
     setupPipeline(ctx);
+
+    // ── Rust orchestrator fast path (#695) ────────────────────────────
+    // When available, run the entire build pipeline in Rust with zero
+    // napi crossings (eliminates WAL dual-connection dance). Falls back
+    // to the JS pipeline on failure or when native is unavailable.
+    const forceJs = process.env.CODEGRAPH_FORCE_JS_PIPELINE === '1';
+    if (!forceJs && ctx.nativeDb?.buildGraph) {
+      try {
+        const resultJson = ctx.nativeDb.buildGraph(
+          ctx.rootDir,
+          JSON.stringify(ctx.config),
+          JSON.stringify(ctx.aliases),
+          JSON.stringify(opts),
+        );
+        const result = JSON.parse(resultJson) as {
+          phases: Record<string, number>;
+          earlyExit?: boolean;
+          nodeCount?: number;
+          edgeCount?: number;
+          fileCount?: number;
+        };
+
+        if (result.earlyExit) {
+          closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
+          return;
+        }
+
+        // Map Rust timing fields to the JS BuildResult format.
+        // Rust handles collect+detect+parse+insert+resolve+edges+structure+roles.
+        // AST/complexity/CFG/dataflow analyses are not yet ported to Rust.
+        const p = result.phases;
+        closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
+        info(
+          `Native build orchestrator completed: ${result.nodeCount ?? 0} nodes, ${result.edgeCount ?? 0} edges, ${result.fileCount ?? 0} files`,
+        );
+        return {
+          phases: {
+            setupMs: +((p.setupMs ?? 0) + (p.collectMs ?? 0) + (p.detectMs ?? 0)).toFixed(1),
+            parseMs: +(p.parseMs ?? 0).toFixed(1),
+            insertMs: +(p.insertMs ?? 0).toFixed(1),
+            resolveMs: +(p.resolveMs ?? 0).toFixed(1),
+            edgesMs: +(p.edgesMs ?? 0).toFixed(1),
+            structureMs: +(p.structureMs ?? 0).toFixed(1),
+            rolesMs: +(p.rolesMs ?? 0).toFixed(1),
+            astMs: 0,
+            complexityMs: 0,
+            cfgMs: 0,
+            dataflowMs: 0,
+            finalizeMs: +(p.finalizeMs ?? 0).toFixed(1),
+          },
+        };
+      } catch (err) {
+        warn(
+          `Native build orchestrator failed, falling back to JS pipeline: ${(err as Error).message}`,
+        );
+        // Fall through to JS pipeline
+      }
+    }
+
     await runPipelineStages(ctx);
   } catch (err) {
     if (!ctx.earlyExit && ctx.db) {

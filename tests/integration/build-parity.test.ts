@@ -114,18 +114,25 @@ describeOrSkip('Build parity: native vs WASM', () => {
   it('produces identical ast_nodes', () => {
     const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
     const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
+    // Filter out 'call' kind transitionally: the WASM side no longer emits call AST
+    // nodes, but the published native binary (v3.7.0) still does. Once the next native
+    // binary is published with call removal, this filter can be dropped.
+    const filterCall = (nodes: unknown[]) =>
+      (nodes as { kind: string }[]).filter((n) => n.kind !== 'call');
+    const wasmFiltered = filterCall(wasmGraph.astNodes);
+    const nativeFiltered = filterCall(nativeGraph.astNodes);
     // Diagnostic: log counts to help debug CI-only parity failures
-    if (nativeGraph.astNodes.length !== wasmGraph.astNodes.length) {
+    if (nativeFiltered.length !== wasmFiltered.length) {
       console.error(
-        `[parity-diag] native astNodes: ${nativeGraph.astNodes.length}, wasm astNodes: ${wasmGraph.astNodes.length}`,
+        `[parity-diag] native astNodes: ${nativeFiltered.length}, wasm astNodes: ${wasmFiltered.length}`,
       );
       console.error(
-        `[parity-diag] native kinds: ${JSON.stringify([...new Set((nativeGraph.astNodes as any[]).map((n: any) => n.kind))])}`,
+        `[parity-diag] native kinds: ${JSON.stringify([...new Set(nativeFiltered.map((n) => n.kind))])}`,
       );
       console.error(
-        `[parity-diag] wasm kinds: ${JSON.stringify([...new Set((wasmGraph.astNodes as any[]).map((n: any) => n.kind))])}`,
+        `[parity-diag] wasm kinds: ${JSON.stringify([...new Set(wasmFiltered.map((n) => n.kind))])}`,
       );
     }
-    expect(nativeGraph.astNodes).toEqual(wasmGraph.astNodes);
+    expect(nativeFiltered).toEqual(wasmFiltered);
   });
 });

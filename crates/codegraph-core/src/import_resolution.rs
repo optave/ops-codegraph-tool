@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 
-use crate::types::{AliasMapping, ImportResolutionInput, PathAliases, ResolvedImport};
+use crate::types::{ImportResolutionInput, PathAliases, ResolvedImport};
 
 /// Check file existence using known_files set when available, falling back to FS.
 fn file_exists(path: &str, known: Option<&HashSet<String>>) -> bool {
