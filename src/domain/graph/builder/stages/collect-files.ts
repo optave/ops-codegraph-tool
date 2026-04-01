@@ -21,13 +21,22 @@ function tryFastCollect(
   ctx: PipelineContext,
 ): { files: string[]; directories: Set<string> } | null {
   const { db, rootDir } = ctx;
+  const useNative = ctx.engineName === 'native' && !!ctx.nativeDb?.getCollectFilesData;
 
   // 1. Check that file_hashes table exists and has entries
   let dbFileCount: number;
-  try {
-    dbFileCount = (db.prepare('SELECT COUNT(*) as c FROM file_hashes').get() as { c: number }).c;
-  } catch {
-    return null;
+  let dbFiles: string[];
+  if (useNative) {
+    const data = ctx.nativeDb!.getCollectFilesData!();
+    dbFileCount = data.count;
+    dbFiles = data.files;
+  } else {
+    try {
+      dbFileCount = (db.prepare('SELECT COUNT(*) as c FROM file_hashes').get() as { c: number }).c;
+    } catch {
+      return null;
+    }
+    dbFiles = []; // deferred — loaded below only if needed
   }
   if (dbFileCount === 0) return null;
 
@@ -42,9 +51,11 @@ function tryFastCollect(
   if (!hasEntries) return null;
 
   // 3. Load existing file list from file_hashes (relative paths)
-  const dbFiles = (db.prepare('SELECT file FROM file_hashes').all() as Array<{ file: string }>).map(
-    (r) => r.file,
-  );
+  if (!useNative) {
+    dbFiles = (db.prepare('SELECT file FROM file_hashes').all() as Array<{ file: string }>).map(
+      (r) => r.file,
+    );
+  }
 
   // 4. Apply journal deltas: remove deleted files, add new/changed files
   const fileSet = new Set(dbFiles);
