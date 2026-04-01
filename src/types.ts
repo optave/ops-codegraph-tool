@@ -97,6 +97,7 @@ export type LanguageId =
   | 'zig'
   | 'haskell'
   | 'ocaml'
+  | 'ocaml-interface'
   | 'fsharp'
   | 'gleam'
   | 'clojure'

@@ -24,6 +24,11 @@ fn match_ocaml_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dept
         "class_definition" => handle_ocaml_class_def(node, source, symbols),
         "open_module" => handle_ocaml_open(node, source, symbols),
         "application_expression" => handle_ocaml_application(node, source, symbols),
+        // Shared node types present in both .ml and .mli files
+        "value_specification" => handle_ocaml_value_spec(node, source, symbols),
+        "external" => handle_ocaml_external(node, source, symbols),
+        "module_type_definition" => handle_ocaml_module_type_def(node, source, symbols),
+        "exception_definition" => handle_ocaml_exception_def(node, source, symbols),
         _ => {}
     }
 }
@@ -210,6 +215,102 @@ fn handle_ocaml_open(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         let last = name.split('.').last().unwrap_or(&name).to_string();
         symbols.imports.push(Import::new(name, vec![last], start_line(node)));
     }
+}
+
+/// Handle `val name : type` declarations in .mli files.
+fn handle_ocaml_value_spec(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let name_node = find_child(node, "value_name")
+        .or_else(|| find_child(node, "parenthesized_operator"));
+    if let Some(name) = name_node {
+        // Check if the type signature contains `->` (function type)
+        let has_arrow = node.child_by_field_name("type")
+            .map(|t| has_descendant_kind(&t, "function_type"))
+            .unwrap_or(false);
+        symbols.definitions.push(Definition {
+            name: node_text(&name, source).to_string(),
+            kind: if has_arrow { "function" } else { "variable" }.to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: None,
+            cfg: None,
+            children: None,
+        });
+    }
+}
+
+/// Handle `external name : type = "c_name"` declarations in .mli files.
+fn handle_ocaml_external(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let name_node = find_child(node, "value_name")
+        .or_else(|| find_child(node, "parenthesized_operator"));
+    if let Some(name) = name_node {
+        symbols.definitions.push(Definition {
+            name: node_text(&name, source).to_string(),
+            kind: "function".to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: None,
+            cfg: None,
+            children: None,
+        });
+    }
+}
+
+/// Handle `module type S = sig ... end` declarations in .mli files.
+fn handle_ocaml_module_type_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let name_node = find_child(node, "module_type_name");
+    if let Some(name) = name_node {
+        symbols.definitions.push(Definition {
+            name: node_text(&name, source).to_string(),
+            kind: "interface".to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: None,
+            cfg: None,
+            children: None,
+        });
+    }
+}
+
+/// Handle `exception Foo of bar` and `exception Foo = Bar` declarations.
+fn handle_ocaml_exception_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    // Standard: `exception Foo of bar` — name is inside constructor_declaration
+    let constructor = find_child(node, "constructor_declaration");
+    let name_node = if let Some(ref decl) = constructor {
+        find_child(decl, "constructor_name")
+    } else {
+        // Fallback for `exception Foo = Bar` (alias) — name is directly on the node
+        find_child(node, "constructor_name")
+    };
+    if let Some(name) = name_node {
+        symbols.definitions.push(Definition {
+            name: node_text(&name, source).to_string(),
+            kind: "type".to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: None,
+            cfg: None,
+            children: None,
+        });
+    }
+}
+
+/// Check if any descendant has the given node kind.
+fn has_descendant_kind(node: &Node, kind: &str) -> bool {
+    if node.kind() == kind {
+        return true;
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if has_descendant_kind(&child, kind) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn handle_ocaml_application(node: &Node, source: &[u8], symbols: &mut FileSymbols) {

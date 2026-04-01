@@ -46,6 +46,7 @@ const grammars = [
   { name: 'tree-sitter-zig', pkg: '@tree-sitter-grammars/tree-sitter-zig', sub: null },
   { name: 'tree-sitter-haskell', pkg: 'tree-sitter-haskell', sub: null },
   { name: 'tree-sitter-ocaml', pkg: 'tree-sitter-ocaml', sub: 'grammars/ocaml' },
+  { name: 'tree-sitter-ocaml_interface', pkg: 'tree-sitter-ocaml', sub: 'grammars/interface' },
   { name: 'tree-sitter-fsharp', pkg: 'tree-sitter-fsharp', sub: 'fsharp' },
   { name: 'tree-sitter-gleam', pkg: 'tree-sitter-gleam', sub: null },
   { name: 'tree-sitter-clojure', pkg: 'tree-sitter-clojure', sub: null },

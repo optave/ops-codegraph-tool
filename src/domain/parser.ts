@@ -551,8 +551,15 @@ export const LANGUAGE_REGISTRY: LanguageRegistryEntry[] = [
   },
   {
     id: 'ocaml',
-    extensions: ['.ml', '.mli'],
+    extensions: ['.ml'],
     grammarFile: 'tree-sitter-ocaml.wasm',
+    extractor: extractOCamlSymbols,
+    required: false,
+  },
+  {
+    id: 'ocaml-interface',
+    extensions: ['.mli'],
+    grammarFile: 'tree-sitter-ocaml_interface.wasm',
     extractor: extractOCamlSymbols,
     required: false,
   },

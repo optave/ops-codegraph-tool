@@ -26,6 +26,7 @@ pub enum LanguageKind {
     Zig,
     Haskell,
     Ocaml,
+    OcamlInterface,
 }
 
 impl LanguageKind {
@@ -56,6 +57,7 @@ impl LanguageKind {
             Self::Zig => "zig",
             Self::Haskell => "haskell",
             Self::Ocaml => "ocaml",
+            Self::OcamlInterface => "ocaml-interface",
         }
     }
 
@@ -93,7 +95,8 @@ impl LanguageKind {
             "dart" => Some(Self::Dart),
             "zig" => Some(Self::Zig),
             "hs" => Some(Self::Haskell),
-            "ml" | "mli" => Some(Self::Ocaml),
+            "ml" => Some(Self::Ocaml),
+            "mli" => Some(Self::OcamlInterface),
             _ => None,
         }
     }
@@ -124,6 +127,7 @@ impl LanguageKind {
             Self::Zig => tree_sitter_zig::LANGUAGE.into(),
             Self::Haskell => tree_sitter_haskell::LANGUAGE.into(),
             Self::Ocaml => tree_sitter_ocaml::LANGUAGE_OCAML.into(),
+            Self::OcamlInterface => tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
         }
     }
 }

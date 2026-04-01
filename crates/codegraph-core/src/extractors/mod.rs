@@ -123,7 +123,7 @@ pub fn extract_symbols_with_opts(
         LanguageKind::Haskell => {
             haskell::HaskellExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
         }
-        LanguageKind::Ocaml => {
+        LanguageKind::Ocaml | LanguageKind::OcamlInterface => {
             ocaml::OcamlExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
         }
     }
