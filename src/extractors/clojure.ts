@@ -1,9 +1,4 @@
-import type {
-  ExtractorOutput,
-  SubDeclaration,
-  TreeSitterNode,
-  TreeSitterTree,
-} from '../types.js';
+import type { ExtractorOutput, SubDeclaration, TreeSitterNode, TreeSitterTree } from '../types.js';
 import { nodeEndLine } from './helpers.js';
 
 /**
