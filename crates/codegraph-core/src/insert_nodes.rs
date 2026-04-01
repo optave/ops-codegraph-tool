@@ -50,7 +50,9 @@ pub struct InsertNodesExport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InsertNodesBatch {
     pub file: String,
+    #[serde(default)]
     pub definitions: Vec<InsertNodesDefinition>,
+    #[serde(default)]
     pub exports: Vec<InsertNodesExport>,
 }
 
