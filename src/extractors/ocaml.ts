@@ -50,6 +50,19 @@ function walkOCamlNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
     case 'application_expression':
       handleOCamlApplication(node, ctx);
       break;
+    // Interface-specific (.mli) node types
+    case 'value_specification':
+      handleOCamlValueSpec(node, ctx);
+      break;
+    case 'external':
+      handleOCamlExternal(node, ctx);
+      break;
+    case 'module_type_definition':
+      handleOCamlModuleTypeDef(node, ctx);
+      break;
+    case 'exception_definition':
+      handleOCamlExceptionDef(node, ctx);
+      break;
   }
 
   for (let i = 0; i < node.childCount; i++) {
@@ -229,6 +242,69 @@ function handleOCamlOpen(node: TreeSitterNode, ctx: ExtractorOutput): void {
     source: moduleName,
     names: [moduleName.split('.').pop() || moduleName],
     line: node.startPosition.row + 1,
+  });
+}
+
+function hasDescendantType(node: TreeSitterNode, type: string): boolean {
+  if (node.type === type) return true;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child && hasDescendantType(child, type)) return true;
+  }
+  return false;
+}
+
+function handleOCamlValueSpec(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const nameNode = findChild(node, 'value_name') || findChild(node, 'parenthesized_operator');
+  if (!nameNode) return;
+
+  // Check if the type contains `->` (function_type node)
+  const typeNode = node.childForFieldName('type');
+  const isFunction = typeNode ? hasDescendantType(typeNode, 'function_type') : false;
+
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: isFunction ? 'function' : 'variable',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+  });
+}
+
+function handleOCamlExternal(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const nameNode = findChild(node, 'value_name') || findChild(node, 'parenthesized_operator');
+  if (!nameNode) return;
+
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'function',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+  });
+}
+
+function handleOCamlModuleTypeDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const nameNode = findChild(node, 'module_type_name');
+  if (!nameNode) return;
+
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'interface',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+  });
+}
+
+function handleOCamlExceptionDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const ctorDecl = findChild(node, 'constructor_declaration');
+  if (!ctorDecl) return;
+  const nameNode = findChild(ctorDecl, 'constructor_name');
+  if (!nameNode) return;
+
+  ctx.definitions.push({
+    name: nameNode.text,
+    kind: 'type',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
   });
 }
 
