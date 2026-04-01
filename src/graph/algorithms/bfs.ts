@@ -26,10 +26,19 @@ export function bfs(
   if (native?.bfsTraversal) {
     const edges = graph.toEdgeArray();
     const nativeMaxDepth = maxDepth === Infinity ? null : maxDepth;
-    const result = native.bfsTraversal(edges, starts, nativeMaxDepth, direction);
+    // Undirected graphs deduplicate edges to one canonical direction in toEdgeArray(),
+    // so the Rust side must traverse both directions to preserve symmetry.
+    const nativeDirection = !graph.directed && direction === 'forward' ? 'both' : direction;
+    const result = native.bfsTraversal(edges, starts, nativeMaxDepth, nativeDirection);
     const depths = new Map<string, number>();
     for (const entry of result) {
       depths.set(entry.node, entry.depth);
+    }
+    // The Rust side only knows nodes referenced by edges; restore any isolated start nodes.
+    for (const startId of starts) {
+      if (graph.hasNode(startId) && !depths.has(startId)) {
+        depths.set(startId, 0);
+      }
     }
     return depths;
   }
