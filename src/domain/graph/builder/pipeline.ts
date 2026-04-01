@@ -223,7 +223,51 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
   if (ctx.earlyExit) return;
 
   await parseFiles(ctx);
+
+  // Temporarily reopen nativeDb for insertNodes — it uses the WAL checkpoint
+  // guard internally (same pattern as feature modules). Closed again before
+  // resolveImports/buildEdges which don't yet have the guard (#709).
+  if (hadNativeDb && ctx.engineName === 'native') {
+    const native = loadNative();
+    if (native?.NativeDatabase) {
+      try {
+        ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+      } catch {
+        ctx.nativeDb = undefined;
+      }
+    }
+  }
+
   await insertNodes(ctx);
+
+  // Close nativeDb after insertNodes — remaining pipeline stages use JS paths.
+  if (ctx.nativeDb && ctx.db) {
+    // Checkpoint WAL through rusqlite before closing so better-sqlite3 never
+    // needs to apply WAL frames written by a different SQLite library (#715, #717).
+    try {
+      ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch {
+      /* ignore checkpoint errors */
+    }
+    try {
+      ctx.nativeDb.close();
+    } catch {
+      /* ignore close errors */
+    }
+    ctx.nativeDb = undefined;
+    // Reopen better-sqlite3 connection to get a fresh page cache.
+    // After rusqlite truncates the WAL, better-sqlite3's internal WAL index
+    // (shared-memory mapping) may reference frames that no longer exist,
+    // causing SQLITE_CORRUPT on the next read. Closing and reopening
+    // forces a clean slate — the only reliable cross-library handoff (#715, #736).
+    try {
+      ctx.db.close();
+    } catch {
+      /* ignore close errors */
+    }
+    ctx.db = openDb(ctx.dbPath);
+  }
+
   await resolveImports(ctx);
   await buildEdges(ctx);
   await buildStructure(ctx);

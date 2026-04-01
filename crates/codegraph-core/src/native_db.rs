@@ -790,13 +790,21 @@ impl NativeDatabase {
     /// Bulk-insert nodes, children, containment edges, exports, and file hashes.
     /// Reuses the persistent connection instead of opening a new one.
     /// Returns `true` on success, `false` on failure.
-    #[napi]
+    ///
+    /// Batches are received as `serde_json::Value` and deserialized via serde so
+    /// that `null` visibility values map to `None` instead of crashing napi's
+    /// `Option<String>` object conversion (#709).
+    #[napi(ts_args_type = "batches: Array<{ file: string; definitions: Array<{ name: string; kind: string; line: number; endLine?: number; visibility?: string; children: Array<{ name: string; kind: string; line: number; endLine?: number; visibility?: string }> }>; exports: Array<{ name: string; kind: string; line: number }> }>, fileHashes: FileHashEntry[], removedFiles: string[]")]
     pub fn bulk_insert_nodes(
         &self,
-        batches: Vec<InsertNodesBatch>,
+        batches: serde_json::Value,
         file_hashes: Vec<FileHashEntry>,
         removed_files: Vec<String>,
     ) -> napi::Result<bool> {
+        let batches: Vec<InsertNodesBatch> = serde_json::from_value(batches)
+            .map_err(|e| {
+                napi::Error::from_reason(format!("bulk_insert_nodes: invalid batches: {e}"))
+            })?;
         let conn = self.conn()?;
         Ok(insert_nodes::do_insert_nodes(conn, &batches, &file_hashes, &removed_files)
             .inspect_err(|e| eprintln!("[NativeDatabase] bulk_insert_nodes failed: {e}"))

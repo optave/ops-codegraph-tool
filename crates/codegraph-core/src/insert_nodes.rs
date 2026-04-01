@@ -12,30 +12,34 @@ use serde::{Deserialize, Serialize};
 
 // ── Input types (received from JS via napi) ─────────────────────────
 
-#[napi(object)]
+/// Child node of a definition (parameter, nested function, etc.).
+///
+/// Deserialized via serde (not napi object conversion) so that `null` visibility
+/// maps to `None` instead of crashing napi's `Option<String>` conversion (#709).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InsertNodesChild {
     pub name: String,
     pub kind: String,
     pub line: u32,
-    #[napi(js_name = "endLine")]
+    #[serde(default, rename = "endLine")]
     pub end_line: Option<u32>,
+    #[serde(default)]
     pub visibility: Option<String>,
 }
 
-#[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InsertNodesDefinition {
     pub name: String,
     pub kind: String,
     pub line: u32,
-    #[napi(js_name = "endLine")]
+    #[serde(default, rename = "endLine")]
     pub end_line: Option<u32>,
+    #[serde(default)]
     pub visibility: Option<String>,
+    #[serde(default)]
     pub children: Vec<InsertNodesChild>,
 }
 
-#[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InsertNodesExport {
     pub name: String,
@@ -43,11 +47,12 @@ pub struct InsertNodesExport {
     pub line: u32,
 }
 
-#[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InsertNodesBatch {
     pub file: String,
+    #[serde(default)]
     pub definitions: Vec<InsertNodesDefinition>,
+    #[serde(default)]
     pub exports: Vec<InsertNodesExport>,
 }
 
