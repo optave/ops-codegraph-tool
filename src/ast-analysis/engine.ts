@@ -15,10 +15,12 @@
  * output). This eliminates redundant tree traversals per file.
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { bulkNodeIdsByFile } from '../db/index.js';
 import { debug } from '../infrastructure/logger.js';
+import { loadNative } from '../infrastructure/native.js';
 import type {
   AnalysisOpts,
   AnalysisTiming,
@@ -30,6 +32,9 @@ import type {
   Definition,
   EngineOpts,
   ExtractorOutput,
+  NativeAddon,
+  NativeFunctionCfgResult,
+  NativeFunctionComplexityResult,
   TreeSitterNode,
   Visitor,
   WalkOptions,
@@ -93,6 +98,172 @@ let _parserModule: Awaited<typeof import('../domain/parser.js')> | null = null;
 async function getParserModule(): Promise<typeof import('../domain/parser.js')> {
   if (!_parserModule) _parserModule = await import('../domain/parser.js');
   return _parserModule;
+}
+
+// ─── Native standalone analysis ─────────────────────────────────────────
+
+/**
+ * Try native Rust analysis for files missing complexity/CFG/dataflow data.
+ * Reads source from disk, calls the native standalone functions, and stores
+ * results directly on definitions/symbols. Returns the set of files that
+ * were fully handled (no remaining gaps except possibly AST store).
+ */
+function runNativeAnalysis(
+  native: NativeAddon,
+  fileSymbols: Map<string, ExtractorOutput>,
+  rootDir: string,
+  opts: AnalysisOpts,
+  extToLang: Map<string, string>,
+): void {
+  const doComplexity = opts.complexity !== false;
+  const doCfg = opts.cfg !== false;
+  const doDataflow = opts.dataflow !== false;
+
+  for (const [relPath, symbols] of fileSymbols) {
+    if (symbols._tree) continue; // already has WASM tree, skip native
+    const ext = path.extname(relPath).toLowerCase();
+    const langId = symbols._langId || extToLang.get(ext);
+    if (!langId) continue;
+
+    const defs = symbols.definitions || [];
+
+    const needsComplexity =
+      doComplexity &&
+      COMPLEXITY_EXTENSIONS.has(ext) &&
+      defs.some((d) => hasFuncBody(d) && !d.complexity);
+    const needsCfg =
+      doCfg &&
+      CFG_EXTENSIONS.has(ext) &&
+      defs.some((d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks));
+    const needsDataflow = doDataflow && !symbols.dataflow && DATAFLOW_EXTENSIONS.has(ext);
+
+    if (!needsComplexity && !needsCfg && !needsDataflow) continue;
+
+    // Read source from disk
+    const absPath = path.join(rootDir, relPath);
+    let source: string;
+    try {
+      source = fs.readFileSync(absPath, 'utf-8');
+    } catch {
+      continue;
+    }
+
+    // Complexity
+    if (needsComplexity && native.analyzeComplexity) {
+      try {
+        const results = native.analyzeComplexity(source, absPath);
+        storeNativeComplexityResults(results, defs);
+      } catch (err: unknown) {
+        debug(`native analyzeComplexity failed for ${relPath}: ${(err as Error).message}`);
+      }
+    }
+
+    // CFG
+    if (needsCfg && native.buildCfgAnalysis) {
+      try {
+        const results = native.buildCfgAnalysis(source, absPath);
+        storeNativeCfgResults(results, defs);
+      } catch (err: unknown) {
+        debug(`native buildCfgAnalysis failed for ${relPath}: ${(err as Error).message}`);
+      }
+    }
+
+    // Dataflow
+    if (needsDataflow && native.extractDataflowAnalysis) {
+      try {
+        const result = native.extractDataflowAnalysis(source, absPath);
+        if (result) symbols.dataflow = result;
+      } catch (err: unknown) {
+        debug(`native extractDataflowAnalysis failed for ${relPath}: ${(err as Error).message}`);
+      }
+    }
+  }
+}
+
+/** Store native complexity results on definitions, matched by line number. */
+function storeNativeComplexityResults(
+  results: NativeFunctionComplexityResult[],
+  defs: Definition[],
+): void {
+  const byLine = new Map<number, NativeFunctionComplexityResult[]>();
+  for (const r of results) {
+    if (!byLine.has(r.line)) byLine.set(r.line, []);
+    byLine.get(r.line)!.push(r);
+  }
+
+  for (const def of defs) {
+    if ((def.kind === 'function' || def.kind === 'method') && def.line && !def.complexity) {
+      const candidates = byLine.get(def.line);
+      if (!candidates) continue;
+      const match =
+        candidates.length === 1
+          ? candidates[0]
+          : (candidates.find((r) => r.name === def.name) ?? candidates[0]);
+      if (!match) continue;
+      const { complexity: c } = match;
+      def.complexity = {
+        cognitive: c.cognitive,
+        cyclomatic: c.cyclomatic,
+        maxNesting: c.maxNesting,
+        halstead: c.halstead
+          ? {
+              volume: c.halstead.volume,
+              difficulty: c.halstead.difficulty,
+              effort: c.halstead.effort,
+              bugs: c.halstead.bugs,
+            }
+          : undefined,
+        loc: c.loc
+          ? { loc: c.loc.loc, sloc: c.loc.sloc, commentLines: c.loc.commentLines }
+          : undefined,
+        maintainabilityIndex: c.maintainabilityIndex ?? undefined,
+      };
+    }
+  }
+}
+
+/** Store native CFG results on definitions, matched by line number. */
+function storeNativeCfgResults(results: NativeFunctionCfgResult[], defs: Definition[]): void {
+  const byLine = new Map<number, NativeFunctionCfgResult[]>();
+  for (const r of results) {
+    if (!byLine.has(r.line)) byLine.set(r.line, []);
+    byLine.get(r.line)!.push(r);
+  }
+
+  for (const def of defs) {
+    if (
+      (def.kind === 'function' || def.kind === 'method') &&
+      def.line &&
+      !def.cfg?.blocks?.length
+    ) {
+      const candidates = byLine.get(def.line);
+      if (!candidates) continue;
+      const match =
+        candidates.length === 1
+          ? candidates[0]
+          : (candidates.find((r) => r.name === def.name) ?? candidates[0]);
+      if (!match) continue;
+      def.cfg = match.cfg;
+
+      // Override complexity cyclomatic with CFG-derived value
+      const { edges, blocks } = match.cfg;
+      if (def.complexity && edges && blocks) {
+        const cfgCyclomatic = edges.length - blocks.length + 2;
+        if (cfgCyclomatic > 0) {
+          def.complexity.cyclomatic = cfgCyclomatic;
+          const { loc, halstead } = def.complexity;
+          const volume = halstead ? halstead.volume : 0;
+          const commentRatio = loc && loc.loc > 0 ? loc.commentLines / loc.loc : 0;
+          def.complexity.maintainabilityIndex = computeMaintainabilityIndex(
+            volume,
+            cfgCyclomatic,
+            loc?.sloc ?? 0,
+            commentRatio,
+          );
+        }
+      }
+    }
+  }
 }
 
 // ─── WASM pre-parse ─────────────────────────────────────────────────────
@@ -429,7 +600,17 @@ export async function runAnalyses(
 
   const extToLang = buildExtToLangMap();
 
-  // WASM pre-parse for files that need it
+  // Native analysis pass: try Rust standalone functions before WASM fallback.
+  // This fills in complexity/CFG/dataflow for files that the native parse pipeline
+  // missed, avoiding the need to parse with WASM + run JS visitors.
+  const native = loadNative();
+  if (native?.analyzeComplexity) {
+    const t0native = performance.now();
+    runNativeAnalysis(native, fileSymbols, rootDir, opts, extToLang);
+    debug(`native standalone analysis: ${(performance.now() - t0native).toFixed(1)}ms`);
+  }
+
+  // WASM pre-parse for files that still need it (AST store, or native gaps)
   await ensureWasmTreesIfNeeded(fileSymbols, opts, rootDir);
 
   // Unified pre-walk: run all applicable visitors in a single DFS per file

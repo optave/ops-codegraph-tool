@@ -1842,11 +1842,48 @@ export interface NativeAddon {
   detectCycles(edges: Array<{ source: string; target: string }>): string[][];
   buildCallEdges(files: unknown[], nodes: unknown[], builtinReceivers: string[]): unknown[];
   engineVersion(): string;
+  analyzeComplexity(source: string, filePath: string): NativeFunctionComplexityResult[];
+  buildCfgAnalysis(source: string, filePath: string): NativeFunctionCfgResult[];
+  extractDataflowAnalysis(source: string, filePath: string): DataflowResult | null;
   ParseTreeCache: new () => NativeParseTreeCache;
   NativeDatabase: {
     openReadWrite(dbPath: string): NativeDatabase;
     openReadonly(dbPath: string): NativeDatabase;
   };
+}
+
+/** Per-function complexity result from native standalone analysis (napi output shape). */
+export interface NativeFunctionComplexityResult {
+  name: string;
+  line: number;
+  endLine: number | null;
+  complexity: {
+    cognitive: number;
+    cyclomatic: number;
+    maxNesting: number;
+    halstead?: {
+      n1: number;
+      n2: number;
+      bigN1: number;
+      bigN2: number;
+      vocabulary: number;
+      length: number;
+      volume: number;
+      difficulty: number;
+      effort: number;
+      bugs: number;
+    };
+    loc?: { loc: number; sloc: number; commentLines: number };
+    maintainabilityIndex?: number | null;
+  };
+}
+
+/** Per-function CFG result from native standalone analysis. */
+export interface NativeFunctionCfgResult {
+  name: string;
+  line: number;
+  endLine: number | null;
+  cfg: { blocks: CfgBlock[]; edges: CfgEdge[] };
 }
 
 /** Native parse-tree cache instance. */

@@ -101,6 +101,38 @@ impl LanguageKind {
         }
     }
 
+    /// Resolve a language kind from a lang_id string (e.g. "javascript", "python").
+    /// Inverse of `lang_id_str()`.
+    pub fn from_lang_id(lang_id: &str) -> Option<Self> {
+        match lang_id {
+            "javascript" => Some(Self::JavaScript),
+            "typescript" => Some(Self::TypeScript),
+            "tsx" => Some(Self::Tsx),
+            "python" => Some(Self::Python),
+            "go" => Some(Self::Go),
+            "rust" => Some(Self::Rust),
+            "java" => Some(Self::Java),
+            "csharp" => Some(Self::CSharp),
+            "ruby" => Some(Self::Ruby),
+            "php" => Some(Self::Php),
+            "hcl" => Some(Self::Hcl),
+            "c" => Some(Self::C),
+            "cpp" => Some(Self::Cpp),
+            "kotlin" => Some(Self::Kotlin),
+            "swift" => Some(Self::Swift),
+            "scala" => Some(Self::Scala),
+            "bash" => Some(Self::Bash),
+            "elixir" => Some(Self::Elixir),
+            "lua" => Some(Self::Lua),
+            "dart" => Some(Self::Dart),
+            "zig" => Some(Self::Zig),
+            "haskell" => Some(Self::Haskell),
+            "ocaml" => Some(Self::Ocaml),
+            "ocaml-interface" => Some(Self::OcamlInterface),
+            _ => None,
+        }
+    }
+
     /// Return the native tree-sitter `Language` for this variant.
     pub fn tree_sitter_language(&self) -> Language {
         match self {
