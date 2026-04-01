@@ -48,12 +48,13 @@ pub struct CollectResult {
 ///
 /// `extra_ignore_dirs` are additional directory names to skip (from config `ignoreDirs`).
 pub fn collect_files(root_dir: &str, extra_ignore_dirs: &[String]) -> CollectResult {
-    let mut ignore_set: HashSet<&str> = DEFAULT_IGNORE_DIRS.iter().copied().collect();
-    for d in extra_ignore_dirs {
-        // Leak is fine here — these are config-provided strings that live for the build duration.
-        // We avoid it by storing owned strings separately.
-        ignore_set.insert(leak_str(d));
-    }
+    // Build an owned set of ignore dirs to avoid leaking memory.
+    // The closure captures this owned set, so lifetimes are satisfied without Box::leak.
+    let ignore_set: HashSet<String> = DEFAULT_IGNORE_DIRS
+        .iter()
+        .map(|s| s.to_string())
+        .chain(extra_ignore_dirs.iter().cloned())
+        .collect();
 
     let ext_set: HashSet<&str> = SUPPORTED_EXTENSIONS.iter().copied().collect();
 
@@ -153,13 +154,6 @@ pub fn try_fast_collect(
 /// Normalize a path to use forward slashes (cross-platform consistency).
 fn normalize_path(p: &Path) -> String {
     p.to_str().unwrap_or("").replace('\\', "/")
-}
-
-/// Helper to get a `&'static str` from a `&String` for use in HashSet closures.
-/// This leaks the string, which is acceptable for config values that live for
-/// the duration of the build.
-fn leak_str(s: &str) -> &'static str {
-    Box::leak(s.to_string().into_boxed_str())
 }
 
 #[cfg(test)]

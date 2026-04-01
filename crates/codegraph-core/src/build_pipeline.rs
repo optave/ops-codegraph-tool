@@ -19,7 +19,7 @@
 use crate::change_detection;
 use crate::config::{BuildConfig, BuildOpts, BuildPathAliases};
 use crate::file_collector;
-use crate::import_edges::{self, ImportEdgeContext, ReexportEntry};
+use crate::import_edges::{self, ImportEdgeContext};
 use crate::import_resolution;
 use crate::journal;
 use crate::parallel;
@@ -194,6 +194,9 @@ pub fn run_pipeline(
         });
     }
 
+    // Track reverse-dep files that need re-parsing for edge reconstruction
+    let mut reverse_dep_abs_paths: Vec<String> = Vec::new();
+
     // Handle full build: clear all graph data
     if change_result.is_full_build {
         let has_embeddings = change_detection::has_embeddings(conn);
@@ -220,11 +223,25 @@ pub fn run_pipeline(
             .collect();
         let reverse_dep_list: Vec<String> = reverse_deps.iter().cloned().collect();
         change_detection::purge_changed_files(conn, &files_to_purge, &reverse_dep_list);
+
+        // Track reverse-dep absolute paths so we can re-parse them for edge
+        // rebuilding. Their nodes are still in the DB (only edges were purged),
+        // but we need fresh FileSymbols so Stage 7 can reconstruct their
+        // import and call edges.
+        for rdep in &reverse_dep_list {
+            let abs = Path::new(root_dir).join(rdep);
+            if abs.exists() {
+                reverse_dep_abs_paths.push(abs.to_str().unwrap_or("").to_string());
+            }
+        }
     }
 
     // ── Stage 4: Parse files ───────────────────────────────────────────
     let t0 = Instant::now();
-    let files_to_parse: Vec<String> = parse_changes.iter().map(|c| c.abs_path.clone()).collect();
+    let mut files_to_parse: Vec<String> =
+        parse_changes.iter().map(|c| c.abs_path.clone()).collect();
+    // Include reverse-dep files so their edges are rebuilt after purging
+    files_to_parse.extend(reverse_dep_abs_paths);
     let parsed =
         parallel::parse_files_parallel(&files_to_parse, root_dir, include_dataflow, include_ast);
 
@@ -472,6 +489,10 @@ fn build_insert_batches(
 }
 
 /// Build FileHashEntry from changed files.
+///
+/// For full builds, `detect_changes` returns `hash: None` because it skips
+/// reading file content. In that case we read and hash each file here so
+/// that `file_hashes` is populated for subsequent incremental builds.
 fn build_file_hash_entries(
     changed: &[&change_detection::ChangedFile],
     _root_dir: &str,
@@ -479,14 +500,45 @@ fn build_file_hash_entries(
     changed
         .iter()
         .filter_map(|c| {
-            c.hash
-                .as_ref()
-                .map(|hash| crate::insert_nodes::FileHashEntry {
-                    file: c.rel_path.clone(),
-                    hash: hash.clone(),
-                    mtime: c.mtime as f64,
-                    size: c.size as f64,
-                })
+            let hash = match c.hash.as_ref() {
+                Some(h) => h.clone(),
+                None => {
+                    // Full build path: read file and compute hash now
+                    match std::fs::read_to_string(&c.abs_path) {
+                        Ok(content) => {
+                            use sha2::{Digest, Sha256};
+                            let mut hasher = Sha256::new();
+                            hasher.update(content.as_bytes());
+                            format!("{:x}", hasher.finalize())
+                        }
+                        Err(_) => return None,
+                    }
+                }
+            };
+            let (mtime, size) = if c.mtime == 0 && c.size == 0 {
+                // Full build: read metadata from filesystem
+                std::fs::metadata(&c.abs_path)
+                    .ok()
+                    .map(|m| {
+                        let mtime = m
+                            .modified()
+                            .ok()
+                            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                            .map(|d| d.as_millis() as f64)
+                            .unwrap_or(0.0);
+                        let size = m.len() as f64;
+                        (mtime, size)
+                    })
+                    .unwrap_or((0.0, 0.0))
+            } else {
+                (c.mtime as f64, c.size as f64)
+            };
+            Some(crate::insert_nodes::FileHashEntry {
+                file: c.rel_path.clone(),
+                hash,
+                mtime,
+                size,
+            })
         })
         .collect()
 }

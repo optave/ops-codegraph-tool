@@ -3,10 +3,12 @@
 //! Strategy (mirrors `detect-changes.ts`):
 //! - Tier 0 (Journal): read journal, hash-check entries against `file_hashes`
 //! - Tier 1 (Mtime+Size): skip files where mtime+size match stored values
-//! - Tier 2 (Content Hash): MD5 hash files that failed Tier 1, compare to DB
+//! - Tier 2 (Content Hash): SHA-256 hash files that failed Tier 1, compare to DB
 //!
-//! Note: Uses MD5 for compatibility with the JS `fileHash()` function in
-//! `src/domain/graph/builder/helpers.ts` which uses `createHash('md5')`.
+//! Note: Uses SHA-256 (not MD5). The JS pipeline uses MD5 via `createHash('md5')`,
+//! but engine-mismatch detection in the pipeline orchestrator forces a full rebuild
+//! when switching between JS and native engines, so hash format compatibility is
+//! not required.
 
 use crate::journal;
 use rusqlite::Connection;
@@ -55,21 +57,12 @@ pub struct MetadataUpdate {
     pub size: i64,
 }
 
-/// Compute MD5 hash of content (compatible with JS `fileHash` in helpers.ts).
+/// Compute SHA-256 hash of file content for change detection.
 ///
-/// The JS side uses `createHash('md5').update(content).digest('hex')`.
-/// We replicate this exactly for incremental build compatibility.
-fn file_hash_md5(content: &str) -> String {
-    // MD5 is used for content-change detection only, not security.
-    // Use sha2 crate's Sha256 internally but output MD5 for compat.
-    // Actually, we need real MD5 for compatibility. Use a manual implementation
-    // or add md-5 crate. For now, use a simple approach: since we're building
-    // fresh, we can use any hash — but incremental builds after engine switch
-    // trigger full rebuild anyway (engine mismatch detection).
-    //
-    // Decision: use SHA-256 internally. The engine/schema mismatch detection
-    // in the pipeline orchestrator will force a full rebuild when switching
-    // from JS to Rust orchestrator, so hash format doesn't need to match.
+/// Uses SHA-256 rather than MD5 (which the JS pipeline uses). This is safe
+/// because engine-mismatch detection forces a full rebuild when switching
+/// between native and JS engines, so the hash formats never need to match.
+fn file_hash_sha256(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
     format!("{:x}", hasher.finalize())
@@ -189,7 +182,7 @@ fn try_journal_tier(
             Err(_) => continue,
         };
 
-        let hash = file_hash_md5(&content);
+        let hash = file_hash_sha256(&content);
         let mtime = metadata
             .modified()
             .ok()
@@ -289,7 +282,7 @@ fn mtime_and_hash_tiers(
             Ok(c) => c,
             Err(_) => continue,
         };
-        let hash = file_hash_md5(&content);
+        let hash = file_hash_sha256(&content);
         let record = existing.get(&item.rel_path);
 
         if record.is_none() || record.unwrap().hash != hash {
@@ -447,13 +440,17 @@ pub fn purge_changed_files(
     let _ = tx.commit();
 }
 
-/// Full build: clear all graph data.
+/// Full build: clear all graph data including file_hashes.
+///
+/// Clearing file_hashes ensures the next incremental build starts from a
+/// clean state — otherwise stale hash entries from a prior incremental
+/// build would cause files to be misclassified as unchanged.
 pub fn clear_all_graph_data(conn: &Connection, has_embeddings: bool) {
     let mut sql = String::from(
         "PRAGMA foreign_keys = OFF; \
          DELETE FROM cfg_edges; DELETE FROM cfg_blocks; DELETE FROM node_metrics; \
          DELETE FROM edges; DELETE FROM function_complexity; DELETE FROM dataflow; \
-         DELETE FROM ast_nodes; DELETE FROM nodes;",
+         DELETE FROM ast_nodes; DELETE FROM nodes; DELETE FROM file_hashes;",
     );
     if has_embeddings {
         sql.push_str(" DELETE FROM embeddings;");
@@ -571,10 +568,10 @@ mod tests {
 
     #[test]
     fn hash_is_deterministic() {
-        let h1 = file_hash_md5("hello world");
-        let h2 = file_hash_md5("hello world");
+        let h1 = file_hash_sha256("hello world");
+        let h2 = file_hash_sha256("hello world");
         assert_eq!(h1, h2);
-        assert_ne!(h1, file_hash_md5("different content"));
+        assert_ne!(h1, file_hash_sha256("different content"));
     }
 
     #[test]
