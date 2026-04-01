@@ -1,3 +1,4 @@
+import { loadNative } from '../../infrastructure/native.js';
 import type { CodeGraph } from '../model.js';
 
 export interface BfsOpts {
@@ -7,6 +8,8 @@ export interface BfsOpts {
 
 /**
  * Breadth-first traversal on a CodeGraph.
+ *
+ * Tries the native Rust implementation first, falls back to JS.
  *
  * @returns nodeId → depth from nearest start node
  */
@@ -19,6 +22,37 @@ export function bfs(
   const direction = opts.direction ?? 'forward';
   const starts = Array.isArray(startIds) ? startIds : [startIds];
 
+  const native = loadNative();
+  if (native?.bfsTraversal) {
+    const edges = graph.toEdgeArray();
+    const nativeMaxDepth = maxDepth === Infinity ? null : maxDepth;
+    // Undirected graphs deduplicate edges to one canonical direction in toEdgeArray(),
+    // so the Rust side must traverse both directions to preserve symmetry.
+    const nativeDirection = !graph.directed ? 'both' : direction;
+    const result = native.bfsTraversal(edges, starts, nativeMaxDepth, nativeDirection);
+    const depths = new Map<string, number>();
+    for (const entry of result) {
+      depths.set(entry.node, entry.depth);
+    }
+    // The Rust side only knows nodes referenced by edges; restore any isolated start nodes.
+    for (const startId of starts) {
+      if (graph.hasNode(startId) && !depths.has(startId)) {
+        depths.set(startId, 0);
+      }
+    }
+    return depths;
+  }
+
+  return bfsJS(graph, starts, maxDepth, direction);
+}
+
+/** Pure JS fallback for BFS (used when native addon is unavailable). */
+function bfsJS(
+  graph: CodeGraph,
+  starts: string[],
+  maxDepth: number,
+  direction: string,
+): Map<string, number> {
   const depths = new Map<string, number>();
   const queue: string[] = [];
 

@@ -100,15 +100,9 @@ function queryAllAstNodes() {
 // ─── Tests ────────────────────────────────────────────────────────────
 
 describe('buildAstNodes — JS extraction', () => {
-  test('captures call_expression as kind:call', () => {
+  test('does not extract call_expression as AST nodes', () => {
     const calls = queryAstNodes('call');
-    // eval(input), result.set('data', data), console.log(result)
-    // Note: fetch('/api/data') is inside await — captured as kind:await, not kind:call
-    expect(calls.length).toBe(3);
-    const names = calls.map((n) => n.name);
-    expect(names).toContain('eval');
-    expect(names).toContain('result.set');
-    expect(names).toContain('console.log');
+    expect(calls.length).toBe(0);
   });
 
   test('captures new_expression as kind:new', () => {
@@ -172,7 +166,7 @@ describe('buildAstNodes — JS extraction', () => {
 
   test('all inserted nodes have valid kinds', () => {
     const all = queryAllAstNodes();
-    const validKinds = new Set(['call', 'new', 'string', 'regex', 'throw', 'await']);
+    const validKinds = new Set(['new', 'string', 'regex', 'throw', 'await']);
     for (const node of all) {
       expect(validKinds.has(node.kind)).toBe(true);
     }
@@ -301,7 +295,8 @@ describe.skipIf(!canTestNative)('buildAstNodes — native engine', () => {
 
   test('all nodes have valid kinds', () => {
     const all = queryAllNativeAstNodes();
-    const validKinds = new Set(['call', 'new', 'string', 'regex', 'throw', 'await']);
+    // 'call' accepted transitionally: published native binary (v3.7.0) still emits it
+    const validKinds = new Set(['new', 'string', 'regex', 'throw', 'await', 'call']);
     for (const node of all) {
       expect(validKinds.has(node.kind)).toBe(true);
     }

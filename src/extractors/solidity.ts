@@ -118,6 +118,36 @@ function handleContractDecl(
             visibility: extractSolVisibility(child),
           });
         }
+      } else if (child.type === 'event_definition') {
+        const evName = child.childForFieldName('name');
+        if (evName) {
+          members.push({
+            name: evName.text,
+            kind: 'property',
+            decorators: ['event'],
+            line: child.startPosition.row + 1,
+          });
+        }
+      } else if (child.type === 'error_declaration') {
+        const errName = child.childForFieldName('name');
+        if (errName) {
+          members.push({
+            name: errName.text,
+            kind: 'property',
+            decorators: ['error'],
+            line: child.startPosition.row + 1,
+          });
+        }
+      } else if (child.type === 'modifier_definition') {
+        const modName = child.childForFieldName('name');
+        if (modName) {
+          members.push({
+            name: modName.text,
+            kind: 'method',
+            decorators: ['modifier'],
+            line: child.startPosition.row + 1,
+          });
+        }
       }
     }
   }

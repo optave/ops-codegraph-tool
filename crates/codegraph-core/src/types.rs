@@ -327,6 +327,28 @@ impl FileSymbols {
     }
 }
 
+// ─── Standalone Analysis Result Types ────────────────────────────────────
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionComplexityResult {
+    pub name: String,
+    pub line: u32,
+    #[napi(js_name = "endLine")]
+    pub end_line: Option<u32>,
+    pub complexity: ComplexityMetrics,
+}
+
+#[napi(object)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionCfgResult {
+    pub name: String,
+    pub line: u32,
+    #[napi(js_name = "endLine")]
+    pub end_line: Option<u32>,
+    pub cfg: CfgData,
+}
+
 #[napi(object)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GraphEdge {
