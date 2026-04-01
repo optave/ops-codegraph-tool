@@ -6,6 +6,7 @@ Import resolution: native batch vs JS fallback throughput.
 
 | Version | Engine | Files | Full Build | No-op | 1-File | Resolve (native) | Resolve (JS) |
 |---------|--------|------:|-----------:|------:|-------:|------------------:|-------------:|
+| 3.7.0 | wasm | 532 | 6.4s ↑5% | 19ms ↑46% | 558ms ↑2% | 4ms ↑3% | 15ms ↑31% |
 | 3.6.0 | wasm | 514 | 6.1s | 13ms | 545ms | 4ms ↓3% | 12ms ↑9% |
 | 3.4.1 | native | 473 | 2.4s ↑3% | 13ms ↑8% | 331ms ↓26% | 4ms ~ | 13ms ↑8% |
 | 3.4.1 | wasm | 473 | 5.1s ~ | 13ms ↑8% | 511ms ↓17% | 4ms ~ | 13ms ↑8% |
@@ -40,35 +41,61 @@ Import resolution: native batch vs JS fallback throughput.
 
 ### Latest results
 
-**Version:** 3.6.0 | **Files:** 514 | **Date:** 2026-03-30
-
-> **Note:** The native engine is absent for 3.6.0 because the native worker
-> crashed with `SQLITE_CORRUPT` during the incremental rebuild tier
-> (WAL corruption in `detect-changes` → `purgeAndAddReverseDeps`).
-> WASM results are unaffected. Tracked as a known WAL race condition
-> between native and JS connections.
+**Version:** 3.7.0 | **Files:** 532 | **Date:** 2026-04-01
 
 #### WASM
 
 | Metric | Value |
 |--------|------:|
-| Full build | 6.1s |
-| No-op rebuild | 13ms |
-| 1-file rebuild | 545ms |
+| Full build | 6.4s |
+| No-op rebuild | 19ms |
+| 1-file rebuild | 558ms |
 
 #### Import Resolution
 
 | Metric | Value |
 |--------|------:|
-| Import pairs | 904 |
+| Import pairs | 912 |
 | Native batch | 4ms |
-| JS fallback | 12ms |
+| JS fallback | 15ms |
 | Per-import (native) | 0ms |
 | Per-import (JS) | 0ms |
-| Speedup ratio | 3.0x |
+| Speedup ratio | 3.8x |
 
 <!-- INCREMENTAL_BENCHMARK_DATA
 [
+  {
+    "version": "3.7.0",
+    "date": "2026-04-01",
+    "files": 532,
+    "wasm": {
+      "fullBuildMs": 6440,
+      "noopRebuildMs": 19,
+      "oneFileRebuildMs": 558,
+      "oneFilePhases": {
+        "setupMs": 2.7,
+        "parseMs": 248.2,
+        "insertMs": 18.4,
+        "resolveMs": 1.7,
+        "edgesMs": 24.2,
+        "structureMs": 32,
+        "rolesMs": 54.5,
+        "astMs": 11.8,
+        "complexityMs": 4.2,
+        "cfgMs": 0.3,
+        "dataflowMs": 0.3,
+        "finalizeMs": 5.6
+      }
+    },
+    "native": null,
+    "resolve": {
+      "imports": 912,
+      "nativeBatchMs": 4,
+      "jsFallbackMs": 15.3,
+      "perImportNativeMs": 0,
+      "perImportJsMs": 0
+    }
+  },
   {
     "version": "3.6.0",
     "date": "2026-03-30",
