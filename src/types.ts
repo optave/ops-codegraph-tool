@@ -102,7 +102,12 @@ export type LanguageId =
   | 'clojure'
   | 'julia'
   | 'r'
-  | 'erlang';
+  | 'erlang'
+  | 'solidity'
+  | 'objc'
+  | 'cuda'
+  | 'groovy'
+  | 'verilog';
 
 /** Engine mode selector. */
 export type EngineMode = 'native' | 'wasm' | 'auto';
