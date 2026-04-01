@@ -10,6 +10,7 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { getDatabase } from '../../../../db/better-sqlite3.js';
 import { bulkNodeIdsByFile } from '../../../../db/index.js';
 import { loadNative } from '../../../../infrastructure/native.js';
 import type {
@@ -41,28 +42,16 @@ interface PrecomputedFileData {
 // ── Native fast-path ─────────────────────────────────────────────────
 
 function tryNativeInsert(ctx: PipelineContext): boolean {
-  // Open a temporary native connection for the insert.  The pipeline closes
-  // ctx.nativeDb before pipeline stages to prevent dual-connection WAL
-  // corruption (#696).  We open our own connection and issue WAL checkpoints
-  // manually (flush JS WAL before open, flush native WAL before close) to
-  // coordinate safely (#709).
+  // Close-reopen pattern: two different SQLite libraries (better-sqlite3 and
+  // rusqlite) cannot safely share a WAL-mode database on Linux/macOS — even
+  // with checkpoint coordination, the SHM mappings diverge and cause
+  // SQLITE_CORRUPT (#696, #709, #737).
+  //
+  // Solution: close ctx.db before opening the native connection, then reopen
+  // ctx.db after the native write completes.  This guarantees only one SQLite
+  // library touches the database file at a time.
   const native = loadNative();
   if (!native?.NativeDatabase) return false;
-
-  let nativeDb: NativeDatabase | undefined;
-  try {
-    nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
-  } catch {
-    return false;
-  }
-  if (!nativeDb?.bulkInsertNodes) {
-    try {
-      nativeDb?.close();
-    } catch {
-      /* ignore */
-    }
-    return false;
-  }
 
   const { allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
 
@@ -159,48 +148,47 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
     fileHashes.push({ file: item.relPath, hash: item.hash, mtime, size });
   }
 
-  // WAL checkpoint dance — extends the suspendJsDb/resumeJsDb pattern from
-  // pipeline.ts, adapted for a temporary native connection:
-  //   1. Flush JS WAL via TRUNCATE (ctx.db) so the native connection starts
-  //      with a clean main DB file and empty WAL
-  //   2. Native write via bulkInsertNodes (appends to WAL)
-  //   3. Checkpoint native WAL via FULL (nativeDb) — moves frames to the main
-  //      DB file but does NOT truncate the WAL.  TRUNCATE would invalidate
-  //      better-sqlite3's SHM mapping on Linux/macOS, causing SQLITE_CORRUPT.
-  //   4. Close nativeDb
-  //   5. TRUNCATE checkpoint through ctx.db — now better-sqlite3 applies any
-  //      remaining WAL frames itself and truncates the WAL safely using its
-  //      own SHM mapping (#709, #737)
+  // Step 1: Close ctx.db so only one SQLite library touches the DB at a time.
+  // Checkpoint first to flush any pending JS WAL frames to the main DB file.
   try {
-    const cpResult = ctx.db.pragma('wal_checkpoint(TRUNCATE)') as { busy: number }[] | undefined;
-    if (cpResult?.[0]?.busy) {
-      // WAL not fully flushed — fall back to JS to avoid mixed-writer WAL state
+    ctx.db.pragma('wal_checkpoint(TRUNCATE)');
+  } catch {
+    /* ignore */
+  }
+  ctx.db.close();
+
+  // Step 2: Open native connection and perform the bulk insert.
+  let nativeDb: NativeDatabase | undefined;
+  let ok = false;
+  try {
+    nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+    if (!nativeDb?.bulkInsertNodes) {
       return false;
     }
-    const ok = nativeDb!.bulkInsertNodes(batches, fileHashes, removed);
-    // Post-write checkpoint through nativeDb (rusqlite): use FULL, not TRUNCATE.
-    // FULL moves WAL frames to the main DB but keeps the WAL file intact so
-    // better-sqlite3's SHM mapping remains valid.  TRUNCATE would zero the WAL
-    // length, invalidating the SHM on platforms with mmap-based locking (#737).
+    ok = nativeDb.bulkInsertNodes(batches, fileHashes, removed);
+    // Checkpoint native WAL so all frames are in the main DB file before
+    // we hand the database back to better-sqlite3.
     try {
-      nativeDb!.exec('PRAGMA wal_checkpoint(FULL)');
+      nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     } catch {
       /* ignore — checkpoint failure is non-fatal */
     }
     return ok;
   } finally {
-    try {
-      nativeDb!.close();
-    } catch {
-      /* ignore close errors */
+    // Close native connection before reopening JS connection.
+    if (nativeDb) {
+      try {
+        nativeDb.close();
+      } catch {
+        /* ignore close errors */
+      }
     }
-    // After nativeDb is fully closed, let better-sqlite3 apply any remaining
-    // WAL frames and truncate the WAL safely using its own SHM mapping.
-    try {
-      ctx.db.pragma('wal_checkpoint(TRUNCATE)');
-    } catch {
-      /* ignore — non-fatal */
-    }
+    // Step 3: Reopen ctx.db.  The advisory lock is already held by the
+    // pipeline, so we just need a fresh better-sqlite3 handle.
+    const Database = getDatabase();
+    ctx.db = new Database(ctx.dbPath) as unknown as BetterSqlite3Database;
+    ctx.db.pragma('journal_mode = WAL');
+    ctx.db.pragma('busy_timeout = 5000');
   }
 }
 
