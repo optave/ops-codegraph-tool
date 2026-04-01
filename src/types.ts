@@ -395,6 +395,7 @@ export interface SubDeclaration {
   line: number;
   endLine?: number;
   visibility?: 'public' | 'private' | 'protected';
+  decorators?: string[];
 }
 
 /** Complexity metrics attached to a definition post-analysis. */
