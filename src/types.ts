@@ -395,6 +395,7 @@ export interface SubDeclaration {
   line: number;
   endLine?: number;
   visibility?: 'public' | 'private' | 'protected';
+  decorators?: string[];
 }
 
 /** Complexity metrics attached to a definition post-analysis. */
@@ -1841,12 +1842,57 @@ export interface NativeAddon {
   computeConfidence(callerFile: string, targetFile: string, importedFrom: string | null): number;
   detectCycles(edges: Array<{ source: string; target: string }>): string[][];
   buildCallEdges(files: unknown[], nodes: unknown[], builtinReceivers: string[]): unknown[];
+  buildImportEdges?(
+    files: unknown[],
+    resolvedImports: unknown[],
+    fileReexports: unknown[],
+    fileNodeIds: unknown[],
+    barrelFiles: string[],
+    rootDir: string,
+  ): unknown[];
   engineVersion(): string;
+  analyzeComplexity(source: string, filePath: string): NativeFunctionComplexityResult[];
+  buildCfgAnalysis(source: string, filePath: string): NativeFunctionCfgResult[];
+  extractDataflowAnalysis(source: string, filePath: string): DataflowResult | null;
   ParseTreeCache: new () => NativeParseTreeCache;
   NativeDatabase: {
     openReadWrite(dbPath: string): NativeDatabase;
     openReadonly(dbPath: string): NativeDatabase;
   };
+}
+
+/** Per-function complexity result from native standalone analysis (napi output shape). */
+export interface NativeFunctionComplexityResult {
+  name: string;
+  line: number;
+  endLine: number | null;
+  complexity: {
+    cognitive: number;
+    cyclomatic: number;
+    maxNesting: number;
+    halstead?: {
+      n1: number;
+      n2: number;
+      bigN1: number;
+      bigN2: number;
+      vocabulary: number;
+      length: number;
+      volume: number;
+      difficulty: number;
+      effort: number;
+      bugs: number;
+    };
+    loc?: { loc: number; sloc: number; commentLines: number };
+    maintainabilityIndex?: number | null;
+  };
+}
+
+/** Per-function CFG result from native standalone analysis. */
+export interface NativeFunctionCfgResult {
+  name: string;
+  line: number;
+  endLine: number | null;
+  cfg: { blocks: CfgBlock[]; edges: CfgEdge[] };
 }
 
 /** Native parse-tree cache instance. */
@@ -2277,6 +2323,32 @@ export interface NativeDatabase {
     fanIn: number;
     fanOut: number;
   }>;
+
+  // ── Batched build-glue queries (6.18) ────────────────────────────────
+  /** All file_hashes rows + table existence + max mtime in one call. */
+  getFileHashData?(): {
+    exists: boolean;
+    rows: Array<{ file: string; hash: string; mtime: number; size: number }>;
+    maxMtime: number;
+  };
+  /** CFG and dataflow table counts (-1 = table missing). */
+  checkPendingAnalysis?(): { cfgCount: number; dataflowCount: number };
+  /** Batch upsert file_hashes for metadata healing. */
+  healFileMetadata?(
+    entries: Array<{ file: string; hash: string; mtime: number; size: number }>,
+  ): number;
+  /** Find files with edges pointing to changed files. */
+  findReverseDependencies?(changedFiles: string[]): string[];
+  /** Node + edge counts in one call. */
+  getFinalizeCounts?(): { nodeCount: number; edgeCount: number };
+  /** Orphaned embeddings, stale embeddings, unused exports in one call. */
+  runAdvisoryChecks?(hasEmbeddings: boolean): {
+    orphanedEmbeddings: number;
+    embedBuiltAt: string | null;
+    unusedExports: number;
+  };
+  /** File_hashes count + all file paths in one call. */
+  getCollectFilesData?(): { count: number; files: string[] };
 
   // ── Generic query execution & version validation (6.16) ─────────────
   /** Execute a parameterized SELECT and return all rows as objects. */

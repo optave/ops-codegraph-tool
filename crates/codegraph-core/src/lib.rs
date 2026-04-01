@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod ast_db;
 pub mod cfg;
 pub mod complexity;
@@ -11,10 +12,10 @@ pub mod import_resolution;
 pub mod incremental;
 pub mod insert_nodes;
 pub mod native_db;
-pub mod read_queries;
-pub mod read_types;
 pub mod parallel;
 pub mod parser_registry;
+pub mod read_queries;
+pub mod read_types;
 pub mod roles_db;
 pub mod types;
 
@@ -116,4 +117,34 @@ pub fn engine_name() -> String {
 #[napi]
 pub fn engine_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Analyze complexity metrics for all functions in the given source.
+/// Returns per-function results (name, line, endLine, complexity metrics).
+/// Language is detected from the file extension or treated as a lang_id.
+#[napi]
+pub fn analyze_complexity(
+    source: String,
+    file_path: String,
+) -> Vec<types::FunctionComplexityResult> {
+    analysis::analyze_complexity_standalone(&source, &file_path)
+}
+
+/// Build control-flow graphs for all functions in the given source.
+/// Returns per-function results (name, line, endLine, CFG blocks + edges).
+/// Language is detected from the file extension or treated as a lang_id.
+#[napi]
+pub fn build_cfg_analysis(source: String, file_path: String) -> Vec<types::FunctionCfgResult> {
+    analysis::build_cfg_standalone(&source, &file_path)
+}
+
+/// Extract dataflow analysis for the given source.
+/// Returns file-level dataflow (parameters, returns, assignments, arg flows, mutations).
+/// Language is detected from the file extension or treated as a lang_id.
+#[napi]
+pub fn extract_dataflow_analysis(
+    source: String,
+    file_path: String,
+) -> Option<types::DataflowResult> {
+    analysis::extract_dataflow_standalone(&source, &file_path)
 }
