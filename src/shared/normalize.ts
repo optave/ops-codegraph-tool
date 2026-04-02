@@ -56,6 +56,21 @@ interface RawSymbolRow {
 }
 
 /**
+ * Resolve a file hash, using the cache when available.
+ */
+function resolveFileHash(
+  db: DbHandle,
+  file: string,
+  hashCache?: Map<string, string | null>,
+): string | null {
+  if (!hashCache) return getFileHash(db, file);
+  if (!hashCache.has(file)) {
+    hashCache.set(file, getFileHash(db, file));
+  }
+  return hashCache.get(file) ?? null;
+}
+
+/**
  * Normalize a raw DB/query row into the stable 7-field symbol shape.
  */
 export function normalizeSymbol(
@@ -63,17 +78,7 @@ export function normalizeSymbol(
   db?: DbHandle | null,
   hashCache?: Map<string, string | null>,
 ): NormalizedSymbol {
-  let fileHash: string | null = null;
-  if (db) {
-    if (hashCache) {
-      if (!hashCache.has(row.file)) {
-        hashCache.set(row.file, getFileHash(db, row.file));
-      }
-      fileHash = hashCache.get(row.file) ?? null;
-    } else {
-      fileHash = getFileHash(db, row.file);
-    }
-  }
+  const fileHash = db ? resolveFileHash(db, row.file, hashCache) : null;
   return {
     name: row.name,
     kind: row.kind,

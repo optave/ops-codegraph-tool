@@ -33,14 +33,20 @@ function validateOrderBy(clause: string): void {
   }
 }
 
+/** Track parenthesis depth change for a character. */
+function parenDepthDelta(ch: string): number {
+  if (ch === '(') return 1;
+  if (ch === ')') return -1;
+  return 0;
+}
+
 function splitTopLevelCommas(str: string): string[] {
   const parts: string[] = [];
   let depth = 0;
   let start = 0;
   for (let i = 0; i < str.length; i++) {
-    if (str[i] === '(') depth++;
-    else if (str[i] === ')') depth--;
-    else if (str[i] === ',' && depth === 0) {
+    depth += parenDepthDelta(str[i]);
+    if (str[i] === ',' && depth === 0) {
       parts.push(str.slice(start, i).trim());
       start = i + 1;
     }
