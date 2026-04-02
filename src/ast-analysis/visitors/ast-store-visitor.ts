@@ -44,33 +44,33 @@ function extractExpressionText(node: TreeSitterNode): string | null {
   return truncate(node.text);
 }
 
-function extractName(kind: string, node: TreeSitterNode): string | null {
-  if (kind === 'throw') {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i);
-      if (!child) continue;
-      if (child.type === 'new_expression') return extractNewName(child);
-      if (child.type === 'call_expression') {
-        const fn = child.childForFieldName('function');
-        return fn ? fn.text : child.text?.split('(')[0] || '?';
-      }
-      if (child.type === 'identifier') return child.text;
+/** Extract the name from a throw statement's child nodes. */
+function extractThrowName(node: TreeSitterNode): string | null {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    if (child.type === 'new_expression') return extractNewName(child);
+    if (child.type === 'call_expression') {
+      const fn = child.childForFieldName('function');
+      return fn ? fn.text : child.text?.split('(')[0] || '?';
     }
-    return truncate(node.text);
+    if (child.type === 'identifier') return child.text;
   }
-  if (kind === 'await') {
-    for (let i = 0; i < node.childCount; i++) {
-      const child = node.child(i);
-      if (!child) continue;
-      if (child.type === 'call_expression') {
-        const fn = child.childForFieldName('function');
-        return fn ? fn.text : child.text?.split('(')[0] || '?';
-      }
-      if (child.type === 'identifier' || child.type === 'member_expression') {
-        return child.text;
-      }
+  return truncate(node.text);
+}
+
+/** Extract the name from an await expression's child nodes. */
+function extractAwaitName(node: TreeSitterNode): string | null {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    if (child.type === 'call_expression') {
+      const fn = child.childForFieldName('function');
+      return fn ? fn.text : child.text?.split('(')[0] || '?';
     }
-    return truncate(node.text);
+    if (child.type === 'identifier' || child.type === 'member_expression') {
+      return child.text;
+    }
   }
   return truncate(node.text);
 }
@@ -102,40 +102,43 @@ export function createAstStoreVisitor(
     return nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
   }
 
+  function resolveNameAndText(
+    node: TreeSitterNode,
+    kind: string,
+  ): { name: string | null | undefined; text: string | null; skip?: boolean } {
+    switch (kind) {
+      case 'new':
+        return { name: extractNewName(node), text: truncate(node.text) };
+      case 'throw':
+        return { name: extractThrowName(node), text: extractExpressionText(node) };
+      case 'await':
+        return { name: extractAwaitName(node), text: extractExpressionText(node) };
+      case 'string': {
+        const content = node.text?.replace(/^['"`]|['"`]$/g, '') || '';
+        if (content.length < 2) return { name: null, text: null, skip: true };
+        return { name: truncate(content, 100), text: truncate(node.text) };
+      }
+      case 'regex':
+        return { name: node.text || '?', text: truncate(node.text) };
+      default:
+        return { name: undefined, text: null };
+    }
+  }
+
   function collectNode(node: TreeSitterNode, kind: string): void {
     if (matched.has(node.id)) return;
 
-    const line = node.startPosition.row + 1;
-    let name: string | null | undefined;
-    let text: string | null = null;
-
-    if (kind === 'new') {
-      name = extractNewName(node);
-      text = truncate(node.text);
-    } else if (kind === 'throw') {
-      name = extractName('throw', node);
-      text = extractExpressionText(node);
-    } else if (kind === 'await') {
-      name = extractName('await', node);
-      text = extractExpressionText(node);
-    } else if (kind === 'string') {
-      const content = node.text?.replace(/^['"`]|['"`]$/g, '') || '';
-      if (content.length < 2) return;
-      name = truncate(content, 100);
-      text = truncate(node.text);
-    } else if (kind === 'regex') {
-      name = node.text || '?';
-      text = truncate(node.text);
-    }
+    const resolved = resolveNameAndText(node, kind);
+    if (resolved.skip) return;
 
     rows.push({
       file: relPath,
-      line,
+      line: node.startPosition.row + 1,
       kind,
-      name,
-      text,
+      name: resolved.name,
+      text: resolved.text,
       receiver: null,
-      parentNodeId: resolveParentNodeId(line),
+      parentNodeId: resolveParentNodeId(node.startPosition.row + 1),
     });
 
     matched.add(node.id);
