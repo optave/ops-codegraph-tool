@@ -57,6 +57,10 @@ pub struct BuildPipelineResult {
     pub edge_count: i64,
     pub file_count: usize,
     pub early_exit: bool,
+    /// Files that were parsed/changed in this build cycle.
+    /// `None` for full builds (all files), `Some` for incremental builds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub changed_files: Option<Vec<String>>,
 }
 
 /// Normalize path to forward slashes.
@@ -335,6 +339,12 @@ pub fn run_pipeline(
     let t0 = Instant::now();
     let line_count_map = structure::build_line_count_map(&file_symbols, root_dir);
     let changed_files: Vec<String> = file_symbols.keys().cloned().collect();
+    // Keep a copy for the result — changed_files is moved into roles classification below.
+    let analysis_scope: Option<Vec<String>> = if change_result.is_full_build {
+        None
+    } else {
+        Some(changed_files.clone())
+    };
 
     let existing_file_count = structure::get_existing_file_count(conn);
     // Use parse_changes.len() for the threshold — changed_files includes
@@ -426,6 +436,7 @@ pub fn run_pipeline(
         edge_count,
         file_count: collect_result.files.len(),
         early_exit: false,
+        changed_files: analysis_scope,
     })
 }
 

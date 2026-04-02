@@ -353,6 +353,7 @@ export async function buildGraph(
           nodeCount?: number;
           edgeCount?: number;
           fileCount?: number;
+          changedFiles?: string[];
         };
 
         if (result.earlyExit) {
@@ -397,16 +398,25 @@ export async function buildGraph(
           } catch {
             /* ignore close errors */
           }
+          ctx.db = null!; // avoid closeDbPair operating on a stale handle
           ctx.db = openDb(ctx.dbPath);
 
           // Reconstruct minimal fileSymbols from DB for analysis visitors.
           // Each entry needs definitions with name/kind/line/endLine so the
           // engine can match complexity/CFG results to the right functions.
-          const rows = ctx.db
-            .prepare(
-              'SELECT file, name, kind, line, end_line as endLine FROM nodes WHERE file IS NOT NULL ORDER BY file, line',
-            )
-            .all() as {
+          // For incremental builds, scope to only the files that were parsed
+          // in this cycle (matching the JS pipeline's behaviour in run-analyses.ts).
+          const changedFiles = result.changedFiles;
+          let query =
+            'SELECT file, name, kind, line, end_line as endLine FROM nodes WHERE file IS NOT NULL';
+          const params: string[] = [];
+          if (changedFiles) {
+            const placeholders = changedFiles.map(() => '?').join(',');
+            query += ` AND file IN (${placeholders})`;
+            params.push(...changedFiles);
+          }
+          query += ' ORDER BY file, line';
+          const rows = ctx.db.prepare(query).all(...params) as {
             file: string;
             name: string;
             kind: string;
@@ -474,6 +484,7 @@ export async function buildGraph(
               /* ignore close errors */
             }
             ctx.nativeDb = undefined;
+            if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
           }
         }
 
