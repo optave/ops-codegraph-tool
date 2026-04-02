@@ -311,6 +311,8 @@ Two simultaneous builds both completed with exit code 0. Race condition detected
 
 #### Build Phase Breakdown (full build)
 
+> **Note:** The native Complexity, CFG, and Dataflow times below reflect the wall-clock time spent *attempting* those phases via the napi-rs standalone functions. The phases execute but their results are not committed to the database (see BUG 6), so downstream queries return empty data despite the time being spent.
+
 | Phase | Native | WASM |
 |-------|-------:|-----:|
 | Parse | 587ms | 1,452ms |
@@ -324,6 +326,8 @@ Two simultaneous builds both completed with exit code 0. Race condition detected
 | Dataflow | 280ms | 509ms |
 
 ### Incremental Benchmark
+
+> **Note:** The full-build figure here (3,787ms) differs from the Build Benchmark above (2,536ms) because these come from different benchmark scripts. The Build Benchmark (`scripts/benchmark.ts`) runs a targeted build on the project root, while the Incremental Benchmark (`scripts/incremental-benchmark.ts`) exercises the full incremental pipeline including journal creation, change detection setup, and additional bookkeeping — adding ~49% overhead.
 
 | Metric | Native | WASM |
 |--------|-------:|-----:|
