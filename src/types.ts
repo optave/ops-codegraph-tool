@@ -2115,7 +2115,10 @@ export interface NativeDatabase {
   hasCfgTables(): boolean;
   hasEmbeddings(): boolean;
   hasDataflowTable(): boolean;
+  hasImplementsEdges(): boolean;
+  hasCoChangesTable(): boolean;
   getComplexityForNode(nodeId: number): NativeComplexityMetrics | null;
+  getFileHash(file: string): string | null;
 
   // ── Build pipeline writes (6.15) ───────────────────────────────────
   bulkInsertNodes(

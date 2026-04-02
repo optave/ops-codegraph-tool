@@ -361,18 +361,18 @@ export class NativeRepository extends Repository {
 
   // ── Convenience queries ────────────────────────────────────────────
 
-  // TODO: add Rust #[napi] getFileHash method for full parity
-  getFileHash(_file: string): string | null {
+  getFileHash(file: string): string | null {
+    if (typeof this.#ndb.getFileHash === "function") return this.#ndb.getFileHash(file);
     return null;
   }
 
-  /** Conservatively return true — the cost of an extra findImplementors call is negligible. */
   hasImplementsEdges(): boolean {
-    return true;
+    if (typeof this.#ndb.hasImplementsEdges === "function") return this.#ndb.hasImplementsEdges();
+    return true; // conservative: assume yes
   }
 
-  /** Conservatively return false — co_changes is optional and rarely present. */
   hasCoChangesTable(): boolean {
-    return false;
+    if (typeof this.#ndb.hasCoChangesTable === "function") return this.#ndb.hasCoChangesTable();
+    return false; // conservative: assume no
   }
 }
