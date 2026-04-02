@@ -13,6 +13,7 @@ const { version: PKG_VERSION } = require('../../package.json') as { version: str
 import { getDatabase } from '../db/better-sqlite3.js';
 import { findDbPath } from '../db/index.js';
 import { loadConfig } from '../infrastructure/config.js';
+import { debug } from '../infrastructure/logger.js';
 import { CodegraphError, ConfigError } from '../shared/errors.js';
 import { MCP_MAX_LIMIT } from '../shared/paginate.js';
 import type { CodegraphConfig, MCPServerOptions } from '../types.js';
@@ -56,7 +57,8 @@ async function loadMCPSdk(): Promise<{
       ListToolsRequestSchema: types.ListToolsRequestSchema,
       CallToolRequestSchema: types.CallToolRequestSchema,
     };
-  } catch {
+  } catch (e) {
+    debug(`MCP SDK import failed: ${(e as Error).message}`);
     throw new ConfigError(
       'MCP server requires @modelcontextprotocol/sdk.\nInstall it with: npm install @modelcontextprotocol/sdk',
     );
@@ -123,8 +125,10 @@ function registerShutdownHandlers(): void {
   const shutdown = async () => {
     try {
       await _activeServer?.close();
-    } catch (_shutdownErr: unknown) {
-      // Ignore close errors during shutdown — the transport may already be gone.
+    } catch (shutdownErr: unknown) {
+      debug(
+        `MCP shutdown close failed (transport may already be gone): ${(shutdownErr as Error).message}`,
+      );
     }
     process.exit(0);
   };

@@ -146,7 +146,8 @@ function runNativeAnalysis(
     let source: string;
     try {
       source = fs.readFileSync(absPath, 'utf-8');
-    } catch {
+    } catch (e) {
+      debug(`runNativeAnalysis: failed to read ${relPath}: ${(e as Error).message}`);
       continue;
     }
 

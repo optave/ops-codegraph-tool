@@ -11,6 +11,7 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { bulkNodeIdsByFile } from '../../../../db/index.js';
+import { debug } from '../../../../infrastructure/logger.js';
 import type {
   BetterSqlite3Database,
   ExtractorOutput,
@@ -119,7 +120,8 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
       let code: string | null;
       try {
         code = readFileSafe(absPath);
-      } catch {
+      } catch (e) {
+        debug(`tryNativeInsert: readFileSafe failed for ${relPath}: ${(e as Error).message}`);
         code = null;
       }
       if (code !== null) {
@@ -151,8 +153,10 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
   } finally {
     try {
       ctx.nativeDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      /* ignore — nativeDb may already be closed */
+    } catch (e) {
+      debug(
+        `tryNativeInsert: WAL checkpoint failed (nativeDb may already be closed): ${(e as Error).message}`,
+      );
     }
   }
   return result;
@@ -324,7 +328,8 @@ function updateFileHashes(
       let code: string | null;
       try {
         code = readFileSafe(absPath);
-      } catch {
+      } catch (e) {
+        debug(`updateFileHashes: readFileSafe failed for ${relPath}: ${(e as Error).message}`);
         code = null;
       }
       if (code !== null) {
@@ -364,8 +369,8 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
         // Removed-file hash cleanup is handled inside the native call
         return;
       }
-    } catch {
-      // Native insert failed — fall through to JS implementation
+    } catch (e) {
+      debug(`insertNodes: native insert failed, falling back to JS: ${(e as Error).message}`);
     }
   }
 
@@ -380,7 +385,8 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
     upsertHash = ctx.db.prepare(
       'INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)',
     );
-  } catch {
+  } catch (e) {
+    debug(`insertNodes: file_hashes prepare failed (table may not exist): ${(e as Error).message}`);
     upsertHash = null;
   }
 

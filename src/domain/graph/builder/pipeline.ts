@@ -8,7 +8,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { closeDbPair, getBuildMeta, initSchema, MIGRATIONS, openDb } from '../../../db/index.js';
 import { detectWorkspaces, loadConfig } from '../../../infrastructure/config.js';
-import { info, warn } from '../../../infrastructure/logger.js';
+import { debug, info, warn } from '../../../infrastructure/logger.js';
 import { loadNative } from '../../../infrastructure/native.js';
 import { CODEGRAPH_VERSION } from '../../../shared/version.js';
 import type { BuildGraphOpts, BuildResult } from '../../../types.js';
@@ -50,8 +50,10 @@ function initializeEngine(ctx: PipelineContext): void {
       ? () => {
           try {
             ctx.nativeDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-          } catch {
-            /* ignore — nativeDb may already be closed */
+          } catch (e) {
+            debug(
+              `resumeJsDb: WAL checkpoint failed (nativeDb may already be closed): ${(e as Error).message}`,
+            );
           }
         }
       : undefined,
@@ -135,8 +137,8 @@ function setupPipeline(ctx: PipelineContext): void {
       warn(`NativeDatabase setup failed, falling back to JS: ${(err as Error).message}`);
       try {
         ctx.nativeDb?.close();
-      } catch {
-        /* ignore close errors */
+      } catch (e) {
+        debug(`setupNativeDb: close failed during fallback: ${(e as Error).message}`);
       }
       ctx.nativeDb = undefined;
     }
@@ -201,13 +203,13 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
     // preventing a live rusqlite connection from lingering until GC.
     try {
       ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      /* ignore checkpoint errors */
+    } catch (e) {
+      debug(`pre-collect WAL checkpoint failed: ${(e as Error).message}`);
     }
     try {
       ctx.nativeDb.close();
-    } catch {
-      /* ignore close errors */
+    } catch (e) {
+      debug(`pre-collect nativeDb close failed: ${(e as Error).message}`);
     }
     ctx.nativeDb = undefined;
     // Also clear stale reference in engineOpts to prevent stages from
@@ -232,7 +234,8 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
     if (native?.NativeDatabase) {
       try {
         ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
-      } catch {
+      } catch (e) {
+        debug(`reopen nativeDb for insertNodes failed: ${(e as Error).message}`);
         ctx.nativeDb = undefined;
       }
     }
@@ -246,13 +249,13 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
     // needs to apply WAL frames written by a different SQLite library (#715, #717).
     try {
       ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      /* ignore checkpoint errors */
+    } catch (e) {
+      debug(`post-insertNodes WAL checkpoint failed: ${(e as Error).message}`);
     }
     try {
       ctx.nativeDb.close();
-    } catch {
-      /* ignore close errors */
+    } catch (e) {
+      debug(`post-insertNodes nativeDb close failed: ${(e as Error).message}`);
     }
     ctx.nativeDb = undefined;
     // Reopen better-sqlite3 connection to get a fresh page cache.
@@ -262,8 +265,8 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
     // forces a clean slate — the only reliable cross-library handoff (#715, #736).
     try {
       ctx.db.close();
-    } catch {
-      /* ignore close errors */
+    } catch (e) {
+      debug(`post-insertNodes JS db close failed: ${(e as Error).message}`);
     }
     ctx.db = openDb(ctx.dbPath);
   }
@@ -282,7 +285,8 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
         if (ctx.engineOpts) {
           ctx.engineOpts.nativeDb = ctx.nativeDb;
         }
-      } catch {
+      } catch (e) {
+        debug(`reopen nativeDb for analyses failed: ${(e as Error).message}`);
         ctx.nativeDb = undefined;
         if (ctx.engineOpts) {
           ctx.engineOpts.nativeDb = undefined;
@@ -301,13 +305,13 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
     // Separate try/catch blocks ensure close() always runs even if checkpoint throws.
     try {
       ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      /* ignore checkpoint errors */
+    } catch (e) {
+      debug(`post-analyses WAL checkpoint failed: ${(e as Error).message}`);
     }
     try {
       ctx.nativeDb.close();
-    } catch {
-      /* ignore close errors */
+    } catch (e) {
+      debug(`post-analyses nativeDb close failed: ${(e as Error).message}`);
     }
     ctx.nativeDb = undefined;
   }
