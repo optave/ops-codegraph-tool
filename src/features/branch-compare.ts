@@ -20,7 +20,8 @@ function validateGitRef(repoRoot: string, ref: string): string | null {
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
     return sha;
-  } catch {
+  } catch (e) {
+    debug(`validateGitRef failed for "${ref}": ${(e as Error).message}`);
     return null;
   }
 }
@@ -50,11 +51,12 @@ function removeWorktree(repoRoot: string, dir: string): void {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-  } catch {
+  } catch (e) {
+    debug(`removeWorktree: git worktree remove failed for ${dir}: ${(e as Error).message}`);
     try {
       fs.rmSync(dir, { recursive: true, force: true });
-    } catch {
-      /* best-effort */
+    } catch (rmErr) {
+      debug(`removeWorktree: rmSync fallback failed for ${dir}: ${(rmErr as Error).message}`);
     }
     try {
       execFileSync('git', ['worktree', 'prune'], {
@@ -62,8 +64,8 @@ function removeWorktree(repoRoot: string, dir: string): void {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
       });
-    } catch {
-      /* best-effort */
+    } catch (pruneErr) {
+      debug(`removeWorktree: git worktree prune failed: ${(pruneErr as Error).message}`);
     }
   }
 }
@@ -205,8 +207,8 @@ function loadSymbolsFromDb(
     if (nativeDb) {
       try {
         nativeDb.close();
-      } catch {
-        /* already closed */
+      } catch (e) {
+        debug(`loadSymbolsFromDb: nativeDb close failed: ${(e as Error).message}`);
       }
     }
   }
@@ -376,7 +378,8 @@ export async function branchCompareData(
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-  } catch {
+  } catch (e) {
+    debug(`branchCompareData: git check failed: ${(e as Error).message}`);
     return { error: 'Not a git repository' };
   }
 
@@ -495,8 +498,8 @@ export async function branchCompareData(
     removeWorktree(repoRoot, targetDir);
     try {
       fs.rmSync(tmpBase, { recursive: true, force: true });
-    } catch {
-      /* best-effort */
+    } catch (cleanupErr) {
+      debug(`branchCompareData: temp cleanup failed: ${(cleanupErr as Error).message}`);
     }
   }
 }
