@@ -8,12 +8,6 @@ vi.mock('../../src/infrastructure/config.js', () => ({
   loadConfig: () => ({ display: { maxColWidth: 40 } }),
 }));
 
-// Mock paginate to capture NDJSON calls
-const mockPrintNdjson = vi.fn();
-vi.mock('../../src/shared/paginate.js', () => ({
-  printNdjson: (...args) => mockPrintNdjson(...args),
-}));
-
 const { outputResult } = await import('../../src/presentation/result-formatter.js');
 
 describe('outputResult', () => {
@@ -21,7 +15,6 @@ describe('outputResult', () => {
 
   beforeEach(() => {
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    mockPrintNdjson.mockClear();
   });
 
   afterEach(() => {
@@ -47,7 +40,9 @@ describe('outputResult', () => {
     const data = { results: [{ name: 'a' }] };
     const result = outputResult(data, 'results', { ndjson: true });
     expect(result).toBe(true);
-    expect(mockPrintNdjson).toHaveBeenCalledWith(data, 'results');
+    // printNdjson is now co-located — verify it emitted the NDJSON line via console.log
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(logSpy.mock.calls[0][0])).toEqual({ name: 'a' });
   });
 
   it('handles csv option with array data', () => {

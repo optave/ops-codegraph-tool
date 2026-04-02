@@ -350,23 +350,25 @@ export function astQuery(
   if (outputResult(data, 'results', opts)) return;
 
   if (data.results.length === 0) {
-    console.log(`No AST nodes found${pattern ? ` matching "${pattern}"` : ''}.`);
+    process.stdout.write(`No AST nodes found${pattern ? ` matching "${pattern}"` : ''}.\n`);
     return;
   }
 
   const kindLabel = opts.kind ? ` (kind: ${opts.kind})` : '';
-  console.log(`\n${data.count} AST nodes${pattern ? ` matching "${pattern}"` : ''}${kindLabel}:\n`);
+  process.stdout.write(
+    `\n${data.count} AST nodes${pattern ? ` matching "${pattern}"` : ''}${kindLabel}:\n\n`,
+  );
 
   for (const r of data.results) {
     const icon = KIND_ICONS[r.kind] || '?';
     const parentInfo = r.parent ? `  (in ${r.parent.name})` : '';
-    console.log(`  ${icon} ${r.name}  -- ${r.file}:${r.line}${parentInfo}`);
+    process.stdout.write(`  ${icon} ${r.name}  -- ${r.file}:${r.line}${parentInfo}\n`);
   }
 
   if (data._pagination?.hasMore) {
-    console.log(
-      `\n  ... ${data._pagination.total - data._pagination.offset - data._pagination.returned} more (use --offset ${data._pagination.offset + data._pagination.limit})`,
+    process.stdout.write(
+      `\n  ... ${data._pagination.total - data._pagination.offset - data._pagination.returned} more (use --offset ${data._pagination.offset + data._pagination.limit})\n`,
     );
   }
-  console.log();
+  process.stdout.write('\n');
 }
