@@ -1879,9 +1879,21 @@ export interface NativeAddon {
     rootDir: string,
   ): unknown[];
   engineVersion(): string;
-  analyzeComplexity(source: string, filePath: string): NativeFunctionComplexityResult[];
-  buildCfgAnalysis(source: string, filePath: string): NativeFunctionCfgResult[];
-  extractDataflowAnalysis(source: string, filePath: string): DataflowResult | null;
+  analyzeComplexity(
+    source: string,
+    filePath: string,
+    langId?: string | null,
+  ): NativeFunctionComplexityResult[];
+  buildCfgAnalysis(
+    source: string,
+    filePath: string,
+    langId?: string | null,
+  ): NativeFunctionCfgResult[];
+  extractDataflowAnalysis(
+    source: string,
+    filePath: string,
+    langId?: string | null,
+  ): DataflowResult | null;
   ParseTreeCache: new () => NativeParseTreeCache;
   NativeDatabase: {
     openReadWrite(dbPath: string): NativeDatabase;
