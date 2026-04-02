@@ -96,6 +96,128 @@ interface NodeInfo {
   type?: string;
 }
 
+/** Resolve the entry node by direct match or framework-prefix matching. */
+function resolveEntryNode(
+  db: ReturnType<typeof openReadonlyOrFail>,
+  name: string,
+  flowOpts: { noTests?: boolean; file?: string; kinds?: string[] },
+): {
+  id: number;
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  role?: string | null;
+} | null {
+  // Phase 1: Direct LIKE match on full name
+  let matchNode = findMatchingNodes(db, name, flowOpts)[0] ?? null;
+
+  // Phase 2: Prefix-stripped matching — try adding framework prefixes
+  if (!matchNode) {
+    for (const prefix of FRAMEWORK_ENTRY_PREFIXES) {
+      matchNode = findMatchingNodes(db, `${prefix}${name}`, flowOpts)[0] ?? null;
+      if (matchNode) break;
+    }
+  }
+
+  return matchNode;
+}
+
+interface BfsState {
+  visited: Set<number>;
+  steps: Array<{ depth: number; nodes: NodeInfo[] }>;
+  cycles: Array<{ from: string; to: string; depth: number }>;
+  nodeDepths: Map<number, number>;
+  idToNode: Map<number, NodeInfo>;
+  truncated: boolean;
+}
+
+/** Forward BFS through callees, collecting steps, cycles, and node depth info. */
+function bfsCallees(
+  db: ReturnType<typeof openReadonlyOrFail>,
+  entryId: number,
+  entryInfo: NodeInfo,
+  maxDepth: number,
+  noTests: boolean,
+): BfsState {
+  const visited = new Set<number>([entryId]);
+  let frontier = [entryId];
+  const steps: Array<{ depth: number; nodes: NodeInfo[] }> = [];
+  const cycles: Array<{ from: string; to: string; depth: number }> = [];
+  const nodeDepths = new Map<number, number>();
+  const idToNode = new Map<number, NodeInfo>();
+  idToNode.set(entryId, entryInfo);
+  let truncated = false;
+
+  const calleesStmt = db.prepare<CalleeRow>(
+    `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line, n.role
+     FROM edges e JOIN nodes n ON e.target_id = n.id
+     WHERE e.source_id = ? AND e.kind = 'calls'`,
+  );
+
+  for (let d = 1; d <= maxDepth; d++) {
+    const nextFrontier: number[] = [];
+    const levelNodes: NodeInfo[] = [];
+
+    for (const fid of frontier) {
+      const callees = calleesStmt.all(fid);
+
+      for (const c of callees) {
+        if (noTests && isTestFile(c.file)) continue;
+
+        if (visited.has(c.id)) {
+          const fromNode = idToNode.get(fid);
+          if (fromNode) {
+            cycles.push({ from: fromNode.name, to: c.name, depth: d });
+          }
+          continue;
+        }
+
+        visited.add(c.id);
+        nextFrontier.push(c.id);
+        const nodeInfo: NodeInfo = { name: c.name, kind: c.kind, file: c.file, line: c.line };
+        levelNodes.push(nodeInfo);
+        nodeDepths.set(c.id, d);
+        idToNode.set(c.id, nodeInfo);
+      }
+    }
+
+    if (levelNodes.length > 0) {
+      steps.push({ depth: d, nodes: levelNodes });
+    }
+
+    frontier = nextFrontier;
+    if (frontier.length === 0) break;
+    if (d === maxDepth && frontier.length > 0) truncated = true;
+  }
+
+  return { visited, steps, cycles, nodeDepths, idToNode, truncated };
+}
+
+/** Identify leaf nodes — visited nodes with no outgoing 'calls' edges. */
+function findLeafNodes(
+  db: ReturnType<typeof openReadonlyOrFail>,
+  nodeDepths: Map<number, number>,
+  idToNode: Map<number, NodeInfo>,
+): Array<NodeInfo & { depth: number }> {
+  const leaves: Array<NodeInfo & { depth: number }> = [];
+  const outgoingStmt = db.prepare<{ id: number }>(
+    `SELECT DISTINCT n.id
+     FROM edges e JOIN nodes n ON e.target_id = n.id
+     WHERE e.source_id = ? AND e.kind = 'calls'`,
+  );
+
+  for (const [id, depth] of nodeDepths) {
+    const outgoing = outgoingStmt.all(id);
+    if (outgoing.length === 0) {
+      const node = idToNode.get(id);
+      if (node) leaves.push({ ...node, depth });
+    }
+  }
+
+  return leaves;
+}
+
 export function flowData(
   name: string,
   dbPath?: string,
@@ -117,17 +239,7 @@ export function flowData(
       kinds: opts.kind ? [opts.kind] : (CORE_SYMBOL_KINDS as unknown as string[]),
     };
 
-    // Phase 1: Direct LIKE match on full name (use all 10 core symbol kinds,
-    // not just FUNCTION_KINDS, so flow can trace from interfaces/types/structs/etc.)
-    let matchNode = findMatchingNodes(db, name, flowOpts)[0] ?? null;
-
-    // Phase 2: Prefix-stripped matching — try adding framework prefixes
-    if (!matchNode) {
-      for (const prefix of FRAMEWORK_ENTRY_PREFIXES) {
-        matchNode = findMatchingNodes(db, `${prefix}${name}`, flowOpts)[0] ?? null;
-        if (matchNode) break;
-      }
-    }
+    const matchNode = resolveEntryNode(db, name, flowOpts);
 
     if (!matchNode) {
       return {
@@ -151,92 +263,17 @@ export function flowData(
       role: matchNode.role,
     };
 
-    // Forward BFS through callees
-    const visited = new Set<number>([matchNode.id]);
-    let frontier = [matchNode.id];
-    const steps: Array<{ depth: number; nodes: NodeInfo[] }> = [];
-    const cycles: Array<{ from: string; to: string; depth: number }> = [];
-    let truncated = false;
-
-    // Track which nodes are at each depth and their depth for leaf detection
-    const nodeDepths = new Map<number, number>();
-    const idToNode = new Map<number, NodeInfo>();
-    idToNode.set(matchNode.id, entry);
-
-    for (let d = 1; d <= maxDepth; d++) {
-      const nextFrontier: number[] = [];
-      const levelNodes: NodeInfo[] = [];
-
-      for (const fid of frontier) {
-        const callees = db
-          .prepare<CalleeRow>(
-            `SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line, n.role
-             FROM edges e JOIN nodes n ON e.target_id = n.id
-             WHERE e.source_id = ? AND e.kind = 'calls'`,
-          )
-          .all(fid);
-
-        for (const c of callees) {
-          if (noTests && isTestFile(c.file)) continue;
-
-          if (visited.has(c.id)) {
-            // Cycle detected
-            const fromNode = idToNode.get(fid);
-            if (fromNode) {
-              cycles.push({ from: fromNode.name, to: c.name, depth: d });
-            }
-            continue;
-          }
-
-          visited.add(c.id);
-          nextFrontier.push(c.id);
-          const nodeInfo: NodeInfo = { name: c.name, kind: c.kind, file: c.file, line: c.line };
-          levelNodes.push(nodeInfo);
-          nodeDepths.set(c.id, d);
-          idToNode.set(c.id, nodeInfo);
-        }
-      }
-
-      if (levelNodes.length > 0) {
-        steps.push({ depth: d, nodes: levelNodes });
-      }
-
-      frontier = nextFrontier;
-      if (frontier.length === 0) break;
-
-      if (d === maxDepth && frontier.length > 0) {
-        truncated = true;
-      }
-    }
-
-    // Identify leaves: visited nodes that have no outgoing 'calls' edges to other visited nodes
-    // (or no outgoing calls at all)
-    const leaves: Array<NodeInfo & { depth: number }> = [];
-    for (const [id, depth] of nodeDepths) {
-      const outgoing = db
-        .prepare<{ id: number }>(
-          `SELECT DISTINCT n.id
-           FROM edges e JOIN nodes n ON e.target_id = n.id
-           WHERE e.source_id = ? AND e.kind = 'calls'`,
-        )
-        .all(id);
-
-      if (outgoing.length === 0) {
-        const node = idToNode.get(id);
-        if (node) {
-          leaves.push({ ...node, depth });
-        }
-      }
-    }
+    const bfs = bfsCallees(db, matchNode.id, entry, maxDepth, noTests);
+    const leaves = findLeafNodes(db, bfs.nodeDepths, bfs.idToNode);
 
     const base = {
       entry,
       depth: maxDepth,
-      steps,
+      steps: bfs.steps,
       leaves,
-      cycles,
-      totalReached: visited.size - 1, // exclude the entry node itself
-      truncated,
+      cycles: bfs.cycles,
+      totalReached: bfs.visited.size - 1,
+      truncated: bfs.truncated,
     };
     return paginateResult(base, 'steps', { limit: opts.limit, offset: opts.offset });
   } finally {
