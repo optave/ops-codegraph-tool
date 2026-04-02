@@ -1,5 +1,129 @@
 import { diffImpactData } from '../domain/analysis/diff-impact.js';
 
+interface MermaidNodeRegistry {
+  nodeIdMap: Map<string, string>;
+  nodeLabels: Map<string, string>;
+  counter: number;
+}
+
+interface ImpactEdgeSets {
+  allEdges: Set<string>;
+  edgeFromNodes: Set<string>;
+  edgeToNodes: Set<string>;
+  changedKeys: Set<string>;
+}
+
+function createNodeRegistry(): MermaidNodeRegistry {
+  return { nodeIdMap: new Map(), nodeLabels: new Map(), counter: 0 };
+}
+
+function registerNode(reg: MermaidNodeRegistry, key: string, label?: string): string {
+  if (!reg.nodeIdMap.has(key)) {
+    reg.nodeIdMap.set(key, `n${reg.counter++}`);
+    if (label) reg.nodeLabels.set(key, label);
+  }
+  return reg.nodeIdMap.get(key)!;
+}
+
+function registerAllNodes(reg: MermaidNodeRegistry, affectedFunctions: any[]): void {
+  for (const fn of affectedFunctions) {
+    registerNode(reg, `${fn.file}::${fn.name}:${fn.line}`, fn.name);
+    for (const callers of Object.values(fn.levels || {})) {
+      for (const c of callers as Array<{ name: string; file: string; line: number }>) {
+        registerNode(reg, `${c.file}::${c.name}:${c.line}`, c.name);
+      }
+    }
+  }
+}
+
+function collectEdges(affectedFunctions: any[]): ImpactEdgeSets {
+  const allEdges = new Set<string>();
+  const edgeFromNodes = new Set<string>();
+  const edgeToNodes = new Set<string>();
+  const changedKeys = new Set<string>();
+
+  for (const fn of affectedFunctions) {
+    changedKeys.add(`${fn.file}::${fn.name}:${fn.line}`);
+    for (const edge of fn.edges || []) {
+      const edgeKey = `${edge.from}|${edge.to}`;
+      if (!allEdges.has(edgeKey)) {
+        allEdges.add(edgeKey);
+        edgeFromNodes.add(edge.from);
+        edgeToNodes.add(edge.to);
+      }
+    }
+  }
+
+  return { allEdges, edgeFromNodes, edgeToNodes, changedKeys };
+}
+
+function classifyCallerNodes(edges: ImpactEdgeSets): {
+  blastRadiusKeys: Set<string>;
+  intermediateKeys: Set<string>;
+} {
+  const blastRadiusKeys = new Set<string>();
+  for (const key of edges.edgeToNodes) {
+    if (!edges.edgeFromNodes.has(key) && !edges.changedKeys.has(key)) {
+      blastRadiusKeys.add(key);
+    }
+  }
+
+  const intermediateKeys = new Set<string>();
+  for (const key of edges.edgeToNodes) {
+    if (!edges.changedKeys.has(key) && !blastRadiusKeys.has(key)) {
+      intermediateKeys.add(key);
+    }
+  }
+
+  return { blastRadiusKeys, intermediateKeys };
+}
+
+function emitFileSubgraphs(
+  lines: string[],
+  affectedFunctions: any[],
+  newFileSet: Set<string>,
+  reg: MermaidNodeRegistry,
+): number {
+  const fileGroups = new Map<string, any[]>();
+  for (const fn of affectedFunctions) {
+    if (!fileGroups.has(fn.file)) fileGroups.set(fn.file, []);
+    fileGroups.get(fn.file)!.push(fn);
+  }
+
+  let sgCounter = 0;
+  for (const [file, fns] of fileGroups) {
+    const isNew = newFileSet.has(file);
+    const tag = isNew ? 'new' : 'modified';
+    const sgId = `sg${sgCounter++}`;
+    lines.push(`    subgraph ${sgId}["${file} **(${tag})**"]`);
+    for (const fn of fns) {
+      const key = `${fn.file}::${fn.name}:${fn.line}`;
+      lines.push(`        ${reg.nodeIdMap.get(key)}["${fn.name}"]`);
+    }
+    lines.push('    end');
+    const style = isNew ? 'fill:#e8f5e9,stroke:#4caf50' : 'fill:#fff3e0,stroke:#ff9800';
+    lines.push(`    style ${sgId} ${style}`);
+  }
+
+  return sgCounter;
+}
+
+function emitBlastRadiusSubgraph(
+  lines: string[],
+  blastRadiusKeys: Set<string>,
+  reg: MermaidNodeRegistry,
+  sgCounter: number,
+): void {
+  if (blastRadiusKeys.size === 0) return;
+  const sgId = `sg${sgCounter}`;
+  lines.push(`    subgraph ${sgId}["Callers **(blast radius)**"]`);
+  for (const key of blastRadiusKeys) {
+    lines.push(`        ${reg.nodeIdMap.get(key)}["${reg.nodeLabels.get(key)}"]`);
+  }
+  lines.push('    end');
+  lines.push(`    style ${sgId} fill:#f3e5f5,stroke:#9c27b0`);
+}
+
 export function diffImpactMermaid(
   customDbPath: string,
   opts: {
@@ -19,108 +143,26 @@ export function diffImpactMermaid(
     return 'flowchart TB\n    none["No impacted functions detected"]';
   }
 
-  const newFileSet = new Set(data.newFiles || []);
+  const newFileSet = new Set<string>(data.newFiles || []);
   const lines = ['flowchart TB'];
 
-  // Assign stable Mermaid node IDs
-  let nodeCounter = 0;
-  const nodeIdMap = new Map<string, string>();
-  const nodeLabels = new Map<string, string>();
-  function nodeId(key: string, label?: string): string {
-    if (!nodeIdMap.has(key)) {
-      nodeIdMap.set(key, `n${nodeCounter++}`);
-      if (label) nodeLabels.set(key, label);
-    }
-    return nodeIdMap.get(key)!;
-  }
+  const reg = createNodeRegistry();
+  registerAllNodes(reg, data.affectedFunctions);
 
-  // Register all nodes (changed functions + their callers)
-  for (const fn of data.affectedFunctions) {
-    nodeId(`${fn.file}::${fn.name}:${fn.line}`, fn.name);
-    for (const callers of Object.values(fn.levels || {})) {
-      for (const c of callers as Array<{ name: string; file: string; line: number }>) {
-        nodeId(`${c.file}::${c.name}:${c.line}`, c.name);
-      }
-    }
-  }
+  const edges = collectEdges(data.affectedFunctions);
+  const { blastRadiusKeys, intermediateKeys } = classifyCallerNodes(edges);
 
-  // Collect all edges and determine blast radius
-  const allEdges = new Set<string>();
-  const edgeFromNodes = new Set<string>();
-  const edgeToNodes = new Set<string>();
-  const changedKeys = new Set<string>();
+  const sgCounter = emitFileSubgraphs(lines, data.affectedFunctions, newFileSet, reg);
 
-  for (const fn of data.affectedFunctions) {
-    changedKeys.add(`${fn.file}::${fn.name}:${fn.line}`);
-    for (const edge of fn.edges || []) {
-      const edgeKey = `${edge.from}|${edge.to}`;
-      if (!allEdges.has(edgeKey)) {
-        allEdges.add(edgeKey);
-        edgeFromNodes.add(edge.from);
-        edgeToNodes.add(edge.to);
-      }
-    }
-  }
-
-  // Blast radius: caller nodes that are never a source (leaf nodes of the impact tree)
-  const blastRadiusKeys = new Set<string>();
-  for (const key of edgeToNodes) {
-    if (!edgeFromNodes.has(key) && !changedKeys.has(key)) {
-      blastRadiusKeys.add(key);
-    }
-  }
-
-  // Intermediate callers: not changed, not blast radius
-  const intermediateKeys = new Set<string>();
-  for (const key of edgeToNodes) {
-    if (!changedKeys.has(key) && !blastRadiusKeys.has(key)) {
-      intermediateKeys.add(key);
-    }
-  }
-
-  // Group changed functions by file
-  const fileGroups = new Map<string, typeof data.affectedFunctions>();
-  for (const fn of data.affectedFunctions) {
-    if (!fileGroups.has(fn.file)) fileGroups.set(fn.file, []);
-    fileGroups.get(fn.file)!.push(fn);
-  }
-
-  // Emit changed-file subgraphs
-  let sgCounter = 0;
-  for (const [file, fns] of fileGroups) {
-    const isNew = newFileSet.has(file);
-    const tag = isNew ? 'new' : 'modified';
-    const sgId = `sg${sgCounter++}`;
-    lines.push(`    subgraph ${sgId}["${file} **(${tag})**"]`);
-    for (const fn of fns) {
-      const key = `${fn.file}::${fn.name}:${fn.line}`;
-      lines.push(`        ${nodeIdMap.get(key)}["${fn.name}"]`);
-    }
-    lines.push('    end');
-    const style = isNew ? 'fill:#e8f5e9,stroke:#4caf50' : 'fill:#fff3e0,stroke:#ff9800';
-    lines.push(`    style ${sgId} ${style}`);
-  }
-
-  // Emit intermediate caller nodes (outside subgraphs)
   for (const key of intermediateKeys) {
-    lines.push(`    ${nodeIdMap.get(key)}["${nodeLabels.get(key)}"]`);
+    lines.push(`    ${reg.nodeIdMap.get(key)}["${reg.nodeLabels.get(key)}"]`);
   }
 
-  // Emit blast radius subgraph
-  if (blastRadiusKeys.size > 0) {
-    const sgId = `sg${sgCounter++}`;
-    lines.push(`    subgraph ${sgId}["Callers **(blast radius)**"]`);
-    for (const key of blastRadiusKeys) {
-      lines.push(`        ${nodeIdMap.get(key)}["${nodeLabels.get(key)}"]`);
-    }
-    lines.push('    end');
-    lines.push(`    style ${sgId} fill:#f3e5f5,stroke:#9c27b0`);
-  }
+  emitBlastRadiusSubgraph(lines, blastRadiusKeys, reg, sgCounter);
 
-  // Emit edges (impact flows from changed fn toward callers)
-  for (const edgeKey of allEdges) {
+  for (const edgeKey of edges.allEdges) {
     const [from, to] = edgeKey.split('|') as [string, string];
-    lines.push(`    ${nodeIdMap.get(from)} --> ${nodeIdMap.get(to)}`);
+    lines.push(`    ${reg.nodeIdMap.get(from)} --> ${reg.nodeIdMap.get(to)}`);
   }
 
   return lines.join('\n');
