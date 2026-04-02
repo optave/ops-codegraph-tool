@@ -362,17 +362,17 @@ export class NativeRepository extends Repository {
   // ── Convenience queries ────────────────────────────────────────────
 
   getFileHash(file: string): string | null {
-    if (typeof this.#ndb.getFileHash === "function") return this.#ndb.getFileHash(file);
+    if (typeof this.#ndb.getFileHash === 'function') return this.#ndb.getFileHash(file);
     return null;
   }
 
   hasImplementsEdges(): boolean {
-    if (typeof this.#ndb.hasImplementsEdges === "function") return this.#ndb.hasImplementsEdges();
+    if (typeof this.#ndb.hasImplementsEdges === 'function') return this.#ndb.hasImplementsEdges();
     return true; // conservative: assume yes
   }
 
   hasCoChangesTable(): boolean {
-    if (typeof this.#ndb.hasCoChangesTable === "function") return this.#ndb.hasCoChangesTable();
+    if (typeof this.#ndb.hasCoChangesTable === 'function') return this.#ndb.hasCoChangesTable();
     return false; // conservative: assume no
   }
 }
