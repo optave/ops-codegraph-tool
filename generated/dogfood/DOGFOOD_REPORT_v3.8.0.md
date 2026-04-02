@@ -304,10 +304,12 @@ Two simultaneous builds both completed with exit code 0. Race condition detected
 | Metric | Native | WASM | Native Speedup |
 |--------|-------:|-----:|---------------:|
 | Full build | 2,536ms | 7,337ms | **2.9x** |
-| No-op rebuild | 55ms | 46ms | 0.8x (WASM faster) |
+| No-op rebuild | 55ms ² | 46ms | 0.8x (WASM faster) |
 | 1-file rebuild | 1,205ms | 1,611ms | **1.3x** |
 | Query time | 9.2ms | 16.4ms | **1.8x** |
 | DB size | 22.1 MB | 27.3 MB | Native 19% smaller |
+
+² Due to BUG 2 (build_meta version mismatch), native no-op always falls through to a full rebuild (~3,787ms). The 55ms figure here was measured under `CODEGRAPH_FORCE_JS_PIPELINE=1` (WASM engine). True native no-op time would be ~3,787ms.
 
 #### Build Phase Breakdown (full build)
 
@@ -360,7 +362,7 @@ Two simultaneous builds both completed with exit code 0. Race condition detected
 | Metric | v3.6.0 | v3.8.0 | Change |
 |--------|-------:|-------:|-------:|
 | No-op rebuild | 13ms | 51ms | **+292%** ¹ |
-| 1-file rebuild | 545ms | 1,491ms | **+174%** |
+| 1-file rebuild | 545ms | 1,491ms | **+174%** ¹ |
 | fnDeps d1 (native) | 9.4ms | 13.9ms | +48% |
 | fnDeps d3 (native) | 9.6ms | 16.1ms | +68% |
 | fnImpact d1 (native) | 3.4ms | 5.9ms | +74% |
@@ -452,7 +454,7 @@ Absolute vs relative path mismatches (BUG 3) should be normalized at the DB inse
 The native orchestrator guard should respect `--engine wasm` (BUG 5). A one-line fix: check `ctx.engineName === 'native'` before entering the Rust fast path.
 
 ### 10.6 Investigate incremental rebuild regressions
-No-op rebuilds went from 13ms to 51ms (+292%), and 1-file rebuilds from 545ms to 1,491ms (+174%) vs v3.6.0. These regressions warrant investigation.
+No-op rebuilds went from 13ms to 51ms (+292%), and 1-file rebuilds from 545ms to 1,491ms (+174%) vs v3.6.0 — these figures are WASM-path measurements (via `CODEGRAPH_FORCE_JS_PIPELINE=1`) since BUG 2 makes native no-op impossible (native always falls through to a full rebuild at ~3,787ms, a +29,000% regression). Even the WASM-path regressions warrant investigation.
 
 ---
 
