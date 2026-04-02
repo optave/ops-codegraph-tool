@@ -414,6 +414,7 @@ export async function buildGraph(
           engine_version: ctx.engineVersion || '',
           codegraph_version: CODEGRAPH_VERSION,
           schema_version: String(ctx.schemaVersion),
+          built_at: new Date().toISOString(),
           node_count: String(result.nodeCount ?? 0),
           edge_count: String(result.edgeCount ?? 0),
         });
