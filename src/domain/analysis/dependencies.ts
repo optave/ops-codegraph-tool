@@ -125,6 +125,60 @@ function buildTransitiveCallers(
   return transitiveCallers;
 }
 
+function collectCallersWithHierarchy(
+  db: BetterSqlite3Database,
+  node: NodeRow,
+  noTests: boolean,
+): Array<RelatedNodeRow & { viaHierarchy?: string }> {
+  let callers: Array<RelatedNodeRow & { viaHierarchy?: string }> = findCallers(
+    db,
+    node.id,
+  ) as RelatedNodeRow[];
+
+  if (node.kind === 'method' && node.name.includes('.')) {
+    const methodName = node.name.split('.').pop()!;
+    const relatedMethods = resolveMethodViaHierarchy(db, methodName);
+    for (const rm of relatedMethods) {
+      if (rm.id === node.id) continue;
+      const extraCallers = findCallers(db, rm.id) as RelatedNodeRow[];
+      callers.push(...extraCallers.map((c) => ({ ...c, viaHierarchy: rm.name })));
+    }
+  }
+  if (noTests) callers = callers.filter((c) => !isTestFile(c.file));
+  return callers;
+}
+
+function buildNodeDepsResult(
+  db: BetterSqlite3Database,
+  node: NodeRow,
+  hc: Map<unknown, unknown>,
+  depth: number,
+  noTests: boolean,
+) {
+  const callees = findCallees(db, node.id) as RelatedNodeRow[];
+  const filteredCallees = noTests ? callees.filter((c) => !isTestFile(c.file)) : callees;
+  const callers = collectCallersWithHierarchy(db, node, noTests);
+  const transitiveCallers = buildTransitiveCallers(db, callers, node.id, depth, noTests);
+
+  return {
+    ...normalizeSymbol(node, db, hc),
+    callees: filteredCallees.map((c) => ({
+      name: c.name,
+      kind: c.kind,
+      file: c.file,
+      line: c.line,
+    })),
+    callers: callers.map((c) => ({
+      name: c.name,
+      kind: c.kind,
+      file: c.file,
+      line: c.line,
+      viaHierarchy: c.viaHierarchy || undefined,
+    })),
+    transitiveCallers,
+  };
+}
+
 export function fnDepsData(
   name: string,
   customDbPath: string,
@@ -147,46 +201,7 @@ export function fnDepsData(
       return { name, results: [] };
     }
 
-    const results = nodes.map((node) => {
-      const callees = findCallees(db, node.id) as RelatedNodeRow[];
-      const filteredCallees = noTests ? callees.filter((c) => !isTestFile(c.file)) : callees;
-
-      let callers: Array<RelatedNodeRow & { viaHierarchy?: string }> = findCallers(
-        db,
-        node.id,
-      ) as RelatedNodeRow[];
-
-      if (node.kind === 'method' && node.name.includes('.')) {
-        const methodName = node.name.split('.').pop()!;
-        const relatedMethods = resolveMethodViaHierarchy(db, methodName);
-        for (const rm of relatedMethods) {
-          if (rm.id === node.id) continue;
-          const extraCallers = findCallers(db, rm.id) as RelatedNodeRow[];
-          callers.push(...extraCallers.map((c) => ({ ...c, viaHierarchy: rm.name })));
-        }
-      }
-      if (noTests) callers = callers.filter((c) => !isTestFile(c.file));
-
-      const transitiveCallers = buildTransitiveCallers(db, callers, node.id, depth, noTests);
-
-      return {
-        ...normalizeSymbol(node, db, hc),
-        callees: filteredCallees.map((c) => ({
-          name: c.name,
-          kind: c.kind,
-          file: c.file,
-          line: c.line,
-        })),
-        callers: callers.map((c) => ({
-          name: c.name,
-          kind: c.kind,
-          file: c.file,
-          line: c.line,
-          viaHierarchy: c.viaHierarchy || undefined,
-        })),
-        transitiveCallers,
-      };
-    });
+    const results = nodes.map((node) => buildNodeDepsResult(db, node, hc, depth, noTests));
 
     const base = { name, results };
     return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });

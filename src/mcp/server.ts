@@ -158,36 +158,13 @@ function registerShutdownHandlers(): void {
   process.on('unhandledRejection', silentReject);
 }
 
-export async function startMCPServer(
-  customDbPath?: string,
-  options: MCPServerOptionsInternal = {},
-): Promise<void> {
-  const { allowedRepos } = options;
-  const multiRepo = options.multiRepo || !!allowedRepos;
-
-  // Apply config-based MCP page-size overrides
-  const config = options.config || loadConfig();
-  initMcpDefaults(config.mcp?.defaults ? { ...config.mcp.defaults } : undefined);
-
-  const { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema } =
-    await loadMCPSdk();
-
-  // Connect transport FIRST so the server can receive the client's
-  // `initialize` request while heavy modules (queries, better-sqlite3)
-  // are still loading.  These are lazy-loaded on the first tool call
-  // and cached for subsequent calls.
-  const { getQueries } = createLazyLoaders();
-
-  const server = new (Server as any)(
-    { name: 'codegraph', version: PKG_VERSION },
-    { capabilities: { tools: {} } },
-  );
-
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: buildToolList(multiRepo),
-  }));
-
-  server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
+function createCallToolHandler(
+  multiRepo: boolean,
+  customDbPath: string | undefined,
+  allowedRepos: string[] | undefined,
+  getQueries: () => Promise<unknown>,
+) {
+  return async (request: any) => {
     const { name, arguments: args } = request.params;
     try {
       validateMultiRepoAccess(multiRepo, name, args);
@@ -219,7 +196,42 @@ export async function startMCPServer(
           : `Error: ${(err as Error).message}`;
       return { content: [{ type: 'text', text }], isError: true };
     }
-  });
+  };
+}
+
+export async function startMCPServer(
+  customDbPath?: string,
+  options: MCPServerOptionsInternal = {},
+): Promise<void> {
+  const { allowedRepos } = options;
+  const multiRepo = options.multiRepo || !!allowedRepos;
+
+  // Apply config-based MCP page-size overrides
+  const config = options.config || loadConfig();
+  initMcpDefaults(config.mcp?.defaults ? { ...config.mcp.defaults } : undefined);
+
+  const { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema } =
+    await loadMCPSdk();
+
+  // Connect transport FIRST so the server can receive the client's
+  // `initialize` request while heavy modules (queries, better-sqlite3)
+  // are still loading.  These are lazy-loaded on the first tool call
+  // and cached for subsequent calls.
+  const { getQueries } = createLazyLoaders();
+
+  const server = new (Server as any)(
+    { name: 'codegraph', version: PKG_VERSION },
+    { capabilities: { tools: {} } },
+  );
+
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: buildToolList(multiRepo),
+  }));
+
+  server.setRequestHandler(
+    CallToolRequestSchema,
+    createCallToolHandler(multiRepo, customDbPath, allowedRepos, getQueries),
+  );
 
   const transport = new (StdioServerTransport as any)();
 
