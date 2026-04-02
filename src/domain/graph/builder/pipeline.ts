@@ -6,7 +6,14 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { closeDbPair, getBuildMeta, initSchema, MIGRATIONS, openDb } from '../../../db/index.js';
+import {
+  closeDbPair,
+  getBuildMeta,
+  initSchema,
+  MIGRATIONS,
+  openDb,
+  setBuildMeta,
+} from '../../../db/index.js';
 import { detectWorkspaces, loadConfig } from '../../../infrastructure/config.js';
 import { info, warn } from '../../../infrastructure/logger.js';
 import { loadNative } from '../../../infrastructure/native.js';
@@ -338,7 +345,17 @@ export async function buildGraph(
     // When available, run the entire build pipeline in Rust with zero
     // napi crossings (eliminates WAL dual-connection dance). Falls back
     // to the JS pipeline on failure or when native is unavailable.
-    const forceJs = process.env.CODEGRAPH_FORCE_JS_PIPELINE === '1';
+    //
+    // Native addon ≤3.8.0 has a path bug: file_symbols keys are absolute
+    // paths but known_files are relative, causing zero import/call edges.
+    // Skip the orchestrator for affected versions (fixed in source, will
+    // take effect in the next native addon release).
+    const orchestratorBuggy = ctx.engineVersion === '3.8.0';
+    const forceJs =
+      process.env.CODEGRAPH_FORCE_JS_PIPELINE === '1' ||
+      ctx.forceFullRebuild ||
+      orchestratorBuggy ||
+      ctx.engineName !== 'native';
     if (!forceJs && ctx.nativeDb?.buildGraph) {
       try {
         const resultJson = ctx.nativeDb.buildGraph(
@@ -353,17 +370,38 @@ export async function buildGraph(
           nodeCount?: number;
           edgeCount?: number;
           fileCount?: number;
+          changedCount?: number;
+          removedCount?: number;
+          isFullBuild?: boolean;
         };
 
         if (result.earlyExit) {
+          info('No changes detected');
           closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
           return;
         }
 
+        // Log incremental status to match JS pipeline output
+        const changed = result.changedCount ?? 0;
+        const removed = result.removedCount ?? 0;
+        if (!result.isFullBuild && (changed > 0 || removed > 0)) {
+          info(`Incremental: ${changed} changed, ${removed} removed`);
+        }
+
         // Map Rust timing fields to the JS BuildResult format.
         // Rust handles collect+detect+parse+insert+resolve+edges+structure+roles.
-        // AST/complexity/CFG/dataflow analyses are not yet ported to Rust.
         const p = result.phases;
+
+        // Sync build_meta so JS-side version/engine checks work on next build
+        setBuildMeta(ctx.db, {
+          engine: ctx.engineName,
+          engine_version: ctx.engineVersion || '',
+          codegraph_version: CODEGRAPH_VERSION,
+          schema_version: String(ctx.schemaVersion),
+          node_count: String(result.nodeCount ?? 0),
+          edge_count: String(result.edgeCount ?? 0),
+        });
+
         closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
         info(
           `Native build orchestrator completed: ${result.nodeCount ?? 0} nodes, ${result.edgeCount ?? 0} edges, ${result.fileCount ?? 0} files`,

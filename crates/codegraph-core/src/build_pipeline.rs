@@ -57,6 +57,9 @@ pub struct BuildPipelineResult {
     pub edge_count: i64,
     pub file_count: usize,
     pub early_exit: bool,
+    pub changed_count: usize,
+    pub removed_count: usize,
+    pub is_full_build: bool,
 }
 
 /// Normalize path to forward slashes.
@@ -191,6 +194,9 @@ pub fn run_pipeline(
             edge_count: 0,
             file_count: collect_result.files.len(),
             early_exit: true,
+            changed_count: 0,
+            removed_count: 0,
+            is_full_build: false,
         });
     }
 
@@ -247,8 +253,9 @@ pub fn run_pipeline(
 
     // Build file symbols map (relative path → FileSymbols)
     let mut file_symbols: HashMap<String, FileSymbols> = HashMap::new();
-    for sym in parsed {
-        let rel = normalize_path(&sym.file);
+    for mut sym in parsed {
+        let rel = relative_path(root_dir, &sym.file);
+        sym.file = rel.clone();
         file_symbols.insert(rel, sym);
     }
     timing.parse_ms = t0.elapsed().as_secs_f64() * 1000.0;
@@ -426,6 +433,9 @@ pub fn run_pipeline(
         edge_count,
         file_count: collect_result.files.len(),
         early_exit: false,
+        changed_count: parse_changes.len(),
+        removed_count: change_result.removed.len(),
+        is_full_build: change_result.is_full_build,
     })
 }
 
