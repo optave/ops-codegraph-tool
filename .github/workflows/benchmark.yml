@@ -156,7 +156,8 @@ jobs:
 
   embedding-benchmark:
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    # 7 models x 20 min each = 140 min worst-case + ~30 min setup/npm-wait headroom
+    timeout-minutes: 195
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&

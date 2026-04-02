@@ -181,14 +181,14 @@ function benchDepths(fn, name, depths) {
  * Handles relative paths (normal) and absolute-like paths without leading '/'
  * (observed on CI when the npm-installed buildGraph stores full paths).
  */
-function resolveDbFile(rootDir: string, dbFile: string): string {
-	if (path.isAbsolute(dbFile)) return dbFile;
+function resolveDbFile(rootDir: string, dbFile: string): string | null {
+	if (path.isAbsolute(dbFile)) return fs.existsSync(dbFile) ? dbFile : null;
 	const joined = path.join(rootDir, dbFile);
 	if (fs.existsSync(joined)) return joined;
 	// DB may store an absolute path without the leading '/'
 	const withSlash = '/' + dbFile;
 	if (fs.existsSync(withSlash)) return withSlash;
-	return joined;
+	return null;
 }
 
 function benchDiffImpact(hubName) {
@@ -204,8 +204,8 @@ function benchDiffImpact(hubName) {
 	// environments store absolute-like paths without the leading '/'.  Handle
 	// both cases so the benchmark works regardless of DB path format.
 	const hubFile = resolveDbFile(root, row.file);
-	if (!fs.existsSync(hubFile)) {
-		console.error(`[benchDiffImpact] Cannot find hub file: ${hubFile} (row.file=${row.file})`);
+	if (!hubFile) {
+		console.error(`[benchDiffImpact] Cannot find hub file for row.file=${row.file}`);
 		return { latencyMs: 0, affectedFunctions: 0, affectedFiles: 0 };
 	}
 	const original = fs.readFileSync(hubFile, 'utf8');
