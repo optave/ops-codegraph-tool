@@ -1,4 +1,4 @@
-import { findFileNodes, type Repository, SqliteRepository } from '../../db/index.js';
+import { findFileNodes, type Repository } from '../../db/index.js';
 import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { resolveMethodViaHierarchy } from '../../shared/hierarchy.js';
@@ -124,9 +124,6 @@ export function fnDepsData(
       return { name, results: [] };
     }
 
-    // resolveMethodViaHierarchy needs raw db — use SqliteRepository.db when available
-    const rawDb = repo instanceof SqliteRepository ? repo.db : null;
-
     const results = nodes.map((node) => {
       const callees = repo.findCallees(node.id) as RelatedNodeRow[];
       const filteredCallees = noTests ? callees.filter((c) => !isTestFile(c.file)) : callees;
@@ -135,9 +132,9 @@ export function fnDepsData(
         node.id,
       ) as RelatedNodeRow[];
 
-      if (rawDb && node.kind === 'method' && node.name.includes('.')) {
+      if (node.kind === 'method' && node.name.includes('.')) {
         const methodName = node.name.split('.').pop()!;
-        const relatedMethods = resolveMethodViaHierarchy(rawDb, methodName);
+        const relatedMethods = resolveMethodViaHierarchy(repo, methodName);
         for (const rm of relatedMethods) {
           if (rm.id === node.id) continue;
           const extraCallers = repo.findCallers(rm.id) as RelatedNodeRow[];
