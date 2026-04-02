@@ -44,8 +44,18 @@ fn collect_function_nodes<'a>(
 }
 
 /// Parse source code and return a tree + language kind, or None if unsupported.
-fn parse_source(source: &str, file_path: &str) -> Option<(tree_sitter::Tree, LanguageKind)> {
-    let lang = LanguageKind::from_extension(file_path)?;
+/// When `lang_id` is provided, it is used as the primary language hint (supports
+/// files whose language is inferred by content rather than extension, e.g. `.vue`
+/// files tagged as `"javascript"` or extension-less files with a shebang).
+/// Falls back to extension detection when `lang_id` is `None`.
+fn parse_source(
+    source: &str,
+    file_path: &str,
+    lang_id: Option<&str>,
+) -> Option<(tree_sitter::Tree, LanguageKind)> {
+    let lang = lang_id
+        .and_then(LanguageKind::from_lang_id)
+        .or_else(|| LanguageKind::from_extension(file_path))?;
     let mut parser = Parser::new();
     parser.set_language(&lang.tree_sitter_language()).ok()?;
     let tree = parser.parse(source.as_bytes(), None)?;
@@ -57,8 +67,9 @@ fn parse_source(source: &str, file_path: &str) -> Option<(tree_sitter::Tree, Lan
 pub fn analyze_complexity_standalone(
     source: &str,
     file_path: &str,
+    lang_id: Option<&str>,
 ) -> Vec<FunctionComplexityResult> {
-    let (tree, lang) = match parse_source(source, file_path) {
+    let (tree, lang) = match parse_source(source, file_path, lang_id) {
         Some(v) => v,
         None => return Vec::new(),
     };
@@ -91,8 +102,8 @@ pub fn analyze_complexity_standalone(
 
 /// Build control-flow graphs for all functions in the given source.
 /// Returns per-function results with name, line, and CFG data.
-pub fn build_cfg_standalone(source: &str, file_path: &str) -> Vec<FunctionCfgResult> {
-    let (tree, lang) = match parse_source(source, file_path) {
+pub fn build_cfg_standalone(source: &str, file_path: &str, lang_id: Option<&str>) -> Vec<FunctionCfgResult> {
+    let (tree, lang) = match parse_source(source, file_path, lang_id) {
         Some(v) => v,
         None => return Vec::new(),
     };
@@ -130,7 +141,7 @@ pub fn build_cfg_standalone(source: &str, file_path: &str) -> Vec<FunctionCfgRes
 
 /// Extract dataflow analysis for the given source.
 /// Returns file-level dataflow result (parameters, returns, assignments, arg flows, mutations).
-pub fn extract_dataflow_standalone(source: &str, file_path: &str) -> Option<DataflowResult> {
-    let (tree, lang) = parse_source(source, file_path)?;
+pub fn extract_dataflow_standalone(source: &str, file_path: &str, lang_id: Option<&str>) -> Option<DataflowResult> {
+    let (tree, lang) = parse_source(source, file_path, lang_id)?;
     extract_dataflow(&tree, source.as_bytes(), lang.lang_id_str())
 }

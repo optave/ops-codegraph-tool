@@ -151,7 +151,7 @@ function runNativeAnalysis(
     // Complexity
     if (needsComplexity && native.analyzeComplexity) {
       try {
-        const results = native.analyzeComplexity(source, absPath);
+        const results = native.analyzeComplexity(source, absPath, langId);
         storeNativeComplexityResults(results, defs);
       } catch (err: unknown) {
         debug(`native analyzeComplexity failed for ${relPath}: ${(err as Error).message}`);
@@ -161,7 +161,7 @@ function runNativeAnalysis(
     // CFG
     if (needsCfg && native.buildCfgAnalysis) {
       try {
-        const results = native.buildCfgAnalysis(source, absPath);
+        const results = native.buildCfgAnalysis(source, absPath, langId);
         storeNativeCfgResults(results, defs);
       } catch (err: unknown) {
         debug(`native buildCfgAnalysis failed for ${relPath}: ${(err as Error).message}`);
@@ -171,7 +171,7 @@ function runNativeAnalysis(
     // Dataflow
     if (needsDataflow && native.extractDataflowAnalysis) {
       try {
-        const result = native.extractDataflowAnalysis(source, absPath);
+        const result = native.extractDataflowAnalysis(source, absPath, langId);
         if (result) symbols.dataflow = result;
       } catch (err: unknown) {
         debug(`native extractDataflowAnalysis failed for ${relPath}: ${(err as Error).message}`);
