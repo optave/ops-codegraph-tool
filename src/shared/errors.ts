@@ -6,6 +6,8 @@
  * MCP returns structured { isError, code } responses.
  */
 
+import { debug } from '../infrastructure/logger.js';
+
 export interface CodegraphErrorOpts {
   code?: string;
   file?: string;
@@ -76,4 +78,42 @@ export class BoundaryError extends CodegraphError {
 /** Safely extract a string message from an unknown thrown value. */
 export function toErrorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/**
+ * Run `fn` and return its result. If it throws, log a debug message and
+ * return `fallback` instead. Use this for intentional catch suppression
+ * where the error is expected and non-fatal (e.g. optional file reads,
+ * graceful feature probes, cleanup that may fail).
+ *
+ * @example
+ *   const version = suppressError(() => readPkgVersion(), 'read package version', '');
+ */
+export function suppressError<T>(fn: () => T, context: string, fallback: T): T {
+  try {
+    return fn();
+  } catch (e: unknown) {
+    debug(`${context}: ${toErrorMessage(e)}`);
+    return fallback;
+  }
+}
+
+/**
+ * Async variant of {@link suppressError}. Awaits `fn()` and returns `fallback`
+ * on rejection, logging the error via `debug()`.
+ *
+ * @example
+ *   const data = await suppressErrorAsync(() => fetchOptionalData(), 'fetch data', null);
+ */
+export async function suppressErrorAsync<T>(
+  fn: () => Promise<T>,
+  context: string,
+  fallback: T,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (e: unknown) {
+    debug(`${context}: ${toErrorMessage(e)}`);
+    return fallback;
+  }
 }
