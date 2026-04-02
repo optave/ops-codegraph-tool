@@ -80,7 +80,7 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 
 | Capability | codegraph | [joern](https://github.com/joernio/joern) | [narsil-mcp](https://github.com/postrv/narsil-mcp) | [cpg](https://github.com/Fraunhofer-AISEC/cpg) | [axon](https://github.com/harshkedia177/axon) | [GitNexus](https://github.com/abhigyanpatwari/GitNexus) |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|
-| Languages | **23** | ~12 | **32** | ~10 | 3 | 13 |
+| Languages | **34** | ~12 | **32** | ~10 | 3 | 13 |
 | MCP server | **Yes** | — | **Yes** | **Yes** | **Yes** | **Yes** |
 | Dataflow + CFG + AST querying | **Yes** | **Yes** | **Yes**¹ | **Yes** | — | — |
 | Hybrid search (BM25 + semantic) | **Yes** | — | — | — | **Yes** | **Yes** |
@@ -104,9 +104,9 @@ No config files, no Docker, no JVM, no API keys, no accounts. Point your agent a
 | **🔬** | **Function-level, not just files** | Traces `handleAuth()` → `validateToken()` → `decryptJWT()` and shows 14 callers across 9 files break if `decryptJWT` changes |
 | **⚡** | **Always-fresh graph** | Three-tier change detection: journal (O(changed)) → mtime+size (O(n) stats) → hash (O(changed) reads). Sub-second rebuilds — agents work with current data |
 | **💥** | **Git diff impact** | `codegraph diff-impact` shows changed functions, their callers, and full blast radius — enriched with historically coupled files from git co-change analysis. Ships with a GitHub Actions workflow |
-| **🌐** | **Multi-language, one graph** | JS/TS + Python + Go + Rust + Java + C# + PHP + Ruby + C + C++ + Kotlin + Swift + Scala + Bash + HCL + Elixir + Lua + Dart + Zig + Haskell + OCaml in a single graph — agents don't need per-language tools |
+| **🌐** | **Multi-language, one graph** | 34 languages in a single graph — JS/TS, Python, Go, Rust, Java, C#, PHP, Ruby, C/C++, Kotlin, Swift, Scala, Bash, HCL, Elixir, Lua, Dart, Zig, Haskell, OCaml, F#, Gleam, Clojure, Julia, R, Erlang, Solidity, Objective-C, CUDA, Groovy, Verilog — agents don't need per-language tools |
 | **🧠** | **Hybrid search** | BM25 keyword + semantic embeddings fused via RRF — `hybrid` (default), `semantic`, or `keyword` mode; multi-query via `"auth; token; JWT"` |
-| **🔬** | **Dataflow + CFG** | Track how data flows through functions (`flows_to`, `returns`, `mutates`) and visualize intraprocedural control flow graphs for all 23 languages |
+| **🔬** | **Dataflow + CFG** | Track how data flows through functions (`flows_to`, `returns`, `mutates`) and visualize intraprocedural control flow graphs for all 34 languages |
 | **🔓** | **Fully local, zero cost** | No API keys, no accounts, no network calls. Optionally bring your own LLM provider — your code only goes where you choose |
 
 ---
@@ -186,7 +186,7 @@ cd codegraph && npm install && npm link
 | 🧠 | **Semantic search** | Embeddings-powered natural language search with multi-query RRF ranking |
 | 👀 | **Watch mode** | Incrementally update the graph as files change |
 | ⚡ | **Always fresh** | Three-tier incremental detection — sub-second rebuilds even on large codebases |
-| 🔬 | **Data flow analysis** | Intraprocedural parameter tracking, return consumers, argument flows, and mutation detection — all 23 languages |
+| 🔬 | **Data flow analysis** | Intraprocedural parameter tracking, return consumers, argument flows, and mutation detection — all 34 languages |
 | 🧮 | **Complexity metrics** | Cognitive, cyclomatic, nesting depth, Halstead, and Maintainability Index per function |
 | 🏘️ | **Community detection** | Leiden clustering to discover natural module boundaries and architectural drift |
 | 📜 | **Manifesto rule engine** | Configurable pass/fail rules with warn/fail thresholds for CI gates via `check` (exit code 1 on fail) |
@@ -199,8 +199,8 @@ cd codegraph && npm install && npm link
 | ✅ | **CI validation predicates** | `check` command with configurable gates: complexity, blast radius, cycles, boundary violations — exit code 0/1 for CI |
 | 📋 | **Composite audit** | Single `audit` command combining explain + impact + health metrics per function — one call instead of 3-4 |
 | 🚦 | **Triage queue** | `triage` merges connectivity, hotspots, roles, and complexity into a ranked audit priority queue |
-| 🔬 | **Dataflow analysis** | Track how data moves through functions with `flows_to`, `returns`, and `mutates` edges — all 23 languages, included by default, skip with `--no-dataflow` |
-| 🧩 | **Control flow graph** | Intraprocedural CFG construction for all 23 languages — `cfg` command with text/DOT/Mermaid output, included by default, skip with `--no-cfg` |
+| 🔬 | **Dataflow analysis** | Track how data moves through functions with `flows_to`, `returns`, and `mutates` edges — all 34 languages, included by default, skip with `--no-dataflow` |
+| 🧩 | **Control flow graph** | Intraprocedural CFG construction for all 34 languages — `cfg` command with text/DOT/Mermaid output, included by default, skip with `--no-cfg` |
 | 🔎 | **AST node querying** | Stored queryable AST nodes (calls, `new`, string, regex, throw, await) — `ast` command with SQL GLOB pattern matching |
 | 🧬 | **Expanded node/edge types** | `parameter`, `property`, `constant` node kinds with `parent_id` for sub-declaration queries; `contains`, `parameter_of`, `receiver` edge kinds |
 | 📊 | **Exports analysis** | `exports <file>` shows all exported symbols with per-symbol consumers, re-export detection, and counts |
@@ -320,7 +320,7 @@ codegraph ast -k call                 # Filter by kind: call, new, string, regex
 codegraph ast -k throw --file src/    # Combine kind and file filters
 ```
 
-> **Note:** Dataflow and CFG are included by default for all 23 languages. Use `--no-dataflow` / `--no-cfg` for faster builds.
+> **Note:** Dataflow and CFG are included by default for all 34 languages. Use `--no-dataflow` / `--no-cfg` for faster builds.
 
 
 ### Audit, Triage & Batch
@@ -494,6 +494,17 @@ codegraph registry remove <name>  # Unregister
 | ![Zig](https://img.shields.io/badge/-Zig-F7A41D?style=flat-square&logo=zig&logoColor=white) | `.zig` | ✓ | ✓ | ✓ | — | — | ✓ |
 | ![Haskell](https://img.shields.io/badge/-Haskell-5D4F85?style=flat-square&logo=haskell&logoColor=white) | `.hs` | ✓ | ✓ | ✓ | — | — | ✓ |
 | ![OCaml](https://img.shields.io/badge/-OCaml-EC6813?style=flat-square&logo=ocaml&logoColor=white) | `.ml`, `.mli` | ✓ | ✓ | ✓ | — | — | ✓ |
+| ![F#](https://img.shields.io/badge/-F%23-378BBA?style=flat-square&logo=fsharp&logoColor=white) | `.fs`, `.fsx`, `.fsi` | ✓ | ✓ | ✓ | — | — | ✓ |
+| ![Gleam](https://img.shields.io/badge/-Gleam-FFAFF3?style=flat-square&logoColor=black) | `.gleam` | ✓ | ✓ | ✓ | — | — | ✓ |
+| ![Clojure](https://img.shields.io/badge/-Clojure-5881D8?style=flat-square&logo=clojure&logoColor=white) | `.clj`, `.cljs`, `.cljc` | ✓ | ✓ | ✓ | — | — | ✓ |
+| ![Julia](https://img.shields.io/badge/-Julia-9558B2?style=flat-square&logo=julia&logoColor=white) | `.jl` | ✓ | ✓ | ✓ | — | — | ✓ |
+| ![R](https://img.shields.io/badge/-R-276DC3?style=flat-square&logo=r&logoColor=white) | `.r`, `.R` | ✓ | ✓ | ✓ | — | — | ✓ |
+| ![Erlang](https://img.shields.io/badge/-Erlang-A90533?style=flat-square&logo=erlang&logoColor=white) | `.erl`, `.hrl` | ✓ | ✓ | ✓ | — | — | ✓ |
+| ![Solidity](https://img.shields.io/badge/-Solidity-363636?style=flat-square&logo=solidity&logoColor=white) | `.sol` | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| ![Objective-C](https://img.shields.io/badge/-Objective--C-438EFF?style=flat-square&logoColor=white) | `.m` | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| ![CUDA](https://img.shields.io/badge/-CUDA-76B900?style=flat-square&logo=nvidia&logoColor=white) | `.cu`, `.cuh` | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| ![Groovy](https://img.shields.io/badge/-Groovy-4298B8?style=flat-square&logo=apachegroovy&logoColor=white) | `.groovy`, `.gvy` | ✓ | ✓ | ✓ | ✓ | — | ✓ |
+| ![Verilog](https://img.shields.io/badge/-Verilog-848484?style=flat-square&logoColor=white) | `.v`, `.sv` | ✓ | ✓ | ✓ | — | — | ✓ |
 | ![Terraform](https://img.shields.io/badge/-Terraform-844FBA?style=flat-square&logo=terraform&logoColor=white) | `.tf`, `.hcl` | ✓ | —³ | —³ | —³ | —³ | —³ |
 
 > ¹ **Heritage** = `extends`, `implements`, `include`/`extend` (Ruby), trait `impl` (Rust), receiver methods (Go).
@@ -798,7 +809,7 @@ See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap a
 6. ~~**Resolution Accuracy**~~ — **Complete** (v3.3.1) — type inference, receiver type tracking, dead role sub-categories, resolution benchmarks, `package.json` exports, monorepo workspace resolution
 7. ~~**TypeScript Migration**~~ — **Complete** (v3.4.0) — all 271 source files migrated from JS to TS, zero `.js` remaining
 8. ~~**Native Analysis Acceleration**~~ — **Complete** (v3.5.0) — all build phases in Rust/rusqlite, sub-100ms incremental rebuilds, better-sqlite3 lazy-loaded as fallback only
-9. **Expanded Language Support** — **In Progress** (v3.7.0) — Batch 1 shipped (C, C++, Kotlin, Swift, Scala, Bash), Batch 2 shipped (Elixir, Lua, Dart, Zig, Haskell, OCaml); 11 remaining in 2 batches (23 → 34)
+9. ~~**Expanded Language Support**~~ — **Complete** (v3.8.0) — 23 new languages in 4 batches (11 → 34), dual-engine WASM + Rust support for all
 10. **Analysis Depth** — TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis
 11. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
 12. **Quality, Security & Technical Debt** — supply-chain security (SBOM, SLSA), CI coverage gates, timer cleanup, tech debt kill list

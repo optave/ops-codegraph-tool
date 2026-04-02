@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.8.0](https://github.com/optave/ops-codegraph-tool/compare/v3.7.0...v3.8.0) (2026-04-01)
+
+**34 languages and a fully native build pipeline.** This release completes Phase 7 (Expanded Language Support) by shipping the final 11 languages — F#, Gleam, Clojure, Julia, R, Erlang, Solidity, Objective-C, CUDA, Groovy, and Verilog — bringing codegraph from 23 to 34 supported languages. On the performance side, the entire build pipeline now runs natively in Rust: graph algorithms (BFS, shortest path, Louvain, centrality), import edge building with barrel resolution, and build-glue queries all migrate from JS to napi-rs. A new Rust build orchestration layer coordinates the full native pipeline end-to-end.
+
+### Features
+
+* add F#, Gleam, Clojure, Julia, R, Erlang language support ([#722](https://github.com/optave/ops-codegraph-tool/pull/722))
+* add Solidity, Objective-C, CUDA, Groovy, Verilog language support ([#729](https://github.com/optave/ops-codegraph-tool/pull/729))
+* full Rust build orchestration ([#740](https://github.com/optave/ops-codegraph-tool/pull/740))
+
+### Bug Fixes
+
+* **native:** enable bulkInsertNodes native path ([#736](https://github.com/optave/ops-codegraph-tool/pull/736))
+* **native:** enable bulkInsertNodes native path — null-visibility serialisation ([#737](https://github.com/optave/ops-codegraph-tool/pull/737))
+* **native:** prevent SQLITE_CORRUPT in incremental pipeline ([#728](https://github.com/optave/ops-codegraph-tool/pull/728))
+* **ocaml:** use LANGUAGE_OCAML_INTERFACE grammar for .mli files ([#730](https://github.com/optave/ops-codegraph-tool/pull/730))
+* address unresolved review feedback from batch4 language extractors ([#731](https://github.com/optave/ops-codegraph-tool/pull/731))
+* **bench:** report partial native results when incremental rebuild fails ([#741](https://github.com/optave/ops-codegraph-tool/pull/741))
+
+### Performance
+
+* migrate graph algorithms (BFS, shortest path, Louvain, centrality) to Rust ([#732](https://github.com/optave/ops-codegraph-tool/pull/732))
+* migrate import edge building + barrel resolution to Rust ([#738](https://github.com/optave/ops-codegraph-tool/pull/738))
+* **native:** expose standalone complexity/CFG/dataflow analysis via napi-rs ([#733](https://github.com/optave/ops-codegraph-tool/pull/733))
+* native Rust build-glue queries (detect-changes, finalize, incremental) ([#735](https://github.com/optave/ops-codegraph-tool/pull/735))
+
+### Refactors
+
+* **native:** remove call kind from AST node extraction ([#734](https://github.com/optave/ops-codegraph-tool/pull/734))
+
 ## [3.7.0](https://github.com/optave/ops-codegraph-tool/compare/v3.6.0...v3.7.0) (2026-03-30)
 
 **Six more languages and a CFG stability fix.** Codegraph now supports Elixir, Lua, Dart, Zig, Haskell, and OCaml — bringing the total to 23 languages with dual-engine extractors. A WAL conflict in the native CFG bulk-insert path is also fixed, preventing database corruption when JS and native connections overlap during control-flow graph writes.
