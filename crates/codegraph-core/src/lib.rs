@@ -129,30 +129,36 @@ pub fn engine_version() -> String {
 
 /// Analyze complexity metrics for all functions in the given source.
 /// Returns per-function results (name, line, endLine, complexity metrics).
-/// Language is detected from the file extension or treated as a lang_id.
+/// When `lang_id` is provided, it takes priority over extension-based detection.
 #[napi]
 pub fn analyze_complexity(
     source: String,
     file_path: String,
+    lang_id: Option<String>,
 ) -> Vec<types::FunctionComplexityResult> {
-    analysis::analyze_complexity_standalone(&source, &file_path)
+    analysis::analyze_complexity_standalone(&source, &file_path, lang_id.as_deref())
 }
 
 /// Build control-flow graphs for all functions in the given source.
 /// Returns per-function results (name, line, endLine, CFG blocks + edges).
-/// Language is detected from the file extension or treated as a lang_id.
+/// When `lang_id` is provided, it takes priority over extension-based detection.
 #[napi]
-pub fn build_cfg_analysis(source: String, file_path: String) -> Vec<types::FunctionCfgResult> {
-    analysis::build_cfg_standalone(&source, &file_path)
+pub fn build_cfg_analysis(
+    source: String,
+    file_path: String,
+    lang_id: Option<String>,
+) -> Vec<types::FunctionCfgResult> {
+    analysis::build_cfg_standalone(&source, &file_path, lang_id.as_deref())
 }
 
 /// Extract dataflow analysis for the given source.
 /// Returns file-level dataflow (parameters, returns, assignments, arg flows, mutations).
-/// Language is detected from the file extension or treated as a lang_id.
+/// When `lang_id` is provided, it takes priority over extension-based detection.
 #[napi]
 pub fn extract_dataflow_analysis(
     source: String,
     file_path: String,
+    lang_id: Option<String>,
 ) -> Option<types::DataflowResult> {
-    analysis::extract_dataflow_standalone(&source, &file_path)
+    analysis::extract_dataflow_standalone(&source, &file_path, lang_id.as_deref())
 }

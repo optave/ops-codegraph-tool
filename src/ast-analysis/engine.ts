@@ -127,15 +127,17 @@ function runNativeAnalysis(
 
     const defs = symbols.definitions || [];
 
+    const langSupportsComplexity = COMPLEXITY_EXTENSIONS.has(ext) || COMPLEXITY_RULES.has(langId);
+    const langSupportsCfg = CFG_EXTENSIONS.has(ext) || CFG_RULES.has(langId);
+    const langSupportsDataflow = DATAFLOW_EXTENSIONS.has(ext) || DATAFLOW_RULES.has(langId);
+
     const needsComplexity =
-      doComplexity &&
-      COMPLEXITY_EXTENSIONS.has(ext) &&
-      defs.some((d) => hasFuncBody(d) && !d.complexity);
+      doComplexity && langSupportsComplexity && defs.some((d) => hasFuncBody(d) && !d.complexity);
     const needsCfg =
       doCfg &&
-      CFG_EXTENSIONS.has(ext) &&
+      langSupportsCfg &&
       defs.some((d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks));
-    const needsDataflow = doDataflow && !symbols.dataflow && DATAFLOW_EXTENSIONS.has(ext);
+    const needsDataflow = doDataflow && !symbols.dataflow && langSupportsDataflow;
 
     if (!needsComplexity && !needsCfg && !needsDataflow) continue;
 
@@ -151,7 +153,7 @@ function runNativeAnalysis(
     // Complexity
     if (needsComplexity && native.analyzeComplexity) {
       try {
-        const results = native.analyzeComplexity(source, absPath);
+        const results = native.analyzeComplexity(source, absPath, langId);
         storeNativeComplexityResults(results, defs);
       } catch (err: unknown) {
         debug(`native analyzeComplexity failed for ${relPath}: ${(err as Error).message}`);
@@ -161,7 +163,7 @@ function runNativeAnalysis(
     // CFG
     if (needsCfg && native.buildCfgAnalysis) {
       try {
-        const results = native.buildCfgAnalysis(source, absPath);
+        const results = native.buildCfgAnalysis(source, absPath, langId);
         storeNativeCfgResults(results, defs);
       } catch (err: unknown) {
         debug(`native buildCfgAnalysis failed for ${relPath}: ${(err as Error).message}`);
@@ -171,7 +173,7 @@ function runNativeAnalysis(
     // Dataflow
     if (needsDataflow && native.extractDataflowAnalysis) {
       try {
-        const result = native.extractDataflowAnalysis(source, absPath);
+        const result = native.extractDataflowAnalysis(source, absPath, langId);
         if (result) symbols.dataflow = result;
       } catch (err: unknown) {
         debug(`native extractDataflowAnalysis failed for ${relPath}: ${(err as Error).message}`);
@@ -305,16 +307,21 @@ async function ensureWasmTreesIfNeeded(
       !d.name.includes('.');
 
     // AST: need tree when native didn't provide non-call astNodes
-    const needsAst = doAst && !Array.isArray(symbols.astNodes) && WALK_EXTENSIONS.has(ext);
+    const lid = symbols._langId || '';
+    const needsAst =
+      doAst &&
+      !Array.isArray(symbols.astNodes) &&
+      (WALK_EXTENSIONS.has(ext) || AST_TYPE_MAPS.has(lid));
     const needsComplexity =
       doComplexity &&
-      COMPLEXITY_EXTENSIONS.has(ext) &&
+      (COMPLEXITY_EXTENSIONS.has(ext) || COMPLEXITY_RULES.has(lid)) &&
       defs.some((d) => hasFuncBody(d) && !d.complexity);
     const needsCfg =
       doCfg &&
-      CFG_EXTENSIONS.has(ext) &&
+      (CFG_EXTENSIONS.has(ext) || CFG_RULES.has(lid)) &&
       defs.some((d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks));
-    const needsDataflow = doDataflow && !symbols.dataflow && DATAFLOW_EXTENSIONS.has(ext);
+    const needsDataflow =
+      doDataflow && !symbols.dataflow && (DATAFLOW_EXTENSIONS.has(ext) || DATAFLOW_RULES.has(lid));
 
     if (needsAst || needsComplexity || needsCfg || needsDataflow) {
       needsWasmTrees = true;
@@ -396,9 +403,9 @@ function setupComplexityVisitorForFile(
 }
 
 /** Set up CFG visitor if any definitions need WASM CFG analysis. */
-function setupCfgVisitorForFile(defs: Definition[], langId: string, ext: string): Visitor | null {
+function setupCfgVisitorForFile(defs: Definition[], langId: string): Visitor | null {
   const cfgRulesForLang = CFG_RULES.get(langId);
-  if (!cfgRulesForLang || !CFG_EXTENSIONS.has(ext)) return null;
+  if (!cfgRulesForLang) return null;
 
   const needsWasmCfg = defs.some(
     (d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks),
@@ -432,12 +439,12 @@ function setupVisitors(
     opts.complexity !== false ? setupComplexityVisitorForFile(defs, langId, walkerOpts) : null;
   if (complexityVisitor) visitors.push(complexityVisitor);
 
-  const cfgVisitor = opts.cfg !== false ? setupCfgVisitorForFile(defs, langId, ext) : null;
+  const cfgVisitor = opts.cfg !== false ? setupCfgVisitorForFile(defs, langId) : null;
   if (cfgVisitor) visitors.push(cfgVisitor);
 
   let dataflowVisitor: Visitor | null = null;
   const dfRules = DATAFLOW_RULES.get(langId);
-  if (opts.dataflow !== false && dfRules && DATAFLOW_EXTENSIONS.has(ext) && !symbols.dataflow) {
+  if (opts.dataflow !== false && dfRules && !symbols.dataflow) {
     dataflowVisitor = createDataflowVisitor(dfRules);
     visitors.push(dataflowVisitor);
   }
