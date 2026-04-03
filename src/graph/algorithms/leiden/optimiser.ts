@@ -437,7 +437,6 @@ function boltzmannSelectCandidate(
  * (approaches greedy), higher = more exploratory. Determinism is preserved
  * via the seeded PRNG — same seed produces the same assignments.
  */
-
 function refineWithinCoarseCommunities(
   g: GraphAdapter,
   basePart: Partition,
