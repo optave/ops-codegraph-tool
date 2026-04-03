@@ -140,7 +140,7 @@ function tryHandleZigContainerDecl(
   return false;
 }
 
-/** Map a Zig container node type to a definition kind, or null if not a container. */
+/** Map a Zig container node type to a definition kind, or undefined if not a container. */
 function zigContainerKind(nodeType: string): 'struct' | 'enum' | undefined {
   if (nodeType === 'struct_declaration' || nodeType === 'union_declaration') return 'struct';
   if (nodeType === 'enum_declaration') return 'enum';
