@@ -65,6 +65,25 @@ interface RawSymbolRow {
 }
 
 /**
+ * Resolve a file hash, using the cache when available.
+ * Accepts a raw DB handle (with .prepare) or a Repository (with .getFileHash).
+ */
+function resolveFileHash(
+  db: DbHandle | HashSource,
+  file: string,
+  hashCache?: Map<string, string | null>,
+): string | null {
+  const lookupHash = isHashSource(db)
+    ? (f: string) => db.getFileHash(f)
+    : (f: string) => getFileHash(db as DbHandle, f);
+  if (!hashCache) return lookupHash(file);
+  if (!hashCache.has(file)) {
+    hashCache.set(file, lookupHash(file));
+  }
+  return hashCache.get(file) ?? null;
+}
+
+/**
  * Normalize a raw DB/query row into the stable 7-field symbol shape.
  * Accepts a raw DB handle (with .prepare), a Repository (with .getFileHash), or null.
  */
@@ -73,20 +92,7 @@ export function normalizeSymbol(
   db?: DbHandle | HashSource | null,
   hashCache?: Map<string, string | null>,
 ): NormalizedSymbol {
-  let fileHash: string | null = null;
-  if (db) {
-    const lookupHash = isHashSource(db)
-      ? (f: string) => db.getFileHash(f)
-      : (f: string) => getFileHash(db as DbHandle, f);
-    if (hashCache) {
-      if (!hashCache.has(row.file)) {
-        hashCache.set(row.file, lookupHash(row.file));
-      }
-      fileHash = hashCache.get(row.file) ?? null;
-    } else {
-      fileHash = lookupHash(row.file);
-    }
-  }
+  const fileHash = db ? resolveFileHash(db, row.file, hashCache) : null;
   return {
     name: row.name,
     kind: row.kind,

@@ -245,33 +245,39 @@ function extractPythonParameters(fnNode: TreeSitterNode): SubDeclaration[] {
   for (let i = 0; i < paramsNode.childCount; i++) {
     const child = paramsNode.child(i);
     if (!child) continue;
-    const t = child.type;
-    if (t === 'identifier') {
-      params.push({ name: child.text, kind: 'parameter', line: child.startPosition.row + 1 });
-    } else if (
-      t === 'typed_parameter' ||
-      t === 'default_parameter' ||
-      t === 'typed_default_parameter'
-    ) {
-      const nameNode = child.childForFieldName('name') || child.child(0);
-      if (nameNode && nameNode.type === 'identifier') {
-        params.push({
-          name: nameNode.text,
-          kind: 'parameter',
-          line: child.startPosition.row + 1,
-        });
-      }
-    } else if (t === 'list_splat_pattern' || t === 'dictionary_splat_pattern') {
-      for (let j = 0; j < child.childCount; j++) {
-        const inner = child.child(j);
-        if (inner && inner.type === 'identifier') {
-          params.push({ name: inner.text, kind: 'parameter', line: child.startPosition.row + 1 });
-          break;
-        }
-      }
-    }
+    const param = extractSinglePyParam(child);
+    if (param) params.push(param);
   }
   return params;
+}
+
+/** Extract a single parameter declaration from a parameter node. */
+function extractSinglePyParam(child: TreeSitterNode): SubDeclaration | null {
+  const t = child.type;
+  if (t === 'identifier') {
+    return { name: child.text, kind: 'parameter', line: child.startPosition.row + 1 };
+  }
+  if (t === 'typed_parameter' || t === 'default_parameter' || t === 'typed_default_parameter') {
+    const nameNode = child.childForFieldName('name') || child.child(0);
+    if (nameNode && nameNode.type === 'identifier') {
+      return { name: nameNode.text, kind: 'parameter', line: child.startPosition.row + 1 };
+    }
+  }
+  if (t === 'list_splat_pattern' || t === 'dictionary_splat_pattern') {
+    return extractSplatParam(child);
+  }
+  return null;
+}
+
+/** Extract the identifier name from a *args or **kwargs splat pattern. */
+function extractSplatParam(node: TreeSitterNode): SubDeclaration | null {
+  for (let j = 0; j < node.childCount; j++) {
+    const inner = node.child(j);
+    if (inner && inner.type === 'identifier') {
+      return { name: inner.text, kind: 'parameter', line: node.startPosition.row + 1 };
+    }
+  }
+  return null;
 }
 
 /** Extract class-level assignment properties from expression statements. */

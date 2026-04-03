@@ -9,6 +9,16 @@ import type { HalsteadDerivedMetrics, LOCMetrics, TreeSitterNode } from '../type
 
 // ─── Halstead Derived Metrics ─────────────────────────────────────────────
 
+/** Halstead delivered-bugs denominator (industry standard: V / 3000). */
+const HALSTEAD_BUGS_DIVISOR = 3000;
+
+/** Sum all values in a count map. */
+function sumCounts(map: Map<string, number>): number {
+  let total = 0;
+  for (const c of map.values()) total += c;
+  return total;
+}
+
 /**
  * Compute Halstead derived metrics from raw operator/operand counts.
  *
@@ -22,17 +32,15 @@ export function computeHalsteadDerived(
 ): HalsteadDerivedMetrics {
   const n1 = operators.size;
   const n2 = operands.size;
-  let bigN1 = 0;
-  for (const c of operators.values()) bigN1 += c;
-  let bigN2 = 0;
-  for (const c of operands.values()) bigN2 += c;
+  const bigN1 = sumCounts(operators);
+  const bigN2 = sumCounts(operands);
 
   const vocabulary = n1 + n2;
   const length = bigN1 + bigN2;
   const volume = vocabulary > 0 ? length * Math.log2(vocabulary) : 0;
   const difficulty = n2 > 0 ? (n1 / 2) * (bigN2 / n2) : 0;
   const effort = difficulty * volume;
-  const bugs = volume / 3000;
+  const bugs = volume / HALSTEAD_BUGS_DIVISOR;
 
   return {
     n1,
@@ -97,10 +105,20 @@ export function computeLOCMetrics(functionNode: TreeSitterNode, language?: strin
 // ─── Maintainability Index ────────────────────────────────────────────────
 
 /**
- * Compute normalized Maintainability Index (0-100 scale).
- *
- * Original SEI formula: MI = 171 - 5.2*ln(V) - 0.23*G - 16.2*ln(LOC) + 50*sin(sqrt(2.4*CM))
+ * SEI Maintainability Index formula coefficients.
+ * Original: MI = 171 - 5.2*ln(V) - 0.23*G - 16.2*ln(LOC) + 50*sin(sqrt(2.4*CM))
  * Microsoft normalization: max(0, min(100, MI * 100/171))
+ */
+const MI_BASE = 171;
+const MI_VOLUME_COEFF = 5.2;
+const MI_CYCLOMATIC_COEFF = 0.23;
+const MI_LOC_COEFF = 16.2;
+const MI_COMMENT_AMPLITUDE = 50;
+const MI_COMMENT_SCALE = 2.4;
+const MI_NORMALIZE_SCALE = 100;
+
+/**
+ * Compute normalized Maintainability Index (0-100 scale).
  *
  * @param {number} volume - Halstead volume
  * @param {number} cyclomatic - Cyclomatic complexity
@@ -117,12 +135,16 @@ export function computeMaintainabilityIndex(
   const safeVolume = Math.max(volume, 1);
   const safeSLOC = Math.max(sloc, 1);
 
-  let mi = 171 - 5.2 * Math.log(safeVolume) - 0.23 * cyclomatic - 16.2 * Math.log(safeSLOC);
+  let mi =
+    MI_BASE -
+    MI_VOLUME_COEFF * Math.log(safeVolume) -
+    MI_CYCLOMATIC_COEFF * cyclomatic -
+    MI_LOC_COEFF * Math.log(safeSLOC);
 
   if (commentRatio != null && commentRatio > 0) {
-    mi += 50 * Math.sin(Math.sqrt(2.4 * commentRatio));
+    mi += MI_COMMENT_AMPLITUDE * Math.sin(Math.sqrt(MI_COMMENT_SCALE * commentRatio));
   }
 
-  const normalized = Math.max(0, Math.min(100, (mi * 100) / 171));
+  const normalized = Math.max(0, Math.min(MI_NORMALIZE_SCALE, (mi * MI_NORMALIZE_SCALE) / MI_BASE));
   return +normalized.toFixed(1);
 }

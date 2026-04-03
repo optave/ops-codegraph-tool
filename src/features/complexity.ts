@@ -109,6 +109,163 @@ export const computeMaintainabilityIndex = _computeMaintainabilityIndex;
 
 // ─── Algorithm: Single-Traversal DFS ──────────────────────────────────────
 
+interface ComplexityAccumulator {
+  cognitive: number;
+  cyclomatic: number;
+  maxNesting: number;
+}
+
+type WalkFn = (n: TreeSitterNode | null, level: number, isTop: boolean) => void;
+
+/** Walk all children at the given nesting level. */
+function walkChildren(node: TreeSitterNode, nestingLevel: number, walkFn: WalkFn): void {
+  for (let i = 0; i < node.childCount; i++) {
+    walkFn(node.child(i), nestingLevel, false);
+  }
+}
+
+/** Handle logical operators in binary expressions. Returns true if handled. */
+function handleLogicalOperator(
+  node: TreeSitterNode,
+  type: string,
+  rules: ComplexityRules,
+  acc: ComplexityAccumulator,
+  nestingLevel: number,
+  walkFn: WalkFn,
+): boolean {
+  if (type !== rules.logicalNodeType) return false;
+
+  const op = node.child(1)?.type;
+  if (!op || !rules.logicalOperators.has(op)) return false;
+
+  acc.cyclomatic++;
+
+  // Cognitive: +1 only when operator changes from the previous sibling sequence
+  const parent = node.parent;
+  const sameSequence = parent?.type === rules.logicalNodeType && parent.child(1)?.type === op;
+  if (!sameSequence) acc.cognitive++;
+
+  walkChildren(node, nestingLevel, walkFn);
+  return true;
+}
+
+/** Handle else clause wrapping an if (Pattern A: JS/C#/Rust). Returns true if handled. */
+function handleElseClause(
+  node: TreeSitterNode,
+  type: string,
+  rules: ComplexityRules,
+  acc: ComplexityAccumulator,
+  nestingLevel: number,
+  walkFn: WalkFn,
+): boolean {
+  if (!rules.elseNodeType || type !== rules.elseNodeType) return false;
+
+  const firstChild = node.namedChild(0);
+  if (firstChild && firstChild.type === rules.ifNodeType) {
+    // else-if: the if_statement child handles its own increment
+    walkChildren(node, nestingLevel, walkFn);
+    return true;
+  }
+  // Plain else
+  acc.cognitive++;
+  walkChildren(node, nestingLevel, walkFn);
+  return true;
+}
+
+/** Detect and handle else-if patterns (Patterns A, B, C). Returns true if handled. */
+function handleElseIf(
+  node: TreeSitterNode,
+  type: string,
+  rules: ComplexityRules,
+  acc: ComplexityAccumulator,
+  nestingLevel: number,
+  walkFn: WalkFn,
+): boolean {
+  // Pattern B: explicit elif node (Python/Ruby/PHP)
+  if (rules.elifNodeType && type === rules.elifNodeType) {
+    acc.cognitive++;
+    acc.cyclomatic++;
+    walkChildren(node, nestingLevel, walkFn);
+    return true;
+  }
+
+  // Detect else-if via Pattern A or C
+  if (type === rules.ifNodeType) {
+    let isElseIf = false;
+    if (rules.elseViaAlternative) {
+      // Pattern C (Go/Java): if_statement is the alternative of parent if_statement
+      isElseIf =
+        node.parent?.type === rules.ifNodeType &&
+        node.parent.childForFieldName('alternative')?.id === node.id;
+    } else if (rules.elseNodeType) {
+      // Pattern A (JS/C#/Rust): if_statement inside else_clause
+      isElseIf = node.parent?.type === rules.elseNodeType;
+    }
+    if (isElseIf) {
+      acc.cognitive++;
+      acc.cyclomatic++;
+      walkChildren(node, nestingLevel, walkFn);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/** Handle branch/control flow nodes. Returns true if handled. */
+function handleBranchNode(
+  node: TreeSitterNode,
+  type: string,
+  rules: ComplexityRules,
+  acc: ComplexityAccumulator,
+  nestingLevel: number,
+  walkFn: WalkFn,
+): boolean {
+  if (!rules.branchNodes.has(type) || node.childCount === 0) return false;
+
+  if (handleElseClause(node, type, rules, acc, nestingLevel, walkFn)) return true;
+  if (handleElseIf(node, type, rules, acc, nestingLevel, walkFn)) return true;
+
+  // Regular branch node
+  acc.cognitive += 1 + nestingLevel; // structural + nesting
+  acc.cyclomatic++;
+
+  // Switch-like nodes don't add cyclomatic themselves (cases do)
+  if (rules.switchLikeNodes?.has(type)) {
+    acc.cyclomatic--;
+  }
+
+  if (rules.nestingNodes.has(type)) {
+    walkChildren(node, nestingLevel + 1, walkFn);
+    return true;
+  }
+
+  return false;
+}
+
+/** Handle Pattern C plain else: block is the alternative of an if_statement (Go/Java). */
+function handlePatternCElse(
+  node: TreeSitterNode,
+  type: string,
+  rules: ComplexityRules,
+  acc: ComplexityAccumulator,
+  nestingLevel: number,
+  walkFn: WalkFn,
+): boolean {
+  if (
+    !rules.elseViaAlternative ||
+    type === rules.ifNodeType ||
+    node.parent?.type !== rules.ifNodeType ||
+    node.parent.childForFieldName('alternative')?.id !== node.id
+  ) {
+    return false;
+  }
+
+  acc.cognitive++;
+  walkChildren(node, nestingLevel, walkFn);
+  return true;
+}
+
 export function computeFunctionComplexity(
   functionNode: TreeSitterNode,
   language: string,
@@ -116,158 +273,38 @@ export function computeFunctionComplexity(
   const rules = COMPLEXITY_RULES.get(language) as ComplexityRules | undefined;
   if (!rules) return null;
 
-  let cognitive = 0;
-  let cyclomatic = 1; // McCabe starts at 1
-  let maxNesting = 0;
+  const acc: ComplexityAccumulator = { cognitive: 0, cyclomatic: 1, maxNesting: 0 };
 
   function walk(node: TreeSitterNode | null, nestingLevel: number, isTopFunction: boolean): void {
     if (!node) return;
 
     const type = node.type;
 
-    // Track nesting depth
-    if (nestingLevel > maxNesting) maxNesting = nestingLevel;
+    if (nestingLevel > acc.maxNesting) acc.maxNesting = nestingLevel;
 
-    // Handle logical operators in binary expressions
-    if (type === rules?.logicalNodeType) {
-      const op = node.child(1)?.type;
-      if (op && rules?.logicalOperators.has(op)) {
-        // Cyclomatic: +1 for every logical operator
-        cyclomatic++;
+    if (handleLogicalOperator(node, type, rules!, acc, nestingLevel, walk)) return;
 
-        // Cognitive: +1 only when operator changes from the previous sibling sequence
-        // Walk up to check if parent is same type with same operator
-        const parent = node.parent;
-        let sameSequence = false;
-        if (parent && parent.type === rules?.logicalNodeType) {
-          const parentOp = parent.child(1)?.type;
-          if (parentOp === op) {
-            sameSequence = true;
-          }
-        }
-        if (!sameSequence) {
-          cognitive++;
-        }
+    // Optional chaining (cyclomatic only)
+    if (type === rules!.optionalChainType) acc.cyclomatic++;
 
-        // Walk children manually to avoid double-counting
-        for (let i = 0; i < node.childCount; i++) {
-          walk(node.child(i), nestingLevel, false);
-        }
-        return;
-      }
-    }
+    if (handleBranchNode(node, type, rules!, acc, nestingLevel, walk)) return;
+    if (handlePatternCElse(node, type, rules!, acc, nestingLevel, walk)) return;
 
-    // Handle optional chaining (cyclomatic only)
-    if (type === rules?.optionalChainType) {
-      cyclomatic++;
-    }
+    // Case nodes (cyclomatic only, skip keyword leaves)
+    if (rules!.caseNodes.has(type) && node.childCount > 0) acc.cyclomatic++;
 
-    // Handle branch/control flow nodes (skip keyword leaf tokens like Ruby's `if`)
-    if (rules?.branchNodes.has(type) && node.childCount > 0) {
-      // Pattern A: else clause wraps if (JS/C#/Rust)
-      if (rules?.elseNodeType && type === rules?.elseNodeType) {
-        const firstChild = node.namedChild(0);
-        if (firstChild && firstChild.type === rules?.ifNodeType) {
-          // else-if: the if_statement child handles its own increment
-          for (let i = 0; i < node.childCount; i++) {
-            walk(node.child(i), nestingLevel, false);
-          }
-          return;
-        }
-        // Plain else
-        cognitive++;
-        for (let i = 0; i < node.childCount; i++) {
-          walk(node.child(i), nestingLevel, false);
-        }
-        return;
-      }
-
-      // Pattern B: explicit elif node (Python/Ruby/PHP)
-      if (rules?.elifNodeType && type === rules?.elifNodeType) {
-        cognitive++;
-        cyclomatic++;
-        for (let i = 0; i < node.childCount; i++) {
-          walk(node.child(i), nestingLevel, false);
-        }
-        return;
-      }
-
-      // Detect else-if via Pattern A or C
-      let isElseIf = false;
-      if (type === rules?.ifNodeType) {
-        if (rules?.elseViaAlternative) {
-          // Pattern C (Go/Java): if_statement is the alternative of parent if_statement
-          isElseIf =
-            node.parent?.type === rules?.ifNodeType &&
-            node.parent.childForFieldName('alternative')?.id === node.id;
-        } else if (rules?.elseNodeType) {
-          // Pattern A (JS/C#/Rust): if_statement inside else_clause
-          isElseIf = node.parent?.type === rules?.elseNodeType;
-        }
-      }
-
-      if (isElseIf) {
-        cognitive++;
-        cyclomatic++;
-        for (let i = 0; i < node.childCount; i++) {
-          walk(node.child(i), nestingLevel, false);
-        }
-        return;
-      }
-
-      // Regular branch node
-      cognitive += 1 + nestingLevel; // structural + nesting
-      cyclomatic++;
-
-      // Switch-like nodes don't add cyclomatic themselves (cases do)
-      if (rules?.switchLikeNodes?.has(type)) {
-        cyclomatic--; // Undo the ++ above; cases handle cyclomatic
-      }
-
-      if (rules?.nestingNodes.has(type)) {
-        for (let i = 0; i < node.childCount; i++) {
-          walk(node.child(i), nestingLevel + 1, false);
-        }
-        return;
-      }
-    }
-
-    // Pattern C plain else: block that is the alternative of an if_statement (Go/Java)
-    if (
-      rules?.elseViaAlternative &&
-      type !== rules?.ifNodeType &&
-      node.parent?.type === rules?.ifNodeType &&
-      node.parent.childForFieldName('alternative')?.id === node.id
-    ) {
-      cognitive++;
-      for (let i = 0; i < node.childCount; i++) {
-        walk(node.child(i), nestingLevel, false);
-      }
+    // Nested function definitions (increase nesting)
+    if (!isTopFunction && rules!.functionNodes.has(type)) {
+      walkChildren(node, nestingLevel + 1, walk);
       return;
     }
 
-    // Handle case nodes (cyclomatic only, skip keyword leaves)
-    if (rules?.caseNodes.has(type) && node.childCount > 0) {
-      cyclomatic++;
-    }
-
-    // Handle nested function definitions (increase nesting)
-    if (!isTopFunction && rules?.functionNodes.has(type)) {
-      for (let i = 0; i < node.childCount; i++) {
-        walk(node.child(i), nestingLevel + 1, false);
-      }
-      return;
-    }
-
-    // Walk children
-    for (let i = 0; i < node.childCount; i++) {
-      walk(node.child(i), nestingLevel, false);
-    }
+    walkChildren(node, nestingLevel, walk);
   }
 
   walk(functionNode, 0, true);
 
-  return { cognitive, cyclomatic, maxNesting };
+  return { cognitive: acc.cognitive, cyclomatic: acc.cyclomatic, maxNesting: acc.maxNesting };
 }
 
 // ─── Merged Single-Pass Computation ───────────────────────────────────────

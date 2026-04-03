@@ -77,3 +77,9 @@ export class BoundaryError extends CodegraphError {
 export function toErrorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
+
+/**
+ * Catch-suppression helpers (`suppressError`, `suppressErrorAsync`) live in
+ * `infrastructure/suppress.ts` to avoid a shared→infrastructure layer inversion.
+ * Import them from there instead of from this module.
+ */

@@ -100,69 +100,8 @@ function handleZigVariable(node: TreeSitterNode, ctx: ExtractorOutput): void {
   if (!nameNode) return;
   const name = nameNode.text;
 
-  // Check if this is a struct/enum/union definition
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (!child) continue;
-
-    if (child.type === 'struct_declaration') {
-      const members = extractZigContainerFields(child);
-      ctx.definitions.push({
-        name,
-        kind: 'struct',
-        line: node.startPosition.row + 1,
-        endLine: nodeEndLine(node),
-        children: members.length > 0 ? members : undefined,
-        visibility: isZigPub(node) ? 'public' : undefined,
-      });
-      extractZigContainerMethods(child, name, ctx);
-      return;
-    }
-    if (child.type === 'enum_declaration') {
-      ctx.definitions.push({
-        name,
-        kind: 'enum',
-        line: node.startPosition.row + 1,
-        endLine: nodeEndLine(node),
-        visibility: isZigPub(node) ? 'public' : undefined,
-      });
-      return;
-    }
-    if (child.type === 'union_declaration') {
-      ctx.definitions.push({
-        name,
-        kind: 'struct',
-        line: node.startPosition.row + 1,
-        endLine: nodeEndLine(node),
-        visibility: isZigPub(node) ? 'public' : undefined,
-      });
-      return;
-    }
-  }
-
-  // Check for @import
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (!child) continue;
-    if (child.type === 'builtin_function') {
-      const builtinId = findChild(child, 'builtin_identifier');
-      if (builtinId?.text === '@import') {
-        const args = findChild(child, 'arguments');
-        if (args) {
-          const strArg = findChild(args, 'string_literal') || findChild(args, 'string');
-          if (strArg) {
-            const source = strArg.text.replace(/^"|"$/g, '');
-            ctx.imports.push({
-              source,
-              names: [name],
-              line: node.startPosition.row + 1,
-            });
-            return;
-          }
-        }
-      }
-    }
-  }
+  if (tryHandleZigContainerDecl(node, name, ctx)) return;
+  if (tryHandleZigImportDecl(node, name, ctx)) return;
 
   // Regular constant/variable
   const isConst = hasChildText(node, 'const');
@@ -172,6 +111,64 @@ function handleZigVariable(node: TreeSitterNode, ctx: ExtractorOutput): void {
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
   });
+}
+
+/** Try to handle a variable_declaration as a struct/enum/union. Returns true if handled. */
+function tryHandleZigContainerDecl(
+  node: TreeSitterNode,
+  name: string,
+  ctx: ExtractorOutput,
+): boolean {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    const containerKind = zigContainerKind(child.type);
+    if (!containerKind) continue;
+
+    const members = child.type === 'struct_declaration' ? extractZigContainerFields(child) : [];
+    ctx.definitions.push({
+      name,
+      kind: containerKind,
+      line: node.startPosition.row + 1,
+      endLine: nodeEndLine(node),
+      children: members.length > 0 ? members : undefined,
+      visibility: isZigPub(node) ? 'public' : undefined,
+    });
+    if (child.type === 'struct_declaration') extractZigContainerMethods(child, name, ctx);
+    return true;
+  }
+  return false;
+}
+
+/** Map a Zig container node type to a definition kind, or null if not a container. */
+function zigContainerKind(nodeType: string): 'struct' | 'enum' | undefined {
+  if (nodeType === 'struct_declaration' || nodeType === 'union_declaration') return 'struct';
+  if (nodeType === 'enum_declaration') return 'enum';
+  return undefined;
+}
+
+/** Try to handle a variable_declaration as an @import. Returns true if handled. */
+function tryHandleZigImportDecl(node: TreeSitterNode, name: string, ctx: ExtractorOutput): boolean {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child || child.type !== 'builtin_function') continue;
+    const source = extractZigImportSource(child);
+    if (source) {
+      ctx.imports.push({ source, names: [name], line: node.startPosition.row + 1 });
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Extract the import source path from a builtin_function node if it is @import. */
+function extractZigImportSource(builtinNode: TreeSitterNode): string | null {
+  const builtinId = findChild(builtinNode, 'builtin_identifier');
+  if (builtinId?.text !== '@import') return null;
+  const args = findChild(builtinNode, 'arguments');
+  if (!args) return null;
+  const strArg = findChild(args, 'string_literal') || findChild(args, 'string');
+  return strArg ? strArg.text.replace(/^"|"$/g, '') : null;
 }
 
 function extractZigContainerFields(container: TreeSitterNode): SubDeclaration[] {

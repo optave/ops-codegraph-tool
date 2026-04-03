@@ -83,32 +83,38 @@ function handleJavaClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
     children: classChildren.length > 0 ? classChildren : undefined,
   });
 
-  const superclass = node.childForFieldName('superclass');
-  if (superclass) {
-    for (let i = 0; i < superclass.childCount; i++) {
-      const child = superclass.child(i);
-      if (
-        child &&
-        (child.type === 'type_identifier' ||
-          child.type === 'identifier' ||
-          child.type === 'generic_type')
-      ) {
-        const superName = child.type === 'generic_type' ? child.child(0)?.text : child.text;
-        if (superName)
-          ctx.classes.push({
-            name: nameNode.text,
-            extends: superName,
-            line: node.startPosition.row + 1,
-          });
-        break;
-      }
-    }
-  }
+  extractJavaSuperclass(node, nameNode.text, ctx);
 
   const interfaces = node.childForFieldName('interfaces');
   if (interfaces) {
     extractJavaInterfaces(interfaces, nameNode.text, node.startPosition.row + 1, ctx);
   }
+}
+
+/** Extract the superclass (extends) relationship from a Java class declaration. */
+function extractJavaSuperclass(
+  node: TreeSitterNode,
+  className: string,
+  ctx: ExtractorOutput,
+): void {
+  const superclass = node.childForFieldName('superclass');
+  if (!superclass) return;
+  const superName = findJavaSuperTypeName(superclass);
+  if (superName) {
+    ctx.classes.push({ name: className, extends: superName, line: node.startPosition.row + 1 });
+  }
+}
+
+/** Find the type name from a superclass node (handles generic_type unwrapping). */
+function findJavaSuperTypeName(superclass: TreeSitterNode): string | undefined {
+  for (let i = 0; i < superclass.childCount; i++) {
+    const child = superclass.child(i);
+    if (!child) continue;
+    if (JAVA_TYPE_NODE_TYPES.has(child.type)) {
+      return resolveJavaIfaceName(child);
+    }
+  }
+  return undefined;
 }
 
 const JAVA_TYPE_NODE_TYPES = new Set(['type_identifier', 'identifier', 'generic_type']);
@@ -161,19 +167,26 @@ function handleJavaInterfaceDecl(node: TreeSitterNode, ctx: ExtractorOutput): vo
     endLine: nodeEndLine(node),
   });
   const body = node.childForFieldName('body');
-  if (body) {
-    for (let i = 0; i < body.childCount; i++) {
-      const child = body.child(i);
-      if (child && child.type === 'method_declaration') {
-        const methName = child.childForFieldName('name');
-        if (methName) {
-          ctx.definitions.push({
-            name: `${nameNode.text}.${methName.text}`,
-            kind: 'method',
-            line: child.startPosition.row + 1,
-            endLine: child.endPosition.row + 1,
-          });
-        }
+  if (body) extractJavaInterfaceMethods(body, nameNode.text, ctx);
+}
+
+/** Extract method declarations from a Java interface body. */
+function extractJavaInterfaceMethods(
+  body: TreeSitterNode,
+  ifaceName: string,
+  ctx: ExtractorOutput,
+): void {
+  for (let i = 0; i < body.childCount; i++) {
+    const child = body.child(i);
+    if (child && child.type === 'method_declaration') {
+      const methName = child.childForFieldName('name');
+      if (methName) {
+        ctx.definitions.push({
+          name: `${ifaceName}.${methName.text}`,
+          kind: 'method',
+          line: child.startPosition.row + 1,
+          endLine: child.endPosition.row + 1,
+        });
       }
     }
   }
@@ -321,21 +334,27 @@ function extractClassFields(classNode: TreeSitterNode): SubDeclaration[] {
   for (let i = 0; i < body.childCount; i++) {
     const member = body.child(i);
     if (!member || member.type !== 'field_declaration') continue;
-    for (let j = 0; j < member.childCount; j++) {
-      const child = member.child(j);
-      if (!child || child.type !== 'variable_declarator') continue;
-      const nameNode = child.childForFieldName('name');
-      if (nameNode) {
-        fields.push({
-          name: nameNode.text,
-          kind: 'property',
-          line: member.startPosition.row + 1,
-          visibility: extractModifierVisibility(member),
-        });
-      }
-    }
+    extractFieldDeclarators(member, fields);
   }
   return fields;
+}
+
+/** Extract variable_declarator names from a field_declaration node. */
+function extractFieldDeclarators(member: TreeSitterNode, fields: SubDeclaration[]): void {
+  const vis = extractModifierVisibility(member);
+  for (let j = 0; j < member.childCount; j++) {
+    const child = member.child(j);
+    if (!child || child.type !== 'variable_declarator') continue;
+    const nameNode = child.childForFieldName('name');
+    if (nameNode) {
+      fields.push({
+        name: nameNode.text,
+        kind: 'property',
+        line: member.startPosition.row + 1,
+        visibility: vis,
+      });
+    }
+  }
 }
 
 function extractEnumConstants(enumNode: TreeSitterNode): SubDeclaration[] {

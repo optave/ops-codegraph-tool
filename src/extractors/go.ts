@@ -80,21 +80,9 @@ function handleGoFuncDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 
 function handleGoMethodDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
-  const receiver = node.childForFieldName('receiver');
   if (!nameNode) return;
-  let receiverType: string | null = null;
-  if (receiver) {
-    for (let i = 0; i < receiver.childCount; i++) {
-      const param = receiver.child(i);
-      if (!param) continue;
-      const typeNode = param.childForFieldName('type');
-      if (typeNode) {
-        receiverType =
-          typeNode.type === 'pointer_type' ? typeNode.text.replace(/^\*/, '') : typeNode.text;
-        break;
-      }
-    }
-  }
+  const receiver = node.childForFieldName('receiver');
+  const receiverType = receiver ? extractGoReceiverType(receiver) : null;
   const fullName = receiverType ? `${receiverType}.${nameNode.text}` : nameNode.text;
   const params = extractGoParameters(node.childForFieldName('parameters'));
   ctx.definitions.push({
@@ -105,6 +93,19 @@ function handleGoMethodDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
     children: params.length > 0 ? params : undefined,
     visibility: goVisibility(nameNode.text),
   });
+}
+
+/** Extract the receiver type name from a method receiver parameter list. */
+function extractGoReceiverType(receiver: TreeSitterNode): string | null {
+  for (let i = 0; i < receiver.childCount; i++) {
+    const param = receiver.child(i);
+    if (!param) continue;
+    const typeNode = param.childForFieldName('type');
+    if (typeNode) {
+      return typeNode.type === 'pointer_type' ? typeNode.text.replace(/^\*/, '') : typeNode.text;
+    }
+  }
+  return null;
 }
 
 function handleGoTypeDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
@@ -403,37 +404,7 @@ function extractGoParameters(paramListNode: TreeSitterNode | null): SubDeclarati
  * This performs file-local matching (cross-file matching requires build-edges).
  */
 function matchGoStructuralInterfaces(ctx: ExtractorOutput): void {
-  const interfaceMethods = new Map<string, Set<string>>();
-  const structMethods = new Map<string, Set<string>>();
-  const structLines = new Map<string, number>();
-
-  // Collect interface and struct definitions
-  const interfaceNames = new Set<string>();
-  const structNames = new Set<string>();
-  for (const def of ctx.definitions) {
-    if (def.kind === 'interface') interfaceNames.add(def.name);
-    if (def.kind === 'struct') {
-      structNames.add(def.name);
-      structLines.set(def.name, def.line);
-    }
-  }
-
-  // Collect methods grouped by receiver type
-  for (const def of ctx.definitions) {
-    if (def.kind !== 'method' || !def.name.includes('.')) continue;
-    const dotIdx = def.name.indexOf('.');
-    const receiver = def.name.slice(0, dotIdx);
-    const method = def.name.slice(dotIdx + 1);
-
-    if (interfaceNames.has(receiver)) {
-      if (!interfaceMethods.has(receiver)) interfaceMethods.set(receiver, new Set());
-      interfaceMethods.get(receiver)?.add(method);
-    }
-    if (structNames.has(receiver)) {
-      if (!structMethods.has(receiver)) structMethods.set(receiver, new Set());
-      structMethods.get(receiver)?.add(method);
-    }
-  }
+  const { interfaceMethods, structMethods, structLines } = collectGoMethodSets(ctx);
 
   // Match: struct satisfies interface if it has all interface methods (name-only;
   // signatures are not verified — treat as candidate match, not definitive).
@@ -451,6 +422,45 @@ function matchGoStructuralInterfaces(ctx: ExtractorOutput): void {
       }
     }
   }
+}
+
+/** Collect interface and struct method sets from definitions for structural matching. */
+function collectGoMethodSets(ctx: ExtractorOutput): {
+  interfaceMethods: Map<string, Set<string>>;
+  structMethods: Map<string, Set<string>>;
+  structLines: Map<string, number>;
+} {
+  const interfaceMethods = new Map<string, Set<string>>();
+  const structMethods = new Map<string, Set<string>>();
+  const structLines = new Map<string, number>();
+  const interfaceNames = new Set<string>();
+  const structNames = new Set<string>();
+
+  for (const def of ctx.definitions) {
+    if (def.kind === 'interface') interfaceNames.add(def.name);
+    if (def.kind === 'struct') {
+      structNames.add(def.name);
+      structLines.set(def.name, def.line);
+    }
+  }
+
+  for (const def of ctx.definitions) {
+    if (def.kind !== 'method' || !def.name.includes('.')) continue;
+    const dotIdx = def.name.indexOf('.');
+    const receiver = def.name.slice(0, dotIdx);
+    const method = def.name.slice(dotIdx + 1);
+
+    if (interfaceNames.has(receiver)) {
+      if (!interfaceMethods.has(receiver)) interfaceMethods.set(receiver, new Set());
+      interfaceMethods.get(receiver)?.add(method);
+    }
+    if (structNames.has(receiver)) {
+      if (!structMethods.has(receiver)) structMethods.set(receiver, new Set());
+      structMethods.get(receiver)?.add(method);
+    }
+  }
+
+  return { interfaceMethods, structMethods, structLines };
 }
 
 function extractStructFields(structTypeNode: TreeSitterNode): SubDeclaration[] {

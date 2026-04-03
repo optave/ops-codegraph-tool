@@ -81,48 +81,7 @@ function handleKotlinClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void
 
   const kind = isInterface ? 'interface' : isEnum ? 'enum' : 'class';
 
-  const children: SubDeclaration[] = [];
-  if (isEnum) {
-    // Enum entries are inside class_body
-    const body = findChild(node, 'class_body');
-    if (body) {
-      for (let i = 0; i < body.childCount; i++) {
-        const child = body.child(i);
-        if (child && child.type === 'enum_entry') {
-          const entryName = findChild(child, 'simple_identifier');
-          if (entryName) {
-            children.push({
-              name: entryName.text,
-              kind: 'constant',
-              line: child.startPosition.row + 1,
-            });
-          }
-        }
-      }
-    }
-  } else {
-    // Extract properties from class_body
-    const body = findChild(node, 'class_body');
-    if (body) {
-      for (let i = 0; i < body.childCount; i++) {
-        const child = body.child(i);
-        if (child && child.type === 'property_declaration') {
-          const propName = findChild(child, 'variable_declaration');
-          if (propName) {
-            const id = findChild(propName, 'simple_identifier');
-            if (id) {
-              children.push({
-                name: id.text,
-                kind: 'property',
-                line: child.startPosition.row + 1,
-                visibility: extractModifierVisibility(child),
-              });
-            }
-          }
-        }
-      }
-    }
-  }
+  const children = isEnum ? collectKotlinEnumEntries(node) : collectKotlinProperties(node);
 
   ctx.definitions.push({
     name,
@@ -132,27 +91,79 @@ function handleKotlinClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void
     children: children.length > 0 ? children : undefined,
   });
 
-  // Methods inside class_body
+  collectKotlinMethods(node, name, ctx);
+  collectKotlinInheritance(node, name, ctx);
+}
+
+/** Collect enum constant entries from a class_body. */
+function collectKotlinEnumEntries(node: TreeSitterNode): SubDeclaration[] {
+  const entries: SubDeclaration[] = [];
   const body = findChild(node, 'class_body');
-  if (body) {
-    for (let i = 0; i < body.childCount; i++) {
-      const child = body.child(i);
-      if (child && child.type === 'function_declaration') {
-        const methName = findChild(child, 'simple_identifier');
-        if (methName) {
-          ctx.definitions.push({
-            name: `${name}.${methName.text}`,
-            kind: 'method',
-            line: child.startPosition.row + 1,
-            endLine: child.endPosition.row + 1,
-            visibility: extractModifierVisibility(child),
-          });
-        }
-      }
+  if (!body) return entries;
+  for (let i = 0; i < body.childCount; i++) {
+    const child = body.child(i);
+    if (!child || child.type !== 'enum_entry') continue;
+    const entryName = findChild(child, 'simple_identifier');
+    if (entryName) {
+      entries.push({
+        name: entryName.text,
+        kind: 'constant',
+        line: child.startPosition.row + 1,
+      });
     }
   }
+  return entries;
+}
 
-  // Inheritance: delegation_specifier nodes are DIRECT children
+/** Collect property declarations from a class_body. */
+function collectKotlinProperties(node: TreeSitterNode): SubDeclaration[] {
+  const props: SubDeclaration[] = [];
+  const body = findChild(node, 'class_body');
+  if (!body) return props;
+  for (let i = 0; i < body.childCount; i++) {
+    const child = body.child(i);
+    if (!child || child.type !== 'property_declaration') continue;
+    const varDecl = findChild(child, 'variable_declaration');
+    if (!varDecl) continue;
+    const id = findChild(varDecl, 'simple_identifier');
+    if (id) {
+      props.push({
+        name: id.text,
+        kind: 'property',
+        line: child.startPosition.row + 1,
+        visibility: extractModifierVisibility(child),
+      });
+    }
+  }
+  return props;
+}
+
+/** Collect method declarations from a class_body. */
+function collectKotlinMethods(node: TreeSitterNode, className: string, ctx: ExtractorOutput): void {
+  const body = findChild(node, 'class_body');
+  if (!body) return;
+  for (let i = 0; i < body.childCount; i++) {
+    const child = body.child(i);
+    if (!child || child.type !== 'function_declaration') continue;
+    const methName = findChild(child, 'simple_identifier');
+    if (methName) {
+      ctx.definitions.push({
+        name: `${className}.${methName.text}`,
+        kind: 'method',
+        line: child.startPosition.row + 1,
+        endLine: child.endPosition.row + 1,
+        visibility: extractModifierVisibility(child),
+      });
+    }
+  }
+}
+
+/** Collect inheritance relationships from delegation_specifier children. */
+function collectKotlinInheritance(
+  node: TreeSitterNode,
+  className: string,
+  ctx: ExtractorOutput,
+): void {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child || child.type !== 'delegation_specifier') continue;
@@ -161,30 +172,26 @@ function handleKotlinClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void
     const ctorInvocation = findChild(child, 'constructor_invocation');
     if (ctorInvocation) {
       const userType = findChild(ctorInvocation, 'user_type');
-      if (userType) {
-        const typeId = findChild(userType, 'type_identifier');
-        if (typeId) {
-          ctx.classes.push({
-            name,
-            extends: typeId.text,
-            line: node.startPosition.row + 1,
-          });
-        }
+      const typeId = userType ? findChild(userType, 'type_identifier') : null;
+      if (typeId) {
+        ctx.classes.push({
+          name: className,
+          extends: typeId.text,
+          line: node.startPosition.row + 1,
+        });
       }
       continue;
     }
 
     // user_type > type_identifier (implements)
     const userType = findChild(child, 'user_type');
-    if (userType) {
-      const typeId = findChild(userType, 'type_identifier');
-      if (typeId) {
-        ctx.classes.push({
-          name,
-          implements: typeId.text,
-          line: node.startPosition.row + 1,
-        });
-      }
+    const typeId = userType ? findChild(userType, 'type_identifier') : null;
+    if (typeId) {
+      ctx.classes.push({
+        name: className,
+        implements: typeId.text,
+        line: node.startPosition.row + 1,
+      });
     }
   }
 }

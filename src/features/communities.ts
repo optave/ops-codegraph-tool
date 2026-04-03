@@ -86,10 +86,7 @@ interface DriftResult {
   driftScore: number;
 }
 
-function analyzeDrift(
-  communities: CommunityObject[],
-  communityDirs: Map<number, Set<string>>,
-): DriftResult {
+function buildDirToCommunities(communityDirs: Map<number, Set<string>>): Map<string, Set<number>> {
   const dirToCommunities = new Map<string, Set<number>>();
   for (const [cid, dirs] of communityDirs) {
     for (const dir of dirs) {
@@ -97,20 +94,28 @@ function analyzeDrift(
       dirToCommunities.get(dir)!.add(cid);
     }
   }
+  return dirToCommunities;
+}
 
-  const splitCandidates: DriftResult['splitCandidates'] = [];
+function findSplitCandidates(
+  dirToCommunities: Map<string, Set<number>>,
+): DriftResult['splitCandidates'] {
+  const candidates: DriftResult['splitCandidates'] = [];
   for (const [dir, cids] of dirToCommunities) {
     if (cids.size >= 2) {
-      splitCandidates.push({ directory: dir, communityCount: cids.size });
+      candidates.push({ directory: dir, communityCount: cids.size });
     }
   }
-  splitCandidates.sort((a, b) => b.communityCount - a.communityCount);
+  candidates.sort((a, b) => b.communityCount - a.communityCount);
+  return candidates;
+}
 
-  const mergeCandidates: DriftResult['mergeCandidates'] = [];
+function findMergeCandidates(communities: CommunityObject[]): DriftResult['mergeCandidates'] {
+  const candidates: DriftResult['mergeCandidates'] = [];
   for (const c of communities) {
     const dirCount = Object.keys(c.directories).length;
     if (dirCount >= 2) {
-      mergeCandidates.push({
+      candidates.push({
         communityId: c.id,
         size: c.size,
         directoryCount: dirCount,
@@ -118,7 +123,17 @@ function analyzeDrift(
       });
     }
   }
-  mergeCandidates.sort((a, b) => b.directoryCount - a.directoryCount);
+  candidates.sort((a, b) => b.directoryCount - a.directoryCount);
+  return candidates;
+}
+
+function analyzeDrift(
+  communities: CommunityObject[],
+  communityDirs: Map<number, Set<string>>,
+): DriftResult {
+  const dirToCommunities = buildDirToCommunities(communityDirs);
+  const splitCandidates = findSplitCandidates(dirToCommunities);
+  const mergeCandidates = findMergeCandidates(communities);
 
   const totalDirs = dirToCommunities.size;
   const splitRatio = totalDirs > 0 ? splitCandidates.length / totalDirs : 0;

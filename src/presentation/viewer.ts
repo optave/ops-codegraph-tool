@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { debug } from '../infrastructure/logger.js';
 import { COMMUNITY_COLORS, DEFAULT_NODE_COLORS, DEFAULT_ROLE_COLORS } from './colors.js';
 
 // Re-export color constants so existing consumers are unaffected
@@ -74,8 +75,8 @@ export function loadPlotConfig(dir: string): PlotConfig {
             ...(raw.riskThresholds || {}),
           },
         };
-      } catch {
-        // Invalid JSON — use defaults
+      } catch (e) {
+        debug(`loadViewerConfig: invalid JSON in config file: ${(e as Error).message}`);
       }
     }
   }
@@ -179,19 +180,45 @@ export interface ViewerData {
   seedNodeIds: (number | string)[];
 }
 
-export function renderPlotHTML(data: ViewerData, cfg: PlotConfig): string {
-  const layoutOpts = buildLayoutOptions(cfg);
-  const title = cfg.title || 'Codegraph';
+interface ResolvedPlotConfig {
+  layoutOpts: LayoutOptions;
+  title: string;
+  layoutAlgorithm: string;
+  layoutDirection: string;
+  physicsEnabled: boolean;
+  sizeBy: string;
+  clusterBy: string;
+  effectiveColorBy: string;
+  effectiveRisk: boolean;
+}
 
-  // Resolve effective colorBy (overlays.complexity overrides)
-  const layoutAlgorithm = cfg.layout?.algorithm || 'hierarchical';
-  const layoutDirection = cfg.layout?.direction || 'LR';
-  const physicsEnabled = cfg.physics?.enabled !== false;
-  const sizeBy = cfg.sizeBy || 'uniform';
-  const clusterBy = cfg.clusterBy || 'none';
-  const effectiveColorBy =
-    cfg.overlays?.complexity && cfg.colorBy === 'kind' ? 'complexity' : cfg.colorBy || 'kind';
-  const effectiveRisk = cfg.overlays?.risk || false;
+function resolvePlotConfig(cfg: PlotConfig): ResolvedPlotConfig {
+  return {
+    layoutOpts: buildLayoutOptions(cfg),
+    title: cfg.title || 'Codegraph',
+    layoutAlgorithm: cfg.layout?.algorithm || 'hierarchical',
+    layoutDirection: cfg.layout?.direction || 'LR',
+    physicsEnabled: cfg.physics?.enabled !== false,
+    sizeBy: cfg.sizeBy || 'uniform',
+    clusterBy: cfg.clusterBy || 'none',
+    effectiveColorBy:
+      cfg.overlays?.complexity && cfg.colorBy === 'kind' ? 'complexity' : cfg.colorBy || 'kind',
+    effectiveRisk: cfg.overlays?.risk || false,
+  };
+}
+
+export function renderPlotHTML(data: ViewerData, cfg: PlotConfig): string {
+  const {
+    layoutOpts,
+    title,
+    layoutAlgorithm,
+    layoutDirection,
+    physicsEnabled,
+    sizeBy,
+    clusterBy,
+    effectiveColorBy,
+    effectiveRisk,
+  } = resolvePlotConfig(cfg);
 
   return `<!DOCTYPE html>
 <html lang="en">

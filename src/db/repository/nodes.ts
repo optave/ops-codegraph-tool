@@ -42,14 +42,8 @@ export function findNodesWithFanIn(
   return q.all(db, nativeDb);
 }
 
-/**
- * Fetch nodes for triage scoring: fan-in + complexity + churn.
- */
-export function findNodesForTriage(
-  db: BetterSqlite3Database,
-  opts: TriageQueryOpts = {},
-  nativeDb?: NativeDatabase,
-): TriageNodeRow[] {
+/** Validate kind and role options, throwing on invalid values. */
+function validateTriageOpts(opts: TriageQueryOpts): void {
   if (opts.kind && !(EVERY_SYMBOL_KIND as readonly string[]).includes(opts.kind)) {
     throw new ConfigError(
       `Invalid kind: ${opts.kind} (expected one of ${EVERY_SYMBOL_KIND.join(', ')})`,
@@ -58,6 +52,17 @@ export function findNodesForTriage(
   if (opts.role && !VALID_ROLES.includes(opts.role)) {
     throw new ConfigError(`Invalid role: ${opts.role} (expected one of ${VALID_ROLES.join(', ')})`);
   }
+}
+
+/**
+ * Fetch nodes for triage scoring: fan-in + complexity + churn.
+ */
+export function findNodesForTriage(
+  db: BetterSqlite3Database,
+  opts: TriageQueryOpts = {},
+  nativeDb?: NativeDatabase,
+): TriageNodeRow[] {
+  validateTriageOpts(opts);
 
   const kindsToUse = opts.kind ? [opts.kind] : ['function', 'method', 'class'];
   const q = new NodeQuery()
