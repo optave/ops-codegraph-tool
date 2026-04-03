@@ -178,7 +178,7 @@ export function loadConfig(cwd?: string): CodegraphConfig {
         _configCache.set(cwd, structuredClone(result));
         return result;
       } catch (err: unknown) {
-        debug(`Failed to parse config ${filePath}: ${(err as Error).message}`);
+        debug(`Failed to parse config ${filePath}: ${toErrorMessage(err)}`);
       }
     }
   }
@@ -229,7 +229,7 @@ export function resolveSecrets(config: CodegraphConfig): CodegraphConfig {
       (config.llm as Record<string, unknown>).apiKey = result;
     }
   } catch (err: unknown) {
-    warn(`apiKeyCommand failed: ${(err as Error).message}`);
+    warn(`apiKeyCommand failed: ${toErrorMessage(err)}`);
   }
   return config;
 }
@@ -253,7 +253,7 @@ function expandWorkspaceGlob(pattern: string, rootDir: string): string[] {
       .map((e) => path.join(baseDir, e.name))
       .filter((d) => fs.existsSync(path.join(d, 'package.json')));
   } catch (e) {
-    debug(`expandGlobDirs: failed to read ${baseDir}: ${(e as Error).message}`);
+    debug(`expandGlobDirs: failed to read ${baseDir}: ${toErrorMessage(e)}`);
     return [];
   }
 }
@@ -267,7 +267,7 @@ function readPackageName(pkgDir: string): string | null {
     const pkg = JSON.parse(raw);
     return pkg.name || null;
   } catch (e) {
-    debug(`readPackageName: failed for ${pkgDir}: ${(e as Error).message}`);
+    debug(`readPackageName: failed for ${pkgDir}: ${toErrorMessage(e)}`);
     return null;
   }
 }

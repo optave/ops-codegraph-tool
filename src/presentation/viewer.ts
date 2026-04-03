@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { debug } from '../infrastructure/logger.js';
+import { toErrorMessage } from '../shared/errors.js';
 import { COMMUNITY_COLORS, DEFAULT_NODE_COLORS, DEFAULT_ROLE_COLORS } from './colors.js';
 
 // Re-export color constants so existing consumers are unaffected
@@ -76,7 +77,7 @@ export function loadPlotConfig(dir: string): PlotConfig {
           },
         };
       } catch (e) {
-        debug(`loadViewerConfig: invalid JSON in config file: ${(e as Error).message}`);
+        debug(`loadViewerConfig: invalid JSON in config file: ${toErrorMessage(e)}`);
       }
     }
   }

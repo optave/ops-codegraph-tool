@@ -12,6 +12,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { bulkNodeIdsByFile } from '../../../../db/index.js';
 import { debug } from '../../../../infrastructure/logger.js';
+import { toErrorMessage } from '../../../../shared/errors.js';
 import type {
   BetterSqlite3Database,
   ExtractorOutput,
@@ -121,7 +122,7 @@ function buildFileHashes(
       try {
         code = readFileSafe(absPath);
       } catch (e) {
-        debug(`buildFileHashes: readFileSafe failed for ${relPath}: ${(e as Error).message}`);
+        debug(`buildFileHashes: readFileSafe failed for ${relPath}: ${toErrorMessage(e)}`);
         code = null;
       }
       if (code !== null) {
@@ -173,7 +174,7 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
       ctx.nativeDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     } catch (e) {
       debug(
-        `tryNativeInsert: WAL checkpoint failed (nativeDb may already be closed): ${(e as Error).message}`,
+        `tryNativeInsert: WAL checkpoint failed (nativeDb may already be closed): ${toErrorMessage(e)}`,
       );
     }
   }
@@ -347,7 +348,7 @@ function updateFileHashes(
       try {
         code = readFileSafe(absPath);
       } catch (e) {
-        debug(`updateFileHashes: readFileSafe failed for ${relPath}: ${(e as Error).message}`);
+        debug(`updateFileHashes: readFileSafe failed for ${relPath}: ${toErrorMessage(e)}`);
         code = null;
       }
       if (code !== null) {
@@ -388,7 +389,7 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
         return;
       }
     } catch (e) {
-      debug(`insertNodes: native insert failed, falling back to JS: ${(e as Error).message}`);
+      debug(`insertNodes: native insert failed, falling back to JS: ${toErrorMessage(e)}`);
     }
   }
 
@@ -404,7 +405,7 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
       'INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)',
     );
   } catch (e) {
-    debug(`insertNodes: file_hashes prepare failed (table may not exist): ${(e as Error).message}`);
+    debug(`insertNodes: file_hashes prepare failed (table may not exist): ${toErrorMessage(e)}`);
     upsertHash = null;
   }
 
