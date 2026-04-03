@@ -96,13 +96,26 @@ export function getModelConfig(modelKey?: string): ModelConfig {
 }
 
 /**
- * Prompt the user to install a missing package interactively.
+ * Attempt to install a missing package.
+ * In TTY environments, prompts the user for confirmation first.
+ * In non-TTY environments (CI, piped stdin), installs automatically with a log message.
  * Returns true if the package was installed, false otherwise.
- * Skips the prompt entirely in non-TTY environments (CI, piped stdin).
  * @internal Not part of the public barrel.
  */
 export function promptInstall(packageName: string): Promise<boolean> {
-  if (!process.stdin.isTTY) return Promise.resolve(false);
+  if (!process.stdin.isTTY) {
+    info(`Installing ${packageName} (optional dependency for semantic search)…`);
+    try {
+      execFileSync('npm', ['install', '--no-save', packageName], {
+        stdio: 'inherit',
+        timeout: 300_000,
+      });
+      return Promise.resolve(true);
+    } catch (err) {
+      info(`Auto-install failed: ${err instanceof Error ? err.message : String(err)}`);
+      return Promise.resolve(false);
+    }
+  }
 
   return new Promise((resolve) => {
     const rl = createInterface({ input: process.stdin, output: process.stderr });
@@ -128,7 +141,7 @@ export function promptInstall(packageName: string): Promise<boolean> {
 /**
  * Lazy-load @huggingface/transformers.
  * If the package is missing, prompts the user to install it interactively.
- * In non-TTY environments, prints an error and exits.
+ * In non-TTY environments, attempts automatic installation.
  * @internal Not part of the public barrel.
  */
 export async function loadTransformers(): Promise<unknown> {
