@@ -1,20 +1,12 @@
 import path from 'node:path';
 import { openReadonlyOrFail, openReadonlyWithNative, testFilterSQL } from '../../db/index.js';
-import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { loadConfig } from '../../infrastructure/config.js';
 import { debug } from '../../infrastructure/logger.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { DEAD_ROLE_PREFIX } from '../../shared/kinds.js';
-import type { BetterSqlite3Database, StmtCache } from '../../types.js';
+import type { BetterSqlite3Database } from '../../types.js';
 import { findCycles } from '../graph/cycles.js';
 import { LANGUAGE_REGISTRY } from '../parser.js';
-
-// ---------------------------------------------------------------------------
-// Statement caches (one prepared statement per db instance)
-// ---------------------------------------------------------------------------
-
-const _fileNodesStmtCache: StmtCache<{ id: number; file: string }> = new WeakMap();
-const _allNodesStmtCache: StmtCache<{ id: number; file: string }> = new WeakMap();
 
 export const FALSE_POSITIVE_NAMES = new Set([
   'run',
@@ -52,48 +44,11 @@ export const FALSE_POSITIVE_CALLER_THRESHOLD = 20;
 // Section helpers
 // ---------------------------------------------------------------------------
 
-const _fileNodesStmt: StmtCache<{ id: number; file: string }> = new WeakMap();
-const _allNodesIdFileStmt: StmtCache<{ id: number; file: string }> = new WeakMap();
-
-function buildTestFileIds(db: BetterSqlite3Database): Set<number> {
-  const allFileNodes = cachedStmt(
-    _fileNodesStmt,
-    db,
-    "SELECT id, file FROM nodes WHERE kind = 'file'",
-  ).all();
-  const testFileIds = new Set<number>();
-  const testFiles = new Set<string>();
-  for (const n of allFileNodes) {
-    if (isTestFile(n.file)) {
-      testFileIds.add(n.id);
-      testFiles.add(n.file);
-    }
-  }
-  const allNodes = cachedStmt(_allNodesIdFileStmt, db, 'SELECT id, file FROM nodes').all();
-  for (const n of allNodes) {
-    if (testFiles.has(n.file)) testFileIds.add(n.id);
-  }
-  return testFileIds;
-}
-
-function countNodesByKind(db: BetterSqlite3Database, testFileIds: Set<number> | null) {
-  let nodeRows: Array<{ kind: string; c: number }>;
-  if (testFileIds) {
-    const allNodes = db.prepare('SELECT id, kind, file FROM nodes').all() as Array<{
-      id: number;
-      kind: string;
-      file: string;
-    }>;
-    const filtered = allNodes.filter((n) => !testFileIds.has(n.id));
-    const counts: Record<string, number> = {};
-    for (const n of filtered) counts[n.kind] = (counts[n.kind] || 0) + 1;
-    nodeRows = Object.entries(counts).map(([kind, c]) => ({ kind, c }));
-  } else {
-    nodeRows = db.prepare('SELECT kind, COUNT(*) as c FROM nodes GROUP BY kind').all() as Array<{
-      kind: string;
-      c: number;
-    }>;
-  }
+function countNodesByKind(db: BetterSqlite3Database, noTests: boolean) {
+  const testFilter = testFilterSQL('file', noTests);
+  const nodeRows = db
+    .prepare(`SELECT kind, COUNT(*) as c FROM nodes WHERE 1=1 ${testFilter} GROUP BY kind`)
+    .all() as Array<{ kind: string; c: number }>;
   const byKind: Record<string, number> = {};
   let total = 0;
   for (const r of nodeRows) {
@@ -103,20 +58,21 @@ function countNodesByKind(db: BetterSqlite3Database, testFileIds: Set<number> | 
   return { total, byKind };
 }
 
-function countEdgesByKind(db: BetterSqlite3Database, testFileIds: Set<number> | null) {
+function countEdgesByKind(db: BetterSqlite3Database, noTests: boolean) {
   let edgeRows: Array<{ kind: string; c: number }>;
-  if (testFileIds) {
-    const allEdges = db.prepare('SELECT source_id, target_id, kind FROM edges').all() as Array<{
-      source_id: number;
-      target_id: number;
-      kind: string;
-    }>;
-    const filtered = allEdges.filter(
-      (e) => !testFileIds.has(e.source_id) && !testFileIds.has(e.target_id),
-    );
-    const counts: Record<string, number> = {};
-    for (const e of filtered) counts[e.kind] = (counts[e.kind] || 0) + 1;
-    edgeRows = Object.entries(counts).map(([kind, c]) => ({ kind, c }));
+  if (noTests) {
+    // Join edges with source node to filter out test files in SQL
+    const srcFilter = testFilterSQL('ns.file', true);
+    const tgtFilter = testFilterSQL('nt.file', true);
+    edgeRows = db
+      .prepare(`
+        SELECT e.kind, COUNT(*) as c FROM edges e
+        JOIN nodes ns ON e.source_id = ns.id
+        JOIN nodes nt ON e.target_id = nt.id
+        WHERE 1=1 ${srcFilter} ${tgtFilter}
+        GROUP BY e.kind
+      `)
+      .all() as Array<{ kind: string; c: number }>;
   } else {
     edgeRows = db.prepare('SELECT kind, COUNT(*) as c FROM edges GROUP BY kind').all() as Array<{
       kind: string;
@@ -157,16 +113,25 @@ function findHotspots(db: BetterSqlite3Database, noTests: boolean, limit: number
   const hotspotRows = db
     .prepare(`
       SELECT n.file,
-        (SELECT COUNT(*) FROM edges WHERE target_id = n.id) as fan_in,
-        (SELECT COUNT(*) FROM edges WHERE source_id = n.id) as fan_out
+        COALESCE(fi.cnt, 0) as fan_in,
+        COALESCE(fo.cnt, 0) as fan_out
       FROM nodes n
+      LEFT JOIN (
+        SELECT target_id, COUNT(*) AS cnt FROM edges
+        WHERE kind NOT IN ('contains', 'parameter_of', 'receiver')
+        GROUP BY target_id
+      ) fi ON fi.target_id = n.id
+      LEFT JOIN (
+        SELECT source_id, COUNT(*) AS cnt FROM edges
+        WHERE kind NOT IN ('contains', 'parameter_of', 'receiver')
+        GROUP BY source_id
+      ) fo ON fo.source_id = n.id
       WHERE n.kind = 'file' ${testFilter}
-      ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id)
-             + (SELECT COUNT(*) FROM edges WHERE source_id = n.id) DESC
+      ORDER BY COALESCE(fi.cnt, 0) + COALESCE(fo.cnt, 0) DESC
+      LIMIT ?
     `)
-    .all() as Array<{ file: string; fan_in: number; fan_out: number }>;
-  const filtered = noTests ? hotspotRows.filter((r) => !isTestFile(r.file)) : hotspotRows;
-  return filtered.slice(0, limit).map((r) => ({
+    .all(limit) as Array<{ file: string; fan_in: number; fan_out: number }>;
+  return hotspotRows.map((r) => ({
     file: r.file,
     fanIn: r.fan_in,
     fanOut: r.fan_out,
@@ -275,20 +240,12 @@ function computeQualityMetrics(
 }
 
 function countRoles(db: BetterSqlite3Database, noTests: boolean) {
-  let roleRows: Array<{ role: string; c: number }>;
-  if (noTests) {
-    const allRoleNodes = db
-      .prepare('SELECT role, file FROM nodes WHERE role IS NOT NULL')
-      .all() as Array<{ role: string; file: string }>;
-    const filtered = allRoleNodes.filter((n) => !isTestFile(n.file));
-    const counts: Record<string, number> = {};
-    for (const n of filtered) counts[n.role] = (counts[n.role] || 0) + 1;
-    roleRows = Object.entries(counts).map(([role, c]) => ({ role, c }));
-  } else {
-    roleRows = db
-      .prepare('SELECT role, COUNT(*) as c FROM nodes WHERE role IS NOT NULL GROUP BY role')
-      .all() as Array<{ role: string; c: number }>;
-  }
+  const testFilter = testFilterSQL('file', noTests);
+  const roleRows = db
+    .prepare(
+      `SELECT role, COUNT(*) as c FROM nodes WHERE role IS NOT NULL ${testFilter} GROUP BY role`,
+    )
+    .all() as Array<{ role: string; c: number }>;
   const roles: Record<string, number> & { dead?: number } = {};
   let deadTotal = 0;
   for (const r of roleRows) {
@@ -344,13 +301,23 @@ export function moduleMapData(customDbPath: string, limit = 20, opts: { noTests?
 
     const nodes = db
       .prepare(`
-      SELECT n.*,
-        (SELECT COUNT(*) FROM edges WHERE source_id = n.id AND kind NOT IN ('contains', 'parameter_of', 'receiver')) as out_edges,
-        (SELECT COUNT(*) FROM edges WHERE target_id = n.id AND kind NOT IN ('contains', 'parameter_of', 'receiver')) as in_edges
+      SELECT n.file,
+        COALESCE(fo.cnt, 0) as out_edges,
+        COALESCE(fi.cnt, 0) as in_edges
       FROM nodes n
+      LEFT JOIN (
+        SELECT source_id, COUNT(*) AS cnt FROM edges
+        WHERE kind NOT IN ('contains', 'parameter_of', 'receiver')
+        GROUP BY source_id
+      ) fo ON fo.source_id = n.id
+      LEFT JOIN (
+        SELECT target_id, COUNT(*) AS cnt FROM edges
+        WHERE kind NOT IN ('contains', 'parameter_of', 'receiver')
+        GROUP BY target_id
+      ) fi ON fi.target_id = n.id
       WHERE n.kind = 'file'
         ${testFilter}
-      ORDER BY (SELECT COUNT(*) FROM edges WHERE target_id = n.id AND kind NOT IN ('contains', 'parameter_of', 'receiver')) DESC
+      ORDER BY COALESCE(fi.cnt, 0) DESC
       LIMIT ?
     `)
       .all(limit) as Array<{ file: string; in_edges: number; out_edges: number }>;
@@ -486,10 +453,9 @@ export function statsData(customDbPath: string, opts: { noTests?: boolean; confi
 
     // ── JS fallback ───────────────────────────────────────────────────
     const testFilter = testFilterSQL('n.file', noTests);
-    const testFileIds = noTests ? buildTestFileIds(db) : null;
 
-    const { total: totalNodes, byKind: nodesByKind } = countNodesByKind(db, testFileIds);
-    const { total: totalEdges, byKind: edgesByKind } = countEdgesByKind(db, testFileIds);
+    const { total: totalNodes, byKind: nodesByKind } = countNodesByKind(db, noTests);
+    const { total: totalEdges, byKind: edgesByKind } = countEdgesByKind(db, noTests);
 
     const hotspots = findHotspots(db, noTests, 5);
     const embeddings = getEmbeddingsInfo(db);
