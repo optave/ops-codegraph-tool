@@ -88,6 +88,41 @@ export function extractParams(
   return result;
 }
 
+/** Extract names from a rest parameter (e.g. `...args`). */
+function extractRestParamNames(node: TreeSitterNode, rules: LanguageRules): string[] {
+  const nameNode = node.childForFieldName('name');
+  if (nameNode) return [nameNode.text];
+  for (const child of node.namedChildren) {
+    if (child.type === rules.paramIdentifier) return [child.text];
+  }
+  return [];
+}
+
+/** Extract names from an object destructuring pattern (e.g. `{ a, b: c }`). */
+function extractObjectDestructNames(node: TreeSitterNode, rules: LanguageRules): string[] {
+  const names: string[] = [];
+  for (const child of node.namedChildren) {
+    if (rules.shorthandPropPattern && child.type === rules.shorthandPropPattern) {
+      names.push(child.text);
+    } else if (rules.pairPatternType && child.type === rules.pairPatternType) {
+      const value = child.childForFieldName('value');
+      if (value) names.push(...extractParamNames(value, rules));
+    } else if (rules.restParamType && child.type === rules.restParamType) {
+      names.push(...extractParamNames(child, rules));
+    }
+  }
+  return names;
+}
+
+/** Extract names from an array destructuring pattern (e.g. `[a, b]`). */
+function extractArrayDestructNames(node: TreeSitterNode, rules: LanguageRules): string[] {
+  const names: string[] = [];
+  for (const child of node.namedChildren) {
+    names.push(...extractParamNames(child, rules));
+  }
+  return names;
+}
+
 /**
  * Extract parameter names from a single parameter node.
  */
@@ -113,35 +148,15 @@ export function extractParamNames(node: TreeSitterNode | null, rules: LanguageRu
   }
 
   if (rules.restParamType && t === rules.restParamType) {
-    const nameNode = node.childForFieldName('name');
-    if (nameNode) return [nameNode.text];
-    for (const child of node.namedChildren) {
-      if (child.type === rules.paramIdentifier) return [child.text];
-    }
-    return [];
+    return extractRestParamNames(node, rules);
   }
 
   if (rules.objectDestructType && t === rules.objectDestructType) {
-    const names: string[] = [];
-    for (const child of node.namedChildren) {
-      if (rules.shorthandPropPattern && child.type === rules.shorthandPropPattern) {
-        names.push(child.text);
-      } else if (rules.pairPatternType && child.type === rules.pairPatternType) {
-        const value = child.childForFieldName('value');
-        if (value) names.push(...extractParamNames(value, rules));
-      } else if (rules.restParamType && child.type === rules.restParamType) {
-        names.push(...extractParamNames(child, rules));
-      }
-    }
-    return names;
+    return extractObjectDestructNames(node, rules);
   }
 
   if (rules.arrayDestructType && t === rules.arrayDestructType) {
-    const names: string[] = [];
-    for (const child of node.namedChildren) {
-      names.push(...extractParamNames(child, rules));
-    }
-    return names;
+    return extractArrayDestructNames(node, rules);
   }
 
   return [];
@@ -153,6 +168,19 @@ export function extractParamNames(node: TreeSitterNode | null, rules: LanguageRu
 export function isIdent(nodeType: string, rules: LanguageRules): boolean {
   if (nodeType === 'identifier' || nodeType === rules.paramIdentifier) return true;
   return rules.extraIdentifierTypes ? rules.extraIdentifierTypes.has(nodeType) : false;
+}
+
+/** Resolve callee name from an optional chain node (e.g. `obj?.method()`). */
+function resolveOptionalChainCallee(fn: TreeSitterNode, rules: LanguageRules): string | null {
+  const target = fn.namedChildren[0];
+  if (!target) return null;
+  if (target.type === rules.memberNode) {
+    const prop = target.childForFieldName(rules.memberPropertyField);
+    return prop ? prop.text : null;
+  }
+  if (target.type === 'identifier') return target.text;
+  const prop = fn.childForFieldName(rules.memberPropertyField);
+  return prop ? prop.text : null;
 }
 
 /**
@@ -170,15 +198,7 @@ export function resolveCalleeName(callNode: TreeSitterNode, rules: LanguageRules
     return prop ? prop.text : null;
   }
   if (rules.optionalChainNode && fn.type === rules.optionalChainNode) {
-    const target = fn.namedChildren[0];
-    if (!target) return null;
-    if (target.type === rules.memberNode) {
-      const prop = target.childForFieldName(rules.memberPropertyField);
-      return prop ? prop.text : null;
-    }
-    if (target.type === 'identifier') return target.text;
-    const prop = fn.childForFieldName(rules.memberPropertyField);
-    return prop ? prop.text : null;
+    return resolveOptionalChainCallee(fn, rules);
   }
   return null;
 }

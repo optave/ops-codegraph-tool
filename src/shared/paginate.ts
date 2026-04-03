@@ -105,20 +105,3 @@ export function paginateResult<T extends Record<string, unknown>>(
   const { items, pagination } = paginate(arr, { limit, offset });
   return { ...result, [field]: items, _pagination: pagination };
 }
-
-/**
- * Print data as newline-delimited JSON (NDJSON).
- *
- * Emits a `_meta` line with pagination info (if present), then one JSON
- * line per item in the named array field.
- */
-export function printNdjson(
-  data: Record<string, unknown> & { _pagination?: PaginationMeta },
-  field: string,
-): void {
-  if (data._pagination) console.log(JSON.stringify({ _meta: data._pagination }));
-  const items = data[field];
-  if (Array.isArray(items)) {
-    for (const item of items) console.log(JSON.stringify(item));
-  }
-}

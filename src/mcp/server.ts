@@ -127,7 +127,7 @@ function registerShutdownHandlers(): void {
       await _activeServer?.close();
     } catch (shutdownErr: unknown) {
       debug(
-        `MCP shutdown close failed (transport may already be gone): ${(shutdownErr as Error).message}`,
+        `MCP shutdown close failed (transport may already be gone): ${toErrorMessage(shutdownErr)}`,
       );
     }
     process.exit(0);
@@ -193,7 +193,7 @@ function createCallToolHandler(
       const text =
         err instanceof CodegraphError
           ? `[${code}] ${err.message}`
-          : `Error: ${(err as Error).message}`;
+          : `Error: ${toErrorMessage(err)}`;
       return { content: [{ type: 'text', text }], isError: true };
     }
   };
@@ -251,7 +251,7 @@ export async function startMCPServer(
       process.exit(0);
     }
     process.stderr.write(
-      `MCP transport connect failed: ${(err as Error).stack ?? (err as Error).message}\n`,
+      `MCP transport connect failed: ${err instanceof Error ? (err.stack ?? err.message) : toErrorMessage(err)}\n`,
     );
     process.exit(1);
   }

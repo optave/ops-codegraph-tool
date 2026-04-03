@@ -240,8 +240,6 @@ function handleBranchNode(
     return true;
   }
 
-  // Increments applied above, but this isn't a nesting node — return false
-  // so the caller continues with handlePatternCElse / caseNodes / walkChildren.
   return false;
 }
 

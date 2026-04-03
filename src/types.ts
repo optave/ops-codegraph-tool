@@ -328,6 +328,11 @@ export interface Repository {
   hasEmbeddings(): boolean;
   hasDataflowTable(): boolean;
   getComplexityForNode(nodeId: number): ComplexityMetrics | undefined;
+
+  // ── Convenience queries ──────────────────────────────────────────
+  getFileHash(file: string): string | null;
+  hasImplementsEdges(): boolean;
+  hasCoChangesTable(): boolean;
 }
 
 /**
@@ -2122,7 +2127,10 @@ export interface NativeDatabase {
   hasCfgTables(): boolean;
   hasEmbeddings(): boolean;
   hasDataflowTable(): boolean;
+  hasImplementsEdges(): boolean;
+  hasCoChangesTable(): boolean;
   getComplexityForNode(nodeId: number): NativeComplexityMetrics | null;
+  getFileHash(file: string): string | null;
 
   // ── Build pipeline writes (6.15) ───────────────────────────────────
   bulkInsertNodes(

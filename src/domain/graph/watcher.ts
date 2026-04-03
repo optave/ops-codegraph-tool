@@ -18,29 +18,8 @@ function isTrackedExt(filePath: string): boolean {
   return EXTENSIONS.has(path.extname(filePath));
 }
 
-export async function watchProject(rootDir: string, opts: { engine?: string } = {}): Promise<void> {
-  const dbPath = path.join(rootDir, '.codegraph', 'graph.db');
-  if (!fs.existsSync(dbPath)) {
-    throw new DbError('No graph.db found. Run `codegraph build` first.', { file: dbPath });
-  }
-
-  const db = openDb(dbPath);
-  initSchema(db);
-  const engineOpts: import('../../types.js').EngineOpts = {
-    engine: (opts.engine || 'auto') as import('../../types.js').EngineMode,
-    dataflow: false,
-    ast: false,
-  };
-  const { name: engineName, version: engineVersion } = getActiveEngine(engineOpts);
-  info(`Watch mode using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
-
-  const cache = createParseTreeCache();
-  info(
-    cache
-      ? 'Incremental parsing enabled (native tree cache)'
-      : 'Incremental parsing unavailable (full re-parse)',
-  );
-
+/** Prepare all SQL statements needed by the watcher's incremental rebuild. */
+function prepareWatcherStatements(db: ReturnType<typeof openDb>): IncrementalStmts {
   const stmts = {
     insertNode: db.prepare(
       'INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
@@ -67,7 +46,6 @@ export async function watchProject(rootDir: string, opts: { engine?: string } = 
     listSymbols: db.prepare("SELECT name, kind, line FROM nodes WHERE file = ? AND kind != 'file'"),
   };
 
-  // Use named params for statements needing the same value twice
   const origDeleteEdges = db.prepare(
     `DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = @f) OR target_id IN (SELECT id FROM nodes WHERE file = @f)`,
   );
@@ -79,77 +57,113 @@ export async function watchProject(rootDir: string, opts: { engine?: string } = 
     get: (f: string) => origCountEdges.get({ f }) as { c: number } | undefined,
   };
 
+  return stmts as IncrementalStmts;
+}
+
+/** Rebuild result shape from rebuildFile. */
+interface RebuildResult {
+  file: string;
+  deleted?: boolean;
+  event: string;
+  symbolDiff: unknown;
+  nodesBefore: number;
+  nodesAfter: number;
+  nodesAdded: number;
+  nodesRemoved: number;
+  edgesAdded: number;
+}
+
+/** Process a batch of pending file changes: rebuild, journal, and log. */
+async function processPendingFiles(
+  files: string[],
+  db: ReturnType<typeof openDb>,
+  rootDir: string,
+  stmts: IncrementalStmts,
+  engineOpts: import('../../types.js').EngineOpts,
+  cache: ReturnType<typeof createParseTreeCache>,
+): Promise<void> {
+  const results: RebuildResult[] = [];
+  for (const filePath of files) {
+    const result = (await rebuildFile(db, rootDir, filePath, stmts, engineOpts, cache, {
+      diffSymbols: diffSymbols as (old: unknown[], new_: unknown[]) => unknown,
+    })) as RebuildResult | null;
+    if (result) results.push(result);
+  }
+
+  if (results.length > 0) {
+    writeJournalAndChangeEvents(rootDir, results);
+  }
+
+  logRebuildResults(results);
+}
+
+/** Write journal entries and change events for processed files. */
+function writeJournalAndChangeEvents(rootDir: string, updates: RebuildResult[]): void {
+  const entries = updates.map((r) => ({
+    file: r.file,
+    deleted: r.deleted || false,
+  }));
+  try {
+    appendJournalEntries(rootDir, entries);
+  } catch (e: unknown) {
+    debug(`Journal write failed (non-fatal): ${(e as Error).message}`);
+  }
+
+  const changeEvents = updates.map((r) =>
+    buildChangeEvent(r.file, r.event, r.symbolDiff, {
+      nodesBefore: r.nodesBefore,
+      nodesAfter: r.nodesAfter,
+      edgesAdded: r.edgesAdded,
+    }),
+  );
+  try {
+    appendChangeEvents(rootDir, changeEvents);
+  } catch (e: unknown) {
+    debug(`Change event write failed (non-fatal): ${(e as Error).message}`);
+  }
+}
+
+/** Log rebuild results to the user. */
+function logRebuildResults(updates: RebuildResult[]): void {
+  for (const r of updates) {
+    const nodeDelta = r.nodesAdded - r.nodesRemoved;
+    const nodeStr = nodeDelta >= 0 ? `+${nodeDelta}` : `${nodeDelta}`;
+    if (r.deleted) {
+      info(`Removed: ${r.file} (-${r.nodesRemoved} nodes)`);
+    } else {
+      info(`Updated: ${r.file} (${nodeStr} nodes, +${r.edgesAdded} edges)`);
+    }
+  }
+}
+
+export async function watchProject(rootDir: string, opts: { engine?: string } = {}): Promise<void> {
+  const dbPath = path.join(rootDir, '.codegraph', 'graph.db');
+  if (!fs.existsSync(dbPath)) {
+    throw new DbError('No graph.db found. Run `codegraph build` first.', { file: dbPath });
+  }
+
+  const db = openDb(dbPath);
+  initSchema(db);
+  const engineOpts: import('../../types.js').EngineOpts = {
+    engine: (opts.engine || 'auto') as import('../../types.js').EngineMode,
+    dataflow: false,
+    ast: false,
+  };
+  const { name: engineName, version: engineVersion } = getActiveEngine(engineOpts);
+  info(`Watch mode using ${engineName} engine${engineVersion ? ` (v${engineVersion})` : ''}`);
+
+  const cache = createParseTreeCache();
+  info(
+    cache
+      ? 'Incremental parsing enabled (native tree cache)'
+      : 'Incremental parsing unavailable (full re-parse)',
+  );
+
+  const stmts = prepareWatcherStatements(db);
+
   const pending = new Set<string>();
   let timer: ReturnType<typeof setTimeout> | null = null;
   const DEBOUNCE_MS = 300;
-
-  async function processPending(): Promise<void> {
-    const files = [...pending];
-    pending.clear();
-
-    const results: Array<{
-      file: string;
-      deleted?: boolean;
-      event: string;
-      symbolDiff: unknown;
-      nodesBefore: number;
-      nodesAfter: number;
-      nodesAdded: number;
-      nodesRemoved: number;
-      edgesAdded: number;
-    }> = [];
-    for (const filePath of files) {
-      const result = (await rebuildFile(
-        db,
-        rootDir,
-        filePath,
-        stmts as IncrementalStmts,
-        engineOpts,
-        cache,
-        {
-          diffSymbols: diffSymbols as (old: unknown[], new_: unknown[]) => unknown,
-        },
-      )) as (typeof results)[number] | null;
-      if (result) results.push(result);
-    }
-    const updates = results;
-
-    // Append processed files to journal for Tier 0 detection on next build
-    if (updates.length > 0) {
-      const entries = updates.map((r) => ({
-        file: r.file,
-        deleted: r.deleted || false,
-      }));
-      try {
-        appendJournalEntries(rootDir, entries);
-      } catch (e: unknown) {
-        debug(`Journal write failed (non-fatal): ${(e as Error).message}`);
-      }
-
-      const changeEvents = updates.map((r) =>
-        buildChangeEvent(r.file, r.event, r.symbolDiff, {
-          nodesBefore: r.nodesBefore,
-          nodesAfter: r.nodesAfter,
-          edgesAdded: r.edgesAdded,
-        }),
-      );
-      try {
-        appendChangeEvents(rootDir, changeEvents);
-      } catch (e: unknown) {
-        debug(`Change event write failed (non-fatal): ${(e as Error).message}`);
-      }
-    }
-
-    for (const r of updates) {
-      const nodeDelta = r.nodesAdded - r.nodesRemoved;
-      const nodeStr = nodeDelta >= 0 ? `+${nodeDelta}` : `${nodeDelta}`;
-      if (r.deleted) {
-        info(`Removed: ${r.file} (-${r.nodesRemoved} nodes)`);
-      } else {
-        info(`Updated: ${r.file} (${nodeStr} nodes, +${r.edgesAdded} edges)`);
-      }
-    }
-  }
 
   info(`Watching ${rootDir} for changes...`);
   info('Press Ctrl+C to stop.');
@@ -163,7 +177,11 @@ export async function watchProject(rootDir: string, opts: { engine?: string } = 
     pending.add(fullPath);
 
     if (timer) clearTimeout(timer);
-    timer = setTimeout(processPending, DEBOUNCE_MS);
+    timer = setTimeout(async () => {
+      const files = [...pending];
+      pending.clear();
+      await processPendingFiles(files, db, rootDir, stmts, engineOpts, cache);
+    }, DEBOUNCE_MS);
   });
 
   process.on('SIGINT', () => {

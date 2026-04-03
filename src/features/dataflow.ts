@@ -527,7 +527,6 @@ function buildNativeDataflowResult(
   noTests: boolean,
 ): Record<string, unknown> {
   const sym = normalizeSymbol(node, db, hc);
-  // Caller guards with `if (nativeDb?.getDataflowEdges)` before invoking
   const d = nativeDb.getDataflowEdges!(node.id);
 
   const flowsTo = d.flowsToOut.map((r: any) => ({

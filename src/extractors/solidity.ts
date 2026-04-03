@@ -97,60 +97,8 @@ function handleContractDecl(
   if (!nameNode) return;
   const name = nameNode.text;
 
-  const members: SubDeclaration[] = [];
   const body = node.childForFieldName('body') || findChild(node, 'contract_body');
-  if (body) {
-    for (let i = 0; i < body.childCount; i++) {
-      const child = body.child(i);
-      if (!child) continue;
-      if (child.type === 'function_definition') {
-        const fnName = child.childForFieldName('name');
-        if (fnName) {
-          members.push({ name: fnName.text, kind: 'method', line: child.startPosition.row + 1 });
-        }
-      } else if (child.type === 'state_variable_declaration') {
-        const varName = child.childForFieldName('name');
-        if (varName) {
-          members.push({
-            name: varName.text,
-            kind: 'property',
-            line: child.startPosition.row + 1,
-            visibility: extractSolVisibility(child),
-          });
-        }
-      } else if (child.type === 'event_definition') {
-        const evName = child.childForFieldName('name');
-        if (evName) {
-          members.push({
-            name: evName.text,
-            kind: 'property',
-            decorators: ['event'],
-            line: child.startPosition.row + 1,
-          });
-        }
-      } else if (child.type === 'error_declaration') {
-        const errName = child.childForFieldName('name');
-        if (errName) {
-          members.push({
-            name: errName.text,
-            kind: 'property',
-            decorators: ['error'],
-            line: child.startPosition.row + 1,
-          });
-        }
-      } else if (child.type === 'modifier_definition') {
-        const modName = child.childForFieldName('name');
-        if (modName) {
-          members.push({
-            name: modName.text,
-            kind: 'method',
-            decorators: ['modifier'],
-            line: child.startPosition.row + 1,
-          });
-        }
-      }
-    }
-  }
+  const members = body ? extractContractMembers(body) : [];
 
   ctx.definitions.push({
     name,
@@ -160,15 +108,63 @@ function handleContractDecl(
     children: members.length > 0 ? members : undefined,
   });
 
-  // Inheritance
+  extractInheritance(node, name, ctx);
+}
+
+/** Extract member declarations from a contract body node. */
+function extractContractMembers(body: TreeSitterNode): SubDeclaration[] {
+  const members: SubDeclaration[] = [];
+  for (let i = 0; i < body.childCount; i++) {
+    const child = body.child(i);
+    if (!child) continue;
+    const member = extractContractMember(child);
+    if (member) members.push(member);
+  }
+  return members;
+}
+
+/** Map a single contract body child to a SubDeclaration, or null if not a recognized member. */
+function extractContractMember(child: TreeSitterNode): SubDeclaration | null {
+  const line = child.startPosition.row + 1;
+  switch (child.type) {
+    case 'function_definition': {
+      const fnName = child.childForFieldName('name');
+      return fnName ? { name: fnName.text, kind: 'method', line } : null;
+    }
+    case 'state_variable_declaration': {
+      const varName = child.childForFieldName('name');
+      return varName
+        ? { name: varName.text, kind: 'property', line, visibility: extractSolVisibility(child) }
+        : null;
+    }
+    case 'event_definition': {
+      const evName = child.childForFieldName('name');
+      return evName ? { name: evName.text, kind: 'property', decorators: ['event'], line } : null;
+    }
+    case 'error_declaration': {
+      const errName = child.childForFieldName('name');
+      return errName ? { name: errName.text, kind: 'property', decorators: ['error'], line } : null;
+    }
+    case 'modifier_definition': {
+      const modName = child.childForFieldName('name');
+      return modName
+        ? { name: modName.text, kind: 'method', decorators: ['modifier'], line }
+        : null;
+    }
+    default:
+      return null;
+  }
+}
+
+/** Extract inheritance (extends) relationships from a contract node. */
+function extractInheritance(node: TreeSitterNode, name: string, ctx: ExtractorOutput): void {
   const inheritance = findChild(node, 'inheritance_specifier');
-  if (inheritance) {
-    for (let i = 0; i < inheritance.childCount; i++) {
-      const child = inheritance.child(i);
-      if (!child) continue;
-      if (child.type === 'user_defined_type' || child.type === 'identifier') {
-        ctx.classes.push({ name, extends: child.text, line: node.startPosition.row + 1 });
-      }
+  if (!inheritance) return;
+  for (let i = 0; i < inheritance.childCount; i++) {
+    const child = inheritance.child(i);
+    if (!child) continue;
+    if (child.type === 'user_defined_type' || child.type === 'identifier') {
+      ctx.classes.push({ name, extends: child.text, line: node.startPosition.row + 1 });
     }
   }
 }

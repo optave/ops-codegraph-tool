@@ -17,6 +17,11 @@ export interface CodeGraphOpts {
   directed?: boolean;
 }
 
+/** Canonical key for an undirected edge — smallest ID first, null-byte separated. */
+function undirectedEdgeKey(a: string, b: string): string {
+  return a < b ? `${a}\0${b}` : `${b}\0${a}`;
+}
+
 export class CodeGraph {
   private _directed: boolean;
   private _nodes: Map<string, NodeAttrs>;
@@ -121,7 +126,7 @@ export class CodeGraph {
     const seen = new Set<string>();
     for (const [src, targets] of this._successors) {
       for (const [tgt, attrs] of targets) {
-        const key = src < tgt ? `${src}\0${tgt}` : `${tgt}\0${src}`;
+        const key = undirectedEdgeKey(src, tgt);
         if (seen.has(key)) continue;
         seen.add(key);
         yield [src, tgt, attrs];

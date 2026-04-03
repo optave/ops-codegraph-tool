@@ -57,7 +57,7 @@ function removeWorktree(repoRoot: string, dir: string): void {
     try {
       fs.rmSync(dir, { recursive: true, force: true });
     } catch (rmErr) {
-      debug(`removeWorktree: rmSync fallback failed for ${dir}: ${(rmErr as Error).message}`);
+      debug(`removeWorktree: rmSync fallback failed for ${dir}: ${toErrorMessage(rmErr)}`);
     }
     try {
       execFileSync('git', ['worktree', 'prune'], {
@@ -66,7 +66,7 @@ function removeWorktree(repoRoot: string, dir: string): void {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (pruneErr) {
-      debug(`removeWorktree: git worktree prune failed: ${(pruneErr as Error).message}`);
+      debug(`removeWorktree: git worktree prune failed: ${toErrorMessage(pruneErr)}`);
     }
   }
 }
@@ -366,6 +366,7 @@ interface BranchCompareResult {
 function attachImpactToSymbols(
   symbols: SymbolInfo[],
   dbPath: string,
+  _baseSymbols: Map<string, SymbolInfo>,
   maxDepth: number,
   noTests: boolean,
 ): void {
@@ -475,7 +476,7 @@ export async function branchCompareData(
     const removedImpact = loadCallersFromDb(baseDbPath, removedIds, maxDepth, noTests);
     const changedImpact = loadCallersFromDb(baseDbPath, changedIds, maxDepth, noTests);
 
-    attachImpactToSymbols(removed, baseDbPath, maxDepth, noTests);
+    attachImpactToSymbols(removed, baseDbPath, baseSymbols, maxDepth, noTests);
     attachImpactToChanged(changed, baseDbPath, baseSymbols, maxDepth, noTests);
 
     const allImpacted = new Set<string>();
@@ -512,14 +513,14 @@ export async function branchCompareData(
       },
     };
   } catch (err) {
-    return { error: (err as Error).message };
+    return { error: toErrorMessage(err) };
   } finally {
     removeWorktree(repoRoot, baseDir);
     removeWorktree(repoRoot, targetDir);
     try {
       fs.rmSync(tmpBase, { recursive: true, force: true });
     } catch (cleanupErr) {
-      debug(`branchCompareData: temp cleanup failed: ${(cleanupErr as Error).message}`);
+      debug(`branchCompareData: temp cleanup failed: ${toErrorMessage(cleanupErr)}`);
     }
   }
 }

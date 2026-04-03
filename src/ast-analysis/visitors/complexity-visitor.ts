@@ -156,6 +156,27 @@ function resetAccumulators(hRules: AnyRules | null | undefined): ComplexityAcc {
   };
 }
 
+/** Classify a single node for all complexity metrics (Halstead, branching, logical ops, etc.). */
+function classifyNode(
+  node: TreeSitterNode,
+  nestingLevel: number,
+  cRules: AnyRules,
+  hRules: AnyRules | null | undefined,
+  acc: ComplexityAcc,
+): void {
+  const type = node.type;
+
+  if (hRules) classifyHalstead(node, hRules, acc);
+  if (nestingLevel > acc.maxNesting) acc.maxNesting = nestingLevel;
+  if (type === cRules.logicalNodeType) classifyLogicalOp(node, cRules, acc);
+  if (type === cRules.optionalChainType) acc.cyclomatic++;
+  if (cRules.branchNodes.has(type) && node.childCount > 0) {
+    classifyBranchNode(node, type, nestingLevel, cRules, acc);
+  }
+  classifyPlainElse(node, type, cRules, acc);
+  if (cRules.caseNodes.has(type) && node.childCount > 0) acc.cyclomatic++;
+}
+
 export function createComplexityVisitor(
   cRules: AnyRules,
   hRules?: AnyRules | null,
@@ -178,15 +199,11 @@ export function createComplexityVisitor(
       funcName: string | null,
       _context: VisitorContext,
     ): void {
-      if (fileLevelWalk) {
-        if (!activeFuncNode) {
-          acc = resetAccumulators(hRules);
-          activeFuncNode = funcNode;
-          activeFuncName = funcName;
-          funcDepth = 0;
-        } else {
-          funcDepth++;
-        }
+      if (fileLevelWalk && !activeFuncNode) {
+        acc = resetAccumulators(hRules);
+        activeFuncNode = funcNode;
+        activeFuncName = funcName;
+        funcDepth = 0;
       } else {
         funcDepth++;
       }
@@ -197,18 +214,14 @@ export function createComplexityVisitor(
       _funcName: string | null,
       _context: VisitorContext,
     ): void {
-      if (fileLevelWalk) {
-        if (funcNode === activeFuncNode) {
-          results.push({
-            funcNode,
-            funcName: activeFuncName,
-            metrics: collectResult(funcNode, acc, hRules, langId),
-          });
-          activeFuncNode = null;
-          activeFuncName = null;
-        } else {
-          funcDepth--;
-        }
+      if (fileLevelWalk && funcNode === activeFuncNode) {
+        results.push({
+          funcNode,
+          funcName: activeFuncName,
+          metrics: collectResult(funcNode, acc, hRules, langId),
+        });
+        activeFuncNode = null;
+        activeFuncName = null;
       } else {
         funcDepth--;
       }
@@ -217,26 +230,8 @@ export function createComplexityVisitor(
     enterNode(node: TreeSitterNode, context: VisitorContext): EnterNodeResult | undefined {
       if (fileLevelWalk && !activeFuncNode) return;
 
-      const type = node.type;
       const nestingLevel = fileLevelWalk ? context.nestingLevel + funcDepth : context.nestingLevel;
-
-      if (hRules) classifyHalstead(node, hRules, acc);
-
-      if (nestingLevel > acc.maxNesting) acc.maxNesting = nestingLevel;
-
-      if (type === cRules.logicalNodeType) {
-        classifyLogicalOp(node, cRules, acc);
-      }
-
-      if (type === cRules.optionalChainType) acc.cyclomatic++;
-
-      if (cRules.branchNodes.has(type) && node.childCount > 0) {
-        classifyBranchNode(node, type, nestingLevel, cRules, acc);
-      }
-
-      classifyPlainElse(node, type, cRules, acc);
-
-      if (cRules.caseNodes.has(type) && node.childCount > 0) acc.cyclomatic++;
+      classifyNode(node, nestingLevel, cRules, hRules, acc);
     },
 
     exitNode(node: TreeSitterNode): void {
