@@ -14,7 +14,7 @@ import { getDatabase } from '../db/better-sqlite3.js';
 import { findDbPath } from '../db/index.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
-import { CodegraphError, ConfigError } from '../shared/errors.js';
+import { CodegraphError, ConfigError, toErrorMessage } from '../shared/errors.js';
 import { MCP_MAX_LIMIT } from '../shared/paginate.js';
 import type { CodegraphConfig, MCPServerOptions } from '../types.js';
 import { initMcpDefaults } from './middleware.js';
@@ -58,7 +58,7 @@ async function loadMCPSdk(): Promise<{
       CallToolRequestSchema: types.CallToolRequestSchema,
     };
   } catch (e) {
-    debug(`MCP SDK import failed: ${(e as Error).message}`);
+    debug(`MCP SDK import failed: ${toErrorMessage(e)}`);
     throw new ConfigError(
       'MCP server requires @modelcontextprotocol/sdk.\nInstall it with: npm install @modelcontextprotocol/sdk',
     );

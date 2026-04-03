@@ -2,6 +2,7 @@ import path from 'node:path';
 import { kindIcon, moduleMapData, rolesData, statsData } from '../../domain/queries.js';
 import { debug } from '../../infrastructure/logger.js';
 import { outputResult } from '../../infrastructure/result-formatter.js';
+import { toErrorMessage } from '../../shared/errors.js';
 
 interface OutputOpts {
   json?: boolean;
@@ -238,7 +239,7 @@ export async function stats(customDbPath: string, opts: OutputOpts = {}): Promis
     const { communitySummaryForStats } = await import('../../features/communities.js');
     data.communities = communitySummaryForStats(customDbPath, { noTests: opts.noTests });
   } catch (e) {
-    debug(`stats: community detection failed (optional): ${(e as Error).message}`);
+    debug(`stats: community detection failed (optional): ${toErrorMessage(e)}`);
   }
 
   if (outputResult(data as unknown as Record<string, unknown>, null, opts)) return;
