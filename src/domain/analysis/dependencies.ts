@@ -151,7 +151,7 @@ function collectCallersWithHierarchy(
 function buildNodeDepsResult(
   db: BetterSqlite3Database,
   node: NodeRow,
-  hc: Map<unknown, unknown>,
+  hc: Map<string, string | null>,
   depth: number,
   noTests: boolean,
 ) {
