@@ -294,10 +294,7 @@ describe('absolute file paths in DB (#760)', () => {
 
   beforeAll(() => {
     absDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-abspath-test-'));
-    fs.writeFileSync(
-      path.join(absDir, 'math.js'),
-      'export function add(a, b) { return a + b; }\n',
-    );
+    fs.writeFileSync(path.join(absDir, 'math.js'), 'export function add(a, b) { return a + b; }\n');
 
     const absDbDir = path.join(absDir, '.codegraph');
     fs.mkdirSync(absDbDir, { recursive: true });
