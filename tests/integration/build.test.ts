@@ -479,8 +479,8 @@ describe('version/engine mismatch auto-promotes to full rebuild', () => {
   });
 
   test('build_meta reflects actual engine and version after build (#751)', async () => {
-    // Rebuild to ensure build_meta is freshly written
-    await buildGraph(promoDir, { skipRegistry: true });
+    // Force a full rebuild to ensure build_meta is freshly written
+    await buildGraph(promoDir, { skipRegistry: true, incremental: false });
 
     const db2 = new Database(promoDbPath, { readonly: true });
     const meta = Object.fromEntries(
@@ -499,10 +499,8 @@ describe('version/engine mismatch auto-promotes to full rebuild', () => {
     // engine must be either 'native' or 'wasm' (not empty, not stale)
     expect(['native', 'wasm']).toContain(meta.engine);
 
-    // engine_version must be a non-empty semver-like string when native
-    if (meta.engine === 'native') {
-      expect(meta.engine_version).toMatch(/^\d+\.\d+\.\d+/);
-    }
+    // engine_version must equal the npm package version (#751: was using Rust crate version)
+    expect(meta.engine_version).toBe(pkg.version);
 
     // built_at must be a valid ISO timestamp from the current build
     expect(new Date(meta.built_at).getTime()).toBeGreaterThan(0);
