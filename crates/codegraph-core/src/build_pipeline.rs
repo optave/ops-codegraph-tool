@@ -330,21 +330,17 @@ pub fn run_pipeline(
     if !change_result.is_full_build {
         // Find all barrel files from DB (files that have 'reexports' edges)
         let barrel_files_in_db: HashSet<String> = {
-            let mut stmt = conn.prepare(
+            let rows: Vec<String> = match conn.prepare(
                 "SELECT DISTINCT n1.file FROM edges e \
                  JOIN nodes n1 ON e.source_id = n1.id \
                  WHERE e.kind = 'reexports' AND n1.kind = 'file'",
-            ).unwrap_or_else(|_| conn.prepare("SELECT '' WHERE 0").unwrap());
-            let rows: Vec<String> = stmt
-                .query_map([], |row| row.get::<_, String>(0))
-                .unwrap_or_else(|_| {
-                    conn.prepare("SELECT '' WHERE 0")
-                        .unwrap()
-                        .query_map([], |row| row.get::<_, String>(0))
-                        .unwrap()
-                })
-                .filter_map(|r| r.ok())
-                .collect();
+            ) {
+                Ok(mut stmt) => match stmt.query_map([], |row| row.get::<_, String>(0)) {
+                    Ok(mapped) => mapped.filter_map(|r| r.ok()).collect(),
+                    Err(_) => Vec::new(),
+                },
+                Err(_) => Vec::new(),
+            };
             rows.into_iter().collect()
         };
 
@@ -372,24 +368,23 @@ pub fn run_pipeline(
         // Also find barrels that re-export FROM changed files
         {
             let changed_rel: Vec<&str> = file_symbols.keys().map(|s| s.as_str()).collect();
-            for changed in &changed_rel {
-                let mut stmt = conn
-                    .prepare(
-                        "SELECT DISTINCT n1.file FROM edges e \
-                         JOIN nodes n1 ON e.source_id = n1.id \
-                         JOIN nodes n2 ON e.target_id = n2.id \
-                         WHERE e.kind = 'reexports' AND n1.kind = 'file' AND n2.file = ?1",
-                    )
-                    .unwrap_or_else(|_| conn.prepare("SELECT '' WHERE 0").unwrap());
-                if let Ok(rows) = stmt.query_map(rusqlite::params![changed], |row| {
-                    row.get::<_, String>(0)
-                }) {
-                    for row in rows.flatten() {
-                        if !file_symbols.contains_key(&row) {
-                            let abs = Path::new(root_dir).join(&row);
-                            if abs.exists() {
-                                barrel_paths_to_parse
-                                    .push(abs.to_str().unwrap_or("").to_string());
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT DISTINCT n1.file FROM edges e \
+                 JOIN nodes n1 ON e.source_id = n1.id \
+                 JOIN nodes n2 ON e.target_id = n2.id \
+                 WHERE e.kind = 'reexports' AND n1.kind = 'file' AND n2.file = ?1",
+            ) {
+                for changed in &changed_rel {
+                    if let Ok(rows) = stmt.query_map(rusqlite::params![changed], |row| {
+                        row.get::<_, String>(0)
+                    }) {
+                        for row in rows.flatten() {
+                            if !file_symbols.contains_key(&row) {
+                                let abs = Path::new(root_dir).join(&row);
+                                if abs.exists() {
+                                    barrel_paths_to_parse
+                                        .push(abs.to_str().unwrap_or("").to_string());
+                                }
                             }
                         }
                     }
@@ -401,18 +396,22 @@ pub fn run_pipeline(
         if !barrel_paths_to_parse.is_empty() {
             barrel_paths_to_parse.sort();
             barrel_paths_to_parse.dedup();
+            // Barrel files are re-export-only — no function bodies or dataflow,
+            // so skip dataflow/AST analysis to avoid unnecessary overhead.
             let barrel_parsed = parallel::parse_files_parallel(
                 &barrel_paths_to_parse,
                 root_dir,
-                include_dataflow,
-                include_ast,
+                false,
+                false,
             );
             for mut sym in barrel_parsed {
                 let rel = relative_path(root_dir, &sym.file);
                 sym.file = rel.clone();
-                // Delete outgoing edges for barrel files being re-parsed
+                // Delete outgoing import/reexport edges for barrel files being re-parsed
+                // (scoped to import-related kinds to avoid dropping calls edges)
                 let _ = conn.execute(
-                    "DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1)",
+                    "DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1) \
+                     AND kind IN ('imports', 'reexports')",
                     rusqlite::params![&rel],
                 );
                 // Re-resolve imports for the barrel file
