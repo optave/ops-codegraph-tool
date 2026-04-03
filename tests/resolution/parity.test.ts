@@ -15,6 +15,7 @@ import {
   resolveImportsBatch,
 } from '../../src/domain/graph/resolve.js';
 import { isNativeAvailable, loadNative } from '../../src/infrastructure/native.js';
+import { normalizePath } from '../../src/shared/constants.js';
 
 const hasNative = isNativeAvailable();
 
@@ -257,7 +258,7 @@ describe.skipIf(!hasNative)('Batch import resolution', () => {
 
     for (const { fromFile, importSource } of inputs) {
       const individual = resolveImportPathJS(fromFile, importSource, rootDir, noAliases);
-      const batchKey = `${fromFile}|${importSource}`;
+      const batchKey = `${normalizePath(fromFile)}|${importSource}`;
       expect(batchResult.get(batchKey)).toBe(individual);
     }
   });

@@ -9,6 +9,7 @@ import { performance } from 'node:perf_hooks';
 import { getNodeId } from '../../../../db/index.js';
 import { debug } from '../../../../infrastructure/logger.js';
 import { loadNative } from '../../../../infrastructure/native.js';
+import { normalizePath } from '../../../../shared/constants.js';
 import type {
   BetterSqlite3Database,
   Call,
@@ -219,7 +220,7 @@ function buildImportEdgesNative(
       addFileNodeId(resolvedPath);
 
       // Check if this resolution is in batchResolved; if not, add supplemental
-      const resolveKey = `${path.join(rootDir, relPath)}|${imp.source}`;
+      const resolveKey = `${normalizePath(path.join(rootDir, relPath))}|${imp.source}`;
       if (!ctx.batchResolved?.has(resolveKey)) {
         supplementalResolved.push({ key: resolveKey, resolvedPath });
       }
@@ -743,10 +744,12 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       }
     }
 
-    // Skip native import-edge path for small incremental builds (≤3 files):
-    // napi-rs marshaling overhead exceeds computation savings.
+    // Skip native import-edge path for small incremental builds (≤3 files)
+    // and for addon 3.8.0 which has a Windows path-separator bug in key
+    // construction (format!("{}/{}", root_dir, file) vs path.join backslashes).
+    const importEdgeBuggy = ctx.engineVersion === '3.8.0';
     const useNativeImportEdges =
-      native?.buildImportEdges && (ctx.isFullBuild || ctx.fileSymbols.size > 3);
+      native?.buildImportEdges && !importEdgeBuggy && (ctx.isFullBuild || ctx.fileSymbols.size > 3);
     if (useNativeImportEdges) {
       buildImportEdgesNative(ctx, getNodeIdStmt, allEdgeRows, native!);
     } else {
