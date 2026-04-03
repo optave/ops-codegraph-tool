@@ -111,14 +111,6 @@ export function findParentNode(
 }
 
 /**
- * Extract child declarations from a container node's body.
- * Finds the body via `bodyFields` (tries childForFieldName then findChild for each),
- * iterates its children, filters by `memberType`, extracts `nameField`, and returns SubDeclarations.
- *
- * Replaces per-language extractStructFields / extractEnumVariants / extractEnumConstants helpers
- * for the common case where each member has a direct name field.
- */
-/**
  * Resolve a container's body node by trying each field name in order.
  */
 function resolveBodyNode(
@@ -132,6 +124,14 @@ function resolveBodyNode(
   return null;
 }
 
+/**
+ * Extract child declarations from a container node's body.
+ * Finds the body via `bodyFields` (tries childForFieldName then findChild for each),
+ * iterates its children, filters by `memberType`, extracts `nameField`, and returns SubDeclarations.
+ *
+ * Replaces per-language extractStructFields / extractEnumVariants / extractEnumConstants helpers
+ * for the common case where each member has a direct name field.
+ */
 export function extractBodyMembers(
   containerNode: TreeSitterNode,
   bodyFields: readonly string[],

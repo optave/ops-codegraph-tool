@@ -301,9 +301,13 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
 
   await runAnalyses(ctx);
 
-  // Close nativeDb after analyses — finalize uses JS paths for setBuildMeta
-  // and closeDbPair handles cleanup. Avoids dual-connection during finalize.
-  closeNativeDb(ctx, 'post-analyses');
+  // Keep nativeDb open through finalize so persistBuildMetadata, advisory
+  // checks, and count queries use the native path.  closeDbPair inside
+  // finalize handles both connections.  Refresh the JS db so it has a
+  // valid page cache in case finalize falls back to JS paths (#751).
+  if (ctx.nativeDb) {
+    refreshJsDb(ctx);
+  }
 
   await finalize(ctx);
 }

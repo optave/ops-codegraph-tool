@@ -86,7 +86,7 @@ function persistBuildMetadata(
       ctx.nativeDb!.setBuildMeta(
         Object.entries({
           engine: ctx.engineName,
-          engine_version: ctx.engineVersion || '',
+          engine_version: CODEGRAPH_VERSION,
           codegraph_version: CODEGRAPH_VERSION,
           schema_version: String(ctx.schemaVersion),
           built_at: buildNow.toISOString(),
@@ -97,7 +97,7 @@ function persistBuildMetadata(
     } else {
       setBuildMeta(ctx.db, {
         engine: ctx.engineName,
-        engine_version: ctx.engineVersion || '',
+        engine_version: CODEGRAPH_VERSION,
         codegraph_version: CODEGRAPH_VERSION,
         schema_version: String(ctx.schemaVersion),
         built_at: buildNow.toISOString(),
