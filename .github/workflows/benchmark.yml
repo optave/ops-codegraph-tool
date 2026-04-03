@@ -156,6 +156,8 @@ jobs:
 
   embedding-benchmark:
     runs-on: ubuntu-latest
+    # 7 models x 20 min each = 140 min worst-case + ~30 min setup/npm-wait headroom
+    timeout-minutes: 195
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
@@ -240,6 +242,7 @@ jobs:
 
       - name: Run embedding benchmark
         if: steps.existing.outputs.skip != 'true'
+        timeout-minutes: 160
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
