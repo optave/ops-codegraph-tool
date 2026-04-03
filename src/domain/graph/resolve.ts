@@ -565,7 +565,7 @@ export function resolveImportsBatch(
       // Native resolver's .js → .ts remap fails on unnormalized paths —
       // apply JS-side fallback (same fix as resolveImportPath).
       const resolved = remapJsToTs(normalized, rootDir);
-      map.set(`${r.fromFile}|${r.importSource}`, resolved);
+      map.set(`${normalizePath(r.fromFile)}|${r.importSource}`, resolved);
     }
     return map;
   } catch (e) {

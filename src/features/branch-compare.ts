@@ -8,6 +8,7 @@ import { kindIcon } from '../domain/queries.js';
 import { debug } from '../infrastructure/logger.js';
 import { getNative, isNativeAvailable } from '../infrastructure/native.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
+import { toErrorMessage } from '../shared/errors.js';
 import type { EngineMode, NativeDatabase } from '../types.js';
 
 // ─── Git Helpers ────────────────────────────────────────────────────────
@@ -21,7 +22,7 @@ function validateGitRef(repoRoot: string, ref: string): string | null {
     }).trim();
     return sha;
   } catch (e) {
-    debug(`validateGitRef failed for "${ref}": ${(e as Error).message}`);
+    debug(`validateGitRef failed for "${ref}": ${toErrorMessage(e)}`);
     return null;
   }
 }
@@ -52,11 +53,11 @@ function removeWorktree(repoRoot: string, dir: string): void {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
   } catch (e) {
-    debug(`removeWorktree: git worktree remove failed for ${dir}: ${(e as Error).message}`);
+    debug(`removeWorktree: git worktree remove failed for ${dir}: ${toErrorMessage(e)}`);
     try {
       fs.rmSync(dir, { recursive: true, force: true });
     } catch (rmErr) {
-      debug(`removeWorktree: rmSync fallback failed for ${dir}: ${(rmErr as Error).message}`);
+      debug(`removeWorktree: rmSync fallback failed for ${dir}: ${toErrorMessage(rmErr)}`);
     }
     try {
       execFileSync('git', ['worktree', 'prune'], {
@@ -65,7 +66,7 @@ function removeWorktree(repoRoot: string, dir: string): void {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (pruneErr) {
-      debug(`removeWorktree: git worktree prune failed: ${(pruneErr as Error).message}`);
+      debug(`removeWorktree: git worktree prune failed: ${toErrorMessage(pruneErr)}`);
     }
   }
 }
@@ -119,7 +120,7 @@ function loadSymbolsFromDb(
       const native = getNative();
       nativeDb = native.NativeDatabase.openReadonly(dbPath);
     } catch (e) {
-      debug(`loadSymbolsFromDb: native path failed: ${(e as Error).message}`);
+      debug(`loadSymbolsFromDb: native path failed: ${toErrorMessage(e)}`);
     }
   }
 
@@ -208,7 +209,7 @@ function loadSymbolsFromDb(
       try {
         nativeDb.close();
       } catch (e) {
-        debug(`loadSymbolsFromDb: nativeDb close failed: ${(e as Error).message}`);
+        debug(`loadSymbolsFromDb: nativeDb close failed: ${toErrorMessage(e)}`);
       }
     }
   }
@@ -362,6 +363,38 @@ interface BranchCompareResult {
   summary?: BranchCompareSummary;
 }
 
+function attachImpactToSymbols(
+  symbols: SymbolInfo[],
+  dbPath: string,
+  _baseSymbols: Map<string, SymbolInfo>,
+  maxDepth: number,
+  noTests: boolean,
+): void {
+  for (const sym of symbols) {
+    const symCallers = loadCallersFromDb(dbPath, sym.id ? [sym.id] : [], maxDepth, noTests);
+    (sym as SymbolInfo & { impact?: CallerInfo[] }).impact = symCallers;
+  }
+}
+
+function attachImpactToChanged(
+  changed: ChangedSymbol[],
+  dbPath: string,
+  baseSymbols: Map<string, SymbolInfo>,
+  maxDepth: number,
+  noTests: boolean,
+): void {
+  for (const sym of changed) {
+    const baseSym = baseSymbols.get(makeSymbolKey(sym.kind, sym.file, sym.name));
+    const symCallers = loadCallersFromDb(
+      dbPath,
+      baseSym?.id ? [baseSym.id] : [],
+      maxDepth,
+      noTests,
+    );
+    sym.impact = symCallers;
+  }
+}
+
 export async function branchCompareData(
   baseRef: string,
   targetRef: string,
@@ -379,7 +412,7 @@ export async function branchCompareData(
       stdio: ['pipe', 'pipe', 'pipe'],
     });
   } catch (e) {
-    debug(`branchCompareData: git check failed: ${(e as Error).message}`);
+    debug(`branchCompareData: git check failed: ${toErrorMessage(e)}`);
     return { error: 'Not a git repository' };
   }
 
@@ -443,20 +476,8 @@ export async function branchCompareData(
     const removedImpact = loadCallersFromDb(baseDbPath, removedIds, maxDepth, noTests);
     const changedImpact = loadCallersFromDb(baseDbPath, changedIds, maxDepth, noTests);
 
-    for (const sym of removed) {
-      const symCallers = loadCallersFromDb(baseDbPath, sym.id ? [sym.id] : [], maxDepth, noTests);
-      (sym as SymbolInfo & { impact?: CallerInfo[] }).impact = symCallers;
-    }
-    for (const sym of changed) {
-      const baseSym = baseSymbols.get(makeSymbolKey(sym.kind, sym.file, sym.name));
-      const symCallers = loadCallersFromDb(
-        baseDbPath,
-        baseSym?.id ? [baseSym.id] : [],
-        maxDepth,
-        noTests,
-      );
-      sym.impact = symCallers;
-    }
+    attachImpactToSymbols(removed, baseDbPath, baseSymbols, maxDepth, noTests);
+    attachImpactToChanged(changed, baseDbPath, baseSymbols, maxDepth, noTests);
 
     const allImpacted = new Set<string>();
     for (const c of removedImpact) allImpacted.add(`${c.file}:${c.name}`);
@@ -492,19 +513,65 @@ export async function branchCompareData(
       },
     };
   } catch (err) {
-    return { error: (err as Error).message };
+    return { error: toErrorMessage(err) };
   } finally {
     removeWorktree(repoRoot, baseDir);
     removeWorktree(repoRoot, targetDir);
     try {
       fs.rmSync(tmpBase, { recursive: true, force: true });
     } catch (cleanupErr) {
-      debug(`branchCompareData: temp cleanup failed: ${(cleanupErr as Error).message}`);
+      debug(`branchCompareData: temp cleanup failed: ${toErrorMessage(cleanupErr)}`);
     }
   }
 }
 
 // ─── Mermaid Output ─────────────────────────────────────────────────────
+
+interface MermaidNodeIdState {
+  counter: number;
+  map: Map<string, string>;
+}
+
+function mermaidNodeId(state: MermaidNodeIdState, key: string): string {
+  if (!state.map.has(key)) {
+    state.map.set(key, `n${state.counter++}`);
+  }
+  return state.map.get(key)!;
+}
+
+function addMermaidSubgraph(
+  lines: string[],
+  state: MermaidNodeIdState,
+  prefix: string,
+  label: string,
+  symbols: Array<{ kind: string; file: string; name: string }>,
+  fillColor: string,
+  strokeColor: string,
+): void {
+  if (symbols.length === 0) return;
+  lines.push(`    subgraph sg_${prefix}["${label}"]`);
+  for (const sym of symbols) {
+    const key = `${prefix}::${sym.kind}::${sym.file}::${sym.name}`;
+    const nid = mermaidNodeId(state, key);
+    lines.push(`        ${nid}["[${kindIcon(sym.kind)}] ${sym.name}"]`);
+  }
+  lines.push('    end');
+  lines.push(`    style sg_${prefix} fill:${fillColor},stroke:${strokeColor}`);
+}
+
+function collectImpactedCallers(
+  impactSources: Array<{ impact?: CallerInfo[] }>,
+): Map<string, CallerInfo> {
+  const allImpacted = new Map<string, CallerInfo>();
+  for (const sym of impactSources) {
+    if (!sym.impact) continue;
+    for (const c of sym.impact) {
+      const key = `impact::${c.kind}::${c.file}::${c.name}`;
+      if (!allImpacted.has(key)) allImpacted.set(key, c);
+    }
+  }
+  return allImpacted;
+}
 
 export function branchCompareMermaid(data: BranchCompareResult): string {
   if (data.error) return data.error;
@@ -517,63 +584,19 @@ export function branchCompareMermaid(data: BranchCompareResult): string {
   }
 
   const lines = ['flowchart TB'];
-  let nodeCounter = 0;
-  const nodeIdMap = new Map<string, string>();
+  const state: MermaidNodeIdState = { counter: 0, map: new Map() };
 
-  function nodeId(key: string): string {
-    if (!nodeIdMap.has(key)) {
-      nodeIdMap.set(key, `n${nodeCounter++}`);
-    }
-    return nodeIdMap.get(key)!;
-  }
+  addMermaidSubgraph(lines, state, 'added', 'Added', data.added || [], '#e8f5e9', '#4caf50');
+  addMermaidSubgraph(lines, state, 'removed', 'Removed', data.removed || [], '#ffebee', '#f44336');
+  addMermaidSubgraph(lines, state, 'changed', 'Changed', data.changed || [], '#fff3e0', '#ff9800');
 
-  if (data.added && data.added.length > 0) {
-    lines.push('    subgraph sg_added["Added"]');
-    for (const sym of data.added) {
-      const key = `added::${sym.kind}::${sym.file}::${sym.name}`;
-      const nid = nodeId(key);
-      lines.push(`        ${nid}["[${kindIcon(sym.kind)}] ${sym.name}"]`);
-    }
-    lines.push('    end');
-    lines.push('    style sg_added fill:#e8f5e9,stroke:#4caf50');
-  }
-
-  if (data.removed && data.removed.length > 0) {
-    lines.push('    subgraph sg_removed["Removed"]');
-    for (const sym of data.removed) {
-      const key = `removed::${sym.kind}::${sym.file}::${sym.name}`;
-      const nid = nodeId(key);
-      lines.push(`        ${nid}["[${kindIcon(sym.kind)}] ${sym.name}"]`);
-    }
-    lines.push('    end');
-    lines.push('    style sg_removed fill:#ffebee,stroke:#f44336');
-  }
-
-  if (data.changed && data.changed.length > 0) {
-    lines.push('    subgraph sg_changed["Changed"]');
-    for (const sym of data.changed) {
-      const key = `changed::${sym.kind}::${sym.file}::${sym.name}`;
-      const nid = nodeId(key);
-      lines.push(`        ${nid}["[${kindIcon(sym.kind)}] ${sym.name}"]`);
-    }
-    lines.push('    end');
-    lines.push('    style sg_changed fill:#fff3e0,stroke:#ff9800');
-  }
-
-  const allImpacted = new Map<string, CallerInfo>();
   const impactSources = [...(data.removed || []), ...(data.changed || [])];
-  for (const sym of impactSources) {
-    if (!sym.impact) continue;
-    for (const c of sym.impact) {
-      const key = `impact::${c.kind}::${c.file}::${c.name}`;
-      if (!allImpacted.has(key)) allImpacted.set(key, c);
-    }
-  }
+  const allImpacted = collectImpactedCallers(impactSources);
 
   if (allImpacted.size > 0) {
     lines.push('    subgraph sg_impact["Impacted Callers"]');
     for (const [key, c] of allImpacted) {
-      const nid = nodeId(key);
+      const nid = mermaidNodeId(state, key);
       lines.push(`        ${nid}["[${kindIcon(c.kind)}] ${c.name}"]`);
     }
     lines.push('    end');
@@ -586,8 +609,8 @@ export function branchCompareMermaid(data: BranchCompareResult): string {
     const symKey = `${prefix}::${sym.kind}::${sym.file}::${sym.name}`;
     for (const c of sym.impact) {
       const callerKey = `impact::${c.kind}::${c.file}::${c.name}`;
-      if (nodeIdMap.has(symKey) && nodeIdMap.has(callerKey)) {
-        lines.push(`    ${nodeIdMap.get(symKey)} -.-> ${nodeIdMap.get(callerKey)}`);
+      if (state.map.has(symKey) && state.map.has(callerKey)) {
+        lines.push(`    ${state.map.get(symKey)} -.-> ${state.map.get(callerKey)}`);
       }
     }
   }

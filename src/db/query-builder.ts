@@ -33,14 +33,26 @@ function validateOrderBy(clause: string): void {
   }
 }
 
+/**
+ * Track parenthesis depth change for a character.
+ * Returns non-zero only for '(' / ')'; a character that is '(' or ')'
+ * can never simultaneously be ',' so the comma check in the caller
+ * remains mutually exclusive with the depth update.
+ */
+function parenDepthDelta(ch: string): number {
+  if (ch === '(') return 1;
+  if (ch === ')') return -1;
+  return 0;
+}
+
 function splitTopLevelCommas(str: string): string[] {
   const parts: string[] = [];
   let depth = 0;
   let start = 0;
   for (let i = 0; i < str.length; i++) {
-    if (str[i] === '(') depth++;
-    else if (str[i] === ')') depth--;
-    else if (str[i] === ',' && depth === 0) {
+    const ch = str[i]!;
+    depth += parenDepthDelta(ch);
+    if (ch === ',' && depth === 0) {
       parts.push(str.slice(start, i).trim());
       start = i + 1;
     }

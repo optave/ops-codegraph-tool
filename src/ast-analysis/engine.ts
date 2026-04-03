@@ -21,6 +21,7 @@ import { performance } from 'node:perf_hooks';
 import { bulkNodeIdsByFile } from '../db/index.js';
 import { debug } from '../infrastructure/logger.js';
 import { loadNative } from '../infrastructure/native.js';
+import { toErrorMessage } from '../shared/errors.js';
 import type {
   AnalysisOpts,
   AnalysisTiming,
@@ -178,6 +179,77 @@ function runNativeFileAnalysis(
  * Reads source from disk, calls the native standalone functions, and stores
  * results directly on definitions/symbols.
  */
+interface NativeAnalysisNeeds {
+  complexity: boolean;
+  cfg: boolean;
+  dataflow: boolean;
+}
+
+/** Determine which native analyses a file still needs. */
+function detectNativeNeeds(
+  symbols: ExtractorOutput,
+  ext: string,
+  langId: string,
+  opts: { doComplexity: boolean; doCfg: boolean; doDataflow: boolean },
+): NativeAnalysisNeeds {
+  const defs = symbols.definitions || [];
+  const langSupportsComplexity = COMPLEXITY_EXTENSIONS.has(ext) || COMPLEXITY_RULES.has(langId);
+  const langSupportsCfg = CFG_EXTENSIONS.has(ext) || CFG_RULES.has(langId);
+  const langSupportsDataflow = DATAFLOW_EXTENSIONS.has(ext) || DATAFLOW_RULES.has(langId);
+
+  return {
+    complexity:
+      opts.doComplexity &&
+      langSupportsComplexity &&
+      defs.some((d) => hasFuncBody(d) && !d.complexity),
+    cfg:
+      opts.doCfg &&
+      langSupportsCfg &&
+      defs.some((d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks)),
+    dataflow: opts.doDataflow && !symbols.dataflow && langSupportsDataflow,
+  };
+}
+
+/** Run native analysis passes for a single file. */
+function runNativeFileAnalysis(
+  native: NativeAddon,
+  source: string,
+  absPath: string,
+  relPath: string,
+  langId: string,
+  symbols: ExtractorOutput,
+  needs: NativeAnalysisNeeds,
+): void {
+  const defs = symbols.definitions || [];
+
+  if (needs.complexity && native.analyzeComplexity) {
+    try {
+      const results = native.analyzeComplexity(source, absPath, langId);
+      storeNativeComplexityResults(results, defs);
+    } catch (err: unknown) {
+      debug(`native analyzeComplexity failed for ${relPath}: ${toErrorMessage(err)}`);
+    }
+  }
+
+  if (needs.cfg && native.buildCfgAnalysis) {
+    try {
+      const results = native.buildCfgAnalysis(source, absPath, langId);
+      storeNativeCfgResults(results, defs);
+    } catch (err: unknown) {
+      debug(`native buildCfgAnalysis failed for ${relPath}: ${toErrorMessage(err)}`);
+    }
+  }
+
+  if (needs.dataflow && native.extractDataflowAnalysis) {
+    try {
+      const result = native.extractDataflowAnalysis(source, absPath, langId);
+      if (result) symbols.dataflow = result;
+    } catch (err: unknown) {
+      debug(`native extractDataflowAnalysis failed for ${relPath}: ${toErrorMessage(err)}`);
+    }
+  }
+}
+
 function runNativeAnalysis(
   native: NativeAddon,
   fileSymbols: Map<string, ExtractorOutput>,
@@ -205,7 +277,7 @@ function runNativeAnalysis(
     try {
       source = fs.readFileSync(absPath, 'utf-8');
     } catch (e) {
-      debug(`runNativeAnalysis: failed to read ${relPath}: ${(e as Error).message}`);
+      debug(`runNativeAnalysis: failed to read ${relPath}: ${toErrorMessage(e)}`);
       continue;
     }
 
@@ -355,7 +427,7 @@ async function ensureWasmTreesIfNeeded(
       const { ensureWasmTrees } = await getParserModule();
       await ensureWasmTrees(fileSymbols, rootDir);
     } catch (err: unknown) {
-      debug(`ensureWasmTrees failed: ${(err as Error).message}`);
+      debug(`ensureWasmTrees failed: ${toErrorMessage(err)}`);
     }
   }
 }
@@ -561,7 +633,7 @@ async function delegateToBuildFunctions(
       const { buildAstNodes } = await import('../features/ast.js');
       await buildAstNodes(db, fileSymbols as Map<string, any>, rootDir, engineOpts);
     } catch (err: unknown) {
-      debug(`buildAstNodes failed: ${(err as Error).message}`);
+      debug(`buildAstNodes failed: ${toErrorMessage(err)}`);
     }
     timing.astMs = performance.now() - t0;
   }
@@ -572,7 +644,7 @@ async function delegateToBuildFunctions(
       const { buildComplexityMetrics } = await import('../features/complexity.js');
       await buildComplexityMetrics(db, fileSymbols as Map<string, any>, rootDir, engineOpts);
     } catch (err: unknown) {
-      debug(`buildComplexityMetrics failed: ${(err as Error).message}`);
+      debug(`buildComplexityMetrics failed: ${toErrorMessage(err)}`);
     }
     timing.complexityMs = performance.now() - t0;
   }
@@ -583,7 +655,7 @@ async function delegateToBuildFunctions(
       const { buildCFGData } = await import('../features/cfg.js');
       await buildCFGData(db, fileSymbols, rootDir, engineOpts);
     } catch (err: unknown) {
-      debug(`buildCFGData failed: ${(err as Error).message}`);
+      debug(`buildCFGData failed: ${toErrorMessage(err)}`);
     }
     timing.cfgMs = performance.now() - t0;
   }
@@ -594,7 +666,7 @@ async function delegateToBuildFunctions(
       const { buildDataflowEdges } = await import('../features/dataflow.js');
       await buildDataflowEdges(db, fileSymbols, rootDir, engineOpts);
     } catch (err: unknown) {
-      debug(`buildDataflowEdges failed: ${(err as Error).message}`);
+      debug(`buildDataflowEdges failed: ${toErrorMessage(err)}`);
     }
     timing.dataflowMs = performance.now() - t0;
   }

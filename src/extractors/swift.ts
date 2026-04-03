@@ -73,49 +73,7 @@ function handleSwiftClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void 
 
   const kind = isEnum ? 'enum' : isStruct ? 'struct' : 'class';
 
-  const children: SubDeclaration[] = [];
-
-  if (isEnum) {
-    // Enum cases: enum_entry > simple_identifier, inside enum_class_body
-    const body = findChild(node, 'enum_class_body');
-    if (body) {
-      for (let i = 0; i < body.childCount; i++) {
-        const child = body.child(i);
-        if (child && child.type === 'enum_entry') {
-          const entryName = findChild(child, 'simple_identifier');
-          if (entryName) {
-            children.push({
-              name: entryName.text,
-              kind: 'constant',
-              line: child.startPosition.row + 1,
-            });
-          }
-        }
-      }
-    }
-  } else {
-    // Extract properties from class_body
-    const body = findChild(node, 'class_body');
-    if (body) {
-      for (let i = 0; i < body.childCount; i++) {
-        const child = body.child(i);
-        if (child && child.type === 'property_declaration') {
-          const pattern = findChild(child, 'pattern');
-          if (pattern) {
-            const propName = findChild(pattern, 'simple_identifier');
-            if (propName) {
-              children.push({
-                name: propName.text,
-                kind: 'property',
-                line: child.startPosition.row + 1,
-                visibility: extractModifierVisibility(child),
-              });
-            }
-          }
-        }
-      }
-    }
-  }
+  const children = isEnum ? collectSwiftEnumEntries(node) : collectSwiftProperties(node);
 
   ctx.definitions.push({
     name,
@@ -125,52 +83,95 @@ function handleSwiftClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void 
     children: children.length > 0 ? children : undefined,
   });
 
-  // Methods inside class_body or enum_class_body
-  const body = findChild(node, 'class_body') || findChild(node, 'enum_class_body');
-  if (body) {
-    for (let i = 0; i < body.childCount; i++) {
-      const child = body.child(i);
-      if (child && child.type === 'function_declaration') {
-        const methName = findChild(child, 'simple_identifier');
-        if (methName) {
-          ctx.definitions.push({
-            name: `${name}.${methName.text}`,
-            kind: 'method',
-            line: child.startPosition.row + 1,
-            endLine: child.endPosition.row + 1,
-            visibility: extractModifierVisibility(child),
-          });
-        }
-      }
+  collectSwiftMethods(node, name, ctx);
+  collectSwiftInheritance(node, name, ctx);
+}
+
+/** Collect enum constant entries from an enum_class_body. */
+function collectSwiftEnumEntries(node: TreeSitterNode): SubDeclaration[] {
+  const entries: SubDeclaration[] = [];
+  const body = findChild(node, 'enum_class_body');
+  if (!body) return entries;
+  for (let i = 0; i < body.childCount; i++) {
+    const child = body.child(i);
+    if (!child || child.type !== 'enum_entry') continue;
+    const entryName = findChild(child, 'simple_identifier');
+    if (entryName) {
+      entries.push({
+        name: entryName.text,
+        kind: 'constant',
+        line: child.startPosition.row + 1,
+      });
     }
   }
+  return entries;
+}
 
-  // Inheritance: inheritance_specifier nodes are DIRECT children of class_declaration
-  // First specifier is the superclass (extends), rest are protocol conformances (implements)
+/** Collect property declarations from a class_body. */
+function collectSwiftProperties(node: TreeSitterNode): SubDeclaration[] {
+  const props: SubDeclaration[] = [];
+  const body = findChild(node, 'class_body');
+  if (!body) return props;
+  for (let i = 0; i < body.childCount; i++) {
+    const child = body.child(i);
+    if (!child || child.type !== 'property_declaration') continue;
+    const pattern = findChild(child, 'pattern');
+    if (!pattern) continue;
+    const propName = findChild(pattern, 'simple_identifier');
+    if (propName) {
+      props.push({
+        name: propName.text,
+        kind: 'property',
+        line: child.startPosition.row + 1,
+        visibility: extractModifierVisibility(child),
+      });
+    }
+  }
+  return props;
+}
+
+/** Collect method declarations from class_body or enum_class_body. */
+function collectSwiftMethods(node: TreeSitterNode, className: string, ctx: ExtractorOutput): void {
+  const body = findChild(node, 'class_body') || findChild(node, 'enum_class_body');
+  if (!body) return;
+  for (let i = 0; i < body.childCount; i++) {
+    const child = body.child(i);
+    if (!child || child.type !== 'function_declaration') continue;
+    const methName = findChild(child, 'simple_identifier');
+    if (methName) {
+      ctx.definitions.push({
+        name: `${className}.${methName.text}`,
+        kind: 'method',
+        line: child.startPosition.row + 1,
+        endLine: child.endPosition.row + 1,
+        visibility: extractModifierVisibility(child),
+      });
+    }
+  }
+}
+
+/** Collect inheritance from inheritance_specifier children. First = extends, rest = implements. */
+function collectSwiftInheritance(
+  node: TreeSitterNode,
+  className: string,
+  ctx: ExtractorOutput,
+): void {
   let first = true;
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child || child.type !== 'inheritance_specifier') continue;
-    // inheritance_specifier > user_type > type_identifier
     const userType = findChild(child, 'user_type');
-    if (userType) {
-      const typeId = findChild(userType, 'type_identifier');
-      if (typeId) {
-        if (first) {
-          ctx.classes.push({
-            name,
-            extends: typeId.text,
-            line: node.startPosition.row + 1,
-          });
-          first = false;
-        } else {
-          ctx.classes.push({
-            name,
-            implements: typeId.text,
-            line: node.startPosition.row + 1,
-          });
-        }
-      }
+    const typeId = userType ? findChild(userType, 'type_identifier') : null;
+    if (!typeId) continue;
+    if (first) {
+      ctx.classes.push({ name: className, extends: typeId.text, line: node.startPosition.row + 1 });
+      first = false;
+    } else {
+      ctx.classes.push({
+        name: className,
+        implements: typeId.text,
+        line: node.startPosition.row + 1,
+      });
     }
   }
 }

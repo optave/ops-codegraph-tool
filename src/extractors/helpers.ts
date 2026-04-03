@@ -111,6 +111,20 @@ export function findParentNode(
 }
 
 /**
+ * Resolve a container's body node by trying each field name in order.
+ */
+function resolveBodyNode(
+  containerNode: TreeSitterNode,
+  bodyFields: readonly string[],
+): TreeSitterNode | null {
+  for (const field of bodyFields) {
+    const body = containerNode.childForFieldName(field) || findChild(containerNode, field);
+    if (body) return body;
+  }
+  return null;
+}
+
+/**
  * Extract child declarations from a container node's body.
  * Finds the body via `bodyFields` (tries childForFieldName then findChild for each),
  * iterates its children, filters by `memberType`, extracts `nameField`, and returns SubDeclarations.
@@ -126,22 +140,17 @@ export function extractBodyMembers(
   nameField: string = 'name',
   visibility?: (member: TreeSitterNode) => SubDeclaration['visibility'],
 ): SubDeclaration[] {
+  const body = resolveBodyNode(containerNode, bodyFields);
+  if (!body) return [];
   const members: SubDeclaration[] = [];
-  let body: TreeSitterNode | null = null;
-  for (const field of bodyFields) {
-    body = containerNode.childForFieldName(field) || findChild(containerNode, field);
-    if (body) break;
-  }
-  if (!body) return members;
   for (let i = 0; i < body.childCount; i++) {
     const member = body.child(i);
     if (!member || member.type !== memberType) continue;
     const nn = member.childForFieldName(nameField);
-    if (nn) {
-      const entry: SubDeclaration = { name: nn.text, kind, line: member.startPosition.row + 1 };
-      if (visibility) entry.visibility = visibility(member);
-      members.push(entry);
-    }
+    if (!nn) continue;
+    const entry: SubDeclaration = { name: nn.text, kind, line: member.startPosition.row + 1 };
+    if (visibility) entry.visibility = visibility(member);
+    members.push(entry);
   }
   return members;
 }
@@ -162,24 +171,29 @@ export function lastPathSegment(path: string, separator: string = '/'): string {
   return path.split(separator).pop() ?? path;
 }
 
+/**
+ * Parse visibility from a modifier node's text content.
+ */
+function parseModifierText(text: string): 'public' | 'private' | 'protected' | undefined {
+  if (VISIBILITY_KEYWORDS.has(text)) return text as 'public' | 'private' | 'protected';
+  // C# 'private protected' — accessible to derived types in same assembly → protected
+  if (text === 'private protected') return 'protected';
+  // Compound modifiers node (Java: "public static") — scan its text for a keyword
+  for (const kw of VISIBILITY_KEYWORDS) {
+    if (text.includes(kw)) return kw as 'public' | 'private' | 'protected';
+  }
+  return undefined;
+}
+
 export function extractModifierVisibility(
   node: TreeSitterNode,
   modifierTypes: Set<string> = DEFAULT_MODIFIER_TYPES,
 ): 'public' | 'private' | 'protected' | undefined {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
-    if (!child) continue;
-    // Direct keyword match (e.g., PHP visibility_modifier = "public")
-    if (modifierTypes.has(child.type)) {
-      const text = child.text;
-      if (VISIBILITY_KEYWORDS.has(text)) return text as 'public' | 'private' | 'protected';
-      // C# 'private protected' — accessible to derived types in same assembly → protected
-      if (text === 'private protected') return 'protected';
-      // Compound modifiers node (Java: "public static") — scan its text for a keyword
-      for (const kw of VISIBILITY_KEYWORDS) {
-        if (text.includes(kw)) return kw as 'public' | 'private' | 'protected';
-      }
-    }
+    if (!child || !modifierTypes.has(child.type)) continue;
+    const result = parseModifierText(child.text);
+    if (result) return result;
   }
   return undefined;
 }

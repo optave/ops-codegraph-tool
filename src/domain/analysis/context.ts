@@ -264,6 +264,22 @@ function getNodeChildrenSafe(db: BetterSqlite3Database, nodeId: number) {
   }
 }
 
+function buildIntraFileDataFlow(
+  db: BetterSqlite3Database,
+  file: string,
+): Array<{ caller: string; callees: string[] }> {
+  const intraEdges = findIntraFileCallEdges(db, file) as IntraFileCallEdge[];
+  const dataFlowMap = new Map<string, string[]>();
+  for (const edge of intraEdges) {
+    if (!dataFlowMap.has(edge.caller_name)) dataFlowMap.set(edge.caller_name, []);
+    dataFlowMap.get(edge.caller_name)!.push(edge.callee_name);
+  }
+  return [...dataFlowMap.entries()].map(([caller, callees]) => ({
+    caller,
+    callees,
+  }));
+}
+
 function explainFileImpl(
   db: BetterSqlite3Database,
   target: string,
@@ -299,16 +315,7 @@ function explainFileImpl(
       file: r.file,
     }));
 
-    const intraEdges = findIntraFileCallEdges(db, fn.file) as IntraFileCallEdge[];
-    const dataFlowMap = new Map<string, string[]>();
-    for (const edge of intraEdges) {
-      if (!dataFlowMap.has(edge.caller_name)) dataFlowMap.set(edge.caller_name, []);
-      dataFlowMap.get(edge.caller_name)!.push(edge.callee_name);
-    }
-    const dataFlow = [...dataFlowMap.entries()].map(([caller, callees]) => ({
-      caller,
-      callees,
-    }));
+    const dataFlow = buildIntraFileDataFlow(db, fn.file);
 
     const metric = getLineCountForNode(db, fn.id) as { line_count: number } | undefined;
     let lineCount: number | null = metric?.line_count || null;

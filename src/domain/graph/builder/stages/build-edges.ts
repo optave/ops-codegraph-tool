@@ -197,8 +197,11 @@ function buildImportEdgesNative(
   };
   const fileNodeRowCache = new Map<string, { id: number }>();
 
-  // 2. Pre-resolve all imports and collect supplemental resolved entries
-  const supplementalResolved: Array<{ key: string; resolvedPath: string }> = [];
+  // 2. Pre-resolve all imports and build resolved imports array.
+  // Keys use rootDir + "/" + relPath to match the Rust lookup format
+  // (format!("{}/{}", root_dir, file)) — avoids separator mismatches on Windows
+  // where path.join uses backslashes but Rust joins with forward slash.
+  const resolvedImports: Array<{ key: string; resolvedPath: string }> = [];
 
   for (const [relPath, symbols] of fileSymbols) {
     const fileNodeRow = addFileNodeId(relPath);
@@ -218,11 +221,8 @@ function buildImportEdgesNative(
       const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
       addFileNodeId(resolvedPath);
 
-      // Check if this resolution is in batchResolved; if not, add supplemental
-      const resolveKey = `${path.join(rootDir, relPath)}|${imp.source}`;
-      if (!ctx.batchResolved?.has(resolveKey)) {
-        supplementalResolved.push({ key: resolveKey, resolvedPath });
-      }
+      // Key matches Rust's format!("{}/{}", root_dir, file_input.file)
+      resolvedImports.push({ key: `${rootDir}/${relPath}|${imp.source}`, resolvedPath });
 
       importInfos.push({
         source: imp.source,
@@ -241,17 +241,6 @@ function buildImportEdgesNative(
       imports: importInfos,
       definitionNames: symbols.definitions.map((d) => d.name),
     });
-  }
-
-  // 3. Flatten batchResolved + supplemental into resolved imports array
-  const resolvedImports: Array<{ key: string; resolvedPath: string }> = [];
-  if (ctx.batchResolved) {
-    for (const [key, resolvedPath] of ctx.batchResolved) {
-      resolvedImports.push({ key, resolvedPath });
-    }
-  }
-  for (const entry of supplementalResolved) {
-    resolvedImports.push(entry);
   }
 
   // 4. Flatten reexportMap

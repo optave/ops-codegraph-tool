@@ -68,6 +68,67 @@ interface DirectoryEntry {
   subdirectories: string[];
 }
 
+function buildDirectoryEntry(
+  d: DirRow,
+  filesStmt: { all(...params: unknown[]): unknown[] },
+  subdirsStmt: { all(...params: unknown[]): unknown[] },
+  noTests: boolean,
+): DirectoryEntry {
+  let files = filesStmt.all(d.id) as FileMetricRow[];
+  if (noTests) files = files.filter((f) => !isTestFile(f.name));
+
+  const subdirs = subdirsStmt.all(d.id) as { name: string }[];
+
+  const fileCount = noTests ? files.length : d.file_count || 0;
+  return {
+    directory: d.name,
+    fileCount,
+    symbolCount: d.symbol_count || 0,
+    fanIn: d.fan_in || 0,
+    fanOut: d.fan_out || 0,
+    cohesion: d.cohesion,
+    density: fileCount > 0 ? (d.symbol_count || 0) / fileCount : 0,
+    files: files.map((f) => ({
+      file: f.name,
+      lineCount: f.line_count || 0,
+      symbolCount: f.symbol_count || 0,
+      importCount: f.import_count || 0,
+      exportCount: f.export_count || 0,
+      fanIn: f.fan_in || 0,
+      fanOut: f.fan_out || 0,
+    })),
+    subdirectories: subdirs.map((s) => s.name),
+  };
+}
+
+function applyFileLimit(
+  result: DirectoryEntry[],
+  fileLimit: number,
+): { directories: DirectoryEntry[]; count: number; suppressed: number; warning: string } | null {
+  const totalFiles = result.reduce((sum, d) => sum + d.files.length, 0);
+  if (totalFiles <= fileLimit) return null;
+
+  let shown = 0;
+  for (const d of result) {
+    const remaining = fileLimit - shown;
+    if (remaining <= 0) {
+      d.files = [];
+    } else if (d.files.length > remaining) {
+      d.files = d.files.slice(0, remaining);
+      shown = fileLimit;
+    } else {
+      shown += d.files.length;
+    }
+  }
+  const suppressed = totalFiles - fileLimit;
+  return {
+    directories: result,
+    count: result.length,
+    suppressed,
+    warning: `${suppressed} files omitted (showing ${fileLimit}/${totalFiles}). Use --full to show all files, or narrow with --directory.`,
+  };
+}
+
 export function structureData(
   customDbPath?: string,
   opts: StructureDataOpts = {},
@@ -115,73 +176,27 @@ export function structureData(
     dirs.sort(sortFn);
 
     // Get file metrics for each directory
-    const result: DirectoryEntry[] = dirs.map((d) => {
-      let files = db
-        .prepare(`
-          SELECT n.name, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count, nm.fan_in, nm.fan_out
-          FROM edges e
-          JOIN nodes n ON e.target_id = n.id
-          LEFT JOIN node_metrics nm ON n.id = nm.node_id
-          WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'file'
-        `)
-        .all(d.id) as FileMetricRow[];
-      if (noTests) files = files.filter((f) => !isTestFile(f.name));
-
-      const subdirs = db
-        .prepare(`
-          SELECT n.name
-          FROM edges e
-          JOIN nodes n ON e.target_id = n.id
-          WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'directory'
-        `)
-        .all(d.id) as { name: string }[];
-
-      const fileCount = noTests ? files.length : d.file_count || 0;
-      return {
-        directory: d.name,
-        fileCount,
-        symbolCount: d.symbol_count || 0,
-        fanIn: d.fan_in || 0,
-        fanOut: d.fan_out || 0,
-        cohesion: d.cohesion,
-        density: fileCount > 0 ? (d.symbol_count || 0) / fileCount : 0,
-        files: files.map((f) => ({
-          file: f.name,
-          lineCount: f.line_count || 0,
-          symbolCount: f.symbol_count || 0,
-          importCount: f.import_count || 0,
-          exportCount: f.export_count || 0,
-          fanIn: f.fan_in || 0,
-          fanOut: f.fan_out || 0,
-        })),
-        subdirectories: subdirs.map((s) => s.name),
-      };
-    });
+    const filesStmt = db.prepare(`
+      SELECT n.name, nm.line_count, nm.symbol_count, nm.import_count, nm.export_count, nm.fan_in, nm.fan_out
+      FROM edges e
+      JOIN nodes n ON e.target_id = n.id
+      LEFT JOIN node_metrics nm ON n.id = nm.node_id
+      WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'file'
+    `);
+    const subdirsStmt = db.prepare(`
+      SELECT n.name
+      FROM edges e
+      JOIN nodes n ON e.target_id = n.id
+      WHERE e.source_id = ? AND e.kind = 'contains' AND n.kind = 'directory'
+    `);
+    const result: DirectoryEntry[] = dirs.map((d) =>
+      buildDirectoryEntry(d, filesStmt, subdirsStmt, noTests),
+    );
 
     // Apply global file limit unless full mode
     if (!full) {
-      const totalFiles = result.reduce((sum, d) => sum + d.files.length, 0);
-      if (totalFiles > fileLimit) {
-        let shown = 0;
-        for (const d of result) {
-          const remaining = fileLimit - shown;
-          if (remaining <= 0) {
-            d.files = [];
-          } else if (d.files.length > remaining) {
-            d.files = d.files.slice(0, remaining);
-            shown = fileLimit;
-          } else {
-            shown += d.files.length;
-          }
-        }
-        const suppressed = totalFiles - fileLimit;
-        return {
-          directories: result,
-          count: result.length,
-          suppressed,
-          warning: `${suppressed} files omitted (showing ${fileLimit}/${totalFiles}). Use --full to show all files, or narrow with --directory.`,
-        };
-      }
+      const limited = applyFileLimit(result, fileLimit);
+      if (limited) return limited;
     }
 
     const base = { directories: result, count: result.length };

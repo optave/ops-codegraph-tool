@@ -1,6 +1,24 @@
 import { loadConfig } from '../infrastructure/config.js';
-import { printNdjson } from '../shared/paginate.js';
+import type { PaginationMeta } from '../shared/paginate.js';
 import { formatTable, truncEnd } from './table.js';
+
+/**
+ * Print data as newline-delimited JSON (NDJSON).
+ *
+ * Emits a `_meta` line with pagination info (if present), then one JSON
+ * line per item in the named array field.
+ */
+export function printNdjson(
+  data: Record<string, unknown> & { _pagination?: PaginationMeta },
+  field: string,
+): void {
+  if (data._pagination) console.log(JSON.stringify({ _meta: data._pagination }));
+  const items = data[field];
+  if (Array.isArray(items)) {
+    // console.log is intentional: NDJSON serialisation must go to stdout, not the structured logger
+    for (const item of items) console.log(JSON.stringify(item));
+  }
+}
 
 function flattenObject(obj: Record<string, unknown>, prefix = ''): Record<string, unknown> {
   const result: Record<string, unknown> = {};

@@ -12,6 +12,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { bulkNodeIdsByFile } from '../../../../db/index.js';
 import { debug } from '../../../../infrastructure/logger.js';
+import { toErrorMessage } from '../../../../shared/errors.js';
 import type {
   BetterSqlite3Database,
   ExtractorOutput,
@@ -37,35 +38,31 @@ interface PrecomputedFileData {
   _reverseDepOnly?: boolean;
 }
 
-// ── Native fast-path ─────────────────────────────────────────────────
+// ── Native fast-path helpers ─────────────────────────────────────────
 
-function tryNativeInsert(ctx: PipelineContext): boolean {
-  // Use NativeDatabase persistent connection (Phase 6.15+).
-  // Standalone napi functions were removed in 6.17 — falls through to JS if nativeDb unavailable.
-  if (!ctx.nativeDb?.bulkInsertNodes) return false;
-
-  const { allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
-
-  // Marshal allSymbols → InsertNodesBatch[]
-  const batches: Array<{
-    file: string;
-    definitions: Array<{
+/** Shape of a marshaled batch for native bulk insert. */
+interface InsertNodesBatch {
+  file: string;
+  definitions: Array<{
+    name: string;
+    kind: string;
+    line: number;
+    endLine?: number;
+    visibility?: string;
+    children: Array<{
       name: string;
       kind: string;
       line: number;
       endLine?: number;
       visibility?: string;
-      children: Array<{
-        name: string;
-        kind: string;
-        line: number;
-        endLine?: number;
-        visibility?: string;
-      }>;
     }>;
-    exports: Array<{ name: string; kind: string; line: number }>;
-  }> = [];
+  }>;
+  exports: Array<{ name: string; kind: string; line: number }>;
+}
 
+/** Marshal allSymbols into the batch format expected by native bulkInsertNodes. */
+function marshalSymbolBatches(allSymbols: Map<string, ExtractorOutput>): InsertNodesBatch[] {
+  const batches: InsertNodesBatch[] = [];
   for (const [relPath, symbols] of allSymbols) {
     batches.push({
       file: relPath,
@@ -90,14 +87,18 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
       })),
     });
   }
+  return batches;
+}
 
-  // Build file hash entries
-  const precomputedData = new Map<string, PrecomputedFileData>();
-  for (const item of filesToParse) {
-    if (item.relPath) precomputedData.set(item.relPath, item as PrecomputedFileData);
-  }
-
+/** Build file hash entries from parsed symbols and precomputed/metadata sources. */
+function buildFileHashes(
+  allSymbols: Map<string, ExtractorOutput>,
+  precomputedData: Map<string, PrecomputedFileData>,
+  metadataUpdates: MetadataUpdate[],
+  rootDir: string,
+): Array<{ file: string; hash: string; mtime: number; size: number }> {
   const fileHashes: Array<{ file: string; hash: string; mtime: number; size: number }> = [];
+
   for (const [relPath] of allSymbols) {
     const precomputed = precomputedData.get(relPath);
     if (precomputed?._reverseDepOnly) {
@@ -121,7 +122,7 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
       try {
         code = readFileSafe(absPath);
       } catch (e) {
-        debug(`tryNativeInsert: readFileSafe failed for ${relPath}: ${(e as Error).message}`);
+        debug(`buildFileHashes: readFileSafe failed for ${relPath}: ${toErrorMessage(e)}`);
         code = null;
       }
       if (code !== null) {
@@ -140,6 +141,24 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
     fileHashes.push({ file: item.relPath, hash: item.hash, mtime, size });
   }
 
+  return fileHashes;
+}
+
+// ── Native fast-path ─────────────────────────────────────────────────
+
+function tryNativeInsert(ctx: PipelineContext): boolean {
+  if (!ctx.nativeDb?.bulkInsertNodes) return false;
+
+  const { allSymbols, filesToParse, metadataUpdates, rootDir, removed } = ctx;
+
+  const batches = marshalSymbolBatches(allSymbols);
+
+  const precomputedData = new Map<string, PrecomputedFileData>();
+  for (const item of filesToParse) {
+    if (item.relPath) precomputedData.set(item.relPath, item as PrecomputedFileData);
+  }
+  const fileHashes = buildFileHashes(allSymbols, precomputedData, metadataUpdates, rootDir);
+
   // WAL guard: same suspendJsDb/resumeJsDb pattern used by feature modules
   // (ast, cfg, complexity, dataflow). Checkpoint JS side before native write,
   // then checkpoint native side after, so neither library reads WAL frames
@@ -155,7 +174,7 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
       ctx.nativeDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     } catch (e) {
       debug(
-        `tryNativeInsert: WAL checkpoint failed (nativeDb may already be closed): ${(e as Error).message}`,
+        `tryNativeInsert: WAL checkpoint failed (nativeDb may already be closed): ${toErrorMessage(e)}`,
       );
     }
   }
@@ -329,7 +348,7 @@ function updateFileHashes(
       try {
         code = readFileSafe(absPath);
       } catch (e) {
-        debug(`updateFileHashes: readFileSafe failed for ${relPath}: ${(e as Error).message}`);
+        debug(`updateFileHashes: readFileSafe failed for ${relPath}: ${toErrorMessage(e)}`);
         code = null;
       }
       if (code !== null) {
@@ -370,7 +389,7 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
         return;
       }
     } catch (e) {
-      debug(`insertNodes: native insert failed, falling back to JS: ${(e as Error).message}`);
+      debug(`insertNodes: native insert failed, falling back to JS: ${toErrorMessage(e)}`);
     }
   }
 
@@ -386,7 +405,7 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
       'INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)',
     );
   } catch (e) {
-    debug(`insertNodes: file_hashes prepare failed (table may not exist): ${(e as Error).message}`);
+    debug(`insertNodes: file_hashes prepare failed (table may not exist): ${toErrorMessage(e)}`);
     upsertHash = null;
   }
 

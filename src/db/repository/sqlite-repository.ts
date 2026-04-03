@@ -245,4 +245,33 @@ export class SqliteRepository extends Repository {
   getComplexityForNode(nodeId: number): ComplexityMetrics | undefined {
     return getComplexityForNode(this.#db, nodeId);
   }
+
+  // ── Convenience queries ────────────────────────────────────────────
+
+  getFileHash(file: string): string | null {
+    const row = this.#db.prepare('SELECT hash FROM file_hashes WHERE file = ?').get(file) as
+      | { hash: string }
+      | undefined;
+    return row?.hash ?? null;
+  }
+
+  #implementsEdgesCache?: boolean;
+  hasImplementsEdges(): boolean {
+    if (this.#implementsEdgesCache !== undefined) return this.#implementsEdgesCache;
+    this.#implementsEdgesCache = !!this.#db
+      .prepare("SELECT 1 FROM edges WHERE kind = 'implements' LIMIT 1")
+      .get();
+    return this.#implementsEdgesCache;
+  }
+
+  #coChangesTableCache?: boolean;
+  hasCoChangesTable(): boolean {
+    if (this.#coChangesTableCache !== undefined) return this.#coChangesTableCache;
+    try {
+      this.#coChangesTableCache = !!this.#db.prepare('SELECT 1 FROM co_changes LIMIT 1').get();
+    } catch {
+      this.#coChangesTableCache = false;
+    }
+    return this.#coChangesTableCache;
+  }
 }

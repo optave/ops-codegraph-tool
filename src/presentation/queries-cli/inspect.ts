@@ -294,17 +294,91 @@ export function children(name: string, customDbPath: string, opts: OutputOpts = 
   }
 }
 
+function renderSignature(sig: ContextResult['signature']): void {
+  if (!sig) return;
+  console.log('## Type/Shape Info');
+  if (sig.params != null) console.log(`  Parameters: (${sig.params})`);
+  if (sig.returnType) console.log(`  Returns: ${sig.returnType}`);
+  console.log();
+}
+
+function renderComplexity(cx: NonNullable<ContextResult['complexity']>): void {
+  const miPart = cx.maintainabilityIndex ? ` | MI: ${cx.maintainabilityIndex}` : '';
+  console.log('## Complexity');
+  console.log(
+    `  Cognitive: ${cx.cognitive} | Cyclomatic: ${cx.cyclomatic} | Max Nesting: ${cx.maxNesting}${miPart}`,
+  );
+  console.log();
+}
+
+function renderSource(source: string, indent = '  '): void {
+  console.log('## Source');
+  for (const line of source.split('\n')) {
+    console.log(`${indent}${line}`);
+  }
+  console.log();
+}
+
+function renderCallees(callees: CalleeRef[]): void {
+  if (callees.length === 0) return;
+  console.log(`## Direct Dependencies (${callees.length})`);
+  for (const c of callees) {
+    const summary = c.summary ? ` — ${c.summary}` : '';
+    console.log(`  ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}${summary}`);
+    if (c.source) {
+      const maxSourceLines = 10;
+      for (const line of c.source.split('\n').slice(0, maxSourceLines)) {
+        console.log(`    | ${line}`);
+      }
+    }
+  }
+  console.log();
+}
+
+function renderCallers(callers: CallerRef[]): void {
+  if (callers.length === 0) return;
+  console.log(`## Callers (${callers.length})`);
+  for (const c of callers) {
+    const via = c.viaHierarchy ? ` (via ${c.viaHierarchy})` : '';
+    console.log(`  ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}${via}`);
+  }
+  console.log();
+}
+
+function renderSymbolRefList(label: string, items: SymbolRef[]): void {
+  if (items.length === 0) return;
+  console.log(`## ${label} (${items.length})`);
+  for (const s of items) {
+    console.log(`  ${kindIcon(s.kind)} ${s.name}  ${s.file}:${s.line}`);
+  }
+  console.log();
+}
+
+function renderRelatedTests(tests: ContextResult['relatedTests']): void {
+  if (tests.length === 0) return;
+  console.log('## Related Tests');
+  const maxTestSourceLines = 20;
+  for (const t of tests) {
+    console.log(`  ${t.file} — ${t.testCount} tests`);
+    for (const tn of t.testNames) {
+      console.log(`    - ${tn}`);
+    }
+    if (t.source) {
+      console.log('    Source:');
+      for (const line of t.source.split('\n').slice(0, maxTestSourceLines)) {
+        console.log(`    | ${line}`);
+      }
+    }
+  }
+  console.log();
+}
+
 function renderContextResult(r: ContextResult): void {
   const lineRange = r.endLine ? `${r.line}-${r.endLine}` : `${r.line}`;
   const roleTag = r.role ? ` [${r.role}]` : '';
   console.log(`\n# ${r.name} (${r.kind})${roleTag} — ${r.file}:${lineRange}\n`);
 
-  if (r.signature) {
-    console.log('## Type/Shape Info');
-    if (r.signature.params != null) console.log(`  Parameters: (${r.signature.params})`);
-    if (r.signature.returnType) console.log(`  Returns: ${r.signature.returnType}`);
-    console.log();
-  }
+  renderSignature(r.signature);
 
   if (r.children && r.children.length > 0) {
     console.log(`## Children (${r.children.length})`);
@@ -314,79 +388,13 @@ function renderContextResult(r: ContextResult): void {
     console.log();
   }
 
-  if (r.complexity) {
-    const cx = r.complexity;
-    const miPart = cx.maintainabilityIndex ? ` | MI: ${cx.maintainabilityIndex}` : '';
-    console.log('## Complexity');
-    console.log(
-      `  Cognitive: ${cx.cognitive} | Cyclomatic: ${cx.cyclomatic} | Max Nesting: ${cx.maxNesting}${miPart}`,
-    );
-    console.log();
-  }
-
-  if (r.source) {
-    console.log('## Source');
-    for (const line of r.source.split('\n')) {
-      console.log(`  ${line}`);
-    }
-    console.log();
-  }
-
-  if (r.callees.length > 0) {
-    console.log(`## Direct Dependencies (${r.callees.length})`);
-    for (const c of r.callees) {
-      const summary = c.summary ? ` — ${c.summary}` : '';
-      console.log(`  ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}${summary}`);
-      if (c.source) {
-        for (const line of c.source.split('\n').slice(0, 10)) {
-          console.log(`    | ${line}`);
-        }
-      }
-    }
-    console.log();
-  }
-
-  if (r.callers.length > 0) {
-    console.log(`## Callers (${r.callers.length})`);
-    for (const c of r.callers) {
-      const via = c.viaHierarchy ? ` (via ${c.viaHierarchy})` : '';
-      console.log(`  ${kindIcon(c.kind)} ${c.name}  ${c.file}:${c.line}${via}`);
-    }
-    console.log();
-  }
-
-  if (r.implementors && r.implementors.length > 0) {
-    console.log(`## Implementors (${r.implementors.length})`);
-    for (const impl of r.implementors) {
-      console.log(`  ${kindIcon(impl.kind)} ${impl.name}  ${impl.file}:${impl.line}`);
-    }
-    console.log();
-  }
-
-  if (r.implements && r.implements.length > 0) {
-    console.log(`## Implements (${r.implements.length})`);
-    for (const iface of r.implements) {
-      console.log(`  ${kindIcon(iface.kind)} ${iface.name}  ${iface.file}:${iface.line}`);
-    }
-    console.log();
-  }
-
-  if (r.relatedTests.length > 0) {
-    console.log('## Related Tests');
-    for (const t of r.relatedTests) {
-      console.log(`  ${t.file} — ${t.testCount} tests`);
-      for (const tn of t.testNames) {
-        console.log(`    - ${tn}`);
-      }
-      if (t.source) {
-        console.log('    Source:');
-        for (const line of t.source.split('\n').slice(0, 20)) {
-          console.log(`    | ${line}`);
-        }
-      }
-    }
-    console.log();
-  }
+  if (r.complexity) renderComplexity(r.complexity);
+  if (r.source) renderSource(r.source);
+  renderCallees(r.callees);
+  renderCallers(r.callers);
+  renderSymbolRefList('Implementors', r.implementors || []);
+  renderSymbolRefList('Implements', r.implements || []);
+  renderRelatedTests(r.relatedTests);
 
   if (r.callees.length === 0 && r.callers.length === 0 && r.relatedTests.length === 0) {
     console.log('  (no call edges or tests found — may be invoked dynamically or via re-exports)');
@@ -439,7 +447,7 @@ function renderFileExplain(r: FileExplainResult): void {
   console.log();
 }
 
-function renderFunctionExplain(r: FunctionExplainResult, indent = ''): void {
+function renderExplainHeader(r: FunctionExplainResult, indent: string): void {
   const lineRange = r.endLine ? `${r.line}-${r.endLine}` : `${r.line}`;
   const lineInfo = r.lineCount ? `${r.lineCount} lines` : '';
   const summaryPart = r.summary ? ` | ${r.summary}` : '';
@@ -454,15 +462,19 @@ function renderFunctionExplain(r: FunctionExplainResult, indent = ''): void {
     if (r.signature.params != null) console.log(`${indent}  Parameters: (${r.signature.params})`);
     if (r.signature.returnType) console.log(`${indent}  Returns: ${r.signature.returnType}`);
   }
+}
 
-  if (r.complexity) {
-    const cx = r.complexity;
-    const miPart = cx.maintainabilityIndex ? ` MI=${cx.maintainabilityIndex}` : '';
-    console.log(
-      `${indent}  Complexity: cognitive=${cx.cognitive} cyclomatic=${cx.cyclomatic} nesting=${cx.maxNesting}${miPart}`,
-    );
-  }
+function renderExplainComplexity(
+  cx: NonNullable<FunctionExplainResult['complexity']>,
+  indent: string,
+): void {
+  const miPart = cx.maintainabilityIndex ? ` MI=${cx.maintainabilityIndex}` : '';
+  console.log(
+    `${indent}  Complexity: cognitive=${cx.cognitive} cyclomatic=${cx.cyclomatic} nesting=${cx.maxNesting}${miPart}`,
+  );
+}
 
+function renderExplainEdges(r: FunctionExplainResult, indent: string): void {
   if (r.callees.length > 0) {
     console.log(`\n${indent}  Calls (${r.callees.length}):`);
     for (const c of r.callees) {
@@ -488,8 +500,15 @@ function renderFunctionExplain(r: FunctionExplainResult, indent = ''): void {
   if (r.callees.length === 0 && r.callers.length === 0) {
     console.log(`${indent}  (no call edges found -- may be invoked dynamically or via re-exports)`);
   }
+}
+
+function renderFunctionExplain(r: FunctionExplainResult, indent = ''): void {
+  renderExplainHeader(r, indent);
+  if (r.complexity) renderExplainComplexity(r.complexity, indent);
+  renderExplainEdges(r, indent);
 
   if (r.depDetails && r.depDetails.length > 0) {
+    const depthLevel = r._depth || 0;
     console.log(`\n${indent}  --- Dependencies (depth ${depthLevel + 1}) ---`);
     for (const dep of r.depDetails) {
       renderFunctionExplain(dep, `${indent}  `);

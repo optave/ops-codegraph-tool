@@ -14,7 +14,7 @@ import { getDatabase } from '../db/better-sqlite3.js';
 import { findDbPath } from '../db/index.js';
 import { loadConfig } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
-import { CodegraphError, ConfigError } from '../shared/errors.js';
+import { CodegraphError, ConfigError, toErrorMessage } from '../shared/errors.js';
 import { MCP_MAX_LIMIT } from '../shared/paginate.js';
 import type { CodegraphConfig, MCPServerOptions } from '../types.js';
 import { initMcpDefaults } from './middleware.js';
@@ -58,7 +58,7 @@ async function loadMCPSdk(): Promise<{
       CallToolRequestSchema: types.CallToolRequestSchema,
     };
   } catch (e) {
-    debug(`MCP SDK import failed: ${(e as Error).message}`);
+    debug(`MCP SDK import failed: ${toErrorMessage(e)}`);
     throw new ConfigError(
       'MCP server requires @modelcontextprotocol/sdk.\nInstall it with: npm install @modelcontextprotocol/sdk',
     );
@@ -127,7 +127,7 @@ function registerShutdownHandlers(): void {
       await _activeServer?.close();
     } catch (shutdownErr: unknown) {
       debug(
-        `MCP shutdown close failed (transport may already be gone): ${(shutdownErr as Error).message}`,
+        `MCP shutdown close failed (transport may already be gone): ${toErrorMessage(shutdownErr)}`,
       );
     }
     process.exit(0);
@@ -156,6 +156,47 @@ function registerShutdownHandlers(): void {
   process.on('SIGHUP', shutdown);
   process.on('uncaughtException', silentExit);
   process.on('unhandledRejection', silentReject);
+}
+
+function createCallToolHandler(
+  multiRepo: boolean,
+  customDbPath: string | undefined,
+  allowedRepos: string[] | undefined,
+  getQueries: () => Promise<unknown>,
+) {
+  return async (request: any) => {
+    const { name, arguments: args } = request.params;
+    try {
+      validateMultiRepoAccess(multiRepo, name, args);
+      const dbPath = await resolveDbPath(customDbPath, args, allowedRepos);
+
+      const toolEntry = TOOL_HANDLERS.get(name);
+      if (!toolEntry) {
+        return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
+      }
+
+      const ctx: McpToolContext = {
+        dbPath: dbPath,
+        getQueries,
+        getDatabase,
+        findDbPath,
+        allowedRepos,
+        MCP_MAX_LIMIT,
+      };
+      const result: unknown = await toolEntry.handler(args, ctx);
+      if (result && typeof result === 'object' && 'content' in result) {
+        return result as { content: Array<{ type: string; text: string }> };
+      }
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (err: unknown) {
+      const code = err instanceof CodegraphError ? err.code : 'UNKNOWN_ERROR';
+      const text =
+        err instanceof CodegraphError
+          ? `[${code}] ${err.message}`
+          : `Error: ${toErrorMessage(err)}`;
+      return { content: [{ type: 'text', text }], isError: true };
+    }
+  };
 }
 
 export async function startMCPServer(
@@ -187,39 +228,10 @@ export async function startMCPServer(
     tools: buildToolList(multiRepo),
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (request: any) => {
-    const { name, arguments: args } = request.params;
-    try {
-      validateMultiRepoAccess(multiRepo, name, args);
-      const dbPath = await resolveDbPath(customDbPath, args, allowedRepos);
-
-      const toolEntry = TOOL_HANDLERS.get(name);
-      if (!toolEntry) {
-        return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
-      }
-
-      const ctx: McpToolContext = {
-        dbPath: dbPath,
-        getQueries,
-        getDatabase,
-        findDbPath,
-        allowedRepos,
-        MCP_MAX_LIMIT,
-      };
-      const result: unknown = await toolEntry.handler(args, ctx);
-      if (result && typeof result === 'object' && 'content' in result) {
-        return result as { content: Array<{ type: string; text: string }> };
-      }
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-    } catch (err: unknown) {
-      const code = err instanceof CodegraphError ? err.code : 'UNKNOWN_ERROR';
-      const text =
-        err instanceof CodegraphError
-          ? `[${code}] ${err.message}`
-          : `Error: ${(err as Error).message}`;
-      return { content: [{ type: 'text', text }], isError: true };
-    }
-  });
+  server.setRequestHandler(
+    CallToolRequestSchema,
+    createCallToolHandler(multiRepo, customDbPath, allowedRepos, getQueries),
+  );
 
   const transport = new (StdioServerTransport as any)();
 
@@ -239,7 +251,7 @@ export async function startMCPServer(
       process.exit(0);
     }
     process.stderr.write(
-      `MCP transport connect failed: ${(err as Error).stack ?? (err as Error).message}\n`,
+      `MCP transport connect failed: ${err instanceof Error ? (err.stack ?? err.message) : toErrorMessage(err)}\n`,
     );
     process.exit(1);
   }
