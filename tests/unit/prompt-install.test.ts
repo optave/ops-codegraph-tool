@@ -63,7 +63,7 @@ describe('loadTransformers install prompt', () => {
     // npm install should have been called automatically
     expect(execMock).toHaveBeenCalledWith(
       'npm',
-      ['install', '@huggingface/transformers'],
+      ['install', '--no-save', '@huggingface/transformers'],
       expect.objectContaining({ stdio: 'inherit', timeout: 300_000 }),
     );
   });

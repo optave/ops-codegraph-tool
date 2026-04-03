@@ -106,12 +106,13 @@ export function promptInstall(packageName: string): Promise<boolean> {
   if (!process.stdin.isTTY) {
     info(`Installing ${packageName} (optional dependency for semantic search)…`);
     try {
-      execFileSync('npm', ['install', packageName], {
+      execFileSync('npm', ['install', '--no-save', packageName], {
         stdio: 'inherit',
         timeout: 300_000,
       });
       return Promise.resolve(true);
-    } catch {
+    } catch (err) {
+      info(`Auto-install failed: ${err instanceof Error ? err.message : String(err)}`);
       return Promise.resolve(false);
     }
   }
@@ -140,7 +141,7 @@ export function promptInstall(packageName: string): Promise<boolean> {
 /**
  * Lazy-load @huggingface/transformers.
  * If the package is missing, prompts the user to install it interactively.
- * In non-TTY environments, prints an error and exits.
+ * In non-TTY environments, attempts automatic installation.
  * @internal Not part of the public barrel.
  */
 export async function loadTransformers(): Promise<unknown> {
