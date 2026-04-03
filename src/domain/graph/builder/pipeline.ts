@@ -18,6 +18,7 @@ import { detectWorkspaces, loadConfig } from '../../../infrastructure/config.js'
 import { debug, info, warn } from '../../../infrastructure/logger.js';
 import { loadNative } from '../../../infrastructure/native.js';
 import { semverCompare } from '../../../infrastructure/update-check.js';
+import { toErrorMessage } from '../../../shared/errors.js';
 import { CODEGRAPH_VERSION } from '../../../shared/version.js';
 import type { BuildGraphOpts, BuildResult, Definition, ExtractorOutput } from '../../../types.js';
 import { getActiveEngine } from '../../parser.js';
@@ -60,7 +61,7 @@ function initializeEngine(ctx: PipelineContext): void {
             ctx.nativeDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
           } catch (e) {
             debug(
-              `resumeJsDb: WAL checkpoint failed (nativeDb may already be closed): ${(e as Error).message}`,
+              `resumeJsDb: WAL checkpoint failed (nativeDb may already be closed): ${toErrorMessage(e)}`,
             );
           }
         }
@@ -142,11 +143,11 @@ function setupPipeline(ctx: PipelineContext): void {
       // with no cross-library WAL frames (#715, #717).
       ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     } catch (err) {
-      warn(`NativeDatabase setup failed, falling back to JS: ${(err as Error).message}`);
+      warn(`NativeDatabase setup failed, falling back to JS: ${toErrorMessage(err)}`);
       try {
         ctx.nativeDb?.close();
       } catch (e) {
-        debug(`setupNativeDb: close failed during fallback: ${(e as Error).message}`);
+        debug(`setupNativeDb: close failed during fallback: ${toErrorMessage(e)}`);
       }
       ctx.nativeDb = undefined;
     }
@@ -203,12 +204,12 @@ function closeNativeDb(ctx: PipelineContext, label: string): void {
   try {
     ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
   } catch (e) {
-    debug(`${label} WAL checkpoint failed: ${(e as Error).message}`);
+    debug(`${label} WAL checkpoint failed: ${toErrorMessage(e)}`);
   }
   try {
     ctx.nativeDb.close();
   } catch (e) {
-    debug(`${label} nativeDb close failed: ${(e as Error).message}`);
+    debug(`${label} nativeDb close failed: ${toErrorMessage(e)}`);
   }
   ctx.nativeDb = undefined;
 }
@@ -220,7 +221,7 @@ function reopenNativeDb(ctx: PipelineContext, label: string): void {
   try {
     ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
   } catch (e) {
-    debug(`reopen nativeDb for ${label} failed: ${(e as Error).message}`);
+    debug(`reopen nativeDb for ${label} failed: ${toErrorMessage(e)}`);
     ctx.nativeDb = undefined;
   }
 }
@@ -242,7 +243,7 @@ function refreshJsDb(ctx: PipelineContext): void {
   try {
     ctx.db.close();
   } catch (e) {
-    debug(`refreshJsDb close failed: ${(e as Error).message}`);
+    debug(`refreshJsDb close failed: ${toErrorMessage(e)}`);
   }
   ctx.db = openDb(ctx.dbPath);
 }
@@ -535,7 +536,7 @@ export async function buildGraph(
               ctx.engineOpts,
             );
           } catch (err) {
-            warn(`Analysis phases failed after native build: ${(err as Error).message}`);
+            warn(`Analysis phases failed after native build: ${toErrorMessage(err)}`);
           }
 
           // Close nativeDb after analyses
@@ -574,7 +575,7 @@ export async function buildGraph(
         };
       } catch (err) {
         warn(
-          `Native build orchestrator failed, falling back to JS pipeline: ${(err as Error).message}`,
+          `Native build orchestrator failed, falling back to JS pipeline: ${toErrorMessage(err)}`,
         );
         // Fall through to JS pipeline
       }
