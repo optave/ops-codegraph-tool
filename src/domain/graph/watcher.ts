@@ -136,7 +136,29 @@ function logRebuildResults(updates: RebuildResult[]): void {
   }
 }
 
-export async function watchProject(rootDir: string, opts: { engine?: string } = {}): Promise<void> {
+/** Recursively collect tracked source files for stat-based polling. */
+function collectTrackedFiles(dir: string, result: string[]): void {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (IGNORE_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      collectTrackedFiles(full, result);
+    } else if (EXTENSIONS.has(path.extname(entry.name))) {
+      result.push(full);
+    }
+  }
+}
+
+export async function watchProject(
+  rootDir: string,
+  opts: { engine?: string; poll?: boolean; pollInterval?: number } = {},
+): Promise<void> {
   const dbPath = path.join(rootDir, '.codegraph', 'graph.db');
   if (!fs.existsSync(dbPath)) {
     throw new DbError('No graph.db found. Run `codegraph build` first.', { file: dbPath });
@@ -165,28 +187,94 @@ export async function watchProject(rootDir: string, opts: { engine?: string } = 
   let timer: ReturnType<typeof setTimeout> | null = null;
   const DEBOUNCE_MS = 300;
 
-  info(`Watching ${rootDir} for changes...`);
+  const usePoll = opts.poll ?? process.platform === 'win32';
+  const POLL_INTERVAL_MS = opts.pollInterval ?? 2000;
+
+  info(`Watching ${rootDir} for changes${usePoll ? ' (polling mode)' : ''}...`);
   info('Press Ctrl+C to stop.');
 
-  const watcher = fs.watch(rootDir, { recursive: true }, (_eventType, filename) => {
-    if (!filename) return;
-    if (shouldIgnore(filename)) return;
-    if (!isTrackedExt(filename)) return;
+  let cleanup: () => void;
 
-    const fullPath = path.join(rootDir, filename);
-    pending.add(fullPath);
+  if (usePoll) {
+    // Polling mode: avoids native OS file watchers (NtNotifyChangeDirectoryFileEx)
+    // which can crash ReFS drivers on Windows Dev Drives.
+    const mtimeMap = new Map<string, number>();
 
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(async () => {
-      const files = [...pending];
-      pending.clear();
-      await processPendingFiles(files, db, rootDir, stmts, engineOpts, cache);
-    }, DEBOUNCE_MS);
-  });
+    // Seed initial mtimes
+    const initial: string[] = [];
+    collectTrackedFiles(rootDir, initial);
+    for (const f of initial) {
+      try {
+        mtimeMap.set(f, fs.statSync(f).mtimeMs);
+      } catch {
+        /* deleted between collect and stat */
+      }
+    }
+    info(`Polling ${initial.length} tracked files every ${POLL_INTERVAL_MS}ms`);
+
+    const pollTimer = setInterval(() => {
+      const current: string[] = [];
+      collectTrackedFiles(rootDir, current);
+      const currentSet = new Set(current);
+
+      // Detect modified or new files
+      for (const f of current) {
+        try {
+          const mtime = fs.statSync(f).mtimeMs;
+          const prev = mtimeMap.get(f);
+          if (prev === undefined || mtime !== prev) {
+            mtimeMap.set(f, mtime);
+            pending.add(f);
+          }
+        } catch {
+          /* deleted between collect and stat */
+        }
+      }
+
+      // Detect deleted files
+      for (const f of mtimeMap.keys()) {
+        if (!currentSet.has(f)) {
+          mtimeMap.delete(f);
+          pending.add(f);
+        }
+      }
+
+      if (pending.size > 0) {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(async () => {
+          const files = [...pending];
+          pending.clear();
+          await processPendingFiles(files, db, rootDir, stmts, engineOpts, cache);
+        }, DEBOUNCE_MS);
+      }
+    }, POLL_INTERVAL_MS);
+
+    cleanup = () => clearInterval(pollTimer);
+  } else {
+    // Native OS watcher — efficient but can trigger ReFS crashes on Windows Dev Drives.
+    // Use --poll if you experience BSOD/HYPERVISOR_ERROR on ReFS volumes.
+    const watcher = fs.watch(rootDir, { recursive: true }, (_eventType, filename) => {
+      if (!filename) return;
+      if (shouldIgnore(filename)) return;
+      if (!isTrackedExt(filename)) return;
+
+      const fullPath = path.join(rootDir, filename);
+      pending.add(fullPath);
+
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(async () => {
+        const files = [...pending];
+        pending.clear();
+        await processPendingFiles(files, db, rootDir, stmts, engineOpts, cache);
+      }, DEBOUNCE_MS);
+    });
+
+    cleanup = () => watcher.close();
+  }
 
   process.on('SIGINT', () => {
     info('Stopping watcher...');
-    watcher.close();
+    cleanup();
     // Flush any pending file paths to journal before exit
     if (pending.size > 0) {
       const entries = [...pending].map((filePath) => ({

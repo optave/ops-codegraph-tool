@@ -15,6 +15,7 @@ export function printNdjson(
   if (data._pagination) console.log(JSON.stringify({ _meta: data._pagination }));
   const items = data[field];
   if (Array.isArray(items)) {
+    // console.log is intentional: NDJSON serialisation must go to stdout, not the structured logger
     for (const item of items) console.log(JSON.stringify(item));
   }
 }
