@@ -376,10 +376,10 @@ if (fs.existsSync(readmePath)) {
 			const totalResolved = langs.reduce((s, l) => s + l.totalResolved, 0);
 			const totalExpected = langs.reduce((s, l) => s + l.totalExpected, 0);
 			const totalTP = langs.reduce((s, l) => s + l.truePositives, 0);
-			const aggPrecision = totalResolved > 0 ? ((totalTP / totalResolved) * 100).toFixed(1) : 'n/a';
-			const aggRecall = totalExpected > 0 ? ((totalTP / totalExpected) * 100).toFixed(1) : 'n/a';
-			rows += `| Resolution precision | **${aggPrecision}%** |\n`;
-			rows += `| Resolution recall | **${aggRecall}%** |\n`;
+			const aggPrecision = totalResolved > 0 ? `${((totalTP / totalResolved) * 100).toFixed(1)}%` : 'n/a';
+			const aggRecall = totalExpected > 0 ? `${((totalTP / totalExpected) * 100).toFixed(1)}%` : 'n/a';
+			rows += `| Resolution precision | **${aggPrecision}** |\n`;
+			rows += `| Resolution recall | **${aggRecall}** |\n`;
 		}
 	}
 

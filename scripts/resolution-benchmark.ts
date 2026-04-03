@@ -65,7 +65,10 @@ function copyFixture(lang: string): string {
 	const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `codegraph-resolution-${lang}-`));
 	for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
 		if (entry.name === 'expected-edges.json') continue;
-		if (!entry.isFile()) continue;
+		if (!entry.isFile()) {
+			console.error(`  Warning: skipping subdirectory "${entry.name}" in ${lang} fixture (flat copy only)`);
+			continue;
+		}
 		fs.copyFileSync(path.join(src, entry.name), path.join(tmp, entry.name));
 	}
 	return tmp;
@@ -139,66 +142,69 @@ console.log = (...args) => console.error(...args);
 
 const { srcDir, cleanup } = await resolveBenchmarkSource();
 
-const { buildGraph } = await import(srcImport(srcDir, 'domain/graph/builder.js'));
-const { openReadonlyOrFail } = await import(srcImport(srcDir, 'db/index.js'));
+try {
+	const { buildGraph } = await import(srcImport(srcDir, 'domain/graph/builder.js'));
+	const { openReadonlyOrFail } = await import(srcImport(srcDir, 'db/index.js'));
 
-const languages = discoverFixtures();
-const results: Record<string, LangResult> = {};
+	const languages = discoverFixtures();
+	const results: Record<string, LangResult> = {};
 
-for (const lang of languages) {
-	console.error(`  Benchmarking resolution for ${lang}...`);
+	for (const lang of languages) {
+		console.error(`  Benchmarking resolution for ${lang}...`);
 
-	const fixtureDir = copyFixture(lang);
-	try {
-		await buildGraph(fixtureDir, {
-			incremental: false,
-			engine: 'wasm',
-			dataflow: false,
-			cfg: false,
-			ast: false,
-		});
-
-		const dbPath = path.join(fixtureDir, '.codegraph', 'graph.db');
-		const db = openReadonlyOrFail(dbPath);
-		let resolvedEdges: ResolvedEdge[];
+		const fixtureDir = copyFixture(lang);
 		try {
-			resolvedEdges = db
-				.prepare(`
-					SELECT
-						src.name  AS source_name,
-						src.file  AS source_file,
-						tgt.name  AS target_name,
-						tgt.file  AS target_file,
-						e.kind    AS kind,
-						e.confidence AS confidence
-					FROM edges e
-					JOIN nodes src ON e.source_id = src.id
-					JOIN nodes tgt ON e.target_id = tgt.id
-					WHERE e.kind = 'calls'
-						AND src.kind IN ('function', 'method')
-				`)
-				.all() as ResolvedEdge[];
+			await buildGraph(fixtureDir, {
+				incremental: false,
+				engine: 'wasm',
+				dataflow: false,
+				cfg: false,
+				ast: false,
+			});
+
+			const dbPath = path.join(fixtureDir, '.codegraph', 'graph.db');
+			const db = openReadonlyOrFail(dbPath);
+			let resolvedEdges: ResolvedEdge[];
+			try {
+				resolvedEdges = db
+					.prepare(`
+						SELECT
+							src.name  AS source_name,
+							src.file  AS source_file,
+							tgt.name  AS target_name,
+							tgt.file  AS target_file,
+							e.kind    AS kind,
+							e.confidence AS confidence
+						FROM edges e
+						JOIN nodes src ON e.source_id = src.id
+						JOIN nodes tgt ON e.target_id = tgt.id
+						WHERE e.kind = 'calls'
+							AND src.kind IN ('function', 'method')
+					`)
+					.all() as ResolvedEdge[];
+			} finally {
+				db.close();
+			}
+
+			const manifestPath = path.join(FIXTURES_DIR, lang, 'expected-edges.json');
+			const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+			const expectedEdges: ExpectedEdge[] = manifest.edges;
+
+			const metrics = computeMetrics(resolvedEdges, expectedEdges);
+			results[lang] = metrics;
+
+			console.error(
+				`    ${lang}: precision=${(metrics.precision * 100).toFixed(1)}% recall=${(metrics.recall * 100).toFixed(1)}%`,
+			);
 		} finally {
-			db.close();
+			fs.rmSync(fixtureDir, { recursive: true, force: true });
 		}
-
-		const manifestPath = path.join(FIXTURES_DIR, lang, 'expected-edges.json');
-		const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-		const expectedEdges: ExpectedEdge[] = manifest.edges;
-
-		const metrics = computeMetrics(resolvedEdges, expectedEdges);
-		results[lang] = metrics;
-
-		console.error(
-			`    ${lang}: precision=${(metrics.precision * 100).toFixed(1)}% recall=${(metrics.recall * 100).toFixed(1)}%`,
-		);
-	} finally {
-		fs.rmSync(fixtureDir, { recursive: true, force: true });
 	}
+
+	// Restore console.log for JSON output
+	console.log = origLog;
+	console.log(JSON.stringify(results, null, 2));
+} finally {
+	console.log = origLog;
+	cleanup();
 }
-
-// Restore console.log for JSON output
-console.log = origLog;
-console.log(JSON.stringify(results, null, 2));
-
-cleanup();
