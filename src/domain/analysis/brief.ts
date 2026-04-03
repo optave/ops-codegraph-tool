@@ -1,15 +1,8 @@
-import {
-  findDistinctCallers,
-  findFileNodes,
-  findImportDependents,
-  findImportSources,
-  findImportTargets,
-  findNodesByFile,
-  openReadonlyOrFail,
-} from '../../db/index.js';
+import type { Repository } from '../../db/index.js';
 import { loadConfig } from '../../infrastructure/config.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
-import type { BetterSqlite3Database, ImportEdgeRow, NodeRow, RelatedNodeRow } from '../../types.js';
+import type { ImportEdgeRow, NodeRow, RelatedNodeRow } from '../../types.js';
+import { withRepo } from './query-helpers.js';
 
 /** Symbol kinds meaningful for a file brief — excludes parameters, properties, constants. */
 const BRIEF_KINDS = new Set([
@@ -49,7 +42,7 @@ function computeRiskTier(
  * Lightweight variant — only counts, does not collect details.
  */
 function countTransitiveCallers(
-  db: BetterSqlite3Database,
+  repo: InstanceType<typeof Repository>,
   startId: number,
   noTests: boolean,
   maxDepth = 5,
@@ -60,7 +53,7 @@ function countTransitiveCallers(
   for (let d = 1; d <= maxDepth; d++) {
     const nextFrontier: number[] = [];
     for (const fid of frontier) {
-      const callers = findDistinctCallers(db, fid) as RelatedNodeRow[];
+      const callers = repo.findDistinctCallers(fid) as RelatedNodeRow[];
       for (const c of callers) {
         if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
           visited.add(c.id);
@@ -80,7 +73,7 @@ function countTransitiveCallers(
  * Depth-bounded to match countTransitiveCallers and keep hook latency predictable.
  */
 function countTransitiveImporters(
-  db: BetterSqlite3Database,
+  repo: InstanceType<typeof Repository>,
   fileNodeIds: number[],
   noTests: boolean,
   maxDepth = 5,
@@ -91,7 +84,7 @@ function countTransitiveImporters(
   for (let d = 1; d <= maxDepth; d++) {
     const nextFrontier: number[] = [];
     for (const current of frontier) {
-      const dependents = findImportDependents(db, current) as RelatedNodeRow[];
+      const dependents = repo.findImportDependents(current) as RelatedNodeRow[];
       for (const dep of dependents) {
         if (!visited.has(dep.id) && (!noTests || !isTestFile(dep.file))) {
           visited.add(dep.id);
@@ -115,38 +108,37 @@ export function briefData(
   customDbPath: string,
   opts: { noTests?: boolean; config?: any } = {},
 ) {
-  const db = openReadonlyOrFail(customDbPath);
-  try {
+  return withRepo(customDbPath, (repo) => {
     const noTests = opts.noTests || false;
     const config = opts.config || loadConfig();
     const callerDepth = config.analysis?.briefCallerDepth ?? 5;
     const importerDepth = config.analysis?.briefImporterDepth ?? 5;
     const highRiskCallers = config.analysis?.briefHighRiskCallers ?? 10;
     const mediumRiskCallers = config.analysis?.briefMediumRiskCallers ?? 3;
-    const fileNodes = findFileNodes(db, `%${file}%`) as NodeRow[];
+    const fileNodes = repo.findFileNodes(`%${file}%`) as NodeRow[];
     if (fileNodes.length === 0) {
       return { file, results: [] };
     }
 
     const results = fileNodes.map((fn) => {
       // Direct importers
-      let importedBy = findImportSources(db, fn.id) as ImportEdgeRow[];
+      let importedBy = repo.findImportSources(fn.id) as ImportEdgeRow[];
       if (noTests) importedBy = importedBy.filter((i) => !isTestFile(i.file));
       const directImporters = [...new Set(importedBy.map((i) => i.file))];
 
       // Transitive importer count
-      const totalImporterCount = countTransitiveImporters(db, [fn.id], noTests, importerDepth);
+      const totalImporterCount = countTransitiveImporters(repo, [fn.id], noTests, importerDepth);
 
       // Direct imports
-      let importsTo = findImportTargets(db, fn.id) as ImportEdgeRow[];
+      let importsTo = repo.findImportTargets(fn.id) as ImportEdgeRow[];
       if (noTests) importsTo = importsTo.filter((i) => !isTestFile(i.file));
 
       // Symbol definitions with roles and caller counts
-      const defs = (findNodesByFile(db, fn.file) as NodeRow[]).filter((d) =>
+      const defs = (repo.findNodesByFile(fn.file) as NodeRow[]).filter((d) =>
         BRIEF_KINDS.has(d.kind),
       );
       const symbols = defs.map((d) => {
-        const callerCount = countTransitiveCallers(db, d.id, noTests, callerDepth);
+        const callerCount = countTransitiveCallers(repo, d.id, noTests, callerDepth);
         return {
           name: d.name,
           kind: d.kind,
@@ -169,7 +161,5 @@ export function briefData(
     });
 
     return { file, results };
-  } finally {
-    db.close();
-  }
+  });
 }

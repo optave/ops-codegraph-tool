@@ -1128,6 +1128,51 @@ impl NativeDatabase {
         }
     }
 
+    /// Check whether the graph contains any 'implements' edges.
+    #[napi]
+    pub fn has_implements_edges(&self) -> napi::Result<bool> {
+        let conn = self.conn()?;
+        match conn
+            .prepare("SELECT 1 FROM edges WHERE kind = 'implements' LIMIT 1")
+            .and_then(|mut stmt| stmt.query_row([], |_| Ok(())))
+        {
+            Ok(()) => Ok(true),
+            Err(rusqlite::Error::SqliteFailure(_, _)) => Ok(false),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+            Err(e) => Err(napi::Error::from_reason(format!("has_implements_edges: {e}"))),
+        }
+    }
+
+    /// Check whether the co_changes table exists and has data.
+    #[napi]
+    pub fn has_co_changes_table(&self) -> napi::Result<bool> {
+        let conn = self.conn()?;
+        match conn
+            .prepare("SELECT 1 FROM co_changes LIMIT 1")
+            .and_then(|mut stmt| stmt.query_row([], |_| Ok(())))
+        {
+            Ok(()) => Ok(true),
+            Err(rusqlite::Error::SqliteFailure(_, _)) => Ok(false),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(false),
+            Err(e) => Err(napi::Error::from_reason(format!("has_co_changes_table: {e}"))),
+        }
+    }
+
+    /// Look up the stored content hash for a single file.
+    #[napi]
+    pub fn get_file_hash(&self, file: String) -> napi::Result<Option<String>> {
+        let conn = self.conn()?;
+        match conn
+            .prepare_cached("SELECT hash FROM file_hashes WHERE file = ?1")
+            .and_then(|mut stmt| stmt.query_row(rusqlite::params![file], |row| row.get::<_, String>(0)))
+        {
+            Ok(hash) => Ok(Some(hash)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(rusqlite::Error::SqliteFailure(_, _)) => Ok(None),
+            Err(e) => Err(napi::Error::from_reason(format!("get_file_hash: {e}"))),
+        }
+    }
+
     /// Check whether dataflow table exists and has data.
     #[napi]
     pub fn has_dataflow_table(&self) -> napi::Result<bool> {
