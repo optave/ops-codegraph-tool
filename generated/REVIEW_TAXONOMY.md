@@ -29,6 +29,11 @@
 | 9 | **Documentation** | 111 | 10.9% | 0 | 31 | 62 |
 | 10 | **Database** | 7 | 0.7% | 0 | 3 | 3 |
 | 11 | **Process** | 38 | 3.7% | 0 | 17 | 19 |
+| 12 | **Titan Pipeline** | 55 | 5.4% | 0 | 23 | 25 |
+| 13 | **Stale / Outdated References** | 52 | 5.1% | 0 | 18 | 27 |
+| 14 | **Shell Script** | 48 | 4.7% | 0 | 20 | 22 |
+| 15 | **Display / Output** | 9 | 0.9% | 0 | 3 | 5 |
+| 16 | **Other** | 3 | 0.3% | 0 | 1 | 2 |
 
 ## Key Insights
 

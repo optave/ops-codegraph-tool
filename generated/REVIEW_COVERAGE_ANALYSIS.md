@@ -204,7 +204,7 @@ comments** (55%) addressable without an LLM.
 
 ---
 
-### Performance / Prepared Statement in Loop (11 comments) — 95% feasible
+### Performance / Prepared Statement in Loop (11 comments) — 91% feasible
 
 | Feasibility | Count | Approach |
 |-------------|------:|----------|
@@ -339,7 +339,9 @@ Ranked by (comments catchable) x (implementation feasibility):
 | 16 | `--mutated-params` side effects | 6 | Medium | Mutable State |
 | 17 | `--non-transactional` DB writes | 2 | Medium | Race Condition |
 | 18 | `--signature-consistency` API | 6 | Medium | Inconsistency |
-| | **Total addressable** | **~244** | | |
+| | **Total by proposed features** | **~244** | | |
+
+> **Note:** The per-problem-class analysis identifies ~260 total catchable findings. The ~244 figure here reflects the subset directly addressed by the 18 proposed features — some catchable findings in each category require additional feature work beyond these 18.
 
 ### Quick wins (Low complexity, high impact):
 1. **`--dead-exports`** — already have the data, just wire to `check`

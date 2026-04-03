@@ -7,7 +7,7 @@
 
 ## Executive Summary
 
-A systematic review of 1,017 code review findings across 300 PRs reveals that **~55% of issues could be caught by deterministic static analysis** using data codegraph already collects (tree-sitter AST, CFG blocks/edges, dataflow edges, call graph, symbol roles). The remaining 45% requires semantic understanding of intent, prose, or domain context — outside the scope of static analysis.
+A systematic review of 1,017 code review findings across 300 PRs reveals that **~41% of issues could be caught by deterministic static analysis** using data codegraph already collects (tree-sitter AST, CFG blocks/edges, dataflow edges, call graph, symbol roles), with an additional **~15% flaggable heuristically** (with possible false positives). Combined, ~55% of findings are addressable without an LLM. The remaining 45% requires semantic understanding of intent, prose, or domain context — outside the scope of static analysis.
 
 This report proposes **18 new features** organized into prioritized tiers following the BACKLOG format. Seven are quick wins (low complexity, high catch rate) that leverage existing tables. The rest require moderate engineering but address high-frequency problem classes.
 
@@ -29,7 +29,7 @@ This report proposes **18 new features** organized into prioritized tiers follow
 | SQL injection patterns | 10 | 8 | 80% | AST pattern |
 | Mutable shared state | 8 | 6 | 75% | AST + dataflow |
 | Weak / missing test assertions | 12 | 7 | 58% | AST pattern |
-| **Total addressable** | | **~260** | | |
+| **Total catchable (all classes)** | | **~260** | | |
 
 ---
 
