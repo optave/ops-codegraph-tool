@@ -366,7 +366,7 @@ function findReverseDependencies(
   for (const relPath of changedRelPaths) {
     for (const row of findReverseDepsStmt.all(relPath) as Array<{ file: string }>) {
       if (!changedRelPaths.has(row.file) && !reverseDeps.has(row.file)) {
-        const absPath = path.join(rootDir, row.file);
+        const absPath = path.isAbsolute(row.file) ? row.file : path.join(rootDir, row.file);
         if (fs.existsSync(absPath)) {
           reverseDeps.add(row.file);
         }

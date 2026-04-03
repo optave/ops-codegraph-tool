@@ -100,7 +100,7 @@ export async function buildEmbeddings(
   let overflowCount = 0;
 
   for (const [file, fileNodes] of byFile) {
-    const fullPath = path.join(rootDir, file);
+    const fullPath = path.isAbsolute(file) ? file : path.join(rootDir, file);
     let lines: string[];
     try {
       lines = fs.readFileSync(fullPath, 'utf-8').split('\n');

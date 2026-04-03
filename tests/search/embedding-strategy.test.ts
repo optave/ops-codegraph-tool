@@ -289,6 +289,42 @@ describe('FTS5 index built alongside embeddings', () => {
   });
 });
 
+describe('absolute file paths in DB (#752)', () => {
+  let absDir: string, absDbPath: string;
+
+  beforeAll(() => {
+    absDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-abspath-test-'));
+    fs.writeFileSync(
+      path.join(absDir, 'math.js'),
+      'export function add(a, b) { return a + b; }\n',
+    );
+
+    const dbDir = path.join(absDir, '.codegraph');
+    fs.mkdirSync(dbDir, { recursive: true });
+    absDbPath = path.join(dbDir, 'graph.db');
+
+    const db = new Database(absDbPath);
+    db.pragma('journal_mode = WAL');
+    initSchema(db);
+    // Insert node with ABSOLUTE file path (simulates native engine behavior)
+    const absFile = path.join(absDir, 'math.js').split(path.sep).join('/');
+    insertNode(db, 'add', 'function', absFile, 1, 1);
+    db.close();
+  });
+
+  afterAll(() => {
+    if (absDir) fs.rmSync(absDir, { recursive: true, force: true });
+  });
+
+  test('embeds symbols even when DB stores absolute file paths', async () => {
+    EMBEDDED_TEXTS.length = 0;
+    await buildEmbeddings(absDir, 'minilm', absDbPath, { strategy: 'source' });
+
+    expect(EMBEDDED_TEXTS.length).toBe(1);
+    expect(EMBEDDED_TEXTS[0]).toContain('add');
+  });
+});
+
 describe('context window overflow detection', () => {
   let bigDir: string, bigDbPath: string;
 
