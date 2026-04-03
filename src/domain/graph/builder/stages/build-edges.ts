@@ -198,10 +198,12 @@ function buildImportEdgesNative(
   const fileNodeRowCache = new Map<string, { id: number }>();
 
   // 2. Pre-resolve all imports and build resolved imports array.
-  // Keys use rootDir + "/" + relPath to match the Rust lookup format
-  // (format!("{}/{}", root_dir, file)) — avoids separator mismatches on Windows
-  // where path.join uses backslashes but Rust joins with forward slash.
+  // Keys use forward-slash-normalized rootDir + "/" + relPath to match the Rust
+  // lookup format (format!("{}/{}", root_dir.replace('\\', "/"), file)).
+  // On Windows, rootDir has backslashes but Rust normalizes them — the JS side
+  // must do the same or every resolve key lookup misses (#750).
   const resolvedImports: Array<{ key: string; resolvedPath: string }> = [];
+  const fwdRootDir = rootDir.replace(/\\/g, '/');
 
   for (const [relPath, symbols] of fileSymbols) {
     const fileNodeRow = addFileNodeId(relPath);
@@ -221,8 +223,8 @@ function buildImportEdgesNative(
       const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
       addFileNodeId(resolvedPath);
 
-      // Key matches Rust's format!("{}/{}", root_dir, file_input.file)
-      resolvedImports.push({ key: `${rootDir}/${relPath}|${imp.source}`, resolvedPath });
+      // Key matches Rust's format!("{}/{}", root_dir.replace('\\', "/"), file_input.file)
+      resolvedImports.push({ key: `${fwdRootDir}/${relPath}|${imp.source}`, resolvedPath });
 
       importInfos.push({
         source: imp.source,
@@ -737,7 +739,16 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
     const useNativeImportEdges =
       native?.buildImportEdges && (ctx.isFullBuild || ctx.fileSymbols.size > 3);
     if (useNativeImportEdges) {
+      const beforeLen = allEdgeRows.length;
       buildImportEdgesNative(ctx, getNodeIdStmt, allEdgeRows, native!);
+      // Fallback: if native produced 0 import edges but there are imports to
+      // process, the native binary may have a key-format mismatch (e.g. Windows
+      // path separators — #750).  Retry with the JS implementation.
+      const hasImports = [...ctx.fileSymbols.values()].some((s) => s.imports.length > 0);
+      if (allEdgeRows.length === beforeLen && hasImports) {
+        debug('Native buildImportEdges produced 0 edges — falling back to JS');
+        buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
+      }
     } else {
       buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
     }
