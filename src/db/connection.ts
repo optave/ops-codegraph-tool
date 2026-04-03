@@ -334,9 +334,11 @@ function openRepoNative(customDbPath?: string): { repo: Repository; close(): voi
   const ndb = native.NativeDatabase.openReadonly(dbPath);
   try {
     warnOnVersionMismatch(() => ndb.getBuildMeta('codegraph_version'));
+    const repo = new NativeRepository(ndb, dbPath);
     return {
-      repo: new NativeRepository(ndb),
+      repo,
       close() {
+        repo.closeFallback();
         ndb.close();
       },
     };

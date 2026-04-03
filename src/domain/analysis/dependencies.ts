@@ -1,11 +1,4 @@
-import {
-  findCallees,
-  findCallers,
-  findFileNodes,
-  findImportSources,
-  findImportTargets,
-  findNodesByFile,
-} from '../../db/index.js';
+import { findFileNodes, type Repository } from '../../db/index.js';
 import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { resolveMethodViaHierarchy } from '../../shared/hierarchy.js';
@@ -18,13 +11,11 @@ import type {
   RelatedNodeRow,
   StmtCache,
 } from '../../types.js';
-import { withReadonlyDb } from './query-helpers.js';
+import { withReadonlyDb, withRepo } from './query-helpers.js';
 import { findMatchingNodes } from './symbol-lookup.js';
 
-type UpstreamRow = { id: number; name: string; kind: string; file: string; line: number };
 type NodeByIdRow = { name: string; kind: string; file: string; line: number };
 
-const _upstreamStmtCache: StmtCache<UpstreamRow> = new WeakMap();
 const _nodeByIdStmtCache: StmtCache<NodeByIdRow> = new WeakMap();
 
 export function fileDepsData(
@@ -32,21 +23,21 @@ export function fileDepsData(
   customDbPath: string,
   opts: { noTests?: boolean; limit?: number; offset?: number } = {},
 ) {
-  return withReadonlyDb(customDbPath, (db) => {
+  return withRepo(customDbPath, (repo) => {
     const noTests = opts.noTests || false;
-    const fileNodes = findFileNodes(db, `%${file}%`) as NodeRow[];
+    const fileNodes = repo.findFileNodes(`%${file}%`) as NodeRow[];
     if (fileNodes.length === 0) {
       return { file, results: [] };
     }
 
     const results = fileNodes.map((fn) => {
-      let importsTo = findImportTargets(db, fn.id) as ImportEdgeRow[];
+      let importsTo = repo.findImportTargets(fn.id) as ImportEdgeRow[];
       if (noTests) importsTo = importsTo.filter((i) => !isTestFile(i.file));
 
-      let importedBy = findImportSources(db, fn.id) as ImportEdgeRow[];
+      let importedBy = repo.findImportSources(fn.id) as ImportEdgeRow[];
       if (noTests) importedBy = importedBy.filter((i) => !isTestFile(i.file));
 
-      const defs = findNodesByFile(db, fn.file) as NodeRow[];
+      const defs = repo.findNodesByFile(fn.file) as NodeRow[];
 
       return {
         file: fn.file,
@@ -64,9 +55,11 @@ export function fileDepsData(
 /**
  * BFS transitive caller traversal starting from `callers` of `nodeId`.
  * Returns an object keyed by depth (2..depth) -> array of caller descriptors.
+ *
+ * Uses Repository.findCallers() so it works with both native and WASM engines.
  */
 function buildTransitiveCallers(
-  db: BetterSqlite3Database,
+  repo: InstanceType<typeof Repository>,
   callers: Array<{ id: number; name: string; kind: string; file: string; line: number }>,
   nodeId: number,
   depth: number,
@@ -81,28 +74,12 @@ function buildTransitiveCallers(
   const visited = new Set([nodeId]);
   let frontier = callers;
 
-  const upstreamStmt = cachedStmt(
-    _upstreamStmtCache,
-    db,
-    `
-    SELECT n.id, n.name, n.kind, n.file, n.line
-    FROM edges e JOIN nodes n ON e.source_id = n.id
-    WHERE e.target_id = ? AND e.kind = 'calls'
-  `,
-  );
-
   for (let d = 2; d <= depth; d++) {
     const nextFrontier: typeof frontier = [];
     for (const f of frontier) {
       if (visited.has(f.id)) continue;
       visited.add(f.id);
-      const upstream = upstreamStmt.all(f.id) as Array<{
-        id: number;
-        name: string;
-        kind: string;
-        file: string;
-        line: number;
-      }>;
+      const upstream = repo.findCallers(f.id) as RelatedNodeRow[];
       for (const u of upstream) {
         if (noTests && isTestFile(u.file)) continue;
         if (!visited.has(u.id)) {
@@ -137,40 +114,39 @@ export function fnDepsData(
     offset?: number;
   } = {},
 ) {
-  return withReadonlyDb(customDbPath, (db) => {
+  return withRepo(customDbPath, (repo) => {
     const depth = opts.depth || 3;
     const noTests = opts.noTests || false;
     const hc = new Map();
 
-    const nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    const nodes = findMatchingNodes(repo, name, { noTests, file: opts.file, kind: opts.kind });
     if (nodes.length === 0) {
       return { name, results: [] };
     }
 
     const results = nodes.map((node) => {
-      const callees = findCallees(db, node.id) as RelatedNodeRow[];
+      const callees = repo.findCallees(node.id) as RelatedNodeRow[];
       const filteredCallees = noTests ? callees.filter((c) => !isTestFile(c.file)) : callees;
 
-      let callers: Array<RelatedNodeRow & { viaHierarchy?: string }> = findCallers(
-        db,
+      let callers: Array<RelatedNodeRow & { viaHierarchy?: string }> = repo.findCallers(
         node.id,
       ) as RelatedNodeRow[];
 
       if (node.kind === 'method' && node.name.includes('.')) {
         const methodName = node.name.split('.').pop()!;
-        const relatedMethods = resolveMethodViaHierarchy(db, methodName);
+        const relatedMethods = resolveMethodViaHierarchy(repo, methodName);
         for (const rm of relatedMethods) {
           if (rm.id === node.id) continue;
-          const extraCallers = findCallers(db, rm.id) as RelatedNodeRow[];
+          const extraCallers = repo.findCallers(rm.id) as RelatedNodeRow[];
           callers.push(...extraCallers.map((c) => ({ ...c, viaHierarchy: rm.name })));
         }
       }
       if (noTests) callers = callers.filter((c) => !isTestFile(c.file));
 
-      const transitiveCallers = buildTransitiveCallers(db, callers, node.id, depth, noTests);
+      const transitiveCallers = buildTransitiveCallers(repo, callers, node.id, depth, noTests);
 
       return {
-        ...normalizeSymbol(node, db, hc),
+        ...normalizeSymbol(node, repo, hc),
         callees: filteredCallees.map((c) => ({
           name: c.name,
           kind: c.kind,

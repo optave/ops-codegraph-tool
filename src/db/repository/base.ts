@@ -189,4 +189,24 @@ export class Repository implements IRepository {
   getComplexityForNode(_nodeId: number): ComplexityMetrics | undefined {
     throw new Error('not implemented');
   }
+
+  // ── Convenience queries ──────────────────────────────────────────────
+  /**
+   * Look up the stored content hash for a file.
+   * Returns null when the file is not in file_hashes or the method is
+   * not yet implemented on the concrete repository.
+   */
+  getFileHash(_file: string): string | null {
+    return null;
+  }
+
+  /** Check whether the graph contains any 'implements' edges. */
+  hasImplementsEdges(): boolean {
+    return false;
+  }
+
+  /** Check whether the co_changes table exists and has data. */
+  hasCoChangesTable(): boolean {
+    return false;
+  }
 }
