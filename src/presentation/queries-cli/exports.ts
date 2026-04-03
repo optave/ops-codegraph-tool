@@ -71,28 +71,36 @@ function printExportSymbols(results: ExportSymbol[]): void {
   }
 }
 
-function printReexportedSymbols(reexportedSymbols: ReexportedSymbol[]): void {
-  // Group by origin file
+function groupByOriginFile(reexportedSymbols: ReexportedSymbol[]): Map<string, ReexportedSymbol[]> {
   const byOrigin = new Map<string, ReexportedSymbol[]>();
   for (const sym of reexportedSymbols) {
     if (!byOrigin.has(sym.originFile)) byOrigin.set(sym.originFile, []);
     byOrigin.get(sym.originFile)!.push(sym);
   }
+  return byOrigin;
+}
+
+function printReexportSymbol(sym: ExportSymbol, indent: string): void {
+  const icon = kindIcon(sym.kind);
+  const sig = sym.signature?.params ? `(${sym.signature.params})` : '';
+  const role = sym.role ? ` [${sym.role}]` : '';
+  console.log(`${indent}${icon} ${sym.name}${sig}${role} :${sym.line}`);
+  if (sym.consumers.length === 0) {
+    console.log(`${indent}  (no consumers)`);
+  } else {
+    for (const c of sym.consumers) {
+      console.log(`${indent}  <- ${c.name} (${c.file}:${c.line})`);
+    }
+  }
+}
+
+function printReexportedSymbols(reexportedSymbols: ReexportedSymbol[]): void {
+  const byOrigin = groupByOriginFile(reexportedSymbols);
 
   for (const [originFile, syms] of byOrigin) {
     console.log(`\n  from ${originFile}:`);
     for (const sym of syms) {
-      const icon = kindIcon(sym.kind);
-      const sig = sym.signature?.params ? `(${sym.signature.params})` : '';
-      const role = sym.role ? ` [${sym.role}]` : '';
-      console.log(`    ${icon} ${sym.name}${sig}${role} :${sym.line}`);
-      if (sym.consumers.length === 0) {
-        console.log('      (no consumers)');
-      } else {
-        for (const c of sym.consumers) {
-          console.log(`      <- ${c.name} (${c.file}:${c.line})`);
-        }
-      }
+      printReexportSymbol(sym, '    ');
     }
   }
 }

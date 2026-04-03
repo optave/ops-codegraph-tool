@@ -1,40 +1,32 @@
-import {
-  findDistinctCallers,
-  findFileNodes,
-  findImplementors,
-  findImportDependents,
-  findNodeById,
-} from '../../db/index.js';
+import { Repository, SqliteRepository } from '../../db/index.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { normalizeSymbol } from '../../shared/normalize.js';
 import { paginateResult } from '../../shared/paginate.js';
 import type { BetterSqlite3Database, NodeRow, RelatedNodeRow } from '../../types.js';
-import { resolveAnalysisOpts, withReadonlyDb } from './query-helpers.js';
+import { resolveAnalysisOpts, withRepo } from './query-helpers.js';
 import { findMatchingNodes } from './symbol-lookup.js';
+
+/** Cache so repeated raw-db calls reuse the same SqliteRepository (preserves per-instance memoization). */
+const repoCache = new WeakMap<BetterSqlite3Database, InstanceType<typeof SqliteRepository>>();
+
+/** Coerce a raw db handle or Repository into a Repository instance. */
+function toRepo(
+  dbOrRepo: BetterSqlite3Database | InstanceType<typeof Repository>,
+): InstanceType<typeof Repository> {
+  if (dbOrRepo instanceof Repository) return dbOrRepo;
+  const db = dbOrRepo as BetterSqlite3Database;
+  let repo = repoCache.get(db);
+  if (!repo) {
+    repo = new SqliteRepository(db);
+    repoCache.set(db, repo);
+  }
+  return repo;
+}
 
 // --- Shared BFS: transitive callers ---
 
 const INTERFACE_LIKE_KINDS = new Set(['interface', 'trait']);
 
-/**
- * Check whether the graph contains any 'implements' edges.
- * Cached per db handle so the query runs at most once per connection.
- */
-const _hasImplementsCache: WeakMap<BetterSqlite3Database, boolean> = new WeakMap();
-function hasImplementsEdges(db: BetterSqlite3Database): boolean {
-  if (_hasImplementsCache.has(db)) return _hasImplementsCache.get(db)!;
-  const row = db.prepare("SELECT 1 FROM edges WHERE kind = 'implements' LIMIT 1").get();
-  const result = !!row;
-  _hasImplementsCache.set(db, result);
-  return result;
-}
-
-/**
- * BFS traversal to find transitive callers of a node.
- * When an interface/trait node is encountered (either as the start node or
- * during traversal), its concrete implementors are also added to the frontier
- * so that changes to an interface signature propagate to all implementors.
- */
 type BfsLevel = Array<{
   name: string;
   kind: string;
@@ -76,7 +68,7 @@ function recordImplementor(
 
 /** Expand implementors for an interface/trait node into the BFS frontier. */
 function expandImplementors(
-  db: BetterSqlite3Database,
+  repo: InstanceType<typeof Repository>,
   nodeId: number,
   depth: number,
   visited: Set<number>,
@@ -85,14 +77,14 @@ function expandImplementors(
   noTests: boolean,
   onVisit?: BfsOnVisit,
 ): void {
-  const impls = findImplementors(db, nodeId) as RelatedNodeRow[];
+  const impls = repo.findImplementors(nodeId) as RelatedNodeRow[];
   for (const impl of impls) {
     recordImplementor(impl, nodeId, depth, visited, frontier, levels, noTests, onVisit);
   }
 }
 
 export function bfsTransitiveCallers(
-  db: BetterSqlite3Database,
+  dbOrRepo: BetterSqlite3Database | InstanceType<typeof Repository>,
   startId: number,
   {
     noTests = false,
@@ -106,7 +98,8 @@ export function bfsTransitiveCallers(
     onVisit?: BfsOnVisit;
   } = {},
 ) {
-  const resolveImplementors = includeImplementors && hasImplementsEdges(db);
+  const repo = toRepo(dbOrRepo);
+  const resolveImplementors = includeImplementors && repo.hasImplementsEdges();
   const visited = new Set([startId]);
   const levels: BfsLevels = {};
   let frontier = [startId];
@@ -114,9 +107,9 @@ export function bfsTransitiveCallers(
   // Seed: if start node is an interface/trait, include its implementors at depth 1
   const implNextFrontier: number[] = [];
   if (resolveImplementors) {
-    const startNode = findNodeById(db, startId) as NodeRow | undefined;
+    const startNode = repo.findNodeById(startId) as NodeRow | undefined;
     if (startNode && INTERFACE_LIKE_KINDS.has(startNode.kind)) {
-      expandImplementors(db, startId, 1, visited, implNextFrontier, levels, noTests, onVisit);
+      expandImplementors(repo, startId, 1, visited, implNextFrontier, levels, noTests, onVisit);
     }
   }
 
@@ -126,7 +119,7 @@ export function bfsTransitiveCallers(
     }
     const nextFrontier: number[] = [];
     for (const fid of frontier) {
-      const callers = findDistinctCallers(db, fid) as RelatedNodeRow[];
+      const callers = repo.findDistinctCallers(fid) as RelatedNodeRow[];
       for (const c of callers) {
         if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
           visited.add(c.id);
@@ -136,7 +129,7 @@ export function bfsTransitiveCallers(
           if (onVisit) onVisit(c, fid, d);
         }
         if (resolveImplementors && INTERFACE_LIKE_KINDS.has(c.kind)) {
-          expandImplementors(db, c.id, d + 1, visited, nextFrontier, levels, noTests, onVisit);
+          expandImplementors(repo, c.id, d + 1, visited, nextFrontier, levels, noTests, onVisit);
         }
       }
     }
@@ -152,9 +145,9 @@ export function impactAnalysisData(
   customDbPath: string,
   opts: { noTests?: boolean } = {},
 ) {
-  return withReadonlyDb(customDbPath, (db) => {
+  return withRepo(customDbPath, (repo) => {
     const noTests = opts.noTests || false;
-    const fileNodes = findFileNodes(db, `%${file}%`) as NodeRow[];
+    const fileNodes = repo.findFileNodes(`%${file}%`) as NodeRow[];
     if (fileNodes.length === 0) {
       return { file, sources: [], levels: {}, totalDependents: 0 };
     }
@@ -172,7 +165,7 @@ export function impactAnalysisData(
     while (queue.length > 0) {
       const current = queue.shift()!;
       const level = levels.get(current)!;
-      const dependents = findImportDependents(db, current) as RelatedNodeRow[];
+      const dependents = repo.findImportDependents(current) as RelatedNodeRow[];
       for (const dep of dependents) {
         if (!visited.has(dep.id) && (!noTests || !isTestFile(dep.file))) {
           visited.add(dep.id);
@@ -186,7 +179,7 @@ export function impactAnalysisData(
     for (const [id, level] of levels) {
       if (level === 0) continue;
       if (!byLevel[level]) byLevel[level] = [];
-      const node = findNodeById(db, id) as NodeRow | undefined;
+      const node = repo.findNodeById(id) as NodeRow | undefined;
       if (node) byLevel[level].push({ file: node.file });
     }
 
@@ -213,12 +206,12 @@ export function fnImpactData(
     config?: any;
   } = {},
 ) {
-  return withReadonlyDb(customDbPath, (db) => {
+  return withRepo(customDbPath, (repo) => {
     const { noTests, config } = resolveAnalysisOpts(opts);
     const maxDepth = opts.depth || config.analysis?.fnImpactDepth || 5;
     const hc = new Map();
 
-    const nodes = findMatchingNodes(db, name, { noTests, file: opts.file, kind: opts.kind });
+    const nodes = findMatchingNodes(repo, name, { noTests, file: opts.file, kind: opts.kind });
     if (nodes.length === 0) {
       return { name, results: [] };
     }
@@ -226,13 +219,13 @@ export function fnImpactData(
     const includeImplementors = opts.includeImplementors !== false;
 
     const results = nodes.map((node) => {
-      const { levels, totalDependents } = bfsTransitiveCallers(db, node.id, {
+      const { levels, totalDependents } = bfsTransitiveCallers(repo, node.id, {
         noTests,
         maxDepth,
         includeImplementors,
       });
       return {
-        ...normalizeSymbol(node, db, hc),
+        ...normalizeSymbol(node, repo, hc),
         levels,
         totalDependents,
       };

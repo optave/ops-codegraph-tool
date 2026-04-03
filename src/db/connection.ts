@@ -20,7 +20,8 @@ function getPackageVersion(): string {
     const pkgPath = path.join(connDir, '..', '..', 'package.json');
     _packageVersion = (JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as { version: string })
       .version;
-  } catch {
+  } catch (e) {
+    debug(`Failed to read package version: ${(e as Error).message}`);
     _packageVersion = '';
   }
   return _packageVersion;
@@ -41,8 +42,8 @@ function warnOnVersionMismatch(getBuildVersion: () => string | undefined | null)
         `DB was built with codegraph v${buildVersion}, running v${currentVersion}. Consider: codegraph build --no-incremental`,
       );
     }
-  } catch {
-    // build_meta table may not exist in older DBs — silently ignore
+  } catch (e) {
+    debug(`Version mismatch check skipped (build_meta may not exist): ${(e as Error).message}`);
   }
 }
 
@@ -187,8 +188,8 @@ export function flushDeferredClose(): void {
     const db = _deferredDbs.pop()!;
     try {
       db.close();
-    } catch {
-      /* ignore — handle may already be closed */
+    } catch (e) {
+      debug(`Deferred DB close failed (handle may already be closed): ${(e as Error).message}`);
     }
   }
 }
@@ -216,8 +217,8 @@ export function closeDbDeferred(db: LockedDatabase): void {
       _deferredDbs.splice(idx, 1);
       try {
         db.close();
-      } catch {
-        /* ignore — handle may already be closed by flush */
+      } catch (e) {
+        debug(`Deferred DB close failed (may already be closed by flush): ${(e as Error).message}`);
       }
     }
   });
@@ -239,8 +240,8 @@ export function closeDbPair(pair: LockedDatabasePair): void {
   if (pair.nativeDb) {
     try {
       pair.nativeDb.close();
-    } catch {
-      /* ignore */
+    } catch (e) {
+      debug(`closeDbPair: native close failed: ${(e as Error).message}`);
     }
   }
   closeDb(pair.db);
@@ -251,8 +252,8 @@ export function closeDbPairDeferred(pair: LockedDatabasePair): void {
   if (pair.nativeDb) {
     try {
       pair.nativeDb.close();
-    } catch {
-      /* ignore */
+    } catch (e) {
+      debug(`closeDbPairDeferred: native close failed: ${(e as Error).message}`);
     }
   }
   closeDbDeferred(pair.db);
@@ -334,9 +335,11 @@ function openRepoNative(customDbPath?: string): { repo: Repository; close(): voi
   const ndb = native.NativeDatabase.openReadonly(dbPath);
   try {
     warnOnVersionMismatch(() => ndb.getBuildMeta('codegraph_version'));
+    const repo = new NativeRepository(ndb, dbPath);
     return {
-      repo: new NativeRepository(ndb),
+      repo,
       close() {
+        repo.closeFallback();
         ndb.close();
       },
     };
@@ -423,8 +426,8 @@ export function openReadonlyWithNative(customPath?: string): {
       if (nativeDb) {
         try {
           nativeDb.close();
-        } catch {
-          // already closed or not closeable
+        } catch (e) {
+          debug(`openReadonlyWithNative: native close failed: ${(e as Error).message}`);
         }
       }
     },

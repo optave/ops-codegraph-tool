@@ -20,6 +20,127 @@ import type {
   WalkResults,
 } from '../types.js';
 
+/** Merge each visitor's custom functionNodeTypes into the master set. */
+function mergeFunctionNodeTypes(visitors: Visitor[], base: Set<string>): Set<string> {
+  const merged = new Set(base);
+  for (const v of visitors) {
+    if (v.functionNodeTypes) {
+      for (const t of v.functionNodeTypes) merged.add(t);
+    }
+  }
+  return merged;
+}
+
+/** Initialize all visitors for a given language. */
+function initVisitors(visitors: Visitor[], langId: string): void {
+  for (const v of visitors) {
+    if (v.init) v.init(langId);
+  }
+}
+
+/** Check whether a visitor should be skipped at the current depth. */
+function isSkipped(
+  skipDepths: Map<number, number>,
+  visitorIndex: number,
+  currentDepth: number,
+): boolean {
+  const skipAt = skipDepths.get(visitorIndex);
+  // Skipped if skip was requested at a shallower (or equal) depth
+  // We skip descendants, not the node itself, so skip when currentDepth > skipAt
+  return skipAt !== undefined && currentDepth > skipAt;
+}
+
+/** Dispatch enterFunction hooks to all non-skipped visitors. */
+function dispatchEnterFunction(
+  visitors: Visitor[],
+  skipDepths: Map<number, number>,
+  node: TreeSitterNode,
+  funcName: string | null,
+  context: VisitorContext,
+  depth: number,
+): void {
+  for (let i = 0; i < visitors.length; i++) {
+    const v = visitors[i]!;
+    if (v.enterFunction && !isSkipped(skipDepths, i, depth)) {
+      v.enterFunction(node, funcName, context);
+    }
+  }
+}
+
+/** Dispatch enterNode hooks and track skipChildren requests. */
+function dispatchEnterNode(
+  visitors: Visitor[],
+  skipDepths: Map<number, number>,
+  node: TreeSitterNode,
+  context: VisitorContext,
+  depth: number,
+): void {
+  for (let i = 0; i < visitors.length; i++) {
+    const v = visitors[i]!;
+    if (v.enterNode && !isSkipped(skipDepths, i, depth)) {
+      const result = v.enterNode(node, context);
+      if (result?.skipChildren) {
+        skipDepths.set(i, depth);
+      }
+    }
+  }
+}
+
+/** Dispatch exitNode hooks to all non-skipped visitors. */
+function dispatchExitNode(
+  visitors: Visitor[],
+  skipDepths: Map<number, number>,
+  node: TreeSitterNode,
+  context: VisitorContext,
+  depth: number,
+): void {
+  for (let i = 0; i < visitors.length; i++) {
+    const v = visitors[i]!;
+    if (v.exitNode && !isSkipped(skipDepths, i, depth)) {
+      v.exitNode(node, context);
+    }
+  }
+}
+
+/** Clear skip flags for visitors that started skipping at this depth. */
+function clearSkipFlags(
+  skipDepths: Map<number, number>,
+  visitorCount: number,
+  depth: number,
+): void {
+  for (let i = 0; i < visitorCount; i++) {
+    if (skipDepths.get(i) === depth) {
+      skipDepths.delete(i);
+    }
+  }
+}
+
+/** Dispatch exitFunction hooks to all non-skipped visitors. */
+function dispatchExitFunction(
+  visitors: Visitor[],
+  skipDepths: Map<number, number>,
+  node: TreeSitterNode,
+  funcName: string | null,
+  context: VisitorContext,
+  depth: number,
+): void {
+  for (let i = 0; i < visitors.length; i++) {
+    const v = visitors[i]!;
+    if (v.exitFunction && !isSkipped(skipDepths, i, depth)) {
+      v.exitFunction(node, funcName, context);
+    }
+  }
+}
+
+/** Collect finish() results from all visitors into a name-keyed map. */
+function collectResults(visitors: Visitor[]): WalkResults {
+  const results: WalkResults = {};
+  for (const v of visitors) {
+    results[v.name] = v.finish ? v.finish() : undefined;
+  }
+  return results;
+}
+
 /**
  * Walk an AST root with multiple visitors in a single DFS pass.
  *
@@ -44,18 +165,8 @@ export function walkWithVisitors(
     getFunctionName = () => null,
   } = options;
 
-  // Merge all visitors' functionNodeTypes into the master set
-  const allFuncTypes = new Set(functionNodeTypes);
-  for (const v of visitors) {
-    if (v.functionNodeTypes) {
-      for (const t of v.functionNodeTypes) allFuncTypes.add(t);
-    }
-  }
-
-  // Initialize visitors
-  for (const v of visitors) {
-    if (v.init) v.init(langId);
-  }
+  const allFuncTypes = mergeFunctionNodeTypes(visitors, functionNodeTypes);
+  initVisitors(visitors, langId);
 
   // Shared context object (mutated during walk)
   const scopeStack: ScopeEntry[] = [];
@@ -66,95 +177,45 @@ export function walkWithVisitors(
     scopeStack,
   };
 
-  // Track which visitors have requested skipChildren at each depth
-  // Key: visitor index, Value: depth at which skip was requested
   const skipDepths = new Map<number, number>();
 
   function walk(node: TreeSitterNode | null, depth: number): void {
     if (!node) return;
 
     const type = node.type;
-    const isFunction = allFuncTypes.has(type);
+    const isFuncBoundary = allFuncTypes.has(type);
     let funcName: string | null = null;
 
-    // Function boundary: enter
-    if (isFunction) {
+    if (isFuncBoundary) {
       funcName = getFunctionName(node);
       context.currentFunction = node;
       scopeStack.push({ funcName, funcNode: node, params: new Map(), locals: new Map() });
-      for (let i = 0; i < visitors.length; i++) {
-        const v = visitors[i]!;
-        if (v.enterFunction && !isSkipped(i, depth)) {
-          v.enterFunction(node, funcName, context);
-        }
-      }
+      dispatchEnterFunction(visitors, skipDepths, node, funcName, context, depth);
     }
 
-    // enterNode hooks
-    for (let i = 0; i < visitors.length; i++) {
-      const v = visitors[i]!;
-      if (v.enterNode && !isSkipped(i, depth)) {
-        const result = v.enterNode(node, context);
-        if (result?.skipChildren) {
-          skipDepths.set(i, depth);
-        }
-      }
-    }
+    dispatchEnterNode(visitors, skipDepths, node, context, depth);
 
-    // Nesting tracking
     const addsNesting = nestingNodeTypes.has(type);
     if (addsNesting) context.nestingLevel++;
 
-    // Recurse children using node.child(i) (all children, not just named)
     for (let i = 0; i < node.childCount; i++) {
       walk(node.child(i), depth + 1);
     }
 
-    // Undo nesting
     if (addsNesting) context.nestingLevel--;
 
-    // exitNode hooks
-    for (let i = 0; i < visitors.length; i++) {
-      const v = visitors[i]!;
-      if (v.exitNode && !isSkipped(i, depth)) {
-        v.exitNode(node, context);
-      }
-    }
+    dispatchExitNode(visitors, skipDepths, node, context, depth);
+    clearSkipFlags(skipDepths, visitors.length, depth);
 
-    // Clear skip for any visitor that started skipping at this depth
-    for (let i = 0; i < visitors.length; i++) {
-      if (skipDepths.get(i) === depth) {
-        skipDepths.delete(i);
-      }
-    }
-
-    // Function boundary: exit
-    if (isFunction) {
-      for (let i = 0; i < visitors.length; i++) {
-        const v = visitors[i]!;
-        if (v.exitFunction && !isSkipped(i, depth)) {
-          v.exitFunction(node, funcName, context);
-        }
-      }
+    if (isFuncBoundary) {
+      dispatchExitFunction(visitors, skipDepths, node, funcName, context, depth);
       scopeStack.pop();
       context.currentFunction =
         scopeStack.length > 0 ? scopeStack[scopeStack.length - 1]!.funcNode : null;
     }
   }
 
-  function isSkipped(visitorIndex: number, currentDepth: number): boolean {
-    const skipAt = skipDepths.get(visitorIndex);
-    // Skipped if skip was requested at a shallower (or equal) depth
-    // We skip descendants, not the node itself, so skip when currentDepth > skipAt
-    return skipAt !== undefined && currentDepth > skipAt;
-  }
-
   walk(rootNode, 0);
 
-  // Collect results
-  const results: WalkResults = {};
-  for (const v of visitors) {
-    results[v.name] = v.finish ? v.finish() : undefined;
-  }
-  return results;
+  return collectResults(visitors);
 }

@@ -35,12 +35,12 @@ import {
 } from '../../src/domain/queries.js';
 import { exportDOT, exportJSON, exportMermaid } from '../../src/features/export.js';
 import { listEntryPointsData } from '../../src/features/flow.js';
+import { printNdjson } from '../../src/presentation/result-formatter.js';
 import {
   MCP_DEFAULTS,
   MCP_MAX_LIMIT,
   paginate,
   paginateResult,
-  printNdjson,
 } from '../../src/shared/paginate.js';
 
 // ─── Helpers ───────────────────────────────────────────────────────────

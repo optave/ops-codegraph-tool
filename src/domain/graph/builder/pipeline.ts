@@ -19,7 +19,7 @@ import { debug, info, warn } from '../../../infrastructure/logger.js';
 import { loadNative } from '../../../infrastructure/native.js';
 import { semverCompare } from '../../../infrastructure/update-check.js';
 import { CODEGRAPH_VERSION } from '../../../shared/version.js';
-import type { BuildGraphOpts, BuildResult } from '../../../types.js';
+import type { BuildGraphOpts, BuildResult, Definition, ExtractorOutput } from '../../../types.js';
 import { getActiveEngine } from '../../parser.js';
 import { setWorkspaces } from '../resolve.js';
 import { PipelineContext } from './context.js';
@@ -58,8 +58,10 @@ function initializeEngine(ctx: PipelineContext): void {
       ? () => {
           try {
             ctx.nativeDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-          } catch {
-            /* ignore — nativeDb may already be closed */
+          } catch (e) {
+            debug(
+              `resumeJsDb: WAL checkpoint failed (nativeDb may already be closed): ${(e as Error).message}`,
+            );
           }
         }
       : undefined,
@@ -143,8 +145,8 @@ function setupPipeline(ctx: PipelineContext): void {
       warn(`NativeDatabase setup failed, falling back to JS: ${(err as Error).message}`);
       try {
         ctx.nativeDb?.close();
-      } catch {
-        /* ignore close errors */
+      } catch (e) {
+        debug(`setupNativeDb: close failed during fallback: ${(e as Error).message}`);
       }
       ctx.nativeDb = undefined;
     }
@@ -193,6 +195,58 @@ function formatTimingResult(ctx: PipelineContext): BuildResult {
   };
 }
 
+// ── NativeDb lifecycle helpers ──────────────────────────────────────────
+
+/** Checkpoint WAL through rusqlite and close the native connection. */
+function closeNativeDb(ctx: PipelineContext, label: string): void {
+  if (!ctx.nativeDb) return;
+  try {
+    ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+  } catch (e) {
+    debug(`${label} WAL checkpoint failed: ${(e as Error).message}`);
+  }
+  try {
+    ctx.nativeDb.close();
+  } catch (e) {
+    debug(`${label} nativeDb close failed: ${(e as Error).message}`);
+  }
+  ctx.nativeDb = undefined;
+}
+
+/** Try to reopen the native connection for a given pipeline phase. */
+function reopenNativeDb(ctx: PipelineContext, label: string): void {
+  const native = loadNative();
+  if (!native?.NativeDatabase) return;
+  try {
+    ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+  } catch (e) {
+    debug(`reopen nativeDb for ${label} failed: ${(e as Error).message}`);
+    ctx.nativeDb = undefined;
+  }
+}
+
+/** Close nativeDb and clear stale references in engineOpts. */
+function suspendNativeDb(ctx: PipelineContext, label: string): void {
+  closeNativeDb(ctx, label);
+  if (ctx.engineOpts?.nativeDb) {
+    ctx.engineOpts.nativeDb = undefined;
+  }
+}
+
+/**
+ * After native writes, reopen the JS db connection to get a fresh page cache.
+ * Rusqlite WAL truncation invalidates better-sqlite3's internal WAL index,
+ * causing SQLITE_CORRUPT on the next read (#715, #736).
+ */
+function refreshJsDb(ctx: PipelineContext): void {
+  try {
+    ctx.db.close();
+  } catch (e) {
+    debug(`refreshJsDb close failed: ${(e as Error).message}`);
+  }
+  ctx.db = openDb(ctx.dbPath);
+}
+
 // ── Pipeline stages execution ───────────────────────────────────────────
 
 async function runPipelineStages(ctx: PipelineContext): Promise<void> {
@@ -203,26 +257,7 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
   // that use suspendJsDb/resumeJsDb WAL checkpoint pattern (#696).
   const hadNativeDb = !!ctx.nativeDb;
   if (ctx.db && ctx.nativeDb) {
-    // Checkpoint WAL through rusqlite before closing so better-sqlite3 never
-    // needs to apply WAL frames written by a different SQLite library (#715, #717).
-    // Separate try/catch blocks ensure close() always runs even if checkpoint throws,
-    // preventing a live rusqlite connection from lingering until GC.
-    try {
-      ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      /* ignore checkpoint errors */
-    }
-    try {
-      ctx.nativeDb.close();
-    } catch {
-      /* ignore close errors */
-    }
-    ctx.nativeDb = undefined;
-    // Also clear stale reference in engineOpts to prevent stages from
-    // calling methods on the closed NativeDatabase.
-    if (ctx.engineOpts?.nativeDb) {
-      ctx.engineOpts.nativeDb = undefined;
-    }
+    suspendNativeDb(ctx, 'pre-collect');
   }
 
   await collectFiles(ctx);
@@ -236,44 +271,15 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
   // guard internally (same pattern as feature modules). Closed again before
   // resolveImports/buildEdges which don't yet have the guard (#709).
   if (hadNativeDb && ctx.engineName === 'native') {
-    const native = loadNative();
-    if (native?.NativeDatabase) {
-      try {
-        ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
-      } catch {
-        ctx.nativeDb = undefined;
-      }
-    }
+    reopenNativeDb(ctx, 'insertNodes');
   }
 
   await insertNodes(ctx);
 
   // Close nativeDb after insertNodes — remaining pipeline stages use JS paths.
   if (ctx.nativeDb && ctx.db) {
-    // Checkpoint WAL through rusqlite before closing so better-sqlite3 never
-    // needs to apply WAL frames written by a different SQLite library (#715, #717).
-    try {
-      ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      /* ignore checkpoint errors */
-    }
-    try {
-      ctx.nativeDb.close();
-    } catch {
-      /* ignore close errors */
-    }
-    ctx.nativeDb = undefined;
-    // Reopen better-sqlite3 connection to get a fresh page cache.
-    // After rusqlite truncates the WAL, better-sqlite3's internal WAL index
-    // (shared-memory mapping) may reference frames that no longer exist,
-    // causing SQLITE_CORRUPT on the next read. Closing and reopening
-    // forces a clean slate — the only reliable cross-library handoff (#715, #736).
-    try {
-      ctx.db.close();
-    } catch {
-      /* ignore close errors */
-    }
-    ctx.db = openDb(ctx.dbPath);
+    closeNativeDb(ctx, 'post-insertNodes');
+    refreshJsDb(ctx);
   }
 
   await resolveImports(ctx);
@@ -283,19 +289,12 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
   // Reopen nativeDb for feature modules (ast, cfg, complexity, dataflow)
   // which use suspendJsDb/resumeJsDb WAL checkpoint before native writes.
   if (hadNativeDb) {
-    const native = loadNative();
-    if (native?.NativeDatabase) {
-      try {
-        ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
-        if (ctx.engineOpts) {
-          ctx.engineOpts.nativeDb = ctx.nativeDb;
-        }
-      } catch {
-        ctx.nativeDb = undefined;
-        if (ctx.engineOpts) {
-          ctx.engineOpts.nativeDb = undefined;
-        }
-      }
+    reopenNativeDb(ctx, 'analyses');
+    if (ctx.nativeDb && ctx.engineOpts) {
+      ctx.engineOpts.nativeDb = ctx.nativeDb;
+    }
+    if (!ctx.nativeDb && ctx.engineOpts) {
+      ctx.engineOpts.nativeDb = undefined;
     }
   }
 
@@ -303,22 +302,7 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
 
   // Close nativeDb after analyses — finalize uses JS paths for setBuildMeta
   // and closeDbPair handles cleanup. Avoids dual-connection during finalize.
-  if (ctx.nativeDb) {
-    // Checkpoint WAL through rusqlite before closing so better-sqlite3 never
-    // needs to apply WAL frames written by a different SQLite library (#715, #717).
-    // Separate try/catch blocks ensure close() always runs even if checkpoint throws.
-    try {
-      ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      /* ignore checkpoint errors */
-    }
-    try {
-      ctx.nativeDb.close();
-    } catch {
-      /* ignore close errors */
-    }
-    ctx.nativeDb = undefined;
-  }
+  closeNativeDb(ctx, 'post-analyses');
 
   await finalize(ctx);
 }
@@ -381,6 +365,7 @@ export async function buildGraph(
           nodeCount?: number;
           edgeCount?: number;
           fileCount?: number;
+          changedFiles?: string[];
           changedCount?: number;
           removedCount?: number;
           isFullBuild?: boolean;
@@ -419,10 +404,154 @@ export async function buildGraph(
           edge_count: String(result.edgeCount ?? 0),
         });
 
-        closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
         info(
           `Native build orchestrator completed: ${result.nodeCount ?? 0} nodes, ${result.edgeCount ?? 0} edges, ${result.fileCount ?? 0} files`,
         );
+
+        // ── Run analysis phases (AST, complexity, CFG, dataflow) ──────
+        // Not yet ported to Rust. After the native orchestrator finishes,
+        // reconstruct a minimal fileSymbols map from the DB and run analyses
+        // via the JS engine (native standalone functions + WASM fallback).
+        let analysisTiming = { astMs: 0, complexityMs: 0, cfgMs: 0, dataflowMs: 0 };
+        const needsAnalysis =
+          opts.ast !== false ||
+          opts.complexity !== false ||
+          opts.cfg !== false ||
+          opts.dataflow !== false;
+
+        if (needsAnalysis) {
+          // WAL handoff: checkpoint through rusqlite, close nativeDb,
+          // reopen better-sqlite3 with a fresh page cache (#715, #736).
+          try {
+            ctx.nativeDb!.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+          } catch {
+            /* ignore checkpoint errors */
+          }
+          try {
+            ctx.nativeDb!.close();
+          } catch {
+            /* ignore close errors */
+          }
+          ctx.nativeDb = undefined;
+          try {
+            ctx.db.close();
+          } catch {
+            /* ignore close errors */
+          }
+          ctx.db = null!; // avoid closeDbPair operating on a stale handle
+          try {
+            ctx.db = openDb(ctx.dbPath);
+          } catch (reopenErr) {
+            warn(
+              `Failed to reopen DB for analysis after native build: ${(reopenErr as Error).message}`,
+            );
+            // Native build succeeded but we can't run analyses — return partial result
+            return {
+              phases: {
+                setupMs: +((p.setupMs ?? 0) + (p.collectMs ?? 0) + (p.detectMs ?? 0)).toFixed(1),
+                parseMs: +(p.parseMs ?? 0).toFixed(1),
+                insertMs: +(p.insertMs ?? 0).toFixed(1),
+                resolveMs: +(p.resolveMs ?? 0).toFixed(1),
+                edgesMs: +(p.edgesMs ?? 0).toFixed(1),
+                structureMs: +(p.structureMs ?? 0).toFixed(1),
+                rolesMs: +(p.rolesMs ?? 0).toFixed(1),
+                astMs: 0,
+                complexityMs: 0,
+                cfgMs: 0,
+                dataflowMs: 0,
+                finalizeMs: +(p.finalizeMs ?? 0).toFixed(1),
+              },
+            };
+          }
+
+          // Reconstruct minimal fileSymbols from DB for analysis visitors.
+          // Each entry needs definitions with name/kind/line/endLine so the
+          // engine can match complexity/CFG results to the right functions.
+          // For incremental builds, scope to only the files that were parsed
+          // in this cycle (matching the JS pipeline's behaviour in run-analyses.ts).
+          const changedFiles = result.changedFiles;
+          let query =
+            'SELECT file, name, kind, line, end_line as endLine FROM nodes WHERE file IS NOT NULL';
+          const params: string[] = [];
+          if (changedFiles && changedFiles.length > 0) {
+            const placeholders = changedFiles.map(() => '?').join(',');
+            query += ` AND file IN (${placeholders})`;
+            params.push(...changedFiles);
+          }
+          query += ' ORDER BY file, line';
+          const rows = ctx.db.prepare(query).all(...params) as {
+            file: string;
+            name: string;
+            kind: string;
+            line: number;
+            endLine: number | null;
+          }[];
+
+          const fileSymbols = new Map<string, ExtractorOutput>();
+          for (const row of rows) {
+            let entry = fileSymbols.get(row.file);
+            if (!entry) {
+              entry = {
+                definitions: [],
+                calls: [],
+                imports: [],
+                classes: [],
+                exports: [],
+                typeMap: new Map(),
+              };
+              fileSymbols.set(row.file, entry);
+            }
+            entry.definitions.push({
+              name: row.name,
+              kind: row.kind as Definition['kind'],
+              line: row.line,
+              endLine: row.endLine ?? undefined,
+            });
+          }
+
+          // Reopen nativeDb for analysis features (suspend/resume WAL pattern).
+          const native = loadNative();
+          if (native?.NativeDatabase) {
+            try {
+              ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+              if (ctx.engineOpts) ctx.engineOpts.nativeDb = ctx.nativeDb;
+            } catch {
+              ctx.nativeDb = undefined;
+              if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
+            }
+          }
+
+          try {
+            const { runAnalyses: runAnalysesFn } = await import('../../../ast-analysis/engine.js');
+            analysisTiming = await runAnalysesFn(
+              ctx.db,
+              fileSymbols,
+              ctx.rootDir,
+              opts,
+              ctx.engineOpts,
+            );
+          } catch (err) {
+            warn(`Analysis phases failed after native build: ${(err as Error).message}`);
+          }
+
+          // Close nativeDb after analyses
+          if (ctx.nativeDb) {
+            try {
+              ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+            } catch {
+              /* ignore checkpoint errors */
+            }
+            try {
+              ctx.nativeDb.close();
+            } catch {
+              /* ignore close errors */
+            }
+            ctx.nativeDb = undefined;
+            if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
+          }
+        }
+
+        closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
         return {
           phases: {
             setupMs: +((p.setupMs ?? 0) + (p.collectMs ?? 0) + (p.detectMs ?? 0)).toFixed(1),
@@ -432,10 +561,10 @@ export async function buildGraph(
             edgesMs: +(p.edgesMs ?? 0).toFixed(1),
             structureMs: +(p.structureMs ?? 0).toFixed(1),
             rolesMs: +(p.rolesMs ?? 0).toFixed(1),
-            astMs: 0,
-            complexityMs: 0,
-            cfgMs: 0,
-            dataflowMs: 0,
+            astMs: +(analysisTiming.astMs ?? 0).toFixed(1),
+            complexityMs: +(analysisTiming.complexityMs ?? 0).toFixed(1),
+            cfgMs: +(analysisTiming.cfgMs ?? 0).toFixed(1),
+            dataflowMs: +(analysisTiming.dataflowMs ?? 0).toFixed(1),
             finalizeMs: +(p.finalizeMs ?? 0).toFixed(1),
           },
         };

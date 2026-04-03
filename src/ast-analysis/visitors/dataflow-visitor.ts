@@ -116,14 +116,13 @@ function isCall(node: TreeSitterNode | null, isCallNode: (t: string) => boolean)
   return node != null && isCallNode(node.type);
 }
 
-function handleVarDeclarator(
+/** Resolve the value node from a variable declarator, trying multiple strategies. */
+function resolveValueNode(
   node: TreeSitterNode,
+  nameNode: TreeSitterNode | null,
   rules: AnyRules,
-  scopeStack: ScopeEntry[],
-  assignments: DataflowAssignment[],
   isCallNode: (t: string) => boolean,
-): void {
-  let nameNode = node.childForFieldName(rules.varNameField);
+): TreeSitterNode | null {
   let valueNode: TreeSitterNode | null = rules.varValueField
     ? node.childForFieldName(rules.varValueField)
     : null;
@@ -146,52 +145,97 @@ function handleVarDeclarator(
     }
   }
 
-  if (rules.expressionListType) {
-    if (nameNode && nameNode.type === rules.expressionListType)
-      nameNode = nameNode.namedChildren[0] ?? null;
-    if (valueNode && valueNode.type === rules.expressionListType)
-      valueNode = valueNode.namedChildren[0] ?? null;
+  return valueNode;
+}
+
+/** Unwrap expression-list wrappers from name/value nodes. */
+function unwrapExpressionList(
+  nameNode: TreeSitterNode | null,
+  valueNode: TreeSitterNode | null,
+  rules: AnyRules,
+): { name: TreeSitterNode | null; value: TreeSitterNode | null } {
+  if (!rules.expressionListType) return { name: nameNode, value: valueNode };
+  const name =
+    nameNode && nameNode.type === rules.expressionListType
+      ? (nameNode.namedChildren[0] ?? null)
+      : nameNode;
+  const value =
+    valueNode && valueNode.type === rules.expressionListType
+      ? (valueNode.namedChildren[0] ?? null)
+      : valueNode;
+  return { name, value };
+}
+
+/** Record a destructured call assignment (object or array destructuring). */
+function recordDestructuredAssignment(
+  nameNode: TreeSitterNode,
+  node: TreeSitterNode,
+  callee: string,
+  scope: ScopeEntry,
+  assignments: DataflowAssignment[],
+  rules: AnyRules,
+): void {
+  const names = extractParamNames(nameNode, rules);
+  for (const n of names) {
+    assignments.push({
+      varName: n,
+      callerFunc: scope.funcName!,
+      sourceCallName: callee,
+      expression: truncate(node.text),
+      line: node.startPosition.row + 1,
+    });
+    scope.locals.set(n, { type: 'destructured', callee });
   }
+}
+
+/** Record a simple (non-destructured) call assignment. */
+function recordSimpleAssignment(
+  nameNode: TreeSitterNode,
+  node: TreeSitterNode,
+  callee: string,
+  scope: ScopeEntry,
+  assignments: DataflowAssignment[],
+): void {
+  const varName = nameNode.text;
+  assignments.push({
+    varName,
+    callerFunc: scope.funcName!,
+    sourceCallName: callee,
+    expression: truncate(node.text),
+    line: node.startPosition.row + 1,
+  });
+  scope.locals.set(varName, { type: 'call_return', callee });
+}
+
+function handleVarDeclarator(
+  node: TreeSitterNode,
+  rules: AnyRules,
+  scopeStack: ScopeEntry[],
+  assignments: DataflowAssignment[],
+  isCallNode: (t: string) => boolean,
+): void {
+  const rawName = node.childForFieldName(rules.varNameField);
+  const rawValue = resolveValueNode(node, rawName, rules, isCallNode);
+  const { name: nameNode, value: valueNode } = unwrapExpressionList(rawName, rawValue, rules);
 
   const scope = currentScope(scopeStack);
   if (!nameNode || !valueNode || !scope) return;
 
   const unwrapped = unwrapAwait(valueNode, rules);
   const callExpr = isCall(unwrapped, isCallNode) ? unwrapped : null;
+  if (!callExpr) return;
 
-  if (callExpr) {
-    const callee = resolveCalleeName(callExpr, rules);
-    if (callee && scope.funcName) {
-      if (
-        (rules.objectDestructType && nameNode.type === rules.objectDestructType) ||
-        (rules.arrayDestructType && nameNode.type === rules.arrayDestructType)
-      ) {
-        const names = extractParamNames(nameNode, rules);
-        for (const n of names) {
-          assignments.push({
-            varName: n,
-            callerFunc: scope.funcName,
-            sourceCallName: callee,
-            expression: truncate(node.text),
-            line: node.startPosition.row + 1,
-          });
-          scope.locals.set(n, { type: 'destructured', callee });
-        }
-      } else {
-        const varName =
-          nameNode.type === 'identifier' || nameNode.type === rules.paramIdentifier
-            ? nameNode.text
-            : nameNode.text;
-        assignments.push({
-          varName,
-          callerFunc: scope.funcName,
-          sourceCallName: callee,
-          expression: truncate(node.text),
-          line: node.startPosition.row + 1,
-        });
-        scope.locals.set(varName, { type: 'call_return', callee });
-      }
-    }
+  const callee = resolveCalleeName(callExpr, rules);
+  if (!callee || !scope.funcName) return;
+
+  const isDestructured =
+    (rules.objectDestructType && nameNode.type === rules.objectDestructType) ||
+    (rules.arrayDestructType && nameNode.type === rules.arrayDestructType);
+
+  if (isDestructured) {
+    recordDestructuredAssignment(nameNode, node, callee, scope, assignments, rules);
+  } else {
+    recordSimpleAssignment(nameNode, node, callee, scope, assignments);
   }
 }
 
