@@ -2,6 +2,43 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.8.1](https://github.com/optave/ops-codegraph-tool/compare/v3.8.0...v3.8.1) (2026-04-03)
+
+**Windows stability, native engine fixes, and large-codebase performance.** This patch hardens the v3.8.0 release with critical Windows fixes (polling watcher to avoid ReFS BSOD, Windows-scoped import-edge handling), several native engine corrections (dataflow parameter indexing, embedding path resolution, build orchestrator sequencing), and performance improvements for large codebases — cycle detection and stats queries are faster, and query-time analysis now routes through the native Rust engine.
+
+### Bug Fixes
+
+* **native:** resolve dataflow null paramIndex and import edge key mismatch ([#788](https://github.com/optave/ops-codegraph-tool/pull/788))
+* **native:** keep nativeDb open through finalize for correct build_meta ([#784](https://github.com/optave/ops-codegraph-tool/pull/784))
+* **embed:** handle absolute file paths from native engine ([#780](https://github.com/optave/ops-codegraph-tool/pull/780), [#783](https://github.com/optave/ops-codegraph-tool/pull/783))
+* default watcher to polling on Windows to avoid ReFS BSOD ([#778](https://github.com/optave/ops-codegraph-tool/pull/778))
+* scope native import-edge skip to Windows only ([#777](https://github.com/optave/ops-codegraph-tool/pull/777))
+* run analysis phases after native Rust build orchestrator ([#757](https://github.com/optave/ops-codegraph-tool/pull/757))
+* skip native build orchestrator for addon ≤3.8.0 and fix path bug ([#758](https://github.com/optave/ops-codegraph-tool/pull/758))
+* auto-install @huggingface/transformers in non-TTY environments ([#779](https://github.com/optave/ops-codegraph-tool/pull/779))
+* remove duplicate function definitions in leiden optimiser ([#786](https://github.com/optave/ops-codegraph-tool/pull/786))
+* replace empty catch blocks with structured error handling ([#764](https://github.com/optave/ops-codegraph-tool/pull/764))
+* replace console.log with structured logging in non-CLI-output code ([#765](https://github.com/optave/ops-codegraph-tool/pull/765))
+* **ci:** add concurrency group to codegraph-impact workflow ([#785](https://github.com/optave/ops-codegraph-tool/pull/785))
+* **bench:** resolve query benchmark CI failure and increase embedding timeout ([#749](https://github.com/optave/ops-codegraph-tool/pull/749))
+
+### Performance
+
+* route query analysis through native Rust engine ([#745](https://github.com/optave/ops-codegraph-tool/pull/745))
+* optimize cycles and stats for large codebases ([#781](https://github.com/optave/ops-codegraph-tool/pull/781))
+* filter reverse-dep files from native build analysis scope ([#782](https://github.com/optave/ops-codegraph-tool/pull/782))
+* forward langId hint to native standalone analysis functions ([#743](https://github.com/optave/ops-codegraph-tool/pull/743))
+
+### Refactors
+
+* decompose ast-analysis visitor framework ([#771](https://github.com/optave/ops-codegraph-tool/pull/771))
+* Titan v3.8.0 — decompose god-functions, structured logging, error handling ([#775](https://github.com/optave/ops-codegraph-tool/pull/775))
+* extract class declaration handlers in language extractors ([#769](https://github.com/optave/ops-codegraph-tool/pull/769))
+* split hybridSearchData into keyword, vector, and merge steps ([#768](https://github.com/optave/ops-codegraph-tool/pull/768))
+* decompose makePartition into focused graph operations ([#766](https://github.com/optave/ops-codegraph-tool/pull/766))
+* extract rendering sub-functions from inspect and diff-impact-mermaid ([#767](https://github.com/optave/ops-codegraph-tool/pull/767))
+* address quality warnings in shared modules ([#770](https://github.com/optave/ops-codegraph-tool/pull/770))
+
 ## [3.8.0](https://github.com/optave/ops-codegraph-tool/compare/v3.7.0...v3.8.0) (2026-04-01)
 
 **34 languages and a fully native build pipeline.** This release completes Phase 7 (Expanded Language Support) by shipping the final 11 languages — F#, Gleam, Clojure, Julia, R, Erlang, Solidity, Objective-C, CUDA, Groovy, and Verilog — bringing codegraph from 23 to 34 supported languages. On the performance side, the entire build pipeline now runs natively in Rust: graph algorithms (BFS, shortest path, Louvain, centrality), import edge building with barrel resolution, and build-glue queries all migrate from JS to napi-rs. A new Rust build orchestration layer coordinates the full native pipeline end-to-end.
