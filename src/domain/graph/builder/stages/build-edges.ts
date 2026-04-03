@@ -744,10 +744,12 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       }
     }
 
-    // Skip native import-edge path for small incremental builds (≤3 files)
-    // and for addon 3.8.0 which has a Windows path-separator bug in key
-    // construction (format!("{}/{}", root_dir, file) vs path.join backslashes).
-    const importEdgeBuggy = ctx.engineVersion === '3.8.0';
+    // Skip native import-edge path for small incremental builds (≤3 files):
+    // napi-rs marshaling overhead exceeds computation savings.
+    // Also skip on Windows for addon 3.8.0: the prebuilt Rust code constructs
+    // lookup keys with mixed separators (format!("{}/{}", root_dir, file)) that
+    // don't match JS-normalized keys. Fixed in Rust source for 3.8.1+.
+    const importEdgeBuggy = process.platform === 'win32' && ctx.engineVersion === '3.8.0';
     const useNativeImportEdges =
       native?.buildImportEdges && !importEdgeBuggy && (ctx.isFullBuild || ctx.fileSymbols.size > 3);
     if (useNativeImportEdges) {
