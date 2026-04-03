@@ -6,10 +6,18 @@
  */
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { closeDbPair, getBuildMeta, initSchema, MIGRATIONS, openDb } from '../../../db/index.js';
+import {
+  closeDbPair,
+  getBuildMeta,
+  initSchema,
+  MIGRATIONS,
+  openDb,
+  setBuildMeta,
+} from '../../../db/index.js';
 import { detectWorkspaces, loadConfig } from '../../../infrastructure/config.js';
-import { info, warn } from '../../../infrastructure/logger.js';
+import { debug, info, warn } from '../../../infrastructure/logger.js';
 import { loadNative } from '../../../infrastructure/native.js';
+import { semverCompare } from '../../../infrastructure/update-check.js';
 import { CODEGRAPH_VERSION } from '../../../shared/version.js';
 import type { BuildGraphOpts, BuildResult, Definition, ExtractorOutput } from '../../../types.js';
 import { getActiveEngine } from '../../parser.js';
@@ -338,7 +346,27 @@ export async function buildGraph(
     // When available, run the entire build pipeline in Rust with zero
     // napi crossings (eliminates WAL dual-connection dance). Falls back
     // to the JS pipeline on failure or when native is unavailable.
-    const forceJs = process.env.CODEGRAPH_FORCE_JS_PIPELINE === '1';
+    //
+    // Native addon 3.8.0 has a path bug: file_symbols keys are absolute
+    // paths but known_files are relative, causing zero import/call edges.
+    // Skip the orchestrator for affected versions (fixed in 3.9.0+).
+    const orchestratorBuggy = !!ctx.engineVersion && semverCompare(ctx.engineVersion, '3.8.0') <= 0;
+    const forceJs =
+      process.env.CODEGRAPH_FORCE_JS_PIPELINE === '1' ||
+      ctx.forceFullRebuild ||
+      orchestratorBuggy ||
+      ctx.engineName !== 'native';
+    if (forceJs) {
+      const reason =
+        process.env.CODEGRAPH_FORCE_JS_PIPELINE === '1'
+          ? 'CODEGRAPH_FORCE_JS_PIPELINE=1'
+          : ctx.forceFullRebuild
+            ? 'forceFullRebuild'
+            : orchestratorBuggy
+              ? `buggy addon ${ctx.engineVersion}`
+              : `engine=${ctx.engineName}`;
+      debug(`Skipping native orchestrator: ${reason}`);
+    }
     if (!forceJs && ctx.nativeDb?.buildGraph) {
       try {
         const resultJson = ctx.nativeDb.buildGraph(
@@ -354,16 +382,44 @@ export async function buildGraph(
           edgeCount?: number;
           fileCount?: number;
           changedFiles?: string[];
+          changedCount?: number;
+          removedCount?: number;
+          isFullBuild?: boolean;
         };
 
         if (result.earlyExit) {
+          info('No changes detected');
           closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
           return;
+        }
+
+        // Log incremental status to match JS pipeline output
+        const changed = result.changedCount ?? 0;
+        const removed = result.removedCount ?? 0;
+        if (!result.isFullBuild && (changed > 0 || removed > 0)) {
+          info(`Incremental: ${changed} changed, ${removed} removed`);
         }
 
         // Map Rust timing fields to the JS BuildResult format.
         // Rust handles collect+detect+parse+insert+resolve+edges+structure+roles.
         const p = result.phases;
+
+        // Sync build_meta so JS-side version/engine checks work on next build.
+        // Note: the Rust orchestrator also writes codegraph_version (using
+        // CARGO_PKG_VERSION). We intentionally overwrite it here with the npm
+        // package version so that the JS-side "version changed → full rebuild"
+        // detection (line ~97) compares against the authoritative JS version.
+        // The two versions are kept in lockstep by the release process.
+        setBuildMeta(ctx.db, {
+          engine: ctx.engineName,
+          engine_version: ctx.engineVersion || '',
+          codegraph_version: CODEGRAPH_VERSION,
+          schema_version: String(ctx.schemaVersion),
+          built_at: new Date().toISOString(),
+          node_count: String(result.nodeCount ?? 0),
+          edge_count: String(result.edgeCount ?? 0),
+        });
+
         info(
           `Native build orchestrator completed: ${result.nodeCount ?? 0} nodes, ${result.edgeCount ?? 0} edges, ${result.fileCount ?? 0} files`,
         );
