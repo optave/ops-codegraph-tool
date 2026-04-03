@@ -63,7 +63,9 @@ function findBarrelCandidates(ctx: PipelineContext): Array<{ file: string }> {
       const symbols = fileSymbols.get(relPath);
       if (!symbols) continue;
       for (const imp of symbols.imports) {
-        const resolved = ctx.batchResolved?.get(`${normalizePath(path.join(rootDir, relPath))}|${imp.source}`);
+        const resolved = ctx.batchResolved?.get(
+          `${normalizePath(path.join(rootDir, relPath))}|${imp.source}`,
+        );
         const target =
           resolved ?? resolveImportPath(path.join(rootDir, relPath), imp.source, rootDir, aliases);
         if (allBarrelFiles.has(target)) barrels.add(target);
