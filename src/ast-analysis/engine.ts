@@ -21,6 +21,7 @@ import { performance } from 'node:perf_hooks';
 import { bulkNodeIdsByFile } from '../db/index.js';
 import { debug } from '../infrastructure/logger.js';
 import { loadNative } from '../infrastructure/native.js';
+import { toErrorMessage } from '../shared/errors.js';
 import type {
   AnalysisOpts,
   AnalysisTiming,
@@ -147,7 +148,7 @@ function runNativeAnalysis(
     try {
       source = fs.readFileSync(absPath, 'utf-8');
     } catch (e) {
-      debug(`runNativeAnalysis: failed to read ${relPath}: ${(e as Error).message}`);
+      debug(`runNativeAnalysis: failed to read ${relPath}: ${toErrorMessage(e)}`);
       continue;
     }
 

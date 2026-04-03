@@ -2,6 +2,7 @@ import path from 'node:path';
 import { kindIcon, moduleMapData, rolesData, statsData } from '../../domain/queries.js';
 import { debug } from '../../infrastructure/logger.js';
 import { outputResult } from '../../infrastructure/result-formatter.js';
+import { toErrorMessage } from '../../shared/errors.js';
 
 interface OutputOpts {
   json?: boolean;
@@ -238,7 +239,7 @@ export async function stats(customDbPath: string, opts: OutputOpts = {}): Promis
     const { communitySummaryForStats } = await import('../../features/communities.js');
     data.communities = communitySummaryForStats(customDbPath, { noTests: opts.noTests });
   } catch (e) {
-    debug(`stats: community detection failed (optional): ${(e as Error).message}`);
+    debug(`stats: community detection failed (optional): ${toErrorMessage(e)}`);
   }
 
   if (outputResult(data as unknown as Record<string, unknown>, null, opts)) return;
@@ -282,6 +283,26 @@ export function moduleMap(customDbPath: string, limit = 20, opts: OutputOpts = {
   );
 }
 
+function groupByRole(symbols: RoleSymbol[]): Record<string, RoleSymbol[]> {
+  const byRole: Record<string, RoleSymbol[]> = {};
+  for (const s of symbols) {
+    if (!byRole[s.role]) byRole[s.role] = [];
+    byRole[s.role]!.push(s);
+  }
+  return byRole;
+}
+
+function printRoleGroup(role: string, symbols: RoleSymbol[]): void {
+  console.log(`## ${role} (${symbols.length})`);
+  for (const s of symbols.slice(0, 30)) {
+    console.log(`  ${kindIcon(s.kind)} ${s.name}  ${s.file}:${s.line}`);
+  }
+  if (symbols.length > 30) {
+    console.log(`  ... and ${symbols.length - 30} more`);
+  }
+  console.log();
+}
+
 export function roles(customDbPath: string, opts: OutputOpts = {}): void {
   const data = rolesData(customDbPath, opts) as RolesData;
   if (outputResult(data as unknown as Record<string, unknown>, 'symbols', opts)) return;
@@ -299,20 +320,8 @@ export function roles(customDbPath: string, opts: OutputOpts = {}): void {
     .map(([role, count]) => `${role}: ${count}`);
   console.log(`  ${summaryParts.join('  ')}\n`);
 
-  const byRole: Record<string, RoleSymbol[]> = {};
-  for (const s of data.symbols) {
-    if (!byRole[s.role]) byRole[s.role] = [];
-    byRole[s.role]!.push(s);
-  }
-
+  const byRole = groupByRole(data.symbols);
   for (const [role, symbols] of Object.entries(byRole)) {
-    console.log(`## ${role} (${symbols.length})`);
-    for (const s of symbols.slice(0, 30)) {
-      console.log(`  ${kindIcon(s.kind)} ${s.name}  ${s.file}:${s.line}`);
-    }
-    if (symbols.length > 30) {
-      console.log(`  ... and ${symbols.length - 30} more`);
-    }
-    console.log();
+    printRoleGroup(role, symbols);
   }
 }

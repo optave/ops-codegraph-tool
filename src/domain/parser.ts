@@ -193,39 +193,27 @@ export async function createParsers(): Promise<Map<string, Parser | null>> {
  * Call this between repeated builds in the same process (e.g. benchmarks)
  * to prevent memory accumulation that can cause segfaults.
  */
+function disposeMapEntries(entries: Iterable<[string, any]>, label: string): void {
+  for (const [id, item] of entries) {
+    if (item && typeof item.delete === 'function') {
+      try {
+        item.delete();
+      } catch (e: unknown) {
+        debug(`Failed to dispose ${label} ${id}: ${(e as Error).message}`);
+      }
+    }
+  }
+}
+
 export function disposeParsers(): void {
   if (_cachedParsers) {
-    for (const [id, parser] of _cachedParsers) {
-      if (parser && typeof parser.delete === 'function') {
-        try {
-          parser.delete();
-        } catch (e: unknown) {
-          debug(`Failed to dispose parser ${id}: ${(e as Error).message}`);
-        }
-      }
-    }
+    disposeMapEntries(_cachedParsers, 'parser');
     _cachedParsers = null;
   }
-  for (const [id, query] of _queryCache) {
-    if (query && typeof query.delete === 'function') {
-      try {
-        query.delete();
-      } catch (e: unknown) {
-        debug(`Failed to dispose query ${id}: ${(e as Error).message}`);
-      }
-    }
-  }
+  disposeMapEntries(_queryCache, 'query');
   _queryCache.clear();
   if (_cachedLanguages) {
-    for (const [id, lang] of _cachedLanguages) {
-      if (lang && typeof (lang as any).delete === 'function') {
-        try {
-          (lang as any).delete();
-        } catch (e: unknown) {
-          debug(`Failed to dispose language ${id}: ${(e as Error).message}`);
-        }
-      }
-    }
+    disposeMapEntries(_cachedLanguages, 'language');
     _cachedLanguages = null;
   }
   _initialized = false;

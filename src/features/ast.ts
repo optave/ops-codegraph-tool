@@ -58,38 +58,11 @@ function findParentDef(defs: Definition[], line: number): Definition | null {
   return best;
 }
 
-// ─── Build ────────────────────────────────────────────────────────────
+// ─── Build helpers ───────────────────────────────────────────────────
 
-export async function buildAstNodes(
-  db: BetterSqlite3Database,
-  fileSymbols: Map<string, FileSymbols>,
-  _rootDir: string,
-  engineOpts?: {
-    nativeDb?: {
-      bulkInsertAstNodes(
-        batches: Array<{
-          file: string;
-          nodes: Array<{
-            line: number;
-            kind: string;
-            name: string;
-            text?: string | null;
-            receiver?: string | null;
-          }>;
-        }>,
-      ): number;
-    };
-    suspendJsDb?: () => void;
-    resumeJsDb?: () => void;
-  },
-): Promise<void> {
-  // ── Native bulk-insert fast path ──────────────────────────────────────
-  // Uses NativeDatabase persistent connection (Phase 6.15+).
-  // Standalone napi functions were removed in 6.17.
-  const nativeDb = engineOpts?.nativeDb;
-  if (nativeDb?.bulkInsertAstNodes) {
-    let needsJsFallback = false;
-    const batches: Array<{
+interface NativeDbHandle {
+  bulkInsertAstNodes(
+    batches: Array<{
       file: string;
       nodes: Array<{
         line: number;
@@ -98,47 +71,127 @@ export async function buildAstNodes(
         text?: string | null;
         receiver?: string | null;
       }>;
-    }> = [];
+    }>,
+  ): number;
+}
 
-    for (const [relPath, symbols] of fileSymbols) {
-      if (Array.isArray(symbols.astNodes)) {
-        batches.push({
-          file: relPath,
-          nodes: symbols.astNodes.map((n) => ({
-            line: n.line,
-            kind: n.kind,
-            name: n.name,
-            text: n.text,
-            receiver: n.receiver ?? '',
-          })),
-        });
-      } else if (symbols.calls || symbols._tree) {
-        needsJsFallback = true;
-        break;
-      }
-    }
+interface EngineOpts {
+  nativeDb?: NativeDbHandle;
+  suspendJsDb?: () => void;
+  resumeJsDb?: () => void;
+}
 
-    if (!needsJsFallback) {
-      const expectedNodes = batches.reduce((s, b) => s + b.nodes.length, 0);
-      let inserted: number;
-      try {
-        engineOpts?.suspendJsDb?.();
-        inserted = nativeDb.bulkInsertAstNodes(batches);
-      } finally {
-        engineOpts?.resumeJsDb?.();
-      }
-      if (inserted === expectedNodes) {
-        debug(`AST extraction (native bulk): ${inserted} nodes stored`);
-        return;
-      }
-      debug(
-        `AST extraction (native bulk): expected ${expectedNodes}, got ${inserted} — falling back to JS`,
-      );
-      // fall through to JS path
+/**
+ * Attempt native bulk-insert of AST nodes.
+ * Returns `true` if all nodes were inserted natively, `false` if JS fallback is needed.
+ */
+function tryNativeBulkInsert(
+  fileSymbols: Map<string, FileSymbols>,
+  engineOpts: EngineOpts | undefined,
+): boolean {
+  const nativeDb = engineOpts?.nativeDb;
+  if (!nativeDb?.bulkInsertAstNodes) return false;
+
+  const batches: Array<{
+    file: string;
+    nodes: Array<{
+      line: number;
+      kind: string;
+      name: string;
+      text?: string | null;
+      receiver?: string | null;
+    }>;
+  }> = [];
+
+  for (const [relPath, symbols] of fileSymbols) {
+    if (Array.isArray(symbols.astNodes)) {
+      batches.push({
+        file: relPath,
+        nodes: symbols.astNodes.map((n) => ({
+          line: n.line,
+          kind: n.kind,
+          name: n.name,
+          text: n.text,
+          receiver: n.receiver ?? '',
+        })),
+      });
+    } else if (symbols.calls || symbols._tree) {
+      return false; // needs JS fallback
     }
   }
 
-  // ── JS fallback path ──────────────────────────────────────────────────
+  const expectedNodes = batches.reduce((s, b) => s + b.nodes.length, 0);
+  let inserted: number;
+  try {
+    engineOpts?.suspendJsDb?.();
+    inserted = nativeDb.bulkInsertAstNodes(batches);
+  } finally {
+    engineOpts?.resumeJsDb?.();
+  }
+
+  if (inserted === expectedNodes) {
+    debug(`AST extraction (native bulk): ${inserted} nodes stored`);
+    return true;
+  }
+  debug(
+    `AST extraction (native bulk): expected ${expectedNodes}, got ${inserted} — falling back to JS`,
+  );
+  return false;
+}
+
+/** Collect AST rows for a single file, resolving parent node IDs. */
+function collectFileAstRows(
+  db: BetterSqlite3Database,
+  relPath: string,
+  symbols: FileSymbols,
+): AstRow[] {
+  const defs = symbols.definitions || [];
+  const nodeIdMap = new Map<string, number>();
+  for (const row of bulkNodeIdsByFile(db, relPath)) {
+    nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
+  }
+
+  if (Array.isArray(symbols.astNodes)) {
+    return symbols.astNodes.map((n) => {
+      const parentDef = findParentDef(defs, n.line);
+      const parentNodeId = parentDef
+        ? nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null
+        : null;
+      return {
+        file: relPath,
+        line: n.line,
+        kind: n.kind,
+        name: n.name,
+        text: n.text || null,
+        receiver: n.receiver || null,
+        parentNodeId,
+      };
+    });
+  }
+
+  // WASM fallback — walk tree if available
+  const ext = path.extname(relPath).toLowerCase();
+  if (WALK_EXTENSIONS.has(ext) && symbols._tree) {
+    const rows: AstRow[] = [];
+    walkAst(symbols._tree.rootNode, defs, relPath, rows, nodeIdMap);
+    return rows;
+  }
+
+  return [];
+}
+
+// ─── Build ────────────────────────────────────────────────────────────
+
+export async function buildAstNodes(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, FileSymbols>,
+  _rootDir: string,
+  engineOpts?: EngineOpts,
+): Promise<void> {
+  // Native bulk-insert fast path (Phase 6.15+)
+  if (tryNativeBulkInsert(fileSymbols, engineOpts)) return;
+
+  // JS fallback path
   let insertStmt: ReturnType<BetterSqlite3Database['prepare']>;
   try {
     insertStmt = db.prepare(
@@ -156,43 +209,8 @@ export async function buildAstNodes(
   });
 
   const allRows: AstRow[] = [];
-
   for (const [relPath, symbols] of fileSymbols) {
-    const defs = symbols.definitions || [];
-
-    const nodeIdMap = new Map<string, number>();
-    for (const row of bulkNodeIdsByFile(db, relPath)) {
-      nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
-    }
-
-    if (Array.isArray(symbols.astNodes)) {
-      // Native engine provided AST nodes (may be empty for files with no AST content)
-      for (const n of symbols.astNodes) {
-        const parentDef = findParentDef(defs, n.line);
-        let parentNodeId: number | null = null;
-        if (parentDef) {
-          parentNodeId =
-            nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
-        }
-        allRows.push({
-          file: relPath,
-          line: n.line,
-          kind: n.kind,
-          name: n.name,
-          text: n.text || null,
-          receiver: n.receiver || null,
-          parentNodeId,
-        });
-      }
-    } else {
-      // WASM fallback — walk tree if available
-      const ext = path.extname(relPath).toLowerCase();
-      if (WALK_EXTENSIONS.has(ext) && symbols._tree) {
-        const astRows: AstRow[] = [];
-        walkAst(symbols._tree.rootNode, defs, relPath, astRows, nodeIdMap);
-        allRows.push(...astRows);
-      }
-    }
+    allRows.push(...collectFileAstRows(db, relPath, symbols));
   }
 
   if (allRows.length > 0) {
