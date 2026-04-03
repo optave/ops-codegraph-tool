@@ -8,6 +8,7 @@ import { kindIcon } from '../domain/queries.js';
 import { debug } from '../infrastructure/logger.js';
 import { getNative, isNativeAvailable } from '../infrastructure/native.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
+import { toErrorMessage } from '../shared/errors.js';
 import type { EngineMode, NativeDatabase } from '../types.js';
 
 // ─── Git Helpers ────────────────────────────────────────────────────────
@@ -21,7 +22,7 @@ function validateGitRef(repoRoot: string, ref: string): string | null {
     }).trim();
     return sha;
   } catch (e) {
-    debug(`validateGitRef failed for "${ref}": ${(e as Error).message}`);
+    debug(`validateGitRef failed for "${ref}": ${toErrorMessage(e)}`);
     return null;
   }
 }
@@ -52,11 +53,11 @@ function removeWorktree(repoRoot: string, dir: string): void {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
   } catch (e) {
-    debug(`removeWorktree: git worktree remove failed for ${dir}: ${(e as Error).message}`);
+    debug(`removeWorktree: git worktree remove failed for ${dir}: ${toErrorMessage(e)}`);
     try {
       fs.rmSync(dir, { recursive: true, force: true });
     } catch (rmErr) {
-      debug(`removeWorktree: rmSync fallback failed for ${dir}: ${(rmErr as Error).message}`);
+      debug(`removeWorktree: rmSync fallback failed for ${dir}: ${toErrorMessage(rmErr)}`);
     }
     try {
       execFileSync('git', ['worktree', 'prune'], {
@@ -65,7 +66,7 @@ function removeWorktree(repoRoot: string, dir: string): void {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
     } catch (pruneErr) {
-      debug(`removeWorktree: git worktree prune failed: ${(pruneErr as Error).message}`);
+      debug(`removeWorktree: git worktree prune failed: ${toErrorMessage(pruneErr)}`);
     }
   }
 }
@@ -119,7 +120,7 @@ function loadSymbolsFromDb(
       const native = getNative();
       nativeDb = native.NativeDatabase.openReadonly(dbPath);
     } catch (e) {
-      debug(`loadSymbolsFromDb: native path failed: ${(e as Error).message}`);
+      debug(`loadSymbolsFromDb: native path failed: ${toErrorMessage(e)}`);
     }
   }
 
@@ -208,7 +209,7 @@ function loadSymbolsFromDb(
       try {
         nativeDb.close();
       } catch (e) {
-        debug(`loadSymbolsFromDb: nativeDb close failed: ${(e as Error).message}`);
+        debug(`loadSymbolsFromDb: nativeDb close failed: ${toErrorMessage(e)}`);
       }
     }
   }
@@ -411,7 +412,7 @@ export async function branchCompareData(
       stdio: ['pipe', 'pipe', 'pipe'],
     });
   } catch (e) {
-    debug(`branchCompareData: git check failed: ${(e as Error).message}`);
+    debug(`branchCompareData: git check failed: ${toErrorMessage(e)}`);
     return { error: 'Not a git repository' };
   }
 
@@ -512,14 +513,14 @@ export async function branchCompareData(
       },
     };
   } catch (err) {
-    return { error: (err as Error).message };
+    return { error: toErrorMessage(err) };
   } finally {
     removeWorktree(repoRoot, baseDir);
     removeWorktree(repoRoot, targetDir);
     try {
       fs.rmSync(tmpBase, { recursive: true, force: true });
     } catch (cleanupErr) {
-      debug(`branchCompareData: temp cleanup failed: ${(cleanupErr as Error).message}`);
+      debug(`branchCompareData: temp cleanup failed: ${toErrorMessage(cleanupErr)}`);
     }
   }
 }
