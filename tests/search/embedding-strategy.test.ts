@@ -289,6 +289,47 @@ describe('FTS5 index built alongside embeddings', () => {
   });
 });
 
+describe('absolute file paths in DB (#760)', () => {
+  let absDir: string, absDbPath: string;
+
+  beforeAll(() => {
+    absDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-abspath-test-'));
+    fs.writeFileSync(
+      path.join(absDir, 'math.js'),
+      'export function add(a, b) { return a + b; }\n',
+    );
+
+    const absDbDir = path.join(absDir, '.codegraph');
+    fs.mkdirSync(absDbDir, { recursive: true });
+    absDbPath = path.join(absDbDir, 'graph.db');
+
+    const db = new Database(absDbPath);
+    db.pragma('journal_mode = WAL');
+    initSchema(db);
+
+    // Insert node with an absolute file path (as the native engine does)
+    const absFile = path.join(absDir, 'math.js');
+    insertNode(db, 'add', 'function', absFile, 1, 1);
+    db.close();
+  });
+
+  afterAll(() => {
+    if (absDir) fs.rmSync(absDir, { recursive: true, force: true });
+  });
+
+  test('produces embeddings when DB stores absolute paths', async () => {
+    EMBEDDED_TEXTS.length = 0;
+    await buildEmbeddings(absDir, 'minilm', absDbPath);
+
+    expect(EMBEDDED_TEXTS.length).toBe(1);
+
+    const db = new Database(absDbPath, { readonly: true });
+    const count = db.prepare('SELECT COUNT(*) as c FROM embeddings').get().c;
+    db.close();
+    expect(count).toBe(1);
+  });
+});
+
 describe('context window overflow detection', () => {
   let bigDir: string, bigDbPath: string;
 
