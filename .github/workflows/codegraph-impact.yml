@@ -2,7 +2,7 @@ name: Codegraph Impact Analysis
 on: [pull_request]
 
 concurrency:
-  group: codegraph-impact-${{ github.event.pull_request.number }}
+  group: codegraph-impact-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
