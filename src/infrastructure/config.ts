@@ -178,7 +178,7 @@ export function loadConfig(cwd?: string): CodegraphConfig {
         _configCache.set(cwd, structuredClone(result));
         return result;
       } catch (err: unknown) {
-        debug(`Failed to parse config ${filePath}: ${(err as Error).message}`);
+        debug(`Failed to parse config ${filePath}: ${toErrorMessage(err)}`);
       }
     }
   }
@@ -229,7 +229,7 @@ export function resolveSecrets(config: CodegraphConfig): CodegraphConfig {
       (config.llm as Record<string, unknown>).apiKey = result;
     }
   } catch (err: unknown) {
-    warn(`apiKeyCommand failed: ${(err as Error).message}`);
+    warn(`apiKeyCommand failed: ${toErrorMessage(err)}`);
   }
   return config;
 }
