@@ -323,5 +323,12 @@ describe('Benchmark regression guard', () => {
       );
       expect(hasAny, 'No incremental benchmark data with ≥2 entries to compare').toBe(true);
     });
+
+    test('has resolve data to compare', () => {
+      expect(
+        resolveEntries.length >= 2,
+        'No import-resolution benchmark data with ≥2 non-dev entries to compare',
+      ).toBe(true);
+    });
   });
 });
