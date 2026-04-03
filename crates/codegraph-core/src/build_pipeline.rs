@@ -57,8 +57,10 @@ pub struct BuildPipelineResult {
     pub edge_count: i64,
     pub file_count: usize,
     pub early_exit: bool,
-    /// Files that were parsed/changed in this build cycle.
-    /// `None` for full builds (all files), `Some` for incremental builds.
+    /// Analysis scope: files whose content genuinely changed (reverse-dep-only
+    /// files excluded). `None` for full builds (all files), `Some` for
+    /// incremental builds. Consumers (e.g. the JS analysis phase) use this to
+    /// scope expensive AST/complexity/CFG/dataflow work.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub changed_files: Option<Vec<String>>,
     pub changed_count: usize,
@@ -205,8 +207,12 @@ pub fn run_pipeline(
         });
     }
 
-    // Track reverse-dep files that need re-parsing for edge reconstruction
+    // Track reverse-dep files that need re-parsing for edge reconstruction.
+    // Also track their relative paths so we can exclude them from analysis_scope —
+    // reverse-dep files are re-parsed for edge rebuilding but their content didn't
+    // change, so running AST/complexity/CFG/dataflow on them is wasted work (#761).
     let mut reverse_dep_abs_paths: Vec<String> = Vec::new();
+    let mut reverse_dep_rel_paths: HashSet<String> = HashSet::new();
 
     // Handle full build: clear all graph data
     if change_result.is_full_build {
@@ -243,6 +249,7 @@ pub fn run_pipeline(
             let abs = Path::new(root_dir).join(rdep);
             if abs.exists() {
                 reverse_dep_abs_paths.push(abs.to_str().unwrap_or("").to_string());
+                reverse_dep_rel_paths.insert(rdep.clone());
             }
         }
     }
@@ -347,11 +354,20 @@ pub fn run_pipeline(
     let t0 = Instant::now();
     let line_count_map = structure::build_line_count_map(&file_symbols, root_dir);
     let changed_files: Vec<String> = file_symbols.keys().cloned().collect();
-    // Keep a copy for the result — changed_files is moved into roles classification below.
+    // Build analysis_scope excluding reverse-dep files — they were re-parsed for
+    // edge reconstruction but their content didn't change, so AST/complexity/CFG/
+    // dataflow analysis would be redundant (#761). This matches the JS pipeline's
+    // _reverseDepOnly filtering in run-analyses.ts.
     let analysis_scope: Option<Vec<String>> = if change_result.is_full_build {
         None
     } else {
-        Some(changed_files.clone())
+        Some(
+            changed_files
+                .iter()
+                .filter(|f| !reverse_dep_rel_paths.contains(f.as_str()))
+                .cloned()
+                .collect(),
+        )
     };
 
     let existing_file_count = structure::get_existing_file_count(conn);
@@ -385,6 +401,11 @@ pub fn run_pipeline(
     timing.structure_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     let t0 = Instant::now();
+    // Role classification intentionally uses the full `changed_files` list
+    // (including reverse-dep files), not `analysis_scope`. Reverse-dep files
+    // had their edges rebuilt, which can change fan-in/fan-out and therefore
+    // role assignments — so they must be re-classified even though their
+    // content didn't change and they are excluded from AST analysis.
     let changed_file_list: Option<Vec<String>> = if change_result.is_full_build {
         None
     } else {
