@@ -228,6 +228,20 @@ export function impactAnalysis(file: string, customDbPath: string, opts: OutputO
   console.log(`\n  Total: ${data.totalDependents} files transitively depend on "${file}"\n`);
 }
 
+function printFnImpactLevels(levels: Record<string, SymbolRef[]>): void {
+  if (Object.keys(levels).length === 0) {
+    console.log(`  No callers found.`);
+    return;
+  }
+  for (const [level, fns] of Object.entries(levels).sort((a, b) => Number(a[0]) - Number(b[0]))) {
+    const l = parseInt(level, 10);
+    console.log(`  ${'--'.repeat(l)} Level ${level} (${fns.length} functions):`);
+    for (const f of fns.slice(0, 20))
+      console.log(`    ${'  '.repeat(l)}^ ${kindIcon(f.kind)} ${f.name}  ${f.file}:${f.line}`);
+    if (fns.length > 20) console.log(`    ... and ${fns.length - 20} more`);
+  }
+}
+
 export function fnImpact(name: string, customDbPath: string, opts: OutputOpts = {}): void {
   const data = fnImpactData(name, customDbPath, opts) as unknown as FnImpactData;
   if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
@@ -239,19 +253,7 @@ export function fnImpact(name: string, customDbPath: string, opts: OutputOpts = 
 
   for (const r of data.results) {
     console.log(`\nFunction impact: ${kindIcon(r.kind)} ${r.name} -- ${r.file}:${r.line}\n`);
-    if (Object.keys(r.levels).length === 0) {
-      console.log(`  No callers found.`);
-    } else {
-      for (const [level, fns] of Object.entries(r.levels).sort(
-        (a, b) => Number(a[0]) - Number(b[0]),
-      )) {
-        const l = parseInt(level, 10);
-        console.log(`  ${'--'.repeat(l)} Level ${level} (${fns.length} functions):`);
-        for (const f of fns.slice(0, 20))
-          console.log(`    ${'  '.repeat(l)}^ ${kindIcon(f.kind)} ${f.name}  ${f.file}:${f.line}`);
-        if (fns.length > 20) console.log(`    ... and ${fns.length - 20} more`);
-      }
-    }
+    printFnImpactLevels(r.levels);
     console.log(`\n  Total: ${r.totalDependents} functions transitively depend on ${r.name}\n`);
   }
 }
