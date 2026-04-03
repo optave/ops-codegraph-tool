@@ -23,6 +23,7 @@ import {
   resolveViaWorkspace,
   setWorkspaces,
 } from '../../src/domain/graph/resolve.js';
+import { normalizePath } from '../../src/shared/constants.js';
 
 // ─── Temp project setup ──────────────────────────────────────────────
 
@@ -236,7 +237,7 @@ describe('resolveImportsBatch', () => {
     const result = resolveImportsBatch([{ fromFile, importSource: './math.js' }], tmpDir, null);
     // Skip when native addon is not available
     if (result === null) return;
-    const key = `${fromFile}|./math.js`;
+    const key = `${normalizePath(fromFile)}|./math.js`;
     const resolved = result.get(key);
     expect(resolved).toBeDefined();
     expect(resolved).toMatch(/math\.ts$/);

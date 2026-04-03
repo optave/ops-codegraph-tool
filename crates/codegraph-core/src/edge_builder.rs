@@ -541,7 +541,7 @@ pub fn build_import_edges(
     let mut edges = Vec::new();
 
     for file_input in &files {
-        let abs_file = format!("{}/{}", root_dir, file_input.file);
+        let abs_file = format!("{}/{}", root_dir.replace('\\', "/"), file_input.file);
 
         for imp in &file_input.imports {
             // Barrel-only files: only emit reexport edges

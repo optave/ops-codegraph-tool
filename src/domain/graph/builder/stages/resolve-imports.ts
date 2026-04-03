@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { debug } from '../../../../infrastructure/logger.js';
+import { normalizePath } from '../../../../shared/constants.js';
 import type { Import } from '../../../../types.js';
 import { parseFilesAuto } from '../../../parser.js';
 import { resolveImportPath, resolveImportsBatch } from '../../resolve.js';
@@ -71,7 +72,9 @@ export async function resolveImports(ctx: PipelineContext): Promise<void> {
         const symbols = fileSymbols.get(relPath);
         if (!symbols) continue;
         for (const imp of symbols.imports) {
-          const resolved = ctx.batchResolved?.get(`${path.join(rootDir, relPath)}|${imp.source}`);
+          const resolved = ctx.batchResolved?.get(
+            `${normalizePath(path.join(rootDir, relPath))}|${imp.source}`,
+          );
           const target =
             resolved ??
             resolveImportPath(path.join(rootDir, relPath), imp.source, rootDir, aliases);
@@ -142,7 +145,7 @@ export async function resolveImports(ctx: PipelineContext): Promise<void> {
 
 export function getResolved(ctx: PipelineContext, absFile: string, importSource: string): string {
   if (ctx.batchResolved) {
-    const key = `${absFile}|${importSource}`;
+    const key = `${normalizePath(absFile)}|${importSource}`;
     const hit = ctx.batchResolved.get(key);
     if (hit !== undefined) return hit;
   }
