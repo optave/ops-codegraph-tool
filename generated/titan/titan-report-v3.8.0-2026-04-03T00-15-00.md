@@ -142,22 +142,21 @@ Functions still above thresholds (carried forward for next Titan run):
 
 ### PR Split Plan
 
-| PR # | Title | Concern | Domain | Commits | Files | Depends On |
-|------|-------|---------|--------|---------|-------|------------|
-| 1 | fix: replace empty catch blocks with structured error handling | quality_fix | cross-cutting | 2 | 11 | -- |
-| 2 | refactor: add error-handling helpers for intentional catch suppression | abstraction | shared | 1 | 1 | PR #1 |
-| 3 | fix: replace console.log with structured logging in non-CLI-output code | quality_fix | shared/features | 1 | 5 | -- |
-| 4 | refactor: decompose makePartition into focused graph operations | decomposition | graph-algorithms | 1 | 2 | -- |
-| 5 | refactor: decompose ast-analysis visitor framework | decomposition | ast-analysis | 7 | 7 | PR #1 |
-| 6 | refactor: extract sub-functions from features domain god-functions | decomposition | features | 2 | 6 | PR #1, #2 |
-| 7 | refactor: decompose graph build pipeline stages | decomposition | graph-build | 1 | 4 | PR #1, #2 |
-| 8 | refactor: extract rendering sub-functions from inspect and diff-impact-mermaid | decomposition | presentation | 1 | 2 | -- |
-| 9 | refactor: split hybridSearchData into keyword, vector, and merge steps | decomposition | search | 1 | 1 | -- |
-| 10 | refactor: extract class declaration handlers in language extractors | decomposition | extractors | 2 | 9 | -- |
-| 11 | fix: address remaining quality issues across domains | quality_fix | cross-cutting | 1 | 11 | PR #1, #3 |
-| 12 | refactor: address quality warnings | warning | cross-cutting | 1 | 6 | -- |
+| PR # | Title | Concern | Domain | Commits | Files | Depends On | URL |
+|------|-------|---------|--------|---------|-------|------------|-----|
+| 1 | fix: replace empty catch blocks with structured error handling | quality_fix + abstraction | cross-cutting | 2 | 11 | -- | [#764](https://github.com/optave/ops-codegraph-tool/pull/764) |
+| 2 | fix: replace console.log with structured logging | quality_fix | shared/features | 1 | 5 | -- | [#765](https://github.com/optave/ops-codegraph-tool/pull/765) |
+| 3 | refactor: decompose makePartition | decomposition | graph-algorithms | 1 | 2 | -- | [#766](https://github.com/optave/ops-codegraph-tool/pull/766) |
+| 4 | refactor: extract rendering sub-functions (inspect + mermaid) | decomposition | presentation | 1 | 2 | -- | [#767](https://github.com/optave/ops-codegraph-tool/pull/767) |
+| 5 | refactor: split hybridSearchData | decomposition | search | 1 | 1 | -- | [#768](https://github.com/optave/ops-codegraph-tool/pull/768) |
+| 6 | refactor: extract class declaration handlers (extractors) | decomposition | extractors | 2 | 9 | -- | [#769](https://github.com/optave/ops-codegraph-tool/pull/769) |
+| 7 | refactor: address quality warnings in shared modules | warning | cross-cutting | 1 | 6 | -- | [#770](https://github.com/optave/ops-codegraph-tool/pull/770) |
+| 8 | refactor: decompose ast-analysis visitor framework | decomposition | ast-analysis | 7 | 7 | PR #1 | [#771](https://github.com/optave/ops-codegraph-tool/pull/771) |
+| 9 | refactor: extract sub-functions from features god-functions | decomposition | features | 2 | 6 | PR #1 | [#772](https://github.com/optave/ops-codegraph-tool/pull/772) |
+| 10 | refactor: decompose graph build pipeline stages | decomposition | graph-build | 1 | 4 | PR #1 | [#773](https://github.com/optave/ops-codegraph-tool/pull/773) |
+| 11 | fix: address remaining quality issues across domains | quality_fix | cross-cutting | 1 | 11 | PR #1 | [#774](https://github.com/optave/ops-codegraph-tool/pull/774) |
 
-**Merge order:** PR #1 -> #2 -> #3 -> (PRs #4, #5, #8, #9, #10, #12 in any order) -> #6 -> #7 -> #11
+**Merge order:** PR #1 first, then PRs #2-#7 (independent, any order), then PRs #8-#11 (after PR #1 merges)
 
 ---
 
