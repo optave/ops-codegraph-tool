@@ -112,7 +112,7 @@ export function promptInstall(packageName: string): Promise<boolean> {
         timeout: 300_000,
       });
       return Promise.resolve(true);
-    } catch (err) {
+    } catch {
       info(
         `Auto-install of ${packageName} failed. Install it manually with:\n  npm install ${packageName}`,
       );
