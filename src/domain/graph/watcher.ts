@@ -2,20 +2,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { closeDb, getNodeId as getNodeIdQuery, initSchema, openDb } from '../../db/index.js';
 import { debug, info } from '../../infrastructure/logger.js';
-import { EXTENSIONS, IGNORE_DIRS, normalizePath } from '../../shared/constants.js';
+import { isSupportedFile, normalizePath, shouldIgnore } from '../../shared/constants.js';
 import { DbError } from '../../shared/errors.js';
 import { createParseTreeCache, getActiveEngine } from '../parser.js';
 import { type IncrementalStmts, rebuildFile } from './builder/incremental.js';
 import { appendChangeEvents, buildChangeEvent, diffSymbols } from './change-journal.js';
 import { appendJournalEntries } from './journal.js';
 
-function shouldIgnore(filePath: string): boolean {
+function shouldIgnorePath(filePath: string): boolean {
   const parts = filePath.split(path.sep);
-  return parts.some((p) => IGNORE_DIRS.has(p));
-}
-
-function isTrackedExt(filePath: string): boolean {
-  return EXTENSIONS.has(path.extname(filePath));
+  return parts.some((p) => shouldIgnore(p));
 }
 
 /** Prepare all SQL statements needed by the watcher's incremental rebuild. */
@@ -268,8 +264,8 @@ function startPollingWatcher(ctx: WatcherContext, pollIntervalMs: number): () =>
 function startNativeWatcher(ctx: WatcherContext): () => void {
   const watcher = fs.watch(ctx.rootDir, { recursive: true }, (_eventType, filename) => {
     if (!filename) return;
-    if (shouldIgnore(filename)) return;
-    if (!isTrackedExt(filename)) return;
+    if (shouldIgnorePath(filename)) return;
+    if (!isSupportedFile(filename)) return;
 
     ctx.pending.add(path.join(ctx.rootDir, filename));
     scheduleDebouncedProcess(ctx);
