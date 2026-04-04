@@ -419,7 +419,12 @@ export function openReadonlyWithNative(customPath?: string): {
       const native = getNative();
       nativeDb = native.NativeDatabase.openReadonly(dbPath);
     } catch (e) {
-      debug(`openReadonlyWithNative: native path failed: ${toErrorMessage(e)}`);
+      const msg = toErrorMessage(e);
+      if (/\b(busy|locked|SQLITE_BUSY|SQLITE_LOCKED)\b/i.test(msg)) {
+        debug(`openReadonlyWithNative: native path busy, skipping native DB: ${msg}`);
+      } else {
+        debug(`openReadonlyWithNative: native path failed: ${msg}`);
+      }
     }
   }
 
