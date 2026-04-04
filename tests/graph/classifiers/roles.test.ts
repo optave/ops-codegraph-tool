@@ -121,7 +121,7 @@ describe('classifyRoles', () => {
     expect(roles.get('1')).toBe('dead-leaf');
   });
 
-  it('classifies dead-leaf for constants', () => {
+  it('classifies dead-leaf for constants without active siblings', () => {
     const nodes = [
       {
         id: '1',
@@ -135,6 +135,32 @@ describe('classifyRoles', () => {
     ];
     const roles = classifyRoles(nodes);
     expect(roles.get('1')).toBe('dead-leaf');
+  });
+
+  it('classifies constant as leaf when same file has active callables', () => {
+    const nodes = [
+      {
+        id: '1',
+        name: 'DEFAULT_WEIGHTS',
+        kind: 'constant',
+        file: 'src/risk.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: false,
+        hasActiveFileSiblings: true,
+      },
+      {
+        id: '2',
+        name: 'scoreRisk',
+        kind: 'function',
+        file: 'src/risk.ts',
+        fanIn: 3,
+        fanOut: 2,
+        isExported: true,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('leaf');
   });
 
   it('classifies dead-ffi for Rust files', () => {
@@ -263,6 +289,32 @@ describe('classifyRoles', () => {
     ];
     const roles = classifyRoles(nodes);
     expect(roles.get('1')).toBe('dead-leaf');
+  });
+
+  it('classifies constant as leaf even in CLI command file when active siblings exist', () => {
+    const nodes = [
+      {
+        id: '1',
+        name: 'MAX',
+        kind: 'constant',
+        file: 'src/cli/commands/build.js',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: false,
+        hasActiveFileSiblings: true,
+      },
+      {
+        id: '2',
+        name: 'execute',
+        kind: 'function',
+        file: 'src/cli/commands/build.js',
+        fanIn: 0,
+        fanOut: 3,
+        isExported: false,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('leaf');
   });
 
   it('falls back to dead-unresolved when no kind/file info', () => {
