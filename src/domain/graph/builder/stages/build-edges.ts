@@ -354,27 +354,26 @@ function buildImportedNamesForNative(
   rootDir: string,
 ): Array<{ name: string; file: string }> {
   const importedNames: Array<{ name: string; file: string }> = [];
-  const seenNames = new Set<string>();
-
-  // Two-pass approach: process static imports first, then dynamic fill-ins.
-  // This ensures static bindings always win regardless of source ordering,
-  // matching buildImportedNamesMap's static-before-dynamic precedence.
-  for (const isDynamicPass of [false, true]) {
-    for (const imp of symbols.imports) {
-      if (!!imp.dynamicImport !== isDynamicPass) continue;
-      const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
-      for (const name of imp.names) {
-        const cleanName = name.replace(/^\*\s+as\s+/, '');
-        if (seenNames.has(cleanName)) continue;
-        seenNames.add(cleanName);
-        let targetFile = resolvedPath;
-        if (isBarrelFile(ctx, resolvedPath)) {
-          const actual = resolveBarrelExport(ctx, resolvedPath, cleanName);
-          if (actual) targetFile = actual;
-        }
-        importedNames.push({ name: cleanName, file: targetFile });
+  // Process dynamic imports first (lower priority), then static imports
+  // (higher priority). Rust HashMap::collect keeps the last entry per key,
+  // so static imports win when both contribute the same name.
+  const addImports = (imp: (typeof symbols.imports)[number]) => {
+    const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
+    for (const name of imp.names) {
+      const cleanName = name.replace(/^\*\s+as\s+/, '');
+      let targetFile = resolvedPath;
+      if (isBarrelFile(ctx, resolvedPath)) {
+        const actual = resolveBarrelExport(ctx, resolvedPath, cleanName);
+        if (actual) targetFile = actual;
       }
+      importedNames.push({ name: cleanName, file: targetFile });
     }
+  };
+  for (const imp of symbols.imports) {
+    if (imp.dynamicImport) addImports(imp);
+  }
+  for (const imp of symbols.imports) {
+    if (!imp.dynamicImport) addImports(imp);
   }
   return importedNames;
 }
@@ -419,7 +418,19 @@ function buildImportedNamesMap(
   rootDir: string,
 ): Map<string, string> {
   const importedNames = new Map<string, string>();
+  // Process dynamic imports first (lower priority), then static imports
+  // (higher priority). Static imports represent direct bindings while dynamic
+  // imports often use aliased destructuring (`{ foo: bar } = await import(…)`).
+  // When both contribute the same name, the static binding is authoritative.
   for (const imp of symbols.imports) {
+    if (!imp.dynamicImport) continue;
+    const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
+    for (const name of imp.names) {
+      importedNames.set(name.replace(/^\*\s+as\s+/, ''), resolvedPath);
+    }
+  }
+  for (const imp of symbols.imports) {
+    if (imp.dynamicImport) continue;
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
     for (const name of imp.names) {
       const cleanName = name.replace(/^\*\s+as\s+/, '');

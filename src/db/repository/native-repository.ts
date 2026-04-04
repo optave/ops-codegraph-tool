@@ -291,6 +291,31 @@ export class NativeRepository extends Repository {
     return this.#ndb.findCallers(nodeId).map(toRelatedNodeRow);
   }
 
+  findCallersBatch(nodeIds: number[]): Map<number, RelatedNodeRow[]> {
+    if (nodeIds.length === 0) return new Map();
+    const placeholders = nodeIds.map(() => '?').join(',');
+    const rows = this.#ndb.queryAll(
+      `SELECT e.target_id AS queried_id, n.id, n.name, n.kind, n.file, n.line, n.end_line
+       FROM edges e JOIN nodes n ON e.source_id = n.id
+       WHERE e.target_id IN (${placeholders}) AND e.kind = 'calls'`,
+      nodeIds,
+    ) as Array<Record<string, unknown>>;
+    const result = new Map<number, RelatedNodeRow[]>();
+    for (const row of rows) {
+      const qid = row.queried_id as number;
+      if (!result.has(qid)) result.set(qid, []);
+      result.get(qid)!.push({
+        id: row.id as number,
+        name: row.name as string,
+        kind: row.kind as string,
+        file: row.file as string,
+        line: row.line as number,
+        end_line: (row.end_line as number | null) ?? null,
+      });
+    }
+    return result;
+  }
+
   findDistinctCallers(nodeId: number): RelatedNodeRow[] {
     return this.#ndb.findDistinctCallers(nodeId).map(toRelatedNodeRow);
   }

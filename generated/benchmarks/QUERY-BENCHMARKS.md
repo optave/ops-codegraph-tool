@@ -45,6 +45,10 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 **Version:** 3.7.0 | **Date:** 2026-04-01
 
+> **Note:** v3.8.1 query data was removed — it was measured before the `findCallersBatch` fix
+> and showed artificially inflated fnDeps latencies (25ms vs 10ms baseline). The next benchmark
+> run will record accurate post-fix numbers.
+
 #### Native (Rust)
 
 **Targets:** hub=`buildGraph`, mid=`node`, leaf=`docs`
@@ -58,8 +62,6 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 | fnImpact depth 3 | 3.6ms |
 | fnImpact depth 5 | 3.5ms |
 | diffImpact latency | 8.9ms |
-| diffImpact affected functions | 0 |
-| diffImpact affected files | 0 |
 
 #### WASM
 
@@ -74,10 +76,9 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 | fnImpact depth 3 | 3.5ms |
 | fnImpact depth 5 | 3.6ms |
 | diffImpact latency | 7.3ms |
-| diffImpact affected functions | 0 |
-| diffImpact affected files | 0 |
 
 <!-- NOTES_START -->
+
 **Note (3.6.0):** Native deltas are relative to 3.4.1 (the last version with native data; 3.5.0 was wasm-only). The mid-query target changed from `db` (3.5.0) to `node`, which affects diffImpact scope and explains the ↑41% WASM diffImpact jump (6.4ms → 9ms). fnDeps/fnImpact growth of 6-10% is consistent with codebase expansion across two releases.
 
 **Note (3.5.0):** This version has WASM-only data (`native: null`) because the native engine crashed during `insertNodes` in the graph build phase. The root cause is a napi-rs serialization bug: parameter and child nodes with undefined `visibility` fields marshal as `null` at the JS-Rust boundary, which fails conversion into the Rust `Option<String>` type in `InsertNodesDefinition.visibility`. The mid-query target also changed from `noTests` to `db`, which may affect diffImpact scope. Query latencies for 3.5.0 are therefore not directly comparable to prior versions that include both engine rows. This will be fixed in the next release.
@@ -89,8 +90,7 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 **Note (3.3.1):** The ↑157-192% fnDeps/fnImpact deltas for 3.3.1 vs 3.3.0 are not comparable. PR #528 changed the hub target from auto-selected `src/types.ts` (shallow type-barrel) to pinned `buildGraph` (deep orchestration function with 2-3x more edges). There is no engine regression — `diffImpact` improved 20-44% in the same release. Future version comparisons (3.3.1+) are stable and meaningful.
 <!-- NOTES_END -->
 
-<!-- QUERY_BENCHMARK_DATA
-[
+<!-- QUERY_BENCHMARK_DATA [
   {
     "version": "3.7.0",
     "date": "2026-04-01",
@@ -934,5 +934,4 @@ Latencies are median over 5 runs. Hub target = most-connected node.
       }
     }
   }
-]
--->
+] -->
