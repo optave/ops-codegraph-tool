@@ -102,27 +102,25 @@ export function createAstStoreVisitor(
     return nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
   }
 
-  function resolveNameAndText(
-    node: TreeSitterNode,
-    kind: string,
-  ): { name: string | null | undefined; text: string | null; skip?: boolean } {
-    switch (kind) {
-      case 'new':
-        return { name: extractNewName(node), text: truncate(node.text) };
-      case 'throw':
-        return { name: extractThrowName(node), text: extractExpressionText(node) };
-      case 'await':
-        return { name: extractAwaitName(node), text: extractExpressionText(node) };
-      case 'string': {
-        const content = node.text?.replace(/^['"`]|['"`]$/g, '') || '';
-        if (content.length < 2) return { name: null, text: null, skip: true };
-        return { name: truncate(content, 100), text: truncate(node.text) };
-      }
-      case 'regex':
-        return { name: node.text || '?', text: truncate(node.text) };
-      default:
-        return { name: undefined, text: null };
-    }
+  type NameTextResult = { name: string | null | undefined; text: string | null; skip?: boolean };
+  type KindHandler = (node: TreeSitterNode) => NameTextResult;
+
+  const kindHandlers: Record<string, KindHandler> = {
+    new: (node) => ({ name: extractNewName(node), text: truncate(node.text) }),
+    throw: (node) => ({ name: extractThrowName(node), text: extractExpressionText(node) }),
+    await: (node) => ({ name: extractAwaitName(node), text: extractExpressionText(node) }),
+    string: (node) => {
+      const content = node.text?.replace(/^['"`]|['"`]$/g, '') || '';
+      if (content.length < 2) return { name: null, text: null, skip: true };
+      return { name: truncate(content, 100), text: truncate(node.text) };
+    },
+    regex: (node) => ({ name: node.text || '?', text: truncate(node.text) }),
+  };
+  const defaultResult: NameTextResult = { name: undefined, text: null };
+
+  function resolveNameAndText(node: TreeSitterNode, kind: string): NameTextResult {
+    const handler = kindHandlers[kind];
+    return handler ? handler(node) : defaultResult;
   }
 
   function collectNode(node: TreeSitterNode, kind: string): void {

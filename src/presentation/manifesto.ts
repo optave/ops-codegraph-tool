@@ -22,17 +22,9 @@ interface ManifestoViolationRow {
   line?: number;
 }
 
-export function manifesto(customDbPath: string | undefined, opts: ManifestoOpts = {}): void {
-  const data = manifestoData(customDbPath, opts as any) as any;
-
-  if (outputResult(data, 'violations', opts)) {
-    if (!data.passed) process.exitCode = 1;
-    return;
-  }
-
+function renderRulesTable(data: any): void {
   console.log('\n# Manifesto Rules\n');
 
-  // Rules table
   console.log(
     `  ${'Rule'.padEnd(20)} ${'Level'.padEnd(10)} ${'Status'.padEnd(8)} ${'Warn'.padStart(6)} ${'Fail'.padStart(6)} ${'Violations'.padStart(11)}`,
   );
@@ -49,44 +41,49 @@ export function manifesto(customDbPath: string | undefined, opts: ManifestoOpts 
     );
   }
 
-  // Summary
   const s = data.summary;
   console.log(
     `\n  ${s.total} rules | ${s.passed} passed | ${s.warned} warned | ${s.failed} failed | ${s.violationCount} violations`,
   );
+}
 
-  // Violations detail
-  if (data.violations.length > 0) {
-    const failViolations = data.violations.filter((v: ManifestoViolationRow) => v.level === 'fail');
-    const warnViolations = data.violations.filter((v: ManifestoViolationRow) => v.level === 'warn');
+function renderViolationList(
+  label: string,
+  violations: ManifestoViolationRow[],
+  maxShown = 20,
+): void {
+  if (violations.length === 0) return;
+  console.log(`\n## ${label} (${violations.length})\n`);
+  for (const v of violations.slice(0, maxShown)) {
+    const loc = v.line ? `${v.file}:${v.line}` : v.file;
+    const tag = label === 'Failures' ? 'FAIL' : 'WARN';
+    console.log(
+      `  [${tag}] ${v.rule}: ${v.name} (${v.value}) at ${loc} — threshold ${v.threshold}`,
+    );
+  }
+  if (violations.length > maxShown) {
+    console.log(`  ... and ${violations.length - maxShown} more`);
+  }
+}
 
-    if (failViolations.length > 0) {
-      console.log(`\n## Failures (${failViolations.length})\n`);
-      for (const v of failViolations.slice(0, 20)) {
-        const loc = v.line ? `${v.file}:${v.line}` : v.file;
-        console.log(
-          `  [FAIL] ${v.rule}: ${v.name} (${v.value}) at ${loc} — threshold ${v.threshold}`,
-        );
-      }
-      if (failViolations.length > 20) {
-        console.log(`  ... and ${failViolations.length - 20} more`);
-      }
-    }
+function renderViolations(violations: ManifestoViolationRow[]): void {
+  if (violations.length === 0) return;
+  const failViolations = violations.filter((v) => v.level === 'fail');
+  const warnViolations = violations.filter((v) => v.level === 'warn');
+  renderViolationList('Failures', failViolations);
+  renderViolationList('Warnings', warnViolations);
+}
 
-    if (warnViolations.length > 0) {
-      console.log(`\n## Warnings (${warnViolations.length})\n`);
-      for (const v of warnViolations.slice(0, 20)) {
-        const loc = v.line ? `${v.file}:${v.line}` : v.file;
-        console.log(
-          `  [WARN] ${v.rule}: ${v.name} (${v.value}) at ${loc} — threshold ${v.threshold}`,
-        );
-      }
-      if (warnViolations.length > 20) {
-        console.log(`  ... and ${warnViolations.length - 20} more`);
-      }
-    }
+export function manifesto(customDbPath: string | undefined, opts: ManifestoOpts = {}): void {
+  const data = manifestoData(customDbPath, opts as any) as any;
+
+  if (outputResult(data, 'violations', opts)) {
+    if (!data.passed) process.exitCode = 1;
+    return;
   }
 
+  renderRulesTable(data);
+  renderViolations(data.violations);
   console.log();
 
   if (!data.passed) {

@@ -251,6 +251,352 @@ function refreshJsDb(ctx: PipelineContext): void {
   ctx.db = openDb(ctx.dbPath);
 }
 
+// ── Native orchestrator types ──────────────────────────────────────────
+
+interface NativeOrchestratorResult {
+  phases: Record<string, number>;
+  earlyExit?: boolean;
+  nodeCount?: number;
+  edgeCount?: number;
+  fileCount?: number;
+  changedFiles?: string[];
+  changedCount?: number;
+  removedCount?: number;
+  isFullBuild?: boolean;
+}
+
+// ── Native orchestrator helpers ───────────────────────────────────────
+
+/** Determine whether the native orchestrator should be skipped. Returns a reason string, or null if it should run. */
+function shouldSkipNativeOrchestrator(ctx: PipelineContext): string | null {
+  if (process.env.CODEGRAPH_FORCE_JS_PIPELINE === '1') return 'CODEGRAPH_FORCE_JS_PIPELINE=1';
+  if (ctx.forceFullRebuild) return 'forceFullRebuild';
+  const orchestratorBuggy = !!ctx.engineVersion && semverCompare(ctx.engineVersion, '3.8.1') <= 0;
+  if (orchestratorBuggy) return `buggy addon ${ctx.engineVersion}`;
+  if (ctx.engineName !== 'native') return `engine=${ctx.engineName}`;
+  return null;
+}
+
+/** Checkpoint WAL through rusqlite, close nativeDb, and reopen better-sqlite3.
+ *  Returns false if the DB reopen fails (caller should return partial result). */
+function handoffWalAfterNativeBuild(ctx: PipelineContext): boolean {
+  closeNativeDb(ctx, 'post-native-build');
+  try {
+    ctx.db.close();
+  } catch (e) {
+    debug(`handoffWal JS db close failed: ${toErrorMessage(e)}`);
+  }
+  try {
+    ctx.db = openDb(ctx.dbPath);
+    return true;
+  } catch (reopenErr) {
+    warn(`Failed to reopen DB after native build: ${(reopenErr as Error).message}`);
+    return false;
+  }
+}
+
+/** Reconstruct fileSymbols from the DB after a native orchestrator build. */
+function reconstructFileSymbolsFromDb(ctx: PipelineContext): Map<string, ExtractorOutput> {
+  const allFileRows = ctx.db
+    .prepare(
+      'SELECT file, name, kind, line, end_line as endLine FROM nodes WHERE file IS NOT NULL ORDER BY file, line',
+    )
+    .all() as {
+    file: string;
+    name: string;
+    kind: string;
+    line: number;
+    endLine: number | null;
+  }[];
+
+  const allFileSymbols = new Map<string, ExtractorOutput>();
+  for (const row of allFileRows) {
+    let entry = allFileSymbols.get(row.file);
+    if (!entry) {
+      entry = {
+        definitions: [],
+        calls: [],
+        imports: [],
+        classes: [],
+        exports: [],
+        typeMap: new Map(),
+      };
+      allFileSymbols.set(row.file, entry);
+    }
+    entry.definitions.push({
+      name: row.name,
+      kind: row.kind as Definition['kind'],
+      line: row.line,
+      endLine: row.endLine ?? undefined,
+    });
+  }
+
+  // Populate import/export counts from DB edges so buildStructure
+  // computes correct import_count/export_count in node_metrics.
+  // The extractor arrays aren't persisted to the DB, so we derive
+  // counts from edge data instead (#804).
+  const importCountRows = ctx.db
+    .prepare(
+      `SELECT n.file, COUNT(*) AS cnt
+       FROM edges e JOIN nodes n ON e.source_id = n.id
+       WHERE e.kind IN ('imports', 'imports-type', 'dynamic-imports')
+         AND n.file IS NOT NULL
+       GROUP BY n.file`,
+    )
+    .all() as { file: string; cnt: number }[];
+  for (const row of importCountRows) {
+    const entry = allFileSymbols.get(row.file);
+    if (entry) entry.imports = new Array(row.cnt) as ExtractorOutput['imports'];
+  }
+
+  const exportCountRows = ctx.db
+    .prepare(
+      `SELECT n_tgt.file, COUNT(DISTINCT n_tgt.id) AS cnt
+       FROM edges e
+       JOIN nodes n_tgt ON e.target_id = n_tgt.id
+       JOIN nodes n_src ON e.source_id = n_src.id
+       WHERE e.kind IN ('imports', 'imports-type', 'reexports')
+         AND n_tgt.file IS NOT NULL
+         AND n_src.file != n_tgt.file
+       GROUP BY n_tgt.file`,
+    )
+    .all() as { file: string; cnt: number }[];
+  for (const row of exportCountRows) {
+    const entry = allFileSymbols.get(row.file);
+    if (entry) entry.exports = new Array(row.cnt) as ExtractorOutput['exports'];
+  }
+
+  return allFileSymbols;
+}
+
+/** Run JS buildStructure() after native orchestrator to fill directory nodes + contains edges. */
+async function runPostNativeStructure(
+  ctx: PipelineContext,
+  allFileSymbols: Map<string, ExtractorOutput>,
+): Promise<number> {
+  const structureStart = performance.now();
+  try {
+    const directories = new Set<string>();
+    for (const relPath of allFileSymbols.keys()) {
+      const parts = relPath.split('/');
+      for (let i = 1; i < parts.length; i++) {
+        directories.add(parts.slice(0, i).join('/'));
+      }
+    }
+
+    const lineCountMap = new Map<string, number>();
+    const cachedLineCounts = ctx.db
+      .prepare(
+        `SELECT n.name AS file, m.line_count
+         FROM node_metrics m JOIN nodes n ON m.node_id = n.id
+         WHERE n.kind = 'file'`,
+      )
+      .all() as Array<{ file: string; line_count: number }>;
+    for (const row of cachedLineCounts) {
+      lineCountMap.set(row.file, row.line_count);
+    }
+
+    const changedFilePaths = null; // full rebuild — every directory gets nodes
+    const { buildStructure: buildStructureFn } = (await import(
+      '../../../features/structure.js'
+    )) as {
+      buildStructure: (
+        db: typeof ctx.db,
+        fileSymbols: Map<string, ExtractorOutput>,
+        rootDir: string,
+        lineCountMap: Map<string, number>,
+        directories: Set<string>,
+        changedFiles: string[] | null,
+      ) => void;
+    };
+    buildStructureFn(
+      ctx.db,
+      allFileSymbols,
+      ctx.rootDir,
+      lineCountMap,
+      directories,
+      changedFilePaths,
+    );
+    debug('Structure phase completed after native orchestrator');
+  } catch (err) {
+    warn(`Structure phase failed after native build: ${toErrorMessage(err)}`);
+  }
+  return performance.now() - structureStart;
+}
+
+/** Run AST/complexity/CFG/dataflow analysis after native orchestrator. */
+async function runPostNativeAnalysis(
+  ctx: PipelineContext,
+  allFileSymbols: Map<string, ExtractorOutput>,
+  changedFiles: string[] | undefined,
+): Promise<{ astMs: number; complexityMs: number; cfgMs: number; dataflowMs: number }> {
+  const timing = { astMs: 0, complexityMs: 0, cfgMs: 0, dataflowMs: 0 };
+
+  // Scope analysis fileSymbols to changed files only
+  let analysisFileSymbols: Map<string, ExtractorOutput>;
+  if (changedFiles && changedFiles.length > 0) {
+    analysisFileSymbols = new Map();
+    for (const f of changedFiles) {
+      const entry = allFileSymbols.get(f);
+      if (entry) analysisFileSymbols.set(f, entry);
+    }
+  } else {
+    analysisFileSymbols = allFileSymbols;
+  }
+
+  // Reopen nativeDb for analysis features (suspend/resume WAL pattern).
+  const native = loadNative();
+  if (native?.NativeDatabase) {
+    try {
+      ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+      if (ctx.engineOpts) ctx.engineOpts.nativeDb = ctx.nativeDb;
+    } catch {
+      ctx.nativeDb = undefined;
+      if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
+    }
+  }
+
+  try {
+    const { runAnalyses: runAnalysesFn } = await import('../../../ast-analysis/engine.js');
+    const result = await runAnalysesFn(
+      ctx.db,
+      analysisFileSymbols,
+      ctx.rootDir,
+      ctx.opts,
+      ctx.engineOpts,
+    );
+    timing.astMs = result.astMs ?? 0;
+    timing.complexityMs = result.complexityMs ?? 0;
+    timing.cfgMs = result.cfgMs ?? 0;
+    timing.dataflowMs = result.dataflowMs ?? 0;
+  } catch (err) {
+    warn(`Analysis phases failed after native build: ${toErrorMessage(err)}`);
+  }
+
+  // Close nativeDb after analyses
+  if (ctx.nativeDb) {
+    try {
+      ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch {
+      /* ignore checkpoint errors */
+    }
+    try {
+      ctx.nativeDb.close();
+    } catch {
+      /* ignore close errors */
+    }
+    ctx.nativeDb = undefined;
+    if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
+  }
+
+  return timing;
+}
+
+/** Format timing result from native orchestrator phases + JS post-processing. */
+function formatNativeTimingResult(
+  p: Record<string, number>,
+  structurePatchMs: number,
+  analysisTiming: { astMs: number; complexityMs: number; cfgMs: number; dataflowMs: number },
+): BuildResult {
+  return {
+    phases: {
+      setupMs: +((p.setupMs ?? 0) + (p.collectMs ?? 0) + (p.detectMs ?? 0)).toFixed(1),
+      parseMs: +(p.parseMs ?? 0).toFixed(1),
+      insertMs: +(p.insertMs ?? 0).toFixed(1),
+      resolveMs: +(p.resolveMs ?? 0).toFixed(1),
+      edgesMs: +(p.edgesMs ?? 0).toFixed(1),
+      structureMs: +((p.structureMs ?? 0) + structurePatchMs).toFixed(1),
+      rolesMs: +(p.rolesMs ?? 0).toFixed(1),
+      astMs: +(analysisTiming.astMs ?? 0).toFixed(1),
+      complexityMs: +(analysisTiming.complexityMs ?? 0).toFixed(1),
+      cfgMs: +(analysisTiming.cfgMs ?? 0).toFixed(1),
+      dataflowMs: +(analysisTiming.dataflowMs ?? 0).toFixed(1),
+      finalizeMs: +(p.finalizeMs ?? 0).toFixed(1),
+    },
+  };
+}
+
+/** Try the native build orchestrator. Returns a BuildResult on success, undefined to fall through to JS pipeline. */
+async function tryNativeOrchestrator(
+  ctx: PipelineContext,
+): Promise<BuildResult | undefined | 'early-exit'> {
+  const skipReason = shouldSkipNativeOrchestrator(ctx);
+  if (skipReason) {
+    debug(`Skipping native orchestrator: ${skipReason}`);
+    return undefined;
+  }
+  if (!ctx.nativeDb?.buildGraph) return undefined;
+
+  const resultJson = ctx.nativeDb.buildGraph(
+    ctx.rootDir,
+    JSON.stringify(ctx.config),
+    JSON.stringify(ctx.aliases),
+    JSON.stringify(ctx.opts),
+  );
+  const result = JSON.parse(resultJson) as NativeOrchestratorResult;
+
+  if (result.earlyExit) {
+    info('No changes detected');
+    closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
+    return 'early-exit';
+  }
+
+  // Log incremental status to match JS pipeline output
+  const changed = result.changedCount ?? 0;
+  const removed = result.removedCount ?? 0;
+  if (!result.isFullBuild && (changed > 0 || removed > 0)) {
+    info(`Incremental: ${changed} changed, ${removed} removed`);
+  }
+
+  const p = result.phases;
+
+  // Sync build_meta so JS-side version/engine checks work on next build.
+  setBuildMeta(ctx.db, {
+    engine: ctx.engineName,
+    engine_version: ctx.engineVersion || '',
+    codegraph_version: CODEGRAPH_VERSION,
+    schema_version: String(ctx.schemaVersion),
+    built_at: new Date().toISOString(),
+    node_count: String(result.nodeCount ?? 0),
+    edge_count: String(result.edgeCount ?? 0),
+  });
+
+  info(
+    `Native build orchestrator completed: ${result.nodeCount ?? 0} nodes, ${result.edgeCount ?? 0} edges, ${result.fileCount ?? 0} files`,
+  );
+
+  // ── Post-native structure + analysis ──────────────────────────────
+  let analysisTiming = { astMs: 0, complexityMs: 0, cfgMs: 0, dataflowMs: 0 };
+  let structurePatchMs = 0;
+  const needsAnalysis =
+    ctx.opts.ast !== false ||
+    ctx.opts.complexity !== false ||
+    ctx.opts.cfg !== false ||
+    ctx.opts.dataflow !== false;
+  // Always run JS structure — native fast-path guard can't be reliably detected.
+  const needsStructure = true;
+
+  if (needsAnalysis || needsStructure) {
+    if (!handoffWalAfterNativeBuild(ctx)) {
+      // DB reopen failed — return partial result
+      return formatNativeTimingResult(p, 0, analysisTiming);
+    }
+
+    const allFileSymbols = reconstructFileSymbolsFromDb(ctx);
+
+    if (needsStructure) {
+      structurePatchMs = await runPostNativeStructure(ctx, allFileSymbols);
+    }
+
+    if (needsAnalysis) {
+      analysisTiming = await runPostNativeAnalysis(ctx, allFileSymbols, result.changedFiles);
+    }
+  }
+
+  closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
+  return formatNativeTimingResult(p, structurePatchMs, analysisTiming);
+}
+
 // ── Pipeline stages execution ───────────────────────────────────────────
 
 async function runPipelineStages(ctx: PipelineContext): Promise<void> {
@@ -338,368 +684,13 @@ export async function buildGraph(
     // When available, run the entire build pipeline in Rust with zero
     // napi crossings (eliminates WAL dual-connection dance). Falls back
     // to the JS pipeline on failure or when native is unavailable.
-    //
-    // Native addon ≤3.8.0 has a path bug: file_symbols keys are absolute
-    // paths but known_files are relative, causing zero import/call edges.
-    // Native addon ≤3.8.1 has an incremental barrel bug: the Rust pipeline
-    // doesn't re-parse barrel files that are imported by changed files,
-    // causing missing barrel import edges and lost analysis data for
-    // reverse-dep files during incremental builds.
-    // Skip the orchestrator for affected versions (fixed in 3.9.0+).
-    const orchestratorBuggy = !!ctx.engineVersion && semverCompare(ctx.engineVersion, '3.8.1') <= 0;
-    const forceJs =
-      process.env.CODEGRAPH_FORCE_JS_PIPELINE === '1' ||
-      ctx.forceFullRebuild ||
-      orchestratorBuggy ||
-      ctx.engineName !== 'native';
-    if (forceJs) {
-      const reason =
-        process.env.CODEGRAPH_FORCE_JS_PIPELINE === '1'
-          ? 'CODEGRAPH_FORCE_JS_PIPELINE=1'
-          : ctx.forceFullRebuild
-            ? 'forceFullRebuild'
-            : orchestratorBuggy
-              ? `buggy addon ${ctx.engineVersion}`
-              : `engine=${ctx.engineName}`;
-      debug(`Skipping native orchestrator: ${reason}`);
-    }
-    if (!forceJs && ctx.nativeDb?.buildGraph) {
-      try {
-        const resultJson = ctx.nativeDb.buildGraph(
-          ctx.rootDir,
-          JSON.stringify(ctx.config),
-          JSON.stringify(ctx.aliases),
-          JSON.stringify(opts),
-        );
-        const result = JSON.parse(resultJson) as {
-          phases: Record<string, number>;
-          earlyExit?: boolean;
-          nodeCount?: number;
-          edgeCount?: number;
-          fileCount?: number;
-          changedFiles?: string[];
-          changedCount?: number;
-          removedCount?: number;
-          isFullBuild?: boolean;
-        };
-
-        if (result.earlyExit) {
-          info('No changes detected');
-          closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
-          return;
-        }
-
-        // Log incremental status to match JS pipeline output
-        const changed = result.changedCount ?? 0;
-        const removed = result.removedCount ?? 0;
-        if (!result.isFullBuild && (changed > 0 || removed > 0)) {
-          info(`Incremental: ${changed} changed, ${removed} removed`);
-        }
-
-        // Map Rust timing fields to the JS BuildResult format.
-        // Rust handles collect+detect+parse+insert+resolve+edges+structure+roles.
-        const p = result.phases;
-
-        // Sync build_meta so JS-side version/engine checks work on next build.
-        // Note: the Rust orchestrator also writes codegraph_version (using
-        // CARGO_PKG_VERSION). We intentionally overwrite it here with the npm
-        // package version so that the JS-side "version changed → full rebuild"
-        // detection (line ~97) compares against the authoritative JS version.
-        // The two versions are kept in lockstep by the release process.
-        setBuildMeta(ctx.db, {
-          engine: ctx.engineName,
-          engine_version: ctx.engineVersion || '',
-          codegraph_version: CODEGRAPH_VERSION,
-          schema_version: String(ctx.schemaVersion),
-          built_at: new Date().toISOString(),
-          node_count: String(result.nodeCount ?? 0),
-          edge_count: String(result.edgeCount ?? 0),
-        });
-
-        info(
-          `Native build orchestrator completed: ${result.nodeCount ?? 0} nodes, ${result.edgeCount ?? 0} edges, ${result.fileCount ?? 0} files`,
-        );
-
-        // ── Run structure + analysis phases after native orchestrator ──
-        // Structure (directory nodes, contains edges, metrics) is not fully
-        // ported to Rust — the native pipeline only handles the small
-        // incremental fast path (≤5 changed files). For full builds and
-        // larger incremental builds, run JS buildStructure() to fill the gap.
-        // Analysis phases (AST, complexity, CFG, dataflow) are also not yet
-        // ported; run via JS engine after reconstructing fileSymbols from DB.
-        let analysisTiming = { astMs: 0, complexityMs: 0, cfgMs: 0, dataflowMs: 0 };
-        let structurePatchMs = 0;
-        const needsAnalysis =
-          opts.ast !== false ||
-          opts.complexity !== false ||
-          opts.cfg !== false ||
-          opts.dataflow !== false;
-
-        // The native fast path only runs structure for small incremental
-        // builds: !isFullBuild && changedCount <= 5 && existingFileCount > 20.
-        // For all other cases (full builds, large incrementals), we must
-        // run JS buildStructure() to create directory nodes + contains edges (#804).
-        // Always run JS structure — the native fast-path has an additional
-        // existingFileCount > 20 guard that isn't reflected in the result JSON,
-        // so we can't reliably detect whether native actually ran structure.
-        const nativeHandledStructure = false;
-        const needsStructure = !nativeHandledStructure;
-
-        if (needsAnalysis || needsStructure) {
-          // WAL handoff: checkpoint through rusqlite, close nativeDb,
-          // reopen better-sqlite3 with a fresh page cache (#715, #736).
-          try {
-            ctx.nativeDb!.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-          } catch {
-            /* ignore checkpoint errors */
-          }
-          try {
-            ctx.nativeDb!.close();
-          } catch {
-            /* ignore close errors */
-          }
-          ctx.nativeDb = undefined;
-          try {
-            ctx.db.close();
-          } catch {
-            /* ignore close errors */
-          }
-          ctx.db = null!; // avoid closeDbPair operating on a stale handle
-          try {
-            ctx.db = openDb(ctx.dbPath);
-          } catch (reopenErr) {
-            warn(`Failed to reopen DB after native build: ${(reopenErr as Error).message}`);
-            // Native build succeeded but we can't run post-processing — return partial result
-            return {
-              phases: {
-                setupMs: +((p.setupMs ?? 0) + (p.collectMs ?? 0) + (p.detectMs ?? 0)).toFixed(1),
-                parseMs: +(p.parseMs ?? 0).toFixed(1),
-                insertMs: +(p.insertMs ?? 0).toFixed(1),
-                resolveMs: +(p.resolveMs ?? 0).toFixed(1),
-                edgesMs: +(p.edgesMs ?? 0).toFixed(1),
-                structureMs: +(p.structureMs ?? 0).toFixed(1),
-                rolesMs: +(p.rolesMs ?? 0).toFixed(1),
-                astMs: 0,
-                complexityMs: 0,
-                cfgMs: 0,
-                dataflowMs: 0,
-                finalizeMs: +(p.finalizeMs ?? 0).toFixed(1),
-              },
-            };
-          }
-
-          // Reconstruct fileSymbols from DB. For structure we need ALL files
-          // (to build complete directory tree); for analysis we scope to
-          // changed files only. Load all files, then scope analysis later.
-          const allFileRows = ctx.db
-            .prepare(
-              'SELECT file, name, kind, line, end_line as endLine FROM nodes WHERE file IS NOT NULL ORDER BY file, line',
-            )
-            .all() as {
-            file: string;
-            name: string;
-            kind: string;
-            line: number;
-            endLine: number | null;
-          }[];
-
-          const allFileSymbols = new Map<string, ExtractorOutput>();
-          for (const row of allFileRows) {
-            let entry = allFileSymbols.get(row.file);
-            if (!entry) {
-              entry = {
-                definitions: [],
-                calls: [],
-                imports: [],
-                classes: [],
-                exports: [],
-                typeMap: new Map(),
-              };
-              allFileSymbols.set(row.file, entry);
-            }
-            entry.definitions.push({
-              name: row.name,
-              kind: row.kind as Definition['kind'],
-              line: row.line,
-              endLine: row.endLine ?? undefined,
-            });
-          }
-
-          // Populate import/export counts from DB edges so buildStructure
-          // computes correct import_count/export_count in node_metrics.
-          // The extractor arrays aren't persisted to the DB, so we derive
-          // counts from edge data instead (#804).
-          const importCountRows = ctx.db
-            .prepare(
-              `SELECT n.file, COUNT(*) AS cnt
-               FROM edges e JOIN nodes n ON e.source_id = n.id
-               WHERE e.kind IN ('imports', 'imports-type', 'dynamic-imports')
-                 AND n.file IS NOT NULL
-               GROUP BY n.file`,
-            )
-            .all() as { file: string; cnt: number }[];
-          for (const row of importCountRows) {
-            const entry = allFileSymbols.get(row.file);
-            if (entry) entry.imports = new Array(row.cnt) as ExtractorOutput['imports'];
-          }
-          // Export count: definitions in this file that are imported by other files
-          const exportCountRows = ctx.db
-            .prepare(
-              `SELECT n_tgt.file, COUNT(DISTINCT n_tgt.id) AS cnt
-               FROM edges e
-               JOIN nodes n_tgt ON e.target_id = n_tgt.id
-               JOIN nodes n_src ON e.source_id = n_src.id
-               WHERE e.kind IN ('imports', 'imports-type', 'reexports')
-                 AND n_tgt.file IS NOT NULL
-                 AND n_src.file != n_tgt.file
-               GROUP BY n_tgt.file`,
-            )
-            .all() as { file: string; cnt: number }[];
-          for (const row of exportCountRows) {
-            const entry = allFileSymbols.get(row.file);
-            if (entry) entry.exports = new Array(row.cnt) as ExtractorOutput['exports'];
-          }
-
-          // ── Structure phase: directory nodes + contains edges (#804) ──
-          if (needsStructure) {
-            const structureStart = performance.now();
-            try {
-              // Derive directories from file paths
-              const directories = new Set<string>();
-              for (const relPath of allFileSymbols.keys()) {
-                const parts = relPath.split('/');
-                for (let i = 1; i < parts.length; i++) {
-                  directories.add(parts.slice(0, i).join('/'));
-                }
-              }
-
-              // Build line count map from DB metrics or file content
-              const lineCountMap = new Map<string, number>();
-              const cachedLineCounts = ctx.db
-                .prepare(
-                  `SELECT n.name AS file, m.line_count
-                 FROM node_metrics m JOIN nodes n ON m.node_id = n.id
-                 WHERE n.kind = 'file'`,
-                )
-                .all() as Array<{ file: string; line_count: number }>;
-              for (const row of cachedLineCounts) {
-                lineCountMap.set(row.file, row.line_count);
-              }
-
-              // Native ran no structure at all — always do a full rebuild so
-              // every directory gets nodes + contains edges (#804).
-              const changedFilePaths = null;
-
-              const { buildStructure: buildStructureFn } = (await import(
-                '../../../features/structure.js'
-              )) as {
-                buildStructure: (
-                  db: typeof ctx.db,
-                  fileSymbols: Map<string, ExtractorOutput>,
-                  rootDir: string,
-                  lineCountMap: Map<string, number>,
-                  directories: Set<string>,
-                  changedFiles: string[] | null,
-                ) => void;
-              };
-              buildStructureFn(
-                ctx.db,
-                allFileSymbols,
-                ctx.rootDir,
-                lineCountMap,
-                directories,
-                changedFilePaths,
-              );
-              debug('Structure phase completed after native orchestrator');
-            } catch (err) {
-              warn(`Structure phase failed after native build: ${toErrorMessage(err)}`);
-            }
-            structurePatchMs = performance.now() - structureStart;
-          }
-
-          // ── Analysis phase ──
-          if (needsAnalysis) {
-            // Scope analysis fileSymbols to changed files only
-            const changedFiles = result.changedFiles;
-            let analysisFileSymbols: Map<string, ExtractorOutput>;
-            if (changedFiles && changedFiles.length > 0) {
-              analysisFileSymbols = new Map();
-              for (const f of changedFiles) {
-                const entry = allFileSymbols.get(f);
-                if (entry) analysisFileSymbols.set(f, entry);
-              }
-            } else {
-              analysisFileSymbols = allFileSymbols;
-            }
-
-            // Reopen nativeDb for analysis features (suspend/resume WAL pattern).
-            const native = loadNative();
-            if (native?.NativeDatabase) {
-              try {
-                ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
-                if (ctx.engineOpts) ctx.engineOpts.nativeDb = ctx.nativeDb;
-              } catch {
-                ctx.nativeDb = undefined;
-                if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
-              }
-            }
-
-            try {
-              const { runAnalyses: runAnalysesFn } = await import(
-                '../../../ast-analysis/engine.js'
-              );
-              analysisTiming = await runAnalysesFn(
-                ctx.db,
-                analysisFileSymbols,
-                ctx.rootDir,
-                opts,
-                ctx.engineOpts,
-              );
-            } catch (err) {
-              warn(`Analysis phases failed after native build: ${toErrorMessage(err)}`);
-            }
-
-            // Close nativeDb after analyses
-            if (ctx.nativeDb) {
-              try {
-                ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-              } catch {
-                /* ignore checkpoint errors */
-              }
-              try {
-                ctx.nativeDb.close();
-              } catch {
-                /* ignore close errors */
-              }
-              ctx.nativeDb = undefined;
-              if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
-            }
-          }
-        }
-
-        closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
-        return {
-          phases: {
-            setupMs: +((p.setupMs ?? 0) + (p.collectMs ?? 0) + (p.detectMs ?? 0)).toFixed(1),
-            parseMs: +(p.parseMs ?? 0).toFixed(1),
-            insertMs: +(p.insertMs ?? 0).toFixed(1),
-            resolveMs: +(p.resolveMs ?? 0).toFixed(1),
-            edgesMs: +(p.edgesMs ?? 0).toFixed(1),
-            structureMs: +((p.structureMs ?? 0) + structurePatchMs).toFixed(1),
-            rolesMs: +(p.rolesMs ?? 0).toFixed(1),
-            astMs: +(analysisTiming.astMs ?? 0).toFixed(1),
-            complexityMs: +(analysisTiming.complexityMs ?? 0).toFixed(1),
-            cfgMs: +(analysisTiming.cfgMs ?? 0).toFixed(1),
-            dataflowMs: +(analysisTiming.dataflowMs ?? 0).toFixed(1),
-            finalizeMs: +(p.finalizeMs ?? 0).toFixed(1),
-          },
-        };
-      } catch (err) {
-        warn(
-          `Native build orchestrator failed, falling back to JS pipeline: ${toErrorMessage(err)}`,
-        );
-        // Fall through to JS pipeline
-      }
+    try {
+      const nativeResult = await tryNativeOrchestrator(ctx);
+      if (nativeResult === 'early-exit') return;
+      if (nativeResult) return nativeResult;
+    } catch (err) {
+      warn(`Native build orchestrator failed, falling back to JS pipeline: ${toErrorMessage(err)}`);
+      // Fall through to JS pipeline
     }
 
     await runPipelineStages(ctx);

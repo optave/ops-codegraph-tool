@@ -111,10 +111,6 @@ impl BarrelContext for ImportEdgeContext {
             .get(file_path)
             .map_or(false, |s| s.definitions.iter().any(|d| d.name == symbol))
     }
-
-    fn has_file(&self, file_path: &str) -> bool {
-        self.file_symbols.contains_key(file_path)
-    }
 }
 
 /// Build the reexport map from parsed file symbols.

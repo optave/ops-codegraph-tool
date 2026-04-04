@@ -486,10 +486,6 @@ impl<'a> BarrelContext for ImportEdgeContext<'a> {
             .get(file_path)
             .map_or(false, |defs| defs.contains(symbol))
     }
-
-    fn has_file(&self, file_path: &str) -> bool {
-        self.file_defs.contains_key(file_path)
-    }
 }
 
 /// Build import and barrel-through edges in Rust.

@@ -24,12 +24,6 @@ pub trait BarrelContext {
 
     /// Return `true` if `file_path` contains a definition named `symbol`.
     fn has_definition(&self, file_path: &str, symbol: &str) -> bool;
-
-    /// Return `true` if the file is present in the symbol/definition index.
-    /// This gates deeper traversal: the TS reference only recurses into
-    /// reexport sources that are actually indexed (i.e. `ctx.fileSymbols.get()`
-    /// returns a value).
-    fn has_file(&self, file_path: &str) -> bool;
 }
 
 /// Recursively resolve a symbol through barrel reexport chains.
@@ -54,27 +48,6 @@ pub fn resolve_barrel_export<'a, C: BarrelContext>(
         // Named reexports (non-wildcard)
         if !re.names.is_empty() && !re.wildcard_reexport {
             if re.names.iter().any(|n| n == symbol_name) {
-                // Only check definitions and recurse if the source file is indexed.
-                // Mirrors TS: `const targetSymbols = ctx.fileSymbols.get(re.source);`
-                if ctx.has_file(re.source) {
-                    if ctx.has_definition(re.source, symbol_name) {
-                        return Some(re.source.to_string());
-                    }
-                    let deeper = resolve_barrel_export(ctx, re.source, symbol_name, visited);
-                    if deeper.is_some() {
-                        return deeper;
-                    }
-                }
-                // Fallback: return source even if no definition found (or not indexed)
-                return Some(re.source.to_string());
-            }
-            continue;
-        }
-
-        // Wildcard or empty-names reexports — only traverse if the source is indexed.
-        // Mirrors TS: `if (targetSymbols) { ... }` guard.
-        if re.wildcard_reexport || re.names.is_empty() {
-            if ctx.has_file(re.source) {
                 if ctx.has_definition(re.source, symbol_name) {
                     return Some(re.source.to_string());
                 }
@@ -82,7 +55,19 @@ pub fn resolve_barrel_export<'a, C: BarrelContext>(
                 if deeper.is_some() {
                     return deeper;
                 }
+                // Fallback: return source even if no definition found
+                return Some(re.source.to_string());
             }
+            continue;
+        }
+
+        // Wildcard or empty-names reexports
+        if ctx.has_definition(re.source, symbol_name) {
+            return Some(re.source.to_string());
+        }
+        let deeper = resolve_barrel_export(ctx, re.source, symbol_name, visited);
+        if deeper.is_some() {
+            return deeper;
         }
     }
 
@@ -117,10 +102,6 @@ mod tests {
             self.definitions
                 .get(file_path)
                 .map_or(false, |defs| defs.contains(symbol))
-        }
-
-        fn has_file(&self, file_path: &str) -> bool {
-            self.definitions.contains_key(file_path)
         }
     }
 
