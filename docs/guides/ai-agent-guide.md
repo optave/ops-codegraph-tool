@@ -960,7 +960,7 @@ Add a GitHub Actions workflow that posts `diff-impact` results on every PR:
 
 - name: Analyze PR impact
   run: |
-    npx @optave/codegraph diff-impact origin/${{ github.base_ref }} --json -T > impact.json
+    npx @optave/codegraph diff-impact origin/${{ github.base_ref }} -f json -T > impact.json
 
 - name: Comment on PR
   uses: actions/github-script@v7

@@ -198,7 +198,7 @@ All of the above works in CI pipelines, not just locally:
 
 - name: Impact comment on PR
   run: |
-    IMPACT=$(npx codegraph diff-impact --ref origin/${{ github.base_ref }} -T)
+    IMPACT=$(npx codegraph diff-impact origin/${{ github.base_ref }} -T)
     gh pr comment ${{ github.event.number }} --body "$IMPACT"
 ```
 
