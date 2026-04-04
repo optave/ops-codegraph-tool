@@ -440,6 +440,24 @@ jobs:
           NPM_TAG: ${{ needs.compute-version.outputs.npm_tag }}
         shell: bash
         run: |
+          # Retry wrapper — handles transient npm registry errors (E404, E500, ETIMEDOUT)
+          npm_publish_retry() {
+            local max_attempts=3
+            local delay=10
+            for attempt in $(seq 1 $max_attempts); do
+              if "$@"; then
+                return 0
+              fi
+              if [ "$attempt" -lt "$max_attempts" ]; then
+                echo "::warning::npm publish attempt $attempt/$max_attempts failed — retrying in ${delay}s..."
+                sleep "$delay"
+                delay=$((delay * 2))
+              fi
+            done
+            echo "::error::npm publish failed after $max_attempts attempts"
+            return 1
+          }
+
           # Format: pkg_name|os|cpu|libc (libc empty for non-linux)
           declare -A PACKAGES=(
             ["linux-x64"]="@optave/codegraph-linux-x64-gnu|linux|x64|glibc"
@@ -497,14 +515,32 @@ jobs:
             fi
 
             echo "Publishing ${pkg_name}@${VERSION} with --tag ${NPM_TAG}"
-            npm publish "${PKG_DIR}/$platform" --access public --provenance --tag "$NPM_TAG"
+            npm_publish_retry npm publish "${PKG_DIR}/$platform" --access public --provenance --tag "$NPM_TAG"
           done
 
       - name: Publish main package
         if: steps.check-main.outputs.already_published == 'false'
         env:
           NPM_TAG: ${{ needs.compute-version.outputs.npm_tag }}
-        run: npm publish --access public --provenance --tag "$NPM_TAG"
+        shell: bash
+        run: |
+          npm_publish_retry() {
+            local max_attempts=3
+            local delay=10
+            for attempt in $(seq 1 $max_attempts); do
+              if "$@"; then
+                return 0
+              fi
+              if [ "$attempt" -lt "$max_attempts" ]; then
+                echo "::warning::npm publish attempt $attempt/$max_attempts failed — retrying in ${delay}s..."
+                sleep "$delay"
+                delay=$((delay * 2))
+              fi
+            done
+            echo "::error::npm publish failed after $max_attempts attempts"
+            return 1
+          }
+          npm_publish_retry npm publish --access public --provenance --tag "$NPM_TAG"
 
       - name: Configure git
         run: |
