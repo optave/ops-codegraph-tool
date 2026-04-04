@@ -390,10 +390,11 @@ jobs:
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      # Node 24 required: ships with npm v11 which supports OIDC trusted publishing.
+      # Node 22 ships with npm v10 which lacks the OIDC handshake protocol needed by the npm registry.
       - uses: actions/setup-node@v6
         with:
-          node-version: "22"
-          registry-url: "https://registry.npmjs.org"
+          node-version: "24"
 
       - run: npm install
 
