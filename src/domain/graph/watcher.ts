@@ -141,7 +141,8 @@ function collectTrackedFiles(dir: string, result: string[]): void {
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
+  } catch (e: unknown) {
+    debug(`collectTrackedFiles: cannot read ${dir}: ${(e as Error).message}`);
     return;
   }
   for (const entry of entries) {
@@ -155,10 +156,20 @@ function collectTrackedFiles(dir: string, result: string[]): void {
   }
 }
 
-export async function watchProject(
-  rootDir: string,
-  opts: { engine?: string; poll?: boolean; pollInterval?: number } = {},
-): Promise<void> {
+/** Shared watcher state passed between setup and watcher sub-functions. */
+interface WatcherContext {
+  rootDir: string;
+  db: ReturnType<typeof openDb>;
+  stmts: IncrementalStmts;
+  engineOpts: import('../../types.js').EngineOpts;
+  cache: ReturnType<typeof createParseTreeCache>;
+  pending: Set<string>;
+  timer: ReturnType<typeof setTimeout> | null;
+  debounceMs: number;
+}
+
+/** Initialize DB, engine, cache, and statements for watch mode. */
+function setupWatcher(rootDir: string, opts: { engine?: string }): WatcherContext {
   const dbPath = path.join(rootDir, '.codegraph', 'graph.db');
   if (!fs.existsSync(dbPath)) {
     throw new DbError('No graph.db found. Run `codegraph build` first.', { file: dbPath });
@@ -183,111 +194,124 @@ export async function watchProject(
 
   const stmts = prepareWatcherStatements(db);
 
-  const pending = new Set<string>();
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const DEBOUNCE_MS = 300;
+  return {
+    rootDir,
+    db,
+    stmts,
+    engineOpts,
+    cache,
+    pending: new Set<string>(),
+    timer: null,
+    debounceMs: 300,
+  };
+}
 
-  const usePoll = opts.poll ?? process.platform === 'win32';
-  const POLL_INTERVAL_MS = opts.pollInterval ?? 2000;
+/** Schedule debounced processing of pending files. */
+function scheduleDebouncedProcess(ctx: WatcherContext): void {
+  if (ctx.timer) clearTimeout(ctx.timer);
+  ctx.timer = setTimeout(async () => {
+    const files = [...ctx.pending];
+    ctx.pending.clear();
+    await processPendingFiles(files, ctx.db, ctx.rootDir, ctx.stmts, ctx.engineOpts, ctx.cache);
+  }, ctx.debounceMs);
+}
 
-  info(`Watching ${rootDir} for changes${usePoll ? ' (polling mode)' : ''}...`);
-  info('Press Ctrl+C to stop.');
+/** Start polling-based file watcher. Returns cleanup function. */
+function startPollingWatcher(ctx: WatcherContext, pollIntervalMs: number): () => void {
+  const mtimeMap = new Map<string, number>();
 
-  let cleanup: () => void;
+  const initial: string[] = [];
+  collectTrackedFiles(ctx.rootDir, initial);
+  for (const f of initial) {
+    try {
+      mtimeMap.set(f, fs.statSync(f).mtimeMs);
+    } catch {
+      /* deleted between collect and stat */
+    }
+  }
+  info(`Polling ${initial.length} tracked files every ${pollIntervalMs}ms`);
 
-  if (usePoll) {
-    // Polling mode: avoids native OS file watchers (NtNotifyChangeDirectoryFileEx)
-    // which can crash ReFS drivers on Windows Dev Drives.
-    const mtimeMap = new Map<string, number>();
+  const pollTimer = setInterval(() => {
+    const current: string[] = [];
+    collectTrackedFiles(ctx.rootDir, current);
+    const currentSet = new Set(current);
 
-    // Seed initial mtimes
-    const initial: string[] = [];
-    collectTrackedFiles(rootDir, initial);
-    for (const f of initial) {
+    for (const f of current) {
       try {
-        mtimeMap.set(f, fs.statSync(f).mtimeMs);
+        const mtime = fs.statSync(f).mtimeMs;
+        const prev = mtimeMap.get(f);
+        if (prev === undefined || mtime !== prev) {
+          mtimeMap.set(f, mtime);
+          ctx.pending.add(f);
+        }
       } catch {
         /* deleted between collect and stat */
       }
     }
-    info(`Polling ${initial.length} tracked files every ${POLL_INTERVAL_MS}ms`);
 
-    const pollTimer = setInterval(() => {
-      const current: string[] = [];
-      collectTrackedFiles(rootDir, current);
-      const currentSet = new Set(current);
-
-      // Detect modified or new files
-      for (const f of current) {
-        try {
-          const mtime = fs.statSync(f).mtimeMs;
-          const prev = mtimeMap.get(f);
-          if (prev === undefined || mtime !== prev) {
-            mtimeMap.set(f, mtime);
-            pending.add(f);
-          }
-        } catch {
-          /* deleted between collect and stat */
-        }
+    for (const f of mtimeMap.keys()) {
+      if (!currentSet.has(f)) {
+        mtimeMap.delete(f);
+        ctx.pending.add(f);
       }
+    }
 
-      // Detect deleted files
-      for (const f of mtimeMap.keys()) {
-        if (!currentSet.has(f)) {
-          mtimeMap.delete(f);
-          pending.add(f);
-        }
-      }
+    if (ctx.pending.size > 0) {
+      scheduleDebouncedProcess(ctx);
+    }
+  }, pollIntervalMs);
 
-      if (pending.size > 0) {
-        if (timer) clearTimeout(timer);
-        timer = setTimeout(async () => {
-          const files = [...pending];
-          pending.clear();
-          await processPendingFiles(files, db, rootDir, stmts, engineOpts, cache);
-        }, DEBOUNCE_MS);
-      }
-    }, POLL_INTERVAL_MS);
+  return () => clearInterval(pollTimer);
+}
 
-    cleanup = () => clearInterval(pollTimer);
-  } else {
-    // Native OS watcher — efficient but can trigger ReFS crashes on Windows Dev Drives.
-    // Use --poll if you experience BSOD/HYPERVISOR_ERROR on ReFS volumes.
-    const watcher = fs.watch(rootDir, { recursive: true }, (_eventType, filename) => {
-      if (!filename) return;
-      if (shouldIgnore(filename)) return;
-      if (!isTrackedExt(filename)) return;
+/** Start native OS file watcher. Returns cleanup function. */
+function startNativeWatcher(ctx: WatcherContext): () => void {
+  const watcher = fs.watch(ctx.rootDir, { recursive: true }, (_eventType, filename) => {
+    if (!filename) return;
+    if (shouldIgnore(filename)) return;
+    if (!isTrackedExt(filename)) return;
 
-      const fullPath = path.join(rootDir, filename);
-      pending.add(fullPath);
+    ctx.pending.add(path.join(ctx.rootDir, filename));
+    scheduleDebouncedProcess(ctx);
+  });
 
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(async () => {
-        const files = [...pending];
-        pending.clear();
-        await processPendingFiles(files, db, rootDir, stmts, engineOpts, cache);
-      }, DEBOUNCE_MS);
-    });
+  return () => watcher.close();
+}
 
-    cleanup = () => watcher.close();
-  }
-
+/** Register SIGINT handler to flush journal and clean up. */
+function setupShutdownHandler(ctx: WatcherContext, cleanup: () => void): void {
   process.on('SIGINT', () => {
     info('Stopping watcher...');
     cleanup();
-    // Flush any pending file paths to journal before exit
-    if (pending.size > 0) {
-      const entries = [...pending].map((filePath) => ({
-        file: normalizePath(path.relative(rootDir, filePath)),
+    if (ctx.pending.size > 0) {
+      const entries = [...ctx.pending].map((filePath) => ({
+        file: normalizePath(path.relative(ctx.rootDir, filePath)),
       }));
       try {
-        appendJournalEntries(rootDir, entries);
+        appendJournalEntries(ctx.rootDir, entries);
       } catch (e: unknown) {
         debug(`Journal flush on exit failed (non-fatal): ${(e as Error).message}`);
       }
     }
-    if (cache) cache.clear();
-    closeDb(db);
+    if (ctx.cache) ctx.cache.clear();
+    closeDb(ctx.db);
     process.exit(0);
   });
+}
+
+export async function watchProject(
+  rootDir: string,
+  opts: { engine?: string; poll?: boolean; pollInterval?: number } = {},
+): Promise<void> {
+  const ctx = setupWatcher(rootDir, opts);
+
+  const usePoll = opts.poll ?? process.platform === 'win32';
+  const pollIntervalMs = opts.pollInterval ?? 2000;
+
+  info(`Watching ${rootDir} for changes${usePoll ? ' (polling mode)' : ''}...`);
+  info('Press Ctrl+C to stop.');
+
+  const cleanup = usePoll ? startPollingWatcher(ctx, pollIntervalMs) : startNativeWatcher(ctx);
+
+  setupShutdownHandler(ctx, cleanup);
 }
