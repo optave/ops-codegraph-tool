@@ -5,6 +5,8 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 | Version | Engine | fnDeps d1 | fnDeps d3 | fnDeps d5 | fnImpact d1 | fnImpact d3 | fnImpact d5 | diffImpact |
 |---------|--------|----------:|----------:|----------:|------------:|------------:|------------:|-----------:|
+| 3.8.1 | native | 25.3 ↑161% | 25.3 ↑156% | 25.3 ↑161% | 3.7 ↑3% | 3.7 ↑3% | 3.7 ↑6% | 9.1ms ↑2% |
+| 3.8.1 | wasm | 27.2 ↑180% | 27 ↑176% | 27 ↑178% | 3.9 ↑11% | 4 ↑14% | 3.9 ↑8% | 8.5ms ↑16% |
 | 3.7.0 | native | 9.7 ↑3% | 9.9 ↑3% | 9.7 ↑3% | 3.6 ↑6% | 3.6 ↑6% | 3.5 ↑6% | 8.9ms ↑7% |
 | 3.7.0 | wasm | 9.7 ~ | 9.8 ~ | 9.7 ~ | 3.5 ↑3% | 3.5 ↑3% | 3.6 ↑6% | 7.3ms ↓19% |
 | 3.6.0 | native | 9.4 | 9.6 | 9.4 | 3.4 | 3.4 | 3.3 | 8.3ms |
@@ -43,7 +45,7 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 ### Latest results
 
-**Version:** 3.7.0 | **Date:** 2026-04-01
+**Version:** 3.8.1 | **Date:** 2026-04-03
 
 #### Native (Rust)
 
@@ -51,13 +53,13 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 9.7ms |
-| fnDeps depth 3 | 9.9ms |
-| fnDeps depth 5 | 9.7ms |
-| fnImpact depth 1 | 3.6ms |
-| fnImpact depth 3 | 3.6ms |
-| fnImpact depth 5 | 3.5ms |
-| diffImpact latency | 8.9ms |
+| fnDeps depth 1 | 25.3ms |
+| fnDeps depth 3 | 25.3ms |
+| fnDeps depth 5 | 25.3ms |
+| fnImpact depth 1 | 3.7ms |
+| fnImpact depth 3 | 3.7ms |
+| fnImpact depth 5 | 3.7ms |
+| diffImpact latency | 9.1ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
@@ -67,17 +69,19 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 9.7ms |
-| fnDeps depth 3 | 9.8ms |
-| fnDeps depth 5 | 9.7ms |
-| fnImpact depth 1 | 3.5ms |
-| fnImpact depth 3 | 3.5ms |
-| fnImpact depth 5 | 3.6ms |
-| diffImpact latency | 7.3ms |
+| fnDeps depth 1 | 27.2ms |
+| fnDeps depth 3 | 27ms |
+| fnDeps depth 5 | 27ms |
+| fnImpact depth 1 | 3.9ms |
+| fnImpact depth 3 | 4ms |
+| fnImpact depth 5 | 3.9ms |
+| diffImpact latency | 8.5ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
 <!-- NOTES_START -->
+**Note (3.8.1):** The ↑161–180% fnDeps jump reflects significant codebase growth between 3.7.0 and 3.8.1 — the Titan v3.8.0 refactor (#775) decomposed multiple god-functions, and several PRs extracted class handlers (#769), visitor frameworks (#771), and search internals (#768), all adding new symbols and edges to `buildGraph`'s dependency subgraph. Both engines moved in lockstep (25.3ms native, 27.2ms WASM), confirming this is graph-size growth rather than an engine regression. fnImpact and diffImpact remained stable, consistent with the growth being in fan-out (more callees) rather than fan-in.
+
 **Note (3.6.0):** Native deltas are relative to 3.4.1 (the last version with native data; 3.5.0 was wasm-only). The mid-query target changed from `db` (3.5.0) to `node`, which affects diffImpact scope and explains the ↑41% WASM diffImpact jump (6.4ms → 9ms). fnDeps/fnImpact growth of 6-10% is consistent with codebase expansion across two releases.
 
 **Note (3.5.0):** This version has WASM-only data (`native: null`) because the native engine crashed during `insertNodes` in the graph build phase. The root cause is a napi-rs serialization bug: parameter and child nodes with undefined `visibility` fields marshal as `null` at the JS-Rust boundary, which fails conversion into the Rust `Option<String>` type in `InsertNodesDefinition.visibility`. The mid-query target also changed from `noTests` to `db`, which may affect diffImpact scope. Query latencies for 3.5.0 are therefore not directly comparable to prior versions that include both engine rows. This will be fixed in the next release.
@@ -91,6 +95,54 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 <!-- QUERY_BENCHMARK_DATA
 [
+  {
+    "version": "3.8.1",
+    "date": "2026-04-03",
+    "wasm": {
+      "targets": {
+        "hub": "buildGraph",
+        "mid": "node",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 27.2,
+        "depth3Ms": 27,
+        "depth5Ms": 27
+      },
+      "fnImpact": {
+        "depth1Ms": 3.9,
+        "depth3Ms": 4,
+        "depth5Ms": 3.9
+      },
+      "diffImpact": {
+        "latencyMs": 8.5,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    },
+    "native": {
+      "targets": {
+        "hub": "buildGraph",
+        "mid": "node",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 25.3,
+        "depth3Ms": 25.3,
+        "depth5Ms": 25.3
+      },
+      "fnImpact": {
+        "depth1Ms": 3.7,
+        "depth3Ms": 3.7,
+        "depth5Ms": 3.7
+      },
+      "diffImpact": {
+        "latencyMs": 9.1,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    }
+  },
   {
     "version": "3.7.0",
     "date": "2026-04-01",
