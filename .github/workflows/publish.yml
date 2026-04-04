@@ -441,6 +441,8 @@ jobs:
           NPM_TAG: ${{ needs.compute-version.outputs.npm_tag }}
         shell: bash
         run: |
+          source scripts/npm-publish-retry.sh
+
           # Format: pkg_name|os|cpu|libc (libc empty for non-linux)
           declare -A PACKAGES=(
             ["linux-x64"]="@optave/codegraph-linux-x64-gnu|linux|x64|glibc"
@@ -498,14 +500,19 @@ jobs:
             fi
 
             echo "Publishing ${pkg_name}@${VERSION} with --tag ${NPM_TAG}"
-            npm publish "${PKG_DIR}/$platform" --access public --provenance --tag "$NPM_TAG"
+            npm_publish_retry "${pkg_name}@${VERSION}" npm publish "${PKG_DIR}/$platform" --access public --provenance --tag "$NPM_TAG"
           done
 
       - name: Publish main package
         if: steps.check-main.outputs.already_published == 'false'
         env:
           NPM_TAG: ${{ needs.compute-version.outputs.npm_tag }}
-        run: npm publish --access public --provenance --tag "$NPM_TAG"
+        shell: bash
+        run: |
+          source scripts/npm-publish-retry.sh
+          PKG_NAME=$(node -p "require('./package.json').name")
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          npm_publish_retry "${PKG_NAME}@${PKG_VERSION}" npm publish --access public --provenance --tag "$NPM_TAG"
 
       - name: Configure git
         run: |
