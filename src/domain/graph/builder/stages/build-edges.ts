@@ -433,7 +433,8 @@ function buildImportedNamesMap(
     if (imp.dynamicImport) continue;
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
     for (const name of imp.names) {
-      importedNames.set(name.replace(/^\*\s+as\s+/, ''), resolvedPath);
+      const cleanName = name.replace(/^\*\s+as\s+/, '');
+      importedNames.set(cleanName, resolvedPath);
     }
   }
   return importedNames;
