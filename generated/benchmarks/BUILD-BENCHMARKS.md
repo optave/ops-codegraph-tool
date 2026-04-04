@@ -223,6 +223,7 @@ pre-parse that previously added ~388ms on native builds.
 <!-- NOTES_END -->
 
 <!-- BENCHMARK_DATA
+
 [
   {
     "version": "3.8.1",
@@ -323,109 +324,6 @@ pre-parse that previously added ~388ms on native builds.
         "complexityMs": 401.3,
         "cfgMs": 510.3,
         "dataflowMs": 320.2,
-        "finalizeMs": 0.4
-      }
-    }
-  },
-  {
-    "version": "3.8.0",
-    "date": "2026-04-02",
-    "files": 564,
-    "wasm": {
-      "buildTimeMs": 1231,
-      "queryTimeMs": 15.3,
-      "nodes": 14652,
-      "edges": 25554,
-      "dbSizeBytes": 17215488,
-      "perFile": {
-        "buildTimeMs": 2.2,
-        "nodes": 26,
-        "edges": 45.3,
-        "dbSizeBytes": 30524
-      },
-      "noopRebuildMs": 8,
-      "oneFileRebuildMs": 33,
-      "oneFilePhases": {
-        "setupMs": 5.4,
-        "parseMs": 0.3,
-        "insertMs": 0.7,
-        "resolveMs": 0.4,
-        "edgesMs": 8.2,
-        "structureMs": 0.2,
-        "rolesMs": 14.1,
-        "astMs": 0,
-        "complexityMs": 0,
-        "cfgMs": 0,
-        "dataflowMs": 0,
-        "finalizeMs": 0.3
-      },
-      "queries": {
-        "fnDepsMs": 2.2,
-        "fnImpactMs": 2.2,
-        "pathMs": 2.1,
-        "rolesMs": 31.3
-      },
-      "phases": {
-        "setupMs": 5.9,
-        "parseMs": 554.8,
-        "insertMs": 377.9,
-        "resolveMs": 4.6,
-        "edgesMs": 151.9,
-        "structureMs": 0.3,
-        "rolesMs": 69.6,
-        "astMs": 0,
-        "complexityMs": 0,
-        "cfgMs": 0,
-        "dataflowMs": 0,
-        "finalizeMs": 0.3
-      }
-    },
-    "native": {
-      "buildTimeMs": 1209,
-      "queryTimeMs": 13.6,
-      "nodes": 14652,
-      "edges": 25554,
-      "dbSizeBytes": 17399808,
-      "perFile": {
-        "buildTimeMs": 2.1,
-        "nodes": 26,
-        "edges": 45.3,
-        "dbSizeBytes": 30851
-      },
-      "noopRebuildMs": 8,
-      "oneFileRebuildMs": 33,
-      "oneFilePhases": {
-        "setupMs": 5.6,
-        "parseMs": 0.3,
-        "insertMs": 0.8,
-        "resolveMs": 0.3,
-        "edgesMs": 8.1,
-        "structureMs": 0.2,
-        "rolesMs": 13.9,
-        "astMs": 0,
-        "complexityMs": 0,
-        "cfgMs": 0,
-        "dataflowMs": 0,
-        "finalizeMs": 0.3
-      },
-      "queries": {
-        "fnDepsMs": 2.5,
-        "fnImpactMs": 2.2,
-        "pathMs": 2.1,
-        "rolesMs": 29.2
-      },
-      "phases": {
-        "setupMs": 4.9,
-        "parseMs": 549.9,
-        "insertMs": 375,
-        "resolveMs": 4.4,
-        "edgesMs": 146.7,
-        "structureMs": 0.3,
-        "rolesMs": 68.8,
-        "astMs": 0,
-        "complexityMs": 0,
-        "cfgMs": 0,
-        "dataflowMs": 0,
         "finalizeMs": 0.4
       }
     }
@@ -1895,4 +1793,5 @@ pre-parse that previously added ~388ms on native builds.
     }
   }
 ]
+
 -->

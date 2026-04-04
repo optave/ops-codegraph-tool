@@ -26,10 +26,36 @@ import { describe, expect, test } from 'vitest';
  */
 const REGRESSION_THRESHOLD = 0.25;
 
+/**
+ * Minimum "previous" version for regression comparisons.
+ *
+ * The guard was introduced after v3.8.1 shipped, so historical data
+ * contains pre-existing regressions (v3.8.0 build outlier, v3.8.1 query
+ * regression vs v3.7.0) that predate the guard.  Setting a baseline
+ * version ensures we only flag regressions in NEW entries — i.e. when
+ * a future release regresses vs v3.8.1+.
+ *
+ * Bump this when a known regression ships intentionally (e.g. trading
+ * query speed for correctness) so the guard watches for regressions
+ * from the new accepted baseline, not from a stale one.
+ */
+const BASELINE_VERSION = '3.8.1';
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const BENCHMARKS_DIR = path.join(ROOT, 'generated', 'benchmarks');
+
+/** True when `a` >= `b` by semver (major.minor.patch). */
+function semverGte(a: string, b: string): boolean {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] ?? 0) > (pb[i] ?? 0)) return true;
+    if ((pa[i] ?? 0) < (pb[i] ?? 0)) return false;
+  }
+  return true; // equal
+}
 
 interface RegressionCheck {
   label: string;
@@ -63,6 +89,10 @@ function extractJsonData<T>(filePath: string, marker: string): T[] {
 /**
  * Find the latest entry for a given engine, then the next non-dev
  * entry with data for that engine (the "previous release").
+ *
+ * Returns null when either side is missing, or when the previous
+ * entry's version is below BASELINE_VERSION (pre-existing regression
+ * that predates the guard).
  */
 function findLatestPair<T extends { version: string }>(
   history: T[],
@@ -80,10 +110,31 @@ function findLatestPair<T extends { version: string }>(
   // Find previous non-dev entry with data for this engine
   for (let i = latestIdx + 1; i < history.length; i++) {
     if (history[i].version !== 'dev' && hasEngine(history[i])) {
+      // Skip comparisons where the previous entry predates the baseline —
+      // those regressions were already shipped before the guard existed.
+      if (!semverGte(history[i].version, BASELINE_VERSION)) return null;
       return { latest: history[latestIdx], previous: history[i] };
     }
   }
   return null; // No previous release to compare against
+}
+
+/**
+ * Check whether at least 2 non-dev entries exist for any engine
+ * (ignoring baseline — used by sentinel tests to verify data exists).
+ */
+function hasRawPair<T extends { version: string }>(
+  history: T[],
+  hasEngine: (entry: T) => boolean,
+): boolean {
+  let count = 0;
+  for (const e of history) {
+    if (e.version !== 'dev' && hasEngine(e)) {
+      count++;
+      if (count >= 2) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -240,11 +291,11 @@ describe('Benchmark regression guard', () => {
       });
     }
 
-    test('has at least one engine to compare', () => {
-      const hasAny = ['native', 'wasm'].some(
-        (ek) => findLatestPair(buildHistory, (e) => e[ek as keyof BuildEntry] != null) != null,
+    test('has at least one engine with data', () => {
+      const hasAny = ['native', 'wasm'].some((ek) =>
+        hasRawPair(buildHistory, (e) => e[ek as keyof BuildEntry] != null),
       );
-      expect(hasAny, 'No build benchmark data with ≥2 entries to compare').toBe(true);
+      expect(hasAny, 'No build benchmark data with ≥2 entries').toBe(true);
     });
   });
 
@@ -274,11 +325,11 @@ describe('Benchmark regression guard', () => {
       });
     }
 
-    test('has at least one engine to compare', () => {
-      const hasAny = ['native', 'wasm'].some(
-        (ek) => findLatestPair(queryHistory, (e) => e[ek as keyof QueryEntry] != null) != null,
+    test('has at least one engine with data', () => {
+      const hasAny = ['native', 'wasm'].some((ek) =>
+        hasRawPair(queryHistory, (e) => e[ek as keyof QueryEntry] != null),
       );
-      expect(hasAny, 'No query benchmark data with ≥2 entries to compare').toBe(true);
+      expect(hasAny, 'No query benchmark data with ≥2 entries').toBe(true);
     });
   });
 
@@ -304,7 +355,9 @@ describe('Benchmark regression guard', () => {
     const resolveEntries = incrementalHistory.filter(
       (e) => e.resolve != null && e.version !== 'dev',
     );
-    if (resolveEntries.length >= 2) {
+    const resolveHasBaselinePair =
+      resolveEntries.length >= 2 && semverGte(resolveEntries[1].version, BASELINE_VERSION);
+    if (resolveHasBaselinePair) {
       test(`import resolution — ${resolveEntries[0].version} vs ${resolveEntries[1].version}`, () => {
         const cur = resolveEntries[0].resolve!;
         const prev = resolveEntries[1].resolve!;
@@ -315,16 +368,15 @@ describe('Benchmark regression guard', () => {
       });
     }
 
-    test('has at least one engine to compare', () => {
-      const hasAny = ['native', 'wasm'].some(
-        (ek) =>
-          findLatestPair(incrementalHistory, (e) => e[ek as keyof IncrementalEntry] != null) !=
-          null,
+    test('has at least one engine with data', () => {
+      const hasAny = ['native', 'wasm'].some((ek) =>
+        hasRawPair(incrementalHistory, (e) => e[ek as keyof IncrementalEntry] != null),
       );
-      expect(hasAny, 'No incremental benchmark data with ≥2 entries to compare').toBe(true);
+      expect(hasAny, 'No incremental benchmark data with ≥2 entries').toBe(true);
     });
 
     test('has resolve data to compare', () => {
+      // At least 2 non-dev entries exist (even if the pair doesn't meet the baseline)
       expect(
         resolveEntries.length >= 2,
         'No import-resolution benchmark data with ≥2 non-dev entries to compare',

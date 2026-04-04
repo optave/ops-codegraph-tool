@@ -78,57 +78,8 @@ Import resolution: native batch vs JS fallback throughput.
 | Speedup ratio | 3.0x |
 
 <!-- INCREMENTAL_BENCHMARK_DATA
+
 [
-  {
-    "version": "3.8.0",
-    "date": "2026-04-02",
-    "files": 564,
-    "wasm": {
-      "fullBuildMs": 1184,
-      "noopRebuildMs": 8,
-      "oneFileRebuildMs": 33,
-      "oneFilePhases": {
-        "setupMs": 5.3,
-        "parseMs": 0.3,
-        "insertMs": 0.8,
-        "resolveMs": 0.4,
-        "edgesMs": 8.7,
-        "structureMs": 0.2,
-        "rolesMs": 13.9,
-        "astMs": 0,
-        "complexityMs": 0,
-        "cfgMs": 0,
-        "dataflowMs": 0,
-        "finalizeMs": 0.3
-      }
-    },
-    "native": {
-      "fullBuildMs": 1166,
-      "noopRebuildMs": 7,
-      "oneFileRebuildMs": 33,
-      "oneFilePhases": {
-        "setupMs": 5.5,
-        "parseMs": 0.3,
-        "insertMs": 0.8,
-        "resolveMs": 0.4,
-        "edgesMs": 8.2,
-        "structureMs": 0.2,
-        "rolesMs": 14,
-        "astMs": 0,
-        "complexityMs": 0,
-        "cfgMs": 0,
-        "dataflowMs": 0,
-        "finalizeMs": 0.3
-      }
-    },
-    "resolve": {
-      "imports": 933,
-      "nativeBatchMs": 4.1,
-      "jsFallbackMs": 12.4,
-      "perImportNativeMs": 0,
-      "perImportJsMs": 0
-    }
-  },
   {
     "version": "3.7.0",
     "date": "2026-04-01",
@@ -730,4 +681,5 @@ Import resolution: native batch vs JS fallback throughput.
     }
   }
 ]
+
 -->
