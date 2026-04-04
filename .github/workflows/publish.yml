@@ -434,6 +434,16 @@ jobs:
             echo "already_published=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Debug npm auth
+        if: steps.check-main.outputs.already_published == 'false'
+        run: |
+          echo "npm version: $(npm --version)"
+          echo "node version: $(node --version)"
+          npm whoami --registry https://registry.npmjs.org/ 2>&1 || echo "::warning::npm whoami failed — OIDC auth may not be working"
+          echo "--- .npmrc ---"
+          grep 'registry' ~/.npmrc 2>/dev/null || echo "no ~/.npmrc or no registry lines"
+          grep 'registry' .npmrc 2>/dev/null || echo "no .npmrc or no registry lines"
+
       - name: Publish platform packages
         if: steps.check-main.outputs.already_published == 'false'
         env:
