@@ -100,6 +100,20 @@ export class Repository implements IRepository {
     throw new Error('not implemented');
   }
 
+  /**
+   * Batch version of findCallers — returns callers for multiple node IDs in a
+   * single query. Default implementation loops; subclasses override with SQL
+   * `IN (...)` for efficiency.
+   */
+  findCallersBatch(nodeIds: number[]): Map<number, RelatedNodeRow[]> {
+    const result = new Map<number, RelatedNodeRow[]>();
+    for (const id of nodeIds) {
+      const callers = this.findCallers(id);
+      if (callers.length > 0) result.set(id, callers);
+    }
+    return result;
+  }
+
   findDistinctCallers(_nodeId: number): RelatedNodeRow[] {
     throw new Error('not implemented');
   }

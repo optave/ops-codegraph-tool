@@ -102,6 +102,12 @@ let _cachedLanguages: Map<string, Language> | null = null;
 // Query cache for JS/TS/TSX extractors (populated during createParsers)
 const _queryCache: Map<string, Query> = new Map();
 
+// Tracks whether ALL grammars have been loaded (vs. a lazy subset)
+let _allParsersLoaded: boolean = false;
+
+// In-flight grammar loads keyed by language id — prevents concurrent duplicate loads
+const _loadingPromises: Map<string, Promise<void>> = new Map();
+
 // Extensions that need typeMap backfill (type annotations only exist in TS/TSX)
 const TS_BACKFILL_EXTS = new Set(['.ts', '.tsx']);
 
@@ -150,42 +156,87 @@ const TS_EXTRA_PATTERNS: string[] = [
   '(type_alias_declaration name: (type_identifier) @type_name) @type_node',
 ];
 
-export async function createParsers(): Promise<Map<string, Parser | null>> {
-  if (_cachedParsers) return _cachedParsers;
+/**
+ * Load a single language grammar and cache the parser + language + query.
+ * Uses in-flight deduplication so concurrent callers awaiting the same grammar
+ * share a single load rather than producing orphaned WASM instances.
+ * Assumes Parser.init() has already been called and _cachedParsers/_cachedLanguages exist.
+ */
+async function loadLanguage(entry: LanguageRegistryEntry): Promise<void> {
+  if (_cachedParsers!.has(entry.id)) return;
+  const inflight = _loadingPromises.get(entry.id);
+  if (inflight) return inflight;
+  const p = doLoadLanguage(entry).finally(() => _loadingPromises.delete(entry.id));
+  _loadingPromises.set(entry.id, p);
+  return p;
+}
 
+async function doLoadLanguage(entry: LanguageRegistryEntry): Promise<void> {
+  try {
+    const lang = await Language.load(grammarPath(entry.grammarFile));
+    const parser = new Parser();
+    parser.setLanguage(lang);
+    _cachedParsers!.set(entry.id, parser);
+    _cachedLanguages!.set(entry.id, lang);
+    if (entry.extractor === extractSymbols && !_queryCache.has(entry.id)) {
+      const isTS = entry.id === 'typescript' || entry.id === 'tsx';
+      const patterns = isTS
+        ? [...COMMON_QUERY_PATTERNS, ...TS_EXTRA_PATTERNS]
+        : [...COMMON_QUERY_PATTERNS, JS_CLASS_PATTERN];
+      _queryCache.set(entry.id, new Query(lang, patterns.join('\n')));
+    }
+  } catch (e: unknown) {
+    if (entry.required) throw e;
+    warn(
+      `${entry.id} parser failed to initialize: ${(e as Error).message}. ${entry.id} files will be skipped.`,
+    );
+    _cachedParsers!.set(entry.id, null);
+  }
+}
+
+async function initParserRuntime(): Promise<void> {
   if (!_initialized) {
     await Parser.init();
     _initialized = true;
   }
+  if (!_cachedParsers) _cachedParsers = new Map();
+  if (!_cachedLanguages) _cachedLanguages = new Map();
+}
 
-  const parsers = new Map<string, Parser | null>();
-  const languages = new Map<string, Language>();
+/**
+ * Load only the WASM grammars needed for the given file paths.
+ * Grammars already in cache are reused. This avoids the ~500ms cold-start
+ * penalty of loading all 23+ grammars when only 1-2 are needed (e.g. incremental rebuilds).
+ */
+async function ensureParsersForFiles(filePaths: string[]): Promise<Map<string, Parser | null>> {
+  await initParserRuntime();
+  const needed = new Set<LanguageRegistryEntry>();
+  for (const fp of filePaths) {
+    const ext = path.extname(fp).toLowerCase();
+    const entry = _extToLang.get(ext);
+    if (entry && !_cachedParsers!.has(entry.id)) needed.add(entry);
+  }
+  for (const entry of needed) {
+    await loadLanguage(entry);
+  }
+  return _cachedParsers!;
+}
+
+/**
+ * Load ALL WASM grammars. Used by full builds and feature modules (CFG, dataflow, complexity)
+ * that may process files of any language.
+ */
+export async function createParsers(): Promise<Map<string, Parser | null>> {
+  if (_cachedParsers && _allParsersLoaded) return _cachedParsers;
+
+  await initParserRuntime();
   for (const entry of LANGUAGE_REGISTRY) {
-    try {
-      const lang = await Language.load(grammarPath(entry.grammarFile));
-      const parser = new Parser();
-      parser.setLanguage(lang);
-      parsers.set(entry.id, parser);
-      languages.set(entry.id, lang);
-      // Compile and cache tree-sitter Query for JS/TS/TSX extractors
-      if (entry.extractor === extractSymbols && !_queryCache.has(entry.id)) {
-        const isTS = entry.id === 'typescript' || entry.id === 'tsx';
-        const patterns = isTS
-          ? [...COMMON_QUERY_PATTERNS, ...TS_EXTRA_PATTERNS]
-          : [...COMMON_QUERY_PATTERNS, JS_CLASS_PATTERN];
-        _queryCache.set(entry.id, new Query(lang, patterns.join('\n')));
-      }
-    } catch (e: unknown) {
-      if (entry.required) throw e;
-      warn(
-        `${entry.id} parser failed to initialize: ${(e as Error).message}. ${entry.id} files will be skipped.`,
-      );
-      parsers.set(entry.id, null);
+    if (!_cachedParsers!.has(entry.id)) {
+      await loadLanguage(entry);
     }
   }
-  _cachedParsers = parsers;
-  _cachedLanguages = languages;
-  return parsers;
+  _allParsersLoaded = true;
+  return _cachedParsers!;
 }
 
 /**
@@ -217,6 +268,8 @@ export function disposeParsers(): void {
     _cachedLanguages = null;
   }
   _initialized = false;
+  _allParsersLoaded = false;
+  _loadingPromises.clear();
 }
 
 export function getParser(parsers: Map<string, Parser | null>, filePath: string): Parser | null {
@@ -235,20 +288,15 @@ export async function ensureWasmTrees(
   fileSymbols: Map<string, any>,
   rootDir: string,
 ): Promise<void> {
-  // Check if any file needs a tree
-  let needsParse = false;
+  // Single pass: collect absolute paths for files that need parsing
+  const filePaths: string[] = [];
   for (const [relPath, symbols] of fileSymbols) {
-    if (!symbols._tree) {
-      const ext = path.extname(relPath).toLowerCase();
-      if (_extToLang.has(ext)) {
-        needsParse = true;
-        break;
-      }
+    if (!symbols._tree && _extToLang.has(path.extname(relPath).toLowerCase())) {
+      filePaths.push(path.join(rootDir, relPath));
     }
   }
-  if (!needsParse) return;
-
-  const parsers = await createParsers();
+  if (filePaths.length === 0) return;
+  const parsers = await ensureParsersForFiles(filePaths);
 
   for (const [relPath, symbols] of fileSymbols) {
     if (symbols._tree) continue;
@@ -658,7 +706,7 @@ async function backfillTypeMap(
       return { typeMap: new Map(), backfilled: false };
     }
   }
-  const parsers = await createParsers();
+  const parsers = await ensureParsersForFiles([filePath]);
   const extracted = wasmExtractSymbols(parsers, filePath, code);
   try {
     if (!extracted || extracted.symbols.typeMap.size === 0) {
@@ -720,18 +768,21 @@ export async function parseFileAuto(
     const result = native.parseFile(filePath, source, !!opts.dataflow, opts.ast !== false);
     if (!result) return null;
     const patched = patchNativeResult(result);
-    // Only backfill typeMap for TS/TSX — JS files have no type annotations,
-    // and the native engine already handles `new Expr()` patterns.
-    if (patched.typeMap.size === 0 && TS_BACKFILL_EXTS.has(path.extname(filePath))) {
+    // Always backfill typeMap for TS/TSX from WASM — the native parser's type
+    // extraction can produce incorrect scope-collision results. For non-TS
+    // files, only backfill when native returned an empty type map.
+    if (TS_BACKFILL_EXTS.has(path.extname(filePath)) || patched.typeMap.size === 0) {
       const { typeMap, backfilled } = await backfillTypeMap(filePath, source);
-      patched.typeMap = typeMap;
-      if (backfilled) patched._typeMapBackfilled = true;
+      if (backfilled) {
+        patched.typeMap = typeMap;
+        patched._typeMapBackfilled = true;
+      }
     }
     return patched;
   }
 
   // WASM path
-  const parsers = await createParsers();
+  const parsers = await ensureParsersForFiles([filePath]);
   const extracted = wasmExtractSymbols(parsers, filePath, source);
   return extracted ? extracted.symbols : null;
 }
@@ -746,7 +797,7 @@ async function backfillTypeMapBatch(
   );
   if (tsFiles.length === 0) return;
 
-  const parsers = await createParsers();
+  const parsers = await ensureParsersForFiles(tsFiles.map((f) => f.filePath));
   for (const { filePath, relPath } of tsFiles) {
     let extracted: WasmExtractResult | null | undefined;
     try {
@@ -778,7 +829,7 @@ async function parseFilesWasm(
   rootDir: string,
 ): Promise<Map<string, ExtractorOutput>> {
   const result = new Map<string, ExtractorOutput>();
-  const parsers = await createParsers();
+  const parsers = await ensureParsersForFiles(filePaths);
   for (const filePath of filePaths) {
     let code: string;
     try {
@@ -819,7 +870,15 @@ export async function parseFilesAuto(
     const patched = patchNativeResult(r);
     const relPath = path.relative(rootDir, r.file).split(path.sep).join('/');
     result.set(relPath, patched);
-    if (patched.typeMap.size === 0) {
+    // Always backfill TS/TSX type maps from WASM — the native parser's type
+    // extraction can produce incorrect results when the same variable name
+    // appears at multiple scopes (e.g. `node: TreeSitterNode` in one function
+    // vs `node: NodeRow` in another). The WASM JS extractor handles scope
+    // traversal order more accurately. For non-TS files or files where the
+    // native parser returned an empty type map, the backfill fills from scratch.
+    if (TS_BACKFILL_EXTS.has(path.extname(r.file))) {
+      needsTypeMap.push({ filePath: r.file, relPath });
+    } else if (patched.typeMap.size === 0) {
       needsTypeMap.push({ filePath: r.file, relPath });
     }
   }
@@ -877,12 +936,13 @@ export async function parseFileIncremental(
     const result = cache.parseFile(filePath, source);
     if (!result) return null;
     const patched = patchNativeResult(result);
-    // Only backfill typeMap for TS/TSX — JS files have no type annotations,
-    // and the native engine already handles `new Expr()` patterns.
-    if (patched.typeMap.size === 0 && TS_BACKFILL_EXTS.has(path.extname(filePath))) {
+    // Always backfill typeMap for TS/TSX from WASM (see parseFileAuto comment).
+    if (TS_BACKFILL_EXTS.has(path.extname(filePath)) || patched.typeMap.size === 0) {
       const { typeMap, backfilled } = await backfillTypeMap(filePath, source);
-      patched.typeMap = typeMap;
-      if (backfilled) patched._typeMapBackfilled = true;
+      if (backfilled) {
+        patched.typeMap = typeMap;
+        patched._typeMapBackfilled = true;
+      }
     }
     return patched;
   }
