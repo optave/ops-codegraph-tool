@@ -148,17 +148,22 @@ const dbSizeBytes = fs.statSync(dbPath).size;
 
 // ── Incremental build tiers ─────────────────────────────────────────
 console.error(`  [${engine}] Benchmarking no-op rebuild...`);
-const noopTimings = [];
-for (let i = 0; i < INCREMENTAL_RUNS; i++) {
-	const start = performance.now();
-	await buildGraph(root, { engine, incremental: true });
-	noopTimings.push(performance.now() - start);
+let noopRebuildMs = null;
+try {
+	const noopTimings = [];
+	for (let i = 0; i < INCREMENTAL_RUNS; i++) {
+		const start = performance.now();
+		await buildGraph(root, { engine, incremental: true });
+		noopTimings.push(performance.now() - start);
+	}
+	noopRebuildMs = Math.round(median(noopTimings));
+} catch (err) {
+	console.error(`  [${engine}] No-op rebuild failed: ${(err as Error).message}`);
 }
-const noopRebuildMs = Math.round(median(noopTimings));
 
 console.error(`  [${engine}] Benchmarking 1-file rebuild...`);
 const original = fs.readFileSync(PROBE_FILE, 'utf8');
-let oneFileRebuildMs;
+let oneFileRebuildMs = null;
 let oneFilePhases = null;
 try {
 	const oneFileRuns = [];
@@ -172,9 +177,15 @@ try {
 	const medianRun = oneFileRuns[Math.floor(oneFileRuns.length / 2)];
 	oneFileRebuildMs = Math.round(medianRun.ms);
 	oneFilePhases = medianRun.phases;
+} catch (err) {
+	console.error(`  [${engine}] 1-file rebuild failed: ${(err as Error).message}`);
 } finally {
 	fs.writeFileSync(PROBE_FILE, original);
-	await buildGraph(root, { engine, incremental: true });
+	try {
+		await buildGraph(root, { engine, incremental: true });
+	} catch {
+		// Cleanup rebuild failed — probe file is already restored, move on
+	}
 }
 
 // ── Query benchmarks ────────────────────────────────────────────────

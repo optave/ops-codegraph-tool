@@ -25,45 +25,51 @@ export interface HybridSearchResult {
   results: HybridResult[];
 }
 
-export async function hybridSearchData(
-  query: string,
+interface RankedItem {
+  key: string;
+  rank: number;
+  source: 'bm25' | 'semantic';
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  endLine?: number | null;
+  role?: string | null;
+  fileHash?: string | null;
+  bm25Score?: number;
+  similarity?: number;
+}
+
+interface FusionEntry {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  endLine: number | null;
+  role: string | null;
+  fileHash: string | null;
+  rrfScore: number;
+  bm25Score: number | null;
+  bm25Rank: number | null;
+  similarity: number | null;
+  semanticRank: number | null;
+}
+
+/** Parse a semicolon-delimited query string into individual queries. */
+function parseQueries(query: string): string[] {
+  return query
+    .split(';')
+    .map((q) => q.trim())
+    .filter((q) => q.length > 0);
+}
+
+/** Collect BM25 and semantic ranked lists for each query. */
+async function collectRankedLists(
+  queries: string[],
   customDbPath: string | undefined,
-  opts: SemanticSearchOpts = {},
-): Promise<HybridSearchResult | null> {
-  const config = opts.config || loadConfig();
-  const searchCfg = config.search || ({} as CodegraphConfig['search']);
-  const limit = opts.limit ?? searchCfg.topK ?? 15;
-  const k = opts.rrfK ?? searchCfg.rrfK ?? 60;
-  const topK = (opts.limit ?? searchCfg.topK ?? 15) * 5;
-
-  const queries =
-    typeof query === 'string'
-      ? query
-          .split(';')
-          .map((q) => q.trim())
-          .filter((q) => q.length > 0)
-      : [query];
-
-  const checkDb = openReadonlyOrFail(customDbPath) as BetterSqlite3Database;
-  const ftsAvailable = hasFtsIndex(checkDb);
-  checkDb.close();
-  if (!ftsAvailable) return null;
-
-  interface RankedItem {
-    key: string;
-    rank: number;
-    source: 'bm25' | 'semantic';
-    name: string;
-    kind: string;
-    file: string;
-    line: number;
-    endLine?: number | null;
-    role?: string | null;
-    fileHash?: string | null;
-    bm25Score?: number;
-    similarity?: number;
-  }
-
+  opts: SemanticSearchOpts,
+  topK: number,
+): Promise<RankedItem[][]> {
   const rankedLists: RankedItem[][] = [];
 
   for (const q of queries) {
@@ -96,22 +102,13 @@ export async function hybridSearchData(
     }
   }
 
-  interface FusionEntry {
-    name: string;
-    kind: string;
-    file: string;
-    line: number;
-    endLine: number | null;
-    role: string | null;
-    fileHash: string | null;
-    rrfScore: number;
-    bm25Score: number | null;
-    bm25Rank: number | null;
-    similarity: number | null;
-    semanticRank: number | null;
-  }
+  return rankedLists;
+}
 
+/** Reciprocal Rank Fusion: merge ranked lists into a single scored result set. */
+function fuseResults(rankedLists: RankedItem[][], k: number, limit: number): HybridResult[] {
   const fusionMap = new Map<string, FusionEntry>();
+
   for (const list of rankedLists) {
     for (const item of list) {
       if (!fusionMap.has(item.key)) {
@@ -146,7 +143,7 @@ export async function hybridSearchData(
     }
   }
 
-  const results: HybridResult[] = [...fusionMap.values()]
+  return [...fusionMap.values()]
     .sort((a, b) => b.rrfScore - a.rrfScore)
     .slice(0, limit)
     .map((e) => ({
@@ -163,6 +160,27 @@ export async function hybridSearchData(
       similarity: e.similarity,
       semanticRank: e.semanticRank,
     }));
+}
+
+export async function hybridSearchData(
+  query: string,
+  customDbPath: string | undefined,
+  opts: SemanticSearchOpts = {},
+): Promise<HybridSearchResult | null> {
+  const config = opts.config || loadConfig();
+  const searchCfg = config.search || ({} as CodegraphConfig['search']);
+  const limit = opts.limit ?? searchCfg.topK ?? 15;
+  const k = opts.rrfK ?? searchCfg.rrfK ?? 60;
+  const topK = (opts.limit ?? searchCfg.topK ?? 15) * 5;
+
+  const checkDb = openReadonlyOrFail(customDbPath) as BetterSqlite3Database;
+  const ftsAvailable = hasFtsIndex(checkDb);
+  checkDb.close();
+  if (!ftsAvailable) return null;
+
+  const queries = parseQueries(query);
+  const rankedLists = await collectRankedLists(queries, customDbPath, opts, topK);
+  const results = fuseResults(rankedLists, k, limit);
 
   return { results };
 }

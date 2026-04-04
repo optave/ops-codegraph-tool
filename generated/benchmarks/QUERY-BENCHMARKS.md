@@ -5,7 +5,9 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 | Version | Engine | fnDeps d1 | fnDeps d3 | fnDeps d5 | fnImpact d1 | fnImpact d3 | fnImpact d5 | diffImpact |
 |---------|--------|----------:|----------:|----------:|------------:|------------:|------------:|-----------:|
-| 3.6.0 | native | 9.4 ↑6% | 9.6 ↑8% | 9.4 ↑7% | 3.4 ↑6% | 3.4 ↑10% | 3.3 ↑6% | 8.3ms ~ |
+| 3.7.0 | native | 9.7 ↑3% | 9.9 ↑3% | 9.7 ↑3% | 3.6 ↑6% | 3.6 ↑6% | 3.5 ↑6% | 8.9ms ↑7% |
+| 3.7.0 | wasm | 9.7 ~ | 9.8 ~ | 9.7 ~ | 3.5 ↑3% | 3.5 ↑3% | 3.6 ↑6% | 7.3ms ↓19% |
+| 3.6.0 | native | 9.4 | 9.6 | 9.4 | 3.4 | 3.4 | 3.3 | 8.3ms |
 | 3.6.0 | wasm | 9.7 ↑7% | 9.7 ↑7% | 9.6 ↑7% | 3.4 ↑13% | 3.4 ↑10% | 3.4 ↑10% | 9ms ↑41% |
 | 3.5.0 | wasm | 9.1 ~ | 9.1 ~ | 9 ~ | 3 ↓9% | 3.1 ↓3% | 3.1 ↓3% | 6.4ms ↓10% |
 | 3.4.1 | native | 8.9 ↑5% | 8.9 ↑5% | 8.8 ↑5% | 3.2 ~ | 3.1 ↓3% | 3.1 ↓3% | 8.1ms ↑45% |
@@ -41,7 +43,11 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 ### Latest results
 
-**Version:** 3.6.0 | **Date:** 2026-03-30
+**Version:** 3.7.0 | **Date:** 2026-04-01
+
+> **Note:** v3.8.1 query data was removed — it was measured before the `findCallersBatch` fix
+> and showed artificially inflated fnDeps latencies (25ms vs 10ms baseline). The next benchmark
+> run will record accurate post-fix numbers.
 
 #### Native (Rust)
 
@@ -49,15 +55,13 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 9.4ms |
-| fnDeps depth 3 | 9.6ms |
-| fnDeps depth 5 | 9.4ms |
-| fnImpact depth 1 | 3.4ms |
-| fnImpact depth 3 | 3.4ms |
-| fnImpact depth 5 | 3.3ms |
-| diffImpact latency | 8.3ms |
-| diffImpact affected functions | 0 |
-| diffImpact affected files | 0 |
+| fnDeps depth 1 | 9.7ms |
+| fnDeps depth 3 | 9.9ms |
+| fnDeps depth 5 | 9.7ms |
+| fnImpact depth 1 | 3.6ms |
+| fnImpact depth 3 | 3.6ms |
+| fnImpact depth 5 | 3.5ms |
+| diffImpact latency | 8.9ms |
 
 #### WASM
 
@@ -66,16 +70,15 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 | Metric | Value |
 |--------|------:|
 | fnDeps depth 1 | 9.7ms |
-| fnDeps depth 3 | 9.7ms |
-| fnDeps depth 5 | 9.6ms |
-| fnImpact depth 1 | 3.4ms |
-| fnImpact depth 3 | 3.4ms |
-| fnImpact depth 5 | 3.4ms |
-| diffImpact latency | 9ms |
-| diffImpact affected functions | 0 |
-| diffImpact affected files | 0 |
+| fnDeps depth 3 | 9.8ms |
+| fnDeps depth 5 | 9.7ms |
+| fnImpact depth 1 | 3.5ms |
+| fnImpact depth 3 | 3.5ms |
+| fnImpact depth 5 | 3.6ms |
+| diffImpact latency | 7.3ms |
 
 <!-- NOTES_START -->
+
 **Note (3.6.0):** Native deltas are relative to 3.4.1 (the last version with native data; 3.5.0 was wasm-only). The mid-query target changed from `db` (3.5.0) to `node`, which affects diffImpact scope and explains the ↑41% WASM diffImpact jump (6.4ms → 9ms). fnDeps/fnImpact growth of 6-10% is consistent with codebase expansion across two releases.
 
 **Note (3.5.0):** This version has WASM-only data (`native: null`) because the native engine crashed during `insertNodes` in the graph build phase. The root cause is a napi-rs serialization bug: parameter and child nodes with undefined `visibility` fields marshal as `null` at the JS-Rust boundary, which fails conversion into the Rust `Option<String>` type in `InsertNodesDefinition.visibility`. The mid-query target also changed from `noTests` to `db`, which may affect diffImpact scope. Query latencies for 3.5.0 are therefore not directly comparable to prior versions that include both engine rows. This will be fixed in the next release.
@@ -87,8 +90,55 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 **Note (3.3.1):** The ↑157-192% fnDeps/fnImpact deltas for 3.3.1 vs 3.3.0 are not comparable. PR #528 changed the hub target from auto-selected `src/types.ts` (shallow type-barrel) to pinned `buildGraph` (deep orchestration function with 2-3x more edges). There is no engine regression — `diffImpact` improved 20-44% in the same release. Future version comparisons (3.3.1+) are stable and meaningful.
 <!-- NOTES_END -->
 
-<!-- QUERY_BENCHMARK_DATA
-[
+<!-- QUERY_BENCHMARK_DATA [
+  {
+    "version": "3.7.0",
+    "date": "2026-04-01",
+    "wasm": {
+      "targets": {
+        "hub": "buildGraph",
+        "mid": "node",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 9.7,
+        "depth3Ms": 9.8,
+        "depth5Ms": 9.7
+      },
+      "fnImpact": {
+        "depth1Ms": 3.5,
+        "depth3Ms": 3.5,
+        "depth5Ms": 3.6
+      },
+      "diffImpact": {
+        "latencyMs": 7.3,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    },
+    "native": {
+      "targets": {
+        "hub": "buildGraph",
+        "mid": "node",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 9.7,
+        "depth3Ms": 9.9,
+        "depth5Ms": 9.7
+      },
+      "fnImpact": {
+        "depth1Ms": 3.6,
+        "depth3Ms": 3.6,
+        "depth5Ms": 3.5
+      },
+      "diffImpact": {
+        "latencyMs": 8.9,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    }
+  },
   {
     "version": "3.6.0",
     "date": "2026-03-30",
@@ -884,5 +934,4 @@ Latencies are median over 5 runs. Hub target = most-connected node.
       }
     }
   }
-]
--->
+] -->

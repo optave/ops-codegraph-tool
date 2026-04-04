@@ -155,6 +155,146 @@ function buildBarrelEdges(
   }
 }
 
+// ── Import edges (native engine) ────────────────────────────────────────
+
+function buildImportEdgesNative(
+  ctx: PipelineContext,
+  getNodeIdStmt: NodeIdStmt,
+  allEdgeRows: EdgeRowTuple[],
+  native: NativeAddon,
+): void {
+  const { fileSymbols, barrelOnlyFiles, rootDir } = ctx;
+
+  // 1. Build per-file input data
+  const files: Array<{
+    file: string;
+    fileNodeId: number;
+    isBarrelOnly: boolean;
+    imports: Array<{
+      source: string;
+      names: string[];
+      reexport: boolean;
+      typeOnly: boolean;
+      dynamicImport: boolean;
+      wildcardReexport: boolean;
+    }>;
+    definitionNames: string[];
+  }> = [];
+
+  // Collect all file node IDs we'll need (sources + targets)
+  const fileNodeIds: Array<{ file: string; nodeId: number }> = [];
+  const seenNodeFiles = new Set<string>();
+
+  const addFileNodeId = (relPath: string): { id: number } | undefined => {
+    if (seenNodeFiles.has(relPath)) return fileNodeRowCache.get(relPath);
+    const row = getNodeIdStmt.get(relPath, 'file', relPath, 0);
+    if (row) {
+      seenNodeFiles.add(relPath);
+      fileNodeIds.push({ file: relPath, nodeId: row.id });
+      fileNodeRowCache.set(relPath, row);
+    }
+    return row;
+  };
+  const fileNodeRowCache = new Map<string, { id: number }>();
+
+  // 2. Pre-resolve all imports and build resolved imports array.
+  // Keys use forward-slash-normalized rootDir + "/" + relPath to match the Rust
+  // lookup format (format!("{}/{}", root_dir.replace('\\', "/"), file)).
+  // On Windows, rootDir has backslashes but Rust normalizes them — the JS side
+  // must do the same or every resolve key lookup misses (#750).
+  const resolvedImports: Array<{ key: string; resolvedPath: string }> = [];
+  const fwdRootDir = rootDir.replace(/\\/g, '/');
+
+  for (const [relPath, symbols] of fileSymbols) {
+    const fileNodeRow = addFileNodeId(relPath);
+    if (!fileNodeRow) continue;
+
+    const importInfos: Array<{
+      source: string;
+      names: string[];
+      reexport: boolean;
+      typeOnly: boolean;
+      dynamicImport: boolean;
+      wildcardReexport: boolean;
+    }> = [];
+
+    for (const imp of symbols.imports) {
+      // Pre-resolve and register target file node
+      const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
+      addFileNodeId(resolvedPath);
+
+      // Key matches Rust's format!("{}/{}", root_dir.replace('\\', "/"), file_input.file)
+      resolvedImports.push({ key: `${fwdRootDir}/${relPath}|${imp.source}`, resolvedPath });
+
+      importInfos.push({
+        source: imp.source,
+        names: imp.names,
+        reexport: !!imp.reexport,
+        typeOnly: !!imp.typeOnly,
+        dynamicImport: !!imp.dynamicImport,
+        wildcardReexport: !!imp.wildcardReexport,
+      });
+    }
+
+    files.push({
+      file: relPath,
+      fileNodeId: fileNodeRow.id,
+      isBarrelOnly: barrelOnlyFiles.has(relPath),
+      imports: importInfos,
+      definitionNames: symbols.definitions.map((d) => d.name),
+    });
+  }
+
+  // 4. Flatten reexportMap
+  const fileReexports: Array<{
+    file: string;
+    reexports: Array<{
+      source: string;
+      names: string[];
+      wildcardReexport: boolean;
+    }>;
+  }> = [];
+  if (ctx.reexportMap) {
+    for (const [file, entries] of ctx.reexportMap) {
+      const reexports = (
+        entries as Array<{ source: string; names: string[]; wildcardReexport: boolean }>
+      ).map((re) => ({
+        source: re.source,
+        names: re.names,
+        wildcardReexport: !!re.wildcardReexport,
+      }));
+      fileReexports.push({ file, reexports });
+
+      // Register reexport target files for node ID lookup
+      for (const re of reexports) {
+        addFileNodeId(re.source);
+      }
+    }
+  }
+
+  // 5. Compute barrel file list
+  const barrelFiles: string[] = [];
+  for (const [relPath] of fileSymbols) {
+    if (isBarrelFile(ctx, relPath)) {
+      barrelFiles.push(relPath);
+    }
+  }
+
+  // 6. Call native
+  const nativeEdges = native.buildImportEdges!(
+    files,
+    resolvedImports,
+    fileReexports,
+    fileNodeIds,
+    barrelFiles,
+    rootDir,
+  ) as NativeEdge[];
+
+  for (const e of nativeEdges) {
+    allEdgeRows.push([e.sourceId, e.targetId, e.kind, e.confidence, e.dynamic]);
+  }
+}
+
 // ── Call edges (native engine) ──────────────────────────────────────────
 
 function buildCallEdgesNative(
@@ -214,7 +354,10 @@ function buildImportedNamesForNative(
   rootDir: string,
 ): Array<{ name: string; file: string }> {
   const importedNames: Array<{ name: string; file: string }> = [];
-  for (const imp of symbols.imports) {
+  // Process dynamic imports first (lower priority), then static imports
+  // (higher priority). Rust HashMap::collect keeps the last entry per key,
+  // so static imports win when both contribute the same name.
+  const addImports = (imp: (typeof symbols.imports)[number]) => {
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
     for (const name of imp.names) {
       const cleanName = name.replace(/^\*\s+as\s+/, '');
@@ -225,6 +368,12 @@ function buildImportedNamesForNative(
       }
       importedNames.push({ name: cleanName, file: targetFile });
     }
+  };
+  for (const imp of symbols.imports) {
+    if (imp.dynamicImport) addImports(imp);
+  }
+  for (const imp of symbols.imports) {
+    if (!imp.dynamicImport) addImports(imp);
   }
   return importedNames;
 }
@@ -269,10 +418,23 @@ function buildImportedNamesMap(
   rootDir: string,
 ): Map<string, string> {
   const importedNames = new Map<string, string>();
+  // Process dynamic imports first (lower priority), then static imports
+  // (higher priority). Static imports represent direct bindings while dynamic
+  // imports often use aliased destructuring (`{ foo: bar } = await import(…)`).
+  // When both contribute the same name, the static binding is authoritative.
   for (const imp of symbols.imports) {
+    if (!imp.dynamicImport) continue;
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
     for (const name of imp.names) {
       importedNames.set(name.replace(/^\*\s+as\s+/, ''), resolvedPath);
+    }
+  }
+  for (const imp of symbols.imports) {
+    if (imp.dynamicImport) continue;
+    const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
+    for (const name of imp.names) {
+      const cleanName = name.replace(/^\*\s+as\s+/, '');
+      importedNames.set(cleanName, resolvedPath);
     }
   }
   return importedNames;
@@ -594,7 +756,28 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       }
     }
 
-    buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
+    // Skip native import-edge path for small incremental builds (≤3 files):
+    // napi-rs marshaling overhead exceeds computation savings.
+    const useNativeImportEdges =
+      native?.buildImportEdges && (ctx.isFullBuild || ctx.fileSymbols.size > 3);
+    if (useNativeImportEdges) {
+      const beforeLen = allEdgeRows.length;
+      buildImportEdgesNative(ctx, getNodeIdStmt, allEdgeRows, native!);
+      // Fallback: if native produced 0 import edges but there are imports to
+      // process, the native binary may have a key-format mismatch (e.g. Windows
+      // path separators — #750).  Retry with the JS implementation.
+      // NOTE: This also fires for codebases where every import targets an
+      // external package (npm deps) that the resolver intentionally skips.
+      // In that case the JS path resolves zero edges too, so the only cost
+      // is the redundant JS traversal — no correctness impact.
+      const hasImports = [...ctx.fileSymbols.values()].some((s) => s.imports.length > 0);
+      if (allEdgeRows.length === beforeLen && hasImports) {
+        debug('Native buildImportEdges produced 0 edges — falling back to JS');
+        buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
+      }
+    } else {
+      buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
+    }
 
     // Skip native call-edge path for small incremental builds (≤3 files):
     // napi-rs marshaling overhead for allNodes exceeds computation savings.

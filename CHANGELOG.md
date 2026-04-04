@@ -2,6 +2,111 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.9.0](https://github.com/optave/ops-codegraph-tool/compare/v3.8.1...v3.9.0) (2026-04-04)
+
+**Engine parity hardening and cross-database queries.** This release closes the remaining native/WASM divergences — node counts, edge counts, complexity metrics, and import resolution now match across engines. A new `--db` flag on `branch-compare` and `info` lets you point at any `.codegraph/graph.db`, enabling cross-repo comparisons without rebuilding. WASM grammar loading is now lazy during incremental rebuilds, cutting rebuild times for large codebases. Windows users get a fix for `ENOENT` failures during auto-install.
+
+### Features
+
+* **cli:** add `--db` flag to `branch-compare` and `info` commands for cross-database queries ([#820](https://github.com/optave/ops-codegraph-tool/pull/820))
+* add resolution precision/recall metrics and version stamp to README benchmarks ([#796](https://github.com/optave/ops-codegraph-tool/pull/796))
+
+### Bug Fixes
+
+* respect `--engine wasm` in pipeline guard ([#819](https://github.com/optave/ops-codegraph-tool/pull/819))
+* resolve npm ENOENT on Windows for auto-install ([#818](https://github.com/optave/ops-codegraph-tool/pull/818))
+* resolve native/WASM engine divergence in node and edge counts ([#810](https://github.com/optave/ops-codegraph-tool/pull/810))
+* **native:** resolve importedNames priority and type map scope collisions ([#811](https://github.com/optave/ops-codegraph-tool/pull/811))
+* **native:** resolve import path mismatch and add post-native structure phase ([#807](https://github.com/optave/ops-codegraph-tool/pull/807))
+* **native:** extract export name for destructured dynamic imports ([#813](https://github.com/optave/ops-codegraph-tool/pull/813))
+* **native:** fix incremental barrel edges, median parity, and analysis data loss ([#806](https://github.com/optave/ops-codegraph-tool/pull/806))
+* **parity:** align native vs WASM complexity metrics ([#809](https://github.com/optave/ops-codegraph-tool/pull/809))
+* v3.8.1 regression fixes (fnDeps, WASM lazy-load, edge parity, CI guard) ([#815](https://github.com/optave/ops-codegraph-tool/pull/815))
+* **ci:** remove npm self-upgrade that breaks publish workflow ([#790](https://github.com/optave/ops-codegraph-tool/pull/790))
+
+### Performance
+
+* lazy-load WASM grammars for incremental rebuilds ([#808](https://github.com/optave/ops-codegraph-tool/pull/808))
+
+## [3.8.1](https://github.com/optave/ops-codegraph-tool/compare/v3.8.0...v3.8.1) (2026-04-03)
+
+**Windows stability, native engine fixes, and large-codebase performance.** This patch hardens the v3.8.0 release with critical Windows fixes (polling watcher to avoid ReFS BSOD, Windows-scoped import-edge handling), several native engine corrections (dataflow parameter indexing, embedding path resolution, build orchestrator sequencing), and performance improvements for large codebases — cycle detection and stats queries are faster, and query-time analysis now routes through the native Rust engine.
+
+### Bug Fixes
+
+* **native:** resolve dataflow null paramIndex and import edge key mismatch ([#788](https://github.com/optave/ops-codegraph-tool/pull/788))
+* **native:** keep nativeDb open through finalize for correct build_meta ([#784](https://github.com/optave/ops-codegraph-tool/pull/784))
+* **embed:** handle absolute file paths from native engine ([#780](https://github.com/optave/ops-codegraph-tool/pull/780), [#783](https://github.com/optave/ops-codegraph-tool/pull/783))
+* default watcher to polling on Windows to avoid ReFS BSOD ([#778](https://github.com/optave/ops-codegraph-tool/pull/778))
+* scope native import-edge skip to Windows only ([#777](https://github.com/optave/ops-codegraph-tool/pull/777))
+* run analysis phases after native Rust build orchestrator ([#757](https://github.com/optave/ops-codegraph-tool/pull/757))
+* skip native build orchestrator for addon ≤3.8.0 and fix path bug ([#758](https://github.com/optave/ops-codegraph-tool/pull/758))
+* auto-install @huggingface/transformers in non-TTY environments ([#779](https://github.com/optave/ops-codegraph-tool/pull/779))
+* remove duplicate function definitions in leiden optimiser ([#786](https://github.com/optave/ops-codegraph-tool/pull/786))
+* replace empty catch blocks with structured error handling ([#764](https://github.com/optave/ops-codegraph-tool/pull/764))
+* replace console.log with structured logging in non-CLI-output code ([#765](https://github.com/optave/ops-codegraph-tool/pull/765))
+* **ci:** add concurrency group to codegraph-impact workflow ([#785](https://github.com/optave/ops-codegraph-tool/pull/785))
+* **bench:** resolve query benchmark CI failure and increase embedding timeout ([#749](https://github.com/optave/ops-codegraph-tool/pull/749))
+
+### Performance
+
+* route query analysis through native Rust engine ([#745](https://github.com/optave/ops-codegraph-tool/pull/745))
+* optimize cycles and stats for large codebases ([#781](https://github.com/optave/ops-codegraph-tool/pull/781))
+* filter reverse-dep files from native build analysis scope ([#782](https://github.com/optave/ops-codegraph-tool/pull/782))
+* forward langId hint to native standalone analysis functions ([#743](https://github.com/optave/ops-codegraph-tool/pull/743))
+
+### Refactors
+
+* decompose ast-analysis visitor framework ([#771](https://github.com/optave/ops-codegraph-tool/pull/771))
+* Titan v3.8.0 — decompose god-functions, structured logging, error handling ([#775](https://github.com/optave/ops-codegraph-tool/pull/775))
+* extract class declaration handlers in language extractors ([#769](https://github.com/optave/ops-codegraph-tool/pull/769))
+* split hybridSearchData into keyword, vector, and merge steps ([#768](https://github.com/optave/ops-codegraph-tool/pull/768))
+* decompose makePartition into focused graph operations ([#766](https://github.com/optave/ops-codegraph-tool/pull/766))
+* extract rendering sub-functions from inspect and diff-impact-mermaid ([#767](https://github.com/optave/ops-codegraph-tool/pull/767))
+* address quality warnings in shared modules ([#770](https://github.com/optave/ops-codegraph-tool/pull/770))
+
+## [3.8.0](https://github.com/optave/ops-codegraph-tool/compare/v3.7.0...v3.8.0) (2026-04-01)
+
+**34 languages and a fully native build pipeline.** This release completes Phase 7 (Expanded Language Support) by shipping the final 11 languages — F#, Gleam, Clojure, Julia, R, Erlang, Solidity, Objective-C, CUDA, Groovy, and Verilog — bringing codegraph from 23 to 34 supported languages. On the performance side, the entire build pipeline now runs natively in Rust: graph algorithms (BFS, shortest path, Louvain, centrality), import edge building with barrel resolution, and build-glue queries all migrate from JS to napi-rs. A new Rust build orchestration layer coordinates the full native pipeline end-to-end.
+
+### Features
+
+* add F#, Gleam, Clojure, Julia, R, Erlang language support ([#722](https://github.com/optave/ops-codegraph-tool/pull/722))
+* add Solidity, Objective-C, CUDA, Groovy, Verilog language support ([#729](https://github.com/optave/ops-codegraph-tool/pull/729))
+* full Rust build orchestration ([#740](https://github.com/optave/ops-codegraph-tool/pull/740))
+
+### Bug Fixes
+
+* **native:** enable bulkInsertNodes native path ([#736](https://github.com/optave/ops-codegraph-tool/pull/736))
+* **native:** enable bulkInsertNodes native path — null-visibility serialisation ([#737](https://github.com/optave/ops-codegraph-tool/pull/737))
+* **native:** prevent SQLITE_CORRUPT in incremental pipeline ([#728](https://github.com/optave/ops-codegraph-tool/pull/728))
+* **ocaml:** use LANGUAGE_OCAML_INTERFACE grammar for .mli files ([#730](https://github.com/optave/ops-codegraph-tool/pull/730))
+* address unresolved review feedback from batch4 language extractors ([#731](https://github.com/optave/ops-codegraph-tool/pull/731))
+* **bench:** report partial native results when incremental rebuild fails ([#741](https://github.com/optave/ops-codegraph-tool/pull/741))
+
+### Performance
+
+* migrate graph algorithms (BFS, shortest path, Louvain, centrality) to Rust ([#732](https://github.com/optave/ops-codegraph-tool/pull/732))
+* migrate import edge building + barrel resolution to Rust ([#738](https://github.com/optave/ops-codegraph-tool/pull/738))
+* **native:** expose standalone complexity/CFG/dataflow analysis via napi-rs ([#733](https://github.com/optave/ops-codegraph-tool/pull/733))
+* native Rust build-glue queries (detect-changes, finalize, incremental) ([#735](https://github.com/optave/ops-codegraph-tool/pull/735))
+
+### Refactors
+
+* **native:** remove call kind from AST node extraction ([#734](https://github.com/optave/ops-codegraph-tool/pull/734))
+
+## [3.7.0](https://github.com/optave/ops-codegraph-tool/compare/v3.6.0...v3.7.0) (2026-03-30)
+
+**Six more languages and a CFG stability fix.** Codegraph now supports Elixir, Lua, Dart, Zig, Haskell, and OCaml — bringing the total to 23 languages with dual-engine extractors. A WAL conflict in the native CFG bulk-insert path is also fixed, preventing database corruption when JS and native connections overlap during control-flow graph writes.
+
+### Features
+
+* add Elixir, Lua, Dart, Zig, Haskell, OCaml language support ([#718](https://github.com/optave/ops-codegraph-tool/pull/718))
+
+### Bug Fixes
+
+* **cfg:** avoid dual-connection WAL conflict in native bulkInsertCfg ([#719](https://github.com/optave/ops-codegraph-tool/pull/719))
+
 ## [3.6.0](https://github.com/optave/ops-codegraph-tool/compare/v3.5.0...v3.6.0) (2026-03-30)
 
 **Six new languages: Elixir, Lua, Dart, Zig, Haskell, OCaml.** This release adds first-class support for Elixir, Lua, Dart, Zig, Haskell, and OCaml — bringing the total supported languages to 23. Each language ships with dual-engine extractors (WASM TypeScript + native Rust), AST configs, and parser tests. The native Rust engine gains batched query methods for the read path, WAL corruption is fixed when native and JS connections overlap, and WASM call-AST extraction is restored for full engine parity.

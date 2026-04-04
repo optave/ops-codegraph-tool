@@ -105,7 +105,7 @@ fn collect_module_children(node: &Node, source: &[u8]) -> Vec<Definition> {
     children
 }
 
-fn handle_def_function(node: &Node, source: &[u8], symbols: &mut FileSymbols, keyword: &str) {
+fn handle_def_function(node: &Node, source: &[u8], symbols: &mut FileSymbols, _keyword: &str) {
     let args = match find_child(node, "arguments") {
         Some(a) => a,
         None => return,

@@ -170,17 +170,22 @@ for (let i = 0; i < RUNS; i++) {
 const fullBuildMs = Math.round(median(fullTimings));
 
 // No-op rebuild (nothing changed)
-const noopTimings = [];
-for (let i = 0; i < RUNS; i++) {
-	const start = performance.now();
-	await buildGraph(root, { engine, incremental: true });
-	noopTimings.push(performance.now() - start);
+let noopRebuildMs = null;
+try {
+	const noopTimings = [];
+	for (let i = 0; i < RUNS; i++) {
+		const start = performance.now();
+		await buildGraph(root, { engine, incremental: true });
+		noopTimings.push(performance.now() - start);
+	}
+	noopRebuildMs = Math.round(median(noopTimings));
+} catch (err) {
+	console.error(`  [${engine}] No-op rebuild failed: ${(err as Error).message}`);
 }
-const noopRebuildMs = Math.round(median(noopTimings));
 
 // 1-file change rebuild
 const original = fs.readFileSync(PROBE_FILE, 'utf8');
-let oneFileRebuildMs;
+let oneFileRebuildMs = null;
 let oneFilePhases = null;
 try {
 	const oneFileRuns = [];
@@ -194,12 +199,18 @@ try {
 	const medianRun = oneFileRuns[Math.floor(oneFileRuns.length / 2)];
 	oneFileRebuildMs = Math.round(medianRun.ms);
 	oneFilePhases = medianRun.phases;
+} catch (err) {
+	console.error(`  [${engine}] 1-file rebuild failed: ${(err as Error).message}`);
 } finally {
 	fs.writeFileSync(PROBE_FILE, original);
-	await buildGraph(root, { engine, incremental: true });
+	try {
+		await buildGraph(root, { engine, incremental: true });
+	} catch {
+		// Cleanup rebuild failed — probe file is already restored, move on
+	}
 }
 
-console.error(`  full=${fullBuildMs}ms noop=${noopRebuildMs}ms 1-file=${oneFileRebuildMs}ms`);
+console.error(`  full=${fullBuildMs}ms noop=${noopRebuildMs ?? 'FAILED'}ms 1-file=${oneFileRebuildMs ?? 'FAILED'}ms`);
 
 // Restore console.log for JSON output
 console.log = origLog;

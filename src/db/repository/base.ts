@@ -100,6 +100,20 @@ export class Repository implements IRepository {
     throw new Error('not implemented');
   }
 
+  /**
+   * Batch version of findCallers — returns callers for multiple node IDs in a
+   * single query. Default implementation loops; subclasses override with SQL
+   * `IN (...)` for efficiency.
+   */
+  findCallersBatch(nodeIds: number[]): Map<number, RelatedNodeRow[]> {
+    const result = new Map<number, RelatedNodeRow[]>();
+    for (const id of nodeIds) {
+      const callers = this.findCallers(id);
+      if (callers.length > 0) result.set(id, callers);
+    }
+    return result;
+  }
+
   findDistinctCallers(_nodeId: number): RelatedNodeRow[] {
     throw new Error('not implemented');
   }
@@ -188,5 +202,25 @@ export class Repository implements IRepository {
 
   getComplexityForNode(_nodeId: number): ComplexityMetrics | undefined {
     throw new Error('not implemented');
+  }
+
+  // ── Convenience queries ──────────────────────────────────────────────
+  /**
+   * Look up the stored content hash for a file.
+   * Returns null when the file is not in file_hashes or the method is
+   * not yet implemented on the concrete repository.
+   */
+  getFileHash(_file: string): string | null {
+    return null;
+  }
+
+  /** Check whether the graph contains any 'implements' edges. */
+  hasImplementsEdges(): boolean {
+    return false;
+  }
+
+  /** Check whether the co_changes table exists and has data. */
+  hasCoChangesTable(): boolean {
+    return false;
   }
 }

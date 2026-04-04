@@ -328,38 +328,38 @@ function extractConstantsWalk(node: TreeSitterNode, definitions: Definition[]): 
       if (inner) declNode = inner;
     }
 
-    const t = declNode.type;
-    if (t === 'lexical_declaration' || t === 'variable_declaration') {
-      if (declNode.text.startsWith('const ')) {
-        for (let j = 0; j < declNode.childCount; j++) {
-          const declarator = declNode.child(j);
-          if (!declarator || declarator.type !== 'variable_declarator') continue;
-          const nameN = declarator.childForFieldName('name');
-          const valueN = declarator.childForFieldName('value');
-          if (!nameN || nameN.type !== 'identifier' || !valueN) continue;
-          // Skip functions — already captured by query patterns
-          const valType = valueN.type;
-          if (
-            valType === 'arrow_function' ||
-            valType === 'function_expression' ||
-            valType === 'function'
-          )
-            continue;
-          if (isConstantValue(valueN)) {
-            definitions.push({
-              name: nameN.text,
-              kind: 'constant',
-              line: declNode.startPosition.row + 1,
-              endLine: nodeEndLine(declNode),
-            });
-          }
-        }
-      }
-    }
+    extractConstDeclarators(declNode, definitions);
 
     // Recurse into non-function, non-export-statement children (blocks, if-statements, etc.)
     if (child.type !== 'export_statement') {
       extractConstantsWalk(child, definitions);
+    }
+  }
+}
+
+/** Extract constant definitions from a `const` declaration node. */
+function extractConstDeclarators(declNode: TreeSitterNode, definitions: Definition[]): void {
+  const t = declNode.type;
+  if (t !== 'lexical_declaration' && t !== 'variable_declaration') return;
+  if (!declNode.text.startsWith('const ')) return;
+
+  for (let j = 0; j < declNode.childCount; j++) {
+    const declarator = declNode.child(j);
+    if (!declarator || declarator.type !== 'variable_declarator') continue;
+    const nameN = declarator.childForFieldName('name');
+    const valueN = declarator.childForFieldName('value');
+    if (!nameN || nameN.type !== 'identifier' || !valueN) continue;
+    // Skip functions — already captured by query patterns
+    const valType = valueN.type;
+    if (valType === 'arrow_function' || valType === 'function_expression' || valType === 'function')
+      continue;
+    if (isConstantValue(valueN)) {
+      definitions.push({
+        name: nameN.text,
+        kind: 'constant',
+        line: declNode.startPosition.row + 1,
+        endLine: nodeEndLine(declNode),
+      });
     }
   }
 }
@@ -678,24 +678,7 @@ function handleCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const fn = node.childForFieldName('function');
   if (!fn) return;
   if (fn.type === 'import') {
-    const args = node.childForFieldName('arguments') || findChild(node, 'arguments');
-    if (args) {
-      const strArg = findChild(args, 'string');
-      if (strArg) {
-        const modPath = strArg.text.replace(/['"]/g, '');
-        const names = extractDynamicImportNames(node);
-        ctx.imports.push({
-          source: modPath,
-          names,
-          line: node.startPosition.row + 1,
-          dynamicImport: true,
-        });
-      } else {
-        debug(
-          `Skipping non-static dynamic import() at line ${node.startPosition.row + 1} (template literal or variable)`,
-        );
-      }
-    }
+    handleDynamicImportCall(node, ctx.imports);
   } else {
     const callInfo = extractCallInfo(fn, node);
     if (callInfo) ctx.calls.push(callInfo);
@@ -703,6 +686,22 @@ function handleCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
       const cbDef = extractCallbackDefinition(node, fn);
       if (cbDef) ctx.definitions.push(cbDef);
     }
+  }
+}
+
+/** Handle a dynamic import() call expression and add to imports if static. */
+function handleDynamicImportCall(node: TreeSitterNode, imports: Import[]): void {
+  const args = node.childForFieldName('arguments') || findChild(node, 'arguments');
+  if (!args) return;
+  const strArg = findChild(args, 'string');
+  if (strArg) {
+    const modPath = strArg.text.replace(/['"]/g, '');
+    const names = extractDynamicImportNames(node);
+    imports.push({ source: modPath, names, line: node.startPosition.row + 1, dynamicImport: true });
+  } else {
+    debug(
+      `Skipping non-static dynamic import() at line ${node.startPosition.row + 1} (template literal or variable)`,
+    );
   }
 }
 
@@ -998,21 +997,34 @@ function handleVarDeclaratorTypeMap(
   const nameN = node.childForFieldName('name');
   if (!nameN || nameN.type !== 'identifier') return;
 
-  // Type annotation: const x: Foo = …
   const typeAnno = findChild(node, 'type_annotation');
+  const valueN = node.childForFieldName('value');
+
+  // Constructor on the same declaration wins over annotation: the runtime type is
+  // what matters for call resolution (e.g. `const x: Base = new Derived()` should
+  // resolve `x.render()` to `Derived.render`, not `Base.render`).
+  // When no constructor is present, annotation still takes precedence over factory.
+  if (valueN?.type === 'new_expression') {
+    const ctorType = extractNewExprTypeName(valueN);
+    if (ctorType) {
+      setTypeMapEntry(typeMap, nameN.text, ctorType, 1.0);
+      return;
+    }
+  }
+
+  // Type annotation: const x: Foo = … → confidence 0.9
   if (typeAnno) {
     const typeName = extractSimpleTypeName(typeAnno);
-    if (typeName) setTypeMapEntry(typeMap, nameN.text, typeName, 0.9);
+    if (typeName) {
+      setTypeMapEntry(typeMap, nameN.text, typeName, 0.9);
+      return;
+    }
   }
 
-  const valueN = node.childForFieldName('value');
   if (!valueN) return;
 
-  // Constructor: const x = new Foo() → confidence 1.0
-  if (valueN.type === 'new_expression') {
-    const ctorType = extractNewExprTypeName(valueN);
-    if (ctorType) setTypeMapEntry(typeMap, nameN.text, ctorType, 1.0);
-  }
+  // Constructor already handled above — only factory path remains.
+  if (valueN.type === 'new_expression') return;
   // Factory method: const x = Foo.create() → confidence 0.7
   else if (valueN.type === 'call_expression') {
     const fn = valueN.childForFieldName('function');

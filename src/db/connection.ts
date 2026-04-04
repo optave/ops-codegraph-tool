@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { debug, warn } from '../infrastructure/logger.js';
 import { getNative, isNativeAvailable } from '../infrastructure/native.js';
-import { DbError } from '../shared/errors.js';
+import { DbError, toErrorMessage } from '../shared/errors.js';
 import type { BetterSqlite3Database, NativeDatabase } from '../types.js';
 import { getDatabase } from './better-sqlite3.js';
 import { Repository } from './repository/base.js';
@@ -20,7 +20,8 @@ function getPackageVersion(): string {
     const pkgPath = path.join(connDir, '..', '..', 'package.json');
     _packageVersion = (JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as { version: string })
       .version;
-  } catch {
+  } catch (e) {
+    debug(`Failed to read package version: ${toErrorMessage(e)}`);
     _packageVersion = '';
   }
   return _packageVersion;
@@ -41,8 +42,8 @@ function warnOnVersionMismatch(getBuildVersion: () => string | undefined | null)
         `DB was built with codegraph v${buildVersion}, running v${currentVersion}. Consider: codegraph build --no-incremental`,
       );
     }
-  } catch {
-    // build_meta table may not exist in older DBs — silently ignore
+  } catch (e) {
+    debug(`Version mismatch check skipped (build_meta may not exist): ${toErrorMessage(e)}`);
   }
 }
 
@@ -78,11 +79,11 @@ export function findRepoRoot(fromDir?: string): string | null {
     try {
       root = fs.realpathSync(raw);
     } catch (e) {
-      debug(`realpathSync failed for git root "${raw}", using resolve: ${(e as Error).message}`);
+      debug(`realpathSync failed for git root "${raw}", using resolve: ${toErrorMessage(e)}`);
       root = path.resolve(raw);
     }
   } catch (e) {
-    debug(`git rev-parse failed for "${dir}": ${(e as Error).message}`);
+    debug(`git rev-parse failed for "${dir}": ${toErrorMessage(e)}`);
     root = null;
   }
   if (!fromDir) {
@@ -103,7 +104,7 @@ function isProcessAlive(pid: number): boolean {
     process.kill(pid, 0);
     return true;
   } catch (e) {
-    debug(`PID ${pid} not alive: ${(e as NodeJS.ErrnoException).code || (e as Error).message}`);
+    debug(`PID ${pid} not alive: ${(e as NodeJS.ErrnoException).code || toErrorMessage(e)}`);
     return false;
   }
 }
@@ -119,12 +120,12 @@ function acquireAdvisoryLock(dbPath: string): void {
       }
     }
   } catch (e) {
-    debug(`Advisory lock read failed: ${(e as Error).message}`);
+    debug(`Advisory lock read failed: ${toErrorMessage(e)}`);
   }
   try {
     fs.writeFileSync(lockPath, String(process.pid), 'utf-8');
   } catch (e) {
-    debug(`Advisory lock write failed: ${(e as Error).message}`);
+    debug(`Advisory lock write failed: ${toErrorMessage(e)}`);
   }
 }
 
@@ -135,7 +136,7 @@ function releaseAdvisoryLock(lockPath: string): void {
       fs.unlinkSync(lockPath);
     }
   } catch (e) {
-    debug(`Advisory lock release failed for ${lockPath}: ${(e as Error).message}`);
+    debug(`Advisory lock release failed for ${lockPath}: ${toErrorMessage(e)}`);
   }
 }
 
@@ -151,7 +152,7 @@ function isSameDirectory(a: string, b: string): boolean {
     const sb = fs.statSync(b);
     return sa.dev === sb.dev && sa.ino === sb.ino;
   } catch (e) {
-    debug(`isSameDirectory stat failed: ${(e as Error).message}`);
+    debug(`isSameDirectory stat failed: ${toErrorMessage(e)}`);
     return false;
   }
 }
@@ -187,8 +188,8 @@ export function flushDeferredClose(): void {
     const db = _deferredDbs.pop()!;
     try {
       db.close();
-    } catch {
-      /* ignore — handle may already be closed */
+    } catch (e) {
+      debug(`Deferred DB close failed (handle may already be closed): ${toErrorMessage(e)}`);
     }
   }
 }
@@ -216,8 +217,8 @@ export function closeDbDeferred(db: LockedDatabase): void {
       _deferredDbs.splice(idx, 1);
       try {
         db.close();
-      } catch {
-        /* ignore — handle may already be closed by flush */
+      } catch (e) {
+        debug(`Deferred DB close failed (may already be closed by flush): ${toErrorMessage(e)}`);
       }
     }
   });
@@ -239,8 +240,8 @@ export function closeDbPair(pair: LockedDatabasePair): void {
   if (pair.nativeDb) {
     try {
       pair.nativeDb.close();
-    } catch {
-      /* ignore */
+    } catch (e) {
+      debug(`closeDbPair: native close failed: ${toErrorMessage(e)}`);
     }
   }
   closeDb(pair.db);
@@ -251,8 +252,8 @@ export function closeDbPairDeferred(pair: LockedDatabasePair): void {
   if (pair.nativeDb) {
     try {
       pair.nativeDb.close();
-    } catch {
-      /* ignore */
+    } catch (e) {
+      debug(`closeDbPairDeferred: native close failed: ${toErrorMessage(e)}`);
     }
   }
   closeDbDeferred(pair.db);
@@ -270,7 +271,7 @@ export function findDbPath(customPath?: string): string {
     try {
       ceiling = fs.realpathSync(rawCeiling);
     } catch (e) {
-      debug(`realpathSync failed for ceiling "${rawCeiling}": ${(e as Error).message}`);
+      debug(`realpathSync failed for ceiling "${rawCeiling}": ${toErrorMessage(e)}`);
       ceiling = rawCeiling;
     }
   } else {
@@ -281,7 +282,7 @@ export function findDbPath(customPath?: string): string {
   try {
     dir = fs.realpathSync(process.cwd());
   } catch (e) {
-    debug(`realpathSync failed for cwd: ${(e as Error).message}`);
+    debug(`realpathSync failed for cwd: ${toErrorMessage(e)}`);
     dir = process.cwd();
   }
   while (true) {
@@ -334,9 +335,11 @@ function openRepoNative(customDbPath?: string): { repo: Repository; close(): voi
   const ndb = native.NativeDatabase.openReadonly(dbPath);
   try {
     warnOnVersionMismatch(() => ndb.getBuildMeta('codegraph_version'));
+    const repo = new NativeRepository(ndb, dbPath);
     return {
-      repo: new NativeRepository(ndb),
+      repo,
       close() {
+        repo.closeFallback();
         ndb.close();
       },
     };
@@ -375,9 +378,7 @@ export function openRepo(
       // Re-throw user-visible errors (e.g. DB not found) — only silently
       // fall back for native-engine failures (e.g. incompatible native binary).
       if (e instanceof DbError) throw e;
-      debug(
-        `openRepo: native path failed, falling back to better-sqlite3: ${(e as Error).message}`,
-      );
+      debug(`openRepo: native path failed, falling back to better-sqlite3: ${toErrorMessage(e)}`);
     }
   }
 
@@ -411,7 +412,7 @@ export function openReadonlyWithNative(customPath?: string): {
       const native = getNative();
       nativeDb = native.NativeDatabase.openReadonly(dbPath);
     } catch (e) {
-      debug(`openReadonlyWithNative: native path failed: ${(e as Error).message}`);
+      debug(`openReadonlyWithNative: native path failed: ${toErrorMessage(e)}`);
     }
   }
 
@@ -423,8 +424,8 @@ export function openReadonlyWithNative(customPath?: string): {
       if (nativeDb) {
         try {
           nativeDb.close();
-        } catch {
-          // already closed or not closeable
+        } catch (e) {
+          debug(`openReadonlyWithNative: native close failed: ${toErrorMessage(e)}`);
         }
       }
     },

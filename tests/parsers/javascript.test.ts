@@ -143,12 +143,11 @@ describe('JavaScript parser', () => {
       expect(symbols.typeMap.get('app')).toEqual({ type: 'Express', confidence: 0.9 });
     });
 
-    it('prefers constructor (1.0) over type annotation (0.9)', () => {
+    it('prefers constructor over annotation on the same declaration', () => {
       const symbols = parseTS(`const x: Base = new Derived();`);
-      // Deliberate: constructor (1.0) beats annotation (0.9) because the runtime
-      // type is what matters for call resolution. In `const x: Base = new Derived()`,
-      // x.method() dispatches to Derived.method, not Base.method. This is a
-      // semantic reversal from the previous behaviour (annotation-first).
+      // Constructor on same declaration wins (confidence 1.0) because the runtime type
+      // is what matters for call resolution: x.render() → Derived.render, not Base.render.
+      // Cross-scope pollution is prevented by setTypeMapEntry's higher-confidence gate.
       expect(symbols.typeMap.get('x')).toEqual({ type: 'Derived', confidence: 1.0 });
     });
 

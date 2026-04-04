@@ -3,6 +3,7 @@
 **Source:** Claude Code v2.1.88 source analysis via [sanbuphy/claude-code-source-code](https://github.com/sanbuphy/claude-code-source-code) + [openedclaude/claude-reviews-claude](https://github.com/openedclaude/claude-reviews-claude)
 
 **Date:** 2026-03-31
+**Verified against:** Claude Code v2.1.88. Internal APIs (`_meta["anthropic/alwaysLoad"]`, `_meta["anthropic/searchHint"]`, `annotations.readOnlyHint`) are reverse-engineered from source — they are not part of the MCP specification and may change without notice in future Claude Code releases. Review these hacks against new releases periodically.
 **Goal:** Make codegraph's MCP server a first-class citizen inside Claude Code — as discoverable and effective as built-in tools like Grep, Glob, and Read.
 
 ---
@@ -254,7 +255,9 @@ if (tool.name.startsWith('mcp__')) {
 
 **All MCP tools pass through to subagents unconditionally.** They bypass agent disallow lists. This means codegraph tools are automatically available to every Agent/Explore/Plan subagent the model spawns.
 
-No action needed — this is free. But it means **codegraph tools work in parallel agent workflows** out of the box.
+No action needed for the current read-only tool set — this is free. But it means **codegraph tools work in parallel agent workflows** out of the box.
+
+**Security caveat:** The passthrough is unconditional and cannot be overridden per-agent. If codegraph ever exposes write-capable tools (`build`, `embed`) via MCP, those tools would be available to every child agent (Agent, Explore, Plan) regardless of the orchestrator's intended restrictions. Keep write-capable tools out of the MCP server surface, or gate them behind explicit opt-in, to preserve child-agent capability boundaries.
 
 ---
 

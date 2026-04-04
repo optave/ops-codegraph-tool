@@ -477,6 +477,38 @@ describe('version/engine mismatch auto-promotes to full rebuild', () => {
     expect(output).toContain('promoting to full rebuild');
     expect(output).not.toContain('No changes detected');
   });
+
+  test('build_meta reflects actual engine and version after build (#751)', async () => {
+    // Force a full rebuild to ensure build_meta is freshly written
+    await buildGraph(promoDir, { skipRegistry: true, incremental: false });
+
+    const db2 = new Database(promoDbPath, { readonly: true });
+    const meta = Object.fromEntries(
+      (
+        db2.prepare('SELECT key, value FROM build_meta').all() as { key: string; value: string }[]
+      ).map((r) => [r.key, r.value]),
+    );
+    db2.close();
+
+    // codegraph_version must match the npm package version
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'),
+    );
+    expect(meta.codegraph_version).toBe(pkg.version);
+
+    // engine must be either 'native' or 'wasm' (not empty, not stale)
+    expect(['native', 'wasm']).toContain(meta.engine);
+
+    // engine_version must equal the npm package version (#751: was using Rust crate version)
+    expect(meta.engine_version).toBe(pkg.version);
+
+    // built_at must be a valid ISO timestamp from the current build
+    expect(new Date(meta.built_at).getTime()).toBeGreaterThan(0);
+
+    // node/edge counts must be positive
+    expect(Number(meta.node_count)).toBeGreaterThan(0);
+    expect(Number(meta.edge_count)).toBeGreaterThan(0);
+  });
 });
 
 describe('typed method call resolution', () => {
@@ -537,8 +569,8 @@ describe('typed method call resolution', () => {
     db.close();
     const receiverEdges = edges.filter((e) => e.target === 'Router');
     expect(receiverEdges.length).toBeGreaterThan(0);
-    // Type-resolved receiver edges carry the type source confidence
-    // (1.0 for constructor `new Router()`, 0.9 for annotation, 0.7 for factory)
+    // Constructor on same declaration wins at confidence 1.0 (runtime type is what
+    // matters for call dispatch)
     expect(receiverEdges[0].confidence).toBe(1.0);
   });
 });

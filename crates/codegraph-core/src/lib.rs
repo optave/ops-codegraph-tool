@@ -1,21 +1,30 @@
+pub mod analysis;
 pub mod ast_db;
+pub mod build_pipeline;
+pub mod change_detection;
 pub mod cfg;
 pub mod complexity;
+pub mod config;
 pub mod constants;
 pub mod cycles;
 pub mod dataflow;
 pub mod edge_builder;
 pub mod edges_db;
 pub mod extractors;
+pub mod file_collector;
+pub mod graph_algorithms;
+pub mod import_edges;
 pub mod import_resolution;
 pub mod incremental;
 pub mod insert_nodes;
+pub mod journal;
 pub mod native_db;
-pub mod read_queries;
-pub mod read_types;
 pub mod parallel;
 pub mod parser_registry;
+pub mod read_queries;
+pub mod read_types;
 pub mod roles_db;
+pub mod structure;
 pub mod types;
 
 use napi_derive::napi;
@@ -116,4 +125,40 @@ pub fn engine_name() -> String {
 #[napi]
 pub fn engine_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
+}
+
+/// Analyze complexity metrics for all functions in the given source.
+/// Returns per-function results (name, line, endLine, complexity metrics).
+/// When `lang_id` is provided, it takes priority over extension-based detection.
+#[napi]
+pub fn analyze_complexity(
+    source: String,
+    file_path: String,
+    lang_id: Option<String>,
+) -> Vec<types::FunctionComplexityResult> {
+    analysis::analyze_complexity_standalone(&source, &file_path, lang_id.as_deref())
+}
+
+/// Build control-flow graphs for all functions in the given source.
+/// Returns per-function results (name, line, endLine, CFG blocks + edges).
+/// When `lang_id` is provided, it takes priority over extension-based detection.
+#[napi]
+pub fn build_cfg_analysis(
+    source: String,
+    file_path: String,
+    lang_id: Option<String>,
+) -> Vec<types::FunctionCfgResult> {
+    analysis::build_cfg_standalone(&source, &file_path, lang_id.as_deref())
+}
+
+/// Extract dataflow analysis for the given source.
+/// Returns file-level dataflow (parameters, returns, assignments, arg flows, mutations).
+/// When `lang_id` is provided, it takes priority over extension-based detection.
+#[napi]
+pub fn extract_dataflow_analysis(
+    source: String,
+    file_path: String,
+    lang_id: Option<String>,
+) -> Option<types::DataflowResult> {
+    analysis::extract_dataflow_standalone(&source, &file_path, lang_id.as_deref())
 }

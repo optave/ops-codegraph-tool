@@ -76,7 +76,7 @@ Edit `package.json` to set `"version": "VERSION"`.
 Also bump `crates/codegraph-core/Cargo.toml` — set the `version` field in `[package]` to match `VERSION`. This keeps the Rust crate version in sync with the npm package.
 
 **Do NOT bump:**
-- `optionalDependencies` versions — synced automatically by `scripts/sync-native-versions.js` during the publish workflow
+- `optionalDependencies` versions — synced automatically by `scripts/sync-native-versions.ts` during the publish workflow
 
 Then run `npm install --package-lock-only` to update `package-lock.json`.
 
@@ -170,6 +170,36 @@ If the count is less than 3, manually restore the missing fields:
 - `-musl` packages: `"libc": ["musl"]`
 
 Place the `libc` array after the `cpu` array in each entry.
+
+## Step 7b: Validate release config scripts
+
+Verify that all script references in release-related config files point to files that actually exist. Broken references cause silent failures during `npm run release` or the publish workflow.
+
+Check these files for script paths:
+
+```bash
+# .versionrc.json — check any "scripts" entries (runner and forwarded args)
+grep -oP 'node \K[^ "]+' .versionrc.json 2>/dev/null | while read script; do
+  [ ! -f "$script" ] && echo "ERROR: .versionrc.json references '$script' but it does not exist"
+done
+grep -oP 'node [^ "]+ \K[^ "]+' .versionrc.json 2>/dev/null | while read script; do
+  [ ! -f "$script" ] && echo "ERROR: .versionrc.json references '$script' but it does not exist"
+done
+
+# package.json — check version/preversion/postversion lifecycle hooks
+grep -E '"(pre)?version"|"postversion"' package.json | grep -oP 'node \K[^ "&]+' | while read script; do
+  [ ! -f "$script" ] && echo "ERROR: package.json lifecycle references '$script' but it does not exist"
+done
+
+# Also check forwarded script arguments (e.g. "node scripts/node-ts.js scripts/foo.ts")
+grep -E '"(pre)?version"|"postversion"' package.json | grep -oP 'node [^ "&]+ \K[^ "&]+' | while read script; do
+  [ ! -f "$script" ] && echo "ERROR: package.json lifecycle references '$script' but it does not exist"
+done
+```
+
+If any script reference is broken, fix it before proceeding. Common causes:
+- `.js` extension referencing a `.ts`-only file (use `node scripts/node-ts.js scripts/<name>.ts` instead)
+- Redundant script entries that duplicate what npm lifecycle hooks already handle (remove them)
 
 ## Step 8: Create branch, commit, push, PR
 

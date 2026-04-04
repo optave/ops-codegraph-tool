@@ -26,6 +26,7 @@ pub enum LanguageKind {
     Zig,
     Haskell,
     Ocaml,
+    OcamlInterface,
 }
 
 impl LanguageKind {
@@ -56,6 +57,7 @@ impl LanguageKind {
             Self::Zig => "zig",
             Self::Haskell => "haskell",
             Self::Ocaml => "ocaml",
+            Self::OcamlInterface => "ocaml-interface",
         }
     }
 
@@ -93,7 +95,40 @@ impl LanguageKind {
             "dart" => Some(Self::Dart),
             "zig" => Some(Self::Zig),
             "hs" => Some(Self::Haskell),
-            "ml" | "mli" => Some(Self::Ocaml),
+            "ml" => Some(Self::Ocaml),
+            "mli" => Some(Self::OcamlInterface),
+            _ => None,
+        }
+    }
+
+    /// Resolve a language kind from a lang_id string (e.g. "javascript", "python").
+    /// Inverse of `lang_id_str()`.
+    pub fn from_lang_id(lang_id: &str) -> Option<Self> {
+        match lang_id {
+            "javascript" => Some(Self::JavaScript),
+            "typescript" => Some(Self::TypeScript),
+            "tsx" => Some(Self::Tsx),
+            "python" => Some(Self::Python),
+            "go" => Some(Self::Go),
+            "rust" => Some(Self::Rust),
+            "java" => Some(Self::Java),
+            "csharp" => Some(Self::CSharp),
+            "ruby" => Some(Self::Ruby),
+            "php" => Some(Self::Php),
+            "hcl" => Some(Self::Hcl),
+            "c" => Some(Self::C),
+            "cpp" => Some(Self::Cpp),
+            "kotlin" => Some(Self::Kotlin),
+            "swift" => Some(Self::Swift),
+            "scala" => Some(Self::Scala),
+            "bash" => Some(Self::Bash),
+            "elixir" => Some(Self::Elixir),
+            "lua" => Some(Self::Lua),
+            "dart" => Some(Self::Dart),
+            "zig" => Some(Self::Zig),
+            "haskell" => Some(Self::Haskell),
+            "ocaml" => Some(Self::Ocaml),
+            "ocaml-interface" => Some(Self::OcamlInterface),
             _ => None,
         }
     }
@@ -124,6 +159,7 @@ impl LanguageKind {
             Self::Zig => tree_sitter_zig::LANGUAGE.into(),
             Self::Haskell => tree_sitter_haskell::LANGUAGE.into(),
             Self::Ocaml => tree_sitter_ocaml::LANGUAGE_OCAML.into(),
+            Self::OcamlInterface => tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
         }
     }
 }

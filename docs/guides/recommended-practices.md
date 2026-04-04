@@ -33,7 +33,7 @@ See what your branch will affect before pushing:
 ```bash
 # .husky/pre-push
 codegraph build
-codegraph diff-impact --ref origin/main --no-tests
+codegraph diff-impact origin/main --no-tests
 ```
 
 This prints a summary like:
@@ -47,7 +47,7 @@ If you want to **block pushes** that exceed a threshold, add a check:
 ```bash
 # .husky/pre-push
 codegraph build
-IMPACT=$(codegraph diff-impact --ref origin/main --no-tests --json)
+IMPACT=$(codegraph diff-impact origin/main --no-tests -f json)
 AFFECTED=$(echo "$IMPACT" | node -e "
   const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
   console.log(d.summary?.callersAffected || 0)
@@ -98,7 +98,7 @@ Add a threshold check to your CI pipeline:
 - name: Check impact threshold
   run: |
     npx codegraph build
-    IMPACT=$(npx codegraph diff-impact --ref origin/${{ github.base_ref }} --json)
+    IMPACT=$(npx codegraph diff-impact origin/${{ github.base_ref }} -f json)
     AFFECTED=$(echo "$IMPACT" | node -e "
       const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
       console.log(d.summary?.callersAffected || 0)

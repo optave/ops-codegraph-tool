@@ -154,6 +154,32 @@ export class SqliteRepository extends Repository {
     return findCallers(this.#db, nodeId);
   }
 
+  findCallersBatch(nodeIds: number[]): Map<number, RelatedNodeRow[]> {
+    if (nodeIds.length === 0) return new Map();
+    const placeholders = nodeIds.map(() => '?').join(',');
+    const rows = this.#db
+      .prepare(
+        `SELECT e.target_id AS queried_id, n.id, n.name, n.kind, n.file, n.line, n.end_line
+         FROM edges e JOIN nodes n ON e.source_id = n.id
+         WHERE e.target_id IN (${placeholders}) AND e.kind = 'calls'`,
+      )
+      .all(...nodeIds) as Array<RelatedNodeRow & { queried_id: number }>;
+    const result = new Map<number, RelatedNodeRow[]>();
+    for (const row of rows) {
+      const qid = row.queried_id;
+      if (!result.has(qid)) result.set(qid, []);
+      result.get(qid)!.push({
+        id: row.id,
+        name: row.name,
+        kind: row.kind,
+        file: row.file,
+        line: row.line,
+        end_line: row.end_line,
+      });
+    }
+    return result;
+  }
+
   findDistinctCallers(nodeId: number): RelatedNodeRow[] {
     return findDistinctCallers(this.#db, nodeId);
   }
@@ -244,5 +270,34 @@ export class SqliteRepository extends Repository {
 
   getComplexityForNode(nodeId: number): ComplexityMetrics | undefined {
     return getComplexityForNode(this.#db, nodeId);
+  }
+
+  // ── Convenience queries ────────────────────────────────────────────
+
+  getFileHash(file: string): string | null {
+    const row = this.#db.prepare('SELECT hash FROM file_hashes WHERE file = ?').get(file) as
+      | { hash: string }
+      | undefined;
+    return row?.hash ?? null;
+  }
+
+  #implementsEdgesCache?: boolean;
+  hasImplementsEdges(): boolean {
+    if (this.#implementsEdgesCache !== undefined) return this.#implementsEdgesCache;
+    this.#implementsEdgesCache = !!this.#db
+      .prepare("SELECT 1 FROM edges WHERE kind = 'implements' LIMIT 1")
+      .get();
+    return this.#implementsEdgesCache;
+  }
+
+  #coChangesTableCache?: boolean;
+  hasCoChangesTable(): boolean {
+    if (this.#coChangesTableCache !== undefined) return this.#coChangesTableCache;
+    try {
+      this.#coChangesTableCache = !!this.#db.prepare('SELECT 1 FROM co_changes LIMIT 1').get();
+    } catch {
+      this.#coChangesTableCache = false;
+    }
+    return this.#coChangesTableCache;
   }
 }

@@ -453,8 +453,7 @@ fn handle_spread_require_reexports(right: &Node, node: &Node, source: &[u8], sym
 
 const TEXT_MAX: usize = 200;
 
-/// Walk the tree collecting call/new/throw/await/string/regex AST nodes.
-/// Mirrors `walkAst()` in `ast.js:216-276`.
+/// Walk the tree collecting new/throw/await/string/regex AST nodes.
 fn walk_ast_nodes(node: &Node, source: &[u8], ast_nodes: &mut Vec<AstNode>) {
     walk_ast_nodes_depth(node, source, ast_nodes, 0);
 }
@@ -464,28 +463,6 @@ fn walk_ast_nodes_depth(node: &Node, source: &[u8], ast_nodes: &mut Vec<AstNode>
         return;
     }
     match node.kind() {
-        "call_expression" => {
-            let (name, receiver) = extract_js_call_ast(node, source);
-            let text = truncate(node_text(node, source), TEXT_MAX);
-            ast_nodes.push(AstNode {
-                kind: "call".to_string(),
-                name,
-                line: start_line(node),
-                text: Some(text),
-                receiver,
-            });
-            // Recurse into arguments only — nested calls in args should be captured.
-            if let Some(args) = node.child_by_field_name("arguments")
-                .or_else(|| find_child(node, "arguments"))
-            {
-                for i in 0..args.child_count() {
-                    if let Some(arg) = args.child(i) {
-                        walk_ast_nodes_depth(&arg, source, ast_nodes, depth + 1);
-                    }
-                }
-            }
-            return;
-        }
         "new_expression" => {
             let name = extract_new_name(node, source);
             let text = truncate(node_text(node, source), TEXT_MAX);
@@ -658,34 +635,6 @@ fn extract_expression_text(node: &Node, source: &[u8]) -> Option<String> {
         }
     }
     Some(truncate(node_text(node, source), TEXT_MAX))
-}
-
-/// Extract call name and optional receiver from a JS/TS `call_expression`.
-/// `fetch()` → ("fetch", None); `obj.method()` → ("obj.method", Some("obj"))
-fn extract_js_call_ast(node: &Node, source: &[u8]) -> (String, Option<String>) {
-    if let Some(fn_node) = node.child_by_field_name("function") {
-        match fn_node.kind() {
-            "member_expression" => {
-                let name = node_text(&fn_node, source).to_string();
-                let receiver = fn_node.child_by_field_name("object")
-                    .map(|obj| node_text(&obj, source).to_string());
-                (name, receiver)
-            }
-            "identifier" => {
-                (node_text(&fn_node, source).to_string(), None)
-            }
-            _ => {
-                // Computed call like `fn[key]()` — use full text before `(`
-                let text = node_text(node, source);
-                let name = text.split('(').next().unwrap_or("?").to_string();
-                (name, None)
-            }
-        }
-    } else {
-        let text = node_text(node, source);
-        let name = text.split('(').next().unwrap_or("?").to_string();
-        (name, None)
-    }
 }
 
 // ── Extended kinds helpers ──────────────────────────────────────────────────
@@ -1153,19 +1102,10 @@ fn extract_dynamic_import_names(call_node: &Node, source: &[u8]) -> Vec<String> 
                     {
                         names.push(node_text(&child, source).to_string());
                     } else if child.kind() == "pair_pattern" || child.kind() == "pair" {
-                        if let Some(val) = child.child_by_field_name("value") {
-                            // Handle `{ foo: bar = 'default' }` — extract the left-hand binding
-                            let binding = if val.kind() == "assignment_pattern" {
-                                val.child_by_field_name("left").unwrap_or(val)
-                            } else if val.kind() == "identifier" {
-                                val
-                            } else {
-                                // Nested pattern (e.g. `{ foo: { bar } }`) — skip;
-                                // full nested support requires recursive extraction.
-                                continue;
-                            };
-                            names.push(node_text(&binding, source).to_string());
-                        } else if let Some(key) = child.child_by_field_name("key") {
+                        // { exportName: localAlias } → extract the key (export name),
+                        // not the value (local alias). The key maps to the source
+                        // module's export; the value is only the local binding.
+                        if let Some(key) = child.child_by_field_name("key") {
                             names.push(node_text(&key, source).to_string());
                         }
                     } else if child.kind() == "object_assignment_pattern" {
@@ -1572,5 +1512,45 @@ mod tests {
         assert_eq!(dyn_imports[0].source, "./bar.js");
         assert!(dyn_imports[0].names.contains(&"a".to_string()));
         assert!(dyn_imports[0].names.contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_aliased_destructuring() {
+        let s = parse_js("const { buildGraph: fromBarrel } = await import('./builder.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].source, "./builder.js");
+        assert!(dyn_imports[0].names.contains(&"buildGraph".to_string()));
+        assert!(!dyn_imports[0].names.contains(&"fromBarrel".to_string()));
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_mixed_destructuring() {
+        let s = parse_js("const { a, buildGraph: fromBarrel, c } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].source, "./mod.js");
+        assert!(dyn_imports[0].names.contains(&"a".to_string()));
+        assert!(dyn_imports[0].names.contains(&"buildGraph".to_string()));
+        assert!(dyn_imports[0].names.contains(&"c".to_string()));
+        assert!(!dyn_imports[0].names.contains(&"fromBarrel".to_string()));
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_aliased_default_destructuring() {
+        let s = parse_js("const { buildGraph: local = null } = await import('./builder.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert!(dyn_imports[0].names.contains(&"buildGraph".to_string()));
+        assert!(!dyn_imports[0].names.contains(&"local".to_string()));
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_nested_object_destructuring() {
+        let s = parse_js("const { foo: { nested } } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert!(dyn_imports[0].names.contains(&"foo".to_string()));
+        assert!(!dyn_imports[0].names.contains(&"nested".to_string()));
     }
 }

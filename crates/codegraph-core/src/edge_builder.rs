@@ -365,3 +365,555 @@ fn emit_hierarchy_edges(
         }
     }
 }
+
+// ── Import edges (native) ──────────────────────────────────────────────
+
+#[napi(object)]
+pub struct ImportInfo {
+    pub source: String,
+    pub names: Vec<String>,
+    pub reexport: bool,
+    #[napi(js_name = "typeOnly")]
+    pub type_only: bool,
+    #[napi(js_name = "dynamicImport")]
+    pub dynamic_import: bool,
+    #[napi(js_name = "wildcardReexport")]
+    pub wildcard_reexport: bool,
+}
+
+#[napi(object)]
+pub struct ImportEdgeFileInput {
+    pub file: String,
+    #[napi(js_name = "fileNodeId")]
+    pub file_node_id: u32,
+    #[napi(js_name = "isBarrelOnly")]
+    pub is_barrel_only: bool,
+    pub imports: Vec<ImportInfo>,
+    #[napi(js_name = "definitionNames")]
+    pub definition_names: Vec<String>,
+}
+
+#[napi(object)]
+pub struct ReexportEntryInput {
+    pub source: String,
+    pub names: Vec<String>,
+    #[napi(js_name = "wildcardReexport")]
+    pub wildcard_reexport: bool,
+}
+
+#[napi(object)]
+pub struct FileReexports {
+    pub file: String,
+    pub reexports: Vec<ReexportEntryInput>,
+}
+
+#[napi(object)]
+pub struct FileNodeEntry {
+    pub file: String,
+    #[napi(js_name = "nodeId")]
+    pub node_id: u32,
+}
+
+#[napi(object)]
+pub struct ResolvedImportEntry {
+    pub key: String,
+    #[napi(js_name = "resolvedPath")]
+    pub resolved_path: String,
+}
+
+/// Shared lookup context for import edge building.
+struct ImportEdgeContext<'a> {
+    resolved: HashMap<&'a str, &'a str>,
+    reexport_map: HashMap<&'a str, &'a [ReexportEntryInput]>,
+    file_node_map: HashMap<&'a str, u32>,
+    barrel_set: HashSet<&'a str>,
+    file_defs: HashMap<&'a str, HashSet<&'a str>>,
+}
+
+impl<'a> ImportEdgeContext<'a> {
+    fn new(
+        resolved_imports: &'a [ResolvedImportEntry],
+        file_reexports: &'a [FileReexports],
+        file_node_ids: &'a [FileNodeEntry],
+        barrel_files: &'a [String],
+        files: &'a [ImportEdgeFileInput],
+    ) -> Self {
+        let mut resolved = HashMap::with_capacity(resolved_imports.len());
+        for ri in resolved_imports {
+            resolved.insert(ri.key.as_str(), ri.resolved_path.as_str());
+        }
+
+        let mut reexport_map: HashMap<&str, &[ReexportEntryInput]> =
+            HashMap::with_capacity(file_reexports.len());
+        for fr in file_reexports {
+            reexport_map.insert(fr.file.as_str(), fr.reexports.as_slice());
+        }
+
+        let mut file_node_map = HashMap::with_capacity(file_node_ids.len());
+        for entry in file_node_ids {
+            file_node_map.insert(entry.file.as_str(), entry.node_id);
+        }
+
+        let barrel_set: HashSet<&str> = barrel_files.iter().map(|s| s.as_str()).collect();
+
+        let mut file_defs: HashMap<&str, HashSet<&str>> = HashMap::with_capacity(files.len());
+        for f in files {
+            let defs: HashSet<&str> = f.definition_names.iter().map(|s| s.as_str()).collect();
+            file_defs.insert(f.file.as_str(), defs);
+        }
+
+        Self { resolved, reexport_map, file_node_map, barrel_set, file_defs }
+    }
+}
+
+/// Recursively resolve a symbol through barrel reexport chains.
+/// Mirrors `resolveBarrelExport()` in resolve-imports.ts.
+fn resolve_barrel_export<'a>(
+    ctx: &'a ImportEdgeContext<'a>,
+    barrel_path: &'a str,
+    symbol_name: &str,
+    visited: &mut HashSet<&'a str>,
+) -> Option<&'a str> {
+    if visited.contains(barrel_path) {
+        return None;
+    }
+    visited.insert(barrel_path);
+
+    let reexports = ctx.reexport_map.get(barrel_path)?;
+
+    for re in reexports.iter() {
+        // Named reexports (non-wildcard)
+        if !re.names.is_empty() && !re.wildcard_reexport {
+            if re.names.iter().any(|n| n == symbol_name) {
+                if let Some(defs) = ctx.file_defs.get(re.source.as_str()) {
+                    if defs.contains(symbol_name) {
+                        return Some(re.source.as_str());
+                    }
+                    let deeper = resolve_barrel_export(ctx, re.source.as_str(), symbol_name, visited);
+                    if deeper.is_some() {
+                        return deeper;
+                    }
+                }
+                // Fallback: return source even if no definition found
+                return Some(re.source.as_str());
+            }
+            continue;
+        }
+
+        // Wildcard or empty-names reexports
+        if re.wildcard_reexport || re.names.is_empty() {
+            if let Some(defs) = ctx.file_defs.get(re.source.as_str()) {
+                if defs.contains(symbol_name) {
+                    return Some(re.source.as_str());
+                }
+                let deeper = resolve_barrel_export(ctx, re.source.as_str(), symbol_name, visited);
+                if deeper.is_some() {
+                    return deeper;
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Build import and barrel-through edges in Rust.
+///
+/// Mirrors `buildImportEdges()` + `buildBarrelEdges()` in build-edges.ts.
+/// All import paths must be pre-resolved on the JS side before calling.
+#[napi]
+pub fn build_import_edges(
+    files: Vec<ImportEdgeFileInput>,
+    resolved_imports: Vec<ResolvedImportEntry>,
+    file_reexports: Vec<FileReexports>,
+    file_node_ids: Vec<FileNodeEntry>,
+    barrel_files: Vec<String>,
+    root_dir: String,
+) -> Vec<ComputedEdge> {
+    let ctx = ImportEdgeContext::new(
+        &resolved_imports,
+        &file_reexports,
+        &file_node_ids,
+        &barrel_files,
+        &files,
+    );
+
+    let mut edges = Vec::new();
+
+    for file_input in &files {
+        let abs_file = format!("{}/{}", root_dir.replace('\\', "/"), file_input.file);
+
+        for imp in &file_input.imports {
+            // Barrel-only files: only emit reexport edges
+            if file_input.is_barrel_only && !imp.reexport {
+                continue;
+            }
+
+            // Look up resolved path
+            let resolve_key = format!("{}|{}", abs_file, imp.source);
+            let resolved_path = match ctx.resolved.get(resolve_key.as_str()) {
+                Some(p) => *p,
+                None => continue,
+            };
+
+            // Look up target file node ID
+            let target_node_id = match ctx.file_node_map.get(resolved_path) {
+                Some(id) => *id,
+                None => continue,
+            };
+
+            // Determine edge kind
+            let edge_kind = if imp.reexport {
+                "reexports"
+            } else if imp.type_only {
+                "imports-type"
+            } else if imp.dynamic_import {
+                "dynamic-imports"
+            } else {
+                "imports"
+            };
+
+            edges.push(ComputedEdge {
+                source_id: file_input.file_node_id,
+                target_id: target_node_id,
+                kind: edge_kind.to_string(),
+                confidence: 1.0,
+                dynamic: 0,
+            });
+
+            // Barrel resolution: if not reexport and target is a barrel file
+            if !imp.reexport && ctx.barrel_set.contains(resolved_path) {
+                let mut resolved_sources: HashSet<&str> = HashSet::new();
+                for name in &imp.names {
+                    let clean_name = if name.starts_with("* as ") || name.starts_with("*\tas ") {
+                        // Strip "* as " or "*\tas " prefix (both exactly 5 bytes)
+                        // JS equivalent: name.replace(/^\*\s+as\s+/, '')
+                        &name[5..]
+                    } else {
+                        name.as_str()
+                    };
+
+                    let mut visited = HashSet::new();
+                    let actual = resolve_barrel_export(&ctx, resolved_path, clean_name, &mut visited);
+
+                    if let Some(actual_source) = actual {
+                        if actual_source != resolved_path && !resolved_sources.contains(actual_source) {
+                            resolved_sources.insert(actual_source);
+                            if let Some(&actual_node_id) = ctx.file_node_map.get(actual_source) {
+                                let barrel_kind = match edge_kind {
+                                    "imports-type" => "imports-type",
+                                    "dynamic-imports" => "dynamic-imports",
+                                    _ => "imports",
+                                };
+                                edges.push(ComputedEdge {
+                                    source_id: file_input.file_node_id,
+                                    target_id: actual_node_id,
+                                    kind: barrel_kind.to_string(),
+                                    confidence: 0.9,
+                                    dynamic: 0,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    edges
+}
+
+#[cfg(test)]
+mod import_edge_tests {
+    use super::*;
+
+    fn make_file(file: &str, node_id: u32, imports: Vec<ImportInfo>, defs: Vec<&str>) -> ImportEdgeFileInput {
+        ImportEdgeFileInput {
+            file: file.to_string(),
+            file_node_id: node_id,
+            is_barrel_only: false,
+            imports,
+            definition_names: defs.into_iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn make_import(source: &str, names: Vec<&str>, reexport: bool, type_only: bool, dynamic: bool) -> ImportInfo {
+        ImportInfo {
+            source: source.to_string(),
+            names: names.into_iter().map(|s| s.to_string()).collect(),
+            reexport,
+            type_only,
+            dynamic_import: dynamic,
+            wildcard_reexport: false,
+        }
+    }
+
+    fn make_resolved(from_abs: &str, source: &str, resolved: &str) -> ResolvedImportEntry {
+        ResolvedImportEntry {
+            key: format!("{}|{}", from_abs, source),
+            resolved_path: resolved.to_string(),
+        }
+    }
+
+    fn make_node_entry(file: &str, id: u32) -> FileNodeEntry {
+        FileNodeEntry { file: file.to_string(), node_id: id }
+    }
+
+    #[test]
+    fn basic_import_edge() {
+        let files = vec![make_file("src/app.ts", 1, vec![
+            make_import("./utils", vec!["foo"], false, false, false),
+        ], vec!["main"])];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./utils", "src/utils.ts")];
+        let node_ids = vec![make_node_entry("src/app.ts", 1), make_node_entry("src/utils.ts", 2)];
+
+        let edges = build_import_edges(files, resolved, vec![], node_ids, vec![], "/root".to_string());
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].source_id, 1);
+        assert_eq!(edges[0].target_id, 2);
+        assert_eq!(edges[0].kind, "imports");
+        assert_eq!(edges[0].confidence, 1.0);
+    }
+
+    #[test]
+    fn reexport_edge() {
+        let files = vec![make_file("src/index.ts", 1, vec![
+            make_import("./utils", vec!["foo"], true, false, false),
+        ], vec![])];
+        let resolved = vec![make_resolved("/root/src/index.ts", "./utils", "src/utils.ts")];
+        let node_ids = vec![make_node_entry("src/index.ts", 1), make_node_entry("src/utils.ts", 2)];
+
+        let edges = build_import_edges(files, resolved, vec![], node_ids, vec![], "/root".to_string());
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].kind, "reexports");
+    }
+
+    #[test]
+    fn type_only_edge() {
+        let files = vec![make_file("src/app.ts", 1, vec![
+            make_import("./types", vec!["MyType"], false, true, false),
+        ], vec![])];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./types", "src/types.ts")];
+        let node_ids = vec![make_node_entry("src/app.ts", 1), make_node_entry("src/types.ts", 2)];
+
+        let edges = build_import_edges(files, resolved, vec![], node_ids, vec![], "/root".to_string());
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].kind, "imports-type");
+    }
+
+    #[test]
+    fn dynamic_import_edge() {
+        let files = vec![make_file("src/app.ts", 1, vec![
+            make_import("./lazy", vec!["Lazy"], false, false, true),
+        ], vec![])];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./lazy", "src/lazy.ts")];
+        let node_ids = vec![make_node_entry("src/app.ts", 1), make_node_entry("src/lazy.ts", 2)];
+
+        let edges = build_import_edges(files, resolved, vec![], node_ids, vec![], "/root".to_string());
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].kind, "dynamic-imports");
+    }
+
+    #[test]
+    fn barrel_only_skips_non_reexport() {
+        let mut file = make_file("src/index.ts", 1, vec![
+            make_import("./a", vec!["a"], false, false, false),
+            make_import("./b", vec!["b"], true, false, false),
+        ], vec![]);
+        file.is_barrel_only = true;
+        let resolved = vec![
+            make_resolved("/root/src/index.ts", "./a", "src/a.ts"),
+            make_resolved("/root/src/index.ts", "./b", "src/b.ts"),
+        ];
+        let node_ids = vec![
+            make_node_entry("src/index.ts", 1),
+            make_node_entry("src/a.ts", 2),
+            make_node_entry("src/b.ts", 3),
+        ];
+
+        let edges = build_import_edges(vec![file], resolved, vec![], node_ids, vec![], "/root".to_string());
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].kind, "reexports");
+        assert_eq!(edges[0].target_id, 3);
+    }
+
+    #[test]
+    fn barrel_resolution_simple() {
+        let files = vec![
+            make_file("src/app.ts", 1, vec![
+                make_import("./index", vec!["foo"], false, false, false),
+            ], vec!["main"]),
+            make_file("src/index.ts", 10, vec![], vec![]),
+            make_file("src/utils.ts", 20, vec![], vec!["foo"]),
+        ];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./index", "src/index.ts")];
+        let reexports = vec![FileReexports {
+            file: "src/index.ts".to_string(),
+            reexports: vec![ReexportEntryInput {
+                source: "src/utils.ts".to_string(),
+                names: vec!["foo".to_string()],
+                wildcard_reexport: false,
+            }],
+        }];
+        let node_ids = vec![
+            make_node_entry("src/app.ts", 1),
+            make_node_entry("src/index.ts", 10),
+            make_node_entry("src/utils.ts", 20),
+        ];
+        let barrels = vec!["src/index.ts".to_string()];
+
+        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string());
+        assert_eq!(edges.len(), 2);
+        // First: direct import to barrel
+        assert_eq!(edges[0].target_id, 10);
+        assert_eq!(edges[0].confidence, 1.0);
+        // Second: barrel-through to actual source
+        assert_eq!(edges[1].target_id, 20);
+        assert_eq!(edges[1].confidence, 0.9);
+        assert_eq!(edges[1].kind, "imports");
+    }
+
+    #[test]
+    fn barrel_chain_two_levels() {
+        let files = vec![
+            make_file("src/app.ts", 1, vec![
+                make_import("./index", vec!["deep"], false, false, false),
+            ], vec![]),
+            make_file("src/index.ts", 10, vec![], vec![]),
+            make_file("src/mid.ts", 20, vec![], vec![]),
+            make_file("src/deep.ts", 30, vec![], vec!["deep"]),
+        ];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./index", "src/index.ts")];
+        let reexports = vec![
+            FileReexports {
+                file: "src/index.ts".to_string(),
+                reexports: vec![ReexportEntryInput {
+                    source: "src/mid.ts".to_string(),
+                    names: vec![],
+                    wildcard_reexport: true,
+                }],
+            },
+            FileReexports {
+                file: "src/mid.ts".to_string(),
+                reexports: vec![ReexportEntryInput {
+                    source: "src/deep.ts".to_string(),
+                    names: vec!["deep".to_string()],
+                    wildcard_reexport: false,
+                }],
+            },
+        ];
+        let node_ids = vec![
+            make_node_entry("src/app.ts", 1),
+            make_node_entry("src/index.ts", 10),
+            make_node_entry("src/deep.ts", 30),
+        ];
+        let barrels = vec!["src/index.ts".to_string()];
+
+        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string());
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[1].target_id, 30);
+        assert_eq!(edges[1].confidence, 0.9);
+    }
+
+    #[test]
+    fn barrel_cycle_detection() {
+        let files = vec![
+            make_file("src/app.ts", 1, vec![
+                make_import("./a", vec!["x"], false, false, false),
+            ], vec![]),
+            make_file("src/a.ts", 10, vec![], vec![]),
+            make_file("src/b.ts", 20, vec![], vec![]),
+        ];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./a", "src/a.ts")];
+        let reexports = vec![
+            FileReexports {
+                file: "src/a.ts".to_string(),
+                reexports: vec![ReexportEntryInput {
+                    source: "src/b.ts".to_string(),
+                    names: vec![],
+                    wildcard_reexport: true,
+                }],
+            },
+            FileReexports {
+                file: "src/b.ts".to_string(),
+                reexports: vec![ReexportEntryInput {
+                    source: "src/a.ts".to_string(),
+                    names: vec![],
+                    wildcard_reexport: true,
+                }],
+            },
+        ];
+        let node_ids = vec![
+            make_node_entry("src/app.ts", 1),
+            make_node_entry("src/a.ts", 10),
+        ];
+        let barrels = vec!["src/a.ts".to_string()];
+
+        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string());
+        // Only the direct import edge, no barrel-through (cycle prevents resolution)
+        assert_eq!(edges.len(), 1);
+        assert_eq!(edges[0].target_id, 10);
+    }
+
+    #[test]
+    fn wildcard_reexport_resolution() {
+        let files = vec![
+            make_file("src/app.ts", 1, vec![
+                make_import("./barrel", vec!["helper"], false, false, false),
+            ], vec![]),
+            make_file("src/barrel.ts", 10, vec![], vec![]),
+            make_file("src/helpers.ts", 20, vec![], vec!["helper"]),
+        ];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./barrel", "src/barrel.ts")];
+        let reexports = vec![FileReexports {
+            file: "src/barrel.ts".to_string(),
+            reexports: vec![ReexportEntryInput {
+                source: "src/helpers.ts".to_string(),
+                names: vec![],
+                wildcard_reexport: true,
+            }],
+        }];
+        let node_ids = vec![
+            make_node_entry("src/app.ts", 1),
+            make_node_entry("src/barrel.ts", 10),
+            make_node_entry("src/helpers.ts", 20),
+        ];
+        let barrels = vec!["src/barrel.ts".to_string()];
+
+        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string());
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[1].target_id, 20);
+        assert_eq!(edges[1].confidence, 0.9);
+    }
+
+    #[test]
+    fn dedup_barrel_sources() {
+        // Two names from same barrel both resolve to the same actual source
+        let files = vec![
+            make_file("src/app.ts", 1, vec![
+                make_import("./barrel", vec!["a", "b"], false, false, false),
+            ], vec![]),
+            make_file("src/barrel.ts", 10, vec![], vec![]),
+            make_file("src/real.ts", 20, vec![], vec!["a", "b"]),
+        ];
+        let resolved = vec![make_resolved("/root/src/app.ts", "./barrel", "src/barrel.ts")];
+        let reexports = vec![FileReexports {
+            file: "src/barrel.ts".to_string(),
+            reexports: vec![ReexportEntryInput {
+                source: "src/real.ts".to_string(),
+                names: vec!["a".to_string(), "b".to_string()],
+                wildcard_reexport: false,
+            }],
+        }];
+        let node_ids = vec![
+            make_node_entry("src/app.ts", 1),
+            make_node_entry("src/barrel.ts", 10),
+            make_node_entry("src/real.ts", 20),
+        ];
+        let barrels = vec!["src/barrel.ts".to_string()];
+
+        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string());
+        // 1 direct import + 1 barrel-through (deduped, not 2)
+        assert_eq!(edges.len(), 2);
+    }
+}

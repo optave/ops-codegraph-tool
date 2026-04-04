@@ -10,6 +10,8 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+const expectedNpmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
 describe('loadTransformers install prompt', () => {
   let exitSpy: any;
   let errorSpy: any;
@@ -34,12 +36,49 @@ describe('loadTransformers install prompt', () => {
     vi.restoreAllMocks();
   });
 
-  test('non-TTY: throws EngineError without prompting', async () => {
+  test('non-TTY: auto-installs without prompting', async () => {
+    process.stdin.isTTY = undefined;
+
+    let importCount = 0;
+    const rlFactory = vi.fn();
+    const execMock = vi.fn();
+    vi.doMock('node:readline', () => ({ createInterface: rlFactory }));
+    vi.doMock('node:child_process', () => ({ execFileSync: execMock }));
+    vi.doMock('@huggingface/transformers', () => {
+      importCount++;
+      if (importCount <= 1) throw new Error('Cannot find package');
+      return {
+        pipeline: async () => async (batch: string[]) => ({
+          data: new Float32Array(384 * batch.length),
+        }),
+        cos_sim: () => 0,
+      };
+    });
+
+    const { embed } = await import('../../src/domain/search/index.js');
+
+    const result = await embed(['test text'], 'minilm');
+    expect(result.vectors).toHaveLength(1);
+    expect(result.dim).toBe(384);
+    // readline should NOT have been called — no prompt in non-TTY
+    expect(rlFactory).not.toHaveBeenCalled();
+    // npm install should have been called automatically
+    expect(execMock).toHaveBeenCalledWith(
+      expectedNpmBin,
+      ['install', '--no-save', '@huggingface/transformers'],
+      expect.objectContaining({ stdio: 'inherit', timeout: 300_000 }),
+    );
+  });
+
+  test('non-TTY: throws EngineError when auto-install fails', async () => {
     process.stdin.isTTY = undefined;
 
     const rlFactory = vi.fn();
+    const execMock = vi.fn(() => {
+      throw new Error('npm ERR!');
+    });
     vi.doMock('node:readline', () => ({ createInterface: rlFactory }));
-    vi.doMock('node:child_process', () => ({ execFileSync: vi.fn() }));
+    vi.doMock('node:child_process', () => ({ execFileSync: execMock }));
     vi.doMock('@huggingface/transformers', () => {
       throw new Error('Cannot find package');
     });
@@ -55,6 +94,8 @@ describe('loadTransformers install prompt', () => {
     });
     // readline should NOT have been called — no prompt in non-TTY
     expect(rlFactory).not.toHaveBeenCalled();
+    // npm install was attempted
+    expect(execMock).toHaveBeenCalled();
   });
 
   test('TTY + user declines: throws EngineError', async () => {
@@ -109,7 +150,7 @@ describe('loadTransformers install prompt', () => {
       code: 'ENGINE_UNAVAILABLE',
     });
     expect(execMock).toHaveBeenCalledWith(
-      'npm',
+      expectedNpmBin,
       ['install', '@huggingface/transformers'],
       expect.objectContaining({ stdio: 'inherit', timeout: 300_000 }),
     );

@@ -127,41 +127,22 @@ interface FilePathDataResult {
   alternateCount: number;
 }
 
-function filePath(from: string, to: string, customDbPath: string, opts: PathOpts = {}): void {
-  const data = filePathData(from, to, customDbPath, opts) as FilePathDataResult;
-  if (outputResult(data as unknown as Record<string, unknown>, null, opts)) return;
-
-  if (data.error) {
-    console.log(data.error);
-    return;
+function printFilePathNotFound(from: string, to: string, data: FilePathDataResult): void {
+  const dir = data.reverse ? 'reverse ' : '';
+  console.log(`No ${dir}file path from "${from}" to "${to}" within ${data.maxDepth} hops.`);
+  if (data.fromCandidates.length > 1) {
+    console.log(
+      `\n  "${from}" matched ${data.fromCandidates.length} files — using: ${data.fromCandidates[0]}`,
+    );
   }
-
-  if (!data.found) {
-    const dir = data.reverse ? 'reverse ' : '';
-    console.log(`No ${dir}file path from "${from}" to "${to}" within ${data.maxDepth} hops.`);
-    if (data.fromCandidates.length > 1) {
-      console.log(
-        `\n  "${from}" matched ${data.fromCandidates.length} files — using: ${data.fromCandidates[0]}`,
-      );
-    }
-    if (data.toCandidates.length > 1) {
-      console.log(
-        `  "${to}" matched ${data.toCandidates.length} files — using: ${data.toCandidates[0]}`,
-      );
-    }
-    return;
+  if (data.toCandidates.length > 1) {
+    console.log(
+      `  "${to}" matched ${data.toCandidates.length} files — using: ${data.toCandidates[0]}`,
+    );
   }
+}
 
-  if (data.hops === 0) {
-    console.log(`\n"${from}" and "${to}" resolve to the same file (0 hops):`);
-    console.log(`  ${data.path[0]}\n`);
-    return;
-  }
-
-  const dir = data.reverse ? ' (reverse)' : '';
-  console.log(
-    `\nFile path from ${from} to ${to} (${data.hops} ${data.hops === 1 ? 'hop' : 'hops'})${dir}:\n`,
-  );
+function printFilePathSteps(data: FilePathDataResult): void {
   for (let i = 0; i < data.path.length; i++) {
     const indent = '  '.repeat(i + 1);
     if (i === 0) {
@@ -175,5 +156,32 @@ function filePath(from: string, to: string, customDbPath: string, opts: PathOpts
       `\n  (${data.alternateCount} alternate shortest ${data.alternateCount === 1 ? 'path' : 'paths'} at same depth)`,
     );
   }
+}
+
+function filePath(from: string, to: string, customDbPath: string, opts: PathOpts = {}): void {
+  const data = filePathData(from, to, customDbPath, opts) as FilePathDataResult;
+  if (outputResult(data as unknown as Record<string, unknown>, null, opts)) return;
+
+  if (data.error) {
+    console.log(data.error);
+    return;
+  }
+
+  if (!data.found) {
+    printFilePathNotFound(from, to, data);
+    return;
+  }
+
+  if (data.hops === 0) {
+    console.log(`\n"${from}" and "${to}" resolve to the same file (0 hops):`);
+    console.log(`  ${data.path[0]}\n`);
+    return;
+  }
+
+  const dir = data.reverse ? ' (reverse)' : '';
+  console.log(
+    `\nFile path from ${from} to ${to} (${data.hops} ${data.hops === 1 ? 'hop' : 'hops'})${dir}:\n`,
+  );
+  printFilePathSteps(data);
   console.log();
 }

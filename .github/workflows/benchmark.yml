@@ -96,6 +96,27 @@ jobs:
           fi
           node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/benchmark.ts $ARGS > benchmark-result.json
 
+      - name: Run resolution benchmark
+        if: steps.existing.outputs.skip != 'true'
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          ARGS="--version ${{ steps.mode.outputs.version }}"
+          if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
+            ARGS="$ARGS --npm"
+          fi
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/resolution-benchmark.ts $ARGS > resolution-result.json
+
+      - name: Merge resolution into build result
+        if: steps.existing.outputs.skip != 'true'
+        run: |
+          node -e "
+            const fs = require('fs');
+            const build = JSON.parse(fs.readFileSync('benchmark-result.json', 'utf8'));
+            const resolution = JSON.parse(fs.readFileSync('resolution-result.json', 'utf8'));
+            build.resolution = resolution;
+            fs.writeFileSync('benchmark-result.json', JSON.stringify(build, null, 2));
+          "
+
       - name: Update build report
         if: steps.existing.outputs.skip != 'true'
         run: |
@@ -156,6 +177,8 @@ jobs:
 
   embedding-benchmark:
     runs-on: ubuntu-latest
+    # 7 models x 20 min each = 140 min worst-case + ~30 min setup/npm-wait headroom
+    timeout-minutes: 195
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' &&
@@ -240,6 +263,7 @@ jobs:
 
       - name: Run embedding benchmark
         if: steps.existing.outputs.skip != 'true'
+        timeout-minutes: 160
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |

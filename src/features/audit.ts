@@ -4,7 +4,9 @@ import { normalizeFileFilter } from '../db/query-builder.js';
 import { bfsTransitiveCallers } from '../domain/analysis/impact.js';
 import { explainData } from '../domain/queries.js';
 import { loadConfig } from '../infrastructure/config.js';
+import { debug } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
+import { toErrorMessage } from '../shared/errors.js';
 import type { BetterSqlite3Database, CodegraphConfig } from '../types.js';
 import { RULE_DEFS } from './manifesto.js';
 
@@ -41,8 +43,8 @@ function resolveThresholds(
       };
     }
     return resolved;
-  } catch {
-    // Fall back to defaults if config loading fails
+  } catch (e) {
+    debug(`resolveThresholds: config loading failed, using defaults: ${toErrorMessage(e)}`);
     const resolved: Record<string, ThresholdEntry> = {};
     for (const def of FUNCTION_RULES) {
       resolved[def.name] = {
@@ -110,8 +112,8 @@ function readPhase44(db: BetterSqlite3Database, nodeId: number): Phase44Fields {
         sideEffects: row.side_effects ?? null,
       };
     }
-  } catch {
-    /* columns don't exist yet */
+  } catch (e) {
+    debug(`readPhase44: columns may not exist yet: ${toErrorMessage(e)}`);
   }
   return { riskScore: null, complexityNotes: null, sideEffects: null };
 }
@@ -413,8 +415,8 @@ function buildHealth(
       commentLines: row.comment_lines || 0,
       thresholdBreaches: checkBreaches(row as unknown as Record<string, unknown>, thresholds),
     };
-  } catch {
-    /* table may not exist */
+  } catch (e) {
+    debug(`readHealth: function_complexity table may not exist: ${toErrorMessage(e)}`);
     return defaultHealth();
   }
 }

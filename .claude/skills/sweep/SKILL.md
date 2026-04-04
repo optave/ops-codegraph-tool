@@ -206,6 +206,11 @@ After addressing all comments for a PR:
 2. Group changes by concern — each logically distinct fix gets its own commit (e.g., one commit for a missing validation, another for a naming change). Do not lump all feedback into a single commit.
 3. Use descriptive messages per commit: `fix: <what this specific change does> (#<number>)`
 4. Push to the PR branch.
+5. **If the push is rejected** (e.g., by a hook or commitlint), diagnose the error before retrying:
+   - **Commitlint failure** (bad commit message format): This is the ONE case where amend + force-push is allowed. Fix the message with `git commit --amend -m "correct message"` then `git push --force-with-lease`.
+   - **Hook denial** (guard-git.sh blocking staged files not in session edit log): The worktree has no edit log — commit with explicit file paths (`git commit <file1> <file2> -m "msg"`) instead of staging first.
+   - **Branch name validation failure**: You are on the wrong branch — check out the correct PR branch before retrying.
+   - **Any other failure**: Fix with a new commit. Never amend + force-push for code changes.
 
 ### 2g. Re-trigger reviewers
 
@@ -309,7 +314,7 @@ If any subagent failed or returned an error, note it in the Status column as `ag
 ## Rules
 
 - **Never rebase.** Always `git merge <base>` to resolve conflicts.
-- **Never force-push** unless fixing a commit message that fails commitlint. Amend + force-push is the only way to fix a pushed commit title (messages are part of the SHA). This is safe on feature branches. For all other problems, fix with a new commit.
+- **Never force-push** unless fixing a commit message that fails commitlint. Amend + force-push is the only way to fix a pushed commit title (messages are part of the SHA). This is safe on feature branches. For all other problems, fix with a new commit. **If a push or commit is denied by a hook**, read the denial reason — don't blindly retry or escalate to force-push. Common causes: (1) commitlint rejects the message format → amend + force-push (`git push --force-with-lease`), (2) guard-git blocks staged files not in session edit log → use `git commit <file1> <file2> -m "msg"` with explicit paths, (3) branch name validation fails → you're on the wrong branch.
 - **Address ALL comments from ALL reviewers** (Claude, Greptile, and humans), even minor/nit/optional ones. Leave zero unaddressed. Do not only respond to one reviewer and skip another.
 - **Always reply to comments** explaining what was done. Don't just fix silently. Every reviewer must see a reply on their feedback.
 - **Never trigger `@greptileai` without replying to every Greptile comment first.** Before posting the re-trigger, run the Step 2g verification script to confirm zero unanswered Greptile comments. Triggering a new review while old comments are unanswered is a blocking violation — it creates review noise and signals that feedback was ignored. Reply first, verify, then trigger.

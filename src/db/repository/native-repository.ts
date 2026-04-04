@@ -8,9 +8,11 @@
  * back to the snake_case field names that the Repository interface expects.
  */
 
+import Database from 'better-sqlite3';
 import { ConfigError } from '../../shared/errors.js';
 import type {
   AdjacentEdgeRow,
+  BetterSqlite3Database,
   CallableNodeRow,
   CallEdgeRow,
   ChildNodeRow,
@@ -159,10 +161,33 @@ function toComplexityMetrics(r: NativeComplexityMetrics): ComplexityMetrics {
 
 export class NativeRepository extends Repository {
   #ndb: NativeDatabase;
+  #dbPath?: string;
+  #fallbackDb?: BetterSqlite3Database;
 
-  constructor(ndb: NativeDatabase) {
+  constructor(ndb: NativeDatabase, dbPath?: string) {
     super();
     this.#ndb = ndb;
+    this.#dbPath = dbPath;
+  }
+
+  /** Lazy better-sqlite3 handle for methods not yet ported to Rust. */
+  #getFallbackDb(): BetterSqlite3Database | undefined {
+    if (this.#fallbackDb) return this.#fallbackDb;
+    if (!this.#dbPath) return undefined;
+    try {
+      this.#fallbackDb = new Database(this.#dbPath, { readonly: true });
+      return this.#fallbackDb;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Close the lazy fallback connection if it was opened. */
+  closeFallback(): void {
+    if (this.#fallbackDb) {
+      this.#fallbackDb.close();
+      this.#fallbackDb = undefined;
+    }
   }
 
   // ── Node lookups ──────────────────────────────────────────────────
@@ -266,6 +291,31 @@ export class NativeRepository extends Repository {
     return this.#ndb.findCallers(nodeId).map(toRelatedNodeRow);
   }
 
+  findCallersBatch(nodeIds: number[]): Map<number, RelatedNodeRow[]> {
+    if (nodeIds.length === 0) return new Map();
+    const placeholders = nodeIds.map(() => '?').join(',');
+    const rows = this.#ndb.queryAll(
+      `SELECT e.target_id AS queried_id, n.id, n.name, n.kind, n.file, n.line, n.end_line
+       FROM edges e JOIN nodes n ON e.source_id = n.id
+       WHERE e.target_id IN (${placeholders}) AND e.kind = 'calls'`,
+      nodeIds,
+    ) as Array<Record<string, unknown>>;
+    const result = new Map<number, RelatedNodeRow[]>();
+    for (const row of rows) {
+      const qid = row.queried_id as number;
+      if (!result.has(qid)) result.set(qid, []);
+      result.get(qid)!.push({
+        id: row.id as number,
+        name: row.name as string,
+        kind: row.kind as string,
+        file: row.file as string,
+        line: row.line as number,
+        end_line: (row.end_line as number | null) ?? null,
+      });
+    }
+    return result;
+  }
+
   findDistinctCallers(nodeId: number): RelatedNodeRow[] {
     return this.#ndb.findDistinctCallers(nodeId).map(toRelatedNodeRow);
   }
@@ -357,5 +407,58 @@ export class NativeRepository extends Repository {
   getComplexityForNode(nodeId: number): ComplexityMetrics | undefined {
     const r = this.#ndb.getComplexityForNode(nodeId);
     return r ? toComplexityMetrics(r) : undefined;
+  }
+
+  // ── Convenience queries ────────────────────────────────────────────
+
+  getFileHash(file: string): string | null {
+    if (typeof this.#ndb.getFileHash === 'function') return this.#ndb.getFileHash(file);
+    // Fallback to better-sqlite3 until Rust implements getFileHash
+    const db = this.#getFallbackDb();
+    if (db) {
+      const row = db.prepare('SELECT hash FROM file_hashes WHERE file = ?').get(file) as
+        | { hash: string }
+        | undefined;
+      return row?.hash ?? null;
+    }
+    return null;
+  }
+
+  #implementsEdgesCache?: boolean;
+  hasImplementsEdges(): boolean {
+    if (this.#implementsEdgesCache !== undefined) return this.#implementsEdgesCache;
+    if (typeof this.#ndb.hasImplementsEdges === 'function') {
+      this.#implementsEdgesCache = this.#ndb.hasImplementsEdges();
+      return this.#implementsEdgesCache;
+    }
+    // Fallback to better-sqlite3
+    const db = this.#getFallbackDb();
+    if (db) {
+      this.#implementsEdgesCache = !!db
+        .prepare("SELECT 1 FROM edges WHERE kind = 'implements' LIMIT 1")
+        .get();
+      return this.#implementsEdgesCache;
+    }
+    return true; // conservative: assume yes when no fallback available
+  }
+
+  #coChangesTableCache?: boolean;
+  hasCoChangesTable(): boolean {
+    if (this.#coChangesTableCache !== undefined) return this.#coChangesTableCache;
+    if (typeof this.#ndb.hasCoChangesTable === 'function') {
+      this.#coChangesTableCache = this.#ndb.hasCoChangesTable();
+      return this.#coChangesTableCache;
+    }
+    // Fallback to better-sqlite3
+    const db = this.#getFallbackDb();
+    if (db) {
+      try {
+        this.#coChangesTableCache = !!db.prepare('SELECT 1 FROM co_changes LIMIT 1').get();
+      } catch {
+        this.#coChangesTableCache = false;
+      }
+      return this.#coChangesTableCache;
+    }
+    return false;
   }
 }

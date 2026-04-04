@@ -150,6 +150,38 @@ export function makeDataflowRules(overrides: Partial<DataflowRulesConfig>): Data
 
 // ─── AST Helpers ──────────────────────────────────────────────────────────
 
+/** Compute the span (row count) of a tree-sitter node. */
+function nodeSpan(node: TreeSitterNode): number {
+  return node.endPosition.row - node.startPosition.row;
+}
+
+/**
+ * Recursively search for the narrowest function node at the target line.
+ */
+function searchFunctionNode(
+  node: TreeSitterNode,
+  targetStart: number,
+  functionNodeTypes: Set<string>,
+  best: TreeSitterNode | null,
+): TreeSitterNode | null {
+  const nodeStart = node.startPosition.row;
+  const nodeEnd = node.endPosition.row;
+
+  // Prune branches outside range
+  if (nodeEnd < targetStart || nodeStart > targetStart + 1) return best;
+
+  if (functionNodeTypes.has(node.type) && nodeStart === targetStart) {
+    if (!best || nodeSpan(node) < nodeSpan(best)) {
+      best = node;
+    }
+  }
+
+  for (let i = 0; i < node.childCount; i++) {
+    best = searchFunctionNode(node.child(i)!, targetStart, functionNodeTypes, best);
+  }
+  return best;
+}
+
 export function findFunctionNode(
   rootNode: TreeSitterNode,
   startLine: number,
@@ -158,30 +190,7 @@ export function findFunctionNode(
 ): TreeSitterNode | null {
   // tree-sitter lines are 0-indexed
   const targetStart = startLine - 1;
-
-  let best: TreeSitterNode | null = null;
-
-  function search(node: TreeSitterNode): void {
-    const nodeStart = node.startPosition.row;
-    const nodeEnd = node.endPosition.row;
-
-    // Prune branches outside range
-    if (nodeEnd < targetStart || nodeStart > targetStart + 1) return;
-
-    if (rules.functionNodes.has(node.type) && nodeStart === targetStart) {
-      // Found a function node at the right position — pick it
-      if (!best || nodeEnd - nodeStart < best.endPosition.row - best.startPosition.row) {
-        best = node;
-      }
-    }
-
-    for (let i = 0; i < node.childCount; i++) {
-      search(node.child(i)!);
-    }
-  }
-
-  search(rootNode);
-  return best;
+  return searchFunctionNode(rootNode, targetStart, rules.functionNodes, null);
 }
 
 // ─── Extension / Language Mapping ─────────────────────────────────────────

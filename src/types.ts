@@ -61,7 +61,7 @@ export type EdgeKind = CoreEdgeKind | StructuralEdgeKind;
 export type AnyEdgeKind = EdgeKind | DataflowEdgeKind;
 
 /** AST node kinds extracted during analysis. */
-export type ASTNodeKind = 'call' | 'new' | 'string' | 'regex' | 'throw' | 'await';
+export type ASTNodeKind = 'new' | 'string' | 'regex' | 'throw' | 'await';
 
 /** Coarse role classifications for symbols based on connectivity. */
 export type CoreRole = 'entry' | 'core' | 'utility' | 'adapter' | 'dead' | 'test-only' | 'leaf';
@@ -96,7 +96,19 @@ export type LanguageId =
   | 'dart'
   | 'zig'
   | 'haskell'
-  | 'ocaml';
+  | 'ocaml'
+  | 'ocaml-interface'
+  | 'fsharp'
+  | 'gleam'
+  | 'clojure'
+  | 'julia'
+  | 'r'
+  | 'erlang'
+  | 'solidity'
+  | 'objc'
+  | 'cuda'
+  | 'groovy'
+  | 'verilog';
 
 /** Engine mode selector. */
 export type EngineMode = 'native' | 'wasm' | 'auto';
@@ -290,6 +302,7 @@ export interface Repository {
   // ── Edge queries ──────────────────────────────────────────────────
   findCallees(nodeId: number): RelatedNodeRow[];
   findCallers(nodeId: number): RelatedNodeRow[];
+  findCallersBatch(nodeIds: number[]): Map<number, RelatedNodeRow[]>;
   findDistinctCallers(nodeId: number): RelatedNodeRow[];
   findAllOutgoingEdges(nodeId: number): AdjacentEdgeRow[];
   findAllIncomingEdges(nodeId: number): AdjacentEdgeRow[];
@@ -316,6 +329,11 @@ export interface Repository {
   hasEmbeddings(): boolean;
   hasDataflowTable(): boolean;
   getComplexityForNode(nodeId: number): ComplexityMetrics | undefined;
+
+  // ── Convenience queries ──────────────────────────────────────────
+  getFileHash(file: string): string | null;
+  hasImplementsEdges(): boolean;
+  hasCoChangesTable(): boolean;
 }
 
 /**
@@ -383,6 +401,7 @@ export interface SubDeclaration {
   line: number;
   endLine?: number;
   visibility?: 'public' | 'private' | 'protected';
+  decorators?: string[];
 }
 
 /** Complexity metrics attached to a definition post-analysis. */
@@ -390,7 +409,7 @@ export interface DefinitionComplexity {
   cognitive: number;
   cyclomatic: number;
   maxNesting: number;
-  halstead?: HalsteadMetrics;
+  halstead?: HalsteadDerivedMetrics | HalsteadMetrics;
   loc?: LOCMetrics;
   maintainabilityIndex?: number;
 }
@@ -1828,13 +1847,93 @@ export interface NativeAddon {
   ): Array<{ fromFile: string; importSource: string; resolvedPath: string }>;
   computeConfidence(callerFile: string, targetFile: string, importedFrom: string | null): number;
   detectCycles(edges: Array<{ source: string; target: string }>): string[][];
+  bfsTraversal(
+    edges: Array<{ source: string; target: string }>,
+    startIds: string[],
+    maxDepth?: number | null,
+    direction?: string | null,
+  ): Array<{ node: string; depth: number }>;
+  shortestPath(
+    edges: Array<{ source: string; target: string }>,
+    fromId: string,
+    toId: string,
+  ): string[];
+  fanInOut(
+    edges: Array<{ source: string; target: string }>,
+  ): Array<{ node: string; fanIn: number; fanOut: number }>;
+  louvainCommunities(
+    edges: Array<{ source: string; target: string }>,
+    nodeIds: string[],
+    resolution?: number | null,
+    randomSeed?: number | null,
+  ): {
+    assignments: Array<{ node: string; community: number }>;
+    modularity: number;
+  };
   buildCallEdges(files: unknown[], nodes: unknown[], builtinReceivers: string[]): unknown[];
+  buildImportEdges?(
+    files: unknown[],
+    resolvedImports: unknown[],
+    fileReexports: unknown[],
+    fileNodeIds: unknown[],
+    barrelFiles: string[],
+    rootDir: string,
+  ): unknown[];
   engineVersion(): string;
+  analyzeComplexity(
+    source: string,
+    filePath: string,
+    langId?: string | null,
+  ): NativeFunctionComplexityResult[];
+  buildCfgAnalysis(
+    source: string,
+    filePath: string,
+    langId?: string | null,
+  ): NativeFunctionCfgResult[];
+  extractDataflowAnalysis(
+    source: string,
+    filePath: string,
+    langId?: string | null,
+  ): DataflowResult | null;
   ParseTreeCache: new () => NativeParseTreeCache;
   NativeDatabase: {
     openReadWrite(dbPath: string): NativeDatabase;
     openReadonly(dbPath: string): NativeDatabase;
   };
+}
+
+/** Per-function complexity result from native standalone analysis (napi output shape). */
+export interface NativeFunctionComplexityResult {
+  name: string;
+  line: number;
+  endLine: number | null;
+  complexity: {
+    cognitive: number;
+    cyclomatic: number;
+    maxNesting: number;
+    halstead?: {
+      n1: number;
+      n2: number;
+      bigN1: number;
+      bigN2: number;
+      vocabulary: number;
+      length: number;
+      volume: number;
+      difficulty: number;
+      effort: number;
+      bugs: number;
+    };
+    loc?: { loc: number; sloc: number; commentLines: number };
+    maintainabilityIndex?: number | null;
+  };
+}
+
+/** Per-function CFG result from native standalone analysis. */
+export interface NativeFunctionCfgResult {
+  name: string;
+  line: number;
+  endLine: number | null;
+  cfg: { blocks: CfgBlock[]; edges: CfgEdge[] };
 }
 
 /** Native parse-tree cache instance. */
@@ -2029,7 +2128,10 @@ export interface NativeDatabase {
   hasCfgTables(): boolean;
   hasEmbeddings(): boolean;
   hasDataflowTable(): boolean;
+  hasImplementsEdges(): boolean;
+  hasCoChangesTable(): boolean;
   getComplexityForNode(nodeId: number): NativeComplexityMetrics | null;
+  getFileHash(file: string): string | null;
 
   // ── Build pipeline writes (6.15) ───────────────────────────────────
   bulkInsertNodes(
@@ -2119,7 +2221,7 @@ export interface NativeDatabase {
       sourceId: number;
       targetId: number;
       kind: string;
-      paramIndex?: number | null;
+      paramIndex?: number;
       expression?: string | null;
       line?: number | null;
       confidence: number;
@@ -2266,6 +2368,32 @@ export interface NativeDatabase {
     fanOut: number;
   }>;
 
+  // ── Batched build-glue queries (6.18) ────────────────────────────────
+  /** All file_hashes rows + table existence + max mtime in one call. */
+  getFileHashData?(): {
+    exists: boolean;
+    rows: Array<{ file: string; hash: string; mtime: number; size: number }>;
+    maxMtime: number;
+  };
+  /** CFG and dataflow table counts (-1 = table missing). */
+  checkPendingAnalysis?(): { cfgCount: number; dataflowCount: number };
+  /** Batch upsert file_hashes for metadata healing. */
+  healFileMetadata?(
+    entries: Array<{ file: string; hash: string; mtime: number; size: number }>,
+  ): number;
+  /** Find files with edges pointing to changed files. */
+  findReverseDependencies?(changedFiles: string[]): string[];
+  /** Node + edge counts in one call. */
+  getFinalizeCounts?(): { nodeCount: number; edgeCount: number };
+  /** Orphaned embeddings, stale embeddings, unused exports in one call. */
+  runAdvisoryChecks?(hasEmbeddings: boolean): {
+    orphanedEmbeddings: number;
+    embedBuiltAt: string | null;
+    unusedExports: number;
+  };
+  /** File_hashes count + all file paths in one call. */
+  getCollectFilesData?(): { count: number; files: string[] };
+
   // ── Generic query execution & version validation (6.16) ─────────────
   /** Execute a parameterized SELECT and return all rows as objects. */
   queryAll(sql: string, params: Array<string | number | null>): Record<string, unknown>[];
@@ -2273,6 +2401,14 @@ export interface NativeDatabase {
   queryGet(sql: string, params: Array<string | number | null>): Record<string, unknown> | null;
   /** Validate DB codegraph_version matches expected. Warns on mismatch. */
   validateSchemaVersion(expectedVersion: string): boolean;
+
+  // ── Full Rust build orchestration (#695) ─────────────────────────────
+  /**
+   * Run the entire build pipeline in Rust with zero napi boundary crossings.
+   * Returns a JSON string with timing and build result data.
+   * When unavailable, the JS pipeline (runPipelineStages) is used as fallback.
+   */
+  buildGraph?(rootDir: string, configJson: string, aliasesJson: string, optsJson: string): string;
 }
 
 // ════════════════════════════════════════════════════════════════════════

@@ -18,6 +18,13 @@ const DEFAULT_MAX_LEVELS: number = 50;
 const DEFAULT_MAX_LOCAL_PASSES: number = 20;
 const GAIN_EPSILON: number = 1e-12;
 
+/** Pre-allocated scratch buffers for refinement candidate collection. */
+interface RefinementScratch {
+  candC: Int32Array;
+  candGain: Float64Array;
+  candWeight: Float64Array;
+}
+
 const CandidateStrategy = {
   Neighbors: 0,
   All: 1,
@@ -336,6 +343,79 @@ function buildCoarseGraph(g: GraphAdapter, p: Partition): CodeGraph {
 }
 
 /**
+ * Collect eligible candidate communities for node `v` during refinement.
+ * A candidate must: (a) be in the same macro-community, (b) respect the size
+ * limit, and (c) produce a positive quality gain above GAIN_EPSILON.
+ * Returns the number of collected candidates written into `scratch`.
+ */
+function collectRefinementCandidates(
+  p: Partition,
+  g: GraphAdapter,
+  v: number,
+  touchedCount: number,
+  macroV: number,
+  commMacro: Int32Array,
+  maxSize: number,
+  opts: NormalizedOptions,
+  scratch: RefinementScratch,
+): number {
+  let candLen: number = 0;
+  for (let t = 0; t < touchedCount; t++) {
+    const c: number = p.getCandidateCommunityAt(t);
+    if (c === p.nodeCommunity[v]!) continue;
+    if (commMacro[c]! !== macroV) continue;
+    if (maxSize < Infinity) {
+      const nextSize: number = p.getCommunityTotalSize(c) + g.size[v]!;
+      if (nextSize > maxSize) continue;
+    }
+    const gain: number = computeQualityGain(p, v, c, opts);
+    if (gain > GAIN_EPSILON) {
+      scratch.candC[candLen] = c;
+      scratch.candGain[candLen] = gain;
+      candLen++;
+    }
+  }
+  return candLen;
+}
+
+/**
+ * Boltzmann probabilistic selection from collected candidates (Algorithm 3).
+ * Returns the chosen community ID, or -1 if the node should stay as singleton.
+ *
+ * p(v, C) is proportional to exp(deltaH / theta), with the "stay as singleton"
+ * option (deltaH = 0) included. For numerical stability, the max gain is
+ * subtracted before exponentiation.
+ */
+function boltzmannSelectCandidate(
+  candLen: number,
+  theta: number,
+  rng: () => number,
+  scratch: RefinementScratch,
+): number {
+  let maxGain: number = 0;
+  for (let i = 0; i < candLen; i++) {
+    if (scratch.candGain[i]! > maxGain) maxGain = scratch.candGain[i]!;
+  }
+  // "Stay as singleton" weight: exp((0 - maxGain) / theta)
+  const stayWeight: number = Math.exp((0 - maxGain) / theta);
+  let totalWeight: number = stayWeight;
+  for (let i = 0; i < candLen; i++) {
+    scratch.candWeight[i] = Math.exp((scratch.candGain[i]! - maxGain) / theta);
+    totalWeight += scratch.candWeight[i]!;
+  }
+
+  const r: number = rng() * totalWeight;
+  if (r < stayWeight) return -1; // node stays as singleton
+
+  let cumulative: number = stayWeight;
+  for (let i = 0; i < candLen; i++) {
+    cumulative += scratch.candWeight[i]!;
+    if (r < cumulative) return scratch.candC[i]!;
+  }
+  return scratch.candC[candLen - 1]!; // fallback
+}
+
+/**
  * True Leiden refinement phase (Algorithm 3, Traag et al. 2019).
  *
  * Key properties that distinguish this from Louvain-style refinement:
@@ -380,10 +460,12 @@ function refineWithinCoarseCommunities(
   shuffleArrayInPlace(order, rng);
 
   // Pre-allocate flat arrays for candidate collection to avoid per-node GC pressure.
-  // Maximum possible candidates per node is bounded by g.n (community count).
-  const candC = new Int32Array(g.n);
-  const candGain = new Float64Array(g.n);
-  const candWeight = new Float64Array(g.n);
+  const scratch: RefinementScratch = {
+    candC: new Int32Array(g.n),
+    candGain: new Float64Array(g.n),
+    candWeight: new Float64Array(g.n),
+  };
+  const maxSize: number = Number.isFinite(opts.maxCommunitySize) ? opts.maxCommunitySize : Infinity;
 
   for (let idx = 0; idx < order.length; idx++) {
     const v: number = order[idx]!;
@@ -394,59 +476,21 @@ function refineWithinCoarseCommunities(
 
     const macroV: number = macro[v]!;
     const touchedCount: number = p.accumulateNeighborCommunityEdgeWeights(v);
-    const maxSize: number = Number.isFinite(opts.maxCommunitySize)
-      ? opts.maxCommunitySize
-      : Infinity;
-
-    // Collect eligible communities and their quality gains.
-    let candLen: number = 0;
-    for (let t = 0; t < touchedCount; t++) {
-      const c: number = p.getCandidateCommunityAt(t);
-      if (c === p.nodeCommunity[v]!) continue;
-      if (commMacro[c]! !== macroV) continue;
-      if (maxSize < Infinity) {
-        const nextSize: number = p.getCommunityTotalSize(c) + g.size[v]!;
-        if (nextSize > maxSize) continue;
-      }
-      const gain: number = computeQualityGain(p, v, c, opts);
-      if (gain > GAIN_EPSILON) {
-        candC[candLen] = c;
-        candGain[candLen] = gain;
-        candLen++;
-      }
-    }
-
+    const candLen: number = collectRefinementCandidates(
+      p,
+      g,
+      v,
+      touchedCount,
+      macroV,
+      commMacro,
+      maxSize,
+      opts,
+      scratch,
+    );
     if (candLen === 0) continue;
 
-    // Probabilistic selection: p(v, C) proportional to exp(deltaH / theta),
-    // with the "stay" option (deltaH = 0) included per Algorithm 3.
-    // For numerical stability, subtract the max gain before exponentiation.
-    let maxGain: number = 0;
-    for (let i = 0; i < candLen; i++) {
-      if (candGain[i]! > maxGain) maxGain = candGain[i]!;
-    }
-    // "Stay as singleton" weight: exp((0 - maxGain) / theta)
-    const stayWeight: number = Math.exp((0 - maxGain) / theta);
-    let totalWeight: number = stayWeight;
-    for (let i = 0; i < candLen; i++) {
-      candWeight[i] = Math.exp((candGain[i]! - maxGain) / theta);
-      totalWeight += candWeight[i]!;
-    }
-
-    const r: number = rng() * totalWeight;
-    if (r < stayWeight) continue; // node stays as singleton
-
-    let cumulative: number = stayWeight;
-    let chosenC: number = candC[candLen - 1]!; // fallback
-    for (let i = 0; i < candLen; i++) {
-      cumulative += candWeight[i]!;
-      if (r < cumulative) {
-        chosenC = candC[i]!;
-        break;
-      }
-    }
-
-    p.moveNodeToCommunity(v, chosenC);
+    const chosenC: number = boltzmannSelectCandidate(candLen, theta, rng, scratch);
+    if (chosenC >= 0) p.moveNodeToCommunity(v, chosenC);
   }
   return p;
 }

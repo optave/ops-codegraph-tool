@@ -138,19 +138,22 @@ function handleRustTraitItem(node: TreeSitterNode, ctx: ExtractorOutput): void {
     endLine: nodeEndLine(node),
   });
   const body = node.childForFieldName('body');
-  if (body) {
-    for (let i = 0; i < body.childCount; i++) {
-      const child = body.child(i);
-      if (child && (child.type === 'function_signature_item' || child.type === 'function_item')) {
-        const methName = child.childForFieldName('name');
-        if (methName) {
-          ctx.definitions.push({
-            name: `${nameNode.text}.${methName.text}`,
-            kind: 'method',
-            line: child.startPosition.row + 1,
-            endLine: child.endPosition.row + 1,
-          });
-        }
+  if (body) extractTraitMethods(body, nameNode.text, ctx);
+}
+
+/** Extract method signatures/definitions from a trait body. */
+function extractTraitMethods(body: TreeSitterNode, traitName: string, ctx: ExtractorOutput): void {
+  for (let i = 0; i < body.childCount; i++) {
+    const child = body.child(i);
+    if (child && (child.type === 'function_signature_item' || child.type === 'function_item')) {
+      const methName = child.childForFieldName('name');
+      if (methName) {
+        ctx.definitions.push({
+          name: `${traitName}.${methName.text}`,
+          kind: 'method',
+          line: child.startPosition.row + 1,
+          endLine: child.endPosition.row + 1,
+        });
       }
     }
   }
@@ -185,25 +188,30 @@ function handleRustUseDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 function handleRustCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const fn = node.childForFieldName('function');
   if (!fn) return;
-  if (fn.type === 'identifier') {
-    ctx.calls.push({ name: fn.text, line: node.startPosition.row + 1 });
-  } else if (fn.type === 'field_expression') {
+  const call = extractRustCallInfo(fn, node.startPosition.row + 1);
+  if (call) ctx.calls.push(call);
+}
+
+/** Extract call info from a Rust call function node. */
+function extractRustCallInfo(fn: TreeSitterNode, line: number): Call | null {
+  if (fn.type === 'identifier') return { name: fn.text, line };
+  if (fn.type === 'field_expression') {
     const field = fn.childForFieldName('field');
-    if (field) {
-      const value = fn.childForFieldName('value');
-      const call: Call = { name: field.text, line: node.startPosition.row + 1 };
-      if (value) call.receiver = value.text;
-      ctx.calls.push(call);
-    }
-  } else if (fn.type === 'scoped_identifier') {
-    const name = fn.childForFieldName('name');
-    if (name) {
-      const path = fn.childForFieldName('path');
-      const call: Call = { name: name.text, line: node.startPosition.row + 1 };
-      if (path) call.receiver = path.text;
-      ctx.calls.push(call);
-    }
+    if (!field) return null;
+    const value = fn.childForFieldName('value');
+    const call: Call = { name: field.text, line };
+    if (value) call.receiver = value.text;
+    return call;
   }
+  if (fn.type === 'scoped_identifier') {
+    const name = fn.childForFieldName('name');
+    if (!name) return null;
+    const path = fn.childForFieldName('path');
+    const call: Call = { name: name.text, line };
+    if (path) call.receiver = path.text;
+    return call;
+  }
+  return null;
 }
 
 function handleRustMacroInvocation(node: TreeSitterNode, ctx: ExtractorOutput): void {
