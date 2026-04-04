@@ -112,9 +112,9 @@ export function promptInstall(packageName: string): Promise<boolean> {
         timeout: 300_000,
       });
       return Promise.resolve(true);
-    } catch {
+    } catch (err) {
       info(
-        `Auto-install of ${packageName} failed. Install it manually with:\n  npm install ${packageName}`,
+        `Auto-install of ${packageName} failed (${err instanceof Error ? err.message : String(err)}). Install it manually with:\n  npm install ${packageName}`,
       );
       return Promise.resolve(false);
     }
@@ -133,7 +133,10 @@ export function promptInstall(packageName: string): Promise<boolean> {
             timeout: 300_000,
           });
           resolve(true);
-        } catch {
+        } catch (err) {
+          info(
+            `Install of ${packageName} failed (${err instanceof Error ? err.message : String(err)}). Install it manually with:\n  npm install ${packageName}`,
+          );
           resolve(false);
         }
       },
