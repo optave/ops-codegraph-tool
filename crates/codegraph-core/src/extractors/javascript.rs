@@ -1535,4 +1535,22 @@ mod tests {
         assert!(dyn_imports[0].names.contains(&"c".to_string()));
         assert!(!dyn_imports[0].names.contains(&"fromBarrel".to_string()));
     }
+
+    #[test]
+    fn finds_dynamic_import_with_aliased_default_destructuring() {
+        let s = parse_js("const { buildGraph: local = null } = await import('./builder.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert!(dyn_imports[0].names.contains(&"buildGraph".to_string()));
+        assert!(!dyn_imports[0].names.contains(&"local".to_string()));
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_nested_object_destructuring() {
+        let s = parse_js("const { foo: { nested } } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert!(dyn_imports[0].names.contains(&"foo".to_string()));
+        assert!(!dyn_imports[0].names.contains(&"nested".to_string()));
+    }
 }
