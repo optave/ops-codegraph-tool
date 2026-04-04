@@ -997,21 +997,34 @@ function handleVarDeclaratorTypeMap(
   const nameN = node.childForFieldName('name');
   if (!nameN || nameN.type !== 'identifier') return;
 
-  // Type annotation: const x: Foo = …
   const typeAnno = findChild(node, 'type_annotation');
+  const valueN = node.childForFieldName('value');
+
+  // Constructor on the same declaration wins over annotation: the runtime type is
+  // what matters for call resolution (e.g. `const x: Base = new Derived()` should
+  // resolve `x.render()` to `Derived.render`, not `Base.render`).
+  // When no constructor is present, annotation still takes precedence over factory.
+  if (valueN?.type === 'new_expression') {
+    const ctorType = extractNewExprTypeName(valueN);
+    if (ctorType) {
+      setTypeMapEntry(typeMap, nameN.text, ctorType, 1.0);
+      return;
+    }
+  }
+
+  // Type annotation: const x: Foo = … → confidence 0.9
   if (typeAnno) {
     const typeName = extractSimpleTypeName(typeAnno);
-    if (typeName) setTypeMapEntry(typeMap, nameN.text, typeName, 0.9);
+    if (typeName) {
+      setTypeMapEntry(typeMap, nameN.text, typeName, 0.9);
+      return;
+    }
   }
 
-  const valueN = node.childForFieldName('value');
   if (!valueN) return;
 
-  // Constructor: const x = new Foo() → confidence 1.0
-  if (valueN.type === 'new_expression') {
-    const ctorType = extractNewExprTypeName(valueN);
-    if (ctorType) setTypeMapEntry(typeMap, nameN.text, ctorType, 1.0);
-  }
+  // Constructor already handled above — only factory path remains.
+  if (valueN.type === 'new_expression') return;
   // Factory method: const x = Foo.create() → confidence 0.7
   else if (valueN.type === 'call_expression') {
     const fn = valueN.childForFieldName('function');
