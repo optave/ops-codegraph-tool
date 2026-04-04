@@ -444,6 +444,77 @@ export function classifyNodeRoles(
   return classifyNodeRolesFull(db, emptySummary);
 }
 
+// ─── Shared role-classification helpers ───────────────────────────────
+
+/**
+ * Build a role summary and group node IDs by role from classifier output.
+ * Shared between full and incremental classification paths.
+ */
+function buildRoleSummary(
+  rows: { id: number }[],
+  leafRows: { id: number }[],
+  roleMap: Map<string, string>,
+  emptySummary: RoleSummary,
+): { summary: RoleSummary; idsByRole: Map<string, number[]> } {
+  const summary: RoleSummary = { ...emptySummary };
+  const idsByRole = new Map<string, number[]>();
+
+  // Leaf kinds are always dead-leaf — skip classifier
+  if (leafRows.length > 0) {
+    const leafIds: number[] = [];
+    for (const row of leafRows) leafIds.push(row.id);
+    idsByRole.set('dead-leaf', leafIds);
+    summary.dead += leafRows.length;
+    summary['dead-leaf'] += leafRows.length;
+  }
+
+  for (const row of rows) {
+    const role = roleMap.get(String(row.id)) || 'leaf';
+    if (role.startsWith('dead')) summary.dead++;
+    summary[role] = (summary[role] || 0) + 1;
+    let ids = idsByRole.get(role);
+    if (!ids) {
+      ids = [];
+      idsByRole.set(role, ids);
+    }
+    ids.push(row.id);
+  }
+
+  return { summary, idsByRole };
+}
+
+/**
+ * Batch-update node roles in the database. Executes a reset callback
+ * first (full resets all nodes, incremental resets only affected files),
+ * then writes new roles in chunks.
+ */
+function batchUpdateRoles(
+  db: BetterSqlite3Database,
+  idsByRole: Map<string, number[]>,
+  resetFn: () => void,
+): void {
+  const ROLE_CHUNK = 500;
+  const roleStmtCache = new Map<number, SqliteStatement>();
+  db.transaction(() => {
+    resetFn();
+    for (const [role, ids] of idsByRole) {
+      for (let i = 0; i < ids.length; i += ROLE_CHUNK) {
+        const end = Math.min(i + ROLE_CHUNK, ids.length);
+        const chunkSize = end - i;
+        let stmt = roleStmtCache.get(chunkSize);
+        if (!stmt) {
+          const placeholders = Array.from({ length: chunkSize }, () => '?').join(',');
+          stmt = db.prepare(`UPDATE nodes SET role = ? WHERE id IN (${placeholders})`);
+          roleStmtCache.set(chunkSize, stmt);
+        }
+        const vals: unknown[] = [role];
+        for (let j = i; j < end; j++) vals.push(ids[j]);
+        stmt.run(...vals);
+      }
+    }
+  })();
+}
+
 function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSummary): RoleSummary {
   // Leaf kinds (parameter, property) can never have callers/callees.
   // Classify them directly as dead-leaf without the expensive fan-in/fan-out JOINs.
@@ -525,52 +596,11 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
 
   const roleMap = classifyRoles(classifierInput);
 
-  // Build summary and group updates by role for batch UPDATE
-  const summary: RoleSummary = { ...emptySummary };
-  const idsByRole = new Map<string, number[]>();
+  const { summary, idsByRole } = buildRoleSummary(rows, leafRows, roleMap, emptySummary);
 
-  // Leaf kinds are always dead-leaf -- skip classifier
-  if (leafRows.length > 0) {
-    const leafIds: number[] = [];
-    for (const row of leafRows) leafIds.push(row.id);
-    idsByRole.set('dead-leaf', leafIds);
-    summary.dead += leafRows.length;
-    summary['dead-leaf'] += leafRows.length;
-  }
-
-  for (const row of rows) {
-    const role = roleMap.get(String(row.id)) || 'leaf';
-    if (role.startsWith('dead')) summary.dead++;
-    summary[role] = (summary[role] || 0) + 1;
-    let ids = idsByRole.get(role);
-    if (!ids) {
-      ids = [];
-      idsByRole.set(role, ids);
-    }
-    ids.push(row.id);
-  }
-
-  // Batch UPDATE: one statement per role instead of one per node
-  const ROLE_CHUNK = 500;
-  const roleStmtCache = new Map<number, SqliteStatement>();
-  db.transaction(() => {
+  batchUpdateRoles(db, idsByRole, () => {
     db.prepare('UPDATE nodes SET role = NULL').run();
-    for (const [role, ids] of idsByRole) {
-      for (let i = 0; i < ids.length; i += ROLE_CHUNK) {
-        const end = Math.min(i + ROLE_CHUNK, ids.length);
-        const chunkSize = end - i;
-        let stmt = roleStmtCache.get(chunkSize);
-        if (!stmt) {
-          const placeholders = Array.from({ length: chunkSize }, () => '?').join(',');
-          stmt = db.prepare(`UPDATE nodes SET role = ? WHERE id IN (${placeholders})`);
-          roleStmtCache.set(chunkSize, stmt);
-        }
-        const vals: unknown[] = [role];
-        for (let j = i; j < end; j++) vals.push(ids[j]);
-        stmt.run(...vals);
-      }
-    }
-  })();
+  });
 
   return summary;
 }
@@ -704,54 +734,14 @@ function classifyNodeRolesIncremental(
   const roleMap = classifyRoles(classifierInput, globalMedians);
 
   // 6. Build summary (only for affected nodes) and update only those nodes
-  const summary: RoleSummary = { ...emptySummary };
-  const idsByRole = new Map<string, number[]>();
+  const { summary, idsByRole } = buildRoleSummary(rows, leafRows, roleMap, emptySummary);
 
-  // Leaf kinds are always dead-leaf -- skip classifier
-  if (leafRows.length > 0) {
-    const leafIds: number[] = [];
-    for (const row of leafRows) leafIds.push(row.id);
-    idsByRole.set('dead-leaf', leafIds);
-    summary.dead += leafRows.length;
-    summary['dead-leaf'] += leafRows.length;
-  }
-
-  for (const row of rows) {
-    const role = roleMap.get(String(row.id)) || 'leaf';
-    if (role.startsWith('dead')) summary.dead++;
-    summary[role] = (summary[role] || 0) + 1;
-    let ids = idsByRole.get(role);
-    if (!ids) {
-      ids = [];
-      idsByRole.set(role, ids);
-    }
-    ids.push(row.id);
-  }
-
-  // Only update affected nodes — no global NULL reset
-  const ROLE_CHUNK = 500;
-  const roleStmtCache = new Map<number, SqliteStatement>();
-  db.transaction(() => {
+  batchUpdateRoles(db, idsByRole, () => {
     // Reset roles only for affected files' nodes
     db.prepare(
       `UPDATE nodes SET role = NULL WHERE file IN (${placeholders}) AND kind NOT IN ('file', 'directory')`,
     ).run(...allAffectedFiles);
-    for (const [role, ids] of idsByRole) {
-      for (let i = 0; i < ids.length; i += ROLE_CHUNK) {
-        const end = Math.min(i + ROLE_CHUNK, ids.length);
-        const chunkSize = end - i;
-        let stmt = roleStmtCache.get(chunkSize);
-        if (!stmt) {
-          const ph = Array.from({ length: chunkSize }, () => '?').join(',');
-          stmt = db.prepare(`UPDATE nodes SET role = ? WHERE id IN (${ph})`);
-          roleStmtCache.set(chunkSize, stmt);
-        }
-        const vals: unknown[] = [role];
-        for (let j = i; j < end; j++) vals.push(ids[j]);
-        stmt.run(...vals);
-      }
-    }
-  })();
+  });
 
   return summary;
 }

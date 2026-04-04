@@ -44,6 +44,48 @@ interface CommunitiesResult {
   drift: DriftAnalysis;
 }
 
+function renderCommunityList(communityList: Community[]): void {
+  for (const c of communityList) {
+    const dirs = Object.entries(c.directories)
+      .sort((a, b) => b[1] - a[1])
+      .map(([d, n]) => `${d} (${n})`)
+      .join(', ');
+    console.log(`  Community ${c.id} (${c.size} members): ${dirs}`);
+    if (c.members) {
+      const shown = c.members.slice(0, 8);
+      for (const m of shown) {
+        const kind = m.kind ? ` [${m.kind}]` : '';
+        console.log(`    - ${m.name}${kind}  ${m.file}`);
+      }
+      if (c.members.length > 8) {
+        console.log(`    ... and ${c.members.length - 8} more`);
+      }
+    }
+  }
+}
+
+function renderDriftAnalysis(d: DriftAnalysis, driftScore: number): void {
+  if (d.splitCandidates.length === 0 && d.mergeCandidates.length === 0) return;
+
+  console.log(`\n# Drift Analysis (score: ${driftScore}%)\n`);
+
+  if (d.splitCandidates.length > 0) {
+    console.log('  Split candidates (directories spanning multiple communities):');
+    for (const s of d.splitCandidates.slice(0, 10)) {
+      console.log(`    - ${s.directory} → ${s.communityCount} communities`);
+    }
+  }
+
+  if (d.mergeCandidates.length > 0) {
+    console.log('  Merge candidates (communities spanning multiple directories):');
+    for (const m of d.mergeCandidates.slice(0, 10)) {
+      console.log(
+        `    - Community ${m.communityId} (${m.size} members) → ${m.directoryCount} dirs: ${m.directories.join(', ')}`,
+      );
+    }
+  }
+}
+
 export function communities(customDbPath: string | undefined, opts: CommunitiesCliOpts = {}): void {
   const data = communitiesData(customDbPath, opts) as unknown as CommunitiesResult;
 
@@ -64,46 +106,9 @@ export function communities(customDbPath: string | undefined, opts: CommunitiesC
   );
 
   if (!opts.drift) {
-    for (const c of data.communities) {
-      const dirs = Object.entries(c.directories)
-        .sort((a, b) => b[1] - a[1])
-        .map(([d, n]) => `${d} (${n})`)
-        .join(', ');
-      console.log(`  Community ${c.id} (${c.size} members): ${dirs}`);
-      if (c.members) {
-        const shown = c.members.slice(0, 8);
-        for (const m of shown) {
-          const kind = m.kind ? ` [${m.kind}]` : '';
-          console.log(`    - ${m.name}${kind}  ${m.file}`);
-        }
-        if (c.members.length > 8) {
-          console.log(`    ... and ${c.members.length - 8} more`);
-        }
-      }
-    }
+    renderCommunityList(data.communities);
   }
 
-  // Drift analysis
-  const d = data.drift;
-  if (d.splitCandidates.length > 0 || d.mergeCandidates.length > 0) {
-    console.log(`\n# Drift Analysis (score: ${data.summary.driftScore}%)\n`);
-
-    if (d.splitCandidates.length > 0) {
-      console.log('  Split candidates (directories spanning multiple communities):');
-      for (const s of d.splitCandidates.slice(0, 10)) {
-        console.log(`    - ${s.directory} → ${s.communityCount} communities`);
-      }
-    }
-
-    if (d.mergeCandidates.length > 0) {
-      console.log('  Merge candidates (communities spanning multiple directories):');
-      for (const m of d.mergeCandidates.slice(0, 10)) {
-        console.log(
-          `    - Community ${m.communityId} (${m.size} members) → ${m.directoryCount} dirs: ${m.directories.join(', ')}`,
-        );
-      }
-    }
-  }
-
+  renderDriftAnalysis(data.drift, data.summary.driftScore);
   console.log();
 }

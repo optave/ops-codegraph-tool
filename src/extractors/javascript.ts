@@ -202,6 +202,48 @@ function handleExportCapture(
   }
 }
 
+function handleInterfaceCapture(
+  c: Record<string, TreeSitterNode>,
+  definitions: Definition[],
+): void {
+  const ifaceNode = c.iface_node!;
+  const ifaceName = c.iface_name!.text;
+  definitions.push({
+    name: ifaceName,
+    kind: 'interface',
+    line: ifaceNode.startPosition.row + 1,
+    endLine: nodeEndLine(ifaceNode),
+  });
+  const body =
+    ifaceNode.childForFieldName('body') ||
+    findChild(ifaceNode, 'interface_body') ||
+    findChild(ifaceNode, 'object_type');
+  if (body) extractInterfaceMethods(body, ifaceName, definitions);
+}
+
+function handleTypeCapture(c: Record<string, TreeSitterNode>, definitions: Definition[]): void {
+  const typeNode = c.type_node!;
+  definitions.push({
+    name: c.type_name!.text,
+    kind: 'type',
+    line: typeNode.startPosition.row + 1,
+    endLine: nodeEndLine(typeNode),
+  });
+}
+
+function handleImportCapture(c: Record<string, TreeSitterNode>, imports: Import[]): void {
+  const impNode = c.imp_node!;
+  const isTypeOnly = impNode.text.startsWith('import type');
+  const modPath = c.imp_source!.text.replace(/['"]/g, '');
+  const names = extractImportNames(impNode);
+  imports.push({
+    source: modPath,
+    names,
+    line: impNode.startPosition.row + 1,
+    typeOnly: isTypeOnly,
+  });
+}
+
 /** Dispatch a single query match to the appropriate handler. */
 function dispatchQueryMatch(
   c: Record<string, TreeSitterNode>,
@@ -220,35 +262,11 @@ function dispatchQueryMatch(
   } else if (c.meth_node) {
     handleMethodCapture(c, definitions);
   } else if (c.iface_node) {
-    const ifaceName = c.iface_name!.text;
-    definitions.push({
-      name: ifaceName,
-      kind: 'interface',
-      line: c.iface_node.startPosition.row + 1,
-      endLine: nodeEndLine(c.iface_node),
-    });
-    const body =
-      c.iface_node.childForFieldName('body') ||
-      findChild(c.iface_node, 'interface_body') ||
-      findChild(c.iface_node, 'object_type');
-    if (body) extractInterfaceMethods(body, ifaceName, definitions);
+    handleInterfaceCapture(c, definitions);
   } else if (c.type_node) {
-    definitions.push({
-      name: c.type_name!.text,
-      kind: 'type',
-      line: c.type_node.startPosition.row + 1,
-      endLine: nodeEndLine(c.type_node),
-    });
+    handleTypeCapture(c, definitions);
   } else if (c.imp_node) {
-    const isTypeOnly = c.imp_node.text.startsWith('import type');
-    const modPath = c.imp_source!.text.replace(/['"]/g, '');
-    const names = extractImportNames(c.imp_node);
-    imports.push({
-      source: modPath,
-      names,
-      line: c.imp_node.startPosition.row + 1,
-      typeOnly: isTypeOnly,
-    });
+    handleImportCapture(c, imports);
   } else if (c.exp_node) {
     handleExportCapture(c, exps, imports);
   } else if (c.callfn_node) {

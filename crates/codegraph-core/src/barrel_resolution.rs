@@ -62,14 +62,12 @@ pub fn resolve_barrel_export<C: BarrelContext>(
         }
 
         // Wildcard or empty-names reexports
-        if re.wildcard_reexport || re.names.is_empty() {
-            if ctx.has_definition(re.source, symbol_name) {
-                return Some(re.source.to_string());
-            }
-            let deeper = resolve_barrel_export(ctx, re.source, symbol_name, visited);
-            if deeper.is_some() {
-                return deeper;
-            }
+        if ctx.has_definition(re.source, symbol_name) {
+            return Some(re.source.to_string());
+        }
+        let deeper = resolve_barrel_export(ctx, re.source, symbol_name, visited);
+        if deeper.is_some() {
+            return deeper;
         }
     }
 

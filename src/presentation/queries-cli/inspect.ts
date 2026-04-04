@@ -182,6 +182,39 @@ interface InterfacesData {
   results: InterfacesResult[];
 }
 
+function renderWhereSymbolResults(results: WhereSymbolResult[]): void {
+  for (const r of results) {
+    const roleTag = r.role ? ` [${r.role}]` : '';
+    const tag = r.exported ? '  (exported)' : '';
+    console.log(`\n${kindIcon(r.kind)} ${r.name}${roleTag}  ${r.file}:${r.line}${tag}`);
+    if (r.uses.length > 0) {
+      const useStrs = r.uses.map((u) => `${u.file}:${u.line}`);
+      console.log(`  Used in: ${useStrs.join(', ')}`);
+    } else {
+      console.log('  No uses found');
+    }
+  }
+}
+
+function renderWhereFileResults(results: WhereFileResult[]): void {
+  for (const r of results) {
+    console.log(`\n# ${r.file}`);
+    if (r.symbols.length > 0) {
+      const symStrs = r.symbols.map((s) => `${s.name}:${s.line}`);
+      console.log(`  Symbols: ${symStrs.join(', ')}`);
+    }
+    if (r.imports.length > 0) {
+      console.log(`  Imports: ${r.imports.join(', ')}`);
+    }
+    if (r.importedBy.length > 0) {
+      console.log(`  Imported by: ${r.importedBy.join(', ')}`);
+    }
+    if (r.exported.length > 0) {
+      console.log(`  Exported: ${r.exported.join(', ')}`);
+    }
+  }
+}
+
 export function where(target: string, customDbPath: string, opts: OutputOpts = {}): void {
   const data = whereData(target, customDbPath, opts as Record<string, unknown>) as WhereData;
   if (outputResult(data as unknown as Record<string, unknown>, 'results', opts)) return;
@@ -196,34 +229,9 @@ export function where(target: string, customDbPath: string, opts: OutputOpts = {
   }
 
   if (data.mode === 'symbol') {
-    for (const r of data.results as WhereSymbolResult[]) {
-      const roleTag = r.role ? ` [${r.role}]` : '';
-      const tag = r.exported ? '  (exported)' : '';
-      console.log(`\n${kindIcon(r.kind)} ${r.name}${roleTag}  ${r.file}:${r.line}${tag}`);
-      if (r.uses.length > 0) {
-        const useStrs = r.uses.map((u) => `${u.file}:${u.line}`);
-        console.log(`  Used in: ${useStrs.join(', ')}`);
-      } else {
-        console.log('  No uses found');
-      }
-    }
+    renderWhereSymbolResults(data.results as WhereSymbolResult[]);
   } else {
-    for (const r of data.results as WhereFileResult[]) {
-      console.log(`\n# ${r.file}`);
-      if (r.symbols.length > 0) {
-        const symStrs = r.symbols.map((s) => `${s.name}:${s.line}`);
-        console.log(`  Symbols: ${symStrs.join(', ')}`);
-      }
-      if (r.imports.length > 0) {
-        console.log(`  Imports: ${r.imports.join(', ')}`);
-      }
-      if (r.importedBy.length > 0) {
-        console.log(`  Imported by: ${r.importedBy.join(', ')}`);
-      }
-      if (r.exported.length > 0) {
-        console.log(`  Exported: ${r.exported.join(', ')}`);
-      }
-    }
+    renderWhereFileResults(data.results as WhereFileResult[]);
   }
   console.log();
 }
@@ -402,6 +410,17 @@ function renderContextResult(r: ContextResult): void {
   }
 }
 
+function renderExplainSymbolList(label: string, symbols: ExplainSymbol[]): void {
+  if (symbols.length === 0) return;
+  console.log(`\n## ${label}`);
+  for (const s of symbols) {
+    const sig = s.signature?.params != null ? `(${s.signature.params})` : '';
+    const roleTag = s.role ? ` [${s.role}]` : '';
+    const summary = s.summary ? `  -- ${s.summary}` : '';
+    console.log(`  ${kindIcon(s.kind)} ${s.name}${sig}${roleTag} :${s.line}${summary}`);
+  }
+}
+
 function renderFileExplain(r: FileExplainResult): void {
   const publicCount = r.publicApi.length;
   const internalCount = r.internal.length;
@@ -418,25 +437,8 @@ function renderFileExplain(r: FileExplainResult): void {
     console.log(`  Imported by: ${r.importedBy.map((i) => i.file).join(', ')}`);
   }
 
-  if (r.publicApi.length > 0) {
-    console.log(`\n## Exported`);
-    for (const s of r.publicApi) {
-      const sig = s.signature?.params != null ? `(${s.signature.params})` : '';
-      const roleTag = s.role ? ` [${s.role}]` : '';
-      const summary = s.summary ? `  -- ${s.summary}` : '';
-      console.log(`  ${kindIcon(s.kind)} ${s.name}${sig}${roleTag} :${s.line}${summary}`);
-    }
-  }
-
-  if (r.internal.length > 0) {
-    console.log(`\n## Internal`);
-    for (const s of r.internal) {
-      const sig = s.signature?.params != null ? `(${s.signature.params})` : '';
-      const roleTag = s.role ? ` [${s.role}]` : '';
-      const summary = s.summary ? `  -- ${s.summary}` : '';
-      console.log(`  ${kindIcon(s.kind)} ${s.name}${sig}${roleTag} :${s.line}${summary}`);
-    }
-  }
+  renderExplainSymbolList('Exported', r.publicApi);
+  renderExplainSymbolList('Internal', r.internal);
 
   if (r.dataFlow.length > 0) {
     console.log(`\n## Data Flow`);
