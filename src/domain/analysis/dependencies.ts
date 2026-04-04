@@ -75,14 +75,20 @@ function buildTransitiveCallers(
   let frontier = callers;
 
   for (let d = 2; d <= depth; d++) {
+    // Collect unvisited frontier IDs for a single batched query per depth
+    const unvisited = frontier.filter((f) => !visited.has(f.id));
+    for (const f of unvisited) visited.add(f.id);
+    if (unvisited.length === 0) break;
+
+    const batchCallers = repo.findCallersBatch(unvisited.map((f) => f.id));
     const nextFrontier: typeof frontier = [];
-    for (const f of frontier) {
-      if (visited.has(f.id)) continue;
-      visited.add(f.id);
-      const upstream = repo.findCallers(f.id) as RelatedNodeRow[];
+    const nextFrontierIds = new Set<number>();
+    for (const f of unvisited) {
+      const upstream = batchCallers.get(f.id) || [];
       for (const u of upstream) {
         if (noTests && isTestFile(u.file)) continue;
-        if (!visited.has(u.id)) {
+        if (!visited.has(u.id) && !nextFrontierIds.has(u.id)) {
+          nextFrontierIds.add(u.id);
           nextFrontier.push(u);
         }
       }
@@ -96,7 +102,6 @@ function buildTransitiveCallers(
       }));
     }
     frontier = nextFrontier;
-    if (frontier.length === 0) break;
   }
 
   return transitiveCallers;

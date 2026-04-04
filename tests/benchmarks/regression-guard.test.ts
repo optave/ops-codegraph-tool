@@ -26,6 +26,40 @@ import { describe, expect, test } from 'vitest';
  */
 const REGRESSION_THRESHOLD = 0.25;
 
+/**
+ * Minimum absolute delta required before a regression is flagged.
+ * Small measurements fluctuate heavily from CI runner load, GC, and
+ * OS scheduling jitter — a 13ms→19ms jump is +46% but only 6ms of noise.
+ * This floor prevents false positives on inherently noisy metrics.
+ *
+ * Applied to all numeric metrics (timing in ms, sizes in bytes, counts).
+ * For timing metrics the 10-unit floor filters sub-10ms jitter; for byte
+ * or count metrics the floor is effectively a no-op since deltas are
+ * orders of magnitude larger.
+ */
+const MIN_ABSOLUTE_DELTA = 10;
+
+/**
+ * Versions to skip entirely from regression comparisons.
+ *
+ * - v3.8.0: benchmarks produced with broken native build orchestrator (#804)
+ *   that dropped 12.6% of edges, making build times and query latencies
+ *   appear artificially low.
+ * - v3.8.1: query/build benchmarks measured before the findCallersBatch fix,
+ *   so fnDeps and queryTimeMs are inflated by per-call NAPI overhead in BFS.
+ *
+ * These entries are skipped whether they appear as the latest or baseline.
+ */
+const SKIP_VERSIONS = new Set(['3.8.0', '3.8.1']);
+
+/**
+ * Maximum minor-version gap allowed for comparison. When the nearest
+ * usable baseline is more than MAX_VERSION_GAP minor versions away,
+ * the comparison is skipped — feature additions (new analysis phases,
+ * more languages, deeper extraction) make cross-gap comparisons unreliable.
+ */
+const MAX_VERSION_GAP = 3;
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 const ROOT = path.resolve(__dirname, '..', '..');
@@ -61,6 +95,25 @@ function extractJsonData<T>(filePath: string, marker: string): T[] {
 }
 
 /**
+ * Parse a semver string into [major, minor, patch].
+ */
+function parseSemver(v: string): [number, number, number] | null {
+  const m = v.match(/^(\d+)\.(\d+)\.(\d+)/);
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+}
+
+/**
+ * Count the minor-version distance between two semver strings.
+ * Returns Infinity for unparseable versions.
+ */
+function minorGap(a: string, b: string): number {
+  const sa = parseSemver(a);
+  const sb = parseSemver(b);
+  if (!sa || !sb) return Infinity;
+  return Math.abs(sa[0] * 100 + sa[1] - (sb[0] * 100 + sb[1]));
+}
+
+/**
  * Find the latest entry for a given engine, then the next non-dev
  * entry with data for that engine (the "previous release").
  */
@@ -68,8 +121,10 @@ function findLatestPair<T extends { version: string }>(
   history: T[],
   hasEngine: (entry: T) => boolean,
 ): { latest: T; previous: T } | null {
+  // Find the latest entry, skipping versions with unreliable data
   let latestIdx = -1;
   for (let i = 0; i < history.length; i++) {
+    if (SKIP_VERSIONS.has(history[i].version)) continue;
     if (hasEngine(history[i])) {
       latestIdx = i;
       break;
@@ -77,13 +132,20 @@ function findLatestPair<T extends { version: string }>(
   }
   if (latestIdx < 0) return null;
 
-  // Find previous non-dev entry with data for this engine
+  const latestVersion = history[latestIdx].version;
+
+  // Find previous non-dev entry with data for this engine, skipping
+  // versions with known unreliable benchmark data and versions that
+  // are too far apart for meaningful comparison.
   for (let i = latestIdx + 1; i < history.length; i++) {
-    if (history[i].version !== 'dev' && hasEngine(history[i])) {
-      return { latest: history[latestIdx], previous: history[i] };
-    }
+    const entry = history[i];
+    if (entry.version === 'dev') continue;
+    if (SKIP_VERSIONS.has(entry.version)) continue;
+    if (!hasEngine(entry)) continue;
+    if (minorGap(latestVersion, entry.version) > MAX_VERSION_GAP) continue;
+    return { latest: history[latestIdx], previous: entry };
   }
-  return null; // No previous release to compare against
+  return null; // No suitable baseline to compare against
 }
 
 /**
@@ -113,7 +175,9 @@ function checkRegression(
   previous: number | null | undefined,
 ): RegressionCheck | null {
   if (current == null || previous == null || previous === 0) return null;
-  const pctChange = (current - previous) / previous;
+  const absDelta = current - previous;
+  if (absDelta < MIN_ABSOLUTE_DELTA) return null; // below noise floor
+  const pctChange = absDelta / previous;
   return { label, current, previous, pctChange };
 }
 
@@ -302,7 +366,7 @@ describe('Benchmark regression guard', () => {
 
     // Resolve benchmarks (not engine-specific)
     const resolveEntries = incrementalHistory.filter(
-      (e) => e.resolve != null && e.version !== 'dev',
+      (e) => e.resolve != null && e.version !== 'dev' && !SKIP_VERSIONS.has(e.version),
     );
     if (resolveEntries.length >= 2) {
       test(`import resolution — ${resolveEntries[0].version} vs ${resolveEntries[1].version}`, () => {
