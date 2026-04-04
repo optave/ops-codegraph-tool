@@ -1102,19 +1102,10 @@ fn extract_dynamic_import_names(call_node: &Node, source: &[u8]) -> Vec<String> 
                     {
                         names.push(node_text(&child, source).to_string());
                     } else if child.kind() == "pair_pattern" || child.kind() == "pair" {
-                        if let Some(val) = child.child_by_field_name("value") {
-                            // Handle `{ foo: bar = 'default' }` — extract the left-hand binding
-                            let binding = if val.kind() == "assignment_pattern" {
-                                val.child_by_field_name("left").unwrap_or(val)
-                            } else if val.kind() == "identifier" {
-                                val
-                            } else {
-                                // Nested pattern (e.g. `{ foo: { bar } }`) — skip;
-                                // full nested support requires recursive extraction.
-                                continue;
-                            };
-                            names.push(node_text(&binding, source).to_string());
-                        } else if let Some(key) = child.child_by_field_name("key") {
+                        // { exportName: localAlias } → extract the key (export name),
+                        // not the value (local alias). The key maps to the source
+                        // module's export; the value is only the local binding.
+                        if let Some(key) = child.child_by_field_name("key") {
                             names.push(node_text(&key, source).to_string());
                         }
                     } else if child.kind() == "object_assignment_pattern" {
@@ -1521,5 +1512,45 @@ mod tests {
         assert_eq!(dyn_imports[0].source, "./bar.js");
         assert!(dyn_imports[0].names.contains(&"a".to_string()));
         assert!(dyn_imports[0].names.contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_aliased_destructuring() {
+        let s = parse_js("const { buildGraph: fromBarrel } = await import('./builder.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].source, "./builder.js");
+        assert!(dyn_imports[0].names.contains(&"buildGraph".to_string()));
+        assert!(!dyn_imports[0].names.contains(&"fromBarrel".to_string()));
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_mixed_destructuring() {
+        let s = parse_js("const { a, buildGraph: fromBarrel, c } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].source, "./mod.js");
+        assert!(dyn_imports[0].names.contains(&"a".to_string()));
+        assert!(dyn_imports[0].names.contains(&"buildGraph".to_string()));
+        assert!(dyn_imports[0].names.contains(&"c".to_string()));
+        assert!(!dyn_imports[0].names.contains(&"fromBarrel".to_string()));
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_aliased_default_destructuring() {
+        let s = parse_js("const { buildGraph: local = null } = await import('./builder.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert!(dyn_imports[0].names.contains(&"buildGraph".to_string()));
+        assert!(!dyn_imports[0].names.contains(&"local".to_string()));
+    }
+
+    #[test]
+    fn finds_dynamic_import_with_nested_object_destructuring() {
+        let s = parse_js("const { foo: { nested } } = await import('./mod.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert!(dyn_imports[0].names.contains(&"foo".to_string()));
+        assert!(!dyn_imports[0].names.contains(&"nested".to_string()));
     }
 }

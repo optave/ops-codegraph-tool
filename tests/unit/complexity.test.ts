@@ -9,6 +9,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { createParsers } from '../../src/domain/parser.js';
 import {
   COMPLEXITY_RULES,
+  computeAllMetrics,
   computeFunctionComplexity,
   computeHalsteadMetrics,
   computeLOCMetrics,
@@ -945,5 +946,178 @@ describe('PHP complexity', () => {
       '<?php\nfunction f() {\n    # hash comment\n    // slash comment\n    return 1;\n}\n',
     );
     expect(l.commentLines).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ─── Parity: standalone DFS vs visitor-based computeAllMetrics ──────────
+
+describe('DFS vs visitor parity', () => {
+  // Compares computeFunctionComplexity (standalone DFS, mirrors Rust walk)
+  // with computeAllMetrics (visitor-based, used by WASM builds).
+  // Both must produce identical cognitive, cyclomatic, and maxNesting values.
+
+  function analyzeViaBoth(code: string) {
+    const root = parse(code);
+    const funcNode = getFunctionBody(root);
+    if (!funcNode) throw new Error('No function found in code snippet');
+    const dfs = computeFunctionComplexity(funcNode, 'javascript');
+    const visitor = computeAllMetrics(funcNode, 'javascript');
+    return { dfs, visitor };
+  }
+
+  it('simple function — identical', () => {
+    const { dfs, visitor } = analyzeViaBoth(`
+      function simple(a, b) { return a + b; }
+    `);
+    expect(visitor.cognitive).toBe(dfs.cognitive);
+    expect(visitor.cyclomatic).toBe(dfs.cyclomatic);
+    expect(visitor.maxNesting).toBe(dfs.maxNesting);
+  });
+
+  it('branches and nesting — identical', () => {
+    const { dfs, visitor } = analyzeViaBoth(`
+      function complex(x, y) {
+        if (x > 0) {
+          for (let i = 0; i < y; i++) {
+            if (i % 2 === 0) {
+              console.log(i);
+            }
+          }
+        } else if (x < 0) {
+          while (y > 0) { y--; }
+        } else {
+          return 0;
+        }
+        return x;
+      }
+    `);
+    expect(visitor.cognitive).toBe(dfs.cognitive);
+    expect(visitor.cyclomatic).toBe(dfs.cyclomatic);
+    expect(visitor.maxNesting).toBe(dfs.maxNesting);
+  });
+
+  it('nested function — identical nesting', () => {
+    const { dfs, visitor } = analyzeViaBoth(`
+      function outer(x) {
+        const inner = (y) => {
+          if (y > 0) return y;
+          return 0;
+        };
+        if (x > 0) return inner(x);
+        return -1;
+      }
+    `);
+    expect(visitor.cognitive).toBe(dfs.cognitive);
+    expect(visitor.cyclomatic).toBe(dfs.cyclomatic);
+    expect(visitor.maxNesting).toBe(dfs.maxNesting);
+  });
+
+  it('double-nested function — identical nesting', () => {
+    const { dfs, visitor } = analyzeViaBoth(`
+      function top() {
+        function mid() {
+          function deep() {
+            if (true) return 1;
+            return 0;
+          }
+          if (true) return deep();
+          return 0;
+        }
+        return mid();
+      }
+    `);
+    expect(visitor.cognitive).toBe(dfs.cognitive);
+    expect(visitor.cyclomatic).toBe(dfs.cyclomatic);
+    expect(visitor.maxNesting).toBe(dfs.maxNesting);
+  });
+
+  it('switch + ternary + logical — identical', () => {
+    const { dfs, visitor } = analyzeViaBoth(`
+      function mixed(x, a, b) {
+        switch (x) {
+          case 1: return a && b ? 'yes' : 'no';
+          case 2: return a || b;
+          default: return null;
+        }
+      }
+    `);
+    expect(visitor.cognitive).toBe(dfs.cognitive);
+    expect(visitor.cyclomatic).toBe(dfs.cyclomatic);
+    expect(visitor.maxNesting).toBe(dfs.maxNesting);
+  });
+});
+
+// ─── Parity: elseViaAlternative languages (Go) ─────────────────────────
+
+describe('DFS vs visitor parity — Go (elseViaAlternative)', () => {
+  let goParser: any;
+
+  beforeAll(async () => {
+    const parsers = await createParsers();
+    goParser = parsers.get('go');
+  });
+
+  function findGoFunc(node: any): any {
+    const rules = COMPLEXITY_RULES.get('go');
+    if (!rules) return null;
+    if (rules.functionNodes.has(node.type)) return node;
+    for (let i = 0; i < node.childCount; i++) {
+      const result = findGoFunc(node.child(i));
+      if (result) return result;
+    }
+    return null;
+  }
+
+  function analyzeGoBoth(code: string) {
+    if (!goParser) throw new Error('Go parser not available');
+    const tree = goParser.parse(code);
+    const funcNode = findGoFunc(tree.rootNode);
+    if (!funcNode) throw new Error('No function found in Go snippet');
+    const dfs = computeFunctionComplexity(funcNode, 'go');
+    const visitor = computeAllMetrics(funcNode, 'go');
+    return { dfs, visitor };
+  }
+
+  it('else-if chain — identical (elseViaAlternative)', () => {
+    const { dfs, visitor } = analyzeGoBoth(`
+      package main
+      func classify(x int) string {
+        if x > 100 {
+          return "big"
+        } else if x > 50 {
+          return "medium"
+        } else if x > 0 {
+          return "small"
+        } else {
+          return "non-positive"
+        }
+      }
+    `);
+    expect(visitor!.cognitive).toBe(dfs!.cognitive);
+    expect(visitor!.cyclomatic).toBe(dfs!.cyclomatic);
+    expect(visitor!.maxNesting).toBe(dfs!.maxNesting);
+  });
+
+  it('nested if with else-if — identical nesting', () => {
+    const { dfs, visitor } = analyzeGoBoth(`
+      package main
+      func process(x int, y int) int {
+        if x > 0 {
+          if y > 0 {
+            return x + y
+          } else if y == 0 {
+            return x
+          } else {
+            return -1
+          }
+        } else if x == 0 {
+          return 0
+        }
+        return -2
+      }
+    `);
+    expect(visitor!.cognitive).toBe(dfs!.cognitive);
+    expect(visitor!.cyclomatic).toBe(dfs!.cyclomatic);
+    expect(visitor!.maxNesting).toBe(dfs!.maxNesting);
   });
 });
