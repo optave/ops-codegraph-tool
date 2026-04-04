@@ -380,4 +380,16 @@ describe('openReadonlyOrFail', () => {
     expect(tables).toContain('nodes');
     readDb.close();
   });
+
+  it('sets busy_timeout pragma to 5000 on readonly connections', () => {
+    const dbPath = path.join(tmpDir, 'readonly-busy.db');
+    const db = openDb(dbPath);
+    initSchema(db);
+    closeDb(db);
+
+    const readDb = openReadonlyOrFail(dbPath);
+    const timeout = readDb.pragma('busy_timeout', { simple: true });
+    expect(timeout).toBe(5000);
+    readDb.close();
+  });
 });

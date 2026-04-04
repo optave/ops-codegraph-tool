@@ -29,7 +29,9 @@ if [ -z "$REL_PATH" ]; then
 fi
 
 # Guard: codegraph DB must exist
-DB_PATH="${CLAUDE_PROJECT_DIR:-.}/.codegraph/graph.db"
+# Use git worktree root so each worktree reads its own DB (avoids WAL contention)
+WORK_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || WORK_ROOT="${CLAUDE_PROJECT_DIR:-.}"
+DB_PATH="$WORK_ROOT/.codegraph/graph.db"
 if [ ! -f "$DB_PATH" ]; then
   exit 0
 fi
