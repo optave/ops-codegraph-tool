@@ -215,25 +215,37 @@ function runNativeAnalysis(
   }
 }
 
+/** Index native results by line number and match to a definition by name. */
+function indexNativeByLine<T extends { line: number; name: string }>(
+  results: T[],
+): Map<number, T[]> {
+  const byLine = new Map<number, T[]>();
+  for (const r of results) {
+    if (!byLine.has(r.line)) byLine.set(r.line, []);
+    byLine.get(r.line)!.push(r);
+  }
+  return byLine;
+}
+
+function matchNativeResult<T extends { name: string }>(
+  candidates: T[] | undefined,
+  defName: string,
+): T | undefined {
+  if (!candidates) return undefined;
+  if (candidates.length === 1) return candidates[0];
+  return candidates.find((r) => r.name === defName) ?? candidates[0];
+}
+
 /** Store native complexity results on definitions, matched by line number. */
 function storeNativeComplexityResults(
   results: NativeFunctionComplexityResult[],
   defs: Definition[],
 ): void {
-  const byLine = new Map<number, NativeFunctionComplexityResult[]>();
-  for (const r of results) {
-    if (!byLine.has(r.line)) byLine.set(r.line, []);
-    byLine.get(r.line)!.push(r);
-  }
+  const byLine = indexNativeByLine(results);
 
   for (const def of defs) {
     if ((def.kind === 'function' || def.kind === 'method') && def.line && !def.complexity) {
-      const candidates = byLine.get(def.line);
-      if (!candidates) continue;
-      const match =
-        candidates.length === 1
-          ? candidates[0]
-          : (candidates.find((r) => r.name === def.name) ?? candidates[0]);
+      const match = matchNativeResult(byLine.get(def.line), def.name);
       if (!match) continue;
       const { complexity: c } = match;
       def.complexity = {
@@ -284,11 +296,7 @@ function overrideCyclomaticFromCfg(def: Definition, cfgCyclomatic: number): void
 
 /** Store native CFG results on definitions, matched by line number. */
 function storeNativeCfgResults(results: NativeFunctionCfgResult[], defs: Definition[]): void {
-  const byLine = new Map<number, NativeFunctionCfgResult[]>();
-  for (const r of results) {
-    if (!byLine.has(r.line)) byLine.set(r.line, []);
-    byLine.get(r.line)!.push(r);
-  }
+  const byLine = indexNativeByLine(results);
 
   for (const def of defs) {
     if (
@@ -297,12 +305,7 @@ function storeNativeCfgResults(results: NativeFunctionCfgResult[], defs: Definit
       def.cfg !== null &&
       !def.cfg?.blocks?.length
     ) {
-      const candidates = byLine.get(def.line);
-      if (!candidates) continue;
-      const match =
-        candidates.length === 1
-          ? candidates[0]
-          : (candidates.find((r) => r.name === def.name) ?? candidates[0]);
+      const match = matchNativeResult(byLine.get(def.line), def.name);
       if (!match) continue;
       def.cfg = match.cfg;
 
@@ -353,42 +356,61 @@ function reconcileCfgCyclomatic(fileSymbols: Map<string, ExtractorOutput>): void
 
 // ─── WASM pre-parse ─────────────────────────────────────────────────────
 
+/** Check whether a single file needs a WASM tree for any enabled analysis pass. */
+function fileNeedsWasmTree(
+  relPath: string,
+  symbols: ExtractorOutput,
+  flags: { doAst: boolean; doComplexity: boolean; doCfg: boolean; doDataflow: boolean },
+): boolean {
+  if (symbols._tree) return false;
+  const ext = path.extname(relPath).toLowerCase();
+  const defs = symbols.definitions || [];
+  const lid = symbols._langId || '';
+
+  if (
+    flags.doAst &&
+    !Array.isArray(symbols.astNodes) &&
+    (WALK_EXTENSIONS.has(ext) || AST_TYPE_MAPS.has(lid))
+  )
+    return true;
+  if (
+    flags.doComplexity &&
+    (COMPLEXITY_EXTENSIONS.has(ext) || COMPLEXITY_RULES.has(lid)) &&
+    defs.some((d) => hasFuncBody(d) && !d.complexity)
+  )
+    return true;
+  if (
+    flags.doCfg &&
+    (CFG_EXTENSIONS.has(ext) || CFG_RULES.has(lid)) &&
+    defs.some((d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks))
+  )
+    return true;
+  if (
+    flags.doDataflow &&
+    !symbols.dataflow &&
+    (DATAFLOW_EXTENSIONS.has(ext) || DATAFLOW_RULES.has(lid))
+  )
+    return true;
+  return false;
+}
+
 async function ensureWasmTreesIfNeeded(
   fileSymbols: Map<string, ExtractorOutput>,
   opts: AnalysisOpts,
   rootDir: string,
 ): Promise<void> {
-  const doAst = opts.ast !== false;
-  const doComplexity = opts.complexity !== false;
-  const doCfg = opts.cfg !== false;
-  const doDataflow = opts.dataflow !== false;
+  const flags = {
+    doAst: opts.ast !== false,
+    doComplexity: opts.complexity !== false,
+    doCfg: opts.cfg !== false,
+    doDataflow: opts.dataflow !== false,
+  };
 
-  if (!doAst && !doComplexity && !doCfg && !doDataflow) return;
+  if (!flags.doAst && !flags.doComplexity && !flags.doCfg && !flags.doDataflow) return;
 
   let needsWasmTrees = false;
   for (const [relPath, symbols] of fileSymbols) {
-    if (symbols._tree) continue;
-    const ext = path.extname(relPath).toLowerCase();
-    const defs = symbols.definitions || [];
-
-    // AST: need tree when native didn't provide non-call astNodes
-    const lid = symbols._langId || '';
-    const needsAst =
-      doAst &&
-      !Array.isArray(symbols.astNodes) &&
-      (WALK_EXTENSIONS.has(ext) || AST_TYPE_MAPS.has(lid));
-    const needsComplexity =
-      doComplexity &&
-      (COMPLEXITY_EXTENSIONS.has(ext) || COMPLEXITY_RULES.has(lid)) &&
-      defs.some((d) => hasFuncBody(d) && !d.complexity);
-    const needsCfg =
-      doCfg &&
-      (CFG_EXTENSIONS.has(ext) || CFG_RULES.has(lid)) &&
-      defs.some((d) => hasFuncBody(d) && d.cfg !== null && !Array.isArray(d.cfg?.blocks));
-    const needsDataflow =
-      doDataflow && !symbols.dataflow && (DATAFLOW_EXTENSIONS.has(ext) || DATAFLOW_RULES.has(lid));
-
-    if (needsAst || needsComplexity || needsCfg || needsDataflow) {
+    if (fileNeedsWasmTree(relPath, symbols, flags)) {
       needsWasmTrees = true;
       break;
     }
@@ -668,7 +690,7 @@ export async function runAnalyses(
   // This fills in complexity/CFG/dataflow for files that the native parse pipeline
   // missed, avoiding the need to parse with WASM + run JS visitors.
   const native = loadNative();
-  if (native?.analyzeComplexity ?? native?.buildCfgAnalysis ?? native?.extractDataflowAnalysis) {
+  if (native?.analyzeComplexity || native?.buildCfgAnalysis || native?.extractDataflowAnalysis) {
     const t0native = performance.now();
     runNativeAnalysis(native, fileSymbols, rootDir, opts, extToLang);
     debug(`native standalone analysis: ${(performance.now() - t0native).toFixed(1)}ms`);

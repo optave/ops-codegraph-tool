@@ -266,44 +266,69 @@ function handleTypedIdentifiers(
 }
 
 /** Infer type from a single RHS expression in a short var declaration. */
+/** x := Struct{...} — composite literal (confidence 1.0). */
+function inferCompositeLiteral(
+  varNode: TreeSitterNode,
+  rhs: TreeSitterNode,
+  typeMap: Map<string, { type: string; confidence: number }>,
+): boolean {
+  if (rhs.type !== 'composite_literal') return false;
+  const typeNode = rhs.childForFieldName('type');
+  if (!typeNode) return false;
+  const typeName = extractGoTypeName(typeNode);
+  if (typeName) setTypeMapEntry(typeMap, varNode.text, typeName, 1.0);
+  return true;
+}
+
+/** x := &Struct{...} — address-of composite literal (confidence 1.0). */
+function inferAddressOfComposite(
+  varNode: TreeSitterNode,
+  rhs: TreeSitterNode,
+  typeMap: Map<string, { type: string; confidence: number }>,
+): boolean {
+  if (rhs.type !== 'unary_expression') return false;
+  const operand = rhs.childForFieldName('operand');
+  if (!operand || operand.type !== 'composite_literal') return false;
+  const typeNode = operand.childForFieldName('type');
+  if (!typeNode) return false;
+  const typeName = extractGoTypeName(typeNode);
+  if (typeName) setTypeMapEntry(typeMap, varNode.text, typeName, 1.0);
+  return true;
+}
+
+/** x := NewFoo() or x := pkg.NewFoo() — factory function (confidence 0.7). */
+function inferFactoryCall(
+  varNode: TreeSitterNode,
+  rhs: TreeSitterNode,
+  typeMap: Map<string, { type: string; confidence: number }>,
+): boolean {
+  if (rhs.type !== 'call_expression') return false;
+  const fn = rhs.childForFieldName('function');
+  if (!fn) return false;
+
+  if (fn.type === 'selector_expression') {
+    const field = fn.childForFieldName('field');
+    if (field?.text.startsWith('New')) {
+      const typeName = field.text.slice(3);
+      if (typeName) setTypeMapEntry(typeMap, varNode.text, typeName, 0.7);
+      return true;
+    }
+  } else if (fn.type === 'identifier' && fn.text.startsWith('New')) {
+    const typeName = fn.text.slice(3);
+    if (typeName) setTypeMapEntry(typeMap, varNode.text, typeName, 0.7);
+    return true;
+  }
+  return false;
+}
+
 function inferShortVarType(
   varNode: TreeSitterNode,
   rhs: TreeSitterNode,
   typeMap: Map<string, { type: string; confidence: number }>,
 ): void {
-  // x := Struct{...} — composite literal (confidence 1.0)
-  if (rhs.type === 'composite_literal') {
-    const typeNode = rhs.childForFieldName('type');
-    if (typeNode) {
-      const typeName = extractGoTypeName(typeNode);
-      if (typeName) setTypeMapEntry(typeMap, varNode.text, typeName, 1.0);
-    }
-  }
-  // x := &Struct{...} — address-of composite literal (confidence 1.0)
-  if (rhs.type === 'unary_expression') {
-    const operand = rhs.childForFieldName('operand');
-    if (operand && operand.type === 'composite_literal') {
-      const typeNode = operand.childForFieldName('type');
-      if (typeNode) {
-        const typeName = extractGoTypeName(typeNode);
-        if (typeName) setTypeMapEntry(typeMap, varNode.text, typeName, 1.0);
-      }
-    }
-  }
-  // x := NewFoo() or x := pkg.NewFoo() — factory function (confidence 0.7)
-  if (rhs.type === 'call_expression') {
-    const fn = rhs.childForFieldName('function');
-    if (fn && fn.type === 'selector_expression') {
-      const field = fn.childForFieldName('field');
-      if (field?.text.startsWith('New')) {
-        const typeName = field.text.slice(3);
-        if (typeName) setTypeMapEntry(typeMap, varNode.text, typeName, 0.7);
-      }
-    } else if (fn && fn.type === 'identifier' && fn.text.startsWith('New')) {
-      const typeName = fn.text.slice(3);
-      if (typeName) setTypeMapEntry(typeMap, varNode.text, typeName, 0.7);
-    }
-  }
+  if (inferCompositeLiteral(varNode, rhs, typeMap)) return;
+  if (inferAddressOfComposite(varNode, rhs, typeMap)) return;
+  inferFactoryCall(varNode, rhs, typeMap);
 }
 
 /** Handle short_var_declaration: x := Struct{}, x := &Struct{}, x := NewFoo(). */

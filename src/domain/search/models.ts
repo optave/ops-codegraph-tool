@@ -194,7 +194,7 @@ async function loadModel(modelKey?: string): Promise<{ extractor: unknown; confi
   pipeline = transformers.pipeline;
 
   info(`Loading embedding model: ${config.name} (${config.dim}d)...`);
-  const pipelineOpts = config.quantized ? { quantized: true } : {};
+  const pipelineOpts = config.quantized ? { dtype: 'q8' } : {};
   try {
     extractor =
       await // biome-ignore lint/complexity/noBannedTypes: dynamically loaded transformers pipeline is untyped
