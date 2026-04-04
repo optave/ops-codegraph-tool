@@ -101,6 +101,23 @@ jobs:
       - name: Type check
         run: npm run typecheck
 
+  audit:
+    runs-on: ubuntu-latest
+    name: Security audit
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
   verify-imports:
     runs-on: ubuntu-latest
     name: Verify dynamic imports
@@ -137,7 +154,7 @@ jobs:
 
   ci-pipeline:
     if: always()
-    needs: [lint, test, typecheck, verify-imports, rust-check]
+    needs: [lint, test, typecheck, audit, verify-imports, rust-check]
     runs-on: ubuntu-latest
     name: CI Testing Pipeline
     steps:

@@ -180,6 +180,13 @@ export function isBarrelFile(ctx: PipelineContext, relPath: string): boolean {
   return reexports.length >= ownDefs;
 }
 
+/** Check if a re-export source directly defines the symbol. */
+function sourceDefinesSymbol(ctx: PipelineContext, source: string, symbolName: string): boolean {
+  const targetSymbols = ctx.fileSymbols.get(source);
+  if (!targetSymbols) return false;
+  return targetSymbols.definitions.some((d) => d.name === symbolName);
+}
+
 export function resolveBarrelExport(
   ctx: PipelineContext,
   barrelPath: string,
@@ -188,31 +195,24 @@ export function resolveBarrelExport(
 ): string | null {
   if (visited.has(barrelPath)) return null;
   visited.add(barrelPath);
+
   const reexports = ctx.reexportMap.get(barrelPath) as ReexportEntry[] | undefined;
   if (!reexports) return null;
+
   for (const re of reexports) {
+    // Named re-export: only follow if the symbol is in the export list
     if (re.names.length > 0 && !re.wildcardReexport) {
-      if (re.names.includes(symbolName)) {
-        const targetSymbols = ctx.fileSymbols.get(re.source);
-        if (targetSymbols) {
-          const hasDef = targetSymbols.definitions.some((d) => d.name === symbolName);
-          if (hasDef) return re.source;
-          const deeper = resolveBarrelExport(ctx, re.source, symbolName, visited);
-          if (deeper) return deeper;
-        }
-        return re.source;
-      }
-      continue;
+      if (!re.names.includes(symbolName)) continue;
+      if (sourceDefinesSymbol(ctx, re.source, symbolName)) return re.source;
+      const deeper = resolveBarrelExport(ctx, re.source, symbolName, visited);
+      return deeper ?? re.source;
     }
-    if (re.wildcardReexport || re.names.length === 0) {
-      const targetSymbols = ctx.fileSymbols.get(re.source);
-      if (targetSymbols) {
-        const hasDef = targetSymbols.definitions.some((d) => d.name === symbolName);
-        if (hasDef) return re.source;
-        const deeper = resolveBarrelExport(ctx, re.source, symbolName, visited);
-        if (deeper) return deeper;
-      }
-    }
+
+    // Wildcard or namespace re-export: check if target defines the symbol
+    if (sourceDefinesSymbol(ctx, re.source, symbolName)) return re.source;
+    const deeper = resolveBarrelExport(ctx, re.source, symbolName, visited);
+    if (deeper) return deeper;
   }
+
   return null;
 }
