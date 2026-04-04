@@ -333,7 +333,8 @@ if (fs.existsSync(readmePath)) {
 	if (latest.native) {
 		rows += `| Build speed (native) | **${latest.native.perFile.buildTimeMs} ms/file** |\n`;
 		rows += `| Build speed (WASM) | **${latest.wasm.perFile.buildTimeMs} ms/file** |\n`;
-		rows += `| Query time | **${formatMs(latest.native.queryTimeMs)}** |\n`;
+		rows += `| Query time (native) | **${formatMs(latest.native.queryTimeMs)}** |\n`;
+		rows += `| Query time (WASM) | **${formatMs(latest.wasm.queryTimeMs)}** |\n`;
 	} else {
 		rows += `| Build speed | **${latest.wasm.perFile.buildTimeMs} ms/file** |\n`;
 		rows += `| Query time | **${formatMs(latest.wasm.queryTimeMs)}** |\n`;
@@ -367,9 +368,26 @@ if (fs.existsSync(readmePath)) {
 		benchmarkLinks = linksMatch[1];
 	}
 
+	// Resolution precision/recall — from resolution-benchmark.ts JSON merged into entry
+	if (latest.resolution) {
+		// Compute aggregate precision/recall across all languages
+		const langs = Object.values(latest.resolution);
+		if (langs.length > 0) {
+			const totalResolved = langs.reduce((s, l) => s + l.totalResolved, 0);
+			const totalExpected = langs.reduce((s, l) => s + l.totalExpected, 0);
+			const totalTP = langs.reduce((s, l) => s + l.truePositives, 0);
+			const aggPrecision = totalResolved > 0 ? `${((totalTP / totalResolved) * 100).toFixed(1)}%` : 'n/a';
+			const aggRecall = totalExpected > 0 ? `${((totalTP / totalExpected) * 100).toFixed(1)}%` : 'n/a';
+			rows += `| Resolution precision | **${aggPrecision}** |\n`;
+			rows += `| Resolution recall | **${aggRecall}** |\n`;
+		}
+	}
+
 	const perfSection = `## 📊 Performance
 
 Self-measured on every release via CI (${benchmarkLinks}):
+
+*Last updated: v${latest.version} (${latest.date})*
 
 | Metric | Latest |
 |---|---|

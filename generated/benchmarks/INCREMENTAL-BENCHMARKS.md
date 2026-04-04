@@ -6,6 +6,8 @@ Import resolution: native batch vs JS fallback throughput.
 
 | Version | Engine | Files | Full Build | No-op | 1-File | Resolve (native) | Resolve (JS) |
 |---------|--------|------:|-----------:|------:|-------:|------------------:|-------------:|
+| 3.8.1 | native | 565 | 6.6s ↑468% | 8ms ↑14% | 41ms ↑24% | 6ms ↑51% | 11ms ↓14% |
+| 3.8.1 | wasm | 565 | 7.0s ↑493% | 15ms ↑88% | 603ms ↑1727% | 6ms ↑51% | 11ms ↓14% |
 | 3.8.0 | native | 564 | 1.2s | 7ms | 33ms | 4ms ↑2% | 12ms ↓19% |
 | 3.8.0 | wasm | 564 | 1.2s ↓82% | 8ms ↓58% | 33ms ↓94% | 4ms ↑2% | 12ms ↓19% |
 | 3.7.0 | wasm | 532 | 6.4s ↑5% | 19ms ↑46% | 558ms ↑2% | 4ms ↑3% | 15ms ↑31% |
@@ -43,42 +45,89 @@ Import resolution: native batch vs JS fallback throughput.
 
 ### Latest results
 
-**Version:** 3.8.0 | **Files:** 564 | **Date:** 2026-04-02
+**Version:** 3.8.1 | **Files:** 565 | **Date:** 2026-04-03
 
 #### Native (Rust)
 
 | Metric | Value |
 |--------|------:|
-| Full build | 1.2s |
-| No-op rebuild | 7ms |
-| 1-file rebuild | 33ms |
+| Full build | 6.6s |
+| No-op rebuild | 8ms |
+| 1-file rebuild | 41ms |
 
 #### WASM
 
 | Metric | Value |
 |--------|------:|
-| Full build | 1.2s |
-| No-op rebuild | 8ms |
-| 1-file rebuild | 33ms |
+| Full build | 7.0s |
+| No-op rebuild | 15ms |
+| 1-file rebuild | 603ms |
 
-> **Note:** 3.8.0 phase timings (`parseMs`, `astMs`, `complexityMs`, `cfgMs`, `dataflowMs`) drop to
-> near-zero in 1-file rebuilds because the full Rust build orchestration pipeline (#695) now handles
-> parsing, AST analysis, and complexity/CFG/dataflow computation inside the native engine — these
-> phases no longer run separately during the JS-side incremental rebuild.
+> **Note:** 3.8.0 showed anomalously fast WASM timings (1-file rebuild 33ms, phase times near-zero) because the native Rust build orchestration pipeline handled parsing/AST/complexity internally. In 3.8.1, the WASM path no longer delegates these phases to the native engine, reverting toward pre-3.8.0 baselines (`parseMs` 0.3ms → 272.3ms). The native engine's incremental path remains fast (1-file 41ms, `parseMs` 0.3ms). The full-build regression (~5.5-5.9x vs 3.8.0) affects both engines and is tracked separately.
 
 #### Import Resolution
 
 | Metric | Value |
 |--------|------:|
-| Import pairs | 933 |
-| Native batch | 4ms |
-| JS fallback | 12ms |
+| Import pairs | 951 |
+| Native batch | 6ms |
+| JS fallback | 11ms |
 | Per-import (native) | 0ms |
 | Per-import (JS) | 0ms |
-| Speedup ratio | 3.0x |
+| Speedup ratio | 1.7x |
 
 <!-- INCREMENTAL_BENCHMARK_DATA
 [
+  {
+    "version": "3.8.1",
+    "date": "2026-04-03",
+    "files": 565,
+    "wasm": {
+      "fullBuildMs": 7018,
+      "noopRebuildMs": 15,
+      "oneFileRebuildMs": 603,
+      "oneFilePhases": {
+        "setupMs": 3.7,
+        "parseMs": 272.3,
+        "insertMs": 18.4,
+        "resolveMs": 1.8,
+        "edgesMs": 29.7,
+        "structureMs": 28.2,
+        "rolesMs": 52.2,
+        "astMs": 11.5,
+        "complexityMs": 0.7,
+        "cfgMs": 0.4,
+        "dataflowMs": 0.4,
+        "finalizeMs": 6
+      }
+    },
+    "native": {
+      "fullBuildMs": 6618,
+      "noopRebuildMs": 8,
+      "oneFileRebuildMs": 41,
+      "oneFilePhases": {
+        "setupMs": 6.8,
+        "parseMs": 0.3,
+        "insertMs": 0.2,
+        "resolveMs": 0.3,
+        "edgesMs": 8,
+        "structureMs": 0.3,
+        "rolesMs": 13.2,
+        "astMs": 2.7,
+        "complexityMs": 0.6,
+        "cfgMs": 0.3,
+        "dataflowMs": 0.3,
+        "finalizeMs": 0.4
+      }
+    },
+    "resolve": {
+      "imports": 951,
+      "nativeBatchMs": 6.2,
+      "jsFallbackMs": 10.7,
+      "perImportNativeMs": 0,
+      "perImportJsMs": 0
+    }
+  },
   {
     "version": "3.8.0",
     "date": "2026-04-02",

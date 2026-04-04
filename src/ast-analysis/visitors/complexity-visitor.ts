@@ -40,6 +40,32 @@ function classifyHalstead(node: TreeSitterNode, hRules: AnyRules, acc: Complexit
   }
 }
 
+/**
+ * Detect whether a branch node is an else-if that the DFS walk would NOT
+ * increment nesting for.  Returns true for:
+ *  - Pattern A (JS/C#/Rust): if_statement whose parent is else_clause
+ *  - Pattern C (Go/Java): if_statement that is the alternative of parent if
+ *
+ * Pattern B (Python elif_clause) is not an issue because elif_clause is
+ * never in nestingNodes.
+ */
+function isElseIfNonNesting(node: TreeSitterNode, type: string, cRules: AnyRules): boolean {
+  if (type !== cRules.ifNodeType) return false;
+
+  if (cRules.elseViaAlternative) {
+    // Pattern C
+    return (
+      node.parent?.type === cRules.ifNodeType &&
+      node.parent?.childForFieldName('alternative')?.id === node.id
+    );
+  }
+  if (cRules.elseNodeType) {
+    // Pattern A
+    return node.parent?.type === cRules.elseNodeType;
+  }
+  return false;
+}
+
 function classifyBranchNode(
   node: TreeSitterNode,
   type: string,
@@ -190,6 +216,13 @@ export function createComplexityVisitor(
   let funcDepth = 0;
   const results: PerFunctionResult[] = [];
 
+  // The walker increments context.nestingLevel for ALL nodes in nestingNodeTypes
+  // (including if_statement). But the DFS engine does NOT increment nesting for
+  // else-if if_statement nodes. Track a correction counter so children of else-if
+  // nodes see the correct (non-inflated) nesting level.
+  let nestingAdjust = 0;
+  const adjustNodeIds = new Set<number>();
+
   return {
     name: 'complexity',
     functionNodeTypes: cRules.functionNodes,
@@ -204,6 +237,8 @@ export function createComplexityVisitor(
         activeFuncNode = funcNode;
         activeFuncName = funcName;
         funcDepth = 0;
+        nestingAdjust = 0;
+        adjustNodeIds.clear();
       } else {
         funcDepth++;
       }
@@ -230,11 +265,30 @@ export function createComplexityVisitor(
     enterNode(node: TreeSitterNode, context: VisitorContext): EnterNodeResult | undefined {
       if (fileLevelWalk && !activeFuncNode) return;
 
-      const nestingLevel = fileLevelWalk ? context.nestingLevel + funcDepth : context.nestingLevel;
+      // In file-level mode, funcDepth starts at 0 for the active function.
+      // In function-level mode, funcDepth starts at 1 for the root function
+      // (since enterFunction always increments it). Nested functions add +1
+      // each level — subtract 1 so the root function contributes 0 nesting
+      // and each nested level adds +1, matching the Rust engine's behavior.
+      const funcNesting = fileLevelWalk ? funcDepth : Math.max(0, funcDepth - 1);
+      const nestingLevel = context.nestingLevel + funcNesting - nestingAdjust;
       classifyNode(node, nestingLevel, cRules, hRules, acc);
+
+      // If this is an else-if if_statement that the walker will treat as a
+      // nesting node (incrementing context.nestingLevel for children), but
+      // the DFS walk would NOT increment nesting for, compensate by bumping
+      // nestingAdjust so children see the correct level.
+      if (cRules.nestingNodes.has(node.type) && isElseIfNonNesting(node, node.type, cRules)) {
+        nestingAdjust++;
+        adjustNodeIds.add(node.id);
+      }
     },
 
     exitNode(node: TreeSitterNode): void {
+      if (adjustNodeIds.has(node.id)) {
+        nestingAdjust--;
+        adjustNodeIds.delete(node.id);
+      }
       if (hRules?.skipTypes.has(node.type)) acc.halsteadSkipDepth--;
     },
 

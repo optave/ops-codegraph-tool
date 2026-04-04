@@ -6,8 +6,32 @@ use rayon::prelude::*;
 use crate::types::{ImportResolutionInput, PathAliases, ResolvedImport};
 
 /// Check file existence using known_files set when available, falling back to FS.
-fn file_exists(path: &str, known: Option<&HashSet<String>>) -> bool {
-    known.map_or_else(|| Path::new(path).exists(), |set| set.contains(path))
+///
+/// When `known_files` is provided, candidates may be absolute paths while
+/// the set contains relative paths (normalized with forward slashes).
+/// We try both the raw path and the root-relative version so extension
+/// probing works regardless of the path format (#804).
+fn file_exists(path: &str, known: Option<&HashSet<String>>, root_dir: &str) -> bool {
+    match known {
+        Some(set) => {
+            if set.contains(path) {
+                return true;
+            }
+            // Candidates are often absolute; known_files are relative — try stripping root
+            let normalized = path.replace('\\', "/");
+            let root_normalized = root_dir.replace('\\', "/");
+            let root_prefix = if root_normalized.ends_with('/') {
+                root_normalized
+            } else {
+                format!("{}/", root_normalized)
+            };
+            if let Some(rel) = normalized.strip_prefix(&root_prefix) {
+                return set.contains(rel);
+            }
+            false
+        }
+        None => Path::new(path).exists(),
+    }
 }
 
 /// Resolve `.` and `..` components in a path without touching the filesystem.
@@ -44,7 +68,7 @@ fn normalize_path(p: &str) -> String {
 fn resolve_via_alias(
     import_source: &str,
     aliases: &PathAliases,
-    _root_dir: &str,
+    root_dir: &str,
     known_files: Option<&HashSet<String>>,
 ) -> Option<String> {
     // baseUrl resolution
@@ -62,7 +86,7 @@ fn resolve_via_alias(
                 "/index.js",
             ] {
                 let full = format!("{}{}", candidate.display(), ext);
-                if file_exists(&full, known_files) {
+                if file_exists(&full, known_files, root_dir) {
                     return Some(full);
                 }
             }
@@ -89,7 +113,7 @@ fn resolve_via_alias(
                 "/index.js",
             ] {
                 let full = format!("{}{}", resolved, ext);
-                if file_exists(&full, known_files) {
+                if file_exists(&full, known_files, root_dir) {
                     return Some(full);
                 }
             }
@@ -140,14 +164,14 @@ fn resolve_import_path_inner(
     // .js → .ts remap
     if resolved_str.ends_with(".js") {
         let ts_candidate = resolved_str.replace(".js", ".ts");
-        if file_exists(&ts_candidate, known_files) {
+        if file_exists(&ts_candidate, known_files, root_dir) {
             let root = Path::new(root_dir);
             if let Ok(rel) = Path::new(&ts_candidate).strip_prefix(root) {
                 return normalize_path(&rel.display().to_string());
             }
         }
         let tsx_candidate = resolved_str.replace(".js", ".tsx");
-        if file_exists(&tsx_candidate, known_files) {
+        if file_exists(&tsx_candidate, known_files, root_dir) {
             let root = Path::new(root_dir);
             if let Ok(rel) = Path::new(&tsx_candidate).strip_prefix(root) {
                 return normalize_path(&rel.display().to_string());
@@ -171,7 +195,7 @@ fn resolve_import_path_inner(
     ];
     for ext in &extensions {
         let candidate = format!("{}{}", resolved_str, ext);
-        if file_exists(&candidate, known_files) {
+        if file_exists(&candidate, known_files, root_dir) {
             let root = Path::new(root_dir);
             if let Ok(rel) = Path::new(&candidate).strip_prefix(root) {
                 return normalize_path(&rel.display().to_string());
@@ -180,7 +204,7 @@ fn resolve_import_path_inner(
     }
 
     // Exact match
-    if file_exists(&resolved_str, known_files) {
+    if file_exists(&resolved_str, known_files, root_dir) {
         let root = Path::new(root_dir);
         if let Ok(rel) = Path::new(&resolved_str).strip_prefix(root) {
             return normalize_path(&rel.display().to_string());
@@ -313,5 +337,70 @@ mod tests {
             clean_path(Path::new("../../foo")),
             PathBuf::from("foo")
         );
+    }
+
+    #[test]
+    fn file_exists_matches_absolute_against_relative_known_files() {
+        // Regression test for #804: known_files contains relative paths but
+        // extension-probing candidates are absolute. file_exists must strip
+        // root_dir to find the match.
+        let mut known = HashSet::new();
+        known.insert("src/domain/parser.ts".to_string());
+        known.insert("src/index.ts".to_string());
+
+        let root = "/project";
+
+        // Absolute candidate should match relative known_files entry
+        assert!(file_exists("/project/src/domain/parser.ts", Some(&known), root));
+        assert!(file_exists("/project/src/index.ts", Some(&known), root));
+
+        // Non-matching paths should still return false
+        assert!(!file_exists("/project/src/nonexistent.ts", Some(&known), root));
+
+        // Relative candidate should still match directly
+        assert!(file_exists("src/domain/parser.ts", Some(&known), root));
+    }
+
+    #[test]
+    fn resolve_with_known_files_probes_extensions() {
+        // Regression test for #804: when from_file is absolute and known_files
+        // are relative, extension probing should still resolve ./bar to src/bar.ts
+        let mut known = HashSet::new();
+        known.insert("src/bar.ts".to_string());
+
+        let aliases = PathAliases {
+            base_url: None,
+            paths: vec![],
+        };
+
+        let result = resolve_import_path_inner(
+            "/project/src/foo.ts",
+            "./bar",
+            "/project",
+            &aliases,
+            Some(&known),
+        );
+        assert_eq!(result, "src/bar.ts");
+    }
+
+    #[test]
+    fn resolve_js_to_ts_remap_with_known_files() {
+        // .js → .ts remap should also work with absolute/relative mismatch
+        let mut known = HashSet::new();
+        known.insert("src/utils.ts".to_string());
+
+        let aliases = PathAliases {
+            base_url: None,
+            paths: vec![],
+        };
+
+        let result = resolve_import_path_inner(
+            "/project/src/index.ts",
+            "./utils.js",
+            "/project",
+            &aliases,
+            Some(&known),
+        );
+        assert_eq!(result, "src/utils.ts");
     }
 }

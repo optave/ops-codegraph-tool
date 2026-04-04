@@ -409,7 +409,7 @@ export interface DefinitionComplexity {
   cognitive: number;
   cyclomatic: number;
   maxNesting: number;
-  halstead?: HalsteadMetrics;
+  halstead?: HalsteadDerivedMetrics | HalsteadMetrics;
   loc?: LOCMetrics;
   maintainabilityIndex?: number;
 }
