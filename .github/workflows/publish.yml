@@ -440,8 +440,8 @@ jobs:
           echo "node version: $(node --version)"
           npm whoami --registry https://registry.npmjs.org/ 2>&1 || echo "::warning::npm whoami failed — OIDC auth may not be working"
           echo "--- .npmrc ---"
-          cat ~/.npmrc 2>/dev/null || echo "no ~/.npmrc"
-          cat .npmrc 2>/dev/null || echo "no .npmrc"
+          grep 'registry' ~/.npmrc 2>/dev/null || echo "no ~/.npmrc or no registry lines"
+          grep 'registry' .npmrc 2>/dev/null || echo "no .npmrc or no registry lines"
 
       - name: Publish platform packages
         if: steps.check-main.outputs.already_published == 'false'
@@ -450,7 +450,7 @@ jobs:
           NPM_TAG: ${{ needs.compute-version.outputs.npm_tag }}
         shell: bash
         run: |
-          set +e  # Disable errexit so retry logic works
+          set +eo pipefail  # Disable errexit and pipefail so retry logic works
 
           npm_publish_retry() {
             local max_attempts=3
@@ -499,6 +499,11 @@ jobs:
 
             mkdir -p "${PKG_DIR}/$platform"
             cp "$artifact_dir"/*.node "${PKG_DIR}/$platform/codegraph-core.node"
+            if [ ! -f "${PKG_DIR}/$platform/codegraph-core.node" ]; then
+              echo "::error::Failed to copy .node artifact for $platform"
+              FAILED=1
+              continue
+            fi
 
             # Build libc field for Linux packages
             libc_field=""
@@ -542,7 +547,7 @@ jobs:
           NPM_TAG: ${{ needs.compute-version.outputs.npm_tag }}
         shell: bash
         run: |
-          set +e  # Disable errexit so retry logic works
+          set +eo pipefail  # Disable errexit and pipefail so retry logic works
           npm_publish_retry() {
             local max_attempts=3
             local delay=15
