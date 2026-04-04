@@ -10,6 +10,8 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
+const expectedNpmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
 describe('loadTransformers install prompt', () => {
   let exitSpy: any;
   let errorSpy: any;
@@ -62,7 +64,7 @@ describe('loadTransformers install prompt', () => {
     expect(rlFactory).not.toHaveBeenCalled();
     // npm install should have been called automatically
     expect(execMock).toHaveBeenCalledWith(
-      'npm',
+      expectedNpmBin,
       ['install', '--no-save', '@huggingface/transformers'],
       expect.objectContaining({ stdio: 'inherit', timeout: 300_000 }),
     );
@@ -148,7 +150,7 @@ describe('loadTransformers install prompt', () => {
       code: 'ENGINE_UNAVAILABLE',
     });
     expect(execMock).toHaveBeenCalledWith(
-      'npm',
+      expectedNpmBin,
       ['install', '@huggingface/transformers'],
       expect.objectContaining({ stdio: 'inherit', timeout: 300_000 }),
     );

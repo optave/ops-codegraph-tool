@@ -74,6 +74,7 @@ export const MODELS: Record<string, ModelConfig> = {
 export const EMBEDDING_STRATEGIES: readonly string[] = ['structured', 'source'];
 
 export const DEFAULT_MODEL: string = 'nomic-v1.5';
+const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const BATCH_SIZE_MAP: Record<string, number> = {
   minilm: 32,
   'jina-small': 16,
@@ -106,13 +107,15 @@ export function promptInstall(packageName: string): Promise<boolean> {
   if (!process.stdin.isTTY) {
     info(`Installing ${packageName} (optional dependency for semantic search)…`);
     try {
-      execFileSync('npm', ['install', '--no-save', packageName], {
+      execFileSync(NPM_BIN, ['install', '--no-save', packageName], {
         stdio: 'inherit',
         timeout: 300_000,
       });
       return Promise.resolve(true);
     } catch (err) {
-      info(`Auto-install failed: ${err instanceof Error ? err.message : String(err)}`);
+      info(
+        `Auto-install of ${packageName} failed (${err instanceof Error ? err.message : String(err)}). Install it manually with:\n  npm install ${packageName}`,
+      );
       return Promise.resolve(false);
     }
   }
@@ -125,12 +128,15 @@ export function promptInstall(packageName: string): Promise<boolean> {
         rl.close();
         if (answer.trim().toLowerCase() !== 'y') return resolve(false);
         try {
-          execFileSync('npm', ['install', packageName], {
+          execFileSync(NPM_BIN, ['install', packageName], {
             stdio: 'inherit',
             timeout: 300_000,
           });
           resolve(true);
-        } catch {
+        } catch (err) {
+          info(
+            `Install of ${packageName} failed (${err instanceof Error ? err.message : String(err)}). Install it manually with:\n  npm install ${packageName}`,
+          );
           resolve(false);
         }
       },
