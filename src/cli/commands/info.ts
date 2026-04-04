@@ -3,7 +3,8 @@ import type { CommandDefinition } from '../types.js';
 export const command: CommandDefinition = {
   name: 'info',
   description: 'Show codegraph engine info and diagnostics',
-  async execute(_args, _opts, ctx) {
+  options: [['-d, --db <path>', 'Path to graph.db']],
+  async execute(_args, opts, ctx) {
     const { getNativePackageVersion, isNativeAvailable, loadNative } = await import(
       '../../infrastructure/native.js'
     );
@@ -40,7 +41,7 @@ export const command: CommandDefinition = {
     try {
       const { findDbPath, getBuildMeta } = await import('../../db/index.js');
       const Database = (await import('better-sqlite3')).default;
-      const dbPath = findDbPath();
+      const dbPath = findDbPath(opts.db as string | undefined);
       const fs = await import('node:fs');
       if (fs.existsSync(dbPath)) {
         const db = new Database(dbPath, { readonly: true });
