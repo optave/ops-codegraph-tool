@@ -234,6 +234,7 @@ If it doesn't match, go back to Phase 0 step 6 and fix it — **all benchmark re
    - Incremental no-op >10ms → investigate
 5. **Sanity-check the complexity phase:** If native `complexityMs` is higher than WASM `complexityMs`, the native binary is likely stale — go back to the pre-flight step.
 6. Include a **Performance Benchmarks** section in the report with tables for each benchmark.
+7. **Build phase breakdowns must show both engines side by side.** The benchmark script outputs `phases` (full build) and `oneFilePhases` (1-file rebuild) for each engine. Present them in a single table with columns for both engines so readers can compare per-phase performance at a glance — don't show only one engine. Flag phases where the ratio is anomalous (e.g., incremental slower than full).
 
 **Note:** The native engine may not be available in the dev repo (no prebuilt binary in `node_modules`). Record WASM results at minimum. If native is available, record both.
 
@@ -259,7 +260,7 @@ Before writing the report, **stop and think** about:
 
 - What testing approaches am I missing?
 - **Cross-command pipelines:** Have I tested `build` → `embed` → `search` → modify → `build` → `search`? Have I tested `watch` detecting changes then `diff-impact`?
-- **MCP server:** Have I tested the `mcp` command? Initialize via JSON-RPC on stdin, send `tools/list`, verify all 33 tools are present (32 in single-repo mode; 33 with `list_repos` in multi-repo). Test single-repo mode (default — `list_repos` should be absent, no `repo` parameter on tools) vs `--multi-repo` mode.
+- **MCP server:** Have I tested the `mcp` command? Initialize via JSON-RPC on stdin, send `tools/list`, verify all 35 tools are present (34 in single-repo mode; 35 with `list_repos` in multi-repo). Test single-repo mode (default — `list_repos` should be absent, no `repo` parameter on tools) vs `--multi-repo` mode.
 - **Programmatic API:** Have I tested `require('@optave/codegraph')` or `import` from `index.js`? Key exports to verify: `buildGraph`, `loadConfig`, `contextData`, `explainData`, `whereData`, `fnDepsData`, `fnImpactData`, `diffImpactData`, `statsData`, `queryNameData`, `rolesData`, `auditData`, `triageData`, `complexityData`, `EXTENSIONS`, `IGNORE_DIRS`, `EVERY_SYMBOL_KIND`.
 - **Config options:** Have I tested `.codegraphrc.json`? Create one with `include`/`exclude` patterns, custom `aliases`, `build.incremental: false`, `query.defaultDepth`, `search.defaultMinScore`. Verify overrides work.
 - **Env var overrides:** `CODEGRAPH_LLM_PROVIDER`, `CODEGRAPH_LLM_API_KEY`, `CODEGRAPH_LLM_MODEL`, `CODEGRAPH_REGISTRY_PATH`.
@@ -443,7 +444,44 @@ Write the report to `generated/dogfood/DOGFOOD_REPORT_v$ARGUMENTS.md` with this 
 <Multi-repo registry testing results>
 <Any other tests from Phase 6 thinking space>
 
-## 8. Bugs Found
+## 8. Performance Benchmarks
+
+### Build Benchmark
+| Metric | WASM | Native | Speedup |
+|--------|------|--------|---------|
+| Full build | ... | ... | ... |
+| No-op rebuild | ... | ... | ... |
+| 1-file rebuild | ... | ... | ... |
+| Query time | ... | ... | ... |
+
+### Build Phase Breakdown
+| Phase | WASM Full | Native Full | WASM 1-File | Native 1-File |
+|-------|-----------|-------------|-------------|---------------|
+| Setup | ... | ... | ... | ... |
+| Parse | ... | ... | ... | ... |
+| Insert | ... | ... | ... | ... |
+| Resolve | ... | ... | ... | ... |
+| Edges | ... | ... | ... | ... |
+| Structure | ... | ... | ... | ... |
+| Roles | ... | ... | ... | ... |
+| AST | ... | ... | ... | ... |
+| Complexity | ... | ... | ... | ... |
+| CFG | ... | ... | ... | ... |
+| Dataflow | ... | ... | ... | ... |
+| Finalize | ... | ... | ... | ... |
+
+<Flag any phases where WASM/Native ratio is anomalous or incremental is slower than full>
+
+### Query Benchmark
+<Table: query | WASM | Native>
+
+### Incremental Benchmark
+<Table: metric | WASM | Native>
+
+### Benchmark Assessment
+<Bullet-point analysis of results, regressions, and anomalies>
+
+## 9. Bugs Found
 ### BUG 1: <title> (<severity>)
 - **Issue:** #<number> (link)
 - **PR:** #<number> (link) or "open — too complex for this session"
@@ -451,11 +489,11 @@ Write the report to `generated/dogfood/DOGFOOD_REPORT_v$ARGUMENTS.md` with this 
 - **Root cause:**
 - **Fix applied:**
 
-## 9. Suggestions for Improvement
-### 9.1 <suggestion>
-### 9.2 <suggestion>
+## 10. Suggestions for Improvement
+### 10.1 <suggestion>
+### 10.2 <suggestion>
 
-## 10. Testing Plan
+## 11. Testing Plan
 
 ### General Testing Plan (Any Release)
 <Checklist of standard tests every release should pass>
@@ -466,11 +504,11 @@ Write the report to `generated/dogfood/DOGFOOD_REPORT_v$ARGUMENTS.md` with this 
 ### Proposed Additional Tests
 <Tests you thought of in Phase 6 that should be added to future dogfooding>
 
-## 11. Overall Assessment
+## 12. Overall Assessment
 <Summary paragraph>
 <Rating: X/10 with justification>
 
-## 12. Issues & PRs Created
+## 13. Issues & PRs Created
 | Type | Number | Title | Status |
 |------|--------|-------|--------|
 | Issue | #N | ... | open / closed via PR |

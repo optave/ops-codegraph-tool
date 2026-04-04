@@ -688,10 +688,17 @@ for (const entry of LANGUAGE_REGISTRY) {
 export const SUPPORTED_EXTENSIONS: Set<string> = new Set(_extToLang.keys());
 
 /**
- * WASM-based typeMap backfill for older native binaries that don't emit typeMap.
+ * WASM-based typeMap backfill for TS/TSX files parsed by the native engine.
+ * Serves two purposes:
+ * 1. Compatibility with older native binaries that don't emit typeMap (< 3.2.0).
+ * 2. Workaround for native parser scope-collision bugs — when the same variable
+ *    name appears at multiple scopes, native type extraction can produce
+ *    incorrect results. WASM's JS-based extractor handles scope traversal
+ *    more accurately. TODO: Remove purpose (2) once the Rust extractor handles
+ *    nested scopes correctly.
+ *
  * Uses tree-sitter AST extraction instead of regex to avoid false positives from
  * matches inside comments and string literals.
- * TODO: Remove once all published native binaries include typeMap extraction (>= 3.2.0)
  */
 async function backfillTypeMap(
   filePath: string,
@@ -768,10 +775,10 @@ export async function parseFileAuto(
     const result = native.parseFile(filePath, source, !!opts.dataflow, opts.ast !== false);
     if (!result) return null;
     const patched = patchNativeResult(result);
-    // Always backfill typeMap for TS/TSX from WASM — the native parser's type
-    // extraction can produce incorrect scope-collision results. For non-TS
-    // files, only backfill when native returned an empty type map.
-    if (TS_BACKFILL_EXTS.has(path.extname(filePath)) || patched.typeMap.size === 0) {
+    // Always backfill typeMap for TS/TSX from WASM — native parser's type
+    // extraction can produce incorrect scope-collision results. Non-TS files
+    // are skipped to stay consistent with the batch path (backfillTypeMapBatch).
+    if (TS_BACKFILL_EXTS.has(path.extname(filePath))) {
       const { typeMap, backfilled } = await backfillTypeMap(filePath, source);
       if (backfilled) {
         patched.typeMap = typeMap;
@@ -787,7 +794,7 @@ export async function parseFileAuto(
   return extracted ? extracted.symbols : null;
 }
 
-/** Backfill typeMap via WASM for files missing type-map data from native engine. */
+/** Backfill typeMap via WASM for TS/TSX files parsed by the native engine. */
 async function backfillTypeMapBatch(
   needsTypeMap: { filePath: string; relPath: string }[],
   result: Map<string, ExtractorOutput>,
@@ -874,11 +881,8 @@ export async function parseFilesAuto(
     // extraction can produce incorrect results when the same variable name
     // appears at multiple scopes (e.g. `node: TreeSitterNode` in one function
     // vs `node: NodeRow` in another). The WASM JS extractor handles scope
-    // traversal order more accurately. For non-TS files or files where the
-    // native parser returned an empty type map, the backfill fills from scratch.
+    // traversal order more accurately.
     if (TS_BACKFILL_EXTS.has(path.extname(r.file))) {
-      needsTypeMap.push({ filePath: r.file, relPath });
-    } else if (patched.typeMap.size === 0) {
       needsTypeMap.push({ filePath: r.file, relPath });
     }
   }
@@ -937,7 +941,7 @@ export async function parseFileIncremental(
     if (!result) return null;
     const patched = patchNativeResult(result);
     // Always backfill typeMap for TS/TSX from WASM (see parseFileAuto comment).
-    if (TS_BACKFILL_EXTS.has(path.extname(filePath)) || patched.typeMap.size === 0) {
+    if (TS_BACKFILL_EXTS.has(path.extname(filePath))) {
       const { typeMap, backfilled } = await backfillTypeMap(filePath, source);
       if (backfilled) {
         patched.typeMap = typeMap;
