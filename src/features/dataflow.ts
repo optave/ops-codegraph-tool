@@ -23,6 +23,7 @@ import { hasDataflowTable, openReadonlyOrFail, openReadonlyWithNative } from '..
 import { ALL_SYMBOL_KINDS, normalizeSymbol } from '../domain/queries.js';
 import { debug, info } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
+import type { NormalizedSymbol } from '../shared/normalize.js';
 import { paginateResult } from '../shared/paginate.js';
 import type { BetterSqlite3Database, NativeDatabase, NodeRow, TreeSitterNode } from '../types.js';
 import { findNodes } from './shared/find-nodes.js';
@@ -438,6 +439,73 @@ function prepareDataflowStmts(db: BetterSqlite3Database): DataflowStmts {
   };
 }
 
+// ─── Shared dataflow result builder ──────────────────────────────────
+
+/** Pre-mapped raw dataflow edge arrays shared between SQL and native paths. */
+interface RawDataflowEdges {
+  flowsTo: {
+    target: string;
+    kind: string;
+    file: string;
+    line: number;
+    paramIndex: number;
+    expression: string;
+    confidence: number;
+  }[];
+  flowsFrom: {
+    source: string;
+    kind: string;
+    file: string;
+    line: number;
+    paramIndex: number;
+    expression: string;
+    confidence: number;
+  }[];
+  returnConsumers: {
+    consumer: string;
+    kind: string;
+    file: string;
+    line: number;
+    expression: string;
+  }[];
+  returnedBy: { producer: string; kind: string; file: string; line: number; expression: string }[];
+  mutatesTargets: { target: string; expression: string; line: number }[];
+  mutatedBy: { source: string; expression: string; line: number }[];
+}
+
+/**
+ * Build a unified dataflow result from pre-mapped edge data.
+ * Shared between the SQL and native code paths.
+ */
+function buildDataflowResult(
+  sym: NormalizedSymbol,
+  edges: RawDataflowEdges,
+  noTests: boolean,
+): Record<string, unknown> {
+  if (noTests) {
+    const filter = (arr: any[]) => arr.filter((r: any) => !isTestFile(r.file));
+    return {
+      ...sym,
+      flowsTo: filter(edges.flowsTo),
+      flowsFrom: filter(edges.flowsFrom),
+      returns: edges.returnConsumers.filter((r: any) => !isTestFile(r.file)),
+      returnedBy: edges.returnedBy.filter((r: any) => !isTestFile(r.file)),
+      mutates: edges.mutatesTargets,
+      mutatedBy: edges.mutatedBy,
+    };
+  }
+
+  return {
+    ...sym,
+    flowsTo: edges.flowsTo,
+    flowsFrom: edges.flowsFrom,
+    returns: edges.returnConsumers,
+    returnedBy: edges.returnedBy,
+    mutates: edges.mutatesTargets,
+    mutatedBy: edges.mutatedBy,
+  };
+}
+
 function buildNodeDataflowResult(
   node: NodeRow,
   stmts: DataflowStmts,
@@ -446,77 +514,51 @@ function buildNodeDataflowResult(
   noTests: boolean,
 ): Record<string, unknown> {
   const sym = normalizeSymbol(node, db, hc);
-
-  const flowsTo = stmts.flowsToOut.all(node.id).map((r: any) => ({
-    target: r.target_name,
-    kind: r.target_kind,
-    file: r.target_file,
-    line: r.line,
-    paramIndex: r.param_index,
-    expression: r.expression,
-    confidence: r.confidence,
-  }));
-
-  const flowsFrom = stmts.flowsToIn.all(node.id).map((r: any) => ({
-    source: r.source_name,
-    kind: r.source_kind,
-    file: r.source_file,
-    line: r.line,
-    paramIndex: r.param_index,
-    expression: r.expression,
-    confidence: r.confidence,
-  }));
-
-  const returnConsumers = stmts.returnsOut.all(node.id).map((r: any) => ({
-    consumer: r.target_name,
-    kind: r.target_kind,
-    file: r.target_file,
-    line: r.line,
-    expression: r.expression,
-  }));
-
-  const returnedBy = stmts.returnsIn.all(node.id).map((r: any) => ({
-    producer: r.source_name,
-    kind: r.source_kind,
-    file: r.source_file,
-    line: r.line,
-    expression: r.expression,
-  }));
-
-  const mutatesTargets = stmts.mutatesOut.all(node.id).map((r: any) => ({
-    target: r.target_name,
-    expression: r.expression,
-    line: r.line,
-  }));
-
-  const mutatedBy = stmts.mutatesIn.all(node.id).map((r: any) => ({
-    source: r.source_name,
-    expression: r.expression,
-    line: r.line,
-  }));
-
-  if (noTests) {
-    const filter = (arr: any[]) => arr.filter((r: any) => !isTestFile(r.file));
-    return {
-      ...sym,
-      flowsTo: filter(flowsTo),
-      flowsFrom: filter(flowsFrom),
-      returns: returnConsumers.filter((r) => !isTestFile(r.file)),
-      returnedBy: returnedBy.filter((r) => !isTestFile(r.file)),
-      mutates: mutatesTargets,
-      mutatedBy,
-    };
-  }
-
-  return {
-    ...sym,
-    flowsTo,
-    flowsFrom,
-    returns: returnConsumers,
-    returnedBy,
-    mutates: mutatesTargets,
-    mutatedBy,
+  const edges: RawDataflowEdges = {
+    flowsTo: stmts.flowsToOut.all(node.id).map((r: any) => ({
+      target: r.target_name,
+      kind: r.target_kind,
+      file: r.target_file,
+      line: r.line,
+      paramIndex: r.param_index,
+      expression: r.expression,
+      confidence: r.confidence,
+    })),
+    flowsFrom: stmts.flowsToIn.all(node.id).map((r: any) => ({
+      source: r.source_name,
+      kind: r.source_kind,
+      file: r.source_file,
+      line: r.line,
+      paramIndex: r.param_index,
+      expression: r.expression,
+      confidence: r.confidence,
+    })),
+    returnConsumers: stmts.returnsOut.all(node.id).map((r: any) => ({
+      consumer: r.target_name,
+      kind: r.target_kind,
+      file: r.target_file,
+      line: r.line,
+      expression: r.expression,
+    })),
+    returnedBy: stmts.returnsIn.all(node.id).map((r: any) => ({
+      producer: r.source_name,
+      kind: r.source_kind,
+      file: r.source_file,
+      line: r.line,
+      expression: r.expression,
+    })),
+    mutatesTargets: stmts.mutatesOut.all(node.id).map((r: any) => ({
+      target: r.target_name,
+      expression: r.expression,
+      line: r.line,
+    })),
+    mutatedBy: stmts.mutatesIn.all(node.id).map((r: any) => ({
+      source: r.source_name,
+      expression: r.expression,
+      line: r.line,
+    })),
   };
+  return buildDataflowResult(sym, edges, noTests);
 }
 
 function buildNativeDataflowResult(
@@ -528,72 +570,51 @@ function buildNativeDataflowResult(
 ): Record<string, unknown> {
   const sym = normalizeSymbol(node, db, hc);
   const d = nativeDb.getDataflowEdges!(node.id);
-
-  const flowsTo = d.flowsToOut.map((r: any) => ({
-    target: r.name,
-    kind: r.kind,
-    file: r.file,
-    line: r.line,
-    paramIndex: r.paramIndex,
-    expression: r.expression,
-    confidence: r.confidence,
-  }));
-  const flowsFrom = d.flowsToIn.map((r: any) => ({
-    source: r.name,
-    kind: r.kind,
-    file: r.file,
-    line: r.line,
-    paramIndex: r.paramIndex,
-    expression: r.expression,
-    confidence: r.confidence,
-  }));
-  const returnConsumers = d.returnsOut.map((r: any) => ({
-    consumer: r.name,
-    kind: r.kind,
-    file: r.file,
-    line: r.line,
-    expression: r.expression,
-  }));
-  const returnedBy = d.returnsIn.map((r: any) => ({
-    producer: r.name,
-    kind: r.kind,
-    file: r.file,
-    line: r.line,
-    expression: r.expression,
-  }));
-  const mutatesTargets = d.mutatesOut.map((r: any) => ({
-    target: r.name,
-    expression: r.expression,
-    line: r.line,
-  }));
-  const mutatedBy = d.mutatesIn.map((r: any) => ({
-    source: r.name,
-    expression: r.expression,
-    line: r.line,
-  }));
-
-  if (noTests) {
-    const filter = (arr: any[]) => arr.filter((r: any) => !isTestFile(r.file));
-    return {
-      ...sym,
-      flowsTo: filter(flowsTo),
-      flowsFrom: filter(flowsFrom),
-      returns: returnConsumers.filter((r: any) => !isTestFile(r.file)),
-      returnedBy: returnedBy.filter((r: any) => !isTestFile(r.file)),
-      mutates: mutatesTargets,
-      mutatedBy,
-    };
-  }
-
-  return {
-    ...sym,
-    flowsTo,
-    flowsFrom,
-    returns: returnConsumers,
-    returnedBy,
-    mutates: mutatesTargets,
-    mutatedBy,
+  const edges: RawDataflowEdges = {
+    flowsTo: d.flowsToOut.map((r: any) => ({
+      target: r.name,
+      kind: r.kind,
+      file: r.file,
+      line: r.line,
+      paramIndex: r.paramIndex,
+      expression: r.expression,
+      confidence: r.confidence,
+    })),
+    flowsFrom: d.flowsToIn.map((r: any) => ({
+      source: r.name,
+      kind: r.kind,
+      file: r.file,
+      line: r.line,
+      paramIndex: r.paramIndex,
+      expression: r.expression,
+      confidence: r.confidence,
+    })),
+    returnConsumers: d.returnsOut.map((r: any) => ({
+      consumer: r.name,
+      kind: r.kind,
+      file: r.file,
+      line: r.line,
+      expression: r.expression,
+    })),
+    returnedBy: d.returnsIn.map((r: any) => ({
+      producer: r.name,
+      kind: r.kind,
+      file: r.file,
+      line: r.line,
+      expression: r.expression,
+    })),
+    mutatesTargets: d.mutatesOut.map((r: any) => ({
+      target: r.name,
+      expression: r.expression,
+      line: r.line,
+    })),
+    mutatedBy: d.mutatesIn.map((r: any) => ({
+      source: r.name,
+      expression: r.expression,
+      line: r.line,
+    })),
   };
+  return buildDataflowResult(sym, edges, noTests);
 }
 
 export function dataflowData(
