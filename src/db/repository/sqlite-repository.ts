@@ -154,6 +154,27 @@ export class SqliteRepository extends Repository {
     return findCallers(this.#db, nodeId);
   }
 
+  findCallersBatch(nodeIds: number[]): Map<number, RelatedNodeRow[]> {
+    if (nodeIds.length === 0) return new Map();
+    const placeholders = nodeIds.map(() => '?').join(',');
+    const rows = this.#db
+      .prepare(
+        `SELECT e.target_id AS queried_id, n.id, n.name, n.kind, n.file, n.line
+         FROM edges e JOIN nodes n ON e.source_id = n.id
+         WHERE e.target_id IN (${placeholders}) AND e.kind = 'calls'`,
+      )
+      .all(...nodeIds) as Array<RelatedNodeRow & { queried_id: number }>;
+    const result = new Map<number, RelatedNodeRow[]>();
+    for (const row of rows) {
+      const qid = row.queried_id;
+      if (!result.has(qid)) result.set(qid, []);
+      result
+        .get(qid)!
+        .push({ id: row.id, name: row.name, kind: row.kind, file: row.file, line: row.line });
+    }
+    return result;
+  }
+
   findDistinctCallers(nodeId: number): RelatedNodeRow[] {
     return findDistinctCallers(this.#db, nodeId);
   }
