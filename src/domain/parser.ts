@@ -768,12 +768,15 @@ export async function parseFileAuto(
     const result = native.parseFile(filePath, source, !!opts.dataflow, opts.ast !== false);
     if (!result) return null;
     const patched = patchNativeResult(result);
-    // Only backfill typeMap for TS/TSX — JS files have no type annotations,
-    // and the native engine already handles `new Expr()` patterns.
-    if (patched.typeMap.size === 0 && TS_BACKFILL_EXTS.has(path.extname(filePath))) {
+    // Always backfill typeMap for TS/TSX from WASM — the native parser's type
+    // extraction can produce incorrect scope-collision results. For non-TS
+    // files, only backfill when native returned an empty type map.
+    if (TS_BACKFILL_EXTS.has(path.extname(filePath)) || patched.typeMap.size === 0) {
       const { typeMap, backfilled } = await backfillTypeMap(filePath, source);
-      patched.typeMap = typeMap;
-      if (backfilled) patched._typeMapBackfilled = true;
+      if (backfilled) {
+        patched.typeMap = typeMap;
+        patched._typeMapBackfilled = true;
+      }
     }
     return patched;
   }
@@ -867,7 +870,15 @@ export async function parseFilesAuto(
     const patched = patchNativeResult(r);
     const relPath = path.relative(rootDir, r.file).split(path.sep).join('/');
     result.set(relPath, patched);
-    if (patched.typeMap.size === 0) {
+    // Always backfill TS/TSX type maps from WASM — the native parser's type
+    // extraction can produce incorrect results when the same variable name
+    // appears at multiple scopes (e.g. `node: TreeSitterNode` in one function
+    // vs `node: NodeRow` in another). The WASM JS extractor handles scope
+    // traversal order more accurately. For non-TS files or files where the
+    // native parser returned an empty type map, the backfill fills from scratch.
+    if (TS_BACKFILL_EXTS.has(path.extname(r.file))) {
+      needsTypeMap.push({ filePath: r.file, relPath });
+    } else if (patched.typeMap.size === 0) {
       needsTypeMap.push({ filePath: r.file, relPath });
     }
   }
@@ -925,12 +936,13 @@ export async function parseFileIncremental(
     const result = cache.parseFile(filePath, source);
     if (!result) return null;
     const patched = patchNativeResult(result);
-    // Only backfill typeMap for TS/TSX — JS files have no type annotations,
-    // and the native engine already handles `new Expr()` patterns.
-    if (patched.typeMap.size === 0 && TS_BACKFILL_EXTS.has(path.extname(filePath))) {
+    // Always backfill typeMap for TS/TSX from WASM (see parseFileAuto comment).
+    if (TS_BACKFILL_EXTS.has(path.extname(filePath)) || patched.typeMap.size === 0) {
       const { typeMap, backfilled } = await backfillTypeMap(filePath, source);
-      patched.typeMap = typeMap;
-      if (backfilled) patched._typeMapBackfilled = true;
+      if (backfilled) {
+        patched.typeMap = typeMap;
+        patched._typeMapBackfilled = true;
+      }
     }
     return patched;
   }
