@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.9.0](https://github.com/optave/ops-codegraph-tool/compare/v3.8.1...v3.9.0) (2026-04-04)
+
+**Engine parity hardening and cross-database queries.** This release closes the remaining native/WASM divergences — node counts, edge counts, complexity metrics, and import resolution now match across engines. A new `--db` flag on `branch-compare` and `info` lets you point at any `.codegraph/graph.db`, enabling cross-repo comparisons without rebuilding. WASM grammar loading is now lazy during incremental rebuilds, cutting rebuild times for large codebases. Windows users get a fix for `ENOENT` failures during auto-install.
+
+### Features
+
+* **cli:** add `--db` flag to `branch-compare` and `info` commands for cross-database queries ([#820](https://github.com/optave/ops-codegraph-tool/pull/820))
+* add resolution precision/recall metrics and version stamp to README benchmarks ([#796](https://github.com/optave/ops-codegraph-tool/pull/796))
+
+### Bug Fixes
+
+* respect `--engine wasm` in pipeline guard ([#819](https://github.com/optave/ops-codegraph-tool/pull/819))
+* resolve npm ENOENT on Windows for auto-install ([#818](https://github.com/optave/ops-codegraph-tool/pull/818))
+* resolve native/WASM engine divergence in node and edge counts ([#810](https://github.com/optave/ops-codegraph-tool/pull/810))
+* **native:** resolve importedNames priority and type map scope collisions ([#811](https://github.com/optave/ops-codegraph-tool/pull/811))
+* **native:** resolve import path mismatch and add post-native structure phase ([#807](https://github.com/optave/ops-codegraph-tool/pull/807))
+* **native:** extract export name for destructured dynamic imports ([#813](https://github.com/optave/ops-codegraph-tool/pull/813))
+* **native:** fix incremental barrel edges, median parity, and analysis data loss ([#806](https://github.com/optave/ops-codegraph-tool/pull/806))
+* **parity:** align native vs WASM complexity metrics ([#809](https://github.com/optave/ops-codegraph-tool/pull/809))
+* v3.8.1 regression fixes (fnDeps, WASM lazy-load, edge parity, CI guard) ([#815](https://github.com/optave/ops-codegraph-tool/pull/815))
+* **ci:** remove npm self-upgrade that breaks publish workflow ([#790](https://github.com/optave/ops-codegraph-tool/pull/790))
+
+### Performance
+
+* lazy-load WASM grammars for incremental rebuilds ([#808](https://github.com/optave/ops-codegraph-tool/pull/808))
+
 ## [3.8.1](https://github.com/optave/ops-codegraph-tool/compare/v3.8.0...v3.8.1) (2026-04-03)
 
 **Windows stability, native engine fixes, and large-codebase performance.** This patch hardens the v3.8.0 release with critical Windows fixes (polling watcher to avoid ReFS BSOD, Windows-scoped import-edge handling), several native engine corrections (dataflow parameter indexing, embedding path resolution, build orchestrator sequencing), and performance improvements for large codebases — cycle detection and stats queries are faster, and query-time analysis now routes through the native Rust engine.
