@@ -354,10 +354,14 @@ function buildImportedNamesForNative(
   rootDir: string,
 ): Array<{ name: string; file: string }> {
   const importedNames: Array<{ name: string; file: string }> = [];
+  const seenNames = new Set<string>();
   for (const imp of symbols.imports) {
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
     for (const name of imp.names) {
       const cleanName = name.replace(/^\*\s+as\s+/, '');
+      // Don't let dynamic import names shadow static import bindings (see buildImportedNamesMap).
+      if (imp.dynamicImport && seenNames.has(cleanName)) continue;
+      seenNames.add(cleanName);
       let targetFile = resolvedPath;
       if (isBarrelFile(ctx, resolvedPath)) {
         const actual = resolveBarrelExport(ctx, resolvedPath, cleanName);
@@ -412,7 +416,12 @@ function buildImportedNamesMap(
   for (const imp of symbols.imports) {
     const resolvedPath = getResolved(ctx, path.join(rootDir, relPath), imp.source);
     for (const name of imp.names) {
-      importedNames.set(name.replace(/^\*\s+as\s+/, ''), resolvedPath);
+      const cleanName = name.replace(/^\*\s+as\s+/, '');
+      // Don't let dynamic import names shadow static import bindings.
+      // Dynamic imports with destructuring use original export names which can
+      // collide with static imports of the same symbol from a different module.
+      if (imp.dynamicImport && importedNames.has(cleanName)) continue;
+      importedNames.set(cleanName, resolvedPath);
     }
   }
   return importedNames;

@@ -998,19 +998,26 @@ function handleVarDeclaratorTypeMap(
   if (!nameN || nameN.type !== 'identifier') return;
 
   // Type annotation: const x: Foo = …
+  // When present, the explicit annotation wins — skip constructor/factory inference.
+  // Matches native (Rust) extractor behaviour.
   const typeAnno = findChild(node, 'type_annotation');
   if (typeAnno) {
     const typeName = extractSimpleTypeName(typeAnno);
-    if (typeName) setTypeMapEntry(typeMap, nameN.text, typeName, 0.9);
+    if (typeName) {
+      setTypeMapEntry(typeMap, nameN.text, typeName, 0.9);
+      return;
+    }
   }
 
   const valueN = node.childForFieldName('value');
   if (!valueN) return;
 
-  // Constructor: const x = new Foo() → confidence 1.0
+  // Constructor: const x = new Foo() → confidence 0.9 (same as annotation so
+  // first-wins semantics apply when the same variable name appears in multiple scopes,
+  // matching the native Rust extractor behaviour)
   if (valueN.type === 'new_expression') {
     const ctorType = extractNewExprTypeName(valueN);
-    if (ctorType) setTypeMapEntry(typeMap, nameN.text, ctorType, 1.0);
+    if (ctorType) setTypeMapEntry(typeMap, nameN.text, ctorType, 0.9);
   }
   // Factory method: const x = Foo.create() → confidence 0.7
   else if (valueN.type === 'call_expression') {

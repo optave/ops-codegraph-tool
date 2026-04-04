@@ -337,17 +337,19 @@ function patchImports(imports: any[]): void {
   }
 }
 
-/** Normalize native typeMap array to a Map instance. */
+/** Normalize native typeMap array to a Map instance.
+ *  Uses first-wins semantics at equal confidence to match the WASM/JS extractor. */
 function patchTypeMap(r: any): void {
   if (!r.typeMap) {
     r.typeMap = new Map();
   } else if (!(r.typeMap instanceof Map)) {
-    r.typeMap = new Map(
-      r.typeMap.map((e: { name: string; typeName: string }) => [
-        e.name,
-        { type: e.typeName, confidence: 0.9 } as TypeMapEntry,
-      ]),
-    );
+    const map = new Map<string, TypeMapEntry>();
+    for (const e of r.typeMap as Array<{ name: string; typeName: string }>) {
+      if (!map.has(e.name)) {
+        map.set(e.name, { type: e.typeName, confidence: 0.9 });
+      }
+    }
+    r.typeMap = map;
   }
 }
 

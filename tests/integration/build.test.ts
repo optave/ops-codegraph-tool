@@ -569,8 +569,8 @@ describe('typed method call resolution', () => {
     db.close();
     const receiverEdges = edges.filter((e) => e.target === 'Router');
     expect(receiverEdges.length).toBeGreaterThan(0);
-    // Type-resolved receiver edges carry the type source confidence
-    // (1.0 for constructor `new Router()`, 0.9 for annotation, 0.7 for factory)
-    expect(receiverEdges[0].confidence).toBe(1.0);
+    // Type-resolved receiver edges carry confidence 0.9 (annotation and constructor
+    // share the same confidence to prevent cross-scope pollution in flat typeMaps)
+    expect(receiverEdges[0].confidence).toBe(0.9);
   });
 });

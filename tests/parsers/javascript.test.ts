@@ -112,13 +112,13 @@ describe('JavaScript parser', () => {
     it('extracts typeMap from generic types', () => {
       const symbols = parseTS(`const m: Map<string, number> = new Map();`);
       expect(symbols.typeMap.get('m')).toEqual(
-        expect.objectContaining({ type: 'Map', confidence: 1.0 }),
+        expect.objectContaining({ type: 'Map', confidence: 0.9 }),
       );
     });
 
-    it('infers type from new expressions with confidence 1.0', () => {
+    it('infers type from new expressions with confidence 0.9', () => {
       const symbols = parseTS(`const r = new Router();`);
-      expect(symbols.typeMap.get('r')).toEqual({ type: 'Router', confidence: 1.0 });
+      expect(symbols.typeMap.get('r')).toEqual({ type: 'Router', confidence: 0.9 });
     });
 
     it('extracts parameter types into typeMap with confidence 0.9', () => {
@@ -143,13 +143,13 @@ describe('JavaScript parser', () => {
       expect(symbols.typeMap.get('app')).toEqual({ type: 'Express', confidence: 0.9 });
     });
 
-    it('prefers constructor (1.0) over type annotation (0.9)', () => {
+    it('prefers type annotation over constructor for engine parity', () => {
       const symbols = parseTS(`const x: Base = new Derived();`);
-      // Deliberate: constructor (1.0) beats annotation (0.9) because the runtime
-      // type is what matters for call resolution. In `const x: Base = new Derived()`,
-      // x.method() dispatches to Derived.method, not Base.method. This is a
-      // semantic reversal from the previous behaviour (annotation-first).
-      expect(symbols.typeMap.get('x')).toEqual({ type: 'Derived', confidence: 1.0 });
+      // Annotation-first: when a type annotation is present, it takes priority and
+      // the constructor is not checked.  This matches the native Rust extractor and
+      // prevents cross-scope pollution where `new Map()` in a different function
+      // overwrites a precise type alias like `BatchResolvedMap` from an earlier scope.
+      expect(symbols.typeMap.get('x')).toEqual({ type: 'Base', confidence: 0.9 });
     });
 
     it('extracts factory method patterns with confidence 0.7', () => {

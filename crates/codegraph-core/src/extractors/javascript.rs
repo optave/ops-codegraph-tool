@@ -1102,19 +1102,9 @@ fn extract_dynamic_import_names(call_node: &Node, source: &[u8]) -> Vec<String> 
                     {
                         names.push(node_text(&child, source).to_string());
                     } else if child.kind() == "pair_pattern" || child.kind() == "pair" {
-                        if let Some(val) = child.child_by_field_name("value") {
-                            // Handle `{ foo: bar = 'default' }` — extract the left-hand binding
-                            let binding = if val.kind() == "assignment_pattern" {
-                                val.child_by_field_name("left").unwrap_or(val)
-                            } else if val.kind() == "identifier" {
-                                val
-                            } else {
-                                // Nested pattern (e.g. `{ foo: { bar } }`) — skip;
-                                // full nested support requires recursive extraction.
-                                continue;
-                            };
-                            names.push(node_text(&binding, source).to_string());
-                        } else if let Some(key) = child.child_by_field_name("key") {
+                        // `{ foo: bar }` → use the KEY (original export name) for
+                        // import resolution; matches the WASM/JS extractor behaviour.
+                        if let Some(key) = child.child_by_field_name("key") {
                             names.push(node_text(&key, source).to_string());
                         }
                     } else if child.kind() == "object_assignment_pattern" {
@@ -1521,5 +1511,18 @@ mod tests {
         assert_eq!(dyn_imports[0].source, "./bar.js");
         assert!(dyn_imports[0].names.contains(&"a".to_string()));
         assert!(dyn_imports[0].names.contains(&"b".to_string()));
+    }
+
+    #[test]
+    fn dynamic_import_destructuring_uses_original_name_not_alias() {
+        let s = parse_js("const { buildGraph: fromBarrel } = await import('./builder.js');");
+        let dyn_imports: Vec<_> = s.imports.iter().filter(|i| i.dynamic_import == Some(true)).collect();
+        assert_eq!(dyn_imports.len(), 1);
+        assert_eq!(dyn_imports[0].source, "./builder.js");
+        // Should use the original export name (key), not the local alias (value)
+        assert!(dyn_imports[0].names.contains(&"buildGraph".to_string()),
+            "expected original name 'buildGraph', got {:?}", dyn_imports[0].names);
+        assert!(!dyn_imports[0].names.contains(&"fromBarrel".to_string()),
+            "should not contain alias 'fromBarrel'");
     }
 }
