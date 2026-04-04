@@ -321,6 +321,123 @@ pub fn run_pipeline(
     }
     timing.resolve_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
+    // ── Stage 6b: Re-parse barrel candidates (incremental only) ─────────
+    // Mirrors JS pipeline's findBarrelCandidates + reparseBarrelFiles.
+    // For incremental builds, barrel files (re-export-only index files) may
+    // not be in file_symbols because they weren't changed or reverse-deps.
+    // Without their symbols, barrel resolution in Stage 7 can't create the
+    // transitive import edges (e.g. app.js -> math.js through index.js).
+    if !change_result.is_full_build {
+        // Find all barrel files from DB (files that have 'reexports' edges)
+        let barrel_files_in_db: HashSet<String> = {
+            let rows: Vec<String> = match conn.prepare(
+                "SELECT DISTINCT n1.file FROM edges e \
+                 JOIN nodes n1 ON e.source_id = n1.id \
+                 WHERE e.kind = 'reexports' AND n1.kind = 'file'",
+            ) {
+                Ok(mut stmt) => match stmt.query_map([], |row| row.get::<_, String>(0)) {
+                    Ok(mapped) => mapped.filter_map(|r| r.ok()).collect(),
+                    Err(_) => Vec::new(),
+                },
+                Err(_) => Vec::new(),
+            };
+            rows.into_iter().collect()
+        };
+
+        // Check which barrels are imported by parsed files but not in file_symbols
+        let mut barrel_paths_to_parse: Vec<String> = Vec::new();
+        for (_rel_path, symbols) in &file_symbols {
+            for imp in &symbols.imports {
+                // Look up resolved path from batch_resolved
+                let abs_file = Path::new(root_dir).join(_rel_path);
+                let fwd = abs_file.to_str().unwrap_or("").replace('\\', "/");
+                let key = format!("{}|{}", fwd, imp.source);
+                if let Some(resolved) = batch_resolved.get(&key) {
+                    if barrel_files_in_db.contains(resolved) && !file_symbols.contains_key(resolved)
+                    {
+                        let abs = Path::new(root_dir).join(resolved);
+                        if abs.exists() {
+                            barrel_paths_to_parse
+                                .push(abs.to_str().unwrap_or("").to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also find barrels that re-export FROM changed files
+        {
+            let changed_rel: Vec<&str> = file_symbols.keys().map(|s| s.as_str()).collect();
+            if let Ok(mut stmt) = conn.prepare(
+                "SELECT DISTINCT n1.file FROM edges e \
+                 JOIN nodes n1 ON e.source_id = n1.id \
+                 JOIN nodes n2 ON e.target_id = n2.id \
+                 WHERE e.kind = 'reexports' AND n1.kind = 'file' AND n2.file = ?1",
+            ) {
+                for changed in &changed_rel {
+                    if let Ok(rows) = stmt.query_map(rusqlite::params![changed], |row| {
+                        row.get::<_, String>(0)
+                    }) {
+                        for row in rows.flatten() {
+                            if !file_symbols.contains_key(&row) {
+                                let abs = Path::new(root_dir).join(&row);
+                                if abs.exists() {
+                                    barrel_paths_to_parse
+                                        .push(abs.to_str().unwrap_or("").to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Re-parse barrel files and merge into file_symbols
+        if !barrel_paths_to_parse.is_empty() {
+            barrel_paths_to_parse.sort();
+            barrel_paths_to_parse.dedup();
+            // Barrel files are re-export-only — no function bodies or dataflow,
+            // so skip dataflow/AST analysis to avoid unnecessary overhead.
+            let barrel_parsed = parallel::parse_files_parallel(
+                &barrel_paths_to_parse,
+                root_dir,
+                false,
+                false,
+            );
+            for mut sym in barrel_parsed {
+                let rel = relative_path(root_dir, &sym.file);
+                sym.file = rel.clone();
+                // Delete outgoing import/reexport edges for barrel files being re-parsed
+                // (scoped to import-related kinds to avoid dropping calls edges)
+                let _ = conn.execute(
+                    "DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1) \
+                     AND kind IN ('imports', 'reexports')",
+                    rusqlite::params![&rel],
+                );
+                // Re-resolve imports for the barrel file
+                let abs_str =
+                    Path::new(root_dir).join(&rel).to_str().unwrap_or("").to_string();
+                for imp in &sym.imports {
+                    let input = ImportResolutionInput {
+                        from_file: abs_str.clone(),
+                        import_source: imp.source.clone(),
+                    };
+                    let resolved_batch = import_resolution::resolve_imports_batch(
+                        &[input],
+                        root_dir,
+                        &napi_aliases,
+                        Some(&known_files),
+                    );
+                    for r in &resolved_batch {
+                        let key = format!("{}|{}", r.from_file, r.import_source);
+                        batch_resolved.insert(key, r.resolved_path.clone());
+                    }
+                }
+                file_symbols.insert(rel, sym);
+            }
+        }
+    }
+
     // ── Stage 7: Build edges ───────────────────────────────────────────
     let t0 = Instant::now();
 

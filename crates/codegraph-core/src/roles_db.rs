@@ -75,15 +75,15 @@ pub struct RoleSummary {
 
 // ── Shared helpers ───────────────────────────────────────────────────
 
-fn median(sorted: &[u32]) -> u32 {
+fn median(sorted: &[u32]) -> f64 {
     if sorted.is_empty() {
-        return 0;
+        return 0.0;
     }
     let mid = sorted.len() / 2;
     if sorted.len() % 2 == 0 {
-        (sorted[mid - 1] + sorted[mid]) / 2
+        (sorted[mid - 1] as f64 + sorted[mid] as f64) / 2.0
     } else {
-        sorted[mid]
+        sorted[mid] as f64
     }
 }
 
@@ -115,8 +115,8 @@ fn classify_node(
     fan_out: u32,
     is_exported: bool,
     production_fan_in: u32,
-    median_fan_in: u32,
-    median_fan_out: u32,
+    median_fan_in: f64,
+    median_fan_out: f64,
 ) -> &'static str {
     // Framework entry
     if FRAMEWORK_ENTRY_PREFIXES.iter().any(|p| name.starts_with(p)) {
@@ -138,8 +138,8 @@ fn classify_node(
         return "test-only";
     }
 
-    let high_in = fan_in >= median_fan_in && fan_in > 0;
-    let high_out = fan_out >= median_fan_out && fan_out > 0;
+    let high_in = fan_in as f64 >= median_fan_in && fan_in > 0;
+    let high_out = fan_out as f64 >= median_fan_out && fan_out > 0;
 
     if high_in && !high_out {
         "core"
@@ -324,7 +324,7 @@ fn test_file_filter() -> String {
 }
 
 /// Compute global median fan-in and fan-out from the edge distribution.
-fn compute_global_medians(tx: &rusqlite::Transaction) -> rusqlite::Result<(u32, u32)> {
+fn compute_global_medians(tx: &rusqlite::Transaction) -> rusqlite::Result<(f64, f64)> {
     let median_fan_in = {
         let mut stmt = tx
             .prepare("SELECT COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY target_id")?;
@@ -389,8 +389,8 @@ fn classify_rows(
     rows: &[(i64, String, String, String, u32, u32)],
     exported_ids: &std::collections::HashSet<i64>,
     prod_fan_in: &HashMap<i64, u32>,
-    median_fan_in: u32,
-    median_fan_out: u32,
+    median_fan_in: f64,
+    median_fan_out: f64,
     ids_by_role: &mut HashMap<&'static str, Vec<i64>>,
     summary: &mut RoleSummary,
 ) {
