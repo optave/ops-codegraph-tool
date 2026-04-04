@@ -27,12 +27,17 @@ import { describe, expect, test } from 'vitest';
 const REGRESSION_THRESHOLD = 0.25;
 
 /**
- * Minimum absolute delta (ms) required before a regression is flagged.
- * Sub-20ms measurements fluctuate heavily from CI runner load, GC, and
+ * Minimum absolute delta required before a regression is flagged.
+ * Small measurements fluctuate heavily from CI runner load, GC, and
  * OS scheduling jitter — a 13ms→19ms jump is +46% but only 6ms of noise.
- * This floor prevents false positives on inherently noisy micro-timings.
+ * This floor prevents false positives on inherently noisy metrics.
+ *
+ * Applied to all numeric metrics (timing in ms, sizes in bytes, counts).
+ * For timing metrics the 10-unit floor filters sub-10ms jitter; for byte
+ * or count metrics the floor is effectively a no-op since deltas are
+ * orders of magnitude larger.
  */
-const MIN_ABSOLUTE_DELTA_MS = 10;
+const MIN_ABSOLUTE_DELTA = 10;
 
 /**
  * Versions to skip entirely from regression comparisons.
@@ -171,7 +176,7 @@ function checkRegression(
 ): RegressionCheck | null {
   if (current == null || previous == null || previous === 0) return null;
   const absDelta = current - previous;
-  if (absDelta < MIN_ABSOLUTE_DELTA_MS) return null; // below noise floor
+  if (absDelta < MIN_ABSOLUTE_DELTA) return null; // below noise floor
   const pctChange = absDelta / previous;
   return { label, current, previous, pctChange };
 }
