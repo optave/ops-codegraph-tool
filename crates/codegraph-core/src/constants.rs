@@ -27,4 +27,4 @@ pub const DATAFLOW_TRUNCATION_LIMIT: usize = 120;
 pub const FAST_PATH_MAX_CHANGED_FILES: usize = 5;
 
 /// Minimum existing file count required before the fast path is considered.
-pub const FAST_PATH_MIN_EXISTING_FILES: usize = 20;
+pub const FAST_PATH_MIN_EXISTING_FILES: i64 = 20;
