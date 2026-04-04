@@ -13,6 +13,7 @@ export const command: CommandDefinition = {
     ['--ndjson', 'Newline-delimited JSON output'],
     ['--staged', 'Analyze staged changes instead of unstaged'],
     ['--depth <n>', 'Max transitive caller depth', '3'],
+    ['-j, --json', 'Output as JSON (shorthand for -f json)'],
     ['-f, --format <format>', 'Output format: text, mermaid, json', 'text'],
     ['--no-implementations', 'Exclude interface/trait implementors from blast radius'],
   ],
@@ -21,7 +22,7 @@ export const command: CommandDefinition = {
       ref,
       staged: opts.staged,
       depth: parseInt(opts.depth as string, 10),
-      format: opts.format,
+      format: opts.json ? 'json' : opts.format,
       includeImplementors: opts.implementations !== false,
       ...ctx.resolveQueryOpts(opts),
     });
