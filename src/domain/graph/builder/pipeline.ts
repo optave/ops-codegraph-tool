@@ -417,18 +417,32 @@ export async function buildGraph(
           `Native build orchestrator completed: ${result.nodeCount ?? 0} nodes, ${result.edgeCount ?? 0} edges, ${result.fileCount ?? 0} files`,
         );
 
-        // ── Run analysis phases (AST, complexity, CFG, dataflow) ──────
-        // Not yet ported to Rust. After the native orchestrator finishes,
-        // reconstruct a minimal fileSymbols map from the DB and run analyses
-        // via the JS engine (native standalone functions + WASM fallback).
+        // ── Run structure + analysis phases after native orchestrator ──
+        // Structure (directory nodes, contains edges, metrics) is not fully
+        // ported to Rust — the native pipeline only handles the small
+        // incremental fast path (≤5 changed files). For full builds and
+        // larger incremental builds, run JS buildStructure() to fill the gap.
+        // Analysis phases (AST, complexity, CFG, dataflow) are also not yet
+        // ported; run via JS engine after reconstructing fileSymbols from DB.
         let analysisTiming = { astMs: 0, complexityMs: 0, cfgMs: 0, dataflowMs: 0 };
+        let structurePatchMs = 0;
         const needsAnalysis =
           opts.ast !== false ||
           opts.complexity !== false ||
           opts.cfg !== false ||
           opts.dataflow !== false;
 
-        if (needsAnalysis) {
+        // The native fast path only runs structure for small incremental
+        // builds: !isFullBuild && changedCount <= 5 && existingFileCount > 20.
+        // For all other cases (full builds, large incrementals), we must
+        // run JS buildStructure() to create directory nodes + contains edges (#804).
+        // Always run JS structure — the native fast-path has an additional
+        // existingFileCount > 20 guard that isn't reflected in the result JSON,
+        // so we can't reliably detect whether native actually ran structure.
+        const nativeHandledStructure = false;
+        const needsStructure = !nativeHandledStructure;
+
+        if (needsAnalysis || needsStructure) {
           // WAL handoff: checkpoint through rusqlite, close nativeDb,
           // reopen better-sqlite3 with a fresh page cache (#715, #736).
           try {
@@ -451,10 +465,8 @@ export async function buildGraph(
           try {
             ctx.db = openDb(ctx.dbPath);
           } catch (reopenErr) {
-            warn(
-              `Failed to reopen DB for analysis after native build: ${(reopenErr as Error).message}`,
-            );
-            // Native build succeeded but we can't run analyses — return partial result
+            warn(`Failed to reopen DB after native build: ${(reopenErr as Error).message}`);
+            // Native build succeeded but we can't run post-processing — return partial result
             return {
               phases: {
                 setupMs: +((p.setupMs ?? 0) + (p.collectMs ?? 0) + (p.detectMs ?? 0)).toFixed(1),
@@ -473,22 +485,14 @@ export async function buildGraph(
             };
           }
 
-          // Reconstruct minimal fileSymbols from DB for analysis visitors.
-          // Each entry needs definitions with name/kind/line/endLine so the
-          // engine can match complexity/CFG results to the right functions.
-          // For incremental builds, scope to only the files that were parsed
-          // in this cycle (matching the JS pipeline's behaviour in run-analyses.ts).
-          const changedFiles = result.changedFiles;
-          let query =
-            'SELECT file, name, kind, line, end_line as endLine FROM nodes WHERE file IS NOT NULL';
-          const params: string[] = [];
-          if (changedFiles && changedFiles.length > 0) {
-            const placeholders = changedFiles.map(() => '?').join(',');
-            query += ` AND file IN (${placeholders})`;
-            params.push(...changedFiles);
-          }
-          query += ' ORDER BY file, line';
-          const rows = ctx.db.prepare(query).all(...params) as {
+          // Reconstruct fileSymbols from DB. For structure we need ALL files
+          // (to build complete directory tree); for analysis we scope to
+          // changed files only. Load all files, then scope analysis later.
+          const allFileRows = ctx.db
+            .prepare(
+              'SELECT file, name, kind, line, end_line as endLine FROM nodes WHERE file IS NOT NULL ORDER BY file, line',
+            )
+            .all() as {
             file: string;
             name: string;
             kind: string;
@@ -496,9 +500,9 @@ export async function buildGraph(
             endLine: number | null;
           }[];
 
-          const fileSymbols = new Map<string, ExtractorOutput>();
-          for (const row of rows) {
-            let entry = fileSymbols.get(row.file);
+          const allFileSymbols = new Map<string, ExtractorOutput>();
+          for (const row of allFileRows) {
+            let entry = allFileSymbols.get(row.file);
             if (!entry) {
               entry = {
                 definitions: [],
@@ -508,7 +512,7 @@ export async function buildGraph(
                 exports: [],
                 typeMap: new Map(),
               };
-              fileSymbols.set(row.file, entry);
+              allFileSymbols.set(row.file, entry);
             }
             entry.definitions.push({
               name: row.name,
@@ -518,45 +522,155 @@ export async function buildGraph(
             });
           }
 
-          // Reopen nativeDb for analysis features (suspend/resume WAL pattern).
-          const native = loadNative();
-          if (native?.NativeDatabase) {
+          // Populate import/export counts from DB edges so buildStructure
+          // computes correct import_count/export_count in node_metrics.
+          // The extractor arrays aren't persisted to the DB, so we derive
+          // counts from edge data instead (#804).
+          const importCountRows = ctx.db
+            .prepare(
+              `SELECT n.file, COUNT(*) AS cnt
+               FROM edges e JOIN nodes n ON e.source_id = n.id
+               WHERE e.kind IN ('imports', 'imports-type', 'dynamic-imports')
+                 AND n.file IS NOT NULL
+               GROUP BY n.file`,
+            )
+            .all() as { file: string; cnt: number }[];
+          for (const row of importCountRows) {
+            const entry = allFileSymbols.get(row.file);
+            if (entry) entry.imports = new Array(row.cnt) as ExtractorOutput['imports'];
+          }
+          // Export count: definitions in this file that are imported by other files
+          const exportCountRows = ctx.db
+            .prepare(
+              `SELECT n_tgt.file, COUNT(DISTINCT n_tgt.id) AS cnt
+               FROM edges e
+               JOIN nodes n_tgt ON e.target_id = n_tgt.id
+               JOIN nodes n_src ON e.source_id = n_src.id
+               WHERE e.kind IN ('imports', 'imports-type', 'reexports')
+                 AND n_tgt.file IS NOT NULL
+                 AND n_src.file != n_tgt.file
+               GROUP BY n_tgt.file`,
+            )
+            .all() as { file: string; cnt: number }[];
+          for (const row of exportCountRows) {
+            const entry = allFileSymbols.get(row.file);
+            if (entry) entry.exports = new Array(row.cnt) as ExtractorOutput['exports'];
+          }
+
+          // ── Structure phase: directory nodes + contains edges (#804) ──
+          if (needsStructure) {
+            const structureStart = performance.now();
             try {
-              ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
-              if (ctx.engineOpts) ctx.engineOpts.nativeDb = ctx.nativeDb;
-            } catch {
+              // Derive directories from file paths
+              const directories = new Set<string>();
+              for (const relPath of allFileSymbols.keys()) {
+                const parts = relPath.split('/');
+                for (let i = 1; i < parts.length; i++) {
+                  directories.add(parts.slice(0, i).join('/'));
+                }
+              }
+
+              // Build line count map from DB metrics or file content
+              const lineCountMap = new Map<string, number>();
+              const cachedLineCounts = ctx.db
+                .prepare(
+                  `SELECT n.name AS file, m.line_count
+                 FROM node_metrics m JOIN nodes n ON m.node_id = n.id
+                 WHERE n.kind = 'file'`,
+                )
+                .all() as Array<{ file: string; line_count: number }>;
+              for (const row of cachedLineCounts) {
+                lineCountMap.set(row.file, row.line_count);
+              }
+
+              // Native ran no structure at all — always do a full rebuild so
+              // every directory gets nodes + contains edges (#804).
+              const changedFilePaths = null;
+
+              const { buildStructure: buildStructureFn } = (await import(
+                '../../../features/structure.js'
+              )) as {
+                buildStructure: (
+                  db: typeof ctx.db,
+                  fileSymbols: Map<string, ExtractorOutput>,
+                  rootDir: string,
+                  lineCountMap: Map<string, number>,
+                  directories: Set<string>,
+                  changedFiles: string[] | null,
+                ) => void;
+              };
+              buildStructureFn(
+                ctx.db,
+                allFileSymbols,
+                ctx.rootDir,
+                lineCountMap,
+                directories,
+                changedFilePaths,
+              );
+              debug('Structure phase completed after native orchestrator');
+            } catch (err) {
+              warn(`Structure phase failed after native build: ${toErrorMessage(err)}`);
+            }
+            structurePatchMs = performance.now() - structureStart;
+          }
+
+          // ── Analysis phase ──
+          if (needsAnalysis) {
+            // Scope analysis fileSymbols to changed files only
+            const changedFiles = result.changedFiles;
+            let analysisFileSymbols: Map<string, ExtractorOutput>;
+            if (changedFiles && changedFiles.length > 0) {
+              analysisFileSymbols = new Map();
+              for (const f of changedFiles) {
+                const entry = allFileSymbols.get(f);
+                if (entry) analysisFileSymbols.set(f, entry);
+              }
+            } else {
+              analysisFileSymbols = allFileSymbols;
+            }
+
+            // Reopen nativeDb for analysis features (suspend/resume WAL pattern).
+            const native = loadNative();
+            if (native?.NativeDatabase) {
+              try {
+                ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+                if (ctx.engineOpts) ctx.engineOpts.nativeDb = ctx.nativeDb;
+              } catch {
+                ctx.nativeDb = undefined;
+                if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
+              }
+            }
+
+            try {
+              const { runAnalyses: runAnalysesFn } = await import(
+                '../../../ast-analysis/engine.js'
+              );
+              analysisTiming = await runAnalysesFn(
+                ctx.db,
+                analysisFileSymbols,
+                ctx.rootDir,
+                opts,
+                ctx.engineOpts,
+              );
+            } catch (err) {
+              warn(`Analysis phases failed after native build: ${toErrorMessage(err)}`);
+            }
+
+            // Close nativeDb after analyses
+            if (ctx.nativeDb) {
+              try {
+                ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+              } catch {
+                /* ignore checkpoint errors */
+              }
+              try {
+                ctx.nativeDb.close();
+              } catch {
+                /* ignore close errors */
+              }
               ctx.nativeDb = undefined;
               if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
             }
-          }
-
-          try {
-            const { runAnalyses: runAnalysesFn } = await import('../../../ast-analysis/engine.js');
-            analysisTiming = await runAnalysesFn(
-              ctx.db,
-              fileSymbols,
-              ctx.rootDir,
-              opts,
-              ctx.engineOpts,
-            );
-          } catch (err) {
-            warn(`Analysis phases failed after native build: ${toErrorMessage(err)}`);
-          }
-
-          // Close nativeDb after analyses
-          if (ctx.nativeDb) {
-            try {
-              ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-            } catch {
-              /* ignore checkpoint errors */
-            }
-            try {
-              ctx.nativeDb.close();
-            } catch {
-              /* ignore close errors */
-            }
-            ctx.nativeDb = undefined;
-            if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
           }
         }
 
@@ -568,7 +682,7 @@ export async function buildGraph(
             insertMs: +(p.insertMs ?? 0).toFixed(1),
             resolveMs: +(p.resolveMs ?? 0).toFixed(1),
             edgesMs: +(p.edgesMs ?? 0).toFixed(1),
-            structureMs: +(p.structureMs ?? 0).toFixed(1),
+            structureMs: +((p.structureMs ?? 0) + structurePatchMs).toFixed(1),
             rolesMs: +(p.rolesMs ?? 0).toFixed(1),
             astMs: +(analysisTiming.astMs ?? 0).toFixed(1),
             complexityMs: +(analysisTiming.complexityMs ?? 0).toFixed(1),
