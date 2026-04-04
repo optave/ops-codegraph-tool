@@ -18,6 +18,7 @@
 
 use crate::change_detection;
 use crate::config::{BuildConfig, BuildOpts, BuildPathAliases};
+use crate::constants::{FAST_PATH_MAX_CHANGED_FILES, FAST_PATH_MIN_EXISTING_FILES};
 use crate::file_collector;
 use crate::import_edges::{self, ImportEdgeContext};
 use crate::import_resolution;
@@ -492,7 +493,7 @@ pub fn run_pipeline(
     // reverse-dep files added for edge rebuilding, which inflates the count
     // and would skip the fast path even for single-file incremental builds.
     let use_fast_path =
-        !change_result.is_full_build && parse_changes.len() <= 5 && existing_file_count > 20;
+        !change_result.is_full_build && parse_changes.len() <= FAST_PATH_MAX_CHANGED_FILES && existing_file_count > FAST_PATH_MIN_EXISTING_FILES;
 
     if use_fast_path {
         structure::update_changed_file_metrics(

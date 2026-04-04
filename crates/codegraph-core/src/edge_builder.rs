@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use napi_derive::napi;
 
+use crate::barrel_resolution::{self, BarrelContext, ReexportRef};
 use crate::import_resolution;
 
 /// Kind sets for hierarchy edge resolution -- mirrors the JS constants in
@@ -466,55 +467,25 @@ impl<'a> ImportEdgeContext<'a> {
     }
 }
 
-/// Recursively resolve a symbol through barrel reexport chains.
-/// Mirrors `resolveBarrelExport()` in resolve-imports.ts.
-fn resolve_barrel_export<'a>(
-    ctx: &'a ImportEdgeContext<'a>,
-    barrel_path: &'a str,
-    symbol_name: &str,
-    visited: &mut HashSet<&'a str>,
-) -> Option<&'a str> {
-    if visited.contains(barrel_path) {
-        return None;
-    }
-    visited.insert(barrel_path);
-
-    let reexports = ctx.reexport_map.get(barrel_path)?;
-
-    for re in reexports.iter() {
-        // Named reexports (non-wildcard)
-        if !re.names.is_empty() && !re.wildcard_reexport {
-            if re.names.iter().any(|n| n == symbol_name) {
-                if let Some(defs) = ctx.file_defs.get(re.source.as_str()) {
-                    if defs.contains(symbol_name) {
-                        return Some(re.source.as_str());
-                    }
-                    let deeper = resolve_barrel_export(ctx, re.source.as_str(), symbol_name, visited);
-                    if deeper.is_some() {
-                        return deeper;
-                    }
-                }
-                // Fallback: return source even if no definition found
-                return Some(re.source.as_str());
-            }
-            continue;
-        }
-
-        // Wildcard or empty-names reexports
-        if re.wildcard_reexport || re.names.is_empty() {
-            if let Some(defs) = ctx.file_defs.get(re.source.as_str()) {
-                if defs.contains(symbol_name) {
-                    return Some(re.source.as_str());
-                }
-                let deeper = resolve_barrel_export(ctx, re.source.as_str(), symbol_name, visited);
-                if deeper.is_some() {
-                    return deeper;
-                }
-            }
-        }
+impl<'a> BarrelContext for ImportEdgeContext<'a> {
+    fn reexports_for(&self, barrel_path: &str) -> Option<Vec<ReexportRef<'_>>> {
+        self.reexport_map.get(barrel_path).map(|entries| {
+            entries
+                .iter()
+                .map(|re| ReexportRef {
+                    source: re.source.as_str(),
+                    names: &re.names,
+                    wildcard_reexport: re.wildcard_reexport,
+                })
+                .collect()
+        })
     }
 
-    None
+    fn has_definition(&self, file_path: &str, symbol: &str) -> bool {
+        self.file_defs
+            .get(file_path)
+            .map_or(false, |defs| defs.contains(symbol))
+    }
 }
 
 /// Build import and barrel-through edges in Rust.
@@ -583,7 +554,7 @@ pub fn build_import_edges(
 
             // Barrel resolution: if not reexport and target is a barrel file
             if !imp.reexport && ctx.barrel_set.contains(resolved_path) {
-                let mut resolved_sources: HashSet<&str> = HashSet::new();
+                let mut resolved_sources: HashSet<String> = HashSet::new();
                 for name in &imp.names {
                     let clean_name = if name.starts_with("* as ") || name.starts_with("*\tas ") {
                         // Strip "* as " or "*\tas " prefix (both exactly 5 bytes)
@@ -594,12 +565,11 @@ pub fn build_import_edges(
                     };
 
                     let mut visited = HashSet::new();
-                    let actual = resolve_barrel_export(&ctx, resolved_path, clean_name, &mut visited);
+                    let actual = barrel_resolution::resolve_barrel_export(&ctx, resolved_path, clean_name, &mut visited);
 
                     if let Some(actual_source) = actual {
-                        if actual_source != resolved_path && !resolved_sources.contains(actual_source) {
-                            resolved_sources.insert(actual_source);
-                            if let Some(&actual_node_id) = ctx.file_node_map.get(actual_source) {
+                        if actual_source != resolved_path && !resolved_sources.contains(&actual_source) {
+                            if let Some(&actual_node_id) = ctx.file_node_map.get(actual_source.as_str()) {
                                 let barrel_kind = match edge_kind {
                                     "imports-type" => "imports-type",
                                     "dynamic-imports" => "dynamic-imports",
@@ -613,6 +583,7 @@ pub fn build_import_edges(
                                     dynamic: 0,
                                 });
                             }
+                            resolved_sources.insert(actual_source);
                         }
                     }
                 }

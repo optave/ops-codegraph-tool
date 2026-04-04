@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod ast_db;
+pub mod barrel_resolution;
 pub mod build_pipeline;
 pub mod change_detection;
 pub mod cfg;

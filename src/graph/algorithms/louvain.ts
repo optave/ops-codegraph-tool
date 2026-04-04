@@ -12,6 +12,9 @@ import type { CodeGraph } from '../model.js';
 import type { DetectClustersResult } from './leiden/index.js';
 import { detectClusters } from './leiden/index.js';
 
+/** Default random seed for deterministic community detection. */
+const DEFAULT_RANDOM_SEED = 42;
+
 export interface LouvainOptions {
   resolution?: number;
   maxLevels?: number;
@@ -42,7 +45,7 @@ export function louvainCommunities(graph: CodeGraph, opts: LouvainOptions = {}):
     }
     const edges = graph.toEdgeArray();
     const nodeIds = graph.nodeIds();
-    const result = native.louvainCommunities(edges, nodeIds, resolution, 42);
+    const result = native.louvainCommunities(edges, nodeIds, resolution, DEFAULT_RANDOM_SEED);
     const assignments = new Map<string, number>();
     for (const entry of result.assignments) {
       assignments.set(entry.node, entry.community);
@@ -57,7 +60,7 @@ export function louvainCommunities(graph: CodeGraph, opts: LouvainOptions = {}):
 function louvainJS(graph: CodeGraph, opts: LouvainOptions, resolution: number): LouvainResult {
   const result: DetectClustersResult = detectClusters(graph, {
     resolution,
-    randomSeed: 42,
+    randomSeed: DEFAULT_RANDOM_SEED,
     directed: false,
     ...(opts.maxLevels != null && { maxLevels: opts.maxLevels }),
     ...(opts.maxLocalPasses != null && { maxLocalPasses: opts.maxLocalPasses }),

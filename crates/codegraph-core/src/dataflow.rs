@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use tree_sitter::{Node, Tree};
 
-use crate::constants::MAX_WALK_DEPTH;
+use crate::constants::{DATAFLOW_TRUNCATION_LIMIT, MAX_WALK_DEPTH};
 use crate::types::{
     DataflowArgFlow, DataflowAssignment, DataflowMutation, DataflowParam, DataflowResult,
     DataflowReturn,
@@ -1196,7 +1196,7 @@ fn handle_var_declarator(
                 var_name: n.clone(),
                 caller_func: Some(func_name.clone()),
                 source_call_name: callee.clone(),
-                expression: truncate(node_text(node, source), 120),
+                expression: truncate(node_text(node, source), DATAFLOW_TRUNCATION_LIMIT),
                 line: node_line(node),
             });
             scope
@@ -1209,7 +1209,7 @@ fn handle_var_declarator(
             var_name: var_name.clone(),
             caller_func: Some(func_name),
             source_call_name: callee.clone(),
-            expression: truncate(node_text(node, source), 120),
+            expression: truncate(node_text(node, source), DATAFLOW_TRUNCATION_LIMIT),
             line: node_line(node),
         });
         scope.locals.insert(var_name, LocalSource::CallReturn { callee });
@@ -1245,7 +1245,7 @@ fn handle_assignment(
                         func_name: Some(func_name.clone()),
                         receiver_name: receiver,
                         binding_type: binding.as_ref().map(|b| b.binding_type.clone()),
-                        mutating_expr: truncate(node_text(node, source), 120),
+                        mutating_expr: truncate(node_text(node, source), DATAFLOW_TRUNCATION_LIMIT),
                         line: node_line(node),
                     });
                 }
@@ -1264,7 +1264,7 @@ fn handle_assignment(
                         var_name: var_name.clone(),
                         caller_func: Some(func_name),
                         source_call_name: callee.clone(),
-                        expression: truncate(node_text(node, source), 120),
+                        expression: truncate(node_text(node, source), DATAFLOW_TRUNCATION_LIMIT),
                         line: node_line(node),
                     });
                     if let Some(scope) = scope_stack.last_mut() {
@@ -1340,7 +1340,7 @@ fn handle_call_expr(
                     arg_name: Some(tracked.clone()),
                     binding_type: binding.as_ref().map(|b| b.binding_type.clone()),
                     confidence: conf,
-                    expression: truncate(node_text(&arg_raw, source), 120),
+                    expression: truncate(node_text(&arg_raw, source), DATAFLOW_TRUNCATION_LIMIT),
                     line: node_line(node),
                 });
             }
@@ -1442,7 +1442,7 @@ fn handle_expr_stmt_mutation(
             func_name,
             receiver_name: recv,
             binding_type: binding.as_ref().map(|b| b.binding_type.clone()),
-            mutating_expr: truncate(node_text(&expr, source), 120),
+            mutating_expr: truncate(node_text(&expr, source), DATAFLOW_TRUNCATION_LIMIT),
             line: node_line(node),
         });
     }

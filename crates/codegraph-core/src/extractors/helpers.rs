@@ -389,6 +389,105 @@ pub fn walk_ast_nodes_with_config(
     walk_ast_nodes_with_config_depth(node, source, ast_nodes, config, 0);
 }
 
+/// Classify a tree-sitter node against the language AST config.
+/// Returns the AST kind string if matched, or `None` to skip.
+fn classify_ast_node<'a>(kind: &str, config: &'a LangAstConfig) -> Option<&'a str> {
+    if config.new_types.contains(&kind) {
+        Some("new")
+    } else if config.throw_types.contains(&kind) {
+        Some("throw")
+    } else if config.await_types.contains(&kind) {
+        Some("await")
+    } else if config.string_types.contains(&kind) {
+        Some("string")
+    } else if config.regex_types.contains(&kind) {
+        Some("regex")
+    } else {
+        None
+    }
+}
+
+/// Build an AstNode for a "new" expression.
+fn build_new_node(node: &Node, source: &[u8]) -> AstNode {
+    AstNode {
+        kind: "new".to_string(),
+        name: extract_constructor_name(node, source),
+        line: start_line(node),
+        text: Some(truncate(node_text(node, source), AST_TEXT_MAX)),
+        receiver: None,
+    }
+}
+
+/// Build an AstNode for a "throw" statement.
+fn build_throw_node(node: &Node, source: &[u8], config: &LangAstConfig) -> AstNode {
+    AstNode {
+        kind: "throw".to_string(),
+        name: extract_throw_target(node, source, config),
+        line: start_line(node),
+        text: extract_child_expression_text(node, source),
+        receiver: None,
+    }
+}
+
+/// Build an AstNode for an "await" expression.
+fn build_await_node(node: &Node, source: &[u8]) -> AstNode {
+    AstNode {
+        kind: "await".to_string(),
+        name: extract_awaited_name(node, source),
+        line: start_line(node),
+        text: extract_child_expression_text(node, source),
+        receiver: None,
+    }
+}
+
+/// Build an AstNode for a string literal.
+/// Returns `None` if the string content is too short (< 2 chars).
+fn build_string_node(node: &Node, source: &[u8], config: &LangAstConfig) -> Option<AstNode> {
+    let raw = node_text(node, source);
+    let kind = node.kind();
+    let is_raw_string = kind.contains("raw_string");
+    // Strip language prefix modifiers before quote chars:
+    // - C# verbatim `@"..."`, Rust raw strings `r"..."`, Python prefixes: r, b, f, u
+    let without_prefix = raw.trim_start_matches('@')
+        .trim_start_matches(|c: char| config.string_prefixes.contains(&c));
+    let without_prefix = if is_raw_string {
+        without_prefix.trim_start_matches('r').trim_start_matches('#')
+    } else {
+        without_prefix
+    };
+    let content = without_prefix
+        .trim_start_matches(|c: char| config.quote_chars.contains(&c));
+    let content = if is_raw_string {
+        content.trim_end_matches('#')
+    } else {
+        content
+    };
+    let content = content
+        .trim_end_matches(|c: char| config.quote_chars.contains(&c));
+    if content.chars().count() < 2 {
+        return None;
+    }
+    Some(AstNode {
+        kind: "string".to_string(),
+        name: truncate(content, 100),
+        line: start_line(node),
+        text: Some(truncate(raw, AST_TEXT_MAX)),
+        receiver: None,
+    })
+}
+
+/// Build an AstNode for a regex literal.
+fn build_regex_node(node: &Node, source: &[u8]) -> AstNode {
+    let raw = node_text(node, source);
+    AstNode {
+        kind: "regex".to_string(),
+        name: if raw.is_empty() { "?".to_string() } else { raw.to_string() },
+        line: start_line(node),
+        text: Some(truncate(raw, AST_TEXT_MAX)),
+        receiver: None,
+    }
+}
+
 fn walk_ast_nodes_with_config_depth(
     node: &Node,
     source: &[u8],
@@ -399,98 +498,34 @@ fn walk_ast_nodes_with_config_depth(
     if depth >= MAX_WALK_DEPTH {
         return;
     }
-    let kind = node.kind();
 
-    if config.new_types.contains(&kind) {
-        let name = extract_constructor_name(node, source);
-        let text = truncate(node_text(node, source), AST_TEXT_MAX);
-        ast_nodes.push(AstNode {
-            kind: "new".to_string(),
-            name,
-            line: start_line(node),
-            text: Some(text),
-            receiver: None,
-        });
-        // Fall through to recurse children (e.g. string args inside `new`)
-    } else if config.throw_types.contains(&kind) {
-        let name = extract_throw_target(node, source, config);
-        let text = extract_child_expression_text(node, source);
-        ast_nodes.push(AstNode {
-            kind: "throw".to_string(),
-            name,
-            line: start_line(node),
-            text,
-            receiver: None,
-        });
-        // Fall through to recurse children (e.g. `new` inside `throw new ...`)
-    } else if config.await_types.contains(&kind) {
-        let name = extract_awaited_name(node, source);
-        let text = extract_child_expression_text(node, source);
-        ast_nodes.push(AstNode {
-            kind: "await".to_string(),
-            name,
-            line: start_line(node),
-            text,
-            receiver: None,
-        });
-        // Fall through to recurse children — captures strings, etc. inside await expr.
-    } else if config.string_types.contains(&kind) {
-        let raw = node_text(node, source);
-        let is_raw_string = kind.contains("raw_string");
-        // Strip language prefix modifiers before quote chars:
-        // - C# verbatim `@"..."`
-        // - Rust raw strings `r"..."`, `r#"..."#`
-        // - Python prefixes: r, b, f, u and combos like rb, fr
-        let without_prefix = raw.trim_start_matches('@')
-            .trim_start_matches(|c: char| config.string_prefixes.contains(&c));
-        // For raw string node types (e.g. Rust `r#"..."#`), strip the `r` prefix
-        // and `#` delimiters.  This must be conditional — the unconditional
-        // `.trim_start_matches('r')` that was here before double-stripped 'r' for
-        // languages like Python where 'r' is already in string_prefixes.
-        let without_prefix = if is_raw_string {
-            without_prefix.trim_start_matches('r').trim_start_matches('#')
-        } else {
-            without_prefix
-        };
-        let content = without_prefix
-            .trim_start_matches(|c: char| config.quote_chars.contains(&c));
-        let content = if is_raw_string {
-            content.trim_end_matches('#')
-        } else {
-            content
-        };
-        let content = content
-            .trim_end_matches(|c: char| config.quote_chars.contains(&c));
-        if content.chars().count() < 2 {
-            for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
-                    walk_ast_nodes_with_config_depth(&child, source, ast_nodes, config, depth + 1);
+    if let Some(ast_kind) = classify_ast_node(node.kind(), config) {
+        match ast_kind {
+            "new" => {
+                ast_nodes.push(build_new_node(node, source));
+            }
+            "throw" => {
+                ast_nodes.push(build_throw_node(node, source, config));
+            }
+            "await" => {
+                ast_nodes.push(build_await_node(node, source));
+            }
+            "string" => {
+                if build_string_node(node, source, config).map(|n| ast_nodes.push(n)).is_none() {
+                    // Short string: recurse children then skip outer loop
+                    for i in 0..node.child_count() {
+                        if let Some(child) = node.child(i) {
+                            walk_ast_nodes_with_config_depth(&child, source, ast_nodes, config, depth + 1);
+                        }
+                    }
+                    return;
                 }
             }
-            return;
+            "regex" => {
+                ast_nodes.push(build_regex_node(node, source));
+            }
+            _ => {}
         }
-        let name = truncate(content, 100);
-        let text = truncate(raw, AST_TEXT_MAX);
-        ast_nodes.push(AstNode {
-            kind: "string".to_string(),
-            name,
-            line: start_line(node),
-            text: Some(text),
-            receiver: None,
-        });
-        // Fall through to recurse children (template strings may have nested expressions)
-    } else if config.regex_types.contains(&kind) {
-        let raw = node_text(node, source);
-        let name = if raw.is_empty() { "?".to_string() } else { raw.to_string() };
-        let text = truncate(raw, AST_TEXT_MAX);
-        ast_nodes.push(AstNode {
-            kind: "regex".to_string(),
-            name,
-            line: start_line(node),
-            text: Some(text),
-            receiver: None,
-        });
-        // Fall through to recurse children
     }
 
     for i in 0..node.child_count() {

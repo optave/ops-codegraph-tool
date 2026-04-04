@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::constants::{DEFAULT_RANDOM_SEED, LOUVAIN_MAX_LEVELS, LOUVAIN_MAX_PASSES, LOUVAIN_MIN_GAIN};
 use crate::types::GraphEdge;
 use napi_derive::napi;
 
@@ -242,7 +243,7 @@ pub fn louvain_communities(
         &edges,
         &node_ids,
         resolution.unwrap_or(1.0),
-        random_seed.unwrap_or(42),
+        random_seed.unwrap_or(DEFAULT_RANDOM_SEED),
     )
 }
 
@@ -314,7 +315,7 @@ fn louvain_impl(
     // edges, inflating the penalty term and causing under-merging at coarser levels.
     let total_m2: f64 = 2.0 * total_weight;
 
-    for _level in 0..50 {
+    for _level in 0..LOUVAIN_MAX_LEVELS {
         if cur_edges.is_empty() {
             break;
         }
@@ -337,7 +338,7 @@ fn louvain_impl(
         }
 
         let mut any_moved = false;
-        for _pass in 0..20 {
+        for _pass in 0..LOUVAIN_MAX_PASSES {
             let mut pass_moved = false;
             for &node in &order {
                 let node_comm = level_comm[node];
@@ -368,7 +369,7 @@ fn louvain_impl(
                     }
                 }
 
-                if best_comm != node_comm && best_gain > 1e-12 {
+                if best_comm != node_comm && best_gain > LOUVAIN_MIN_GAIN {
                     comm_total[node_comm] -= node_deg;
                     comm_total[best_comm] += node_deg;
                     level_comm[node] = best_comm;

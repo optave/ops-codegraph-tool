@@ -4,6 +4,7 @@
 //! the barrel detection from `resolve-imports.ts:isBarrelFile()`, and the
 //! recursive barrel export resolution from `resolveBarrelExport()`.
 
+use crate::barrel_resolution::{self, BarrelContext, ReexportRef};
 use crate::import_resolution;
 use crate::types::{FileSymbols, PathAliases};
 use rusqlite::Connection;
@@ -79,58 +80,36 @@ impl ImportEdgeContext {
     }
 
     /// Recursively resolve a barrel export to its actual source file.
+    ///
+    /// Delegates to the shared [`barrel_resolution::resolve_barrel_export`] algorithm.
     pub fn resolve_barrel_export(
         &self,
         barrel_path: &str,
         symbol_name: &str,
         visited: &mut HashSet<String>,
     ) -> Option<String> {
-        if visited.contains(barrel_path) {
-            return None;
-        }
-        visited.insert(barrel_path.to_string());
+        barrel_resolution::resolve_barrel_export(self, barrel_path, symbol_name, visited)
+    }
+}
 
-        let reexports = self.reexport_map.get(barrel_path)?;
-        for re in reexports {
-            // Named reexport (not wildcard)
-            if !re.names.is_empty() && !re.wildcard_reexport {
-                if re.names.iter().any(|n| n == symbol_name) {
-                    if let Some(target_symbols) = self.file_symbols.get(&re.source) {
-                        let has_def = target_symbols
-                            .definitions
-                            .iter()
-                            .any(|d| d.name == symbol_name);
-                        if has_def {
-                            return Some(re.source.clone());
-                        }
-                        let deeper = self.resolve_barrel_export(&re.source, symbol_name, visited);
-                        if deeper.is_some() {
-                            return deeper;
-                        }
-                    }
-                    return Some(re.source.clone());
-                }
-                continue;
-            }
+impl BarrelContext for ImportEdgeContext {
+    fn reexports_for(&self, barrel_path: &str) -> Option<Vec<ReexportRef<'_>>> {
+        self.reexport_map.get(barrel_path).map(|entries| {
+            entries
+                .iter()
+                .map(|re| ReexportRef {
+                    source: re.source.as_str(),
+                    names: &re.names,
+                    wildcard_reexport: re.wildcard_reexport,
+                })
+                .collect()
+        })
+    }
 
-            // Wildcard reexport or unnamed
-            if re.wildcard_reexport || re.names.is_empty() {
-                if let Some(target_symbols) = self.file_symbols.get(&re.source) {
-                    let has_def = target_symbols
-                        .definitions
-                        .iter()
-                        .any(|d| d.name == symbol_name);
-                    if has_def {
-                        return Some(re.source.clone());
-                    }
-                    let deeper = self.resolve_barrel_export(&re.source, symbol_name, visited);
-                    if deeper.is_some() {
-                        return deeper;
-                    }
-                }
-            }
-        }
-        None
+    fn has_definition(&self, file_path: &str, symbol: &str) -> bool {
+        self.file_symbols
+            .get(file_path)
+            .map_or(false, |s| s.definitions.iter().any(|d| d.name == symbol))
     }
 }
 
