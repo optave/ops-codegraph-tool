@@ -208,180 +208,190 @@ fn extract_cpp_base_classes(node: &Node, source: &[u8], class_name: &str, symbol
     }
 }
 
+// ── Per-node-kind handlers ──────────────────────────────────────────────────
+
+fn handle_cpp_function_definition(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if let Some(name) = extract_cpp_function_name(node, source) {
+        let parent_class = find_cpp_parent_class(node, source);
+        let full_name = match &parent_class {
+            Some(cls) => format!("{}.{}", cls, name),
+            None => name,
+        };
+        let kind = if parent_class.is_some() { "method" } else { "function" };
+        let children = extract_cpp_parameters(node, source);
+        symbols.definitions.push(Definition {
+            name: full_name,
+            kind: kind.to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: compute_all_metrics(node, source, "cpp"),
+            cfg: build_function_cfg(node, "cpp", source),
+            children: opt_children(children),
+        });
+    }
+}
+
+fn handle_cpp_class_specifier(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if let Some(name_node) = node.child_by_field_name("name") {
+        let class_name = node_text(&name_node, source).to_string();
+        let children = node.child_by_field_name("body")
+            .map(|body| extract_cpp_fields(&body, source))
+            .unwrap_or_default();
+        symbols.definitions.push(Definition {
+            name: class_name.clone(),
+            kind: "class".to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: None,
+            cfg: None,
+            children: opt_children(children),
+        });
+        extract_cpp_base_classes(node, source, &class_name, symbols);
+    }
+}
+
+fn handle_cpp_struct_specifier(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if let Some(name_node) = node.child_by_field_name("name") {
+        let struct_name = node_text(&name_node, source).to_string();
+        let children = node.child_by_field_name("body")
+            .map(|body| extract_cpp_fields(&body, source))
+            .unwrap_or_default();
+        symbols.definitions.push(Definition {
+            name: struct_name.clone(),
+            kind: "struct".to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: None,
+            cfg: None,
+            children: opt_children(children),
+        });
+        extract_cpp_base_classes(node, source, &struct_name, symbols);
+    }
+}
+
+fn handle_cpp_enum_specifier(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if let Some(name_node) = node.child_by_field_name("name") {
+        let children = extract_cpp_enum_constants(node, source);
+        symbols.definitions.push(Definition {
+            name: node_text(&name_node, source).to_string(),
+            kind: "enum".to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: None,
+            cfg: None,
+            children: opt_children(children),
+        });
+    }
+}
+
+fn handle_cpp_namespace_definition(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if let Some(name_node) = node.child_by_field_name("name") {
+        symbols.definitions.push(Definition {
+            name: node_text(&name_node, source).to_string(),
+            kind: "namespace".to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: None,
+            cfg: None,
+            children: None,
+        });
+    }
+}
+
+fn handle_cpp_type_definition(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let mut alias_name = None;
+    for i in (0..node.child_count()).rev() {
+        if let Some(child) = node.child(i) {
+            match child.kind() {
+                "type_identifier" | "identifier" | "primitive_type" => {
+                    alias_name = Some(node_text(&child, source).to_string());
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+    if let Some(name) = alias_name {
+        symbols.definitions.push(Definition {
+            name,
+            kind: "type".to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: None,
+            cfg: None,
+            children: None,
+        });
+    }
+}
+
+fn handle_cpp_preproc_include(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if let Some(path_node) = node.child_by_field_name("path") {
+        let raw = node_text(&path_node, source);
+        let path = raw.trim_matches(|c| c == '"' || c == '<' || c == '>');
+        if !path.is_empty() {
+            let last = path.split('/').last().unwrap_or(path);
+            let name = last.strip_suffix(".h")
+                .or_else(|| last.strip_suffix(".hpp"))
+                .unwrap_or(last);
+            let mut imp = Import::new(path.to_string(), vec![name.to_string()], start_line(node));
+            imp.c_include = Some(true);
+            symbols.imports.push(imp);
+        }
+    }
+}
+
+fn handle_cpp_call_expression(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if let Some(fn_node) = node.child_by_field_name("function") {
+        match fn_node.kind() {
+            "identifier" | "qualified_identifier" | "scoped_identifier" => {
+                symbols.calls.push(Call {
+                    name: node_text(&fn_node, source).to_string(),
+                    line: start_line(node),
+                    dynamic: None,
+                    receiver: None,
+                });
+            }
+            "field_expression" => {
+                let name = fn_node.child_by_field_name("field")
+                    .map(|n| node_text(&n, source).to_string())
+                    .unwrap_or_else(|| node_text(&fn_node, source).to_string());
+                let receiver = fn_node.child_by_field_name("argument")
+                    .map(|n| node_text(&n, source).to_string());
+                symbols.calls.push(Call {
+                    name,
+                    line: start_line(node),
+                    dynamic: None,
+                    receiver,
+                });
+            }
+            _ => {
+                symbols.calls.push(Call {
+                    name: node_text(&fn_node, source).to_string(),
+                    line: start_line(node),
+                    dynamic: None,
+                    receiver: None,
+                });
+            }
+        }
+    }
+}
+
 fn match_cpp_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
-        "function_definition" => {
-            if let Some(name) = extract_cpp_function_name(node, source) {
-                let parent_class = find_cpp_parent_class(node, source);
-                let full_name = match &parent_class {
-                    Some(cls) => format!("{}.{}", cls, name),
-                    None => name,
-                };
-                let kind = if parent_class.is_some() { "method" } else { "function" };
-                let children = extract_cpp_parameters(node, source);
-                symbols.definitions.push(Definition {
-                    name: full_name,
-                    kind: kind.to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: compute_all_metrics(node, source, "cpp"),
-                    cfg: build_function_cfg(node, "cpp", source),
-                    children: opt_children(children),
-                });
-            }
-        }
-
-        "class_specifier" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let class_name = node_text(&name_node, source).to_string();
-                let children = node.child_by_field_name("body")
-                    .map(|body| extract_cpp_fields(&body, source))
-                    .unwrap_or_default();
-                symbols.definitions.push(Definition {
-                    name: class_name.clone(),
-                    kind: "class".to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: None,
-                    cfg: None,
-                    children: opt_children(children),
-                });
-                extract_cpp_base_classes(node, source, &class_name, symbols);
-            }
-        }
-
-        "struct_specifier" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let struct_name = node_text(&name_node, source).to_string();
-                let children = node.child_by_field_name("body")
-                    .map(|body| extract_cpp_fields(&body, source))
-                    .unwrap_or_default();
-                symbols.definitions.push(Definition {
-                    name: struct_name.clone(),
-                    kind: "struct".to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: None,
-                    cfg: None,
-                    children: opt_children(children),
-                });
-                extract_cpp_base_classes(node, source, &struct_name, symbols);
-            }
-        }
-
-        "enum_specifier" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                let children = extract_cpp_enum_constants(node, source);
-                symbols.definitions.push(Definition {
-                    name: node_text(&name_node, source).to_string(),
-                    kind: "enum".to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: None,
-                    cfg: None,
-                    children: opt_children(children),
-                });
-            }
-        }
-
-        "namespace_definition" => {
-            if let Some(name_node) = node.child_by_field_name("name") {
-                symbols.definitions.push(Definition {
-                    name: node_text(&name_node, source).to_string(),
-                    kind: "namespace".to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: None,
-                    cfg: None,
-                    children: None,
-                });
-            }
-        }
-
-        "type_definition" => {
-            let mut alias_name = None;
-            for i in (0..node.child_count()).rev() {
-                if let Some(child) = node.child(i) {
-                    match child.kind() {
-                        "type_identifier" | "identifier" | "primitive_type" => {
-                            alias_name = Some(node_text(&child, source).to_string());
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            if let Some(name) = alias_name {
-                symbols.definitions.push(Definition {
-                    name,
-                    kind: "type".to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: None,
-                    cfg: None,
-                    children: None,
-                });
-            }
-        }
-
-        "preproc_include" => {
-            if let Some(path_node) = node.child_by_field_name("path") {
-                let raw = node_text(&path_node, source);
-                let path = raw.trim_matches(|c| c == '"' || c == '<' || c == '>');
-                if !path.is_empty() {
-                    let last = path.split('/').last().unwrap_or(path);
-                    let name = last.strip_suffix(".h")
-                        .or_else(|| last.strip_suffix(".hpp"))
-                        .unwrap_or(last);
-                    let mut imp = Import::new(path.to_string(), vec![name.to_string()], start_line(node));
-                    imp.c_include = Some(true);
-                    symbols.imports.push(imp);
-                }
-            }
-        }
-
-        "call_expression" => {
-            if let Some(fn_node) = node.child_by_field_name("function") {
-                match fn_node.kind() {
-                    "identifier" | "qualified_identifier" | "scoped_identifier" => {
-                        symbols.calls.push(Call {
-                            name: node_text(&fn_node, source).to_string(),
-                            line: start_line(node),
-                            dynamic: None,
-                            receiver: None,
-                        });
-                    }
-                    "field_expression" => {
-                        let name = fn_node.child_by_field_name("field")
-                            .map(|n| node_text(&n, source).to_string())
-                            .unwrap_or_else(|| node_text(&fn_node, source).to_string());
-                        let receiver = fn_node.child_by_field_name("argument")
-                            .map(|n| node_text(&n, source).to_string());
-                        symbols.calls.push(Call {
-                            name,
-                            line: start_line(node),
-                            dynamic: None,
-                            receiver,
-                        });
-                    }
-                    _ => {
-                        symbols.calls.push(Call {
-                            name: node_text(&fn_node, source).to_string(),
-                            line: start_line(node),
-                            dynamic: None,
-                            receiver: None,
-                        });
-                    }
-                }
-            }
-        }
-
+        "function_definition" => handle_cpp_function_definition(node, source, symbols),
+        "class_specifier" => handle_cpp_class_specifier(node, source, symbols),
+        "struct_specifier" => handle_cpp_struct_specifier(node, source, symbols),
+        "enum_specifier" => handle_cpp_enum_specifier(node, source, symbols),
+        "namespace_definition" => handle_cpp_namespace_definition(node, source, symbols),
+        "type_definition" => handle_cpp_type_definition(node, source, symbols),
+        "preproc_include" => handle_cpp_preproc_include(node, source, symbols),
+        "call_expression" => handle_cpp_call_expression(node, source, symbols),
         _ => {}
     }
 }
