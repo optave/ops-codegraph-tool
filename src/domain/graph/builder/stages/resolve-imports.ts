@@ -180,17 +180,11 @@ export function isBarrelFile(ctx: PipelineContext, relPath: string): boolean {
   return reexports.length >= ownDefs;
 }
 
-/** Try to resolve a symbol through a re-export source, recursing if needed. */
-function resolveReexportSource(
-  ctx: PipelineContext,
-  source: string,
-  symbolName: string,
-  visited: Set<string>,
-): string | null {
+/** Check if a re-export source directly defines the symbol. */
+function sourceDefinesSymbol(ctx: PipelineContext, source: string, symbolName: string): boolean {
   const targetSymbols = ctx.fileSymbols.get(source);
-  if (!targetSymbols) return null;
-  if (targetSymbols.definitions.some((d) => d.name === symbolName)) return source;
-  return resolveBarrelExport(ctx, source, symbolName, visited);
+  if (!targetSymbols) return false;
+  return targetSymbols.definitions.some((d) => d.name === symbolName);
 }
 
 export function resolveBarrelExport(
@@ -209,12 +203,15 @@ export function resolveBarrelExport(
     // Named re-export: only follow if the symbol is in the export list
     if (re.names.length > 0 && !re.wildcardReexport) {
       if (!re.names.includes(symbolName)) continue;
-      return resolveReexportSource(ctx, re.source, symbolName, visited) ?? re.source;
+      if (sourceDefinesSymbol(ctx, re.source, symbolName)) return re.source;
+      const deeper = resolveBarrelExport(ctx, re.source, symbolName, visited);
+      return deeper ?? re.source;
     }
 
     // Wildcard or namespace re-export: check if target defines the symbol
-    const resolved = resolveReexportSource(ctx, re.source, symbolName, visited);
-    if (resolved) return resolved;
+    if (sourceDefinesSymbol(ctx, re.source, symbolName)) return re.source;
+    const deeper = resolveBarrelExport(ctx, re.source, symbolName, visited);
+    if (deeper) return deeper;
   }
 
   return null;
