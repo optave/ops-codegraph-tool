@@ -535,75 +535,89 @@ function upsertAstComplexity(
   return 1;
 }
 
-export async function buildComplexityMetrics(
+/** Collect native bulk-insert rows from precomputed complexity data.
+ *  Returns the rows array, or null if any definition is missing complexity
+ *  (signalling that JS fallback is needed). */
+function collectNativeBulkRows(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, FileSymbols>,
-  rootDir: string,
+): Array<Record<string, unknown>> | null {
+  const rows: Array<Record<string, unknown>> = [];
+
+  for (const [relPath, symbols] of fileSymbols) {
+    for (const def of symbols.definitions) {
+      if (def.kind !== 'function' && def.kind !== 'method') continue;
+      if (!def.line) continue;
+      if (!def.complexity) return null; // needs JS fallback
+      const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
+      if (!nodeId) continue;
+      const ch = def.complexity.halstead;
+      const cl = def.complexity.loc;
+      rows.push({
+        nodeId,
+        cognitive: def.complexity.cognitive ?? 0,
+        cyclomatic: def.complexity.cyclomatic ?? 0,
+        maxNesting: def.complexity.maxNesting ?? 0,
+        loc: cl ? cl.loc : 0,
+        sloc: cl ? cl.sloc : 0,
+        commentLines: cl ? cl.commentLines : 0,
+        halsteadN1: ch ? ch.n1 : 0,
+        halsteadN2: ch ? ch.n2 : 0,
+        halsteadBigN1: ch ? ch.bigN1 : 0,
+        halsteadBigN2: ch ? ch.bigN2 : 0,
+        halsteadVocabulary: ch ? ch.vocabulary : 0,
+        halsteadLength: ch ? ch.length : 0,
+        halsteadVolume: ch ? ch.volume : 0,
+        halsteadDifficulty: ch ? ch.difficulty : 0,
+        halsteadEffort: ch ? ch.effort : 0,
+        halsteadBugs: ch ? ch.bugs : 0,
+        maintainabilityIndex: def.complexity.maintainabilityIndex ?? 0,
+      });
+    }
+  }
+
+  return rows;
+}
+
+/** Try the native bulk-insert fast path. Returns true if all rows were
+ *  inserted successfully (caller can return early). */
+function tryNativeBulkInsert(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, FileSymbols>,
   engineOpts?: {
     nativeDb?: { bulkInsertComplexity?(rows: Array<Record<string, unknown>>): number };
     suspendJsDb?: () => void;
     resumeJsDb?: () => void;
   },
-): Promise<void> {
-  // ── Native bulk-insert fast path ──────────────────────────────────────
+): boolean {
   const nativeDb = engineOpts?.nativeDb;
-  if (nativeDb?.bulkInsertComplexity) {
-    const rows: Array<Record<string, unknown>> = [];
-    let needsJsFallback = false;
+  if (!nativeDb?.bulkInsertComplexity) return false;
 
-    for (const [relPath, symbols] of fileSymbols) {
-      for (const def of symbols.definitions) {
-        if (def.kind !== 'function' && def.kind !== 'method') continue;
-        if (!def.line) continue;
-        if (!def.complexity) {
-          needsJsFallback = true;
-          break;
-        }
-        const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
-        if (!nodeId) continue;
-        const ch = def.complexity.halstead;
-        const cl = def.complexity.loc;
-        rows.push({
-          nodeId,
-          cognitive: def.complexity.cognitive ?? 0,
-          cyclomatic: def.complexity.cyclomatic ?? 0,
-          maxNesting: def.complexity.maxNesting ?? 0,
-          loc: cl ? cl.loc : 0,
-          sloc: cl ? cl.sloc : 0,
-          commentLines: cl ? cl.commentLines : 0,
-          halsteadN1: ch ? ch.n1 : 0,
-          halsteadN2: ch ? ch.n2 : 0,
-          halsteadBigN1: ch ? ch.bigN1 : 0,
-          halsteadBigN2: ch ? ch.bigN2 : 0,
-          halsteadVocabulary: ch ? ch.vocabulary : 0,
-          halsteadLength: ch ? ch.length : 0,
-          halsteadVolume: ch ? ch.volume : 0,
-          halsteadDifficulty: ch ? ch.difficulty : 0,
-          halsteadEffort: ch ? ch.effort : 0,
-          halsteadBugs: ch ? ch.bugs : 0,
-          maintainabilityIndex: def.complexity.maintainabilityIndex ?? 0,
-        });
-      }
-      if (needsJsFallback) break;
-    }
+  const rows = collectNativeBulkRows(db, fileSymbols);
+  if (!rows || rows.length === 0) return false;
 
-    if (!needsJsFallback && rows.length > 0) {
-      let inserted: number;
-      try {
-        engineOpts?.suspendJsDb?.();
-        inserted = nativeDb.bulkInsertComplexity(rows);
-      } finally {
-        engineOpts?.resumeJsDb?.();
-      }
-      if (inserted === rows.length) {
-        info(`Complexity (native bulk): ${inserted} functions analyzed`);
-        return;
-      }
-      debug(`Native bulkInsertComplexity partial: ${inserted}/${rows.length} — falling back to JS`);
-    }
+  let inserted: number;
+  try {
+    engineOpts?.suspendJsDb?.();
+    inserted = nativeDb.bulkInsertComplexity(rows);
+  } finally {
+    engineOpts?.resumeJsDb?.();
   }
 
-  // ── JS fallback path ─────────────────────────────────────────────────
+  if (inserted === rows.length) {
+    info(`Complexity (native bulk): ${inserted} functions analyzed`);
+    return true;
+  }
+  debug(`Native bulkInsertComplexity partial: ${inserted}/${rows.length} — falling back to JS`);
+  return false;
+}
+
+/** JS/WASM fallback: parse files and compute metrics via AST traversal. */
+async function computeJsFallbackMetrics(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, FileSymbols>,
+  rootDir: string,
+): Promise<void> {
   const { parsers, extToLang } = await initWasmParsersIfNeeded(fileSymbols);
   const { getParser } = await import('../domain/parser.js');
 
@@ -647,6 +661,20 @@ export async function buildComplexityMetrics(
   if (analyzed > 0) {
     info(`Complexity: ${analyzed} functions analyzed`);
   }
+}
+
+export async function buildComplexityMetrics(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, FileSymbols>,
+  rootDir: string,
+  engineOpts?: {
+    nativeDb?: { bulkInsertComplexity?(rows: Array<Record<string, unknown>>): number };
+    suspendJsDb?: () => void;
+    resumeJsDb?: () => void;
+  },
+): Promise<void> {
+  if (tryNativeBulkInsert(db, fileSymbols, engineOpts)) return;
+  await computeJsFallbackMetrics(db, fileSymbols, rootDir);
 }
 
 // ─── Query-Time Functions (re-exported from complexity-query.ts) ──────────
