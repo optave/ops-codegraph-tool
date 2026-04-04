@@ -336,10 +336,14 @@ export async function buildGraph(
     // napi crossings (eliminates WAL dual-connection dance). Falls back
     // to the JS pipeline on failure or when native is unavailable.
     //
-    // Native addon 3.8.0 has a path bug: file_symbols keys are absolute
+    // Native addon ≤3.8.0 has a path bug: file_symbols keys are absolute
     // paths but known_files are relative, causing zero import/call edges.
+    // Native addon ≤3.8.1 has an incremental barrel bug: the Rust pipeline
+    // doesn't re-parse barrel files that are imported by changed files,
+    // causing missing barrel import edges and lost analysis data for
+    // reverse-dep files during incremental builds.
     // Skip the orchestrator for affected versions (fixed in 3.9.0+).
-    const orchestratorBuggy = !!ctx.engineVersion && semverCompare(ctx.engineVersion, '3.8.0') <= 0;
+    const orchestratorBuggy = !!ctx.engineVersion && semverCompare(ctx.engineVersion, '3.8.1') <= 0;
     const forceJs =
       process.env.CODEGRAPH_FORCE_JS_PIPELINE === '1' ||
       ctx.forceFullRebuild ||
