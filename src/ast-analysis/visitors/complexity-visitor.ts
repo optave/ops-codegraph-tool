@@ -237,6 +237,8 @@ export function createComplexityVisitor(
         activeFuncNode = funcNode;
         activeFuncName = funcName;
         funcDepth = 0;
+        nestingAdjust = 0;
+        adjustNodeIds.clear();
       } else {
         funcDepth++;
       }

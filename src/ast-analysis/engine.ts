@@ -323,6 +323,16 @@ function storeNativeCfgResults(results: NativeFunctionCfgResult[], defs: Definit
  * overridden (e.g., native extractors provide both fields inline, so the
  * normal override path in storeNativeCfgResults / storeCfgResults is skipped).
  */
+/** Type guard for cfg objects with blocks and edges arrays. */
+function hasCfgBlocksAndEdges(cfg: unknown): cfg is { blocks: unknown[]; edges: unknown[] } {
+  return (
+    cfg != null &&
+    typeof cfg === 'object' &&
+    Array.isArray((cfg as { blocks?: unknown }).blocks) &&
+    Array.isArray((cfg as { edges?: unknown }).edges)
+  );
+}
+
 function reconcileCfgCyclomatic(fileSymbols: Map<string, ExtractorOutput>): void {
   for (const [, symbols] of fileSymbols) {
     const defs = symbols.definitions || [];
@@ -330,13 +340,10 @@ function reconcileCfgCyclomatic(fileSymbols: Map<string, ExtractorOutput>): void
       if (
         (def.kind === 'function' || def.kind === 'method') &&
         def.complexity &&
-        def.cfg &&
-        Array.isArray((def.cfg as any).blocks) &&
-        Array.isArray((def.cfg as any).edges)
+        hasCfgBlocksAndEdges(def.cfg)
       ) {
-        const { edges, blocks } = def.cfg as { edges: unknown[]; blocks: unknown[] };
-        const cfgCyclomatic = edges.length - blocks.length + 2;
-        if (cfgCyclomatic > 0 && cfgCyclomatic !== def.complexity.cyclomatic) {
+        const cfgCyclomatic = Math.max(def.cfg.edges.length - def.cfg.blocks.length + 2, 1);
+        if (cfgCyclomatic !== def.complexity.cyclomatic) {
           overrideCyclomaticFromCfg(def, cfgCyclomatic);
         }
       }

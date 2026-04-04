@@ -1046,3 +1046,78 @@ describe('DFS vs visitor parity', () => {
     expect(visitor.maxNesting).toBe(dfs.maxNesting);
   });
 });
+
+// ─── Parity: elseViaAlternative languages (Go) ─────────────────────────
+
+describe('DFS vs visitor parity — Go (elseViaAlternative)', () => {
+  let goParser: any;
+
+  beforeAll(async () => {
+    const parsers = await createParsers();
+    goParser = parsers.get('go');
+  });
+
+  function findGoFunc(node: any): any {
+    const rules = COMPLEXITY_RULES.get('go');
+    if (!rules) return null;
+    if (rules.functionNodes.has(node.type)) return node;
+    for (let i = 0; i < node.childCount; i++) {
+      const result = findGoFunc(node.child(i));
+      if (result) return result;
+    }
+    return null;
+  }
+
+  function analyzeGoBoth(code: string) {
+    if (!goParser) throw new Error('Go parser not available');
+    const tree = goParser.parse(code);
+    const funcNode = findGoFunc(tree.rootNode);
+    if (!funcNode) throw new Error('No function found in Go snippet');
+    const dfs = computeFunctionComplexity(funcNode, 'go');
+    const visitor = computeAllMetrics(funcNode, 'go');
+    return { dfs, visitor };
+  }
+
+  it('else-if chain — identical (elseViaAlternative)', () => {
+    const { dfs, visitor } = analyzeGoBoth(`
+      package main
+      func classify(x int) string {
+        if x > 100 {
+          return "big"
+        } else if x > 50 {
+          return "medium"
+        } else if x > 0 {
+          return "small"
+        } else {
+          return "non-positive"
+        }
+      }
+    `);
+    expect(visitor!.cognitive).toBe(dfs!.cognitive);
+    expect(visitor!.cyclomatic).toBe(dfs!.cyclomatic);
+    expect(visitor!.maxNesting).toBe(dfs!.maxNesting);
+  });
+
+  it('nested if with else-if — identical nesting', () => {
+    const { dfs, visitor } = analyzeGoBoth(`
+      package main
+      func process(x int, y int) int {
+        if x > 0 {
+          if y > 0 {
+            return x + y
+          } else if y == 0 {
+            return x
+          } else {
+            return -1
+          }
+        } else if x == 0 {
+          return 0
+        }
+        return -2
+      }
+    `);
+    expect(visitor!.cognitive).toBe(dfs!.cognitive);
+    expect(visitor!.cyclomatic).toBe(dfs!.cyclomatic);
+    expect(visitor!.maxNesting).toBe(dfs!.maxNesting);
+  });
+});
