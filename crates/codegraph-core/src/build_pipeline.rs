@@ -504,9 +504,9 @@ fn reparse_barrel_candidates(
 
     // Check which barrels are imported by parsed files but not in file_symbols
     let mut barrel_paths_to_parse: Vec<String> = Vec::new();
-    for (_rel_path, symbols) in file_symbols.iter() {
+    for (rel_path, symbols) in file_symbols.iter() {
         for imp in &symbols.imports {
-            let abs_file = Path::new(root_dir).join(_rel_path);
+            let abs_file = Path::new(root_dir).join(rel_path);
             let fwd = abs_file.to_str().unwrap_or("").replace('\\', "/");
             let key = format!("{}|{}", fwd, imp.source);
             if let Some(resolved) = batch_resolved.get(&key) {

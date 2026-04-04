@@ -1068,7 +1068,7 @@ fn handle_return_stmt(
         func_name: func_name.clone(),
         expression: truncate(
             expr.map(|e| node_text(&e, source)).unwrap_or(""),
-            120,
+            DATAFLOW_TRUNCATION_LIMIT,
         ),
         referenced_names,
         line: node_line(node),
