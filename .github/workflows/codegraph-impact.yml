@@ -1,8 +1,11 @@
 name: Codegraph Impact Analysis
 on: [pull_request]
 
+permissions:
+  pull-requests: write
+
 concurrency:
-  group: codegraph-impact-${{ github.ref }}
+  group: codegraph-impact-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
@@ -33,31 +36,47 @@ jobs:
           path: .codegraph/
           key: codegraph-${{ hashFiles('src/**', 'package.json') }}
           restore-keys: codegraph-
-      - name: Build codegraph
-        run: npx codegraph build || (rm -rf .codegraph && npx codegraph build --no-incremental)
+      - name: Build graph
+        run: node dist/cli.js build || (rm -rf .codegraph && node dist/cli.js build --no-incremental)
       - name: Run impact analysis
-        run: |
-          npx codegraph diff-impact --ref origin/${{ github.base_ref }} --json -T > impact.json || echo '{"affectedFiles":[],"summary":null}' > impact.json
+        run: node dist/cli.js diff-impact origin/${{ github.base_ref }} --json -T > impact.json
       - name: Comment on PR
+        if: success()
         uses: actions/github-script@v8
         with:
           script: |
             const fs = require('fs');
             const impact = JSON.parse(fs.readFileSync('impact.json', 'utf-8'));
-            if (!impact.summary) {
+            if (!impact.summary || (impact.summary.functionsChanged === 0 && impact.summary.callersAffected === 0)) {
               console.log('No impact data to report.');
               return;
             }
             const body = `## Codegraph Impact Analysis\n\n` +
-              `**${impact.summary.functionsChanged} functions changed** -> ` +
+              `**${impact.summary.functionsChanged} functions changed** → ` +
               `**${impact.summary.callersAffected} callers affected** across ` +
-              `**${impact.summary.filesAffected} files**.\n\n` +
+              `**${impact.summary.filesAffected} files**\n\n` +
               (impact.affectedFunctions || []).slice(0, 20).map(f =>
                 `- \`${f.name}\` in \`${f.file}:${f.line}\` (${f.transitiveCallers} transitive callers)`
               ).join('\n');
-            github.rest.issues.createComment({
+            // Update existing comment or create new one
+            const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body
             });
+            const existing = comments.find(c => c.body.startsWith('## Codegraph Impact Analysis'));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
