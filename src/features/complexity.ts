@@ -548,7 +548,14 @@ function collectNativeBulkRows(
     for (const def of symbols.definitions) {
       if (def.kind !== 'function' && def.kind !== 'method') continue;
       if (!def.line) continue;
-      if (!def.complexity) return null; // needs JS fallback
+      // Interface/type property signatures and single-line stubs are extracted
+      // as methods but the native engine correctly never assigns complexity.
+      // Mirror the leniency in initWasmParsersIfNeeded to avoid bailing out
+      // of the native bulk-insert path for every TypeScript codebase (#846).
+      if (!def.complexity) {
+        if (def.name.includes('.') || !def.endLine || def.endLine <= def.line) continue;
+        return null; // genuine function body missing complexity — needs JS fallback
+      }
       const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
       if (!nodeId) continue;
       const ch = def.complexity.halstead;
@@ -594,7 +601,8 @@ function tryNativeBulkInsert(
   if (!nativeDb?.bulkInsertComplexity) return false;
 
   const rows = collectNativeBulkRows(db, fileSymbols);
-  if (!rows || rows.length === 0) return false;
+  if (rows === null) return false; // missing complexity — needs JS fallback
+  if (rows.length === 0) return true; // nothing to insert — native path done
 
   let inserted: number;
   try {
