@@ -143,6 +143,8 @@ const COMMON_QUERY_PATTERNS: string[] = [
   '(call_expression function: (identifier) @callfn_name) @callfn_node',
   '(call_expression function: (member_expression) @callmem_fn) @callmem_node',
   '(call_expression function: (subscript_expression) @callsub_fn) @callsub_node',
+  '(new_expression (identifier) @newfn_name) @newfn_node',
+  '(new_expression (member_expression) @newmem_fn) @newmem_node',
   '(expression_statement (assignment_expression left: (member_expression) @assign_left right: (_) @assign_right)) @assign_node',
 ];
 
