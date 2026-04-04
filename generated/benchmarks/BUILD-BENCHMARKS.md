@@ -192,6 +192,19 @@ Extrapolated linearly from per-file metrics above.
 <!-- NOTES_START -->
 ### Notes
 
+**Native 1-file rebuild regression (v3.8.1 42 ms → v3.9.0 562 ms, ↑1238%):** The native incremental
+path is re-running graph-wide work on single-file rebuilds. The phase breakdown shows `structureMs`
+at 151.7 ms for a 1-file rebuild vs 54.1 ms for the full 567-file build, and `setupMs` at 38.2 ms
+vs 5.5 ms. AST/complexity/CFG/dataflow phases also jump from near-zero to 20-28 ms each,
+suggesting these phases are not scoped to only the changed file. WASM 1-file rebuild (559 ms) is
+comparable, indicating the issue is in the shared incremental pipeline rather than the native engine
+specifically. The no-op rebuild (8 ms native, 15 ms WASM) is unaffected, confirming the regression
+is triggered by actual file-change detection.
+
+**Engine edge divergence (v3.9.0, 1 edge):** Native reports 30,609 edges and WASM reports 30,610
+for the same 567-file codebase (node counts match at 15,483). This is a parity bug — tracked in
+#855.
+
 **WASM regression (v2.0.0 → v2.1.0, ↑32% — persists in v2.3.0):** The
 "v2.1.0" entry was measured after the v2.1.0 tag on main, when `package.json`
 still read "2.1.0" but the codebase already included post-release features:
