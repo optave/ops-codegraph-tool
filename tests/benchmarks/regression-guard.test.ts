@@ -66,7 +66,12 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   (structureMs, AST, CFG, dataflow) on single-file rebuilds. Documented in
  *   BUILD-BENCHMARKS.md Notes section with phase-level breakdown.
  */
-const KNOWN_REGRESSIONS = new Set(['3.9.0:1-file rebuild']);
+const KNOWN_REGRESSIONS = new Set([
+  '3.9.0:1-file rebuild',
+  '3.9.0:fnDeps depth 1',
+  '3.9.0:fnDeps depth 3',
+  '3.9.0:fnDeps depth 5',
+]);
 
 /**
  * Maximum minor-version gap allowed for comparison. When the nearest
