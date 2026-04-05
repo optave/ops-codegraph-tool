@@ -90,6 +90,134 @@ afterAll(() => {
   if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+// ─── Barrel re-export role classification (#837) ──────────────────────
+
+describe('barrel re-export role classification', () => {
+  let barrelTmpDir: string, barrelDbPath: string;
+
+  beforeAll(() => {
+    barrelTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-barrel-roles-'));
+    fs.mkdirSync(path.join(barrelTmpDir, '.codegraph'));
+    barrelDbPath = path.join(barrelTmpDir, '.codegraph', 'graph.db');
+
+    const db = new Database(barrelDbPath);
+    db.pragma('journal_mode = WAL');
+    initSchema(db);
+
+    // File nodes
+    const fInspect = insertNode(db, 'src/inspect.ts', 'file', 'src/inspect.ts', 0);
+    const fBarrel = insertNode(db, 'src/index.ts', 'file', 'src/index.ts', 0);
+    const fConsumer = insertNode(db, 'src/app.ts', 'file', 'src/app.ts', 0);
+    const fTest = insertNode(db, 'tests/inspect.test.ts', 'file', 'tests/inspect.test.ts', 0);
+
+    // Symbol nodes
+    const queryName = insertNode(db, 'queryName', 'function', 'src/inspect.ts', 10);
+    const helperFn = insertNode(db, 'helperFn', 'function', 'src/inspect.ts', 30);
+    const appMain = insertNode(db, 'appMain', 'function', 'src/app.ts', 1);
+    const testFn = insertNode(db, 'testQueryName', 'function', 'tests/inspect.test.ts', 1);
+
+    // Barrel re-exports inspect.ts
+    insertEdge(db, fBarrel, fInspect, 'reexports');
+    // Consumer imports from barrel
+    insertEdge(db, fConsumer, fBarrel, 'imports');
+    // Test file imports from inspect directly
+    insertEdge(db, fTest, fInspect, 'imports');
+
+    // Only test code calls queryName — no production calls edges
+    insertEdge(db, testFn, queryName, 'calls');
+
+    // helperFn has no callers at all — truly dead
+    // appMain has no callers — but is in a production file
+
+    classifyNodeRoles(db);
+    db.close();
+  });
+
+  afterAll(() => {
+    if (barrelTmpDir) fs.rmSync(barrelTmpDir, { recursive: true, force: true });
+  });
+
+  test('symbol consumed via barrel re-export is classified as entry, not dead', () => {
+    const data = rolesData(barrelDbPath);
+    const queryNameResult = data.symbols.find((s) => s.name === 'queryName');
+    expect(queryNameResult).toBeDefined();
+    // queryName is in a file re-exported by a barrel with production importers
+    // → isExported = true, fanIn > 0 from test → falls through to median-based
+    //   classification (core/utility/leaf), NOT test-only or dead
+    expect(queryNameResult!.role).not.toMatch(/^dead/);
+    expect(queryNameResult!.role).not.toBe('test-only');
+  });
+
+  test('symbol in re-exported file with no callers is classified as entry (part of exported API)', () => {
+    const data = rolesData(barrelDbPath);
+    const helperResult = data.symbols.find((s) => s.name === 'helperFn');
+    expect(helperResult).toBeDefined();
+    // helperFn has 0 callers — but it's in a re-exported file, so isExported = true
+    // With fanIn=0 and isExported=true → entry (exported but uncalled)
+    expect(helperResult!.role).toBe('entry');
+  });
+});
+
+// ─── Multi-level barrel re-export chain (#837) ───────────────────────
+
+describe('multi-level barrel re-export chain', () => {
+  let chainTmpDir: string, chainDbPath: string;
+
+  beforeAll(() => {
+    chainTmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-chain-roles-'));
+    fs.mkdirSync(path.join(chainTmpDir, '.codegraph'));
+    chainDbPath = path.join(chainTmpDir, '.codegraph', 'graph.db');
+
+    const db = new Database(chainDbPath);
+    db.pragma('journal_mode = WAL');
+    initSchema(db);
+
+    // Chain: inspect.ts → index.ts (barrel) → queries-cli.ts (barrel) → query.ts (consumer)
+    const fInspect = insertNode(
+      db,
+      'src/queries-cli/inspect.ts',
+      'file',
+      'src/queries-cli/inspect.ts',
+      0,
+    );
+    const fIndex = insertNode(
+      db,
+      'src/queries-cli/index.ts',
+      'file',
+      'src/queries-cli/index.ts',
+      0,
+    );
+    const fQueriesCli = insertNode(db, 'src/queries-cli.ts', 'file', 'src/queries-cli.ts', 0);
+    const fQuery = insertNode(db, 'src/query.ts', 'file', 'src/query.ts', 0);
+
+    const queryName = insertNode(db, 'queryName', 'function', 'src/queries-cli/inspect.ts', 10);
+    insertNode(db, 'queryCmd', 'function', 'src/query.ts', 1);
+
+    // Barrel chain: each barrel re-exports from the one below
+    insertEdge(db, fIndex, fInspect, 'reexports');
+    insertEdge(db, fQueriesCli, fIndex, 'reexports');
+    // Consumer imports from the top-level barrel
+    insertEdge(db, fQuery, fQueriesCli, 'imports');
+
+    // No calls edges to queryName at all
+    classifyNodeRoles(db);
+    db.close();
+  });
+
+  afterAll(() => {
+    if (chainTmpDir) fs.rmSync(chainTmpDir, { recursive: true, force: true });
+  });
+
+  test('symbol at bottom of multi-level barrel chain is classified as entry', () => {
+    const data = rolesData(chainDbPath);
+    const queryNameResult = data.symbols.find((s) => s.name === 'queryName');
+    expect(queryNameResult).toBeDefined();
+    // 3-level deep re-export chain: inspect → index → queries-cli → query (consumer)
+    // Should still be recognized as exported
+    expect(queryNameResult!.role).toBe('entry');
+  });
+});
+
 // ─── rolesData ──────────────────────────────────────────────────────────
 
 describe('rolesData', () => {
