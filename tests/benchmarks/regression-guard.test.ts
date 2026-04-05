@@ -343,6 +343,38 @@ describe('Benchmark regression guard', () => {
     'INCREMENTAL_BENCHMARK_DATA',
   );
 
+  // Warn when KNOWN_REGRESSIONS entries are stale (more than 1 minor version
+  // behind the current package version).  This makes the stale-exemption
+  // problem self-detecting rather than requiring manual bookkeeping.
+  test('KNOWN_REGRESSIONS entries are not stale', () => {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const pkgVersion: string = JSON.parse(
+      fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'),
+    ).version;
+    const stale: string[] = [];
+    for (const entry of KNOWN_REGRESSIONS) {
+      const colonIdx = entry.indexOf(':');
+      if (colonIdx === -1) continue;
+      const entryVersion = entry.slice(0, colonIdx);
+      const gap = minorGap(entryVersion, pkgVersion);
+      if (gap > 1) {
+        stale.push(
+          `${entry} (version ${entryVersion} is ${gap} minor versions behind ${pkgVersion})`,
+        );
+      }
+    }
+    if (stale.length > 0) {
+      console.warn(
+        `[regression-guard] Stale KNOWN_REGRESSIONS entries — remove after verifying corrected data:\n  ${stale.join('\n  ')}`,
+      );
+    }
+    expect(
+      stale.length,
+      `KNOWN_REGRESSIONS has ${stale.length} stale entries (>1 minor version behind ${pkgVersion}). ` +
+        `Remove them after verifying the corrected benchmark data has landed:\n  ${stale.join('\n  ')}`,
+    ).toBe(0);
+  });
+
   // Validate newest-first ordering assumption for all history arrays
   test('build history is sorted newest-first', () => {
     assertNewestFirst(buildHistory, 'Build benchmark');
