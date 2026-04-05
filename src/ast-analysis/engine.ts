@@ -700,7 +700,7 @@ export async function runAnalyses(
   await ensureWasmTreesIfNeeded(fileSymbols, opts, rootDir);
 
   // Unified pre-walk: run all applicable visitors in a single DFS per file.
-  // Time each file's walk and distribute proportionally among active visitors
+  // Time each file's walk and distribute equally among active visitors
   // so that phase timers (astMs, complexityMs, etc.) reflect real work — not
   // just the DB-write tail in delegateToBuildFunctions.
   const t0walk = performance.now();
@@ -745,6 +745,10 @@ export async function runAnalyses(
     if (dataflowVisitor) symbols.dataflow = results.dataflow as DataflowResult;
   }
 
+  // Total wall-clock time for the unified walk loop, including per-file
+  // setupVisitors overhead. Walk time is already distributed into per-phase
+  // timers above, so this field overlaps with (astMs + complexityMs + ...).
+  // It is kept as a diagnostic cross-check, not an additive bucket.
   timing._unifiedWalkMs = performance.now() - t0walk;
 
   // Reconcile: apply CFG-derived cyclomatic override for any definitions that have
