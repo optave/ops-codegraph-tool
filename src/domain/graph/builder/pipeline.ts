@@ -263,6 +263,8 @@ interface NativeOrchestratorResult {
   changedCount?: number;
   removedCount?: number;
   isFullBuild?: boolean;
+  /** Full changed files including reverse-dep files — used by JS structure fallback. */
+  structureScope?: string[];
   /** Whether the Rust pipeline handled the structure phase (small-incremental fast path). */
   structureHandled?: boolean;
 }
@@ -420,7 +422,7 @@ async function runPostNativeStructure(
     // Full builds need null (rebuild everything). Incremental builds pass the
     // changed file list so buildStructure only updates those files' metrics
     // and contains edges — matching the JS pipeline's medium-incremental path.
-    const changedFilePaths = isFullBuild ? null : (changedFiles ?? null);
+    const changedFilePaths = isFullBuild || !changedFiles?.length ? null : changedFiles;
     const { buildStructure: buildStructureFn } = (await import(
       '../../../features/structure.js'
     )) as {
@@ -621,7 +623,7 @@ async function tryNativeOrchestrator(
         ctx,
         fileSymbols,
         !!result.isFullBuild,
-        result.changedFiles,
+        result.structureScope ?? result.changedFiles,
       );
     }
 
