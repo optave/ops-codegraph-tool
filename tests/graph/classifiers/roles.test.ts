@@ -291,6 +291,32 @@ describe('classifyRoles', () => {
     expect(roles.get('1')).toBe('dead-leaf');
   });
 
+  it('classifies constant as leaf when sibling is a pure-sink function (fan_in > 0, fan_out === 0)', () => {
+    const nodes = [
+      {
+        id: '1',
+        name: 'MAX_LENGTH',
+        kind: 'constant',
+        file: 'src/validators.ts',
+        fanIn: 0,
+        fanOut: 0,
+        isExported: false,
+        hasActiveFileSiblings: true,
+      },
+      {
+        id: '2',
+        name: 'validate',
+        kind: 'function',
+        file: 'src/validators.ts',
+        fanIn: 10,
+        fanOut: 0,
+        isExported: true,
+      },
+    ];
+    const roles = classifyRoles(nodes);
+    expect(roles.get('1')).toBe('leaf');
+  });
+
   it('classifies constant as leaf even in CLI command file when active siblings exist', () => {
     const nodes = [
       {
