@@ -125,10 +125,15 @@ fn load_file_hashes(conn: &Connection) -> Option<HashMap<String, FileHashRow>> {
 }
 
 /// Detect removed files: files in DB but not in current file list.
+///
+/// When `scoped_rel_paths` is provided (scoped rebuild), only files within that
+/// scope are considered candidates for removal. Without it, all DB files not
+/// found on disk are treated as removed.
 fn detect_removed_files(
     existing: &HashMap<String, FileHashRow>,
     all_files: &[String],
     root_dir: &str,
+    scoped_rel_paths: Option<&HashSet<String>>,
 ) -> Vec<String> {
     let current: HashSet<String> = all_files
         .iter()
@@ -137,7 +142,14 @@ fn detect_removed_files(
 
     existing
         .keys()
-        .filter(|f| !current.contains(*f))
+        .filter(|f| {
+            // When scope is set, only consider files within scope as candidates.
+            if let Some(scope) = scoped_rel_paths {
+                scope.contains(*f) && !current.contains(*f)
+            } else {
+                !current.contains(*f)
+            }
+        })
         .cloned()
         .collect()
 }
@@ -371,6 +383,10 @@ pub fn find_reverse_dependencies(
 }
 
 /// Purge graph data for changed/removed files and delete outgoing edges for reverse deps.
+///
+/// Deletion order: analysis dependents → edges → nodes (matches `native_db::purge_files_data`).
+/// Analysis tables use join-based queries (node_id IN SELECT id FROM nodes) because they
+/// reference nodes by ID, not by file path directly.
 pub fn purge_changed_files(
     conn: &Connection,
     files_to_purge: &[String],
@@ -385,48 +401,36 @@ pub fn purge_changed_files(
         Err(_) => return,
     };
 
-    // Purge nodes and edges for changed/removed files
-    if !files_to_purge.is_empty() {
-        // Delete edges where source or target is in the purged files
-        if let Ok(mut stmt) =
-            tx.prepare("DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)")
-        {
-            for f in files_to_purge {
-                let _ = stmt.execute([f]);
-            }
-        }
-        if let Ok(mut stmt) =
-            tx.prepare("DELETE FROM edges WHERE target_id IN (SELECT id FROM nodes WHERE file = ?)")
-        {
-            for f in files_to_purge {
-                let _ = stmt.execute([f]);
-            }
-        }
-        // Delete nodes
-        if let Ok(mut stmt) = tx.prepare("DELETE FROM nodes WHERE file = ?") {
-            for f in files_to_purge {
-                let _ = stmt.execute([f]);
-            }
-        }
-        // Delete analysis data
-        for table in &[
-            "function_complexity",
-            "cfg_blocks",
-            "cfg_edges",
-            "dataflow",
-            "ast_nodes",
-            "node_metrics",
-        ] {
-            let sql = format!("DELETE FROM {table} WHERE file = ?");
-            if let Ok(mut stmt) = tx.prepare(&sql) {
-                for f in files_to_purge {
-                    let _ = stmt.execute([f]);
+    // Purge each file across all tables. Optional tables are silently skipped
+    // if they don't exist. Order: analysis dependents → edges → nodes.
+    let purge_sql: &[(&str, bool)] = &[
+        // Analysis tables (optional — may not exist)
+        ("DELETE FROM embeddings WHERE node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+        ("DELETE FROM cfg_edges WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+        ("DELETE FROM cfg_blocks WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+        ("DELETE FROM dataflow WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1) OR target_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+        ("DELETE FROM function_complexity WHERE node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+        ("DELETE FROM node_metrics WHERE node_id IN (SELECT id FROM nodes WHERE file = ?1)", false),
+        ("DELETE FROM ast_nodes WHERE file = ?1", false),
+        // Core tables (errors logged)
+        ("DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1) OR target_id IN (SELECT id FROM nodes WHERE file = ?1)", true),
+        ("DELETE FROM nodes WHERE file = ?1", true),
+    ];
+
+    for file in files_to_purge {
+        for &(sql, required) in purge_sql {
+            match tx.execute(sql, rusqlite::params![file]) {
+                Ok(_) => {}
+                Err(e) if required => {
+                    eprintln!("[codegraph] purge failed for \"{file}\": {e}");
                 }
+                Err(_) => {} // optional table missing — skip
             }
         }
     }
 
-    // Delete outgoing edges for reverse-dep files (they'll be re-built)
+    // Delete outgoing edges for reverse-dep files (they'll be re-built).
+    // These files keep their nodes but need outgoing edges rebuilt.
     if !reverse_dep_files.is_empty() {
         if let Ok(mut stmt) =
             tx.prepare("DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)")
@@ -487,12 +491,16 @@ pub fn heal_metadata(conn: &Connection, updates: &[MetadataUpdate]) {
 /// Main entry point: detect changes using the tiered strategy.
 ///
 /// Returns `None` for full builds (no file_hashes table or force flag).
+///
+/// When `scoped_rel_paths` is provided, removal detection is limited to files
+/// within that scope — non-scoped files in the DB are left untouched.
 pub fn detect_changes(
     conn: &Connection,
     all_files: &[String],
     root_dir: &str,
     incremental: bool,
     force_full_rebuild: bool,
+    scoped_rel_paths: Option<&HashSet<String>>,
 ) -> ChangeResult {
     if !incremental || force_full_rebuild {
         return ChangeResult {
@@ -539,7 +547,7 @@ pub fn detect_changes(
         }
     };
 
-    let removed = detect_removed_files(&existing, all_files, root_dir);
+    let removed = detect_removed_files(&existing, all_files, root_dir, scoped_rel_paths);
 
     // Try Tier 0 (journal) first
     if let Some(result) = try_journal_tier(conn, &existing, root_dir, &removed) {
@@ -597,7 +605,7 @@ mod tests {
         );
 
         let all_files = vec!["/project/src/a.ts".to_string()];
-        let removed = detect_removed_files(&existing, &all_files, "/project");
+        let removed = detect_removed_files(&existing, &all_files, "/project", None);
         assert_eq!(removed, vec!["src/b.ts"]);
     }
 }

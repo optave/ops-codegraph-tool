@@ -50,7 +50,9 @@ pub struct EdgeRow {
 impl ImportEdgeContext {
     /// Resolve an import source to a relative path, using batch cache first.
     pub fn get_resolved(&self, abs_file: &str, import_source: &str) -> String {
-        let key = format!("{abs_file}|{import_source}");
+        // Normalize to forward slashes so cache keys match across platforms (#826).
+        let normalized = abs_file.replace('\\', "/");
+        let key = format!("{normalized}|{import_source}");
         if let Some(hit) = self.batch_resolved.get(&key) {
             return hit.clone();
         }
