@@ -658,7 +658,7 @@ function classifyNodeRolesIncremental(
       `SELECT DISTINCT n2.file FROM edges e
        JOIN nodes n1 ON (e.source_id = n1.id OR e.target_id = n1.id)
        JOIN nodes n2 ON (e.source_id = n2.id OR e.target_id = n2.id)
-       WHERE e.kind IN ('calls', 'reexports')
+       WHERE e.kind = 'calls'
          AND n1.file IN (${seedPlaceholders})
          AND n2.file NOT IN (${seedPlaceholders})
          AND n2.kind NOT IN ('file', 'directory')`,
