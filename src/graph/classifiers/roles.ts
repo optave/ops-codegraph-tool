@@ -74,6 +74,8 @@ export interface RoleClassificationNode {
   isExported: boolean;
   testOnlyFanIn?: number;
   productionFanIn?: number;
+  /** True when the same file contains at least one non-constant callable connected to the graph (fanIn > 0 or fanOut > 0). */
+  hasActiveFileSiblings?: boolean;
 }
 
 /**
@@ -115,10 +117,17 @@ export function classifyRoles(
     if (isFrameworkEntry) {
       role = 'entry';
     } else if (node.fanIn === 0 && !node.isExported) {
-      role =
-        node.testOnlyFanIn != null && node.testOnlyFanIn > 0
-          ? 'test-only'
-          : classifyDeadSubRole(node);
+      if (node.kind === 'constant' && node.hasActiveFileSiblings) {
+        // Constants consumed via identifier reference (not calls) have no
+        // inbound call edges. If the same file has active callables, the
+        // constant is almost certainly used locally — classify as leaf.
+        role = 'leaf';
+      } else {
+        role =
+          node.testOnlyFanIn != null && node.testOnlyFanIn > 0
+            ? 'test-only'
+            : classifyDeadSubRole(node);
+      }
     } else if (node.fanIn === 0 && node.isExported) {
       role = 'entry';
     } else if (hasProdFanIn && node.fanIn > 0 && node.productionFanIn === 0) {
