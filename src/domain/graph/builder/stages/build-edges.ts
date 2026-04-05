@@ -297,7 +297,18 @@ function buildImportEdgesNative(
     }
   }
 
-  // 6. Call native
+  // 6. Build symbol node entries for type-only import resolution
+  const symbolNodes: Array<{ name: string; file: string; nodeId: number }> = [];
+  if (ctx.nodesByNameAndFile) {
+    for (const [key, nodes] of ctx.nodesByNameAndFile) {
+      if (nodes.length > 0) {
+        const [name, file] = key.split('|');
+        symbolNodes.push({ name: name!, file: file!, nodeId: nodes[0]!.id });
+      }
+    }
+  }
+
+  // 7. Call native
   const nativeEdges = native.buildImportEdges!(
     files,
     resolvedImports,
@@ -305,6 +316,7 @@ function buildImportEdgesNative(
     fileNodeIds,
     barrelFiles,
     rootDir,
+    symbolNodes,
   ) as NativeEdge[];
 
   for (const e of nativeEdges) {

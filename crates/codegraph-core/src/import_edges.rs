@@ -161,6 +161,16 @@ fn get_file_node_id(conn: &Connection, rel_path: &str) -> Option<i64> {
     .ok()
 }
 
+/// Look up the first symbol node ID by name and file (for type-only import resolution).
+fn get_symbol_node_id(conn: &Connection, name: &str, file: &str) -> Option<i64> {
+    conn.query_row(
+        "SELECT id FROM nodes WHERE name = ? AND file = ? AND kind != 'file' LIMIT 1",
+        [name, file],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
 /// Build import edges from parsed file symbols.
 ///
 /// For each file's imports, resolves the target path and creates edges:
@@ -213,6 +223,30 @@ pub fn build_import_edges(conn: &Connection, ctx: &ImportEdgeContext) -> Vec<Edg
                 confidence: 1.0,
                 dynamic: 0,
             });
+
+            // Type-only imports: create symbol-level edges so the target symbols
+            // get fan-in credit and aren't falsely classified as dead code.
+            if imp.type_only.unwrap_or(false) {
+                for name in &imp.names {
+                    let clean_name = name.strip_prefix("* as ").unwrap_or(name);
+                    let mut target_file = resolved_path.clone();
+                    if ctx.is_barrel_file(&resolved_path) {
+                        let mut visited = HashSet::new();
+                        if let Some(actual) = ctx.resolve_barrel_export(&resolved_path, clean_name, &mut visited) {
+                            target_file = actual;
+                        }
+                    }
+                    if let Some(sym_id) = get_symbol_node_id(conn, clean_name, &target_file) {
+                        edges.push(EdgeRow {
+                            source_id: file_node_id,
+                            target_id: sym_id,
+                            kind: "imports-type".to_string(),
+                            confidence: 1.0,
+                            dynamic: 0,
+                        });
+                    }
+                }
+            }
 
             // Build barrel-through edges if the target is a barrel file
             if !is_reexport && ctx.is_barrel_file(&resolved_path) {
