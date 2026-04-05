@@ -426,8 +426,9 @@ pub fn run_pipeline(
                     rusqlite::params![&rel],
                 );
                 // Re-resolve imports for the barrel file
+                // Normalize to forward slashes so batch_resolved keys match get_resolved lookups on Windows.
                 let abs_str =
-                    Path::new(root_dir).join(&rel).to_str().unwrap_or("").to_string();
+                    Path::new(root_dir).join(&rel).to_str().unwrap_or("").replace('\\', "/");
                 for imp in &sym.imports {
                     let input = ImportResolutionInput {
                         from_file: abs_str.clone(),
