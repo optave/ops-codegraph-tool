@@ -6,6 +6,8 @@ Import resolution: native batch vs JS fallback throughput.
 
 | Version | Engine | Files | Full Build | No-op | 1-File | Resolve (native) | Resolve (JS) |
 |---------|--------|------:|-----------:|------:|-------:|------------------:|-------------:|
+| 3.9.0 | native | 567 | 6.5s ~ | 6ms ↓25% | 527ms ↑1185% | 5ms ↓18% | 11ms ~ |
+| 3.9.0 | wasm | 567 | 6.8s ↓3% | 12ms ↓20% | 541ms ↓10% | 5ms ↓18% | 11ms ~ |
 | 3.8.1 | native | 565 | 6.6s ↑468% | 8ms ↑14% | 41ms ↑24% | 6ms ↑51% | 11ms ↓14% |
 | 3.8.1 | wasm | 565 | 7.0s ↑493% | 15ms ↑88% | 603ms ↑1727% | 6ms ↑51% | 11ms ↓14% |
 | 3.8.0 | native | 564 | 1.2s | 7ms | 33ms | 4ms ↑2% | 12ms ↓19% |
@@ -45,39 +47,87 @@ Import resolution: native batch vs JS fallback throughput.
 
 ### Latest results
 
-**Version:** 3.8.1 | **Files:** 565 | **Date:** 2026-04-03
+**Version:** 3.9.0 | **Files:** 567 | **Date:** 2026-04-04
 
 #### Native (Rust)
 
 | Metric | Value |
 |--------|------:|
-| Full build | 6.6s |
-| No-op rebuild | 8ms |
-| 1-file rebuild | 41ms |
+| Full build | 6.5s |
+| No-op rebuild | 6ms |
+| 1-file rebuild | 527ms |
 
 #### WASM
 
 | Metric | Value |
 |--------|------:|
-| Full build | 7.0s |
-| No-op rebuild | 15ms |
-| 1-file rebuild | 603ms |
-
-> **Note:** 3.8.0 showed anomalously fast WASM timings (1-file rebuild 33ms, phase times near-zero) because the native Rust build orchestration pipeline handled parsing/AST/complexity internally. In 3.8.1, the WASM path no longer delegates these phases to the native engine, reverting toward pre-3.8.0 baselines (`parseMs` 0.3ms → 272.3ms). The native engine's incremental path remains fast (1-file 41ms, `parseMs` 0.3ms). The full-build regression (~5.5-5.9x vs 3.8.0) affects both engines and is tracked separately.
+| Full build | 6.8s |
+| No-op rebuild | 12ms |
+| 1-file rebuild | 541ms |
 
 #### Import Resolution
 
 | Metric | Value |
 |--------|------:|
 | Import pairs | 951 |
-| Native batch | 6ms |
+| Native batch | 5ms |
 | JS fallback | 11ms |
 | Per-import (native) | 0ms |
 | Per-import (JS) | 0ms |
-| Speedup ratio | 1.7x |
+| Speedup ratio | 2.1x |
 
 <!-- INCREMENTAL_BENCHMARK_DATA
 [
+  {
+    "version": "3.9.0",
+    "date": "2026-04-04",
+    "files": 567,
+    "wasm": {
+      "fullBuildMs": 6793,
+      "noopRebuildMs": 12,
+      "oneFileRebuildMs": 541,
+      "oneFilePhases": {
+        "setupMs": 1.6,
+        "parseMs": 264.6,
+        "insertMs": 16.2,
+        "resolveMs": 2,
+        "edgesMs": 20.7,
+        "structureMs": 25.7,
+        "rolesMs": 46.6,
+        "astMs": 0.4,
+        "complexityMs": 0.4,
+        "cfgMs": 0.2,
+        "dataflowMs": 0.3,
+        "finalizeMs": 6.2
+      }
+    },
+    "native": {
+      "fullBuildMs": 6520,
+      "noopRebuildMs": 6,
+      "oneFileRebuildMs": 527,
+      "oneFilePhases": {
+        "setupMs": 31.1,
+        "parseMs": 54,
+        "insertMs": 21.1,
+        "resolveMs": 0.8,
+        "edgesMs": 25.1,
+        "structureMs": 140.6,
+        "rolesMs": 59.3,
+        "astMs": 14.4,
+        "complexityMs": 4.2,
+        "cfgMs": 25.6,
+        "dataflowMs": 11.7,
+        "finalizeMs": 0.4
+      }
+    },
+    "resolve": {
+      "imports": 951,
+      "nativeBatchMs": 5.1,
+      "jsFallbackMs": 10.8,
+      "perImportNativeMs": 0,
+      "perImportJsMs": 0
+    }
+  },
   {
     "version": "3.8.1",
     "date": "2026-04-03",

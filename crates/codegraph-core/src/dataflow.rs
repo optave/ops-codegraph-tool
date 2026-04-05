@@ -579,127 +579,143 @@ fn function_name<'a>(fn_node: &Node<'a>, rules: &DataflowRules, source: &[u8]) -
     None
 }
 
+// ── Per-language parameter extraction handlers ─────────────────────────────
+
+fn extract_params_python(node: &Node, source: &[u8]) -> Option<Vec<String>> {
+    let t = node.kind();
+    if t == "typed_parameter" || t == "typed_default_parameter" {
+        let cursor = &mut node.walk();
+        for c in node.named_children(cursor) {
+            if c.kind() == "identifier" {
+                return Some(vec![node_text(&c, source).to_string()]);
+            }
+        }
+        return Some(vec![]);
+    }
+    if t == "default_parameter" {
+        if let Some(name_node) = node.child_by_field_name("name") {
+            return Some(vec![node_text(&name_node, source).to_string()]);
+        }
+        return Some(vec![]);
+    }
+    if t == "list_splat_pattern" || t == "dictionary_splat_pattern" {
+        let cursor = &mut node.walk();
+        for c in node.named_children(cursor) {
+            if c.kind() == "identifier" {
+                return Some(vec![node_text(&c, source).to_string()]);
+            }
+        }
+        return Some(vec![]);
+    }
+    None
+}
+
+fn extract_params_go(node: &Node, source: &[u8]) -> Option<Vec<String>> {
+    let t = node.kind();
+    if t == "parameter_declaration" {
+        let mut names = Vec::new();
+        let cursor = &mut node.walk();
+        for c in node.named_children(cursor) {
+            if c.kind() == "identifier" {
+                names.push(node_text(&c, source).to_string());
+            }
+        }
+        if !names.is_empty() { Some(names) } else { None }
+    } else if t == "variadic_parameter_declaration" {
+        node.child_by_field_name("name")
+            .map(|n| vec![node_text(&n, source).to_string()])
+    } else {
+        None
+    }
+}
+
+fn extract_params_rust(node: &Node, source: &[u8]) -> Option<Vec<String>> {
+    let t = node.kind();
+    if t == "parameter" {
+        if let Some(pat) = node.child_by_field_name("pattern") {
+            if pat.kind() == "identifier" {
+                return Some(vec![node_text(&pat, source).to_string()]);
+            }
+        }
+        return Some(vec![]);
+    }
+    if t == "identifier" {
+        return Some(vec![node_text(node, source).to_string()]);
+    }
+    None
+}
+
+fn extract_params_java(node: &Node, source: &[u8]) -> Option<Vec<String>> {
+    let t = node.kind();
+    if t == "formal_parameter" || t == "spread_parameter" {
+        if let Some(name_node) = node.child_by_field_name("name") {
+            return Some(vec![node_text(&name_node, source).to_string()]);
+        }
+        return Some(vec![]);
+    }
+    if t == "identifier" {
+        return Some(vec![node_text(node, source).to_string()]);
+    }
+    None
+}
+
+fn extract_params_csharp(node: &Node, source: &[u8]) -> Option<Vec<String>> {
+    let t = node.kind();
+    if t == "parameter" {
+        if let Some(name_node) = node.child_by_field_name("name") {
+            return Some(vec![node_text(&name_node, source).to_string()]);
+        }
+        return Some(vec![]);
+    }
+    if t == "identifier" {
+        return Some(vec![node_text(node, source).to_string()]);
+    }
+    None
+}
+
+fn extract_params_php(node: &Node, source: &[u8]) -> Option<Vec<String>> {
+    let t = node.kind();
+    if t == "simple_parameter" || t == "variadic_parameter" {
+        if let Some(name_node) = node.child_by_field_name("name") {
+            return Some(vec![node_text(&name_node, source).to_string()]);
+        }
+        return Some(vec![]);
+    }
+    if t == "variable_name" {
+        return Some(vec![node_text(node, source).to_string()]);
+    }
+    None
+}
+
+fn extract_params_ruby(node: &Node, source: &[u8]) -> Option<Vec<String>> {
+    let t = node.kind();
+    if t == "identifier" {
+        return Some(vec![node_text(node, source).to_string()]);
+    }
+    if t == "optional_parameter"
+        || t == "keyword_parameter"
+        || t == "splat_parameter"
+        || t == "hash_splat_parameter"
+    {
+        if let Some(name_node) = node.child_by_field_name("name") {
+            return Some(vec![node_text(&name_node, source).to_string()]);
+        }
+        return Some(vec![]);
+    }
+    None
+}
+
 /// Extract parameter names using per-language strategy.
 fn extract_param_names_strategy(node: &Node, strategy: ParamStrategy, source: &[u8]) -> Option<Vec<String>> {
     match strategy {
         ParamStrategy::Default => None,
-        ParamStrategy::Python => {
-            let t = node.kind();
-            if t == "typed_parameter" || t == "typed_default_parameter" {
-                let cursor = &mut node.walk();
-                for c in node.named_children(cursor) {
-                    if c.kind() == "identifier" {
-                        return Some(vec![node_text(&c, source).to_string()]);
-                    }
-                }
-                return Some(vec![]);
-            }
-            if t == "default_parameter" {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    return Some(vec![node_text(&name_node, source).to_string()]);
-                }
-                return Some(vec![]);
-            }
-            if t == "list_splat_pattern" || t == "dictionary_splat_pattern" {
-                let cursor = &mut node.walk();
-                for c in node.named_children(cursor) {
-                    if c.kind() == "identifier" {
-                        return Some(vec![node_text(&c, source).to_string()]);
-                    }
-                }
-                return Some(vec![]);
-            }
-            None
-        }
-        ParamStrategy::Go => {
-            let t = node.kind();
-            if t == "parameter_declaration" {
-                let mut names = Vec::new();
-                let cursor = &mut node.walk();
-                for c in node.named_children(cursor) {
-                    if c.kind() == "identifier" {
-                        names.push(node_text(&c, source).to_string());
-                    }
-                }
-                if !names.is_empty() { Some(names) } else { None }
-            } else if t == "variadic_parameter_declaration" {
-                node.child_by_field_name("name")
-                    .map(|n| vec![node_text(&n, source).to_string()])
-            } else {
-                None
-            }
-        }
-        ParamStrategy::Rust => {
-            let t = node.kind();
-            if t == "parameter" {
-                if let Some(pat) = node.child_by_field_name("pattern") {
-                    if pat.kind() == "identifier" {
-                        return Some(vec![node_text(&pat, source).to_string()]);
-                    }
-                }
-                return Some(vec![]);
-            }
-            if t == "identifier" {
-                return Some(vec![node_text(node, source).to_string()]);
-            }
-            None
-        }
-        ParamStrategy::Java => {
-            let t = node.kind();
-            if t == "formal_parameter" || t == "spread_parameter" {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    return Some(vec![node_text(&name_node, source).to_string()]);
-                }
-                return Some(vec![]);
-            }
-            if t == "identifier" {
-                return Some(vec![node_text(node, source).to_string()]);
-            }
-            None
-        }
-        ParamStrategy::CSharp => {
-            let t = node.kind();
-            if t == "parameter" {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    return Some(vec![node_text(&name_node, source).to_string()]);
-                }
-                return Some(vec![]);
-            }
-            if t == "identifier" {
-                return Some(vec![node_text(node, source).to_string()]);
-            }
-            None
-        }
-        ParamStrategy::Php => {
-            let t = node.kind();
-            if t == "simple_parameter" || t == "variadic_parameter" {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    return Some(vec![node_text(&name_node, source).to_string()]);
-                }
-                return Some(vec![]);
-            }
-            if t == "variable_name" {
-                return Some(vec![node_text(node, source).to_string()]);
-            }
-            None
-        }
-        ParamStrategy::Ruby => {
-            let t = node.kind();
-            if t == "identifier" {
-                return Some(vec![node_text(node, source).to_string()]);
-            }
-            if t == "optional_parameter"
-                || t == "keyword_parameter"
-                || t == "splat_parameter"
-                || t == "hash_splat_parameter"
-            {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    return Some(vec![node_text(&name_node, source).to_string()]);
-                }
-                return Some(vec![]);
-            }
-            None
-        }
+        ParamStrategy::Python => extract_params_python(node, source),
+        ParamStrategy::Go => extract_params_go(node, source),
+        ParamStrategy::Rust => extract_params_rust(node, source),
+        ParamStrategy::Java => extract_params_java(node, source),
+        ParamStrategy::CSharp => extract_params_csharp(node, source),
+        ParamStrategy::Php => extract_params_php(node, source),
+        ParamStrategy::Ruby => extract_params_ruby(node, source),
     }
 }
 
@@ -1052,7 +1068,7 @@ fn handle_return_stmt(
         func_name: func_name.clone(),
         expression: truncate(
             expr.map(|e| node_text(&e, source)).unwrap_or(""),
-            120,
+            DATAFLOW_TRUNCATION_LIMIT,
         ),
         referenced_names,
         line: node_line(node),

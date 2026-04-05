@@ -566,6 +566,36 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
     ).map((r) => r.target_id),
   );
 
+  // Mark symbols as exported when their files are targets of reexports edges
+  // from production-reachable barrels (traces through multi-level chains) (#837)
+  const reexportExported = db
+    .prepare(
+      `WITH RECURSIVE prod_reachable(file_id) AS (
+        SELECT DISTINCT e.target_id
+        FROM edges e
+        JOIN nodes src ON e.source_id = src.id
+        WHERE e.kind IN ('imports', 'dynamic-imports', 'imports-type')
+          AND src.kind = 'file'
+          ${testFilterSQL('src.file')}
+        UNION
+        SELECT e.target_id
+        FROM edges e
+        JOIN prod_reachable pr ON e.source_id = pr.file_id
+        WHERE e.kind = 'reexports'
+      )
+      SELECT DISTINCT n.id
+      FROM nodes n
+      JOIN nodes f ON f.file = n.file AND f.kind = 'file'
+      WHERE f.id IN (
+        SELECT e.target_id FROM edges e
+        WHERE e.kind = 'reexports'
+          AND e.source_id IN (SELECT file_id FROM prod_reachable)
+      )
+      AND n.kind NOT IN ('file', 'directory', 'parameter', 'property')`,
+    )
+    .all() as { id: number }[];
+  for (const r of reexportExported) exportedIds.add(r.id);
+
   // Compute production fan-in (excluding callers in test files)
   const prodFanInMap = new Map<number, number>();
   const prodRows = db
@@ -582,6 +612,15 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
     prodFanInMap.set(r.target_id, r.cnt);
   }
 
+  // Files with at least one callable (non-constant) connected to the graph.
+  // Constants in these files are likely consumed locally via identifier reference.
+  const activeFiles = new Set<string>();
+  for (const r of rows) {
+    if ((r.fan_in > 0 || r.fan_out > 0) && r.kind !== 'constant') {
+      activeFiles.add(r.file);
+    }
+  }
+
   // Delegate classification to the pure-logic classifier
   const classifierInput = rows.map((r) => ({
     id: String(r.id),
@@ -592,6 +631,7 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
     fanOut: r.fan_out,
     isExported: exportedIds.has(r.id),
     productionFanIn: prodFanInMap.get(r.id) || 0,
+    hasActiveFileSiblings: r.kind === 'constant' ? activeFiles.has(r.file) : undefined,
   }));
 
   const roleMap = classifyRoles(classifierInput);
@@ -628,7 +668,7 @@ function classifyNodeRolesIncremental(
       `SELECT DISTINCT n2.file FROM edges e
        JOIN nodes n1 ON (e.source_id = n1.id OR e.target_id = n1.id)
        JOIN nodes n2 ON (e.source_id = n2.id OR e.target_id = n2.id)
-       WHERE e.kind = 'calls'
+       WHERE e.kind IN ('calls', 'reexports')
          AND n1.file IN (${seedPlaceholders})
          AND n2.file NOT IN (${seedPlaceholders})
          AND n2.kind NOT IN ('file', 'directory')`,
@@ -701,6 +741,37 @@ function classifyNodeRolesIncremental(
     ).map((r) => r.target_id),
   );
 
+  // 3b. Mark symbols as exported when their files are targets of reexports edges
+  // from production-reachable barrels (traces through multi-level chains) (#837)
+  const reexportExported = db
+    .prepare(
+      `WITH RECURSIVE prod_reachable(file_id) AS (
+        SELECT DISTINCT e.target_id
+        FROM edges e
+        JOIN nodes src ON e.source_id = src.id
+        WHERE e.kind IN ('imports', 'dynamic-imports', 'imports-type')
+          AND src.kind = 'file'
+          ${testFilterSQL('src.file')}
+        UNION
+        SELECT e.target_id
+        FROM edges e
+        JOIN prod_reachable pr ON e.source_id = pr.file_id
+        WHERE e.kind = 'reexports'
+      )
+      SELECT DISTINCT n.id
+      FROM nodes n
+      JOIN nodes f ON f.file = n.file AND f.kind = 'file'
+      WHERE f.id IN (
+        SELECT e.target_id FROM edges e
+        WHERE e.kind = 'reexports'
+          AND e.source_id IN (SELECT file_id FROM prod_reachable)
+      )
+      AND n.kind NOT IN ('file', 'directory', 'parameter', 'property')
+      AND n.file IN (${placeholders})`,
+    )
+    .all(...allAffectedFiles) as { id: number }[];
+  for (const r of reexportExported) exportedIds.add(r.id);
+
   // 4. Production fan-in for affected nodes only
   const prodFanInMap = new Map<number, number>();
   const prodRows = db
@@ -720,6 +791,13 @@ function classifyNodeRolesIncremental(
   }
 
   // 5. Classify affected nodes using global medians
+  const activeFiles = new Set<string>();
+  for (const r of rows) {
+    if ((r.fan_in > 0 || r.fan_out > 0) && r.kind !== 'constant') {
+      activeFiles.add(r.file);
+    }
+  }
+
   const classifierInput = rows.map((r) => ({
     id: String(r.id),
     name: r.name,
@@ -729,6 +807,7 @@ function classifyNodeRolesIncremental(
     fanOut: r.fan_out,
     isExported: exportedIds.has(r.id),
     productionFanIn: prodFanInMap.get(r.id) || 0,
+    hasActiveFileSiblings: r.kind === 'constant' ? activeFiles.has(r.file) : undefined,
   }));
 
   const roleMap = classifyRoles(classifierInput, globalMedians);
