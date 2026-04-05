@@ -114,6 +114,42 @@ function minorGap(a: string, b: string): number {
 }
 
 /**
+ * Count the effective version gap between two versions, including
+ * skipped versions between them.  When multiple intermediate versions
+ * are skipped (e.g. 3.8.0 and 3.8.1 both in SKIP_VERSIONS), the
+ * comparison spans a larger real gap than the raw minor-version
+ * distance suggests.  Adding skipped-version count to the minor gap
+ * prevents comparing across feature-expansion boundaries where
+ * intermediate baselines were invalidated.
+ */
+function effectiveGap(a: string, b: string, history: { version: string }[]): number {
+  const raw = minorGap(a, b);
+  if (raw === Infinity) return Infinity;
+  const sa = parseSemver(a);
+  const sb = parseSemver(b);
+  if (!sa || !sb) return Infinity;
+  const [lo, hi] = [a, b].sort((x, y) => {
+    const px = parseSemver(x)!;
+    const py = parseSemver(y)!;
+    return px[0] * 10000 + px[1] * 100 + px[2] - (py[0] * 10000 + py[1] * 100 + py[2]);
+  });
+  const loSv = parseSemver(lo)!;
+  const hiSv = parseSemver(hi)!;
+  const loVal = loSv[0] * 10000 + loSv[1] * 100 + loSv[2];
+  const hiVal = hiSv[0] * 10000 + hiSv[1] * 100 + hiSv[2];
+  // Count distinct skipped versions that fall between lo and hi
+  const skippedBetween = new Set(
+    [...SKIP_VERSIONS].filter((v) => {
+      const sv = parseSemver(v);
+      if (!sv) return false;
+      const val = sv[0] * 10000 + sv[1] * 100 + sv[2];
+      return val > loVal && val < hiVal;
+    }),
+  );
+  return raw + skippedBetween.size;
+}
+
+/**
  * Find the latest entry for a given engine, then the next non-dev
  * entry with data for that engine (the "previous release").
  */
@@ -121,31 +157,34 @@ function findLatestPair<T extends { version: string }>(
   history: T[],
   hasEngine: (entry: T) => boolean,
 ): { latest: T; previous: T } | null {
-  // Find the latest entry, skipping versions with unreliable data
-  let latestIdx = -1;
-  for (let i = 0; i < history.length; i++) {
-    if (SKIP_VERSIONS.has(history[i].version)) continue;
-    if (hasEngine(history[i])) {
-      latestIdx = i;
-      break;
+  // Try each candidate as "latest", starting from the most recent.
+  // If the latest entry has no valid baseline within the effective gap,
+  // fall through to the next candidate — this ensures we always find
+  // the most recent *comparable* pair rather than giving up when the
+  // newest entry spans a large feature-expansion gap.
+  for (let latestIdx = 0; latestIdx < history.length; latestIdx++) {
+    if (SKIP_VERSIONS.has(history[latestIdx].version)) continue;
+    if (!hasEngine(history[latestIdx])) continue;
+
+    const latestVersion = history[latestIdx].version;
+
+    // Find previous non-dev entry with data for this engine, skipping
+    // versions with known unreliable benchmark data and versions that
+    // are too far apart for meaningful comparison.  The effective gap
+    // includes skipped versions between the pair — when intermediate
+    // releases are in SKIP_VERSIONS, the real distance is larger than
+    // the raw minor-version count.
+    for (let i = latestIdx + 1; i < history.length; i++) {
+      const entry = history[i];
+      if (entry.version === 'dev') continue;
+      if (SKIP_VERSIONS.has(entry.version)) continue;
+      if (!hasEngine(entry)) continue;
+      if (effectiveGap(latestVersion, entry.version, history) > MAX_VERSION_GAP) continue;
+      return { latest: history[latestIdx], previous: entry };
     }
+    // No valid baseline for this latest — try the next candidate
   }
-  if (latestIdx < 0) return null;
-
-  const latestVersion = history[latestIdx].version;
-
-  // Find previous non-dev entry with data for this engine, skipping
-  // versions with known unreliable benchmark data and versions that
-  // are too far apart for meaningful comparison.
-  for (let i = latestIdx + 1; i < history.length; i++) {
-    const entry = history[i];
-    if (entry.version === 'dev') continue;
-    if (SKIP_VERSIONS.has(entry.version)) continue;
-    if (!hasEngine(entry)) continue;
-    if (minorGap(latestVersion, entry.version) > MAX_VERSION_GAP) continue;
-    return { latest: history[latestIdx], previous: entry };
-  }
-  return null; // No suitable baseline to compare against
+  return null; // No suitable pair found anywhere in the history
 }
 
 /**
