@@ -197,9 +197,12 @@ path is re-running graph-wide work on single-file rebuilds. The phase breakdown 
 at 151.7 ms for a 1-file rebuild vs 54.1 ms for the full 567-file build, and `setupMs` at 38.2 ms
 vs 5.5 ms. AST/complexity/CFG/dataflow phases also jump from near-zero to 20-28 ms each,
 suggesting these phases are not scoped to only the changed file. WASM 1-file rebuild (559 ms) is
-comparable, indicating the issue is in the shared incremental pipeline rather than the native engine
-specifically. The no-op rebuild (8 ms native, 15 ms WASM) is unaffected, confirming the regression
-is triggered by actual file-change detection.
+superficially similar in total time but has a different root cause: WASM is parse-dominated
+(`parseMs` 258.2 ms accounts for nearly half the total) while `structureMs` (28.3 ms),
+`astMs`/`cfgMs`/`dataflowMs` (all under 1 ms) are correctly scoped. The native regression is
+specifically in graph-wide phases being re-run during incremental builds. The no-op rebuild
+(8 ms native, 15 ms WASM) is unaffected, confirming the regression is triggered by actual
+file-change detection.
 
 **Engine edge divergence (v3.9.0, 1 edge):** Native reports 30,609 edges and WASM reports 30,610
 for the same 567-file codebase (node counts match at 15,483). This is a parity bug — tracked in
