@@ -601,11 +601,7 @@ pub fn run_pipeline(
         changed_count: parse_changes.len(),
         removed_count: change_result.removed.len(),
         is_full_build: change_result.is_full_build,
-        structure_scope: if change_result.is_full_build {
-            None
-        } else {
-            Some(changed_files)
-        },
+        structure_scope: changed_file_list.clone(),
         structure_handled: use_fast_path,
     })
 }
