@@ -67,6 +67,16 @@ pub struct BuildPipelineResult {
     pub changed_count: usize,
     pub removed_count: usize,
     pub is_full_build: bool,
+    /// Full set of changed files including reverse-dep files. Used by the JS
+    /// structure fallback path so it can update metrics for files whose edges
+    /// changed even though their content didn't. `None` for full builds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structure_scope: Option<Vec<String>>,
+    /// Whether the Rust pipeline handled the structure phase (directory nodes,
+    /// contains edges, file metrics). True when the small-incremental fast path
+    /// ran (≤5 changed files, >20 existing files). When false, the JS caller
+    /// must run its own structure phase as a post-processing step.
+    pub structure_handled: bool,
 }
 
 /// Normalize path to forward slashes.
@@ -163,6 +173,8 @@ pub fn run_pipeline(
             changed_count: 0,
             removed_count: 0,
             is_full_build: false,
+            structure_scope: Some(vec![]),
+            structure_handled: true,
         });
     }
 
@@ -352,15 +364,6 @@ pub fn run_pipeline(
             &line_count_map,
             &file_symbols,
         );
-    } else {
-        // Emit a debug-level warning so users of `codegraph stats` know
-        // structure metrics were not updated on this build path.
-        eprintln!(
-            "[codegraph] note: structure metrics skipped (native fast-path not applicable — \
-             {} changed files, full_build={}). Run JS pipeline for full structure.",
-            parse_changes.len(),
-            change_result.is_full_build,
-        );
     }
     // For full/larger builds, the JS fallback handles full structure via
     // `features/structure.ts`. The Rust orchestrator handles the fast path
@@ -417,6 +420,8 @@ pub fn run_pipeline(
         changed_count: parse_changes.len(),
         removed_count: change_result.removed.len(),
         is_full_build: change_result.is_full_build,
+        structure_scope: changed_file_list.clone(),
+        structure_handled: use_fast_path,
     })
 }
 
