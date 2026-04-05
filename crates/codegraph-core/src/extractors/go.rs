@@ -314,39 +314,24 @@ fn extract_go_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Option<&'
 
 fn match_go_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
-        "var_spec" => {
-            if let Some(type_node) = node.child_by_field_name("type") {
-                if let Some(type_name) = extract_go_type_name(&type_node, source) {
-                    for i in 0..node.child_count() {
-                        if let Some(child) = node.child(i) {
-                            if child.kind() == "identifier" {
-                                symbols.type_map.push(TypeMapEntry {
-                                    name: node_text(&child, source).to_string(),
-                                    type_name: type_name.to_string(),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        "parameter_declaration" => {
-            if let Some(type_node) = node.child_by_field_name("type") {
-                if let Some(type_name) = extract_go_type_name(&type_node, source) {
-                    for i in 0..node.child_count() {
-                        if let Some(child) = node.child(i) {
-                            if child.kind() == "identifier" {
-                                symbols.type_map.push(TypeMapEntry {
-                                    name: node_text(&child, source).to_string(),
-                                    type_name: type_name.to_string(),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
+        "var_spec" | "parameter_declaration" => {
+            collect_go_typed_identifiers(node, source, &mut symbols.type_map);
         }
         _ => {}
+    }
+}
+
+fn collect_go_typed_identifiers(node: &Node, source: &[u8], type_map: &mut Vec<TypeMapEntry>) {
+    let Some(type_node) = node.child_by_field_name("type") else { return };
+    let Some(type_name) = extract_go_type_name(&type_node, source) else { return };
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else { continue };
+        if child.kind() == "identifier" {
+            type_map.push(TypeMapEntry {
+                name: node_text(&child, source).to_string(),
+                type_name: type_name.to_string(),
+            });
+        }
     }
 }
 

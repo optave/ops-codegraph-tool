@@ -292,39 +292,35 @@ fn extract_csharp_class_fields(node: &Node, source: &[u8]) -> Vec<Definition> {
     let mut fields = Vec::new();
     let body = node.child_by_field_name("body")
         .or_else(|| find_child(node, "declaration_list"));
-    if let Some(body) = body {
-        for i in 0..body.child_count() {
-            if let Some(child) = body.child(i) {
-                if child.kind() == "field_declaration" {
-                    // Walk variable_declaration inside
-                    for j in 0..child.child_count() {
-                        if let Some(decl) = child.child(j) {
-                            if decl.kind() == "variable_declaration" {
-                                for k in 0..decl.child_count() {
-                                    if let Some(declarator) = decl.child(k) {
-                                        if declarator.kind() == "variable_declarator" {
-                                            if let Some(name_node) = declarator.child_by_field_name("name")
-                                                .or_else(|| declarator.child(0))
-                                            {
-                                                if name_node.kind() == "identifier" {
-                                                    fields.push(child_def(
-                                                        node_text(&name_node, source).to_string(),
-                                                        "property",
-                                                        start_line(&child),
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    let Some(body) = body else { return fields };
+    for i in 0..body.child_count() {
+        let Some(child) = body.child(i) else { continue };
+        if child.kind() == "field_declaration" {
+            collect_field_declarator_names(&child, source, &mut fields);
         }
     }
     fields
+}
+
+fn collect_field_declarator_names(field: &Node, source: &[u8], fields: &mut Vec<Definition>) {
+    for j in 0..field.child_count() {
+        let Some(decl) = field.child(j) else { continue };
+        if decl.kind() != "variable_declaration" { continue; }
+        for k in 0..decl.child_count() {
+            let Some(declarator) = decl.child(k) else { continue };
+            if declarator.kind() != "variable_declarator" { continue; }
+            let name_node = declarator.child_by_field_name("name")
+                .or_else(|| declarator.child(0));
+            let Some(name_node) = name_node else { continue };
+            if name_node.kind() == "identifier" {
+                fields.push(child_def(
+                    node_text(&name_node, source).to_string(),
+                    "property",
+                    start_line(field),
+                ));
+            }
+        }
+    }
 }
 
 fn extract_csharp_enum_members(node: &Node, source: &[u8]) -> Vec<Definition> {

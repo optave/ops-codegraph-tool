@@ -163,23 +163,25 @@ fn find_elixir_parent_module<'a>(node: &Node<'a>, source: &[u8]) -> Option<Strin
     let mut current = node.parent();
     while let Some(parent) = current {
         if parent.kind() == "do_block" {
-            if let Some(gp) = parent.parent() {
-                if gp.kind() == "call" {
-                    if let Some(target) = gp.child_by_field_name("target").or_else(|| gp.child(0)) {
-                        if target.kind() == "identifier" && node_text(&target, source) == "defmodule" {
-                            if let Some(args) = find_child(&gp, "arguments") {
-                                if let Some(alias) = find_child(&args, "alias") {
-                                    return Some(node_text(&alias, source).to_string());
-                                }
-                            }
-                        }
-                    }
-                }
+            if let Some(name) = try_extract_defmodule_name(&parent, source) {
+                return Some(name);
             }
         }
         current = parent.parent();
     }
     None
+}
+
+fn try_extract_defmodule_name(do_block: &Node, source: &[u8]) -> Option<String> {
+    let gp = do_block.parent()?;
+    if gp.kind() != "call" { return None; }
+    let target = gp.child_by_field_name("target").or_else(|| gp.child(0))?;
+    if target.kind() != "identifier" || node_text(&target, source) != "defmodule" {
+        return None;
+    }
+    let args = find_child(&gp, "arguments")?;
+    let alias = find_child(&args, "alias")?;
+    Some(node_text(&alias, source).to_string())
 }
 
 fn handle_defprotocol(node: &Node, source: &[u8], symbols: &mut FileSymbols) {

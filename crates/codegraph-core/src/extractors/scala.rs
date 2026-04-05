@@ -193,142 +193,150 @@ fn extract_scala_import_path(node: &Node, source: &[u8]) -> String {
     path
 }
 
+// ── Per-node-kind handlers ──────────────────────────────────────────────────
+
+fn handle_scala_class_definition(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let name_node = node.child_by_field_name("name")
+        .or_else(|| find_child(node, "identifier"));
+    if let Some(name_node) = name_node {
+        let class_name = node_text(&name_node, source).to_string();
+        let children = extract_scala_class_members(node, source);
+        symbols.definitions.push(Definition {
+            name: class_name.clone(),
+            kind: "class".to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: None,
+            cfg: None,
+            children: opt_children(children),
+        });
+        extract_scala_extends(node, source, &class_name, symbols);
+    }
+}
+
+fn handle_scala_trait_definition(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let name_node = node.child_by_field_name("name")
+        .or_else(|| find_child(node, "identifier"));
+    if let Some(name_node) = name_node {
+        let trait_name = node_text(&name_node, source).to_string();
+        symbols.definitions.push(Definition {
+            name: trait_name.clone(),
+            kind: "interface".to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: None,
+            cfg: None,
+            children: None,
+        });
+        extract_scala_extends(node, source, &trait_name, symbols);
+    }
+}
+
+fn handle_scala_object_definition(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let name_node = node.child_by_field_name("name")
+        .or_else(|| find_child(node, "identifier"));
+    if let Some(name_node) = name_node {
+        let obj_name = node_text(&name_node, source).to_string();
+        let children = extract_scala_class_members(node, source);
+        symbols.definitions.push(Definition {
+            name: obj_name.clone(),
+            kind: "class".to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: None,
+            cfg: None,
+            children: opt_children(children),
+        });
+        extract_scala_extends(node, source, &obj_name, symbols);
+    }
+}
+
+fn handle_scala_function_definition(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let name_node = node.child_by_field_name("name")
+        .or_else(|| find_child(node, "identifier"));
+    if let Some(name_node) = name_node {
+        let parent_class = find_scala_parent_class(node, source);
+        let name = node_text(&name_node, source);
+        let full_name = match &parent_class {
+            Some(cls) => format!("{}.{}", cls, name),
+            None => name.to_string(),
+        };
+        let kind = if parent_class.is_some() { "method" } else { "function" };
+        let children = extract_scala_parameters(node, source);
+        symbols.definitions.push(Definition {
+            name: full_name,
+            kind: kind.to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: compute_all_metrics(node, source, "scala"),
+            cfg: build_function_cfg(node, "scala", source),
+            children: opt_children(children),
+        });
+    }
+}
+
+fn handle_scala_import_declaration(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let path = extract_scala_import_path(node, source);
+    if !path.is_empty() {
+        let last = path.split('.').last().unwrap_or("").to_string();
+        let mut imp = Import::new(path, vec![last], start_line(node));
+        imp.scala_import = Some(true);
+        symbols.imports.push(imp);
+    }
+}
+
+fn handle_scala_call_expression(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if let Some(fn_node) = node.child_by_field_name("function")
+        .or_else(|| node.child(0))
+    {
+        match fn_node.kind() {
+            "identifier" => {
+                symbols.calls.push(Call {
+                    name: node_text(&fn_node, source).to_string(),
+                    line: start_line(node),
+                    dynamic: None,
+                    receiver: None,
+                });
+            }
+            "field_expression" => {
+                let name = fn_node.child_by_field_name("field")
+                    .or_else(|| fn_node.child_by_field_name("member"))
+                    .map(|n| node_text(&n, source).to_string())
+                    .unwrap_or_else(|| node_text(&fn_node, source).to_string());
+                let receiver = fn_node.child_by_field_name("value")
+                    .or_else(|| fn_node.child(0))
+                    .map(|n| node_text(&n, source).to_string());
+                symbols.calls.push(Call {
+                    name,
+                    line: start_line(node),
+                    dynamic: None,
+                    receiver,
+                });
+            }
+            _ => {
+                symbols.calls.push(Call {
+                    name: node_text(&fn_node, source).to_string(),
+                    line: start_line(node),
+                    dynamic: None,
+                    receiver: None,
+                });
+            }
+        }
+    }
+}
+
 fn match_scala_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
     match node.kind() {
-        "class_definition" => {
-            let name_node = node.child_by_field_name("name")
-                .or_else(|| find_child(node, "identifier"));
-            if let Some(name_node) = name_node {
-                let class_name = node_text(&name_node, source).to_string();
-                let children = extract_scala_class_members(node, source);
-                symbols.definitions.push(Definition {
-                    name: class_name.clone(),
-                    kind: "class".to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: None,
-                    cfg: None,
-                    children: opt_children(children),
-                });
-                extract_scala_extends(node, source, &class_name, symbols);
-            }
-        }
-
-        "trait_definition" => {
-            let name_node = node.child_by_field_name("name")
-                .or_else(|| find_child(node, "identifier"));
-            if let Some(name_node) = name_node {
-                let trait_name = node_text(&name_node, source).to_string();
-                symbols.definitions.push(Definition {
-                    name: trait_name.clone(),
-                    kind: "interface".to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: None,
-                    cfg: None,
-                    children: None,
-                });
-                extract_scala_extends(node, source, &trait_name, symbols);
-            }
-        }
-
-        "object_definition" => {
-            let name_node = node.child_by_field_name("name")
-                .or_else(|| find_child(node, "identifier"));
-            if let Some(name_node) = name_node {
-                let obj_name = node_text(&name_node, source).to_string();
-                let children = extract_scala_class_members(node, source);
-                symbols.definitions.push(Definition {
-                    name: obj_name.clone(),
-                    kind: "class".to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: None,
-                    cfg: None,
-                    children: opt_children(children),
-                });
-                extract_scala_extends(node, source, &obj_name, symbols);
-            }
-        }
-
-        "function_definition" => {
-            let name_node = node.child_by_field_name("name")
-                .or_else(|| find_child(node, "identifier"));
-            if let Some(name_node) = name_node {
-                let parent_class = find_scala_parent_class(node, source);
-                let name = node_text(&name_node, source);
-                let full_name = match &parent_class {
-                    Some(cls) => format!("{}.{}", cls, name),
-                    None => name.to_string(),
-                };
-                let kind = if parent_class.is_some() { "method" } else { "function" };
-                let children = extract_scala_parameters(node, source);
-                symbols.definitions.push(Definition {
-                    name: full_name,
-                    kind: kind.to_string(),
-                    line: start_line(node),
-                    end_line: Some(end_line(node)),
-                    decorators: None,
-                    complexity: compute_all_metrics(node, source, "scala"),
-                    cfg: build_function_cfg(node, "scala", source),
-                    children: opt_children(children),
-                });
-            }
-        }
-
-        "import_declaration" => {
-            let path = extract_scala_import_path(node, source);
-            if !path.is_empty() {
-                let last = path.split('.').last().unwrap_or("").to_string();
-                let mut imp = Import::new(path, vec![last], start_line(node));
-                imp.scala_import = Some(true);
-                symbols.imports.push(imp);
-            }
-        }
-
-        "call_expression" => {
-            if let Some(fn_node) = node.child_by_field_name("function")
-                .or_else(|| node.child(0))
-            {
-                match fn_node.kind() {
-                    "identifier" => {
-                        symbols.calls.push(Call {
-                            name: node_text(&fn_node, source).to_string(),
-                            line: start_line(node),
-                            dynamic: None,
-                            receiver: None,
-                        });
-                    }
-                    "field_expression" => {
-                        let name = fn_node.child_by_field_name("field")
-                            .or_else(|| fn_node.child_by_field_name("member"))
-                            .map(|n| node_text(&n, source).to_string())
-                            .unwrap_or_else(|| node_text(&fn_node, source).to_string());
-                        let receiver = fn_node.child_by_field_name("value")
-                            .or_else(|| fn_node.child(0))
-                            .map(|n| node_text(&n, source).to_string());
-                        symbols.calls.push(Call {
-                            name,
-                            line: start_line(node),
-                            dynamic: None,
-                            receiver,
-                        });
-                    }
-                    _ => {
-                        symbols.calls.push(Call {
-                            name: node_text(&fn_node, source).to_string(),
-                            line: start_line(node),
-                            dynamic: None,
-                            receiver: None,
-                        });
-                    }
-                }
-            }
-        }
-
+        "class_definition" => handle_scala_class_definition(node, source, symbols),
+        "trait_definition" => handle_scala_trait_definition(node, source, symbols),
+        "object_definition" => handle_scala_object_definition(node, source, symbols),
+        "function_definition" => handle_scala_function_definition(node, source, symbols),
+        "import_declaration" => handle_scala_import_declaration(node, source, symbols),
+        "call_expression" => handle_scala_call_expression(node, source, symbols),
         _ => {}
     }
 }

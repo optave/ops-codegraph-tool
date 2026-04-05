@@ -74,87 +74,17 @@ fn extract_zig_params(func_node: &Node, source: &[u8]) -> Vec<Definition> {
 }
 
 fn handle_zig_variable(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    let name_node = match find_child(node, "identifier") {
-        Some(n) => n,
-        None => return,
-    };
+    let Some(name_node) = find_child(node, "identifier") else { return };
     let name = node_text(&name_node, source).to_string();
 
-    // Check for struct/enum/union
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            match child.kind() {
-                "struct_declaration" => {
-                    let members = extract_zig_container_fields(&child, source);
-                    symbols.definitions.push(Definition {
-                        name,
-                        kind: "struct".to_string(),
-                        line: start_line(node),
-                        end_line: Some(end_line(node)),
-                        decorators: None,
-                        complexity: None,
-                        cfg: None,
-                        children: opt_children(members),
-                    });
-                    return;
-                }
-                "enum_declaration" => {
-                    symbols.definitions.push(Definition {
-                        name,
-                        kind: "enum".to_string(),
-                        line: start_line(node),
-                        end_line: Some(end_line(node)),
-                        decorators: None,
-                        complexity: None,
-                        cfg: None,
-                        children: None,
-                    });
-                    return;
-                }
-                "union_declaration" => {
-                    symbols.definitions.push(Definition {
-                        name,
-                        kind: "struct".to_string(),
-                        line: start_line(node),
-                        end_line: Some(end_line(node)),
-                        decorators: None,
-                        complexity: None,
-                        cfg: None,
-                        children: None,
-                    });
-                    return;
-                }
-                _ => {}
-            }
-        }
+    // Check for struct/enum/union type definition
+    if try_handle_zig_type_def(node, source, symbols, &name) {
+        return;
     }
 
-    // Check for @import
-    for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            if child.kind() == "builtin_function" {
-                if let Some(builtin_id) = find_child(&child, "builtin_identifier") {
-                    if node_text(&builtin_id, source) == "@import" {
-                        if let Some(args) = find_child(&child, "arguments") {
-                            for j in 0..args.child_count() {
-                                if let Some(arg) = args.child(j) {
-                                    if arg.kind() == "string_literal" || arg.kind() == "string" {
-                                        let raw = node_text(&arg, source);
-                                        let source_path = raw.trim_matches('"').to_string();
-                                        symbols.imports.push(Import::new(
-                                            source_path,
-                                            vec![name],
-                                            start_line(node),
-                                        ));
-                                        return;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    // Check for @import binding
+    if try_handle_zig_import(node, source, symbols, name.clone()) {
+        return;
     }
 
     // Regular const/var
@@ -169,6 +99,56 @@ fn handle_zig_variable(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         cfg: None,
         children: None,
     });
+}
+
+fn try_handle_zig_type_def(node: &Node, source: &[u8], symbols: &mut FileSymbols, name: &str) -> bool {
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else { continue };
+        let (kind, children) = match child.kind() {
+            "struct_declaration" => ("struct", opt_children(extract_zig_container_fields(&child, source))),
+            "enum_declaration" => ("enum", None),
+            "union_declaration" => ("struct", None),
+            _ => continue,
+        };
+        symbols.definitions.push(Definition {
+            name: name.to_string(),
+            kind: kind.to_string(),
+            line: start_line(node),
+            end_line: Some(end_line(node)),
+            decorators: None,
+            complexity: None,
+            cfg: None,
+            children,
+        });
+        return true;
+    }
+    false
+}
+
+fn try_handle_zig_import(node: &Node, source: &[u8], symbols: &mut FileSymbols, name: String) -> bool {
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else { continue };
+        if child.kind() != "builtin_function" { continue; }
+        if let Some(path) = extract_zig_import_path(&child, source) {
+            symbols.imports.push(Import::new(path, vec![name], start_line(node)));
+            return true;
+        }
+    }
+    false
+}
+
+fn extract_zig_import_path(builtin: &Node, source: &[u8]) -> Option<String> {
+    let builtin_id = find_child(builtin, "builtin_identifier")?;
+    if node_text(&builtin_id, source) != "@import" { return None; }
+    let args = find_child(builtin, "arguments")?;
+    for j in 0..args.child_count() {
+        let Some(arg) = args.child(j) else { continue };
+        if arg.kind() == "string_literal" || arg.kind() == "string" {
+            let raw = node_text(&arg, source);
+            return Some(raw.trim_matches('"').to_string());
+        }
+    }
+    None
 }
 
 fn extract_zig_container_fields(container: &Node, source: &[u8]) -> Vec<Definition> {

@@ -224,35 +224,27 @@ fn extract_ruby_class_children(node: &Node, source: &[u8]) -> Vec<Definition> {
 
 fn collect_ruby_class_children(node: &Node, source: &[u8], children: &mut Vec<Definition>) {
     for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            match child.kind() {
-                // Instance variable assignment: @name = ...
-                "assignment" => {
-                    if let Some(left) = child.child_by_field_name("left") {
-                        if left.kind() == "instance_variable" {
-                            let name = node_text(&left, source);
-                            if !children.iter().any(|c| c.name == name) {
-                                children.push(child_def(
-                                    name.to_string(),
-                                    "property",
-                                    start_line(&child),
-                                ));
-                            }
-                        }
-                        // UPPER_CASE = value → constant
-                        if left.kind() == "constant" {
-                            let name = node_text(&left, source);
-                            children.push(child_def(
-                                name.to_string(),
-                                "constant",
-                                start_line(&child),
-                            ));
-                        }
-                    }
-                }
-                _ => {}
+        let Some(child) = node.child(i) else { continue };
+        if child.kind() == "assignment" {
+            try_collect_ruby_assignment(&child, source, children);
+        }
+    }
+}
+
+fn try_collect_ruby_assignment(assign: &Node, source: &[u8], children: &mut Vec<Definition>) {
+    let Some(left) = assign.child_by_field_name("left") else { return };
+    match left.kind() {
+        "instance_variable" => {
+            let name = node_text(&left, source);
+            if !children.iter().any(|c| c.name == name) {
+                children.push(child_def(name.to_string(), "property", start_line(assign)));
             }
         }
+        "constant" => {
+            let name = node_text(&left, source);
+            children.push(child_def(name.to_string(), "constant", start_line(assign)));
+        }
+        _ => {}
     }
 }
 

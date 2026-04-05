@@ -323,31 +323,29 @@ fn extract_php_class_properties(node: &Node, source: &[u8]) -> Vec<Definition> {
     let mut props = Vec::new();
     let body = node.child_by_field_name("body")
         .or_else(|| find_child(node, "declaration_list"));
-    if let Some(body) = body {
-        for i in 0..body.child_count() {
-            if let Some(child) = body.child(i) {
-                if child.kind() == "property_declaration" {
-                    // Walk property_element children
-                    for j in 0..child.child_count() {
-                        if let Some(elem) = child.child(j) {
-                            if elem.kind() == "property_element" {
-                                if let Some(name_node) = elem.child(0) {
-                                    if name_node.kind() == "variable_name" {
-                                        props.push(child_def(
-                                            node_text(&name_node, source).to_string(),
-                                            "property",
-                                            start_line(&child),
-                                        ));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    let Some(body) = body else { return props };
+    for i in 0..body.child_count() {
+        let Some(child) = body.child(i) else { continue };
+        if child.kind() == "property_declaration" {
+            collect_property_element_names(&child, source, &mut props);
         }
     }
     props
+}
+
+fn collect_property_element_names(decl: &Node, source: &[u8], props: &mut Vec<Definition>) {
+    for j in 0..decl.child_count() {
+        let Some(elem) = decl.child(j) else { continue };
+        if elem.kind() != "property_element" { continue; }
+        let Some(name_node) = elem.child(0) else { continue };
+        if name_node.kind() == "variable_name" {
+            props.push(child_def(
+                node_text(&name_node, source).to_string(),
+                "property",
+                start_line(decl),
+            ));
+        }
+    }
 }
 
 fn extract_php_enum_cases(node: &Node, source: &[u8]) -> Vec<Definition> {
