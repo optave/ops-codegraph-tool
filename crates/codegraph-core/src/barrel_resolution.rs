@@ -31,8 +31,8 @@ pub trait BarrelContext {
 /// Mirrors `resolveBarrelExport()` in `resolve-imports.ts`.
 /// The caller provides a `visited` set to prevent infinite loops on circular
 /// reexport chains.
-pub fn resolve_barrel_export<'a, C: BarrelContext>(
-    ctx: &'a C,
+pub fn resolve_barrel_export<C: BarrelContext>(
+    ctx: &C,
     barrel_path: &str,
     symbol_name: &str,
     visited: &mut HashSet<String>,

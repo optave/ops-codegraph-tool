@@ -666,6 +666,12 @@ export interface AnalysisTiming {
   complexityMs: number;
   cfgMs: number;
   dataflowMs: number;
+  /**
+   * Diagnostic: total wall-clock time for the unified walk loop (includes
+   * setupVisitors overhead). Walk time is already distributed equally into
+   * the per-phase timers above, so this overlaps — it is not an additive
+   * bucket. Useful for cross-checking that Σ phase timers ≈ this value.
+   */
   _unifiedWalkMs?: number;
 }
 
