@@ -74,7 +74,7 @@ export interface RoleClassificationNode {
   isExported: boolean;
   testOnlyFanIn?: number;
   productionFanIn?: number;
-  /** True when the same file contains at least one callable with fanOut > 0. */
+  /** True when the same file contains at least one non-constant callable connected to the graph (fanIn > 0 or fanOut > 0). */
   hasActiveFileSiblings?: boolean;
 }
 
