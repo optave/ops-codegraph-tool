@@ -117,8 +117,16 @@ pub fn run_pipeline(
 
     // ── Stage 2: Collect files ─────────────────────────────────────────
     let t0 = Instant::now();
+    // For scoped builds, track all scoped relative paths (including deleted files)
+    // so detect_removed_files only flags scoped files as removed, not everything.
+    let scoped_rel_paths: Option<HashSet<String>> = opts.scope.as_ref().map(|scope| {
+        scope
+            .iter()
+            .map(|f| normalize_path(f))
+            .collect()
+    });
     let collect_result = if let Some(ref scope) = opts.scope {
-        // Scoped rebuild
+        // Scoped rebuild — only collect files that exist on disk
         let files: Vec<String> = scope
             .iter()
             .map(|f| {
@@ -179,6 +187,7 @@ pub fn run_pipeline(
         root_dir,
         incremental,
         force_full_rebuild,
+        scoped_rel_paths.as_ref(),
     );
     timing.detect_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
@@ -292,7 +301,8 @@ pub fn run_pipeline(
     let mut batch_inputs: Vec<ImportResolutionInput> = Vec::new();
     for (rel_path, symbols) in &file_symbols {
         let abs_file = Path::new(root_dir).join(rel_path);
-        let abs_str = abs_file.to_str().unwrap_or("").to_string();
+        // Normalize to forward slashes so batch_resolved keys match Stage 6b lookups on Windows.
+        let abs_str = abs_file.to_str().unwrap_or("").replace('\\', "/");
         for imp in &symbols.imports {
             batch_inputs.push(ImportResolutionInput {
                 from_file: abs_str.clone(),
@@ -549,7 +559,7 @@ pub fn run_pipeline(
 
     // Persist build metadata
     let version = env!("CARGO_PKG_VERSION");
-    let meta_sql = "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)";
+    let meta_sql = "INSERT OR REPLACE INTO build_meta (key, value) VALUES (?, ?)";
     if let Ok(mut stmt) = conn.prepare(meta_sql) {
         let _ = stmt.execute(["engine", "native"]);
         let _ = stmt.execute(["engine_version", version]);
@@ -593,7 +603,7 @@ pub fn run_pipeline(
 /// Check if engine/schema/version changed since last build (forces full rebuild).
 fn check_version_mismatch(conn: &Connection) -> bool {
     let get_meta = |key: &str| -> Option<String> {
-        conn.query_row("SELECT value FROM metadata WHERE key = ?", [key], |row| {
+        conn.query_row("SELECT value FROM build_meta WHERE key = ?", [key], |row| {
             row.get(0)
         })
         .ok()
