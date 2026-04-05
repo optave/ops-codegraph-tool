@@ -372,57 +372,52 @@ fn extract_java_interfaces(
     symbols: &mut FileSymbols,
 ) {
     for i in 0..interfaces.child_count() {
-        if let Some(child) = interfaces.child(i) {
-            match child.kind() {
-                "type_identifier" | "identifier" => {
-                    symbols.classes.push(ClassRelation {
-                        name: class_name.to_string(),
-                        extends: None,
-                        implements: Some(node_text(&child, source).to_string()),
-                        line: start_line(interfaces),
-                    });
-                }
-                "type_list" => {
-                    for j in 0..child.child_count() {
-                        if let Some(t) = child.child(j) {
-                            match t.kind() {
-                                "type_identifier" | "identifier" => {
-                                    symbols.classes.push(ClassRelation {
-                                        name: class_name.to_string(),
-                                        extends: None,
-                                        implements: Some(node_text(&t, source).to_string()),
-                                        line: start_line(interfaces),
-                                    });
-                                }
-                                "generic_type" => {
-                                    if let Some(first) = t.child(0) {
-                                        symbols.classes.push(ClassRelation {
-                                            name: class_name.to_string(),
-                                            extends: None,
-                                            implements: Some(
-                                                node_text(&first, source).to_string(),
-                                            ),
-                                            line: start_line(interfaces),
-                                        });
-                                    }
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                "generic_type" => {
-                    if let Some(first) = child.child(0) {
-                        symbols.classes.push(ClassRelation {
-                            name: class_name.to_string(),
-                            extends: None,
-                            implements: Some(node_text(&first, source).to_string()),
-                            line: start_line(interfaces),
-                        });
-                    }
-                }
-                _ => {}
+        let Some(child) = interfaces.child(i) else { continue };
+        match child.kind() {
+            "type_identifier" | "identifier" => {
+                push_implements(symbols, class_name, node_text(&child, source), interfaces);
             }
+            "type_list" => {
+                collect_type_list_implements(&child, class_name, source, symbols, interfaces);
+            }
+            "generic_type" => {
+                if let Some(first) = child.child(0) {
+                    push_implements(symbols, class_name, node_text(&first, source), interfaces);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn push_implements(symbols: &mut FileSymbols, class_name: &str, iface_name: &str, line_node: &Node) {
+    symbols.classes.push(ClassRelation {
+        name: class_name.to_string(),
+        extends: None,
+        implements: Some(iface_name.to_string()),
+        line: start_line(line_node),
+    });
+}
+
+fn collect_type_list_implements(
+    type_list: &Node,
+    class_name: &str,
+    source: &[u8],
+    symbols: &mut FileSymbols,
+    line_node: &Node,
+) {
+    for j in 0..type_list.child_count() {
+        let Some(t) = type_list.child(j) else { continue };
+        match t.kind() {
+            "type_identifier" | "identifier" => {
+                push_implements(symbols, class_name, node_text(&t, source), line_node);
+            }
+            "generic_type" => {
+                if let Some(first) = t.child(0) {
+                    push_implements(symbols, class_name, node_text(&first, source), line_node);
+                }
+            }
+            _ => {}
         }
     }
 }

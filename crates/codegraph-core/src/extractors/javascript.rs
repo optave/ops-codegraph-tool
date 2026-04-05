@@ -1087,70 +1087,76 @@ fn extract_dynamic_import_names(call_node: &Node, source: &[u8]) -> Vec<String> 
         Some(n) if n.kind() == "variable_declarator" => n,
         _ => return Vec::new(),
     };
-    let name_node = match declarator.child_by_field_name("name") {
-        Some(n) => n,
-        None => return Vec::new(),
+    let Some(name_node) = declarator.child_by_field_name("name") else {
+        return Vec::new();
     };
     match name_node.kind() {
-        // const { a, b } = await import(...)
-        "object_pattern" => {
-            let mut names = Vec::new();
-            for i in 0..name_node.child_count() {
-                if let Some(child) = name_node.child(i) {
-                    if child.kind() == "shorthand_property_identifier_pattern"
-                        || child.kind() == "shorthand_property_identifier"
-                    {
-                        names.push(node_text(&child, source).to_string());
-                    } else if child.kind() == "pair_pattern" || child.kind() == "pair" {
-                        // { exportName: localAlias } → extract the key (export name),
-                        // not the value (local alias). The key maps to the source
-                        // module's export; the value is only the local binding.
-                        if let Some(key) = child.child_by_field_name("key") {
-                            names.push(node_text(&key, source).to_string());
-                        }
-                    } else if child.kind() == "object_assignment_pattern" {
-                        // Handle `{ a = 'default' }` — extract the left-hand binding
-                        if let Some(left) = child.child_by_field_name("left") {
-                            names.push(node_text(&left, source).to_string());
-                        }
-                    } else if child.kind() == "rest_pattern" || child.kind() == "rest_element" {
-                        // Handle `{ a, ...rest }` — extract the identifier inside the spread
-                        if let Some(inner) = child.child(0) {
-                            if inner.kind() == "identifier" {
-                                names.push(node_text(&inner, source).to_string());
-                            }
-                        }
-                    }
-                }
-            }
-            names
-        }
-        // const mod = await import(...)
+        "object_pattern" => collect_object_pattern_names(&name_node, source),
         "identifier" => vec![node_text(&name_node, source).to_string()],
-        // const [first, second] = await import(...)
-        "array_pattern" => {
-            let mut names = Vec::new();
-            for i in 0..name_node.child_count() {
-                if let Some(child) = name_node.child(i) {
-                    if child.kind() == "identifier" {
-                        names.push(node_text(&child, source).to_string());
-                    } else if child.kind() == "assignment_pattern" {
-                        if let Some(left) = child.child_by_field_name("left") {
-                            names.push(node_text(&left, source).to_string());
-                        }
-                    } else if child.kind() == "rest_pattern" || child.kind() == "rest_element" {
-                        // Handle `[a, ...rest]` — extract the identifier inside the spread
-                        if let Some(inner) = child.child(0) {
-                            if inner.kind() == "identifier" {
-                                names.push(node_text(&inner, source).to_string());
-                            }
-                        }
-                    }
+        "array_pattern" => collect_array_pattern_names(&name_node, source),
+        _ => Vec::new(),
+    }
+}
+
+/// Collect names from `const { a, b } = await import(...)`
+fn collect_object_pattern_names(pattern: &Node, source: &[u8]) -> Vec<String> {
+    let mut names = Vec::new();
+    for i in 0..pattern.child_count() {
+        let Some(child) = pattern.child(i) else { continue };
+        match child.kind() {
+            "shorthand_property_identifier_pattern" | "shorthand_property_identifier" => {
+                names.push(node_text(&child, source).to_string());
+            }
+            "pair_pattern" | "pair" => {
+                // { exportName: localAlias } → extract the key (export name)
+                if let Some(key) = child.child_by_field_name("key") {
+                    names.push(node_text(&key, source).to_string());
                 }
             }
-            names
+            "object_assignment_pattern" => {
+                // { a = 'default' } → extract the left-hand binding
+                if let Some(left) = child.child_by_field_name("left") {
+                    names.push(node_text(&left, source).to_string());
+                }
+            }
+            "rest_pattern" | "rest_element" => {
+                extract_rest_identifier(&child, source, &mut names);
+            }
+            _ => {}
         }
-        _ => Vec::new(),
+    }
+    names
+}
+
+/// Collect names from `const [first, second] = await import(...)`
+fn collect_array_pattern_names(pattern: &Node, source: &[u8]) -> Vec<String> {
+    let mut names = Vec::new();
+    for i in 0..pattern.child_count() {
+        let Some(child) = pattern.child(i) else { continue };
+        match child.kind() {
+            "identifier" => {
+                names.push(node_text(&child, source).to_string());
+            }
+            "assignment_pattern" => {
+                if let Some(left) = child.child_by_field_name("left") {
+                    names.push(node_text(&left, source).to_string());
+                }
+            }
+            "rest_pattern" | "rest_element" => {
+                extract_rest_identifier(&child, source, &mut names);
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
+/// Extract the identifier from a rest/spread element (`...rest` → `rest`)
+fn extract_rest_identifier(rest_node: &Node, source: &[u8], names: &mut Vec<String>) {
+    if let Some(inner) = rest_node.child(0) {
+        if inner.kind() == "identifier" {
+            names.push(node_text(&inner, source).to_string());
+        }
     }
 }
 

@@ -309,73 +309,61 @@ fn extract_rust_use_path(node: &Node, source: &[u8]) -> Vec<(String, Vec<String>
         "use_list" => {
             let mut results = Vec::new();
             for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
-                    results.extend(extract_rust_use_path(&child, source));
-                }
+                let Some(child) = node.child(i) else { continue };
+                results.extend(extract_rust_use_path(&child, source));
             }
             results
         }
-
-        "scoped_use_list" => {
-            let path_node = node.child_by_field_name("path");
-            let list_node = node.child_by_field_name("list");
-            let prefix = path_node
-                .map(|p| node_text(&p, source).to_string())
-                .unwrap_or_default();
-            if let Some(list_node) = list_node {
-                let mut names = Vec::new();
-                for i in 0..list_node.child_count() {
-                    if let Some(child) = list_node.child(i) {
-                        match child.kind() {
-                            "identifier" | "self" => {
-                                names.push(node_text(&child, source).to_string());
-                            }
-                            "use_as_clause" => {
-                                let name = child
-                                    .child_by_field_name("alias")
-                                    .or_else(|| child.child_by_field_name("name"))
-                                    .map(|n| node_text(&n, source).to_string());
-                                if let Some(name) = name {
-                                    names.push(name);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                vec![(prefix, names)]
-            } else {
-                vec![(prefix, vec![])]
-            }
-        }
-
+        "scoped_use_list" => extract_scoped_use_list(node, source),
         "use_as_clause" => {
             let name = node
                 .child_by_field_name("alias")
                 .or_else(|| node.child_by_field_name("name"))
                 .map(|n| node_text(&n, source).to_string());
-            vec![(
-                node_text(node, source).to_string(),
-                name.into_iter().collect(),
-            )]
+            vec![(node_text(node, source).to_string(), name.into_iter().collect())]
         }
-
         "use_wildcard" => {
-            let path_node = node.child_by_field_name("path");
-            let src = path_node
+            let src = node.child_by_field_name("path")
                 .map(|p| node_text(&p, source).to_string())
                 .unwrap_or_else(|| "*".to_string());
             vec![(src, vec!["*".to_string()])]
         }
-
         "scoped_identifier" | "identifier" => {
             let text = node_text(node, source).to_string();
             let last_name = text.split("::").last().unwrap_or("").to_string();
             vec![(text, vec![last_name])]
         }
-
         _ => vec![],
     }
+}
+
+fn extract_scoped_use_list(node: &Node, source: &[u8]) -> Vec<(String, Vec<String>)> {
+    let prefix = node.child_by_field_name("path")
+        .map(|p| node_text(&p, source).to_string())
+        .unwrap_or_default();
+    let Some(list_node) = node.child_by_field_name("list") else {
+        return vec![(prefix, vec![])];
+    };
+    let mut names = Vec::new();
+    for i in 0..list_node.child_count() {
+        let Some(child) = list_node.child(i) else { continue };
+        match child.kind() {
+            "identifier" | "self" => {
+                names.push(node_text(&child, source).to_string());
+            }
+            "use_as_clause" => {
+                let name = child
+                    .child_by_field_name("alias")
+                    .or_else(|| child.child_by_field_name("name"))
+                    .map(|n| node_text(&n, source).to_string());
+                if let Some(name) = name {
+                    names.push(name);
+                }
+            }
+            _ => {}
+        }
+    }
+    vec![(prefix, names)]
 }
 
 fn extract_rust_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Option<&'a str> {

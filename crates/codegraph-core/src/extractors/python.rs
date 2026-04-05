@@ -259,39 +259,30 @@ fn extract_python_class_properties(class_node: &Node, source: &[u8]) -> Vec<Defi
 
 fn collect_self_assignments(node: &Node, source: &[u8], props: &mut Vec<Definition>) {
     for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
-            if child.kind() == "expression_statement" {
-                if let Some(expr) = child.child(0) {
-                    if expr.kind() == "assignment" {
-                        if let Some(left) = expr.child_by_field_name("left") {
-                            if left.kind() == "attribute" {
-                                if let Some(obj) = left.child_by_field_name("object") {
-                                    if node_text(&obj, source) == "self" {
-                                        if let Some(attr) = left.child_by_field_name("attribute") {
-                                            let name = node_text(&attr, source);
-                                            // Avoid duplicates
-                                            if !props.iter().any(|p| p.name == name) {
-                                                props.push(child_def(
-                                                    name.to_string(),
-                                                    "property",
-                                                    start_line(&child),
-                                                ));
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // Recurse into blocks (if/for/etc inside __init__)
-            if child.kind() == "block" || child.kind() == "if_statement"
-                || child.kind() == "for_statement" || child.kind() == "while_statement"
-            {
-                collect_self_assignments(&child, source, props);
-            }
+        let Some(child) = node.child(i) else { continue };
+        if child.kind() == "expression_statement" {
+            try_extract_self_assignment(&child, source, props);
         }
+        // Recurse into blocks (if/for/etc inside __init__)
+        if child.kind() == "block" || child.kind() == "if_statement"
+            || child.kind() == "for_statement" || child.kind() == "while_statement"
+        {
+            collect_self_assignments(&child, source, props);
+        }
+    }
+}
+
+fn try_extract_self_assignment(stmt: &Node, source: &[u8], props: &mut Vec<Definition>) {
+    let Some(expr) = stmt.child(0) else { return };
+    if expr.kind() != "assignment" { return; }
+    let Some(left) = expr.child_by_field_name("left") else { return };
+    if left.kind() != "attribute" { return; }
+    let Some(obj) = left.child_by_field_name("object") else { return };
+    if node_text(&obj, source) != "self" { return; }
+    let Some(attr) = left.child_by_field_name("attribute") else { return };
+    let name = node_text(&attr, source);
+    if !props.iter().any(|p| p.name == name) {
+        props.push(child_def(name.to_string(), "property", start_line(stmt)));
     }
 }
 
