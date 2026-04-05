@@ -45,7 +45,7 @@ import type {
   TriageNodeRow,
   TriageQueryOpts,
 } from '../../types.js';
-import { Repository } from './base.js';
+import { Repository, type FnDepsResult, type FnDepsEntry, type FnDepsNode, type FnDepsCallerNode } from './base.js';
 
 // ── Row converters (napi camelCase → Repository snake_case) ─────────────
 
@@ -460,5 +460,59 @@ export class NativeRepository extends Repository {
       return this.#coChangesTableCache;
     }
     return false;
+  }
+
+  // ── Composite queries ──────────────────────────────────────────────
+  fnDeps(
+    name: string,
+    opts?: { depth?: number; noTests?: boolean; file?: string; kind?: string },
+  ): FnDepsResult | null {
+    if (typeof this.#ndb.fnDeps !== 'function') return null;
+    const raw = this.#ndb.fnDeps(
+      name,
+      opts?.depth ?? undefined,
+      opts?.noTests ?? undefined,
+      opts?.file ?? undefined,
+      opts?.kind ?? undefined,
+    );
+    // Convert from native format (transitive_callers as array of groups)
+    // to JS format (transitiveCallers as Record<number, Array>)
+    return {
+      name: raw.name,
+      results: raw.results.map((entry: any): FnDepsEntry => {
+        const transitiveCallers: Record<number, FnDepsNode[]> = {};
+        for (const group of entry.transitiveCallers ?? []) {
+          transitiveCallers[group.depth] = (group.callers ?? []).map((c: any): FnDepsNode => ({
+            name: c.name,
+            kind: c.kind,
+            file: c.file,
+            line: c.line ?? null,
+          }));
+        }
+        return {
+          name: entry.name,
+          kind: entry.kind,
+          file: entry.file,
+          line: entry.line ?? null,
+          endLine: entry.endLine ?? entry.end_line ?? null,
+          role: entry.role ?? null,
+          fileHash: entry.fileHash ?? entry.file_hash ?? null,
+          callees: (entry.callees ?? []).map((c: any): FnDepsNode => ({
+            name: c.name,
+            kind: c.kind,
+            file: c.file,
+            line: c.line ?? null,
+          })),
+          callers: (entry.callers ?? []).map((c: any): FnDepsCallerNode => ({
+            name: c.name,
+            kind: c.kind,
+            file: c.file,
+            line: c.line ?? null,
+            viaHierarchy: c.viaHierarchy ?? c.via_hierarchy ?? undefined,
+          })),
+          transitiveCallers,
+        };
+      }),
+    };
   }
 }

@@ -3,7 +3,7 @@
 //! Uses a second `#[napi] impl NativeDatabase` block (Rust allows multiple impl blocks).
 //! All methods use `conn.prepare_cached()` for automatic statement caching.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use napi_derive::napi;
 use rusqlite::params;
@@ -26,6 +26,15 @@ fn escape_like(s: &str) -> String {
         }
     }
     out
+}
+
+/// Check if a file path looks like a test file (mirrors `isTestFile` in JS).
+fn is_test_file(file: &str) -> bool {
+    file.contains(".test.")
+        || file.contains(".spec.")
+        || file.contains("__test__")
+        || file.contains("__tests__")
+        || file.contains(".stories.")
 }
 
 /// Build test-file exclusion clauses for a column.
@@ -1681,5 +1690,330 @@ impl NativeDatabase {
         }
 
         Ok(results)
+    }
+
+    // ── Composite Queries ─────────────────────────────────────────────────
+
+    /// Complete fnDeps query in a single native call.
+    ///
+    /// Finds matching nodes, collects callees/callers, and runs BFS transitive
+    /// caller traversal — all in Rust with `prepare_cached` statements.
+    /// Eliminates per-query NAPI boundary crossings that made the JS-orchestrated
+    /// version ~3x slower than direct better-sqlite3.
+    #[napi]
+    pub fn fn_deps(
+        &self,
+        name: String,
+        depth: Option<i32>,
+        no_tests: Option<bool>,
+        file: Option<String>,
+        kind: Option<String>,
+    ) -> napi::Result<FnDepsResult> {
+        let conn = self.conn()?;
+        let depth = depth.unwrap_or(3).max(1) as usize;
+        let no_tests = no_tests.unwrap_or(false);
+        let lower_query = name.to_lowercase();
+
+        // ── Step 1: Find matching nodes with fan-in (relevance ranking) ───
+        let default_kinds = vec![
+            "function".to_string(),
+            "method".to_string(),
+            "class".to_string(),
+            "constant".to_string(),
+        ];
+        let kinds = if let Some(ref k) = kind {
+            vec![k.clone()]
+        } else {
+            default_kinds
+        };
+
+        let mut sql = String::from(
+            "SELECT n.id, n.name, n.kind, n.file, n.line, n.end_line, n.role, \
+             COALESCE(fi.cnt, 0) AS fan_in \
+             FROM nodes n \
+             LEFT JOIN (SELECT target_id, COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY target_id) fi \
+             ON fi.target_id = n.id \
+             WHERE n.name LIKE ?1",
+        );
+        let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+            vec![Box::new(format!("%{name}%"))];
+        let mut idx = 2;
+
+        if !kinds.is_empty() {
+            let placeholders: Vec<String> =
+                kinds.iter().enumerate().map(|(i, _)| format!("?{}", idx + i)).collect();
+            sql.push_str(&format!(" AND n.kind IN ({})", placeholders.join(", ")));
+            for k in &kinds {
+                param_values.push(Box::new(k.clone()));
+            }
+            idx += kinds.len();
+        }
+        if let Some(ref f) = file {
+            sql.push_str(&format!(" AND n.file LIKE ?{idx} ESCAPE '\\'"));
+            param_values.push(Box::new(format!("%{}%", escape_like(f))));
+        }
+
+        let params_ref: Vec<&dyn rusqlite::types::ToSql> =
+            param_values.iter().map(|p| p.as_ref()).collect();
+
+        struct MatchedNode {
+            id: i32,
+            name: String,
+            kind: String,
+            file: String,
+            line: Option<i32>,
+            end_line: Option<i32>,
+            role: Option<String>,
+            fan_in: i32,
+        }
+
+        let mut matched: Vec<MatchedNode> = {
+            let mut stmt = conn.prepare_cached(&sql)
+                .map_err(|e| napi::Error::from_reason(format!("fn_deps find_nodes prepare: {e}")))?;
+            let rows = stmt.query_map(params_ref.as_slice(), |row| {
+                Ok(MatchedNode {
+                    id: row.get("id")?,
+                    name: row.get("name")?,
+                    kind: row.get("kind")?,
+                    file: row.get("file")?,
+                    line: row.get("line")?,
+                    end_line: row.get("end_line")?,
+                    role: row.get("role")?,
+                    fan_in: row.get("fan_in")?,
+                })
+            }).map_err(|e| napi::Error::from_reason(format!("fn_deps find_nodes: {e}")))?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|e| napi::Error::from_reason(format!("fn_deps find_nodes collect: {e}")))?
+        };
+
+        // Filter test files
+        if no_tests {
+            matched.retain(|n| !is_test_file(&n.file));
+        }
+
+        // Relevance scoring (mirrors JS findMatchingNodes)
+        matched.sort_by(|a, b| {
+            let score = |node: &MatchedNode| -> f64 {
+                let lower_name = node.name.to_lowercase();
+                let bare_name = lower_name.rsplit('.').next().unwrap_or(&lower_name);
+                let match_score = if lower_name == lower_query || bare_name == lower_query {
+                    100.0
+                } else if lower_name.starts_with(&lower_query) || bare_name.starts_with(&lower_query) {
+                    60.0
+                } else if lower_name.contains(&format!(".{lower_query}")) || lower_name.contains(&format!("{lower_query}.")) {
+                    40.0
+                } else {
+                    10.0
+                };
+                let fan_in_bonus = ((node.fan_in as f64 + 1.0).log2() * 5.0).min(25.0);
+                match_score + fan_in_bonus
+            };
+            score(b).partial_cmp(&score(a)).unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        // ── Step 2: Build result for each matched node ────────────────────
+        let mut file_hash_cache: HashMap<String, Option<String>> = HashMap::new();
+
+        let mut results = Vec::with_capacity(matched.len());
+        for node in &matched {
+            // Callees
+            let callees: Vec<FnDepsNode> = {
+                let mut stmt = conn.prepare_cached(
+                    "SELECT DISTINCT n.id, n.name, n.kind, n.file, n.line \
+                     FROM edges e JOIN nodes n ON e.target_id = n.id \
+                     WHERE e.source_id = ?1 AND e.kind = 'calls'"
+                ).map_err(|e| napi::Error::from_reason(format!("fn_deps callees prepare: {e}")))?;
+                let rows = stmt.query_map(params![node.id], |row| {
+                    Ok(FnDepsNode {
+                        name: row.get("name")?,
+                        kind: row.get("kind")?,
+                        file: row.get("file")?,
+                        line: row.get("line")?,
+                    })
+                }).map_err(|e| napi::Error::from_reason(format!("fn_deps callees: {e}")))?;
+                let mut v: Vec<FnDepsNode> = rows.collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| napi::Error::from_reason(format!("fn_deps callees collect: {e}")))?;
+                if no_tests {
+                    v.retain(|c| !is_test_file(&c.file));
+                }
+                v
+            };
+
+            // Callers (direct)
+            let mut callers: Vec<FnDepsCallerNode> = {
+                let mut stmt = conn.prepare_cached(
+                    "SELECT n.id, n.name, n.kind, n.file, n.line \
+                     FROM edges e JOIN nodes n ON e.source_id = n.id \
+                     WHERE e.target_id = ?1 AND e.kind = 'calls'"
+                ).map_err(|e| napi::Error::from_reason(format!("fn_deps callers prepare: {e}")))?;
+                let rows = stmt.query_map(params![node.id], |row| {
+                    Ok(FnDepsCallerNode {
+                        name: row.get("name")?,
+                        kind: row.get("kind")?,
+                        file: row.get("file")?,
+                        line: row.get("line")?,
+                        via_hierarchy: None,
+                    })
+                }).map_err(|e| napi::Error::from_reason(format!("fn_deps callers: {e}")))?;
+                rows.collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| napi::Error::from_reason(format!("fn_deps callers collect: {e}")))?
+            };
+
+            // Method hierarchy resolution
+            if node.kind == "method" && node.name.contains('.') {
+                if let Some(method_name) = node.name.split('.').last() {
+                    let pattern = format!("%.{method_name}");
+                    let related: Vec<(i32, String)> = {
+                        let mut stmt = conn.prepare_cached(
+                            "SELECT n.id, n.name FROM nodes n \
+                             LEFT JOIN (SELECT target_id, COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY target_id) fi \
+                             ON fi.target_id = n.id \
+                             WHERE n.name LIKE ?1 AND n.kind = 'method'"
+                        ).map_err(|e| napi::Error::from_reason(format!("fn_deps hierarchy prepare: {e}")))?;
+                        let rows = stmt.query_map(params![pattern], |row| {
+                            Ok((row.get::<_, i32>("id")?, row.get::<_, String>("name")?))
+                        }).map_err(|e| napi::Error::from_reason(format!("fn_deps hierarchy: {e}")))?;
+                        rows.collect::<Result<Vec<_>, _>>()
+                            .map_err(|e| napi::Error::from_reason(format!("fn_deps hierarchy collect: {e}")))?
+                    };
+                    for (rm_id, rm_name) in &related {
+                        if *rm_id == node.id { continue; }
+                        let mut stmt = conn.prepare_cached(
+                            "SELECT n.id, n.name, n.kind, n.file, n.line \
+                             FROM edges e JOIN nodes n ON e.source_id = n.id \
+                             WHERE e.target_id = ?1 AND e.kind = 'calls'"
+                        ).map_err(|e| napi::Error::from_reason(format!("fn_deps hierarchy callers prepare: {e}")))?;
+                        let rows = stmt.query_map(params![rm_id], |row| {
+                            Ok(FnDepsCallerNode {
+                                name: row.get("name")?,
+                                kind: row.get("kind")?,
+                                file: row.get("file")?,
+                                line: row.get("line")?,
+                                via_hierarchy: Some(rm_name.clone()),
+                            })
+                        }).map_err(|e| napi::Error::from_reason(format!("fn_deps hierarchy callers: {e}")))?;
+                        let extra: Vec<FnDepsCallerNode> = rows.collect::<Result<Vec<_>, _>>()
+                            .map_err(|e| napi::Error::from_reason(format!("fn_deps hierarchy callers collect: {e}")))?;
+                        callers.extend(extra);
+                    }
+                }
+            }
+            if no_tests {
+                callers.retain(|c| !is_test_file(&c.file));
+            }
+
+            // BFS transitive callers
+            let transitive_callers = if depth > 1 {
+                // Collect initial frontier IDs from direct callers
+                struct CallerWithId { id: i32, name: String, kind: String, file: String, line: Option<i32> }
+                // Re-query callers with IDs for BFS frontier
+                let initial_callers: Vec<CallerWithId> = {
+                    let mut stmt = conn.prepare_cached(
+                        "SELECT n.id, n.name, n.kind, n.file, n.line \
+                         FROM edges e JOIN nodes n ON e.source_id = n.id \
+                         WHERE e.target_id = ?1 AND e.kind = 'calls'"
+                    ).map_err(|e| napi::Error::from_reason(format!("fn_deps bfs init prepare: {e}")))?;
+                    let rows = stmt.query_map(params![node.id], |row| {
+                        Ok(CallerWithId {
+                            id: row.get("id")?,
+                            name: row.get("name")?,
+                            kind: row.get("kind")?,
+                            file: row.get("file")?,
+                            line: row.get("line")?,
+                        })
+                    }).map_err(|e| napi::Error::from_reason(format!("fn_deps bfs init: {e}")))?;
+                    rows.collect::<Result<Vec<_>, _>>()
+                        .map_err(|e| napi::Error::from_reason(format!("fn_deps bfs init collect: {e}")))?
+                };
+
+                let mut visited = HashSet::new();
+                visited.insert(node.id);
+                let mut frontier: Vec<CallerWithId> = initial_callers;
+                let mut groups: Vec<FnDepsTransitiveGroup> = Vec::new();
+
+                for d in 2..=depth {
+                    let unvisited: Vec<&CallerWithId> = frontier.iter()
+                        .filter(|f| !visited.contains(&f.id))
+                        .collect();
+                    for f in &unvisited {
+                        visited.insert(f.id);
+                    }
+                    if unvisited.is_empty() { break; }
+
+                    // Batch query: find all callers of the unvisited frontier
+                    let mut next_frontier: Vec<CallerWithId> = Vec::new();
+                    let mut next_ids = HashSet::new();
+                    for f in &unvisited {
+                        let mut stmt = conn.prepare_cached(
+                            "SELECT n.id, n.name, n.kind, n.file, n.line \
+                             FROM edges e JOIN nodes n ON e.source_id = n.id \
+                             WHERE e.target_id = ?1 AND e.kind = 'calls'"
+                        ).map_err(|e| napi::Error::from_reason(format!("fn_deps bfs prepare: {e}")))?;
+                        let rows = stmt.query_map(params![f.id], |row| {
+                            Ok(CallerWithId {
+                                id: row.get("id")?,
+                                name: row.get("name")?,
+                                kind: row.get("kind")?,
+                                file: row.get("file")?,
+                                line: row.get("line")?,
+                            })
+                        }).map_err(|e| napi::Error::from_reason(format!("fn_deps bfs: {e}")))?;
+                        let upstream: Vec<CallerWithId> = rows.collect::<Result<Vec<_>, _>>()
+                            .map_err(|e| napi::Error::from_reason(format!("fn_deps bfs collect: {e}")))?;
+                        for u in upstream {
+                            if no_tests && is_test_file(&u.file) { continue; }
+                            if !visited.contains(&u.id) && !next_ids.contains(&u.id) {
+                                next_ids.insert(u.id);
+                                next_frontier.push(u);
+                            }
+                        }
+                    }
+
+                    if !next_frontier.is_empty() {
+                        groups.push(FnDepsTransitiveGroup {
+                            depth: d as i32,
+                            callers: next_frontier.iter().map(|n| FnDepsNode {
+                                name: n.name.clone(),
+                                kind: n.kind.clone(),
+                                file: n.file.clone(),
+                                line: n.line,
+                            }).collect(),
+                        });
+                    }
+                    frontier = next_frontier;
+                }
+                groups
+            } else {
+                Vec::new()
+            };
+
+            // File hash (cached)
+            let file_hash = if !file_hash_cache.contains_key(&node.file) {
+                let hash: Option<String> = conn.prepare_cached(
+                    "SELECT hash FROM metadata WHERE file = ?1"
+                ).ok().and_then(|mut stmt| {
+                    stmt.query_row(params![node.file], |row| row.get(0)).ok()
+                });
+                file_hash_cache.insert(node.file.clone(), hash.clone());
+                hash
+            } else {
+                file_hash_cache.get(&node.file).cloned().flatten()
+            };
+
+            results.push(FnDepsEntry {
+                name: node.name.clone(),
+                kind: node.kind.clone(),
+                file: node.file.clone(),
+                line: node.line,
+                end_line: node.end_line,
+                role: node.role.clone(),
+                file_hash,
+                callees,
+                callers,
+                transitive_callers,
+            });
+        }
+
+        Ok(FnDepsResult { name, results })
     }
 }

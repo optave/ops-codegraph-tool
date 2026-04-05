@@ -173,6 +173,19 @@ export function fnDepsData(
   } = {},
 ) {
   return withRepo(customDbPath, (repo) => {
+    // Try native composite path — single NAPI call for the entire query.
+    const nativeResult = repo.fnDeps(name, {
+      depth: opts.depth,
+      noTests: opts.noTests,
+      file: opts.file,
+      kind: opts.kind,
+    });
+    if (nativeResult) {
+      const base = { name: nativeResult.name, results: nativeResult.results };
+      return paginateResult(base, 'results', { limit: opts.limit, offset: opts.offset });
+    }
+
+    // Fallback: JS-orchestrated path (used when native engine is unavailable)
     const depth = opts.depth || 3;
     const noTests = opts.noTests || false;
     const hc = new Map();

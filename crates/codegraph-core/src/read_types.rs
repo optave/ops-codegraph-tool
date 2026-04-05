@@ -300,3 +300,58 @@ pub struct FanMetric {
     pub fan_in: i32,
     pub fan_out: i32,
 }
+
+// ── Composite query return types (fnDeps) ─────────────────────────────
+
+/// A single caller/callee node in fnDeps results.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct FnDepsNode {
+    pub name: String,
+    pub kind: String,
+    pub file: String,
+    pub line: Option<i32>,
+}
+
+/// A caller node with optional hierarchy resolution info.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct FnDepsCallerNode {
+    pub name: String,
+    pub kind: String,
+    pub file: String,
+    pub line: Option<i32>,
+    pub via_hierarchy: Option<String>,
+}
+
+/// A group of transitive callers at a specific BFS depth.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct FnDepsTransitiveGroup {
+    pub depth: i32,
+    pub callers: Vec<FnDepsNode>,
+}
+
+/// A single symbol's dependency entry in the fnDeps result.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct FnDepsEntry {
+    pub name: String,
+    pub kind: String,
+    pub file: String,
+    pub line: Option<i32>,
+    pub end_line: Option<i32>,
+    pub role: Option<String>,
+    pub file_hash: Option<String>,
+    pub callees: Vec<FnDepsNode>,
+    pub callers: Vec<FnDepsCallerNode>,
+    pub transitive_callers: Vec<FnDepsTransitiveGroup>,
+}
+
+/// Complete fnDeps result returned from a single native call.
+#[napi(object)]
+#[derive(Debug, Clone)]
+pub struct FnDepsResult {
+    pub name: String,
+    pub results: Vec<FnDepsEntry>,
+}

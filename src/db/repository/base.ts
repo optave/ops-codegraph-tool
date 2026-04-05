@@ -223,4 +223,47 @@ export class Repository implements IRepository {
   hasCoChangesTable(): boolean {
     return false;
   }
+
+  // ── Composite queries ──────────────────────────────────────────────
+  /**
+   * Complete fnDeps query in a single call. Returns null when not natively
+   * supported — callers should fall back to the JS-orchestrated path.
+   */
+  fnDeps(
+    _name: string,
+    _opts?: { depth?: number; noTests?: boolean; file?: string; kind?: string },
+  ): FnDepsResult | null {
+    return null;
+  }
+}
+
+// ── Composite query result types ────────────────────────────────────────
+
+export interface FnDepsNode {
+  name: string;
+  kind: string;
+  file: string;
+  line: number | null;
+}
+
+export interface FnDepsCallerNode extends FnDepsNode {
+  viaHierarchy?: string;
+}
+
+export interface FnDepsEntry {
+  name: string;
+  kind: string;
+  file: string;
+  line: number | null;
+  endLine: number | null;
+  role: string | null;
+  fileHash: string | null;
+  callees: FnDepsNode[];
+  callers: FnDepsCallerNode[];
+  transitiveCallers: Record<number, FnDepsNode[]>;
+}
+
+export interface FnDepsResult {
+  name: string;
+  results: FnDepsEntry[];
 }

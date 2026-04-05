@@ -334,6 +334,35 @@ export interface Repository {
   getFileHash(file: string): string | null;
   hasImplementsEdges(): boolean;
   hasCoChangesTable(): boolean;
+
+  // ── Composite queries ──────────────────────────────────────────────
+  fnDeps(
+    name: string,
+    opts?: { depth?: number; noTests?: boolean; file?: string; kind?: string },
+  ): {
+    name: string;
+    results: Array<{
+      name: string;
+      kind: string;
+      file: string;
+      line: number | null;
+      endLine: number | null;
+      role: string | null;
+      fileHash: string | null;
+      callees: Array<{ name: string; kind: string; file: string; line: number | null }>;
+      callers: Array<{
+        name: string;
+        kind: string;
+        file: string;
+        line: number | null;
+        viaHierarchy?: string;
+      }>;
+      transitiveCallers: Record<
+        number,
+        Array<{ name: string; kind: string; file: string; line: number | null }>
+      >;
+    }>;
+  } | null;
 }
 
 /**
@@ -2055,6 +2084,46 @@ export interface NativeComplexityMetrics {
   halsteadVolume: number | null;
 }
 
+// ── Native composite query types (fnDeps) ──────────────────────────────
+
+export interface NativeFnDepsNode {
+  name: string;
+  kind: string;
+  file: string;
+  line: number | null;
+}
+
+export interface NativeFnDepsCallerNode {
+  name: string;
+  kind: string;
+  file: string;
+  line: number | null;
+  viaHierarchy: string | null;
+}
+
+export interface NativeFnDepsTransitiveGroup {
+  depth: number;
+  callers: NativeFnDepsNode[];
+}
+
+export interface NativeFnDepsEntry {
+  name: string;
+  kind: string;
+  file: string;
+  line: number | null;
+  endLine: number | null;
+  role: string | null;
+  fileHash: string | null;
+  callees: NativeFnDepsNode[];
+  callers: NativeFnDepsCallerNode[];
+  transitiveCallers: NativeFnDepsTransitiveGroup[];
+}
+
+export interface NativeFnDepsResult {
+  name: string;
+  results: NativeFnDepsEntry[];
+}
+
 /** Native rusqlite database wrapper instance (Phase 6.13 + 6.14 + 6.15). */
 export interface NativeDatabase {
   // ── Lifecycle (6.13) ────────────────────────────────────────────────
@@ -2138,6 +2207,15 @@ export interface NativeDatabase {
   hasCoChangesTable(): boolean;
   getComplexityForNode(nodeId: number): NativeComplexityMetrics | null;
   getFileHash(file: string): string | null;
+
+  // ── Composite queries ──────────────────────────────────────────────
+  fnDeps(
+    name: string,
+    depth: number | null | undefined,
+    noTests: boolean | null | undefined,
+    file: string | null | undefined,
+    kind: string | null | undefined,
+  ): NativeFnDepsResult;
 
   // ── Build pipeline writes (6.15) ───────────────────────────────────
   bulkInsertNodes(
