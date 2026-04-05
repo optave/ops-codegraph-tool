@@ -311,6 +311,7 @@ export function openReadonlyOrFail(customPath?: string): BetterSqlite3Database {
   }
   const Database = getDatabase();
   const db = new Database(dbPath, { readonly: true }) as unknown as BetterSqlite3Database;
+  db.pragma('busy_timeout = 5000');
 
   warnOnVersionMismatch(() => {
     const row = db
@@ -378,7 +379,13 @@ export function openRepo(
       // Re-throw user-visible errors (e.g. DB not found) — only silently
       // fall back for native-engine failures (e.g. incompatible native binary).
       if (e instanceof DbError) throw e;
-      debug(`openRepo: native path failed, falling back to better-sqlite3: ${toErrorMessage(e)}`);
+      // Re-throw locking/busy errors — falling back to better-sqlite3 would
+      // hit the same contention (and potentially hang without busy_timeout).
+      const msg = toErrorMessage(e);
+      if (/\b(busy|locked|SQLITE_BUSY|SQLITE_LOCKED)\b/i.test(msg)) {
+        throw new DbError(`Database is busy (another process may be writing): ${msg}`, {});
+      }
+      debug(`openRepo: native path failed, falling back to better-sqlite3: ${msg}`);
     }
   }
 
@@ -412,7 +419,12 @@ export function openReadonlyWithNative(customPath?: string): {
       const native = getNative();
       nativeDb = native.NativeDatabase.openReadonly(dbPath);
     } catch (e) {
-      debug(`openReadonlyWithNative: native path failed: ${toErrorMessage(e)}`);
+      const msg = toErrorMessage(e);
+      if (/\b(busy|locked|SQLITE_BUSY|SQLITE_LOCKED)\b/i.test(msg)) {
+        debug(`openReadonlyWithNative: native path busy, skipping native DB: ${msg}`);
+      } else {
+        debug(`openReadonlyWithNative: native path failed: ${msg}`);
+      }
     }
   }
 

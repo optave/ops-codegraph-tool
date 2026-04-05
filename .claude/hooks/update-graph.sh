@@ -38,16 +38,18 @@ if echo "$FILE_PATH" | grep -qE '(fixtures|__fixtures__|testdata)/'; then
 fi
 
 # Guard: codegraph DB must exist (project has been built at least once)
-DB_PATH="${CLAUDE_PROJECT_DIR:-.}/.codegraph/graph.db"
+# Use git worktree root so each worktree uses its own DB (avoids WAL contention)
+WORK_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || WORK_ROOT="${CLAUDE_PROJECT_DIR:-.}"
+DB_PATH="$WORK_ROOT/.codegraph/graph.db"
 if [ ! -f "$DB_PATH" ]; then
   exit 0
 fi
 
 # Run incremental build (skips unchanged files via hash check)
 if command -v codegraph &>/dev/null; then
-  codegraph build "${CLAUDE_PROJECT_DIR:-.}" -d "$DB_PATH" 2>/dev/null || true
+  codegraph build "$WORK_ROOT" -d "$DB_PATH" 2>/dev/null || true
 else
-  node "${CLAUDE_PROJECT_DIR}/src/cli.js" build "${CLAUDE_PROJECT_DIR:-.}" -d "$DB_PATH" 2>/dev/null || true
+  node "${CLAUDE_PROJECT_DIR:-$WORK_ROOT}/src/cli.js" build "$WORK_ROOT" -d "$DB_PATH" 2>/dev/null || true
 fi
 
 exit 0
