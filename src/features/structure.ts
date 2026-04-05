@@ -612,6 +612,15 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
     prodFanInMap.set(r.target_id, r.cnt);
   }
 
+  // Files with at least one callable (non-constant) connected to the graph.
+  // Constants in these files are likely consumed locally via identifier reference.
+  const activeFiles = new Set<string>();
+  for (const r of rows) {
+    if ((r.fan_in > 0 || r.fan_out > 0) && r.kind !== 'constant') {
+      activeFiles.add(r.file);
+    }
+  }
+
   // Delegate classification to the pure-logic classifier
   const classifierInput = rows.map((r) => ({
     id: String(r.id),
@@ -622,6 +631,7 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
     fanOut: r.fan_out,
     isExported: exportedIds.has(r.id),
     productionFanIn: prodFanInMap.get(r.id) || 0,
+    hasActiveFileSiblings: r.kind === 'constant' ? activeFiles.has(r.file) : undefined,
   }));
 
   const roleMap = classifyRoles(classifierInput);
@@ -781,6 +791,13 @@ function classifyNodeRolesIncremental(
   }
 
   // 5. Classify affected nodes using global medians
+  const activeFiles = new Set<string>();
+  for (const r of rows) {
+    if ((r.fan_in > 0 || r.fan_out > 0) && r.kind !== 'constant') {
+      activeFiles.add(r.file);
+    }
+  }
+
   const classifierInput = rows.map((r) => ({
     id: String(r.id),
     name: r.name,
@@ -790,6 +807,7 @@ function classifyNodeRolesIncremental(
     fanOut: r.fan_out,
     isExported: exportedIds.has(r.id),
     productionFanIn: prodFanInMap.get(r.id) || 0,
+    hasActiveFileSiblings: r.kind === 'constant' ? activeFiles.has(r.file) : undefined,
   }));
 
   const roleMap = classifyRoles(classifierInput, globalMedians);

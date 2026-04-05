@@ -629,7 +629,7 @@ async function delegateToBuildFunctions(
     } catch (err: unknown) {
       debug(`buildAstNodes failed: ${toErrorMessage(err)}`);
     }
-    timing.astMs = performance.now() - t0;
+    timing.astMs += performance.now() - t0;
   }
 
   if (opts.complexity !== false) {
@@ -640,7 +640,7 @@ async function delegateToBuildFunctions(
     } catch (err: unknown) {
       debug(`buildComplexityMetrics failed: ${toErrorMessage(err)}`);
     }
-    timing.complexityMs = performance.now() - t0;
+    timing.complexityMs += performance.now() - t0;
   }
 
   if (opts.cfg !== false) {
@@ -651,7 +651,7 @@ async function delegateToBuildFunctions(
     } catch (err: unknown) {
       debug(`buildCFGData failed: ${toErrorMessage(err)}`);
     }
-    timing.cfgMs = performance.now() - t0;
+    timing.cfgMs += performance.now() - t0;
   }
 
   if (opts.dataflow !== false) {
@@ -662,7 +662,7 @@ async function delegateToBuildFunctions(
     } catch (err: unknown) {
       debug(`buildDataflowEdges failed: ${toErrorMessage(err)}`);
     }
-    timing.dataflowMs = performance.now() - t0;
+    timing.dataflowMs += performance.now() - t0;
   }
 }
 
@@ -699,7 +699,10 @@ export async function runAnalyses(
   // WASM pre-parse for files that still need it (AST store, or native gaps)
   await ensureWasmTreesIfNeeded(fileSymbols, opts, rootDir);
 
-  // Unified pre-walk: run all applicable visitors in a single DFS per file
+  // Unified pre-walk: run all applicable visitors in a single DFS per file.
+  // Time each file's walk and distribute equally among active visitors
+  // so that phase timers (astMs, complexityMs, etc.) reflect real work — not
+  // just the DB-write tail in delegateToBuildFunctions.
   const t0walk = performance.now();
 
   for (const [relPath, symbols] of fileSymbols) {
@@ -714,7 +717,22 @@ export async function runAnalyses(
 
     if (visitors.length === 0) continue;
 
+    const walkStart = performance.now();
     const results = walkWithVisitors(symbols._tree.rootNode, visitors, langId, walkerOpts);
+    const walkMs = performance.now() - walkStart;
+
+    // Distribute walk time equally among active visitors
+    const activeCount = [astVisitor, complexityVisitor, cfgVisitor, dataflowVisitor].filter(
+      Boolean,
+    ).length;
+    if (activeCount > 0) {
+      const share = walkMs / activeCount;
+      if (astVisitor) timing.astMs += share;
+      if (complexityVisitor) timing.complexityMs += share;
+      if (cfgVisitor) timing.cfgMs += share;
+      if (dataflowVisitor) timing.dataflowMs += share;
+    }
+
     const defs = symbols.definitions || [];
 
     if (astVisitor) {
@@ -727,6 +745,10 @@ export async function runAnalyses(
     if (dataflowVisitor) symbols.dataflow = results.dataflow as DataflowResult;
   }
 
+  // Total wall-clock time for the unified walk loop, including per-file
+  // setupVisitors overhead. Walk time is already distributed into per-phase
+  // timers above, so this field overlaps with (astMs + complexityMs + ...).
+  // It is kept as a diagnostic cross-check, not an additive bucket.
   timing._unifiedWalkMs = performance.now() - t0walk;
 
   // Reconcile: apply CFG-derived cyclomatic override for any definitions that have

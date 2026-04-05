@@ -200,11 +200,11 @@ md += '| Metric | Native (Rust) | WASM |\n';
 md += '|--------|---:|---:|\n';
 
 const estNative = latest.native?.perFile;
-const estWasm = latest.wasm.perFile;
-md += `| Build time | ${estNative ? formatMs(estNative.buildTimeMs * ESTIMATE_FILES) : 'n/a'} | ${formatMs(estWasm.buildTimeMs * ESTIMATE_FILES)} |\n`;
-md += `| DB size | ${estNative ? formatBytes(estNative.dbSizeBytes * ESTIMATE_FILES) : 'n/a'} | ${formatBytes(estWasm.dbSizeBytes * ESTIMATE_FILES)} |\n`;
-md += `| Nodes | ${estNative ? Math.round(estNative.nodes * ESTIMATE_FILES).toLocaleString() : 'n/a'} | ${Math.round(estWasm.nodes * ESTIMATE_FILES).toLocaleString()} |\n`;
-md += `| Edges | ${estNative ? Math.round(estNative.edges * ESTIMATE_FILES).toLocaleString() : 'n/a'} | ${Math.round(estWasm.edges * ESTIMATE_FILES).toLocaleString()} |\n\n`;
+const estWasm = latest.wasm?.perFile;
+md += `| Build time | ${estNative ? formatMs(estNative.buildTimeMs * ESTIMATE_FILES) : 'n/a'} | ${estWasm ? formatMs(estWasm.buildTimeMs * ESTIMATE_FILES) : 'n/a'} |\n`;
+md += `| DB size | ${estNative ? formatBytes(estNative.dbSizeBytes * ESTIMATE_FILES) : 'n/a'} | ${estWasm ? formatBytes(estWasm.dbSizeBytes * ESTIMATE_FILES) : 'n/a'} |\n`;
+md += `| Nodes | ${estNative ? Math.round(estNative.nodes * ESTIMATE_FILES).toLocaleString() : 'n/a'} | ${estWasm ? Math.round(estWasm.nodes * ESTIMATE_FILES).toLocaleString() : 'n/a'} |\n`;
+md += `| Edges | ${estNative ? Math.round(estNative.edges * ESTIMATE_FILES).toLocaleString() : 'n/a'} | ${estWasm ? Math.round(estWasm.edges * ESTIMATE_FILES).toLocaleString() : 'n/a'} |\n\n`;
 
 // ── Incremental Rebuilds section ──────────────────────────────────────────
 const hasIncremental = history.some(
@@ -324,41 +324,71 @@ if (prev) {
 if (fs.existsSync(readmePath)) {
 	let readme = fs.readFileSync(readmePath, 'utf8');
 
-	// Build the table rows — show both engines when native is available
-	// Pick the preferred engine: native when available, WASM as fallback
-	const pref = latest.native || latest.wasm;
-	const prefLabel = latest.native ? ' (native)' : '';
+	// Show both engines side-by-side when both are available;
+	// fall back to native-only or WASM-only single-column layout otherwise.
+	const hasNative = latest.native != null;
+	const hasBoth = hasNative && latest.wasm != null;
 
 	let rows = '';
-	if (latest.native) {
-		rows += `| Build speed (native) | **${latest.native.perFile.buildTimeMs} ms/file** |\n`;
-		rows += `| Build speed (WASM) | **${latest.wasm.perFile.buildTimeMs} ms/file** |\n`;
-		rows += `| Query time (native) | **${formatMs(latest.native.queryTimeMs)}** |\n`;
-		rows += `| Query time (WASM) | **${formatMs(latest.wasm.queryTimeMs)}** |\n`;
+	if (hasBoth) {
+		rows += `| Build speed | **${latest.native.perFile.buildTimeMs} ms/file** | **${latest.wasm.perFile.buildTimeMs} ms/file** |\n`;
+		rows += `| Query time | **${formatMs(latest.native.queryTimeMs)}** | **${formatMs(latest.wasm.queryTimeMs)}** |\n`;
+	} else if (hasNative) {
+		rows += `| Build speed | **${latest.native.perFile.buildTimeMs} ms/file** |\n`;
+		rows += `| Query time | **${formatMs(latest.native.queryTimeMs)}** |\n`;
 	} else {
 		rows += `| Build speed | **${latest.wasm.perFile.buildTimeMs} ms/file** |\n`;
 		rows += `| Query time | **${formatMs(latest.wasm.queryTimeMs)}** |\n`;
 	}
 
-	// Incremental rebuild rows (prefer native, fallback to WASM)
-	if (pref.noopRebuildMs != null) {
-		rows += `| No-op rebuild${prefLabel} | **${formatMs(pref.noopRebuildMs)}** |\n`;
-	}
-	if (pref.oneFileRebuildMs != null) {
-		rows += `| 1-file rebuild${prefLabel} | **${formatMs(pref.oneFileRebuildMs)}** |\n`;
+	// Incremental rebuild rows
+	if (hasBoth) {
+		const nativeNoop = latest.native.noopRebuildMs != null ? `**${formatMs(latest.native.noopRebuildMs)}**` : 'n/a';
+		const wasmNoop = latest.wasm.noopRebuildMs != null ? `**${formatMs(latest.wasm.noopRebuildMs)}**` : 'n/a';
+		if (latest.native.noopRebuildMs != null || latest.wasm.noopRebuildMs != null) {
+			rows += `| No-op rebuild | ${nativeNoop} | ${wasmNoop} |\n`;
+		}
+		const nativeOneFile = latest.native.oneFileRebuildMs != null ? `**${formatMs(latest.native.oneFileRebuildMs)}**` : 'n/a';
+		const wasmOneFile = latest.wasm.oneFileRebuildMs != null ? `**${formatMs(latest.wasm.oneFileRebuildMs)}**` : 'n/a';
+		if (latest.native.oneFileRebuildMs != null || latest.wasm.oneFileRebuildMs != null) {
+			rows += `| 1-file rebuild | ${nativeOneFile} | ${wasmOneFile} |\n`;
+		}
+	} else {
+		const pref = latest.native || latest.wasm;
+		if (pref.noopRebuildMs != null) {
+			rows += `| No-op rebuild | **${formatMs(pref.noopRebuildMs)}** |\n`;
+		}
+		if (pref.oneFileRebuildMs != null) {
+			rows += `| 1-file rebuild | **${formatMs(pref.oneFileRebuildMs)}** |\n`;
+		}
 	}
 
-	// Query latency rows (pick two representative queries, skip if null)
-	if (pref.queries) {
-		if (pref.queries.fnDepsMs != null) rows += `| Query: fn-deps | **${pref.queries.fnDepsMs}ms** |\n`;
-		if (pref.queries.pathMs != null) rows += `| Query: path | **${pref.queries.pathMs}ms** |\n`;
+	// Query latency rows (pick two representative queries)
+	if (hasBoth) {
+		const nq = latest.native.queries;
+		const wq = latest.wasm.queries;
+		if (nq?.fnDepsMs != null || wq?.fnDepsMs != null) {
+			rows += `| Query: fn-deps | **${nq?.fnDepsMs ?? 'n/a'}ms** | **${wq?.fnDepsMs ?? 'n/a'}ms** |\n`;
+		}
+		if (nq?.pathMs != null || wq?.pathMs != null) {
+			rows += `| Query: path | **${nq?.pathMs ?? 'n/a'}ms** | **${wq?.pathMs ?? 'n/a'}ms** |\n`;
+		}
+	} else {
+		const pref = latest.native || latest.wasm;
+		if (pref.queries?.fnDepsMs != null) rows += `| Query: fn-deps | **${pref.queries.fnDepsMs}ms** |\n`;
+		if (pref.queries?.pathMs != null) rows += `| Query: path | **${pref.queries.pathMs}ms** |\n`;
 	}
 
 	// 50k-file estimate
-	const estBuild = latest.native
-		? formatMs(latest.native.perFile.buildTimeMs * ESTIMATE_FILES)
-		: formatMs(latest.wasm.perFile.buildTimeMs * ESTIMATE_FILES);
-	rows += `| ~${(ESTIMATE_FILES).toLocaleString()} files (est.) | **~${estBuild} build** |\n`;
+	if (hasBoth) {
+		const estNativeBuild = formatMs(latest.native.perFile.buildTimeMs * ESTIMATE_FILES);
+		const estWasmBuild = formatMs(latest.wasm.perFile.buildTimeMs * ESTIMATE_FILES);
+		rows += `| ~${(ESTIMATE_FILES).toLocaleString()} files (est.) | **~${estNativeBuild} build** | **~${estWasmBuild} build** |\n`;
+	} else {
+		const pref = latest.native || latest.wasm;
+		const estBuild = formatMs(pref.perFile.buildTimeMs * ESTIMATE_FILES);
+		rows += `| ~${(ESTIMATE_FILES).toLocaleString()} files (est.) | **~${estBuild} build** |\n`;
+	}
 
 	// Preserve existing benchmark link line from README rather than hardcoding.
 	// Fall back to a default if we can't find it.
@@ -369,8 +399,8 @@ if (fs.existsSync(readmePath)) {
 	}
 
 	// Resolution precision/recall — from resolution-benchmark.ts JSON merged into entry
+	// Resolution is engine-independent, so show single value (span both columns when needed)
 	if (latest.resolution) {
-		// Compute aggregate precision/recall across all languages
 		const langs = Object.values(latest.resolution);
 		if (langs.length > 0) {
 			const totalResolved = langs.reduce((s, l) => s + l.totalResolved, 0);
@@ -378,10 +408,19 @@ if (fs.existsSync(readmePath)) {
 			const totalTP = langs.reduce((s, l) => s + l.truePositives, 0);
 			const aggPrecision = totalResolved > 0 ? `${((totalTP / totalResolved) * 100).toFixed(1)}%` : 'n/a';
 			const aggRecall = totalExpected > 0 ? `${((totalTP / totalExpected) * 100).toFixed(1)}%` : 'n/a';
-			rows += `| Resolution precision | **${aggPrecision}** |\n`;
-			rows += `| Resolution recall | **${aggRecall}** |\n`;
+			if (hasBoth) {
+				rows += `| Resolution precision | **${aggPrecision}** | — |\n`;
+				rows += `| Resolution recall | **${aggRecall}** | — |\n`;
+			} else {
+				rows += `| Resolution precision | **${aggPrecision}** |\n`;
+				rows += `| Resolution recall | **${aggRecall}** |\n`;
+			}
 		}
 	}
+
+	const tableHeader = hasBoth
+		? `| Metric | Native | WASM |\n|---|---|---|`
+		: `| Metric | Latest |\n|---|---|`;
 
 	const perfSection = `## 📊 Performance
 
@@ -389,8 +428,7 @@ Self-measured on every release via CI (${benchmarkLinks}):
 
 *Last updated: v${latest.version} (${latest.date})*
 
-| Metric | Latest |
-|---|---|
+${tableHeader}
 ${rows}
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 `;
