@@ -324,20 +324,25 @@ if (prev) {
 if (fs.existsSync(readmePath)) {
 	let readme = fs.readFileSync(readmePath, 'utf8');
 
-	// Show both engines side-by-side when native is available
+	// Show both engines side-by-side when both are available;
+	// fall back to native-only or WASM-only single-column layout otherwise.
 	const hasNative = latest.native != null;
+	const hasBoth = hasNative && latest.wasm != null;
 
 	let rows = '';
-	if (hasNative) {
+	if (hasBoth) {
 		rows += `| Build speed | **${latest.native.perFile.buildTimeMs} ms/file** | **${latest.wasm.perFile.buildTimeMs} ms/file** |\n`;
 		rows += `| Query time | **${formatMs(latest.native.queryTimeMs)}** | **${formatMs(latest.wasm.queryTimeMs)}** |\n`;
+	} else if (hasNative) {
+		rows += `| Build speed | **${latest.native.perFile.buildTimeMs} ms/file** |\n`;
+		rows += `| Query time | **${formatMs(latest.native.queryTimeMs)}** |\n`;
 	} else {
 		rows += `| Build speed | **${latest.wasm.perFile.buildTimeMs} ms/file** |\n`;
 		rows += `| Query time | **${formatMs(latest.wasm.queryTimeMs)}** |\n`;
 	}
 
 	// Incremental rebuild rows
-	if (hasNative) {
+	if (hasBoth) {
 		const nativeNoop = latest.native.noopRebuildMs != null ? `**${formatMs(latest.native.noopRebuildMs)}**` : 'n/a';
 		const wasmNoop = latest.wasm.noopRebuildMs != null ? `**${formatMs(latest.wasm.noopRebuildMs)}**` : 'n/a';
 		if (latest.native.noopRebuildMs != null || latest.wasm.noopRebuildMs != null) {
@@ -349,16 +354,17 @@ if (fs.existsSync(readmePath)) {
 			rows += `| 1-file rebuild | ${nativeOneFile} | ${wasmOneFile} |\n`;
 		}
 	} else {
-		if (latest.wasm.noopRebuildMs != null) {
-			rows += `| No-op rebuild | **${formatMs(latest.wasm.noopRebuildMs)}** |\n`;
+		const pref = latest.native || latest.wasm;
+		if (pref.noopRebuildMs != null) {
+			rows += `| No-op rebuild | **${formatMs(pref.noopRebuildMs)}** |\n`;
 		}
-		if (latest.wasm.oneFileRebuildMs != null) {
-			rows += `| 1-file rebuild | **${formatMs(latest.wasm.oneFileRebuildMs)}** |\n`;
+		if (pref.oneFileRebuildMs != null) {
+			rows += `| 1-file rebuild | **${formatMs(pref.oneFileRebuildMs)}** |\n`;
 		}
 	}
 
 	// Query latency rows (pick two representative queries)
-	if (hasNative) {
+	if (hasBoth) {
 		const nq = latest.native.queries;
 		const wq = latest.wasm.queries;
 		if (nq?.fnDepsMs != null || wq?.fnDepsMs != null) {
@@ -367,18 +373,20 @@ if (fs.existsSync(readmePath)) {
 		if (nq?.pathMs != null || wq?.pathMs != null) {
 			rows += `| Query: path | **${nq?.pathMs ?? 'n/a'}ms** | **${wq?.pathMs ?? 'n/a'}ms** |\n`;
 		}
-	} else if (latest.wasm.queries) {
-		if (latest.wasm.queries.fnDepsMs != null) rows += `| Query: fn-deps | **${latest.wasm.queries.fnDepsMs}ms** |\n`;
-		if (latest.wasm.queries.pathMs != null) rows += `| Query: path | **${latest.wasm.queries.pathMs}ms** |\n`;
+	} else {
+		const pref = latest.native || latest.wasm;
+		if (pref.queries?.fnDepsMs != null) rows += `| Query: fn-deps | **${pref.queries.fnDepsMs}ms** |\n`;
+		if (pref.queries?.pathMs != null) rows += `| Query: path | **${pref.queries.pathMs}ms** |\n`;
 	}
 
 	// 50k-file estimate
-	if (hasNative) {
+	if (hasBoth) {
 		const estNativeBuild = formatMs(latest.native.perFile.buildTimeMs * ESTIMATE_FILES);
 		const estWasmBuild = formatMs(latest.wasm.perFile.buildTimeMs * ESTIMATE_FILES);
 		rows += `| ~${(ESTIMATE_FILES).toLocaleString()} files (est.) | **~${estNativeBuild} build** | **~${estWasmBuild} build** |\n`;
 	} else {
-		const estBuild = formatMs(latest.wasm.perFile.buildTimeMs * ESTIMATE_FILES);
+		const pref = latest.native || latest.wasm;
+		const estBuild = formatMs(pref.perFile.buildTimeMs * ESTIMATE_FILES);
 		rows += `| ~${(ESTIMATE_FILES).toLocaleString()} files (est.) | **~${estBuild} build** |\n`;
 	}
 
@@ -400,7 +408,7 @@ if (fs.existsSync(readmePath)) {
 			const totalTP = langs.reduce((s, l) => s + l.truePositives, 0);
 			const aggPrecision = totalResolved > 0 ? `${((totalTP / totalResolved) * 100).toFixed(1)}%` : 'n/a';
 			const aggRecall = totalExpected > 0 ? `${((totalTP / totalExpected) * 100).toFixed(1)}%` : 'n/a';
-			if (hasNative) {
+			if (hasBoth) {
 				rows += `| Resolution precision | **${aggPrecision}** | — |\n`;
 				rows += `| Resolution recall | **${aggRecall}** | — |\n`;
 			} else {
@@ -410,7 +418,7 @@ if (fs.existsSync(readmePath)) {
 		}
 	}
 
-	const tableHeader = hasNative
+	const tableHeader = hasBoth
 		? `| Metric | Native | WASM |\n|---|---|---|`
 		: `| Metric | Latest |\n|---|---|`;
 
