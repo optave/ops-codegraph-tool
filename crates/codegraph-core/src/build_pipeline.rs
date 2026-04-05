@@ -11,10 +11,10 @@
 //! 4. Parse files in parallel (existing `parallel::parse_files_parallel`)
 //! 5. Insert nodes (existing `insert_nodes::do_insert_nodes`)
 //! 6. Resolve imports (existing `import_resolution::resolve_imports_batch`)
-//! 7. Build import edges + barrel resolution
-//! 8. Build call edges (existing `edge_builder::build_call_edges`)
-//! 9. Structure metrics + role classification
-//! 10. Finalize (metadata, journal)
+//! 6b. Re-parse barrel candidates (incremental only)
+//! 7. Build import edges + call edges + barrel resolution
+//! 8. Structure metrics + role classification
+//! 9. Finalize (metadata, journal)
 
 use crate::change_detection;
 use crate::config::{BuildConfig, BuildOpts, BuildPathAliases};
@@ -67,6 +67,16 @@ pub struct BuildPipelineResult {
     pub changed_count: usize,
     pub removed_count: usize,
     pub is_full_build: bool,
+    /// Full set of changed files including reverse-dep files. Used by the JS
+    /// structure fallback path so it can update metrics for files whose edges
+    /// changed even though their content didn't. `None` for full builds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub structure_scope: Option<Vec<String>>,
+    /// Whether the Rust pipeline handled the structure phase (directory nodes,
+    /// contains edges, file metrics). True when the small-incremental fast path
+    /// ran (≤5 changed files, >20 existing files). When false, the JS caller
+    /// must run its own structure phase as a post-processing step.
+    pub structure_handled: bool,
 }
 
 /// Normalize path to forward slashes.
@@ -125,58 +135,7 @@ pub fn run_pipeline(
             .map(|f| normalize_path(f))
             .collect()
     });
-    let collect_result = if let Some(ref scope) = opts.scope {
-        // Scoped rebuild — only collect files that exist on disk
-        let files: Vec<String> = scope
-            .iter()
-            .map(|f| {
-                let abs = Path::new(root_dir).join(normalize_path(f));
-                abs.to_str().unwrap_or("").to_string()
-            })
-            .filter(|f| Path::new(f).exists())
-            .collect();
-        file_collector::CollectResult {
-            directories: files
-                .iter()
-                .filter_map(|f| {
-                    Path::new(f)
-                        .parent()
-                        .map(|p| p.to_str().unwrap_or("").to_string())
-                })
-                .collect(),
-            files,
-        }
-    } else if incremental && !force_full_rebuild {
-        // Try fast collect from DB + journal
-        let journal = journal::read_journal(root_dir);
-        let has_entries =
-            journal.valid && (!journal.changed.is_empty() || !journal.removed.is_empty());
-
-        if has_entries {
-            let db_files: Vec<String> = conn
-                .prepare("SELECT file FROM file_hashes")
-                .and_then(|mut stmt| {
-                    stmt.query_map([], |row| row.get::<_, String>(0))
-                        .map(|rows| rows.filter_map(|r| r.ok()).collect())
-                })
-                .unwrap_or_default();
-
-            if !db_files.is_empty() {
-                file_collector::try_fast_collect(
-                    root_dir,
-                    &db_files,
-                    &journal.changed,
-                    &journal.removed,
-                )
-            } else {
-                file_collector::collect_files(root_dir, &config.ignore_dirs)
-            }
-        } else {
-            file_collector::collect_files(root_dir, &config.ignore_dirs)
-        }
-    } else {
-        file_collector::collect_files(root_dir, &config.ignore_dirs)
-    };
+    let collect_result = collect_source_files(conn, root_dir, &config, &opts, incremental, force_full_rebuild);
     timing.collect_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ── Stage 3: Detect changes ────────────────────────────────────────
@@ -214,6 +173,8 @@ pub fn run_pipeline(
             changed_count: 0,
             removed_count: 0,
             is_full_build: false,
+            structure_scope: Some(vec![]),
+            structure_handled: true,
         });
     }
 
@@ -285,7 +246,7 @@ pub fn run_pipeline(
     // ── Stage 5: Insert nodes ──────────────────────────────────────────
     let t0 = Instant::now();
     let insert_batches = build_insert_batches(&file_symbols);
-    let file_hashes = build_file_hash_entries(&parse_changes, root_dir);
+    let file_hashes = build_file_hash_entries(&parse_changes);
     let _ = crate::insert_nodes::do_insert_nodes(
         conn,
         &insert_batches,
@@ -333,121 +294,11 @@ pub fn run_pipeline(
     timing.resolve_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // ── Stage 6b: Re-parse barrel candidates (incremental only) ─────────
-    // Mirrors JS pipeline's findBarrelCandidates + reparseBarrelFiles.
-    // For incremental builds, barrel files (re-export-only index files) may
-    // not be in file_symbols because they weren't changed or reverse-deps.
-    // Without their symbols, barrel resolution in Stage 7 can't create the
-    // transitive import edges (e.g. app.js -> math.js through index.js).
     if !change_result.is_full_build {
-        // Find all barrel files from DB (files that have 'reexports' edges)
-        let barrel_files_in_db: HashSet<String> = {
-            let rows: Vec<String> = match conn.prepare(
-                "SELECT DISTINCT n1.file FROM edges e \
-                 JOIN nodes n1 ON e.source_id = n1.id \
-                 WHERE e.kind = 'reexports' AND n1.kind = 'file'",
-            ) {
-                Ok(mut stmt) => match stmt.query_map([], |row| row.get::<_, String>(0)) {
-                    Ok(mapped) => mapped.filter_map(|r| r.ok()).collect(),
-                    Err(_) => Vec::new(),
-                },
-                Err(_) => Vec::new(),
-            };
-            rows.into_iter().collect()
-        };
-
-        // Check which barrels are imported by parsed files but not in file_symbols
-        let mut barrel_paths_to_parse: Vec<String> = Vec::new();
-        for (_rel_path, symbols) in &file_symbols {
-            for imp in &symbols.imports {
-                // Look up resolved path from batch_resolved
-                let abs_file = Path::new(root_dir).join(_rel_path);
-                let fwd = abs_file.to_str().unwrap_or("").replace('\\', "/");
-                let key = format!("{}|{}", fwd, imp.source);
-                if let Some(resolved) = batch_resolved.get(&key) {
-                    if barrel_files_in_db.contains(resolved) && !file_symbols.contains_key(resolved)
-                    {
-                        let abs = Path::new(root_dir).join(resolved);
-                        if abs.exists() {
-                            barrel_paths_to_parse
-                                .push(abs.to_str().unwrap_or("").to_string());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Also find barrels that re-export FROM changed files
-        {
-            let changed_rel: Vec<&str> = file_symbols.keys().map(|s| s.as_str()).collect();
-            if let Ok(mut stmt) = conn.prepare(
-                "SELECT DISTINCT n1.file FROM edges e \
-                 JOIN nodes n1 ON e.source_id = n1.id \
-                 JOIN nodes n2 ON e.target_id = n2.id \
-                 WHERE e.kind = 'reexports' AND n1.kind = 'file' AND n2.file = ?1",
-            ) {
-                for changed in &changed_rel {
-                    if let Ok(rows) = stmt.query_map(rusqlite::params![changed], |row| {
-                        row.get::<_, String>(0)
-                    }) {
-                        for row in rows.flatten() {
-                            if !file_symbols.contains_key(&row) {
-                                let abs = Path::new(root_dir).join(&row);
-                                if abs.exists() {
-                                    barrel_paths_to_parse
-                                        .push(abs.to_str().unwrap_or("").to_string());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Re-parse barrel files and merge into file_symbols
-        if !barrel_paths_to_parse.is_empty() {
-            barrel_paths_to_parse.sort();
-            barrel_paths_to_parse.dedup();
-            // Barrel files are re-export-only — no function bodies or dataflow,
-            // so skip dataflow/AST analysis to avoid unnecessary overhead.
-            let barrel_parsed = parallel::parse_files_parallel(
-                &barrel_paths_to_parse,
-                root_dir,
-                false,
-                false,
-            );
-            for mut sym in barrel_parsed {
-                let rel = relative_path(root_dir, &sym.file);
-                sym.file = rel.clone();
-                // Delete outgoing import/reexport edges for barrel files being re-parsed
-                // (scoped to import-related kinds to avoid dropping calls edges)
-                let _ = conn.execute(
-                    "DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1) \
-                     AND kind IN ('imports', 'reexports')",
-                    rusqlite::params![&rel],
-                );
-                // Re-resolve imports for the barrel file
-                // Normalize to forward slashes so batch_resolved keys match get_resolved lookups on Windows.
-                let abs_str =
-                    Path::new(root_dir).join(&rel).to_str().unwrap_or("").replace('\\', "/");
-                for imp in &sym.imports {
-                    let input = ImportResolutionInput {
-                        from_file: abs_str.clone(),
-                        import_source: imp.source.clone(),
-                    };
-                    let resolved_batch = import_resolution::resolve_imports_batch(
-                        &[input],
-                        root_dir,
-                        &napi_aliases,
-                        Some(&known_files),
-                    );
-                    for r in &resolved_batch {
-                        let key = format!("{}|{}", r.from_file, r.import_source);
-                        batch_resolved.insert(key, r.resolved_path.clone());
-                    }
-                }
-                file_symbols.insert(rel, sym);
-            }
-        }
+        reparse_barrel_candidates(
+            conn, root_dir, &napi_aliases, &known_files,
+            &mut file_symbols, &mut batch_resolved,
+        );
     }
 
     // ── Stage 7: Build edges ───────────────────────────────────────────
@@ -513,15 +364,6 @@ pub fn run_pipeline(
             &line_count_map,
             &file_symbols,
         );
-    } else {
-        // Emit a debug-level warning so users of `codegraph stats` know
-        // structure metrics were not updated on this build path.
-        eprintln!(
-            "[codegraph] note: structure metrics skipped (native fast-path not applicable — \
-             {} changed files, full_build={}). Run JS pipeline for full structure.",
-            parse_changes.len(),
-            change_result.is_full_build,
-        );
     }
     // For full/larger builds, the JS fallback handles full structure via
     // `features/structure.ts`. The Rust orchestrator handles the fast path
@@ -551,27 +393,7 @@ pub fn run_pipeline(
 
     // ── Stage 9: Finalize ──────────────────────────────────────────────
     let t0 = Instant::now();
-    let node_count = conn
-        .query_row("SELECT COUNT(*) FROM nodes", [], |row| row.get::<_, i64>(0))
-        .unwrap_or(0);
-    let edge_count = conn
-        .query_row("SELECT COUNT(*) FROM edges", [], |row| row.get::<_, i64>(0))
-        .unwrap_or(0);
-
-    // Persist build metadata
-    let version = env!("CARGO_PKG_VERSION");
-    let meta_sql = "INSERT OR REPLACE INTO build_meta (key, value) VALUES (?, ?)";
-    if let Ok(mut stmt) = conn.prepare(meta_sql) {
-        let _ = stmt.execute(["engine", "native"]);
-        let _ = stmt.execute(["engine_version", version]);
-        let _ = stmt.execute(["codegraph_version", version]);
-        let _ = stmt.execute(["node_count", &node_count.to_string()]);
-        let _ = stmt.execute(["edge_count", &edge_count.to_string()]);
-        let _ = stmt.execute(["last_build", &now_ms().to_string()]);
-    }
-
-    // Write journal header
-    journal::write_journal_header(root_dir, now_ms());
+    let (node_count, edge_count) = finalize_build(conn, root_dir);
     timing.finalize_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
     // Include total time in setup for overhead accounting.
@@ -598,7 +420,221 @@ pub fn run_pipeline(
         changed_count: parse_changes.len(),
         removed_count: change_result.removed.len(),
         is_full_build: change_result.is_full_build,
+        structure_scope: changed_file_list.clone(),
+        structure_handled: use_fast_path,
     })
+}
+
+/// Stage 2: Collect source files with strategy selection (scoped, journal-fast, or full).
+fn collect_source_files(
+    conn: &Connection,
+    root_dir: &str,
+    config: &BuildConfig,
+    opts: &BuildOpts,
+    incremental: bool,
+    force_full_rebuild: bool,
+) -> file_collector::CollectResult {
+    if let Some(ref scope) = opts.scope {
+        // Scoped rebuild
+        let files: Vec<String> = scope
+            .iter()
+            .map(|f| {
+                let abs = Path::new(root_dir).join(normalize_path(f));
+                abs.to_str().unwrap_or("").to_string()
+            })
+            .filter(|f| Path::new(f).exists())
+            .collect();
+        file_collector::CollectResult {
+            directories: files
+                .iter()
+                .filter_map(|f| {
+                    Path::new(f)
+                        .parent()
+                        .map(|p| p.to_str().unwrap_or("").to_string())
+                })
+                .collect(),
+            files,
+        }
+    } else if incremental && !force_full_rebuild {
+        // Try fast collect from DB + journal
+        let journal = journal::read_journal(root_dir);
+        let has_entries =
+            journal.valid && (!journal.changed.is_empty() || !journal.removed.is_empty());
+
+        if has_entries {
+            let db_files: Vec<String> = conn
+                .prepare("SELECT file FROM file_hashes")
+                .and_then(|mut stmt| {
+                    stmt.query_map([], |row| row.get::<_, String>(0))
+                        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default();
+
+            if !db_files.is_empty() {
+                file_collector::try_fast_collect(
+                    root_dir,
+                    &db_files,
+                    &journal.changed,
+                    &journal.removed,
+                )
+            } else {
+                file_collector::collect_files(root_dir, &config.ignore_dirs)
+            }
+        } else {
+            file_collector::collect_files(root_dir, &config.ignore_dirs)
+        }
+    } else {
+        file_collector::collect_files(root_dir, &config.ignore_dirs)
+    }
+}
+
+/// Stage 6b: Re-parse barrel candidates for incremental builds.
+///
+/// Barrel files (re-export-only index files) may not be in file_symbols because
+/// they weren't changed or reverse-deps. Without their symbols, barrel resolution
+/// in Stage 7 can't create transitive import edges.
+fn reparse_barrel_candidates(
+    conn: &Connection,
+    root_dir: &str,
+    napi_aliases: &crate::types::PathAliases,
+    known_files: &HashSet<String>,
+    file_symbols: &mut HashMap<String, FileSymbols>,
+    batch_resolved: &mut HashMap<String, String>,
+) {
+    // Find all barrel files from DB (files that have 'reexports' edges)
+    let barrel_files_in_db: HashSet<String> = {
+        let rows: Vec<String> = match conn.prepare(
+            "SELECT DISTINCT n1.file FROM edges e \
+             JOIN nodes n1 ON e.source_id = n1.id \
+             WHERE e.kind = 'reexports' AND n1.kind = 'file'",
+        ) {
+            Ok(mut stmt) => match stmt.query_map([], |row| row.get::<_, String>(0)) {
+                Ok(mapped) => mapped.filter_map(|r| r.ok()).collect(),
+                Err(_) => Vec::new(),
+            },
+            Err(_) => Vec::new(),
+        };
+        rows.into_iter().collect()
+    };
+
+    // Check which barrels are imported by parsed files but not in file_symbols
+    let mut barrel_paths_to_parse: Vec<String> = Vec::new();
+    for (rel_path, symbols) in file_symbols.iter() {
+        for imp in &symbols.imports {
+            let abs_file = Path::new(root_dir).join(rel_path);
+            let fwd = abs_file.to_str().unwrap_or("").replace('\\', "/");
+            let key = format!("{}|{}", fwd, imp.source);
+            if let Some(resolved) = batch_resolved.get(&key) {
+                if barrel_files_in_db.contains(resolved) && !file_symbols.contains_key(resolved)
+                {
+                    let abs = Path::new(root_dir).join(resolved);
+                    if abs.exists() {
+                        barrel_paths_to_parse
+                            .push(abs.to_str().unwrap_or("").to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Also find barrels that re-export FROM changed files
+    {
+        let changed_rel: Vec<&str> = file_symbols.keys().map(|s| s.as_str()).collect();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT DISTINCT n1.file FROM edges e \
+             JOIN nodes n1 ON e.source_id = n1.id \
+             JOIN nodes n2 ON e.target_id = n2.id \
+             WHERE e.kind = 'reexports' AND n1.kind = 'file' AND n2.file = ?1",
+        ) {
+            for changed in &changed_rel {
+                if let Ok(rows) = stmt.query_map(rusqlite::params![changed], |row| {
+                    row.get::<_, String>(0)
+                }) {
+                    for row in rows.flatten() {
+                        if !file_symbols.contains_key(&row) {
+                            let abs = Path::new(root_dir).join(&row);
+                            if abs.exists() {
+                                barrel_paths_to_parse
+                                    .push(abs.to_str().unwrap_or("").to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Re-parse barrel files and merge into file_symbols
+    if !barrel_paths_to_parse.is_empty() {
+        barrel_paths_to_parse.sort();
+        barrel_paths_to_parse.dedup();
+        // Barrel files are re-export-only — no function bodies or dataflow,
+        // so skip dataflow/AST analysis to avoid unnecessary overhead.
+        let barrel_parsed = parallel::parse_files_parallel(
+            &barrel_paths_to_parse,
+            root_dir,
+            false,
+            false,
+        );
+        for mut sym in barrel_parsed {
+            let rel = relative_path(root_dir, &sym.file);
+            sym.file = rel.clone();
+            // Delete outgoing import/reexport edges for barrel files being re-parsed
+            // (scoped to import-related kinds to avoid dropping calls edges)
+            let _ = conn.execute(
+                "DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?1) \
+                 AND kind IN ('imports', 'reexports')",
+                rusqlite::params![&rel],
+            );
+            // Re-resolve imports for the barrel file
+            // Normalize to forward slashes so batch_resolved keys match get_resolved lookups on Windows.
+            let abs_str =
+                Path::new(root_dir).join(&rel).to_str().unwrap_or("").replace('\\', "/");
+            for imp in &sym.imports {
+                let input = ImportResolutionInput {
+                    from_file: abs_str.clone(),
+                    import_source: imp.source.clone(),
+                };
+                let resolved_batch = import_resolution::resolve_imports_batch(
+                    &[input],
+                    root_dir,
+                    napi_aliases,
+                    Some(known_files),
+                );
+                for r in &resolved_batch {
+                    let key = format!("{}|{}", r.from_file, r.import_source);
+                    batch_resolved.insert(key, r.resolved_path.clone());
+                }
+            }
+            file_symbols.insert(rel, sym);
+        }
+    }
+}
+
+/// Stage 9: Finalize build — persist metadata, write journal, return counts.
+fn finalize_build(conn: &Connection, root_dir: &str) -> (i64, i64) {
+    let node_count = conn
+        .query_row("SELECT COUNT(*) FROM nodes", [], |row| row.get::<_, i64>(0))
+        .unwrap_or(0);
+    let edge_count = conn
+        .query_row("SELECT COUNT(*) FROM edges", [], |row| row.get::<_, i64>(0))
+        .unwrap_or(0);
+
+    // Persist build metadata
+    let version = env!("CARGO_PKG_VERSION");
+    let meta_sql = "INSERT OR REPLACE INTO build_meta (key, value) VALUES (?, ?)";
+    if let Ok(mut stmt) = conn.prepare(meta_sql) {
+        let _ = stmt.execute(["engine", "native"]);
+        let _ = stmt.execute(["engine_version", version]);
+        let _ = stmt.execute(["codegraph_version", version]);
+        let _ = stmt.execute(["node_count", &node_count.to_string()]);
+        let _ = stmt.execute(["edge_count", &edge_count.to_string()]);
+        let _ = stmt.execute(["last_build", &now_ms().to_string()]);
+    }
+
+    // Write journal header
+    journal::write_journal_header(root_dir, now_ms());
+    (node_count, edge_count)
 }
 
 /// Check if engine/schema/version changed since last build (forces full rebuild).
@@ -681,7 +717,6 @@ fn build_insert_batches(
 /// that `file_hashes` is populated for subsequent incremental builds.
 fn build_file_hash_entries(
     changed: &[&change_detection::ChangedFile],
-    _root_dir: &str,
 ) -> Vec<crate::insert_nodes::FileHashEntry> {
     changed
         .iter()

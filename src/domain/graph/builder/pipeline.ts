@@ -263,6 +263,10 @@ interface NativeOrchestratorResult {
   changedCount?: number;
   removedCount?: number;
   isFullBuild?: boolean;
+  /** Full changed files including reverse-dep files — used by JS structure fallback. */
+  structureScope?: string[];
+  /** Whether the Rust pipeline handled the structure phase (small-incremental fast path). */
+  structureHandled?: boolean;
 }
 
 // ── Native orchestrator helpers ───────────────────────────────────────
@@ -295,13 +299,26 @@ function handoffWalAfterNativeBuild(ctx: PipelineContext): boolean {
   }
 }
 
-/** Reconstruct fileSymbols from the DB after a native orchestrator build. */
-function reconstructFileSymbolsFromDb(ctx: PipelineContext): Map<string, ExtractorOutput> {
-  const allFileRows = ctx.db
-    .prepare(
-      'SELECT file, name, kind, line, end_line as endLine FROM nodes WHERE file IS NOT NULL ORDER BY file, line',
-    )
-    .all() as {
+/**
+ * Reconstruct fileSymbols from the DB after a native orchestrator build.
+ * When `scopeFiles` is provided, only loads those files (for analysis-only).
+ * When omitted, loads all files (needed for structure rebuilds).
+ */
+function reconstructFileSymbolsFromDb(
+  ctx: PipelineContext,
+  scopeFiles?: string[],
+): Map<string, ExtractorOutput> {
+  let query =
+    'SELECT file, name, kind, line, end_line as endLine FROM nodes WHERE file IS NOT NULL';
+  const params: string[] = [];
+  if (scopeFiles && scopeFiles.length > 0) {
+    const placeholders = scopeFiles.map(() => '?').join(',');
+    query += ` AND file IN (${placeholders})`;
+    params.push(...scopeFiles);
+  }
+  query += ' ORDER BY file, line';
+
+  const rows = ctx.db.prepare(query).all(...params) as {
     file: string;
     name: string;
     kind: string;
@@ -309,9 +326,9 @@ function reconstructFileSymbolsFromDb(ctx: PipelineContext): Map<string, Extract
     endLine: number | null;
   }[];
 
-  const allFileSymbols = new Map<string, ExtractorOutput>();
-  for (const row of allFileRows) {
-    let entry = allFileSymbols.get(row.file);
+  const fileSymbols = new Map<string, ExtractorOutput>();
+  for (const row of rows) {
+    let entry = fileSymbols.get(row.file);
     if (!entry) {
       entry = {
         definitions: [],
@@ -321,7 +338,7 @@ function reconstructFileSymbolsFromDb(ctx: PipelineContext): Map<string, Extract
         exports: [],
         typeMap: new Map(),
       };
-      allFileSymbols.set(row.file, entry);
+      fileSymbols.set(row.file, entry);
     }
     entry.definitions.push({
       name: row.name,
@@ -345,7 +362,7 @@ function reconstructFileSymbolsFromDb(ctx: PipelineContext): Map<string, Extract
     )
     .all() as { file: string; cnt: number }[];
   for (const row of importCountRows) {
-    const entry = allFileSymbols.get(row.file);
+    const entry = fileSymbols.get(row.file);
     if (entry) entry.imports = new Array(row.cnt) as ExtractorOutput['imports'];
   }
 
@@ -362,17 +379,23 @@ function reconstructFileSymbolsFromDb(ctx: PipelineContext): Map<string, Extract
     )
     .all() as { file: string; cnt: number }[];
   for (const row of exportCountRows) {
-    const entry = allFileSymbols.get(row.file);
+    const entry = fileSymbols.get(row.file);
     if (entry) entry.exports = new Array(row.cnt) as ExtractorOutput['exports'];
   }
 
-  return allFileSymbols;
+  return fileSymbols;
 }
 
-/** Run JS buildStructure() after native orchestrator to fill directory nodes + contains edges. */
+/**
+ * Run JS buildStructure() after native orchestrator to fill directory nodes + contains edges.
+ * For full builds, passes changedFiles=null (full rebuild).
+ * For incremental builds, passes the changed file list to scope the update.
+ */
 async function runPostNativeStructure(
   ctx: PipelineContext,
   allFileSymbols: Map<string, ExtractorOutput>,
+  isFullBuild: boolean,
+  changedFiles: string[] | undefined,
 ): Promise<number> {
   const structureStart = performance.now();
   try {
@@ -396,7 +419,10 @@ async function runPostNativeStructure(
       lineCountMap.set(row.file, row.line_count);
     }
 
-    const changedFilePaths = null; // full rebuild — every directory gets nodes
+    // Full builds need null (rebuild everything). Incremental builds pass the
+    // changed file list so buildStructure only updates those files' metrics
+    // and contains edges — matching the JS pipeline's medium-incremental path.
+    const changedFilePaths = isFullBuild || !changedFiles?.length ? null : changedFiles;
     const { buildStructure: buildStructureFn } = (await import(
       '../../../features/structure.js'
     )) as {
@@ -417,7 +443,9 @@ async function runPostNativeStructure(
       directories,
       changedFilePaths,
     );
-    debug('Structure phase completed after native orchestrator');
+    debug(
+      `Structure phase completed after native orchestrator${changedFilePaths ? ` (${changedFilePaths.length} files)` : ' (full)'}`,
+    );
   } catch (err) {
     warn(`Structure phase failed after native build: ${toErrorMessage(err)}`);
   }
@@ -573,8 +601,10 @@ async function tryNativeOrchestrator(
     ctx.opts.complexity !== false ||
     ctx.opts.cfg !== false ||
     ctx.opts.dataflow !== false;
-  // Always run JS structure — native fast-path guard can't be reliably detected.
-  const needsStructure = true;
+  // Skip JS structure when the Rust pipeline's small-incremental fast path
+  // already handled it. For full builds and large incrementals where Rust
+  // skipped structure, we must run the JS fallback.
+  const needsStructure = !result.structureHandled;
 
   if (needsAnalysis || needsStructure) {
     if (!handoffWalAfterNativeBuild(ctx)) {
@@ -582,14 +612,23 @@ async function tryNativeOrchestrator(
       return formatNativeTimingResult(p, 0, analysisTiming);
     }
 
-    const allFileSymbols = reconstructFileSymbolsFromDb(ctx);
+    // When structure was handled by Rust, we only need changed files for
+    // analysis — no need to load the entire graph from DB. When structure
+    // was NOT handled, we need all files to build the complete directory tree.
+    const scopeFiles = needsStructure ? undefined : result.changedFiles;
+    const fileSymbols = reconstructFileSymbolsFromDb(ctx, scopeFiles);
 
     if (needsStructure) {
-      structurePatchMs = await runPostNativeStructure(ctx, allFileSymbols);
+      structurePatchMs = await runPostNativeStructure(
+        ctx,
+        fileSymbols,
+        !!result.isFullBuild,
+        result.structureScope ?? result.changedFiles,
+      );
     }
 
     if (needsAnalysis) {
-      analysisTiming = await runPostNativeAnalysis(ctx, allFileSymbols, result.changedFiles);
+      analysisTiming = await runPostNativeAnalysis(ctx, fileSymbols, result.changedFiles);
     }
   }
 
