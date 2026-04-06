@@ -32,6 +32,11 @@ if echo "$COMMAND" | grep -qE '\-\-amend' && ! echo "$COMMAND" | grep -qE '\s-m\
   exit 0
 fi
 
+# Skip heredoc-style messages (shell code only; can't validate pre-execution)
+if echo "$COMMAND" | grep -qE '\$\(cat <<'; then
+  exit 0
+fi
+
 # Extract the commit message from -m flag using node for robust parsing
 MSG=$(echo "$COMMAND" | node -e "
   let d='';
@@ -40,7 +45,7 @@ MSG=$(echo "$COMMAND" | node -e "
     const cmd = d;
     let msg = '';
     // Match -m \"...\" or -m '...'
-    const dq = cmd.match(/-m\s+\"([\\s\\S]*?)\"\s*(?:\)|$|&&|;|\s+-)/);
+    const dq = cmd.match(/-m\s+\"([\\s\\S]*?)\"(?:\s|$)/);
     if (dq) { msg = dq[1]; }
     else {
       const sq = cmd.match(/-m\s+'([^']*)'/);
