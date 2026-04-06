@@ -61,6 +61,7 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  * underlying issue is being fixed.
  *
  * Format: "version:metric-label" (must match the label passed to checkRegression).
+ * Resolution keys use: "version:resolution <lang> precision" or "version:resolution <lang> recall".
  *
  * - 3.9.0:1-file rebuild — native incremental path re-runs graph-wide phases
  *   (structureMs, AST, CFG, dataflow) on single-file rebuilds. Documented in
@@ -521,6 +522,9 @@ describe('Benchmark regression guard', () => {
      * Precision >5pp drop and recall >10pp drop are flagged.
      * Recall has a wider threshold because it's more volatile — adding new
      * expected edges to fixtures can temporarily lower recall.
+     *
+     * SYNC: These must match PRECISION_DROP_THRESHOLD / RECALL_DROP_THRESHOLD
+     * in scripts/update-benchmark-report.ts (the ::warning annotation side).
      */
     const PRECISION_DROP_PP = 0.05;
     const RECALL_DROP_PP = 0.1;
@@ -539,10 +543,9 @@ describe('Benchmark regression guard', () => {
       resolution?: Record<string, ResolutionLang>;
     }
 
-    const fullHistory = extractJsonData<BuildEntryWithResolution>(
-      path.join(BENCHMARKS_DIR, 'BUILD-BENCHMARKS.md'),
-      'BENCHMARK_DATA',
-    );
+    // buildHistory already parsed BUILD-BENCHMARKS.md with the same marker;
+    // widen the type instead of re-reading the file.
+    const fullHistory = buildHistory as BuildEntryWithResolution[];
 
     const resolutionPair = findLatestPair(fullHistory, (e) => e.resolution != null);
 
