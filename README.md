@@ -588,21 +588,19 @@ Codegraph also extracts symbols from common callback patterns: Commander `.comma
 
 Self-measured on every release via CI ([build benchmarks](generated/benchmarks/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/benchmarks/EMBEDDING-BENCHMARKS.md) | [query benchmarks](generated/benchmarks/QUERY-BENCHMARKS.md) | [incremental benchmarks](generated/benchmarks/INCREMENTAL-BENCHMARKS.md) | [resolution precision/recall](tests/benchmarks/resolution/)):
 
-*Last updated: v3.9.0 (2026-04-04)*
+*Last updated: v3.9.1 (2026-04-06)*
 
-| Metric | Latest |
-|---|---|
-| Build speed (native) | **12.8 ms/file** |
-| Build speed (WASM) | **13.1 ms/file** |
-| Query time (native) | **30ms** |
-| Query time (WASM) | **31ms** |
-| No-op rebuild (native) | **8ms** |
-| 1-file rebuild (native) | **562ms** |
-| Query: fn-deps | **2.1ms** |
-| Query: path | **2.2ms** |
-| ~50,000 files (est.) | **~640.0s build** |
-| Resolution precision | **100.0%** |
-| Resolution recall | **64.5%** |
+| Metric | Native | WASM |
+|---|---|---|
+| Build speed | **10.2 ms/file** | **13.7 ms/file** |
+| Query time | **23ms** | **36ms** |
+| No-op rebuild | **17ms** | **15ms** |
+| 1-file rebuild | **767ms** | **639ms** |
+| Query: fn-deps | **2.2ms** | **2.2ms** |
+| Query: path | **2.2ms** | **2.2ms** |
+| ~50,000 files (est.) | **~510.0s build** | **~685.0s build** |
+| Resolution precision | **100.0%** | — |
+| Resolution recall | **71.1%** | — |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 
