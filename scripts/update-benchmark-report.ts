@@ -438,7 +438,7 @@ if (fs.existsSync(readmePath)) {
 			}
 
 			// Per-mode breakdown across all languages
-			const allModes = {};
+			const allModes: Record<string, { expected: number; resolved: number }> = {};
 			for (const [, m] of langEntries) {
 				if (!m.byMode) continue;
 				for (const [mode, data] of Object.entries(m.byMode)) {
