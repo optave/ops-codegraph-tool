@@ -322,6 +322,8 @@ if (prev) {
 
 // ── Resolution regression detection ─────────────────────────────────────
 // Resolution metrics are "higher is better" — warn when they DROP.
+// SYNC: These must match PRECISION_DROP_PP / RECALL_DROP_PP in
+// tests/benchmarks/regression-guard.test.ts (the hard-fail gate side).
 const PRECISION_DROP_THRESHOLD = 0.05; // warn if precision drops >5pp
 const RECALL_DROP_THRESHOLD = 0.10;    // warn if recall drops >10pp
 
