@@ -59,6 +59,19 @@ describe('JavaScript parser', () => {
     expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'baz' }));
   });
 
+  it('extracts class instantiation as calls', () => {
+    const symbols = parseJS(`
+      const e = new CodegraphError("msg");
+      new Foo();
+      throw new ParseError("x");
+      const bar = new ns.Bar();
+    `);
+    expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'CodegraphError' }));
+    expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'Foo' }));
+    expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'ParseError' }));
+    expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'Bar', receiver: 'ns' }));
+  });
+
   it('handles re-exports from barrel files', () => {
     const symbols = parseJS(`export { default as Widget } from './Widget';`);
     expect(symbols.imports).toHaveLength(1);

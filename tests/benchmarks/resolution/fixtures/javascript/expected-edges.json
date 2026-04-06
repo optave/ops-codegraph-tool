@@ -107,6 +107,27 @@
       "kind": "calls",
       "mode": "receiver-typed",
       "notes": "svc.createUser() — receiver typed via new UserService()"
+    },
+    {
+      "source": { "name": "directInstantiation", "file": "index.js" },
+      "target": { "name": "UserService", "file": "service.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "new UserService() — class instantiation tracked as consumption"
+    },
+    {
+      "source": { "name": "UserService.constructor", "file": "service.js" },
+      "target": { "name": "Logger", "file": "logger.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "new Logger('UserService') — class instantiation in constructor"
+    },
+    {
+      "source": { "name": "buildService", "file": "service.js" },
+      "target": { "name": "UserService", "file": "service.js" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "new UserService() — class instantiation tracked as consumption"
     }
   ]
 }
