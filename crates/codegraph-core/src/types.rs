@@ -292,7 +292,6 @@ pub struct TypeMapEntry {
     pub type_name: String,
     /// Confidence: 0.9 = type annotation, 1.0 = constructor, 0.7 = factory.
     /// Used to resolve conflicts when the same name appears multiple times.
-    #[napi(default = 0.9)]
     pub confidence: f64,
 }
 

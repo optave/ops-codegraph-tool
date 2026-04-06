@@ -58,7 +58,6 @@ pub struct TypeMapInput {
     #[napi(js_name = "typeName")]
     pub type_name: String,
     /// Confidence: 0.9 = type annotation, 1.0 = constructor, 0.7 = factory.
-    #[napi(default = 0.9)]
     pub confidence: f64,
 }
 
