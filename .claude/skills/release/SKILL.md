@@ -51,7 +51,7 @@ Scan **every commit message** between the last tag and HEAD. Apply these rules i
 
 **Internal scopes — treat as patch, not minor:** The following scopes represent internal developer tooling and infrastructure, not user-facing features. A `feat:` commit with one of these scopes counts as a **patch**, not a minor bump:
 
-`architect`, `bench`, `ci`, `claude`, `deps-audit`, `dogfood`, `hooks`, `housekeep`, `release`, `skills`, `sweep`, `test-health`, `titan`
+`architect`, `bench`, `ci`, `claude`, `deps-audit`, `dogfood`, `hooks`, `housekeep`, `release`, `security`, `skills`, `sweep`, `test-health`, `titan`
 
 For example, `feat(titan): first full pipeline run` is internal tooling — patch. But `feat(cfg): control-flow graph generation` is user-facing — minor.
 
