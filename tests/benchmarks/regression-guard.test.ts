@@ -523,7 +523,7 @@ describe('Benchmark regression guard', () => {
      * expected edges to fixtures can temporarily lower recall.
      */
     const PRECISION_DROP_PP = 0.05;
-    const RECALL_DROP_PP = 0.10;
+    const RECALL_DROP_PP = 0.1;
 
     interface ResolutionLang {
       precision: number;
@@ -581,9 +581,7 @@ describe('Benchmark regression guard', () => {
         }
 
         if (regressions.length > 0) {
-          expect.fail(
-            `Resolution precision/recall regressions:\n${regressions.join('\n')}`,
-          );
+          expect.fail(`Resolution precision/recall regressions:\n${regressions.join('\n')}`);
         }
       });
     }
