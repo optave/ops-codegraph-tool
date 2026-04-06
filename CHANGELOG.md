@@ -2,6 +2,52 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.9.1](https://github.com/optave/ops-codegraph-tool/compare/v3.9.0...v3.9.1) (2026-04-05)
+
+**Dead code accuracy, native query performance, and supply-chain hardening.** This release significantly improves dead code detection — class instantiations via `new`, type-only imports, barrel re-exports, and same-file constants are now correctly tracked as consumption. The native Rust engine gains a composite `fnDeps` query that runs dependency resolution in a single cross-language call, and a critical 1238% incremental rebuild regression from v3.9.0 is fixed. WASM grammar validation and npm audit harden the build pipeline. CLI reliability improves with a fix for hangs in git worktree environments.
+
+### Bug Fixes
+
+* track class instantiation (`new`) as consumption for dead code detection ([#861](https://github.com/optave/ops-codegraph-tool/pull/861))
+* resolve type-only imports for dead code analysis ([#862](https://github.com/optave/ops-codegraph-tool/pull/862))
+* trace barrel re-exports in role classification ([#860](https://github.com/optave/ops-codegraph-tool/pull/860))
+* recognize same-file constant consumption in dead code detector ([#859](https://github.com/optave/ops-codegraph-tool/pull/859))
+* resolve codegraph CLI hangs in git worktrees ([#863](https://github.com/optave/ops-codegraph-tool/pull/863))
+* use shared `shouldIgnore`/`isSupportedFile` in watcher ([#864](https://github.com/optave/ops-codegraph-tool/pull/864))
+* resolve barrel resolution quality and cycle regression ([#848](https://github.com/optave/ops-codegraph-tool/pull/848))
+* show both engines side-by-side in README benchmark table ([#826](https://github.com/optave/ops-codegraph-tool/pull/826))
+* release config script validation and broken postbump ([#825](https://github.com/optave/ops-codegraph-tool/pull/825))
+* **native:** lower version gate for native orchestrator ([#867](https://github.com/optave/ops-codegraph-tool/pull/867))
+* **native:** correct incremental purge, scoped deletion, and barrel resolution ([#865](https://github.com/optave/ops-codegraph-tool/pull/865))
+* **ci:** retry npm publish on transient registry errors ([#833](https://github.com/optave/ops-codegraph-tool/pull/833))
+* **ci:** upgrade publish job to Node 24 for OIDC trusted publishing ([#850](https://github.com/optave/ops-codegraph-tool/pull/850))
+* **ci:** add npm auth debug step and fix publish retry logic ([#835](https://github.com/optave/ops-codegraph-tool/pull/835))
+* **perf:** wire engine selection through openRepo to fix query benchmarks ([#869](https://github.com/optave/ops-codegraph-tool/pull/869))
+* **bench:** attribute unified walk time to per-phase timers ([#858](https://github.com/optave/ops-codegraph-tool/pull/858))
+
+### Performance
+
+* native Rust fnDeps composite query ([#870](https://github.com/optave/ops-codegraph-tool/pull/870))
+* **native:** fix 1238% incremental rebuild regression ([#856](https://github.com/optave/ops-codegraph-tool/pull/856))
+
+### Refactors
+
+* **native:** decompose core Rust algorithms and pipeline ([#845](https://github.com/optave/ops-codegraph-tool/pull/845))
+* **native:** extract constants and shared barrel resolution ([#842](https://github.com/optave/ops-codegraph-tool/pull/842))
+* **native:** flatten and decompose extractor match arms ([#844](https://github.com/optave/ops-codegraph-tool/pull/844))
+* DRY shared abstractions in TS features ([#843](https://github.com/optave/ops-codegraph-tool/pull/843))
+* decompose TS complexity and build pipeline ([#846](https://github.com/optave/ops-codegraph-tool/pull/846))
+* improve TS code quality across modules ([#847](https://github.com/optave/ops-codegraph-tool/pull/847))
+
+### Chores
+
+* **security:** WASM grammar validation and npm audit CI ([#834](https://github.com/optave/ops-codegraph-tool/pull/834))
+* **deps:** bump @modelcontextprotocol/sdk from 1.28.0 to 1.29.0 ([#829](https://github.com/optave/ops-codegraph-tool/pull/829))
+* **deps-dev:** bump @huggingface/transformers from 3.8.1 to 4.0.1 ([#831](https://github.com/optave/ops-codegraph-tool/pull/831))
+* **deps-dev:** bump @biomejs/biome from 2.4.9 to 2.4.10 ([#828](https://github.com/optave/ops-codegraph-tool/pull/828))
+* **deps-dev:** bump tree-sitter-gleam ([#830](https://github.com/optave/ops-codegraph-tool/pull/830))
+* **deps-dev:** bump tree-sitter-erlang from 0.0.0 to 0.15 ([#827](https://github.com/optave/ops-codegraph-tool/pull/827))
+
 ## [3.9.0](https://github.com/optave/ops-codegraph-tool/compare/v3.8.1...v3.9.0) (2026-04-04)
 
 **Engine parity hardening and cross-database queries.** This release closes the remaining native/WASM divergences — node counts, edge counts, complexity metrics, and import resolution now match across engines. A new `--db` flag on `branch-compare` and `info` lets you point at any `.codegraph/graph.db`, enabling cross-repo comparisons without rebuilding. WASM grammar loading is now lazy during incremental rebuilds, cutting rebuild times for large codebases. Windows users get a fix for `ENOENT` failures during auto-install.
