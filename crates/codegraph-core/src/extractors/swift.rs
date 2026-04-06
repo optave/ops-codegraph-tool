@@ -38,6 +38,7 @@ fn match_swift_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _
                     symbols.type_map.push(TypeMapEntry {
                         name: name.to_string(),
                         type_name: type_name.to_string(),
+                        confidence: 0.9,
                     });
                 }
             }

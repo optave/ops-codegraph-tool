@@ -39,6 +39,7 @@ fn match_c_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dept
                                     symbols.type_map.push(TypeMapEntry {
                                         name: final_name,
                                         type_name: type_name.to_string(),
+                                        confidence: 0.9,
                                     });
                                 }
                             }
@@ -55,6 +56,7 @@ fn match_c_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dept
                         symbols.type_map.push(TypeMapEntry {
                             name,
                             type_name: node_text(&type_node, source).to_string(),
+                            confidence: 0.9,
                         });
                     }
                 }
