@@ -31,6 +31,7 @@ fn match_scala_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _
                     symbols.type_map.push(TypeMapEntry {
                         name: node_text(&pat, source).to_string(),
                         type_name: node_text(&type_node, source).to_string(),
+                        confidence: 0.9,
                     });
                 }
             }
@@ -43,6 +44,7 @@ fn match_scala_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _
                     symbols.type_map.push(TypeMapEntry {
                         name: node_text(&name_node, source).to_string(),
                         type_name: node_text(&type_node, source).to_string(),
+                        confidence: 0.9,
                     });
                 }
             }

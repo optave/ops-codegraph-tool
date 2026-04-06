@@ -877,6 +877,7 @@ fn build_and_insert_call_edges(
             .map(|t| TypeMapInput {
                 name: t.name.clone(),
                 type_name: t.type_name.clone(),
+                confidence: t.confidence,
             })
             .collect();
 

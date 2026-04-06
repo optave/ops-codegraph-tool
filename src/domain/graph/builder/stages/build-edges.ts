@@ -342,7 +342,7 @@ function buildCallEdgesNative(
     if (!fileNodeRow) continue;
 
     const importedNames = buildImportedNamesForNative(ctx, relPath, symbols, rootDir);
-    const typeMap: Array<{ name: string; typeName: string; confidence: number }> =
+    const typeMapRaw: Array<{ name: string; typeName: string; confidence: number }> =
       symbols.typeMap instanceof Map
         ? [...symbols.typeMap.entries()].map(([name, entry]) => ({
             name,
@@ -352,6 +352,17 @@ function buildCallEdgesNative(
         : Array.isArray(symbols.typeMap)
           ? (symbols.typeMap as Array<{ name: string; typeName: string; confidence: number }>)
           : [];
+    // Deduplicate: keep highest-confidence entry per name (first-wins on tie),
+    // matching JS setTypeMapEntry semantics.  This ensures parity even when
+    // the native edge builder's HashMap would otherwise use last-wins.
+    const typeMapDedup = new Map<string, { name: string; typeName: string; confidence: number }>();
+    for (const entry of typeMapRaw) {
+      const existing = typeMapDedup.get(entry.name);
+      if (!existing || entry.confidence > existing.confidence) {
+        typeMapDedup.set(entry.name, entry);
+      }
+    }
+    const typeMap = [...typeMapDedup.values()];
     nativeFiles.push({
       file: relPath,
       fileNodeId: fileNodeRow.id,

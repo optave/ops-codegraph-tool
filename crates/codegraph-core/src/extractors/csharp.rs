@@ -428,6 +428,7 @@ fn match_csharp_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, 
                                             symbols.type_map.push(TypeMapEntry {
                                                 name: node_text(&name_node, source).to_string(),
                                                 type_name: type_name.to_string(),
+                                                confidence: 0.9,
                                             });
                                         }
                                     }
@@ -445,6 +446,7 @@ fn match_csharp_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, 
                         symbols.type_map.push(TypeMapEntry {
                             name: node_text(&name_node, source).to_string(),
                             type_name: type_name.to_string(),
+                            confidence: 0.9,
                         });
                     }
                 }

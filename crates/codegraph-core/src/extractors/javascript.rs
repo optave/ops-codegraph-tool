@@ -58,23 +58,24 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
             if let Some(name_n) = node.child_by_field_name("name") {
                 if name_n.kind() == "identifier" {
                     let var_name = node_text(&name_n, source);
-                    // Type annotation takes priority
+                    // Type annotation: confidence 0.9
                     if let Some(type_anno) = find_child(node, "type_annotation") {
                         if let Some(type_name) = extract_simple_type_name(&type_anno, source) {
                             symbols.type_map.push(TypeMapEntry {
                                 name: var_name.to_string(),
                                 type_name: type_name.to_string(),
+                                confidence: 0.9,
                             });
-                            return; // Skip new_expression check — annotation wins
                         }
                     }
-                    // Fall back to new expression inference
+                    // Constructor: confidence 1.0 (overrides annotation in edge builder)
                     if let Some(value_n) = node.child_by_field_name("value") {
                         if value_n.kind() == "new_expression" {
                             if let Some(type_name) = extract_new_expr_type_name(&value_n, source) {
                                 symbols.type_map.push(TypeMapEntry {
                                     name: var_name.to_string(),
                                     type_name: type_name.to_string(),
+                                    confidence: 1.0,
                                 });
                             }
                         }
@@ -93,6 +94,7 @@ fn match_js_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                             symbols.type_map.push(TypeMapEntry {
                                 name: node_text(&name_node, source).to_string(),
                                 type_name: type_name.to_string(),
+                                confidence: 0.9,
                             });
                         }
                     }

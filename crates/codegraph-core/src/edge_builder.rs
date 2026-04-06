@@ -57,6 +57,9 @@ pub struct TypeMapInput {
     pub name: String,
     #[napi(js_name = "typeName")]
     pub type_name: String,
+    /// Confidence: 0.9 = type annotation, 1.0 = constructor, 0.7 = factory.
+    #[napi(default = 0.9)]
+    pub confidence: f64,
 }
 
 #[napi(object)]
@@ -153,10 +156,22 @@ fn process_file<'a>(
         .map(|im| (im.name.as_str(), im.file.as_str()))
         .collect();
 
-    let type_map: HashMap<&str, &str> = file_input
-        .type_map.iter()
-        .map(|tm| (tm.name.as_str(), tm.type_name.as_str()))
-        .collect();
+    // Build type map keeping the highest-confidence entry per name
+    // (first-wins on tie), matching the JS setTypeMapEntry behaviour.
+    let mut type_map: HashMap<&str, (&str, f64)> = HashMap::new();
+    for tm in &file_input.type_map {
+        let entry = type_map.entry(tm.name.as_str());
+        match entry {
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert((tm.type_name.as_str(), tm.confidence));
+            }
+            std::collections::hash_map::Entry::Occupied(mut e) => {
+                if tm.confidence > e.get().1 {
+                    e.insert((tm.type_name.as_str(), tm.confidence));
+                }
+            }
+        }
+    }
 
     let file_nodes: Vec<&NodeInfo> = all_nodes.iter().filter(|n| n.file == *rel_path).collect();
     let defs_with_ids: Vec<DefWithId> = file_input.definitions.iter().map(|d| {
@@ -210,7 +225,7 @@ fn resolve_call_targets<'a>(
     call: &CallInfo,
     rel_path: &str,
     imported_from: Option<&str>,
-    type_map: &HashMap<&str, &str>,
+    type_map: &HashMap<&str, (&str, f64)>,
 ) -> Vec<&'a NodeInfo> {
     // 1. Import-aware resolution
     if let Some(imp_file) = imported_from {
@@ -236,7 +251,7 @@ fn resolve_call_targets<'a>(
 
     // 4. Type-aware resolution via receiver → type map
     if let Some(ref receiver) = call.receiver {
-        if let Some(type_name) = type_map.get(receiver.as_str()) {
+        if let Some(&(type_name, _conf)) = type_map.get(receiver.as_str()) {
             let qualified = format!("{}.{}", type_name, call.name);
             let typed: Vec<&NodeInfo> = ctx.nodes_by_name
                 .get(qualified.as_str())
@@ -296,7 +311,7 @@ fn emit_call_edges(
 /// Emit a receiver edge from caller to the receiver's type node (if applicable).
 fn emit_receiver_edge(
     ctx: &EdgeContext, call: &CallInfo, caller_id: u32, rel_path: &str,
-    type_map: &HashMap<&str, &str>,
+    type_map: &HashMap<&str, (&str, f64)>,
     seen_edges: &mut HashSet<u64>, edges: &mut Vec<ComputedEdge>,
 ) {
     let Some(ref receiver) = call.receiver else { return };
@@ -304,7 +319,7 @@ fn emit_receiver_edge(
         || receiver == "this" || receiver == "self" || receiver == "super"
     { return; }
 
-    let effective_receiver = type_map.get(receiver.as_str()).copied().unwrap_or(receiver.as_str());
+    let effective_receiver = type_map.get(receiver.as_str()).map(|&(t, _)| t).unwrap_or(receiver.as_str());
     let type_resolved = effective_receiver != receiver.as_str();
 
     let samefile = ctx.nodes_by_name_and_file

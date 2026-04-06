@@ -330,6 +330,7 @@ fn collect_go_typed_identifiers(node: &Node, source: &[u8], type_map: &mut Vec<T
             type_map.push(TypeMapEntry {
                 name: node_text(&child, source).to_string(),
                 type_name: type_name.to_string(),
+                confidence: 0.9,
             });
         }
     }
