@@ -82,12 +82,17 @@ const THRESHOLDS: Record<string, { precision: number; recall: number }> = {
   rust: { precision: 0.6, recall: 0.2 },
   cpp: { precision: 0.6, recall: 0.2 },
   swift: { precision: 0.5, recall: 0.15 },
+  // TODO(#872): raise haskell thresholds once call resolution lands
   haskell: { precision: 0.0, recall: 0.0 },
+  // TODO(#873): raise lua thresholds once call resolution lands
   lua: { precision: 0.0, recall: 0.0 },
+  // TODO(#874): raise ocaml thresholds once call resolution lands
   ocaml: { precision: 0.0, recall: 0.0 },
   // Minimal — call resolution not yet implemented or grammar unavailable
+  // TODO(#875): raise scala thresholds once call resolution lands
   scala: { precision: 0.0, recall: 0.0 },
   php: { precision: 0.6, recall: 0.2 },
+  // TODO: raise thresholds below once call resolution is implemented for each language
   elixir: { precision: 0.0, recall: 0.0 },
   dart: { precision: 0.0, recall: 0.0 },
   zig: { precision: 0.0, recall: 0.0 },
@@ -323,10 +328,10 @@ describe('Call Resolution Precision/Recall', () => {
 
       test('builds graph successfully', () => {
         expect(resolvedEdges).toBeDefined();
+        expect(Array.isArray(resolvedEdges)).toBe(true);
         // Some languages may have 0 resolved call edges if resolution isn't
         // implemented yet — that's okay, the precision/recall tests will
         // catch it at the appropriate threshold level.
-        expect(resolvedEdges.length).toBeGreaterThanOrEqual(0);
       });
 
       test('expected edges manifest is non-empty', () => {
