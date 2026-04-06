@@ -275,7 +275,7 @@ interface NativeOrchestratorResult {
 function shouldSkipNativeOrchestrator(ctx: PipelineContext): string | null {
   if (process.env.CODEGRAPH_FORCE_JS_PIPELINE === '1') return 'CODEGRAPH_FORCE_JS_PIPELINE=1';
   if (ctx.forceFullRebuild) return 'forceFullRebuild';
-  const orchestratorBuggy = !!ctx.engineVersion && semverCompare(ctx.engineVersion, '3.9.0') <= 0;
+  const orchestratorBuggy = !!ctx.engineVersion && semverCompare(ctx.engineVersion, '3.10.0') < 0;
   if (orchestratorBuggy) return `buggy addon ${ctx.engineVersion}`;
   if (ctx.engineName !== 'native') return `engine=${ctx.engineName}`;
   return null;

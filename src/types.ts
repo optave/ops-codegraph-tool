@@ -1913,6 +1913,7 @@ export interface NativeAddon {
     fileNodeIds: unknown[],
     barrelFiles: string[],
     rootDir: string,
+    symbolNodes?: Array<{ name: string; file: string; nodeId: number }>,
   ): unknown[];
   engineVersion(): string;
   analyzeComplexity(
