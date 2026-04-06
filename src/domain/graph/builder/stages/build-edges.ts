@@ -353,8 +353,10 @@ function buildCallEdgesNative(
           ? (symbols.typeMap as Array<{ name: string; typeName: string; confidence: number }>)
           : [];
     // Deduplicate: keep highest-confidence entry per name (first-wins on tie),
-    // matching JS setTypeMapEntry semantics.  This ensures parity even when
-    // the native edge builder's HashMap would otherwise use last-wins.
+    // matching JS setTypeMapEntry semantics.  The Map branch is already
+    // deduped by setTypeMapEntry — this loop is only needed for the Array
+    // branch (pre-rebuilt native addon) but runs unconditionally as
+    // belt-and-suspenders since it's a cheap O(n) pass.
     const typeMapDedup = new Map<string, { name: string; typeName: string; confidence: number }>();
     for (const entry of typeMapRaw) {
       const existing = typeMapDedup.get(entry.name);
