@@ -125,7 +125,7 @@ const dbPath = path.join(root, '.codegraph', 'graph.db');
 
 const { MODELS } = await import(srcImport(srcDir, 'domain/search/index.js'));
 
-const TIMEOUT_MS = 1_200_000; // 20 min — model download + embedding can be slow on CI
+const TIMEOUT_MS = 1_800_000; // 30 min — CPU-only CI runners need ~20 min per model for 6k+ symbols
 const hasHfToken = !!process.env.HF_TOKEN;
 const modelKeys = Object.keys(MODELS);
 const results = {};
