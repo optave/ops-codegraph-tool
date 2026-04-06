@@ -58,13 +58,23 @@ You are the **orchestrator** for the full Titan Paradigm pipeline. Your job is t
    ```
    If the check fails, log a warning but do not stop the pipeline — clock skew or immediate completion of short phases can cause this.
 
-4. **Sync with main** (once, before any sub-agent runs):
+4. **Install latest codegraph** (once, before any sub-agent runs):
+   ```bash
+   npm install -g @optave/codegraph@latest
+   ```
+   Log the installed version (skip if codegraph is not available):
+   ```bash
+   codegraph --version || true
+   ```
+   If the install fails or `codegraph` is not found, warn the user but continue — the sub-agents may still work if a project-local version is available.
+
+5. **Sync with main** (once, before any sub-agent runs):
    ```bash
    git fetch origin main && git merge origin/main --no-edit
    ```
    If merge conflict → stop: "Merge conflict after syncing with main. Resolve conflicts and re-run `/titan-run`."
 
-5. **Print plan:**
+6. **Print plan:**
    ```
    Titan Pipeline — End-to-End Run
    Target: <path>
