@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.9.0 | **Status:** Active development | **Updated:** 2026-04-04
+> **Current version:** 3.10.0 | **Status:** Active development | **Updated:** 2026-04-05
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across fourteen phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -23,7 +23,7 @@ Codegraph is a strong local-first code graph CLI. This roadmap describes planned
 | [**7**](#phase-7--expanded-language-support) | Expanded Language Support | Parser abstraction layer, 23 new languages in 4 batches (11 → 34), dual-engine support — all 4 batches shipped across v3.6.0–v3.8.0 | **Complete** (v3.8.0) |
 | [**8**](#phase-8--analysis-depth) | Analysis Depth | TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis, enhanced dynamic dispatch, barrel file resolution, precision/recall CI gates | Planned |
 | [**9**](#phase-9--runtime--extensibility) | Runtime & Extensibility | Event-driven pipeline, unified engine strategy, subgraph export filtering, transitive confidence, query caching, configuration profiles, pagination, plugin system | Planned |
-| [**10**](#phase-10--quality-security--technical-debt) | Quality, Security & Technical Debt | Supply-chain security, test quality gates, architectural debt cleanup | Planned |
+| [**10**](#phase-10--quality-security--technical-debt) | Quality, Security & Technical Debt | Supply-chain security, test quality gates, architectural debt cleanup | In Progress |
 | [**11**](#phase-11--intelligent-embeddings) | Intelligent Embeddings | LLM-generated descriptions, enhanced embeddings, build-time semantic metadata, module summaries | Planned |
 | [**12**](#phase-12--natural-language-queries) | Natural Language Queries | `ask` command, conversational sessions, LLM-narrated graph queries, onboarding tools | Planned |
 | [**13**](#phase-13--github-integration--ci) | GitHub Integration & CI | Reusable GitHub Action, LLM-enhanced PR review, visual impact graphs, SARIF output | Planned |
@@ -1685,9 +1685,14 @@ Commander supports shell completion but it's not implemented. Basic UX gap for a
 **Deliverables:**
 
 1. **CI `npm audit`** -- add `npm audit --omit=dev` step to CI pipeline; fail on critical/high vulnerabilities
+   - ✅ npm audit CI step added (v3.10.0, [#834](https://github.com/optave/ops-codegraph-tool/pull/834))
+   - ✅ WASM grammar validation — build-time integrity checks for tree-sitter grammar files (v3.10.0, [#834](https://github.com/optave/ops-codegraph-tool/pull/834))
 2. **SBOM generation** -- produce CycloneDX or SPDX SBOM on each release via `@cyclonedx/cyclonedx-npm` or similar
+   - 🔲 Not yet started
 3. **SLSA provenance** -- enable SLSA Level 2+ build provenance using `actions/attest-build-provenance` in the publish workflow; attach attestation to npm packages
+   - 🔲 Not yet started
 4. **Security audit log** -- maintain `docs/security/AUDIT_LOG.md` documenting past audits, dependency reviews, and remediation history
+   - 🔲 Not yet started
 
 **Affected files:** `.github/workflows/ci.yml`, `.github/workflows/publish.yml`, `docs/security/`
 

@@ -818,7 +818,7 @@ See **[ROADMAP.md](docs/roadmap/ROADMAP.md)** for the full development roadmap a
 9. ~~**Expanded Language Support**~~ — **Complete** (v3.8.0) — 23 new languages in 4 batches (11 → 34), dual-engine WASM + Rust support for all
 10. **Analysis Depth** — TypeScript-native resolution, inter-procedural type propagation, field-based points-to analysis
 11. **Runtime & Extensibility** — event-driven pipeline, plugin system, query caching, pagination
-12. **Quality, Security & Technical Debt** — supply-chain security (SBOM, SLSA), CI coverage gates, timer cleanup, tech debt kill list
+12. **Quality, Security & Technical Debt** — **In Progress** — supply-chain security (SBOM, SLSA), CI coverage gates, timer cleanup, tech debt kill list
 13. **Intelligent Embeddings** — LLM-generated descriptions, enhanced embeddings, module summaries
 14. **Natural Language Queries** — `codegraph ask` command, conversational sessions
 15. **GitHub Integration & CI** — reusable GitHub Action, LLM-enhanced PR review, SARIF output
