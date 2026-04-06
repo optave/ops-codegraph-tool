@@ -114,6 +114,34 @@
       "kind": "calls",
       "mode": "receiver-typed",
       "notes": "svc.getUser() — typed via createService() return type"
+    },
+    {
+      "source": { "name": "withExplicitType", "file": "index.ts" },
+      "target": { "name": "JsonSerializer", "file": "serializer.ts" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "new JsonSerializer() — class instantiation tracked as consumption"
+    },
+    {
+      "source": { "name": "createRepository", "file": "repository.ts" },
+      "target": { "name": "UserRepository", "file": "repository.ts" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "new UserRepository() — class instantiation tracked as consumption"
+    },
+    {
+      "source": { "name": "createService", "file": "service.ts" },
+      "target": { "name": "JsonSerializer", "file": "serializer.ts" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "new JsonSerializer() — class instantiation tracked as consumption"
+    },
+    {
+      "source": { "name": "createService", "file": "service.ts" },
+      "target": { "name": "UserService", "file": "service.ts" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "new UserService(repo, serializer) — class instantiation tracked as consumption"
     }
   ]
 }

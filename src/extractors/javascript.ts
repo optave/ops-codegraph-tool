@@ -282,6 +282,14 @@ function dispatchQueryMatch(
   } else if (c.callsub_node) {
     const callInfo = extractCallInfo(c.callsub_fn!, c.callsub_node);
     if (callInfo) calls.push(callInfo);
+  } else if (c.newfn_node) {
+    calls.push({
+      name: c.newfn_name!.text,
+      line: c.newfn_node.startPosition.row + 1,
+    });
+  } else if (c.newmem_node) {
+    const callInfo = extractCallInfo(c.newmem_fn!, c.newmem_node);
+    if (callInfo) calls.push(callInfo);
   } else if (c.assign_node) {
     handleCommonJSAssignment(c.assign_left!, c.assign_right!, c.assign_node, imports);
   }
@@ -520,6 +528,9 @@ function walkJavaScriptNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
     case 'call_expression':
       handleCallExpr(node, ctx);
       break;
+    case 'new_expression':
+      handleNewExpr(node, ctx);
+      break;
     case 'import_statement':
       handleImportStmt(node, ctx);
       break;
@@ -704,6 +715,17 @@ function handleCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
       const cbDef = extractCallbackDefinition(node, fn);
       if (cbDef) ctx.definitions.push(cbDef);
     }
+  }
+}
+
+function handleNewExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const ctor = node.childForFieldName('constructor') || node.child(1);
+  if (!ctor) return;
+  if (ctor.type === 'identifier') {
+    ctx.calls.push({ name: ctor.text, line: node.startPosition.row + 1 });
+  } else if (ctor.type === 'member_expression') {
+    const callInfo = extractCallInfo(ctor, node);
+    if (callInfo) ctx.calls.push(callInfo);
   }
 }
 

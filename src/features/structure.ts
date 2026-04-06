@@ -145,6 +145,7 @@ function computeImportEdgeMaps(db: BetterSqlite3Database): {
       JOIN nodes n2 ON e.target_id = n2.id
       WHERE e.kind IN ('imports', 'imports-type')
         AND n1.file != n2.file
+        AND n2.kind = 'file'
     `)
     .all() as ImportEdge[];
 
@@ -534,7 +535,7 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
         COALESCE(fo.cnt, 0) AS fan_out
       FROM nodes n
       LEFT JOIN (
-        SELECT target_id, COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY target_id
+        SELECT target_id, COUNT(*) AS cnt FROM edges WHERE kind IN ('calls', 'imports-type') GROUP BY target_id
       ) fi ON n.id = fi.target_id
       LEFT JOIN (
         SELECT source_id, COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY source_id
@@ -560,7 +561,7 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
         FROM edges e
         JOIN nodes caller ON e.source_id = caller.id
         JOIN nodes target ON e.target_id = target.id
-        WHERE e.kind = 'calls' AND caller.file != target.file`,
+        WHERE e.kind IN ('calls', 'imports-type') AND caller.file != target.file`,
         )
         .all() as { target_id: number }[]
     ).map((r) => r.target_id),
@@ -603,7 +604,7 @@ function classifyNodeRolesFull(db: BetterSqlite3Database, emptySummary: RoleSumm
       `SELECT e.target_id, COUNT(*) AS cnt
       FROM edges e
       JOIN nodes caller ON e.source_id = caller.id
-      WHERE e.kind = 'calls'
+      WHERE e.kind IN ('calls', 'imports-type')
         ${testFilterSQL('caller.file')}
       GROUP BY e.target_id`,
     )
@@ -668,7 +669,7 @@ function classifyNodeRolesIncremental(
       `SELECT DISTINCT n2.file FROM edges e
        JOIN nodes n1 ON (e.source_id = n1.id OR e.target_id = n1.id)
        JOIN nodes n2 ON (e.source_id = n2.id OR e.target_id = n2.id)
-       WHERE e.kind IN ('calls', 'reexports')
+       WHERE e.kind IN ('calls', 'imports-type', 'reexports')
          AND n1.file IN (${seedPlaceholders})
          AND n2.file NOT IN (${seedPlaceholders})
          AND n2.kind NOT IN ('file', 'directory')`,
@@ -680,7 +681,9 @@ function classifyNodeRolesIncremental(
   // 1. Compute global medians from edge distribution (fast: scans edge index, no node join)
   const fanInDist = (
     db
-      .prepare(`SELECT COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY target_id`)
+      .prepare(
+        `SELECT COUNT(*) AS cnt FROM edges WHERE kind IN ('calls', 'imports-type') GROUP BY target_id`,
+      )
       .all() as { cnt: number }[]
   )
     .map((r) => r.cnt)
@@ -708,7 +711,7 @@ function classifyNodeRolesIncremental(
   const rows = db
     .prepare(
       `SELECT n.id, n.name, n.kind, n.file,
-        (SELECT COUNT(*) FROM edges WHERE kind = 'calls' AND target_id = n.id) AS fan_in,
+        (SELECT COUNT(*) FROM edges WHERE kind IN ('calls', 'imports-type') AND target_id = n.id) AS fan_in,
         (SELECT COUNT(*) FROM edges WHERE kind = 'calls' AND source_id = n.id) AS fan_out
       FROM nodes n
       WHERE n.kind NOT IN ('file', 'directory', 'parameter', 'property')
@@ -734,7 +737,7 @@ function classifyNodeRolesIncremental(
           FROM edges e
           JOIN nodes caller ON e.source_id = caller.id
           JOIN nodes target ON e.target_id = target.id
-          WHERE e.kind = 'calls' AND caller.file != target.file
+          WHERE e.kind IN ('calls', 'imports-type') AND caller.file != target.file
             AND target.file IN (${placeholders})`,
         )
         .all(...allAffectedFiles) as { target_id: number }[]
@@ -780,7 +783,7 @@ function classifyNodeRolesIncremental(
       FROM edges e
       JOIN nodes caller ON e.source_id = caller.id
       JOIN nodes target ON e.target_id = target.id
-      WHERE e.kind = 'calls'
+      WHERE e.kind IN ('calls', 'imports-type')
         AND target.file IN (${placeholders})
         ${testFilterSQL('caller.file')}
       GROUP BY e.target_id`,

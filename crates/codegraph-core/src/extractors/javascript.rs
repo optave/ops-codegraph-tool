@@ -113,6 +113,7 @@ fn match_js_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: 
         "enum_declaration" => handle_enum_decl(node, source, symbols),
         "lexical_declaration" | "variable_declaration" => handle_var_decl(node, source, symbols),
         "call_expression" => handle_call_expr(node, source, symbols),
+        "new_expression" => handle_new_expr(node, source, symbols),
         "import_statement" => handle_import_stmt(node, source, symbols),
         "export_statement" => handle_export_stmt(node, source, symbols),
         "expression_statement" => handle_expr_stmt(node, source, symbols),
@@ -308,6 +309,28 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
     if let Some(cb_def) = extract_callback_definition(node, source) {
         symbols.definitions.push(cb_def);
+    }
+}
+
+fn handle_new_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    let ctor = node.child_by_field_name("constructor")
+        .or_else(|| node.child(1));
+    let Some(ctor) = ctor else { return };
+    match ctor.kind() {
+        "identifier" => {
+            symbols.calls.push(Call {
+                name: node_text(&ctor, source).to_string(),
+                line: start_line(node),
+                dynamic: None,
+                receiver: None,
+            });
+        }
+        "member_expression" => {
+            if let Some(call_info) = extract_call_info(&ctor, node, source) {
+                symbols.calls.push(call_info);
+            }
+        }
+        _ => {}
     }
 }
 

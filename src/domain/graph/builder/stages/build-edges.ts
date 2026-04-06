@@ -119,6 +119,23 @@ function buildImportEdges(
             : 'imports';
       allEdgeRows.push([fileNodeId, targetRow.id, edgeKind, 1.0, 0]);
 
+      // Type-only imports: create symbol-level edges so the target symbols
+      // get fan-in credit and aren't falsely classified as dead code.
+      if (imp.typeOnly && ctx.nodesByNameAndFile) {
+        for (const name of imp.names) {
+          const cleanName = name.replace(/^\*\s+as\s+/, '');
+          let targetFile = resolvedPath;
+          if (isBarrelFile(ctx, resolvedPath)) {
+            const actual = resolveBarrelExport(ctx, resolvedPath, cleanName);
+            if (actual) targetFile = actual;
+          }
+          const candidates = ctx.nodesByNameAndFile.get(`${cleanName}|${targetFile}`);
+          if (candidates && candidates.length > 0) {
+            allEdgeRows.push([fileNodeId, candidates[0]!.id, 'imports-type', 1.0, 0]);
+          }
+        }
+      }
+
       if (!imp.reexport && isBarrelFile(ctx, resolvedPath)) {
         buildBarrelEdges(ctx, imp, resolvedPath, fileNodeId, edgeKind, getNodeIdStmt, allEdgeRows);
       }
@@ -280,7 +297,18 @@ function buildImportEdgesNative(
     }
   }
 
-  // 6. Call native
+  // 6. Build symbol node entries for type-only import resolution
+  const symbolNodes: Array<{ name: string; file: string; nodeId: number }> = [];
+  if (ctx.nodesByNameAndFile) {
+    for (const [key, nodes] of ctx.nodesByNameAndFile) {
+      if (nodes.length > 0) {
+        const [name, file] = key.split('|');
+        symbolNodes.push({ name: name!, file: file!, nodeId: nodes[0]!.id });
+      }
+    }
+  }
+
+  // 7. Call native
   const nativeEdges = native.buildImportEdges!(
     files,
     resolvedImports,
@@ -288,6 +316,7 @@ function buildImportEdgesNative(
     fileNodeIds,
     barrelFiles,
     rootDir,
+    symbolNodes,
   ) as NativeEdge[];
 
   for (const e of nativeEdges) {
