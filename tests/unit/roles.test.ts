@@ -192,4 +192,32 @@ describe('classifyNodeRoles', () => {
     const role = db.prepare("SELECT role FROM nodes WHERE name = 'fn1'").get();
     expect(role.role).toBe('dead-unresolved');
   });
+
+  it('does not classify type-imported interfaces as dead (#840)', () => {
+    // Simulate: file b.ts has `import type { MyInterface } from './a'`
+    // This should create a symbol-level imports-type edge from b.ts file node
+    // to the MyInterface symbol, giving it fan-in > 0.
+    const fA = insertNode('a.ts', 'file', 'a.ts', 0);
+    const fB = insertNode('b.ts', 'file', 'b.ts', 0);
+    const iface = insertNode('MyInterface', 'interface', 'a.ts', 5);
+
+    // File-level imports-type edge (file → file)
+    insertEdge(fB, fA, 'imports-type');
+    // Symbol-level imports-type edge (file → symbol) — the fix creates these
+    insertEdge(fB, iface, 'imports-type');
+
+    classifyNodeRoles(db);
+    const role = db.prepare("SELECT role FROM nodes WHERE name = 'MyInterface'").get();
+    // Should NOT be dead — it has a type-import consumer
+    expect(role.role).not.toMatch(/^dead/);
+  });
+
+  it('classifies interface with no type-import edges as dead', () => {
+    insertNode('a.ts', 'file', 'a.ts', 0);
+    insertNode('UnusedInterface', 'interface', 'a.ts', 5);
+
+    classifyNodeRoles(db);
+    const role = db.prepare("SELECT role FROM nodes WHERE name = 'UnusedInterface'").get();
+    expect(role.role).toBe('dead-unresolved');
+  });
 });

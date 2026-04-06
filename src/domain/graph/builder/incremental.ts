@@ -366,6 +366,27 @@ function buildImportEdges(
       stmts.insertEdge.run(fileNodeId, targetRow.id, edgeKind, 1.0, 0);
       edgesAdded++;
 
+      // Type-only imports: create symbol-level edges so the target symbols
+      // get fan-in credit and aren't falsely classified as dead code.
+      if (imp.typeOnly) {
+        for (const name of imp.names) {
+          const cleanName = name.replace(/^\*\s+as\s+/, '');
+          let targetFile = resolvedPath;
+          if (db && isBarrelFile(db, resolvedPath)) {
+            const actual = resolveBarrelTarget(db, resolvedPath, cleanName);
+            if (actual) targetFile = actual;
+          }
+          const candidates = stmts.findNodeInFile.all(cleanName, targetFile) as Array<{
+            id: number;
+            file: string;
+          }>;
+          if (candidates.length > 0) {
+            stmts.insertEdge.run(fileNodeId, candidates[0]!.id, 'imports-type', 1.0, 0);
+            edgesAdded++;
+          }
+        }
+      }
+
       // Barrel resolution: create edges through re-export chains
       if (!imp.reexport && db) {
         edgesAdded += resolveBarrelImportEdges(db, stmts, fileNodeId, resolvedPath, imp);

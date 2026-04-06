@@ -422,6 +422,17 @@ pub struct ResolvedImportEntry {
     pub resolved_path: String,
 }
 
+/// A symbol node entry for type-only import resolution.
+/// Maps (name, file) → nodeId so the native engine can create symbol-level
+/// `imports-type` edges (parity with the JS `buildImportEdges` path).
+#[napi(object)]
+pub struct SymbolNodeEntry {
+    pub name: String,
+    pub file: String,
+    #[napi(js_name = "nodeId")]
+    pub node_id: u32,
+}
+
 /// Shared lookup context for import edge building.
 struct ImportEdgeContext<'a> {
     resolved: HashMap<&'a str, &'a str>,
@@ -429,6 +440,9 @@ struct ImportEdgeContext<'a> {
     file_node_map: HashMap<&'a str, u32>,
     barrel_set: HashSet<&'a str>,
     file_defs: HashMap<&'a str, HashSet<&'a str>>,
+    /// Symbol node lookup: (name, file) → node ID.
+    /// Used to create symbol-level `imports-type` edges for type-only imports.
+    symbol_node_map: HashMap<(&'a str, &'a str), u32>,
 }
 
 impl<'a> ImportEdgeContext<'a> {
@@ -438,6 +452,7 @@ impl<'a> ImportEdgeContext<'a> {
         file_node_ids: &'a [FileNodeEntry],
         barrel_files: &'a [String],
         files: &'a [ImportEdgeFileInput],
+        symbol_nodes: &'a [SymbolNodeEntry],
     ) -> Self {
         let mut resolved = HashMap::with_capacity(resolved_imports.len());
         for ri in resolved_imports {
@@ -463,7 +478,12 @@ impl<'a> ImportEdgeContext<'a> {
             file_defs.insert(f.file.as_str(), defs);
         }
 
-        Self { resolved, reexport_map, file_node_map, barrel_set, file_defs }
+        let mut symbol_node_map = HashMap::with_capacity(symbol_nodes.len());
+        for entry in symbol_nodes {
+            symbol_node_map.insert((entry.name.as_str(), entry.file.as_str()), entry.node_id);
+        }
+
+        Self { resolved, reexport_map, file_node_map, barrel_set, file_defs, symbol_node_map }
     }
 }
 
@@ -500,13 +520,18 @@ pub fn build_import_edges(
     file_node_ids: Vec<FileNodeEntry>,
     barrel_files: Vec<String>,
     root_dir: String,
+    #[napi(ts_arg_type = "SymbolNodeEntry[] | undefined")]
+    symbol_nodes: Option<Vec<SymbolNodeEntry>>,
 ) -> Vec<ComputedEdge> {
+    let empty_symbols = Vec::new();
+    let symbols_ref = symbol_nodes.as_deref().unwrap_or(&empty_symbols);
     let ctx = ImportEdgeContext::new(
         &resolved_imports,
         &file_reexports,
         &file_node_ids,
         &barrel_files,
         &files,
+        symbols_ref,
     );
 
     let mut edges = Vec::new();
@@ -551,6 +576,38 @@ pub fn build_import_edges(
                 confidence: 1.0,
                 dynamic: 0,
             });
+
+            // Type-only imports: create symbol-level edges so the target symbols
+            // get fan-in credit and aren't falsely classified as dead code.
+            if imp.type_only && !ctx.symbol_node_map.is_empty() {
+                for name in &imp.names {
+                    let clean_name = if name.starts_with("* as ") || name.starts_with("*\tas ") {
+                        &name[5..]
+                    } else {
+                        name.as_str()
+                    };
+                    // Try barrel resolution first, then fall back to the resolved path
+                    let barrel_target = if ctx.barrel_set.contains(resolved_path) {
+                        let mut visited = HashSet::new();
+                        barrel_resolution::resolve_barrel_export(&ctx, resolved_path, clean_name, &mut visited)
+                    } else {
+                        None
+                    };
+                    let sym_id = barrel_target
+                        .as_deref()
+                        .and_then(|f| ctx.symbol_node_map.get(&(clean_name, f)))
+                        .or_else(|| ctx.symbol_node_map.get(&(clean_name, resolved_path)));
+                    if let Some(&id) = sym_id {
+                        edges.push(ComputedEdge {
+                            source_id: file_input.file_node_id,
+                            target_id: id,
+                            kind: "imports-type".to_string(),
+                            confidence: 1.0,
+                            dynamic: 0,
+                        });
+                    }
+                }
+            }
 
             // Barrel resolution: if not reexport and target is a barrel file
             if !imp.reexport && ctx.barrel_set.contains(resolved_path) {
