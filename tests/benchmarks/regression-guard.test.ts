@@ -511,4 +511,88 @@ describe('Benchmark regression guard', () => {
       ).toBe(true);
     });
   });
+
+  describe('resolution benchmarks', () => {
+    /**
+     * Resolution precision/recall regression thresholds.
+     * These are percentage-point drops (not relative %) because resolution
+     * metrics are bounded [0, 1] and small absolute drops matter.
+     *
+     * Precision >5pp drop and recall >10pp drop are flagged.
+     * Recall has a wider threshold because it's more volatile — adding new
+     * expected edges to fixtures can temporarily lower recall.
+     */
+    const PRECISION_DROP_PP = 0.05;
+    const RECALL_DROP_PP = 0.10;
+
+    interface ResolutionLang {
+      precision: number;
+      recall: number;
+      truePositives: number;
+      falsePositives: number;
+      falseNegatives: number;
+      totalResolved: number;
+      totalExpected: number;
+    }
+
+    interface BuildEntryWithResolution extends BuildEntry {
+      resolution?: Record<string, ResolutionLang>;
+    }
+
+    const fullHistory = extractJsonData<BuildEntryWithResolution>(
+      path.join(BENCHMARKS_DIR, 'BUILD-BENCHMARKS.md'),
+      'BENCHMARK_DATA',
+    );
+
+    const resolutionPair = findLatestPair(fullHistory, (e) => e.resolution != null);
+
+    if (resolutionPair) {
+      const { latest: latestRes, previous: previousRes } = resolutionPair;
+
+      test(`resolution — ${latestRes.version} vs ${previousRes.version}`, () => {
+        const curRes = latestRes.resolution!;
+        const prevRes = previousRes.resolution!;
+        const regressions: string[] = [];
+
+        for (const lang of Object.keys(curRes)) {
+          const cur = curRes[lang];
+          const prv = prevRes[lang];
+          if (!cur || !prv) continue;
+
+          const precDrop = prv.precision - cur.precision;
+          if (precDrop > PRECISION_DROP_PP) {
+            const key = `${latestRes.version}:resolution ${lang} precision`;
+            if (!KNOWN_REGRESSIONS.has(key)) {
+              regressions.push(
+                `  ${lang} precision: ${(prv.precision * 100).toFixed(1)}% → ${(cur.precision * 100).toFixed(1)}% (−${(precDrop * 100).toFixed(1)}pp, threshold ${(PRECISION_DROP_PP * 100).toFixed(0)}pp)`,
+              );
+            }
+          }
+
+          const recDrop = prv.recall - cur.recall;
+          if (recDrop > RECALL_DROP_PP) {
+            const key = `${latestRes.version}:resolution ${lang} recall`;
+            if (!KNOWN_REGRESSIONS.has(key)) {
+              regressions.push(
+                `  ${lang} recall: ${(prv.recall * 100).toFixed(1)}% → ${(cur.recall * 100).toFixed(1)}% (−${(recDrop * 100).toFixed(1)}pp, threshold ${(RECALL_DROP_PP * 100).toFixed(0)}pp)`,
+              );
+            }
+          }
+        }
+
+        if (regressions.length > 0) {
+          expect.fail(
+            `Resolution precision/recall regressions:\n${regressions.join('\n')}`,
+          );
+        }
+      });
+    }
+
+    test('has resolution data to compare', () => {
+      expect(
+        resolutionPair != null,
+        'No resolution benchmark data with ≥2 non-dev entries to compare',
+      ).toBe(true);
+    });
+  });
 });

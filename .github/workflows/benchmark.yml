@@ -106,6 +106,10 @@ jobs:
           fi
           node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/resolution-benchmark.ts $ARGS > resolution-result.json
 
+      - name: Gate on resolution thresholds
+        if: steps.existing.outputs.skip != 'true'
+        run: npx vitest run tests/benchmarks/resolution/resolution-benchmark.test.ts --reporter=verbose
+
       - name: Merge resolution into build result
         if: steps.existing.outputs.skip != 'true'
         run: |

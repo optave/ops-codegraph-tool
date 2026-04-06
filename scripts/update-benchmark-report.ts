@@ -320,6 +320,39 @@ if (prev) {
 	}
 }
 
+// ── Resolution regression detection ─────────────────────────────────────
+// Resolution metrics are "higher is better" — warn when they DROP.
+const PRECISION_DROP_THRESHOLD = 0.05; // warn if precision drops >5pp
+const RECALL_DROP_THRESHOLD = 0.10;    // warn if recall drops >10pp
+
+if (prev && latest.resolution && prev.resolution) {
+	for (const lang of Object.keys(latest.resolution)) {
+		const cur = latest.resolution[lang];
+		const prv = prev.resolution?.[lang];
+		if (!cur || !prv) continue;
+
+		const precDrop = prv.precision - cur.precision;
+		if (precDrop > PRECISION_DROP_THRESHOLD) {
+			const msg = `[resolution] ${lang} precision: ${(prv.precision * 100).toFixed(1)}% → ${(cur.precision * 100).toFixed(1)}% (−${(precDrop * 100).toFixed(1)}pp, threshold ${(PRECISION_DROP_THRESHOLD * 100).toFixed(0)}pp)`;
+			if (process.env.GITHUB_ACTIONS) {
+				console.error(`::warning title=Resolution Regression::${msg}`);
+			} else {
+				console.error(`⚠ REGRESSION: ${msg}`);
+			}
+		}
+
+		const recDrop = prv.recall - cur.recall;
+		if (recDrop > RECALL_DROP_THRESHOLD) {
+			const msg = `[resolution] ${lang} recall: ${(prv.recall * 100).toFixed(1)}% → ${(cur.recall * 100).toFixed(1)}% (−${(recDrop * 100).toFixed(1)}pp, threshold ${(RECALL_DROP_THRESHOLD * 100).toFixed(0)}pp)`;
+			if (process.env.GITHUB_ACTIONS) {
+				console.error(`::warning title=Resolution Regression::${msg}`);
+			} else {
+				console.error(`⚠ REGRESSION: ${msg}`);
+			}
+		}
+	}
+}
+
 // ── Patch README.md ──────────────────────────────────────────────────────
 if (fs.existsSync(readmePath)) {
 	let readme = fs.readFileSync(readmePath, 'utf8');
