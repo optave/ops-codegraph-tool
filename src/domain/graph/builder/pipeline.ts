@@ -43,29 +43,11 @@ function initializeEngine(ctx: PipelineContext): void {
     engine: ctx.opts.engine || 'auto',
     dataflow: ctx.opts.dataflow !== false,
     ast: ctx.opts.ast !== false,
-    nativeDb: ctx.nativeDb,
-    // WAL checkpoint callbacks for dual-connection WAL guard (#696, #715).
-    // Feature modules (ast, cfg, complexity, dataflow) receive `db` as a
-    // parameter and cannot tolerate close/reopen (stale reference). Instead,
-    // checkpoint the WAL so native writes start with a clean slate.
-    // After native writes, resumeJsDb checkpoints through rusqlite so
-    // better-sqlite3 never reads WAL frames from a different SQLite library.
-    suspendJsDb: ctx.nativeDb
-      ? () => {
-          ctx.db.pragma('wal_checkpoint(TRUNCATE)');
-        }
-      : undefined,
-    resumeJsDb: ctx.nativeDb
-      ? () => {
-          try {
-            ctx.nativeDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-          } catch (e) {
-            debug(
-              `resumeJsDb: WAL checkpoint failed (nativeDb may already be closed): ${toErrorMessage(e)}`,
-            );
-          }
-        }
-      : undefined,
+    // nativeDb and WAL callbacks are set later when NativeDatabase is opened
+    // (deferred to skip overhead on no-op rebuilds).
+    nativeDb: undefined,
+    suspendJsDb: undefined,
+    resumeJsDb: undefined,
   };
   const { name: engineName, version: engineVersion } = getActiveEngine(ctx.engineOpts);
   ctx.engineName = engineName as 'native' | 'wasm';
@@ -79,11 +61,10 @@ function checkEngineSchemaMismatch(ctx: PipelineContext): void {
   ctx.forceFullRebuild = false;
   if (!ctx.incremental) return;
 
-  // Route metadata reads through NativeDatabase only when using the native engine,
-  // to avoid dual-SQLite WAL conflicts (rusqlite + better-sqlite3 on same file).
-  const useNativeDb = ctx.engineName === 'native' && !!ctx.nativeDb;
-  const meta = (key: string): string | null =>
-    useNativeDb ? ctx.nativeDb!.getBuildMeta(key) : getBuildMeta(ctx.db, key);
+  // NativeDatabase is deferred until after change detection, so always use
+  // better-sqlite3 for metadata reads here. Reads are safe — WAL conflicts
+  // only arise from concurrent writes.
+  const meta = (key: string): string | null => getBuildMeta(ctx.db, key);
 
   const prevEngine = meta('engine');
   if (prevEngine && prevEngine !== ctx.engineName) {
@@ -130,35 +111,13 @@ function setupPipeline(ctx: PipelineContext): void {
   ctx.rootDir = path.resolve(ctx.rootDir);
   ctx.dbPath = path.join(ctx.rootDir, '.codegraph', 'graph.db');
   ctx.db = openDb(ctx.dbPath);
+  initSchema(ctx.db);
 
-  // Use NativeDatabase for schema init when native engine is available (Phase 6.13).
-  // better-sqlite3 (ctx.db) is still always opened — needed for queries and stages
-  // that haven't been migrated to rusqlite yet.
-  // Skip native DB entirely when user explicitly requested --engine wasm.
+  // Detect whether native engine is available, but defer opening NativeDatabase.
+  // The native orchestrator opens it on demand; the JS pipeline defers until
+  // after change detection — avoiding ~5ms open+initSchema+close on no-op rebuilds.
   const enginePref = ctx.opts.engine || 'auto';
-  const native = enginePref !== 'wasm' ? loadNative() : null;
-  if (native?.NativeDatabase) {
-    try {
-      ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
-      ctx.nativeDb.initSchema();
-      // Checkpoint WAL through rusqlite so better-sqlite3 sees a clean DB
-      // with no cross-library WAL frames (#715, #717).
-      ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch (err) {
-      warn(`NativeDatabase setup failed, falling back to JS: ${toErrorMessage(err)}`);
-      try {
-        ctx.nativeDb?.close();
-      } catch (e) {
-        debug(`setupNativeDb: close failed during fallback: ${toErrorMessage(e)}`);
-      }
-      ctx.nativeDb = undefined;
-    }
-    // Always run JS initSchema so better-sqlite3 sees the schema —
-    // nativeDb is closed during pipeline stages and reopened for analyses.
-    initSchema(ctx.db);
-  } else {
-    initSchema(ctx.db);
-  }
+  ctx.nativeAvailable = enginePref !== 'wasm' && !!loadNative()?.NativeDatabase;
 
   ctx.config = loadConfig(ctx.rootDir);
   ctx.incremental =
@@ -553,6 +512,28 @@ async function tryNativeOrchestrator(
     debug(`Skipping native orchestrator: ${skipReason}`);
     return undefined;
   }
+
+  // Open NativeDatabase on demand for the orchestrator.
+  // Deferred from setupPipeline so no-op JS pipeline rebuilds skip the overhead.
+  if (!ctx.nativeDb && ctx.nativeAvailable) {
+    const native = loadNative();
+    if (native?.NativeDatabase) {
+      try {
+        ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+        ctx.nativeDb.initSchema();
+        ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      } catch (err) {
+        warn(`NativeDatabase setup failed, falling back to JS: ${toErrorMessage(err)}`);
+        try {
+          ctx.nativeDb?.close();
+        } catch (e) {
+          debug(`tryNativeOrchestrator: close failed during fallback: ${toErrorMessage(e)}`);
+        }
+        ctx.nativeDb = undefined;
+      }
+    }
+  }
+
   if (!ctx.nativeDb?.buildGraph) return undefined;
 
   const resultJson = ctx.nativeDb.buildGraph(
@@ -639,12 +620,11 @@ async function tryNativeOrchestrator(
 // ── Pipeline stages execution ───────────────────────────────────────────
 
 async function runPipelineStages(ctx: PipelineContext): Promise<void> {
-  // Prevent dual-connection WAL corruption during pipeline stages: when both
-  // better-sqlite3 (ctx.db) and rusqlite (ctx.nativeDb) are open to the same
-  // WAL-mode file, native writes corrupt the DB. Close nativeDb so stages
-  // use JS fallback paths. Reopened before runAnalyses for feature modules
-  // that use suspendJsDb/resumeJsDb WAL checkpoint pattern (#696).
-  const hadNativeDb = !!ctx.nativeDb;
+  // NativeDatabase is deferred — not opened during setup. collectFiles and
+  // detectChanges only need better-sqlite3. If no files changed, we exit
+  // early without ever opening the native connection, saving ~5ms.
+  // If nativeDb was opened by tryNativeOrchestrator (which fell through),
+  // suspend it now to avoid dual-connection WAL corruption during stages.
   if (ctx.db && ctx.nativeDb) {
     suspendNativeDb(ctx, 'pre-collect');
   }
@@ -659,7 +639,7 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
   // Temporarily reopen nativeDb for insertNodes — it uses the WAL checkpoint
   // guard internally (same pattern as feature modules). Closed again before
   // resolveImports/buildEdges which don't yet have the guard (#709).
-  if (hadNativeDb && ctx.engineName === 'native') {
+  if (ctx.nativeAvailable && ctx.engineName === 'native') {
     reopenNativeDb(ctx, 'insertNodes');
   }
 
@@ -677,7 +657,7 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
 
   // Reopen nativeDb for feature modules (ast, cfg, complexity, dataflow)
   // which use suspendJsDb/resumeJsDb WAL checkpoint before native writes.
-  if (hadNativeDb) {
+  if (ctx.nativeAvailable) {
     reopenNativeDb(ctx, 'analyses');
     if (ctx.nativeDb && ctx.engineOpts) {
       ctx.engineOpts.nativeDb = ctx.nativeDb;

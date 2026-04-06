@@ -58,26 +58,9 @@ function getChangedFiles(
   db: BetterSqlite3Database,
   allFiles: string[],
   rootDir: string,
-  nativeDb?: NativeDatabase,
 ): ChangeResult {
-  // Batched native path: single napi call for table check + all rows + max mtime
-  if (nativeDb?.getFileHashData) {
-    const data = nativeDb.getFileHashData();
-    if (!data.exists) {
-      return {
-        changed: allFiles.map((f) => ({ file: f })),
-        removed: [],
-        isFullBuild: true,
-      };
-    }
-    const existing = new Map<string, FileHashRow>(data.rows.map((r) => [r.file, r]));
-    const removed = detectRemovedFiles(existing, allFiles, rootDir);
-    const journalResult = tryJournalTier(db, existing, rootDir, removed, data.maxMtime);
-    if (journalResult) return journalResult;
-    return mtimeAndHashTiers(existing, allFiles, rootDir, removed);
-  }
-
-  // WASM / fallback path
+  // NativeDatabase is not open during change detection (deferred to after
+  // early-exit check). All queries use better-sqlite3 here.
   let hasTable = false;
   try {
     db.prepare('SELECT 1 FROM file_hashes LIMIT 1').get();
@@ -487,12 +470,7 @@ export async function detectChanges(ctx: PipelineContext): Promise<void> {
   }
   const increResult =
     incremental && !forceFullRebuild
-      ? getChangedFiles(
-          db,
-          allFiles,
-          rootDir,
-          ctx.engineName === 'native' ? ctx.nativeDb : undefined,
-        )
+      ? getChangedFiles(db, allFiles, rootDir)
       : {
           changed: allFiles.map((f): ChangedFile => ({ file: f })),
           removed: [] as string[],
