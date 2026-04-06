@@ -33,6 +33,8 @@ export class PipelineContext {
   forceFullRebuild: boolean = false;
   schemaVersion!: number;
   nativeDb?: NativeDatabase;
+  /** Whether native engine is available (deferred — DB opened only when needed). */
+  nativeAvailable: boolean = false;
 
   // ── File collection (set by collectFiles stage) ────────────────────
   allFiles!: string[];
