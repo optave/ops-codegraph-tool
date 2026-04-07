@@ -15,7 +15,13 @@
  * After the driver finishes, call `globalThis.__tracer.dump()` to get edges.
  */
 
+import { register } from 'node:module';
 import path from 'node:path';
+
+// Register the ESM load() hook that instruments fixture source code.
+// The hooks module runs in a separate thread; it transforms source text
+// to inject enter()/exit() calls that reference globalThis.__tracer (set up below).
+register(new URL('./loader-hooks.mjs', import.meta.url).href);
 
 /** @type {Array<{source_name: string, source_file: string, target_name: string, target_file: string}>} */
 const edges = [];
@@ -155,6 +161,24 @@ function instrumentExports(moduleExports, filePath) {
   return instrumented;
 }
 
+/**
+ * Enter a function scope: record the call edge from the current top-of-stack
+ * (the caller) to this function (the callee), then push onto the stack.
+ * Used by the load() hook's source-level instrumentation.
+ */
+function enterFunction(name, file) {
+  const f = basename(file);
+  if (callStack.length > 0) {
+    const caller = callStack[callStack.length - 1];
+    recordEdge(caller.name, caller.file, name, f);
+  }
+  callStack.push({ name, file: f });
+}
+
+function exitFunction() {
+  if (callStack.length > 0) callStack.pop();
+}
+
 // Expose the tracer globally so driver scripts can use it
 globalThis.__tracer = {
   edges,
@@ -162,6 +186,8 @@ globalThis.__tracer = {
   wrapClassMethods,
   instrumentExports,
   recordEdge,
+  enter: enterFunction,
+  exit: exitFunction,
   pushCall(name, file) {
     callStack.push({ name, file: basename(file) });
   },
@@ -177,3 +203,4 @@ globalThis.__tracer = {
     callStack = [];
   },
 };
+

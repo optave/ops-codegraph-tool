@@ -1,35 +1,31 @@
 /**
  * Dynamic call-tracing driver for the TSX resolution fixture.
  *
- * Imports all modules via __tracer.instrumentExports(), exercises every
- * exported function/method, then dumps captured call edges to stdout.
+ * The loader-hook.mjs load() hook instruments ALL function bodies at the
+ * source level (not just exports), so intra-module calls are captured.
  *
  * Run via: tsx --import ../tracer/loader-hook.mjs driver.mjs
  */
 
-import * as _app from './App.tsx';
-import * as _service from './service.tsx';
-import * as _validators from './validators.tsx';
-
-const app = globalThis.__tracer.instrumentExports(_app, 'App.tsx');
-const service = globalThis.__tracer.instrumentExports(_service, 'service.tsx');
-const validators = globalThis.__tracer.instrumentExports(_validators, 'validators.tsx');
+import { App } from './App.tsx';
+import { createUser, getUser, listUsers, removeUser } from './service.tsx';
+import { validateUser, formatErrors } from './validators.tsx';
 
 try {
   globalThis.__tracer.pushCall('__driver__', 'driver.mjs');
 
   // Exercise App()
-  app.App();
+  App();
 
   // Direct validator calls
-  validators.validateUser('Test', 'test@example.com');
-  validators.formatErrors({ valid: false, errors: ['test'] });
+  validateUser('Test', 'test@example.com');
+  formatErrors({ valid: false, errors: ['test'] });
 
   // Direct service calls
-  const user = service.createUser('Direct', 'direct@example.com');
-  service.getUser(user.id);
-  service.listUsers();
-  service.removeUser(user.id);
+  const user = createUser('Direct', 'direct@example.com');
+  getUser(user.id);
+  listUsers();
+  removeUser(user.id);
 
   globalThis.__tracer.popCall();
 } catch {
