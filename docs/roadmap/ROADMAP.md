@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.9.1 | **Status:** Active development | **Updated:** 2026-04-05
+> **Current version:** 3.9.2 | **Status:** Active development | **Updated:** 2026-04-06
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across fourteen phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -1476,6 +1476,14 @@ Upgrade the Phase 4.4 benchmark suite to enforce regression gates on the new res
 - CI gate: fail if caller coverage drops below baseline (initially 29%, ratcheted upward as each sub-phase ships)
 - Benchmark against Jelly and ACG on shared fixture projects for external validation
 
+**Progress (v3.9.2):**
+- ✅ Resolution benchmark v2 — dynamic call tracing across 14 languages, per-mode categories ([#878](https://github.com/optave/ops-codegraph-tool/pull/878))
+- ✅ Dynamic call tracing extended to all language fixtures ([#883](https://github.com/optave/ops-codegraph-tool/pull/883))
+- ✅ Release workflow gated on resolution precision/recall thresholds ([#886](https://github.com/optave/ops-codegraph-tool/pull/886))
+- 🔲 Per-technique breakdown (edges contributed by each resolver)
+- 🔲 Coverage dashboard in `codegraph stats`
+- 🔲 Benchmark against Jelly and ACG on shared fixture projects
+
 **Affected files:** `tests/benchmarks/resolution/`, `src/domain/analysis/symbol-lookup.ts`, `src/presentation/queries-cli/overview.ts`
 
 ### 8.7 -- Reaching Definition Analysis (PDG Foundation)
@@ -1685,8 +1693,8 @@ Commander supports shell completion but it's not implemented. Basic UX gap for a
 **Deliverables:**
 
 1. **CI `npm audit`** -- add `npm audit --omit=dev` step to CI pipeline; fail on critical/high vulnerabilities
-   - ✅ npm audit CI step added (v3.10.0, [#834](https://github.com/optave/ops-codegraph-tool/pull/834))
-   - ✅ WASM grammar validation — build-time integrity checks for tree-sitter grammar files (v3.10.0, [#834](https://github.com/optave/ops-codegraph-tool/pull/834))
+   - ✅ npm audit CI step added (v3.9.1, [#834](https://github.com/optave/ops-codegraph-tool/pull/834))
+   - ✅ WASM grammar validation — build-time integrity checks for tree-sitter grammar files (v3.9.1, [#834](https://github.com/optave/ops-codegraph-tool/pull/834))
 2. **SBOM generation** -- produce CycloneDX or SPDX SBOM on each release via `@cyclonedx/cyclonedx-npm` or similar
    - 🔲 Not yet started
 3. **SLSA provenance** -- enable SLSA Level 2+ build provenance using `actions/attest-build-provenance` in the publish workflow; attach attestation to npm packages

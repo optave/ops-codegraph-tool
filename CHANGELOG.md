@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.9.2](https://github.com/optave/ops-codegraph-tool/compare/v3.9.1...v3.9.2) (2026-04-06)
+
+**Engine parity fix and build performance improvements.** This patch fixes a native engine deduplication bug that caused divergent results when multiple type map entries existed for the same symbol, improving engine parity. Build performance improves with deferred native database initialization (skipping the native DB entirely on no-op rebuilds) and a fix for an incremental rebuild regression introduced in v3.9.1. The resolution benchmark suite is significantly expanded with dynamic call tracing across all language fixtures, and the release workflow now gates on precision/recall thresholds.
+
+### Bug Fixes
+
+* **native:** confidence-aware dedup in type map for engine parity ([#885](https://github.com/optave/ops-codegraph-tool/pull/885))
+
+### Performance
+
+* defer NativeDatabase init to after no-op early exit ([#884](https://github.com/optave/ops-codegraph-tool/pull/884))
+* **native:** fix incremental rebuild regression ([#882](https://github.com/optave/ops-codegraph-tool/pull/882), [#888](https://github.com/optave/ops-codegraph-tool/pull/888))
+
+### Chores
+
+* **ci:** gate release workflow on resolution precision/recall thresholds ([#886](https://github.com/optave/ops-codegraph-tool/pull/886))
+* **bench:** resolution benchmark v2 — dynamic tracing, 14 languages, per-mode categories ([#878](https://github.com/optave/ops-codegraph-tool/pull/878))
+* **bench:** extend dynamic call tracing to all language fixtures ([#883](https://github.com/optave/ops-codegraph-tool/pull/883))
+
 ## [3.9.1](https://github.com/optave/ops-codegraph-tool/compare/v3.9.0...v3.9.1) (2026-04-05)
 
 **Dead code accuracy, native query performance, and supply-chain hardening.** This release significantly improves dead code detection — class instantiations via `new`, type-only imports, barrel re-exports, and same-file constants are now correctly tracked as consumption. The native Rust engine gains a composite `fnDeps` query that runs dependency resolution in a single cross-language call, and a critical 1238% incremental rebuild regression from v3.9.0 is fixed. WASM grammar validation and npm audit harden the build pipeline. CLI reliability improves with a fix for hangs in git worktree environments.
