@@ -269,7 +269,7 @@ try {
 
 			// Run dynamic tracer if available
 			const dynamicEdges = runDynamicTracer(lang);
-			const { merged, dynamicConfirmed } = mergeWithDynamic(expectedEdges, dynamicEdges);
+			const { dynamicConfirmed } = mergeWithDynamic(expectedEdges, dynamicEdges);
 
 			// Use only expected edges for metrics (dynamic edges are supplemental)
 			const metrics = computeMetrics(resolvedEdges, expectedEdges);
