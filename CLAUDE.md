@@ -56,7 +56,7 @@ Skip the above commands for non-code files, trivial edits, or when you already h
 
 Codegraph (`@optave/codegraph`) is a local code dependency graph CLI. It parses codebases with tree-sitter (WASM), builds function-level dependency graphs stored in SQLite, and supports semantic search with local embeddings. No cloud services required.
 
-**Languages supported (35):** JavaScript, TypeScript, TSX, Python, Go, Rust, Java, C#, Ruby, PHP, C, C++, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, OCaml, F#, Gleam, Clojure, Julia, R, Erlang, Solidity, Objective-C, CUDA, Groovy, Verilog, Terraform/HCL. `LANGUAGE_REGISTRY` in `domain/parser.ts` is the single source of truth — check there for the current list.
+**Languages supported (23):** JavaScript, TypeScript, TSX, Python, Go, Rust, Java, C#, Ruby, PHP, C, C++, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, OCaml, Terraform/HCL. `LANGUAGE_REGISTRY` in `domain/parser.ts` is the single source of truth — check there for the current list.
 
 ## Commands
 
@@ -174,7 +174,7 @@ tests/
 ├── fixtures/sample-project/  # ES module fixture (math.js, utils.js, index.js)
 └── benchmarks/resolution/
     ├── resolution-benchmark.test.ts   # Static resolution precision/recall vs expected-edges manifests
-    ├── fixtures/<lang>/       # Hand-annotated fixture projects (35 languages) with expected-edges.json
+    ├── fixtures/<lang>/       # Hand-annotated fixture projects (34 languages) with expected-edges.json
     └── tracer/                # Dynamic call tracers — per-language runtime instrumentation
         ├── loader-hook.mjs    #   ESM loader hook (JS/TS): @babel/parser AST → position-based instrumentation
         ├── run-tracer.mjs     #   CLI: imports entry module, calls exports, dumps edges as JSON
