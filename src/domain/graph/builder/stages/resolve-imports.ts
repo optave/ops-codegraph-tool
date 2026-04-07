@@ -34,15 +34,14 @@ function buildReexportMap(ctx: PipelineContext): void {
 
 /**
  * Find barrel files related to changed files for scoped re-parsing.
- * For small incremental builds (<=5 files), only barrels that re-export from
+ * For small incremental builds (<=smallFilesThreshold files), only barrels that re-export from
  * or are imported by the changed files. For larger changes, all barrels.
  */
 function findBarrelCandidates(ctx: PipelineContext): Array<{ file: string }> {
   const { db, fileSymbols, rootDir, aliases } = ctx;
   const changedRelPaths = new Set<string>(fileSymbols.keys());
 
-  const SMALL_CHANGE_THRESHOLD = 5;
-  if (changedRelPaths.size <= SMALL_CHANGE_THRESHOLD) {
+  if (changedRelPaths.size <= ctx.config.build.smallFilesThreshold) {
     const allBarrelFiles = new Set(
       (
         db

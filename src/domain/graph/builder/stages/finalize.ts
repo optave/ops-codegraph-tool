@@ -258,7 +258,7 @@ export async function finalize(ctx: PipelineContext): Promise<void> {
   // immediately after build.
   const pair = { db: ctx.db, nativeDb: ctx.nativeDb };
   const isTempDir = path.resolve(rootDir).startsWith(path.resolve(tmpdir()));
-  if (!isFullBuild && allSymbols.size <= 5 && !isTempDir) {
+  if (!isFullBuild && allSymbols.size <= ctx.config.build.smallFilesThreshold && !isTempDir) {
     closeDbPairDeferred(pair);
   } else {
     closeDbPair(pair);

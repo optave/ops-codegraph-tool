@@ -712,7 +712,7 @@ function loadNodes(ctx: PipelineContext): { rows: QueryNodeRow[]; scoped: boolea
   const nodeKindFilter = `kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')`;
 
   // Gate: only scope for small incremental on large codebases
-  if (!isFullBuild && fileSymbols.size <= 5) {
+  if (!isFullBuild && fileSymbols.size <= ctx.config.build.smallFilesThreshold) {
     const existingFileCount = (
       db.prepare("SELECT COUNT(*) as c FROM nodes WHERE kind = 'file'").get() as { c: number }
     ).c;
