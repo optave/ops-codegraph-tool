@@ -1085,6 +1085,7 @@ export interface CodegraphConfig {
     incremental: boolean;
     dbPath: string;
     driftThreshold: number;
+    smallFilesThreshold: number;
   };
 
   query: {
