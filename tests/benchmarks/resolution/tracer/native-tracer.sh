@@ -300,15 +300,19 @@ RSTRACE
             fi
 
             # Detect fn declarations ending with {
-            if [[ "$line" =~ fn[[:space:]]+([a-z_][a-z0-9_]*) ]] && [[ "$line" =~ \{[[:space:]]*$ ]]; then
-                local fname="${BASH_REMATCH[1]}"
-                local qualname="$fname"
-                if [[ -n "$current_impl" ]]; then
-                    qualname="${current_impl}.${fname}"
+            # Save capture before second regex clobbers BASH_REMATCH
+            if [[ "$line" =~ fn[[:space:]]+([a-z_][a-z0-9_]*) ]]; then
+                local fname_candidate="${BASH_REMATCH[1]}"
+                if [[ "$line" =~ \{[[:space:]]*$ ]]; then
+                    local fname="$fname_candidate"
+                    local qualname="$fname"
+                    if [[ -n "$current_impl" ]]; then
+                        qualname="${current_impl}.${fname}"
+                    fi
+                    printf '%s\n' "$line" >> "$tmpfile"
+                    printf '        let _tg = crate::trace_support::trace_call("%s", "%s");\n' "$qualname" "$base" >> "$tmpfile"
+                    continue
                 fi
-                printf '%s\n' "$line" >> "$tmpfile"
-                printf '        let _tg = crate::trace_support::trace_call("%s", "%s");\n' "$qualname" "$base" >> "$tmpfile"
-                continue
             fi
 
             printf '%s\n' "$line" >> "$tmpfile"
@@ -578,15 +582,19 @@ SWTRACE
                 continue
             fi
             # Detect func declarations ending with {
-            if [[ "$trimmed" =~ ^(override[[:space:]]+)?func[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*) ]] && [[ "$trimmed" =~ \{[[:space:]]*$ ]]; then
-                local fname="${BASH_REMATCH[2]}"
-                local qualname="$fname"
-                if [[ -n "$current_class" ]]; then
-                    qualname="${current_class}.${fname}"
+            # Save capture before second regex clobbers BASH_REMATCH
+            if [[ "$trimmed" =~ ^(override[[:space:]]+)?func[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*) ]]; then
+                local fname_candidate="${BASH_REMATCH[2]}"
+                if [[ "$trimmed" =~ \{[[:space:]]*$ ]]; then
+                    local fname="$fname_candidate"
+                    local qualname="$fname"
+                    if [[ -n "$current_class" ]]; then
+                        qualname="${current_class}.${fname}"
+                    fi
+                    printf '%s\n' "$line" >> "$tmpfile"
+                    printf '        CallTracer.shared.traceCall("%s", "%s"); defer { CallTracer.shared.traceReturn() }\n' "$qualname" "$base" >> "$tmpfile"
+                    continue
                 fi
-                printf '%s\n' "$line" >> "$tmpfile"
-                printf '        CallTracer.shared.traceCall("%s", "%s"); defer { CallTracer.shared.traceReturn() }\n' "$qualname" "$base" >> "$tmpfile"
-                continue
             fi
             printf '%s\n' "$line" >> "$tmpfile"
         done < "$swfile"
@@ -697,15 +705,19 @@ DARTTRACE
                 continue
             fi
             # Detect function declarations (return_type name(args) {)
-            if [[ "$trimmed" =~ [[:space:]]([a-zA-Z_][a-zA-Z0-9_]*)\( ]] && [[ "$trimmed" =~ \{[[:space:]]*$ ]] && [[ ! "$trimmed" =~ ^(import|if|while|for|switch|catch|class) ]]; then
-                local fname="${BASH_REMATCH[1]}"
-                local qualname="$fname"
-                if [[ -n "$current_class" ]]; then
-                    qualname="${current_class}.${fname}"
+            # Save capture before subsequent regexes clobber BASH_REMATCH
+            if [[ "$trimmed" =~ [[:space:]]([a-zA-Z_][a-zA-Z0-9_]*)\( ]]; then
+                local fname_candidate="${BASH_REMATCH[1]}"
+                if [[ "$trimmed" =~ \{[[:space:]]*$ ]] && [[ ! "$trimmed" =~ ^(import|if|while|for|switch|catch|class) ]]; then
+                    local fname="$fname_candidate"
+                    local qualname="$fname"
+                    if [[ -n "$current_class" ]]; then
+                        qualname="${current_class}.${fname}"
+                    fi
+                    printf '%s\n' "$line" >> "$tmpfile"
+                    printf '    CallTracer.instance.traceCall("%s", "%s"); try {\n' "$qualname" "$base" >> "$tmpfile"
+                    continue
                 fi
-                printf '%s\n' "$line" >> "$tmpfile"
-                printf '    CallTracer.instance.traceCall("%s", "%s"); try {\n' "$qualname" "$base" >> "$tmpfile"
-                continue
             fi
             printf '%s\n' "$line" >> "$tmpfile"
         done < "$dartfile"
@@ -817,11 +829,15 @@ ZIGTRACE
         local tmpfile="$(mktemp)"
         while IFS= read -r line || [[ -n "$line" ]]; do
             local trimmed="${line#"${line%%[![:space:]]*}"}"
-            if [[ "$trimmed" =~ ^(pub[[:space:]]+)?fn[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*) ]] && [[ "$trimmed" =~ \{[[:space:]]*$ ]]; then
-                local fname="${BASH_REMATCH[2]}"
-                printf '%s\n' "$line" >> "$tmpfile"
-                printf '    trace_support.traceCall("%s", "%s"); defer trace_support.traceReturn();\n' "$fname" "$base" >> "$tmpfile"
-                continue
+            # Save capture before second regex clobbers BASH_REMATCH
+            if [[ "$trimmed" =~ ^(pub[[:space:]]+)?fn[[:space:]]+([a-zA-Z_][a-zA-Z0-9_]*) ]]; then
+                local fname_candidate="${BASH_REMATCH[2]}"
+                if [[ "$trimmed" =~ \{[[:space:]]*$ ]]; then
+                    local fname="$fname_candidate"
+                    printf '%s\n' "$line" >> "$tmpfile"
+                    printf '    trace_support.traceCall("%s", "%s"); defer trace_support.traceReturn();\n' "$fname" "$base" >> "$tmpfile"
+                    continue
+                fi
             fi
             printf '%s\n' "$line" >> "$tmpfile"
         done < "$zigfile"
