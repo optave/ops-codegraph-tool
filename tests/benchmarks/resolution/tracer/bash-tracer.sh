@@ -63,6 +63,14 @@ source "$FIXTURE_DIR/main.sh" 2>/dev/null || true
 # Disable trap
 trap - DEBUG
 
+# Escape a string for safe JSON embedding
+_json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    printf '%s' "$s"
+}
+
 # Output JSON from collected edges
 echo '{'
 echo '  "edges": ['
@@ -74,7 +82,7 @@ while IFS=$'\t' read -r src_name src_file tgt_name tgt_file; do
         echo ','
     fi
     printf '    {\n      "source_name": "%s",\n      "source_file": "%s",\n      "target_name": "%s",\n      "target_file": "%s"\n    }' \
-        "$src_name" "$src_file" "$tgt_name" "$tgt_file"
+        "$(_json_escape "$src_name")" "$(_json_escape "$src_file")" "$(_json_escape "$tgt_name")" "$(_json_escape "$tgt_file")"
 done < "$EDGE_FILE"
 echo ''
 echo '  ]'

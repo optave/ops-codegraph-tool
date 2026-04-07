@@ -86,16 +86,22 @@
   (catch Exception _
     nil))
 
+;; Escape a string for safe JSON embedding
+(defn json-escape [s]
+  (-> (str s)
+      (clojure.string/replace "\\" "\\\\")
+      (clojure.string/replace "\"" "\\\"")))
+
 ;; Output JSON
 (println "{")
 (println "  \"edges\": [")
 (doseq [[idx edge] (map-indexed vector @edges)]
   (let [comma (if (< idx (dec (count @edges))) "," "")]
     (println (str "    {"
-      "\n      \"source_name\": \"" (get edge "source_name") "\","
-      "\n      \"source_file\": \"" (get edge "source_file") "\","
-      "\n      \"target_name\": \"" (get edge "target_name") "\","
-      "\n      \"target_file\": \"" (get edge "target_file") "\""
+      "\n      \"source_name\": \"" (json-escape (get edge "source_name")) "\","
+      "\n      \"source_file\": \"" (json-escape (get edge "source_file")) "\","
+      "\n      \"target_name\": \"" (json-escape (get edge "target_name")) "\","
+      "\n      \"target_file\": \"" (json-escape (get edge "target_file")) "\""
       "\n    }" comma))))
 (println "  ]")
 (println "}")
