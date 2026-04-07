@@ -644,7 +644,7 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
   // exceeds the napi bulk-insert savings on a handful of files. The JS
   // fallback path inside insertNodes handles this case efficiently.
   const smallIncremental =
-    !ctx.isFullBuild && ctx.fileSymbols.size <= ctx.config.build.smallFilesThreshold;
+    !ctx.isFullBuild && ctx.allSymbols.size <= ctx.config.build.smallFilesThreshold;
   if (ctx.nativeAvailable && ctx.engineName === 'native' && !smallIncremental) {
     reopenNativeDb(ctx, 'insertNodes');
   }
