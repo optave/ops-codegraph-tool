@@ -1,6 +1,6 @@
 {
   "name": "@optave/codegraph",
-  "version": "3.9.2",
+  "version": "3.9.1",
   "description": "Local code graph CLI — parse codebases with tree-sitter, build dependency graphs, query them",
   "type": "module",
   "main": "dist/index.js",
