@@ -37,7 +37,7 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
   // For small incremental builds on large codebases, use a fast path that
   // updates only the changed files' metrics via targeted SQL instead of
   // loading ALL definitions from DB (~8ms) and recomputing ALL metrics (~15ms).
-  // Gate: ≤5 changed files AND significantly more existing files (>20) to
+  // Gate: ≤smallFilesThreshold changed files AND significantly more existing files (>20) to
   // avoid triggering on small test fixtures where directory metrics matter.
   const useNativeReads = ctx.engineName === 'native' && !!ctx.nativeDb;
   const existingFileCount = !isFullBuild
@@ -52,7 +52,7 @@ export async function buildStructure(ctx: PipelineContext): Promise<void> {
   const useSmallIncrementalFastPath =
     !isFullBuild &&
     changedFileList != null &&
-    changedFileList.length <= 5 &&
+    changedFileList.length <= ctx.config.build.smallFilesThreshold &&
     existingFileCount > 20;
 
   if (!isFullBuild && !useSmallIncrementalFastPath) {

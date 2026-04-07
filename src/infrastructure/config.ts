@@ -23,6 +23,7 @@ export const DEFAULTS = {
     incremental: true,
     dbPath: '.codegraph/graph.db',
     driftThreshold: 0.2,
+    smallFilesThreshold: 5,
   },
   query: {
     defaultDepth: 3,

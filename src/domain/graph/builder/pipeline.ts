@@ -639,11 +639,12 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
 
   await parseFiles(ctx);
 
-  // For small incremental builds (≤5 files), skip the nativeDb open/close
+  // For small incremental builds (≤smallFilesThreshold files), skip the nativeDb open/close
   // cycle for insertNodes — the WAL checkpoint + connection churn (~5-10ms)
   // exceeds the napi bulk-insert savings on a handful of files. The JS
   // fallback path inside insertNodes handles this case efficiently.
-  const smallIncremental = !ctx.isFullBuild && ctx.fileSymbols.size <= 5;
+  const smallIncremental =
+    !ctx.isFullBuild && ctx.fileSymbols.size <= ctx.config.build.smallFilesThreshold;
   if (ctx.nativeAvailable && ctx.engineName === 'native' && !smallIncremental) {
     reopenNativeDb(ctx, 'insertNodes');
   }
