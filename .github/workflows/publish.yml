@@ -32,14 +32,7 @@ jobs:
         with:
           node-version: "22"
       - run: npm install
-      # Only run tests for dev builds (push to main). For stable releases
-      # (release/workflow_dispatch), CI already validated the code on the merged
-      # PR. Running tests here would fail on version mismatch — package.json
-      # still has the old version while the native binary matches it, but the
-      # version-check test expects them to agree with the release tag.
-      - name: Run tests
-        if: github.event_name == 'push'
-        run: npm test
+      - run: npm test
 
   compute-version:
     needs: preflight
