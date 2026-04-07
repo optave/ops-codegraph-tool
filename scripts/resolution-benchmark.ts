@@ -14,6 +14,7 @@
  *   { "javascript": { "precision": 0.92, "recall": 0.67, ... }, ... }
  */
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -47,6 +48,13 @@ interface ModeMetrics {
 	recall: number;
 }
 
+interface DynamicEdge {
+	source_name: string;
+	source_file: string;
+	target_name: string;
+	target_file: string;
+}
+
 interface LangResult {
 	precision: number;
 	recall: number;
@@ -56,12 +64,14 @@ interface LangResult {
 	totalResolved: number;
 	totalExpected: number;
 	byMode: Record<string, ModeMetrics>;
+	dynamicEdges?: number;
+	dynamicConfirmed?: number;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 // Files to skip when copying fixtures (not source code for codegraph)
-const SKIP_FILES = new Set(['expected-edges.json', 'driver.mjs']);
+const SKIP_FILES = new Set(['expected-edges.json', 'driver.mjs', 'dynamic-edges.json']);
 
 function copyFixture(lang: string): string {
 	const src = path.join(FIXTURES_DIR, lang);
@@ -137,6 +147,70 @@ function discoverFixtures(): string[] {
 	return languages;
 }
 
+// ── Dynamic tracing ────────────────────────────────────────────────────
+
+const TRACER_SCRIPT = path.join(root, 'tests', 'benchmarks', 'resolution', 'tracer', 'run-tracer.mjs');
+
+/**
+ * Attempt to run the dynamic call tracer for a language fixture.
+ * Returns captured edges on success, empty array on failure or unavailability.
+ */
+function runDynamicTracer(lang: string): DynamicEdge[] {
+	if (!fs.existsSync(TRACER_SCRIPT)) return [];
+
+	const fixtureDir = path.join(FIXTURES_DIR, lang);
+	try {
+		const result = execFileSync(process.execPath, [TRACER_SCRIPT, fixtureDir], {
+			encoding: 'utf-8',
+			timeout: 60_000,
+			env: { ...process.env, NODE_NO_WARNINGS: '1' },
+			stdio: ['pipe', 'pipe', 'pipe'],
+		});
+		const parsed = JSON.parse(result);
+		if (parsed.error) {
+			console.error(`    Dynamic tracer for ${lang}: ${parsed.error}`);
+		}
+		return Array.isArray(parsed.edges) ? parsed.edges : [];
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * Merge dynamic edges with expected edges as supplemental ground truth.
+ * Dynamic edges that aren't already in expected-edges get added with mode "dynamic".
+ */
+function mergeWithDynamic(expectedEdges: ExpectedEdge[], dynamicEdges: DynamicEdge[]): {
+	merged: ExpectedEdge[];
+	dynamicConfirmed: number;
+} {
+	const expectedSet = new Set(
+		expectedEdges.map((e) => edgeKey(e.source.name, e.source.file, e.target.name, e.target.file)),
+	);
+
+	let dynamicConfirmed = 0;
+	const newEdges: ExpectedEdge[] = [];
+
+	for (const de of dynamicEdges) {
+		const key = edgeKey(de.source_name, de.source_file, de.target_name, de.target_file);
+		if (expectedSet.has(key)) {
+			dynamicConfirmed++;
+		} else {
+			// New edge discovered only by dynamic tracing
+			newEdges.push({
+				source: { name: de.source_name, file: de.source_file },
+				target: { name: de.target_name, file: de.target_file },
+				mode: 'dynamic',
+			});
+		}
+	}
+
+	return {
+		merged: [...expectedEdges, ...newEdges],
+		dynamicConfirmed,
+	};
+}
+
 // ── Main ────────────────────────────────────────────────────────────────
 
 // Redirect console.log to stderr so only JSON goes to stdout
@@ -193,11 +267,24 @@ try {
 			const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
 			const expectedEdges: ExpectedEdge[] = manifest.edges;
 
+			// Run dynamic tracer if available
+			const dynamicEdges = runDynamicTracer(lang);
+			const { dynamicConfirmed } = mergeWithDynamic(expectedEdges, dynamicEdges);
+
+			// Use only expected edges for metrics (dynamic edges are supplemental)
 			const metrics = computeMetrics(resolvedEdges, expectedEdges);
+			if (dynamicEdges.length > 0) {
+				metrics.dynamicEdges = dynamicEdges.length;
+				metrics.dynamicConfirmed = dynamicConfirmed;
+			}
 			results[lang] = metrics;
 
+			const dynamicInfo =
+				dynamicEdges.length > 0
+					? ` dynamic=${dynamicEdges.length} confirmed=${dynamicConfirmed}`
+					: '';
 			console.error(
-				`    ${lang}: precision=${(metrics.precision * 100).toFixed(1)}% recall=${(metrics.recall * 100).toFixed(1)}%`,
+				`    ${lang}: precision=${(metrics.precision * 100).toFixed(1)}% recall=${(metrics.recall * 100).toFixed(1)}%${dynamicInfo}`,
 			);
 		} finally {
 			fs.rmSync(fixtureDir, { recursive: true, force: true });

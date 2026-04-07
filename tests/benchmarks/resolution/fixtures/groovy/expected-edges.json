@@ -1,0 +1,98 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "groovy",
+  "description": "Hand-annotated call edges for Groovy resolution benchmark",
+  "edges": [
+    {
+      "source": { "name": "Main.main", "file": "Main.groovy" },
+      "target": { "name": "UserService", "file": "Service.groovy" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "new UserService() — class instantiation"
+    },
+    {
+      "source": { "name": "Main.main", "file": "Main.groovy" },
+      "target": { "name": "UserService.createUser", "file": "Service.groovy" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.createUser() — method call on UserService instance"
+    },
+    {
+      "source": { "name": "Main.main", "file": "Main.groovy" },
+      "target": { "name": "UserService.getUser", "file": "Service.groovy" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.getUser() — method call on UserService instance"
+    },
+    {
+      "source": { "name": "Main.main", "file": "Main.groovy" },
+      "target": { "name": "UserService.removeUser", "file": "Service.groovy" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.removeUser() — method call on UserService instance"
+    },
+    {
+      "source": { "name": "Main.main", "file": "Main.groovy" },
+      "target": { "name": "Validators.validateUser", "file": "Validators.groovy" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Validators.validateUser() — static method call via import"
+    },
+    {
+      "source": { "name": "UserService.createUser", "file": "Service.groovy" },
+      "target": { "name": "Validators.isValidEmail", "file": "Validators.groovy" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Validators.isValidEmail() — static method call via import"
+    },
+    {
+      "source": { "name": "UserService.createUser", "file": "Service.groovy" },
+      "target": { "name": "Validators.isValidName", "file": "Validators.groovy" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Validators.isValidName() — static method call via import"
+    },
+    {
+      "source": { "name": "UserService.createUser", "file": "Service.groovy" },
+      "target": { "name": "UserRepository.save", "file": "Repository.groovy" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "repo.save() — method call on UserRepository field"
+    },
+    {
+      "source": { "name": "UserService.getUser", "file": "Service.groovy" },
+      "target": { "name": "UserRepository.findById", "file": "Repository.groovy" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "repo.findById() — method call on UserRepository field"
+    },
+    {
+      "source": { "name": "UserService.removeUser", "file": "Service.groovy" },
+      "target": { "name": "UserRepository.delete", "file": "Repository.groovy" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "repo.delete() — method call on UserRepository field"
+    },
+    {
+      "source": { "name": "UserService.summary", "file": "Service.groovy" },
+      "target": { "name": "UserRepository.count", "file": "Repository.groovy" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "repo.count() — method call on UserRepository field"
+    },
+    {
+      "source": { "name": "Validators.validateUser", "file": "Validators.groovy" },
+      "target": { "name": "Validators.isValidName", "file": "Validators.groovy" },
+      "kind": "calls",
+      "mode": "same-file",
+      "notes": "Same-class static method call"
+    },
+    {
+      "source": { "name": "Validators.validateUser", "file": "Validators.groovy" },
+      "target": { "name": "Validators.isValidEmail", "file": "Validators.groovy" },
+      "kind": "calls",
+      "mode": "same-file",
+      "notes": "Same-class static method call"
+    }
+  ]
+}

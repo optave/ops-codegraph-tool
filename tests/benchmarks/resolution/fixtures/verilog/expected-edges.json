@@ -1,0 +1,35 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "verilog",
+  "description": "Hand-annotated call edges for Verilog resolution benchmark",
+  "edges": [
+    {
+      "source": { "name": "main", "file": "main.v" },
+      "target": { "name": "validators", "file": "validators.v" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Module instantiation: validators val_inst(...)"
+    },
+    {
+      "source": { "name": "main", "file": "main.v" },
+      "target": { "name": "service", "file": "service.v" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Module instantiation: service svc_inst(...)"
+    },
+    {
+      "source": { "name": "service", "file": "service.v" },
+      "target": { "name": "repository", "file": "repository.v" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Module instantiation: repository repo_inst(...)"
+    },
+    {
+      "source": { "name": "validators", "file": "validators.v" },
+      "target": { "name": "validators.check_range", "file": "validators.v" },
+      "kind": "calls",
+      "mode": "same-file",
+      "notes": "Function call within always block: check_range(data_in, ...)"
+    }
+  ]
+}

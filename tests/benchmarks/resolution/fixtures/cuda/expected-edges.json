@@ -1,0 +1,91 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "cuda",
+  "description": "Hand-annotated call edges for CUDA resolution benchmark",
+  "edges": [
+    {
+      "source": { "name": "runService", "file": "main.cu" },
+      "target": { "name": "UserService.createUser", "file": "service.cu" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.createUser() — method call on UserService local"
+    },
+    {
+      "source": { "name": "runService", "file": "main.cu" },
+      "target": { "name": "UserService.getUser", "file": "service.cu" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.getUser() — method call on UserService local"
+    },
+    {
+      "source": { "name": "runService", "file": "main.cu" },
+      "target": { "name": "UserService.removeUser", "file": "service.cu" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "svc.removeUser() — method call on UserService local"
+    },
+    {
+      "source": { "name": "runValidation", "file": "main.cu" },
+      "target": { "name": "validateEmail", "file": "validators.cu" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Direct cross-file function call via #include"
+    },
+    {
+      "source": { "name": "runValidation", "file": "main.cu" },
+      "target": { "name": "validateName", "file": "validators.cu" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Direct cross-file function call via #include"
+    },
+    {
+      "source": { "name": "UserService.createUser", "file": "service.cu" },
+      "target": { "name": "validateEmail", "file": "validators.cu" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Direct cross-file function call via #include"
+    },
+    {
+      "source": { "name": "UserService.createUser", "file": "service.cu" },
+      "target": { "name": "validateName", "file": "validators.cu" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "Direct cross-file function call via #include"
+    },
+    {
+      "source": { "name": "UserService.createUser", "file": "service.cu" },
+      "target": { "name": "UserRepository.save", "file": "service.cu" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "repo.save() — method call on UserRepository member"
+    },
+    {
+      "source": { "name": "UserService.getUser", "file": "service.cu" },
+      "target": { "name": "UserRepository.findById", "file": "service.cu" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "repo.findById() — method call on UserRepository member"
+    },
+    {
+      "source": { "name": "UserService.removeUser", "file": "service.cu" },
+      "target": { "name": "UserRepository.deleteById", "file": "service.cu" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "repo.deleteById() — method call on UserRepository member"
+    },
+    {
+      "source": { "name": "validateEmail", "file": "validators.cu" },
+      "target": { "name": "checkLength", "file": "validators.cu" },
+      "kind": "calls",
+      "mode": "same-file",
+      "notes": "Same-file function call to helper"
+    },
+    {
+      "source": { "name": "validateName", "file": "validators.cu" },
+      "target": { "name": "checkLength", "file": "validators.cu" },
+      "kind": "calls",
+      "mode": "same-file",
+      "notes": "Same-file function call to helper"
+    }
+  ]
+}

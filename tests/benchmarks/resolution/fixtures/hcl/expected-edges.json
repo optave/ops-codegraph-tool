@@ -1,0 +1,21 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "hcl",
+  "description": "Hand-annotated call edges for HCL/Terraform resolution benchmark. HCL uses module references rather than function calls — edges represent module source references.",
+  "edges": [
+    {
+      "source": { "name": "module.user_service", "file": "main.tf" },
+      "target": { "name": "module.repository", "file": "main.tf" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "module.user_service references module.repository.name via variable"
+    },
+    {
+      "source": { "name": "module.user_service", "file": "main.tf" },
+      "target": { "name": "module.validators", "file": "main.tf" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "module.user_service references module.validators via variable"
+    }
+  ]
+}

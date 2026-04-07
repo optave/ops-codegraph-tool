@@ -1,0 +1,91 @@
+{
+  "$schema": "../../expected-edges.schema.json",
+  "language": "objc",
+  "description": "Hand-annotated call edges for Objective-C resolution benchmark",
+  "edges": [
+    {
+      "source": { "name": "run", "file": "main.m" },
+      "target": { "name": "UserService.initWithRepository", "file": "Service.m" },
+      "kind": "calls",
+      "mode": "constructor",
+      "notes": "[[UserService alloc] initWithRepository:repo] — message send constructor"
+    },
+    {
+      "source": { "name": "run", "file": "main.m" },
+      "target": { "name": "UserService.createUserWithId", "file": "Service.m" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "[svc createUserWithId:...] — message send on UserService instance"
+    },
+    {
+      "source": { "name": "run", "file": "main.m" },
+      "target": { "name": "UserService.getUserWithId", "file": "Service.m" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "[svc getUserWithId:...] — message send on UserService instance"
+    },
+    {
+      "source": { "name": "run", "file": "main.m" },
+      "target": { "name": "UserService.removeUserWithId", "file": "Service.m" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "[svc removeUserWithId:...] — message send on UserService instance"
+    },
+    {
+      "source": { "name": "run", "file": "main.m" },
+      "target": { "name": "Validators.isValidEmail", "file": "Validators.m" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "[Validators isValidEmail:...] — class method message send"
+    },
+    {
+      "source": { "name": "UserService.createUserWithId", "file": "Service.m" },
+      "target": { "name": "Validators.isValidEmail", "file": "Validators.m" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "[Validators isValidEmail:...] — class method message send"
+    },
+    {
+      "source": { "name": "UserService.createUserWithId", "file": "Service.m" },
+      "target": { "name": "Validators.isValidName", "file": "Validators.m" },
+      "kind": "calls",
+      "mode": "static",
+      "notes": "[Validators isValidName:...] — class method message send"
+    },
+    {
+      "source": { "name": "UserService.createUserWithId", "file": "Service.m" },
+      "target": { "name": "UserRepository.saveWithId", "file": "Repository.m" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "[_repo saveWithId:...] — message send on UserRepository ivar"
+    },
+    {
+      "source": { "name": "UserService.getUserWithId", "file": "Service.m" },
+      "target": { "name": "UserRepository.findById", "file": "Repository.m" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "[_repo findById:...] — message send on UserRepository ivar"
+    },
+    {
+      "source": { "name": "UserService.removeUserWithId", "file": "Service.m" },
+      "target": { "name": "UserRepository.deleteWithId", "file": "Repository.m" },
+      "kind": "calls",
+      "mode": "receiver-typed",
+      "notes": "[_repo deleteWithId:...] — message send on UserRepository ivar"
+    },
+    {
+      "source": { "name": "Validators.validateUser", "file": "Validators.m" },
+      "target": { "name": "Validators.isValidName", "file": "Validators.m" },
+      "kind": "calls",
+      "mode": "same-file",
+      "notes": "[self isValidName:...] — same-class class method call"
+    },
+    {
+      "source": { "name": "Validators.validateUser", "file": "Validators.m" },
+      "target": { "name": "Validators.isValidEmail", "file": "Validators.m" },
+      "kind": "calls",
+      "mode": "same-file",
+      "notes": "[self isValidEmail:...] — same-class class method call"
+    }
+  ]
+}

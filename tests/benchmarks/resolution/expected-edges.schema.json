@@ -55,9 +55,10 @@
               "higher-order",
               "trait-dispatch",
               "module-function",
-              "package-function"
+              "package-function",
+              "dynamic"
             ],
-            "description": "Resolution category — describes the language feature exercised by this edge"
+            "description": "Resolution category — describes the language feature exercised by this edge. 'dynamic' is assigned to edges discovered only by runtime tracing, not hand-annotated."
           },
           "notes": {
             "type": "string",
