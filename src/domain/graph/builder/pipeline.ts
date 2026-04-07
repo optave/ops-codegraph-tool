@@ -234,7 +234,10 @@ interface NativeOrchestratorResult {
 function shouldSkipNativeOrchestrator(ctx: PipelineContext): string | null {
   if (process.env.CODEGRAPH_FORCE_JS_PIPELINE === '1') return 'CODEGRAPH_FORCE_JS_PIPELINE=1';
   if (ctx.forceFullRebuild) return 'forceFullRebuild';
-  const orchestratorBuggy = !!ctx.engineVersion && semverCompare(ctx.engineVersion, '3.10.0') < 0;
+  // v3.9.0 addon had buggy incremental purge (wrong SQL on analysis tables,
+  // scoped removal over-detection). Fixed in v3.9.1 by PR #865. Gate on
+  // < 3.9.1 so v3.9.1+ uses the fast Rust orchestrator path.
+  const orchestratorBuggy = !!ctx.engineVersion && semverCompare(ctx.engineVersion, '3.9.1') < 0;
   if (orchestratorBuggy) return `buggy addon ${ctx.engineVersion}`;
   if (ctx.engineName !== 'native') return `engine=${ctx.engineName}`;
   return null;
@@ -636,10 +639,12 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
 
   await parseFiles(ctx);
 
-  // Temporarily reopen nativeDb for insertNodes — it uses the WAL checkpoint
-  // guard internally (same pattern as feature modules). Closed again before
-  // resolveImports/buildEdges which don't yet have the guard (#709).
-  if (ctx.nativeAvailable && ctx.engineName === 'native') {
+  // For small incremental builds (≤5 files), skip the nativeDb open/close
+  // cycle for insertNodes — the WAL checkpoint + connection churn (~5-10ms)
+  // exceeds the napi bulk-insert savings on a handful of files. The JS
+  // fallback path inside insertNodes handles this case efficiently.
+  const smallIncremental = !ctx.isFullBuild && ctx.fileSymbols.size <= 5;
+  if (ctx.nativeAvailable && ctx.engineName === 'native' && !smallIncremental) {
     reopenNativeDb(ctx, 'insertNodes');
   }
 
@@ -657,7 +662,8 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
 
   // Reopen nativeDb for feature modules (ast, cfg, complexity, dataflow)
   // which use suspendJsDb/resumeJsDb WAL checkpoint before native writes.
-  if (ctx.nativeAvailable) {
+  // Skip for small incremental builds — same rationale as insertNodes above.
+  if (ctx.nativeAvailable && !smallIncremental) {
     reopenNativeDb(ctx, 'analyses');
     if (ctx.nativeDb && ctx.engineOpts) {
       ctx.engineOpts.nativeDb = ctx.nativeDb;
