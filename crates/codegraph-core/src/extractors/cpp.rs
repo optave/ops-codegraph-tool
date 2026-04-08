@@ -171,21 +171,6 @@ fn extract_cpp_enum_constants(node: &Node, source: &[u8]) -> Vec<Definition> {
     constants
 }
 
-fn find_cpp_parent_class<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> {
-    let mut current = node.parent();
-    while let Some(parent) = current {
-        match parent.kind() {
-            "class_specifier" | "struct_specifier" => {
-                return parent.child_by_field_name("name")
-                    .map(|n| node_text(&n, source).to_string());
-            }
-            _ => {}
-        }
-        current = parent.parent();
-    }
-    None
-}
-
 fn extract_cpp_base_classes(node: &Node, source: &[u8], class_name: &str, symbols: &mut FileSymbols) {
     for i in 0..node.child_count() {
         if let Some(child) = node.child(i) {
@@ -214,7 +199,7 @@ fn extract_cpp_base_classes(node: &Node, source: &[u8], class_name: &str, symbol
 
 fn handle_cpp_function_definition(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(name) = extract_cpp_function_name(node, source) {
-        let parent_class = find_cpp_parent_class(node, source);
+        let parent_class = find_enclosing_type_name(node, &["class_specifier", "struct_specifier"], source);
         let full_name = match &parent_class {
             Some(cls) => format!("{}.{}", cls, name),
             None => name,
@@ -360,11 +345,11 @@ fn handle_cpp_call_expression(node: &Node, source: &[u8], symbols: &mut FileSymb
                 });
             }
             "field_expression" => {
-                let name = fn_node.child_by_field_name("field")
-                    .map(|n| node_text(&n, source).to_string())
+                let name = named_child_text(&fn_node, "field", source)
+                    .map(|s| s.to_string())
                     .unwrap_or_else(|| node_text(&fn_node, source).to_string());
-                let receiver = fn_node.child_by_field_name("argument")
-                    .map(|n| node_text(&n, source).to_string());
+                let receiver = named_child_text(&fn_node, "argument", source)
+                    .map(|s| s.to_string());
                 symbols.calls.push(Call {
                     name,
                     line: start_line(node),

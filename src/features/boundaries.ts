@@ -1,5 +1,5 @@
-import { debug } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
+import { BoundaryError } from '../shared/errors.js';
 import type { BetterSqlite3Database } from '../types.js';
 
 // ─── Glob-to-Regex ───────────────────────────────────────────────────
@@ -269,8 +269,7 @@ export function evaluateBoundaries(
 
   const { valid, errors } = validateBoundaryConfig(boundaryConfig);
   if (!valid) {
-    debug(`boundary config validation failed: ${errors.join('; ')}`);
-    return { violations: [], violationCount: 0 };
+    throw new BoundaryError(`Invalid boundary configuration: ${errors.join('; ')}`);
   }
 
   const modules = resolveModules(boundaryConfig);
@@ -297,8 +296,7 @@ export function evaluateBoundaries(
       )
       .all() as Array<{ source: string; target: string }>;
   } catch (err) {
-    debug(`boundary edge query failed: ${(err as Error).message}`);
-    return { violations: [], violationCount: 0 };
+    throw new BoundaryError('Boundary evaluation failed', { cause: err as Error });
   }
 
   if (opts.noTests) {

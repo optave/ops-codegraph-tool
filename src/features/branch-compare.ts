@@ -9,6 +9,7 @@ import { debug } from '../infrastructure/logger.js';
 import { getNative, isNativeAvailable } from '../infrastructure/native.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { toErrorMessage } from '../shared/errors.js';
+import { toSymbolRef } from '../shared/normalize.js';
 import type { EngineMode, NativeDatabase } from '../types.js';
 
 // ─── Git Helpers ────────────────────────────────────────────────────────
@@ -255,9 +256,7 @@ function loadCallersFromDb(
             if (!visited.has(c.id) && (!noTests || !isTestFile(c.file))) {
               visited.add(c.id);
               nextFrontier.push(c.id);
-              allCallers.add(
-                JSON.stringify({ name: c.name, kind: c.kind, file: c.file, line: c.line }),
-              );
+              allCallers.add(JSON.stringify(toSymbolRef(c)));
             }
           }
         }

@@ -15,9 +15,29 @@ export const command: CommandDefinition = {
     ['--limit <number>', 'Max results to return'],
     ['--offset <number>', 'Skip N results (default: 0)'],
     ['--ndjson', 'Newline-delimited JSON output'],
+    ['--modules', 'Show module boundaries (directories with high cohesion)'],
+    ['--threshold <number>', 'Cohesion threshold for --modules (default: 0.3)'],
   ],
   async execute([dir], opts, ctx) {
-    const { structureData, formatStructure } = await import('../../presentation/structure.js');
+    const { structureData, formatStructure, moduleBoundariesData, formatModuleBoundaries } =
+      await import('../../presentation/structure.js');
+
+    if (opts.modules) {
+      const parsed = opts.threshold ? parseFloat(opts.threshold as string) : undefined;
+      if (parsed !== undefined && Number.isNaN(parsed)) {
+        console.error('Error: --threshold must be a number');
+        process.exitCode = 1;
+        return;
+      }
+      const data = moduleBoundariesData(opts.db, {
+        threshold: parsed,
+      });
+      if (!ctx.outputResult(data, 'modules', opts)) {
+        console.log(formatModuleBoundaries(data));
+      }
+      return;
+    }
+
     const qOpts = ctx.resolveQueryOpts(opts);
     const data = structureData(opts.db, {
       directory: dir,

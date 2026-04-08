@@ -207,8 +207,8 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         }
         "selector_expression" => {
             if let Some(field) = fn_node.child_by_field_name("field") {
-                let receiver = fn_node.child_by_field_name("operand")
-                    .map(|op| node_text(&op, source).to_string());
+                let receiver = named_child_text(&fn_node, "operand", source)
+                    .map(|s| s.to_string());
                 symbols.calls.push(Call {
                     name: node_text(&field, source).to_string(),
                     line: start_line(node),

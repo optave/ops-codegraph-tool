@@ -46,7 +46,7 @@ fn extract_new_expr_type_name<'a>(node: &Node<'a>, source: &'a [u8]) -> Option<&
     match ctor.kind() {
         "identifier" => Some(node_text(&ctor, source)),
         "member_expression" => {
-            ctor.child_by_field_name("property").map(|p| node_text(&p, source))
+            named_child_text(&ctor, "property", source)
         }
         _ => None,
     }
@@ -905,8 +905,8 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
             if prop.kind() == "string" || prop.kind() == "string_fragment" {
                 let method_name = node_text(&prop, source).replace(&['\'', '"'][..], "");
                 if !method_name.is_empty() {
-                    let receiver = fn_node.child_by_field_name("object")
-                        .map(|obj| node_text(&obj, source).to_string());
+                    let receiver = named_child_text(&fn_node, "object", source)
+                        .map(|s| s.to_string());
                     return Some(Call {
                         name: method_name,
                         line: start_line(call_node),
@@ -916,8 +916,8 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                 }
             }
 
-            let receiver = fn_node.child_by_field_name("object")
-                .map(|obj| node_text(&obj, source).to_string());
+            let receiver = named_child_text(&fn_node, "object", source)
+                .map(|s| s.to_string());
             Some(Call {
                 name: prop_text.to_string(),
                 line: start_line(call_node),
@@ -932,8 +932,8 @@ fn extract_call_info(fn_node: &Node, call_node: &Node, source: &[u8]) -> Option<
                     let method_name = node_text(&index, source)
                         .replace(&['\'', '"', '`'][..], "");
                     if !method_name.is_empty() && !method_name.contains('$') {
-                        let receiver = fn_node.child_by_field_name("object")
-                            .map(|obj| node_text(&obj, source).to_string());
+                        let receiver = named_child_text(&fn_node, "object", source)
+                            .map(|s| s.to_string());
                         return Some(Call {
                             name: method_name,
                             line: start_line(call_node),

@@ -116,11 +116,10 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let (call_name, receiver) = match fn_node.kind() {
         "identifier" => (Some(node_text(&fn_node, source).to_string()), None),
         "attribute" => {
-            let name = fn_node
-                .child_by_field_name("attribute")
-                .map(|a| node_text(&a, source).to_string());
-            let recv = fn_node.child_by_field_name("object")
-                .map(|obj| node_text(&obj, source).to_string());
+            let name = named_child_text(&fn_node, "attribute", source)
+                .map(|s| s.to_string());
+            let recv = named_child_text(&fn_node, "object", source)
+                .map(|s| s.to_string());
             (name, recv)
         }
         _ => (None, None),
@@ -207,8 +206,8 @@ fn extract_python_parameters(node: &Node, source: &[u8], is_method: bool) -> Vec
                         Some(text.to_string())
                     }
                     "default_parameter" | "typed_default_parameter" => {
-                        child.child_by_field_name("name")
-                            .map(|n| node_text(&n, source).to_string())
+                        named_child_text(&child, "name", source)
+                            .map(|s| s.to_string())
                     }
                     "typed_parameter" => {
                         // typed_parameter: first child is the identifier
@@ -312,9 +311,7 @@ fn extract_python_type_name<'a>(type_node: &Node<'a>, source: &'a [u8]) -> Optio
         "identifier" | "attribute" => Some(node_text(type_node, source)),
         "subscript" => {
             // List[int] → List
-            type_node
-                .child_by_field_name("value")
-                .map(|n| node_text(&n, source))
+            named_child_text(type_node, "value", source)
         }
         _ => None,
     }

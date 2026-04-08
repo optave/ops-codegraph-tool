@@ -75,9 +75,8 @@ pub fn find_enclosing_type_name(node: &Node, kinds: &[&str], source: &[u8]) -> O
     let mut current = node.parent();
     while let Some(parent) = current {
         if kinds.contains(&parent.kind()) {
-            return parent
-                .child_by_field_name("name")
-                .map(|n| node_text(&n, source).to_string());
+            return named_child_text(&parent, "name", source)
+                .map(|s| s.to_string());
         }
         current = parent.parent();
     }
@@ -541,8 +540,8 @@ fn walk_ast_nodes_with_config_depth(
 fn extract_constructor_name(node: &Node, source: &[u8]) -> String {
     // Try common field names for the constructed type
     for field in &["type", "class", "constructor"] {
-        if let Some(child) = node.child_by_field_name(field) {
-            return node_text(&child, source).to_string();
+        if let Some(text) = named_child_text(node, field, source) {
+            return text.to_string();
         }
     }
     for i in 0..node.child_count() {
@@ -599,8 +598,8 @@ fn extract_awaited_name(node: &Node, source: &[u8]) -> String {
 /// Extract function name from a call node.
 fn extract_call_name(node: &Node, source: &[u8]) -> String {
     for field in &["function", "method", "name"] {
-        if let Some(fn_node) = node.child_by_field_name(field) {
-            return node_text(&fn_node, source).to_string();
+        if let Some(text) = named_child_text(node, field, source) {
+            return text.to_string();
         }
     }
     let text = node_text(node, source);

@@ -21,9 +21,8 @@ fn find_current_impl<'a>(node: &Node<'a>, source: &[u8]) -> Option<String> {
     let mut current = node.parent();
     while let Some(parent) = current {
         if parent.kind() == "impl_item" {
-            return parent
-                .child_by_field_name("type")
-                .map(|n| node_text(&n, source).to_string());
+            return named_child_text(&parent, "type", source)
+                .map(|s| s.to_string());
         }
         current = parent.parent();
     }
@@ -194,8 +193,8 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         }
         "field_expression" => {
             if let Some(field) = fn_node.child_by_field_name("field") {
-                let receiver = fn_node.child_by_field_name("value")
-                    .map(|v| node_text(&v, source).to_string());
+                let receiver = named_child_text(&fn_node, "value", source)
+                    .map(|s| s.to_string());
                 symbols.calls.push(Call {
                     name: node_text(&field, source).to_string(),
                     line: start_line(node),
@@ -206,8 +205,8 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         }
         "scoped_identifier" => {
             if let Some(name) = fn_node.child_by_field_name("name") {
-                let receiver = fn_node.child_by_field_name("path")
-                    .map(|p| node_text(&p, source).to_string());
+                let receiver = named_child_text(&fn_node, "path", source)
+                    .map(|s| s.to_string());
                 symbols.calls.push(Call {
                     name: node_text(&name, source).to_string(),
                     line: start_line(node),
@@ -323,8 +322,8 @@ fn extract_rust_use_path(node: &Node, source: &[u8]) -> Vec<(String, Vec<String>
             vec![(node_text(node, source).to_string(), name.into_iter().collect())]
         }
         "use_wildcard" => {
-            let src = node.child_by_field_name("path")
-                .map(|p| node_text(&p, source).to_string())
+            let src = named_child_text(&node, "path", source)
+                .map(|s| s.to_string())
                 .unwrap_or_else(|| "*".to_string());
             vec![(src, vec!["*".to_string()])]
         }
@@ -338,8 +337,8 @@ fn extract_rust_use_path(node: &Node, source: &[u8]) -> Vec<(String, Vec<String>
 }
 
 fn extract_scoped_use_list(node: &Node, source: &[u8]) -> Vec<(String, Vec<String>)> {
-    let prefix = node.child_by_field_name("path")
-        .map(|p| node_text(&p, source).to_string())
+    let prefix = named_child_text(&node, "path", source)
+        .map(|s| s.to_string())
         .unwrap_or_default();
     let Some(list_node) = node.child_by_field_name("list") else {
         return vec![(prefix, vec![])];

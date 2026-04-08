@@ -75,7 +75,7 @@ export function formatHotspots(data: HotspotsResult): string {
 
 interface ModuleBoundaryEntry {
   directory: string;
-  cohesion: number;
+  cohesion: number | null;
   fileCount: number;
   symbolCount: number;
   fanIn: number;
@@ -95,7 +95,7 @@ export function formatModuleBoundaries(data: ModuleBoundariesResult): string {
   const lines = [`\nModule boundaries (cohesion >= ${data.threshold}, ${data.count} modules):\n`];
   for (const m of data.modules) {
     lines.push(
-      `  ${m.directory}/  cohesion=${m.cohesion.toFixed(2)}  (${m.fileCount} files, ${m.symbolCount} symbols)`,
+      `  ${m.directory}/  cohesion=${m.cohesion !== null ? m.cohesion.toFixed(2) : 'n/a'}  (${m.fileCount} files, ${m.symbolCount} symbols)`,
     );
     lines.push(`    Incoming: ${m.fanIn} edges    Outgoing: ${m.fanOut} edges`);
     if (m.files.length > 0) {

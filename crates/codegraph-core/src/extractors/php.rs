@@ -255,8 +255,8 @@ fn handle_function_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
 fn handle_member_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(name) = node.child_by_field_name("name") {
-        let receiver = node.child_by_field_name("object")
-            .map(|obj| node_text(&obj, source).to_string());
+        let receiver = named_child_text(node, "object", source)
+            .map(|s| s.to_string());
         symbols.calls.push(Call {
             name: node_text(&name, source).to_string(),
             line: start_line(node),
@@ -268,8 +268,8 @@ fn handle_member_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
 fn handle_scoped_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(name) = node.child_by_field_name("name") {
-        let receiver = node.child_by_field_name("scope")
-            .map(|s| node_text(&s, source).to_string());
+        let receiver = named_child_text(node, "scope", source)
+            .map(|s| s.to_string());
         symbols.calls.push(Call {
             name: node_text(&name, source).to_string(),
             line: start_line(node),

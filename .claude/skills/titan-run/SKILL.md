@@ -1,7 +1,7 @@
 ---
 name: titan-run
-description: Run the full Titan Paradigm pipeline end-to-end by dispatching each phase to sub-agents with fresh context windows. Orchestrates recon → gauntlet → sync → forge automatically.
-argument-hint: <path (default: .)> <--skip-recon> <--skip-gauntlet> <--start-from recon|gauntlet|sync|forge> <--gauntlet-batch-size 5> <--yes>
+description: Run the full Titan Paradigm pipeline end-to-end by dispatching each phase to sub-agents with fresh context windows. Orchestrates recon → gauntlet → sync → forge → grind automatically.
+argument-hint: <path (default: .)> <--skip-recon> <--skip-gauntlet> <--start-from recon|gauntlet|sync|forge|grind> <--gauntlet-batch-size 5> <--yes>
 allowed-tools: Agent, Read, Bash, Glob, Write, Edit
 ---
 
@@ -16,7 +16,7 @@ You are the **orchestrator** for the full Titan Paradigm pipeline. Your job is t
 - `<path>` → target path (passed to recon)
 - `--skip-recon` → skip recon (assumes artifacts exist)
 - `--skip-gauntlet` → skip gauntlet (assumes artifacts exist)
-- `--start-from <phase>` → jump to phase: `recon`, `gauntlet`, `sync`, `forge`
+- `--start-from <phase>` → jump to phase: `recon`, `gauntlet`, `sync`, `forge`, `grind`
 - `--gauntlet-batch-size <N>` → batch size for gauntlet (default: 5)
 - `--yes` → skip all confirmation prompts in the orchestrator (pre-pipeline, forge checkpoint, and resume prompts) and in forge (per-phase confirmation)
 
@@ -62,11 +62,11 @@ You are the **orchestrator** for the full Titan Paradigm pipeline. Your job is t
    ```bash
    npm install -g @optave/codegraph@latest
    ```
-   Log the installed version (skip if codegraph is not available):
+   Log the installed version:
    ```bash
-   codegraph --version || true
+   codegraph --version
    ```
-   If the install fails or `codegraph` is not found, warn the user but continue — the sub-agents may still work if a project-local version is available.
+   If the install fails, warn the user but continue with whichever version is currently available.
 
 5. **Sync with main** (once, before any sub-agent runs):
    ```bash
@@ -81,9 +81,10 @@ You are the **orchestrator** for the full Titan Paradigm pipeline. Your job is t
    Starting from: <phase>
    Gauntlet batch size: <N>
 
-   Phases: recon → gauntlet (loop) → sync → [PAUSE] → forge (loop)
+   Phases: recon → gauntlet (loop) → sync → [PAUSE] → forge (loop) → grind (loop) → close
    Each phase runs in a sub-agent with a fresh context window.
    Forge requires explicit confirmation (analysis phases are safe to automate).
+   Grind runs after forge to adopt extracted helpers into consumers.
    ```
 
    Start immediately — do NOT ask for confirmation before analysis phases. The user invoked `/titan-run`; that is the confirmation. Analysis phases (recon, gauntlet, sync) are read-only and safe to automate. The forge checkpoint (Step 3.5b) still applies unless `--yes` is set.
@@ -141,6 +142,7 @@ For each phase BEFORE `startPhase`, run the corresponding V-checks:
 | `recon` | V1 structural fields only (domains, batches, priorityQueue, stats — skip `currentPhase == "recon"` check since later phases advance it), V2 (GLOBAL_ARCH.md), V3 (snapshot exists — WARN if missing), V4 (cross-check counts) |
 | `gauntlet` | V5 (coverage ≥ 50%), V6 (entry completeness sample), V7 (summary consistency); also run NDJSON integrity check (2c) |
 | `sync` | V8 (sync.json structure), V9 (targets trace to gauntlet), V10 (dependency order) |
+| `forge` | V14 (final state consistency), V15 (gate log consistency); execution block must exist in titan-state.json |
 
 If ANY required artifact is **missing** → stop: "Cannot start from `<phase>` — `<artifact>` is missing. Run the full pipeline or start from an earlier phase."
 
@@ -632,6 +634,113 @@ Record `phaseTimestamps.forge.completedAt`.
 
 ---
 
+## Step 4.5 — GRIND (loop)
+
+Grind runs after forge to close the adoption loop. Forge extracts helpers; grind wires them into consumers and removes dead code. Without grind, the dead symbol count inflates with every forge phase.
+
+**Skip if:** `--start-from` is `close`, or `titan-state.json → grind.completedPhases` already covers all forge phases.
+
+### 4.5a. Pre-loop check
+
+Record `phaseTimestamps.grind.startedAt` (only if not already set — grind may be resuming).
+
+Read `.codegraph/titan/sync.json` → count total phases in `executionOrder`.
+Read `.codegraph/titan/titan-state.json` → check `grind.completedPhases` (may not exist yet if grind hasn't started).
+
+### 4.5b. Grind loop
+
+Set `maxIterations = 20` (safety limit — same as forge).
+Set `stallCount = 0`, `maxStalls = 2`.
+
+```
+previousGrindPhases = grind.completedPhases (or [])
+iteration = 0
+
+while iteration < maxIterations:
+    iteration += 1
+
+    # Run Pre-Agent Gate (G1-G4)
+
+    # Determine next forge phase to grind
+    Read .codegraph/titan/titan-state.json
+    grindCompleted = grind.completedPhases (or [])
+    forgePhases = execution.completedPhases (or [])
+    ungroundPhases = forgePhases.filter(p => !grindCompleted.includes(p))
+    if len(ungroundPhases) == 0 → break
+
+    nextPhase = ungroundPhases[0]
+
+    headBefore = $(git rev-parse HEAD)
+
+    yesFlag = "--yes" if autoConfirm else ""
+    Agent → "Run /titan-grind --phase <nextPhase> <yesFlag>.
+             Read .claude/skills/titan-grind/SKILL.md and follow it exactly.
+             Skip worktree check and main sync — already handled.
+
+             For each dead helper from forge phase <nextPhase>:
+             1. Classify: adopt / re-export / promote / false-positive / intentionally-private / remove
+             2. For adopt/re-export/promote: wire consumers, stage, run /titan-gate, commit
+             3. For remove: delete, stage, run /titan-gate, commit
+             4. Gate on dead-symbol delta at phase end"
+
+    # Post-agent checks
+    headAfter = $(git rev-parse HEAD)
+
+    Read .codegraph/titan/titan-state.json
+    newGrindPhases = grind.completedPhases (or [])
+
+    if newGrindPhases == previousGrindPhases:
+        stallCount += 1
+        Print: "WARNING: Grind iteration <iteration> made no progress (stall <stallCount>/<maxStalls>)"
+        if stallCount >= maxStalls:
+            Stop: "Grind stalled on phase <nextPhase>. Check titan-state.json → grind for details."
+    else:
+        stallCount = 0
+
+    previousGrindPhases = newGrindPhases
+
+    # V16. Commit audit
+    if headAfter != headBefore:
+        git log --oneline <headBefore>..<headAfter>
+        commitCount = number of commits
+        Print: "Grind phase <nextPhase>: <commitCount> adoption commits"
+    else:
+        Print: "Grind phase <nextPhase>: no adoptions needed (forge wired everything correctly)"
+
+    # V17. Test suite still green (same as forge V13)
+    if headAfter != headBefore:
+        testCmd = <same detection as forge V13>
+        if testCmd != "NO_TEST_SCRIPT":
+            Run: <testCmd> 2>&1
+            if tests fail:
+                Print: "CRITICAL: Test suite fails after grind phase <nextPhase>. Stopping pipeline."
+                Print: "Commits from this phase: git log --oneline <headBefore>..<headAfter>"
+                Stop.
+```
+
+### 4.5c. Post-loop validation
+
+**V18. Dead-symbol delta:**
+Read `grind.deadSymbolBaseline` and `grind.deadSymbolCurrent` from `titan-state.json`.
+- If delta > 10: **WARN** "Grind could not fully adopt forge's helpers. <delta> new dead symbols remain."
+- Otherwise: Print summary.
+
+**V19. Grind coverage:**
+- Count forge phases processed vs total forge phases
+- If < 100%: **WARN** with details
+
+Print grind summary:
+```
+GRIND complete.
+Dead symbols: <baseline> → <current> (delta: <+/-N>)
+Adoptions: <N> helpers wired, <N> removed, <N> false positives logged
+Phases ground: <N>/<M>
+```
+
+Record `phaseTimestamps.grind.completedAt`.
+
+---
+
 ## Step 5 — CLOSE (report + PRs)
 
 After forge completes, dispatch `/titan-close` to produce the final report with before/after metrics and split commits into focused PRs.
@@ -676,7 +785,7 @@ Record `phaseTimestamps.close.completedAt`.
 
 - **You are the orchestrator, not the executor.** Never run codegraph commands, edit source files, or make commits yourself. Only spawn sub-agents and read state files. Exceptions (pure validation/snapshot, no code changes): the post-forge test run (V13), NDJSON integrity checks, the V3 baseline snapshot check (`codegraph snapshot list`), and the pre-forge architectural snapshot capture (Step 3.5a) are run directly by the orchestrator.
 - **Run the Pre-Agent Gate (G1-G4) before EVERY sub-agent.** No exceptions.
-- **One sub-agent at a time.** Phases are sequential — recon before gauntlet, gauntlet before sync, sync before forge.
+- **One sub-agent at a time.** Phases are sequential — recon before gauntlet, gauntlet before sync, sync before forge, forge before grind, grind before close.
 - **Fresh context per sub-agent.** This is the whole point — each sub-agent gets a clean context window.
 - **Read AND validate state files after every sub-agent.** Trust the on-disk state, not the sub-agent's text output — but verify the state is structurally sound.
 - **Back up state before every sub-agent.** The `.bak` file is your safety net against mid-write crashes.

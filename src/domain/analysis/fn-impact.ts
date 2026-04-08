@@ -1,6 +1,6 @@
 import { Repository, SqliteRepository } from '../../db/index.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
-import { normalizeSymbol } from '../../shared/normalize.js';
+import { normalizeSymbol, toSymbolRef } from '../../shared/normalize.js';
 import { paginateResult } from '../../shared/paginate.js';
 import type { BetterSqlite3Database, NodeRow, RelatedNodeRow } from '../../types.js';
 import { resolveAnalysisOpts, withRepo } from './query-helpers.js';
@@ -125,7 +125,7 @@ export function bfsTransitiveCallers(
           visited.add(c.id);
           nextFrontier.push(c.id);
           if (!levels[d]) levels[d] = [];
-          levels[d]!.push({ name: c.name, kind: c.kind, file: c.file, line: c.line });
+          levels[d]!.push(toSymbolRef(c));
           if (onVisit) onVisit(c, fid, d);
         }
         if (resolveImplementors && INTERFACE_LIKE_KINDS.has(c.kind)) {
