@@ -221,8 +221,8 @@ fn handle_invocation_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols)
         }
         "member_access_expression" => {
             if let Some(name) = fn_node.child_by_field_name("name") {
-                let receiver = fn_node.child_by_field_name("expression")
-                    .map(|expr| node_text(&expr, source).to_string());
+                let receiver = named_child_text(&fn_node, "expression", source)
+                    .map(|s| s.to_string());
                 symbols.calls.push(Call {
                     name: node_text(&name, source).to_string(),
                     line: start_line(node),

@@ -22,7 +22,7 @@ export {
   VALID_ROLES,
 } from '../shared/kinds.js';
 // ── Shared utilities ─────────────────────────────────────────────────────
-export { kindIcon, normalizeSymbol } from '../shared/normalize.js';
+export { kindIcon, normalizeSymbol, toSymbolRef } from '../shared/normalize.js';
 export { briefData } from './analysis/brief.js';
 export { contextData, explainData } from './analysis/context.js';
 export { fileDepsData, filePathData, fnDepsData, pathData } from './analysis/dependencies.js';

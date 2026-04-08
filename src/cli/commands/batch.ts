@@ -1,25 +1,10 @@
 import fs from 'node:fs';
 import { collectFile } from '../../db/query-builder.js';
 import { EVERY_SYMBOL_KIND } from '../../domain/queries.js';
-import { BATCH_COMMANDS, multiBatchData, splitTargets } from '../../features/batch.js';
-import { batch } from '../../presentation/batch.js';
+import { BATCH_COMMANDS, splitTargets } from '../../features/batch.js';
+import { batchQuery } from '../../presentation/batch.js';
 import { ConfigError, toErrorMessage } from '../../shared/errors.js';
 import type { CommandDefinition } from '../types.js';
-
-interface MultiBatchItem {
-  command: string;
-  target: string;
-  opts?: Record<string, unknown>;
-}
-
-function isMultiBatch(targets: unknown[]): targets is MultiBatchItem[] {
-  return (
-    targets.length > 0 &&
-    typeof targets[0] === 'object' &&
-    targets[0] !== null &&
-    'command' in targets[0]
-  );
-}
 
 export const command: CommandDefinition = {
   name: 'batch <command> [targets...]',
@@ -69,18 +54,12 @@ export const command: CommandDefinition = {
       );
     }
 
-    const batchOpts = {
+    batchQuery(targets as Array<string | { command: string; target: string }>, opts.db, {
+      command,
       depth: opts.depth ? parseInt(opts.depth as string, 10) : undefined,
       file: opts.file,
       kind: opts.kind,
       noTests: ctx.resolveNoTests(opts),
-    };
-
-    if (isMultiBatch(targets)) {
-      const data = multiBatchData(targets as MultiBatchItem[], opts.db, batchOpts);
-      console.log(JSON.stringify(data, null, 2));
-    } else {
-      batch(command!, targets as string[], opts.db, batchOpts);
-    }
+    });
   },
 };

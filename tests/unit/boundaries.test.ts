@@ -383,11 +383,12 @@ describe('evaluateBoundaries', () => {
     }
   });
 
-  test('returns empty on invalid config', () => {
+  test('throws BoundaryError on invalid config', () => {
     const database = openDb();
     try {
-      const result = evaluateBoundaries(database, { modules: {} });
-      expect(result.violations).toHaveLength(0);
+      expect(() => evaluateBoundaries(database, { modules: {} })).toThrow(
+        /Invalid boundary configuration/,
+      );
     } finally {
       database.close();
     }

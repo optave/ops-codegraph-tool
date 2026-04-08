@@ -297,11 +297,11 @@ fn match_c_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: u
                         });
                     }
                     "field_expression" => {
-                        let name = fn_node.child_by_field_name("field")
-                            .map(|n| node_text(&n, source).to_string())
+                        let name = named_child_text(&fn_node, "field", source)
+                            .map(|s| s.to_string())
                             .unwrap_or_else(|| node_text(&fn_node, source).to_string());
-                        let receiver = fn_node.child_by_field_name("argument")
-                            .map(|n| node_text(&n, source).to_string());
+                        let receiver = named_child_text(&fn_node, "argument", source)
+                            .map(|s| s.to_string());
                         symbols.calls.push(Call {
                             name,
                             line: start_line(node),

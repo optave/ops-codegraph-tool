@@ -119,8 +119,8 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     } else if method_text == "include" || method_text == "extend" || method_text == "prepend" {
         handle_mixin_call(node, source, symbols);
     } else {
-        let receiver = node.child_by_field_name("receiver")
-            .map(|r| node_text(&r, source).to_string());
+        let receiver = named_child_text(node, "receiver", source)
+            .map(|s| s.to_string());
         symbols.calls.push(Call {
             name: method_text.to_string(),
             line: start_line(node),

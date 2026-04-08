@@ -1,6 +1,6 @@
 ---
 name: release
-description: Prepare a codegraph release — bump versions, update CHANGELOG, ROADMAP, BACKLOG, README, create PR
+description: Prepare a codegraph release — update CHANGELOG, ROADMAP, BACKLOG, README, create PR
 argument-hint: "[version e.g. 3.1.1]  (optional — auto-detects from commits)"
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Agent
 ---
@@ -12,6 +12,8 @@ You are preparing a release for `@optave/codegraph`.
 **Version argument:** `$ARGUMENTS`
 - If a version was provided (e.g. `3.1.1`), use it as the target version.
 - If no version was provided (empty or blank `$ARGUMENTS`), you will auto-detect it in Step 1b.
+
+**Important: this skill does NOT bump versions.** The publish workflow (`publish.yml`) handles version bumping in `package.json`, `Cargo.toml`, `package-lock.json`, and `optionalDependencies` atomically — after building native binaries and publishing to npm. Bumping versions in the release PR would cause CI failures because the native prebuilt binary wouldn't exist at the new version yet.
 
 ---
 
@@ -27,7 +29,7 @@ You are preparing a release for `@optave/codegraph`.
    ```bash
    git checkout origin/main
    ```
-   Do **not** create the `release/VERSION` branch here — Step 8 creates it once VERSION is known.
+   Do **not** create the `release/VERSION` branch here — Step 7 creates it once VERSION is known.
 
 ## Step 1a: Gather context
 
@@ -69,18 +71,7 @@ Use the resolved version as `VERSION` for all subsequent steps.
 
 If `$ARGUMENTS` was provided, use it directly as `VERSION`.
 
-## Step 2: Bump version in package.json
-
-Edit `package.json` to set `"version": "VERSION"`.
-
-Also bump `crates/codegraph-core/Cargo.toml` — set the `version` field in `[package]` to match `VERSION`. This keeps the Rust crate version in sync with the npm package.
-
-**Do NOT bump:**
-- `optionalDependencies` versions — synced automatically by `scripts/sync-native-versions.ts` during the publish workflow
-
-Then run `npm install --package-lock-only` to update `package-lock.json`.
-
-## Step 3: Update CHANGELOG.md
+## Step 2: Update CHANGELOG.md
 
 The CHANGELOG doubles as **release notes** — it's what users see on the GitHub release page. Write it for humans, not machines.
 
@@ -116,7 +107,7 @@ Rules:
 - Include a Performance section if there are performance improvements
 - Read previous CHANGELOG entries to match the tone and detail level
 
-## Step 4: Update ROADMAP.md
+## Step 3: Update ROADMAP.md
 
 Read `docs/roadmap/ROADMAP.md` and update:
 1. **Version header** — update `Current version: X.Y.Z`
@@ -126,7 +117,7 @@ Read `docs/roadmap/ROADMAP.md` and update:
    - Add checklist items: `- ✅` for done, `- 🔲` for remaining
    - Check actual code exists (glob/grep for new files/directories mentioned in PRs) before marking tasks complete
 
-## Step 5: Update BACKLOG.md
+## Step 4: Update BACKLOG.md
 
 Read `docs/roadmap/BACKLOG.md` and check if any backlog items were completed or partially completed by commits in this release.
 
@@ -138,7 +129,7 @@ Read `docs/roadmap/BACKLOG.md` and check if any backlog items were completed or 
   - Check the "Depends on" column of other items — if they depended on the newly completed item, note that they are now unblocked
 - Update the `Last updated` date at the top of the file
 
-## Step 6: Update README.md
+## Step 5: Update README.md
 
 Read `README.md` and check if any new user-facing features from this release need to be documented:
 
@@ -154,79 +145,60 @@ Read `README.md` and check if any new user-facing features from this release nee
 6. **Version references** — only update version-specific references (e.g., install commands). Historical milestone markers like "Complete (v3.0.0)" should stay as-is
 7. If nothing user-facing changed (pure refactors, bug fixes, internal improvements), no README update is needed — **but still run the roadmap ordering cross-check (item 5)**
 
-## Step 7: Verify package-lock.json
+## Step 6: Verify `libc` fields in package-lock.json
 
-Run `grep` to confirm the new version appears in `package-lock.json` and that all `@optave/codegraph-*` optional dependency entries are complete (have version, resolved, integrity, cpu, os fields). Flag any incomplete entries — they indicate an unpublished platform binary.
+Some npm versions (notably v11+) silently strip the `libc` field from Linux entries in `package-lock.json`. Without `libc`, npm may install glibc binaries on musl systems (Alpine) and vice versa.
 
-**Critical: verify `libc` fields on Linux entries.** Some npm versions (notably v11+) silently strip the `libc` field when regenerating the lock file via `npm install --package-lock-only`. Without `libc`, npm may install glibc binaries on musl systems (Alpine) and vice versa. Check:
+Even though this skill does not bump versions, check that `libc` fields are present — they can go missing after any `npm install` run:
 
 ```bash
 grep -A12 'codegraph-linux' package-lock.json | grep -c libc
-# Expected: 3 (one each for linux-arm64-gnu, linux-x64-gnu, linux-x64-musl)
+# Expected: ≥3 (one each for linux-arm64-gnu, linux-x64-gnu, linux-x64-musl)
 ```
 
-If the count is less than 3, manually restore the missing fields:
+If the count is less than 3, restore the missing fields in a separate commit:
 - `-gnu` packages: `"libc": ["glibc"]`
 - `-musl` packages: `"libc": ["musl"]`
 
 Place the `libc` array after the `cpu` array in each entry.
 
-## Step 7b: Validate release config scripts
-
-Verify that all script references in release-related config files point to files that actually exist. Broken references cause silent failures during `npm run release` or the publish workflow.
-
-Check these files for script paths:
-
-```bash
-# .versionrc.json — check any "scripts" entries (runner and forwarded args)
-grep -oP 'node \K[^ "]+' .versionrc.json 2>/dev/null | while read script; do
-  [ ! -f "$script" ] && echo "ERROR: .versionrc.json references '$script' but it does not exist"
-done
-grep -oP 'node [^ "]+ \K[^ "]+' .versionrc.json 2>/dev/null | while read script; do
-  [ ! -f "$script" ] && echo "ERROR: .versionrc.json references '$script' but it does not exist"
-done
-
-# package.json — check version/preversion/postversion lifecycle hooks
-grep -E '"(pre)?version"|"postversion"' package.json | grep -oP 'node \K[^ "&]+' | while read script; do
-  [ ! -f "$script" ] && echo "ERROR: package.json lifecycle references '$script' but it does not exist"
-done
-
-# Also check forwarded script arguments (e.g. "node scripts/node-ts.js scripts/foo.ts")
-grep -E '"(pre)?version"|"postversion"' package.json | grep -oP 'node [^ "&]+ \K[^ "&]+' | while read script; do
-  [ ! -f "$script" ] && echo "ERROR: package.json lifecycle references '$script' but it does not exist"
-done
-```
-
-If any script reference is broken, fix it before proceeding. Common causes:
-- `.js` extension referencing a `.ts`-only file (use `node scripts/node-ts.js scripts/<name>.ts` instead)
-- Redundant script entries that duplicate what npm lifecycle hooks already handle (remove them)
-
-## Step 8: Create branch, commit, push, PR
+## Step 7: Create branch, commit, push, PR
 
 1. Create branch: `git checkout -b release/VERSION` (if on detached HEAD from Step 0, this creates the branch at the current commit)
-2. Stage only the files you changed: `CHANGELOG.md`, `package.json`, `package-lock.json`, `docs/roadmap/ROADMAP.md`, `docs/roadmap/BACKLOG.md` if changed, `README.md` if changed
-3. Commit: `chore: release vVERSION`
+2. Stage only the files you changed: `CHANGELOG.md`, `docs/roadmap/ROADMAP.md`, `docs/roadmap/BACKLOG.md` if changed, `README.md` if changed, `package-lock.json` if libc fields were fixed
+3. Commit: `docs: prepare release notes for vVERSION`
 4. Push: `git push -u origin release/VERSION`
 5. Create PR:
 
 ```
-gh pr create --title "chore: release vVERSION" --body "$(cat <<'EOF'
+gh pr create --title "docs: prepare release notes for vVERSION" --body "$(cat <<'EOF'
 ## Summary
-- Bump version to VERSION
-- Add CHANGELOG entry for all commits since previous release
+- Add CHANGELOG entry for vVERSION (all commits since previous release)
 - Update ROADMAP progress
 
+**After merging:** create a GitHub Release with tag `vVERSION` to trigger the publish workflow, which handles version bumping, native binary builds, and npm publishing.
+
 ## Test plan
-- [ ] `npm install` succeeds with updated lock file
 - [ ] CHANGELOG renders correctly on GitHub
 - [ ] ROADMAP checklist items match actual codebase state
 EOF
 )"
 ```
 
+## Step 8: Post-merge instructions
+
+After the PR is merged, remind the user:
+
+> **Next step:** Go to GitHub → Releases → "Draft a new release" → tag `vVERSION` → target `main` → title `vVERSION` → auto-generate release notes or paste the CHANGELOG section → Publish.
+>
+> This triggers the publish workflow which will:
+> 1. Build native binaries for all 6 platforms with the correct version
+> 2. Publish platform packages and main package to npm
+> 3. Push a version bump PR (`package.json`, `Cargo.toml`, `package-lock.json`) back to main
+
 ## Important reminders
 
+- **No version bumps in this PR** — the publish workflow handles `package.json`, `Cargo.toml`, `package-lock.json`, and `optionalDependencies` atomically after building native binaries
 - **No co-author lines** in commit messages
 - **No Claude Code references** in commit messages or PR descriptions
-- The publish workflow (`publish.yml`) handles: optionalDependencies version sync, npm publishing, git tagging, and the post-publish version bump PR
-- If you find issues (incomplete lock entries, phantom packages), fix them in a separate commit with a descriptive message
+- If you find `libc` field issues in package-lock.json, fix them in a separate commit with a descriptive message

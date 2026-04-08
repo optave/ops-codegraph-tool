@@ -19,6 +19,16 @@ export function getFileHash(db: DbHandle, file: string): string | null {
   return row ? row.hash : null;
 }
 
+/** Pick the 4-field symbol reference from any row that carries at least {name, kind, file, line}. */
+export function toSymbolRef(row: { name: string; kind: string; file: string; line: number }): {
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+} {
+  return { name: row.name, kind: row.kind, file: row.file, line: row.line };
+}
+
 export function kindIcon(kind: string): string {
   switch (kind) {
     case 'function':

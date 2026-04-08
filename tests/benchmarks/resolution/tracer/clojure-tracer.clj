@@ -65,7 +65,7 @@
 ;; Wrap all vars in fixture namespaces
 (doseq [[ns-name basename] @ns-file-map]
   (when-let [ns-obj (find-ns (symbol ns-name))]
-    (doseq [[sym var-ref] (ns-publics ns-obj)]
+    (doseq [[sym var-ref] (ns-interns ns-obj)]
       (when (fn? @var-ref)
         (let [orig-fn @var-ref
               qualname (str ns-name "/" (name sym))]

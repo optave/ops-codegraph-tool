@@ -27,7 +27,7 @@ import {
   readSourceRange,
 } from '../../shared/file-utils.js';
 import { resolveMethodViaHierarchy } from '../../shared/hierarchy.js';
-import { normalizeSymbol } from '../../shared/normalize.js';
+import { normalizeSymbol, toSymbolRef } from '../../shared/normalize.js';
 import { paginateResult } from '../../shared/paginate.js';
 import type {
   BetterSqlite3Database,
@@ -177,7 +177,7 @@ function buildImplementationInfo(db: BetterSqlite3Database, node: NodeRow, noTes
     let impls = findImplementors(db, node.id) as RelatedNodeRow[];
     if (noTests) impls = impls.filter((n) => !isTestFile(n.file));
     return {
-      implementors: impls.map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line })),
+      implementors: impls.map(toSymbolRef),
     };
   }
   // For classes/structs: show what they implement
@@ -186,7 +186,7 @@ function buildImplementationInfo(db: BetterSqlite3Database, node: NodeRow, noTes
     if (noTests) ifaces = ifaces.filter((n) => !isTestFile(n.file));
     if (ifaces.length > 0) {
       return {
-        implements: ifaces.map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line })),
+        implements: ifaces.map(toSymbolRef),
       };
     }
   }
@@ -359,21 +359,11 @@ function explainFunctionImpl(
     const summary = fileLines ? extractSummary(fileLines, node.line, displayOpts) : null;
     const signature = fileLines ? extractSignature(fileLines, node.line, displayOpts) : null;
 
-    const callees = (findCallees(db, node.id) as RelatedNodeRow[]).map((c) => ({
-      name: c.name,
-      kind: c.kind,
-      file: c.file,
-      line: c.line,
-    }));
+    const callees = (findCallees(db, node.id) as RelatedNodeRow[]).map(toSymbolRef);
 
     const allCallerRows = findCallers(db, node.id) as RelatedNodeRow[];
 
-    let callers = allCallerRows.map((c) => ({
-      name: c.name,
-      kind: c.kind,
-      file: c.file,
-      line: c.line,
-    }));
+    let callers = allCallerRows.map(toSymbolRef);
     if (noTests) callers = callers.filter((c) => !isTestFile(c.file));
 
     const seenFiles = new Set<string>();

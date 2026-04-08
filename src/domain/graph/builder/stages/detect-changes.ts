@@ -277,14 +277,14 @@ async function runPendingAnalysis(ctx: PipelineContext): Promise<boolean> {
     rootDir,
     analysisOpts,
   );
-  if (needsCfg) {
-    const { buildCFGData } = await import('../../../../features/cfg.js');
-    await buildCFGData(db, analysisSymbols, rootDir, engineOpts);
-  }
-  if (needsDataflow) {
-    const { buildDataflowEdges } = await import('../../../../features/dataflow.js');
-    await buildDataflowEdges(db, analysisSymbols, rootDir, engineOpts);
-  }
+  const { runAnalyses } = await import('../../../../ast-analysis/engine.js');
+  await runAnalyses(
+    db,
+    analysisSymbols,
+    rootDir,
+    { ast: false, complexity: false, cfg: needsCfg, dataflow: needsDataflow },
+    engineOpts,
+  );
   return true;
 }
 
