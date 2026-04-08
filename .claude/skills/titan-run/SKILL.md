@@ -143,6 +143,7 @@ For each phase BEFORE `startPhase`, run the corresponding V-checks:
 | `gauntlet` | V5 (coverage ≥ 50%), V6 (entry completeness sample), V7 (summary consistency); also run NDJSON integrity check (2c) |
 | `sync` | V8 (sync.json structure), V9 (targets trace to gauntlet), V10 (dependency order) |
 | `forge` | V14 (final state consistency), V15 (gate log consistency); execution block must exist in titan-state.json |
+| `grind` | V14, V15; `execution.completedPhases` must be non-empty in titan-state.json (forge must have run at least one phase) |
 
 If ANY required artifact is **missing** → stop: "Cannot start from `<phase>` — `<artifact>` is missing. Run the full pipeline or start from an earlier phase."
 
