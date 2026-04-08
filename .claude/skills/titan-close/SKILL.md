@@ -65,7 +65,7 @@ Your goal: analyze all commits on the current branch, split them into focused PR
    - `.codegraph/titan/issues.ndjson` — issue tracker from all phases
    - `.codegraph/titan/arch-snapshot.json` — pre-forge architectural snapshot (communities, structure, drift). Use for before/after comparison in the Metrics section. May not exist if capture failed.
    - `.codegraph/titan/drift-report.json` — cumulative drift reports from all phases. May not exist if no drift was detected.
-   - `.codegraph/titan/grind-targets.ndjson` — grind phase adoption targets and outcomes. Each line: `{target, status, deadBefore, deadAfter, ...}`. May not exist if grind wasn't run.
+   - `.codegraph/titan/grind-targets.ndjson` — grind phase adoption targets and outcomes. Each line: `{target, file, phase, classification, reason, consumers, pattern, timestamp}`. May not exist if grind wasn't run.
 
    If `titan-state.json` is missing after the search, stop: "No Titan session found. Run `/titan-recon` first."
 
@@ -208,11 +208,12 @@ If `.codegraph/titan/arch-snapshot.json` was captured before forge, compare its 
 
 ### Grind metrics (if grind-targets.ndjson exists)
 
-If `.codegraph/titan/grind-targets.ndjson` exists, parse it and compute:
-- **Targets processed:** count of lines with `status: "done"`
-- **Targets failed:** count of lines with `status: "failed"`
-- **Dead symbols adopted:** sum of `(deadBefore - deadAfter)` across all done targets
-- **False positives identified:** count of lines with `status: "false_positive"`
+If `.codegraph/titan/grind-targets.ndjson` exists, parse it and cross-reference with `titan-state.json → grind`:
+- **Targets processed:** count entries in `grind.processedTargets` (from titan-state.json)
+- **Targets failed:** count entries in `grind.failedTargets` (from titan-state.json)
+- **False positives identified:** count entries with `classification: "false-positive"` in grind-targets.ndjson (or from `grind.falsePositives` in titan-state.json)
+- **Adopted:** count entries with `classification: "adopt"` in grind-targets.ndjson
+- **Dead symbol delta:** from `grind.deadSymbolDelta` in titan-state.json (or compute from baseline vs final dead symbol counts)
 
 Include these in the Metrics: Before & After section and the Grind Results report section.
 
