@@ -65,6 +65,7 @@ Your goal: analyze all commits on the current branch, split them into focused PR
    - `.codegraph/titan/issues.ndjson` — issue tracker from all phases
    - `.codegraph/titan/arch-snapshot.json` — pre-forge architectural snapshot (communities, structure, drift). Use for before/after comparison in the Metrics section. May not exist if capture failed.
    - `.codegraph/titan/drift-report.json` — cumulative drift reports from all phases. May not exist if no drift was detected.
+   - `.codegraph/titan/grind-targets.ndjson` — grind phase adoption targets and outcomes. Each line: `{target, status, deadBefore, deadAfter, ...}`. May not exist if grind wasn't run.
 
    If `titan-state.json` is missing after the search, stop: "No Titan session found. Run `/titan-recon` first."
 
@@ -146,6 +147,9 @@ Use `sync.json` execution phases as the primary guide if available:
    - Group by domain: `fix: address quality issues in <domain>`
 6. **Warning improvements** — commits addressing warn-level issues
    - Group by domain: `refactor: improve code quality in <domain>`
+7. **Helper adoption** — commits from grind phase adopting dead helpers into callsites
+   - PR title: `refactor: adopt dead helpers in <domain>`
+   - Look for `grind(...)` commit prefixes or commits touching files listed in `grind-targets.ndjson`
 
 ### Fallback grouping (if no sync.json)
 
@@ -164,7 +168,7 @@ Record the grouping plan:
   {
     "pr": 1,
     "title": "...",
-    "concern": "dead_code|abstraction|cycle_break|decomposition|quality_fix|warning",
+    "concern": "dead_code|abstraction|cycle_break|decomposition|quality_fix|warning|adoption",
     "domain": "<domain name>",
     "commits": ["<sha1>", "<sha2>"],
     "files": ["<file1>", "<file2>"],
@@ -201,6 +205,16 @@ codegraph complexity --health --sort mi -T --json --limit 10
 ### Architecture comparison (if arch-snapshot.json exists)
 
 If `.codegraph/titan/arch-snapshot.json` was captured before forge, compare its `structure` data against current `codegraph structure --depth 2 --json` output. Report cohesion changes per directory (improved / degraded / unchanged). Include in the "Metrics: Before & After" section of the report.
+
+### Grind metrics (if grind-targets.ndjson exists)
+
+If `.codegraph/titan/grind-targets.ndjson` exists, parse it and compute:
+- **Targets processed:** count of lines with `status: "done"`
+- **Targets failed:** count of lines with `status: "failed"`
+- **Dead symbols adopted:** sum of `(deadBefore - deadAfter)` across all done targets
+- **False positives identified:** count of lines with `status: "false_positive"`
+
+Include these in the Metrics: Before & After section and the Grind Results report section.
 
 ### Compute deltas
 
@@ -342,7 +356,8 @@ Read `titan-state.json → phaseTimestamps` for real wall-clock data. If `phaseT
 | GAUNTLET | <computed from phaseTimestamps.gauntlet> | <iterations count if resuming> |
 | SYNC | <computed from phaseTimestamps.sync> | — |
 | FORGE | <computed from phaseTimestamps.forge> | <commit count>, first at <time>, last at <time> |
-| GATE | across forge | <total runs> inline with forge commits |
+| GRIND | <computed from phaseTimestamps.grind> | <targets processed>, <adoptions made> |
+| GATE | across forge/grind | <total runs> inline with forge/grind commits |
 | CLOSE | <computed from phaseTimestamps.close> | — |
 | **Total** | <sum of all phases> | — |
 
@@ -390,6 +405,22 @@ Read `titan-state.json → phaseTimestamps` for real wall-clock data. If `phaseT
 ### Most Common Violations
 
 <Top 5 violation types with counts>
+
+---
+
+## Grind Results (if grind ran)
+
+**Targets processed:** <N> | **Adopted:** <N> | **Failed:** <N> | **False positives:** <N>
+
+### Adoption Summary
+
+<Table: target name, dead symbols before, dead symbols after, delta, files modified>
+
+### False Positives Logged
+
+<Table: target name, reason (dynamic import / re-export / closure-local / type noise), logged to issues.ndjson>
+
+> Omit this section entirely if `grind-targets.ndjson` does not exist.
 
 ---
 
@@ -551,6 +582,7 @@ Write `.codegraph/titan/close-summary.json`:
   },
   "audit": { "totalAudited": 0, "pass": 0, "warn": 0, "fail": 0, "decompose": 0 },
   "gate": { "totalRuns": 0, "pass": 0, "warn": 0, "fail": 0, "rollbacks": 0 },
+  "grind": { "targetsProcessed": 0, "adopted": 0, "failed": 0, "falsePositives": 0, "deadSymbolDelta": 0 },
   "issues": { "codegraph": 0, "tooling": 0, "process": 0, "codebase": 0 },
   "prs": [
     { "number": 0, "url": "<url>", "title": "<title>", "concern": "<type>", "domain": "<domain>", "commits": 0 }
