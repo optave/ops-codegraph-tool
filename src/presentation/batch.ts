@@ -36,6 +36,7 @@ export function batchQuery(
   const { command: defaultCommand = 'where', ...rest } = opts;
   const isMulti =
     targets.length > 0 &&
+    targets[0] !== null &&
     typeof targets[0] === 'object' &&
     !!(targets[0] as MultiBatchTarget).command;
 
