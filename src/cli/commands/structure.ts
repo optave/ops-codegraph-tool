@@ -23,8 +23,14 @@ export const command: CommandDefinition = {
       await import('../../presentation/structure.js');
 
     if (opts.modules) {
+      const parsed = opts.threshold ? parseFloat(opts.threshold as string) : undefined;
+      if (parsed !== undefined && Number.isNaN(parsed)) {
+        console.error('Error: --threshold must be a number');
+        process.exitCode = 1;
+        return;
+      }
       const data = moduleBoundariesData(opts.db, {
-        threshold: opts.threshold ? parseFloat(opts.threshold as string) : undefined,
+        threshold: parsed,
       });
       if (!ctx.outputResult(data, 'modules', opts)) {
         console.log(formatModuleBoundaries(data));

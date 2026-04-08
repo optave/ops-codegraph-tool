@@ -425,7 +425,7 @@ function evaluateBoundaryRules(
     ruleResults.push({
       name: 'boundaries',
       level: 'graph',
-      status: 'pass',
+      status: 'warn',
       thresholds: effectiveThresholds,
       violationCount: 0,
     });

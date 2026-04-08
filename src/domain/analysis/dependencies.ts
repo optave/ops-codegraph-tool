@@ -144,6 +144,7 @@ function buildNodeDepsResult(
   return {
     ...normalizeSymbol(node, repo, hc),
     callees: filteredCallees.map(toSymbolRef),
+    // Not using toSymbolRef — callers include the extra viaHierarchy field
     callers: callers.map((c) => ({
       name: c.name,
       kind: c.kind,
