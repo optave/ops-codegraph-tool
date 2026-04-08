@@ -264,8 +264,8 @@ fn handle_import_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
 fn handle_method_invocation(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(name_node) = node.child_by_field_name("name") {
-        let receiver = node.child_by_field_name("object")
-            .map(|obj| node_text(&obj, source).to_string());
+        let receiver = named_child_text(node, "object", source)
+            .map(|s| s.to_string());
         symbols.calls.push(Call {
             name: node_text(&name_node, source).to_string(),
             line: start_line(node),

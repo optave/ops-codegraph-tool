@@ -7,6 +7,7 @@ import { loadConfig } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
 import { toErrorMessage } from '../shared/errors.js';
+import { toSymbolRef } from '../shared/normalize.js';
 import type { BetterSqlite3Database, CodegraphConfig } from '../types.js';
 import { RULE_DEFS } from './manifesto.js';
 
@@ -317,7 +318,7 @@ function enrichSymbol(
          WHERE e.source_id = ? AND e.kind = 'calls'`,
         )
         .all(nodeId) as SymbolRef[]
-    ).map((c) => ({ name: c.name, kind: c.kind, file: c.file, line: c.line }));
+    ).map(toSymbolRef);
 
     callers = (
       db
@@ -327,7 +328,7 @@ function enrichSymbol(
          WHERE e.target_id = ? AND e.kind = 'calls'`,
         )
         .all(nodeId) as SymbolRef[]
-    ).map((c) => ({ name: c.name, kind: c.kind, file: c.file, line: c.line }));
+    ).map(toSymbolRef);
     if (noTests) callers = callers.filter((c) => !isTestFile(c.file));
 
     const testCallerRows = db

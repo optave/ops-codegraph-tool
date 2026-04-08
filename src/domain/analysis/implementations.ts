@@ -1,6 +1,6 @@
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { CORE_SYMBOL_KINDS } from '../../shared/kinds.js';
-import { normalizeSymbol } from '../../shared/normalize.js';
+import { normalizeSymbol, toSymbolRef } from '../../shared/normalize.js';
 import { paginateResult } from '../../shared/paginate.js';
 import type { RelatedNodeRow } from '../../types.js';
 import { withRepo } from './query-helpers.js';
@@ -34,12 +34,7 @@ export function implementationsData(
 
       return {
         ...normalizeSymbol(node, repo, hc),
-        implementors: implementors.map((impl) => ({
-          name: impl.name,
-          kind: impl.kind,
-          file: impl.file,
-          line: impl.line,
-        })),
+        implementors: implementors.map(toSymbolRef),
       };
     });
 
@@ -76,12 +71,7 @@ export function interfacesData(
 
       return {
         ...normalizeSymbol(node, repo, hc),
-        interfaces: interfaces.map((iface) => ({
-          name: iface.name,
-          kind: iface.kind,
-          file: iface.file,
-          line: iface.line,
-        })),
+        interfaces: interfaces.map(toSymbolRef),
       };
     });
 

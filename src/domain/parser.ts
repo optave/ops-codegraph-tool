@@ -5,7 +5,7 @@ import type { Tree } from 'web-tree-sitter';
 import { Language, Parser, Query } from 'web-tree-sitter';
 import { debug, warn } from '../infrastructure/logger.js';
 import { getNative, getNativePackageVersion, loadNative } from '../infrastructure/native.js';
-import { toErrorMessage } from '../shared/errors.js';
+import { ParseError, toErrorMessage } from '../shared/errors.js';
 import type {
   EngineMode,
   ExtractorOutput,
@@ -188,7 +188,11 @@ async function doLoadLanguage(entry: LanguageRegistryEntry): Promise<void> {
       _queryCache.set(entry.id, new Query(lang, patterns.join('\n')));
     }
   } catch (e: unknown) {
-    if (entry.required) throw e;
+    if (entry.required)
+      throw new ParseError(`Required parser ${entry.id} failed to initialize`, {
+        file: entry.grammarFile,
+        cause: e as Error,
+      });
     warn(
       `${entry.id} parser failed to initialize: ${(e as Error).message}. ${entry.id} files will be skipped.`,
     );

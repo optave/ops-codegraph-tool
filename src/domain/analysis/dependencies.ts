@@ -2,7 +2,7 @@ import { findFileNodes, type Repository } from '../../db/index.js';
 import { cachedStmt } from '../../db/repository/cached-stmt.js';
 import { isTestFile } from '../../infrastructure/test-filter.js';
 import { resolveMethodViaHierarchy } from '../../shared/hierarchy.js';
-import { normalizeSymbol } from '../../shared/normalize.js';
+import { normalizeSymbol, toSymbolRef } from '../../shared/normalize.js';
 import { paginateResult } from '../../shared/paginate.js';
 import type {
   BetterSqlite3Database,
@@ -143,12 +143,7 @@ function buildNodeDepsResult(
 
   return {
     ...normalizeSymbol(node, repo, hc),
-    callees: filteredCallees.map((c) => ({
-      name: c.name,
-      kind: c.kind,
-      file: c.file,
-      line: c.line,
-    })),
+    callees: filteredCallees.map(toSymbolRef),
     callers: callers.map((c) => ({
       name: c.name,
       kind: c.kind,
@@ -245,20 +240,14 @@ function resolveEndpoints(
         to,
         found: false,
         error: `No symbol matching "${to}"`,
-        fromCandidates: fromNodes
-          .slice(0, 5)
-          .map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line })),
+        fromCandidates: fromNodes.slice(0, 5).map(toSymbolRef),
         toCandidates: [],
       },
     };
   }
 
-  const fromCandidates = fromNodes
-    .slice(0, 5)
-    .map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line }));
-  const toCandidates = toNodes
-    .slice(0, 5)
-    .map((n) => ({ name: n.name, kind: n.kind, file: n.file, line: n.line }));
+  const fromCandidates = fromNodes.slice(0, 5).map(toSymbolRef);
+  const toCandidates = toNodes.slice(0, 5).map(toSymbolRef);
 
   return {
     sourceNode: fromNodes[0],

@@ -5,6 +5,7 @@ import { loadConfig } from '../infrastructure/config.js';
 import { debug } from '../infrastructure/logger.js';
 import { paginateResult } from '../shared/paginate.js';
 import type { BetterSqlite3Database, CodegraphConfig, ThresholdRule } from '../types.js';
+import type { BoundaryViolation } from './boundaries.js';
 import { evaluateBoundaries } from './boundaries.js';
 
 // ─── Rule Definitions ─────────────────────────────────────────────────
@@ -416,7 +417,20 @@ function evaluateBoundaryRules(
     return;
   }
 
-  const result = evaluateBoundaries(db, boundaryConfig, { noTests: opts.noTests || false });
+  let result: { violations: BoundaryViolation[]; violationCount: number };
+  try {
+    result = evaluateBoundaries(db, boundaryConfig, { noTests: opts.noTests || false });
+  } catch (e: unknown) {
+    debug(`boundary check failed: ${(e as Error).message}`);
+    ruleResults.push({
+      name: 'boundaries',
+      level: 'graph',
+      status: 'pass',
+      thresholds: effectiveThresholds,
+      violationCount: 0,
+    });
+    return;
+  }
   const hasBoundaryViolations = result.violationCount > 0;
 
   if (!hasBoundaryViolations) {

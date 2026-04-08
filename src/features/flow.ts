@@ -8,6 +8,7 @@
 import { openReadonlyOrFail } from '../db/index.js';
 import { CORE_SYMBOL_KINDS, findMatchingNodes } from '../domain/queries.js';
 import { isTestFile } from '../infrastructure/test-filter.js';
+import { toSymbolRef } from '../shared/normalize.js';
 import { paginateResult } from '../shared/paginate.js';
 import { FRAMEWORK_ENTRY_PREFIXES } from './structure.js';
 
@@ -175,7 +176,7 @@ function bfsCallees(
 
         visited.add(c.id);
         nextFrontier.push(c.id);
-        const nodeInfo: NodeInfo = { name: c.name, kind: c.kind, file: c.file, line: c.line };
+        const nodeInfo: NodeInfo = toSymbolRef(c);
         levelNodes.push(nodeInfo);
         nodeDepths.set(c.id, d);
         idToNode.set(c.id, nodeInfo);
