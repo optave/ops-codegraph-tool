@@ -111,6 +111,24 @@ jobs:
         timeout-minutes: 30
         run: npx vitest run tests/benchmarks/resolution/resolution-benchmark.test.ts --reporter=verbose
 
+      - name: Setup Python (for tracer validation)
+        if: steps.existing.outputs.skip != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Setup Go (for tracer validation)
+        if: steps.existing.outputs.skip != 'true'
+        uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+          cache: false
+
+      - name: Run tracer validation (same-file edge recall)
+        if: steps.existing.outputs.skip != 'true'
+        timeout-minutes: 10
+        run: npx vitest run tests/benchmarks/resolution/tracer/tracer-validation.test.ts --reporter=verbose
+
       - name: Merge resolution into build result
         if: steps.existing.outputs.skip != 'true'
         run: |

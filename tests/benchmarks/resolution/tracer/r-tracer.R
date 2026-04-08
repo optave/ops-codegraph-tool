@@ -27,7 +27,25 @@ traced_source <- function(file, ...) {
     full_path <- normalizePath(file, mustWork = FALSE)
   }
   current_source_file <<- basename(full_path)
+
+  # Snapshot global env before sourcing
+  before_names <- ls(envir = .GlobalEnv)
+
   result <- original_source(full_path, local = FALSE, ...)
+
+  # Discover newly defined functions and wrap them with tracing
+  after_names <- ls(envir = .GlobalEnv)
+  new_names <- setdiff(after_names, before_names)
+  bname <- basename(full_path)
+  for (nm in new_names) {
+    val <- get(nm, envir = .GlobalEnv)
+    if (is.function(val)) {
+      wrapped <- wrap_function(val, nm, bname)
+      register_function(wrapped, nm, bname)
+      assign(nm, wrapped, envir = .GlobalEnv)
+    }
+  }
+
   current_source_file <<- prev_file
   invisible(result)
 }
