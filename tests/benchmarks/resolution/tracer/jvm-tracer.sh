@@ -49,6 +49,15 @@ esac
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
+# Portable sed -i (GNU vs BSD)
+sedi() {
+    if sed --version 2>/dev/null | grep -q GNU; then
+        sed -i "$@"
+    else
+        sed -i '' "$@"
+    fi
+}
+
 # Copy fixture files
 case "$LANG" in
     java)   cp "$FIXTURE_DIR"/*.java "$TMP_DIR/" ;;
@@ -139,26 +148,20 @@ case "$LANG" in
             # Add CallTracer.traceCall() after method opening braces
             # Match lines like: public void method(...) {
             # Use portable sed -i: GNU sed uses -i alone, BSD sed (macOS) requires -i ''
+            # The first sed pass matches all method/constructor opening braces,
+            # so a second pass is unnecessary (it would double-inject traceCall).
             if sed --version 2>/dev/null | grep -q GNU; then
                 sed -i -E '/\)\s*\{$/{
                     /class |interface /!{
                         a\        CallTracer.traceCall();
                     }
                 }' "$javafile"
-                # Also inject into constructors
-                sed -i -E '/\)\s*\{$/{
-                    /class |interface /!s/$/\n        CallTracer.traceCall();/
-                }' "$javafile" 2>/dev/null || true
             else
                 sed -i '' -E '/\)\s*\{$/{
                     /class |interface /!{
                         a\        CallTracer.traceCall();
                     }
                 }' "$javafile"
-                # Also inject into constructors
-                sed -i '' -E '/\)\s*\{$/{
-                    /class |interface /!s/$/\n        CallTracer.traceCall();/
-                }' "$javafile" 2>/dev/null || true
             fi
         done
 
@@ -183,7 +186,28 @@ case "$LANG" in
         ;;
 
     kotlin)
-        # For Kotlin, compile CallTracer.java first, then Kotlin files
+        # Strip package declarations so CallTracer (default package) is accessible
+        for ktfile in "$TMP_DIR"/*.kt; do
+            sedi '/^package /d' "$ktfile"
+        done
+
+        # Inject CallTracer.traceCall() into every function body
+        for ktfile in "$TMP_DIR"/*.kt; do
+            sedi -E '/fun [a-zA-Z].*\{[[:space:]]*$/{
+                /class |interface |object /!a\        CallTracer.traceCall();
+            }' "$ktfile"
+        done
+
+        # Inject dump call before main's closing brace
+        sedi '/^fun main/,/^\}/ {
+            /^\}/ i\    CallTracer.dump()
+        }' "$TMP_DIR/Main.kt"
+
+        # Suppress println to keep stdout clean for JSON
+        for ktfile in "$TMP_DIR"/*.kt; do
+            sedi 's/println(/System.err.println(/g' "$ktfile" 2>/dev/null || true
+        done
+
         cd "$TMP_DIR"
         if javac CallTracer.java 2>/dev/null && kotlinc -cp . *.kt -include-runtime -d app.jar 2>/dev/null; then
             java -jar app.jar 2>/dev/null || echo '{"edges":[]}'
@@ -193,6 +217,24 @@ case "$LANG" in
         ;;
 
     scala)
+        # Inject CallTracer.traceCall() into every def body
+        for scfile in "$TMP_DIR"/*.scala; do
+            base="$(basename "$scfile")"
+            sedi -E '/def [a-zA-Z].*\{[[:space:]]*$/{
+                /class |trait |object .*extends/!a\        CallTracer.traceCall();
+            }' "$scfile"
+        done
+
+        # Inject dump call before main's closing brace
+        sedi '/def main/,/^\s*\}/ {
+            /^\s*\}/ i\    CallTracer.dump()
+        }' "$TMP_DIR/Main.scala"
+
+        # Suppress println to keep stdout clean for JSON
+        for scfile in "$TMP_DIR"/*.scala; do
+            sedi 's/println(/System.err.println(/g' "$scfile" 2>/dev/null || true
+        done
+
         cd "$TMP_DIR"
         if javac CallTracer.java 2>/dev/null && scalac -cp . *.scala 2>/dev/null; then
             scala -cp . Main 2>/dev/null || echo '{"edges":[]}'
@@ -202,6 +244,31 @@ case "$LANG" in
         ;;
 
     groovy)
+        # Strip package declarations so CallTracer (default package) is accessible
+        for grfile in "$TMP_DIR"/*.groovy; do
+            sedi '/^package /d' "$grfile"
+            # Remove cross-package imports that are no longer needed
+            sedi '/^import /d' "$grfile"
+        done
+
+        # Inject CallTracer.traceCall() into every method body
+        for grfile in "$TMP_DIR"/*.groovy; do
+            sedi -E '/\)\s*\{[[:space:]]*$/{
+                /class |interface /!a\        CallTracer.traceCall();
+            }' "$grfile"
+        done
+
+        # Inject dump call before main's closing brace
+        sedi '/static void main/,/^\s*\}/ {
+            /^\s*\}/ i\        CallTracer.dump()
+        }' "$TMP_DIR/Main.groovy"
+
+        # Suppress println to keep stdout clean for JSON
+        for grfile in "$TMP_DIR"/*.groovy; do
+            sedi 's/println /System.err.println /g' "$grfile" 2>/dev/null || true
+            sedi 's/println("/System.err.println("/g' "$grfile" 2>/dev/null || true
+        done
+
         cd "$TMP_DIR"
         if javac CallTracer.java 2>/dev/null && groovyc -cp . *.groovy 2>/dev/null; then
             groovy -cp . Main 2>/dev/null || echo '{"edges":[]}'
