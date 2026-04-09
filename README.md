@@ -588,21 +588,75 @@ Codegraph also extracts symbols from common callback patterns: Commander `.comma
 
 Self-measured on every release via CI ([build benchmarks](generated/benchmarks/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/benchmarks/EMBEDDING-BENCHMARKS.md) | [query benchmarks](generated/benchmarks/QUERY-BENCHMARKS.md) | [incremental benchmarks](generated/benchmarks/INCREMENTAL-BENCHMARKS.md) | [resolution precision/recall](tests/benchmarks/resolution/)):
 
-*Last updated: v3.9.1 (2026-04-06)*
+*Last updated: v3.9.2 (2026-04-09)*
 
 | Metric | Native | WASM |
 |---|---|---|
-| Build speed | **10.2 ms/file** | **13.7 ms/file** |
-| Query time | **23ms** | **36ms** |
-| No-op rebuild | **17ms** | **15ms** |
-| 1-file rebuild | **767ms** | **639ms** |
-| Query: fn-deps | **2.2ms** | **2.2ms** |
-| Query: path | **2.2ms** | **2.2ms** |
-| ~50,000 files (est.) | **~510.0s build** | **~685.0s build** |
-| Resolution precision | **100.0%** | — |
-| Resolution recall | **71.1%** | — |
+| Build speed | **15.7 ms/file** | **15 ms/file** |
+| Query time | **27ms** | **40ms** |
+| No-op rebuild | **9ms** | **20ms** |
+| 1-file rebuild | **558ms** | **624ms** |
+| Query: fn-deps | **2.3ms** | **2.4ms** |
+| Query: path | **2.5ms** | **2.4ms** |
+| ~50,000 files (est.) | **~785.0s build** | **~750.0s build** |
+| Resolution precision | **90.7%** | — |
+| Resolution recall | **42.9%** | — |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
+
+<details><summary>Per-language resolution precision/recall</summary>
+
+| Language | Precision | Recall | TP | FP | FN | Edges | Dynamic |
+|----------|----------:|-------:|---:|---:|---:|------:|--------:|
+| javascript | 100.0% | 66.7% | 12 | 0 | 6 | 18 | 14/28 |
+| typescript | 100.0% | 75.0% | 15 | 0 | 5 | 20 | — |
+| bash | 100.0% | 100.0% | 12 | 0 | 0 | 12 | 0/1 |
+| c | 100.0% | 100.0% | 9 | 0 | 0 | 9 | — |
+| clojure | 80.0% | 26.7% | 4 | 1 | 11 | 15 | — |
+| cpp | 100.0% | 57.1% | 8 | 0 | 6 | 14 | — |
+| csharp | 100.0% | 52.6% | 10 | 0 | 9 | 19 | — |
+| cuda | 50.0% | 33.3% | 4 | 4 | 8 | 12 | — |
+| dart | 0.0% | 0.0% | 0 | 0 | 18 | 18 | — |
+| elixir | 0.0% | 0.0% | 0 | 0 | 15 | 15 | — |
+| erlang | 100.0% | 100.0% | 12 | 0 | 0 | 12 | — |
+| fsharp | 0.0% | 0.0% | 0 | 9 | 12 | 12 | — |
+| gleam | 100.0% | 26.7% | 4 | 0 | 11 | 15 | — |
+| go | 100.0% | 69.2% | 9 | 0 | 4 | 13 | 13/14 |
+| groovy | 100.0% | 7.7% | 1 | 0 | 12 | 13 | — |
+| haskell | 100.0% | 33.3% | 4 | 0 | 8 | 12 | — |
+| hcl | 0.0% | 0.0% | 0 | 0 | 2 | 2 | — |
+| java | 100.0% | 52.9% | 9 | 0 | 8 | 17 | — |
+| julia | 0.0% | 0.0% | 0 | 0 | 15 | 15 | — |
+| kotlin | 92.3% | 63.2% | 12 | 1 | 7 | 19 | — |
+| lua | 100.0% | 15.4% | 2 | 0 | 11 | 13 | — |
+| objc | 0.0% | 0.0% | 0 | 1 | 12 | 12 | — |
+| ocaml | 100.0% | 8.3% | 1 | 0 | 11 | 12 | — |
+| php | 100.0% | 31.6% | 6 | 0 | 13 | 19 | — |
+| python | 100.0% | 60.0% | 9 | 0 | 6 | 15 | 15/15 |
+| r | 100.0% | 100.0% | 11 | 0 | 0 | 11 | — |
+| ruby | 100.0% | 100.0% | 11 | 0 | 0 | 11 | 11/11 |
+| rust | 100.0% | 35.7% | 5 | 0 | 9 | 14 | — |
+| scala | 100.0% | 71.4% | 5 | 0 | 2 | 7 | — |
+| solidity | 33.3% | 7.7% | 1 | 2 | 12 | 13 | — |
+| swift | 75.0% | 42.9% | 6 | 2 | 8 | 14 | 9/9 |
+| tsx | 100.0% | 100.0% | 13 | 0 | 0 | 13 | — |
+| verilog | 0.0% | 0.0% | 0 | 0 | 4 | 4 | — |
+| zig | 0.0% | 0.0% | 0 | 0 | 15 | 15 | — |
+
+**By resolution mode (all languages):**
+
+| Mode | Resolved | Expected | Recall |
+|------|--------:|---------:|-------:|
+| module-function | 16 | 106 | 15.1% |
+| receiver-typed | 17 | 104 | 16.3% |
+| static | 66 | 93 | 71.0% |
+| same-file | 48 | 86 | 55.8% |
+| interface-dispatched | 7 | 12 | 58.3% |
+| class-inheritance | 0 | 4 | 0.0% |
+| trait-dispatch | 0 | 2 | 0.0% |
+| package-function | 1 | 1 | 100.0% |
+
+</details>
 
 ### Lightweight Footprint
 
