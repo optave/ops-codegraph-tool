@@ -501,8 +501,6 @@ async function runPostNativeAnalysis(
         if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
       }
     }
-  } else if (ctx.engineOpts) {
-    ctx.engineOpts.nativeDb = ctx.nativeDb;
   }
 
   try {
@@ -655,17 +653,11 @@ async function tryNativeOrchestrator(
     // makes structure/analysis phases significantly slower than direct
     // better-sqlite3. Native bulk-insert methods (bulkInsertCfg, etc.)
     // are wired through engineOpts.nativeDb in runPostNativeAnalysis.
-    const lockPath = ctx.nativeFirstProxy
-      ? (ctx.db as unknown as { __lockPath?: string }).__lockPath
-      : undefined;
     if (ctx.nativeFirstProxy) ctx.nativeFirstProxy = false;
     if (!handoffWalAfterNativeBuild(ctx)) {
       // DB reopen failed — return partial result
       return formatNativeTimingResult(p, 0, analysisTiming);
     }
-    // Transfer advisory lock ownership from the proxy to the new better-sqlite3
-    // connection so closeDbPair releases it at the end.
-    if (lockPath) (ctx.db as unknown as { __lockPath?: string }).__lockPath = lockPath;
 
     // When structure was handled by Rust, we only need changed files for
     // analysis — no need to load the entire graph from DB. When structure
