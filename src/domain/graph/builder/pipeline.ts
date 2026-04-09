@@ -477,8 +477,25 @@ async function runPostNativeAnalysis(
     const native = loadNative();
     if (native?.NativeDatabase) {
       try {
+        // Checkpoint JS WAL before opening native connection so both
+        // connections see the same DB state (structure writes are flushed).
+        ctx.db.pragma('wal_checkpoint(TRUNCATE)');
         ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
-        if (ctx.engineOpts) ctx.engineOpts.nativeDb = ctx.nativeDb;
+        if (ctx.engineOpts) {
+          ctx.engineOpts.nativeDb = ctx.nativeDb;
+          ctx.engineOpts.suspendJsDb = () => {
+            ctx.db.pragma('wal_checkpoint(TRUNCATE)');
+          };
+          ctx.engineOpts.resumeJsDb = () => {
+            try {
+              ctx.nativeDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+            } catch (e) {
+              debug(
+                `resumeJsDb: WAL checkpoint failed (nativeDb may already be closed): ${toErrorMessage(e)}`,
+              );
+            }
+          };
+        }
       } catch {
         ctx.nativeDb = undefined;
         if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
@@ -633,11 +650,22 @@ async function tryNativeOrchestrator(
   const needsStructure = !result.structureHandled;
 
   if (needsAnalysis || needsStructure) {
-    // In native-first mode the proxy is already wired — no WAL handoff needed.
-    if (!ctx.nativeFirstProxy && !handoffWalAfterNativeBuild(ctx)) {
+    // Always hand off to better-sqlite3 for JS post-processing.
+    // The NativeDbProxy has per-statement napi serialization overhead that
+    // makes structure/analysis phases significantly slower than direct
+    // better-sqlite3. Native bulk-insert methods (bulkInsertCfg, etc.)
+    // are wired through engineOpts.nativeDb in runPostNativeAnalysis.
+    const lockPath = ctx.nativeFirstProxy
+      ? (ctx.db as unknown as { __lockPath?: string }).__lockPath
+      : undefined;
+    if (ctx.nativeFirstProxy) ctx.nativeFirstProxy = false;
+    if (!handoffWalAfterNativeBuild(ctx)) {
       // DB reopen failed — return partial result
       return formatNativeTimingResult(p, 0, analysisTiming);
     }
+    // Transfer advisory lock ownership from the proxy to the new better-sqlite3
+    // connection so closeDbPair releases it at the end.
+    if (lockPath) (ctx.db as unknown as { __lockPath?: string }).__lockPath = lockPath;
 
     // When structure was handled by Rust, we only need changed files for
     // analysis — no need to load the entire graph from DB. When structure

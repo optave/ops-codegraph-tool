@@ -27,6 +27,9 @@ export class NativeDbProxy implements BetterSqlite3Database {
 
   prepare<TRow = unknown>(sql: string): SqliteStatement<TRow> {
     const ndb = this.#ndb;
+    // Only INSERT statements need last_insert_rowid — skip the extra napi
+    // call for UPDATE/DELETE/other DML to halve per-statement overhead.
+    const isInsert = sql.trimStart().substring(0, 6).toUpperCase() === 'INSERT';
     const stmt: SqliteStatement<TRow> = {
       all(...params: unknown[]): TRow[] {
         return ndb.queryAll(sql, sanitize(params)) as TRow[];
@@ -36,10 +39,13 @@ export class NativeDbProxy implements BetterSqlite3Database {
       },
       run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint } {
         ndb.queryAll(sql, sanitize(params));
-        // Retrieve last_insert_rowid via SQLite scalar function so callers
-        // that depend on it (e.g. CFG block edge mapping) get correct values.
-        const row = ndb.queryGet('SELECT last_insert_rowid() AS rid', []) as { rid: number } | null;
-        return { changes: 0, lastInsertRowid: row?.rid ?? 0 };
+        if (isInsert) {
+          const row = ndb.queryGet('SELECT last_insert_rowid() AS rid', []) as {
+            rid: number;
+          } | null;
+          return { changes: 0, lastInsertRowid: row?.rid ?? 0 };
+        }
+        return { changes: 0, lastInsertRowid: 0 };
       },
       iterate(): IterableIterator<TRow> {
         throw new Error('iterate() is not supported via NativeDbProxy');
