@@ -109,7 +109,7 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-function acquireAdvisoryLock(dbPath: string): void {
+export function acquireAdvisoryLock(dbPath: string): void {
   const lockPath = `${dbPath}.lock`;
   try {
     if (fs.existsSync(lockPath)) {
@@ -129,7 +129,7 @@ function acquireAdvisoryLock(dbPath: string): void {
   }
 }
 
-function releaseAdvisoryLock(lockPath: string): void {
+export function releaseAdvisoryLock(lockPath: string): void {
   try {
     const content = fs.readFileSync(lockPath, 'utf-8').trim();
     if (Number(content) === process.pid) {

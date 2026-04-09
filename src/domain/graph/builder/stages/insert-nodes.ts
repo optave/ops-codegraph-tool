@@ -159,23 +159,26 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
   }
   const fileHashes = buildFileHashes(allSymbols, precomputedData, metadataUpdates, rootDir);
 
-  // WAL guard: same suspendJsDb/resumeJsDb pattern used by feature modules
-  // (ast, cfg, complexity, dataflow). Checkpoint JS side before native write,
-  // then checkpoint native side after, so neither library reads WAL frames
-  // written by the other (#696, #709, #715, #717).
+  // In native-first mode (single rusqlite connection), no WAL dance is needed.
+  // In dual-connection mode, checkpoint JS side before native write, then
+  // checkpoint native side after (#696, #709, #715, #717).
   let result: boolean;
-  try {
-    if (ctx.db) {
-      ctx.db.pragma('wal_checkpoint(TRUNCATE)');
-    }
+  if (ctx.nativeFirstProxy) {
     result = ctx.nativeDb!.bulkInsertNodes(batches, fileHashes, removed);
-  } finally {
+  } else {
     try {
-      ctx.nativeDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch (e) {
-      debug(
-        `tryNativeInsert: WAL checkpoint failed (nativeDb may already be closed): ${toErrorMessage(e)}`,
-      );
+      if (ctx.db) {
+        ctx.db.pragma('wal_checkpoint(TRUNCATE)');
+      }
+      result = ctx.nativeDb!.bulkInsertNodes(batches, fileHashes, removed);
+    } finally {
+      try {
+        ctx.nativeDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      } catch (e) {
+        debug(
+          `tryNativeInsert: WAL checkpoint failed (nativeDb may already be closed): ${toErrorMessage(e)}`,
+        );
+      }
     }
   }
   return result;

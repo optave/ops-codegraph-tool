@@ -4,14 +4,17 @@
  * This is the heart of the builder refactor (ROADMAP 3.9): the monolithic buildGraph()
  * is decomposed into independently testable stages that communicate via PipelineContext.
  */
+import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import {
+  acquireAdvisoryLock,
   closeDbPair,
   getBuildMeta,
   initSchema,
   MIGRATIONS,
   openDb,
+  releaseAdvisoryLock,
   setBuildMeta,
 } from '../../../db/index.js';
 import { detectWorkspaces, loadConfig } from '../../../infrastructure/config.js';
@@ -25,6 +28,7 @@ import { getActiveEngine } from '../../parser.js';
 import { setWorkspaces } from '../resolve.js';
 import { PipelineContext } from './context.js';
 import { loadPathAliases } from './helpers.js';
+import { NativeDbProxy } from './native-db-proxy.js';
 import { buildEdges } from './stages/build-edges.js';
 import { buildStructure } from './stages/build-structure.js';
 // Pipeline stages
@@ -110,14 +114,48 @@ function loadAliases(ctx: PipelineContext): void {
 function setupPipeline(ctx: PipelineContext): void {
   ctx.rootDir = path.resolve(ctx.rootDir);
   ctx.dbPath = path.join(ctx.rootDir, '.codegraph', 'graph.db');
-  ctx.db = openDb(ctx.dbPath);
-  initSchema(ctx.db);
 
-  // Detect whether native engine is available, but defer opening NativeDatabase.
-  // The native orchestrator opens it on demand; the JS pipeline defers until
-  // after change detection — avoiding ~5ms open+initSchema+close on no-op rebuilds.
+  // Detect whether native engine is available.
   const enginePref = ctx.opts.engine || 'auto';
-  ctx.nativeAvailable = enginePref !== 'wasm' && !!loadNative()?.NativeDatabase;
+  const native = enginePref !== 'wasm' ? loadNative() : null;
+  ctx.nativeAvailable = !!native?.NativeDatabase;
+
+  // Native-first: use only rusqlite for the entire pipeline (no better-sqlite3).
+  // This eliminates the dual-connection WAL corruption problem and enables all
+  // native fast-paths (bulkInsertNodes, classifyRolesFull, etc.).
+  // Fallback: if native is unavailable or FORCE_JS is set, use better-sqlite3.
+  if (
+    ctx.nativeAvailable &&
+    native?.NativeDatabase &&
+    process.env.CODEGRAPH_FORCE_JS_PIPELINE !== '1'
+  ) {
+    try {
+      const dir = path.dirname(ctx.dbPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      acquireAdvisoryLock(ctx.dbPath);
+      ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+      ctx.nativeDb.initSchema();
+      const proxy = new NativeDbProxy(ctx.nativeDb);
+      proxy.__lockPath = `${ctx.dbPath}.lock`;
+      ctx.db = proxy as unknown as typeof ctx.db;
+      ctx.nativeFirstProxy = true;
+    } catch (err) {
+      warn(`NativeDatabase setup failed, falling back to better-sqlite3: ${toErrorMessage(err)}`);
+      try {
+        ctx.nativeDb?.close();
+      } catch {
+        /* ignore */
+      }
+      ctx.nativeDb = undefined;
+      ctx.nativeFirstProxy = false;
+      releaseAdvisoryLock(`${ctx.dbPath}.lock`);
+      ctx.db = openDb(ctx.dbPath);
+      initSchema(ctx.db);
+    }
+  } else {
+    ctx.db = openDb(ctx.dbPath);
+    initSchema(ctx.db);
+  }
 
   ctx.config = loadConfig(ctx.rootDir);
   ctx.incremental =
@@ -434,16 +472,20 @@ async function runPostNativeAnalysis(
     analysisFileSymbols = allFileSymbols;
   }
 
-  // Reopen nativeDb for analysis features (suspend/resume WAL pattern).
-  const native = loadNative();
-  if (native?.NativeDatabase) {
-    try {
-      ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
-      if (ctx.engineOpts) ctx.engineOpts.nativeDb = ctx.nativeDb;
-    } catch {
-      ctx.nativeDb = undefined;
-      if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
+  // In native-first mode, nativeDb is already open — no reopen needed.
+  if (!ctx.nativeFirstProxy) {
+    const native = loadNative();
+    if (native?.NativeDatabase) {
+      try {
+        ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
+        if (ctx.engineOpts) ctx.engineOpts.nativeDb = ctx.nativeDb;
+      } catch {
+        ctx.nativeDb = undefined;
+        if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
+      }
     }
+  } else if (ctx.engineOpts) {
+    ctx.engineOpts.nativeDb = ctx.nativeDb;
   }
 
   try {
@@ -463,8 +505,8 @@ async function runPostNativeAnalysis(
     warn(`Analysis phases failed after native build: ${toErrorMessage(err)}`);
   }
 
-  // Close nativeDb after analyses
-  if (ctx.nativeDb) {
+  // Close nativeDb after analyses (skip in native-first — single connection stays open)
+  if (ctx.nativeDb && !ctx.nativeFirstProxy) {
     try {
       ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
     } catch {
@@ -516,8 +558,8 @@ async function tryNativeOrchestrator(
     return undefined;
   }
 
-  // Open NativeDatabase on demand for the orchestrator.
-  // Deferred from setupPipeline so no-op JS pipeline rebuilds skip the overhead.
+  // In native-first mode, nativeDb is already open from setupPipeline.
+  // Otherwise, open it on demand (deferred to skip overhead on no-op rebuilds).
   if (!ctx.nativeDb && ctx.nativeAvailable) {
     const native = loadNative();
     if (native?.NativeDatabase) {
@@ -591,7 +633,8 @@ async function tryNativeOrchestrator(
   const needsStructure = !result.structureHandled;
 
   if (needsAnalysis || needsStructure) {
-    if (!handoffWalAfterNativeBuild(ctx)) {
+    // In native-first mode the proxy is already wired — no WAL handoff needed.
+    if (!ctx.nativeFirstProxy && !handoffWalAfterNativeBuild(ctx)) {
       // DB reopen failed — return partial result
       return formatNativeTimingResult(p, 0, analysisTiming);
     }
@@ -623,6 +666,30 @@ async function tryNativeOrchestrator(
 // ── Pipeline stages execution ───────────────────────────────────────────
 
 async function runPipelineStages(ctx: PipelineContext): Promise<void> {
+  // ── Native-first mode ────────────────────────────────────────────────
+  // When ctx.nativeFirstProxy is true, ctx.db is a NativeDbProxy backed by
+  // the single rusqlite connection (ctx.nativeDb). No dual-connection WAL
+  // dance is needed — every stage uses the same connection transparently.
+  if (ctx.nativeFirstProxy) {
+    // Ensure engineOpts.nativeDb is set so stages can use dedicated native methods.
+    if (ctx.engineOpts) {
+      ctx.engineOpts.nativeDb = ctx.nativeDb;
+    }
+
+    await collectFiles(ctx);
+    await detectChanges(ctx);
+    if (ctx.earlyExit) return;
+    await parseFiles(ctx);
+    await insertNodes(ctx);
+    await resolveImports(ctx);
+    await buildEdges(ctx);
+    await buildStructure(ctx);
+    await runAnalyses(ctx);
+    await finalize(ctx);
+    return;
+  }
+
+  // ── Legacy dual-connection mode (WASM / fallback) ────────────────────
   // NativeDatabase is deferred — not opened during setup. collectFiles and
   // detectChanges only need better-sqlite3. If no files changed, we exit
   // early without ever opening the native connection, saving ~5ms.

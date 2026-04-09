@@ -2,6 +2,7 @@
 
 export type { LockedDatabase, LockedDatabasePair } from './connection.js';
 export {
+  acquireAdvisoryLock,
   closeDb,
   closeDbDeferred,
   closeDbPair,
@@ -13,6 +14,7 @@ export {
   openReadonlyOrFail,
   openReadonlyWithNative,
   openRepo,
+  releaseAdvisoryLock,
 } from './connection.js';
 export { getBuildMeta, initSchema, MIGRATIONS, setBuildMeta } from './migrations.js';
 export {

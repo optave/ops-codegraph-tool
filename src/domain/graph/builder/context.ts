@@ -35,6 +35,8 @@ export class PipelineContext {
   nativeDb?: NativeDatabase;
   /** Whether native engine is available (deferred — DB opened only when needed). */
   nativeAvailable: boolean = false;
+  /** True when ctx.db is a NativeDbProxy — single rusqlite connection for the entire pipeline. */
+  nativeFirstProxy: boolean = false;
 
   // ── File collection (set by collectFiles stage) ────────────────────
   allFiles!: string[];
