@@ -18,11 +18,11 @@ interface UpdateCache {
 
 /**
  * Minimal semver comparison. Returns -1, 0, or 1.
- * Only handles numeric x.y.z (no pre-release tags).
+ * Strips pre-release suffixes (e.g. "3.9.3-dev.6" → "3.9.3") before comparing.
  */
 export function semverCompare(a: string, b: string): -1 | 0 | 1 {
-  const pa = a.split('.').map(Number);
-  const pb = b.split('.').map(Number);
+  const pa = a.replace(/-.*$/, '').split('.').map(Number);
+  const pb = b.replace(/-.*$/, '').split('.').map(Number);
   for (let i = 0; i < 3; i++) {
     const na = pa[i] || 0;
     const nb = pb[i] || 0;

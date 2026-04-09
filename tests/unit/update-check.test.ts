@@ -51,6 +51,15 @@ describe('semverCompare', () => {
   it('major takes priority over minor and patch', () => {
     expect(semverCompare('1.9.9', '2.0.0')).toBe(-1);
   });
+
+  it('strips pre-release suffixes before comparing', () => {
+    // 3.9.3-dev.6 should be treated as 3.9.3, which is > 3.9.1
+    expect(semverCompare('3.9.3-dev.6', '3.9.1')).toBe(1);
+    expect(semverCompare('3.9.3-dev.6', '3.9.3')).toBe(0);
+    expect(semverCompare('3.9.3-dev.6', '3.9.4')).toBe(-1);
+    // Both sides with pre-release
+    expect(semverCompare('2.0.0-beta.1', '1.9.9-alpha.3')).toBe(1);
+  });
 });
 
 // ─── checkForUpdates ────────────────────────────────────────────────
