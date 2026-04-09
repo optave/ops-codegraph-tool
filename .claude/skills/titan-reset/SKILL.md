@@ -27,6 +27,12 @@ This restores the graph database to its pre-GAUNTLET state.
 codegraph snapshot delete titan-baseline 2>/dev/null
 ```
 
+Delete the grind baseline snapshot (if it exists):
+
+```bash
+codegraph snapshot delete titan-grind-baseline 2>/dev/null
+```
+
 Also delete any batch snapshots dynamically:
 
 ```bash
@@ -53,6 +59,8 @@ This removes:
 - `issues.ndjson` — cross-phase issue tracker
 - `close-summary.json` — close phase summary
 - `drift-report.json` — staleness detection across phases
+- `grind-targets.ndjson` — grind phase adoption targets and outcomes
+- `arch-snapshot.json` — pre-forge architectural snapshot
 
 ---
 
@@ -75,6 +83,7 @@ If `$ARGUMENTS` contains `--keep-graph`, skip this step.
 ```
 Titan pipeline reset complete.
   - Baseline snapshot: restored and deleted
+  - Grind snapshot: deleted
   - Batch snapshots: deleted
   - Artifacts: removed (.codegraph/titan/)
   - Graph: rebuilt (clean state)
