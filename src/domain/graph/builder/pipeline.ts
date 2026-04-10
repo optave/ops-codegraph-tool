@@ -477,15 +477,30 @@ async function runPostNativeAnalysis(
     const native = loadNative();
     if (native?.NativeDatabase) {
       try {
+        // Checkpoint JS WAL before opening native connection so both
+        // connections see the same DB state (structure writes are flushed).
+        ctx.db.pragma('wal_checkpoint(TRUNCATE)');
         ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
-        if (ctx.engineOpts) ctx.engineOpts.nativeDb = ctx.nativeDb;
+        if (ctx.engineOpts) {
+          ctx.engineOpts.nativeDb = ctx.nativeDb;
+          ctx.engineOpts.suspendJsDb = () => {
+            ctx.db.pragma('wal_checkpoint(TRUNCATE)');
+          };
+          ctx.engineOpts.resumeJsDb = () => {
+            try {
+              ctx.nativeDb?.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+            } catch (e) {
+              debug(
+                `resumeJsDb: WAL checkpoint failed (nativeDb may already be closed): ${toErrorMessage(e)}`,
+              );
+            }
+          };
+        }
       } catch {
         ctx.nativeDb = undefined;
         if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
       }
     }
-  } else if (ctx.engineOpts) {
-    ctx.engineOpts.nativeDb = ctx.nativeDb;
   }
 
   try {
@@ -633,8 +648,13 @@ async function tryNativeOrchestrator(
   const needsStructure = !result.structureHandled;
 
   if (needsAnalysis || needsStructure) {
-    // In native-first mode the proxy is already wired — no WAL handoff needed.
-    if (!ctx.nativeFirstProxy && !handoffWalAfterNativeBuild(ctx)) {
+    // Always hand off to better-sqlite3 for JS post-processing.
+    // The NativeDbProxy has per-statement napi serialization overhead that
+    // makes structure/analysis phases significantly slower than direct
+    // better-sqlite3. Native bulk-insert methods (bulkInsertCfg, etc.)
+    // are wired through engineOpts.nativeDb in runPostNativeAnalysis.
+    if (ctx.nativeFirstProxy) ctx.nativeFirstProxy = false;
+    if (!handoffWalAfterNativeBuild(ctx)) {
       // DB reopen failed — return partial result
       return formatNativeTimingResult(p, 0, analysisTiming);
     }
