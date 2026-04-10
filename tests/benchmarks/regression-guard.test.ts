@@ -76,6 +76,9 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  * - 3.9.1:1-file rebuild — continuation of the 3.9.0 regression; native
  *   incremental path still re-runs graph-wide phases on single-file rebuilds.
  *   Benchmark data shows 562 → 767ms (+36%). Same root cause as 3.9.0 entry.
+ *
+ * - 3.9.2:Full build — NativeDbProxy overhead causes native full build to
+ *   regress from 5206ms to 9403ms (+81%). Fix tracked in PR #906.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.9.0:1-file rebuild',
@@ -83,6 +86,7 @@ const KNOWN_REGRESSIONS = new Set([
   '3.9.0:fnDeps depth 3',
   '3.9.0:fnDeps depth 5',
   '3.9.1:1-file rebuild',
+  '3.9.2:Full build',
 ]);
 
 /**
