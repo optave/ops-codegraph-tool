@@ -1162,6 +1162,7 @@ fn write_complexity(
         }
     }
 
+    drop(stmt); // release borrow on tx before commit
     tx.commit().is_ok()
 }
 
@@ -1183,7 +1184,7 @@ fn write_cfg(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
     ) {
         Ok(s) => s,
-        Err(_) => return,
+        Err(_) => return false,
     };
 
     let mut edge_stmt = match tx.prepare(
@@ -1192,7 +1193,7 @@ fn write_cfg(
          VALUES (?1, ?2, ?3, ?4)",
     ) {
         Ok(s) => s,
-        Err(_) => return,
+        Err(_) => return false,
     };
 
     for (file, symbols) in file_symbols {
@@ -1215,6 +1216,8 @@ fn write_cfg(
         }
     }
 
+    drop(block_stmt);
+    drop(edge_stmt);
     tx.commit().is_ok()
 }
 
@@ -1285,7 +1288,7 @@ fn write_dataflow(
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     ) {
         Ok(s) => s,
-        Err(_) => return,
+        Err(_) => return false,
     };
 
     let mut local_stmt = match tx.prepare(
@@ -1293,7 +1296,7 @@ fn write_dataflow(
          AND kind IN ('function','method') LIMIT 1",
     ) {
         Ok(s) => s,
-        Err(_) => return,
+        Err(_) => return false,
     };
 
     let mut global_stmt = match tx.prepare(
@@ -1302,7 +1305,7 @@ fn write_dataflow(
          ORDER BY file, line LIMIT 1",
     ) {
         Ok(s) => s,
-        Err(_) => return,
+        Err(_) => return false,
     };
 
     for (file, symbols) in file_symbols {
@@ -1379,6 +1382,9 @@ fn write_dataflow(
         }
     }
 
+    drop(insert_stmt);
+    drop(local_stmt);
+    drop(global_stmt);
     tx.commit().is_ok()
 }
 
