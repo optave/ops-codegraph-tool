@@ -5,6 +5,8 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 | Version | Engine | fnDeps d1 | fnDeps d3 | fnDeps d5 | fnImpact d1 | fnImpact d3 | fnImpact d5 | diffImpact |
 |---------|--------|----------:|----------:|----------:|------------:|------------:|------------:|-----------:|
+| 3.9.2 | native | 24.6 ↑14% | 24.6 ↑15% | 24.5 ↑14% | 4.5 ↑13% | 4.6 ↑15% | 4.5 ↑10% | 9.6ms ↑28% |
+| 3.9.2 | wasm | 33.5 ↑5% | 33.7 ↑8% | 33.6 ↑7% | 4.5 ↑13% | 4.5 ↑13% | 4.5 ↑13% | 12.6ms ↑94% |
 | 3.9.1 | native | 21.5 ↓22% | 21.4 ↓22% | 21.4 ↓22% | 4 ~ | 4 ~ | 4.1 ↑2% | 7.5ms ↓19% |
 | 3.9.1 | wasm | 31.8 ↑18% | 31.3 ↑16% | 31.3 ↑16% | 4 ~ | 4 ~ | 4 ↑3% | 6.5ms ↓18% |
 | 3.9.0 | native | 27.4 ↑182% | 27.5 ↑178% | 27.5 ↑184% | 4 ↑11% | 4 ↑11% | 4 ↑14% | 9.3ms ↑4% |
@@ -47,41 +49,43 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 ### Latest results
 
-**Version:** 3.9.1 | **Date:** 2026-04-06
+**Version:** 3.9.2 | **Date:** 2026-04-09
 
 #### Native (Rust)
 
-**Targets:** hub=`buildGraph`, mid=`ctx`, leaf=`docs`
+**Targets:** hub=`buildGraph`, mid=`node`, leaf=`docs`
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 21.5ms |
-| fnDeps depth 3 | 21.4ms |
-| fnDeps depth 5 | 21.4ms |
-| fnImpact depth 1 | 4ms |
-| fnImpact depth 3 | 4ms |
-| fnImpact depth 5 | 4.1ms |
-| diffImpact latency | 7.5ms |
+| fnDeps depth 1 | 24.6ms |
+| fnDeps depth 3 | 24.6ms |
+| fnDeps depth 5 | 24.5ms |
+| fnImpact depth 1 | 4.5ms |
+| fnImpact depth 3 | 4.6ms |
+| fnImpact depth 5 | 4.5ms |
+| diffImpact latency | 9.6ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
 #### WASM
 
-**Targets:** hub=`buildGraph`, mid=`ctx`, leaf=`docs`
+**Targets:** hub=`buildGraph`, mid=`node`, leaf=`docs`
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 31.8ms |
-| fnDeps depth 3 | 31.3ms |
-| fnDeps depth 5 | 31.3ms |
-| fnImpact depth 1 | 4ms |
-| fnImpact depth 3 | 4ms |
-| fnImpact depth 5 | 4ms |
-| diffImpact latency | 6.5ms |
+| fnDeps depth 1 | 33.5ms |
+| fnDeps depth 3 | 33.7ms |
+| fnDeps depth 5 | 33.6ms |
+| fnImpact depth 1 | 4.5ms |
+| fnImpact depth 3 | 4.5ms |
+| fnImpact depth 5 | 4.5ms |
+| diffImpact latency | 12.6ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
 <!-- NOTES_START -->
+
+**Note (3.9.2):** The diffImpact latency regressed significantly — WASM jumped from 6.5ms to 12.6ms (↑94%) and native from 7.5ms to 9.6ms (↑28%), reversing the improvements seen in 3.9.1. This is tracked in #904 for investigation in the query/resolution path. The mid-connectivity target also changed from `ctx` (3.9.1) to `node` (3.9.2); targets are selected dynamically at run time as the most-connected nodes of their tier, so this shift reflects genuine changes in graph connectivity structure as the codebase evolves. fnDeps growth of 5-15% and fnImpact growth of 10-15% are consistent with normal codebase expansion.
 
 **Note (3.9.0):** The ↑177-184% fnDeps regression (9.7ms → 27ms) reflects substantial codebase growth between 3.7.0 and 3.9.0 — many new language extractors were added across 3.7.0-3.8.0 (Elixir, Lua, Dart, Zig, Haskell, OCaml, F#, Gleam, Clojure, Julia, R, Erlang, C, C++, Kotlin, Swift, Scala, Bash, Solidity, Objective-C, CUDA, Groovy, Verilog), significantly increasing the `buildGraph` hub node's edge count. The `findCallersBatch` path was also refactored in 3.8.1 (PR #815). fnImpact and diffImpact grew only 8-14%, consistent with normal expansion. The native engine being marginally slower than WASM for fnDeps (27.4ms vs 26.9ms, ~2%) is within measurement noise and not a meaningful inversion. Versions 3.8.0 and 3.8.1 are absent because their query benchmark data was removed — v3.8.1 was measured before the `findCallersBatch` fix and showed artificially inflated fnDeps latencies; v3.8.0 had no separate query benchmark run.
 
@@ -98,6 +102,54 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 <!-- QUERY_BENCHMARK_DATA
 [
+  {
+    "version": "3.9.2",
+    "date": "2026-04-09",
+    "wasm": {
+      "targets": {
+        "hub": "buildGraph",
+        "mid": "node",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 33.5,
+        "depth3Ms": 33.7,
+        "depth5Ms": 33.6
+      },
+      "fnImpact": {
+        "depth1Ms": 4.5,
+        "depth3Ms": 4.5,
+        "depth5Ms": 4.5
+      },
+      "diffImpact": {
+        "latencyMs": 12.6,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    },
+    "native": {
+      "targets": {
+        "hub": "buildGraph",
+        "mid": "node",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 24.6,
+        "depth3Ms": 24.6,
+        "depth5Ms": 24.5
+      },
+      "fnImpact": {
+        "depth1Ms": 4.5,
+        "depth3Ms": 4.6,
+        "depth5Ms": 4.5
+      },
+      "diffImpact": {
+        "latencyMs": 9.6,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    }
+  },
   {
     "version": "3.9.1",
     "date": "2026-04-06",

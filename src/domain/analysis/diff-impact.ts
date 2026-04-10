@@ -307,6 +307,33 @@ export function diffImpactData(
     }
 
     const affectedFunctions = findAffectedFunctions(db, changedRanges, noTests);
+
+    // Short-circuit: when no function-level changes detected, skip expensive
+    // lookups (BFS, co-change, ownership).  Boundary checks are preserved
+    // because they are file-scoped and can surface real violations even when
+    // no function bodies were touched (e.g. import or type-alias changes).
+    if (affectedFunctions.length === 0) {
+      const { boundaryViolations, boundaryViolationCount } = checkBoundaryViolations(
+        db,
+        changedRanges,
+        noTests,
+        { ...opts, config },
+        repoRoot,
+      );
+      const base = {
+        changedFiles: changedRanges.size,
+        newFiles: [...newFiles],
+        affectedFunctions: [] as unknown[],
+        affectedFiles: [] as string[],
+        historicallyCoupled: [] as unknown[],
+        ownership: null,
+        boundaryViolations,
+        boundaryViolationCount,
+        summary: null as null,
+      };
+      return paginateResult(base, 'affectedFunctions', { limit: opts.limit, offset: opts.offset });
+    }
+
     const includeImplementors = opts.includeImplementors !== false;
     const { functionResults, allAffected } = buildFunctionImpactResults(
       db,
@@ -325,7 +352,7 @@ export function diffImpactData(
       db,
       changedRanges,
       noTests,
-      opts,
+      { ...opts, config },
       repoRoot,
     );
 

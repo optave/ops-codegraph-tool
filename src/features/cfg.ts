@@ -369,7 +369,7 @@ export async function buildCFGData(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, FileSymbols>,
   rootDir: string,
-  _engineOpts?: {
+  engineOpts?: {
     nativeDb?: { bulkInsertCfg?(entries: Array<Record<string, unknown>>): number };
     suspendJsDb?: () => void;
     resumeJsDb?: () => void;
@@ -379,11 +379,56 @@ export async function buildCFGData(
   // skip WASM parser init, tree parsing, and JS visitor entirely — just persist.
   const allNative = allCfgNative(fileSymbols);
 
-  // NOTE: nativeDb.bulkInsertCfg is intentionally NOT used here.
-  // The CFG path requires delete-before-insert (deleteCfgForNode) which creates
-  // a dual-connection WAL conflict when deletes go through JS (better-sqlite3)
-  // and inserts go through native (rusqlite). The JS-only persistNativeFileCfg
-  // path below handles both on a single connection safely.
+  // ── Native bulk-insert fast path ──────────────────────────────────────
+  // The Rust bulkInsertCfg handles delete-before-insert atomically on a
+  // single rusqlite connection, so there is no dual-connection WAL conflict.
+  const nativeDb = engineOpts?.nativeDb;
+  if (allNative && nativeDb?.bulkInsertCfg) {
+    const entries: Array<Record<string, unknown>> = [];
+    for (const [relPath, symbols] of fileSymbols) {
+      const ext = path.extname(relPath).toLowerCase();
+      if (!CFG_EXTENSIONS.has(ext)) continue;
+
+      for (const def of symbols.definitions) {
+        if (def.kind !== 'function' && def.kind !== 'method') continue;
+        if (!def.line) continue;
+
+        const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);
+        if (!nodeId) continue;
+
+        const cfg = def.cfg as { blocks?: CfgBuildBlock[]; edges?: CfgBuildEdge[] } | undefined;
+        if (!cfg?.blocks?.length) continue;
+
+        entries.push({
+          nodeId,
+          blocks: cfg.blocks.map((b) => ({
+            index: b.index,
+            blockType: b.type,
+            startLine: b.startLine ?? null,
+            endLine: b.endLine ?? null,
+            label: b.label ?? null,
+          })),
+          edges: (cfg.edges || []).map((e) => ({
+            sourceIndex: e.sourceIndex,
+            targetIndex: e.targetIndex,
+            kind: e.kind,
+          })),
+        });
+      }
+    }
+
+    if (entries.length > 0) {
+      let inserted = 0;
+      try {
+        engineOpts?.suspendJsDb?.();
+        inserted = nativeDb.bulkInsertCfg(entries);
+      } finally {
+        engineOpts?.resumeJsDb?.();
+      }
+      info(`CFG (native bulk): ${inserted} functions analyzed`);
+    }
+    return;
+  }
 
   const extToLang = buildExtToLangMap();
   let parsers: unknown = null;
