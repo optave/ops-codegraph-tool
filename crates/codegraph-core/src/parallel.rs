@@ -10,6 +10,8 @@ use crate::types::FileSymbols;
 /// Parse multiple files in parallel using rayon.
 /// Each thread creates its own Parser (cheap; Language objects are Send+Sync).
 /// Failed files are silently skipped (matches WASM behavior).
+/// All analysis data (symbols, AST nodes, complexity, CFG, dataflow) is always
+/// extracted in a single parse pass — no separate re-parse needed downstream.
 /// When `include_dataflow` is false, dataflow extraction is skipped for performance.
 /// When `include_ast_nodes` is false, AST node walking is skipped for performance.
 pub fn parse_files_parallel(
@@ -34,6 +36,35 @@ pub fn parse_files_parallel(
             if include_dataflow {
                 symbols.dataflow = extract_dataflow(&tree, &source, lang.lang_id_str());
             }
+            symbols.line_count = Some(line_count);
+            Some(symbols)
+        })
+        .collect()
+}
+
+/// Parse multiple files in parallel, always extracting ALL analysis data:
+/// symbols, AST nodes, complexity, CFG, and dataflow in a single parse pass.
+/// This eliminates the need for any downstream re-parse (WASM or native standalone).
+pub fn parse_files_parallel_full(
+    file_paths: &[String],
+    _root_dir: &str,
+) -> Vec<FileSymbols> {
+    file_paths
+        .par_iter()
+        .filter_map(|file_path| {
+            let lang = LanguageKind::from_extension(file_path)?;
+            let source = fs::read(file_path).ok()?;
+            let line_count = source.iter().filter(|&&b| b == b'\n').count() as u32 + 1;
+
+            let mut parser = Parser::new();
+            parser.set_language(&lang.tree_sitter_language()).ok()?;
+
+            let tree = parser.parse(&source, None)?;
+            // Always include AST nodes
+            let mut symbols =
+                extract_symbols_with_opts(lang, &tree, &source, file_path, true);
+            // Always extract dataflow
+            symbols.dataflow = extract_dataflow(&tree, &source, lang.lang_id_str());
             symbols.line_count = Some(line_count);
             Some(symbols)
         })

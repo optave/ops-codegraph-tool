@@ -545,6 +545,10 @@ function collectNativeBulkRows(
   const rows: Array<Record<string, unknown>> = [];
 
   for (const [relPath, symbols] of fileSymbols) {
+    const ext = path.extname(relPath).toLowerCase();
+    const langId = symbols._langId || '';
+    const langSupported = COMPLEXITY_EXTENSIONS.has(ext) || COMPLEXITY_RULES.has(langId);
+
     for (const def of symbols.definitions) {
       if (def.kind !== 'function' && def.kind !== 'method') continue;
       if (!def.line) continue;
@@ -554,6 +558,9 @@ function collectNativeBulkRows(
       // of the native bulk-insert path for every TypeScript codebase (#846).
       if (!def.complexity) {
         if (def.name.includes('.') || !def.endLine || def.endLine <= def.line) continue;
+        // Languages without complexity rules will never have data — skip them
+        // rather than bailing out of the entire native bulk path.
+        if (!langSupported) continue;
         return null; // genuine function body missing complexity — needs JS fallback
       }
       const nodeId = getFunctionNodeId(db, def.name, relPath, def.line);

@@ -120,15 +120,11 @@ function setupPipeline(ctx: PipelineContext): void {
   const native = enginePref !== 'wasm' ? loadNative() : null;
   ctx.nativeAvailable = !!native?.NativeDatabase;
 
-  // Native-first: use only rusqlite for the entire pipeline (no better-sqlite3).
-  // This eliminates the dual-connection WAL corruption problem and enables all
-  // native fast-paths (bulkInsertNodes, classifyRolesFull, etc.).
-  // Fallback: if native is unavailable or FORCE_JS is set, use better-sqlite3.
-  if (
-    ctx.nativeAvailable &&
-    native?.NativeDatabase &&
-    process.env.CODEGRAPH_FORCE_JS_PIPELINE !== '1'
-  ) {
+  // When native is available, use a NativeDbProxy backed by a single rusqlite
+  // connection. This eliminates the dual-connection WAL corruption problem.
+  // The Rust orchestrator handles the full pipeline; the proxy is used for any
+  // JS post-processing (e.g. structure fallback on large builds).
+  if (ctx.nativeAvailable && native?.NativeDatabase) {
     try {
       const dir = path.dirname(ctx.dbPath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -264,13 +260,14 @@ interface NativeOrchestratorResult {
   structureScope?: string[];
   /** Whether the Rust pipeline handled the structure phase (small-incremental fast path). */
   structureHandled?: boolean;
+  /** Whether the Rust pipeline wrote AST/complexity/CFG/dataflow to DB. */
+  analysisComplete?: boolean;
 }
 
 // ── Native orchestrator helpers ───────────────────────────────────────
 
 /** Determine whether the native orchestrator should be skipped. Returns a reason string, or null if it should run. */
 function shouldSkipNativeOrchestrator(ctx: PipelineContext): string | null {
-  if (process.env.CODEGRAPH_FORCE_JS_PIPELINE === '1') return 'CODEGRAPH_FORCE_JS_PIPELINE=1';
   if (ctx.forceFullRebuild) return 'forceFullRebuild';
   // v3.9.0 addon had buggy incremental purge (wrong SQL on analysis tables,
   // scoped removal over-detection). Fixed in v3.9.1 by PR #865. Gate on
@@ -452,78 +449,6 @@ async function runPostNativeStructure(
   return performance.now() - structureStart;
 }
 
-/** Run AST/complexity/CFG/dataflow analysis after native orchestrator. */
-async function runPostNativeAnalysis(
-  ctx: PipelineContext,
-  allFileSymbols: Map<string, ExtractorOutput>,
-  changedFiles: string[] | undefined,
-): Promise<{ astMs: number; complexityMs: number; cfgMs: number; dataflowMs: number }> {
-  const timing = { astMs: 0, complexityMs: 0, cfgMs: 0, dataflowMs: 0 };
-
-  // Scope analysis fileSymbols to changed files only
-  let analysisFileSymbols: Map<string, ExtractorOutput>;
-  if (changedFiles && changedFiles.length > 0) {
-    analysisFileSymbols = new Map();
-    for (const f of changedFiles) {
-      const entry = allFileSymbols.get(f);
-      if (entry) analysisFileSymbols.set(f, entry);
-    }
-  } else {
-    analysisFileSymbols = allFileSymbols;
-  }
-
-  // In native-first mode, nativeDb is already open — no reopen needed.
-  if (!ctx.nativeFirstProxy) {
-    const native = loadNative();
-    if (native?.NativeDatabase) {
-      try {
-        ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
-        if (ctx.engineOpts) ctx.engineOpts.nativeDb = ctx.nativeDb;
-      } catch {
-        ctx.nativeDb = undefined;
-        if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
-      }
-    }
-  } else if (ctx.engineOpts) {
-    ctx.engineOpts.nativeDb = ctx.nativeDb;
-  }
-
-  try {
-    const { runAnalyses: runAnalysesFn } = await import('../../../ast-analysis/engine.js');
-    const result = await runAnalysesFn(
-      ctx.db,
-      analysisFileSymbols,
-      ctx.rootDir,
-      ctx.opts,
-      ctx.engineOpts,
-    );
-    timing.astMs = result.astMs ?? 0;
-    timing.complexityMs = result.complexityMs ?? 0;
-    timing.cfgMs = result.cfgMs ?? 0;
-    timing.dataflowMs = result.dataflowMs ?? 0;
-  } catch (err) {
-    warn(`Analysis phases failed after native build: ${toErrorMessage(err)}`);
-  }
-
-  // Close nativeDb after analyses (skip in native-first — single connection stays open)
-  if (ctx.nativeDb && !ctx.nativeFirstProxy) {
-    try {
-      ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-    } catch {
-      /* ignore checkpoint errors */
-    }
-    try {
-      ctx.nativeDb.close();
-    } catch {
-      /* ignore close errors */
-    }
-    ctx.nativeDb = undefined;
-    if (ctx.engineOpts) ctx.engineOpts.nativeDb = undefined;
-  }
-
-  return timing;
-}
-
 /** Format timing result from native orchestrator phases + JS post-processing. */
 function formatNativeTimingResult(
   p: Record<string, number>,
@@ -620,43 +545,32 @@ async function tryNativeOrchestrator(
   );
 
   // ── Post-native structure + analysis ──────────────────────────────
-  let analysisTiming = { astMs: 0, complexityMs: 0, cfgMs: 0, dataflowMs: 0 };
+  const analysisTiming = {
+    astMs: +(p.astMs ?? 0),
+    complexityMs: +(p.complexityMs ?? 0),
+    cfgMs: +(p.cfgMs ?? 0),
+    dataflowMs: +(p.dataflowMs ?? 0),
+  };
   let structurePatchMs = 0;
-  const needsAnalysis =
-    ctx.opts.ast !== false ||
-    ctx.opts.complexity !== false ||
-    ctx.opts.cfg !== false ||
-    ctx.opts.dataflow !== false;
   // Skip JS structure when the Rust pipeline's small-incremental fast path
   // already handled it. For full builds and large incrementals where Rust
   // skipped structure, we must run the JS fallback.
   const needsStructure = !result.structureHandled;
 
-  if (needsAnalysis || needsStructure) {
+  if (needsStructure) {
     // In native-first mode the proxy is already wired — no WAL handoff needed.
     if (!ctx.nativeFirstProxy && !handoffWalAfterNativeBuild(ctx)) {
       // DB reopen failed — return partial result
       return formatNativeTimingResult(p, 0, analysisTiming);
     }
 
-    // When structure was handled by Rust, we only need changed files for
-    // analysis — no need to load the entire graph from DB. When structure
-    // was NOT handled, we need all files to build the complete directory tree.
-    const scopeFiles = needsStructure ? undefined : result.changedFiles;
-    const fileSymbols = reconstructFileSymbolsFromDb(ctx, scopeFiles);
-
-    if (needsStructure) {
-      structurePatchMs = await runPostNativeStructure(
-        ctx,
-        fileSymbols,
-        !!result.isFullBuild,
-        result.structureScope ?? result.changedFiles,
-      );
-    }
-
-    if (needsAnalysis) {
-      analysisTiming = await runPostNativeAnalysis(ctx, fileSymbols, result.changedFiles);
-    }
+    const fileSymbols = reconstructFileSymbolsFromDb(ctx);
+    structurePatchMs = await runPostNativeStructure(
+      ctx,
+      fileSymbols,
+      !!result.isFullBuild,
+      result.structureScope ?? result.changedFiles,
+    );
   }
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
@@ -666,30 +580,7 @@ async function tryNativeOrchestrator(
 // ── Pipeline stages execution ───────────────────────────────────────────
 
 async function runPipelineStages(ctx: PipelineContext): Promise<void> {
-  // ── Native-first mode ────────────────────────────────────────────────
-  // When ctx.nativeFirstProxy is true, ctx.db is a NativeDbProxy backed by
-  // the single rusqlite connection (ctx.nativeDb). No dual-connection WAL
-  // dance is needed — every stage uses the same connection transparently.
-  if (ctx.nativeFirstProxy) {
-    // Ensure engineOpts.nativeDb is set so stages can use dedicated native methods.
-    if (ctx.engineOpts) {
-      ctx.engineOpts.nativeDb = ctx.nativeDb;
-    }
-
-    await collectFiles(ctx);
-    await detectChanges(ctx);
-    if (ctx.earlyExit) return;
-    await parseFiles(ctx);
-    await insertNodes(ctx);
-    await resolveImports(ctx);
-    await buildEdges(ctx);
-    await buildStructure(ctx);
-    await runAnalyses(ctx);
-    await finalize(ctx);
-    return;
-  }
-
-  // ── Legacy dual-connection mode (WASM / fallback) ────────────────────
+  // ── WASM / fallback dual-connection mode ─────────────────────────────
   // NativeDatabase is deferred — not opened during setup. collectFiles and
   // detectChanges only need better-sqlite3. If no files changed, we exit
   // early without ever opening the native connection, saving ~5ms.

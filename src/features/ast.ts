@@ -115,8 +115,8 @@ function tryNativeBulkInsert(
           receiver: n.receiver ?? '',
         })),
       });
-    } else if (symbols.calls || symbols._tree) {
-      return false; // needs JS fallback
+    } else if (symbols._tree) {
+      return false; // has WASM tree not yet processed — needs JS fallback
     }
   }
 
