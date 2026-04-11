@@ -119,7 +119,7 @@ jobs:
 
       - name: Setup Go (for tracer validation)
         if: steps.existing.outputs.skip != 'true'
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "stable"
           cache: false
