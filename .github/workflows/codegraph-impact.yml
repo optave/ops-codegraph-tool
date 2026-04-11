@@ -43,7 +43,7 @@ jobs:
         run: node dist/cli.js diff-impact origin/${{ github.base_ref }} --json -T > impact.json
       - name: Comment on PR
         if: success()
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
