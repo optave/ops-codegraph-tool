@@ -113,7 +113,7 @@ jobs:
 
       - name: Setup Python (for tracer validation)
         if: steps.existing.outputs.skip != 'true'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
