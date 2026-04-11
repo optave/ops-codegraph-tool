@@ -102,73 +102,18 @@ describeOrSkip('Build parity: native vs WASM', () => {
   it('produces identical edges', () => {
     const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
     const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
-
-    // Transitional: the published native binary (v3.9.0) does not yet extract
-    // new_expression as a call site. The Rust code is fixed in this PR but the
-    // binary used by CI is the npm-published one. If the native engine is missing
-    // the new_expression calls edge, compare after filtering it from WASM output.
-    // Remove this filter once the next native binary is published.
-    type Edge = { source_name: string; target_name: string; kind: string };
-    const nativeHasNewExprEdge = (nativeGraph.edges as Edge[]).some(
-      (e) => e.kind === 'calls' && e.target_name === 'Calculator' && e.source_name === 'main',
-    );
-    if (nativeHasNewExprEdge) {
-      // Native binary supports new_expression — compare directly
-      expect(nativeGraph.edges).toEqual(wasmGraph.edges);
-    } else {
-      // Filter the new_expression calls edge from WASM output for comparison
-      const wasmFiltered = (wasmGraph.edges as Edge[]).filter(
-        (e) => !(e.kind === 'calls' && e.target_name === 'Calculator' && e.source_name === 'main'),
-      );
-      expect(nativeGraph.edges).toEqual(wasmFiltered);
-    }
+    expect(nativeGraph.edges).toEqual(wasmGraph.edges);
   });
 
   it('produces identical roles', () => {
     const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
     const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
-
-    // Transitional: without the new_expression calls edge, the native engine
-    // classifies Calculator as dead-unresolved instead of core. Filter this
-    // known divergence when the installed native binary is older.
-    // Remove this filter once the next native binary is published.
-    type Role = { name: string; role: string };
-    const nativeCalcRole = (nativeGraph.roles as Role[]).find((r) => r.name === 'Calculator');
-    const wasmCalcRole = (wasmGraph.roles as Role[]).find((r) => r.name === 'Calculator');
-    if (nativeCalcRole?.role === wasmCalcRole?.role) {
-      expect(nativeGraph.roles).toEqual(wasmGraph.roles);
-    } else {
-      // Normalize the Calculator role divergence for comparison
-      const normalizeRoles = (roles: Role[], targetRole: string) =>
-        roles.map((r) => (r.name === 'Calculator' ? { ...r, role: targetRole } : r));
-      expect(normalizeRoles(nativeGraph.roles as Role[], 'core')).toEqual(
-        normalizeRoles(wasmGraph.roles as Role[], 'core'),
-      );
-    }
+    expect(nativeGraph.roles).toEqual(wasmGraph.roles);
   });
 
   it('produces identical ast_nodes', () => {
     const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
     const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
-    // Filter out 'call' kind transitionally: the WASM side no longer emits call AST
-    // nodes, but the published native binary (v3.7.0) still does. Once the next native
-    // binary is published with call removal, this filter can be dropped.
-    const filterCall = (nodes: unknown[]) =>
-      (nodes as { kind: string }[]).filter((n) => n.kind !== 'call');
-    const wasmFiltered = filterCall(wasmGraph.astNodes);
-    const nativeFiltered = filterCall(nativeGraph.astNodes);
-    // Diagnostic: log counts to help debug CI-only parity failures
-    if (nativeFiltered.length !== wasmFiltered.length) {
-      console.error(
-        `[parity-diag] native astNodes: ${nativeFiltered.length}, wasm astNodes: ${wasmFiltered.length}`,
-      );
-      console.error(
-        `[parity-diag] native kinds: ${JSON.stringify([...new Set(nativeFiltered.map((n) => n.kind))])}`,
-      );
-      console.error(
-        `[parity-diag] wasm kinds: ${JSON.stringify([...new Set(wasmFiltered.map((n) => n.kind))])}`,
-      );
-    }
-    expect(nativeFiltered).toEqual(wasmFiltered);
+    expect(nativeGraph.astNodes).toEqual(wasmGraph.astNodes);
   });
 });

@@ -134,6 +134,62 @@ jobs:
           STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
           node $STRIP_FLAG scripts/verify-imports.ts
 
+  parity:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+    name: Engine parity (${{ matrix.os }})
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            npm install && break
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::npm install attempt $attempt failed, retrying in 15s..."
+              sleep 15
+            else
+              echo "::error::npm install failed after 3 attempts"
+              exit 1
+            fi
+          done
+
+      - name: Verify native addon is available
+        shell: bash
+        run: |
+          node -e "
+            const { createRequire } = require('node:module');
+            const r = createRequire(require.resolve('./package.json'));
+            const os = require('os');
+            const plat = os.platform();
+            const arch = os.arch();
+            const pkgs = {
+              'linux-x64': '@optave/codegraph-linux-x64-gnu',
+              'darwin-arm64': '@optave/codegraph-darwin-arm64',
+              'darwin-x64': '@optave/codegraph-darwin-x64',
+              'win32-x64': '@optave/codegraph-win32-x64-msvc',
+            };
+            const pkg = pkgs[plat + '-' + arch];
+            if (!pkg) { console.error('No native package for ' + plat + '-' + arch); process.exit(1); }
+            try { r(pkg); console.log('Native addon loaded: ' + pkg); }
+            catch (e) { console.error('Failed to load ' + pkg + ': ' + e.message); process.exit(1); }
+          "
+
+      - name: Run parity tests
+        shell: bash
+        run: npx vitest run tests/engines/ tests/integration/build-parity.test.ts --reporter=verbose
+
   rust-check:
     runs-on: ubuntu-latest
     name: Rust compile check
@@ -154,7 +210,7 @@ jobs:
 
   ci-pipeline:
     if: always()
-    needs: [lint, test, typecheck, audit, verify-imports, rust-check]
+    needs: [lint, test, typecheck, audit, verify-imports, rust-check, parity]
     runs-on: ubuntu-latest
     name: CI Testing Pipeline
     steps:
