@@ -63,6 +63,10 @@ pub struct BuildOpts {
     #[serde(default)]
     pub ast: Option<bool>,
 
+    /// Whether to include complexity metrics.
+    #[serde(default)]
+    pub complexity: Option<bool>,
+
     /// Whether to include CFG analysis.
     #[serde(default)]
     pub cfg: Option<bool>,

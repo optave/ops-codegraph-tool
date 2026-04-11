@@ -780,7 +780,7 @@ export async function parseFileAuto(
   const { native } = resolveEngine(opts);
 
   if (native) {
-    const result = native.parseFile(filePath, source, !!opts.dataflow, opts.ast !== false);
+    const result = native.parseFile(filePath, source, true, true);
     if (!result) return null;
     const patched = patchNativeResult(result);
     // Always backfill typeMap for TS/TSX from WASM — native parser's type
@@ -878,7 +878,11 @@ export async function parseFilesAuto(
   if (!native) return parseFilesWasm(filePaths, rootDir);
 
   const result = new Map<string, ExtractorOutput>();
-  const nativeResults = native.parseFiles(filePaths, rootDir, !!opts.dataflow, opts.ast !== false);
+  // Always extract all analysis data (dataflow + AST nodes) during native parse.
+  // This eliminates the need for any downstream WASM re-parse or native standalone calls.
+  const nativeResults = native.parseFilesFull
+    ? native.parseFilesFull(filePaths, rootDir)
+    : native.parseFiles(filePaths, rootDir, true, true);
   const needsTypeMap: { filePath: string; relPath: string }[] = [];
   for (const r of nativeResults) {
     if (!r) continue;

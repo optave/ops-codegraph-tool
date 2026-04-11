@@ -37,40 +37,29 @@ if (!isWorker()) {
 		process.exit(1);
 	}
 
+	function formatEngineResult(data) {
+		if (!data) return null;
+		return {
+			buildTimeMs: data.buildTimeMs,
+			queryTimeMs: data.queryTimeMs,
+			nodes: data.nodes,
+			edges: data.edges,
+			dbSizeBytes: data.dbSizeBytes,
+			perFile: data.perFile,
+			noopRebuildMs: data.noopRebuildMs,
+			oneFileRebuildMs: data.oneFileRebuildMs,
+			oneFilePhases: data.oneFilePhases,
+			queries: data.queries,
+			phases: data.phases,
+		};
+	}
+
 	const result = {
 		version,
 		date: new Date().toISOString().slice(0, 10),
 		files: primary.files,
-		wasm: wasm
-			? {
-					buildTimeMs: wasm.buildTimeMs,
-					queryTimeMs: wasm.queryTimeMs,
-					nodes: wasm.nodes,
-					edges: wasm.edges,
-					dbSizeBytes: wasm.dbSizeBytes,
-					perFile: wasm.perFile,
-					noopRebuildMs: wasm.noopRebuildMs,
-					oneFileRebuildMs: wasm.oneFileRebuildMs,
-					oneFilePhases: wasm.oneFilePhases,
-					queries: wasm.queries,
-					phases: wasm.phases,
-				}
-			: null,
-		native: native
-			? {
-					buildTimeMs: native.buildTimeMs,
-					queryTimeMs: native.queryTimeMs,
-					nodes: native.nodes,
-					edges: native.edges,
-					dbSizeBytes: native.dbSizeBytes,
-					perFile: native.perFile,
-					noopRebuildMs: native.noopRebuildMs,
-					oneFileRebuildMs: native.oneFileRebuildMs,
-					oneFilePhases: native.oneFilePhases,
-					queries: native.queries,
-					phases: native.phases,
-				}
-			: null,
+		wasm: formatEngineResult(wasm),
+		native: formatEngineResult(native),
 	};
 
 	console.log(JSON.stringify(result, null, 2));

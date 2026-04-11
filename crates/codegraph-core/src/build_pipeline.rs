@@ -24,6 +24,7 @@ use crate::import_edges::{self, ImportEdgeContext};
 use crate::import_resolution;
 use crate::journal;
 use crate::parallel;
+use crate::ast_db::{self, AstInsertNode, FileAstBatch};
 use crate::roles_db;
 use crate::structure;
 use crate::types::{FileSymbols, ImportResolutionInput};
@@ -46,6 +47,10 @@ pub struct PipelineTiming {
     pub edges_ms: f64,
     pub structure_ms: f64,
     pub roles_ms: f64,
+    pub ast_ms: f64,
+    pub complexity_ms: f64,
+    pub cfg_ms: f64,
+    pub dataflow_ms: f64,
     pub finalize_ms: f64,
 }
 
@@ -77,6 +82,9 @@ pub struct BuildPipelineResult {
     /// ran (≤5 changed files, >20 existing files). When false, the JS caller
     /// must run its own structure phase as a post-processing step.
     pub structure_handled: bool,
+    /// Whether the Rust pipeline wrote AST/complexity/CFG/dataflow to the DB.
+    /// When true, the JS caller can skip `runPostNativeAnalysis` entirely.
+    pub analysis_complete: bool,
 }
 
 /// Normalize path to forward slashes.
@@ -175,6 +183,7 @@ pub fn run_pipeline(
             is_full_build: false,
             structure_scope: Some(vec![]),
             structure_handled: true,
+            analysis_complete: true,
         });
     }
 
@@ -391,6 +400,62 @@ pub fn run_pipeline(
     }
     timing.roles_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
+    // ── Stage 8b: Analysis persistence (AST, complexity, CFG, dataflow) ──
+    // Write analysis data from parsed file_symbols directly to DB tables,
+    // eliminating the JS runPostNativeAnalysis step and its WASM re-parse.
+    let include_complexity = opts.complexity.unwrap_or(true);
+    let include_cfg = opts.cfg.unwrap_or(true);
+    let do_analysis = include_ast || include_dataflow || include_cfg || include_complexity;
+
+    let mut analysis_ok = true;
+    if do_analysis {
+        // Determine which files to analyze (excludes reverse-dep files)
+        let analysis_file_set: HashSet<&str> = match &analysis_scope {
+            Some(files) => files.iter().map(|s| s.as_str()).collect(),
+            None => file_symbols.keys().map(|s| s.as_str()).collect(),
+        };
+
+        // Build node ID lookup: (file, name, line) -> node_id
+        let node_id_map = build_analysis_node_map(conn, &analysis_file_set);
+
+        // AST nodes
+        if include_ast {
+            let t0 = Instant::now();
+            let ast_batches = build_ast_batches(&file_symbols, &analysis_file_set);
+            if ast_db::do_insert_ast_nodes(conn, &ast_batches).is_err() {
+                analysis_ok = false;
+            }
+            timing.ast_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        }
+
+        // Complexity metrics
+        if include_complexity {
+            let t0 = Instant::now();
+            if !write_complexity(conn, &file_symbols, &analysis_file_set, &node_id_map) {
+                analysis_ok = false;
+            }
+            timing.complexity_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        }
+
+        // CFG blocks + edges
+        if include_cfg {
+            let t0 = Instant::now();
+            if !write_cfg(conn, &file_symbols, &analysis_file_set, &node_id_map) {
+                analysis_ok = false;
+            }
+            timing.cfg_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        }
+
+        // Dataflow edges
+        if include_dataflow {
+            let t0 = Instant::now();
+            if !write_dataflow(conn, &file_symbols, &analysis_file_set) {
+                analysis_ok = false;
+            }
+            timing.dataflow_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        }
+    }
+
     // ── Stage 9: Finalize ──────────────────────────────────────────────
     let t0 = Instant::now();
     let (node_count, edge_count) = finalize_build(conn, root_dir);
@@ -406,6 +471,10 @@ pub fn run_pipeline(
         + timing.edges_ms
         + timing.structure_ms
         + timing.roles_ms
+        + timing.ast_ms
+        + timing.complexity_ms
+        + timing.cfg_ms
+        + timing.dataflow_ms
         + timing.finalize_ms;
     let overhead = total_start.elapsed().as_secs_f64() * 1000.0 - stage_sum;
     timing.setup_ms += overhead.max(0.0);
@@ -422,6 +491,7 @@ pub fn run_pipeline(
         is_full_build: change_result.is_full_build,
         structure_scope: changed_file_list.clone(),
         structure_handled: use_fast_path,
+        analysis_complete: do_analysis && analysis_ok,
     })
 }
 
@@ -935,6 +1005,403 @@ fn build_and_insert_call_edges(
             .collect();
         let _ = crate::edges_db::do_insert_edges(conn, &edge_rows);
     }
+}
+
+// ── Analysis persistence helpers ─────────────────────────────────────────
+
+/// Build a lookup map from (file, name, line) to node_id for analysis writes.
+fn build_analysis_node_map(
+    conn: &Connection,
+    files: &HashSet<&str>,
+) -> HashMap<(String, String, u32), i64> {
+    let mut map = HashMap::new();
+    if files.is_empty() {
+        return map;
+    }
+
+    // Use a temp table to batch all file lookups into a single join query,
+    // avoiding N per-file round-trips through prepared-statement execution.
+    let _ = conn.execute_batch(
+        "CREATE TEMP TABLE IF NOT EXISTS _analysis_files (file TEXT NOT NULL)",
+    );
+    let _ = conn.execute("DELETE FROM temp._analysis_files", []);
+
+    if let Ok(mut ins) = conn.prepare("INSERT INTO temp._analysis_files (file) VALUES (?1)") {
+        for file in files {
+            let _ = ins.execute(rusqlite::params![file]);
+        }
+    }
+
+    let mut stmt = match conn.prepare(
+        "SELECT n.id, n.file, n.name, n.line FROM nodes n \
+         INNER JOIN temp._analysis_files af ON n.file = af.file \
+         WHERE n.kind != 'file'",
+    ) {
+        Ok(s) => s,
+        Err(_) => return map,
+    };
+
+    if let Ok(rows) = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, u32>(3)?,
+        ))
+    }) {
+        for row in rows.flatten() {
+            let (id, file, name, line) = row;
+            map.insert((file, name, line), id);
+        }
+    }
+
+    let _ = conn.execute("DROP TABLE IF EXISTS temp._analysis_files", []);
+    map
+}
+
+/// Convert FileSymbols AST nodes to FileAstBatch format for `ast_db::do_insert_ast_nodes`.
+fn build_ast_batches(
+    file_symbols: &HashMap<String, FileSymbols>,
+    analysis_files: &HashSet<&str>,
+) -> Vec<FileAstBatch> {
+    let mut batches = Vec::new();
+    for (file, symbols) in file_symbols {
+        if !analysis_files.contains(file.as_str()) || symbols.ast_nodes.is_empty() {
+            continue;
+        }
+        batches.push(FileAstBatch {
+            file: file.clone(),
+            nodes: symbols
+                .ast_nodes
+                .iter()
+                .map(|n| AstInsertNode {
+                    line: n.line,
+                    kind: n.kind.clone(),
+                    name: n.name.clone(),
+                    text: n.text.clone(),
+                    receiver: n.receiver.clone(),
+                })
+                .collect(),
+        });
+    }
+    batches
+}
+
+/// Write complexity metrics from parsed definitions to the `function_complexity` table.
+fn write_complexity(
+    conn: &Connection,
+    file_symbols: &HashMap<String, FileSymbols>,
+    analysis_files: &HashSet<&str>,
+    node_id_map: &HashMap<(String, String, u32), i64>,
+) -> bool {
+    let tx = match conn.unchecked_transaction() {
+        Ok(tx) => tx,
+        Err(_) => return false,
+    };
+
+    let mut stmt = match tx.prepare(
+        "INSERT OR REPLACE INTO function_complexity \
+         (node_id, cognitive, cyclomatic, max_nesting, \
+          loc, sloc, comment_lines, \
+          halstead_n1, halstead_n2, halstead_big_n1, halstead_big_n2, \
+          halstead_vocabulary, halstead_length, halstead_volume, \
+          halstead_difficulty, halstead_effort, halstead_bugs, \
+          maintainability_index) \
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+    ) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    fn insert_def_complexity(
+        stmt: &mut rusqlite::Statement,
+        file: &str,
+        def: &crate::types::Definition,
+        node_id_map: &HashMap<(String, String, u32), i64>,
+    ) {
+        if let Some(ref cm) = def.complexity {
+            let key = (file.to_string(), def.name.clone(), def.line);
+            if let Some(&node_id) = node_id_map.get(&key) {
+                let h = cm.halstead.as_ref();
+                let loc = cm.loc.as_ref();
+                let _ = stmt.execute(rusqlite::params![
+                    node_id,
+                    cm.cognitive,
+                    cm.cyclomatic,
+                    cm.max_nesting,
+                    loc.map(|l| l.loc).unwrap_or(0),
+                    loc.map(|l| l.sloc).unwrap_or(0),
+                    loc.map(|l| l.comment_lines).unwrap_or(0),
+                    h.map(|h| h.n1).unwrap_or(0),
+                    h.map(|h| h.n2).unwrap_or(0),
+                    h.map(|h| h.big_n1).unwrap_or(0),
+                    h.map(|h| h.big_n2).unwrap_or(0),
+                    h.map(|h| h.vocabulary).unwrap_or(0),
+                    h.map(|h| h.length).unwrap_or(0),
+                    h.map(|h| h.volume).unwrap_or(0.0),
+                    h.map(|h| h.difficulty).unwrap_or(0.0),
+                    h.map(|h| h.effort).unwrap_or(0.0),
+                    h.map(|h| h.bugs).unwrap_or(0.0),
+                    cm.maintainability_index.unwrap_or(0.0),
+                ]);
+            }
+        }
+    }
+
+    for (file, symbols) in file_symbols {
+        if !analysis_files.contains(file.as_str()) {
+            continue;
+        }
+        for def in &symbols.definitions {
+            insert_def_complexity(&mut stmt, file, def, node_id_map);
+            if let Some(ref children) = def.children {
+                for child in children {
+                    insert_def_complexity(&mut stmt, file, child, node_id_map);
+                }
+            }
+        }
+    }
+
+    drop(stmt); // release borrow on tx before commit
+    tx.commit().is_ok()
+}
+
+/// Write CFG blocks and edges from parsed definitions to DB tables.
+fn write_cfg(
+    conn: &Connection,
+    file_symbols: &HashMap<String, FileSymbols>,
+    analysis_files: &HashSet<&str>,
+    node_id_map: &HashMap<(String, String, u32), i64>,
+) -> bool {
+    let tx = match conn.unchecked_transaction() {
+        Ok(tx) => tx,
+        Err(_) => return false,
+    };
+
+    let mut block_stmt = match tx.prepare(
+        "INSERT INTO cfg_blocks \
+         (function_node_id, block_index, block_type, start_line, end_line, label) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+    ) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    let mut edge_stmt = match tx.prepare(
+        "INSERT INTO cfg_edges \
+         (function_node_id, source_block_id, target_block_id, kind) \
+         VALUES (?1, ?2, ?3, ?4)",
+    ) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    for (file, symbols) in file_symbols {
+        if !analysis_files.contains(file.as_str()) {
+            continue;
+        }
+        for def in &symbols.definitions {
+            write_def_cfg(
+                &tx, &mut block_stmt, &mut edge_stmt,
+                file, def, node_id_map,
+            );
+            if let Some(ref children) = def.children {
+                for child in children {
+                    write_def_cfg(
+                        &tx, &mut block_stmt, &mut edge_stmt,
+                        file, child, node_id_map,
+                    );
+                }
+            }
+        }
+    }
+
+    drop(block_stmt);
+    drop(edge_stmt);
+    tx.commit().is_ok()
+}
+
+/// Write CFG data for a single definition.
+fn write_def_cfg(
+    tx: &rusqlite::Transaction,
+    block_stmt: &mut rusqlite::Statement,
+    edge_stmt: &mut rusqlite::Statement,
+    file: &str,
+    def: &crate::types::Definition,
+    node_id_map: &HashMap<(String, String, u32), i64>,
+) {
+    let cfg = match &def.cfg {
+        Some(c) if !c.blocks.is_empty() => c,
+        _ => return,
+    };
+    let key = (file.to_string(), def.name.clone(), def.line);
+    let node_id = match node_id_map.get(&key) {
+        Some(&id) => id,
+        None => return,
+    };
+
+    // Insert blocks and track DB IDs for edge resolution
+    let mut block_db_ids: HashMap<u32, i64> = HashMap::new();
+    for block in &cfg.blocks {
+        if block_stmt
+            .execute(rusqlite::params![
+                node_id,
+                block.index,
+                &block.block_type,
+                block.start_line,
+                block.end_line,
+                &block.label,
+            ])
+            .is_ok()
+        {
+            block_db_ids.insert(block.index, tx.last_insert_rowid());
+        }
+    }
+
+    // Insert edges using resolved block DB IDs
+    for edge in &cfg.edges {
+        if let (Some(&src), Some(&tgt)) = (
+            block_db_ids.get(&edge.source_index),
+            block_db_ids.get(&edge.target_index),
+        ) {
+            let _ = edge_stmt.execute(rusqlite::params![node_id, src, tgt, &edge.kind]);
+        }
+    }
+}
+
+/// Write dataflow edges from parsed FileSymbols to the `dataflow` table.
+/// Resolves function names to node IDs using the DB, mirroring the JS
+/// `makeNodeResolver` logic (prefer same-file match, fall back to global).
+fn write_dataflow(
+    conn: &Connection,
+    file_symbols: &HashMap<String, FileSymbols>,
+    analysis_files: &HashSet<&str>,
+) -> bool {
+    let tx = match conn.unchecked_transaction() {
+        Ok(tx) => tx,
+        Err(_) => return false,
+    };
+
+    let mut insert_stmt = match tx.prepare(
+        "INSERT INTO dataflow \
+         (source_id, target_id, kind, param_index, expression, line, confidence) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    ) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    let mut local_stmt = match tx.prepare(
+        "SELECT id FROM nodes WHERE name = ?1 AND file = ?2 \
+         AND kind IN ('function','method') LIMIT 1",
+    ) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    let mut global_stmt = match tx.prepare(
+        "SELECT id FROM nodes WHERE name = ?1 \
+         AND kind IN ('function','method') \
+         ORDER BY file, line LIMIT 1",
+    ) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+
+    for (file, symbols) in file_symbols {
+        if !analysis_files.contains(file.as_str()) {
+            continue;
+        }
+        let data = match &symbols.dataflow {
+            Some(d) => d,
+            None => continue,
+        };
+
+        // argFlows → flows_to edges
+        for flow in &data.arg_flows {
+            let caller = match &flow.caller_func {
+                Some(name) => name.as_str(),
+                None => continue,
+            };
+            let src = resolve_dataflow_node(&mut local_stmt, &mut global_stmt, caller, file);
+            let tgt = resolve_dataflow_node(&mut local_stmt, &mut global_stmt, &flow.callee_name, file);
+            if let (Some(src), Some(tgt)) = (src, tgt) {
+                let _ = insert_stmt.execute(rusqlite::params![
+                    src,
+                    tgt,
+                    "flows_to",
+                    flow.arg_index,
+                    &flow.expression,
+                    flow.line,
+                    flow.confidence,
+                ]);
+            }
+        }
+
+        // assignments → returns edges
+        for assignment in &data.assignments {
+            let consumer = match &assignment.caller_func {
+                Some(name) => name.as_str(),
+                None => continue,
+            };
+            let producer = resolve_dataflow_node(&mut local_stmt, &mut global_stmt, &assignment.source_call_name, file);
+            let consumer_id = resolve_dataflow_node(&mut local_stmt, &mut global_stmt, consumer, file);
+            if let (Some(producer), Some(consumer_id)) = (producer, consumer_id) {
+                let _ = insert_stmt.execute(rusqlite::params![
+                    producer,
+                    consumer_id,
+                    "returns",
+                    Option::<u32>::None,
+                    &assignment.expression,
+                    assignment.line,
+                    1.0_f64,
+                ]);
+            }
+        }
+
+        // mutations → mutates edges (only for param bindings)
+        for mutation in &data.mutations {
+            if mutation.binding_type.as_deref() != Some("param") {
+                continue;
+            }
+            let func = match &mutation.func_name {
+                Some(name) => name.as_str(),
+                None => continue,
+            };
+            if let Some(node_id) = resolve_dataflow_node(&mut local_stmt, &mut global_stmt, func, file) {
+                let _ = insert_stmt.execute(rusqlite::params![
+                    node_id,
+                    node_id,
+                    "mutates",
+                    Option::<u32>::None,
+                    &mutation.mutating_expr,
+                    mutation.line,
+                    1.0_f64,
+                ]);
+            }
+        }
+    }
+
+    drop(insert_stmt);
+    drop(local_stmt);
+    drop(global_stmt);
+    tx.commit().is_ok()
+}
+
+/// Resolve a function name to a node ID, trying same-file first then global.
+/// Mirrors the JS `makeNodeResolver` logic from `features/dataflow.ts`.
+fn resolve_dataflow_node(
+    local_stmt: &mut rusqlite::Statement,
+    global_stmt: &mut rusqlite::Statement,
+    name: &str,
+    file: &str,
+) -> Option<i64> {
+    if let Ok(id) = local_stmt.query_row(rusqlite::params![name, file], |r| r.get::<_, i64>(0)) {
+        return Some(id);
+    }
+    global_stmt
+        .query_row(rusqlite::params![name], |r| r.get::<_, i64>(0))
+        .ok()
 }
 
 /// Current time in milliseconds since epoch.

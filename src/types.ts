@@ -1874,6 +1874,7 @@ export type StmtCache<TRow = unknown> = WeakMap<BetterSqlite3Database, SqliteSta
 export interface NativeAddon {
   parseFile(filePath: string, source: string, dataflow: boolean, ast: boolean): unknown;
   parseFiles(files: string[], rootDir: string, dataflow: boolean, ast: boolean): unknown[];
+  parseFilesFull?(files: string[], rootDir: string): unknown[];
   resolveImport(fromFile: string, importSource: string, rootDir: string, aliases: unknown): string;
   resolveImports(
     items: Array<{ fromFile: string; importSource: string }>,

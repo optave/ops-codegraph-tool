@@ -666,6 +666,79 @@ async function delegateToBuildFunctions(
   }
 }
 
+// ─── Native full-analysis fast path ────────────────────────────────────
+
+/**
+ * Check whether all files already have complete analysis data from the native
+ * parse pass (parseFilesFull). When true, no WASM re-parse or JS visitor walk
+ * is needed — the engine can skip directly to DB persistence.
+ */
+function allNativeDataComplete(
+  fileSymbols: Map<string, ExtractorOutput>,
+  opts: AnalysisOpts,
+): boolean {
+  const doAst = opts.ast !== false;
+  const doComplexity = opts.complexity !== false;
+  const doCfg = opts.cfg !== false;
+  const doDataflow = opts.dataflow !== false;
+
+  for (const [relPath, symbols] of fileSymbols) {
+    // If any file has a WASM tree, it was parsed by WASM — not native full
+    if (symbols._tree) return false;
+
+    const ext = path.extname(relPath).toLowerCase();
+    const langId = symbols._langId || '';
+
+    // AST nodes: native must have produced them
+    if (
+      doAst &&
+      !Array.isArray(symbols.astNodes) &&
+      (WALK_EXTENSIONS.has(ext) || AST_TYPE_MAPS.has(langId))
+    ) {
+      debug(`allNativeDataComplete: ${relPath} missing astNodes`);
+      return false;
+    }
+
+    // Dataflow: native must have produced it
+    if (
+      doDataflow &&
+      !symbols.dataflow &&
+      (DATAFLOW_EXTENSIONS.has(ext) || DATAFLOW_RULES.has(langId))
+    ) {
+      debug(`allNativeDataComplete: ${relPath} missing dataflow`);
+      return false;
+    }
+
+    const defs = symbols.definitions || [];
+    for (const def of defs) {
+      if (!hasFuncBody(def)) continue;
+
+      // Complexity: every function must already have it
+      if (
+        doComplexity &&
+        !def.complexity &&
+        (COMPLEXITY_EXTENSIONS.has(ext) || COMPLEXITY_RULES.has(langId))
+      ) {
+        debug(`allNativeDataComplete: ${relPath}:${def.name} missing complexity`);
+        return false;
+      }
+
+      // CFG: every function must already have blocks
+      if (
+        doCfg &&
+        def.cfg !== null &&
+        !Array.isArray(def.cfg?.blocks) &&
+        (CFG_EXTENSIONS.has(ext) || CFG_RULES.has(langId))
+      ) {
+        debug(`allNativeDataComplete: ${relPath}:${def.name} missing cfg blocks`);
+        return false;
+      }
+    }
+  }
+
+  return fileSymbols.size > 0;
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────
 
 export async function runAnalyses(
@@ -685,6 +758,16 @@ export async function runAnalyses(
   if (!doAst && !doComplexity && !doCfg && !doDataflow) return timing;
 
   const extToLang = buildExtToLangMap();
+
+  // Fast path: when all files were parsed by the native engine with full analysis
+  // (parseFilesFull), all data is already present — skip WASM re-parse and JS
+  // visitor walks entirely, go straight to DB persistence.
+  if (allNativeDataComplete(fileSymbols, opts)) {
+    debug('native full-analysis fast path: all data present, skipping WASM/visitor passes');
+    if (doComplexity && doCfg) reconcileCfgCyclomatic(fileSymbols);
+    await delegateToBuildFunctions(db, fileSymbols, rootDir, opts, engineOpts, timing);
+    return timing;
+  }
 
   // Native analysis pass: try Rust standalone functions before WASM fallback.
   // This fills in complexity/CFG/dataflow for files that the native parse pipeline
