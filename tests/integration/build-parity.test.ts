@@ -22,7 +22,10 @@ import { isNativeAvailable } from '../../src/infrastructure/native.js';
 const FIXTURE_DIR = path.join(import.meta.dirname, '..', 'fixtures', 'sample-project');
 
 const hasNative = isNativeAvailable();
-const describeOrSkip = hasNative ? describe : describe.skip;
+// In the dedicated parity CI job (CODEGRAPH_PARITY=1), never silently skip —
+// fail hard so a missing native addon is immediately visible.
+const requireParity = !!process.env.CODEGRAPH_PARITY;
+const describeOrSkip = requireParity || hasNative ? describe : describe.skip;
 
 function copyDirSync(src, dest) {
   fs.mkdirSync(dest, { recursive: true });
