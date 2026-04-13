@@ -404,9 +404,9 @@ export async function buildCFGData(
           blocks: cfg.blocks.map((b) => ({
             index: b.index,
             blockType: b.type,
-            startLine: b.startLine ?? null,
-            endLine: b.endLine ?? null,
-            label: b.label ?? null,
+            startLine: b.startLine ?? undefined,
+            endLine: b.endLine ?? undefined,
+            label: b.label ?? undefined,
           })),
           edges: (cfg.edges || []).map((e) => ({
             sourceIndex: e.sourceIndex,
