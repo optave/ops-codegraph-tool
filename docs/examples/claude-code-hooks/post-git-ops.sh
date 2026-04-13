@@ -2,7 +2,7 @@
 # post-git-ops.sh — PostToolUse hook for Bash tool calls
 # Detects git operations that change file state (rebase, revert, cherry-pick,
 # merge, pull) and:
-#   1. Rebuilds the codegraph incrementally (fixes stale dependency context)
+#   1. Runs a full codegraph rebuild (recomputes all analysis data, not just edges)
 #   2. Logs changed files to session-edits.log (so commit validation works)
 # Always exits 0 (informational only, never blocks).
 
@@ -32,14 +32,21 @@ fi
 # Use git worktree root so each worktree session has its own state
 PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
 
-# --- 1. Rebuild codegraph ---
+# --- 1. Full rebuild of codegraph ---
+# Git operations (merge, rebase, pull) can change many files at once. A full
+# rebuild ensures complexity, dataflow, and directory cohesion metrics are
+# recomputed for all affected files — not just direct edits.
+# See docs/guides/incremental-builds.md for what incremental skips.
 DB_PATH="$PROJECT_DIR/.codegraph/graph.db"
 if [ -f "$DB_PATH" ]; then
   if command -v codegraph &>/dev/null; then
-    codegraph build "$PROJECT_DIR" -d "$DB_PATH" 2>/dev/null || true
+    codegraph build "$PROJECT_DIR" -d "$DB_PATH" --no-incremental 2>/dev/null || true
   else
-    npx --yes @optave/codegraph build "$PROJECT_DIR" -d "$DB_PATH" 2>/dev/null || true
+    npx --yes @optave/codegraph build "$PROJECT_DIR" -d "$DB_PATH" --no-incremental 2>/dev/null || true
   fi
+  # Update staleness marker so update-graph.sh knows a full rebuild happened
+  MARKER="$PROJECT_DIR/.codegraph/last-full-build"
+  touch "$MARKER"
 fi
 
 # --- 2. Log changed files to session-edits.log ---
