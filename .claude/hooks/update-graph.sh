@@ -74,14 +74,15 @@ else
 fi
 
 # Run the build
+BUILD_OK=0
 if command -v codegraph &>/dev/null; then
-  codegraph build "$PROJECT_DIR" -d "$DB_PATH" $BUILD_FLAGS 2>/dev/null || true
+  codegraph build "$PROJECT_DIR" -d "$DB_PATH" $BUILD_FLAGS 2>/dev/null && BUILD_OK=1 || true
 else
-  node "${CLAUDE_PROJECT_DIR}/src/cli.js" build "$PROJECT_DIR" -d "$DB_PATH" $BUILD_FLAGS 2>/dev/null || true
+  node "${CLAUDE_PROJECT_DIR:-$PROJECT_DIR}/src/cli.js" build "$PROJECT_DIR" -d "$DB_PATH" $BUILD_FLAGS 2>/dev/null && BUILD_OK=1 || true
 fi
 
-# Update marker if we did a full rebuild
-if [ -n "$BUILD_FLAGS" ]; then
+# Update marker only if we did a full rebuild AND it succeeded
+if [ -n "$BUILD_FLAGS" ] && [ "$BUILD_OK" -eq 1 ]; then
   mkdir -p "$(dirname "$MARKER")"
   touch "$MARKER"
 fi

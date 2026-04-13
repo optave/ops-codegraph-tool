@@ -40,14 +40,17 @@ PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR="${CLAUD
 # See docs/guides/incremental-builds.md for what incremental skips.
 DB_PATH="$PROJECT_DIR/.codegraph/graph.db"
 if [ -f "$DB_PATH" ]; then
+  BUILD_OK=0
   if command -v codegraph &>/dev/null; then
-    codegraph build "$PROJECT_DIR" -d "$DB_PATH" --no-incremental 2>/dev/null || true
+    codegraph build "$PROJECT_DIR" -d "$DB_PATH" --no-incremental 2>/dev/null && BUILD_OK=1 || true
   else
-    node "${CLAUDE_PROJECT_DIR:-$PROJECT_DIR}/src/cli.js" build "$PROJECT_DIR" -d "$DB_PATH" --no-incremental 2>/dev/null || true
+    node "${CLAUDE_PROJECT_DIR:-$PROJECT_DIR}/src/cli.js" build "$PROJECT_DIR" -d "$DB_PATH" --no-incremental 2>/dev/null && BUILD_OK=1 || true
   fi
-  # Update staleness marker so update-graph.sh knows a full rebuild happened
-  MARKER="$PROJECT_DIR/.codegraph/last-full-build"
-  touch "$MARKER"
+  # Update staleness marker only if the full rebuild succeeded
+  if [ "$BUILD_OK" -eq 1 ]; then
+    MARKER="$PROJECT_DIR/.codegraph/last-full-build"
+    touch "$MARKER"
+  fi
 fi
 
 # --- 2. Log changed files to session-edits.log ---
