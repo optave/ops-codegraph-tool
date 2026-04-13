@@ -5,6 +5,8 @@ Metrics are normalized per file for cross-version comparability.
 
 | Version | Engine | Date | Files | Build (ms/file) | Query (ms) | Nodes/file | Edges/file | DB (bytes/file) |
 |---------|--------|------|------:|----------------:|-----------:|-----------:|-----------:|----------------:|
+| 3.9.3 | native | 2026-04-13 | 727 | 3.3 ↓79% | 29.5 ↑11% | 25.4 ~ | 51.6 ~ | 43981 ↑7% |
+| 3.9.3 | wasm | 2026-04-13 | 727 | 15.9 ↑6% | 41.6 ↑4% | 24.1 ~ | 49.3 ~ | 38380 ~ |
 | 3.9.2 | native | 2026-04-09 | 727 | 15.7 ↑54% | 26.6 ↑14% | 25.3 ↓10% | 51.4 ↓10% | 41028 ↓15% |
 | 3.9.2 | wasm | 2026-04-09 | 727 | 15 ↑9% | 40.1 ↑13% | 24 ↓15% | 49.2 ↓14% | 38256 ↓16% |
 | 3.9.1 | native | 2026-04-06 | 570 | 10.2 ↓20% | 23.4 ↓23% | 28.1 ↑3% | 56.9 ↑5% | 48433 ↑8% |
@@ -61,38 +63,38 @@ Metrics are normalized per file for cross-version comparability.
 
 | Metric | Value |
 |--------|-------|
-| Build time | 10.5s |
-| Query time | 27ms |
-| Nodes | 16,879 |
-| Edges | 34,281 |
-| DB size | 26.1 MB |
+| Build time | 2.2s |
+| Query time | 30ms |
+| Nodes | 16,938 |
+| Edges | 34,396 |
+| DB size | 28.0 MB |
 | Files | 727 |
 
 #### WASM
 
 | Metric | Value |
 |--------|-------|
-| Build time | 10.9s |
-| Query time | 40ms |
-| Nodes | 17,438 |
-| Edges | 35,744 |
-| DB size | 26.5 MB |
+| Build time | 11.6s |
+| Query time | 42ms |
+| Nodes | 17,497 |
+| Edges | 35,859 |
+| DB size | 26.6 MB |
 | Files | 727 |
 
 ### Build Phase Breakdown (latest)
 
 | Phase | Native (build) | WASM (build) | Native (1-file) | WASM (1-file) |
 |-------|---------------:|-------------:|----------------:|--------------:|
-| Parse | 600.1 ms | 4898.5 ms | 53.4 ms | 263.4 ms |
-| Insert nodes | 363.1 ms | 989.5 ms | 25.9 ms | 21.6 ms |
-| Resolve imports | 3.6 ms | 18.6 ms | 0.7 ms | 2 ms |
-| Build edges | 196.8 ms | 272.5 ms | 30.1 ms | 32.9 ms |
-| Structure | 111 ms | 754.4 ms | 121.4 ms | 39.4 ms |
-| Roles | 76.4 ms | 91.6 ms | 76.2 ms | 81.6 ms |
-| AST nodes | 1436.3 ms | 756.4 ms | 26 ms | 0.8 ms |
-| Complexity | 596.4 ms | 1002.4 ms | 3.2 ms | 0.7 ms |
-| CFG | 1464.2 ms | 1069.7 ms | 53.5 ms | 0.4 ms |
-| Dataflow | 932.4 ms | 844.9 ms | 30.6 ms | 0.7 ms |
+| Parse | 601.2 ms | 5094.5 ms | 51.8 ms | 265.7 ms |
+| Insert nodes | 374.9 ms | 919.7 ms | 30.6 ms | 21.1 ms |
+| Resolve imports | 4.1 ms | 26.8 ms | 1 ms | 2.1 ms |
+| Build edges | 208.6 ms | 327.7 ms | 31.2 ms | 33.1 ms |
+| Structure | 122.4 ms | 998.9 ms | 124.6 ms | 38.8 ms |
+| Roles | 95.5 ms | 99.1 ms | 105 ms | 84.9 ms |
+| AST nodes | 244 ms | 804.2 ms | 0.6 ms | 0.6 ms |
+| Complexity | 20.3 ms | 1026.3 ms | 0.8 ms | 0.6 ms |
+| CFG | 186.3 ms | 1109 ms | 1.6 ms | 0.3 ms |
+| Dataflow | 165.6 ms | 885.1 ms | 0.1 ms | 0.6 ms |
 
 ### Estimated performance at 50,000 files
 
@@ -100,15 +102,17 @@ Extrapolated linearly from per-file metrics above.
 
 | Metric | Native (Rust) | WASM |
 |--------|---:|---:|
-| Build time | 785.0s | 750.0s |
-| DB size | 1956.4 MB | 1824.2 MB |
-| Nodes | 1,265,000 | 1,200,000 |
-| Edges | 2,570,000 | 2,460,000 |
+| Build time | 165.0s | 795.0s |
+| DB size | 2097.2 MB | 1830.1 MB |
+| Nodes | 1,270,000 | 1,205,000 |
+| Edges | 2,580,000 | 2,465,000 |
 
 ### Incremental Rebuilds
 
 | Version | Engine | No-op (ms) | 1-file (ms) |
 |---------|--------|----------:|-----------:|
+| 3.9.3 | native | 11 ↑22% | 397 ↓29% |
+| 3.9.3 | wasm | 22 ↑10% | 638 ↑2% |
 | 3.9.2 | native | 9 ↓47% | 558 ↓27% |
 | 3.9.2 | wasm | 20 ↑33% | 624 ↓2% |
 | 3.9.1 | native | 17 ↑113% | 767 ↑36% |
@@ -157,6 +161,8 @@ Extrapolated linearly from per-file metrics above.
 
 | Version | Engine | fn-deps (ms) | fn-impact (ms) | path (ms) | roles (ms) |
 |---------|--------|------------:|--------------:|----------:|----------:|
+| 3.9.3 | native | 2.5 ↑9% | 2.5 ↑4% | 2.5 ~ | 41.3 ↑24% |
+| 3.9.3 | wasm | 2.4 ~ | 2.4 ~ | 2.3 ↓4% | 34.5 ↓3% |
 | 3.9.2 | native | 2.3 ↑5% | 2.4 ↑4% | 2.5 ↑14% | 33.2 ↑30% |
 | 3.9.2 | wasm | 2.4 ↑9% | 2.4 ↑9% | 2.4 ↑9% | 35.4 ↑35% |
 | 3.9.1 | native | 2.2 ↑5% | 2.3 ↑5% | 2.2 ~ | 25.5 ~ |
@@ -258,6 +264,947 @@ pre-parse that previously added ~388ms on native builds.
 
 <!-- BENCHMARK_DATA
 [
+  {
+    "version": "3.9.3",
+    "date": "2026-04-13",
+    "files": 727,
+    "wasm": {
+      "buildTimeMs": 11590,
+      "queryTimeMs": 41.6,
+      "nodes": 17497,
+      "edges": 35859,
+      "dbSizeBytes": 27901952,
+      "perFile": {
+        "buildTimeMs": 15.9,
+        "nodes": 24.1,
+        "edges": 49.3,
+        "dbSizeBytes": 38380
+      },
+      "noopRebuildMs": 22,
+      "oneFileRebuildMs": 638,
+      "oneFilePhases": {
+        "setupMs": 2,
+        "parseMs": 265.7,
+        "insertMs": 21.1,
+        "resolveMs": 2.1,
+        "edgesMs": 33.1,
+        "structureMs": 38.8,
+        "rolesMs": 84.9,
+        "astMs": 0.6,
+        "complexityMs": 0.6,
+        "cfgMs": 0.3,
+        "dataflowMs": 0.6,
+        "finalizeMs": 6.7
+      },
+      "queries": {
+        "fnDepsMs": 2.4,
+        "fnImpactMs": 2.4,
+        "pathMs": 2.3,
+        "rolesMs": 34.5
+      },
+      "phases": {
+        "setupMs": 85.7,
+        "parseMs": 5094.5,
+        "insertMs": 919.7,
+        "resolveMs": 26.8,
+        "edgesMs": 327.7,
+        "structureMs": 998.9,
+        "rolesMs": 99.1,
+        "astMs": 804.2,
+        "complexityMs": 1026.3,
+        "cfgMs": 1109,
+        "dataflowMs": 885.1,
+        "finalizeMs": 63.3
+      }
+    },
+    "native": {
+      "buildTimeMs": 2187,
+      "queryTimeMs": 29.5,
+      "nodes": 16938,
+      "edges": 34396,
+      "dbSizeBytes": 29335552,
+      "perFile": {
+        "buildTimeMs": 3.3,
+        "nodes": 25.4,
+        "edges": 51.6,
+        "dbSizeBytes": 43981
+      },
+      "noopRebuildMs": 11,
+      "oneFileRebuildMs": 397,
+      "oneFilePhases": {
+        "setupMs": 41.2,
+        "parseMs": 51.8,
+        "insertMs": 30.6,
+        "resolveMs": 1,
+        "edgesMs": 31.2,
+        "structureMs": 124.6,
+        "rolesMs": 105,
+        "astMs": 0.6,
+        "complexityMs": 0.8,
+        "cfgMs": 1.6,
+        "dataflowMs": 0.1,
+        "finalizeMs": 0.5
+      },
+      "queries": {
+        "fnDepsMs": 2.5,
+        "fnImpactMs": 2.5,
+        "pathMs": 2.5,
+        "rolesMs": 41.3
+      },
+      "phases": {
+        "setupMs": 24.6,
+        "parseMs": 601.2,
+        "insertMs": 374.9,
+        "resolveMs": 4.1,
+        "edgesMs": 208.6,
+        "structureMs": 122.4,
+        "rolesMs": 95.5,
+        "astMs": 244,
+        "complexityMs": 20.3,
+        "cfgMs": 186.3,
+        "dataflowMs": 165.6,
+        "finalizeMs": 0.5
+      }
+    },
+    "resolution": {
+      "bash": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 12,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 12,
+        "totalExpected": 12,
+        "byMode": {
+          "same-file": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          },
+          "static": {
+            "expected": 9,
+            "resolved": 9,
+            "recall": 1
+          }
+        },
+        "dynamicEdges": 1,
+        "dynamicConfirmed": 0
+      },
+      "c": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 9,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 9,
+        "totalExpected": 9,
+        "byMode": {
+          "same-file": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          },
+          "static": {
+            "expected": 6,
+            "resolved": 6,
+            "recall": 1
+          }
+        }
+      },
+      "clojure": {
+        "precision": 0.8,
+        "recall": 0.267,
+        "truePositives": 4,
+        "falsePositives": 1,
+        "falseNegatives": 11,
+        "totalResolved": 5,
+        "totalExpected": 15,
+        "byMode": {
+          "module-function": {
+            "expected": 11,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 4,
+            "resolved": 4,
+            "recall": 1
+          }
+        }
+      },
+      "cpp": {
+        "precision": 1,
+        "recall": 0.571,
+        "truePositives": 8,
+        "falsePositives": 0,
+        "falseNegatives": 6,
+        "totalResolved": 8,
+        "totalExpected": 14,
+        "byMode": {
+          "same-file": {
+            "expected": 8,
+            "resolved": 4,
+            "recall": 0.5
+          },
+          "static": {
+            "expected": 4,
+            "resolved": 4,
+            "recall": 1
+          },
+          "receiver-typed": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "csharp": {
+        "precision": 1,
+        "recall": 0.526,
+        "truePositives": 10,
+        "falsePositives": 0,
+        "falseNegatives": 9,
+        "totalResolved": 10,
+        "totalExpected": 19,
+        "byMode": {
+          "same-file": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          },
+          "interface-dispatched": {
+            "expected": 4,
+            "resolved": 4,
+            "recall": 1
+          },
+          "static": {
+            "expected": 3,
+            "resolved": 0,
+            "recall": 0
+          },
+          "receiver-typed": {
+            "expected": 4,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "cuda": {
+        "precision": 0.5,
+        "recall": 0.333,
+        "truePositives": 4,
+        "falsePositives": 4,
+        "falseNegatives": 8,
+        "totalResolved": 8,
+        "totalExpected": 12,
+        "byMode": {
+          "receiver-typed": {
+            "expected": 6,
+            "resolved": 0,
+            "recall": 0
+          },
+          "static": {
+            "expected": 4,
+            "resolved": 2,
+            "recall": 0.5
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          }
+        }
+      },
+      "dart": {
+        "precision": 0,
+        "recall": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 18,
+        "totalResolved": 0,
+        "totalExpected": 18,
+        "byMode": {
+          "static": {
+            "expected": 4,
+            "resolved": 0,
+            "recall": 0
+          },
+          "receiver-typed": {
+            "expected": 8,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "elixir": {
+        "precision": 0,
+        "recall": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 15,
+        "totalResolved": 0,
+        "totalExpected": 15,
+        "byMode": {
+          "same-file": {
+            "expected": 4,
+            "resolved": 0,
+            "recall": 0
+          },
+          "module-function": {
+            "expected": 11,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "erlang": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 12,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 12,
+        "totalExpected": 12,
+        "byMode": {
+          "module-function": {
+            "expected": 10,
+            "resolved": 10,
+            "recall": 1
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          }
+        }
+      },
+      "fsharp": {
+        "precision": 0,
+        "recall": 0,
+        "truePositives": 0,
+        "falsePositives": 9,
+        "falseNegatives": 12,
+        "totalResolved": 9,
+        "totalExpected": 12,
+        "byMode": {
+          "module-function": {
+            "expected": 11,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 1,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "gleam": {
+        "precision": 1,
+        "recall": 0.267,
+        "truePositives": 4,
+        "falsePositives": 0,
+        "falseNegatives": 11,
+        "totalResolved": 4,
+        "totalExpected": 15,
+        "byMode": {
+          "module-function": {
+            "expected": 11,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 4,
+            "resolved": 4,
+            "recall": 1
+          }
+        }
+      },
+      "go": {
+        "precision": 1,
+        "recall": 0.692,
+        "truePositives": 9,
+        "falsePositives": 0,
+        "falseNegatives": 4,
+        "totalResolved": 9,
+        "totalExpected": 13,
+        "byMode": {
+          "receiver-typed": {
+            "expected": 8,
+            "resolved": 4,
+            "recall": 0.5
+          },
+          "package-function": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          }
+        },
+        "dynamicEdges": 14,
+        "dynamicConfirmed": 13
+      },
+      "groovy": {
+        "precision": 1,
+        "recall": 0.077,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "falseNegatives": 12,
+        "totalResolved": 1,
+        "totalExpected": 13,
+        "byMode": {
+          "receiver-typed": {
+            "expected": 7,
+            "resolved": 0,
+            "recall": 0
+          },
+          "static": {
+            "expected": 3,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "haskell": {
+        "precision": 1,
+        "recall": 0.333,
+        "truePositives": 4,
+        "falsePositives": 0,
+        "falseNegatives": 8,
+        "totalResolved": 4,
+        "totalExpected": 12,
+        "byMode": {
+          "module-function": {
+            "expected": 11,
+            "resolved": 3,
+            "recall": 0.2727272727272727
+          },
+          "same-file": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          }
+        }
+      },
+      "hcl": {
+        "precision": 0,
+        "recall": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 2,
+        "totalResolved": 0,
+        "totalExpected": 2,
+        "byMode": {
+          "static": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "java": {
+        "precision": 1,
+        "recall": 0.529,
+        "truePositives": 9,
+        "falsePositives": 0,
+        "falseNegatives": 8,
+        "totalResolved": 9,
+        "totalExpected": 17,
+        "byMode": {
+          "same-file": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          },
+          "class-inheritance": {
+            "expected": 3,
+            "resolved": 0,
+            "recall": 0
+          },
+          "interface-dispatched": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          },
+          "receiver-typed": {
+            "expected": 4,
+            "resolved": 3,
+            "recall": 0.75
+          },
+          "static": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "javascript": {
+        "precision": 1,
+        "recall": 0.667,
+        "truePositives": 12,
+        "falsePositives": 0,
+        "falseNegatives": 6,
+        "totalResolved": 12,
+        "totalExpected": 18,
+        "byMode": {
+          "static": {
+            "expected": 4,
+            "resolved": 4,
+            "recall": 1
+          },
+          "receiver-typed": {
+            "expected": 5,
+            "resolved": 2,
+            "recall": 0.4
+          },
+          "same-file": {
+            "expected": 5,
+            "resolved": 2,
+            "recall": 0.4
+          }
+        },
+        "dynamicEdges": 28,
+        "dynamicConfirmed": 14
+      },
+      "julia": {
+        "precision": 0,
+        "recall": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 15,
+        "totalResolved": 0,
+        "totalExpected": 15,
+        "byMode": {
+          "module-function": {
+            "expected": 11,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 4,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "kotlin": {
+        "precision": 0.923,
+        "recall": 0.632,
+        "truePositives": 12,
+        "falsePositives": 1,
+        "falseNegatives": 7,
+        "totalResolved": 13,
+        "totalExpected": 19,
+        "byMode": {
+          "same-file": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          },
+          "static": {
+            "expected": 7,
+            "resolved": 7,
+            "recall": 1
+          },
+          "class-inheritance": {
+            "expected": 1,
+            "resolved": 0,
+            "recall": 0
+          },
+          "receiver-typed": {
+            "expected": 6,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "lua": {
+        "precision": 1,
+        "recall": 0.154,
+        "truePositives": 2,
+        "falsePositives": 0,
+        "falseNegatives": 11,
+        "totalResolved": 2,
+        "totalExpected": 13,
+        "byMode": {
+          "module-function": {
+            "expected": 11,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          }
+        }
+      },
+      "objc": {
+        "precision": 0,
+        "recall": 0,
+        "truePositives": 0,
+        "falsePositives": 1,
+        "falseNegatives": 12,
+        "totalResolved": 1,
+        "totalExpected": 12,
+        "byMode": {
+          "receiver-typed": {
+            "expected": 6,
+            "resolved": 0,
+            "recall": 0
+          },
+          "static": {
+            "expected": 3,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "ocaml": {
+        "precision": 1,
+        "recall": 0.083,
+        "truePositives": 1,
+        "falsePositives": 0,
+        "falseNegatives": 11,
+        "totalResolved": 1,
+        "totalExpected": 12,
+        "byMode": {
+          "module-function": {
+            "expected": 11,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          }
+        }
+      },
+      "php": {
+        "precision": 1,
+        "recall": 0.316,
+        "truePositives": 6,
+        "falsePositives": 0,
+        "falseNegatives": 13,
+        "totalResolved": 6,
+        "totalExpected": 19,
+        "byMode": {
+          "same-file": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          },
+          "receiver-typed": {
+            "expected": 8,
+            "resolved": 0,
+            "recall": 0
+          },
+          "static": {
+            "expected": 3,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "python": {
+        "precision": 1,
+        "recall": 0.6,
+        "truePositives": 9,
+        "falsePositives": 0,
+        "falseNegatives": 6,
+        "totalResolved": 9,
+        "totalExpected": 15,
+        "byMode": {
+          "static": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          },
+          "receiver-typed": {
+            "expected": 8,
+            "resolved": 2,
+            "recall": 0.25
+          },
+          "same-file": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          }
+        },
+        "dynamicEdges": 15,
+        "dynamicConfirmed": 15
+      },
+      "r": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 11,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 11,
+        "totalExpected": 11,
+        "byMode": {
+          "static": {
+            "expected": 9,
+            "resolved": 9,
+            "recall": 1
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          }
+        }
+      },
+      "ruby": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 11,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 11,
+        "totalExpected": 11,
+        "byMode": {
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          },
+          "static": {
+            "expected": 9,
+            "resolved": 9,
+            "recall": 1
+          }
+        },
+        "dynamicEdges": 11,
+        "dynamicConfirmed": 11
+      },
+      "rust": {
+        "precision": 1,
+        "recall": 0.357,
+        "truePositives": 5,
+        "falsePositives": 0,
+        "falseNegatives": 9,
+        "totalResolved": 5,
+        "totalExpected": 14,
+        "byMode": {
+          "same-file": {
+            "expected": 6,
+            "resolved": 2,
+            "recall": 0.3333333333333333
+          },
+          "trait-dispatch": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          },
+          "receiver-typed": {
+            "expected": 3,
+            "resolved": 0,
+            "recall": 0
+          },
+          "module-function": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          }
+        }
+      },
+      "scala": {
+        "precision": 1,
+        "recall": 0.714,
+        "truePositives": 5,
+        "falsePositives": 0,
+        "falseNegatives": 2,
+        "totalResolved": 5,
+        "totalExpected": 7,
+        "byMode": {
+          "same-file": {
+            "expected": 1,
+            "resolved": 0,
+            "recall": 0
+          },
+          "static": {
+            "expected": 1,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "solidity": {
+        "precision": 0.333,
+        "recall": 0.077,
+        "truePositives": 1,
+        "falsePositives": 2,
+        "falseNegatives": 12,
+        "totalResolved": 3,
+        "totalExpected": 13,
+        "byMode": {
+          "receiver-typed": {
+            "expected": 8,
+            "resolved": 0,
+            "recall": 0
+          },
+          "static": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "swift": {
+        "precision": 0.75,
+        "recall": 0.429,
+        "truePositives": 6,
+        "falsePositives": 2,
+        "falseNegatives": 8,
+        "totalResolved": 8,
+        "totalExpected": 14,
+        "byMode": {
+          "same-file": {
+            "expected": 1,
+            "resolved": 1,
+            "recall": 1
+          },
+          "static": {
+            "expected": 3,
+            "resolved": 2,
+            "recall": 0.6666666666666666
+          },
+          "receiver-typed": {
+            "expected": 7,
+            "resolved": 0,
+            "recall": 0
+          }
+        },
+        "dynamicEdges": 9,
+        "dynamicConfirmed": 9
+      },
+      "tsx": {
+        "precision": 1,
+        "recall": 1,
+        "truePositives": 13,
+        "falsePositives": 0,
+        "falseNegatives": 0,
+        "totalResolved": 13,
+        "totalExpected": 13,
+        "byMode": {
+          "same-file": {
+            "expected": 5,
+            "resolved": 5,
+            "recall": 1
+          },
+          "static": {
+            "expected": 8,
+            "resolved": 8,
+            "recall": 1
+          }
+        }
+      },
+      "typescript": {
+        "precision": 1,
+        "recall": 0.75,
+        "truePositives": 15,
+        "falsePositives": 0,
+        "falseNegatives": 5,
+        "totalResolved": 15,
+        "totalExpected": 20,
+        "byMode": {
+          "same-file": {
+            "expected": 2,
+            "resolved": 2,
+            "recall": 1
+          },
+          "interface-dispatched": {
+            "expected": 5,
+            "resolved": 0,
+            "recall": 0
+          },
+          "static": {
+            "expected": 3,
+            "resolved": 3,
+            "recall": 1
+          },
+          "receiver-typed": {
+            "expected": 6,
+            "resolved": 6,
+            "recall": 1
+          }
+        }
+      },
+      "verilog": {
+        "precision": 0,
+        "recall": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 4,
+        "totalResolved": 0,
+        "totalExpected": 4,
+        "byMode": {
+          "static": {
+            "expected": 3,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 1,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      },
+      "zig": {
+        "precision": 0,
+        "recall": 0,
+        "truePositives": 0,
+        "falsePositives": 0,
+        "falseNegatives": 15,
+        "totalResolved": 0,
+        "totalExpected": 15,
+        "byMode": {
+          "module-function": {
+            "expected": 5,
+            "resolved": 0,
+            "recall": 0
+          },
+          "receiver-typed": {
+            "expected": 8,
+            "resolved": 0,
+            "recall": 0
+          },
+          "same-file": {
+            "expected": 2,
+            "resolved": 0,
+            "recall": 0
+          }
+        }
+      }
+    }
+  },
   {
     "version": "3.9.2",
     "date": "2026-04-09",
