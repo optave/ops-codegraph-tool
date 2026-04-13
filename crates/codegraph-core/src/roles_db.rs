@@ -115,6 +115,7 @@ fn classify_node(
     fan_out: u32,
     is_exported: bool,
     production_fan_in: u32,
+    has_active_file_siblings: bool,
     median_fan_in: f64,
     median_fan_out: f64,
 ) -> &'static str {
@@ -124,8 +125,12 @@ fn classify_node(
     }
 
     if fan_in == 0 && !is_exported {
-        // Test-only check: if node has test fan-in but zero total fan-in it's
-        // classified in the dead sub-role path (JS mirrors this)
+        // Constants consumed via identifier reference (not calls) have no
+        // inbound call edges. If the same file has active callables, the
+        // constant is almost certainly used locally — classify as leaf.
+        if kind == "constant" && has_active_file_siblings {
+            return "leaf";
+        }
         return classify_dead_sub_role(name, kind, file);
     }
 
@@ -134,7 +139,7 @@ fn classify_node(
     }
 
     // Test-only: has callers but all are in test files
-    if fan_in > 0 && production_fan_in == 0 {
+    if fan_in > 0 && production_fan_in == 0 && !is_exported {
         return "test-only";
     }
 
@@ -218,6 +223,7 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
     };
 
     // 2. Fan-in/fan-out for callable nodes (uses JOIN approach for full scan)
+    //    Fan-in includes 'imports-type' edges to match JS classification.
     let rows: Vec<(i64, String, String, String, u32, u32)> = {
         let mut stmt = tx.prepare(
             "SELECT n.id, n.name, n.kind, n.file,
@@ -225,7 +231,7 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
                 COALESCE(fo.cnt, 0) AS fan_out
              FROM nodes n
              LEFT JOIN (
-                SELECT target_id, COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY target_id
+                SELECT target_id, COUNT(*) AS cnt FROM edges WHERE kind IN ('calls', 'imports-type') GROUP BY target_id
              ) fi ON n.id = fi.target_id
              LEFT JOIN (
                 SELECT source_id, COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY source_id
@@ -250,26 +256,68 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
         return Ok(summary);
     }
 
-    // 3. Exported IDs (cross-file callers)
-    let exported_ids: std::collections::HashSet<i64> = {
+    // 3. Exported IDs (cross-file callers including imports-type)
+    let mut exported_ids: std::collections::HashSet<i64> = {
         let mut stmt = tx.prepare(
             "SELECT DISTINCT e.target_id
              FROM edges e
              JOIN nodes caller ON e.source_id = caller.id
              JOIN nodes target ON e.target_id = target.id
-             WHERE e.kind = 'calls' AND caller.file != target.file",
+             WHERE e.kind IN ('calls', 'imports-type') AND caller.file != target.file",
         )?;
         let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
         rows.filter_map(|r| r.ok()).collect()
     };
 
-    // 4. Production fan-in (excluding test files)
+    // 3b. Mark symbols as exported when their files are targets of reexport edges
+    // from production-reachable barrels (traces through multi-level chains) (#837).
+    //
+    // The recursive CTE works in two stages:
+    //   Base case: find all file nodes directly imported by production (non-test) files.
+    //   Recursive step: follow 'reexports' edges outward to discover barrel chains
+    //     (e.g. index.ts re-exports from internal.ts which re-exports from core.ts).
+    // Then: any symbol whose file is a reexport target of a prod-reachable barrel
+    // is considered exported (prevents false dead-code classification).
+    {
+        let sql = format!(
+            "WITH RECURSIVE prod_reachable(file_id) AS (
+                SELECT DISTINCT e.target_id
+                FROM edges e
+                JOIN nodes src ON e.source_id = src.id
+                WHERE e.kind IN ('imports', 'dynamic-imports', 'imports-type')
+                  AND src.kind = 'file'
+                  {}
+                UNION
+                SELECT e.target_id
+                FROM edges e
+                JOIN prod_reachable pr ON e.source_id = pr.file_id
+                WHERE e.kind = 'reexports'
+              )
+              SELECT DISTINCT n.id
+              FROM nodes n
+              JOIN nodes f ON f.file = n.file AND f.kind = 'file'
+              WHERE f.id IN (
+                SELECT e.target_id FROM edges e
+                WHERE e.kind = 'reexports'
+                  AND e.source_id IN (SELECT file_id FROM prod_reachable)
+              )
+              AND n.kind NOT IN ('file', 'directory', 'parameter', 'property')",
+            test_file_filter_col("src.file")
+        );
+        let mut stmt = tx.prepare(&sql)?;
+        let reexport_rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+        for r in reexport_rows.flatten() {
+            exported_ids.insert(r);
+        }
+    }
+
+    // 4. Production fan-in (excluding test files, including imports-type)
     let prod_fan_in: HashMap<i64, u32> = {
         let sql = format!(
             "SELECT e.target_id, COUNT(*) AS cnt
              FROM edges e
              JOIN nodes caller ON e.source_id = caller.id
-             WHERE e.kind = 'calls' {}
+             WHERE e.kind IN ('calls', 'imports-type') {}
              GROUP BY e.target_id",
             test_file_filter()
         );
@@ -287,6 +335,9 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
     let median_fan_in = median(&fan_in_vals);
     let median_fan_out = median(&fan_out_vals);
 
+    // 5b. Compute active files (files with non-constant callables connected to the graph)
+    let active_files = compute_active_files(&rows);
+
     // 6. Classify and collect IDs by role
     let mut ids_by_role: HashMap<&str, Vec<i64>> = HashMap::new();
 
@@ -300,6 +351,7 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
         &rows,
         &exported_ids,
         &prod_fan_in,
+        &active_files,
         median_fan_in,
         median_fan_out,
         &mut ids_by_role,
@@ -314,20 +366,38 @@ pub(crate) fn do_classify_full(conn: &Connection) -> rusqlite::Result<RoleSummar
     Ok(summary)
 }
 
-/// Build the test-file exclusion filter for SQL queries.
+/// Build the test-file exclusion filter for SQL queries (default column: `caller.file`).
 fn test_file_filter() -> String {
+    test_file_filter_col("caller.file")
+}
+
+/// Build the test-file exclusion filter for an arbitrary column name.
+fn test_file_filter_col(column: &str) -> String {
     TEST_FILE_PATTERNS
         .iter()
-        .map(|p| format!("AND caller.file NOT LIKE '{}'", p))
+        .map(|p| format!("AND {} NOT LIKE '{}'", column, p))
         .collect::<Vec<_>>()
         .join(" ")
 }
 
+/// Compute the set of files that have at least one non-constant callable connected to the graph.
+/// Constants in these files are likely consumed locally via identifier reference.
+fn compute_active_files(rows: &[(i64, String, String, String, u32, u32)]) -> std::collections::HashSet<String> {
+    let mut active = std::collections::HashSet::new();
+    for (_id, _name, kind, file, fan_in, fan_out) in rows {
+        if (*fan_in > 0 || *fan_out > 0) && kind != "constant" {
+            active.insert(file.clone());
+        }
+    }
+    active
+}
+
 /// Compute global median fan-in and fan-out from the edge distribution.
+/// Fan-in includes 'imports-type' edges to match JS classification.
 fn compute_global_medians(tx: &rusqlite::Transaction) -> rusqlite::Result<(f64, f64)> {
     let median_fan_in = {
         let mut stmt = tx
-            .prepare("SELECT COUNT(*) AS cnt FROM edges WHERE kind = 'calls' GROUP BY target_id")?;
+            .prepare("SELECT COUNT(*) AS cnt FROM edges WHERE kind IN ('calls', 'imports-type') GROUP BY target_id")?;
         let mut vals: Vec<u32> = stmt
             .query_map([], |row| row.get::<_, u32>(0))?
             .filter_map(|r| r.ok())
@@ -389,6 +459,7 @@ fn classify_rows(
     rows: &[(i64, String, String, String, u32, u32)],
     exported_ids: &std::collections::HashSet<i64>,
     prod_fan_in: &HashMap<i64, u32>,
+    active_files: &std::collections::HashSet<String>,
     median_fan_in: f64,
     median_fan_out: f64,
     ids_by_role: &mut HashMap<&'static str, Vec<i64>>,
@@ -397,6 +468,11 @@ fn classify_rows(
     for (id, name, kind, file, fan_in, fan_out) in rows {
         let is_exported = exported_ids.contains(id);
         let prod_fi = prod_fan_in.get(id).copied().unwrap_or(0);
+        let has_active_siblings = if kind == "constant" {
+            active_files.contains(file)
+        } else {
+            false
+        };
         let role = classify_node(
             name,
             kind,
@@ -405,6 +481,7 @@ fn classify_rows(
             *fan_out,
             is_exported,
             prod_fi,
+            has_active_siblings,
             median_fan_in,
             median_fan_out,
         );
@@ -413,7 +490,7 @@ fn classify_rows(
     }
 }
 
-/// Find neighbouring files connected by call edges to the changed files.
+/// Find neighbouring files connected by call/imports-type/reexports edges to the changed files.
 fn find_neighbour_files(
     tx: &rusqlite::Transaction,
     changed_files: &[String],
@@ -427,7 +504,7 @@ fn find_neighbour_files(
         "SELECT DISTINCT n2.file FROM edges e
          JOIN nodes n1 ON (e.source_id = n1.id OR e.target_id = n1.id)
          JOIN nodes n2 ON (e.source_id = n2.id OR e.target_id = n2.id)
-         WHERE e.kind = 'calls'
+         WHERE e.kind IN ('calls', 'imports-type', 'reexports')
            AND n1.file IN ({})
            AND n2.file NOT IN ({})
            AND n2.kind NOT IN ('file', 'directory')",
@@ -477,7 +554,7 @@ fn query_nodes_for_files(
 
     let rows_sql = format!(
         "SELECT n.id, n.name, n.kind, n.file,
-            (SELECT COUNT(*) FROM edges WHERE kind = 'calls' AND target_id = n.id) AS fan_in,
+            (SELECT COUNT(*) FROM edges WHERE kind IN ('calls', 'imports-type') AND target_id = n.id) AS fan_in,
             (SELECT COUNT(*) FROM edges WHERE kind = 'calls' AND source_id = n.id) AS fan_out
          FROM nodes n
          WHERE n.kind NOT IN ('file', 'directory', 'parameter', 'property')
@@ -542,18 +619,60 @@ pub(crate) fn do_classify_incremental(
          FROM edges e
          JOIN nodes caller ON e.source_id = caller.id
          JOIN nodes target ON e.target_id = target.id
-         WHERE e.kind = 'calls' AND caller.file != target.file
+         WHERE e.kind IN ('calls', 'imports-type') AND caller.file != target.file
            AND target.file IN ({})",
         affected_ph
     );
-    let exported_ids = query_id_set(&tx, &exported_sql, &all_affected)?;
+    let mut exported_ids = query_id_set(&tx, &exported_sql, &all_affected)?;
+
+    // Mark symbols as exported when their files are targets of reexport edges
+    // from production-reachable barrels (traces through multi-level chains) (#837).
+    // Same recursive CTE logic as the full-classify path (step 3b), but scoped
+    // to affected files only via the additional `AND n.file IN (...)` filter.
+    {
+        let reexport_sql = format!(
+            "WITH RECURSIVE prod_reachable(file_id) AS (
+                SELECT DISTINCT e.target_id
+                FROM edges e
+                JOIN nodes src ON e.source_id = src.id
+                WHERE e.kind IN ('imports', 'dynamic-imports', 'imports-type')
+                  AND src.kind = 'file'
+                  {}
+                UNION
+                SELECT e.target_id
+                FROM edges e
+                JOIN prod_reachable pr ON e.source_id = pr.file_id
+                WHERE e.kind = 'reexports'
+              )
+              SELECT DISTINCT n.id
+              FROM nodes n
+              JOIN nodes f ON f.file = n.file AND f.kind = 'file'
+              WHERE f.id IN (
+                SELECT e.target_id FROM edges e
+                WHERE e.kind = 'reexports'
+                  AND e.source_id IN (SELECT file_id FROM prod_reachable)
+              )
+              AND n.kind NOT IN ('file', 'directory', 'parameter', 'property')
+              AND n.file IN ({})",
+            test_file_filter_col("src.file"),
+            affected_ph
+        );
+        let mut stmt = tx.prepare(&reexport_sql)?;
+        for (i, f) in all_affected.iter().enumerate() {
+            stmt.raw_bind_parameter(i + 1, *f)?;
+        }
+        let mut rrows = stmt.raw_query();
+        while let Some(row) = rrows.next()? {
+            exported_ids.insert(row.get::<_, i64>(0)?);
+        }
+    }
 
     let prod_sql = format!(
         "SELECT e.target_id, COUNT(*) AS cnt
          FROM edges e
          JOIN nodes caller ON e.source_id = caller.id
          JOIN nodes target ON e.target_id = target.id
-         WHERE e.kind = 'calls'
+         WHERE e.kind IN ('calls', 'imports-type')
            AND target.file IN ({})
            {}
          GROUP BY e.target_id",
@@ -561,6 +680,8 @@ pub(crate) fn do_classify_incremental(
         test_file_filter()
     );
     let prod_fan_in = query_id_counts(&tx, &prod_sql, &all_affected)?;
+
+    let active_files = compute_active_files(&rows);
 
     let mut ids_by_role: HashMap<&str, Vec<i64>> = HashMap::new();
 
@@ -574,6 +695,7 @@ pub(crate) fn do_classify_incremental(
         &rows,
         &exported_ids,
         &prod_fan_in,
+        &active_files,
         median_fan_in,
         median_fan_out,
         &mut ids_by_role,
