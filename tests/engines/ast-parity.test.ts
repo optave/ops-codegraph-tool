@@ -88,7 +88,12 @@ function processItems(items: string[]): void {
 }
 `;
 
-describe('AST node parity (native vs WASM)', () => {
+// In the dedicated parity CI job (CODEGRAPH_PARITY=1), never silently skip —
+// fail hard so a missing native addon is immediately visible.
+const requireParity = !!process.env.CODEGRAPH_PARITY;
+const describeOrSkip = requireParity || isNativeAvailable() ? describe : describe.skip;
+
+describeOrSkip('AST node parity (native vs WASM)', () => {
   beforeAll(async () => {
     if (!isNativeAvailable()) return;
     native = getNative();

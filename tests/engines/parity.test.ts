@@ -110,8 +110,10 @@ function normalize(symbols) {
 }
 
 const hasNative = isNativeAvailable();
-
-const describeOrSkip = hasNative ? describe : describe.skip;
+// In the dedicated parity CI job (CODEGRAPH_PARITY=1), never silently skip —
+// fail hard so a missing native addon is immediately visible.
+const requireParity = !!process.env.CODEGRAPH_PARITY;
+const describeOrSkip = requireParity || hasNative ? describe : describe.skip;
 
 describeOrSkip('Cross-engine parity', () => {
   beforeAll(async () => {
