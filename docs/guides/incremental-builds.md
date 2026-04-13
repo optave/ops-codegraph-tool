@@ -66,7 +66,7 @@ codegraph build --no-incremental
 - You edited a few files and want to check impact — incremental handles this perfectly
 - You're querying callers, paths, or dependencies — edge data is always current for changed files
 - `codegraph watch` is running — it maintains a change journal for efficient incremental updates
-- You just ran `git pull` with a post-checkout hook that triggers `codegraph build` — incremental is sufficient for routine pulls
+- You just ran `git pull` and the `post-git-ops.sh` hook is active — it already ran a full rebuild for you
 
 ---
 
