@@ -33,7 +33,7 @@ See what your branch will affect before pushing:
 ```bash
 # .husky/pre-push
 codegraph build
-codegraph diff-impact origin/main --no-tests
+codegraph diff-impact --ref origin/main --no-tests
 ```
 
 This prints a summary like:
@@ -47,7 +47,7 @@ If you want to **block pushes** that exceed a threshold, add a check:
 ```bash
 # .husky/pre-push
 codegraph build
-IMPACT=$(codegraph diff-impact origin/main --no-tests -f json)
+IMPACT=$(codegraph diff-impact --ref origin/main --no-tests --json)
 AFFECTED=$(echo "$IMPACT" | node -e "
   const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
   console.log(d.summary?.callersAffected || 0)
@@ -57,6 +57,26 @@ if [ "$AFFECTED" -gt 50 ]; then
   exit 1
 fi
 ```
+
+### Periodic full rebuilds
+
+Incremental builds keep edges and symbols fresh, but some analysis data (complexity, dataflow, directory cohesion) is only recomputed for files you directly edit. Schedule a periodic full rebuild to keep everything accurate:
+
+**With husky (weekly or post-merge):**
+
+```bash
+# .husky/post-merge — runs after every git pull/merge
+codegraph build --no-incremental
+```
+
+**Manual habit:**
+
+```bash
+# After large merges, before audits, or weekly
+codegraph build --no-incremental
+```
+
+> **When does this matter?** If you rely on `codegraph complexity`, `codegraph dataflow`, `codegraph communities --drift`, or `codegraph roles --role dead` for files you haven't directly edited, those results may be stale after incremental-only builds. A full rebuild recomputes everything from scratch. See [incremental-builds.md](./incremental-builds.md) for the full breakdown.
 
 ### Commit message enrichment
 
@@ -98,7 +118,7 @@ Add a threshold check to your CI pipeline:
 - name: Check impact threshold
   run: |
     npx codegraph build
-    IMPACT=$(npx codegraph diff-impact origin/${{ github.base_ref }} -f json)
+    IMPACT=$(npx codegraph diff-impact --ref origin/${{ github.base_ref }} --json)
     AFFECTED=$(echo "$IMPACT" | node -e "
       const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
       console.log(d.summary?.callersAffected || 0)
@@ -388,6 +408,8 @@ codegraph watch
 ```
 
 Changes are picked up incrementally — no manual rebuilds needed.
+
+> **Note:** Watch mode runs incremental builds — it keeps symbols, edges, and callers current, but won't recompute complexity, dataflow, or directory cohesion for files you didn't directly edit. If you need fresh analysis data across the entire codebase, run `codegraph build --no-incremental` periodically. See [incremental-builds.md](./incremental-builds.md) for details.
 
 ### Explore before you edit
 

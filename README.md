@@ -544,6 +544,35 @@ The graph stays current without re-parsing your entire codebase. Three-tier chan
 
 **Result:** change one file in a 3,000-file project and the rebuild completes in under a second. Put it in a commit hook, a file watcher, or let your AI agent trigger it.
 
+#### What incremental rebuilds refresh — and what they don't
+
+Incremental builds re-parse changed files and rebuild their edges, structure metrics, and role classifications. But some data is **only fully refreshed on a full rebuild:**
+
+| Data | Incremental | Full rebuild |
+|------|:-----------:|:------------:|
+| Symbols & edges for changed files | Yes | Yes |
+| Reverse-dependency cascade (importers of changed files) | Yes | Yes |
+| AST nodes, complexity, CFG, dataflow for changed files | Yes | Yes |
+| Directory-level cohesion metrics | Partial (skipped for ≤5 files) | Yes |
+| Advisory checks (orphaned embeddings, stale embeddings, unused exports) | Skipped | Yes |
+| Build metadata persistence | Skipped for ≤3 files | Yes |
+| Incremental drift detection | Skipped | Yes |
+
+**When to run a full rebuild:**
+
+```bash
+codegraph build --no-incremental   # Force full rebuild
+```
+
+- **After large refactors** (renames, moves, deleted files) — the reverse-dependency cascade handles most cases, but a full rebuild ensures nothing is stale
+- **If you suspect stale analysis data** — complexity or dataflow results for files you didn't directly edit won't update incrementally
+- **Periodically** — if you rely heavily on `complexity`, `dataflow`, `roles --role dead`, or `communities` queries, run a full rebuild weekly or after major merges
+- **After upgrading codegraph** — engine, schema, or version changes trigger an automatic full rebuild, but if you skip versions you may want to force one
+
+Codegraph auto-detects and forces a full rebuild when the engine, schema version, or codegraph version changes between builds. For everything else, incremental is the safe default — a full rebuild is a correctness guarantee, not a frequent necessity.
+
+> **Detailed guide:** See [docs/guides/incremental-builds.md](docs/guides/incremental-builds.md) for a complete breakdown of what each build mode refreshes and recommended rebuild schedules.
+
 ### Dual Engine
 
 Codegraph ships with two parsing engines:

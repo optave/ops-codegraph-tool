@@ -54,8 +54,8 @@ If an instruction matters, make it a blocking hook. If it's in CLAUDE.md but not
 
 | Hook | Trigger | What it does |
 |------|---------|-------------|
-| `update-graph.sh` | PostToolUse on Edit/Write | Runs `codegraph build` incrementally after source file edits to keep the graph fresh |
-| `post-git-ops.sh` | PostToolUse on Bash | Detects `git rebase/revert/cherry-pick/merge/pull` and rebuilds the graph + logs changed files to the edit log |
+| `update-graph.sh` | PostToolUse on Edit/Write | Runs `codegraph build` incrementally after source file edits to keep the graph fresh (see [freshness note](#incremental-build-freshness)) |
+| `post-git-ops.sh` | PostToolUse on Bash | Detects `git rebase/revert/cherry-pick/merge/pull`, runs a **full rebuild** (recomputes all analysis data), and logs changed files to the edit log |
 
 ## Pre-commit consolidation
 
@@ -79,6 +79,34 @@ All session-local state files (`session-edits.log`) use `git rev-parse --show-to
 - **Multi-agent / worktrees:** Add `guard-git.sh` + `track-edits.sh` + `track-moves.sh`
 
 **Branch name validation:** The `guard-git.sh` in this repo's `.claude/hooks/` validates branch names against conventional prefixes (`feat/`, `fix/`, etc.). The example version omits this — add your own validation if needed.
+
+## Incremental build freshness
+
+The `update-graph.sh` hook runs **incremental** builds — it only re-parses files you directly edited. This keeps symbols, edges, and caller data fresh during a session. However, some analysis data is only recomputed for directly modified files:
+
+- **Complexity, dataflow, and CFG metrics** for files you didn't edit remain from the last full build
+- **Directory-level cohesion metrics** are skipped for small changes (≤5 files)
+- **Advisory checks** (orphaned embeddings, unused exports) are skipped entirely
+
+**This means:** If you edit `utils.ts` and `handler.ts` imports it, the import edges from `handler.ts` are rebuilt, but `handler.ts`'s complexity and dataflow data are not recomputed.
+
+### Automatic staleness detection
+
+The hooks handle this automatically via a **staleness marker** (`.codegraph/last-full-build`):
+
+1. **First edit of a stale session** — `update-graph.sh` checks the marker. If missing or older than 24 hours, it upgrades that one build to `--no-incremental` (~3.5s instead of ~1.5s) and updates the marker.
+2. **Subsequent edits** — marker is fresh, so builds stay incremental (fast).
+3. **After git merge/rebase/pull** — `post-git-ops.sh` always runs a full rebuild and updates the marker.
+
+This means you never need to manually run `codegraph build --no-incremental` — the first edit after a stale period triggers it automatically. The 24-hour threshold ensures complexity, dataflow, and cohesion data never drifts more than a day behind.
+
+Add `.codegraph/last-full-build` to `.gitignore` — it's session-local state:
+
+```
+.codegraph/
+```
+
+For a detailed breakdown of what incremental builds skip, see the [incremental builds guide](../../guides/incremental-builds.md).
 
 ## Requirements
 
