@@ -93,9 +93,8 @@ function checkEngineSchemaMismatch(ctx: PipelineContext): void {
   // build. The check must compare against the same version, otherwise JS and Rust
   // fight over which version to record — causing every incremental build to be
   // promoted to a full rebuild when npm and crate versions diverge.
-  const effectiveVersion = ctx.engineName === 'native' && ctx.engineVersion
-    ? ctx.engineVersion
-    : CODEGRAPH_VERSION;
+  const effectiveVersion =
+    ctx.engineName === 'native' && ctx.engineVersion ? ctx.engineVersion : CODEGRAPH_VERSION;
   const prevVersion = meta('codegraph_version');
   if (prevVersion && prevVersion !== effectiveVersion) {
     info(
