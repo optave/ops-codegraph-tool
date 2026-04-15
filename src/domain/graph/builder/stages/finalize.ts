@@ -81,18 +81,20 @@ function persistBuildMetadata(
 ): void {
   const useNativeDb = ctx.engineName === 'native' && !!ctx.nativeDb;
   if (!ctx.isFullBuild && ctx.allSymbols.size <= 3) return;
+  // When the native engine is active, persist the Rust addon version so that
+  // checkEngineSchemaMismatch compares against the same value on the next build.
+  // Writing CODEGRAPH_VERSION (the npm package version) here would create a
+  // permanent mismatch whenever npm and crate versions diverge, forcing every
+  // subsequent build to be a full rebuild.
+  const codeVersionToWrite =
+    ctx.engineName === 'native' && ctx.engineVersion ? ctx.engineVersion : CODEGRAPH_VERSION;
   try {
-    // engine_version must be the actual engine version (addon version for native,
-    // npm version for WASM) — not always CODEGRAPH_VERSION. The Rust orchestrator's
-    // check_version_mismatch compares engine_version against CARGO_PKG_VERSION,
-    // so writing the npm version here would cause perpetual full rebuilds (#928).
-    const engineVer = ctx.engineVersion || CODEGRAPH_VERSION;
     if (useNativeDb) {
       ctx.nativeDb!.setBuildMeta(
         Object.entries({
           engine: ctx.engineName,
-          engine_version: engineVer,
-          codegraph_version: CODEGRAPH_VERSION,
+          engine_version: codeVersionToWrite,
+          codegraph_version: codeVersionToWrite,
           schema_version: String(ctx.schemaVersion),
           built_at: buildNow.toISOString(),
           node_count: String(nodeCount),
@@ -102,8 +104,8 @@ function persistBuildMetadata(
     } else {
       setBuildMeta(ctx.db, {
         engine: ctx.engineName,
-        engine_version: engineVer,
-        codegraph_version: CODEGRAPH_VERSION,
+        engine_version: codeVersionToWrite,
+        codegraph_version: codeVersionToWrite,
         schema_version: String(ctx.schemaVersion),
         built_at: buildNow.toISOString(),
         node_count: nodeCount,
