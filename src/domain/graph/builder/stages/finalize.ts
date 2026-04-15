@@ -81,13 +81,20 @@ function persistBuildMetadata(
 ): void {
   const useNativeDb = ctx.engineName === 'native' && !!ctx.nativeDb;
   if (!ctx.isFullBuild && ctx.allSymbols.size <= 3) return;
+  // When the native engine is active, persist the Rust addon version so that
+  // checkEngineSchemaMismatch compares against the same value on the next build.
+  // Writing CODEGRAPH_VERSION (the npm package version) here would create a
+  // permanent mismatch whenever npm and crate versions diverge, forcing every
+  // subsequent build to be a full rebuild.
+  const codeVersionToWrite =
+    ctx.engineName === 'native' && ctx.engineVersion ? ctx.engineVersion : CODEGRAPH_VERSION;
   try {
     if (useNativeDb) {
       ctx.nativeDb!.setBuildMeta(
         Object.entries({
           engine: ctx.engineName,
-          engine_version: CODEGRAPH_VERSION,
-          codegraph_version: CODEGRAPH_VERSION,
+          engine_version: codeVersionToWrite,
+          codegraph_version: codeVersionToWrite,
           schema_version: String(ctx.schemaVersion),
           built_at: buildNow.toISOString(),
           node_count: String(nodeCount),
@@ -97,8 +104,8 @@ function persistBuildMetadata(
     } else {
       setBuildMeta(ctx.db, {
         engine: ctx.engineName,
-        engine_version: CODEGRAPH_VERSION,
-        codegraph_version: CODEGRAPH_VERSION,
+        engine_version: codeVersionToWrite,
+        codegraph_version: codeVersionToWrite,
         schema_version: String(ctx.schemaVersion),
         built_at: buildNow.toISOString(),
         node_count: nodeCount,
