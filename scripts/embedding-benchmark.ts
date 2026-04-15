@@ -18,6 +18,12 @@ import { resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { forkWorker } from './lib/fork-engine.js';
 
 const MODEL_WORKER_KEY = '__BENCH_MODEL__';
+/**
+ * Cap symbol count so CI stays under the per-model timeout.
+ * At ~1500 symbols on a CPU-only runner, search evaluation takes ~5 min;
+ * embedding all DB symbols takes ~18 min — ~23 min total, within the 30-min timeout.
+ */
+const MAX_SYMBOLS = 1500;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -66,12 +72,34 @@ if (process.env[MODEL_WORKER_KEY]) {
 		return symbols;
 	}
 
+	/**
+	 * Deterministic shuffle using a simple seeded PRNG (mulberry32).
+	 * Keeps results reproducible across runs while sampling fairly.
+	 */
+	function seededShuffle<T>(arr: T[], seed: number): T[] {
+		const out = arr.slice();
+		let s = seed | 0;
+		for (let i = out.length - 1; i > 0; i--) {
+			s = (s + 0x6d2b79f5) | 0;
+			let t = Math.imul(s ^ (s >>> 15), 1 | s);
+			t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+			const r = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+			const j = Math.floor(r * (i + 1));
+			[out[i], out[j]] = [out[j], out[i]];
+		}
+		return out;
+	}
+
 	// Redirect console.log to stderr so only JSON goes to stdout
 	const origLog = console.log;
 	console.log = (...args) => console.error(...args);
 
-	const symbols = loadSymbols();
-	console.error(`  [${modelKey}] Loaded ${symbols.length} symbols`);
+	let symbols = loadSymbols();
+	if (symbols.length > MAX_SYMBOLS) {
+		console.error(`  [${modelKey}] Sampling ${MAX_SYMBOLS} of ${symbols.length} symbols (deterministic seed=42)`);
+		symbols = seededShuffle(symbols, 42).slice(0, MAX_SYMBOLS);
+	}
+	console.error(`  [${modelKey}] Benchmarking ${symbols.length} symbols`);
 
 	const embedStart = performance.now();
 	await buildEmbeddings(root, modelKey, dbPath, { strategy: 'structured' });
@@ -125,7 +153,7 @@ const dbPath = path.join(root, '.codegraph', 'graph.db');
 
 const { MODELS } = await import(srcImport(srcDir, 'domain/search/index.js'));
 
-const TIMEOUT_MS = 1_800_000; // 30 min — CPU-only CI runners need ~20 min per model for 6k+ symbols
+const TIMEOUT_MS = 1_800_000; // 30 min — with symbol sampling, embed (~18 min) + search (~5 min) fits comfortably
 const hasHfToken = !!process.env.HF_TOKEN;
 const modelKeys = Object.keys(MODELS);
 const results = {};
