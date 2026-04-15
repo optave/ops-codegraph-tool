@@ -825,7 +825,19 @@ export async function buildGraph(
       if (nativeResult) return nativeResult;
     } catch (err) {
       warn(`Native build orchestrator failed, falling back to JS pipeline: ${toErrorMessage(err)}`);
-      // Fall through to JS pipeline
+      // The version gate in checkEngineSchemaMismatch was skipped because
+      // nativeAvailable was true. Now that we're falling back to the JS
+      // pipeline, perform the codegraph_version check here so a version
+      // bump still promotes to a full rebuild (#928).
+      if (ctx.incremental && !ctx.forceFullRebuild) {
+        const prevVersion = getBuildMeta(ctx.db, 'codegraph_version');
+        if (prevVersion && prevVersion !== CODEGRAPH_VERSION) {
+          info(
+            `Codegraph version changed (${prevVersion} → ${CODEGRAPH_VERSION}), promoting to full rebuild.`,
+          );
+          ctx.forceFullRebuild = true;
+        }
+      }
     }
 
     await runPipelineStages(ctx);
