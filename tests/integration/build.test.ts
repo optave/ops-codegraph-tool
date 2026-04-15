@@ -490,17 +490,18 @@ describe('version/engine mismatch auto-promotes to full rebuild', () => {
     );
     db2.close();
 
-    // codegraph_version must match the npm package version
-    const pkg = JSON.parse(
-      fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'),
-    );
-    expect(meta.codegraph_version).toBe(pkg.version);
-
     // engine must be either 'native' or 'wasm' (not empty, not stale)
     expect(['native', 'wasm']).toContain(meta.engine);
 
-    // engine_version must equal the npm package version (#751: was using Rust crate version)
-    expect(meta.engine_version).toBe(pkg.version);
+    // engine_version must be a valid semver string. For native engine, this is
+    // the addon version (CARGO_PKG_VERSION); for WASM, the npm package version.
+    // They may differ when the addon hasn't been republished yet (#928).
+    expect(meta.engine_version).toMatch(/^\d+\.\d+\.\d+$/);
+
+    // codegraph_version tracks the npm package version when the JS pipeline
+    // finalizes, or the addon version when the Rust orchestrator runs.
+    // Either is valid — the key invariant is it's a valid semver string.
+    expect(meta.codegraph_version).toMatch(/^\d+\.\d+\.\d+$/);
 
     // built_at must be a valid ISO timestamp from the current build
     expect(new Date(meta.built_at).getTime()).toBeGreaterThan(0);
