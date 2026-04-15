@@ -723,7 +723,11 @@ fn check_version_mismatch(conn: &Connection) -> bool {
             return true;
         }
     }
-    if let Some(prev_version) = get_meta("codegraph_version") {
+    // Compare against engine_version (the addon's own version), not
+    // codegraph_version (the npm package version). The JS post-processing
+    // overwrites codegraph_version with the npm version, which may differ
+    // from CARGO_PKG_VERSION — causing a perpetual full-rebuild loop (#928).
+    if let Some(prev_version) = get_meta("engine_version") {
         if prev_version != current_version {
             return true;
         }

@@ -82,11 +82,16 @@ function persistBuildMetadata(
   const useNativeDb = ctx.engineName === 'native' && !!ctx.nativeDb;
   if (!ctx.isFullBuild && ctx.allSymbols.size <= 3) return;
   try {
+    // engine_version must be the actual engine version (addon version for native,
+    // npm version for WASM) — not always CODEGRAPH_VERSION. The Rust orchestrator's
+    // check_version_mismatch compares engine_version against CARGO_PKG_VERSION,
+    // so writing the npm version here would cause perpetual full rebuilds (#928).
+    const engineVer = ctx.engineVersion || CODEGRAPH_VERSION;
     if (useNativeDb) {
       ctx.nativeDb!.setBuildMeta(
         Object.entries({
           engine: ctx.engineName,
-          engine_version: CODEGRAPH_VERSION,
+          engine_version: engineVer,
           codegraph_version: CODEGRAPH_VERSION,
           schema_version: String(ctx.schemaVersion),
           built_at: buildNow.toISOString(),
@@ -97,7 +102,7 @@ function persistBuildMetadata(
     } else {
       setBuildMeta(ctx.db, {
         engine: ctx.engineName,
-        engine_version: CODEGRAPH_VERSION,
+        engine_version: engineVer,
         codegraph_version: CODEGRAPH_VERSION,
         schema_version: String(ctx.schemaVersion),
         built_at: buildNow.toISOString(),

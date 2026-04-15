@@ -88,12 +88,20 @@ function checkEngineSchemaMismatch(ctx: PipelineContext): void {
     );
     ctx.forceFullRebuild = true;
   }
-  const prevVersion = meta('codegraph_version');
-  if (prevVersion && prevVersion !== CODEGRAPH_VERSION) {
-    info(
-      `Codegraph version changed (${prevVersion} → ${CODEGRAPH_VERSION}), promoting to full rebuild.`,
-    );
-    ctx.forceFullRebuild = true;
+  // When the native orchestrator is available, it handles its own version
+  // check (engine_version vs CARGO_PKG_VERSION). The JS-side codegraph_version
+  // may differ from the Rust addon version (npm 3.9.3 vs addon 3.9.2), so
+  // checking it here would force unnecessary full rebuilds and prevent the
+  // native orchestrator from ever running its fast incremental path (#928).
+  // Only check codegraph_version when falling through to the JS pipeline.
+  if (!ctx.nativeAvailable) {
+    const prevVersion = meta('codegraph_version');
+    if (prevVersion && prevVersion !== CODEGRAPH_VERSION) {
+      info(
+        `Codegraph version changed (${prevVersion} → ${CODEGRAPH_VERSION}), promoting to full rebuild.`,
+      );
+      ctx.forceFullRebuild = true;
+    }
   }
 }
 
@@ -630,15 +638,16 @@ async function tryNativeOrchestrator(
 
   const p = result.phases;
 
-  // Sync build_meta so JS-side version/engine checks work on next build.
+  // The Rust orchestrator already persists engine, engine_version,
+  // codegraph_version, node_count, edge_count, and last_build.
+  // Only write fields Rust doesn't set, plus built_at for JS callers.
+  // IMPORTANT: Do NOT overwrite codegraph_version here — Rust writes
+  // CARGO_PKG_VERSION and check_version_mismatch compares against it.
+  // Overwriting with CODEGRAPH_VERSION (npm version) when they differ
+  // causes a perpetual full-rebuild loop (#928).
   setBuildMeta(ctx.db, {
-    engine: ctx.engineName,
-    engine_version: ctx.engineVersion || '',
-    codegraph_version: CODEGRAPH_VERSION,
     schema_version: String(ctx.schemaVersion),
     built_at: new Date().toISOString(),
-    node_count: String(result.nodeCount ?? 0),
-    edge_count: String(result.edgeCount ?? 0),
   });
 
   info(
@@ -816,7 +825,19 @@ export async function buildGraph(
       if (nativeResult) return nativeResult;
     } catch (err) {
       warn(`Native build orchestrator failed, falling back to JS pipeline: ${toErrorMessage(err)}`);
-      // Fall through to JS pipeline
+      // The version gate in checkEngineSchemaMismatch was skipped because
+      // nativeAvailable was true. Now that we're falling back to the JS
+      // pipeline, perform the codegraph_version check here so a version
+      // bump still promotes to a full rebuild (#928).
+      if (ctx.incremental && !ctx.forceFullRebuild) {
+        const prevVersion = getBuildMeta(ctx.db, 'codegraph_version');
+        if (prevVersion && prevVersion !== CODEGRAPH_VERSION) {
+          info(
+            `Codegraph version changed (${prevVersion} → ${CODEGRAPH_VERSION}), promoting to full rebuild.`,
+          );
+          ctx.forceFullRebuild = true;
+        }
+      }
     }
 
     await runPipelineStages(ctx);
