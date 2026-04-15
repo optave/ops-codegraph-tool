@@ -20,8 +20,8 @@ import { forkWorker } from './lib/fork-engine.js';
 const MODEL_WORKER_KEY = '__BENCH_MODEL__';
 /**
  * Cap symbol count so CI stays under the per-model timeout.
- * At ~1500 symbols on a CPU-only runner, embed + search takes ~12-15 min
- * per model — well within the 45-min timeout with headroom to spare.
+ * At ~1500 symbols on a CPU-only runner, search evaluation takes ~5 min;
+ * embedding all DB symbols takes ~18 min — ~23 min total, within the 30-min timeout.
  */
 const MAX_SYMBOLS = 1500;
 
