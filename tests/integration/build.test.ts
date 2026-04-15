@@ -490,10 +490,6 @@ describe('version/engine mismatch auto-promotes to full rebuild', () => {
     );
     db2.close();
 
-    const pkg = JSON.parse(
-      fs.readFileSync(path.join(__dirname, '..', '..', 'package.json'), 'utf8'),
-    );
-
     // engine must be either 'native' or 'wasm' (not empty, not stale)
     expect(['native', 'wasm']).toContain(meta.engine);
 
