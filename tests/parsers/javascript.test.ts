@@ -260,10 +260,99 @@ describe('JavaScript parser', () => {
       expect(def.kind).toBe('function');
     });
 
-    it('does not extract event with named handler', () => {
+    it('does not extract event with named handler as definition', () => {
       const symbols = parseJS(`emitter.on('data', handleData);`);
       const defs = symbols.definitions.filter((d) => d.name.startsWith('event:'));
       expect(defs).toHaveLength(0);
+      // But we DO get a call edge to the named handler
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'handleData', dynamic: true }),
+      );
+    });
+
+    // Callback reference calls (named functions passed as arguments)
+    it('extracts named middleware in router.use()', () => {
+      const symbols = parseJS(`router.use(handleToken);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'handleToken', dynamic: true }),
+      );
+    });
+
+    it('extracts multiple named middleware arguments', () => {
+      const symbols = parseJS(`app.get('/api', authenticate, validate, handler);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'authenticate', dynamic: true }),
+      );
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'validate', dynamic: true }),
+      );
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'handler', dynamic: true }),
+      );
+    });
+
+    it('extracts member expression callbacks (auth.validate)', () => {
+      const symbols = parseJS(`app.use(auth.validate);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'validate', receiver: 'auth', dynamic: true }),
+      );
+    });
+
+    it('extracts callback in array methods (.map, .filter)', () => {
+      const symbols = parseJS(`items.map(transform);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'transform', dynamic: true }),
+      );
+    });
+
+    it('extracts callback in Promise .then/.catch', () => {
+      const symbols = parseJS(`promise.then(onSuccess).catch(onError);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'onSuccess', dynamic: true }),
+      );
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'onError', dynamic: true }),
+      );
+    });
+
+    it('does not create dynamic calls for string/number/object arguments', () => {
+      const symbols = parseJS(`app.get('/path', {key: 1}, [], 42);`);
+      const dynamicCalls = symbols.calls.filter((c) => c.dynamic);
+      expect(dynamicCalls).toHaveLength(0);
+    });
+
+    it('extracts callback in plain function calls like setTimeout', () => {
+      const symbols = parseJS(`setTimeout(tick, 1000);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'tick', dynamic: true }),
+      );
+    });
+
+    it('does not duplicate call for call-expression arguments', () => {
+      const symbols = parseJS(`router.use(checkPermissions(['admin']));`);
+      const cpCalls = symbols.calls.filter((c) => c.name === 'checkPermissions');
+      expect(cpCalls).toHaveLength(1);
+    });
+
+    // Destructured bindings
+    it('extracts definitions from destructured const bindings', () => {
+      const symbols = parseJS(`const { handleToken, checkPermissions } = initAuth(config);`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'handleToken', kind: 'function' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'checkPermissions', kind: 'function' }),
+      );
+    });
+
+    it('extracts definitions from exported destructured const bindings', () => {
+      const symbols = parseJS(`export const { handleToken, checkPermissions } = initAuth(config);`);
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'handleToken', kind: 'function' }),
+      );
+      expect(symbols.definitions).toContainEqual(
+        expect.objectContaining({ name: 'checkPermissions', kind: 'function' }),
+      );
     });
 
     // Line range verification

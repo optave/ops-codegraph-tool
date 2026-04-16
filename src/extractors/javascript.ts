@@ -274,14 +274,17 @@ function dispatchQueryMatch(
       name: c.callfn_name!.text,
       line: c.callfn_node.startPosition.row + 1,
     });
+    calls.push(...extractCallbackReferenceCalls(c.callfn_node));
   } else if (c.callmem_node) {
     const callInfo = extractCallInfo(c.callmem_fn!, c.callmem_node);
     if (callInfo) calls.push(callInfo);
     const cbDef = extractCallbackDefinition(c.callmem_node, c.callmem_fn);
     if (cbDef) definitions.push(cbDef);
+    calls.push(...extractCallbackReferenceCalls(c.callmem_node));
   } else if (c.callsub_node) {
     const callInfo = extractCallInfo(c.callsub_fn!, c.callsub_node);
     if (callInfo) calls.push(callInfo);
+    calls.push(...extractCallbackReferenceCalls(c.callsub_node));
   } else if (c.newfn_node) {
     calls.push({
       name: c.newfn_name!.text,
@@ -321,6 +324,9 @@ function extractSymbolsQuery(tree: TreeSitterTree, query: TreeSitterQuery): Extr
   // Extract typeMap from type annotations and new expressions
   extractTypeMapWalk(tree.rootNode, typeMap);
 
+  // Extract definitions from destructured bindings (query patterns don't match object_pattern)
+  extractDestructuredBindingsWalk(tree.rootNode, definitions);
+
   return { definitions, calls, imports, classes, exports: exps, typeMap };
 }
 
@@ -359,6 +365,45 @@ function extractConstantsWalk(node: TreeSitterNode, definitions: Definition[]): 
     // Recurse into non-function, non-export-statement children (blocks, if-statements, etc.)
     if (child.type !== 'export_statement') {
       extractConstantsWalk(child, definitions);
+    }
+  }
+}
+
+/**
+ * Walk the AST to find destructured const bindings (query patterns don't match object_pattern).
+ * e.g. `const { handleToken, checkPermissions } = initAuth(config)`
+ */
+function extractDestructuredBindingsWalk(node: TreeSitterNode, definitions: Definition[]): void {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    if (FUNCTION_SCOPE_TYPES.has(child.type)) continue;
+
+    let declNode = child;
+    if (child.type === 'export_statement') {
+      const inner = child.childForFieldName('declaration');
+      if (inner) declNode = inner;
+    }
+
+    const t = declNode.type;
+    if (t === 'lexical_declaration' || t === 'variable_declaration') {
+      for (let j = 0; j < declNode.childCount; j++) {
+        const declarator = declNode.child(j);
+        if (!declarator || declarator.type !== 'variable_declarator') continue;
+        const nameN = declarator.childForFieldName('name');
+        if (nameN && nameN.type === 'object_pattern') {
+          extractDestructuredBindings(
+            nameN,
+            declNode.startPosition.row + 1,
+            nodeEndLine(declNode),
+            definitions,
+          );
+        }
+      }
+    }
+
+    if (child.type !== 'export_statement') {
+      extractDestructuredBindingsWalk(child, definitions);
     }
   }
 }
@@ -637,6 +682,39 @@ function handleTypeAliasDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   }
 }
 
+/**
+ * Extract definitions from destructured object bindings.
+ * `const { handleToken, checkPermissions } = initAuth(...)` creates definitions
+ * for handleToken and checkPermissions so they can be resolved as call targets.
+ */
+function extractDestructuredBindings(
+  pattern: TreeSitterNode,
+  line: number,
+  endLine: number,
+  definitions: Definition[],
+): void {
+  for (let i = 0; i < pattern.childCount; i++) {
+    const child = pattern.child(i);
+    if (!child) continue;
+    if (
+      child.type === 'shorthand_property_identifier_pattern' ||
+      child.type === 'shorthand_property_identifier'
+    ) {
+      // { handleToken } — shorthand binding
+      definitions.push({ name: child.text, kind: 'function', line, endLine });
+    } else if (child.type === 'pair_pattern' || child.type === 'pair') {
+      // { original: renamed } — renamed binding, use the local alias
+      const value = child.childForFieldName('value');
+      if (
+        value &&
+        (value.type === 'identifier' || value.type === 'shorthand_property_identifier_pattern')
+      ) {
+        definitions.push({ name: value.text, kind: 'function', line, endLine });
+      }
+    }
+  }
+}
+
 function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const isConst = node.text.startsWith('const ');
   for (let i = 0; i < node.childCount; i++) {
@@ -667,6 +745,16 @@ function handleVariableDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
             line: node.startPosition.row + 1,
             endLine: nodeEndLine(node),
           });
+        } else if (nameN.type === 'object_pattern') {
+          // Destructured bindings: const { handleToken, checkPermissions } = initAuth(...)
+          // Each destructured property becomes a function definition so it can be
+          // resolved when passed as a callback (e.g. router.use(handleToken))
+          extractDestructuredBindings(
+            nameN,
+            node.startPosition.row + 1,
+            nodeEndLine(node),
+            ctx.definitions,
+          );
         }
       }
     }
@@ -715,6 +803,7 @@ function handleCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
       const cbDef = extractCallbackDefinition(node, fn);
       if (cbDef) ctx.definitions.push(cbDef);
     }
+    ctx.calls.push(...extractCallbackReferenceCalls(node));
   }
 }
 
@@ -1165,6 +1254,38 @@ function extractSubscriptCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode):
     }
   }
   return null;
+}
+
+/**
+ * Extract Call entries for named function references passed as arguments.
+ * e.g. `router.use(handleToken, checkAuth)` yields calls to handleToken and checkAuth.
+ * `app.use(auth.validate)` yields a call to validate with receiver auth.
+ * Skips literals, objects, arrays, anonymous functions, and call expressions (already handled).
+ */
+function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
+  const args = callNode.childForFieldName('arguments') || findChild(callNode, 'arguments');
+  if (!args) return [];
+
+  const result: Call[] = [];
+  const callLine = callNode.startPosition.row + 1;
+
+  for (let i = 0; i < args.childCount; i++) {
+    const child = args.child(i);
+    if (!child) continue;
+
+    if (child.type === 'identifier') {
+      result.push({ name: child.text, line: callLine, dynamic: true });
+    } else if (child.type === 'member_expression') {
+      const prop = child.childForFieldName('property');
+      const obj = child.childForFieldName('object');
+      if (prop) {
+        const receiver = extractReceiverName(obj);
+        result.push({ name: prop.text, line: callLine, dynamic: true, receiver });
+      }
+    }
+  }
+
+  return result;
 }
 
 function findAnonymousCallback(argsNode: TreeSitterNode): TreeSitterNode | null {
