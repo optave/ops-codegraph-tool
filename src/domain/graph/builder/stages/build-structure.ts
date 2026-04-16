@@ -174,13 +174,13 @@ function updateChangedFileMetrics(ctx: PipelineContext, changedFiles: string[]):
     SELECT COUNT(DISTINCT n_src.file) AS cnt FROM edges e
     JOIN nodes n_src ON e.source_id = n_src.id
     JOIN nodes n_tgt ON e.target_id = n_tgt.id
-    WHERE e.kind = 'imports' AND n_tgt.file = ? AND n_src.file != n_tgt.file
+    WHERE e.kind IN ('imports', 'imports-type') AND n_tgt.file = ? AND n_src.file != n_tgt.file
   `);
   const getFanOut = db.prepare(`
     SELECT COUNT(DISTINCT n_tgt.file) AS cnt FROM edges e
     JOIN nodes n_src ON e.source_id = n_src.id
     JOIN nodes n_tgt ON e.target_id = n_tgt.id
-    WHERE e.kind = 'imports' AND n_src.file = ? AND n_src.file != n_tgt.file
+    WHERE e.kind IN ('imports', 'imports-type') AND n_src.file = ? AND n_src.file != n_tgt.file
   `);
   const upsertMetric = db.prepare(`
     INSERT OR REPLACE INTO node_metrics
