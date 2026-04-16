@@ -63,6 +63,23 @@ export class PipelineContext {
   nodesByName!: Map<string, NodeRow[]>;
   nodesByNameAndFile!: Map<string, NodeRow[]>;
 
+  // ── Reverse-dep edge reconnection (set by detectChanges) ───────────
+  /**
+   * Edges from reverse-dep files to changed files, saved before purge so they
+   * can be reconnected to new node IDs after insertNodes (#932, #933).
+   * Eliminates the need to reparse reverse-dep files entirely.
+   */
+  savedReverseDepEdges: Array<{
+    sourceId: number;
+    tgtName: string;
+    tgtKind: string;
+    tgtFile: string;
+    tgtLine: number;
+    edgeKind: string;
+    confidence: number;
+    dynamic: number;
+  }> = [];
+
   // ── Misc state ─────────────────────────────────────────────────────
   hasEmbeddings: boolean = false;
   lineCountMap!: Map<string, number>;

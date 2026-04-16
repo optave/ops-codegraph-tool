@@ -374,23 +374,66 @@ function purgeAndAddReverseDeps(
     // Prefer NativeDatabase: purge + reverse-dep edge deletion in one transaction (#670)
     if (ctx.engineName === 'native' && ctx.nativeDb?.purgeFilesData) {
       ctx.nativeDb.purgeFilesData(filesToPurge, false, hasReverseDeps ? reverseDepList : undefined);
+      // Native path still reparses reverse-deps (works correctly with native edge builder)
+      for (const relPath of reverseDeps) {
+        const absPath = path.join(rootDir, relPath);
+        ctx.parseChanges.push({ file: absPath, relPath, _reverseDepOnly: true });
+      }
     } else {
+      // WASM/JS path: save edges from reverse-dep files → changed files BEFORE
+      // purge, then reconnect them to new node IDs after insertNodes (#932, #933).
+      //
+      // purgeFilesFromGraph deletes edges in BOTH directions for changed files,
+      // which already removes the reverse-dep → changed-file edges.  The old
+      // approach then over-deleted ALL outgoing edges from reverse-dep files and
+      // reparsed them to rebuild everything — expensive (87 extra parses) and
+      // lossy (442 missing edges due to imperfect resolution on rebuild).
+      //
+      // New approach: save the edge topology, let purge handle deletion, then
+      // reconnect using new node IDs.  No reparse needed.
+      if (hasReverseDeps && hasPurge) {
+        const saveEdgesStmt = db.prepare(`
+          SELECT e.source_id, n_tgt.name AS tgt_name, n_tgt.kind AS tgt_kind,
+                 n_tgt.file AS tgt_file, n_tgt.line AS tgt_line,
+                 e.kind AS edge_kind, e.confidence, e.dynamic
+          FROM edges e
+          JOIN nodes n_src ON e.source_id = n_src.id
+          JOIN nodes n_tgt ON e.target_id = n_tgt.id
+          WHERE n_tgt.file = ? AND n_src.file != n_tgt.file
+        `);
+        for (const changedPath of changePaths) {
+          for (const row of saveEdgesStmt.all(changedPath) as Array<{
+            source_id: number;
+            tgt_name: string;
+            tgt_kind: string;
+            tgt_file: string;
+            tgt_line: number;
+            edge_kind: string;
+            confidence: number;
+            dynamic: number;
+          }>) {
+            ctx.savedReverseDepEdges.push({
+              sourceId: row.source_id,
+              tgtName: row.tgt_name,
+              tgtKind: row.tgt_kind,
+              tgtFile: row.tgt_file,
+              tgtLine: row.tgt_line,
+              edgeKind: row.edge_kind,
+              confidence: row.confidence,
+              dynamic: row.dynamic,
+            });
+          }
+        }
+        debug(`Saved ${ctx.savedReverseDepEdges.length} reverse-dep edges for reconnection`);
+      }
+
       if (hasPurge) {
         purgeFilesFromGraph(db, filesToPurge, { purgeHashes: false });
       }
-      if (hasReverseDeps) {
-        const deleteOutgoingEdgesForFile = db.prepare(
-          'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
-        );
-        for (const relPath of reverseDepList) {
-          deleteOutgoingEdgesForFile.run(relPath);
-        }
-      }
+      // No outgoing-edge deletion for reverse-deps — purge already removed
+      // edges targeting the changed files, and other outgoing edges are valid.
+      // No reverse-deps added to parseChanges — no reparse needed.
     }
-  }
-  for (const relPath of reverseDeps) {
-    const absPath = path.join(rootDir, relPath);
-    ctx.parseChanges.push({ file: absPath, relPath, _reverseDepOnly: true });
   }
 }
 
