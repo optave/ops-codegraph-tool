@@ -372,7 +372,7 @@ mod tests {
     fn extracts_include() {
         let s = parse_c("#include <stdio.h>\n#include \"mylib.h\"");
         assert_eq!(s.imports.len(), 2);
-        assert_eq!(s.imports[0].path, "stdio.h");
+        assert_eq!(s.imports[0].source, "stdio.h");
         assert!(s.imports[0].c_include.unwrap());
     }
 
