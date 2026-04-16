@@ -699,6 +699,69 @@ function buildClassHierarchyEdges(
   }
 }
 
+// ── Reverse-dep edge reconnection (#932, #933) ─────────────────────────
+
+/**
+ * Reconnect edges that were saved before changed-file purge.
+ *
+ * Each saved edge records: sourceId (still valid — reverse-dep nodes were not
+ * purged) and target attributes (name, kind, file, line).  The target node was
+ * deleted and re-inserted with a new ID by insertNodes.  We look up the new ID
+ * by (name, kind, file) and re-create the edge.
+ */
+function reconnectReverseDepEdges(ctx: PipelineContext): void {
+  const { db } = ctx;
+  const findNodeStmt = db.prepare(
+    'SELECT id FROM nodes WHERE name = ? AND kind = ? AND file = ? ORDER BY ABS(line - ?) LIMIT 1',
+  );
+  const reconnectedRows: EdgeRowTuple[] = [];
+  let dropped = 0;
+
+  for (const saved of ctx.savedReverseDepEdges) {
+    const newTarget = findNodeStmt.get(
+      saved.tgtName,
+      saved.tgtKind,
+      saved.tgtFile,
+      saved.tgtLine,
+    ) as { id: number } | undefined;
+    if (newTarget) {
+      reconnectedRows.push([
+        saved.sourceId,
+        newTarget.id,
+        saved.edgeKind,
+        saved.confidence,
+        saved.dynamic,
+      ]);
+    } else {
+      // Target was removed or renamed in the changed file — edge is stale
+      dropped++;
+    }
+  }
+
+  if (reconnectedRows.length > 0) {
+    if (ctx.nativeDb?.bulkInsertEdges) {
+      const nativeEdges = reconnectedRows.map((r) => ({
+        sourceId: r[0],
+        targetId: r[1],
+        kind: r[2],
+        confidence: r[3],
+        dynamic: r[4],
+      }));
+      const ok = ctx.nativeDb.bulkInsertEdges(nativeEdges);
+      if (!ok) {
+        batchInsertEdges(db, reconnectedRows);
+      }
+    } else {
+      batchInsertEdges(db, reconnectedRows);
+    }
+  }
+
+  debug(
+    `Reconnected ${reconnectedRows.length} reverse-dep edges` +
+      (dropped > 0 ? ` (${dropped} dropped — targets removed/renamed)` : ''),
+  );
+}
+
 // ── Main entry point ────────────────────────────────────────────────────
 
 /**
@@ -798,10 +861,11 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       }
     }
 
-    // Skip native import-edge path for small incremental builds (≤3 files):
-    // napi-rs marshaling overhead exceeds computation savings.
+    // Skip native import-edge path for small incremental builds: napi-rs
+    // marshaling overhead (~13ms) exceeds Rust computation savings at this scale.
     const useNativeImportEdges =
-      native?.buildImportEdges && (ctx.isFullBuild || ctx.fileSymbols.size > 3);
+      native?.buildImportEdges &&
+      (ctx.isFullBuild || ctx.fileSymbols.size > ctx.config.build.smallFilesThreshold);
     if (useNativeImportEdges) {
       const beforeLen = allEdgeRows.length;
       buildImportEdgesNative(ctx, getNodeIdStmt, allEdgeRows, native!);
@@ -821,10 +885,11 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
     }
 
-    // Skip native call-edge path for small incremental builds (≤3 files):
-    // napi-rs marshaling overhead for allNodes exceeds computation savings.
+    // Skip native call-edge path for small incremental builds: napi-rs
+    // marshaling overhead for allNodes exceeds Rust computation savings.
     const useNativeCallEdges =
-      native?.buildCallEdges && (ctx.isFullBuild || ctx.fileSymbols.size > 3);
+      native?.buildCallEdges &&
+      (ctx.isFullBuild || ctx.fileSymbols.size > ctx.config.build.smallFilesThreshold);
     if (useNativeCallEdges) {
       buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodesBefore, native!);
     } else {
@@ -856,6 +921,15 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       debug('Native bulkInsertEdges failed — falling back to JS batchInsertEdges');
       batchInsertEdges(ctx.db, allEdgeRows);
     }
+  }
+
+  // Phase 3: Reconnect saved reverse-dep edges (#932, #933).
+  // When the WASM/JS path purged changed files, edges FROM reverse-dep files TO
+  // those files were deleted (target-side).  The reverse-dep files were NOT
+  // reparsed — instead we saved the edge topology before purge and now reconnect
+  // each edge to the new node IDs created by insertNodes.
+  if (ctx.savedReverseDepEdges.length > 0) {
+    reconnectReverseDepEdges(ctx);
   }
 
   ctx.timing.edgesMs = performance.now() - t0;

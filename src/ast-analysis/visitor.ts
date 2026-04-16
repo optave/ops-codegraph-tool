@@ -11,6 +11,7 @@
  * so individual visitors don't need to track traversal state themselves.
  */
 
+import { debug } from '../infrastructure/logger.js';
 import type {
   ScopeEntry,
   TreeSitterNode,
@@ -132,6 +133,16 @@ function dispatchExitFunction(
   }
 }
 
+/**
+ * Maximum AST depth before walk() bails out.  WASM-backed tree-sitter parsers
+ * have a smaller stack than native V8 (~64-256 KB).  Deep recursion in
+ * generated code, deeply nested object literals, or pathologically large
+ * switch statements can exhaust that stack, causing a V8 fatal error /
+ * segfault (#931).  500 levels is well beyond any realistic hand-written
+ * code while staying safely inside the WASM stack budget.
+ */
+const MAX_WALK_DEPTH = 500;
+
 /** Collect finish() results from all visitors into a name-keyed map. */
 function collectResults(visitors: Visitor[]): WalkResults {
   const results: WalkResults = {};
@@ -181,6 +192,10 @@ export function walkWithVisitors(
 
   function walk(node: TreeSitterNode | null, depth: number): void {
     if (!node) return;
+    if (depth > MAX_WALK_DEPTH) {
+      debug(`walkWithVisitors: AST depth limit (${MAX_WALK_DEPTH}) hit — subtree truncated`);
+      return;
+    }
 
     const type = node.type;
     const isFuncBoundary = allFuncTypes.has(type);
