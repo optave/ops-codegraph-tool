@@ -709,7 +709,7 @@ mod import_edge_tests {
         let resolved = vec![make_resolved("/root/src/app.ts", "./utils", "src/utils.ts")];
         let node_ids = vec![make_node_entry("src/app.ts", 1), make_node_entry("src/utils.ts", 2)];
 
-        let edges = build_import_edges(files, resolved, vec![], node_ids, vec![], "/root".to_string());
+        let edges = build_import_edges(files, resolved, vec![], node_ids, vec![], "/root".to_string(), None);
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].source_id, 1);
         assert_eq!(edges[0].target_id, 2);
@@ -725,7 +725,7 @@ mod import_edge_tests {
         let resolved = vec![make_resolved("/root/src/index.ts", "./utils", "src/utils.ts")];
         let node_ids = vec![make_node_entry("src/index.ts", 1), make_node_entry("src/utils.ts", 2)];
 
-        let edges = build_import_edges(files, resolved, vec![], node_ids, vec![], "/root".to_string());
+        let edges = build_import_edges(files, resolved, vec![], node_ids, vec![], "/root".to_string(), None);
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].kind, "reexports");
     }
@@ -738,7 +738,7 @@ mod import_edge_tests {
         let resolved = vec![make_resolved("/root/src/app.ts", "./types", "src/types.ts")];
         let node_ids = vec![make_node_entry("src/app.ts", 1), make_node_entry("src/types.ts", 2)];
 
-        let edges = build_import_edges(files, resolved, vec![], node_ids, vec![], "/root".to_string());
+        let edges = build_import_edges(files, resolved, vec![], node_ids, vec![], "/root".to_string(), None);
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].kind, "imports-type");
     }
@@ -751,7 +751,7 @@ mod import_edge_tests {
         let resolved = vec![make_resolved("/root/src/app.ts", "./lazy", "src/lazy.ts")];
         let node_ids = vec![make_node_entry("src/app.ts", 1), make_node_entry("src/lazy.ts", 2)];
 
-        let edges = build_import_edges(files, resolved, vec![], node_ids, vec![], "/root".to_string());
+        let edges = build_import_edges(files, resolved, vec![], node_ids, vec![], "/root".to_string(), None);
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].kind, "dynamic-imports");
     }
@@ -773,7 +773,7 @@ mod import_edge_tests {
             make_node_entry("src/b.ts", 3),
         ];
 
-        let edges = build_import_edges(vec![file], resolved, vec![], node_ids, vec![], "/root".to_string());
+        let edges = build_import_edges(vec![file], resolved, vec![], node_ids, vec![], "/root".to_string(), None);
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].kind, "reexports");
         assert_eq!(edges[0].target_id, 3);
@@ -804,7 +804,7 @@ mod import_edge_tests {
         ];
         let barrels = vec!["src/index.ts".to_string()];
 
-        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string());
+        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string(), None);
         assert_eq!(edges.len(), 2);
         // First: direct import to barrel
         assert_eq!(edges[0].target_id, 10);
@@ -851,7 +851,7 @@ mod import_edge_tests {
         ];
         let barrels = vec!["src/index.ts".to_string()];
 
-        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string());
+        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string(), None);
         assert_eq!(edges.len(), 2);
         assert_eq!(edges[1].target_id, 30);
         assert_eq!(edges[1].confidence, 0.9);
@@ -891,7 +891,7 @@ mod import_edge_tests {
         ];
         let barrels = vec!["src/a.ts".to_string()];
 
-        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string());
+        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string(), None);
         // Only the direct import edge, no barrel-through (cycle prevents resolution)
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].target_id, 10);
@@ -922,7 +922,7 @@ mod import_edge_tests {
         ];
         let barrels = vec!["src/barrel.ts".to_string()];
 
-        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string());
+        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string(), None);
         assert_eq!(edges.len(), 2);
         assert_eq!(edges[1].target_id, 20);
         assert_eq!(edges[1].confidence, 0.9);
@@ -954,7 +954,7 @@ mod import_edge_tests {
         ];
         let barrels = vec!["src/barrel.ts".to_string()];
 
-        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string());
+        let edges = build_import_edges(files, resolved, reexports, node_ids, barrels, "/root".to_string(), None);
         // 1 direct import + 1 barrel-through (deduped, not 2)
         assert_eq!(edges.len(), 2);
     }
