@@ -186,8 +186,8 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
           REPO_FULL_NAME: ${{ github.repository }}
         run: |
-          PR_DATA=$(gh pr view "${PR_NUMBER}" --repo "${REPO_FULL_NAME}" --json headRefName,headRepository)
-          HEAD_REPO=$(echo "${PR_DATA}" | jq -r '.headRepository.owner.login + "/" + .headRepository.name')
+          PR_DATA=$(gh pr view "${PR_NUMBER}" --repo "${REPO_FULL_NAME}" --json headRefName,headRepository,headRepositoryOwner)
+          HEAD_REPO=$(echo "${PR_DATA}" | jq -r '.headRepositoryOwner.login + "/" + .headRepository.name')
           HEAD_REF=$(echo "${PR_DATA}" | jq -r '.headRefName')
           for i in 1 2 3; do
             if git ls-remote --exit-code "https://github.com/${HEAD_REPO}.git" "refs/heads/${HEAD_REF}" >/dev/null 2>&1; then
