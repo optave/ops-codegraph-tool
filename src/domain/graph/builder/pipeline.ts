@@ -133,38 +133,15 @@ function setupPipeline(ctx: PipelineContext): void {
   const native = enginePref !== 'wasm' ? loadNative() : null;
   ctx.nativeAvailable = !!native?.NativeDatabase;
 
-  // When native is available, use a NativeDbProxy backed by a single rusqlite
-  // connection. This eliminates the dual-connection WAL corruption problem.
-  // The Rust orchestrator handles the full pipeline; the proxy is used for any
-  // JS post-processing (e.g. structure fallback on large builds).
-  if (ctx.nativeAvailable && native?.NativeDatabase) {
-    try {
-      const dir = path.dirname(ctx.dbPath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      acquireAdvisoryLock(ctx.dbPath);
-      ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
-      ctx.nativeDb.initSchema();
-      const proxy = new NativeDbProxy(ctx.nativeDb);
-      proxy.__lockPath = `${ctx.dbPath}.lock`;
-      ctx.db = proxy as unknown as typeof ctx.db;
-      ctx.nativeFirstProxy = true;
-    } catch (err) {
-      warn(`NativeDatabase setup failed, falling back to better-sqlite3: ${toErrorMessage(err)}`);
-      try {
-        ctx.nativeDb?.close();
-      } catch {
-        /* ignore */
-      }
-      ctx.nativeDb = undefined;
-      ctx.nativeFirstProxy = false;
-      releaseAdvisoryLock(`${ctx.dbPath}.lock`);
-      ctx.db = openDb(ctx.dbPath);
-      initSchema(ctx.db);
-    }
-  } else {
-    ctx.db = openDb(ctx.dbPath);
-    initSchema(ctx.db);
-  }
+  // Always use better-sqlite3 for setup — it's cheap (~4ms) and only needed
+  // for metadata reads (schema mismatch check). NativeDatabase.openReadWrite
+  // is deferred to tryNativeOrchestrator, saving ~60ms on incremental builds
+  // where the Rust orchestrator handles the full pipeline, and avoiding the
+  // cost entirely on no-op builds that exit before reaching the orchestrator.
+  const dir = path.dirname(ctx.dbPath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  ctx.db = openDb(ctx.dbPath);
+  initSchema(ctx.db);
 
   ctx.config = loadConfig(ctx.rootDir);
   ctx.incremental =
@@ -591,15 +568,24 @@ async function tryNativeOrchestrator(
     return undefined;
   }
 
-  // In native-first mode, nativeDb is already open from setupPipeline.
-  // Otherwise, open it on demand (deferred to skip overhead on no-op rebuilds).
+  // Open NativeDatabase on demand — deferred from setupPipeline to skip the
+  // ~60ms cost on no-op/early-exit builds. Close the better-sqlite3 connection
+  // first to avoid dual-connection WAL corruption.
   if (!ctx.nativeDb && ctx.nativeAvailable) {
     const native = loadNative();
     if (native?.NativeDatabase) {
       try {
+        // Close better-sqlite3 before opening rusqlite to avoid WAL conflicts
+        ctx.db.close();
+        acquireAdvisoryLock(ctx.dbPath);
         ctx.nativeDb = native.NativeDatabase.openReadWrite(ctx.dbPath);
         ctx.nativeDb.initSchema();
-        ctx.nativeDb.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+        // Replace ctx.db with a NativeDbProxy so post-native JS fallback
+        // (structure, analysis) can use it without reopening better-sqlite3.
+        const proxy = new NativeDbProxy(ctx.nativeDb);
+        proxy.__lockPath = `${ctx.dbPath}.lock`;
+        ctx.db = proxy as unknown as typeof ctx.db;
+        ctx.nativeFirstProxy = true;
       } catch (err) {
         warn(`NativeDatabase setup failed, falling back to JS: ${toErrorMessage(err)}`);
         try {
@@ -608,6 +594,10 @@ async function tryNativeOrchestrator(
           debug(`tryNativeOrchestrator: close failed during fallback: ${toErrorMessage(e)}`);
         }
         ctx.nativeDb = undefined;
+        ctx.nativeFirstProxy = false;
+        releaseAdvisoryLock(`${ctx.dbPath}.lock`);
+        // Reopen better-sqlite3 for JS pipeline fallback
+        ctx.db = openDb(ctx.dbPath);
       }
     }
   }
