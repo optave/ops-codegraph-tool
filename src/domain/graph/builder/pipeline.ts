@@ -783,6 +783,23 @@ async function runPipelineStages(ctx: PipelineContext): Promise<void> {
 
   await runAnalyses(ctx);
 
+  // Release WASM trees deterministically on the success path — same cleanup
+  // as the error-path catch block.  Without this, trees stay allocated until
+  // GC collects ctx, holding WASM memory for the rest of the build (#931).
+  if (ctx.allSymbols?.size > 0) {
+    for (const [, symbols] of ctx.allSymbols) {
+      const tree = symbols._tree as { delete?: () => void } | undefined;
+      if (tree && typeof tree.delete === 'function') {
+        try {
+          tree.delete();
+        } catch {
+          /* ignore cleanup errors */
+        }
+      }
+      symbols._tree = undefined;
+    }
+  }
+
   // Flush Rust WAL writes (AST, complexity, CFG, dataflow) so the JS
   // connection and any post-build readers can see them.  One TRUNCATE
   // here replaces the N per-feature resumeJsDb checkpoints (#checkpoint-opt).

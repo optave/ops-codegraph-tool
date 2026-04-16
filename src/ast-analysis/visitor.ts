@@ -11,6 +11,7 @@
  * so individual visitors don't need to track traversal state themselves.
  */
 
+import { debug } from '../infrastructure/logger.js';
 import type {
   ScopeEntry,
   TreeSitterNode,
@@ -190,7 +191,11 @@ export function walkWithVisitors(
   const skipDepths = new Map<number, number>();
 
   function walk(node: TreeSitterNode | null, depth: number): void {
-    if (!node || depth > MAX_WALK_DEPTH) return;
+    if (!node) return;
+    if (depth > MAX_WALK_DEPTH) {
+      debug(`walkWithVisitors: AST depth limit (${MAX_WALK_DEPTH}) hit — subtree truncated`);
+      return;
+    }
 
     const type = node.type;
     const isFuncBoundary = allFuncTypes.has(type);

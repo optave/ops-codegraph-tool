@@ -392,10 +392,12 @@ function purgeAndAddReverseDeps(
       // New approach: save the edge topology, let purge handle deletion, then
       // reconnect using new node IDs.  No reparse needed.
       if (hasReverseDeps && hasPurge) {
+        const changePathSet = new Set(changePaths);
         const saveEdgesStmt = db.prepare(`
           SELECT e.source_id, n_tgt.name AS tgt_name, n_tgt.kind AS tgt_kind,
                  n_tgt.file AS tgt_file, n_tgt.line AS tgt_line,
-                 e.kind AS edge_kind, e.confidence, e.dynamic
+                 e.kind AS edge_kind, e.confidence, e.dynamic,
+                 n_src.file AS src_file
           FROM edges e
           JOIN nodes n_src ON e.source_id = n_src.id
           JOIN nodes n_tgt ON e.target_id = n_tgt.id
@@ -411,7 +413,11 @@ function purgeAndAddReverseDeps(
             edge_kind: string;
             confidence: number;
             dynamic: number;
+            src_file: string;
           }>) {
+            // Skip edges whose source is also being purged — buildEdges will
+            // re-create them with correct new IDs.
+            if (changePathSet.has(row.src_file)) continue;
             ctx.savedReverseDepEdges.push({
               sourceId: row.source_id,
               tgtName: row.tgt_name,
