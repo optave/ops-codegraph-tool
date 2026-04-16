@@ -589,6 +589,25 @@ fn compute_file_metrics(
         }
     }
 
+    // Batch-load import counts per file from DB (distinct imported files,
+    // matching the fast-path semantics in update_changed_file_metrics)
+    let mut import_counts: HashMap<String, i64> = HashMap::new();
+    if let Ok(mut stmt) = tx.prepare(
+        "SELECT n1.file, COUNT(DISTINCT n2.file) FROM edges e \
+         JOIN nodes n1 ON e.source_id = n1.id \
+         JOIN nodes n2 ON e.target_id = n2.id \
+         WHERE e.kind = 'imports' \
+         GROUP BY n1.file",
+    ) {
+        if let Ok(rows) = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        }) {
+            for row in rows.flatten() {
+                import_counts.insert(row.0, row.1);
+            }
+        }
+    }
+
     {
         let mut upsert = match tx.prepare(
             "INSERT OR REPLACE INTO node_metrics \
@@ -607,7 +626,7 @@ fn compute_file_metrics(
 
             let line_count = line_count_map.get(rel_path).copied().unwrap_or(0);
             let symbol_count = symbol_counts.get(rel_path).copied().unwrap_or(0);
-            let import_count = symbols.imports.len() as i64;
+            let import_count = import_counts.get(rel_path).copied().unwrap_or(0);
             let export_count = symbols.exports.len() as i64;
             let fan_in = fan_in_map.get(rel_path).copied().unwrap_or(0);
             let fan_out = fan_out_map.get(rel_path).copied().unwrap_or(0);
