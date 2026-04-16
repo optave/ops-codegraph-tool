@@ -72,11 +72,6 @@ pub struct BuildPipelineResult {
     pub changed_count: usize,
     pub removed_count: usize,
     pub is_full_build: bool,
-    /// Full set of changed files including reverse-dep files. Used by the JS
-    /// structure fallback path so it can update metrics for files whose edges
-    /// changed even though their content didn't. `None` for full builds.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub structure_scope: Option<Vec<String>>,
     /// Whether the Rust pipeline handled the structure phase (directory nodes,
     /// contains edges, file and directory metrics). Always true — the Rust
     /// pipeline handles both the small-incremental fast path and full builds.
@@ -180,7 +175,6 @@ pub fn run_pipeline(
             changed_count: 0,
             removed_count: 0,
             is_full_build: false,
-            structure_scope: Some(vec![]),
             structure_handled: true,
             analysis_complete: true,
         });
@@ -499,7 +493,6 @@ pub fn run_pipeline(
         changed_count: parse_changes.len(),
         removed_count: change_result.removed.len(),
         is_full_build: change_result.is_full_build,
-        structure_scope: changed_file_list.clone(),
         structure_handled: true,
         analysis_complete: do_analysis && analysis_ok,
     })
