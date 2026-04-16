@@ -357,6 +357,27 @@ fn insert_directory_nodes(conn: &Connection, all_dirs: &HashSet<String>) {
     let _ = tx.commit();
 }
 
+/// Load all child directory paths from the DB whose parent is in the given set.
+/// Used during incremental builds to ensure unchanged sibling subdirectories
+/// retain their parent→child containment edges after cleanup.
+fn load_child_dirs_in_affected(conn: &Connection, affected_dirs: &HashSet<String>) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut stmt = match conn.prepare("SELECT name FROM nodes WHERE kind = 'directory'") {
+        Ok(s) => s,
+        Err(_) => return result,
+    };
+    if let Ok(rows) = stmt.query_map([], |row| row.get::<_, String>(0)) {
+        for row in rows.flatten() {
+            if let Some(parent) = parent_dir(&row) {
+                if affected_dirs.contains(&parent) {
+                    result.push(row);
+                }
+            }
+        }
+    }
+    result
+}
+
 /// Load all file paths from the DB that reside in the given directories.
 /// Used during incremental builds to ensure unchanged files in affected
 /// directories retain their dir→file containment edges after cleanup.
@@ -467,6 +488,30 @@ fn insert_contains_edges(
                 None => continue,
             };
             let _ = stmt.execute(rusqlite::params![parent_id, child_id]);
+        }
+
+        // Restore dir→dir edges for unchanged sibling subdirectories that
+        // were cleaned up but aren't in all_dirs (no changed file under them).
+        if let Some(ref ad) = affected_dirs {
+            let db_child_dirs = load_child_dirs_in_affected(&tx, ad);
+            for child_dir in &db_child_dirs {
+                if all_dirs.contains(child_dir.as_str()) {
+                    continue; // already handled above
+                }
+                let parent = match parent_dir(child_dir) {
+                    Some(p) => p,
+                    None => continue,
+                };
+                if !ad.contains(&parent) {
+                    continue;
+                }
+                if let (Some(p_id), Some(c_id)) = (
+                    get_node_id(&tx, &parent, "directory", &parent, 0),
+                    get_node_id(&tx, child_dir, "directory", child_dir, 0),
+                ) {
+                    let _ = stmt.execute(rusqlite::params![p_id, c_id]);
+                }
+            }
         }
     }
     let _ = tx.commit();
