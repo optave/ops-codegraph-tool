@@ -372,7 +372,7 @@ mod tests {
     fn extracts_import() {
         let s = parse_swift("import Foundation");
         assert_eq!(s.imports.len(), 1);
-        assert_eq!(s.imports[0].path, "Foundation");
+        assert_eq!(s.imports[0].source, "Foundation");
         assert!(s.imports[0].swift_import.unwrap());
     }
 }

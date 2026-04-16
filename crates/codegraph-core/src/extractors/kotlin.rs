@@ -387,7 +387,7 @@ mod tests {
     fn extracts_import() {
         let s = parse_kotlin("import com.example.Foo");
         assert_eq!(s.imports.len(), 1);
-        assert_eq!(s.imports[0].path, "com.example.Foo");
+        assert_eq!(s.imports[0].source, "com.example.Foo");
         assert!(s.imports[0].kotlin_import.unwrap());
     }
 

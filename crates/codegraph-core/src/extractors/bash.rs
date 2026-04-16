@@ -106,7 +106,7 @@ mod tests {
     fn extracts_source_import() {
         let s = parse_bash("source ./utils.sh");
         assert_eq!(s.imports.len(), 1);
-        assert_eq!(s.imports[0].path, "./utils.sh");
+        assert_eq!(s.imports[0].source, "./utils.sh");
         assert!(s.imports[0].bash_source.unwrap());
     }
 

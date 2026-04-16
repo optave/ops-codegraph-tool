@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > **Never document bugs as expected behavior.** If two engines (native vs WASM) produce different results, that is a bug in the less-accurate engine — not an acceptable "parity gap." Adding comments or tests that frame wrong output as "expected" blocks future agents from ever fixing it. Instead: identify the root cause, file an issue, and fix the extraction/resolution layer that produces incorrect results. The correct response to "engine A reports 8 cycles, engine B reports 11" is to fix the 3 false cycles in engine B, not to document why the difference is okay.
 
+> **Never silently skip verification.** If tests, builds, or any verification step cannot run or fails for any reason (compilation errors, platform issues, missing dependencies), STOP and report the issue to the user immediately. Never silently proceed with unverified changes. Let the user decide whether to proceed — do not make that decision yourself.
+
 ## Codegraph Workflow
 
 Hooks handle: file-level deps on reads, graph rebuild after edits, commit-time checks (cycles, dead exports, diff-impact, lint). **Use these for function-level understanding when modifying source code:**
