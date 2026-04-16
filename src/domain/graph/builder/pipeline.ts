@@ -269,8 +269,6 @@ interface NativeOrchestratorResult {
   changedCount?: number;
   removedCount?: number;
   isFullBuild?: boolean;
-  /** Full changed files including reverse-dep files — used by JS structure fallback. */
-  structureScope?: string[];
   /** Whether the Rust pipeline handled the structure phase (small-incremental fast path). */
   structureHandled?: boolean;
   /** Whether the Rust pipeline wrote AST/complexity/CFG/dataflow to DB. */
@@ -697,7 +695,7 @@ async function tryNativeOrchestrator(
         ctx,
         fileSymbols,
         !!result.isFullBuild,
-        result.structureScope ?? result.changedFiles,
+        result.changedFiles,
       );
     }
 
