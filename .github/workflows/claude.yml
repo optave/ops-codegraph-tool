@@ -28,16 +28,16 @@ jobs:
       - name: Verify PR branch is fetchable
         env:
           GH_TOKEN: ${{ github.token }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          HEAD_REPO="${{ github.event.pull_request.head.repo.full_name }}"
-          HEAD_REF="${{ github.event.pull_request.head.ref }}"
           for i in 1 2 3; do
             if git ls-remote --exit-code "https://github.com/${HEAD_REPO}.git" "refs/heads/${HEAD_REF}" >/dev/null 2>&1; then
               echo "Branch ${HEAD_REPO}:${HEAD_REF} verified on attempt ${i}"
               exit 0
             fi
             echo "::warning::Branch not reachable (attempt ${i}/3), retrying in 10s..."
-            sleep 10
+            if [ "${i}" -lt 3 ]; then sleep 10; fi
           done
           echo "::error::PR branch ${HEAD_REPO}:${HEAD_REF} not reachable after 3 attempts — fork may be deleted or branch in transient state"
           exit 1
@@ -183,9 +183,10 @@ jobs:
         if: github.event.issue.pull_request
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          REPO_FULL_NAME: ${{ github.repository }}
         run: |
-          PR_NUMBER="${{ github.event.issue.number }}"
-          PR_DATA=$(gh pr view "${PR_NUMBER}" --repo "${{ github.repository }}" --json headRefName,headRepository)
+          PR_DATA=$(gh pr view "${PR_NUMBER}" --repo "${REPO_FULL_NAME}" --json headRefName,headRepository)
           HEAD_REPO=$(echo "${PR_DATA}" | jq -r '.headRepository.owner.login + "/" + .headRepository.name')
           HEAD_REF=$(echo "${PR_DATA}" | jq -r '.headRefName')
           for i in 1 2 3; do
@@ -194,7 +195,7 @@ jobs:
               exit 0
             fi
             echo "::warning::Branch not reachable (attempt ${i}/3), retrying in 10s..."
-            sleep 10
+            if [ "${i}" -lt 3 ]; then sleep 10; fi
           done
           echo "::error::PR branch ${HEAD_REPO}:${HEAD_REF} not reachable after 3 attempts — fork may be deleted or branch in transient state"
           exit 1
