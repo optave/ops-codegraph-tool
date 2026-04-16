@@ -798,10 +798,11 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       }
     }
 
-    // Skip native import-edge path for small incremental builds (≤3 files):
-    // napi-rs marshaling overhead exceeds computation savings.
+    // Skip native import-edge path for small incremental builds: napi-rs
+    // marshaling overhead (~13ms) exceeds Rust computation savings at this scale.
     const useNativeImportEdges =
-      native?.buildImportEdges && (ctx.isFullBuild || ctx.fileSymbols.size > 3);
+      native?.buildImportEdges &&
+      (ctx.isFullBuild || ctx.fileSymbols.size > ctx.config.build.smallFilesThreshold);
     if (useNativeImportEdges) {
       const beforeLen = allEdgeRows.length;
       buildImportEdgesNative(ctx, getNodeIdStmt, allEdgeRows, native!);
@@ -821,10 +822,11 @@ export async function buildEdges(ctx: PipelineContext): Promise<void> {
       buildImportEdges(ctx, getNodeIdStmt, allEdgeRows);
     }
 
-    // Skip native call-edge path for small incremental builds (≤3 files):
-    // napi-rs marshaling overhead for allNodes exceeds computation savings.
+    // Skip native call-edge path for small incremental builds: napi-rs
+    // marshaling overhead for allNodes exceeds Rust computation savings.
     const useNativeCallEdges =
-      native?.buildCallEdges && (ctx.isFullBuild || ctx.fileSymbols.size > 3);
+      native?.buildCallEdges &&
+      (ctx.isFullBuild || ctx.fileSymbols.size > ctx.config.build.smallFilesThreshold);
     if (useNativeCallEdges) {
       buildCallEdgesNative(ctx, getNodeIdStmt, allEdgeRows, allNodesBefore, native!);
     } else {
