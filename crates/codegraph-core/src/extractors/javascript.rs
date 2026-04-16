@@ -304,12 +304,13 @@ fn handle_var_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 }
 
 fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    if let Some(fn_node) = node.child_by_field_name("function") {
-        if fn_node.kind() == "import" {
-            handle_dynamic_import(node, &fn_node, source, symbols);
-        } else if let Some(call_info) = extract_call_info(&fn_node, node, source) {
-            symbols.calls.push(call_info);
-        }
+    let Some(fn_node) = node.child_by_field_name("function") else { return };
+    if fn_node.kind() == "import" {
+        handle_dynamic_import(node, &fn_node, source, symbols);
+        return;
+    }
+    if let Some(call_info) = extract_call_info(&fn_node, node, source) {
+        symbols.calls.push(call_info);
     }
     if let Some(cb_def) = extract_callback_definition(node, source) {
         symbols.definitions.push(cb_def);
@@ -1718,6 +1719,19 @@ mod tests {
         let s = parse_js("router.use(checkPermissions(['admin']));");
         let cp_calls: Vec<_> = s.calls.iter().filter(|c| c.name == "checkPermissions").collect();
         assert_eq!(cp_calls.len(), 1);
+    }
+
+    #[test]
+    fn no_dynamic_call_for_dynamic_import_arg() {
+        // Parity with TS walk path: callback-reference extraction must be skipped
+        // when the call is a dynamic `import()`. Otherwise `import(modulePath)`
+        // would emit a spurious dynamic call to `modulePath`.
+        let s = parse_js("const mod = await import(modulePath);");
+        let dyn_calls: Vec<_> = s.calls.iter().filter(|c| c.dynamic == Some(true)).collect();
+        assert!(
+            !dyn_calls.iter().any(|c| c.name == "modulePath"),
+            "import() argument must not be emitted as a dynamic call"
+        );
     }
 
     #[test]
