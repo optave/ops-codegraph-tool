@@ -43,29 +43,61 @@ Run these in parallel:
 
 If `$ARGUMENTS` is empty or blank, determine the semver bump from the commits gathered in Step 1a.
 
-Scan **every commit message** between the last tag and HEAD. Apply these rules in priority order:
+**The conventional commit prefix (`feat:`, `fix:`, `perf:`, etc.) is a hint, not the verdict.** Contributors frequently use `feat(scope):` for internal refactors, perf improvements, or extractor/engine accuracy fixes that don't actually add any user-facing feature. The version bump is determined by **what users observe**, not by the commit prefix.
+
+### The real test for a minor bump
+
+A commit only counts as **minor** if a user running codegraph could observe a genuinely new capability — specifically, one of:
+
+1. **A new CLI command** (new top-level subcommand registered in `cli.ts`)
+2. **A new CLI flag** on an existing command that unlocks behavior previously unavailable
+3. **A new MCP tool** (new entry in the MCP tool list)
+4. **A new output format / field** (new JSON schema field, new export format, new column in table output)
+5. **A new configuration option** (new `.codegraphrc.json` field that changes behavior)
+6. **A new public programmatic API export** from `index.ts`
+
+Things that are **NOT minor bumps** even if prefixed `feat:`:
+- Extractor/parser accuracy improvements ("resolve named function references", "track class instantiation") — these make existing queries more accurate but add no new CLI surface. Classify as **Bug Fixes** in the CHANGELOG.
+- Native/engine performance refactors ("port X to Rust", "move Y to native") — these are perf improvements. Classify as **Performance**.
+- Internal plumbing changes (build pipeline, DB schema migrations, cache tuning) — patch.
+
+### Decision procedure
+
+Scan every commit between the last tag and HEAD. For each `feat:` or `feat(scope):` commit:
+
+1. Read the PR body (`gh pr view <N> --json title,body`) or the commit body
+2. Ask: *does this add a new command, flag, MCP tool, output format, config option, or public API export that didn't exist before?*
+3. If yes → counts toward minor
+4. If no → treat as patch (and re-categorize in the CHANGELOG: accuracy → Bug Fixes, speed → Performance, internals → Chores)
+
+Apply these rules in priority order:
 
 | Condition | Bump |
 |-----------|------|
-| Any commit has a `BREAKING CHANGE:` or `BREAKING-CHANGE:` footer, **or** uses the `!` suffix (e.g. `feat!:`, `fix!:`, `refactor!:`) | **major** |
-| Any `feat:` commit **or** any `feat(scope):` where the scope is **not** in the internal list below | **minor** |
-| Everything else (`fix:`, `refactor:`, `perf:`, `chore:`, `docs:`, `test:`, `ci:`, etc.) | **patch** |
-
-**Internal scopes — treat as patch, not minor:** The following scopes represent internal developer tooling and infrastructure, not user-facing features. A `feat:` commit with one of these scopes counts as a **patch**, not a minor bump:
-
-`architect`, `bench`, `ci`, `claude`, `deps-audit`, `dogfood`, `hooks`, `housekeep`, `release`, `security`, `skills`, `sweep`, `test-health`, `titan`
-
-For example, `feat(titan): first full pipeline run` is internal tooling — patch. But `feat(cfg): control-flow graph generation` is user-facing — minor.
+| Any commit has a `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer, or uses `!` suffix (`feat!:`, `fix!:`, etc.) | **major** |
+| Any `feat:` commit passes the "real test" above (adds new CLI command/flag/MCP tool/output field/config/public API export) | **minor** |
+| Everything else — including `feat:` commits that are really accuracy fixes, perf refactors, or internal plumbing | **patch** |
 
 Given the current version `MAJOR.MINOR.PATCH` from `package.json`, compute the new version:
 - **major** → `(MAJOR+1).0.0`
 - **minor** → `MAJOR.(MINOR+1).0`
 - **patch** → `MAJOR.MINOR.(PATCH+1)`
 
-Print the detected bump reason and the resolved version, e.g.:
-> Detected **minor** bump (found `feat:` commits). Version: 3.1.0 → **3.2.0**
+### Before committing to the bump
 
-> Detected **patch** bump (all `feat` commits use internal scopes: `titan`, `skills`). Version: 3.4.0 → **3.4.1**
+When the detection lands on **minor**, state the specific new CLI surface before proceeding — e.g.:
+
+> Detected **minor** bump. New user-facing surface:
+> - New CLI command: `codegraph trends` ([#920](...))
+> - New `--architecture` flag on `codegraph check` ([#925](...))
+>
+> Version: 3.9.3 → **3.10.0**
+
+If you cannot name a specific new command/flag/tool/output/config/public API export, the bump is **patch**, not minor. Example:
+
+> Detected **patch** bump. The `feat(js-extractor)` commit ([#947](...)) is an extractor accuracy improvement — it adds edges but no new CLI surface. The `feat(native)` commit ([#937](...)) is a perf refactor — no new commands or flags. Both belong under Bug Fixes / Performance in the CHANGELOG.
+>
+> Version: 3.9.3 → **3.9.4**
 
 Use the resolved version as `VERSION` for all subsequent steps.
 
