@@ -1,6 +1,6 @@
 # Codegraph Roadmap
 
-> **Current version:** 3.9.3 | **Status:** Active development | **Updated:** 2026-04-12
+> **Current version:** 3.9.4 | **Status:** Active development | **Updated:** 2026-04-17
 
 Codegraph is a strong local-first code graph CLI. This roadmap describes planned improvements across fourteen phases -- closing gaps with commercial code intelligence platforms while preserving codegraph's core strengths: fully local, open source, zero cloud dependency by default.
 
@@ -1424,6 +1424,10 @@ Extend type tracking beyond single-function scope. Currently, type information f
 Implement a lightweight field-based points-to analysis inspired by [ACG](https://arxiv.org/abs/2405.07206) and [Jelly](https://github.com/cs-au-dk/jelly). This resolves higher-order function calls (callbacks, event handlers, strategy patterns) that syntactic analysis completely misses.
 
 **What it solves:** When `app.use(authMiddleware)` or `events.on('click', handler)` passes a function reference, the current extractor sees only a variable name — not the function it points to. Points-to analysis tracks what values flow into function-typed variables.
+
+**Progress (v3.9.4):**
+- ✅ Lightweight name-based callback resolution for JS/TS — identifier and member_expression arguments of call expressions emit dynamic call edges; destructured bindings from factory calls emit function definitions so the edge resolver can match them as call targets ([#947](https://github.com/optave/ops-codegraph-tool/pull/947))
+- 🔲 Full points-to analysis with allocation-site abstraction and constraint solver (the proper Phase 8.3 deliverable — the v3.9.4 heuristic covers the common named-reference case but misses function literals, method references, and cross-module flows)
 
 **Approach:**
 - **Field-based** (not field-sensitive): treat all instances of `obj.field` as the same abstract location regardless of which `obj` instance. This is the sweet spot between precision and scalability — ACG achieves 99% precision with this approach

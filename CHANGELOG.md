@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.9.4](https://github.com/optave/ops-codegraph-tool/compare/v3.9.3...v3.9.4) (2026-04-17)
+
+**Resolution accuracy and incremental-build reliability.** The JS/TS extractor now resolves named function references passed as callback arguments — Express middleware, event handlers, `Array.map`/`.filter`/`.then` callbacks, and destructured handler bindings are tracked as real call edges instead of appearing as dead code. On a 1 895-file TypeScript monorepo this surfaced 21 previously-invisible callers of a single auth middleware. A version-mismatch bug that silently forced every native incremental build into a full 5.8s rebuild is fixed — no-op rebuilds now exit in ~200ms. Three WASM incremental-build bugs are also fixed: edge loss during reverse-dep purges, unnecessary reparses, and a V8 crash during GC of orphaned WASM trees. Fan-in/out and import counts are now consistent between full and incremental build paths.
+
+### Bug Fixes
+
+* **js-extractor:** resolve named function references passed as arguments — middleware, callback, and handler references emit dynamic call edges; destructured bindings from factory calls emit function definitions, eliminating false "dead-unresolved" results for functions passed by reference ([#947](https://github.com/optave/ops-codegraph-tool/pull/947))
+* **wasm:** resolve incremental edge loss, unnecessary reparses, and V8 crash — save-and-reconnect approach preserves edges without reparsing reverse-dep files; error-path tree cleanup prevents GC crashes ([#938](https://github.com/optave/ops-codegraph-tool/pull/938))
+* **native:** resolve version-mismatch that broke incremental builds — no-op rebuild dropped from 5.8s to 214ms ([#928](https://github.com/optave/ops-codegraph-tool/pull/928), [#930](https://github.com/optave/ops-codegraph-tool/pull/930))
+* **structure:** reconcile `import_count` semantics between fast path and full path — both paths now consistently count distinct imported files ([#942](https://github.com/optave/ops-codegraph-tool/pull/942))
+* include `imports-type` in fast-path `fan_in`/`fan_out` queries — aligns incremental metrics with full-build behavior for files with type-only imports ([#948](https://github.com/optave/ops-codegraph-tool/pull/948))
+* **rust:** fix test compilation errors in extractor tests — renamed `Import.path` → `Import.source` and missing `build_import_edges` arguments ([#950](https://github.com/optave/ops-codegraph-tool/pull/950))
+* **ci:** add resilience to Claude Code workflow for fork branch races — concurrency groups and pre-flight branch verification with 3 retries ([#949](https://github.com/optave/ops-codegraph-tool/pull/949))
+
+### Performance
+
+* **native:** port full-build structure computation to Rust — eliminates JS DB round-trip through `reconstructFileSymbolsFromDb()` on full builds ([#937](https://github.com/optave/ops-codegraph-tool/pull/937))
+* **native:** defer `NativeDatabase.openReadWrite` until after change detection — saves ~60ms on every incremental build invocation, no-op builds exit before opening native connection ([#939](https://github.com/optave/ops-codegraph-tool/pull/939))
+* **native:** raise native edge-building threshold to `smallFilesThreshold` — small incrementals (≤5 files) use JS edge path to avoid napi-rs marshaling overhead ([#940](https://github.com/optave/ops-codegraph-tool/pull/940))
+
+### Chores
+
+* disable adaptive thinking via `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING` env var ([#943](https://github.com/optave/ops-codegraph-tool/pull/943))
+
 ## [3.9.3](https://github.com/optave/ops-codegraph-tool/compare/v3.9.2...v3.9.3) (2026-04-12)
 
 **Native engine parity and build performance.** The Rust engine now produces identical role classifications as the JS fallback — reexport chains, type-only imports, and constant classification all match. Build performance improves across the board: the entire analysis pipeline (complexity, CFG, dataflow, AST) now runs inside the Rust orchestrator on a single rusqlite connection, batched WAL checkpoints cut incremental rebuild overhead by 49%, and a full-build regression from v3.9.2 is fixed. A new CI parity job catches engine divergences before they ship. The incremental rebuild guide documents what data requires a full rebuild and adds automatic 24h staleness detection to Claude Code hooks.
