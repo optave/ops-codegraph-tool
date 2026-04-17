@@ -66,7 +66,7 @@ Things that are **NOT minor bumps** even if prefixed `feat:`:
 Scan every commit between the last tag and HEAD. For each `feat:` or `feat(scope):` commit:
 
 1. Read the PR body (`gh pr view <N> --json title,body`) or the commit body
-2. Ask: *does this add a new command, flag, MCP tool, output format, or config option that didn't exist before?*
+2. Ask: *does this add a new command, flag, MCP tool, output format, config option, or public API export that didn't exist before?*
 3. If yes → counts toward minor
 4. If no → treat as patch (and re-categorize in the CHANGELOG: accuracy → Bug Fixes, speed → Performance, internals → Chores)
 
@@ -75,7 +75,7 @@ Apply these rules in priority order:
 | Condition | Bump |
 |-----------|------|
 | Any commit has a `BREAKING CHANGE:` / `BREAKING-CHANGE:` footer, or uses `!` suffix (`feat!:`, `fix!:`, etc.) | **major** |
-| Any `feat:` commit passes the "real test" above (adds new CLI command/flag/MCP tool/output field/config) | **minor** |
+| Any `feat:` commit passes the "real test" above (adds new CLI command/flag/MCP tool/output field/config/public API export) | **minor** |
 | Everything else — including `feat:` commits that are really accuracy fixes, perf refactors, or internal plumbing | **patch** |
 
 Given the current version `MAJOR.MINOR.PATCH` from `package.json`, compute the new version:
@@ -93,7 +93,7 @@ When the detection lands on **minor**, state the specific new CLI surface before
 >
 > Version: 3.9.3 → **3.10.0**
 
-If you cannot name a specific new command/flag/tool/output/config, the bump is **patch**, not minor. Example:
+If you cannot name a specific new command/flag/tool/output/config/public API export, the bump is **patch**, not minor. Example:
 
 > Detected **patch** bump. The `feat(js-extractor)` commit ([#947](...)) is an extractor accuracy improvement — it adds edges but no new CLI surface. The `feat(native)` commit ([#937](...)) is a perf refactor — no new commands or flags. Both belong under Bug Fixes / Performance in the CHANGELOG.
 >
