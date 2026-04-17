@@ -3,7 +3,6 @@ on: [pull_request]
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: codegraph-impact-${{ github.event.pull_request.number }}
@@ -41,43 +40,13 @@ jobs:
         run: node dist/cli.js build || (rm -rf .codegraph && node dist/cli.js build --no-incremental)
       - name: Run impact analysis
         run: node dist/cli.js diff-impact origin/${{ github.base_ref }} --json -T > impact.json
-      - name: Comment on PR
-        if: success()
-        uses: actions/github-script@v9
+      - name: Save PR number
+        run: echo "${{ github.event.pull_request.number }}" > pr-number.txt
+      - name: Upload impact artifact
+        uses: actions/upload-artifact@v4
         with:
-          script: |
-            const fs = require('fs');
-            const impact = JSON.parse(fs.readFileSync('impact.json', 'utf-8'));
-            if (!impact.summary || (impact.summary.functionsChanged === 0 && impact.summary.callersAffected === 0)) {
-              console.log('No impact data to report.');
-              return;
-            }
-            const body = `## Codegraph Impact Analysis\n\n` +
-              `**${impact.summary.functionsChanged} functions changed** → ` +
-              `**${impact.summary.callersAffected} callers affected** across ` +
-              `**${impact.summary.filesAffected} files**\n\n` +
-              (impact.affectedFunctions || []).slice(0, 20).map(f =>
-                `- \`${f.name}\` in \`${f.file}:${f.line}\` (${f.transitiveCallers} transitive callers)`
-              ).join('\n');
-            // Update existing comment or create new one
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-            });
-            const existing = comments.find(c => c.body.startsWith('## Codegraph Impact Analysis'));
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body,
-              });
-            }
+          name: codegraph-impact
+          path: |
+            impact.json
+            pr-number.txt
+          retention-days: 1
