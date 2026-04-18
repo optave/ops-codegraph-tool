@@ -132,7 +132,7 @@
   "optionalDependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@optave/codegraph-darwin-arm64": "3.9.3",
-    "@optave/codegraph-darwin-x64": "3.9.3",
+    "@optave/codegraph-darwin-x64": "3.9.4",
     "@optave/codegraph-linux-arm64-gnu": "3.9.3",
     "@optave/codegraph-linux-x64-gnu": "3.9.3",
     "@optave/codegraph-linux-x64-musl": "3.9.3",
