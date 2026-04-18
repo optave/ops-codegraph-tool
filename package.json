@@ -135,7 +135,7 @@
     "@optave/codegraph-darwin-x64": "3.9.3",
     "@optave/codegraph-linux-arm64-gnu": "3.9.3",
     "@optave/codegraph-linux-x64-gnu": "3.9.3",
-    "@optave/codegraph-linux-x64-musl": "3.9.3",
+    "@optave/codegraph-linux-x64-musl": "3.9.4",
     "@optave/codegraph-win32-x64-msvc": "3.9.3"
   },
   "devDependencies": {
