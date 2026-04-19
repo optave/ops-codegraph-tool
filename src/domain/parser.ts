@@ -884,8 +884,10 @@ export async function parseFilesAuto(
     ? native.parseFilesFull(filePaths, rootDir)
     : native.parseFiles(filePaths, rootDir, true, true);
   const needsTypeMap: { filePath: string; relPath: string }[] = [];
+  const nativeParsed = new Set<string>();
   for (const r of nativeResults) {
     if (!r) continue;
+    nativeParsed.add(r.file);
     const patched = patchNativeResult(r);
     const relPath = path.relative(rootDir, r.file).split(path.sep).join('/');
     result.set(relPath, patched);
@@ -901,6 +903,22 @@ export async function parseFilesAuto(
   if (needsTypeMap.length > 0) {
     await backfillTypeMapBatch(needsTypeMap, result);
   }
+
+  // Engine parity: native may silently drop files whose extensions are in
+  // SUPPORTED_EXTENSIONS (because a WASM grammar exists) but whose Rust
+  // extractor/grammar is missing or fails. WASM handles these — fall back so
+  // both engines process the same file set (#967).
+  const dropped = filePaths.filter(
+    (f) => !nativeParsed.has(f) && _extToLang.has(path.extname(f).toLowerCase()),
+  );
+  if (dropped.length > 0) {
+    warn(`Native engine dropped ${dropped.length} file(s); falling back to WASM for parity`);
+    const wasmResults = await parseFilesWasm(dropped, rootDir);
+    for (const [relPath, symbols] of wasmResults) {
+      result.set(relPath, symbols);
+    }
+  }
+
   return result;
 }
 

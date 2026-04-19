@@ -30,10 +30,11 @@ import type {
   Definition,
   ExtractorOutput,
 } from '../../../types.js';
-import { getActiveEngine } from '../../parser.js';
+import { normalizePath } from '../../../shared/constants.js';
+import { getActiveEngine, parseFilesAuto } from '../../parser.js';
 import { setWorkspaces } from '../resolve.js';
 import { PipelineContext } from './context.js';
-import { loadPathAliases } from './helpers.js';
+import { batchInsertNodes, collectFiles as collectFilesUtil, loadPathAliases } from './helpers.js';
 import { NativeDbProxy } from './native-db-proxy.js';
 import { buildEdges } from './stages/build-edges.js';
 import { buildStructure } from './stages/build-structure.js';
@@ -696,8 +697,69 @@ async function tryNativeOrchestrator(
     }
   }
 
+  // Engine parity: the native orchestrator silently drops files whose
+  // Rust extractor/grammar is missing or fails (e.g. HCL, Scala, Swift on
+  // stale native binaries). WASM handles those — backfill via WASM so both
+  // engines process the same file set (#967).
+  await backfillNativeDroppedFiles(ctx);
+
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
   return formatNativeTimingResult(p, structurePatchMs, analysisTiming);
+}
+
+/**
+ * Backfill files that the native orchestrator silently dropped during parse.
+ * Falls back to WASM + inserts file/symbol nodes so engine counts match (#967).
+ */
+async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
+  // Needs a real better-sqlite3 connection for INSERT.
+  if (ctx.nativeFirstProxy) {
+    closeNativeDb(ctx, 'pre-parity-backfill');
+    ctx.db = openDb(ctx.dbPath);
+    ctx.nativeFirstProxy = false;
+  }
+
+  const collected = collectFilesUtil(ctx.rootDir, [], ctx.config, new Set<string>());
+  const expected = new Set(
+    collected.files.map((f) => normalizePath(path.relative(ctx.rootDir, f))),
+  );
+
+  const existingRows = ctx.db
+    .prepare("SELECT DISTINCT file FROM nodes WHERE kind = 'file'")
+    .all() as Array<{ file: string }>;
+  const existing = new Set(existingRows.map((r) => r.file));
+
+  const missingAbs: string[] = [];
+  for (const rel of expected) {
+    if (!existing.has(rel)) {
+      missingAbs.push(path.join(ctx.rootDir, rel));
+    }
+  }
+  if (missingAbs.length === 0) return;
+
+  warn(
+    `Native orchestrator dropped ${missingAbs.length} file(s); backfilling via WASM for engine parity`,
+  );
+  const wasmResults = await parseFilesAuto(missingAbs, ctx.rootDir, { engine: 'wasm' });
+
+  const rows: unknown[][] = [];
+  for (const [relPath, symbols] of wasmResults) {
+    rows.push([relPath, 'file', relPath, 0, null, null, relPath, null, null]);
+    for (const def of symbols.definitions ?? []) {
+      rows.push([
+        def.name,
+        def.kind,
+        relPath,
+        def.line,
+        def.endLine ?? null,
+        null,
+        null,
+        null,
+        def.visibility ?? null,
+      ]);
+    }
+  }
+  batchInsertNodes(ctx.db as unknown as BetterSqlite3Database, rows);
 }
 
 // ── Pipeline stages execution ───────────────────────────────────────────
