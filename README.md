@@ -617,18 +617,18 @@ Codegraph also extracts symbols from common callback patterns: Commander `.comma
 
 Self-measured on every release via CI ([build benchmarks](generated/benchmarks/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/benchmarks/EMBEDDING-BENCHMARKS.md) | [query benchmarks](generated/benchmarks/QUERY-BENCHMARKS.md) | [incremental benchmarks](generated/benchmarks/INCREMENTAL-BENCHMARKS.md) | [resolution precision/recall](tests/benchmarks/resolution/)):
 
-*Last updated: v3.9.3 (2026-04-13)*
+*Last updated: v3.9.4 (2026-04-18)*
 
 | Metric | Native | WASM |
 |---|---|---|
-| Build speed | **3.3 ms/file** | **15.9 ms/file** |
-| Query time | **30ms** | **42ms** |
-| No-op rebuild | **11ms** | **22ms** |
-| 1-file rebuild | **397ms** | **638ms** |
-| Query: fn-deps | **2.5ms** | **2.4ms** |
-| Query: path | **2.5ms** | **2.3ms** |
-| ~50,000 files (est.) | **~165.0s build** | **~795.0s build** |
-| Resolution precision | **90.7%** | — |
+| Build speed | **3.2 ms/file** | **16.3 ms/file** |
+| Query time | **29ms** | **44ms** |
+| No-op rebuild | **10ms** | **21ms** |
+| 1-file rebuild | **400ms** | **64ms** |
+| Query: fn-deps | **2.5ms** | **2.2ms** |
+| Query: path | **2.4ms** | **2.2ms** |
+| ~50,000 files (est.) | **~160.0s build** | **~815.0s build** |
+| Resolution precision | **90.3%** | — |
 | Resolution recall | **42.9%** | — |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
@@ -638,7 +638,7 @@ Metrics are normalized per file for cross-version comparability. Times above are
 | Language | Precision | Recall | TP | FP | FN | Edges | Dynamic |
 |----------|----------:|-------:|---:|---:|---:|------:|--------:|
 | javascript | 100.0% | 66.7% | 12 | 0 | 6 | 18 | 14/28 |
-| typescript | 100.0% | 75.0% | 15 | 0 | 5 | 20 | — |
+| typescript | 93.8% | 75.0% | 15 | 1 | 5 | 20 | — |
 | bash | 100.0% | 100.0% | 12 | 0 | 0 | 12 | 0/1 |
 | c | 100.0% | 100.0% | 9 | 0 | 0 | 9 | — |
 | clojure | 80.0% | 26.7% | 4 | 1 | 11 | 15 | — |
