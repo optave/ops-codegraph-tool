@@ -30,6 +30,7 @@ import type {
   BuildResult,
   Definition,
   ExtractorOutput,
+  SqliteStatement,
 } from '../../../types.js';
 import { getActiveEngine, getInstalledWasmExtensions, parseFilesAuto } from '../../parser.js';
 import { setWorkspaces } from '../resolve.js';
@@ -755,9 +756,10 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
   const wasmResults = await parseFilesAuto(missingAbs, ctx.rootDir, { engine: 'wasm' });
 
   const rows: unknown[][] = [];
+  const exportKeys: unknown[][] = [];
   for (const [relPath, symbols] of wasmResults) {
-    // File row: name=relPath, qualified_name=relPath (matches insertDefinitionsAndExports).
-    rows.push([relPath, 'file', relPath, 0, null, null, relPath, null, null]);
+    // File row — mirrors insertDefinitionsAndExports: qualified_name is null.
+    rows.push([relPath, 'file', relPath, 0, null, null, null, null, null]);
     for (const def of symbols.definitions ?? []) {
       // Populate qualified_name/scope the same way the JS fallback does so
       // downstream queries (cross-file references, "go to definition") find
@@ -776,8 +778,41 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
         def.visibility ?? null,
       ]);
     }
+    // Exports: insert the row (INSERT OR IGNORE — a matching definition row
+    // is a no-op) and queue a key for the second-pass exported=1 update, so
+    // queries filtering on exported=1 find backfilled symbols (#970).
+    for (const exp of symbols.exports ?? []) {
+      rows.push([exp.name, exp.kind, relPath, exp.line, null, null, exp.name, null, null]);
+      exportKeys.push([exp.name, exp.kind, relPath, exp.line]);
+    }
   }
-  batchInsertNodes(ctx.db as unknown as BetterSqlite3Database, rows);
+  const db = ctx.db as unknown as BetterSqlite3Database;
+  batchInsertNodes(db, rows);
+
+  // Mark exported symbols in batches — mirrors insertDefinitionsAndExports.
+  if (exportKeys.length > 0) {
+    const EXPORT_CHUNK = 500;
+    const exportStmtCache = new Map<number, SqliteStatement>();
+    for (let i = 0; i < exportKeys.length; i += EXPORT_CHUNK) {
+      const end = Math.min(i + EXPORT_CHUNK, exportKeys.length);
+      const chunkSize = end - i;
+      let updateStmt = exportStmtCache.get(chunkSize);
+      if (!updateStmt) {
+        const conditions = Array.from(
+          { length: chunkSize },
+          () => '(name = ? AND kind = ? AND file = ? AND line = ?)',
+        ).join(' OR ');
+        updateStmt = db.prepare(`UPDATE nodes SET exported = 1 WHERE ${conditions}`);
+        exportStmtCache.set(chunkSize, updateStmt);
+      }
+      const vals: unknown[] = [];
+      for (let j = i; j < end; j++) {
+        const k = exportKeys[j] as unknown[];
+        vals.push(k[0], k[1], k[2], k[3]);
+      }
+      updateStmt.run(...vals);
+    }
+  }
 }
 
 // ── Pipeline stages execution ───────────────────────────────────────────
