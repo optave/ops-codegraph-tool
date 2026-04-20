@@ -21,6 +21,7 @@ import { detectWorkspaces, loadConfig } from '../../../infrastructure/config.js'
 import { debug, info, warn } from '../../../infrastructure/logger.js';
 import { loadNative } from '../../../infrastructure/native.js';
 import { semverCompare } from '../../../infrastructure/update-check.js';
+import { normalizePath } from '../../../shared/constants.js';
 import { toErrorMessage } from '../../../shared/errors.js';
 import { CODEGRAPH_VERSION } from '../../../shared/version.js';
 import type {
@@ -29,11 +30,12 @@ import type {
   BuildResult,
   Definition,
   ExtractorOutput,
+  SqliteStatement,
 } from '../../../types.js';
-import { getActiveEngine } from '../../parser.js';
+import { getActiveEngine, getInstalledWasmExtensions, parseFilesAuto } from '../../parser.js';
 import { setWorkspaces } from '../resolve.js';
 import { PipelineContext } from './context.js';
-import { loadPathAliases } from './helpers.js';
+import { batchInsertNodes, collectFiles as collectFilesUtil, loadPathAliases } from './helpers.js';
 import { NativeDbProxy } from './native-db-proxy.js';
 import { buildEdges } from './stages/build-edges.js';
 import { buildStructure } from './stages/build-structure.js';
@@ -696,8 +698,121 @@ async function tryNativeOrchestrator(
     }
   }
 
+  // Engine parity: the native orchestrator silently drops files whose
+  // Rust extractor/grammar is missing or fails (e.g. HCL, Scala, Swift on
+  // stale native binaries). WASM handles those — backfill via WASM so both
+  // engines process the same file set (#967).
+  //
+  // Only runs on full builds: incremental builds only touch changed files,
+  // which are parsed through parseFilesAuto (which has its own per-file
+  // backfill), so a full filesystem scan here would be wasted work.
+  if (result.isFullBuild) {
+    await backfillNativeDroppedFiles(ctx);
+  }
+
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
   return formatNativeTimingResult(p, structurePatchMs, analysisTiming);
+}
+
+/**
+ * Backfill files that the native orchestrator silently dropped during parse.
+ * Falls back to WASM + inserts file/symbol nodes so engine counts match (#967).
+ */
+async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
+  // Needs a real better-sqlite3 connection for INSERT.
+  if (ctx.nativeFirstProxy) {
+    closeNativeDb(ctx, 'pre-parity-backfill');
+    ctx.db = openDb(ctx.dbPath);
+    ctx.nativeFirstProxy = false;
+  }
+
+  const collected = collectFilesUtil(ctx.rootDir, [], ctx.config, new Set<string>());
+  const expected = new Set(
+    collected.files.map((f) => normalizePath(path.relative(ctx.rootDir, f))),
+  );
+
+  const existingRows = ctx.db
+    .prepare("SELECT DISTINCT file FROM nodes WHERE kind = 'file'")
+    .all() as Array<{ file: string }>;
+  const existing = new Set(existingRows.map((r) => r.file));
+
+  // Restrict backfill to files with an installed WASM grammar. Extensions in
+  // LANGUAGE_REGISTRY without a shipped grammar file (e.g. groovy, erlang on
+  // minimal installs) can't be parsed by either engine, so they're not a
+  // native regression — excluding them keeps the warn count meaningful.
+  const installedExts = getInstalledWasmExtensions();
+  const missingAbs: string[] = [];
+  for (const rel of expected) {
+    if (existing.has(rel)) continue;
+    const ext = path.extname(rel).toLowerCase();
+    if (!installedExts.has(ext)) continue;
+    missingAbs.push(path.join(ctx.rootDir, rel));
+  }
+  if (missingAbs.length === 0) return;
+
+  warn(
+    `Native orchestrator dropped ${missingAbs.length} file(s); backfilling via WASM for engine parity`,
+  );
+  const wasmResults = await parseFilesAuto(missingAbs, ctx.rootDir, { engine: 'wasm' });
+
+  const rows: unknown[][] = [];
+  const exportKeys: unknown[][] = [];
+  for (const [relPath, symbols] of wasmResults) {
+    // File row — mirrors insertDefinitionsAndExports: qualified_name is null.
+    rows.push([relPath, 'file', relPath, 0, null, null, null, null, null]);
+    for (const def of symbols.definitions ?? []) {
+      // Populate qualified_name/scope the same way the JS fallback does so
+      // downstream queries (cross-file references, "go to definition") find
+      // these symbols.
+      const dotIdx = def.name.lastIndexOf('.');
+      const scope = dotIdx !== -1 ? def.name.slice(0, dotIdx) : null;
+      rows.push([
+        def.name,
+        def.kind,
+        relPath,
+        def.line,
+        def.endLine ?? null,
+        null,
+        def.name,
+        scope,
+        def.visibility ?? null,
+      ]);
+    }
+    // Exports: insert the row (INSERT OR IGNORE — a matching definition row
+    // is a no-op) and queue a key for the second-pass exported=1 update, so
+    // queries filtering on exported=1 find backfilled symbols (#970).
+    for (const exp of symbols.exports ?? []) {
+      rows.push([exp.name, exp.kind, relPath, exp.line, null, null, exp.name, null, null]);
+      exportKeys.push([exp.name, exp.kind, relPath, exp.line]);
+    }
+  }
+  const db = ctx.db as unknown as BetterSqlite3Database;
+  batchInsertNodes(db, rows);
+
+  // Mark exported symbols in batches — mirrors insertDefinitionsAndExports.
+  if (exportKeys.length > 0) {
+    const EXPORT_CHUNK = 500;
+    const exportStmtCache = new Map<number, SqliteStatement>();
+    for (let i = 0; i < exportKeys.length; i += EXPORT_CHUNK) {
+      const end = Math.min(i + EXPORT_CHUNK, exportKeys.length);
+      const chunkSize = end - i;
+      let updateStmt = exportStmtCache.get(chunkSize);
+      if (!updateStmt) {
+        const conditions = Array.from(
+          { length: chunkSize },
+          () => '(name = ? AND kind = ? AND file = ? AND line = ?)',
+        ).join(' OR ');
+        updateStmt = db.prepare(`UPDATE nodes SET exported = 1 WHERE ${conditions}`);
+        exportStmtCache.set(chunkSize, updateStmt);
+      }
+      const vals: unknown[] = [];
+      for (let j = i; j < end; j++) {
+        const k = exportKeys[j] as unknown[];
+        vals.push(k[0], k[1], k[2], k[3]);
+      }
+      updateStmt.run(...vals);
+    }
+  }
 }
 
 // ── Pipeline stages execution ───────────────────────────────────────────
