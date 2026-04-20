@@ -66,7 +66,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "codegraph-core"
-version = "3.9.3"
+version = "3.9.4"
 dependencies = [
  "ignore",
  "napi",
@@ -892,9 +892,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-scala"
-version = "0.25.0"
+version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83079f50ea7d03e0faf6be6260ed97538e6df7349ec3cbcbf5771f7b38e3c8b7"
+checksum = "3b4f354028b5fcf1d0c77f1c6d84cd5a579f29a1e43cb61551ec6580e9a99229"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -902,9 +902,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-swift"
-version = "0.7.1"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ef216011c3e3df4fa864736f347cb8d509b1066cf0c8549fb1fd81ac9832e59"
+checksum = "d65aeb41726119416567d0333ec17580ac4abfb96db1f67c4bd638c65f9992fe"
 dependencies = [
  "cc",
  "tree-sitter-language",
