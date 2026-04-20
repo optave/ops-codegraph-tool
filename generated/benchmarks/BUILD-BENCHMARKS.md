@@ -1134,12 +1134,12 @@ pre-parse that previously added ~388ms on native builds.
         }
       },
       "typescript": {
-        "precision": 0.938,
+        "precision": 1,
         "recall": 0.75,
         "truePositives": 15,
-        "falsePositives": 1,
+        "falsePositives": 0,
         "falseNegatives": 5,
-        "totalResolved": 16,
+        "totalResolved": 15,
         "totalExpected": 20,
         "byMode": {
           "same-file": {

@@ -1282,14 +1282,157 @@ function extractSubscriptCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode):
 }
 
 /**
+ * Callee names that idiomatically accept callback references. Used to gate
+ * member_expression args in {@link extractCallbackReferenceCalls}: arguments
+ * like `user.id` are only emitted as dynamic callback calls when the callee
+ * is a known callback-accepting API (router/middleware, promises, array
+ * methods, event emitters, scheduling APIs). This avoids false positives
+ * from plain property reads passed as data, e.g. `store.set(user.id, user)`.
+ *
+ * Identifier args (e.g. `router.use(handleToken)`) are always emitted — the
+ * collateral damage of dropping them is larger than the FP risk, since plain
+ * identifier data args rarely collide with real function names.
+ */
+const CALLBACK_ACCEPTING_CALLEES: ReadonlySet<string> = new Set([
+  // Express / router / middleware
+  'use',
+  'get',
+  'post',
+  'put',
+  'delete',
+  'patch',
+  'options',
+  'head',
+  'all',
+  // Promises
+  'then',
+  'catch',
+  'finally',
+  // Array iteration / reduction
+  'map',
+  'filter',
+  'forEach',
+  'find',
+  'findIndex',
+  'findLast',
+  'findLastIndex',
+  'some',
+  'every',
+  'reduce',
+  'reduceRight',
+  'flatMap',
+  'sort',
+  // Event emitters / DOM
+  'on',
+  'once',
+  'off',
+  'addListener',
+  'removeListener',
+  'addEventListener',
+  'removeEventListener',
+  'subscribe',
+  'unsubscribe',
+  // Scheduling / plain function callbacks
+  'setTimeout',
+  'setInterval',
+  'setImmediate',
+  'queueMicrotask',
+  'requestAnimationFrame',
+  'requestIdleCallback',
+  'nextTick',
+  // Commander / yargs / hooks
+  'action',
+  'command',
+]);
+
+/**
+ * HTTP-verb callees that double as Map/cache/repository method names (`get`,
+ * `post`, `put`, `delete`, `patch`, `options`, `head`, `all`). Express/router
+ * invocations always take a string-literal route path as the first argument
+ * (`app.get('/path', handler)`), whereas Map-like APIs pass values/keys
+ * (`cache.get(user.id)`). Requiring a string-literal first arg keeps real
+ * route handlers covered while dropping the Map/cache false-positive surface.
+ *
+ * `use` and `all` without a path are legitimate middleware registrations, so
+ * `use` is intentionally excluded here — it stays in the general allowlist.
+ */
+const HTTP_VERB_CALLEES: ReadonlySet<string> = new Set([
+  'get',
+  'post',
+  'put',
+  'delete',
+  'patch',
+  'options',
+  'head',
+  'all',
+]);
+
+/**
+ * Extract the callee's final name (function identifier or member expression
+ * property) for callback-eligibility filtering. Returns null if the callee
+ * shape is not analyzable (e.g. computed subscripts, IIFEs).
+ *
+ * Optional-chaining (`obj?.method(...)`) is handled transparently: in both
+ * tree-sitter-javascript and tree-sitter-typescript grammars `obj?.method` is
+ * still a `member_expression` (the `?.` appears as an `optional_chain` child),
+ * so the property extraction below returns `method` as expected.
+ */
+function extractCalleeName(callNode: TreeSitterNode): string | null {
+  const fn = callNode.childForFieldName('function');
+  if (!fn) return null;
+  if (fn.type === 'identifier') return fn.text;
+  if (fn.type === 'member_expression') {
+    const prop = fn.childForFieldName('property');
+    return prop ? prop.text : null;
+  }
+  return null;
+}
+
+/**
+ * True iff the first argument of an arguments node is a string literal.
+ * Used to distinguish Express/router route handlers (`app.get('/path', h)`)
+ * from Map/cache APIs that reuse the same verb names (`cache.get(user.id)`).
+ */
+function firstArgIsStringLiteral(argsNode: TreeSitterNode): boolean {
+  for (let i = 0; i < argsNode.childCount; i++) {
+    const child = argsNode.child(i);
+    if (!child) continue;
+    // Skip parens and commas; the first non-punctuation child is the first arg.
+    if (child.type === '(' || child.type === ',' || child.type === ')') continue;
+    return child.type === 'string' || child.type === 'template_string';
+  }
+  return false;
+}
+
+/**
  * Extract Call entries for named function references passed as arguments.
  * e.g. `router.use(handleToken, checkAuth)` yields calls to handleToken and checkAuth.
  * `app.use(auth.validate)` yields a call to validate with receiver auth.
  * Skips literals, objects, arrays, anonymous functions, and call expressions (already handled).
+ *
+ * To avoid false positives where plain property reads are passed as data
+ * (e.g. `store.set(user.id, user)` — `user.id` is a value, not a callback),
+ * member_expression args are only emitted when the callee is in
+ * {@link CALLBACK_ACCEPTING_CALLEES}. Identifier args are always emitted.
+ *
+ * HTTP-verb callees (`get`, `post`, `put`, `delete`, `patch`, `options`,
+ * `head`, `all`) double as Map/cache/repository method names, so their
+ * member-expr args are only emitted when the first argument is a string
+ * literal route path — matching Express/router shape and skipping
+ * `cache.get(user.id)`-style calls.
  */
 function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
   const args = callNode.childForFieldName('arguments') || findChild(callNode, 'arguments');
   if (!args) return [];
+
+  const calleeName = extractCalleeName(callNode);
+  let memberExprArgsAllowed = calleeName !== null && CALLBACK_ACCEPTING_CALLEES.has(calleeName);
+  if (memberExprArgsAllowed && calleeName !== null && HTTP_VERB_CALLEES.has(calleeName)) {
+    // HTTP verbs require a string-literal route path to be treated as a
+    // callback-accepting API; otherwise `cache.get(user.id)` etc. would
+    // still emit `id` as a dynamic call.
+    memberExprArgsAllowed = firstArgIsStringLiteral(args);
+  }
 
   const result: Call[] = [];
   const callLine = callNode.startPosition.row + 1;
@@ -1300,7 +1443,7 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
 
     if (child.type === 'identifier') {
       result.push({ name: child.text, line: callLine, dynamic: true });
-    } else if (child.type === 'member_expression') {
+    } else if (child.type === 'member_expression' && memberExprArgsAllowed) {
       const prop = child.childForFieldName('property');
       const obj = child.childForFieldName('object');
       if (prop) {
