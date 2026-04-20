@@ -345,6 +345,42 @@ describe('JavaScript parser', () => {
       );
     });
 
+    it('does not treat cache/Map .get/.put as callback-accepting (HTTP-verb guard)', () => {
+      // `cache.get(user.id)` shares the verb name `get` with Express routes,
+      // but has no string-literal route path first arg — so member-expr args
+      // must not be emitted as dynamic calls. Same for `repo.put`, `map.delete`.
+      const cacheSymbols = parseJS(`cache.get(user.id);`);
+      expect(cacheSymbols.calls.filter((c) => c.dynamic && c.name === 'id')).toHaveLength(0);
+      const repoSymbols = parseJS(`repo.put(record.key, value);`);
+      expect(repoSymbols.calls.filter((c) => c.dynamic && c.name === 'key')).toHaveLength(0);
+      const mapSymbols = parseJS(`map.delete(entry.id);`);
+      expect(mapSymbols.calls.filter((c) => c.dynamic && c.name === 'id')).toHaveLength(0);
+    });
+
+    it('still emits member-expr args for Express HTTP routes with string path', () => {
+      // Positive regression guard: HTTP-verb calls with a string-literal
+      // first arg (Express route signature) must still emit member-expr args.
+      const routerSymbols = parseJS(`router.get('/users/:id', auth.check);`);
+      expect(routerSymbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'check', receiver: 'auth', dynamic: true }),
+      );
+      const templateSymbols = parseJS('app.post(`/api`, handlers.create);');
+      expect(templateSymbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'create', receiver: 'handlers', dynamic: true }),
+      );
+    });
+
+    it('handles optional-chaining callees in allowlist (obj?.on)', () => {
+      // `obj?.on(event, handler.fn)` — tree-sitter-javascript/typescript
+      // represent `obj?.on` as a `member_expression` with an `optional_chain`
+      // child, so `extractCalleeName` still returns `on` and the allowlist
+      // gate works. Guards against a previously-flagged false-negative class.
+      const symbols = parseJS(`emitter?.on('tick', handlers.fn);`);
+      expect(symbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'fn', receiver: 'handlers', dynamic: true }),
+      );
+    });
+
     it('extracts callback in plain function calls like setTimeout', () => {
       const symbols = parseJS(`setTimeout(tick, 1000);`);
       expect(symbols.calls).toContainEqual(
