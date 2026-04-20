@@ -1278,14 +1278,102 @@ function extractSubscriptCallInfo(fn: TreeSitterNode, callNode: TreeSitterNode):
 }
 
 /**
+ * Callee names that idiomatically accept callback references. Used to gate
+ * member_expression args in {@link extractCallbackReferenceCalls}: arguments
+ * like `user.id` are only emitted as dynamic callback calls when the callee
+ * is a known callback-accepting API (router/middleware, promises, array
+ * methods, event emitters, scheduling APIs). This avoids false positives
+ * from plain property reads passed as data, e.g. `store.set(user.id, user)`.
+ *
+ * Identifier args (e.g. `router.use(handleToken)`) are always emitted — the
+ * collateral damage of dropping them is larger than the FP risk, since plain
+ * identifier data args rarely collide with real function names.
+ */
+const CALLBACK_ACCEPTING_CALLEES: ReadonlySet<string> = new Set([
+  // Express / router / middleware
+  'use',
+  'get',
+  'post',
+  'put',
+  'delete',
+  'patch',
+  'options',
+  'head',
+  'all',
+  // Promises
+  'then',
+  'catch',
+  'finally',
+  // Array iteration / reduction
+  'map',
+  'filter',
+  'forEach',
+  'find',
+  'findIndex',
+  'findLast',
+  'findLastIndex',
+  'some',
+  'every',
+  'reduce',
+  'reduceRight',
+  'flatMap',
+  'sort',
+  // Event emitters / DOM
+  'on',
+  'once',
+  'off',
+  'addListener',
+  'removeListener',
+  'addEventListener',
+  'removeEventListener',
+  'subscribe',
+  'unsubscribe',
+  // Scheduling / plain function callbacks
+  'setTimeout',
+  'setInterval',
+  'setImmediate',
+  'queueMicrotask',
+  'requestAnimationFrame',
+  'requestIdleCallback',
+  'nextTick',
+  // Commander / yargs / hooks
+  'action',
+  'command',
+]);
+
+/**
+ * Extract the callee's final name (function identifier or member expression
+ * property) for callback-eligibility filtering. Returns null if the callee
+ * shape is not analyzable (e.g. computed subscripts, IIFEs).
+ */
+function extractCalleeName(callNode: TreeSitterNode): string | null {
+  const fn = callNode.childForFieldName('function');
+  if (!fn) return null;
+  if (fn.type === 'identifier') return fn.text;
+  if (fn.type === 'member_expression') {
+    const prop = fn.childForFieldName('property');
+    return prop ? prop.text : null;
+  }
+  return null;
+}
+
+/**
  * Extract Call entries for named function references passed as arguments.
  * e.g. `router.use(handleToken, checkAuth)` yields calls to handleToken and checkAuth.
  * `app.use(auth.validate)` yields a call to validate with receiver auth.
  * Skips literals, objects, arrays, anonymous functions, and call expressions (already handled).
+ *
+ * To avoid false positives where plain property reads are passed as data
+ * (e.g. `store.set(user.id, user)` — `user.id` is a value, not a callback),
+ * member_expression args are only emitted when the callee is in
+ * {@link CALLBACK_ACCEPTING_CALLEES}. Identifier args are always emitted.
  */
 function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
   const args = callNode.childForFieldName('arguments') || findChild(callNode, 'arguments');
   if (!args) return [];
+
+  const calleeName = extractCalleeName(callNode);
+  const memberExprArgsAllowed = calleeName !== null && CALLBACK_ACCEPTING_CALLEES.has(calleeName);
 
   const result: Call[] = [];
   const callLine = callNode.startPosition.row + 1;
@@ -1296,7 +1384,7 @@ function extractCallbackReferenceCalls(callNode: TreeSitterNode): Call[] {
 
     if (child.type === 'identifier') {
       result.push({ name: child.text, line: callLine, dynamic: true });
-    } else if (child.type === 'member_expression') {
+    } else if (child.type === 'member_expression' && memberExprArgsAllowed) {
       const prop = child.childForFieldName('property');
       const obj = child.childForFieldName('object');
       if (prop) {

@@ -321,6 +321,30 @@ describe('JavaScript parser', () => {
       expect(dynamicCalls).toHaveLength(0);
     });
 
+    it('does not treat member_expression args as callbacks for non-allowlisted callees', () => {
+      // `store.set(user.id, user)` — `user.id` is a property read passed as a
+      // value (map key), NOT a callback. Only allowlisted callees (use, then,
+      // map, addEventListener, etc.) get member_expression args emitted as
+      // dynamic calls. See issue #971.
+      const symbols = parseJS(`store.set(user.id, user);`);
+      const dynamicMemberCalls = symbols.calls.filter((c) => c.dynamic && c.name === 'id');
+      expect(dynamicMemberCalls).toHaveLength(0);
+    });
+
+    it('still emits member_expression args for allowlisted callees (regression guard)', () => {
+      // Positive companion to the test above: `app.use(auth.validate)` and
+      // `promise.then(handlers.onSuccess)` must still produce dynamic calls,
+      // because `use` and `then` are callback-accepting APIs.
+      const useSymbols = parseJS(`app.use(auth.validate);`);
+      expect(useSymbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'validate', receiver: 'auth', dynamic: true }),
+      );
+      const thenSymbols = parseJS(`promise.then(handlers.onSuccess);`);
+      expect(thenSymbols.calls).toContainEqual(
+        expect.objectContaining({ name: 'onSuccess', receiver: 'handlers', dynamic: true }),
+      );
+    });
+
     it('extracts callback in plain function calls like setTimeout', () => {
       const symbols = parseJS(`setTimeout(tick, 1000);`);
       expect(symbols.calls).toContainEqual(
