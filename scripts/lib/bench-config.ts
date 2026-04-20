@@ -15,6 +15,35 @@ import { pathToFileURL } from 'node:url';
 
 import { getBenchmarkVersion } from '../bench-version.js';
 
+// On Windows, `npm` is `npm.cmd` and Node refuses to spawn `.cmd`/`.bat`
+// without `shell: true` (since Node 18.20 / 20.15). When `shell: true`, the
+// Windows `cmd.exe` shell resolves bare `npm` to `npm.cmd` automatically, so
+// a single boolean is sufficient.
+const NPM_SHELL = os.platform() === 'win32';
+
+// Strict guards for any string that gets interpolated into an npm install
+// spec while running with `shell: true`. Registry-sourced values are
+// constrained by npm itself, but we enforce the constraint locally so a
+// compromised upstream or local `package.json` can't inject shell metacharacters.
+const PKG_NAME_RE = /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/i;
+// Permit exact versions, ranges, dist-tags, and common operators — but no
+// shell metacharacters. Intentionally conservative; tighten if needed.
+const PKG_VERSION_RE = /^[a-z0-9._+\-~^>=<|* ]+$/i;
+
+function assertSafePkgName(name: string): string {
+	if (!PKG_NAME_RE.test(name)) {
+		throw new Error(`Refusing to install package with unsafe name: ${JSON.stringify(name)}`);
+	}
+	return name;
+}
+
+function assertSafePkgVersion(version: string): string {
+	if (!PKG_VERSION_RE.test(version)) {
+		throw new Error(`Refusing to install package with unsafe version: ${JSON.stringify(version)}`);
+	}
+	return version;
+}
+
 /**
  * Parse `--version <v>` and `--npm` from process.argv.
  */
@@ -56,11 +85,14 @@ export async function resolveBenchmarkSource() {
 		};
 	}
 
-	// npm mode — install @optave/codegraph@<version> into a temp dir
-	const version = cliVersion || 'latest';
+	// npm mode — install @optave/codegraph@<version> into a temp dir.
+	// Validate the version up-front so we never log or interpolate an
+	// unvalidated string (with `shell: true` on Windows, bad input would be a
+	// shell-injection surface).
+	const safeVersion = assertSafePkgVersion(cliVersion || 'latest');
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-bench-'));
 
-	console.error(`Installing @optave/codegraph@${version} into ${tmpDir}...`);
+	console.error(`Installing @optave/codegraph@${safeVersion} into ${tmpDir}...`);
 
 	// Write a minimal package.json so npm install works
 	fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ private: true }));
@@ -69,17 +101,18 @@ export async function resolveBenchmarkSource() {
 	const maxRetries = 5;
 	for (let attempt = 1; attempt <= maxRetries; attempt++) {
 		try {
-			execFileSync('npm', ['install', `@optave/codegraph@${version}`, '--no-audit', '--no-fund'], {
+			execFileSync('npm', ['install', `@optave/codegraph@${safeVersion}`, '--no-audit', '--no-fund'], {
 				cwd: tmpDir,
 				stdio: 'pipe',
 				timeout: 120_000,
+				shell: NPM_SHELL,
 			});
 			break;
 		} catch (err) {
 			if (attempt === maxRetries) {
 				// Clean up before throwing
 				fs.rmSync(tmpDir, { recursive: true, force: true });
-				throw new Error(`Failed to install @optave/codegraph@${version} after ${maxRetries} attempts: ${err.message}`);
+				throw new Error(`Failed to install @optave/codegraph@${safeVersion} after ${maxRetries} attempts: ${err.message}`);
 			}
 			const delay = attempt * 15_000; // 15s, 30s, 45s, 60s
 			console.error(`  Attempt ${attempt} failed, retrying in ${delay / 1000}s...`);
@@ -109,14 +142,19 @@ export async function resolveBenchmarkSource() {
 		const platformKey = `codegraph-${platform}-${arch}${libcSuffix}`;
 		const nativePkg = Object.keys(optDeps).find((name) => name.includes(platformKey));
 		if (nativePkg) {
-			const nativeVersion = optDeps[nativePkg];
-			console.error(`Installing native package ${nativePkg}@${nativeVersion}...`);
+			// Even though these originate from the installed package's
+			// optionalDependencies (i.e. the npm registry), validate before
+			// logging or interpolating into a `shell: true` command line.
+			const safeNativePkg = assertSafePkgName(nativePkg);
+			const safeNativeVersion = assertSafePkgVersion(optDeps[nativePkg]);
+			console.error(`Installing native package ${safeNativePkg}@${safeNativeVersion}...`);
 			for (let attempt = 1; attempt <= maxRetries; attempt++) {
 				try {
-					execFileSync('npm', ['install', `${nativePkg}@${nativeVersion}`, '--no-audit', '--no-fund', '--no-save'], {
+					execFileSync('npm', ['install', `${safeNativePkg}@${safeNativeVersion}`, '--no-audit', '--no-fund', '--no-save'], {
 						cwd: tmpDir,
 						stdio: 'pipe',
 						timeout: 120_000,
+						shell: NPM_SHELL,
 					});
 					break;
 				} catch (innerErr) {
@@ -126,7 +164,7 @@ export async function resolveBenchmarkSource() {
 					await new Promise((resolve) => setTimeout(resolve, delay));
 				}
 			}
-			console.error(`Installed ${nativePkg}@${nativeVersion}`);
+			console.error(`Installed ${safeNativePkg}@${safeNativeVersion}`);
 		} else {
 			console.error(`No native package found for platform ${platform}-${arch}${libcSuffix}, skipping`);
 		}
@@ -143,12 +181,18 @@ export async function resolveBenchmarkSource() {
 		);
 		const hfVersion = localPkg.devDependencies?.['@huggingface/transformers'];
 		if (hfVersion) {
-			console.error(`Installing @huggingface/transformers@${hfVersion} for embedding benchmarks...`);
-			execFileSync('npm', ['install', `@huggingface/transformers@${hfVersion}`, '--no-audit', '--no-fund', '--no-save'], {
-				cwd: tmpDir,
-				stdio: 'pipe',
-				timeout: 120_000,
-			});
+			const safeHfVersion = assertSafePkgVersion(hfVersion);
+			console.error(`Installing @huggingface/transformers@${safeHfVersion} for embedding benchmarks...`);
+			execFileSync(
+				'npm',
+				['install', `@huggingface/transformers@${safeHfVersion}`, '--no-audit', '--no-fund', '--no-save'],
+				{
+					cwd: tmpDir,
+					stdio: 'pipe',
+					timeout: 120_000,
+					shell: NPM_SHELL,
+				},
+			);
 			console.error('Installed @huggingface/transformers');
 		}
 	} catch (err) {
