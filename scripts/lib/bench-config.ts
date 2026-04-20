@@ -85,18 +85,17 @@ export async function resolveBenchmarkSource() {
 		};
 	}
 
-	// npm mode — install @optave/codegraph@<version> into a temp dir
-	const version = cliVersion || 'latest';
+	// npm mode — install @optave/codegraph@<version> into a temp dir.
+	// Validate the version up-front so we never log or interpolate an
+	// unvalidated string (with `shell: true` on Windows, bad input would be a
+	// shell-injection surface).
+	const safeVersion = assertSafePkgVersion(cliVersion || 'latest');
 	const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-bench-'));
 
-	console.error(`Installing @optave/codegraph@${version} into ${tmpDir}...`);
+	console.error(`Installing @optave/codegraph@${safeVersion} into ${tmpDir}...`);
 
 	// Write a minimal package.json so npm install works
 	fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify({ private: true }));
-
-	// Validate the version before it is interpolated into the install spec
-	// (with `shell: true` on Windows, bad input would be a shell-injection surface).
-	const safeVersion = assertSafePkgVersion(version);
 
 	// Retry with backoff for npm propagation delays
 	const maxRetries = 5;
@@ -113,7 +112,7 @@ export async function resolveBenchmarkSource() {
 			if (attempt === maxRetries) {
 				// Clean up before throwing
 				fs.rmSync(tmpDir, { recursive: true, force: true });
-				throw new Error(`Failed to install @optave/codegraph@${version} after ${maxRetries} attempts: ${err.message}`);
+				throw new Error(`Failed to install @optave/codegraph@${safeVersion} after ${maxRetries} attempts: ${err.message}`);
 			}
 			const delay = attempt * 15_000; // 15s, 30s, 45s, 60s
 			console.error(`  Attempt ${attempt} failed, retrying in ${delay / 1000}s...`);
@@ -143,12 +142,11 @@ export async function resolveBenchmarkSource() {
 		const platformKey = `codegraph-${platform}-${arch}${libcSuffix}`;
 		const nativePkg = Object.keys(optDeps).find((name) => name.includes(platformKey));
 		if (nativePkg) {
-			const nativeVersion = optDeps[nativePkg];
 			// Even though these originate from the installed package's
 			// optionalDependencies (i.e. the npm registry), validate before
-			// interpolating into a `shell: true` command line.
+			// logging or interpolating into a `shell: true` command line.
 			const safeNativePkg = assertSafePkgName(nativePkg);
-			const safeNativeVersion = assertSafePkgVersion(nativeVersion);
+			const safeNativeVersion = assertSafePkgVersion(optDeps[nativePkg]);
 			console.error(`Installing native package ${safeNativePkg}@${safeNativeVersion}...`);
 			for (let attempt = 1; attempt <= maxRetries; attempt++) {
 				try {
