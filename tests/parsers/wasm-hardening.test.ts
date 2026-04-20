@@ -1,101 +1,96 @@
 /**
- * Tests for WASM-path error hardening in wasmExtractSymbols.
+ * Tests for WASM worker crash-isolation (issue #965).
  *
- * If an extractor throws on a single file (e.g. due to a bug on pathological input
- * or a corrupted tree from a WASM parse trap), the whole build must NOT crash —
- * the file is skipped with a warn() and parsing continues for the remaining files.
+ * When the WASM grammar triggers a V8 fatal (uncatchable from JS) the worker
+ * exits with a non-zero code. The pool must:
+ *   - detect the exit,
+ *   - skip the in-flight file with a warn(),
+ *   - respawn the worker,
+ *   - and continue parsing the rest of the batch.
  *
- * Related: issue #965 (WASM extractor hardening on Windows + Node 22).
+ * We simulate the V8 fatal by having the worker `process.exit(1)` when the
+ * source contains a magic test token (gated by CODEGRAPH_WASM_WORKER_TEST_CRASH).
  */
 
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { LANGUAGE_REGISTRY, parseFileAuto, parseFilesAuto } from '../../src/domain/parser.js';
+import { disposeParsers, parseFileAuto, parseFilesAuto } from '../../src/domain/parser.js';
 
-describe('WASM extractor hardening (issue #965)', () => {
-  const jsEntry = LANGUAGE_REGISTRY.find((e) => e.id === 'javascript');
-  if (!jsEntry) throw new Error('JavaScript language entry not found in LANGUAGE_REGISTRY');
+const CRASH_MAGIC = '__CODEGRAPH_WASM_WORKER_TEST_CRASH__';
 
-  const originalExtractor = jsEntry.extractor;
+describe('WASM worker crash isolation (issue #965)', () => {
   let stderrSpy: ReturnType<typeof vi.spyOn>;
+  let tmpDir: string;
 
-  beforeEach(() => {
-    // Capture warn() output (writes to process.stderr.write).
+  beforeEach(async () => {
+    // Pool is a singleton — dispose so the next spawn picks up the env flag.
+    await disposeParsers();
+    process.env.CODEGRAPH_WASM_WORKER_TEST_CRASH = '1';
     stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-wasm-crash-'));
   });
 
-  afterEach(() => {
-    // Always restore the original extractor, even if a test fails.
-    jsEntry.extractor = originalExtractor;
+  afterEach(async () => {
+    delete process.env.CODEGRAPH_WASM_WORKER_TEST_CRASH;
     stderrSpy.mockRestore();
+    await disposeParsers();
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // best-effort
+    }
   });
 
-  it('returns null and emits a warn when the extractor throws (single-file path)', async () => {
-    jsEntry.extractor = () => {
-      throw new Error('simulated extractor failure');
-    };
+  it('returns null and warns when a single-file parse crashes the worker', async () => {
+    const filePath = path.join(tmpDir, 'boom.js');
+    const code = `// ${CRASH_MAGIC}\nfunction hello() {}`;
+    fs.writeFileSync(filePath, code);
 
-    const symbols = await parseFileAuto('boom.js', 'function hello() {}', { engine: 'wasm' });
-
+    const symbols = await parseFileAuto(filePath, code, { engine: 'wasm' });
     expect(symbols).toBeNull();
 
     const warnings = stderrSpy.mock.calls
       .map((args) => String(args[0]))
       .filter((s) => s.includes('[codegraph WARN]'));
     expect(warnings.some((w) => w.includes('boom.js'))).toBe(true);
-    expect(warnings.some((w) => w.includes('simulated extractor failure'))).toBe(true);
-    expect(warnings.some((w) => /skipping/i.test(w))).toBe(true);
+    expect(warnings.some((w) => /crashed|exit|skipping/i.test(w))).toBe(true);
   });
 
-  it('skips the failing file but continues parsing the rest of the batch', async () => {
-    const fixtureDir = path.resolve('tests/fixtures/sample-project');
-    const goodFile1 = path.join(fixtureDir, 'math.js');
-    const goodFile2 = path.join(fixtureDir, 'utils.js');
-    const poisonedFile = path.join(fixtureDir, 'index.js');
+  it('skips the crashing file but continues parsing the rest of the batch', async () => {
+    const good1 = path.join(tmpDir, 'math.js');
+    const good2 = path.join(tmpDir, 'utils.js');
+    const poisoned = path.join(tmpDir, 'boom.js');
+    fs.writeFileSync(good1, 'export function add(a, b) { return a + b; }');
+    fs.writeFileSync(good2, 'export function id(x) { return x; }');
+    fs.writeFileSync(poisoned, `// ${CRASH_MAGIC}\nfunction hello() {}`);
 
-    // Throw only for the poisoned file; run the real extractor otherwise.
-    jsEntry.extractor = (tree, filePath, query) => {
-      if (filePath === poisonedFile) {
-        throw new Error('simulated WASM extractor trap');
-      }
-      return originalExtractor(tree, filePath, query);
-    };
-
-    const result = await parseFilesAuto([goodFile1, goodFile2, poisonedFile], fixtureDir, {
-      engine: 'wasm',
-    });
+    const result = await parseFilesAuto([good1, good2, poisoned], tmpDir, { engine: 'wasm' });
 
     expect(result).toBeInstanceOf(Map);
-    // Two good files parsed successfully; the poisoned file was skipped.
-    expect(result.size).toBe(2);
     expect(result.has('math.js')).toBe(true);
     expect(result.has('utils.js')).toBe(true);
-    expect(result.has('index.js')).toBe(false);
+    expect(result.has('boom.js')).toBe(false);
 
     const warnings = stderrSpy.mock.calls
       .map((args) => String(args[0]))
       .filter((s) => s.includes('[codegraph WARN]'));
-    expect(warnings.some((w) => w.includes('index.js'))).toBe(true);
-    expect(warnings.some((w) => w.includes('simulated WASM extractor trap'))).toBe(true);
+    expect(warnings.some((w) => w.includes('boom.js'))).toBe(true);
   });
 
-  it('still reports parse errors (pre-existing hardening) without killing the build', async () => {
-    const fixtureDir = path.resolve('tests/fixtures/sample-project');
-    const goodFile = path.join(fixtureDir, 'math.js');
-    const poisonedFile = path.join(fixtureDir, 'utils.js');
+  it('re-crashes are tolerated: pool respawns worker and keeps going', async () => {
+    const good = path.join(tmpDir, 'math.js');
+    const poisoned1 = path.join(tmpDir, 'boom1.js');
+    const poisoned2 = path.join(tmpDir, 'boom2.js');
+    fs.writeFileSync(good, 'export function add(a, b) { return a + b; }');
+    fs.writeFileSync(poisoned1, `// ${CRASH_MAGIC}\nfunction a() {}`);
+    fs.writeFileSync(poisoned2, `// ${CRASH_MAGIC}\nfunction b() {}`);
 
-    // Simulate an error path that surfaces via the extractor (catchable) —
-    // confirms parseFilesWasm continues across the batch rather than aborting.
-    jsEntry.extractor = (tree, filePath, query) => {
-      if (filePath === poisonedFile) {
-        throw new TypeError("Cannot read properties of undefined (reading 'toLowerCase')");
-      }
-      return originalExtractor(tree, filePath, query);
-    };
+    const result = await parseFilesAuto([poisoned1, good, poisoned2], tmpDir, { engine: 'wasm' });
 
-    const result = await parseFilesAuto([poisonedFile, goodFile], fixtureDir, { engine: 'wasm' });
-
-    expect(result.size).toBe(1);
     expect(result.has('math.js')).toBe(true);
+    expect(result.has('boom1.js')).toBe(false);
+    expect(result.has('boom2.js')).toBe(false);
   });
 });

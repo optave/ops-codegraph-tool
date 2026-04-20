@@ -36,11 +36,7 @@ export interface WorkerParseRequest {
   opts: WorkerAnalysisOpts;
 }
 
-export interface WorkerShutdownRequest {
-  type: 'shutdown';
-}
-
-export type WorkerRequest = WorkerParseRequest | WorkerShutdownRequest;
+export type WorkerRequest = WorkerParseRequest;
 
 /**
  * Serialized ExtractorOutput shape. Identical to ExtractorOutput except:

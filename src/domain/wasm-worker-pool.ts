@@ -12,8 +12,9 @@
  * "in-flight" file.
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Worker } from 'node:worker_threads';
 import { debug, warn } from '../infrastructure/logger.js';
 import type { ASTNodeRow, ExtractorOutput, TypeMapEntry } from '../types.js';
@@ -27,17 +28,41 @@ import type {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Resolve the path to the compiled (or source) worker entry script.
+ * Resolve the path to the compiled worker entry script.
  *
- * In dist builds, `import.meta.url` points at a `.js` file and the worker
- * sibling is also `.js`. Under Node's type-stripping runtime (tests,
- * `--experimental-strip-types`) the URL ends in `.ts` — in that case we
- * point the worker at the `.ts` entry, which Node will strip at load time.
+ * The worker is always loaded from compiled `.js` — Node's worker_threads
+ * loader does not apply vitest/ts-node transforms or rewrite `.js` specifiers
+ * to `.ts`, so even under `--experimental-strip-types` the worker's
+ * relative `.js` imports (e.g. `../ast-analysis/metrics.js`) would fail to
+ * resolve inside the src/ tree.
+ *
+ * Resolution order:
+ *   1. Sibling `.js` (dist build — `dist/domain/wasm-worker-entry.js`).
+ *   2. Corresponding `dist/` file when running from `src/` (tests/dev).
+ * If neither exists, surface a clear error instead of silently exiting the
+ * worker with "module not found".
  */
 function resolveWorkerEntry(): URL {
   const selfUrl = import.meta.url;
-  const ext = selfUrl.endsWith('.ts') ? '.ts' : '.js';
-  return new URL(`./wasm-worker-entry${ext}`, selfUrl);
+  const selfPath = fileURLToPath(selfUrl);
+
+  // Prefer the sibling .js first (dist build — fast path).
+  const siblingJs = path.join(path.dirname(selfPath), 'wasm-worker-entry.js');
+  if (fs.existsSync(siblingJs)) return pathToFileURL(siblingJs);
+
+  // Running from src/ — fall back to the compiled dist/ copy. Walk up to the
+  // package root (parent of `src/`) and look for `dist/domain/wasm-worker-entry.js`.
+  // This lets vitest import parser.ts while the worker still runs real .js.
+  const srcIdx = selfPath.lastIndexOf(`${path.sep}src${path.sep}`);
+  if (srcIdx !== -1) {
+    const repoRoot = selfPath.slice(0, srcIdx);
+    const distJs = path.join(repoRoot, 'dist', 'domain', 'wasm-worker-entry.js');
+    if (fs.existsSync(distJs)) return pathToFileURL(distJs);
+  }
+
+  throw new Error(
+    `wasm-worker-entry.js not found — run \`npm run build\` to generate dist/. Searched: ${siblingJs}`,
+  );
 }
 
 interface PendingJob {
@@ -46,7 +71,20 @@ interface PendingJob {
   code: string;
   opts: WorkerAnalysisOpts;
   resolve: (out: ExtractorOutput | null) => void;
+  /** setTimeout handle — fires if the worker hangs in a non-crashing loop. */
+  timeoutHandle: NodeJS.Timeout | null;
 }
+
+/**
+ * Per-file watchdog deadline. A parse that takes longer than this is assumed
+ * to be hung (e.g. WASM grammar stuck in an infinite loop rather than
+ * crashing). We terminate the worker, skip the file, and continue.
+ *
+ * 60s is comfortably above worst-case real parses seen in CI (~12s for the
+ * slowest fixture) while still giving the build a definite upper bound
+ * instead of stalling forever.
+ */
+const WORKER_PARSE_TIMEOUT_MS = 60_000;
 
 function deserializeResult(ser: SerializedExtractorOutput | null): ExtractorOutput | null {
   if (!ser) return null;
@@ -73,7 +111,6 @@ function deserializeResult(ser: SerializedExtractorOutput | null): ExtractorOutp
 
 export class WasmWorkerPool {
   private worker: Worker | null = null;
-  private workerReady: Promise<void> | null = null;
   private nextId = 1;
   private queue: PendingJob[] = [];
   private inFlight: PendingJob | null = null;
@@ -90,7 +127,14 @@ export class WasmWorkerPool {
     if (this.disposed) return Promise.resolve(null);
     if (this.crashedFiles.has(filePath)) return Promise.resolve(null);
     return new Promise((resolve) => {
-      const job: PendingJob = { id: this.nextId++, filePath, code, opts, resolve };
+      const job: PendingJob = {
+        id: this.nextId++,
+        filePath,
+        code,
+        opts,
+        resolve,
+        timeoutHandle: null,
+      };
       this.queue.push(job);
       this.pump();
     });
@@ -103,7 +147,10 @@ export class WasmWorkerPool {
     const inFlight = this.inFlight;
     this.inFlight = null;
     for (const j of pending) j.resolve(null);
-    if (inFlight) inFlight.resolve(null);
+    if (inFlight) {
+      if (inFlight.timeoutHandle) clearTimeout(inFlight.timeoutHandle);
+      inFlight.resolve(null);
+    }
     if (this.worker) {
       try {
         await this.worker.terminate();
@@ -128,7 +175,30 @@ export class WasmWorkerPool {
       code: next.code,
       opts: next.opts,
     };
+    // Arm the hang watchdog BEFORE posting so we can't race a fast reply.
+    next.timeoutHandle = setTimeout(() => this.onTimeout(next.id), WORKER_PARSE_TIMEOUT_MS);
     worker.postMessage(req);
+  }
+
+  /**
+   * Called when the per-job watchdog fires. Terminate the worker so the
+   * hang stops consuming CPU; `onExit` will then resolve the in-flight job
+   * with `null` and blacklist the file via `crashedFiles`.
+   */
+  private onTimeout(jobId: number): void {
+    const job = this.inFlight;
+    if (!job || job.id !== jobId) return; // already resolved
+    warn(
+      `WASM worker parse timed out after ${WORKER_PARSE_TIMEOUT_MS}ms on ${job.filePath} — terminating worker and skipping file`,
+    );
+    this.crashedFiles.add(job.filePath);
+    const w = this.worker;
+    if (w) {
+      w.terminate().catch((e: unknown) => {
+        debug(`WasmWorkerPool onTimeout: terminate failed: ${(e as Error).message}`);
+      });
+      // onExit will fire and clean up `inFlight` + resolve the job.
+    }
   }
 
   private ensureWorker(): Worker {
@@ -146,6 +216,10 @@ export class WasmWorkerPool {
     if (!job || job.id !== msg.id) {
       debug(`WasmWorkerPool: stale or unmatched response id=${msg.id}`);
       return;
+    }
+    if (job.timeoutHandle) {
+      clearTimeout(job.timeoutHandle);
+      job.timeoutHandle = null;
     }
     this.inFlight = null;
     if (msg.ok) {
@@ -167,7 +241,6 @@ export class WasmWorkerPool {
   private onExit(code: number): void {
     const crashed = this.inFlight;
     this.worker = null;
-    this.workerReady = null;
     if (!crashed) {
       // Clean exit with no in-flight job — e.g. shutdown. Nothing to do.
       if (code !== 0) {
@@ -175,9 +248,15 @@ export class WasmWorkerPool {
       }
       return;
     }
+    if (crashed.timeoutHandle) {
+      clearTimeout(crashed.timeoutHandle);
+      crashed.timeoutHandle = null;
+    }
     this.inFlight = null;
     if (code === 0) {
-      // Shouldn't happen — worker terminated mid-job without a response.
+      // Clean exit mid-job — could be our own terminate() from onTimeout,
+      // or an unexpected worker shutdown. In either case the file is
+      // skipped (crashedFiles was already set in onTimeout if that was the cause).
       warn(`WASM worker exited cleanly mid-job on ${crashed.filePath} — skipping`);
     } else {
       warn(

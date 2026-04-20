@@ -752,11 +752,25 @@ if (!parentPort) {
   throw new Error('wasm-worker-entry must be run as a worker_thread');
 }
 
+// Test-only crash marker. When the code contains this exact magic token
+// and CODEGRAPH_WASM_WORKER_TEST_CRASH=1 is set in the worker env, the
+// worker calls process.exit(1) mid-parse — simulating a V8 fatal from the
+// grammar so we can unit-test pool crash recovery without a real V8 abort.
+const TEST_CRASH_MAGIC = '__CODEGRAPH_WASM_WORKER_TEST_CRASH__';
+
+// The pool terminates workers via `Worker.terminate()`; no graceful-shutdown
+// handshake is needed. Worker only handles `parse` messages.
 parentPort.on('message', async (msg: WorkerRequest) => {
-  if (msg.type === 'shutdown') {
-    process.exit(0);
-  }
   if (msg.type !== 'parse') return;
+
+  if (
+    process.env.CODEGRAPH_WASM_WORKER_TEST_CRASH === '1' &&
+    typeof msg.code === 'string' &&
+    msg.code.includes(TEST_CRASH_MAGIC)
+  ) {
+    // Simulate a fatal V8 abort — hard-exit the worker.
+    process.exit(1);
+  }
 
   try {
     const result = await handleParse(msg);
