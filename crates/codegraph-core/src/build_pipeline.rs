@@ -328,7 +328,7 @@ pub fn run_pipeline(
     // Build call edges using existing Rust edge_builder (internal path)
     // For now, call edges are built via the existing napi-exported function's
     // internal logic. We load nodes from DB and pass to the edge builder.
-    build_and_insert_call_edges(conn, &file_symbols, &import_ctx);
+    build_and_insert_call_edges(conn, &file_symbols, &import_ctx, !change_result.is_full_build);
 
     timing.edges_ms = t0.elapsed().as_secs_f64() * 1000.0;
 
@@ -842,32 +842,151 @@ fn build_file_hash_entries(
 }
 
 /// Build call edges using the Rust edge_builder and insert them.
+///
+/// `is_incremental`: when true, the set of nodes loaded from the DB may be
+/// scoped to the files being processed plus their resolved import targets.
+/// Scoping is gated on:
+///   - small incremental change set (`file_symbols.len() <= SMALL_FILES`)
+///   - large-enough existing codebase (`file-node count > MIN_EXISTING`)
+/// Both gates mirror the JS path in `build-edges.ts` (#976) to avoid
+/// exercising the scoped path on tiny fixtures where the scoped set can
+/// miss transitively-required nodes (e.g. a call site whose receiver type
+/// is declared in a file that isn't a direct import target).
+///
+/// Full builds always load every node — there is no smaller set anyway.
 fn build_and_insert_call_edges(
     conn: &Connection,
     file_symbols: &HashMap<String, FileSymbols>,
     import_ctx: &ImportEdgeContext,
+    is_incremental: bool,
 ) {
     use crate::edge_builder::*;
 
-    // Load all callable nodes from DB
     let node_kind_filter = "kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')";
-    let sql = format!("SELECT id, name, kind, file, line FROM nodes WHERE {node_kind_filter}");
-    let mut stmt = match conn.prepare(&sql) {
-        Ok(s) => s,
-        Err(_) => return,
+
+    // Gate parity with `loadNodes` in `src/domain/graph/builder/stages/build-edges.ts`:
+    //   isFullBuild = false
+    //   && fileSymbols.size <= smallFilesThreshold (5)
+    //   && existingFileCount > FAST_PATH_MIN_EXISTING_FILES (20)
+    // Small fixtures skip the scoped path entirely — the savings are
+    // negligible at that scale and the scoped set can miss nodes that the
+    // edge builder needs for receiver-type resolution (#976).
+    let existing_file_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM nodes WHERE kind = 'file'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    let scope_eligible = is_incremental
+        && file_symbols.len() <= crate::constants::FAST_PATH_MAX_CHANGED_FILES
+        && existing_file_count > crate::constants::FAST_PATH_MIN_EXISTING_FILES;
+
+    let all_nodes: Vec<NodeInfo> = if scope_eligible {
+        // Build the scoped set: changed/reverse-dep files + their resolved
+        // import targets + any barrel files on the path + the **ultimate**
+        // source files that barrel chains resolve to. The FileEdgeInput
+        // construction below (see `imported_names` at ~L1035) rewrites
+        // `target_file` to the ultimate definition file via
+        // `resolve_barrel_export`; if that file isn't in `relevant_files`
+        // the edge builder's `nodes_by_name_and_file` lookup returns
+        // nothing and the call edge is silently dropped (greptile P1).
+        let mut relevant_files: HashSet<String> = file_symbols.keys().cloned().collect();
+        for (rel_path, symbols) in file_symbols {
+            let abs_file = Path::new(&import_ctx.root_dir).join(rel_path);
+            let abs_str = abs_file.to_str().unwrap_or("");
+            for imp in &symbols.imports {
+                let resolved = import_ctx.get_resolved(abs_str, &imp.source);
+                if resolved.is_empty() {
+                    continue;
+                }
+                relevant_files.insert(resolved.clone());
+                // If the resolved target is a barrel, walk the re-export
+                // chain and add every ultimate definition file that a
+                // named import could resolve to.
+                if import_ctx.is_barrel_file(&resolved) {
+                    for name in &imp.names {
+                        let clean_name = name.strip_prefix("* as ").unwrap_or(name);
+                        let mut visited = HashSet::new();
+                        if let Some(ultimate) = import_ctx.resolve_barrel_export(
+                            &resolved,
+                            clean_name,
+                            &mut visited,
+                        ) {
+                            relevant_files.insert(ultimate);
+                        }
+                    }
+                }
+            }
+        }
+        for barrel_path in &import_ctx.barrel_only_files {
+            relevant_files.insert(barrel_path.clone());
+        }
+
+        if relevant_files.is_empty() {
+            Vec::new()
+        } else {
+            // Schema qualification matches the existing `_analysis_files`
+            // pattern below: unqualified CREATE (temp schema is the
+            // default for TEMP tables), qualified `temp.` for every
+            // subsequent op. Index the file column so the INNER JOIN is
+            // a lookup rather than a table scan (greptile P2).
+            let _ = conn.execute_batch(
+                "CREATE TEMP TABLE IF NOT EXISTS _edge_files (file TEXT NOT NULL);\n                 CREATE INDEX IF NOT EXISTS _edge_files_file_idx ON _edge_files (file);",
+            );
+            let _ = conn.execute("DELETE FROM temp._edge_files", []);
+            {
+                let mut ins =
+                    match conn.prepare("INSERT INTO temp._edge_files (file) VALUES (?1)") {
+                        Ok(s) => s,
+                        Err(_) => return,
+                    };
+                for f in &relevant_files {
+                    let _ = ins.execute(rusqlite::params![f]);
+                }
+            }
+
+            let sql = format!(
+                "SELECT n.id, n.name, n.kind, n.file, n.line FROM nodes n \
+                 INNER JOIN temp._edge_files ef ON n.file = ef.file \
+                 WHERE n.{node_kind_filter}",
+            );
+            let nodes: Vec<NodeInfo> = match conn.prepare(&sql) {
+                Ok(mut stmt) => stmt
+                    .query_map([], |row| {
+                        Ok(NodeInfo {
+                            id: row.get::<_, i64>(0)? as u32,
+                            name: row.get(1)?,
+                            kind: row.get(2)?,
+                            file: row.get(3)?,
+                            line: row.get::<_, i64>(4)? as u32,
+                        })
+                    })
+                    .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                    .unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
+            let _ = conn.execute("DROP TABLE IF EXISTS temp._edge_files", []);
+            nodes
+        }
+    } else {
+        let sql = format!("SELECT id, name, kind, file, line FROM nodes WHERE {node_kind_filter}");
+        match conn.prepare(&sql) {
+            Ok(mut stmt) => stmt
+                .query_map([], |row| {
+                    Ok(NodeInfo {
+                        id: row.get::<_, i64>(0)? as u32,
+                        name: row.get(1)?,
+                        kind: row.get(2)?,
+                        file: row.get(3)?,
+                        line: row.get::<_, i64>(4)? as u32,
+                    })
+                })
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                .unwrap_or_default(),
+            Err(_) => Vec::new(),
+        }
     };
-    let all_nodes: Vec<NodeInfo> = stmt
-        .query_map([], |row| {
-            Ok(NodeInfo {
-                id: row.get::<_, i64>(0)? as u32,
-                name: row.get(1)?,
-                kind: row.get(2)?,
-                file: row.get(3)?,
-                line: row.get::<_, i64>(4)? as u32,
-            })
-        })
-        .map(|rows| rows.filter_map(|r| r.ok()).collect())
-        .unwrap_or_default();
 
     if all_nodes.is_empty() {
         return;
