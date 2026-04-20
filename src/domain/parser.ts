@@ -791,6 +791,9 @@ function wasmExtractSymbols(
     symbols = entry.extractor(tree as any, filePath, query as any);
   } catch (e: unknown) {
     warn(`Extractor error in ${filePath}: ${(e as Error).message}`);
+    // Free WASM tree to prevent memory leak — web-tree-sitter trees are backed
+    // by WASM linear memory and are not garbage-collected automatically.
+    if (typeof (tree as any).delete === 'function') (tree as any).delete();
     return null;
   }
   return symbols ? { symbols, tree, langId: entry.id } : null;
