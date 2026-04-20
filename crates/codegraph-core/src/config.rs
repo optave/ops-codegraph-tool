@@ -23,7 +23,7 @@ pub struct BuildConfig {
     pub aliases: std::collections::HashMap<String, String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildSettings {
     /// Whether incremental builds are enabled (default: true).
@@ -33,6 +33,18 @@ pub struct BuildSettings {
     /// Drift detection threshold for incremental builds.
     #[serde(default = "default_drift_threshold")]
     pub drift_threshold: f64,
+}
+
+// Manual impl so `BuildSettings::default()` matches the serde field defaults.
+// `#[derive(Default)]` would give `incremental: false`, which disagrees with
+// `#[serde(default = "default_true")]` when the outer `build` key is absent.
+impl Default for BuildSettings {
+    fn default() -> Self {
+        Self {
+            incremental: default_true(),
+            drift_threshold: default_drift_threshold(),
+        }
+    }
 }
 
 fn default_true() -> bool {
