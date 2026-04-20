@@ -1182,7 +1182,11 @@ function handleVarDeclaratorTypeMap(
       const obj = fn.childForFieldName('object');
       if (obj && obj.type === 'identifier') {
         const objName = obj.text;
-        if (objName[0]! !== objName[0]!.toLowerCase() && !BUILTIN_GLOBALS.has(objName)) {
+        if (
+          objName[0] &&
+          objName[0] !== objName[0].toLowerCase() &&
+          !BUILTIN_GLOBALS.has(objName)
+        ) {
           setTypeMapEntry(typeMap, nameN.text, objName, 0.7);
         }
       }

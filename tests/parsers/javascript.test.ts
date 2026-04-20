@@ -184,6 +184,79 @@ describe('JavaScript parser', () => {
       expect(symbols.typeMap.has('d')).toBe(false);
       expect(symbols.typeMap.has('p')).toBe(false);
     });
+
+    // Regression: GH #964 — tree-sitter can produce partial/corrupted trees in
+    // which an identifier node has empty `text`. Previously the factory path
+    // crashed with "Cannot read properties of undefined (reading 'toLowerCase')"
+    // because `objName[0]` is undefined for an empty string. The guard now
+    // mirrors the Python extractor's short-circuit check.
+    it('does not crash when factory call has an empty-text identifier', () => {
+      // Build a mock tree that mimics `const x = <empty-identifier>.create()`.
+      // The walk path calls handleVarDeclaratorTypeMap → factory branch, which
+      // reads `obj.text` ("") and would previously call "".toLowerCase() via
+      // `objName[0]!.toLowerCase()`. The fix's `objName[0] &&` guard short-circuits.
+      const pos = { row: 0, column: 0 };
+      const makeNode = (
+        type: string,
+        text = '',
+        fields: Record<string, any> = {},
+        children: any[] = [],
+      ) => {
+        const node: any = {
+          type,
+          text,
+          startPosition: pos,
+          endPosition: pos,
+          childCount: children.length,
+          child: (i: number) => children[i] ?? null,
+          childForFieldName: (name: string) => fields[name] ?? null,
+          parent: null,
+        };
+        for (const c of children) {
+          c.parent = node;
+        }
+        return node;
+      };
+
+      const emptyIdentifier = makeNode('identifier', '');
+      const createName = makeNode('property_identifier', 'create');
+      const memberExpr = makeNode(
+        'member_expression',
+        '.create',
+        {
+          object: emptyIdentifier,
+          property: createName,
+        },
+        [emptyIdentifier, createName],
+      );
+      const callExpr = makeNode(
+        'call_expression',
+        '.create()',
+        {
+          function: memberExpr,
+        },
+        [memberExpr],
+      );
+      const nameIdent = makeNode('identifier', 'x');
+      const declarator = makeNode(
+        'variable_declarator',
+        'x = .create()',
+        {
+          name: nameIdent,
+          value: callExpr,
+        },
+        [nameIdent, callExpr],
+      );
+      const lexDecl = makeNode('lexical_declaration', 'const x = .create();', {}, [declarator]);
+      const root = makeNode('program', '', {}, [lexDecl]);
+      const fakeTree: any = { rootNode: root };
+
+      // Before the fix this would throw TypeError. Now it should complete and
+      // simply leave `x` out of the typeMap (empty identifier is ignored).
+      expect(() => extractSymbols(fakeTree, 'test.js')).not.toThrow();
+      const symbols = extractSymbols(fakeTree, 'test.js');
+      expect(symbols.typeMap.has('x')).toBe(false);
+    });
   });
 
   it('does not set receiver for .call()/.apply()/.bind() unwrapped calls', () => {
