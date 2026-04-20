@@ -117,6 +117,17 @@ export class WasmWorkerPool {
   private disposed = false;
   /** filePaths that already caused one worker crash — skipped rather than retried. */
   private crashedFiles = new Set<string>();
+  /**
+   * Tracks the id of the job whose timeout fired and triggered `terminate()`.
+   * Node timers are delivered before poll-phase I/O, so `onTimeout` can fire in
+   * the same loop iteration that already has the worker's response queued. In
+   * that race, `onMessage` resolves the timed-out job and starts the next one
+   * BEFORE `onExit` arrives for the earlier `terminate()` — so the `inFlight`
+   * job `onExit` sees is the innocent next job, not the one that actually hung.
+   * `onExit` uses this field to detect the mismatch and re-queue the new job
+   * instead of silently discarding it.
+   */
+  private timedOutJobId: number | null = null;
 
   /**
    * Parse a single file via the worker. Returns the fully pre-computed
@@ -146,6 +157,7 @@ export class WasmWorkerPool {
     const pending = this.queue.splice(0);
     const inFlight = this.inFlight;
     this.inFlight = null;
+    this.timedOutJobId = null;
     for (const j of pending) j.resolve(null);
     if (inFlight) {
       if (inFlight.timeoutHandle) clearTimeout(inFlight.timeoutHandle);
@@ -192,6 +204,10 @@ export class WasmWorkerPool {
       `WASM worker parse timed out after ${WORKER_PARSE_TIMEOUT_MS}ms on ${job.filePath} — terminating worker and skipping file`,
     );
     this.crashedFiles.add(job.filePath);
+    // Record which job we're terminating so onExit can distinguish this
+    // terminate-induced exit from a crash on a different (innocent) job that
+    // got pumped in between — see `timedOutJobId` field comment.
+    this.timedOutJobId = jobId;
     const w = this.worker;
     if (w) {
       w.terminate().catch((e: unknown) => {
@@ -221,6 +237,12 @@ export class WasmWorkerPool {
       clearTimeout(job.timeoutHandle);
       job.timeoutHandle = null;
     }
+    // If a terminate() is pending for this same job (response + timeout raced
+    // in the same loop tick — timers fire before poll-phase I/O), delay
+    // pumping the next job until `onExit` runs. Otherwise the upcoming exit
+    // would land on an innocent follow-up job. `onExit` clears
+    // `timedOutJobId` and calls pump() itself once the worker is fully gone.
+    const terminatePending = this.timedOutJobId === job.id;
     this.inFlight = null;
     if (msg.ok) {
       job.resolve(deserializeResult(msg.result));
@@ -228,7 +250,7 @@ export class WasmWorkerPool {
       warn(`WASM worker soft error on ${job.filePath}: ${msg.error}`);
       job.resolve(null);
     }
-    this.pump();
+    if (!terminatePending) this.pump();
   }
 
   private onError(err: unknown): void {
@@ -241,11 +263,32 @@ export class WasmWorkerPool {
   private onExit(code: number): void {
     const crashed = this.inFlight;
     this.worker = null;
+    const timedOutJobId = this.timedOutJobId;
+    this.timedOutJobId = null;
     if (!crashed) {
-      // Clean exit with no in-flight job — e.g. shutdown. Nothing to do.
+      // Clean exit with no in-flight job — e.g. shutdown, or the race where
+      // `onMessage` already resolved the timed-out job (and deferred pump()
+      // because a terminate was in flight). Nothing to crash; just pump the
+      // queue so any waiting jobs get dispatched on a fresh worker.
       if (code !== 0) {
         debug(`WASM worker exited with code ${code}, no job in flight`);
       }
+      if (timedOutJobId !== null) this.pump();
+      return;
+    }
+    if (timedOutJobId !== null && crashed.id !== timedOutJobId) {
+      // Defensive: a terminate() we issued for a different (earlier) job is
+      // what triggered this exit, but somehow an innocent follow-up job ended
+      // up in-flight. `onMessage` normally defers pumping when a terminate is
+      // pending, so this path should not trigger — but if it does, re-queue
+      // the follow-up rather than silently discarding a valid parse.
+      if (crashed.timeoutHandle) {
+        clearTimeout(crashed.timeoutHandle);
+        crashed.timeoutHandle = null;
+      }
+      this.inFlight = null;
+      this.queue.unshift(crashed);
+      this.pump();
       return;
     }
     if (crashed.timeoutHandle) {
