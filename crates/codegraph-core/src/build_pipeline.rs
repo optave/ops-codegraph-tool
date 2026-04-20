@@ -843,9 +843,17 @@ fn build_file_hash_entries(
 
 /// Build call edges using the Rust edge_builder and insert them.
 ///
-/// `is_incremental`: when true, the set of nodes loaded from the DB is scoped
-/// to the files being processed plus their resolved import targets. Full
-/// builds load every node (there is no smaller set to work with anyway).
+/// `is_incremental`: when true, the set of nodes loaded from the DB may be
+/// scoped to the files being processed plus their resolved import targets.
+/// Scoping is gated on:
+///   - small incremental change set (`file_symbols.len() <= SMALL_FILES`)
+///   - large-enough existing codebase (`file-node count > MIN_EXISTING`)
+/// Both gates mirror the JS path in `build-edges.ts` (#976) to avoid
+/// exercising the scoped path on tiny fixtures where the scoped set can
+/// miss transitively-required nodes (e.g. a call site whose receiver type
+/// is declared in a file that isn't a direct import target).
+///
+/// Full builds always load every node — there is no smaller set anyway.
 fn build_and_insert_call_edges(
     conn: &Connection,
     file_symbols: &HashMap<String, FileSymbols>,
@@ -856,10 +864,28 @@ fn build_and_insert_call_edges(
 
     let node_kind_filter = "kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')";
 
-    // For incremental builds, scope node loading to only the files being
-    // processed + their import targets. This avoids deserializing the entire
-    // node table (~13k rows) for a small edit.
-    let all_nodes: Vec<NodeInfo> = if is_incremental && file_symbols.len() < 200 {
+    // Gate parity with `loadNodes` in `src/domain/graph/builder/stages/build-edges.ts`:
+    //   isFullBuild = false
+    //   && fileSymbols.size <= smallFilesThreshold (5)
+    //   && existingFileCount > FAST_PATH_MIN_EXISTING_FILES (20)
+    // Small fixtures skip the scoped path entirely — the savings are
+    // negligible at that scale and the scoped set can miss nodes that the
+    // edge builder needs for receiver-type resolution (#976).
+    let existing_file_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM nodes WHERE kind = 'file'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    let scope_eligible = is_incremental
+        && file_symbols.len() <= crate::constants::FAST_PATH_MAX_CHANGED_FILES
+        && existing_file_count > crate::constants::FAST_PATH_MIN_EXISTING_FILES;
+
+    let all_nodes: Vec<NodeInfo> = if scope_eligible {
+        // Build the scoped set: changed/reverse-dep files + their resolved
+        // import targets + any barrel files (imports re-exported through
+        // them may resolve to nodes the edge builder needs).
         let mut relevant_files: HashSet<String> = file_symbols.keys().cloned().collect();
         for (rel_path, symbols) in file_symbols {
             let abs_file = Path::new(&import_ctx.root_dir).join(rel_path);
@@ -870,6 +896,9 @@ fn build_and_insert_call_edges(
                     relevant_files.insert(resolved);
                 }
             }
+        }
+        for barrel_path in &import_ctx.barrel_only_files {
+            relevant_files.insert(barrel_path.clone());
         }
 
         if relevant_files.is_empty() {
