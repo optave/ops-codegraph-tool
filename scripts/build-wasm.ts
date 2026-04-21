@@ -36,13 +36,28 @@ function printBanner(title: string, lines: string[]): void {
   console.warn(bar);
 }
 
+// With shell: true, execFileSync concatenates cmd + args into a single string
+// and hands it to the shell, so any whitespace in args (e.g. Windows paths like
+// `C:\Users\First Last\...`) gets re-split as separate tokens. Quote args that
+// contain whitespace so the shell treats them as one argument.
+function quoteShellArg(arg: string): string {
+  if (arg.length === 0) return '""';
+  if (!/\s/.test(arg)) return arg;
+  if (process.platform === 'win32') {
+    // cmd.exe: wrap in double quotes; escape any embedded double quotes.
+    return `"${arg.replace(/"/g, '""')}"`;
+  }
+  // POSIX sh: wrap in single quotes; close/escape/reopen for embedded single quotes.
+  return `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
 function runCaptured(
   cmd: string,
   args: string[],
   cwd: string,
 ): { ok: true; stdout: string } | { ok: false; stdout: string; stderr: string; message: string } {
   try {
-    const stdout = execFileSync(cmd, args, {
+    const stdout = execFileSync(cmd, args.map(quoteShellArg), {
       cwd,
       stdio: ['ignore', 'pipe', 'pipe'],
       shell: true,
@@ -229,8 +244,13 @@ for (const g of grammars) {
   const build = runCaptured('npx', ['tree-sitter', 'build', '--wasm', grammarDir], grammarsDir);
   if (!build.ok) {
     failed++;
-    const combined = `${build.stderr}\n${build.stdout}`;
-    if (/emcc|emscripten|docker/i.test(combined) && /not found|no such|cannot find|missing/i.test(combined)) {
+    // Include build.message — Node.js surfaces ENOENT for spawned executables
+    // (e.g. `spawn emcc ENOENT`) via the error message, not stderr.
+    const combined = `${build.stderr}\n${build.stdout}\n${build.message}`;
+    if (
+      /emcc|emscripten|docker/i.test(combined) &&
+      /not found|no such|cannot find|missing|ENOENT/i.test(combined)
+    ) {
       missingToolchain = true;
     }
     const detail = build.stderr.trim().split('\n').slice(-2).join(' | ') || build.message;
