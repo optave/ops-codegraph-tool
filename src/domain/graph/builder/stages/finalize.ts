@@ -3,6 +3,7 @@
  *
  * WASM cleanup, stats logging, drift detection, build metadata, registry, journal.
  */
+import fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -88,6 +89,19 @@ function persistBuildMetadata(
   // subsequent build to be a full rebuild.
   const codeVersionToWrite =
     ctx.engineName === 'native' && ctx.engineVersion ? ctx.engineVersion : CODEGRAPH_VERSION;
+  // Persist the repo root so downstream commands (e.g. `codegraph embed`)
+  // can resolve relative file paths regardless of the invoking cwd.
+  // Use realpathSync (symlink-resolving) to match the Rust engine's
+  // std::fs::canonicalize — otherwise the JS write here would overwrite the
+  // canonical path Rust wrote for native full builds and could re-introduce
+  // a non-canonical path when the project root is behind a symlink.
+  const resolvedRootDir = path.resolve(ctx.rootDir);
+  let rootDirToWrite = resolvedRootDir;
+  try {
+    rootDirToWrite = fs.realpathSync(resolvedRootDir);
+  } catch {
+    /* realpath can fail (e.g. path no longer exists); fall back to resolve() */
+  }
   try {
     if (useNativeDb) {
       ctx.nativeDb!.setBuildMeta(
@@ -99,6 +113,7 @@ function persistBuildMetadata(
           built_at: buildNow.toISOString(),
           node_count: String(nodeCount),
           edge_count: String(actualEdgeCount),
+          root_dir: rootDirToWrite,
         }).map(([key, value]) => ({ key, value: String(value) })),
       );
     } else {
@@ -110,6 +125,7 @@ function persistBuildMetadata(
         built_at: buildNow.toISOString(),
         node_count: nodeCount,
         edge_count: actualEdgeCount,
+        root_dir: rootDirToWrite,
       });
     }
   } catch (err) {
