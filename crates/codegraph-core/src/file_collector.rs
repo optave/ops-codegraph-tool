@@ -69,7 +69,17 @@ fn build_glob_set(patterns: &[String]) -> Option<GlobSet> {
     if added == 0 {
         return None;
     }
-    builder.build().ok()
+    match builder.build() {
+        Ok(set) => Some(set),
+        Err(e) => {
+            // Failing to build the GlobSet disables *all* include/exclude
+            // filters, which silently changes what files the build sees.
+            // Surface the error so users can correct their config instead of
+            // being confused by ignored filters.
+            eprintln!("codegraph: failed to build glob set: {e}");
+            None
+        }
+    }
 }
 
 /// `true` when the relative path passes the configured include/exclude filters.
