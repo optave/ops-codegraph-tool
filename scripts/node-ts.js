@@ -1,12 +1,13 @@
 #!/usr/bin/env node
-// node-ts.js — Version-aware TypeScript launcher
-// Uses --strip-types on Node 23+ and --experimental-strip-types on Node 22.x.
+// node-ts.js — TypeScript launcher
+// Uses --experimental-strip-types, which is accepted on every supported Node
+// version (>=22.6). Node 23 briefly shipped a --strip-types alias that was
+// removed in Node 24, so we avoid it.
 // Usage: node scripts/node-ts.js <script.ts> [args...]
 
 import { execFileSync } from "node:child_process";
 
-const [major] = process.versions.node.split(".").map(Number);
-const flag = major >= 23 ? "--strip-types" : "--experimental-strip-types";
+const flag = "--experimental-strip-types";
 const [script, ...args] = process.argv.slice(2);
 
 if (!script) {
