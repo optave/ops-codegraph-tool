@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { toErrorMessage } from '../shared/errors.js';
+import { ConfigError, toErrorMessage } from '../shared/errors.js';
 import type { CodegraphConfig } from '../types.js';
 import { debug, warn } from './logger.js';
 
@@ -179,6 +179,7 @@ export function loadConfig(cwd?: string): CodegraphConfig {
         _configCache.set(cwd, structuredClone(result));
         return result;
       } catch (err: unknown) {
+        if (err instanceof ConfigError) throw err;
         debug(`Failed to parse config ${filePath}: ${toErrorMessage(err)}`);
       }
     }
@@ -215,7 +216,16 @@ export function applyEnvOverrides(config: CodegraphConfig): CodegraphConfig {
 
 export function resolveSecrets(config: CodegraphConfig): CodegraphConfig {
   const cmd = config.llm.apiKeyCommand;
-  if (typeof cmd !== 'string' || cmd.trim() === '') return config;
+  if (cmd == null) return config;
+  if (typeof cmd !== 'string') {
+    const actual = Array.isArray(cmd) ? 'array' : typeof cmd;
+    throw new ConfigError(
+      `llm.apiKeyCommand must be a string (received ${actual}). ` +
+        'The command is split on whitespace and executed without a shell. ' +
+        'Example: "apiKeyCommand": "op read op://vault/openai/api-key"',
+    );
+  }
+  if (cmd.trim() === '') return config;
 
   const parts = cmd.trim().split(/\s+/);
   const [executable, ...args] = parts;

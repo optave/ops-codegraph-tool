@@ -15,6 +15,7 @@ import {
   mergeConfig,
   resolveSecrets,
 } from '../../src/infrastructure/config.js';
+import { ConfigError } from '../../src/shared/errors.js';
 
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal();
@@ -430,13 +431,24 @@ describe('resolveSecrets', () => {
     expect(config.llm.apiKey).toBe('existing');
   });
 
-  it('skips when apiKeyCommand is not a string', () => {
-    const config = {
+  it('throws ConfigError when apiKeyCommand is not a string', () => {
+    const numberCfg = {
       llm: { provider: null, model: null, baseUrl: null, apiKey: 'existing', apiKeyCommand: 42 },
     };
-    resolveSecrets(config);
+    expect(() => resolveSecrets(numberCfg as never)).toThrow(ConfigError);
+    expect(() => resolveSecrets(numberCfg as never)).toThrow(/must be a string/);
+
+    const arrayCfg = {
+      llm: {
+        provider: null,
+        model: null,
+        baseUrl: null,
+        apiKey: 'existing',
+        apiKeyCommand: ['op', 'read', 'op://vault/key'],
+      },
+    };
+    expect(() => resolveSecrets(arrayCfg as never)).toThrow(/received array/);
     expect(mockExecFile).not.toHaveBeenCalled();
-    expect(config.llm.apiKey).toBe('existing');
   });
 
   it('warns and preserves existing apiKey on command failure', () => {

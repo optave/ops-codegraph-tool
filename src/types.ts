@@ -1104,6 +1104,13 @@ export interface CodegraphConfig {
     model: string | null;
     baseUrl: string | null;
     apiKey: string | null;
+    /**
+     * Command that prints the API key to stdout. Must be a single string —
+     * it is split on whitespace and executed via `execFileSync` with no shell,
+     * so shell features like `$(...)`, pipes, globs, or variable expansion are
+     * not supported. Example: `"op read op://vault/openai/api-key"`. Non-string
+     * values are rejected with a `ConfigError` at load time.
+     */
     apiKeyCommand: string | null;
   };
 
