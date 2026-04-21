@@ -196,6 +196,53 @@ describe('appendJournalEntries', () => {
   });
 });
 
+describe('concurrent-append safety', () => {
+  it('cleans up the .lock file after a successful append', () => {
+    const root = makeRoot();
+    writeJournalHeader(root, 1700000000000);
+    appendJournalEntries(root, [{ file: 'src/a.js' }]);
+
+    const lockPath = path.join(root, '.codegraph', `${JOURNAL_FILENAME}.lock`);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it('steals a stale lock whose holder PID is dead', () => {
+    const root = makeRoot();
+    writeJournalHeader(root, 1700000000000);
+
+    // Pre-stage a lockfile with a PID that is guaranteed not to exist
+    // (max 32-bit value; well above any real process).
+    const lockPath = path.join(root, '.codegraph', `${JOURNAL_FILENAME}.lock`);
+    fs.writeFileSync(lockPath, '2147483646\n');
+
+    expect(() => appendJournalEntries(root, [{ file: 'src/a.js' }])).not.toThrow();
+    expect(fs.existsSync(lockPath)).toBe(false);
+
+    const result = readJournal(root);
+    expect(result.changed).toEqual(['src/a.js']);
+  });
+
+  it('produces no interleaved lines under repeated appends', () => {
+    const root = makeRoot();
+    writeJournalHeader(root, 1700000000000);
+
+    // Many small appends — every emitted line must be a complete,
+    // well-formed entry (no truncated "DELETED " prefixes, no split paths).
+    for (let i = 0; i < 200; i++) {
+      appendJournalEntries(root, [
+        { file: `src/changed-${i}.js` },
+        { file: `src/gone-${i}.js`, deleted: true },
+      ]);
+    }
+
+    const content = fs.readFileSync(path.join(root, '.codegraph', JOURNAL_FILENAME), 'utf-8');
+    for (const line of content.split('\n')) {
+      if (!line || line.startsWith('#')) continue;
+      expect(line).toMatch(/^(DELETED src\/gone-\d+\.js|src\/changed-\d+\.js)$/);
+    }
+  });
+});
+
 describe('read/write/append lifecycle', () => {
   it('full lifecycle: header → append → read → new header', () => {
     const root = makeRoot();
