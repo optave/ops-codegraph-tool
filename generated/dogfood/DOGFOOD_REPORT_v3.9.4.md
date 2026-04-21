@@ -220,7 +220,7 @@ This is the most consequential benchmark finding of the session. Starting from a
 | Incremental #3 | 37,034 | +249 | 276 |
 | Restore probe + rebuild | 37,283 | +249 | 276 |
 
-Every incremental rebuild of a one-line change adds ~249 duplicate edges sourced from **files other than the one that was changed** (e.g., `src/domain/parser.ts` edges appear three times after two `queries.ts` touches). See §9 #979 for the full reproduction.
+Every incremental rebuild of a one-line change adds duplicate edges sourced from **files other than the one that was changed** (e.g., `src/domain/parser.ts` edges appear three times after two `queries.ts` touches). The first rebuild leaks +211 duplicates; subsequent rebuilds settle at a steady +249 per run. See §9 #979 for the full reproduction.
 
 ### Query benchmarks (single-engine, native)
 
@@ -351,7 +351,7 @@ v3.9.4 is a careful, disciplined release: JS callback resolution (#947), WASM in
 
 The **critical remaining issue** is the incremental edge-leak (#979): every single-file incremental rebuild inserts ~249 duplicate edges sourced from files other than the one that changed, and those duplicates are never cleaned up. Watch-mode users and CI that relies on incrementals for speed drift further from correctness with every change. This is not a v3.9.4 regression per se — the pattern reproduces the same way that the published WASM bug (#938) likely did before it was fixed — but it's the most consequential unresolved bug in the native path. Until it's fixed, any long-lived dev session produces increasingly wrong `fn-impact`, `triage`, `stats`, and `map` output.
 
-Three other meaningful bugs surfaced: `scripts/node-ts.js` is broken on Node 24 (#980, fixed in #985), `config.include`/`exclude` are declared-but-unused (#981), `build --no-incremental` silently drops embeddings (#982, warning added in #986), and `codegraph watch` didn't accept `--db` (#984, fixed in #987). None of these block a user who knows the gotchas, but each one cost real time to diagnose.
+Four other meaningful bugs surfaced: `scripts/node-ts.js` is broken on Node 24 (#980, fixed in #985), `config.include`/`exclude` are declared-but-unused (#981), `build --no-incremental` silently drops embeddings (#982, warning added in #986), and `codegraph watch` didn't accept `--db` (#984, fixed in #987). None of these block a user who knows the gotchas, but each one cost real time to diagnose.
 
 Build performance is solid: native full build in ~1.4 s, no-op rebuild in ~15–20 ms (well under the 214 ms target from the #928/#930 fix), queries sub-10 ms. No performance regressions detected vs v3.8.1.
 
