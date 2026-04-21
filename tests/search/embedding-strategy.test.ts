@@ -398,56 +398,60 @@ describe('embed resolves source files from DB root, not cwd (#983)', () => {
   test('falls back to <dbPath>/../.. when root_dir metadata is missing', async () => {
     // Build a fresh DB without root_dir metadata
     const legacyRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-embed983-legacy-'));
-    fs.writeFileSync(path.join(legacyRepo, 'b.js'), 'export function gamma() { return 42; }\n');
-    const legacyDbDir = path.join(legacyRepo, '.codegraph');
-    fs.mkdirSync(legacyDbDir, { recursive: true });
-    const legacyDb = path.join(legacyDbDir, 'graph.db');
+    try {
+      fs.writeFileSync(path.join(legacyRepo, 'b.js'), 'export function gamma() { return 42; }\n');
+      const legacyDbDir = path.join(legacyRepo, '.codegraph');
+      fs.mkdirSync(legacyDbDir, { recursive: true });
+      const legacyDb = path.join(legacyDbDir, 'graph.db');
 
-    const db = new Database(legacyDb);
-    db.pragma('journal_mode = WAL');
-    initSchema(db);
-    insertNode(db, 'gamma', 'function', 'b.js', 1, 1);
-    // Deliberately NOT writing root_dir — simulates DB built before #983 fix
-    db.close();
+      const db = new Database(legacyDb);
+      db.pragma('journal_mode = WAL');
+      initSchema(db);
+      insertNode(db, 'gamma', 'function', 'b.js', 1, 1);
+      // Deliberately NOT writing root_dir — simulates DB built before #983 fix
+      db.close();
 
-    EMBEDDED_TEXTS.length = 0;
-    process.chdir(otherDir);
-    await buildEmbeddings(process.cwd(), 'minilm', legacyDb);
+      EMBEDDED_TEXTS.length = 0;
+      process.chdir(otherDir);
+      await buildEmbeddings(process.cwd(), 'minilm', legacyDb);
 
-    expect(EMBEDDED_TEXTS.length).toBe(1);
-
-    fs.rmSync(legacyRepo, { recursive: true, force: true });
+      expect(EMBEDDED_TEXTS.length).toBe(1);
+    } finally {
+      fs.rmSync(legacyRepo, { recursive: true, force: true });
+    }
   });
 
   test('exits non-zero (throws) when no source files can be read', async () => {
     // Build a DB pointing at files that no longer exist
     const ghostRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-embed983-ghost-'));
-    const ghostDbDir = path.join(ghostRepo, '.codegraph');
-    fs.mkdirSync(ghostDbDir, { recursive: true });
-    const ghostDb = path.join(ghostDbDir, 'graph.db');
+    try {
+      const ghostDbDir = path.join(ghostRepo, '.codegraph');
+      fs.mkdirSync(ghostDbDir, { recursive: true });
+      const ghostDb = path.join(ghostDbDir, 'graph.db');
 
-    const db = new Database(ghostDb);
-    db.pragma('journal_mode = WAL');
-    initSchema(db);
-    insertNode(db, 'missing', 'function', 'does-not-exist.js', 1, 1);
-    db.prepare('INSERT OR REPLACE INTO build_meta (key, value) VALUES (?, ?)').run(
-      'root_dir',
-      path.resolve(ghostRepo),
-    );
-    db.close();
+      const db = new Database(ghostDb);
+      db.pragma('journal_mode = WAL');
+      initSchema(db);
+      insertNode(db, 'missing', 'function', 'does-not-exist.js', 1, 1);
+      db.prepare('INSERT OR REPLACE INTO build_meta (key, value) VALUES (?, ?)').run(
+        'root_dir',
+        path.resolve(ghostRepo),
+      );
+      db.close();
 
-    EMBEDDED_TEXTS.length = 0;
-    await expect(buildEmbeddings(ghostRepo, 'minilm', ghostDb)).rejects.toThrow(
-      /could not read any of the .* source files/,
-    );
+      EMBEDDED_TEXTS.length = 0;
+      await expect(buildEmbeddings(ghostRepo, 'minilm', ghostDb)).rejects.toThrow(
+        /could not read any of the .* source files/,
+      );
 
-    // No embeddings were persisted (they would have been overwritten via DELETE)
-    const readDb = new Database(ghostDb, { readonly: true });
-    const count = readDb.prepare('SELECT COUNT(*) as c FROM embeddings').get().c;
-    readDb.close();
-    expect(count).toBe(0);
-
-    fs.rmSync(ghostRepo, { recursive: true, force: true });
+      // No embeddings were persisted (they would have been overwritten via DELETE)
+      const readDb = new Database(ghostDb, { readonly: true });
+      const count = readDb.prepare('SELECT COUNT(*) as c FROM embeddings').get().c;
+      readDb.close();
+      expect(count).toBe(0);
+    } finally {
+      fs.rmSync(ghostRepo, { recursive: true, force: true });
+    }
   });
 });
 
