@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { closeDb, findDbPath, openDb } from '../../db/index.js';
+import { closeDb, findDbPath, getBuildMeta, openDb } from '../../db/index.js';
 import { warn } from '../../infrastructure/logger.js';
 import { DbError } from '../../shared/errors.js';
 import type { BetterSqlite3Database, NodeRow } from '../../types.js';
@@ -73,6 +73,21 @@ export async function buildEmbeddings(
   const db = openDb(dbPath) as BetterSqlite3Database;
   initEmbeddingsSchema(db);
 
+  // Prefer the repo root recorded at build time — embed may be invoked from a
+  // different cwd (e.g. `codegraph embed --db /abs/path/graph.db`) and the
+  // positional rootDir will be wrong in that case. For legacy DBs without
+  // root_dir metadata, fall back to `<dbParent>` only when the DB lives at
+  // the conventional `<root>/.codegraph/graph.db` layout — otherwise trust
+  // the caller-provided rootDir (which may be an explicit positional arg).
+  // `path.dirname(...)` is always non-empty (`'.'` at minimum), so the
+  // conventional-layout check is required to keep the rootDir path reachable.
+  const metaRoot = getBuildMeta(db, 'root_dir');
+  const resolvedDbPath = path.resolve(dbPath);
+  const dbDirName = path.basename(path.dirname(resolvedDbPath));
+  const dbParent =
+    dbDirName === '.codegraph' ? path.dirname(path.dirname(resolvedDbPath)) : undefined;
+  const resolvedRoot = metaRoot || dbParent || rootDir;
+
   db.exec('DELETE FROM embeddings');
   db.exec('DELETE FROM embedding_meta');
   db.exec('DELETE FROM fts_index');
@@ -98,13 +113,17 @@ export async function buildEmbeddings(
   const config = getModelConfig(modelKey);
   const contextWindow = config.contextWindow;
   let overflowCount = 0;
+  let filesRead = 0;
+  let filesSkipped = 0;
 
   for (const [file, fileNodes] of byFile) {
-    const fullPath = path.isAbsolute(file) ? file : path.join(rootDir, file);
+    const fullPath = path.isAbsolute(file) ? file : path.join(resolvedRoot, file);
     let lines: string[];
     try {
       lines = fs.readFileSync(fullPath, 'utf-8').split('\n');
+      filesRead++;
     } catch (err: unknown) {
+      filesSkipped++;
       warn(`Cannot read ${file} for embeddings: ${(err as Error).message}`);
       continue;
     }
@@ -133,6 +152,19 @@ export async function buildEmbeddings(
   if (overflowCount > 0) {
     warn(
       `${overflowCount} symbol(s) exceeded model context window (${contextWindow} tokens) and were truncated`,
+    );
+  }
+
+  // If there were symbols to embed but every file failed to read, the DB was
+  // almost certainly built from a different location than the current cwd.
+  // Surface this clearly instead of emitting a silent "Stored 0 embeddings".
+  if (byFile.size > 0 && filesRead === 0) {
+    closeDb(db);
+    throw new DbError(
+      `embed: could not read any of the ${filesSkipped} source files recorded in the graph — the DB may have been built from a different location than the current working directory.\n` +
+        `Tried resolving against: ${resolvedRoot}\n` +
+        'Pass a positional <dir> argument pointing at the original repo root, or re-run "codegraph build" from that directory.',
+      { file: dbPath },
     );
   }
 
