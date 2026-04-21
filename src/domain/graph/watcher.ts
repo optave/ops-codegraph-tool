@@ -165,8 +165,8 @@ interface WatcherContext {
 }
 
 /** Initialize DB, engine, cache, and statements for watch mode. */
-function setupWatcher(rootDir: string, opts: { engine?: string }): WatcherContext {
-  const dbPath = path.join(rootDir, '.codegraph', 'graph.db');
+function setupWatcher(rootDir: string, opts: { engine?: string; dbPath?: string }): WatcherContext {
+  const dbPath = opts.dbPath ?? path.join(rootDir, '.codegraph', 'graph.db');
   if (!fs.existsSync(dbPath)) {
     throw new DbError('No graph.db found. Run `codegraph build` first.', { file: dbPath });
   }
@@ -297,7 +297,7 @@ function setupShutdownHandler(ctx: WatcherContext, cleanup: () => void): void {
 
 export async function watchProject(
   rootDir: string,
-  opts: { engine?: string; poll?: boolean; pollInterval?: number } = {},
+  opts: { engine?: string; poll?: boolean; pollInterval?: number; dbPath?: string } = {},
 ): Promise<void> {
   const ctx = setupWatcher(rootDir, opts);
 
