@@ -13,6 +13,24 @@ import type {
   LanguageRegistryEntry,
   TypeMapEntry,
 } from '../types.js';
+import { disposeWasmWorkerPool, getWasmWorkerPool } from './wasm-worker-pool.js';
+import type { WorkerAnalysisOpts } from './wasm-worker-protocol.js';
+
+/** Default worker opts: run all analyses so output matches parseFilesFull. */
+const FULL_ANALYSIS: WorkerAnalysisOpts = {
+  ast: true,
+  complexity: true,
+  cfg: true,
+  dataflow: true,
+};
+
+/** Extract-only opts: skip visitor walk for typeMap backfill / similar fast paths. */
+const EXTRACT_ONLY: WorkerAnalysisOpts = {
+  ast: false,
+  complexity: false,
+  cfg: false,
+  dataflow: false,
+};
 
 // Re-export all extractors for backward compatibility
 export {
@@ -262,7 +280,7 @@ function disposeMapEntries(entries: Iterable<[string, any]>, label: string): voi
   }
 }
 
-export function disposeParsers(): void {
+export async function disposeParsers(): Promise<void> {
   if (_cachedParsers) {
     disposeMapEntries(_cachedParsers, 'parser');
     _cachedParsers = null;
@@ -276,6 +294,7 @@ export function disposeParsers(): void {
   _initialized = false;
   _allParsersLoaded = false;
   _loadingPromises.clear();
+  await disposeWasmWorkerPool();
 }
 
 export function getParser(parsers: Map<string, Parser | null>, filePath: string): Parser | null {
@@ -286,33 +305,33 @@ export function getParser(parsers: Map<string, Parser | null>, filePath: string)
 }
 
 /**
- * Pre-parse files missing `_tree` via WASM so downstream phases (CFG, dataflow)
- * don't each need to create parsers and re-parse independently.
- * Only parses files whose extension is in SUPPORTED_EXTENSIONS.
+ * Backfill missing AST-analysis data (astNodes, dataflow, def.complexity,
+ * def.cfg) via the WASM worker pool for files that were parsed by the native
+ * engine but are missing one or more analyses.
+ *
+ * Historically this function populated `symbols._tree` so the main-thread
+ * visitor walk in `ast-analysis/engine.ts` could run. After the worker-isolation
+ * refactor (#965), the worker runs every visitor itself and returns pre-computed
+ * analysis data — `_tree` is never set on the main thread.
+ *
+ * Name is preserved for caller compatibility; the function now ensures
+ * *analysis data* rather than *trees*.
  */
 export async function ensureWasmTrees(
   fileSymbols: Map<string, any>,
   rootDir: string,
 ): Promise<void> {
-  // Single pass: collect absolute paths for files that need parsing
-  const filePaths: string[] = [];
+  // Collect files that still need analysis data and are parseable by WASM.
+  const pending: Array<{ relPath: string; absPath: string; symbols: any }> = [];
   for (const [relPath, symbols] of fileSymbols) {
-    if (!symbols._tree && _extToLang.has(path.extname(relPath).toLowerCase())) {
-      filePaths.push(path.join(rootDir, relPath));
-    }
+    if (symbols._tree) continue; // legacy path — leave existing trees alone
+    if (!_extToLang.has(path.extname(relPath).toLowerCase())) continue;
+    pending.push({ relPath, absPath: path.join(rootDir, relPath), symbols });
   }
-  if (filePaths.length === 0) return;
-  const parsers = await ensureParsersForFiles(filePaths);
+  if (pending.length === 0) return;
 
-  for (const [relPath, symbols] of fileSymbols) {
-    if (symbols._tree) continue;
-    const ext = path.extname(relPath).toLowerCase();
-    const entry = _extToLang.get(ext);
-    if (!entry) continue;
-    const parser = parsers.get(entry.id);
-    if (!parser) continue;
-
-    const absPath = path.join(rootDir, relPath);
+  const pool = getWasmWorkerPool();
+  for (const { relPath, absPath, symbols } of pending) {
     let code: string;
     try {
       code = fs.readFileSync(absPath, 'utf-8');
@@ -320,11 +339,45 @@ export async function ensureWasmTrees(
       debug(`ensureWasmTrees: cannot read ${relPath}: ${(e as Error).message}`);
       continue;
     }
-    try {
-      symbols._tree = parser.parse(code);
-      symbols._langId = entry.id;
-    } catch (e: unknown) {
-      debug(`ensureWasmTrees: parse failed for ${relPath}: ${(e as Error).message}`);
+    const output = await pool.parse(absPath, code, FULL_ANALYSIS);
+    if (!output) continue; // worker crashed or returned null — skip silently
+    mergeAnalysisData(symbols, output);
+  }
+}
+
+/**
+ * Merge pre-computed analysis data from a worker result onto existing symbols.
+ * Only fills gaps — never overwrites fields the caller already populated.
+ * Used to patch native-parsed symbols with worker-produced astNodes / dataflow /
+ * per-definition complexity and cfg.
+ */
+function mergeAnalysisData(symbols: any, worker: ExtractorOutput): void {
+  if (!symbols._langId && worker._langId) symbols._langId = worker._langId;
+  if (!symbols._lineCount && worker._lineCount) symbols._lineCount = worker._lineCount;
+  if (!Array.isArray(symbols.astNodes) && Array.isArray(worker.astNodes)) {
+    symbols.astNodes = worker.astNodes;
+  }
+  if (!symbols.dataflow && worker.dataflow) symbols.dataflow = worker.dataflow;
+  if (worker.typeMap && worker.typeMap.size > 0) {
+    if (!symbols.typeMap || !(symbols.typeMap instanceof Map)) {
+      symbols.typeMap = new Map(worker.typeMap);
+    } else {
+      for (const [k, v] of worker.typeMap) {
+        if (!symbols.typeMap.has(k)) symbols.typeMap.set(k, v);
+      }
+    }
+  }
+  const existingDefs: any[] = Array.isArray(symbols.definitions) ? symbols.definitions : [];
+  const workerDefs: any[] = Array.isArray(worker.definitions) ? worker.definitions : [];
+  // Index existing defs by (kind, name, line) — mirrors engine.ts matching key.
+  const byKey = new Map<string, any>();
+  for (const d of existingDefs) byKey.set(`${d.kind}|${d.name}|${d.line}`, d);
+  for (const wd of workerDefs) {
+    const existing = byKey.get(`${wd.kind}|${wd.name}|${wd.line}`);
+    if (!existing) continue;
+    if (!existing.complexity && wd.complexity) existing.complexity = wd.complexity;
+    if ((!existing.cfg || !Array.isArray(existing.cfg.blocks)) && wd.cfg?.blocks) {
+      existing.cfg = wd.cfg;
     }
   }
 }
@@ -742,23 +795,13 @@ async function backfillTypeMap(
       return { typeMap: new Map(), backfilled: false };
     }
   }
-  const parsers = await ensureParsersForFiles([filePath]);
-  const extracted = wasmExtractSymbols(parsers, filePath, code);
-  try {
-    if (!extracted || extracted.symbols.typeMap.size === 0) {
-      return { typeMap: new Map(), backfilled: false };
-    }
-    return { typeMap: extracted.symbols.typeMap, backfilled: true };
-  } finally {
-    // Free the WASM tree to prevent memory accumulation across repeated builds
-    if (extracted?.tree && typeof extracted.tree.delete === 'function') {
-      try {
-        extracted.tree.delete();
-      } catch (e) {
-        debug(`backfillTypeMap: WASM tree cleanup failed: ${toErrorMessage(e)}`);
-      }
-    }
+  const pool = getWasmWorkerPool();
+  // Extract-only — no visitor walk, we only need the typeMap from this pass.
+  const output = await pool.parse(filePath, code, EXTRACT_ONLY);
+  if (!output || output.typeMap.size === 0) {
+    return { typeMap: new Map(), backfilled: false };
   }
+  return { typeMap: output.typeMap, backfilled: true };
 }
 
 /**
@@ -826,10 +869,9 @@ export async function parseFileAuto(
     return patched;
   }
 
-  // WASM path
-  const parsers = await ensureParsersForFiles([filePath]);
-  const extracted = wasmExtractSymbols(parsers, filePath, source);
-  return extracted ? extracted.symbols : null;
+  // WASM path — dispatch to isolated worker
+  const pool = getWasmWorkerPool();
+  return pool.parse(filePath, source, FULL_ANALYSIS);
 }
 
 /** Backfill typeMap via WASM for TS/TSX files parsed by the native engine. */
@@ -842,40 +884,44 @@ async function backfillTypeMapBatch(
   );
   if (tsFiles.length === 0) return;
 
-  const parsers = await ensureParsersForFiles(tsFiles.map((f) => f.filePath));
+  const pool = getWasmWorkerPool();
   for (const { filePath, relPath } of tsFiles) {
-    let extracted: WasmExtractResult | null | undefined;
+    let code: string;
     try {
-      const code = fs.readFileSync(filePath, 'utf-8');
-      extracted = wasmExtractSymbols(parsers, filePath, code);
-      if (extracted?.symbols && extracted.symbols.typeMap.size > 0) {
-        const symbols = result.get(relPath);
-        if (!symbols) continue;
-        symbols.typeMap = extracted.symbols.typeMap;
-        symbols._typeMapBackfilled = true;
-      }
+      code = fs.readFileSync(filePath, 'utf-8');
     } catch (e) {
-      debug(`batchExtract: typeMap backfill failed: ${toErrorMessage(e)}`);
-    } finally {
-      if (extracted?.tree && typeof extracted.tree.delete === 'function') {
-        try {
-          extracted.tree.delete();
-        } catch (e) {
-          debug(`batchExtract: WASM tree cleanup failed: ${toErrorMessage(e)}`);
-        }
-      }
+      debug(`batchExtract: cannot read ${filePath}: ${toErrorMessage(e)}`);
+      continue;
     }
+    const output = await pool.parse(filePath, code, EXTRACT_ONLY);
+    if (!output || output.typeMap.size === 0) continue;
+    const symbols = result.get(relPath);
+    if (!symbols) continue;
+    symbols.typeMap = output.typeMap;
+    symbols._typeMapBackfilled = true;
   }
 }
 
-/** Parse files via WASM engine, returning a Map<relPath, symbols>. */
+/**
+ * Parse files via WASM engine, returning a Map<relPath, symbols>.
+ *
+ * Each file is dispatched to the WASM worker pool. The worker parses, extracts,
+ * and runs all AST analyses (complexity, CFG, dataflow, ast-store) in its own
+ * thread, returning fully pre-computed ExtractorOutput. V8 fatal errors from
+ * tree-sitter WASM (#965) kill only the worker — the pool skips the file and
+ * restarts the worker for the next one.
+ *
+ * `_tree` is NEVER set by this path. All downstream analyses operate on the
+ * pre-computed `astNodes` / `dataflow` / `def.complexity` / `def.cfg` fields.
+ */
 async function parseFilesWasm(
   filePaths: string[],
   rootDir: string,
 ): Promise<Map<string, ExtractorOutput>> {
   const result = new Map<string, ExtractorOutput>();
-  const parsers = await ensureParsersForFiles(filePaths);
+  const pool = getWasmWorkerPool();
   for (const filePath of filePaths) {
+    if (!_extToLang.has(path.extname(filePath).toLowerCase())) continue;
     let code: string;
     try {
       code = fs.readFileSync(filePath, 'utf-8');
@@ -883,13 +929,10 @@ async function parseFilesWasm(
       warn(`Skipping ${path.relative(rootDir, filePath)}: ${(err as Error).message}`);
       continue;
     }
-    const extracted = wasmExtractSymbols(parsers, filePath, code);
-    if (extracted) {
+    const output = await pool.parse(filePath, code, FULL_ANALYSIS);
+    if (output) {
       const relPath = path.relative(rootDir, filePath).split(path.sep).join('/');
-      extracted.symbols._tree = extracted.tree;
-      extracted.symbols._langId = extracted.langId;
-      extracted.symbols._lineCount = code.split('\n').length;
-      result.set(relPath, extracted.symbols);
+      result.set(relPath, output);
     }
   }
   return result;

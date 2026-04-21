@@ -6,6 +6,7 @@ export const command: CommandDefinition = {
   name: 'watch [dir]',
   description: 'Watch project for file changes and incrementally update the graph',
   options: [
+    ['-d, --db <path>', 'Path to graph.db'],
     ['--poll', 'Use stat-based polling (default on Windows to avoid ReFS/Dev Drive crashes)'],
     ['--native', 'Force native OS file watchers instead of polling'],
     ['--poll-interval <ms>', 'Polling interval in milliseconds (default: 2000)'],
@@ -22,6 +23,7 @@ export const command: CommandDefinition = {
       engine,
       poll,
       pollInterval: opts.pollInterval ? Number(opts.pollInterval) : undefined,
+      dbPath: opts.db ? path.resolve(opts.db) : undefined,
     });
   },
 };

@@ -22,6 +22,100 @@ const grammarsDir = resolve(root, 'grammars');
 
 if (!existsSync(grammarsDir)) mkdirSync(grammarsDir);
 
+type PreflightFailure = {
+  reason: string;
+  remediation: string[];
+};
+
+function printBanner(title: string, lines: string[]): void {
+  const bar = '─'.repeat(Math.max(title.length + 4, 60));
+  console.warn(bar);
+  console.warn(`  ${title}`);
+  console.warn(bar);
+  for (const l of lines) console.warn(l);
+  console.warn(bar);
+}
+
+// With shell: true, execFileSync concatenates cmd + args into a single string
+// and hands it to the shell, so any whitespace in args (e.g. Windows paths like
+// `C:\Users\First Last\...`) gets re-split as separate tokens. Quote args that
+// contain whitespace so the shell treats them as one argument.
+function quoteShellArg(arg: string): string {
+  if (arg.length === 0) return '""';
+  if (!/\s/.test(arg)) return arg;
+  if (process.platform === 'win32') {
+    // cmd.exe: wrap in double quotes; escape any embedded double quotes.
+    return `"${arg.replace(/"/g, '""')}"`;
+  }
+  // POSIX sh: wrap in single quotes; close/escape/reopen for embedded single quotes.
+  return `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+function runCaptured(
+  cmd: string,
+  args: string[],
+  cwd: string,
+): { ok: true; stdout: string } | { ok: false; stdout: string; stderr: string; message: string } {
+  try {
+    const stdout = execFileSync(cmd, args.map(quoteShellArg), {
+      cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: true,
+      encoding: 'utf8',
+    });
+    return { ok: true, stdout };
+  } catch (err: any) {
+    return {
+      ok: false,
+      stdout: String(err.stdout ?? ''),
+      stderr: String(err.stderr ?? ''),
+      message: String(err.message ?? 'unknown error'),
+    };
+  }
+}
+
+function preflightTreeSitterCli(): PreflightFailure | null {
+  const result = runCaptured('npx', ['tree-sitter', '--version'], root);
+  if (result.ok) return null;
+
+  const combined = `${result.stderr}\n${result.stdout}\n${result.message}`;
+  const missingBinary =
+    /ENOENT.*tree-sitter(\.exe)?/i.test(combined) ||
+    /tree-sitter(\.exe)? was not found/i.test(combined) ||
+    /spawn .*tree-sitter(\.exe)?.*ENOENT/i.test(combined);
+
+  if (missingBinary) {
+    return {
+      reason: "tree-sitter CLI binary is missing — can't build WASM grammars",
+      remediation: [
+        'The tree-sitter-cli npm package downloads a platform-specific binary',
+        'at install time (see node_modules/tree-sitter-cli/install.js). That',
+        'download appears to have failed or been skipped on this machine,',
+        'likely due to a network/proxy block or a previous --ignore-scripts install.',
+        '',
+        'Remediation — try one of:',
+        '  1. npm rebuild tree-sitter-cli      (re-run the binary download)',
+        '  2. npm install -g tree-sitter-cli   (install globally from PATH)',
+        '  3. Download tree-sitter from',
+        '     https://github.com/tree-sitter/tree-sitter/releases',
+        '     and place it on PATH',
+        '',
+        'Note: the native Rust engine handles parsing on its own. WASM grammars',
+        'are only needed when running with --engine wasm or on platforms without',
+        'a prebuilt native addon.',
+      ],
+    };
+  }
+
+  return {
+    reason: `tree-sitter CLI is not runnable: ${result.message.trim()}`,
+    remediation: [
+      'Inspect node_modules/tree-sitter-cli/ to confirm the package installed cleanly.',
+      result.stderr.trim() ? `stderr: ${result.stderr.trim().split('\n').slice(0, 3).join(' | ')}` : '',
+    ].filter(Boolean),
+  };
+}
+
 // Allowed WASM imports — pure C runtime / memory primitives only (no I/O, no syscalls)
 const ALLOWED_WASM_IMPORTS = new Set([
   'env.memory',
@@ -124,8 +218,16 @@ const grammars = [
   { name: 'tree-sitter-verilog', pkg: 'tree-sitter-verilog', sub: null },
 ];
 
+const preflight = preflightTreeSitterCli();
+if (preflight) {
+  printBanner(`WASM build skipped: ${preflight.reason}`, preflight.remediation);
+  console.warn(`\nSkipped building ${grammars.length} grammars. Exiting cleanly (non-fatal — native engine available).`);
+  process.exit(0);
+}
+
 let failed = 0;
 let rejected = 0;
+let missingToolchain = false;
 
 for (const g of grammars) {
   let pkgDir: string;
@@ -139,15 +241,20 @@ for (const g of grammars) {
   const grammarDir = g.sub ? resolve(pkgDir, g.sub) : pkgDir;
 
   console.log(`Building ${g.name}.wasm from ${grammarDir}...`);
-  try {
-    execFileSync('npx', ['tree-sitter', 'build', '--wasm', grammarDir], {
-      cwd: grammarsDir,
-      stdio: 'inherit',
-      shell: true,
-    });
-  } catch (err: any) {
+  const build = runCaptured('npx', ['tree-sitter', 'build', '--wasm', grammarDir], grammarsDir);
+  if (!build.ok) {
     failed++;
-    console.warn(`  WARN: Failed to build ${g.name}.wasm — ${err.message ?? 'unknown error'}`);
+    // Include build.message — Node.js surfaces ENOENT for spawned executables
+    // (e.g. `spawn emcc ENOENT`) via the error message, not stderr.
+    const combined = `${build.stderr}\n${build.stdout}\n${build.message}`;
+    if (
+      /emcc|emscripten|docker/i.test(combined) &&
+      /not found|no such|cannot find|missing|ENOENT/i.test(combined)
+    ) {
+      missingToolchain = true;
+    }
+    const detail = build.stderr.trim().split('\n').slice(-2).join(' | ') || build.message;
+    console.warn(`  WARN: Failed to build ${g.name}.wasm — ${detail}`);
     continue;
   }
 
@@ -173,6 +280,18 @@ for (const g of grammars) {
 const total = failed + rejected;
 if (total > 0) {
   console.warn(`\n${failed} build failures, ${rejected} validation rejections out of ${grammars.length} grammars (non-fatal — native engine available)`);
+  if (missingToolchain) {
+    printBanner('WASM toolchain missing', [
+      "tree-sitter's `build --wasm` needs either Docker or Emscripten (emcc) to",
+      'compile grammars from C to WebAssembly. Neither appears to be available.',
+      '',
+      'Remediation — install one of:',
+      '  - Docker Desktop:  https://www.docker.com/products/docker-desktop',
+      '  - Emscripten SDK:  https://emscripten.org/docs/getting_started/downloads.html',
+      '',
+      'Then re-run: npm run build:wasm',
+    ]);
+  }
   if (rejected > 0) {
     console.error('SECURITY: Some grammars were rejected — inspect the source packages before retrying.');
   }
