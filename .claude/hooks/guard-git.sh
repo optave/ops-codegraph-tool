@@ -29,7 +29,12 @@ fi
 # Normalize: strip `git -C "<path>"` / `git -C <path>` so downstream subcommand
 # patterns (git\s+push, git\s+commit, …) match regardless of whether `-C` is
 # present. detect_work_dir still inspects the raw $COMMAND to find the target.
-NCOMMAND=$(echo "$COMMAND" | sed -E 's/(^|\s|&&\s*)git[[:space:]]+-C[[:space:]]+"[^"]+"/\1git/g; s/(^|\s|&&\s*)git[[:space:]]+-C[[:space:]]+[^[:space:]]+/\1git/g')
+# The unquoted pattern requires a non-quote first char so it does not mis-match
+# the opening `"` of a quoted path (which would leave a trailing `path"` in
+# NCOMMAND). The pattern re-anchors on `git`, so multi-`-C` chains (e.g.
+# `git -C /a -C /b push`) need a second pass to collapse the residual `-C`.
+NCOMMAND=$(echo "$COMMAND" | sed -E 's/(^|\s|&&\s*)git[[:space:]]+-C[[:space:]]+"[^"]+"/\1git/g; s/(^|\s|&&\s*)git[[:space:]]+-C[[:space:]]+[^"[:space:]][^[:space:]]*/\1git/g')
+NCOMMAND=$(echo "$NCOMMAND" | sed -E 's/(^|\s|&&\s*)git[[:space:]]+-C[[:space:]]+"[^"]+"/\1git/g; s/(^|\s|&&\s*)git[[:space:]]+-C[[:space:]]+[^"[:space:]][^[:space:]]*/\1git/g')
 
 deny() {
   local reason="$1"
@@ -82,16 +87,18 @@ fi
 # --- Working directory detection ---
 
 # Resolve the working directory a git command targets:
+# - `git -C "<dir>" ...`   → the -C target (takes precedence — explicit git-level override)
 # - `cd "<dir>" && git ...` → the cd target
-# - `git -C "<dir>" ...`   → the -C target
 # Falls back to empty string (caller uses cwd).
 detect_work_dir() {
   local work_dir=""
-  if echo "$COMMAND" | grep -qE '^\s*cd\s+'; then
-    work_dir=$(echo "$COMMAND" | sed -nE 's/^\s*cd\s+"?([^"&]+)"?\s*&&.*/\1/p')
-  fi
-  if [ -z "$work_dir" ] && echo "$COMMAND" | grep -qE 'git\s+-C\s+'; then
+  # `git -C` is the explicit git-level override and wins over any ambient cd prefix,
+  # so check it first (e.g. `cd /tmp && git -C /worktree push` targets /worktree).
+  if echo "$COMMAND" | grep -qE 'git\s+-C\s+'; then
     work_dir=$(echo "$COMMAND" | sed -nE 's/.*git[[:space:]]+-C[[:space:]]+"([^"]+)".*/\1/p;t;s/.*git[[:space:]]+-C[[:space:]]+([^[:space:]]+).*/\1/p')
+  fi
+  if [ -z "$work_dir" ] && echo "$COMMAND" | grep -qE '^\s*cd\s+'; then
+    work_dir=$(echo "$COMMAND" | sed -nE 's/^\s*cd\s+"?([^"&]+)"?\s*&&.*/\1/p')
   fi
   # Trim trailing whitespace
   work_dir="${work_dir%"${work_dir##*[![:space:]]}"}"
