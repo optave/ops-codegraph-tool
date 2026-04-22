@@ -184,6 +184,8 @@ function formatTimingResult(ctx: PipelineContext): BuildResult {
   return {
     phases: {
       setupMs: +(t.setupMs ?? 0).toFixed(1),
+      collectMs: +(t.collectMs ?? 0).toFixed(1),
+      detectMs: +(t.detectMs ?? 0).toFixed(1),
       parseMs: +(t.parseMs ?? 0).toFixed(1),
       insertMs: +(t.insertMs ?? 0).toFixed(1),
       resolveMs: +(t.resolveMs ?? 0).toFixed(1),
@@ -558,7 +560,9 @@ function formatNativeTimingResult(
 ): BuildResult {
   return {
     phases: {
-      setupMs: +((p.setupMs ?? 0) + (p.collectMs ?? 0) + (p.detectMs ?? 0)).toFixed(1),
+      setupMs: +(p.setupMs ?? 0).toFixed(1),
+      collectMs: +(p.collectMs ?? 0).toFixed(1),
+      detectMs: +(p.detectMs ?? 0).toFixed(1),
       parseMs: +(p.parseMs ?? 0).toFixed(1),
       insertMs: +(p.insertMs ?? 0).toFixed(1),
       resolveMs: +(p.resolveMs ?? 0).toFixed(1),

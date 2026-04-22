@@ -8,7 +8,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { purgeFilesData } from '../../../db/index.js';
 import { warn } from '../../../infrastructure/logger.js';
-import { EXTENSIONS, IGNORE_DIRS } from '../../../shared/constants.js';
+import { EXTENSIONS, IGNORE_DIRS, normalizePath } from '../../../shared/constants.js';
+import { compileGlobs, matchesAny } from '../../../shared/globs.js';
 import type {
   BetterSqlite3Database,
   CodegraphConfig,
@@ -59,8 +60,28 @@ function shouldSkipEntry(entry: fs.Dirent, extraIgnore: Set<string> | null): boo
 }
 
 /**
+ * Check whether a source file passes the configured include/exclude globs.
+ *
+ * Patterns are matched against the path relative to the project root,
+ * normalized to forward slashes (e.g. `src/foo/bar.ts`). When both lists
+ * are set, a file must match at least one include and no exclude.
+ */
+export function passesIncludeExclude(
+  relPath: string,
+  includeRegexes: readonly RegExp[],
+  excludeRegexes: readonly RegExp[],
+): boolean {
+  if (includeRegexes.length > 0 && !matchesAny(includeRegexes, relPath)) return false;
+  if (excludeRegexes.length > 0 && matchesAny(excludeRegexes, relPath)) return false;
+  return true;
+}
+
+/**
  * Recursively collect all source files under `dir`.
  * When `directories` is a Set, also tracks which directories contain files.
+ *
+ * The first invocation establishes `dir` as the project root against which
+ * `config.include` / `config.exclude` globs are matched.
  */
 export function collectFiles(
   dir: string,
@@ -68,6 +89,9 @@ export function collectFiles(
   config: Partial<CodegraphConfig>,
   directories: Set<string>,
   _visited?: Set<string>,
+  _rootDir?: string,
+  _includeRegexes?: RegExp[],
+  _excludeRegexes?: RegExp[],
 ): { files: string[]; directories: Set<string> };
 export function collectFiles(
   dir: string,
@@ -75,6 +99,9 @@ export function collectFiles(
   config?: Partial<CodegraphConfig>,
   directories?: null,
   _visited?: Set<string>,
+  _rootDir?: string,
+  _includeRegexes?: RegExp[],
+  _excludeRegexes?: RegExp[],
 ): string[];
 export function collectFiles(
   dir: string,
@@ -82,9 +109,19 @@ export function collectFiles(
   config: Partial<CodegraphConfig> = {},
   directories: Set<string> | null = null,
   _visited: Set<string> = new Set(),
+  _rootDir?: string,
+  _includeRegexes?: RegExp[],
+  _excludeRegexes?: RegExp[],
 ): string[] | { files: string[]; directories: Set<string> } {
   const trackDirs = directories instanceof Set;
   let hasFiles = false;
+
+  // First call: compute root and compile include/exclude patterns once,
+  // then pass them down recursive calls so we don't recompile per directory.
+  const rootDir = _rootDir ?? dir;
+  const includeRegexes = _includeRegexes ?? compileGlobs(config.include);
+  const excludeRegexes = _excludeRegexes ?? compileGlobs(config.exclude);
+  const hasGlobFilters = includeRegexes.length > 0 || excludeRegexes.length > 0;
 
   // Merge config ignoreDirs with defaults
   const extraIgnore = config.ignoreDirs ? new Set(config.ignoreDirs) : null;
@@ -116,11 +153,24 @@ export function collectFiles(
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
       if (trackDirs) {
-        collectFiles(full, files, config, directories as Set<string>, _visited);
+        collectFiles(
+          full,
+          files,
+          config,
+          directories as Set<string>,
+          _visited,
+          rootDir,
+          includeRegexes,
+          excludeRegexes,
+        );
       } else {
-        collectFiles(full, files, config, null, _visited);
+        collectFiles(full, files, config, null, _visited, rootDir, includeRegexes, excludeRegexes);
       }
     } else if (EXTENSIONS.has(path.extname(entry.name))) {
+      if (hasGlobFilters) {
+        const rel = normalizePath(path.relative(rootDir, full));
+        if (!passesIncludeExclude(rel, includeRegexes, excludeRegexes)) continue;
+      }
       files.push(full);
       hasFiles = true;
     }

@@ -5,6 +5,7 @@
 //! (from BurntSushi/ripgrep) for gitignore-aware traversal.
 
 use crate::parser_registry::LanguageKind;
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -44,10 +45,77 @@ pub struct CollectResult {
     pub directories: HashSet<String>,
 }
 
+/// Compile a list of glob patterns into a `GlobSet`.
+///
+/// Invalid patterns are logged via `eprintln!` and skipped so a single bad
+/// entry in config can't take down the whole build.
+fn build_glob_set(patterns: &[String]) -> Option<GlobSet> {
+    if patterns.is_empty() {
+        return None;
+    }
+    let mut builder = GlobSetBuilder::new();
+    let mut added = 0usize;
+    for p in patterns {
+        match Glob::new(p) {
+            Ok(g) => {
+                builder.add(g);
+                added += 1;
+            }
+            Err(e) => {
+                eprintln!("codegraph: ignoring invalid glob pattern {p:?}: {e}");
+            }
+        }
+    }
+    if added == 0 {
+        return None;
+    }
+    match builder.build() {
+        Ok(set) => Some(set),
+        Err(e) => {
+            // Failing to build the GlobSet disables *all* include/exclude
+            // filters, which silently changes what files the build sees.
+            // Surface the error so users can correct their config instead of
+            // being confused by ignored filters.
+            eprintln!("codegraph: failed to build glob set: {e}");
+            None
+        }
+    }
+}
+
+/// `true` when the relative path passes the configured include/exclude filters.
+///
+/// `rel_path` must be relative to the project root and normalized to forward
+/// slashes. Mirrors `passesIncludeExclude` in `src/domain/graph/builder/helpers.ts`
+/// so both engines accept or reject the same set of files.
+pub fn passes_include_exclude(
+    rel_path: &str,
+    include: Option<&GlobSet>,
+    exclude: Option<&GlobSet>,
+) -> bool {
+    if let Some(set) = include {
+        if !set.is_match(rel_path) {
+            return false;
+        }
+    }
+    if let Some(set) = exclude {
+        if set.is_match(rel_path) {
+            return false;
+        }
+    }
+    true
+}
+
 /// Collect all source files under `root_dir`, respecting gitignore and ignore dirs.
 ///
 /// `extra_ignore_dirs` are additional directory names to skip (from config `ignoreDirs`).
-pub fn collect_files(root_dir: &str, extra_ignore_dirs: &[String]) -> CollectResult {
+/// `include_patterns` / `exclude_patterns` are file-level glob filters applied after
+/// the extension check, matched against paths relative to `root_dir`.
+pub fn collect_files(
+    root_dir: &str,
+    extra_ignore_dirs: &[String],
+    include_patterns: &[String],
+    exclude_patterns: &[String],
+) -> CollectResult {
     // Build an owned set of ignore dirs to avoid leaking memory.
     // The closure captures this owned set, so lifetimes are satisfied without Box::leak.
     let ignore_set: HashSet<String> = DEFAULT_IGNORE_DIRS
@@ -57,6 +125,10 @@ pub fn collect_files(root_dir: &str, extra_ignore_dirs: &[String]) -> CollectRes
         .collect();
 
     let ext_set: HashSet<&str> = SUPPORTED_EXTENSIONS.iter().copied().collect();
+
+    let include_set = build_glob_set(include_patterns);
+    let exclude_set = build_glob_set(exclude_patterns);
+    let root_path = Path::new(root_dir);
 
     let mut files = Vec::new();
     let mut directories = HashSet::new();
@@ -105,6 +177,19 @@ pub fn collect_files(root_dir: &str, extra_ignore_dirs: &[String]) -> CollectRes
             }
         }
 
+        // Apply file-level include/exclude globs against the relative path.
+        if include_set.is_some() || exclude_set.is_some() {
+            let rel = path
+                .strip_prefix(root_path)
+                .ok()
+                .and_then(|p| p.to_str())
+                .map(|s| s.replace('\\', "/"))
+                .unwrap_or_else(|| normalize_path(path));
+            if !passes_include_exclude(&rel, include_set.as_ref(), exclude_set.as_ref()) {
+                continue;
+            }
+        }
+
         let abs = normalize_path(path);
         if let Some(parent) = path.parent() {
             directories.insert(normalize_path(parent));
@@ -117,12 +202,18 @@ pub fn collect_files(root_dir: &str, extra_ignore_dirs: &[String]) -> CollectRes
 
 /// Reconstruct file list from DB file_hashes + journal deltas (fast path).
 ///
+/// Applies `include_patterns` / `exclude_patterns` so incremental builds honor
+/// config changes — the paths in the DB were collected under an earlier config
+/// that may have had different glob filters.
+///
 /// Returns `None` when the fast path isn't applicable.
 pub fn try_fast_collect(
     root_dir: &str,
     db_files: &[String],
     journal_changed: &[String],
     journal_removed: &[String],
+    include_patterns: &[String],
+    exclude_patterns: &[String],
 ) -> CollectResult {
     let mut file_set: HashSet<String> = db_files.iter().cloned().collect();
 
@@ -134,12 +225,22 @@ pub fn try_fast_collect(
         file_set.insert(changed.clone());
     }
 
+    let include_set = build_glob_set(include_patterns);
+    let exclude_set = build_glob_set(exclude_patterns);
+    let has_filters = include_set.is_some() || exclude_set.is_some();
+
     // Convert relative paths to absolute and compute directories
     let root = Path::new(root_dir);
     let mut files = Vec::with_capacity(file_set.len());
     let mut directories = HashSet::new();
 
     for rel_path in &file_set {
+        if has_filters {
+            let norm = rel_path.replace('\\', "/");
+            if !passes_include_exclude(&norm, include_set.as_ref(), exclude_set.as_ref()) {
+                continue;
+            }
+        }
         let abs = root.join(rel_path);
         let abs_str = normalize_path(&abs);
         if let Some(parent) = abs.parent() {
@@ -171,7 +272,7 @@ mod tests {
         fs::write(src.join("readme.md"), "# Hello").unwrap();
         fs::write(src.join("util.js"), "module.exports = {};").unwrap();
 
-        let result = collect_files(tmp.to_str().unwrap(), &[]);
+        let result = collect_files(tmp.to_str().unwrap(), &[], &[], &[]);
         let names: HashSet<String> = result
             .files
             .iter()
@@ -200,9 +301,57 @@ mod tests {
         fs::create_dir_all(&src).unwrap();
         fs::write(src.join("app.ts"), "").unwrap();
 
-        let result = collect_files(tmp.to_str().unwrap(), &[]);
+        let result = collect_files(tmp.to_str().unwrap(), &[], &[], &[]);
         assert_eq!(result.files.len(), 1);
         assert!(result.files[0].contains("app.ts"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn collect_honors_exclude_globs() {
+        let tmp = std::env::temp_dir().join("codegraph_collect_exclude_test");
+        let _ = fs::remove_dir_all(&tmp);
+        let src = tmp.join("src");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("app.ts"), "").unwrap();
+        fs::write(src.join("app.test.ts"), "").unwrap();
+        fs::write(src.join("util.ts"), "").unwrap();
+
+        let exclude = vec!["**/*.test.ts".to_string()];
+        let result = collect_files(tmp.to_str().unwrap(), &[], &[], &exclude);
+        let names: HashSet<String> = result
+            .files
+            .iter()
+            .filter_map(|f| Path::new(f).file_name().map(|n| n.to_str().unwrap().to_string()))
+            .collect();
+        assert!(names.contains("app.ts"));
+        assert!(names.contains("util.ts"));
+        assert!(!names.contains("app.test.ts"), "exclude glob should reject matching files");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn collect_honors_include_globs() {
+        let tmp = std::env::temp_dir().join("codegraph_collect_include_test");
+        let _ = fs::remove_dir_all(&tmp);
+        let src = tmp.join("src");
+        let tests = tmp.join("tests");
+        fs::create_dir_all(&src).unwrap();
+        fs::create_dir_all(&tests).unwrap();
+        fs::write(src.join("app.ts"), "").unwrap();
+        fs::write(tests.join("spec.ts"), "").unwrap();
+
+        let include = vec!["src/**".to_string()];
+        let result = collect_files(tmp.to_str().unwrap(), &[], &include, &[]);
+        let names: HashSet<String> = result
+            .files
+            .iter()
+            .filter_map(|f| Path::new(f).file_name().map(|n| n.to_str().unwrap().to_string()))
+            .collect();
+        assert!(names.contains("app.ts"));
+        assert!(!names.contains("spec.ts"), "include glob should reject non-matching files");
 
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -218,7 +367,7 @@ mod tests {
         let changed = vec!["src/d.ts".to_string()];
         let removed = vec!["src/b.ts".to_string()];
 
-        let result = try_fast_collect(root, &db_files, &changed, &removed);
+        let result = try_fast_collect(root, &db_files, &changed, &removed, &[], &[]);
         assert_eq!(result.files.len(), 3); // a, c, d
         let names: HashSet<&str> = result
             .files
@@ -229,5 +378,29 @@ mod tests {
         assert!(!names.contains("b.ts"));
         assert!(names.contains("c.ts"));
         assert!(names.contains("d.ts"));
+    }
+
+    #[test]
+    fn fast_collect_honors_exclude_globs() {
+        let root = "/project";
+        let db_files = vec![
+            "src/a.ts".to_string(),
+            "src/a.test.ts".to_string(),
+            "src/b.ts".to_string(),
+        ];
+        let exclude = vec!["**/*.test.ts".to_string()];
+
+        let result = try_fast_collect(root, &db_files, &[], &[], &[], &exclude);
+        let names: HashSet<&str> = result
+            .files
+            .iter()
+            .map(|f| f.rsplit('/').next().unwrap_or(f))
+            .collect();
+        assert!(names.contains("a.ts"));
+        assert!(names.contains("b.ts"));
+        assert!(
+            !names.contains("a.test.ts"),
+            "fast path must filter out excluded files so incremental builds honor config changes"
+        );
     }
 }

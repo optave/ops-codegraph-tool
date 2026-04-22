@@ -1033,7 +1033,23 @@ export interface PipelineContext {
   lineCountMap: Map<string, number>;
 
   // Phase timing
-  timing: Record<string, number>;
+  timing: {
+    setupMs?: number;
+    collectMs?: number;
+    detectMs?: number;
+    parseMs?: number;
+    insertMs?: number;
+    resolveMs?: number;
+    edgesMs?: number;
+    structureMs?: number;
+    rolesMs?: number;
+    astMs?: number;
+    complexityMs?: number;
+    cfgMs?: number;
+    dataflowMs?: number;
+    finalizeMs?: number;
+    [key: string]: number | undefined;
+  };
   buildStart: number;
 }
 
@@ -1053,6 +1069,8 @@ export interface BuildGraphOpts {
 export interface BuildResult {
   phases: {
     setupMs: number;
+    collectMs: number;
+    detectMs: number;
     parseMs: number;
     insertMs: number;
     resolveMs: number;

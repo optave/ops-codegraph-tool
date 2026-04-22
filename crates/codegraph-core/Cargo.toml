@@ -37,6 +37,7 @@ tree-sitter-haskell = "0.23"
 tree-sitter-ocaml = "0.24"
 rayon = "1"
 ignore = "0.4"
+globset = "0.4"
 sha2 = "0.10"
 # `bundled` embeds a second SQLite copy (better-sqlite3 already bundles one).
 # This is intentional: Windows CI lacks a system SQLite, and WAL coordination

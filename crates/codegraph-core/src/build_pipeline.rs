@@ -549,15 +549,32 @@ fn collect_source_files(
                     &db_files,
                     &journal.changed,
                     &journal.removed,
+                    &config.include,
+                    &config.exclude,
                 )
             } else {
-                file_collector::collect_files(root_dir, &config.ignore_dirs)
+                file_collector::collect_files(
+                    root_dir,
+                    &config.ignore_dirs,
+                    &config.include,
+                    &config.exclude,
+                )
             }
         } else {
-            file_collector::collect_files(root_dir, &config.ignore_dirs)
+            file_collector::collect_files(
+                root_dir,
+                &config.ignore_dirs,
+                &config.include,
+                &config.exclude,
+            )
         }
     } else {
-        file_collector::collect_files(root_dir, &config.ignore_dirs)
+        file_collector::collect_files(
+            root_dir,
+            &config.ignore_dirs,
+            &config.include,
+            &config.exclude,
+        )
     }
 }
 
