@@ -549,15 +549,32 @@ fn collect_source_files(
                     &db_files,
                     &journal.changed,
                     &journal.removed,
+                    &config.include,
+                    &config.exclude,
                 )
             } else {
-                file_collector::collect_files(root_dir, &config.ignore_dirs)
+                file_collector::collect_files(
+                    root_dir,
+                    &config.ignore_dirs,
+                    &config.include,
+                    &config.exclude,
+                )
             }
         } else {
-            file_collector::collect_files(root_dir, &config.ignore_dirs)
+            file_collector::collect_files(
+                root_dir,
+                &config.ignore_dirs,
+                &config.include,
+                &config.exclude,
+            )
         }
     } else {
-        file_collector::collect_files(root_dir, &config.ignore_dirs)
+        file_collector::collect_files(
+            root_dir,
+            &config.ignore_dirs,
+            &config.include,
+            &config.exclude,
+        )
     }
 }
 
@@ -703,6 +720,13 @@ fn finalize_build(conn: &Connection, root_dir: &str) -> (i64, i64) {
         let _ = stmt.execute(["node_count", &node_count.to_string()]);
         let _ = stmt.execute(["edge_count", &edge_count.to_string()]);
         let _ = stmt.execute(["last_build", &now_ms().to_string()]);
+        // Persist repo root so downstream commands (e.g. `codegraph embed`)
+        // can resolve relative file paths regardless of invoking cwd.
+        let root_canon = std::fs::canonicalize(root_dir)
+            .ok()
+            .and_then(|p| p.to_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| root_dir.to_string());
+        let _ = stmt.execute(["root_dir", &root_canon]);
     }
 
     // Write journal header

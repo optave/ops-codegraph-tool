@@ -10,6 +10,17 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildConfig {
+    /// Glob patterns limiting which source files are included.
+    /// When non-empty, a file must match at least one pattern.
+    /// Matched against paths relative to the project root.
+    #[serde(default)]
+    pub include: Vec<String>,
+
+    /// Glob patterns excluding source files from the build.
+    /// Matched against paths relative to the project root.
+    #[serde(default)]
+    pub exclude: Vec<String>,
+
     /// Additional directory names to ignore during file collection.
     #[serde(default)]
     pub ignore_dirs: Vec<String>,
@@ -129,12 +140,16 @@ mod tests {
     fn deserialize_empty_config() {
         let config: BuildConfig = serde_json::from_str("{}").unwrap();
         assert!(config.ignore_dirs.is_empty());
+        assert!(config.include.is_empty());
+        assert!(config.exclude.is_empty());
         assert!(config.build.incremental);
     }
 
     #[test]
     fn deserialize_full_config() {
         let json = r#"{
+            "include": ["src/**/*.ts"],
+            "exclude": ["**/*.test.ts", "**/*.spec.ts"],
             "ignoreDirs": ["vendor", "tmp"],
             "build": {
                 "incremental": false,
@@ -145,6 +160,8 @@ mod tests {
             }
         }"#;
         let config: BuildConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(config.include, vec!["src/**/*.ts"]);
+        assert_eq!(config.exclude, vec!["**/*.test.ts", "**/*.spec.ts"]);
         assert_eq!(config.ignore_dirs, vec!["vendor", "tmp"]);
         assert!(!config.build.incremental);
         assert_eq!(config.build.drift_threshold, 0.2);

@@ -47,6 +47,25 @@ describe('globToRegex', () => {
     expect(re.test('foo.test.js')).toBe(true);
   });
 
+  test('**/<literal> enforces path-component boundary', () => {
+    // Matches parity with Rust `globset`: `**/index.ts` must NOT match
+    // `barindex.ts` — the segment before `index.ts` has to be a full
+    // directory component (or absent). See PR #994 / Greptile review.
+    const re = globToRegex('**/index.ts');
+    expect(re.test('index.ts')).toBe(true);
+    expect(re.test('src/index.ts')).toBe(true);
+    expect(re.test('a/b/index.ts')).toBe(true);
+    expect(re.test('barindex.ts')).toBe(false);
+    expect(re.test('src/barindex.ts')).toBe(false);
+  });
+
+  test('trailing ** (e.g. dir/**) matches anything under dir', () => {
+    const re = globToRegex('dir/**');
+    expect(re.test('dir/a')).toBe(true);
+    expect(re.test('dir/a/b')).toBe(true);
+    expect(re.test('other/a')).toBe(false);
+  });
+
   test('exact path match', () => {
     const re = globToRegex('src/controllers/main.js');
     expect(re.test('src/controllers/main.js')).toBe(true);

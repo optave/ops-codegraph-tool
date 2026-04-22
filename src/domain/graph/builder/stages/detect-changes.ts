@@ -7,6 +7,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { closeDb } from '../../../../db/index.js';
 import { debug, info } from '../../../../infrastructure/logger.js';
 import { normalizePath } from '../../../../shared/constants.js';
@@ -512,59 +513,66 @@ function handleIncrementalBuild(ctx: PipelineContext): void {
 }
 
 export async function detectChanges(ctx: PipelineContext): Promise<void> {
-  const { db, allFiles, rootDir, incremental, forceFullRebuild, opts } = ctx;
-  if ((opts as Record<string, unknown>).scope) {
-    handleScopedBuild(ctx);
-    return;
-  }
-  const increResult =
-    incremental && !forceFullRebuild
-      ? getChangedFiles(db, allFiles, rootDir)
-      : {
-          changed: allFiles.map((f): ChangedFile => ({ file: f })),
-          removed: [] as string[],
-          isFullBuild: true,
-        };
-  ctx.removed = increResult.removed;
-  ctx.isFullBuild = increResult.isFullBuild;
-  ctx.parseChanges = increResult.changed
-    .filter((c) => !c.metadataOnly)
-    .map((c) => ({
-      file: c.file,
-      relPath: c.relPath,
-      content: c.content,
-      hash: c.hash,
-      stat: c.stat ? { mtime: Math.floor(c.stat.mtimeMs), size: c.stat.size } : undefined,
-      _reverseDepOnly: c._reverseDepOnly,
-    }));
-  ctx.metadataUpdates = increResult.changed
-    .filter(
-      (c): c is ChangedFile & { relPath: string; hash: string; stat: FileStat } =>
-        !!c.metadataOnly && !!c.relPath && !!c.hash && !!c.stat,
-    )
-    .map((c) => ({
-      relPath: c.relPath,
-      hash: c.hash,
-      stat: { mtime: Math.floor(c.stat.mtimeMs), size: c.stat.size },
-    }));
-  if (!ctx.isFullBuild && ctx.parseChanges.length === 0 && ctx.removed.length === 0) {
-    const ranAnalysis = await runPendingAnalysis(ctx);
-    if (ranAnalysis) {
+  const start = performance.now();
+  try {
+    const { db, allFiles, rootDir, incremental, forceFullRebuild, opts } = ctx;
+    if ((opts as Record<string, unknown>).scope) {
+      handleScopedBuild(ctx);
+      return;
+    }
+    const increResult =
+      incremental && !forceFullRebuild
+        ? getChangedFiles(db, allFiles, rootDir)
+        : {
+            changed: allFiles.map((f): ChangedFile => ({ file: f })),
+            removed: [] as string[],
+            isFullBuild: true,
+          };
+    ctx.removed = increResult.removed;
+    ctx.isFullBuild = increResult.isFullBuild;
+    ctx.parseChanges = increResult.changed
+      .filter((c) => !c.metadataOnly)
+      .map((c) => ({
+        file: c.file,
+        relPath: c.relPath,
+        content: c.content,
+        hash: c.hash,
+        stat: c.stat ? { mtime: Math.floor(c.stat.mtimeMs), size: c.stat.size } : undefined,
+        _reverseDepOnly: c._reverseDepOnly,
+      }));
+    ctx.metadataUpdates = increResult.changed
+      .filter(
+        (c): c is ChangedFile & { relPath: string; hash: string; stat: FileStat } =>
+          !!c.metadataOnly && !!c.relPath && !!c.hash && !!c.stat,
+      )
+      .map((c) => ({
+        relPath: c.relPath,
+        hash: c.hash,
+        stat: { mtime: Math.floor(c.stat.mtimeMs), size: c.stat.size },
+      }));
+    if (!ctx.isFullBuild && ctx.parseChanges.length === 0 && ctx.removed.length === 0) {
+      const ranAnalysis = await runPendingAnalysis(ctx);
+      if (ranAnalysis) {
+        closeDb(db);
+        writeJournalHeader(rootDir, Date.now());
+        ctx.earlyExit = true;
+        return;
+      }
+      healMetadata(ctx);
+      info('No changes detected. Graph is up to date.');
       closeDb(db);
       writeJournalHeader(rootDir, Date.now());
       ctx.earlyExit = true;
       return;
     }
-    healMetadata(ctx);
-    info('No changes detected. Graph is up to date.');
-    closeDb(db);
-    writeJournalHeader(rootDir, Date.now());
-    ctx.earlyExit = true;
-    return;
-  }
-  if (ctx.isFullBuild) {
-    handleFullBuild(ctx);
-  } else {
-    handleIncrementalBuild(ctx);
+    if (ctx.isFullBuild) {
+      handleFullBuild(ctx);
+    } else {
+      handleIncrementalBuild(ctx);
+    }
+  } finally {
+    // Additive to respect any partial detectMs contribution from collectFiles
+    // (scoped-rebuild path splits change-detection outputs across both stages).
+    ctx.timing.detectMs = (ctx.timing.detectMs ?? 0) + (performance.now() - start);
   }
 }

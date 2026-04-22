@@ -87,6 +87,8 @@ export class PipelineContext {
   // ── Phase timing ───────────────────────────────────────────────────
   timing: {
     setupMs?: number;
+    collectMs?: number;
+    detectMs?: number;
     parseMs?: number;
     insertMs?: number;
     resolveMs?: number;
