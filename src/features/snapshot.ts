@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { getDatabase } from '../db/better-sqlite3.js';
@@ -37,6 +38,8 @@ export function snapshotSave(
   const dir = snapshotsDir(dbPath);
   const dest = path.join(dir, `${name}.db`);
 
+  // Cheap fail-fast for the common non-force case; the authoritative check
+  // below uses an atomic linkSync that closes the TOCTOU window.
   if (!options.force && fs.existsSync(dest)) {
     throw new ConfigError(`Snapshot "${name}" already exists. Use --force to overwrite.`);
   }
@@ -44,10 +47,17 @@ export function snapshotSave(
   fs.mkdirSync(dir, { recursive: true });
 
   // VACUUM INTO a unique temp path on the same filesystem, then atomically
-  // rename over the destination. This closes the TOCTOU window between
+  // place it at the destination. This closes the TOCTOU window between
   // existsSync/unlinkSync/VACUUM INTO where two concurrent saves could
   // observe a missing file or interleave their VACUUM writes.
-  const tmp = path.join(dir, `.${name}.db.tmp-${process.pid}-${Date.now()}`);
+  //
+  // Unique temp name: process.pid is shared across worker_threads in the
+  // same process, so we add random bytes to keep concurrent callers in any
+  // thread from colliding on the temp path.
+  const tmp = path.join(
+    dir,
+    `.${name}.db.tmp-${process.pid}-${Date.now()}-${randomBytes(6).toString('hex')}`,
+  );
   try {
     fs.unlinkSync(tmp);
   } catch (err) {
@@ -63,12 +73,38 @@ export function snapshotSave(
   }
 
   try {
-    fs.renameSync(tmp, dest);
+    if (options.force) {
+      // renameSync overwrites atomically — the correct semantics for --force.
+      fs.renameSync(tmp, dest);
+    } else {
+      // Non-force path: linkSync fails atomically with EEXIST if dest exists,
+      // closing the TOCTOU window between existsSync above and the final
+      // placement. We then unlink the temp file; on POSIX and NTFS, link
+      // creates a second reference so tmp can safely be removed.
+      try {
+        fs.linkSync(tmp, dest);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === 'EEXIST') {
+          throw new ConfigError(`Snapshot "${name}" already exists. Use --force to overwrite.`);
+        }
+        throw err;
+      }
+      try {
+        fs.unlinkSync(tmp);
+      } catch (cleanupErr) {
+        // Best-effort — dest is already in place, so a leftover tmp file is
+        // harmless. Log at debug so repeated failures surface during
+        // troubleshooting without noising up normal operation.
+        debug(`snapshotSave: failed to remove temp file ${tmp}: ${cleanupErr}`);
+      }
+    }
   } catch (err) {
     try {
       fs.unlinkSync(tmp);
-    } catch {
-      /* cleanup best-effort */
+    } catch (cleanupErr) {
+      if ((cleanupErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+        debug(`snapshotSave: failed to remove temp file ${tmp}: ${cleanupErr}`);
+      }
     }
     throw err;
   }
@@ -109,15 +145,17 @@ export function snapshotRestore(name: string, options: SnapshotDbPathOptions = {
   // open dbPath during restore see either the pre-restore or post-restore
   // file, never a partially-written one.
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-  const tmp = `${dbPath}.restore-tmp-${process.pid}-${Date.now()}`;
+  const tmp = `${dbPath}.restore-tmp-${process.pid}-${Date.now()}-${randomBytes(6).toString('hex')}`;
   try {
     fs.copyFileSync(src, tmp);
     fs.renameSync(tmp, dbPath);
   } catch (err) {
     try {
       fs.unlinkSync(tmp);
-    } catch {
-      /* cleanup best-effort */
+    } catch (cleanupErr) {
+      if ((cleanupErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+        debug(`snapshotRestore: failed to remove temp file ${tmp}: ${cleanupErr}`);
+      }
     }
     throw err;
   }
