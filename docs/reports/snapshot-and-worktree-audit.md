@@ -78,7 +78,7 @@ Not a lock — a log line. SQLite's WAL `busy_timeout = 5000` (`connection.ts:16
 
 ### 2.4 Per-worktree isolation is correct — but each worktree starts cold
 
-- Every linked worktree has its own `.codegraph/` (verified). DB isolation is fine.
+- Every linked worktree has its own `.codegraph/` (verified). DB isolation is fine. Our own context-enrichment hook already relies on this — `.claude/hooks/enrich-context.sh:32-34` derives the DB path from `git rev-parse --show-toplevel`, so each worktree's hook naturally reads that worktree's DB.
 - But every new worktree re-parses every file, re-resolves every import, re-hashes, and re-embeds — even though most files are byte-identical to another worktree's parse output.
 - For a 3-file branch off main, first build costs the same as indexing from scratch.
 - This is an amortization gap, not a structural failure. It is the thing omnigraph's "copy-on-write branches" would address if ported — see §3.
