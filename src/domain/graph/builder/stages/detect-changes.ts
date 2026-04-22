@@ -571,6 +571,8 @@ export async function detectChanges(ctx: PipelineContext): Promise<void> {
       handleIncrementalBuild(ctx);
     }
   } finally {
-    ctx.timing.detectMs = performance.now() - start;
+    // Additive to respect any partial detectMs contribution from collectFiles
+    // (scoped-rebuild path splits change-detection outputs across both stages).
+    ctx.timing.detectMs = (ctx.timing.detectMs ?? 0) + (performance.now() - start);
   }
 }

@@ -87,15 +87,20 @@ function tryFastCollect(
 }
 
 export async function collectFiles(ctx: PipelineContext): Promise<void> {
-  const start = performance.now();
-  try {
-    const { rootDir, config, opts } = ctx;
+  const { rootDir, config, opts } = ctx;
 
-    if (opts.scope) {
-      // Scoped rebuild: rebuild only specified files
-      const scopedFiles = opts.scope.map((f: string) => normalizePath(f));
-      const existing: Array<{ file: string; relPath: string }> = [];
-      const missing: string[] = [];
+  if (opts.scope) {
+    // Scoped rebuild: rebuild only specified files.
+    //
+    // Timer only wraps the filesystem-walk portion (existence checks + file
+    // list construction). Change-detection outputs (parseChanges, removed,
+    // isFullBuild) are attributed to detectMs for semantic consistency with
+    // the non-scoped path, even though this stage computes them.
+    const start = performance.now();
+    const scopedFiles = opts.scope.map((f: string) => normalizePath(f));
+    const existing: Array<{ file: string; relPath: string }> = [];
+    const missing: string[] = [];
+    try {
       for (const rel of scopedFiles) {
         const abs = path.join(rootDir, rel);
         if (fs.existsSync(abs)) {
@@ -106,14 +111,22 @@ export async function collectFiles(ctx: PipelineContext): Promise<void> {
       }
       ctx.allFiles = existing.map((e) => e.file);
       ctx.discoveredDirs = new Set(existing.map((e) => path.dirname(e.file)));
-      ctx.parseChanges = existing;
-      ctx.metadataUpdates = [];
-      ctx.removed = missing;
-      ctx.isFullBuild = false;
-      info(`Scoped rebuild: ${existing.length} files to rebuild, ${missing.length} to purge`);
-      return;
+    } finally {
+      ctx.timing.collectMs = performance.now() - start;
     }
+    // Change-detection outputs — timed under detectMs for semantic parity.
+    const detectStart = performance.now();
+    ctx.parseChanges = existing;
+    ctx.metadataUpdates = [];
+    ctx.removed = missing;
+    ctx.isFullBuild = false;
+    ctx.timing.detectMs = (ctx.timing.detectMs ?? 0) + (performance.now() - detectStart);
+    info(`Scoped rebuild: ${existing.length} files to rebuild, ${missing.length} to purge`);
+    return;
+  }
 
+  const start = performance.now();
+  try {
     // Incremental fast path: reconstruct file list from DB + journal deltas
     // instead of full recursive filesystem scan (~8ms savings on 473 files).
     if (ctx.incremental && !ctx.forceFullRebuild) {
