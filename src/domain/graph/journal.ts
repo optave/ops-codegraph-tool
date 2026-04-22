@@ -66,9 +66,7 @@ export function appendJournalEntries(
   const dir = path.join(rootDir, '.codegraph');
   const journalPath = path.join(dir, JOURNAL_FILENAME);
 
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  fs.mkdirSync(dir, { recursive: true });
 
   if (!fs.existsSync(journalPath)) {
     fs.writeFileSync(journalPath, `${HEADER_PREFIX}0\n`);
@@ -87,9 +85,7 @@ export function writeJournalHeader(rootDir: string, timestamp: number): void {
   const journalPath = path.join(dir, JOURNAL_FILENAME);
   const tmpPath = `${journalPath}.tmp`;
 
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  fs.mkdirSync(dir, { recursive: true });
 
   try {
     fs.writeFileSync(tmpPath, `${HEADER_PREFIX}${timestamp}\n`);
@@ -124,9 +120,7 @@ export function appendJournalEntriesAndStampHeader(
   const journalPath = path.join(dir, JOURNAL_FILENAME);
   const tmpPath = `${journalPath}.tmp`;
 
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  fs.mkdirSync(dir, { recursive: true });
 
   let existingBody = '';
   try {
