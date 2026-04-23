@@ -1,9 +1,224 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { debug, warn } from '../../infrastructure/logger.js';
 
 export const JOURNAL_FILENAME = 'changes.journal';
 const HEADER_PREFIX = '# codegraph-journal v1 ';
+const LOCK_SUFFIX = '.lock';
+const LOCK_TIMEOUT_MS = 5_000;
+const LOCK_STALE_MS = 30_000;
+const LOCK_RETRY_MS = 25;
+
+// Busy-spin sleep avoids blocking the Node.js event loop (unlike Atomics.wait,
+// which freezes all I/O and timer callbacks). The retry interval is short
+// (25ms), so the CPU cost is negligible while keeping unrelated callbacks
+// responsive in watcher processes.
+function sleepSync(ms: number): void {
+  const end = process.hrtime.bigint() + BigInt(ms) * 1_000_000n;
+  while (process.hrtime.bigint() < end) {
+    /* spin */
+  }
+}
+
+function isPidAlive(pid: number): boolean {
+  if (!Number.isFinite(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    // EPERM means the process exists but we lack permission — still alive.
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+interface AcquiredLock {
+  fd: number;
+  nonce: string;
+}
+
+/**
+ * Steal a stale lockfile atomically via write-tmp + rename.
+ *
+ * Using rename (which is atomic on POSIX and Windows) avoids the TOCTOU race
+ * inherent to the unlink + openSync('wx') pattern: if two stealers both
+ * observed the same stale holder, one's unlink could cross the other's fresh
+ * acquisition, admitting two writers into the critical section.
+ *
+ * After rename, we re-read the lockfile to confirm our nonce — if another
+ * stealer's rename landed after ours, they own the lock and we retry.
+ */
+function trySteal(lockPath: string): AcquiredLock | null {
+  const nonce = `${process.pid}-${crypto.randomBytes(8).toString('hex')}`;
+  const tmpPath = `${lockPath}.${nonce}.tmp`;
+  try {
+    fs.writeFileSync(tmpPath, `${process.pid}\n${nonce}\n`, { flag: 'w' });
+  } catch {
+    return null;
+  }
+
+  try {
+    // Atomic replace: overwrites the stale lockfile.
+    fs.renameSync(tmpPath, lockPath);
+  } catch {
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      /* ignore */
+    }
+    return null;
+  }
+
+  // Verify the nonce — another stealer's rename may have landed after ours.
+  let content: string;
+  try {
+    content = fs.readFileSync(lockPath, 'utf-8');
+  } catch {
+    return null;
+  }
+  if (!content.includes(nonce)) {
+    // Lost the race to another stealer; do NOT unlink their live lockfile.
+    return null;
+  }
+
+  let fd: number;
+  try {
+    // Re-open r+ so we have a persistent fd the caller can close on release.
+    fd = fs.openSync(lockPath, 'r+');
+  } catch {
+    return null;
+  }
+  return { fd, nonce };
+}
+
+function acquireJournalLock(lockPath: string): AcquiredLock {
+  const start = Date.now();
+  for (;;) {
+    const nonce = `${process.pid}-${crypto.randomBytes(8).toString('hex')}`;
+    try {
+      const fd = fs.openSync(lockPath, 'wx');
+      try {
+        fs.writeSync(fd, `${process.pid}\n${nonce}\n`);
+      } catch {
+        // Stamp write failed (ENOSPC, I/O error). An empty lockfile would
+        // look stale to concurrent waiters (Number('') === 0, isPidAlive(0)
+        // returns false), so they'd steal our live lock. Release and retry.
+        try {
+          fs.closeSync(fd);
+        } catch {
+          /* ignore */
+        }
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {
+          /* ignore */
+        }
+        if (Date.now() - start > LOCK_TIMEOUT_MS) {
+          throw new Error(
+            `Failed to acquire journal lock at ${lockPath} within ${LOCK_TIMEOUT_MS}ms`,
+          );
+        }
+        sleepSync(LOCK_RETRY_MS);
+        continue;
+      }
+      return { fd, nonce };
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+    }
+
+    let holderAlive = true;
+    try {
+      const pidContent = fs.readFileSync(lockPath, 'utf-8').split('\n')[0]!.trim();
+      holderAlive = isPidAlive(Number(pidContent));
+    } catch {
+      /* unreadable — fall through to age check */
+    }
+
+    let shouldSteal = !holderAlive;
+    if (holderAlive) {
+      try {
+        const stat = fs.statSync(lockPath);
+        if (Date.now() - stat.mtimeMs > LOCK_STALE_MS) {
+          shouldSteal = true;
+        }
+      } catch {
+        /* stat failed — keep retrying */
+      }
+    }
+
+    if (shouldSteal) {
+      const stolen = trySteal(lockPath);
+      if (stolen) return stolen;
+      // Steal failed or lost the race — fall through to timeout check & retry.
+    }
+
+    if (Date.now() - start > LOCK_TIMEOUT_MS) {
+      throw new Error(`Failed to acquire journal lock at ${lockPath} within ${LOCK_TIMEOUT_MS}ms`);
+    }
+    sleepSync(LOCK_RETRY_MS);
+  }
+}
+
+function releaseJournalLock(lockPath: string, lock: AcquiredLock): void {
+  try {
+    fs.closeSync(lock.fd);
+  } catch {
+    /* ignore */
+  }
+  // Only unlink if the lockfile still carries our nonce — if another stealer
+  // decided we were stale and replaced it, we must not unlink their live lock.
+  try {
+    const content = fs.readFileSync(lockPath, 'utf-8');
+    if (content.includes(lock.nonce)) {
+      fs.unlinkSync(lockPath);
+    }
+  } catch {
+    /* lockfile gone or unreadable — nothing to unlink */
+  }
+}
+
+function sweepStaleTmpFiles(dir: string): void {
+  // Clean up orphaned .tmp files left behind when a process is killed after
+  // writeFileSync(tmpPath, ...) succeeds but before renameSync(tmpPath, lockPath)
+  // completes (trySteal path). Without this, tmp files accumulate silently in
+  // .codegraph/ across crash cycles. Only sweep ones older than LOCK_STALE_MS
+  // so we don't race an in-flight steal on another process.
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  const now = Date.now();
+  const prefix = `${JOURNAL_FILENAME}${LOCK_SUFFIX}.`;
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.startsWith(prefix) || !entry.name.endsWith('.tmp')) {
+      continue;
+    }
+    const tmpPath = path.join(dir, entry.name);
+    try {
+      const stat = fs.statSync(tmpPath);
+      if (now - stat.mtimeMs > LOCK_STALE_MS) {
+        fs.unlinkSync(tmpPath);
+      }
+    } catch {
+      /* stat/unlink raced another cleaner or was already removed — ignore */
+    }
+  }
+}
+
+function withJournalLock<T>(rootDir: string, fn: () => T): T {
+  const dir = path.join(rootDir, '.codegraph');
+  fs.mkdirSync(dir, { recursive: true });
+  sweepStaleTmpFiles(dir);
+  const lockPath = path.join(dir, `${JOURNAL_FILENAME}${LOCK_SUFFIX}`);
+  const lock = acquireJournalLock(lockPath);
+  try {
+    return fn();
+  } finally {
+    releaseJournalLock(lockPath, lock);
+  }
+}
 
 interface JournalResult {
   valid: boolean;
@@ -63,41 +278,39 @@ export function appendJournalEntries(
   rootDir: string,
   entries: Array<{ file: string; deleted?: boolean }>,
 ): void {
-  const dir = path.join(rootDir, '.codegraph');
-  const journalPath = path.join(dir, JOURNAL_FILENAME);
+  withJournalLock(rootDir, () => {
+    const journalPath = path.join(rootDir, '.codegraph', JOURNAL_FILENAME);
 
-  fs.mkdirSync(dir, { recursive: true });
+    if (!fs.existsSync(journalPath)) {
+      fs.writeFileSync(journalPath, `${HEADER_PREFIX}0\n`);
+    }
 
-  if (!fs.existsSync(journalPath)) {
-    fs.writeFileSync(journalPath, `${HEADER_PREFIX}0\n`);
-  }
+    const lines = entries.map((e) => {
+      if (e.deleted) return `DELETED ${e.file}`;
+      return e.file;
+    });
 
-  const lines = entries.map((e) => {
-    if (e.deleted) return `DELETED ${e.file}`;
-    return e.file;
+    fs.appendFileSync(journalPath, `${lines.join('\n')}\n`);
   });
-
-  fs.appendFileSync(journalPath, `${lines.join('\n')}\n`);
 }
 
 export function writeJournalHeader(rootDir: string, timestamp: number): void {
-  const dir = path.join(rootDir, '.codegraph');
-  const journalPath = path.join(dir, JOURNAL_FILENAME);
-  const tmpPath = `${journalPath}.tmp`;
+  withJournalLock(rootDir, () => {
+    const journalPath = path.join(rootDir, '.codegraph', JOURNAL_FILENAME);
+    const tmpPath = `${journalPath}.tmp`;
 
-  fs.mkdirSync(dir, { recursive: true });
-
-  try {
-    fs.writeFileSync(tmpPath, `${HEADER_PREFIX}${timestamp}\n`);
-    fs.renameSync(tmpPath, journalPath);
-  } catch (err) {
-    warn(`Failed to write journal header: ${(err as Error).message}`);
     try {
-      fs.unlinkSync(tmpPath);
-    } catch {
-      /* ignore */
+      fs.writeFileSync(tmpPath, `${HEADER_PREFIX}${timestamp}\n`);
+      fs.renameSync(tmpPath, journalPath);
+    } catch (err) {
+      warn(`Failed to write journal header: ${(err as Error).message}`);
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        /* ignore */
+      }
     }
-  }
+  });
 }
 
 /**
@@ -116,35 +329,34 @@ export function appendJournalEntriesAndStampHeader(
   entries: Array<{ file: string; deleted?: boolean }>,
   timestamp: number,
 ): void {
-  const dir = path.join(rootDir, '.codegraph');
-  const journalPath = path.join(dir, JOURNAL_FILENAME);
-  const tmpPath = `${journalPath}.tmp`;
+  withJournalLock(rootDir, () => {
+    const journalPath = path.join(rootDir, '.codegraph', JOURNAL_FILENAME);
+    const tmpPath = `${journalPath}.tmp`;
 
-  fs.mkdirSync(dir, { recursive: true });
-
-  let existingBody = '';
-  try {
-    const content = fs.readFileSync(journalPath, 'utf-8');
-    const newlineIdx = content.indexOf('\n');
-    if (newlineIdx >= 0) existingBody = content.slice(newlineIdx + 1);
-  } catch {
-    /* no existing journal — fall through to write header + new entries */
-  }
-  if (existingBody && !existingBody.endsWith('\n')) existingBody = `${existingBody}\n`;
-
-  const newLines = entries.map((e) => (e.deleted ? `DELETED ${e.file}` : e.file));
-  const appended = newLines.length > 0 ? `${newLines.join('\n')}\n` : '';
-  const content = `${HEADER_PREFIX}${timestamp}\n${existingBody}${appended}`;
-
-  try {
-    fs.writeFileSync(tmpPath, content);
-    fs.renameSync(tmpPath, journalPath);
-  } catch (err) {
-    warn(`Failed to update journal: ${(err as Error).message}`);
+    let existingBody = '';
     try {
-      fs.unlinkSync(tmpPath);
+      const content = fs.readFileSync(journalPath, 'utf-8');
+      const newlineIdx = content.indexOf('\n');
+      if (newlineIdx >= 0) existingBody = content.slice(newlineIdx + 1);
     } catch {
-      /* ignore */
+      /* no existing journal — fall through to write header + new entries */
     }
-  }
+    if (existingBody && !existingBody.endsWith('\n')) existingBody = `${existingBody}\n`;
+
+    const newLines = entries.map((e) => (e.deleted ? `DELETED ${e.file}` : e.file));
+    const appended = newLines.length > 0 ? `${newLines.join('\n')}\n` : '';
+    const content = `${HEADER_PREFIX}${timestamp}\n${existingBody}${appended}`;
+
+    try {
+      fs.writeFileSync(tmpPath, content);
+      fs.renameSync(tmpPath, journalPath);
+    } catch (err) {
+      warn(`Failed to update journal: ${(err as Error).message}`);
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        /* ignore */
+      }
+    }
+  });
 }
