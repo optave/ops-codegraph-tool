@@ -90,12 +90,35 @@ fi
 # - `git -C "<dir>" ...`   → the -C target (takes precedence — explicit git-level override)
 # - `cd "<dir>" && git ...` → the cd target
 # Falls back to empty string (caller uses cwd).
+#
+# Optional arg: target subcommand hint (e.g. `push`, `commit`). When given,
+# narrows the search to the `&&`-separated segment whose git invocation runs
+# that subcommand, so chained commands like
+#   `git -C /a push && git -C /b commit -m ...`
+# resolve each caller to its own worktree instead of always picking the last
+# `git` token. Within the chosen segment the LAST `-C` wins (git's `-C` is
+# cumulative, so the final `-C` is the effective CWD) — this closes the
+# multi-`-C` bypass (`git -C /ok -C /bad push` resolves to `/bad`).
 detect_work_dir() {
+  local target_subcmd="${1:-}"
   local work_dir=""
+  local search_str="$COMMAND"
+
+  if [ -n "$target_subcmd" ]; then
+    local segment
+    segment=$(echo "$COMMAND" | awk -v tgt="$target_subcmd" 'BEGIN{RS="&&"}{
+      if ($0 ~ "git[[:space:]]+([^|;&]*[[:space:]])?" tgt "([[:space:]]|$)") { print; exit }
+    }')
+    if [ -n "$segment" ]; then
+      search_str="$segment"
+    fi
+  fi
+
   # `git -C` is the explicit git-level override and wins over any ambient cd prefix,
   # so check it first (e.g. `cd /tmp && git -C /worktree push` targets /worktree).
-  if echo "$COMMAND" | grep -qE 'git\s+-C\s+'; then
-    work_dir=$(echo "$COMMAND" | sed -nE 's/.*git[[:space:]]+-C[[:space:]]+"([^"]+)".*/\1/p;t;s/.*git[[:space:]]+-C[[:space:]]+([^[:space:]]+).*/\1/p')
+  # Greedy `.*-C` anchors on the LAST `-C` in the chosen segment.
+  if echo "$search_str" | grep -qE 'git\s+([^&|;]*\s)?-C\s+'; then
+    work_dir=$(echo "$search_str" | sed -nE 's/.*-C[[:space:]]+"([^"]+)".*/\1/p;t;s/.*-C[[:space:]]+([^[:space:]]+).*/\1/p')
   fi
   if [ -z "$work_dir" ] && echo "$COMMAND" | grep -qE '^\s*cd\s+'; then
     work_dir=$(echo "$COMMAND" | sed -nE 's/^\s*cd\s+"?([^"&]+)"?\s*&&.*/\1/p')
@@ -108,8 +131,9 @@ detect_work_dir() {
 # --- Branch name validation helper ---
 
 validate_branch_name() {
+  local subcmd="${1:-}"
   local work_dir
-  work_dir=$(detect_work_dir)
+  work_dir=$(detect_work_dir "$subcmd")
 
   local BRANCH=""
   if [ -n "$work_dir" ] && [ -d "$work_dir" ]; then
@@ -130,12 +154,14 @@ validate_branch_name() {
 # --- Branch name validation on push ---
 
 if echo "$NCOMMAND" | grep -qE '(^|\s|&&\s*)git\s+push'; then
-  validate_branch_name
+  validate_branch_name push
 fi
 
 # --- Branch name validation on gh pr create ---
 
 if echo "$NCOMMAND" | grep -qE '(^|\s|&&\s*)gh\s+pr\s+create'; then
+  # `gh pr create` does not use `git -C`; detect_work_dir falls through to the
+  # `cd` path or cwd. No subcommand hint to pass.
   validate_branch_name
 fi
 
@@ -144,7 +170,7 @@ fi
 if echo "$NCOMMAND" | grep -qE '(^|\s|&&\s*)git\s+commit'; then
   # Resolve the target worktree so the edit log and staged-file listing come
   # from the same repo the commit targets (e.g. `git -C <pr-worktree> commit`).
-  WORK_DIR=$(detect_work_dir)
+  WORK_DIR=$(detect_work_dir commit)
   if [ -n "$WORK_DIR" ] && [ -d "$WORK_DIR" ]; then
     PROJECT_DIR=$(git -C "$WORK_DIR" rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR="${CLAUDE_PROJECT_DIR:-.}"
     STAGED_FILES=$(git -C "$WORK_DIR" diff --cached --name-only 2>/dev/null) || true
