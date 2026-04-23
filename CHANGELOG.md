@@ -2,6 +2,49 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.9.5](https://github.com/optave/ops-codegraph-tool/compare/v3.9.4...v3.9.5) (2026-04-23)
+
+**Incremental build correctness and concurrency safety.** This release hardens the incremental build path end-to-end. Duplicate edges that silently accumulated on every incremental rebuild of hybrid barrel files are eliminated — edge counts are now stable across consecutive rebuilds. `config.include` and `config.exclude` globs were declared in `DEFAULTS` but never consumed by either engine; both the Rust and WASM collectors now compile and apply them identically during initial walks and fast-path rebuilds. Concurrent journal appends from watch sessions and manual builds are serialized via lockfile, and watcher writes now advance the header timestamp so the first build after every watch session no longer falls through to an expensive full rescan. `snapshot save --force` and `snapshot restore` use per-pid temp files + atomic rename to close TOCTOU races. WASM parsing is isolated in a worker thread so a V8 fatal error skips one file instead of aborting the whole build, and extractor exceptions are now per-file rather than pipeline-fatal. The `watch` command gains `-d/--db` for consistency with every other DB-scoped command, `--no-incremental` warns before discarding embeddings, and `build:wasm` shows a one-line remediation banner instead of 700 lines of ENOENT noise when `tree-sitter-cli` is missing.
+
+### Features
+
+* **build:** report `collectMs` and `detectMs` as separate phases in `BuildResult.phases` so incremental-build perf investigations can see file-walk and change-detection work separately ([#993](https://github.com/optave/ops-codegraph-tool/pull/993))
+
+### Bug Fixes
+
+* **incremental:** prevent duplicate edges on rebuild — Stage 6b's scoped `DELETE` only purged `imports`/`reexports` before Stage 7 re-emitted 8 edge kinds, leaking ~250 duplicate `calls`/`receiver`/`extends`/`implements`/`imports-type`/`dynamic-imports` edges per incremental rebuild of hybrid barrel files ([#998](https://github.com/optave/ops-codegraph-tool/pull/998))
+* **config:** honor `include`/`exclude` globs in file collection — both the native Rust engine and the WASM/JS engine now compile the globs once and filter collected paths identically during initial walks and incremental fast-path rebuilds ([#994](https://github.com/optave/ops-codegraph-tool/pull/994))
+* **journal:** serialize concurrent appends via lockfile — prevents interleaved writes from watch sessions + manual builds that corrupted the journal header and caused silent fall-through to hash-scan rebuilds ([#1002](https://github.com/optave/ops-codegraph-tool/pull/1002))
+* **journal:** stamp header timestamp on watcher appends — the first build after every watch session no longer falls through to expensive mtime+size + SHA256 rescans ([#1001](https://github.com/optave/ops-codegraph-tool/pull/1001))
+* **snapshot:** close TOCTOU race on save/restore/delete — `snapshot save --force` and `snapshot restore` write to per-pid temp files and atomically rename so concurrent saves can no longer produce truncated/interleaved destinations ([#1003](https://github.com/optave/ops-codegraph-tool/pull/1003))
+* **wasm:** isolate tree-sitter parsing in worker thread — V8 fatal errors skip a single file with a warn and respawn the worker instead of killing the whole build ([#975](https://github.com/optave/ops-codegraph-tool/pull/975))
+* **extractors:** guard empty-text identifiers and isolate extractor crashes — a single misbehaving file no longer kills the whole WASM build ([#972](https://github.com/optave/ops-codegraph-tool/pull/972))
+* **extractor:** gate `member_expression` callback args on callee allowlist — restores TS resolution precision from 93.8% back to 100% by eliminating `store.set(user.id, user)` false positives ([#974](https://github.com/optave/ops-codegraph-tool/pull/974))
+* **native:** backfill silently-dropped files via WASM for engine parity — closes a native-vs-WASM file-node gap (668 vs 728 on this repo) when the installed native addon lacks an extractor for a language ([#970](https://github.com/optave/ops-codegraph-tool/pull/970))
+* **native:** restore `cargo test --lib` green — downgrade tree-sitter-scala/swift to ABI-14-compatible releases and fix `BuildSettings::default` disagreeing with serde field defaults (176 passed / 0 failed) ([#978](https://github.com/optave/ops-codegraph-tool/pull/978))
+* **watch:** accept `-d/--db` to point at a graph.db outside cwd — restores consistency with every other DB-scoped command (`build`, `stats`, `query`, `fn-impact`, …) ([#987](https://github.com/optave/ops-codegraph-tool/pull/987))
+* **build:** warn before `--no-incremental` wipes embeddings — single-line warning at the shared pipeline entry fires whenever a full rebuild is about to discard non-empty embeddings ([#986](https://github.com/optave/ops-codegraph-tool/pull/986))
+* **build:wasm:** add preflight check with clear remediation — missing `tree-sitter-cli` binary now shows one banner with concrete fixes instead of 35 × 20-line ENOENT stack dumps ([#990](https://github.com/optave/ops-codegraph-tool/pull/990))
+* **embed:** resolve source files from DB root, not cwd — `codegraph embed --db <abs-path>` no longer silently stores 0 embeddings when run from an unrelated cwd; falls back to the DB's parent for pre-existing DBs ([#992](https://github.com/optave/ops-codegraph-tool/pull/992))
+* **config:** reject non-string `apiKeyCommand` with `ConfigError` — the previous silent fallthrough left `apiKey` null with no diagnostic; error message names the received type and shows the expected format ([#991](https://github.com/optave/ops-codegraph-tool/pull/991))
+* **louvain:** demote native-path parity warning to debug — the Leiden-specific-options warning was firing unconditionally because `DEFAULTS.community` always populated the guarded fields ([#989](https://github.com/optave/ops-codegraph-tool/pull/989))
+* **hooks:** recognize `git -C <path>` in `guard-git.sh` — closes a hook bypass where `git -C <worktree> push` skipped branch-name validation and the destructive-command blocklist ([#1004](https://github.com/optave/ops-codegraph-tool/pull/1004))
+* **scripts:** use `--experimental-strip-types` on every Node version — Node 24 removed the `--strip-types` alias, breaking `build:wasm`, `deps:tree`, and `version` scripts on Node 24.10.0 ([#985](https://github.com/optave/ops-codegraph-tool/pull/985))
+* **benchmark:** spawn npm via shell on Windows — fixes benchmark suite invocation on Windows ([#973](https://github.com/optave/ops-codegraph-tool/pull/973))
+* **publish:** build native addon from source in preflight ([#954](https://github.com/optave/ops-codegraph-tool/pull/954))
+* **release:** require user-observable surface for minor bumps in the release skill ([#953](https://github.com/optave/ops-codegraph-tool/pull/953))
+
+### Performance
+
+* **globs:** memoize compiled include/exclude globs per build — long-running processes (watch mode, MCP server) no longer recompile identical pattern lists on every `buildGraph` call; FIFO cache capped at 32 entries in both TS and Rust paths ([#1005](https://github.com/optave/ops-codegraph-tool/pull/1005))
+* **native:** scope node loading in call-edge builder for incremental builds — loads only files being processed + their resolved import targets instead of every node in the graph; full builds and very large incrementals (>200 files) unchanged ([#976](https://github.com/optave/ops-codegraph-tool/pull/976))
+
+### Chores
+
+* **deps:** bump better-sqlite3 from 12.8.0 to 12.9.0 ([#962](https://github.com/optave/ops-codegraph-tool/pull/962))
+* **deps-dev:** bump tree-sitter-erlang from 0.0.0 to 0.15 ([#961](https://github.com/optave/ops-codegraph-tool/pull/961))
+* **deps-dev:** bump tree-sitter-c-sharp from 0.23.1 to 0.23.5 ([#959](https://github.com/optave/ops-codegraph-tool/pull/959))
+
 ## [3.9.4](https://github.com/optave/ops-codegraph-tool/compare/v3.9.3...v3.9.4) (2026-04-17)
 
 **Resolution accuracy and incremental-build reliability.** The JS/TS extractor now resolves named function references passed as callback arguments — Express middleware, event handlers, `Array.map`/`.filter`/`.then` callbacks, and destructured handler bindings are tracked as real call edges instead of appearing as dead code. On a 1 895-file TypeScript monorepo this surfaced 21 previously-invisible callers of a single auth middleware. A version-mismatch bug that silently forced every native incremental build into a full 5.8s rebuild is fixed — no-op rebuilds now exit in ~200ms. Three WASM incremental-build bugs are also fixed: edge loss during reverse-dep purges, unnecessary reparses, and a V8 crash during GC of orphaned WASM trees. Fan-in/out and import counts are now consistent between full and incremental build paths.
