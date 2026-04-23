@@ -7,7 +7,7 @@ import { DbError } from '../../shared/errors.js';
 import { createParseTreeCache, getActiveEngine } from '../parser.js';
 import { type IncrementalStmts, rebuildFile } from './builder/incremental.js';
 import { appendChangeEvents, buildChangeEvent, diffSymbols } from './change-journal.js';
-import { appendJournalEntries } from './journal.js';
+import { appendJournalEntriesAndStampHeader } from './journal.js';
 
 function shouldIgnorePath(filePath: string): boolean {
   const parts = filePath.split(path.sep);
@@ -100,7 +100,7 @@ function writeJournalAndChangeEvents(rootDir: string, updates: RebuildResult[]):
     deleted: r.deleted || false,
   }));
   try {
-    appendJournalEntries(rootDir, entries);
+    appendJournalEntriesAndStampHeader(rootDir, entries, Date.now());
   } catch (e: unknown) {
     debug(`Journal write failed (non-fatal): ${(e as Error).message}`);
   }
@@ -274,17 +274,37 @@ function startNativeWatcher(ctx: WatcherContext): () => void {
   return () => watcher.close();
 }
 
+/**
+ * Build journal entries for a pending-path set, detecting deletions by
+ * existence check.
+ *
+ * `ctx.pending` is an untyped `Set<string>` — it carries no event-type
+ * metadata. Without this check, a file deleted during the watch session
+ * would be journaled as "changed", causing the next incremental build to
+ * try to re-parse a non-existent file instead of removing it from the graph.
+ * Mirrors the deletion detection in `rebuildFile` (see builder/incremental.ts).
+ *
+ * Exported for unit-testing; prefer `setupShutdownHandler` in production paths.
+ */
+export function buildFlushEntriesFromPending(
+  rootDir: string,
+  pending: Iterable<string>,
+): Array<{ file: string; deleted: boolean }> {
+  return [...pending].map((filePath) => ({
+    file: normalizePath(path.relative(rootDir, filePath)),
+    deleted: !fs.existsSync(filePath),
+  }));
+}
+
 /** Register SIGINT handler to flush journal and clean up. */
 function setupShutdownHandler(ctx: WatcherContext, cleanup: () => void): void {
   process.once('SIGINT', () => {
     info('Stopping watcher...');
     cleanup();
     if (ctx.pending.size > 0) {
-      const entries = [...ctx.pending].map((filePath) => ({
-        file: normalizePath(path.relative(ctx.rootDir, filePath)),
-      }));
+      const entries = buildFlushEntriesFromPending(ctx.rootDir, ctx.pending);
       try {
-        appendJournalEntries(ctx.rootDir, entries);
+        appendJournalEntriesAndStampHeader(ctx.rootDir, entries, Date.now());
       } catch (e: unknown) {
         debug(`Journal flush on exit failed (non-fatal): ${(e as Error).message}`);
       }

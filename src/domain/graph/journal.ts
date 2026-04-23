@@ -100,7 +100,26 @@ function acquireJournalLock(lockPath: string): AcquiredLock {
       try {
         fs.writeSync(fd, `${process.pid}\n${nonce}\n`);
       } catch {
-        /* PID stamp is advisory; fd is still exclusive */
+        // Stamp write failed (ENOSPC, I/O error). An empty lockfile would
+        // look stale to concurrent waiters (Number('') === 0, isPidAlive(0)
+        // returns false), so they'd steal our live lock. Release and retry.
+        try {
+          fs.closeSync(fd);
+        } catch {
+          /* ignore */
+        }
+        try {
+          fs.unlinkSync(lockPath);
+        } catch {
+          /* ignore */
+        }
+        if (Date.now() - start > LOCK_TIMEOUT_MS) {
+          throw new Error(
+            `Failed to acquire journal lock at ${lockPath} within ${LOCK_TIMEOUT_MS}ms`,
+          );
+        }
+        sleepSync(LOCK_RETRY_MS);
+        continue;
       }
       return { fd, nonce };
     } catch (e) {
@@ -160,9 +179,7 @@ function releaseJournalLock(lockPath: string, lock: AcquiredLock): void {
 
 function withJournalLock<T>(rootDir: string, fn: () => T): T {
   const dir = path.join(rootDir, '.codegraph');
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  fs.mkdirSync(dir, { recursive: true });
   const lockPath = path.join(dir, `${JOURNAL_FILENAME}${LOCK_SUFFIX}`);
   const lock = acquireJournalLock(lockPath);
   try {
@@ -256,6 +273,54 @@ export function writeJournalHeader(rootDir: string, timestamp: number): void {
       fs.renameSync(tmpPath, journalPath);
     } catch (err) {
       warn(`Failed to write journal header: ${(err as Error).message}`);
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        /* ignore */
+      }
+    }
+  });
+}
+
+/**
+ * Atomically append entries while advancing the header timestamp.
+ *
+ * Used by the watcher: without this, the header timestamp stays frozen at the
+ * last build's finalize time while entries accumulate, so the next build's
+ * Tier 0 check sees `journal.timestamp < MAX(file_hashes.mtime)`, rejects the
+ * journal, and falls through to the expensive mtime+size / hash scan.
+ *
+ * Writes a tmp file then renames — a crash mid-rename leaves the previous
+ * journal state intact.
+ */
+export function appendJournalEntriesAndStampHeader(
+  rootDir: string,
+  entries: Array<{ file: string; deleted?: boolean }>,
+  timestamp: number,
+): void {
+  withJournalLock(rootDir, () => {
+    const journalPath = path.join(rootDir, '.codegraph', JOURNAL_FILENAME);
+    const tmpPath = `${journalPath}.tmp`;
+
+    let existingBody = '';
+    try {
+      const content = fs.readFileSync(journalPath, 'utf-8');
+      const newlineIdx = content.indexOf('\n');
+      if (newlineIdx >= 0) existingBody = content.slice(newlineIdx + 1);
+    } catch {
+      /* no existing journal — fall through to write header + new entries */
+    }
+    if (existingBody && !existingBody.endsWith('\n')) existingBody = `${existingBody}\n`;
+
+    const newLines = entries.map((e) => (e.deleted ? `DELETED ${e.file}` : e.file));
+    const appended = newLines.length > 0 ? `${newLines.join('\n')}\n` : '';
+    const content = `${HEADER_PREFIX}${timestamp}\n${existingBody}${appended}`;
+
+    try {
+      fs.writeFileSync(tmpPath, content);
+      fs.renameSync(tmpPath, journalPath);
+    } catch (err) {
+      warn(`Failed to update journal: ${(err as Error).message}`);
       try {
         fs.unlinkSync(tmpPath);
       } catch {
