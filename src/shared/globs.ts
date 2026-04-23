@@ -58,11 +58,13 @@ const EMPTY_REGEX_LIST: readonly RegExp[] = Object.freeze([]) as readonly RegExp
 // (watch mode, MCP server) doesn't recompile on every buildGraph call.
 // Capped to avoid unbounded growth when callers pass many distinct lists.
 const COMPILE_CACHE_MAX = 32;
-const GLOB_KEY_SEP = '\x1f';
 const compileCache = new Map<string, readonly RegExp[]>();
 
 function buildCacheKey(patterns: readonly string[]): string {
-  return patterns.join(GLOB_KEY_SEP);
+  // JSON.stringify avoids ambiguity when patterns legitimately contain any
+  // single character (including control characters or separators a caller
+  // might choose): ["a", "bc"] → '["a","bc"]' vs ["ab", "c"] → '["ab","c"]'.
+  return JSON.stringify(patterns);
 }
 
 /**
