@@ -276,6 +276,33 @@ describe('concurrent-append safety', () => {
       expect(line).toMatch(/^(DELETED src\/gone-\d+\.js|src\/changed-\d+\.js)$/);
     }
   });
+
+  it('sweeps orphaned .tmp files older than the stale threshold', () => {
+    // Regression for Greptile P2: crash-mid-steal leaves .codegraph/changes.journal.lock.<nonce>.tmp
+    // files behind. withJournalLock should clean up stale ones (> LOCK_STALE_MS old) on entry.
+    const root = makeRoot();
+    writeJournalHeader(root, 1700000000000);
+
+    const dir = path.join(root, '.codegraph');
+    const freshTmp = path.join(dir, `${JOURNAL_FILENAME}.lock.fresh-nonce.tmp`);
+    const staleTmp = path.join(dir, `${JOURNAL_FILENAME}.lock.stale-nonce.tmp`);
+    fs.writeFileSync(freshTmp, 'fresh');
+    fs.writeFileSync(staleTmp, 'stale');
+
+    // Backdate the stale tmp file past the 30s stale threshold.
+    const pastMs = Date.now() - 60_000;
+    const past = new Date(pastMs);
+    fs.utimesSync(staleTmp, past, past);
+
+    // Any journal write enters withJournalLock which triggers the sweep.
+    appendJournalEntries(root, [{ file: 'src/a.js' }]);
+
+    expect(fs.existsSync(staleTmp)).toBe(false);
+    expect(fs.existsSync(freshTmp)).toBe(true);
+
+    // Clean up the fresh tmp so makeRoot's temp dir removal stays clean.
+    fs.unlinkSync(freshTmp);
+  });
 });
 
 describe('appendJournalEntriesAndStampHeader', () => {

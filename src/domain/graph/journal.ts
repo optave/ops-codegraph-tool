@@ -177,9 +177,40 @@ function releaseJournalLock(lockPath: string, lock: AcquiredLock): void {
   }
 }
 
+function sweepStaleTmpFiles(dir: string): void {
+  // Clean up orphaned .tmp files left behind when a process is killed after
+  // writeFileSync(tmpPath, ...) succeeds but before renameSync(tmpPath, lockPath)
+  // completes (trySteal path). Without this, tmp files accumulate silently in
+  // .codegraph/ across crash cycles. Only sweep ones older than LOCK_STALE_MS
+  // so we don't race an in-flight steal on another process.
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  const now = Date.now();
+  const prefix = `${JOURNAL_FILENAME}${LOCK_SUFFIX}.`;
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.startsWith(prefix) || !entry.name.endsWith('.tmp')) {
+      continue;
+    }
+    const tmpPath = path.join(dir, entry.name);
+    try {
+      const stat = fs.statSync(tmpPath);
+      if (now - stat.mtimeMs > LOCK_STALE_MS) {
+        fs.unlinkSync(tmpPath);
+      }
+    } catch {
+      /* stat/unlink raced another cleaner or was already removed — ignore */
+    }
+  }
+}
+
 function withJournalLock<T>(rootDir: string, fn: () => T): T {
   const dir = path.join(rootDir, '.codegraph');
   fs.mkdirSync(dir, { recursive: true });
+  sweepStaleTmpFiles(dir);
   const lockPath = path.join(dir, `${JOURNAL_FILENAME}${LOCK_SUFFIX}`);
   const lock = acquireJournalLock(lockPath);
   try {
