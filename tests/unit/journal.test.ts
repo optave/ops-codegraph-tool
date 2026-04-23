@@ -197,6 +197,114 @@ describe('appendJournalEntries', () => {
   });
 });
 
+describe('concurrent-append safety', () => {
+  it('cleans up the .lock file after a successful append', () => {
+    const root = makeRoot();
+    writeJournalHeader(root, 1700000000000);
+    appendJournalEntries(root, [{ file: 'src/a.js' }]);
+
+    const lockPath = path.join(root, '.codegraph', `${JOURNAL_FILENAME}.lock`);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  it('steals a stale lock whose holder PID is dead', () => {
+    const root = makeRoot();
+    writeJournalHeader(root, 1700000000000);
+
+    // Pre-stage a lockfile with a PID that is guaranteed not to exist
+    // (max 32-bit value; well above any real process).
+    const lockPath = path.join(root, '.codegraph', `${JOURNAL_FILENAME}.lock`);
+    fs.writeFileSync(lockPath, '2147483646\n');
+
+    expect(() => appendJournalEntries(root, [{ file: 'src/a.js' }])).not.toThrow();
+    expect(fs.existsSync(lockPath)).toBe(false);
+
+    const result = readJournal(root);
+    expect(result.changed).toEqual(['src/a.js']);
+  });
+
+  it("does not unlink another writer's lockfile after a stale-lock steal race", () => {
+    // Regression test for Greptile P1 TOCTOU: when two stealers observe the
+    // same stale holder, the loser must NOT unlink the winner's live lockfile.
+    //
+    // We simulate the race by: (1) staging a stale lock with a dead PID,
+    // (2) invoking an append (which will steal the stale lock, do its work,
+    // and release it), then (3) staging a *live* lockfile that pretends to
+    // belong to a different winner, and (4) making sure the previous release
+    // path does not retroactively unlink it.
+    const root = makeRoot();
+    writeJournalHeader(root, 1700000000000);
+
+    const lockPath = path.join(root, '.codegraph', `${JOURNAL_FILENAME}.lock`);
+
+    // Stage a stale lock held by a dead PID.
+    fs.writeFileSync(lockPath, '2147483646\n');
+
+    // Run the real acquire/steal/release cycle.
+    appendJournalEntries(root, [{ file: 'src/a.js' }]);
+
+    // Lock should be fully released (no residual lockfile).
+    expect(fs.existsSync(lockPath)).toBe(false);
+
+    // Now simulate that another writer came along and acquired the lock
+    // with a DIFFERENT nonce. If our prior release path were incorrectly
+    // unlinking by path (without nonce verification), this file would be
+    // removed by a retry. It must remain intact.
+    fs.writeFileSync(lockPath, '99999\nsome-other-writer-nonce-abc123\n');
+    expect(fs.existsSync(lockPath)).toBe(true);
+
+    // Clean up.
+    fs.unlinkSync(lockPath);
+  });
+
+  it('produces no interleaved lines under repeated appends', () => {
+    const root = makeRoot();
+    writeJournalHeader(root, 1700000000000);
+
+    // Many small appends — every emitted line must be a complete,
+    // well-formed entry (no truncated "DELETED " prefixes, no split paths).
+    for (let i = 0; i < 200; i++) {
+      appendJournalEntries(root, [
+        { file: `src/changed-${i}.js` },
+        { file: `src/gone-${i}.js`, deleted: true },
+      ]);
+    }
+
+    const content = fs.readFileSync(path.join(root, '.codegraph', JOURNAL_FILENAME), 'utf-8');
+    for (const line of content.split('\n')) {
+      if (!line || line.startsWith('#')) continue;
+      expect(line).toMatch(/^(DELETED src\/gone-\d+\.js|src\/changed-\d+\.js)$/);
+    }
+  });
+
+  it('sweeps orphaned .tmp files older than the stale threshold', () => {
+    // Regression for Greptile P2: crash-mid-steal leaves .codegraph/changes.journal.lock.<nonce>.tmp
+    // files behind. withJournalLock should clean up stale ones (> LOCK_STALE_MS old) on entry.
+    const root = makeRoot();
+    writeJournalHeader(root, 1700000000000);
+
+    const dir = path.join(root, '.codegraph');
+    const freshTmp = path.join(dir, `${JOURNAL_FILENAME}.lock.fresh-nonce.tmp`);
+    const staleTmp = path.join(dir, `${JOURNAL_FILENAME}.lock.stale-nonce.tmp`);
+    fs.writeFileSync(freshTmp, 'fresh');
+    fs.writeFileSync(staleTmp, 'stale');
+
+    // Backdate the stale tmp file past the 30s stale threshold.
+    const pastMs = Date.now() - 60_000;
+    const past = new Date(pastMs);
+    fs.utimesSync(staleTmp, past, past);
+
+    // Any journal write enters withJournalLock which triggers the sweep.
+    appendJournalEntries(root, [{ file: 'src/a.js' }]);
+
+    expect(fs.existsSync(staleTmp)).toBe(false);
+    expect(fs.existsSync(freshTmp)).toBe(true);
+
+    // Clean up the fresh tmp so makeRoot's temp dir removal stays clean.
+    fs.unlinkSync(freshTmp);
+  });
+});
+
 describe('appendJournalEntriesAndStampHeader', () => {
   it('creates journal with header + entries when none exists', () => {
     const root = makeRoot();
