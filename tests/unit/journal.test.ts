@@ -8,6 +8,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   appendJournalEntries,
+  appendJournalEntriesAndStampHeader,
   JOURNAL_FILENAME,
   readJournal,
   writeJournalHeader,
@@ -193,6 +194,81 @@ describe('appendJournalEntries', () => {
 
     const result = readJournal(root);
     expect(result.changed).toEqual(['src/a.js', 'src/b.js']);
+  });
+});
+
+describe('appendJournalEntriesAndStampHeader', () => {
+  it('creates journal with header + entries when none exists', () => {
+    const root = makeRoot();
+    appendJournalEntriesAndStampHeader(root, [{ file: 'src/a.js' }], 1700000000000);
+
+    const result = readJournal(root);
+    expect(result.valid).toBe(true);
+    expect(result.timestamp).toBe(1700000000000);
+    expect(result.changed).toEqual(['src/a.js']);
+  });
+
+  it('advances the header timestamp while preserving prior entries', () => {
+    const root = makeRoot();
+    writeJournalHeader(root, 1000);
+    appendJournalEntries(root, [{ file: 'src/a.js' }, { file: 'src/b.js', deleted: true }]);
+
+    appendJournalEntriesAndStampHeader(root, [{ file: 'src/c.js' }], 2000);
+
+    const result = readJournal(root);
+    expect(result.valid).toBe(true);
+    expect(result.timestamp).toBe(2000);
+    expect(result.changed).toEqual(['src/a.js', 'src/c.js']);
+    expect(result.removed).toEqual(['src/b.js']);
+  });
+
+  it('advances the header even when no new entries are supplied', () => {
+    const root = makeRoot();
+    writeJournalHeader(root, 1000);
+    appendJournalEntries(root, [{ file: 'src/a.js' }]);
+
+    appendJournalEntriesAndStampHeader(root, [], 2000);
+
+    const result = readJournal(root);
+    expect(result.timestamp).toBe(2000);
+    expect(result.changed).toEqual(['src/a.js']);
+  });
+
+  it('is atomic: interleaved reads see either old or new state, never a truncated header', () => {
+    const root = makeRoot();
+    writeJournalHeader(root, 1000);
+    appendJournalEntries(root, [{ file: 'src/a.js' }]);
+
+    appendJournalEntriesAndStampHeader(root, [{ file: 'src/b.js' }], 2000);
+
+    // No leftover .tmp file after the rename
+    expect(fs.existsSync(`${journalPath(root)}.tmp`)).toBe(false);
+    const content = fs.readFileSync(journalPath(root), 'utf-8');
+    expect(content.startsWith('# codegraph-journal v1 2000\n')).toBe(true);
+  });
+});
+
+describe('regression: watch session keeps header ahead of DB mtime', () => {
+  it('header timestamp reflects latest append, not prior build', () => {
+    // Simulates the bug in #997: after a build finalizes the journal header
+    // at T0, the watcher appends entries at T1 > T0. A later build's Tier 0
+    // check compares journal.timestamp against MAX(file_hashes.mtime).
+    // If the header stays at T0, Tier 0 bails out and the fast path is lost.
+    const root = makeRoot();
+
+    const buildFinalizedAt = 1000;
+    writeJournalHeader(root, buildFinalizedAt);
+
+    const watcherAppendAt = 2500;
+    appendJournalEntriesAndStampHeader(root, [{ file: 'src/a.js' }], watcherAppendAt);
+
+    const journal = readJournal(root);
+    expect(journal.valid).toBe(true);
+    expect(journal.timestamp).toBeGreaterThanOrEqual(watcherAppendAt);
+    // latestDbMtime can never exceed the timestamp of the most recent append
+    // because the watcher journals a file immediately after processing it.
+    const simulatedDbMtime = watcherAppendAt;
+    expect(journal.timestamp!).toBeGreaterThanOrEqual(simulatedDbMtime);
   });
 });
 

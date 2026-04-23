@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -11,6 +13,8 @@ import {
   snapshotsDir,
   validateSnapshotName,
 } from '../../src/features/snapshot.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 let tmpDir: string;
 let dbPath: string;
@@ -131,6 +135,109 @@ describe('snapshotSave', () => {
 
   it('rejects invalid name', () => {
     expect(() => snapshotSave('bad name', { dbPath })).toThrow(/Invalid snapshot name/);
+  });
+
+  it('leaves no temp files in snapshots dir after success', () => {
+    snapshotSave('clean', { dbPath });
+    const entries = fs.readdirSync(snapshotsDir(dbPath));
+    expect(entries).toContain('clean.db');
+    // Temp files are named `.<name>.db.tmp-<pid>-<ts>` — none should remain.
+    expect(entries.filter((f) => f.includes('.tmp-'))).toEqual([]);
+  });
+
+  // Worker infrastructure for genuine cross-thread concurrency on
+  // snapshotSave. better-sqlite3 is synchronous, so Promise-based
+  // concurrency would queue two sequential microtasks — only separate
+  // threads exercise the TOCTOU race.
+  const nodeMajor = Number(process.versions.node.split('.')[0]);
+  const raceWorkerPath = path.join(__dirname, 'snapshot-race-worker.mjs');
+  // --import requires a URL (file://…) or a bare/relative specifier, not a
+  // drive-letter path on Windows. Use the file:// URL directly.
+  const loaderUrl = new URL('../../scripts/ts-resolve-loader.js', import.meta.url).href;
+  const raceExecArgv = [
+    nodeMajor >= 23 ? '--strip-types' : '--experimental-strip-types',
+    '--import',
+    loaderUrl,
+  ];
+  const spawnSaveWorker = (workerData: {
+    dbPath: string;
+    name: string;
+    force: boolean;
+  }): Promise<{ ok: boolean; error?: string }> =>
+    new Promise((resolve, reject) => {
+      const w = new Worker(raceWorkerPath, { workerData, execArgv: raceExecArgv });
+      let messageReceived = false;
+      w.once('message', (msg) => {
+        messageReceived = true;
+        resolve(msg);
+      });
+      w.once('error', reject);
+      w.once('exit', (code) => {
+        if (!messageReceived) {
+          reject(new Error(`worker exited with code ${code} before posting a message`));
+        }
+      });
+    });
+
+  it('does not corrupt output when two --force saves race on the same name', async () => {
+    // Prime the target so both workers take the --force overwrite path.
+    snapshotSave('race', { dbPath });
+
+    // Spawn two worker threads racing on the same name. Post-fix, the atomic
+    // rename ensures the winner's file is intact and the loser either
+    // overwrites cleanly or leaves no corrupt artifact.
+    const results = await Promise.allSettled([
+      spawnSaveWorker({ dbPath, name: 'race', force: true }),
+      spawnSaveWorker({ dbPath, name: 'race', force: true }),
+    ]);
+
+    // At least one save must have succeeded.
+    const succeeded = results.filter((r) => r.status === 'fulfilled' && r.value.ok === true);
+    expect(succeeded.length).toBeGreaterThanOrEqual(1);
+
+    // The final file must be a valid SQLite DB with the expected contents.
+    const finalPath = path.join(snapshotsDir(dbPath), 'race.db');
+    const db = new Database(finalPath, { readonly: true });
+    const rows = db.prepare('SELECT name FROM nodes').all();
+    db.close();
+    expect(rows).toEqual([{ name: 'hello' }]);
+
+    // No temp files should leak from either worker.
+    const entries = fs.readdirSync(snapshotsDir(dbPath));
+    expect(entries.filter((f) => f.includes('.tmp-'))).toEqual([]);
+  });
+
+  it('atomically rejects a concurrent non-force save when one already won', async () => {
+    // With no existing snapshot, two concurrent non-force saves race on the
+    // same name. Post-fix, the atomic linkSync(tmp, dest) makes the guard
+    // authoritative: exactly one must succeed, the other must fail with
+    // "already exists". Pre-fix, both could pass existsSync and silently
+    // overwrite each other.
+    const results = await Promise.allSettled([
+      spawnSaveWorker({ dbPath, name: 'nonforce-race', force: false }),
+      spawnSaveWorker({ dbPath, name: 'nonforce-race', force: false }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    expect(fulfilled).toHaveLength(2);
+
+    const outcomes = fulfilled.map(
+      (r) => (r as PromiseFulfilledResult<{ ok: boolean; error?: string }>).value,
+    );
+    const wins = outcomes.filter((o) => o.ok);
+    const losses = outcomes.filter((o) => !o.ok);
+    expect(wins).toHaveLength(1);
+    expect(losses).toHaveLength(1);
+    expect(losses[0].error).toMatch(/already exists/);
+
+    // Final snapshot must be valid.
+    const finalPath = path.join(snapshotsDir(dbPath), 'nonforce-race.db');
+    const db = new Database(finalPath, { readonly: true });
+    const rows = db.prepare('SELECT name FROM nodes').all();
+    db.close();
+    expect(rows).toEqual([{ name: 'hello' }]);
+
+    const entries = fs.readdirSync(snapshotsDir(dbPath));
+    expect(entries.filter((f) => f.includes('.tmp-'))).toEqual([]);
   });
 });
 
