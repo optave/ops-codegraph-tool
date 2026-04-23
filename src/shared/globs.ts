@@ -52,11 +52,33 @@ export function globToRegex(pattern: string): RegExp {
   return new RegExp(`^${re}$`);
 }
 
+const EMPTY_REGEX_LIST: readonly RegExp[] = Object.freeze([]) as readonly RegExp[];
+
+// Compile results are cached by pattern content so a long-running host
+// (watch mode, MCP server) doesn't recompile on every buildGraph call.
+// Capped to avoid unbounded growth when callers pass many distinct lists.
+const COMPILE_CACHE_MAX = 32;
+const compileCache = new Map<string, readonly RegExp[]>();
+
+function buildCacheKey(patterns: readonly string[]): string {
+  // JSON.stringify avoids ambiguity when patterns legitimately contain any
+  // single character (including control characters or separators a caller
+  // might choose): ["a", "bc"] → '["a","bc"]' vs ["ab", "c"] → '["ab","c"]'.
+  return JSON.stringify(patterns);
+}
+
 /**
  * Compile a list of glob patterns. Invalid / empty patterns are skipped.
+ *
+ * Results are memoized per pattern-content so repeated `buildGraph` calls
+ * with the same include/exclude lists reuse the compiled regexes. The
+ * returned array is shared across callers and must not be mutated.
  */
-export function compileGlobs(patterns: readonly string[] | undefined): RegExp[] {
-  if (!patterns || patterns.length === 0) return [];
+export function compileGlobs(patterns: readonly string[] | undefined): readonly RegExp[] {
+  if (!patterns || patterns.length === 0) return EMPTY_REGEX_LIST;
+  const key = buildCacheKey(patterns);
+  const cached = compileCache.get(key);
+  if (cached) return cached;
   const out: RegExp[] = [];
   for (const p of patterns) {
     if (typeof p !== 'string' || p.length === 0) continue;
@@ -66,7 +88,24 @@ export function compileGlobs(patterns: readonly string[] | undefined): RegExp[] 
       // Ignore malformed patterns rather than failing the whole build.
     }
   }
-  return out;
+  const frozen = Object.freeze(out) as readonly RegExp[];
+  if (compileCache.size >= COMPILE_CACHE_MAX) {
+    // FIFO eviction — Map iterates insertion order. Config pattern sets
+    // are small and stable, so a simple cap is sufficient.
+    const first = compileCache.keys().next().value;
+    if (first !== undefined) compileCache.delete(first);
+  }
+  compileCache.set(key, frozen);
+  return frozen;
+}
+
+/**
+ * Clear the compiled-glob cache. Intended for long-running hosts that
+ * need to reload config (e.g. watch mode after `.codegraphrc.json` edits)
+ * and for test isolation.
+ */
+export function clearGlobCache(): void {
+  compileCache.clear();
 }
 
 /**
