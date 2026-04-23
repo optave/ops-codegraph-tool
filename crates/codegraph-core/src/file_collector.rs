@@ -6,8 +6,9 @@
 
 use crate::parser_registry::LanguageKind;
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Default directories to ignore (mirrors `IGNORE_DIRS` in `src/shared/constants.ts`).
 const DEFAULT_IGNORE_DIRS: &[&str] = &[
@@ -45,13 +46,85 @@ pub struct CollectResult {
     pub directories: HashSet<String>,
 }
 
+/// Max entries held in the compiled-glob cache. Config pattern sets are small
+/// and stable; the cap guards against unbounded growth if a caller churns
+/// through many distinct lists.
+const COMPILE_CACHE_MAX: usize = 32;
+
+/// FIFO cache of compiled `GlobSet`s, keyed by the raw pattern list.
+///
+/// Long-running hosts (watch mode, MCP server) invoke `collect_files`
+/// repeatedly with the same config. Reusing compiled `GlobSet`s across
+/// those invocations avoids paying the parse cost on every rebuild.
+struct GlobCache {
+    // `VecDeque` gives O(1) `pop_front` for FIFO eviction; `Vec::remove(0)`
+    // would shift every remaining element on each eviction.
+    order: VecDeque<Vec<String>>,
+    map: HashMap<Vec<String>, Arc<GlobSet>>,
+}
+
+impl GlobCache {
+    fn new() -> Self {
+        Self {
+            order: VecDeque::new(),
+            map: HashMap::new(),
+        }
+    }
+
+    fn get(&self, key: &[String]) -> Option<Arc<GlobSet>> {
+        self.map.get(key).cloned()
+    }
+
+    fn insert(&mut self, key: Vec<String>, value: Arc<GlobSet>) {
+        if self.map.contains_key(&key) {
+            self.map.insert(key, value);
+            return;
+        }
+        if self.map.len() >= COMPILE_CACHE_MAX {
+            if let Some(oldest) = self.order.pop_front() {
+                self.map.remove(&oldest);
+            }
+        }
+        self.order.push_back(key.clone());
+        self.map.insert(key, value);
+    }
+
+    #[cfg(test)]
+    fn clear(&mut self) {
+        self.order.clear();
+        self.map.clear();
+    }
+}
+
+fn glob_cache() -> &'static Mutex<GlobCache> {
+    static CACHE: OnceLock<Mutex<GlobCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(GlobCache::new()))
+}
+
+/// Clear the compiled-glob cache. Exposed for tests; production hosts
+/// don't need to invalidate because the cache is keyed on exact pattern
+/// contents (a changed config produces a fresh key).
+#[cfg(test)]
+pub(crate) fn clear_glob_cache() {
+    if let Ok(mut cache) = glob_cache().lock() {
+        cache.clear();
+    }
+}
+
 /// Compile a list of glob patterns into a `GlobSet`.
 ///
 /// Invalid patterns are logged via `eprintln!` and skipped so a single bad
-/// entry in config can't take down the whole build.
-fn build_glob_set(patterns: &[String]) -> Option<GlobSet> {
+/// entry in config can't take down the whole build. Results are memoized
+/// by pattern content so repeated `collect_files` invocations in the same
+/// process share the compiled set.
+fn build_glob_set(patterns: &[String]) -> Option<Arc<GlobSet>> {
     if patterns.is_empty() {
         return None;
+    }
+    if let Ok(cache) = glob_cache().lock() {
+        if let Some(set) = cache.get(patterns) {
+            return Some(set);
+        }
     }
     let mut builder = GlobSetBuilder::new();
     let mut added = 0usize;
@@ -70,7 +143,13 @@ fn build_glob_set(patterns: &[String]) -> Option<GlobSet> {
         return None;
     }
     match builder.build() {
-        Ok(set) => Some(set),
+        Ok(set) => {
+            let arc = Arc::new(set);
+            if let Ok(mut cache) = glob_cache().lock() {
+                cache.insert(patterns.to_vec(), arc.clone());
+            }
+            Some(arc)
+        }
         Err(e) => {
             // Failing to build the GlobSet disables *all* include/exclude
             // filters, which silently changes what files the build sees.
@@ -185,7 +264,7 @@ pub fn collect_files(
                 .and_then(|p| p.to_str())
                 .map(|s| s.replace('\\', "/"))
                 .unwrap_or_else(|| normalize_path(path));
-            if !passes_include_exclude(&rel, include_set.as_ref(), exclude_set.as_ref()) {
+            if !passes_include_exclude(&rel, include_set.as_deref(), exclude_set.as_deref()) {
                 continue;
             }
         }
@@ -237,7 +316,7 @@ pub fn try_fast_collect(
     for rel_path in &file_set {
         if has_filters {
             let norm = rel_path.replace('\\', "/");
-            if !passes_include_exclude(&norm, include_set.as_ref(), exclude_set.as_ref()) {
+            if !passes_include_exclude(&norm, include_set.as_deref(), exclude_set.as_deref()) {
                 continue;
             }
         }
@@ -378,6 +457,32 @@ mod tests {
         assert!(!names.contains("b.ts"));
         assert!(names.contains("c.ts"));
         assert!(names.contains("d.ts"));
+    }
+
+    #[test]
+    fn build_glob_set_memoizes_identical_pattern_lists() {
+        // Guards the performance optimization: long-running hosts (watch mode,
+        // MCP server) must reuse the compiled GlobSet across buildGraph calls
+        // instead of recompiling from scratch every time.
+        clear_glob_cache();
+        let patterns = vec!["src/**/*.ts".to_string(), "**/*.test.ts".to_string()];
+        let first = build_glob_set(&patterns).expect("compiles");
+        let second = build_glob_set(&patterns).expect("compiles");
+        assert!(
+            Arc::ptr_eq(&first, &second),
+            "repeated build_glob_set calls with the same patterns must return the cached Arc"
+        );
+    }
+
+    #[test]
+    fn build_glob_set_cache_distinguishes_different_lists() {
+        clear_glob_cache();
+        let a = build_glob_set(&["src/**/*.ts".to_string()]).expect("compiles");
+        let b = build_glob_set(&["src/**/*.js".to_string()]).expect("compiles");
+        assert!(
+            !Arc::ptr_eq(&a, &b),
+            "different pattern lists must get independent cache entries"
+        );
     }
 
     #[test]

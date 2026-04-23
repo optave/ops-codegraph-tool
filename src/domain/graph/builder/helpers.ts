@@ -90,8 +90,8 @@ export function collectFiles(
   directories: Set<string>,
   _visited?: Set<string>,
   _rootDir?: string,
-  _includeRegexes?: RegExp[],
-  _excludeRegexes?: RegExp[],
+  _includeRegexes?: readonly RegExp[],
+  _excludeRegexes?: readonly RegExp[],
 ): { files: string[]; directories: Set<string> };
 export function collectFiles(
   dir: string,
@@ -100,8 +100,8 @@ export function collectFiles(
   directories?: null,
   _visited?: Set<string>,
   _rootDir?: string,
-  _includeRegexes?: RegExp[],
-  _excludeRegexes?: RegExp[],
+  _includeRegexes?: readonly RegExp[],
+  _excludeRegexes?: readonly RegExp[],
 ): string[];
 export function collectFiles(
   dir: string,
@@ -110,8 +110,8 @@ export function collectFiles(
   directories: Set<string> | null = null,
   _visited: Set<string> = new Set(),
   _rootDir?: string,
-  _includeRegexes?: RegExp[],
-  _excludeRegexes?: RegExp[],
+  _includeRegexes?: readonly RegExp[],
+  _excludeRegexes?: readonly RegExp[],
 ): string[] | { files: string[]; directories: Set<string> } {
   const trackDirs = directories instanceof Set;
   let hasFiles = false;
