@@ -198,6 +198,13 @@ jobs:
               --body "Automated build benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
           fi
 
+      # Engine-parity gate: runs AFTER the doc PR is created so the PR still
+      # records raw benchmark data even when parity regresses. The job status
+      # going red alerts maintainers; the linked issues describe each threshold.
+      - name: Engine parity gate
+        if: steps.existing.outputs.skip != 'true'
+        run: node scripts/benchmark-parity-gate.mjs benchmark-result.json
+
   embedding-benchmark:
     runs-on: ubuntu-latest
     # 7 models x 30 min each = 210 min worst-case; symbols are sampled to 1500 so
