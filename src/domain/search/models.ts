@@ -253,7 +253,7 @@ export async function embed(
     }
 
     if (texts.length > batchSize) {
-      process.stdout.write(`  Embedded ${Math.min(i + batchSize, texts.length)}/${texts.length}\r`);
+      process.stderr.write(`  Embedded ${Math.min(i + batchSize, texts.length)}/${texts.length}\r`);
     }
   }
 

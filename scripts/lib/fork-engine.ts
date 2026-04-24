@@ -93,7 +93,18 @@ export function forkWorker(scriptPath, envKey, workerName, argv = [], timeoutMs 
 
 			if (signal) {
 				console.error(`[fork] ${workerName} worker killed by signal ${signal}`);
-				settle(null);
+				// A worker can finish its measurements and write valid JSON to
+				// stdout before hanging on a non-daemonized handle (e.g. an
+				// un-disposed worker_thread pool). SIGKILL from our timeout
+				// then discards the result. Try to parse captured stdout first
+				// so we don't lose real data to a lingering event-loop keepalive.
+				try {
+					const parsed = JSON.parse(stdout);
+					console.error(`[fork] ${workerName} worker produced results before being killed — salvaging`);
+					settle(parsed);
+				} catch {
+					settle(null);
+				}
 				return;
 			}
 

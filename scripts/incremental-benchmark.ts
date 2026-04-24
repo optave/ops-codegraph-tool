@@ -143,6 +143,13 @@ const { srcDir, cleanup } = await resolveBenchmarkSource();
 const dbPath = path.join(root, '.codegraph', 'graph.db');
 
 const { buildGraph } = await import(srcImport(srcDir, 'domain/graph/builder.js'));
+// v3.9.5+ parses WASM in a worker_thread that keeps the event loop alive until
+// disposed. Older releases don't export disposeParsers — fall back to a no-op.
+let disposeParsers = async () => {};
+try {
+	const parser = await import(srcImport(srcDir, 'domain/parser.js'));
+	if (typeof parser.disposeParsers === 'function') disposeParsers = parser.disposeParsers;
+} catch { /* older release — no worker pool to dispose */ }
 
 // Redirect console.log to stderr so only JSON goes to stdout
 const origLog = console.log;
@@ -218,4 +225,6 @@ console.log = origLog;
 const workerResult = { fullBuildMs, noopRebuildMs, oneFileRebuildMs, oneFilePhases };
 console.log(JSON.stringify(workerResult));
 
+await disposeParsers();
 cleanup();
+process.exit(0);
