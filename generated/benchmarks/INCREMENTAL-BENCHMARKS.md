@@ -68,6 +68,10 @@ Import resolution: native batch vs JS fallback throughput.
 | Per-import (JS) | 0ms |
 | Speedup ratio | 1.5x |
 
+<!-- NOTES_START -->
+**Note (3.9.5):** No build/rebuild metrics for this release (both engines null) — only import resolution data was collected. Both the WASM and native workers reached the 1-file rebuild phase and then hung past the benchmark's 10-minute per-engine timeout (see `scripts/lib/fork-engine.ts`), so each was killed (`SIGKILL`) before returning results. Import resolution is unaffected because it runs in the parent process and doesn't depend on the full build. 3.9.5 is consequently absent from the top-level version-history comparison table since there are no build-time figures to compare against prior releases. The workflow run is [here](https://github.com/optave/ops-codegraph-tool/actions/runs/24863501577); the root cause will be investigated and the numbers backfilled in a follow-up if possible.
+<!-- NOTES_END -->
+
 <!-- INCREMENTAL_BENCHMARK_DATA
 [
   {
