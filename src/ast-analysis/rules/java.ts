@@ -174,4 +174,8 @@ export const dataflow: DataflowRulesConfig = makeDataflowRules({
 
 // ─── AST Node Types ───────────────────────────────────────────────────────
 
-export const astTypes: Record<string, string> | null = null;
+export const astTypes: Record<string, string> | null = {
+  object_creation_expression: 'new',
+  throw_statement: 'throw',
+  string_literal: 'string',
+};

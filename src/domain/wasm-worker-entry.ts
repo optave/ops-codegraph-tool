@@ -28,7 +28,9 @@ import type { Tree } from 'web-tree-sitter';
 import { Language, Parser, Query } from 'web-tree-sitter';
 import { computeLOCMetrics, computeMaintainabilityIndex } from '../ast-analysis/metrics.js';
 import {
+  AST_STRING_CONFIGS,
   AST_TYPE_MAPS,
+  astStopRecurseKinds,
   CFG_RULES,
   COMPLEXITY_RULES,
   DATAFLOW_RULES,
@@ -584,7 +586,15 @@ function setupVisitorsLocal(
   if (opts.ast) {
     const astTypeMap = AST_TYPE_MAPS.get(langId);
     if (astTypeMap) {
-      astVisitor = createAstStoreVisitor(astTypeMap, defs, relPath, new Map<string, number>());
+      const stringConfig = AST_STRING_CONFIGS.get(langId);
+      astVisitor = createAstStoreVisitor(
+        astTypeMap,
+        defs,
+        relPath,
+        new Map<string, number>(),
+        stringConfig,
+        astStopRecurseKinds(langId),
+      );
       visitors.push(astVisitor);
     }
   }

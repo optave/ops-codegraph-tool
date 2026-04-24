@@ -43,7 +43,9 @@ import type {
 } from '../types.js';
 import { computeLOCMetrics, computeMaintainabilityIndex } from './metrics.js';
 import {
+  AST_STRING_CONFIGS,
   AST_TYPE_MAPS,
+  astStopRecurseKinds,
   CFG_RULES,
   COMPLEXITY_RULES,
   DATAFLOW_RULES,
@@ -458,7 +460,15 @@ function setupAstVisitor(
   for (const row of bulkNodeIdsByFile(db, relPath)) {
     nodeIdMap.set(`${row.name}|${row.kind}|${row.line}`, row.id);
   }
-  return createAstStoreVisitor(astTypeMap, symbols.definitions || [], relPath, nodeIdMap);
+  const stringConfig = AST_STRING_CONFIGS.get(langId);
+  return createAstStoreVisitor(
+    astTypeMap,
+    symbols.definitions || [],
+    relPath,
+    nodeIdMap,
+    stringConfig,
+    astStopRecurseKinds(langId),
+  );
 }
 
 /** Set up complexity visitor if any definitions need WASM complexity analysis. */

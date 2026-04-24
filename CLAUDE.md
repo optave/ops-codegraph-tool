@@ -161,7 +161,7 @@ Source is TypeScript in `src/`, compiled via `tsup`. The Rust native engine live
 
 **Configuration:** All tunable behavioral constants live in `DEFAULTS` in `src/infrastructure/config.ts`, grouped by concern (`analysis`, `risk`, `search`, `display`, `community`, `structure`, `mcp`, `check`, `coChange`, `manifesto`). Users override via `.codegraphrc.json` — `mergeConfig` deep-merges recursively so partial overrides preserve sibling keys. Env vars override LLM settings (`CODEGRAPH_LLM_*`). When adding new behavioral constants, **always add them to `DEFAULTS`** and wire them through config — never introduce new hardcoded magic numbers in individual modules. Category F values (safety boundaries, standard formulas, platform concerns) are the only exception.
 
-**Database:** SQLite at `.codegraph/graph.db` with tables: `nodes`, `edges`, `metadata`, `embeddings`, `function_complexity`
+**Database:** SQLite at `.codegraph/graph.db` with tables: `nodes`, `edges`, `metadata`, `embeddings`, `function_complexity`, `ast_nodes` (stored `new`/`throw`/`await`/`string`/`regex` literals queryable via `codegraph ast`). Both engines must extract `ast_nodes` for every language they parse — per-language node-type maps live in `src/ast-analysis/rules/index.ts` (`AST_TYPE_MAPS`, `AST_STRING_CONFIGS`) and mirror the native `LangAstConfig` constants in `crates/codegraph-core/src/extractors/helpers.rs`. Adding a new language requires a matching entry in both.
 
 ## Test Structure
 

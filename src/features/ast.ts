@@ -1,5 +1,9 @@
 import path from 'node:path';
-import { AST_TYPE_MAPS } from '../ast-analysis/rules/index.js';
+import {
+  AST_STRING_CONFIGS,
+  AST_TYPE_MAPS,
+  astStopRecurseKinds,
+} from '../ast-analysis/rules/index.js';
 import { buildExtensionSet } from '../ast-analysis/shared.js';
 import { walkWithVisitors } from '../ast-analysis/visitor.js';
 import { createAstStoreVisitor } from '../ast-analysis/visitors/ast-store-visitor.js';
@@ -21,8 +25,6 @@ const KIND_ICONS: Record<string, string> = {
   throw: '\u2191', // ↑
   await: '\u22B3', // ⊳
 };
-
-const JS_TS_AST_TYPES = AST_TYPE_MAPS.get('javascript');
 
 const WALK_EXTENSIONS = buildExtensionSet(AST_TYPE_MAPS);
 
@@ -171,9 +173,10 @@ function collectFileAstRows(
 
   // WASM fallback — walk tree if available
   const ext = path.extname(relPath).toLowerCase();
-  if (WALK_EXTENSIONS.has(ext) && symbols._tree) {
+  const langId = symbols._langId || '';
+  if ((WALK_EXTENSIONS.has(ext) || AST_TYPE_MAPS.has(langId)) && symbols._tree) {
     const rows: AstRow[] = [];
-    walkAst(symbols._tree.rootNode, defs, relPath, rows, nodeIdMap);
+    walkAst(symbols._tree.rootNode, defs, relPath, rows, nodeIdMap, langId);
     return rows;
   }
 
@@ -226,13 +229,23 @@ function walkAst(
   relPath: string,
   rows: AstRow[],
   nodeIdMap: Map<string, number>,
+  langId: string,
 ): void {
-  if (!JS_TS_AST_TYPES) {
-    debug('ast-store: JS_TS_AST_TYPES not available — skipping walk');
+  const astTypeMap = AST_TYPE_MAPS.get(langId);
+  if (!astTypeMap) {
+    debug(`ast-store: no astTypes for langId=${langId} — skipping walk`);
     return;
   }
-  const visitor = createAstStoreVisitor(JS_TS_AST_TYPES, defs, relPath, nodeIdMap);
-  const results = walkWithVisitors(rootNode, [visitor], 'javascript');
+  const stringConfig = AST_STRING_CONFIGS.get(langId);
+  const visitor = createAstStoreVisitor(
+    astTypeMap,
+    defs,
+    relPath,
+    nodeIdMap,
+    stringConfig,
+    astStopRecurseKinds(langId),
+  );
+  const results = walkWithVisitors(rootNode, [visitor], langId);
   const collected = (results['ast-store'] || []) as AstRow[];
   rows.push(...collected);
 }

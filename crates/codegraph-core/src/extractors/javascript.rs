@@ -551,7 +551,12 @@ fn walk_ast_nodes_depth(node: &Node, source: &[u8], ast_nodes: &mut Vec<AstNode>
             let content = raw
                 .trim_start_matches(|c| c == '\'' || c == '"' || c == '`')
                 .trim_end_matches(|c| c == '\'' || c == '"' || c == '`');
-            if content.len() < 2 {
+            // Count Unicode code points, not UTF-8 bytes, so the filter matches
+            // helpers.rs `build_string_node` and the WASM visitor — a single non-
+            // ASCII glyph like `─` (3 bytes / 1 code point) must be treated as one
+            // character, otherwise we emit "excess" string nodes the WASM engine
+            // skips (see parity issue #1010).
+            if content.chars().count() < 2 {
                 // Still recurse children (template_string may have nested expressions)
                 for i in 0..node.child_count() {
                     if let Some(child) = node.child(i) {
