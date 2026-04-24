@@ -5,8 +5,36 @@ import type {
   Visitor,
   VisitorContext,
 } from '../../types.js';
+import type { AstStringConfig } from '../rules/index.js';
 
 const TEXT_MAX = 200;
+
+// ── Cross-language node-type constants (mirror Rust `helpers.rs`) ────────
+const IDENT_TYPES = new Set<string>([
+  'identifier',
+  'type_identifier',
+  'name',
+  'qualified_name',
+  'scoped_identifier',
+  'qualified_identifier',
+  'member_expression',
+  'member_access_expression',
+  'field_expression',
+  'attribute',
+  'scoped_type_identifier',
+]);
+
+const CALL_TYPES = new Set<string>([
+  'call_expression',
+  'call',
+  'invocation_expression',
+  'method_invocation',
+  'function_call_expression',
+  'member_call_expression',
+  'scoped_call_expression',
+]);
+
+const DEFAULT_STRING_CONFIG: AstStringConfig = { quoteChars: '\'"`', stringPrefixes: '' };
 
 interface AstStoreRow {
   file: string;
@@ -20,59 +48,106 @@ interface AstStoreRow {
 
 function truncate(s: string | null | undefined, max: number = TEXT_MAX): string | null {
   if (!s) return null;
-  return s.length <= max ? s : `${s.slice(0, max - 1)}\u2026`;
+  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 }
 
-function extractNewName(node: TreeSitterNode): string {
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (!child) continue;
-    if (child.type === 'identifier') return child.text;
-    if (child.type === 'member_expression') return child.text;
+function trimLeadingChars(s: string, chars: string): string {
+  if (!chars) return s;
+  let i = 0;
+  while (i < s.length && chars.includes(s[i]!)) i++;
+  return i === 0 ? s : s.slice(i);
+}
+
+function trimTrailingChars(s: string, chars: string): string {
+  if (!chars) return s;
+  let i = s.length;
+  while (i > 0 && chars.includes(s[i - 1]!)) i--;
+  return i === s.length ? s : s.slice(0, i);
+}
+
+/** Extract constructor name from a `new_expression` / `object_creation_expression`. */
+function extractConstructorName(node: TreeSitterNode): string {
+  for (const field of ['type', 'class', 'constructor']) {
+    const f = node.childForFieldName(field);
+    if (f?.text) return f.text;
   }
-  return node.text?.split('(')[0]?.replace('new ', '').trim() || '?';
-}
-
-function extractExpressionText(node: TreeSitterNode): string | null {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child) continue;
-    if (child.type !== 'throw' && child.type !== 'await') {
-      return truncate(child.text);
-    }
+    if (IDENT_TYPES.has(child.type)) return child.text;
+  }
+  const raw = node.text || '';
+  const beforeParen = raw.split('(')[0] || raw;
+  return beforeParen.replace(/^new\s+/, '').trim() || '?';
+}
+
+/** Extract function name from a call node. */
+function extractCallName(node: TreeSitterNode): string {
+  for (const field of ['function', 'method', 'name']) {
+    const f = node.childForFieldName(field);
+    if (f?.text) return f.text;
+  }
+  const text = node.text || '';
+  return text.split('(')[0] || '?';
+}
+
+/** Extract name from a throw/raise statement — matches native `extract_throw_target`. */
+function extractThrowName(node: TreeSitterNode, newTypes: Set<string>): string {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    const ck = child.type;
+    if (newTypes.has(ck)) return extractConstructorName(child);
+    if (CALL_TYPES.has(ck)) return extractCallName(child);
+    if (IDENT_TYPES.has(ck)) return child.text;
+  }
+  return truncate(node.text) ?? node.text ?? '';
+}
+
+/** Extract name from an await expression — matches native `extract_awaited_name`. */
+function extractAwaitName(node: TreeSitterNode): string {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    const ck = child.type;
+    if (CALL_TYPES.has(ck)) return extractCallName(child);
+    if (IDENT_TYPES.has(ck)) return child.text;
+  }
+  return truncate(node.text) ?? node.text ?? '';
+}
+
+/** Extract text of the expression inside a throw/await, skipping the keyword. */
+function extractChildExpressionText(node: TreeSitterNode): string | null {
+  const keywords = new Set(['throw', 'raise', 'await', 'new']);
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    if (!keywords.has(child.type)) return truncate(child.text);
   }
   return truncate(node.text);
 }
 
-/** Extract the name from a throw statement's child nodes. */
-function extractThrowName(node: TreeSitterNode): string | null {
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (!child) continue;
-    if (child.type === 'new_expression') return extractNewName(child);
-    if (child.type === 'call_expression') {
-      const fn = child.childForFieldName('function');
-      return fn ? fn.text : child.text?.split('(')[0] || '?';
-    }
-    if (child.type === 'identifier') return child.text;
-  }
-  return truncate(node.text);
-}
+/**
+ * Extract string content from a string-literal node, mirroring the native
+ * engine's `build_string_node` (`helpers.rs`). Returns `null` when the
+ * content is shorter than 2 Unicode code points.
+ */
+function extractStringContent(node: TreeSitterNode, cfg: AstStringConfig): string | null {
+  const raw = node.text ?? '';
+  const isRawString = node.type.includes('raw_string');
 
-/** Extract the name from an await expression's child nodes. */
-function extractAwaitName(node: TreeSitterNode): string | null {
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (!child) continue;
-    if (child.type === 'call_expression') {
-      const fn = child.childForFieldName('function');
-      return fn ? fn.text : child.text?.split('(')[0] || '?';
-    }
-    if (child.type === 'identifier' || child.type === 'member_expression') {
-      return child.text;
-    }
-  }
-  return truncate(node.text);
+  let s = raw;
+  s = trimLeadingChars(s, '@');
+  s = trimLeadingChars(s, cfg.stringPrefixes);
+  if (isRawString) s = trimLeadingChars(s, 'r#');
+  s = trimLeadingChars(s, cfg.quoteChars);
+  if (isRawString) s = trimTrailingChars(s, '#');
+  s = trimTrailingChars(s, cfg.quoteChars);
+
+  // Count code points, not UTF-16 code units — matches Rust `chars().count()`.
+  const codePointCount = [...s].length;
+  if (codePointCount < 2) return null;
+  return s;
 }
 
 export function createAstStoreVisitor(
@@ -80,9 +155,16 @@ export function createAstStoreVisitor(
   defs: Definition[],
   relPath: string,
   nodeIdMap: Map<string, number>,
+  stringConfig: AstStringConfig = DEFAULT_STRING_CONFIG,
+  stopRecurseKinds: ReadonlySet<string> = new Set(),
 ): Visitor {
   const rows: AstStoreRow[] = [];
   const matched = new Set<number>();
+  const newTypes = new Set<string>(
+    Object.entries(astTypeMap)
+      .filter(([, kind]) => kind === 'new')
+      .map(([type]) => type),
+  );
 
   function findParentDef(line: number): Definition | null {
     let best: Definition | null = null;
@@ -106,12 +188,15 @@ export function createAstStoreVisitor(
   type KindHandler = (node: TreeSitterNode) => NameTextResult;
 
   const kindHandlers: Record<string, KindHandler> = {
-    new: (node) => ({ name: extractNewName(node), text: truncate(node.text) }),
-    throw: (node) => ({ name: extractThrowName(node), text: extractExpressionText(node) }),
-    await: (node) => ({ name: extractAwaitName(node), text: extractExpressionText(node) }),
+    new: (node) => ({ name: extractConstructorName(node), text: truncate(node.text) }),
+    throw: (node) => ({
+      name: extractThrowName(node, newTypes),
+      text: extractChildExpressionText(node),
+    }),
+    await: (node) => ({ name: extractAwaitName(node), text: extractChildExpressionText(node) }),
     string: (node) => {
-      const content = node.text?.replace(/^['"`]|['"`]$/g, '') || '';
-      if (content.length < 2) return { name: null, text: null, skip: true };
+      const content = extractStringContent(node, stringConfig);
+      if (content == null) return { name: null, text: null, skip: true };
       return { name: truncate(content, 100), text: truncate(node.text) };
     },
     regex: (node) => ({ name: node.text || '?', text: truncate(node.text) }),
@@ -156,7 +241,13 @@ export function createAstStoreVisitor(
 
       collectNode(node, kind);
 
-      if (kind !== 'string' && kind !== 'regex') {
+      // Mirror the native walker's recursion policy. In JS/TS, the native
+      // javascript.rs walker returns after collecting `new` or `throw` to
+      // avoid double-counting the wrapped expression (e.g. `throw new
+      // Error('x')` emits one `throw` row, not throw+new+string). Other
+      // languages go through helpers.rs::walk_ast_nodes_with_config_depth
+      // which always recurses — so `stopRecurseKinds` is empty for them.
+      if (stopRecurseKinds.has(kind)) {
         return { skipChildren: true };
       }
     },
