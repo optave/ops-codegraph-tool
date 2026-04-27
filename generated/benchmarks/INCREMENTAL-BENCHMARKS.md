@@ -55,37 +55,39 @@ Import resolution: native batch vs JS fallback throughput.
 
 ### Latest results
 
-**Version:** 3.9.4 | **Files:** 668 | **Date:** 2026-04-18
-
-#### Native (Rust)
-
-| Metric | Value |
-|--------|------:|
-| Full build | 2.1s |
-| No-op rebuild | 9ms |
-| 1-file rebuild | 406ms |
-
-#### WASM
-
-| Metric | Value |
-|--------|------:|
-| Full build | 7.6s |
-| No-op rebuild | 19ms |
-| 1-file rebuild | 61ms |
+**Version:** 3.9.5 | **Files:** 742 | **Date:** 2026-04-23
 
 #### Import Resolution
 
 | Metric | Value |
 |--------|------:|
-| Import pairs | 957 |
-| Native batch | 6ms |
-| JS fallback | 9ms |
+| Import pairs | 987 |
+| Native batch | 7ms |
+| JS fallback | 10ms |
 | Per-import (native) | 0ms |
 | Per-import (JS) | 0ms |
-| Speedup ratio | 1.6x |
+| Speedup ratio | 1.5x |
+
+<!-- NOTES_START -->
+**Note (3.9.5):** No build/rebuild metrics for this release (both engines null) — only import resolution data was collected. Both the WASM and native workers reached the 1-file rebuild phase and then hung past the benchmark's 10-minute per-engine timeout (see `scripts/lib/fork-engine.ts`), so each was killed (`SIGKILL`) before returning results. Import resolution is unaffected because it runs in the parent process and doesn't depend on the full build. 3.9.5 is consequently absent from the top-level version-history comparison table since there are no build-time figures to compare against prior releases. The workflow run is [here](https://github.com/optave/ops-codegraph-tool/actions/runs/24863501577); the root cause will be investigated and the numbers backfilled in a follow-up if possible.
+<!-- NOTES_END -->
 
 <!-- INCREMENTAL_BENCHMARK_DATA
 [
+  {
+    "version": "3.9.5",
+    "date": "2026-04-23",
+    "files": 742,
+    "wasm": null,
+    "native": null,
+    "resolve": {
+      "imports": 987,
+      "nativeBatchMs": 6.5,
+      "jsFallbackMs": 9.8,
+      "perImportNativeMs": 0,
+      "perImportJsMs": 0
+    }
+  },
   {
     "version": "3.9.4",
     "date": "2026-04-18",
