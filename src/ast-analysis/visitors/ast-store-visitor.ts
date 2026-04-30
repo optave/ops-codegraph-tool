@@ -134,14 +134,15 @@ function extractChildExpressionText(node: TreeSitterNode): string | null {
 /**
  * Count code points cheaply: skip the `[...s]` spread when `s.length` already
  * decides the answer. Each code point is 1 or 2 UTF-16 units, so `.length < 2`
- * implies `< 2` code points and `.length >= 4` implies `>= 2` code points
- * (at most 2 surrogate pairs). Only `.length` of 2 or 3 needs the spread to
- * disambiguate the surrogate-pair edge case.
+ * implies `< 2` code points and `.length >= 3` already guarantees `>= 2` code
+ * points (worst case: one surrogate pair + one BMP char = 2 code points).
+ * Only `.length === 2` is genuinely ambiguous (could be a single surrogate
+ * pair = 1 code point, or two BMP chars = 2 code points) and needs the spread.
  */
 function codePointCountAtLeast2(s: string): boolean {
   const len = s.length;
   if (len < 2) return false;
-  if (len >= 4) return true;
+  if (len >= 3) return true;
   return [...s].length >= 2;
 }
 
