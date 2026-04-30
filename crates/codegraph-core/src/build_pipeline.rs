@@ -1081,6 +1081,31 @@ fn build_and_insert_call_edges(
     .map(String::from)
     .collect();
 
+    // Pre-load every file node ID into a HashMap with one query, replacing
+    // the per-file `query_row` cycle that paid a fresh sqlite3_prepare for
+    // each entry in `file_symbols` (#1013).
+    //
+    // The `name = file` predicate matches the legacy per-row lookup
+    // (`WHERE name = ? AND file = ?` with both binds set to `rel_path`).
+    // For file-kind nodes `name` and `file` are conventionally identical,
+    // but keeping the guard prevents an unrelated row from silently
+    // overwriting the map entry for `file` (#1028 review).
+    let file_node_ids: HashMap<String, u32> = {
+        let mut map = HashMap::new();
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT file, id FROM nodes WHERE kind = 'file' AND line = 0 AND name = file",
+        ) {
+            if let Ok(rows) = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? as u32))
+            }) {
+                for r in rows.flatten() {
+                    map.insert(r.0, r.1);
+                }
+            }
+        }
+        map
+    };
+
     // Build FileEdgeInput entries for the native edge builder
     let mut file_entries: Vec<FileEdgeInput> = Vec::new();
     for (rel_path, symbols) in file_symbols {
@@ -1088,14 +1113,9 @@ fn build_and_insert_call_edges(
             continue;
         }
 
-        // Look up file node ID
-        let file_node_id: u32 = match conn.query_row(
-            "SELECT id FROM nodes WHERE name = ? AND kind = 'file' AND file = ? AND line = 0",
-            [rel_path, rel_path],
-            |row| row.get::<_, i64>(0),
-        ) {
-            Ok(id) => id as u32,
-            Err(_) => continue,
+        let file_node_id: u32 = match file_node_ids.get(rel_path) {
+            Some(&id) => id,
+            None => continue,
         };
 
         // Build imported names from resolved imports
