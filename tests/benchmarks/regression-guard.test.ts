@@ -363,7 +363,15 @@ interface IncrementalEntry {
 
 // ── Tests ────────────────────────────────────────────────────────────────
 
-describe('Benchmark regression guard', () => {
+// Release-blocking gate: runs pre-publish (after fresh benchmark numbers are
+// written by the pre-publish-benchmark job in .github/workflows/publish.yml)
+// and during local invocations of `npm run test:regression-guard`. Skipped
+// in the default `npm test` run so docs commits that merge already-recorded
+// regressed history into main don't trigger false failures — by then the
+// release has already passed the gate.
+const RUN_REGRESSION_GUARD = process.env.RUN_REGRESSION_GUARD === '1';
+
+describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
   const buildHistory = extractJsonData<BuildEntry>(
     path.join(BENCHMARKS_DIR, 'BUILD-BENCHMARKS.md'),
     'BENCHMARK_DATA',
