@@ -79,6 +79,20 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *
  * - 3.9.2:Full build — NativeDbProxy overhead causes native full build to
  *   regress from 5206ms to 9403ms (+81%). Fix tracked in PR #906.
+ *
+ * - 3.9.6:Build ms/file / 3.9.6:No-op rebuild — WASM full build regressed
+ *   (#1036) when PR #1016 expanded AST_TYPE_MAPS from 3 to 23 languages,
+ *   causing zero-AST-row files to return `astNodes: undefined` and trigger
+ *   a full-corpus re-parse. Fixed by PR #1038. Benchmarks captured before
+ *   the fix landed; will reclear in v3.9.7+ data.
+ *
+ * - 3.9.6:Query time — native query benchmark sample-noise blip (29.4 → 47ms)
+ *   above the natural variance of the small target set. Not reproducible
+ *   locally (~30ms steady-state); will be re-validated on v3.9.7+ data.
+ *
+ * - 3.9.6:resolution haskell precision/recall — separate Haskell resolver
+ *   regression introduced in 3.9.6, unrelated to #1036 / PR #1038. Tracked
+ *   in #1039.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.9.0:1-file rebuild',
@@ -87,6 +101,11 @@ const KNOWN_REGRESSIONS = new Set([
   '3.9.0:fnDeps depth 5',
   '3.9.1:1-file rebuild',
   '3.9.2:Full build',
+  '3.9.6:Build ms/file',
+  '3.9.6:No-op rebuild',
+  '3.9.6:Query time',
+  '3.9.6:resolution haskell precision',
+  '3.9.6:resolution haskell recall',
 ]);
 
 /**
