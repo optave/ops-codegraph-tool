@@ -269,6 +269,13 @@ export function createAstStoreVisitor(
       // unrelated subtree. The parent call's skipChildren handles the intended case.
       if (matched.has(node.id)) return;
 
+      // Gate with `hasOwn` because plain-object lookup walks Object.prototype:
+      // tree-sitter node types like `constructor` (Haskell sum-types: Left,
+      // Right) would otherwise resolve to `Object.prototype.constructor` (the
+      // Object() function), which then crashes the worker boundary with
+      // "function Object() { [native code] } could not be cloned" when the
+      // resulting astNodes row is structured-cloned back to the main thread.
+      if (!Object.hasOwn(astTypeMap, node.type)) return;
       const kind = astTypeMap[node.type];
       if (!kind) return;
 

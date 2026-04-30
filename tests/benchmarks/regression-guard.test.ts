@@ -90,9 +90,14 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   above the natural variance of the small target set. Not reproducible
  *   locally (~30ms steady-state); will be re-validated on v3.9.7+ data.
  *
- * - 3.9.6:resolution haskell precision/recall — separate Haskell resolver
- *   regression introduced in 3.9.6, unrelated to #1036 / PR #1038. Tracked
- *   in #1039.
+ * - 3.9.6:resolution haskell precision/recall — Haskell AST visitor walked
+ *   `astTypeMap` with bracket-notation lookup, so node type `constructor`
+ *   (Haskell sum-types: Left, Right) resolved to `Object.prototype.constructor`
+ *   instead of `undefined`. The Object() function landed in the astNodes row
+ *   and crashed the worker boundary with "function Object() could not be
+ *   cloned", skipping every Haskell file with constructors. Fixed by gating
+ *   with `Object.hasOwn` (#1039). Benchmarks captured before the fix landed;
+ *   will reclear in v3.9.7+ data.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.9.0:1-file rebuild',
