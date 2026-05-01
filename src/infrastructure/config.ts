@@ -147,6 +147,7 @@ export const DEFAULTS = {
       implementations: 50,
       interfaces: 50,
     },
+    disabledTools: [] as string[],
   },
 } satisfies CodegraphConfig;
 
