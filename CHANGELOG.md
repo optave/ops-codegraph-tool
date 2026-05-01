@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.10.0](https://github.com/optave/ops-codegraph-tool/compare/v3.9.6...v3.10.0) (2026-05-01)
+
+**Selective MCP tool filtering, WASM build-speed regression fix, and Haskell parity restoration.** A new `mcp.disabledTools` config field lets you remove specific MCP tools from the schema entirely — useful for smaller-context models that don't need all 33 tools competing for the initial prompt budget. The 3.9.6 expansion of `AST_TYPE_MAPS` to 23 languages had a side effect of making WASM full builds re-parse every WASM-parseable file in the corpus; the per-file `needsFn` filter now scopes the re-parse correctly, dropping the 744-file dogfooding build from 14.0s back to 7.8s (matching the 3.9.5 baseline). A second parity fix gates `astTypeMap` lookups with `Object.hasOwn` so Haskell's `constructor` node type no longer walks the prototype chain to `Object.prototype.constructor` — restoring the Haskell resolver from 0%/0% precision/recall in 3.9.6 to 100%/33% (matching the 3.9.4 baseline). The release benchmark workflow has also been restructured: regression guards now run inside `publish.yml` *before* npm publishes, instead of after the docs PR lands, so a regression can no longer ship to npm and then fire on unrelated dev commits.
+
+### Features
+
+* **mcp:** add `mcp.disabledTools` config to remove specific tools from the MCP schema — drops disabled tools entirely from the schema (not just rejected at runtime) so smaller-context models save initial-prompt tokens; tool names are normalized for matching ([#1035](https://github.com/optave/ops-codegraph-tool/pull/1035))
+
+### Bug Fixes
+
+* **parity:** gate `astTypeMap` lookup with `Object.hasOwn` — Haskell `constructor` nodes (`Left`, `Right`, `Just`, …) no longer fall through to `Object.prototype.constructor`, which was dropping the non-cloneable `Object()` function into `astNodes.kind` and crashing the worker boundary with `function Object() { [native code] } could not be cloned`; Haskell resolver returns to v3.9.4 baseline (precision=1.0, recall=0.333) ([#1041](https://github.com/optave/ops-codegraph-tool/pull/1041))
+
+### Performance
+
+* **wasm:** scope `ensureWasmTrees` re-parse to files that actually need it — `wasm-worker-entry.ts` now serializes empty `astNodes` arrays (empty ≠ undefined) and `ensureWasmTrees` accepts an optional `needsFn` filter so only files genuinely lacking data are re-parsed; WASM full build on the 744-file dogfooding corpus drops from 14.0s back to 7.8s, restoring the 3.9.5 baseline ([#1038](https://github.com/optave/ops-codegraph-tool/pull/1038))
+
+### CI
+
+* **release:** gate npm publish on benchmark regressions — moves the regression guard into a `pre-publish-benchmark` job in `publish.yml` so a regression fails the publish workflow before npm sees the new version, instead of firing on unrelated dev commits after the post-publish benchmark PR lands ([#1040](https://github.com/optave/ops-codegraph-tool/pull/1040))
+* **bench:** rename auto-generated benchmark branch prefix from `benchmark/` to `chore/` — aligns with the local `guard-git.sh` allow-list so post-publish benchmark PRs no longer require hook bypass when pushed from a Claude Code session ([#1044](https://github.com/optave/ops-codegraph-tool/pull/1044))
+
 ## [3.9.6](https://github.com/optave/ops-codegraph-tool/compare/v3.9.5...v3.9.6) (2026-04-29)
 
 **Native engine parity and incremental-build performance.** Native single-file incremental rebuilds drop from 876ms to 43ms (95% faster, 0.78× WASM) by adopting the WASM save-and-reconnect strategy so reverse-dep files no longer get re-parsed when they didn't change. Native full-build edge construction now beats WASM (119ms vs 184ms) by replacing per-row `query_row` lookups with one-shot HashMap pre-loads and chunked multi-row inserts. AST-node extraction is now within 0.12% parity between engines after fixing three independent divergences (missing language coverage in WASM, `await_expression` recursion, UTF-8 byte-length gating). The release-triggered benchmark workflow that silently hung at 600s on v3.9.5 is fixed — workers now dispose the WASM parser pool and embedding progress writes to stderr instead of corrupting stdout JSON. A new CI parity gate runs after every release benchmark and fails loudly when any of five engine-parity thresholds regress, so silent drift can no longer ship.
