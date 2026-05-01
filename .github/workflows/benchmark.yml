@@ -68,6 +68,9 @@ jobs:
           if ! git diff --quiet HEAD -- generated/benchmarks/ README.md 2>/dev/null; then
             CHANGED=true
           fi
+          if [ -n "$(git ls-files --others --exclude-standard generated/benchmarks/)" ]; then
+            CHANGED=true
+          fi
           echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push via PR
