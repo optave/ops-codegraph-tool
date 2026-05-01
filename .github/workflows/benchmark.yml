@@ -82,7 +82,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          BRANCH="benchmark/v${VERSION}-$(date +%Y%m%d-%H%M%S)"
+          BRANCH="chore/bench-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
           git checkout -b "$BRANCH"
           git add generated/benchmarks/BUILD-BENCHMARKS.md generated/benchmarks/QUERY-BENCHMARKS.md generated/benchmarks/INCREMENTAL-BENCHMARKS.md README.md
           git commit -m "docs: update performance benchmarks (${VERSION})"
@@ -249,9 +249,9 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           if [ "$VERSION" = "dev" ]; then
-            BRANCH="benchmark/embedding-dev-$(date +%Y%m%d-%H%M%S)"
+            BRANCH="chore/embedding-bench-dev-$(date +%Y%m%d-%H%M%S)"
           else
-            BRANCH="benchmark/embedding-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
+            BRANCH="chore/embedding-bench-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
           fi
           git checkout -b "$BRANCH"
           git add generated/benchmarks/EMBEDDING-BENCHMARKS.md
