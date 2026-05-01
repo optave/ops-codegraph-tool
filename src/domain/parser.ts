@@ -316,16 +316,23 @@ export function getParser(parsers: Map<string, Parser | null>, filePath: string)
  *
  * Name is preserved for caller compatibility; the function now ensures
  * *analysis data* rather than *trees*.
+ *
+ * `needsFn` (optional): when provided, only files for which it returns true are
+ * re-parsed. Without it the function falls back to "any WASM-parseable file
+ * without _tree", which was the source of #1036 — a single file missing one
+ * analysis triggered a full-build re-parse of every WASM-parseable file.
  */
 export async function ensureWasmTrees(
   fileSymbols: Map<string, any>,
   rootDir: string,
+  needsFn?: (relPath: string, symbols: any) => boolean,
 ): Promise<void> {
   // Collect files that still need analysis data and are parseable by WASM.
   const pending: Array<{ relPath: string; absPath: string; symbols: any }> = [];
   for (const [relPath, symbols] of fileSymbols) {
     if (symbols._tree) continue; // legacy path — leave existing trees alone
     if (!_extToLang.has(path.extname(relPath).toLowerCase())) continue;
+    if (needsFn && !needsFn(relPath, symbols)) continue;
     pending.push({ relPath, absPath: path.join(rootDir, relPath), symbols });
   }
   if (pending.length === 0) return;

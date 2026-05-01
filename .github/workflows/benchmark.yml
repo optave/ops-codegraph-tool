@@ -6,19 +6,28 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to benchmark ("dev" for local, or semver like "2.4.0" for npm)'
+        description: 'Version to benchmark for embedding-only ("dev" for local, or semver like "2.4.0" for npm)'
         required: false
         default: "dev"
 
 permissions: {}
 
 jobs:
-  build-benchmark:
+  # ── Record benchmark history for the just-published release ──
+  #
+  # The build/query/incremental/resolution benchmarks are measured during the
+  # Publish workflow's pre-publish-benchmark gate (against the just-built
+  # native artifact). That job uploads the modified history files as an
+  # artifact only when the regression guard passes — meaning a publish that
+  # would have regressed is aborted before reaching npm, and no PR is opened
+  # for an un-published release. This job consumes that artifact and opens a
+  # single PR with the updates.
+  record-benchmarks:
     runs-on: ubuntu-latest
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event != 'push')
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event != 'push'
     permissions:
       actions: read
       contents: write
@@ -31,163 +40,55 @@ jobs:
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: actions/setup-node@v6
+      - name: Download benchmark history artifact
+        uses: actions/download-artifact@v8
         with:
-          node-version: "22"
-          cache: "npm"
+          name: benchmark-files
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install dependencies
-        run: npm install --prefer-offline --no-audit --no-fund
-
-      - name: Determine benchmark mode
-        id: mode
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            # Release — find latest semver tag
-            TAG=$(git tag --sort=-version:refname --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -v dev | head -1)
-            VERSION="${TAG#v}"
-            echo "source=npm" >> "$GITHUB_OUTPUT"
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          elif [ "${{ inputs.version }}" = "dev" ] || [ -z "${{ inputs.version }}" ]; then
-            echo "source=local" >> "$GITHUB_OUTPUT"
-            echo "version=dev" >> "$GITHUB_OUTPUT"
-          else
-            echo "source=npm" >> "$GITHUB_OUTPUT"
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check for existing benchmark
-        id: existing
-        run: |
-          VERSION="${{ steps.mode.outputs.version }}"
-          VERSION_RE="${VERSION//./\\.}"
-          if [ "$VERSION" = "dev" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/benchmarks/BUILD-BENCHMARKS.md 2>/dev/null; then
-            echo "Benchmark for $VERSION already exists in BUILD-BENCHMARKS.md — skipping"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Wait for npm propagation
-        if: steps.existing.outputs.skip != 'true' && steps.mode.outputs.source == 'npm'
-        run: |
-          VERSION="${{ steps.mode.outputs.version }}"
-          echo "Waiting for @optave/codegraph@${VERSION} on npm..."
-          for i in $(seq 1 20); do
-            if npm view "@optave/codegraph@${VERSION}" version 2>/dev/null; then
-              echo "Package available on npm"
-              exit 0
-            fi
-            echo "  Attempt $i/20 — not yet available, waiting 30s..."
-            sleep 30
-          done
-          echo "::error::Package @optave/codegraph@${VERSION} not found on npm after 10 minutes"
-          exit 1
-
-      - name: Run build benchmark
-        if: steps.existing.outputs.skip != 'true'
-        run: |
-          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
-          ARGS="--version ${{ steps.mode.outputs.version }}"
-          if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
-            ARGS="$ARGS --npm"
-          fi
-          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/benchmark.ts $ARGS > benchmark-result.json
-
-      - name: Run resolution benchmark
-        if: steps.existing.outputs.skip != 'true'
-        run: |
-          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
-          ARGS="--version ${{ steps.mode.outputs.version }}"
-          if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
-            ARGS="$ARGS --npm"
-          fi
-          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/resolution-benchmark.ts $ARGS > resolution-result.json
-
-      - name: Gate on resolution thresholds
-        if: steps.existing.outputs.skip != 'true'
-        timeout-minutes: 30
-        run: npx vitest run tests/benchmarks/resolution/resolution-benchmark.test.ts --reporter=verbose
-
-      - name: Setup Python (for tracer validation)
-        if: steps.existing.outputs.skip != 'true'
-        uses: actions/setup-python@v6
+      - name: Download benchmark JSON results
+        uses: actions/download-artifact@v8
         with:
-          python-version: "3.12"
+          name: benchmark-results-json
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Setup Go (for tracer validation)
-        if: steps.existing.outputs.skip != 'true'
-        uses: actions/setup-go@v6
-        with:
-          go-version: "stable"
-          cache: false
-
-      - name: Run tracer validation (same-file edge recall)
-        if: steps.existing.outputs.skip != 'true'
-        timeout-minutes: 10
-        run: npx vitest run tests/benchmarks/resolution/tracer/tracer-validation.test.ts --reporter=verbose
-
-      - name: Merge resolution into build result
-        if: steps.existing.outputs.skip != 'true'
+      - name: Determine release version
+        id: version
         run: |
-          node -e "
-            const fs = require('fs');
-            const build = JSON.parse(fs.readFileSync('benchmark-result.json', 'utf8'));
-            const resolution = JSON.parse(fs.readFileSync('resolution-result.json', 'utf8'));
-            build.resolution = resolution;
-            fs.writeFileSync('benchmark-result.json', JSON.stringify(build, null, 2));
-          "
-
-      - name: Update build report
-        if: steps.existing.outputs.skip != 'true'
-        run: |
-          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
-          node $STRIP_FLAG scripts/update-benchmark-report.ts benchmark-result.json
-
-      - name: Upload build result
-        if: steps.existing.outputs.skip != 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: build-benchmark-result
-          path: benchmark-result.json
+          TAG=$(git tag --sort=-version:refname --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -v dev | head -1)
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Check for changes
-        if: steps.existing.outputs.skip != 'true'
         id: changes
         run: |
           CHANGED=false
-          # Detect modified tracked files
-          if ! git diff --quiet HEAD -- generated/benchmarks/BUILD-BENCHMARKS.md README.md 2>/dev/null; then
+          if ! git diff --quiet HEAD -- generated/benchmarks/ README.md 2>/dev/null; then
             CHANGED=true
           fi
-          # Detect newly created (untracked) files
-          if [ -n "$(git ls-files --others --exclude-standard generated/benchmarks/BUILD-BENCHMARKS.md)" ]; then
+          if [ -n "$(git ls-files --others --exclude-standard generated/benchmarks/)" ]; then
             CHANGED=true
           fi
           echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push via PR
-        if: steps.existing.outputs.skip != 'true' && steps.changes.outputs.changed == 'true'
+        if: steps.changes.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.mode.outputs.version }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          if [ "$VERSION" = "dev" ]; then
-            BRANCH="benchmark/build-dev-$(date +%Y%m%d-%H%M%S)"
-          else
-            BRANCH="benchmark/build-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
-          fi
+          BRANCH="benchmark/v${VERSION}-$(date +%Y%m%d-%H%M%S)"
           git checkout -b "$BRANCH"
-          git add generated/benchmarks/BUILD-BENCHMARKS.md README.md
-          git commit -m "docs: update build performance benchmarks (${VERSION})"
+          git add generated/benchmarks/BUILD-BENCHMARKS.md generated/benchmarks/QUERY-BENCHMARKS.md generated/benchmarks/INCREMENTAL-BENCHMARKS.md README.md
+          git commit -m "docs: update performance benchmarks (${VERSION})"
           git push origin "$BRANCH"
 
-          TITLE="docs: update build performance benchmarks (${VERSION})"
+          TITLE="docs: update performance benchmarks (${VERSION})"
           if gh pr list --state open --json title --jq ".[].title" | grep -qF "$TITLE"; then
             echo "::notice::PR already open for '$TITLE' — skipping"
           else
@@ -195,16 +96,21 @@ jobs:
               --base main \
               --head "$BRANCH" \
               --title "$TITLE" \
-              --body "Automated build benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
+              --body "Automated benchmark history update for **${VERSION}** from publish run [#${{ github.event.workflow_run.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }}). These numbers were measured during the pre-publish gate and passed the regression guard before npm publish proceeded."
           fi
 
-      # Engine-parity gate: runs AFTER the doc PR is created so the PR still
-      # records raw benchmark data even when parity regresses. The job status
-      # going red alerts maintainers; the linked issues describe each threshold.
+      # Engine-parity gate: surfaces wasm/native divergence as a red workflow
+      # status (does not block — publish has already completed). Runs after
+      # the doc PR is created so the PR still records data even when parity
+      # regresses.
       - name: Engine parity gate
-        if: steps.existing.outputs.skip != 'true'
         run: node scripts/benchmark-parity-gate.mjs benchmark-result.json
 
+  # ── Embedding benchmark (post-publish, npm-installed package) ──
+  #
+  # Embeddings have no regression guard and take 2.5+ hours to run, so they
+  # cannot fit in the pre-publish path. They run after a successful publish
+  # against the npm-installed package and open their own PR.
   embedding-benchmark:
     runs-on: ubuntu-latest
     # 7 models x 30 min each = 210 min worst-case; symbols are sampled to 1500 so
@@ -361,284 +267,4 @@ jobs:
               --head "$BRANCH" \
               --title "$TITLE" \
               --body "Automated embedding benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
-          fi
-
-  query-benchmark:
-    runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event != 'push')
-    permissions:
-      actions: read
-      contents: write
-      pull-requests: write
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm install --prefer-offline --no-audit --no-fund
-
-      - name: Determine benchmark mode
-        id: mode
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            TAG=$(git tag --sort=-version:refname --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -v dev | head -1)
-            VERSION="${TAG#v}"
-            echo "source=npm" >> "$GITHUB_OUTPUT"
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          elif [ "${{ inputs.version }}" = "dev" ] || [ -z "${{ inputs.version }}" ]; then
-            echo "source=local" >> "$GITHUB_OUTPUT"
-            echo "version=dev" >> "$GITHUB_OUTPUT"
-          else
-            echo "source=npm" >> "$GITHUB_OUTPUT"
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check for existing benchmark
-        id: existing
-        run: |
-          VERSION="${{ steps.mode.outputs.version }}"
-          VERSION_RE="${VERSION//./\\.}"
-          if [ "$VERSION" = "dev" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/benchmarks/QUERY-BENCHMARKS.md 2>/dev/null; then
-            echo "Benchmark for $VERSION already exists in QUERY-BENCHMARKS.md — skipping"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Wait for npm propagation
-        if: steps.existing.outputs.skip != 'true' && steps.mode.outputs.source == 'npm'
-        run: |
-          VERSION="${{ steps.mode.outputs.version }}"
-          echo "Waiting for @optave/codegraph@${VERSION} on npm..."
-          for i in $(seq 1 20); do
-            if npm view "@optave/codegraph@${VERSION}" version 2>/dev/null; then
-              echo "Package available on npm"
-              exit 0
-            fi
-            echo "  Attempt $i/20 — not yet available, waiting 30s..."
-            sleep 30
-          done
-          echo "::error::Package @optave/codegraph@${VERSION} not found on npm after 10 minutes"
-          exit 1
-
-      - name: Run query benchmark
-        if: steps.existing.outputs.skip != 'true'
-        run: |
-          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
-          ARGS="--version ${{ steps.mode.outputs.version }}"
-          if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
-            ARGS="$ARGS --npm"
-          fi
-          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/query-benchmark.ts $ARGS > query-benchmark-result.json
-
-      - name: Update query report
-        if: steps.existing.outputs.skip != 'true'
-        run: |
-          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
-          node $STRIP_FLAG scripts/update-query-report.ts query-benchmark-result.json
-
-      - name: Upload query result
-        if: steps.existing.outputs.skip != 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: query-benchmark-result
-          path: query-benchmark-result.json
-
-      - name: Check for changes
-        if: steps.existing.outputs.skip != 'true'
-        id: changes
-        run: |
-          CHANGED=false
-          # Detect modified tracked files
-          if ! git diff --quiet HEAD -- generated/benchmarks/QUERY-BENCHMARKS.md 2>/dev/null; then
-            CHANGED=true
-          fi
-          # Detect newly created (untracked) files
-          if [ -n "$(git ls-files --others --exclude-standard generated/benchmarks/QUERY-BENCHMARKS.md)" ]; then
-            CHANGED=true
-          fi
-          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
-
-      - name: Commit and push via PR
-        if: steps.existing.outputs.skip != 'true' && steps.changes.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.mode.outputs.version }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          if [ "$VERSION" = "dev" ]; then
-            BRANCH="benchmark/query-dev-$(date +%Y%m%d-%H%M%S)"
-          else
-            BRANCH="benchmark/query-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
-          fi
-          git checkout -b "$BRANCH"
-          git add generated/benchmarks/QUERY-BENCHMARKS.md
-          git commit -m "docs: update query benchmarks (${VERSION})"
-          git push origin "$BRANCH"
-
-          TITLE="docs: update query benchmarks (${VERSION})"
-          if gh pr list --state open --json title --jq ".[].title" | grep -qF "$TITLE"; then
-            echo "::notice::PR already open for '$TITLE' — skipping"
-          else
-            gh pr create \
-              --base main \
-              --head "$BRANCH" \
-              --title "$TITLE" \
-              --body "Automated query benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
-          fi
-
-  incremental-benchmark:
-    runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event != 'push')
-    permissions:
-      actions: read
-      contents: write
-      pull-requests: write
-
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          ref: main
-          token: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm install --prefer-offline --no-audit --no-fund
-
-      - name: Determine benchmark mode
-        id: mode
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            TAG=$(git tag --sort=-version:refname --list 'v[0-9]*.[0-9]*.[0-9]*' | grep -v dev | head -1)
-            VERSION="${TAG#v}"
-            echo "source=npm" >> "$GITHUB_OUTPUT"
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          elif [ "${{ inputs.version }}" = "dev" ] || [ -z "${{ inputs.version }}" ]; then
-            echo "source=local" >> "$GITHUB_OUTPUT"
-            echo "version=dev" >> "$GITHUB_OUTPUT"
-          else
-            echo "source=npm" >> "$GITHUB_OUTPUT"
-            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check for existing benchmark
-        id: existing
-        run: |
-          VERSION="${{ steps.mode.outputs.version }}"
-          VERSION_RE="${VERSION//./\\.}"
-          if [ "$VERSION" = "dev" ]; then
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          elif grep -qP '"version":\s*"'"$VERSION_RE"'"' generated/benchmarks/INCREMENTAL-BENCHMARKS.md 2>/dev/null; then
-            echo "Benchmark for $VERSION already exists in INCREMENTAL-BENCHMARKS.md — skipping"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Wait for npm propagation
-        if: steps.existing.outputs.skip != 'true' && steps.mode.outputs.source == 'npm'
-        run: |
-          VERSION="${{ steps.mode.outputs.version }}"
-          echo "Waiting for @optave/codegraph@${VERSION} on npm..."
-          for i in $(seq 1 20); do
-            if npm view "@optave/codegraph@${VERSION}" version 2>/dev/null; then
-              echo "Package available on npm"
-              exit 0
-            fi
-            echo "  Attempt $i/20 — not yet available, waiting 30s..."
-            sleep 30
-          done
-          echo "::error::Package @optave/codegraph@${VERSION} not found on npm after 10 minutes"
-          exit 1
-
-      - name: Run incremental benchmark
-        if: steps.existing.outputs.skip != 'true'
-        run: |
-          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
-          ARGS="--version ${{ steps.mode.outputs.version }}"
-          if [ "${{ steps.mode.outputs.source }}" = "npm" ]; then
-            ARGS="$ARGS --npm"
-          fi
-          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/incremental-benchmark.ts $ARGS > incremental-benchmark-result.json
-
-      - name: Update incremental report
-        if: steps.existing.outputs.skip != 'true'
-        run: |
-          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
-          node $STRIP_FLAG scripts/update-incremental-report.ts incremental-benchmark-result.json
-
-      - name: Upload incremental result
-        if: steps.existing.outputs.skip != 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: incremental-benchmark-result
-          path: incremental-benchmark-result.json
-
-      - name: Check for changes
-        if: steps.existing.outputs.skip != 'true'
-        id: changes
-        run: |
-          CHANGED=false
-          # Detect modified tracked files
-          if ! git diff --quiet HEAD -- generated/benchmarks/INCREMENTAL-BENCHMARKS.md 2>/dev/null; then
-            CHANGED=true
-          fi
-          # Detect newly created (untracked) files
-          if [ -n "$(git ls-files --others --exclude-standard generated/benchmarks/INCREMENTAL-BENCHMARKS.md)" ]; then
-            CHANGED=true
-          fi
-          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
-
-      - name: Commit and push via PR
-        if: steps.existing.outputs.skip != 'true' && steps.changes.outputs.changed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION: ${{ steps.mode.outputs.version }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-
-          if [ "$VERSION" = "dev" ]; then
-            BRANCH="benchmark/incremental-dev-$(date +%Y%m%d-%H%M%S)"
-          else
-            BRANCH="benchmark/incremental-v${VERSION}-$(date +%Y%m%d-%H%M%S)"
-          fi
-          git checkout -b "$BRANCH"
-          git add generated/benchmarks/INCREMENTAL-BENCHMARKS.md
-          git commit -m "docs: update incremental benchmarks (${VERSION})"
-          git push origin "$BRANCH"
-
-          TITLE="docs: update incremental benchmarks (${VERSION})"
-          if gh pr list --state open --json title --jq ".[].title" | grep -qF "$TITLE"; then
-            echo "::notice::PR already open for '$TITLE' — skipping"
-          else
-            gh pr create \
-              --base main \
-              --head "$BRANCH" \
-              --title "$TITLE" \
-              --body "Automated incremental benchmark update for **${VERSION}** from workflow run [#${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})."
           fi

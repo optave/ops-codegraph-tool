@@ -421,7 +421,9 @@ async function ensureWasmTreesIfNeeded(
   if (needsWasmTrees) {
     try {
       const { ensureWasmTrees } = await getParserModule();
-      await ensureWasmTrees(fileSymbols, rootDir);
+      await ensureWasmTrees(fileSymbols, rootDir, (relPath, symbols) =>
+        fileNeedsWasmTree(relPath, symbols, flags),
+      );
     } catch (err: unknown) {
       debug(`ensureWasmTrees failed: ${toErrorMessage(err)}`);
     }

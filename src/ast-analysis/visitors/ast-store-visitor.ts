@@ -132,6 +132,21 @@ function extractChildExpressionText(node: TreeSitterNode): string | null {
 }
 
 /**
+ * Count code points cheaply: skip the `[...s]` spread when `s.length` already
+ * decides the answer. Each code point is 1 or 2 UTF-16 units, so `.length < 2`
+ * implies `< 2` code points and `.length >= 3` already guarantees `>= 2` code
+ * points (worst case: one surrogate pair + one BMP char = 2 code points).
+ * Only `.length === 2` is genuinely ambiguous (could be a single surrogate
+ * pair = 1 code point, or two BMP chars = 2 code points) and needs the spread.
+ */
+function codePointCountAtLeast2(s: string): boolean {
+  const len = s.length;
+  if (len < 2) return false;
+  if (len >= 3) return true;
+  return [...s].length >= 2;
+}
+
+/**
  * Extract string content from a string-literal node, mirroring the native
  * engine's `build_string_node` (`helpers.rs`). Returns `null` when the
  * content is shorter than 2 Unicode code points.
@@ -142,15 +157,27 @@ function extractStringContent(node: TreeSitterNode, cfg: AstStringConfig): strin
 
   let s = raw;
   s = trimLeadingChars(s, '@');
-  s = trimLeadingChars(s, cfg.stringPrefixes);
+  if (cfg.stringPrefixes) s = trimLeadingChars(s, cfg.stringPrefixes);
   if (isRawString) s = trimLeadingChars(s, 'r#');
   s = trimLeadingChars(s, cfg.quoteChars);
   if (isRawString) s = trimTrailingChars(s, '#');
   s = trimTrailingChars(s, cfg.quoteChars);
 
-  // Count code points, not UTF-16 code units — matches Rust `chars().count()`.
-  const codePointCount = [...s].length;
-  if (codePointCount < 2) return null;
+  return codePointCountAtLeast2(s) ? s : null;
+}
+
+// Per-astTypeMap cache for the set of node-types that map to kind 'new'.
+// Computed once per unique astTypeMap reference (one per language) instead
+// of once per file.
+const _newTypesCache = new WeakMap<Record<string, string>, Set<string>>();
+function newTypesFor(astTypeMap: Record<string, string>): Set<string> {
+  let s = _newTypesCache.get(astTypeMap);
+  if (s) return s;
+  s = new Set<string>();
+  for (const type in astTypeMap) {
+    if (astTypeMap[type] === 'new') s.add(type);
+  }
+  _newTypesCache.set(astTypeMap, s);
   return s;
 }
 
@@ -164,11 +191,12 @@ export function createAstStoreVisitor(
 ): Visitor {
   const rows: AstStoreRow[] = [];
   const matched = new Set<number>();
-  const newTypes = new Set<string>(
-    Object.entries(astTypeMap)
-      .filter(([, kind]) => kind === 'new')
-      .map(([type]) => type),
-  );
+  const newTypes = newTypesFor(astTypeMap);
+  // When nodeIdMap is empty, parentNodeId resolution is wasted work — the
+  // worker passes an empty map and the main thread re-resolves against its
+  // own DB-populated map in features/ast.ts::collectFileAstRows. Skip the
+  // findParentDef linear scan in that case.
+  const skipParentLookup = nodeIdMap.size === 0;
 
   function findParentDef(line: number): Definition | null {
     let best: Definition | null = null;
@@ -183,6 +211,7 @@ export function createAstStoreVisitor(
   }
 
   function resolveParentNodeId(line: number): number | null {
+    if (skipParentLookup) return null;
     const parentDef = findParentDef(line);
     if (!parentDef) return null;
     return nodeIdMap.get(`${parentDef.name}|${parentDef.kind}|${parentDef.line}`) || null;
@@ -240,6 +269,13 @@ export function createAstStoreVisitor(
       // unrelated subtree. The parent call's skipChildren handles the intended case.
       if (matched.has(node.id)) return;
 
+      // Gate with `hasOwn` because plain-object lookup walks Object.prototype:
+      // tree-sitter node types like `constructor` (Haskell sum-types: Left,
+      // Right) would otherwise resolve to `Object.prototype.constructor` (the
+      // Object() function), which then crashes the worker boundary with
+      // "function Object() { [native code] } could not be cloned" when the
+      // resulting astNodes row is structured-cloned back to the main thread.
+      if (!Object.hasOwn(astTypeMap, node.type)) return;
       const kind = astTypeMap[node.type];
       if (!kind) return;
 

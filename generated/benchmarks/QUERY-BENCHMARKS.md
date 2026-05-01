@@ -5,6 +5,8 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 | Version | Engine | fnDeps d1 | fnDeps d3 | fnDeps d5 | fnImpact d1 | fnImpact d3 | fnImpact d5 | diffImpact |
 |---------|--------|----------:|----------:|----------:|------------:|------------:|------------:|-----------:|
+| 3.9.6 | native | 28.7 ↑7% | 29.1 ↑7% | 33.2 ↑22% | 5.3 ↑8% | 5.5 ↑8% | 5.4 ↑6% | 16.7ms ↑129% |
+| 3.9.6 | wasm | 38.4 ~ | 40 ↑4% | 38.4 ↓2% | 5 ~ | 5 ↓19% | 4.9 ↓20% | 11.5ms ↓20% |
 | 3.9.4 | native | 26.9 ↑10% | 27.3 ↑13% | 27.3 ↑13% | 4.9 ↑11% | 5.1 ↑16% | 5.1 ↑16% | 7.3ms ↓15% |
 | 3.9.4 | wasm | 37.8 ↑10% | 38.5 ↑12% | 39.2 ↑15% | 5.1 ↑19% | 6.2 ↑41% | 6.1 ↑42% | 14.3ms ↑35% |
 | 3.9.3 | native | 24.5 ~ | 24.2 ~ | 24.1 ~ | 4.4 ↓2% | 4.4 ↓4% | 4.4 ↓2% | 8.6ms ↓10% |
@@ -53,37 +55,37 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 ### Latest results
 
-**Version:** 3.9.4 | **Date:** 2026-04-18
+**Version:** 3.9.6 | **Date:** 2026-04-30
 
 #### Native (Rust)
 
-**Targets:** hub=`buildGraph`, mid=`ctx`, leaf=`docs`
+**Targets:** hub=`buildGraph`, mid=`dir`, leaf=`docs`
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 26.9ms |
-| fnDeps depth 3 | 27.3ms |
-| fnDeps depth 5 | 27.3ms |
-| fnImpact depth 1 | 4.9ms |
-| fnImpact depth 3 | 5.1ms |
-| fnImpact depth 5 | 5.1ms |
-| diffImpact latency | 7.3ms |
+| fnDeps depth 1 | 28.7ms |
+| fnDeps depth 3 | 29.1ms |
+| fnDeps depth 5 | 33.2ms |
+| fnImpact depth 1 | 5.3ms |
+| fnImpact depth 3 | 5.5ms |
+| fnImpact depth 5 | 5.4ms |
+| diffImpact latency | 16.7ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
 #### WASM
 
-**Targets:** hub=`buildGraph`, mid=`ctx`, leaf=`docs`
+**Targets:** hub=`buildGraph`, mid=`dir`, leaf=`docs`
 
 | Metric | Value |
 |--------|------:|
-| fnDeps depth 1 | 37.8ms |
-| fnDeps depth 3 | 38.5ms |
-| fnDeps depth 5 | 39.2ms |
-| fnImpact depth 1 | 5.1ms |
-| fnImpact depth 3 | 6.2ms |
-| fnImpact depth 5 | 6.1ms |
-| diffImpact latency | 14.3ms |
+| fnDeps depth 1 | 38.4ms |
+| fnDeps depth 3 | 40ms |
+| fnDeps depth 5 | 38.4ms |
+| fnImpact depth 1 | 5ms |
+| fnImpact depth 3 | 5ms |
+| fnImpact depth 5 | 4.9ms |
+| diffImpact latency | 11.5ms |
 | diffImpact affected functions | 0 |
 | diffImpact affected files | 0 |
 
@@ -106,6 +108,54 @@ Latencies are median over 5 runs. Hub target = most-connected node.
 
 <!-- QUERY_BENCHMARK_DATA
 [
+  {
+    "version": "3.9.6",
+    "date": "2026-04-30",
+    "wasm": {
+      "targets": {
+        "hub": "buildGraph",
+        "mid": "dir",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 38.4,
+        "depth3Ms": 40,
+        "depth5Ms": 38.4
+      },
+      "fnImpact": {
+        "depth1Ms": 5,
+        "depth3Ms": 5,
+        "depth5Ms": 4.9
+      },
+      "diffImpact": {
+        "latencyMs": 11.5,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    },
+    "native": {
+      "targets": {
+        "hub": "buildGraph",
+        "mid": "dir",
+        "leaf": "docs"
+      },
+      "fnDeps": {
+        "depth1Ms": 28.7,
+        "depth3Ms": 29.1,
+        "depth5Ms": 33.2
+      },
+      "fnImpact": {
+        "depth1Ms": 5.3,
+        "depth3Ms": 5.5,
+        "depth5Ms": 5.4
+      },
+      "diffImpact": {
+        "latencyMs": 16.7,
+        "affectedFunctions": 0,
+        "affectedFiles": 0
+      }
+    }
+  },
   {
     "version": "3.9.4",
     "date": "2026-04-18",

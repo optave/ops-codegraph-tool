@@ -225,6 +225,138 @@ jobs:
           path: crates/codegraph-core/*.node
           if-no-files-found: error
 
+  # ── Pre-publish benchmark gate (stable releases only) ──
+  #
+  # Measures the just-built native artifact against the local source, writes
+  # new entries into the benchmark history files, and runs the regression
+  # guard. If the new version regresses beyond the threshold vs the previous
+  # release, this job fails and the publish job is skipped — preventing the
+  # bad code from reaching npm. The modified history files are uploaded as
+  # an artifact so the post-publish Benchmark workflow can record them via
+  # PR without re-measuring (single source of truth, half the CI minutes).
+
+  pre-publish-benchmark:
+    name: Pre-publish benchmark gate
+    if: github.event_name != 'push'
+    needs: [compute-version, build-native]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Setup Python (for resolution benchmark)
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Setup Go (for resolution benchmark)
+        uses: actions/setup-go@v6
+        with:
+          go-version: "stable"
+          cache: false
+
+      - name: Download native artifact (linux-x64)
+        uses: actions/download-artifact@v8
+        with:
+          name: native-linux-x64
+          path: crates/codegraph-core/
+
+      - run: npm install
+
+      - name: Install native addon over published binary
+        run: node scripts/ci-install-native.mjs
+
+      - name: Run build benchmark
+        env:
+          VERSION: ${{ needs.compute-version.outputs.version }}
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/benchmark.ts --version "$VERSION" > benchmark-result.json
+
+      - name: Run resolution benchmark
+        env:
+          VERSION: ${{ needs.compute-version.outputs.version }}
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/resolution-benchmark.ts --version "$VERSION" > resolution-result.json
+
+      - name: Merge resolution into build result
+        run: |
+          node -e "
+            const fs = require('fs');
+            const build = JSON.parse(fs.readFileSync('benchmark-result.json', 'utf8'));
+            const resolution = JSON.parse(fs.readFileSync('resolution-result.json', 'utf8'));
+            build.resolution = resolution;
+            fs.writeFileSync('benchmark-result.json', JSON.stringify(build, null, 2));
+          "
+
+      - name: Run query benchmark
+        env:
+          VERSION: ${{ needs.compute-version.outputs.version }}
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/query-benchmark.ts --version "$VERSION" > query-benchmark-result.json
+
+      - name: Run incremental benchmark
+        env:
+          VERSION: ${{ needs.compute-version.outputs.version }}
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/incremental-benchmark.ts --version "$VERSION" > incremental-benchmark-result.json
+
+      - name: Update build report
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG scripts/update-benchmark-report.ts benchmark-result.json
+
+      - name: Update query report
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG scripts/update-query-report.ts query-benchmark-result.json
+
+      - name: Update incremental report
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG scripts/update-incremental-report.ts incremental-benchmark-result.json
+
+      - name: Regression guard
+        env:
+          RUN_REGRESSION_GUARD: "1"
+        run: npm run test:regression-guard
+
+      - name: Upload benchmark history files
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-files
+          path: |
+            generated/benchmarks/BUILD-BENCHMARKS.md
+            generated/benchmarks/QUERY-BENCHMARKS.md
+            generated/benchmarks/INCREMENTAL-BENCHMARKS.md
+            README.md
+          if-no-files-found: error
+
+      # Raw JSON used by post-publish soft-signal jobs (e.g. engine-parity
+      # gate in the Benchmark workflow). Separated from the history-files
+      # artifact because consumers read different shapes.
+      - name: Upload benchmark JSON results
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-results-json
+          path: |
+            benchmark-result.json
+            query-benchmark-result.json
+            incremental-benchmark-result.json
+          if-no-files-found: error
+
   # ── Dev builds: GitHub pre-release with tarballs ──
 
   publish-dev:
@@ -399,7 +531,7 @@ jobs:
 
   publish:
     if: github.event_name != 'push'
-    needs: [compute-version, build-native]
+    needs: [compute-version, build-native, pre-publish-benchmark]
     runs-on: ubuntu-latest
     environment: npm-publish
     permissions:

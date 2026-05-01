@@ -708,18 +708,18 @@ async function handleParse(msg: WorkerParseRequest): Promise<SerializedExtractor
           file?: string;
           parentNodeId?: number | null;
         }>;
-        if (astRows.length > 0) {
-          // Strip `file` and `parentNodeId` — main thread re-resolves parent IDs
-          // against its DB in features/ast.ts::collectFileAstRows, and `file` is
-          // known from the map key.
-          serializedAstNodes = astRows.map((n) => ({
-            line: n.line,
-            kind: n.kind,
-            name: n.name ?? '',
-            text: n.text ?? undefined,
-            receiver: n.receiver ?? undefined,
-          }));
-        }
+        // Always set an array (even empty) — leaving astNodes undefined makes
+        // engine.ts::fileNeedsWasmTree treat the file as un-walked and trigger
+        // a full ensureWasmTrees re-parse of every WASM-parseable file (#1036).
+        // Strip `file` and `parentNodeId` — main thread re-resolves both in
+        // features/ast.ts::collectFileAstRows.
+        serializedAstNodes = astRows.map((n) => ({
+          line: n.line,
+          kind: n.kind,
+          name: n.name ?? '',
+          text: n.text ?? undefined,
+          receiver: n.receiver ?? undefined,
+        }));
       }
 
       if (complexityVisitor) storeComplexityResults(results, defs, entry.id);
