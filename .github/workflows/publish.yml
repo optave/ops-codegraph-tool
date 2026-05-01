@@ -251,6 +251,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "22"
+          cache: "npm"
 
       - name: Setup Python (for resolution benchmark)
         uses: actions/setup-python@v6
