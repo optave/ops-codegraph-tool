@@ -773,7 +773,7 @@ Copy `.github/workflows/codegraph-impact.yml` to your repo, and every PR will ge
 
 ## 🛠️ Configuration
 
-Create a `.codegraphrc.json` in your project root to customize behavior:
+Create a `.codegraphrc.json` in your project root to customize behavior. The snippets below cover the most-used keys — see **[docs/guides/configuration.md](docs/guides/configuration.md)** for the full reference (every group, every key, every default).
 
 ```json
 {
@@ -832,6 +832,20 @@ Codegraph supports an `apiKeyCommand` field for secure credential management. In
 The command is split on whitespace and executed with `execFileSync` (no shell injection risk). Priority: **command output > `CODEGRAPH_LLM_API_KEY` env var > file config**. On failure, codegraph warns and falls back to the next source.
 
 Works with any secret manager: 1Password CLI (`op`), Bitwarden (`bw`), `pass`, HashiCorp Vault, macOS Keychain (`security`), AWS Secrets Manager, etc.
+
+### MCP tool filtering
+
+Codegraph's MCP server exposes 30+ tools by default. For models with a small context window, you can shrink the schema by disabling tools you don't use:
+
+```json
+{
+  "mcp": {
+    "disabledTools": ["execution_flow", "sequence", "communities", "co_changes"]
+  }
+}
+```
+
+Names are matched case-insensitively and a leading `codegraph<digits>_` prefix (e.g. `codegraph2_module_map`) is stripped before comparison. Disabled tools are removed from `tools/list` and any `tools/call` invocation returns `Unknown tool: <name>`. See **[docs/guides/configuration.md#mcp-tool-filtering](docs/guides/configuration.md#mcp-tool-filtering)** for the full tool catalog, and the rest of that guide for every other config option.
 
 ## 📖 Programmatic API
 
