@@ -98,17 +98,15 @@ async function resolveDbPath(
   return dbPath;
 }
 
-function validateMultiRepoAccess(multiRepo: boolean, name: string, args: { repo?: string }): void {
+function validateMultiRepoAccess(multiRepo: boolean, args: { repo?: string }): void {
   if (!multiRepo && args.repo) {
     throw new ConfigError(
       'Multi-repo access is disabled. Restart with `codegraph mcp --multi-repo` to access other repositories.',
     );
   }
-  if (!multiRepo && name === 'list_repos') {
-    throw new ConfigError(
-      'Multi-repo access is disabled. Restart with `codegraph mcp --multi-repo` to list repositories.',
-    );
-  }
+  // Note: the `list_repos` tool is excluded from `enabledToolNames` when
+  // `multiRepo` is false (see `buildToolList`), so any call to it is rejected
+  // earlier in `createCallToolHandler` with an "Unknown tool" error.
 }
 
 /**
@@ -163,11 +161,17 @@ function createCallToolHandler(
   customDbPath: string | undefined,
   allowedRepos: string[] | undefined,
   getQueries: () => Promise<unknown>,
+  enabledToolNames: Set<string>,
 ) {
   return async (request: any) => {
     const { name, arguments: args } = request.params;
     try {
-      validateMultiRepoAccess(multiRepo, name, args);
+      if (!enabledToolNames.has(name)) {
+        return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
+      }
+
+      validateMultiRepoAccess(multiRepo, args);
+
       const dbPath = await resolveDbPath(customDbPath, args, allowedRepos);
 
       const toolEntry = TOOL_HANDLERS.get(name);
@@ -209,6 +213,9 @@ export async function startMCPServer(
   // Apply config-based MCP page-size overrides
   const config = options.config || loadConfig();
   initMcpDefaults(config.mcp?.defaults ? { ...config.mcp.defaults } : undefined);
+  const disabledTools = [...(config.mcp?.disabledTools ?? [])];
+  const enabledTools = buildToolList(multiRepo, disabledTools);
+  const enabledToolNames = new Set(enabledTools.map((tool) => tool.name));
 
   const { Server, StdioServerTransport, ListToolsRequestSchema, CallToolRequestSchema } =
     await loadMCPSdk();
@@ -225,12 +232,12 @@ export async function startMCPServer(
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: buildToolList(multiRepo),
+    tools: enabledTools,
   }));
 
   server.setRequestHandler(
     CallToolRequestSchema,
-    createCallToolHandler(multiRepo, customDbPath, allowedRepos, getQueries),
+    createCallToolHandler(multiRepo, customDbPath, allowedRepos, getQueries, enabledToolNames),
   );
 
   const transport = new (StdioServerTransport as any)();

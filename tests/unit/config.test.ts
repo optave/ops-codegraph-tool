@@ -137,6 +137,7 @@ describe('DEFAULTS', () => {
   it('has mcp defaults', () => {
     expect(DEFAULTS.mcp.defaults.list_functions).toBe(100);
     expect(DEFAULTS.mcp.defaults.fn_impact).toBe(5);
+    expect(DEFAULTS.mcp.disabledTools).toEqual([]);
   });
 });
 
