@@ -255,6 +255,20 @@ describe('buildToolList', () => {
       expect(tool.inputSchema.properties.repo.type).toBe('string');
     }
   });
+
+  it('removes disabled tools from schema in single-repo mode', () => {
+    const tools = buildToolList(false, ['execution_flow', 'module_map']);
+    const names = tools.map((t) => t.name);
+    expect(names).not.toContain('execution_flow');
+    expect(names).not.toContain('module_map');
+  });
+
+  it('supports prefixed disabled tool names and can disable list_repos', () => {
+    const tools = buildToolList(true, ['codegraph2_module_map', 'list_repos']);
+    const names = tools.map((t) => t.name);
+    expect(names).not.toContain('module_map');
+    expect(names).not.toContain('list_repos');
+  });
 });
 
 // ─── startMCPServer handler logic ────────────────────────────────────
@@ -333,6 +347,79 @@ describe('startMCPServer handler dispatch', () => {
     });
     expect(unknownResult.isError).toBe(true);
     expect(unknownResult.content[0].text).toContain('Unknown tool');
+  });
+
+  it('applies config.mcp.disabledTools to list and call handlers', async () => {
+    const handlers = {};
+
+    vi.doMock('@modelcontextprotocol/sdk/server/index.js', () => ({
+      Server: class MockServer {
+        setRequestHandler(name, handler) {
+          handlers[name] = handler;
+        }
+        async connect() {}
+      },
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
+      StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
+    }));
+
+    vi.doMock('../../src/infrastructure/config.js', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../../src/infrastructure/config.js')>();
+      return {
+        ...actual,
+        loadConfig: vi.fn(() => ({
+          ...actual.DEFAULTS,
+          mcp: {
+            ...actual.DEFAULTS.mcp,
+            disabledTools: ['module_map'],
+          },
+        })),
+      };
+    });
+
+    vi.doMock('../../src/domain/queries.js', () => ({
+      EVERY_SYMBOL_KIND: [],
+      EVERY_EDGE_KIND: [],
+      VALID_ROLES: [],
+      diffImpactMermaid: vi.fn(),
+      impactAnalysisData: vi.fn(() => ({ file: 'test', sources: [] })),
+      moduleMapData: vi.fn(() => ({ topNodes: [], stats: {} })),
+      fileDepsData: vi.fn(() => ({ file: 'test', results: [] })),
+      fnDepsData: vi.fn(() => ({ name: 'test', results: [] })),
+      fnImpactData: vi.fn(() => ({ name: 'test', results: [] })),
+      contextData: vi.fn(() => ({ name: 'test', results: [] })),
+      childrenData: vi.fn(() => ({ name: 'test', results: [] })),
+      explainData: vi.fn(() => ({ target: 'test', kind: 'function', results: [] })),
+      exportsData: vi.fn(() => ({
+        file: 'test',
+        results: [],
+        reexports: [],
+        totalExported: 0,
+        totalInternal: 0,
+      })),
+      whereData: vi.fn(() => ({ target: 'test', mode: 'symbol', results: [] })),
+      diffImpactData: vi.fn(() => ({ changedFiles: 0, affectedFunctions: [] })),
+      listFunctionsData: vi.fn(() => ({ count: 0, functions: [] })),
+      rolesData: vi.fn(() => ({ count: 0, summary: {}, symbols: [] })),
+      pathData: vi.fn(() => ({ from: 'a', to: 'b', found: false })),
+    }));
+
+    const { startMCPServer } = await import('../../src/mcp/index.js');
+    await startMCPServer('/tmp/test.db');
+
+    const toolsList = await handlers['tools/list']();
+    expect(toolsList.tools.map((t) => t.name)).not.toContain('module_map');
+
+    const result = await handlers['tools/call']({
+      params: { name: 'module_map', arguments: {} },
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Unknown tool: module_map');
   });
 
   it('dispatches query deps mode to fnDepsData with options', async () => {
@@ -1014,8 +1101,7 @@ describe('startMCPServer handler dispatch', () => {
       params: { name: 'list_repos', arguments: {} },
     });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain('Multi-repo access is disabled');
-    expect(result.content[0].text).toContain('--multi-repo');
+    expect(result.content[0].text).toContain('Unknown tool: list_repos');
   });
 
   it('tools/list in single-repo mode has no repo property and no list_repos', async () => {

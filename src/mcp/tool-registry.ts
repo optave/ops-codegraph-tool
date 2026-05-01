@@ -29,6 +29,17 @@ const PAGINATION_PROPS: Record<string, unknown> = {
   offset: { type: 'number', description: 'Skip this many results (pagination, default: 0)' },
 };
 
+function normalizeToolName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/^codegraph\d+_/, '');
+}
+
+function buildDisabledToolSet(disabledTools?: string[]): Set<string> {
+  return new Set((disabledTools || []).map((name) => normalizeToolName(name)).filter(Boolean));
+}
+
 const BASE_TOOLS: ToolSchema[] = [
   {
     name: 'query',
@@ -849,18 +860,25 @@ const LIST_REPOS_TOOL: ToolSchema = {
 /**
  * Build the tool list based on multi-repo mode.
  */
-export function buildToolList(multiRepo: boolean): ToolSchema[] {
-  if (!multiRepo) return BASE_TOOLS;
-  return [
-    ...BASE_TOOLS.map((tool) => ({
+export function buildToolList(multiRepo: boolean, disabledTools?: string[]): ToolSchema[] {
+  const disabled = buildDisabledToolSet(disabledTools);
+  const includeTool = (tool: ToolSchema): boolean => !disabled.has(normalizeToolName(tool.name));
+  const baseTools = BASE_TOOLS.filter(includeTool);
+
+  if (!multiRepo) return baseTools;
+
+  const tools: ToolSchema[] = [
+    ...baseTools.map((tool) => ({
       ...tool,
       inputSchema: {
         ...tool.inputSchema,
         properties: { ...tool.inputSchema.properties, ...REPO_PROP },
       },
     })),
-    LIST_REPOS_TOOL,
   ];
+
+  if (includeTool(LIST_REPOS_TOOL)) tools.push(LIST_REPOS_TOOL);
+  return tools;
 }
 
 // Backward-compatible export: full multi-repo tool list
