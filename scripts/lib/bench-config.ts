@@ -45,22 +45,33 @@ function assertSafePkgVersion(version: string): string {
 }
 
 /**
- * Parse `--version <v>` and `--npm` from process.argv.
+ * Parse `--version <v>`, `--npm`, and `--dist` from process.argv.
+ *
+ * `--dist` selects local-built `dist/` over `src/` so the benchmark loads the
+ * compiled JavaScript that ships to npm — matching the loading path used for
+ * historical baselines (where `--npm` installs a published package whose
+ * `bench-config` already prefers `dist/`). Without this, the pre-publish gate
+ * runs `src/` via `--strip-types` while baselines were measured against
+ * compiled JS, which introduces per-call JIT/loader overhead deltas that are
+ * artifacts of measurement, not the code under test.
  */
 export function parseArgs() {
 	const args = process.argv.slice(2);
 	let version = null;
 	let npm = false;
+	let dist = false;
 
 	for (let i = 0; i < args.length; i++) {
 		if (args[i] === '--version' && i + 1 < args.length) {
 			version = args[++i];
 		} else if (args[i] === '--npm') {
 			npm = true;
+		} else if (args[i] === '--dist') {
+			dist = true;
 		}
 	}
 
-	return { version, npm };
+	return { version, npm, dist };
 }
 
 /**
@@ -72,15 +83,23 @@ export function parseArgs() {
  *   - cleanup:  call when done — removes the temp dir in npm mode, no-op otherwise
  */
 export async function resolveBenchmarkSource() {
-	const { version: cliVersion, npm } = parseArgs();
+	const { version: cliVersion, npm, dist } = parseArgs();
 
 	if (!npm) {
-		// Local mode — use repo src/, version derived from git state
+		// Local mode — use repo src/ (or dist/ when --dist), version from git state
 		const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')), '..', '..');
 		const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+		let srcDir = path.join(root, 'src');
+		if (dist) {
+			const distDir = path.join(root, 'dist');
+			if (!fs.existsSync(distDir)) {
+				throw new Error(`--dist requested but ${distDir} does not exist. Run "npm run build" first.`);
+			}
+			srcDir = distDir;
+		}
 		return {
 			version: cliVersion || getBenchmarkVersion(pkg.version, root),
-			srcDir: path.join(root, 'src'),
+			srcDir,
 			cleanup() {},
 		};
 	}

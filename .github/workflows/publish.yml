@@ -275,19 +275,27 @@ jobs:
       - name: Install native addon over published binary
         run: node scripts/ci-install-native.mjs
 
+      # Build dist/ so benchmarks load the same compiled JS that ships to npm.
+      # Historical baselines (v3.9.6 and earlier) were measured against dist/
+      # via the post-publish --npm path; running pre-publish against src/ with
+      # --strip-types changed the load path and introduced version-to-version
+      # noise unrelated to the code under test (#1055).
+      - name: Build TypeScript
+        run: npm run build
+
       - name: Run build benchmark
         env:
           VERSION: ${{ needs.compute-version.outputs.version }}
         run: |
           STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
-          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/benchmark.ts --version "$VERSION" > benchmark-result.json
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/benchmark.ts --version "$VERSION" --dist > benchmark-result.json
 
       - name: Run resolution benchmark
         env:
           VERSION: ${{ needs.compute-version.outputs.version }}
         run: |
           STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
-          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/resolution-benchmark.ts --version "$VERSION" > resolution-result.json
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/resolution-benchmark.ts --version "$VERSION" --dist > resolution-result.json
 
       - name: Merge resolution into build result
         run: |
@@ -304,14 +312,14 @@ jobs:
           VERSION: ${{ needs.compute-version.outputs.version }}
         run: |
           STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
-          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/query-benchmark.ts --version "$VERSION" > query-benchmark-result.json
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/query-benchmark.ts --version "$VERSION" --dist > query-benchmark-result.json
 
       - name: Run incremental benchmark
         env:
           VERSION: ${{ needs.compute-version.outputs.version }}
         run: |
           STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
-          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/incremental-benchmark.ts --version "$VERSION" > incremental-benchmark-result.json
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/incremental-benchmark.ts --version "$VERSION" --dist > incremental-benchmark-result.json
 
       - name: Update build report
         run: |
