@@ -512,6 +512,63 @@ function handleIncrementalBuild(ctx: PipelineContext): void {
   purgeAndAddReverseDeps(ctx, changePaths, reverseDeps);
 }
 
+/**
+ * Read-only pre-flight check for the native orchestrator.
+ *
+ * Returns true iff every collected source file has matching mtime+size in
+ * `file_hashes` and no DB-tracked file has been removed. When true, the
+ * caller can short-circuit before invoking the native orchestrator —
+ * matching WASM's ~20 ms early-exit path and avoiding the ~2s flat
+ * per-call native rebuild overhead seen in CI (#1054).
+ *
+ * Intentionally Tier-0/Tier-1 only (journal + mtime/size). Tier-2 content
+ * hashing is left to the native side: when this returns false the caller
+ * falls through to the orchestrator, which performs its own complete
+ * detection and is the source of truth.
+ *
+ * Pure read of `db` and the filesystem — never mutates either.
+ */
+export function detectNoChanges(
+  db: BetterSqlite3Database,
+  allFiles: string[],
+  rootDir: string,
+): boolean {
+  let hasTable = false;
+  try {
+    db.prepare('SELECT 1 FROM file_hashes LIMIT 1').get();
+    hasTable = true;
+  } catch {
+    /* table missing — first build */
+  }
+  if (!hasTable) return false;
+
+  const rows = db.prepare('SELECT file, hash, mtime, size FROM file_hashes').all() as FileHashRow[];
+  if (rows.length === 0) return false;
+  const existing = new Map<string, FileHashRow>(rows.map((r) => [r.file, r]));
+
+  const currentFiles = new Set<string>();
+  for (const file of allFiles) {
+    currentFiles.add(normalizePath(path.relative(rootDir, file)));
+  }
+  for (const existingFile of existing.keys()) {
+    if (!currentFiles.has(existingFile)) return false;
+  }
+
+  for (const file of allFiles) {
+    const relPath = normalizePath(path.relative(rootDir, file));
+    const record = existing.get(relPath);
+    if (!record) return false;
+    const stat = fileStat(file) as FileStat | undefined;
+    if (!stat) return false;
+    const storedMtime = record.mtime || 0;
+    const storedSize = record.size || 0;
+    if (storedSize <= 0) return false;
+    if (Math.floor(stat.mtimeMs) !== storedMtime || stat.size !== storedSize) return false;
+  }
+
+  return true;
+}
+
 export async function detectChanges(ctx: PipelineContext): Promise<void> {
   const start = performance.now();
   try {
