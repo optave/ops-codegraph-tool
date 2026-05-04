@@ -42,7 +42,7 @@ export const MODELS: Record<string, ModelConfig> = {
     quantized: false,
   },
   'jina-code': {
-    name: 'Xenova/jina-embeddings-v2-base-code',
+    name: 'jinaai/jina-embeddings-v2-base-code',
     dim: 768,
     contextWindow: 8192,
     desc: 'Code-aware (~137MB). Trained on code+text, best for code search.',
