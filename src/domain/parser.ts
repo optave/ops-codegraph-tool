@@ -1067,7 +1067,14 @@ async function parseFilesWasm(
   return result;
 }
 
-/** Files at or below this count use the inline parse path (no worker spawn). */
+/**
+ * Files at or below this count use the inline parse path (no worker spawn).
+ *
+ * Sized for typical engine-parity drops: a handful of fixture files in one
+ * or two languages (the recurring HCL case is 4 files). Above this, the
+ * worker-pool's IPC + crash-isolation cost (#965) is amortized over enough
+ * parse work to be worth paying; below it, the ~1–2s cold-start dominates.
+ */
 const INLINE_BACKFILL_THRESHOLD = 16;
 
 /**
