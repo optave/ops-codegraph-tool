@@ -61,20 +61,6 @@ jobs:
         with:
           workspaces: crates/codegraph-core
 
-      # NOTE: this step was added in #1059 on the assumption that gcc-vs-clang
-      # was responsible for the HCL .tf drop in #1054, but the real root cause
-      # was a tree-sitter ABI mismatch (HCL grammar shipped ABI 15 while the
-      # runtime was pinned at ABI 14). That is fixed by the tree-sitter 0.25
-      # bump in this PR, so this clang override is now redundant. Kept in place
-      # here to keep this PR scoped to the ABI fix; a follow-up revert removes
-      # the step entirely.
-      - name: Use clang on Linux
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          clang --version
-          echo "CC=clang" >> "$GITHUB_ENV"
-          echo "CXX=clang++" >> "$GITHUB_ENV"
-
       - name: Install napi-rs CLI
         run: npm install -g @napi-rs/cli@3
 
