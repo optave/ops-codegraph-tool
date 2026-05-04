@@ -253,12 +253,12 @@ jobs:
           node-version: "22"
           cache: "npm"
 
-      - name: Setup Python (for resolution benchmark)
+      - name: Setup Python (for resolution benchmark + tracer validation)
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
-      - name: Setup Go (for resolution benchmark)
+      - name: Setup Go (for resolution benchmark + tracer validation)
         uses: actions/setup-go@v6
         with:
           go-version: "stable"
@@ -296,6 +296,14 @@ jobs:
         run: |
           STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
           node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/resolution-benchmark.ts --version "$VERSION" --dist > resolution-result.json
+
+      - name: Gate on resolution thresholds
+        timeout-minutes: 30
+        run: npx vitest run tests/benchmarks/resolution/resolution-benchmark.test.ts --reporter=verbose
+
+      - name: Run tracer validation (same-file edge recall)
+        timeout-minutes: 10
+        run: npx vitest run tests/benchmarks/resolution/tracer/tracer-validation.test.ts --reporter=verbose
 
       - name: Merge resolution into build result
         run: |
