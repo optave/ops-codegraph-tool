@@ -38,6 +38,7 @@ import {
   getActiveEngine,
   getInstalledWasmExtensions,
   parseFilesAuto,
+  parseFilesWasmForBackfill,
 } from '../../parser.js';
 import { setWorkspaces } from '../resolve.js';
 import { PipelineContext } from './context.js';
@@ -793,7 +794,7 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
       `Native orchestrator dropped ${totals['native-extractor-failure']} file(s) in natively-supported languages — likely a Rust extractor bug. Backfilling via WASM: ${formatDropExtensionSummary(byReason['native-extractor-failure'])}`,
     );
   }
-  const wasmResults = await parseFilesAuto(missingAbs, ctx.rootDir, { engine: 'wasm' });
+  const wasmResults = await parseFilesWasmForBackfill(missingAbs, ctx.rootDir);
 
   const rows: unknown[][] = [];
   const exportKeys: unknown[][] = [];

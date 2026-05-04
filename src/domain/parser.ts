@@ -1067,6 +1067,64 @@ async function parseFilesWasm(
   return result;
 }
 
+/** Files at or below this count use the inline parse path (no worker spawn). */
+const INLINE_BACKFILL_THRESHOLD = 16;
+
+/**
+ * Inline WASM parse (no worker) for small file batches.
+ *
+ * Used by the engine-parity backfill path when the native engine drops a
+ * handful of files (typically test fixtures). The worker pool's per-call
+ * IPC + grammar-init overhead can cost 1–2s on slow CI runners — for a
+ * 4-file backfill, that dwarfs the ~10ms of actual parse work.
+ *
+ * Returns symbols with `_tree` set so `runAnalyses` can run AST/CFG/dataflow
+ * visitors via the unified walker (mirrors how WASM-engine results behaved
+ * before the worker pool was introduced).
+ */
+async function parseFilesWasmInline(
+  filePaths: string[],
+  rootDir: string,
+): Promise<Map<string, ExtractorOutput>> {
+  const result = new Map<string, ExtractorOutput>();
+  if (filePaths.length === 0) return result;
+  const parsers = await ensureParsersForFiles(filePaths);
+  for (const filePath of filePaths) {
+    if (!_extToLang.has(path.extname(filePath).toLowerCase())) continue;
+    let code: string;
+    try {
+      code = fs.readFileSync(filePath, 'utf-8');
+    } catch (err: unknown) {
+      warn(`Skipping ${path.relative(rootDir, filePath)}: ${(err as Error).message}`);
+      continue;
+    }
+    const extracted = wasmExtractSymbols(parsers, filePath, code);
+    if (!extracted) continue;
+    const relPath = path.relative(rootDir, filePath).split(path.sep).join('/');
+    const symbols = extracted.symbols as ExtractorOutput & { _tree?: unknown; _langId?: string };
+    symbols._tree = extracted.tree;
+    symbols._langId = extracted.langId;
+    result.set(relPath, symbols);
+  }
+  return result;
+}
+
+/**
+ * Backfill helper: small batches use the inline (main-thread) path; larger
+ * batches keep the worker-pool isolation against tree-sitter WASM crashes
+ * (#965). Threshold matches typical engine-parity drop sizes (a few fixture
+ * files in one or two languages).
+ */
+export async function parseFilesWasmForBackfill(
+  filePaths: string[],
+  rootDir: string,
+): Promise<Map<string, ExtractorOutput>> {
+  if (filePaths.length <= INLINE_BACKFILL_THRESHOLD) {
+    return parseFilesWasmInline(filePaths, rootDir);
+  }
+  return parseFilesWasm(filePaths, rootDir);
+}
+
 /**
  * Parse multiple files in bulk and return a Map<relPath, symbols>.
  */
@@ -1117,7 +1175,7 @@ export async function parseFilesAuto(
   );
   if (dropped.length > 0) {
     warn(`Native engine dropped ${dropped.length} file(s); falling back to WASM for parity`);
-    const wasmResults = await parseFilesWasm(dropped, rootDir);
+    const wasmResults = await parseFilesWasmForBackfill(dropped, rootDir);
     for (const [relPath, symbols] of wasmResults) {
       result.set(relPath, symbols);
     }
