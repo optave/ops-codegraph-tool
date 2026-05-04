@@ -61,6 +61,16 @@ jobs:
         with:
           workspaces: crates/codegraph-core
 
+      # Force clang on Linux runners. With gcc (the default cc) the bundled
+      # C parsers in tree-sitter-hcl produce a binary whose HCL extractor
+      # silently drops files (#1054). Clang produces a working binary.
+      - name: Use clang on Linux
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          clang --version
+          echo "CC=clang" >> "$GITHUB_ENV"
+          echo "CXX=clang++" >> "$GITHUB_ENV"
+
       - name: Install napi-rs CLI
         run: npm install -g @napi-rs/cli@3
 
