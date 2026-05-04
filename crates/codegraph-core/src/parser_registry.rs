@@ -246,6 +246,17 @@ mod tests {
             | LanguageKind::Ocaml
             | LanguageKind::OcamlInterface => (),
         };
-        assert_eq!(LanguageKind::all().len(), 24);
+        // IMPORTANT: this constant must equal the number of arms in the match
+        // above AND the length of the slice returned by `LanguageKind::all()`.
+        // Because both checks require the same manual update, they reinforce
+        // each other: a developer who updates the match is reminded to also
+        // update `all()` and this count.
+        const EXPECTED_LEN: usize = 24;
+        assert_eq!(
+            LanguageKind::all().len(),
+            EXPECTED_LEN,
+            "A LanguageKind variant is in the exhaustive match but missing from \
+             `all()` (or vice-versa). Update `all()` and bump EXPECTED_LEN.",
+        );
     }
 }
