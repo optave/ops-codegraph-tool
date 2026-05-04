@@ -37,7 +37,7 @@ import {
   formatDropExtensionSummary,
   getActiveEngine,
   getInstalledWasmExtensions,
-  parseFilesAuto,
+  parseFilesWasmForBackfill,
 } from '../../parser.js';
 import { setWorkspaces } from '../resolve.js';
 import { PipelineContext } from './context.js';
@@ -793,7 +793,7 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
       `Native orchestrator dropped ${totals['native-extractor-failure']} file(s) in natively-supported languages — likely a Rust extractor bug. Backfilling via WASM: ${formatDropExtensionSummary(byReason['native-extractor-failure'])}`,
     );
   }
-  const wasmResults = await parseFilesAuto(missingAbs, ctx.rootDir, { engine: 'wasm' });
+  const wasmResults = await parseFilesWasmForBackfill(missingAbs, ctx.rootDir);
 
   const rows: unknown[][] = [];
   const exportKeys: unknown[][] = [];
@@ -852,6 +852,27 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
       }
       updateStmt.run(...vals);
     }
+  }
+
+  // Free WASM parse trees from the inline backfill path (#1058).
+  // `parseFilesWasmInline` sets `symbols._tree` (a live web-tree-sitter Tree
+  // backed by WASM linear memory) on every result, but these symbols are
+  // consumed locally for DB row construction and never added to
+  // `ctx.allSymbols`, so the finalize-stage `releaseWasmTrees` sweep never
+  // sees them. Without this, trees leak WASM memory until process exit —
+  // bounded per run but cumulative across in-process integration tests.
+  // Mirrors the cleanup discipline established for #931.
+  for (const [, symbols] of wasmResults) {
+    const tree = (symbols as { _tree?: { delete?: () => void } })._tree;
+    if (tree && typeof tree.delete === 'function') {
+      try {
+        tree.delete();
+      } catch {
+        /* ignore cleanup errors */
+      }
+    }
+    (symbols as { _tree?: unknown; _langId?: unknown })._tree = undefined;
+    (symbols as { _tree?: unknown; _langId?: unknown })._langId = undefined;
   }
 }
 
