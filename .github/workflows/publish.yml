@@ -44,15 +44,6 @@ jobs:
         with:
           workspaces: crates/codegraph-core
 
-      # Match the build-native job: gcc-built tree-sitter parsers drop files
-      # on Linux x86_64 (#1054). Use clang here too so preflight parity tests
-      # exercise the same binary characteristics as the published artifact.
-      - name: Use clang for native build
-        run: |
-          clang --version
-          echo "CC=clang" >> "$GITHUB_ENV"
-          echo "CXX=clang++" >> "$GITHUB_ENV"
-
       - name: Install napi-rs CLI
         run: npm install -g @napi-rs/cli@3
 
@@ -186,18 +177,6 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: crates/codegraph-core
-
-      # Force clang for the host x86_64-linux-gnu build. With gcc (the runner's
-      # default `cc`) the bundled C parsers in tree-sitter-hcl produce a binary
-      # whose HCL extractor silently drops files (#1054), triggering an
-      # expensive WASM backfill on every build call. Clang produces a working
-      # binary. Verified locally: gcc 14.2.0 drops .tf files, clang does not.
-      - name: Use clang for x86_64-linux-gnu
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: |
-          clang --version
-          echo "CC=clang" >> "$GITHUB_ENV"
-          echo "CXX=clang++" >> "$GITHUB_ENV"
 
       - name: Install cross-compilation tools (aarch64-gnu)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
