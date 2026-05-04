@@ -143,6 +143,10 @@ describe('MODELS contextWindow', () => {
       expect(config.contextWindow, `${key} missing contextWindow`).toBeGreaterThan(0);
     }
   });
+
+  test('jina-code points to the published code embedding model', () => {
+    expect(MODELS['jina-code'].name).toBe('jinaai/jina-embeddings-v2-base-code');
+  });
 });
 
 describe('buildEmbeddings with structured strategy', () => {
