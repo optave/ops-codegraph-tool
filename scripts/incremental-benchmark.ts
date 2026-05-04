@@ -166,13 +166,31 @@ function median(arr) {
 
 console.error(`Benchmarking ${engine} engine...`);
 
+// ───── Issue #1054 timing instrumentation (one-off) ─────
+// Emits per-iteration phase breakdown for every buildGraph call so we can
+// see which step eats the 2s/call CI overhead that doesn't reproduce locally.
+// The plan: dispatch the gate against this branch, read the log, then
+// throw the branch away.
+function logTrace(scenario: string, iter: number, totalMs: number, phases: any) {
+	const p = phases || {};
+	const order = [
+		'setupMs', 'collectMs', 'detectMs', 'parseMs', 'insertMs', 'resolveMs',
+		'edgesMs', 'structureMs', 'rolesMs', 'astMs', 'complexityMs', 'cfgMs',
+		'dataflowMs', 'finalizeMs',
+	];
+	const parts = order.map(k => `${k.replace(/Ms$/, '')}=${p[k] ?? '?'}`).join(' ');
+	console.error(`[1054-trace] ${engine}.${scenario}[${iter}] total=${Math.round(totalMs)}ms ${parts}`);
+}
+
 // Full build (delete DB first)
 const fullTimings = [];
 for (let i = 0; i < RUNS; i++) {
 	if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
 	const start = performance.now();
-	await buildGraph(root, { engine, incremental: false });
-	fullTimings.push(performance.now() - start);
+	const res = await buildGraph(root, { engine, incremental: false });
+	const elapsed = performance.now() - start;
+	fullTimings.push(elapsed);
+	logTrace('full', i, elapsed, res?.phases);
 }
 const fullBuildMs = Math.round(median(fullTimings));
 
@@ -182,8 +200,10 @@ try {
 	const noopTimings = [];
 	for (let i = 0; i < RUNS; i++) {
 		const start = performance.now();
-		await buildGraph(root, { engine, incremental: true });
-		noopTimings.push(performance.now() - start);
+		const res = await buildGraph(root, { engine, incremental: true });
+		const elapsed = performance.now() - start;
+		noopTimings.push(elapsed);
+		logTrace('noop', i, elapsed, res?.phases);
 	}
 	noopRebuildMs = Math.round(median(noopTimings));
 } catch (err) {
@@ -200,7 +220,9 @@ try {
 		fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`);
 		const start = performance.now();
 		const res = await buildGraph(root, { engine, incremental: true });
-		oneFileRuns.push({ ms: performance.now() - start, phases: res?.phases || null });
+		const elapsed = performance.now() - start;
+		oneFileRuns.push({ ms: elapsed, phases: res?.phases || null });
+		logTrace('1file', i, elapsed, res?.phases);
 	}
 	oneFileRuns.sort((a, b) => a.ms - b.ms);
 	const medianRun = oneFileRuns[Math.floor(oneFileRuns.length / 2)];
