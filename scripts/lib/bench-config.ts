@@ -85,6 +85,10 @@ export function parseArgs() {
 export async function resolveBenchmarkSource() {
 	const { version: cliVersion, npm, dist } = parseArgs();
 
+	if (dist && npm) {
+		console.error('Warning: --dist is ignored in --npm mode (the installed package already uses dist/ automatically).');
+	}
+
 	if (!npm) {
 		// Local mode — use repo src/ (or dist/ when --dist), version from git state
 		const root = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1')), '..', '..');
