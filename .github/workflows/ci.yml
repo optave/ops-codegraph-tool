@@ -78,6 +78,14 @@ jobs:
         working-directory: crates/codegraph-core
         run: napi build --release
 
+      # Runs `cargo test`, which exercises the grammar-ABI regression test
+      # added in #1054. Without this step a future tree-sitter / grammar
+      # version drift would only surface as a runtime "files dropped"
+      # warning during benchmarks, not as a test failure on the PR.
+      - name: Run Rust tests
+        working-directory: crates/codegraph-core
+        run: cargo test --release
+
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         with:

@@ -162,4 +162,90 @@ impl LanguageKind {
             Self::OcamlInterface => tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
         }
     }
+
+    /// Every variant in declaration order. Adding a new `LanguageKind` variant
+    /// requires adding it here too — the regression test in this file's
+    /// `tests` module iterates this list to confirm each grammar loads at
+    /// runtime, so missing entries silently lose ABI coverage for that
+    /// language. See #1054 (tree-sitter-hcl 1.1.0 shipped ABI 15 while the
+    /// runtime was pinned at ABI 14, and `set_language` rejected the grammar
+    /// at runtime instead of at compile time).
+    pub fn all() -> &'static [LanguageKind] {
+        use LanguageKind::*;
+        &[
+            JavaScript, TypeScript, Tsx, Python, Go, Rust, Java, CSharp, Ruby, Php, Hcl, C,
+            Cpp, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, Ocaml,
+            OcamlInterface,
+        ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tree_sitter::Parser;
+
+    /// Catches tree-sitter ABI version mismatches between the runtime crate
+    /// and individual grammar crates. When a grammar ships parser code built
+    /// against a newer ABI than the runtime supports, `set_language` rejects
+    /// it with `LanguageError`, `parse_file` silently returns `None`, and
+    /// every file in that language is "dropped" — the user sees a warning
+    /// and the JS layer falls back to WASM. See #1054 (tree-sitter-hcl 1.1.0
+    /// vs tree-sitter 0.24).
+    #[test]
+    fn all_grammars_have_compatible_abi() {
+        let mut failures: Vec<String> = Vec::new();
+        for &kind in LanguageKind::all() {
+            let mut parser = Parser::new();
+            let language = kind.tree_sitter_language();
+            if let Err(e) = parser.set_language(&language) {
+                failures.push(format!("  {:?}: {:?}", kind, e));
+            }
+        }
+        assert!(
+            failures.is_empty(),
+            "Tree-sitter grammar ABI mismatch — bump `tree-sitter` in Cargo.toml \
+             or pin the failing grammar crate down (#1054):\n{}",
+            failures.join("\n")
+        );
+    }
+
+    /// Every variant declared in the enum must appear in `all()`. Without
+    /// this check, a new variant added to the enum would silently lose
+    /// ABI coverage from `all_grammars_have_compatible_abi`.
+    #[test]
+    fn all_kinds_listed_in_all() {
+        // Exhaustive match — fails to compile if a variant is added without
+        // updating the body. The match itself is a no-op; the compile-time
+        // exhaustiveness check is the test. If this match starts failing,
+        // also update `LanguageKind::all()`.
+        let kind = LanguageKind::JavaScript;
+        let _: () = match kind {
+            LanguageKind::JavaScript
+            | LanguageKind::TypeScript
+            | LanguageKind::Tsx
+            | LanguageKind::Python
+            | LanguageKind::Go
+            | LanguageKind::Rust
+            | LanguageKind::Java
+            | LanguageKind::CSharp
+            | LanguageKind::Ruby
+            | LanguageKind::Php
+            | LanguageKind::Hcl
+            | LanguageKind::C
+            | LanguageKind::Cpp
+            | LanguageKind::Kotlin
+            | LanguageKind::Swift
+            | LanguageKind::Scala
+            | LanguageKind::Bash
+            | LanguageKind::Elixir
+            | LanguageKind::Lua
+            | LanguageKind::Dart
+            | LanguageKind::Zig
+            | LanguageKind::Haskell
+            | LanguageKind::Ocaml
+            | LanguageKind::OcamlInterface => (),
+        };
+        assert_eq!(LanguageKind::all().len(), 24);
+    }
 }
