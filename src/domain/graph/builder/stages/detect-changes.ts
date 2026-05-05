@@ -526,12 +526,19 @@ function handleIncrementalBuild(ctx: PipelineContext): void {
  * falls through to the orchestrator, which performs its own complete
  * detection and is the source of truth.
  *
+ * Conservatively returns false when CFG or dataflow analysis is enabled
+ * but the corresponding tables are empty — otherwise the fast-skip would
+ * silently suppress the pending-analysis pass that the JS path runs via
+ * `runPendingAnalysis`, and CFG/dataflow data would never populate on
+ * repos where source files don't change between builds.
+ *
  * Pure read of `db` and the filesystem — never mutates either.
  */
 export function detectNoChanges(
   db: BetterSqlite3Database,
   allFiles: string[],
   rootDir: string,
+  opts?: Record<string, unknown>,
 ): boolean {
   let hasTable = false;
   try {
@@ -566,7 +573,31 @@ export function detectNoChanges(
     if (Math.floor(stat.mtimeMs) !== storedMtime || stat.size !== storedSize) return false;
   }
 
+  // Pending-analysis guard: if CFG/dataflow is enabled but the corresponding
+  // table is empty (analysis newly enabled, or tables wiped between builds),
+  // fall through so the orchestrator / JS pipeline can run runPendingAnalysis.
+  // Mirrors the check at the top of runPendingAnalysis (see line ~244).
+  if (opts) {
+    if (opts.cfg !== false && hasEmptyAnalysisTable(db, 'cfg_blocks')) return false;
+    if (opts.dataflow !== false && hasEmptyAnalysisTable(db, 'dataflow')) return false;
+  }
+
   return true;
+}
+
+/**
+ * Returns true if `table` exists and has zero rows, matching the empty-table
+ * semantics of `runPendingAnalysis`. A missing table is treated as empty
+ * (the conservative outcome), so the caller falls through to the orchestrator
+ * which will create the schema and populate it.
+ */
+function hasEmptyAnalysisTable(db: BetterSqlite3Database, table: string): boolean {
+  try {
+    const row = db.prepare(`SELECT COUNT(*) as c FROM ${table}`).get() as { c: number } | undefined;
+    return (row?.c ?? 0) === 0;
+  } catch {
+    return true;
+  }
 }
 
 export async function detectChanges(ctx: PipelineContext): Promise<void> {

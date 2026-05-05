@@ -7,7 +7,10 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDb, initSchema, openDb } from '../../src/db/index.js';
 import { PipelineContext } from '../../src/domain/graph/builder/context.js';
-import { detectChanges } from '../../src/domain/graph/builder/stages/detect-changes.js';
+import {
+  detectChanges,
+  detectNoChanges,
+} from '../../src/domain/graph/builder/stages/detect-changes.js';
 import { writeJournalHeader } from '../../src/domain/graph/journal.js';
 
 let tmpDir: string;
@@ -138,6 +141,138 @@ describe('detectChanges stage', () => {
 
     expect(ctx.isFullBuild).toBe(true);
     expect(ctx.parseChanges.length).toBe(1);
+    closeDb(db);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('detectNoChanges fast-skip', () => {
+  function seedFile(dir: string, name: string, content: string): string {
+    const filePath = path.join(dir, name);
+    fs.writeFileSync(filePath, content);
+    return filePath;
+  }
+
+  function seedHashRow(
+    db: ReturnType<typeof openDb>,
+    relPath: string,
+    filePath: string,
+  ): { mtime: number; size: number } {
+    const stat = fs.statSync(filePath);
+    const mtime = Math.floor(stat.mtimeMs);
+    db.prepare('INSERT INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)').run(
+      relPath,
+      'deadbeef',
+      mtime,
+      stat.size,
+    );
+    return { mtime, size: stat.size };
+  }
+
+  it('returns false when file_hashes is empty (first build)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-noChange-empty-'));
+    const dbDir = path.join(dir, '.codegraph');
+    fs.mkdirSync(dbDir, { recursive: true });
+    const db = openDb(path.join(dbDir, 'graph.db'));
+    initSchema(db);
+    const file = seedFile(dir, 'a.js', 'export const a = 1;');
+
+    expect(detectNoChanges(db, [file], dir)).toBe(false);
+
+    closeDb(db);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('returns true when mtime+size match seeded file_hashes', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-noChange-match-'));
+    const dbDir = path.join(dir, '.codegraph');
+    fs.mkdirSync(dbDir, { recursive: true });
+    const db = openDb(path.join(dbDir, 'graph.db'));
+    initSchema(db);
+    const file = seedFile(dir, 'a.js', 'export const a = 1;');
+    seedHashRow(db, 'a.js', file);
+
+    expect(detectNoChanges(db, [file], dir)).toBe(true);
+
+    closeDb(db);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('returns false when a tracked file has been deleted', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-noChange-deleted-'));
+    const dbDir = path.join(dir, '.codegraph');
+    fs.mkdirSync(dbDir, { recursive: true });
+    const db = openDb(path.join(dbDir, 'graph.db'));
+    initSchema(db);
+    const file = seedFile(dir, 'a.js', 'export const a = 1;');
+    seedHashRow(db, 'a.js', file);
+    seedHashRow(db, 'gone.js', file); // tracked but no longer on disk
+
+    expect(detectNoChanges(db, [file], dir)).toBe(false);
+
+    closeDb(db);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('returns false when mtime differs from seeded value', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-noChange-mtime-'));
+    const dbDir = path.join(dir, '.codegraph');
+    fs.mkdirSync(dbDir, { recursive: true });
+    const db = openDb(path.join(dbDir, 'graph.db'));
+    initSchema(db);
+    const file = seedFile(dir, 'a.js', 'export const a = 1;');
+    const stat = fs.statSync(file);
+    db.prepare('INSERT INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)').run(
+      'a.js',
+      'deadbeef',
+      Math.floor(stat.mtimeMs) + 1000, // skewed mtime
+      stat.size,
+    );
+
+    expect(detectNoChanges(db, [file], dir)).toBe(false);
+
+    closeDb(db);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('returns false when CFG analysis is enabled but cfg_blocks is empty (#1064)', () => {
+    // Pending-analysis guard: even though mtime+size match, if cfg_blocks
+    // is empty (analysis newly enabled), the caller must fall through so
+    // runPendingAnalysis can populate the table.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-noChange-pendingCfg-'));
+    const dbDir = path.join(dir, '.codegraph');
+    fs.mkdirSync(dbDir, { recursive: true });
+    const db = openDb(path.join(dbDir, 'graph.db'));
+    initSchema(db);
+    const file = seedFile(dir, 'a.js', 'export const a = 1;');
+    seedHashRow(db, 'a.js', file);
+    // cfg_blocks table is created empty by initSchema — that's the trigger.
+
+    // Without opts: legacy behaviour — fast-skip returns true.
+    expect(detectNoChanges(db, [file], dir)).toBe(true);
+    // With cfg enabled (cfg !== false) and cfg_blocks empty: must return false.
+    expect(detectNoChanges(db, [file], dir, { cfg: true, dataflow: false })).toBe(false);
+    // When cfg explicitly disabled (and dataflow disabled too so its guard
+    // doesn't fire), the empty cfg table is irrelevant.
+    expect(detectNoChanges(db, [file], dir, { cfg: false, dataflow: false })).toBe(true);
+
+    closeDb(db);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('returns false when dataflow is enabled but dataflow table is empty (#1064)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-noChange-pendingDf-'));
+    const dbDir = path.join(dir, '.codegraph');
+    fs.mkdirSync(dbDir, { recursive: true });
+    const db = openDb(path.join(dbDir, 'graph.db'));
+    initSchema(db);
+    const file = seedFile(dir, 'a.js', 'export const a = 1;');
+    seedHashRow(db, 'a.js', file);
+
+    // Disable cfg so only the dataflow guard is exercised.
+    expect(detectNoChanges(db, [file], dir, { cfg: false, dataflow: true })).toBe(false);
+    expect(detectNoChanges(db, [file], dir, { cfg: false, dataflow: false })).toBe(true);
+
     closeDb(db);
     fs.rmSync(dir, { recursive: true, force: true });
   });
