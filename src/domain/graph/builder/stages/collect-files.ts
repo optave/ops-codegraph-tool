@@ -100,6 +100,15 @@ function tryFastCollect(
 export async function collectFiles(ctx: PipelineContext): Promise<void> {
   const { rootDir, config, opts } = ctx;
 
+  // Skip when the JS-side fast-skip pre-flight (#1054) already populated the
+  // file list and changes were detected, causing fallthrough to the native
+  // orchestrator and then to runPipelineStages. Avoids redoing the filesystem
+  // walk on the non-skip path (~8ms on 473 files). On pre-flight failure the
+  // caller resets ctx.allFiles so this guard correctly falls through.
+  if (!opts.scope && ctx.allFiles?.length && ctx.discoveredDirs?.size) {
+    return;
+  }
+
   if (opts.scope) {
     // Scoped rebuild: rebuild only specified files.
     //

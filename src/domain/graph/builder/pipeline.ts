@@ -1019,7 +1019,9 @@ export async function buildGraph(
     ) {
       try {
         await collectFiles(ctx);
-        if (detectNoChanges(ctx.db, ctx.allFiles, ctx.rootDir)) {
+        if (
+          detectNoChanges(ctx.db, ctx.allFiles, ctx.rootDir, ctx.opts as Record<string, unknown>)
+        ) {
           info('No changes detected. Graph is up to date.');
           writeJournalHeader(ctx.rootDir, Date.now());
           closeDb(ctx.db);
@@ -1028,6 +1030,10 @@ export async function buildGraph(
       } catch (err) {
         // Pre-flight is best-effort — any failure falls through to the
         // orchestrator, which performs its own complete detection.
+        // Reset ctx.allFiles so runPipelineStages re-collects under its own
+        // engine state if we ended up partially populated before throwing.
+        ctx.allFiles = undefined as unknown as string[];
+        ctx.discoveredDirs = undefined as unknown as Set<string>;
         debug(`native fast-skip pre-flight failed: ${toErrorMessage(err)}`);
       }
     }
