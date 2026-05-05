@@ -43,7 +43,14 @@ import {
 import { writeJournalHeader } from '../journal.js';
 import { setWorkspaces } from '../resolve.js';
 import { PipelineContext } from './context.js';
-import { batchInsertNodes, collectFiles as collectFilesUtil, loadPathAliases } from './helpers.js';
+import {
+  batchInsertNodes,
+  collectFiles as collectFilesUtil,
+  fileHash,
+  fileStat,
+  loadPathAliases,
+  readFileSafe,
+} from './helpers.js';
 import { NativeDbProxy } from './native-db-proxy.js';
 import { buildEdges } from './stages/build-edges.js';
 import { buildStructure } from './stages/build-structure.js';
@@ -731,12 +738,15 @@ async function tryNativeOrchestrator(
   // stale native binaries). WASM handles those — backfill via WASM so both
   // engines process the same file set (#967).
   //
-  // Only runs on full builds: incremental builds only touch changed files,
-  // which are parsed through parseFilesAuto (which has its own per-file
-  // backfill), so a full filesystem scan here would be wasted work.
-  if (result.isFullBuild) {
-    await backfillNativeDroppedFiles(ctx);
-  }
+  // Runs on every successful orchestrator pass (not just full builds): on
+  // incrementals the orchestrator's change detection treats files outside
+  // Rust's narrower file_collector as `removed` and deletes their nodes +
+  // file_hashes rows. Without re-running the backfill we'd lose the symbols
+  // for those files and permanently break the JS-side fast-skip pre-flight
+  // (#1054, #1068). The function is cheap (single fs scan + DB query) when
+  // nothing is missing, and on no-op rebuilds the missing-set is re-derived
+  // from `nodes`, so it catches whatever Rust just deleted.
+  await backfillNativeDroppedFiles(ctx);
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
   return formatNativeTimingResult(p, structurePatchMs, analysisTiming);
@@ -747,13 +757,11 @@ async function tryNativeOrchestrator(
  * Falls back to WASM + inserts file/symbol nodes so engine counts match (#967).
  */
 async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
-  // Needs a real better-sqlite3 connection for INSERT.
-  if (ctx.nativeFirstProxy) {
-    closeNativeDb(ctx, 'pre-parity-backfill');
-    ctx.db = openDb(ctx.dbPath);
-    ctx.nativeFirstProxy = false;
-  }
-
+  // Compute the missing-file set FIRST, before any expensive DB handoff.
+  // NativeDbProxy supports .prepare().all(), so the upfront query works
+  // whether ctx.db is a proxy or a real better-sqlite3 connection. On
+  // incremental no-op rebuilds nothing is missing, so we want to early-return
+  // without paying the close-native / reopen-better-sqlite3 cost.
   const collected = collectFilesUtil(ctx.rootDir, [], ctx.config, new Set<string>());
   const expected = new Set(
     collected.files.map((f) => normalizePath(path.relative(ctx.rootDir, f))),
@@ -779,6 +787,14 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
     missingAbs.push(path.join(ctx.rootDir, rel));
   }
   if (missingAbs.length === 0) return;
+
+  // Now that we know there's work to do, hand off to better-sqlite3 (needed
+  // for the INSERT path below).
+  if (ctx.nativeFirstProxy) {
+    closeNativeDb(ctx, 'pre-parity-backfill');
+    ctx.db = openDb(ctx.dbPath);
+    ctx.nativeFirstProxy = false;
+  }
 
   // Classify drops so users see per-extension reasons instead of just a count
   // (#1011). `unsupported-by-native` is a legitimate parser limit (no Rust
@@ -854,6 +870,47 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
       }
       updateStmt.run(...vals);
     }
+  }
+
+  // Persist file_hashes rows for every backfilled file. The Rust orchestrator
+  // only hashes files it parsed itself, so without this step files in
+  // optional-language extensions (e.g. .clj when no Rust extractor exists)
+  // would be missing from `file_hashes` — permanently breaking the JS-side
+  // fast-skip pre-flight (#1054), which rejects on `collected file missing
+  // from file_hashes` and forces every no-op rebuild back through the full
+  // ~2s native pipeline (#1068).
+  //
+  // Iterates `missingRel` (every collected file the Rust orchestrator
+  // dropped), not `wasmResults`, so files that produced zero symbols still
+  // get a row.
+  try {
+    const upsertHash = db.prepare(
+      'INSERT OR REPLACE INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)',
+    );
+    const writeHashes = db.transaction(() => {
+      for (let i = 0; i < missingRel.length; i++) {
+        const relPath = missingRel[i];
+        const absPath = missingAbs[i];
+        if (!relPath || !absPath) continue;
+        let code: string | null;
+        try {
+          code = readFileSafe(absPath);
+        } catch (e) {
+          debug(`backfillNativeDroppedFiles: read failed for ${relPath}: ${toErrorMessage(e)}`);
+          continue;
+        }
+        if (code === null) continue;
+        const stat = fileStat(absPath);
+        const mtime = stat ? Math.floor(stat.mtimeMs) : 0;
+        const size = stat ? stat.size : 0;
+        upsertHash.run(relPath, fileHash(code), mtime, size);
+      }
+    });
+    writeHashes();
+  } catch (e) {
+    debug(
+      `backfillNativeDroppedFiles: file_hashes write failed (table may not exist): ${toErrorMessage(e)}`,
+    );
   }
 
   // Free WASM parse trees from the inline backfill path (#1058).

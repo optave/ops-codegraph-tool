@@ -12,10 +12,12 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { bulkNodeIdsByFile } from '../../../../db/index.js';
 import { debug } from '../../../../infrastructure/logger.js';
+import { normalizePath } from '../../../../shared/constants.js';
 import { toErrorMessage } from '../../../../shared/errors.js';
 import type {
   BetterSqlite3Database,
   ExtractorOutput,
+  FileToParse,
   MetadataUpdate,
   SqliteStatement,
 } from '../../../../types.js';
@@ -90,16 +92,30 @@ function marshalSymbolBatches(allSymbols: Map<string, ExtractorOutput>): InsertN
   return batches;
 }
 
-/** Build file hash entries from parsed symbols and precomputed/metadata sources. */
-function buildFileHashes(
-  allSymbols: Map<string, ExtractorOutput>,
+/**
+ * Build file hash entries for every collected file, including those that
+ * produced zero symbols (empty files, parsers that silently no-op'd, or
+ * optional-language extensions whose grammar wasn't installed). Iterating the
+ * symbol map instead would skip such files and leave them missing from
+ * `file_hashes`, which permanently breaks the JS-side fast-skip pre-flight on
+ * any subsequent no-op rebuild (#1068).
+ *
+ * Exported for unit testing.
+ */
+export function buildFileHashes(
+  filesToParse: FileToParse[],
   precomputedData: Map<string, PrecomputedFileData>,
   metadataUpdates: MetadataUpdate[],
   rootDir: string,
 ): Array<{ file: string; hash: string; mtime: number; size: number }> {
   const fileHashes: Array<{ file: string; hash: string; mtime: number; size: number }> = [];
+  const seen = new Set<string>();
 
-  for (const [relPath] of allSymbols) {
+  for (const item of filesToParse) {
+    const relPath = item.relPath ?? normalizePath(path.relative(rootDir, item.file));
+    if (seen.has(relPath)) continue;
+    seen.add(relPath);
+
     const precomputed = precomputedData.get(relPath);
     if (precomputed?._reverseDepOnly) {
       continue; // file unchanged, hash already correct
@@ -157,7 +173,7 @@ function tryNativeInsert(ctx: PipelineContext): boolean {
   for (const item of filesToParse) {
     if (item.relPath) precomputedData.set(item.relPath, item as PrecomputedFileData);
   }
-  const fileHashes = buildFileHashes(allSymbols, precomputedData, metadataUpdates, rootDir);
+  const fileHashes = buildFileHashes(filesToParse, precomputedData, metadataUpdates, rootDir);
 
   // In native-first mode (single rusqlite connection), no WAL dance is needed.
   // In dual-connection mode, checkpoint JS side before native write, then
@@ -321,7 +337,7 @@ function insertChildrenAndEdges(
 
 function updateFileHashes(
   _db: BetterSqlite3Database,
-  allSymbols: Map<string, ExtractorOutput>,
+  filesToParse: FileToParse[],
   precomputedData: Map<string, PrecomputedFileData>,
   metadataUpdates: MetadataUpdate[],
   rootDir: string,
@@ -329,7 +345,15 @@ function updateFileHashes(
 ): void {
   if (!upsertHash) return;
 
-  for (const [relPath] of allSymbols) {
+  // Iterate every collected file (#1068): files that produced zero symbols
+  // (empty, parser no-op, or grammar-missing optional language) still need a
+  // hash row, otherwise the next no-op rebuild's fast-skip pre-flight rejects.
+  const seen = new Set<string>();
+  for (const item of filesToParse) {
+    const relPath = item.relPath ?? normalizePath(path.relative(rootDir, item.file));
+    if (seen.has(relPath)) continue;
+    seen.add(relPath);
+
     const precomputed = precomputedData.get(relPath);
     if (precomputed?._reverseDepOnly) {
       // no-op: file unchanged, hash already correct
@@ -415,7 +439,7 @@ export async function insertNodes(ctx: PipelineContext): Promise<void> {
   const insertAll = ctx.db.transaction(() => {
     insertDefinitionsAndExports(ctx.db, allSymbols);
     insertChildrenAndEdges(ctx.db, allSymbols);
-    updateFileHashes(ctx.db, allSymbols, precomputedData, metadataUpdates, rootDir, upsertHash);
+    updateFileHashes(ctx.db, filesToParse, precomputedData, metadataUpdates, rootDir, upsertHash);
   });
 
   insertAll();
