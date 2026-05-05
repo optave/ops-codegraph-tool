@@ -63,6 +63,7 @@ jobs:
           workspaces: crates/codegraph-core
 
       - name: Install napi-rs CLI
+        timeout-minutes: 5
         run: npm install -g @napi-rs/cli@3
 
       - name: Build native addon
