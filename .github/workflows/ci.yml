@@ -22,6 +22,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
+        timeout-minutes: 10
         shell: bash
         run: |
           for attempt in 1 2 3; do
@@ -103,6 +104,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Install dependencies
+        timeout-minutes: 10
         shell: bash
         run: |
           for attempt in 1 2 3; do
@@ -141,6 +143,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
+        timeout-minutes: 10
         shell: bash
         run: |
           for attempt in 1 2 3; do
@@ -169,6 +172,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
+        timeout-minutes: 10
         run: npm ci
 
       - name: Audit production dependencies
@@ -209,6 +213,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
+        timeout-minutes: 10
         shell: bash
         run: |
           for attempt in 1 2 3; do
