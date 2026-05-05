@@ -1010,6 +1010,24 @@ export async function buildGraph(
     // source files have changed. Tier-2 hashing is left to the native
     // side: any mismatch falls through and lets Rust's detect_changes
     // remain the source of truth.
+    //
+    // Diagnostic logging gated by CODEGRAPH_FAST_SKIP_DIAG (#1066) — when
+    // any of the call-site guards short-circuit (forceFullRebuild,
+    // engineName, scope, etc.) we log the reason so the bench gate run
+    // produces observable output even if `detectNoChanges` is never
+    // entered.
+    const fastSkipDiag = process.env.CODEGRAPH_FAST_SKIP_DIAG === '1';
+    if (fastSkipDiag) {
+      const reasons: string[] = [];
+      if (!ctx.nativeAvailable) reasons.push('nativeAvailable=false');
+      if (ctx.engineName !== 'native') reasons.push(`engineName=${ctx.engineName}`);
+      if (!ctx.incremental) reasons.push('incremental=false');
+      if (ctx.forceFullRebuild) reasons.push('forceFullRebuild=true');
+      if ((ctx.opts as Record<string, unknown>).scope) reasons.push('scope=set');
+      if (reasons.length > 0) {
+        info(`[fast-skip] false: pre-flight gate skipped — ${reasons.join(', ')}`);
+      }
+    }
     if (
       ctx.nativeAvailable &&
       ctx.engineName === 'native' &&

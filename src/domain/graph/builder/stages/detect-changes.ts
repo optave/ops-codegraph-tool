@@ -540,6 +540,14 @@ export function detectNoChanges(
   rootDir: string,
   opts?: Record<string, unknown>,
 ): boolean {
+  // Diagnostic logging gated by env var — used by the bench gate to surface
+  // why the fast-skip is not firing on CI runners (#1066). Off by default to
+  // avoid noise on every regular incremental build.
+  const diag = process.env.CODEGRAPH_FAST_SKIP_DIAG === '1';
+  const log = (reason: string): void => {
+    if (diag) info(`[fast-skip] ${reason}`);
+  };
+
   let hasTable = false;
   try {
     db.prepare('SELECT 1 FROM file_hashes LIMIT 1').get();
@@ -547,10 +555,16 @@ export function detectNoChanges(
   } catch {
     /* table missing — first build */
   }
-  if (!hasTable) return false;
+  if (!hasTable) {
+    log('false: file_hashes table missing');
+    return false;
+  }
 
   const rows = db.prepare('SELECT file, hash, mtime, size FROM file_hashes').all() as FileHashRow[];
-  if (rows.length === 0) return false;
+  if (rows.length === 0) {
+    log('false: file_hashes table empty');
+    return false;
+  }
   const existing = new Map<string, FileHashRow>(rows.map((r) => [r.file, r]));
 
   const currentFiles = new Set<string>();
@@ -558,19 +572,36 @@ export function detectNoChanges(
     currentFiles.add(normalizePath(path.relative(rootDir, file)));
   }
   for (const existingFile of existing.keys()) {
-    if (!currentFiles.has(existingFile)) return false;
+    if (!currentFiles.has(existingFile)) {
+      log(`false: tracked file no longer collected: ${existingFile}`);
+      return false;
+    }
   }
 
   for (const file of allFiles) {
     const relPath = normalizePath(path.relative(rootDir, file));
     const record = existing.get(relPath);
-    if (!record) return false;
+    if (!record) {
+      log(`false: collected file missing from file_hashes: ${relPath}`);
+      return false;
+    }
     const stat = fileStat(file) as FileStat | undefined;
-    if (!stat) return false;
+    if (!stat) {
+      log(`false: stat failed for ${relPath}`);
+      return false;
+    }
     const storedMtime = record.mtime || 0;
     const storedSize = record.size || 0;
-    if (storedSize <= 0) return false;
-    if (Math.floor(stat.mtimeMs) !== storedMtime || stat.size !== storedSize) return false;
+    if (storedSize <= 0) {
+      log(`false: stored size <= 0 for ${relPath} (stored=${record.size})`);
+      return false;
+    }
+    if (Math.floor(stat.mtimeMs) !== storedMtime || stat.size !== storedSize) {
+      log(
+        `false: mtime/size diff for ${relPath}: stat=${Math.floor(stat.mtimeMs)}/${stat.size} stored=${storedMtime}/${storedSize} (mtimeMs=${stat.mtimeMs})`,
+      );
+      return false;
+    }
   }
 
   // Pending-analysis guard: if CFG/dataflow is enabled but the corresponding
@@ -578,10 +609,17 @@ export function detectNoChanges(
   // fall through so the orchestrator / JS pipeline can run runPendingAnalysis.
   // Mirrors the check at the top of runPendingAnalysis (see line ~244).
   if (opts) {
-    if (opts.cfg !== false && hasEmptyAnalysisTable(db, 'cfg_blocks')) return false;
-    if (opts.dataflow !== false && hasEmptyAnalysisTable(db, 'dataflow')) return false;
+    if (opts.cfg !== false && hasEmptyAnalysisTable(db, 'cfg_blocks')) {
+      log('false: pending-analysis guard — cfg_blocks is empty');
+      return false;
+    }
+    if (opts.dataflow !== false && hasEmptyAnalysisTable(db, 'dataflow')) {
+      log('false: pending-analysis guard — dataflow is empty');
+      return false;
+    }
   }
 
+  log(`true: all checks passed (${allFiles.length} files)`);
   return true;
 }
 

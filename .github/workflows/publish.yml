@@ -246,6 +246,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    env:
+      # Surface why detectNoChanges returns false on each fast-skip pre-flight
+      # so we can pinpoint the cause of the ~2s incremental-rebuild regression
+      # observed in CI but not locally (#1066). Remove once root cause is fixed.
+      CODEGRAPH_FAST_SKIP_DIAG: "1"
 
     steps:
       - uses: actions/checkout@v6
