@@ -9,6 +9,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import {
   acquireAdvisoryLock,
+  closeDb,
   closeDbPair,
   getBuildMeta,
   initSchema,
@@ -39,6 +40,7 @@ import {
   getInstalledWasmExtensions,
   parseFilesWasmForBackfill,
 } from '../../parser.js';
+import { writeJournalHeader } from '../journal.js';
 import { setWorkspaces } from '../resolve.js';
 import { PipelineContext } from './context.js';
 import { batchInsertNodes, collectFiles as collectFilesUtil, loadPathAliases } from './helpers.js';
@@ -47,7 +49,7 @@ import { buildEdges } from './stages/build-edges.js';
 import { buildStructure } from './stages/build-structure.js';
 // Pipeline stages
 import { collectFiles } from './stages/collect-files.js';
-import { detectChanges } from './stages/detect-changes.js';
+import { detectChanges, detectNoChanges } from './stages/detect-changes.js';
 import { finalize } from './stages/finalize.js';
 import { insertNodes } from './stages/insert-nodes.js';
 import { parseFiles } from './stages/parse-files.js';
@@ -999,6 +1001,42 @@ export async function buildGraph(
 
   try {
     setupPipeline(ctx);
+
+    // ── JS-side fast-skip for native incremental (#1054) ──────────────
+    // The Rust orchestrator's internal early-exit fires reliably locally
+    // but not in CI, where every no-op rebuild was paying the full ~2s
+    // pipeline cost. A read-only mtime+size check here matches WASM's
+    // ~20ms early-exit and skips the orchestrator entirely when no
+    // source files have changed. Tier-2 hashing is left to the native
+    // side: any mismatch falls through and lets Rust's detect_changes
+    // remain the source of truth.
+    if (
+      ctx.nativeAvailable &&
+      ctx.engineName === 'native' &&
+      ctx.incremental &&
+      !ctx.forceFullRebuild &&
+      !(ctx.opts as Record<string, unknown>).scope
+    ) {
+      try {
+        await collectFiles(ctx);
+        if (
+          detectNoChanges(ctx.db, ctx.allFiles, ctx.rootDir, ctx.opts as Record<string, unknown>)
+        ) {
+          info('No changes detected. Graph is up to date.');
+          writeJournalHeader(ctx.rootDir, Date.now());
+          closeDb(ctx.db);
+          return;
+        }
+      } catch (err) {
+        // Pre-flight is best-effort — any failure falls through to the
+        // orchestrator, which performs its own complete detection.
+        // Reset ctx.allFiles so runPipelineStages re-collects under its own
+        // engine state if we ended up partially populated before throwing.
+        ctx.allFiles = undefined as unknown as string[];
+        ctx.discoveredDirs = undefined as unknown as Set<string>;
+        debug(`native fast-skip pre-flight failed: ${toErrorMessage(err)}`);
+      }
+    }
 
     // ── Rust orchestrator fast path (#695) ────────────────────────────
     // When available, run the entire build pipeline in Rust with zero
