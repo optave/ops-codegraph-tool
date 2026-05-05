@@ -48,7 +48,7 @@ jobs:
         run: npm install -g @napi-rs/cli@3
 
       - name: Install dependencies
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: npm install
 
       - name: Build native addon from current source
@@ -273,7 +273,7 @@ jobs:
           path: crates/codegraph-core/
 
       - name: Install dependencies
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: npm install
 
       - name: Install native addon over published binary
@@ -394,7 +394,7 @@ jobs:
           node-version: "22"
 
       - name: Install dependencies
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: npm install
 
       - name: Set version
@@ -575,7 +575,7 @@ jobs:
           node-version: "24"
 
       - name: Install dependencies
-        timeout-minutes: 10
+        timeout-minutes: 20
         run: npm install
 
       - name: Set version
