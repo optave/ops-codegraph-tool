@@ -295,9 +295,153 @@ jobs:
       - name: Check compilation
         run: cargo check --workspace
 
+  # ── Pre-publish benchmark gate ──
+  #
+  # Mirrors the gate in publish.yml so every PR catches regressions before
+  # merge instead of at release time. Measures the PR-built native artifact
+  # against the local source as version "dev", appends to the benchmark
+  # history files (in-job only — never committed from CI), and runs the
+  # regression guard against the most recent release baseline.
+  #
+  # Long-running but parallel with the rest of CI, so it does not extend
+  # the critical path for fast-failing checks (lint/typecheck/test).
+  pre-publish-benchmark:
+    name: Pre-publish benchmark gate
+    needs: native-host-build
+    runs-on: ubuntu-latest
+    env:
+      # Surface why detectNoChanges returns false on each fast-skip pre-flight
+      # so we can pinpoint the cause of the ~2s incremental-rebuild regression
+      # observed in CI but not locally (#1066). Remove once root cause is fixed.
+      CODEGRAPH_FAST_SKIP_DIAG: "1"
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Setup Python (for resolution benchmark + tracer validation)
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Setup Go (for resolution benchmark + tracer validation)
+        uses: actions/setup-go@v6
+        with:
+          go-version: "stable"
+          cache: false
+
+      - name: Download PR-built native addon
+        uses: actions/download-artifact@v8
+        with:
+          name: native-host-ubuntu-latest
+          path: crates/codegraph-core/
+
+      - name: Install dependencies
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            npm install && break
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::npm install attempt $attempt failed, retrying in 15s..."
+              sleep 15
+            else
+              echo "::error::npm install failed after 3 attempts"
+              exit 1
+            fi
+          done
+
+      - name: Install native addon over published binary
+        run: node scripts/ci-install-native.mjs
+
+      # Build dist/ so benchmarks load the same compiled JS that ships to npm.
+      # Historical baselines (v3.9.6 and earlier) were measured against dist/
+      # via the post-publish --npm path; running against src/ with --strip-types
+      # changes the load path and introduces version-to-version noise unrelated
+      # to the code under test (#1055).
+      - name: Build TypeScript
+        run: npm run build
+
+      - name: Run build benchmark
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/benchmark.ts --version dev --dist > benchmark-result.json
+
+      - name: Run resolution benchmark
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/resolution-benchmark.ts --version dev --dist > resolution-result.json
+
+      - name: Gate on resolution thresholds
+        timeout-minutes: 30
+        run: npx vitest run tests/benchmarks/resolution/resolution-benchmark.test.ts --reporter=verbose
+
+      - name: Run tracer validation (same-file edge recall)
+        timeout-minutes: 10
+        run: npx vitest run tests/benchmarks/resolution/tracer/tracer-validation.test.ts --reporter=verbose
+
+      - name: Merge resolution into build result
+        run: |
+          node -e "
+            const fs = require('fs');
+            const build = JSON.parse(fs.readFileSync('benchmark-result.json', 'utf8'));
+            const resolution = JSON.parse(fs.readFileSync('resolution-result.json', 'utf8'));
+            build.resolution = resolution;
+            fs.writeFileSync('benchmark-result.json', JSON.stringify(build, null, 2));
+          "
+
+      - name: Run query benchmark
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/query-benchmark.ts --version dev --dist > query-benchmark-result.json
+
+      - name: Run incremental benchmark
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/incremental-benchmark.ts --version dev --dist > incremental-benchmark-result.json
+
+      - name: Update build report
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG scripts/update-benchmark-report.ts benchmark-result.json
+
+      - name: Update query report
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG scripts/update-query-report.ts query-benchmark-result.json
+
+      - name: Update incremental report
+        run: |
+          STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
+          node $STRIP_FLAG scripts/update-incremental-report.ts incremental-benchmark-result.json
+
+      - name: Regression guard
+        env:
+          RUN_REGRESSION_GUARD: "1"
+        run: npm run test:regression-guard
+
+      # Always upload raw JSON so a failed regression guard is debuggable
+      # without re-running the full benchmark suite locally.
+      - name: Upload benchmark JSON results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-results-json
+          path: |
+            benchmark-result.json
+            query-benchmark-result.json
+            incremental-benchmark-result.json
+          if-no-files-found: warn
+
   ci-pipeline:
     if: always()
-    needs: [lint, native-host-build, test, typecheck, audit, verify-imports, rust-check, parity]
+    needs: [lint, native-host-build, test, typecheck, audit, verify-imports, rust-check, parity, pre-publish-benchmark]
     runs-on: ubuntu-latest
     name: CI Testing Pipeline
     steps:
