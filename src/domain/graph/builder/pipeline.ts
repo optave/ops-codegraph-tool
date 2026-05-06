@@ -767,10 +767,30 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
     collected.files.map((f) => normalizePath(path.relative(ctx.rootDir, f))),
   );
 
-  const existingRows = ctx.db
+  const existingNodeRows = ctx.db
     .prepare("SELECT DISTINCT file FROM nodes WHERE kind = 'file'")
     .all() as Array<{ file: string }>;
-  const existing = new Set(existingRows.map((r) => r.file));
+  const existingNodes = new Set(existingNodeRows.map((r) => r.file));
+
+  // Belt-and-suspenders: also check `file_hashes`. The fast-skip pre-flight
+  // (#1054) rejects on `file_hashes` gaps, and the two tables can diverge
+  // (e.g. a DB written by old code where `nodes` was populated but
+  // `file_hashes` was not). Treating "in nodes but not in file_hashes" as
+  // missing closes the gap so the backfill repairs the file_hashes row even
+  // when the node row already exists.
+  let existingHashes = new Set<string>();
+  try {
+    const existingHashRows = ctx.db
+      .prepare('SELECT DISTINCT file FROM file_hashes')
+      .all() as Array<{ file: string }>;
+    existingHashes = new Set(existingHashRows.map((r) => r.file));
+  } catch (e) {
+    // file_hashes table may not exist on legacy DBs; treat as fully missing
+    // so the backfill writes rows on the upsert path below.
+    debug(
+      `backfillNativeDroppedFiles: file_hashes read failed (table may not exist): ${toErrorMessage(e)}`,
+    );
+  }
 
   // Restrict backfill to files with an installed WASM grammar. Extensions in
   // LANGUAGE_REGISTRY without a shipped grammar file (e.g. groovy, erlang on
@@ -780,7 +800,9 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
   const missingRel: string[] = [];
   const missingAbs: string[] = [];
   for (const rel of expected) {
-    if (existing.has(rel)) continue;
+    // A file is "missing" if it's absent from EITHER nodes OR file_hashes.
+    // Both must be present for fast-skip to work correctly.
+    if (existingNodes.has(rel) && existingHashes.has(rel)) continue;
     const ext = path.extname(rel).toLowerCase();
     if (!installedExts.has(ext)) continue;
     missingRel.push(rel);
