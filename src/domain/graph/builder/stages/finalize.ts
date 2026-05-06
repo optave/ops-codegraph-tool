@@ -82,13 +82,16 @@ function persistBuildMetadata(
 ): void {
   const useNativeDb = ctx.engineName === 'native' && !!ctx.nativeDb;
   if (!ctx.isFullBuild && ctx.allSymbols.size <= 3) return;
-  // When the native engine is active, persist the Rust addon version so that
-  // checkEngineSchemaMismatch compares against the same value on the next build.
-  // Writing CODEGRAPH_VERSION (the npm package version) here would create a
-  // permanent mismatch whenever npm and crate versions diverge, forcing every
-  // subsequent build to be a full rebuild.
+  // When the native engine is active, persist the binary's CARGO_PKG_VERSION
+  // (ctx.nativeBinaryVersion). The Rust orchestrator's check_version_mismatch
+  // compares against that exact value, so writing the platform package.json
+  // version (ctx.engineVersion) — which can drift from the binary in CI
+  // hot-swap flows (#1066) — would force every subsequent native build to
+  // be a full rebuild.
   const codeVersionToWrite =
-    ctx.engineName === 'native' && ctx.engineVersion ? ctx.engineVersion : CODEGRAPH_VERSION;
+    ctx.engineName === 'native' && ctx.nativeBinaryVersion
+      ? ctx.nativeBinaryVersion
+      : CODEGRAPH_VERSION;
   // Persist the repo root so downstream commands (e.g. `codegraph embed`)
   // can resolve relative file paths regardless of the invoking cwd.
   // Use realpathSync (symlink-resolving) to match the Rust engine's

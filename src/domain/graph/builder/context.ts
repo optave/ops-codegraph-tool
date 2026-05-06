@@ -28,6 +28,16 @@ export class PipelineContext {
   engineOpts!: EngineOpts;
   engineName!: 'native' | 'wasm';
   engineVersion!: string | null;
+  /**
+   * The version reported by the native binary itself (CARGO_PKG_VERSION at
+   * build time), as opposed to `engineVersion` which prefers the platform
+   * package.json. The Rust orchestrator's check_version_mismatch compares
+   * `build_meta.engine_version` against CARGO_PKG_VERSION, so build_meta
+   * writes must use this value to avoid a perpetual full-rebuild loop when
+   * the binary and platform package.json drift apart (e.g., CI hot-swap
+   * via ci-install-native.mjs — #1066).
+   */
+  nativeBinaryVersion!: string | null;
   aliases!: PathAliases;
   incremental!: boolean;
   forceFullRebuild: boolean = false;

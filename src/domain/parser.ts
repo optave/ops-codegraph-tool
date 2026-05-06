@@ -1197,15 +1197,17 @@ export async function parseFilesAuto(
 export function getActiveEngine(opts: ParseEngineOpts = {}): {
   name: 'native' | 'wasm';
   version: string | null;
+  binaryVersion: string | null;
 } {
   const { name, native } = resolveEngine(opts);
-  let version: string | null = native
-    ? typeof native.engineVersion === 'function'
-      ? native.engineVersion()
-      : null
-    : null;
-  // Prefer platform package.json version over binary-embedded version
-  // to handle stale binaries that weren't recompiled during a release
+  const binaryVersion: string | null =
+    native && typeof native.engineVersion === 'function' ? native.engineVersion() : null;
+  // The display version prefers the platform package.json so the "Using native
+  // engine (vX)" log matches the npm release the user installed. The Rust
+  // orchestrator's check_version_mismatch compares against CARGO_PKG_VERSION
+  // (the binary's own value), so build_meta writes must use `binaryVersion`,
+  // not this display value — see pipeline.ts and finalize.ts (#1066).
+  let version: string | null = binaryVersion;
   if (native) {
     try {
       version = getNativePackageVersion() ?? version;
@@ -1213,7 +1215,7 @@ export function getActiveEngine(opts: ParseEngineOpts = {}): {
       debug(`getNativePackageVersion failed: ${(e as Error).message}`);
     }
   }
-  return { name, version };
+  return { name, version, binaryVersion };
 }
 
 /**
