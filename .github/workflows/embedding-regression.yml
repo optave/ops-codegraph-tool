@@ -29,6 +29,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
+        timeout-minutes: 20
         run: npm install
 
       - name: Cache HuggingFace models

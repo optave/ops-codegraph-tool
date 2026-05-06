@@ -45,9 +45,12 @@ jobs:
           workspaces: crates/codegraph-core
 
       - name: Install napi-rs CLI
+        timeout-minutes: 5
         run: npm install -g @napi-rs/cli@3
 
-      - run: npm install
+      - name: Install dependencies
+        timeout-minutes: 20
+        run: npm install
 
       - name: Build native addon from current source
         working-directory: crates/codegraph-core
@@ -212,6 +215,7 @@ jobs:
           mv "${CARGO}.tmp" "$CARGO"
 
       - name: Install napi-rs CLI
+        timeout-minutes: 5
         run: npm install -g @napi-rs/cli@3
 
       - name: Build native addon
@@ -275,7 +279,9 @@ jobs:
           name: native-linux-x64
           path: crates/codegraph-core/
 
-      - run: npm install
+      - name: Install dependencies
+        timeout-minutes: 20
+        run: npm install
 
       - name: Install native addon over published binary
         run: node scripts/ci-install-native.mjs
@@ -394,7 +400,9 @@ jobs:
         with:
           node-version: "22"
 
-      - run: npm install
+      - name: Install dependencies
+        timeout-minutes: 20
+        run: npm install
 
       - name: Set version
         env:
@@ -573,7 +581,9 @@ jobs:
         with:
           node-version: "24"
 
-      - run: npm install
+      - name: Install dependencies
+        timeout-minutes: 20
+        run: npm install
 
       - name: Set version
         env:
@@ -707,6 +717,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
       - name: Refresh node_modules after publish
+        timeout-minutes: 10
         run: npm install --ignore-scripts
 
       - name: Generate DEPENDENCIES.json

@@ -29,6 +29,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
+        timeout-minutes: 10
         shell: bash
         run: |
           for attempt in 1 2 3; do

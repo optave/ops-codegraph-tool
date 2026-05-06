@@ -96,6 +96,7 @@ jobs:
           sudo ln -sf /lib/x86_64-linux-gnu/libgcc_s.so.1 "${GNU_LIB}/libgcc_s.so.1"
 
       - name: Install napi-rs CLI
+        timeout-minutes: 5
         run: npm install -g @napi-rs/cli@3
 
       - name: Build native addon

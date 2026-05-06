@@ -138,6 +138,7 @@ jobs:
           cache: "npm"
 
       - name: Install dependencies
+        timeout-minutes: 20
         run: npm install --prefer-offline --no-audit --no-fund
 
       - name: Determine benchmark mode

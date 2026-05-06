@@ -22,6 +22,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
+        timeout-minutes: 20
         shell: bash
         run: |
           for attempt in 1 2 3; do
@@ -62,6 +63,7 @@ jobs:
           workspaces: crates/codegraph-core
 
       - name: Install napi-rs CLI
+        timeout-minutes: 5
         run: npm install -g @napi-rs/cli@3
 
       - name: Build native addon
@@ -103,6 +105,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
 
       - name: Install dependencies
+        timeout-minutes: 20
         shell: bash
         run: |
           for attempt in 1 2 3; do
@@ -141,6 +144,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
+        timeout-minutes: 20
         shell: bash
         run: |
           for attempt in 1 2 3; do
@@ -169,6 +173,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
+        timeout-minutes: 20
         run: npm ci
 
       - name: Audit production dependencies
@@ -209,6 +214,7 @@ jobs:
           node-version: 22
 
       - name: Install dependencies
+        timeout-minutes: 20
         shell: bash
         run: |
           for attempt in 1 2 3; do
