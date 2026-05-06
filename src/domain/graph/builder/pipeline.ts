@@ -679,11 +679,17 @@ async function tryNativeOrchestrator(
   // the binary and platform package.json diverge — e.g., CI hot-swap
   // via ci-install-native.mjs (#1066) — forcing every subsequent build
   // to be a full rebuild.
-  const nativeVersionForMeta = ctx.nativeBinaryVersion || ctx.engineVersion || '';
+  //
+  // When the native addon doesn't expose engineVersion() (older addon),
+  // fall back to CODEGRAPH_VERSION — same fallback used by both
+  // checkEngineSchemaMismatch (read path) and persistBuildMetadata
+  // (the JS-pipeline write path in finalize.ts). Using ctx.engineVersion
+  // here would re-introduce the asymmetry this PR fixes for that case.
+  const nativeVersionForMeta = ctx.nativeBinaryVersion || CODEGRAPH_VERSION;
   setBuildMeta(ctx.db, {
     engine: ctx.engineName,
     engine_version: nativeVersionForMeta,
-    codegraph_version: nativeVersionForMeta || CODEGRAPH_VERSION,
+    codegraph_version: nativeVersionForMeta,
     schema_version: String(ctx.schemaVersion),
     built_at: new Date().toISOString(),
   });
