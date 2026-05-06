@@ -38,6 +38,25 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
     "kts", "swift", "scala", "sh", "bash", "ex", "exs", "lua", "dart", "zig", "hs", "ml", "mli",
 ];
 
+/// Returns whether `path` has an extension the Rust file_collector would accept.
+///
+/// Mirrors the predicate at the heart of `collect_files`: a file is collected
+/// if `LanguageKind::from_extension` recognizes it OR its raw extension is in
+/// `SUPPORTED_EXTENSIONS`. Exposed for `change_detection::detect_removed_files`
+/// so that files outside Rust's capability (e.g. WASM-only `.clj`, `.gleam`,
+/// `.jl`) are not flagged as "removed" merely because the orchestrator's
+/// narrower collector never sees them.
+pub fn is_supported_extension(path: &str) -> bool {
+    if LanguageKind::from_extension(path).is_some() {
+        return true;
+    }
+    let ext = Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("");
+    SUPPORTED_EXTENSIONS.contains(&ext)
+}
+
 /// Result of file collection.
 pub struct CollectResult {
     /// Absolute paths of all collected source files.
