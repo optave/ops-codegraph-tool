@@ -307,6 +307,11 @@ jobs:
   # the critical path for fast-failing checks (lint/typecheck/test).
   pre-publish-benchmark:
     name: Pre-publish benchmark gate
+    # Only run on PRs — push-to-main re-runs the same benchmarks the merged
+    # PR already gated on, doubling CI minutes per landed change with no new
+    # signal. Mirrors the `if: github.event_name != 'push'` skip in
+    # publish.yml's equivalent gate.
+    if: github.event_name == 'pull_request'
     needs: native-host-build
     runs-on: ubuntu-latest
     env:
@@ -369,11 +374,13 @@ jobs:
         run: npm run build
 
       - name: Run build benchmark
+        timeout-minutes: 20
         run: |
           STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
           node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/benchmark.ts --version dev --dist > benchmark-result.json
 
       - name: Run resolution benchmark
+        timeout-minutes: 20
         run: |
           STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
           node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/resolution-benchmark.ts --version dev --dist > resolution-result.json
@@ -397,11 +404,13 @@ jobs:
           "
 
       - name: Run query benchmark
+        timeout-minutes: 20
         run: |
           STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
           node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/query-benchmark.ts --version dev --dist > query-benchmark-result.json
 
       - name: Run incremental benchmark
+        timeout-minutes: 20
         run: |
           STRIP_FLAG=$(node -e "const [M]=process.versions.node.split('.').map(Number); console.log(M>=23?'--strip-types':'--experimental-strip-types')")
           node $STRIP_FLAG --import ./scripts/ts-resolve-loader.js scripts/incremental-benchmark.ts --version dev --dist > incremental-benchmark-result.json
