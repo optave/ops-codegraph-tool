@@ -10,6 +10,7 @@
 //! when switching between JS and native engines, so hash format compatibility is
 //! not required.
 
+use crate::file_collector::is_supported_extension;
 use crate::journal;
 use rusqlite::Connection;
 use sha2::{Digest, Sha256};
@@ -129,6 +130,14 @@ fn load_file_hashes(conn: &Connection) -> Option<HashMap<String, FileHashRow>> {
 /// When `scoped_rel_paths` is provided (scoped rebuild), only files within that
 /// scope are considered candidates for removal. Without it, all DB files not
 /// found on disk are treated as removed.
+///
+/// Files whose extension is outside the Rust file_collector's supported set
+/// (e.g. `.clj`, `.gleam`, `.jl`, `.fs` — WASM-only languages) are skipped:
+/// the orchestrator's narrower collector never sees them, so absence from
+/// `current` is a capability boundary, not a deletion. Their `nodes` and
+/// `file_hashes` rows are owned by the JS-side WASM backfill (#967, #1068)
+/// and must be left alone, otherwise every incremental rebuild purges and
+/// re-creates them — the ~2s floor reported in #1066.
 fn detect_removed_files(
     existing: &HashMap<String, FileHashRow>,
     all_files: &[String],
@@ -143,6 +152,9 @@ fn detect_removed_files(
     existing
         .keys()
         .filter(|f| {
+            if !is_supported_extension(f) {
+                return false;
+            }
             // When scope is set, only consider files within scope as candidates.
             if let Some(scope) = scoped_rel_paths {
                 scope.contains(*f) && !current.contains(*f)
@@ -758,5 +770,46 @@ mod tests {
         let all_files = vec!["/project/src/a.ts".to_string()];
         let removed = detect_removed_files(&existing, &all_files, "/project", None);
         assert_eq!(removed, vec!["src/b.ts"]);
+    }
+
+    #[test]
+    fn detect_removed_skips_unsupported_extensions() {
+        // Files in WASM-only languages (Clojure, Gleam, Julia, F#) live in
+        // `file_hashes` because the JS-side WASM backfill writes them, but
+        // Rust's narrower file_collector never collects them. Without this
+        // skip, every incremental rebuild would flag them as removed and
+        // purge their rows — the #1066 ~2s floor.
+        let mut existing = HashMap::new();
+        for path in [
+            "tests/fixtures/clojure/main.clj",
+            "tests/fixtures/gleam/main.gleam",
+            "tests/fixtures/julia/main.jl",
+            "tests/fixtures/fsharp/Main.fs",
+        ] {
+            existing.insert(
+                path.to_string(),
+                FileHashRow {
+                    file: path.to_string(),
+                    hash: "h".to_string(),
+                    mtime: 0,
+                    size: 0,
+                },
+            );
+        }
+        // Also include a supported file that IS missing from disk — should
+        // still be flagged as removed.
+        existing.insert(
+            "src/deleted.ts".to_string(),
+            FileHashRow {
+                file: "src/deleted.ts".to_string(),
+                hash: "h".to_string(),
+                mtime: 0,
+                size: 0,
+            },
+        );
+
+        let all_files: Vec<String> = Vec::new();
+        let removed = detect_removed_files(&existing, &all_files, "/project", None);
+        assert_eq!(removed, vec!["src/deleted.ts"]);
     }
 }
