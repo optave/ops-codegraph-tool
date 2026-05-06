@@ -284,6 +284,15 @@ jobs:
         run: npm install
 
       - name: Install native addon over published binary
+        # Pass NATIVE_BUILD_VERSION so the script also rewrites the platform
+        # package.json's version to match the binary's CARGO_PKG_VERSION
+        # (build-native bumps Cargo.toml to this same value before building).
+        # Without this, the JS-side getNativePackageVersion() returns the
+        # last-published version while the binary reports the bumped version,
+        # and the Rust orchestrator's check_version_mismatch forces every
+        # incremental rebuild back through the full pipeline (#1066).
+        env:
+          NATIVE_BUILD_VERSION: ${{ needs.compute-version.outputs.version }}
         run: node scripts/ci-install-native.mjs
 
       # Build dist/ so benchmarks load the same compiled JS that ships to npm.
