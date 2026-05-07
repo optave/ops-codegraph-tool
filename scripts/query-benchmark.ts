@@ -115,7 +115,7 @@ const RUNS = 5;
 // tree-sitter 0.25 grew the binary's init footprint (#1076), even though
 // steady-state per-call latency is unchanged. Discard the first WARMUP_RUNS
 // before timing so the metric reflects warm-call latency, not cold-start.
-const WARMUP_RUNS = 2;
+const WARMUP_RUNS = 3;
 
 function median(arr) {
 	const sorted = [...arr].sort((a, b) => a - b);
