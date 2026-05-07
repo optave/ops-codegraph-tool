@@ -108,6 +108,15 @@ console.log = (...args) => console.error(...args);
 
 const RUNS = 5;
 
+// First 2-3 native fnDeps calls per process pay a cold-start cost (rusqlite
+// statement-cache warmup, OS page cache for the DB file, NAPI-side static
+// init from tree-sitter's transitive crates linked into the .node binary).
+// On Linux x86_64 CI, that pulled median(5) into cold-start territory once
+// tree-sitter 0.25 grew the binary's init footprint (#1076), even though
+// steady-state per-call latency is unchanged. Discard the first WARMUP_RUNS
+// before timing so the metric reflects warm-call latency, not cold-start.
+const WARMUP_RUNS = 2;
+
 function median(arr) {
 	const sorted = [...arr].sort((a, b) => a - b);
 	const mid = Math.floor(sorted.length / 2);
@@ -172,6 +181,9 @@ function selectTargets() {
 function benchDepths(fn, name, depths) {
 	const result = {};
 	for (const depth of depths) {
+		for (let i = 0; i < WARMUP_RUNS; i++) {
+			fn(name, dbPath, { depth, noTests: true });
+		}
 		const timings = [];
 		for (let i = 0; i < RUNS; i++) {
 			const start = performance.now();
