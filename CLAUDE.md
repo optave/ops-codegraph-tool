@@ -10,6 +10,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 > **Never silently skip verification.** If tests, builds, or any verification step cannot run or fails for any reason (compilation errors, platform issues, missing dependencies), STOP and report the issue to the user immediately. Never silently proceed with unverified changes. Let the user decide whether to proceed — do not make that decision yourself.
 
+> **Scope discipline — open issues, don't expand scope.** When you encounter a problem unrelated to the current task — pre-existing bugs, code that needs a bigger refactor, or any defect that does not directly affect the result of what you're doing — open a GitHub issue with `gh issue create` and keep going. Only fix it inline when it directly affects the correctness or outcome of the work in front of you. This keeps PRs focused (one concern per PR) while ensuring the finding is not lost.
+
+> **Prioritize the best architecture, not the smallest diff.** Do not default to the simplest or most localized fix. Choose the approach that fits the codebase's architecture best, even when that means larger changes, moving code across modules, or restructuring an abstraction. Do not be afraid of bigger changes — a larger diff that leaves the design healthier is preferable to a small diff that entrenches a poor structure. Surface the architectural reasoning to the user; don't silently shrink the change to avoid the work.
+
 ## Codegraph Workflow
 
 Hooks handle: file-level deps on reads, graph rebuild after edits, commit-time checks (cycles, dead exports, diff-impact, lint). **Use these for function-level understanding when modifying source code:**
