@@ -753,15 +753,17 @@ async function tryNativeOrchestrator(
   // stale native binaries). WASM handles those — backfill via WASM so both
   // engines process the same file set (#967).
   //
-  // Runs on every successful orchestrator pass (not just full builds): on
-  // incrementals the orchestrator's change detection treats files outside
-  // Rust's narrower file_collector as `removed` and deletes their nodes +
-  // file_hashes rows. Without re-running the backfill we'd lose the symbols
-  // for those files and permanently break the JS-side fast-skip pre-flight
-  // (#1054, #1068). The function is cheap (single fs scan + DB query) when
-  // nothing is missing, and on no-op rebuilds the missing-set is re-derived
-  // from `nodes`, so it catches whatever Rust just deleted.
-  await backfillNativeDroppedFiles(ctx);
+  // Runs on full builds and on incrementals when the orchestrator reports
+  // any deletions. The orchestrator's `detect_removed_files` filter (#1070)
+  // skips files outside its narrower file_collector, so on a current binary
+  // an unchanged 1-file rebuild reports `removedCount=0` and the backfill
+  // call is pure overhead (fs walk + 2 DB queries + 48-file WASM re-parse).
+  // Legacy binaries lacking the filter still report `removedCount>0` and
+  // get the gap-repair behavior #1068 introduced.
+  const removedCount = result.removedCount ?? 0;
+  if (result.isFullBuild || removedCount > 0) {
+    await backfillNativeDroppedFiles(ctx);
+  }
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
   return formatNativeTimingResult(p, structurePatchMs, analysisTiming);
