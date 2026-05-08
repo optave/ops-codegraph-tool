@@ -232,6 +232,13 @@ function findLatestPair<T extends { version: string }>(
     if (!hasEngine(history[latestIdx])) continue;
 
     const latestVersion = history[latestIdx].version;
+    // 'dev' represents the current PR build (rolling entry — see
+    // scripts/update-benchmark-report.ts). It has no parseable semver,
+    // so effectiveGap('dev', anyRelease) returns Infinity — without this
+    // bypass, the gap check below would skip dev entirely and the loop
+    // would silently fall through to compare two real releases instead
+    // of dev vs the latest release, defeating the per-PR gate.
+    const isDevLatest = latestVersion === 'dev';
 
     // Find previous non-dev entry with data for this engine, skipping
     // versions with known unreliable benchmark data and versions that
@@ -244,7 +251,10 @@ function findLatestPair<T extends { version: string }>(
       if (entry.version === 'dev') continue;
       if (SKIP_VERSIONS.has(entry.version)) continue;
       if (!hasEngine(entry)) continue;
-      if (effectiveGap(latestVersion, entry.version) > MAX_VERSION_GAP) continue;
+      // Skip the gap check when comparing dev → release: dev is always
+      // the current build, so the most recent comparable release is the
+      // correct baseline regardless of feature-expansion distance.
+      if (!isDevLatest && effectiveGap(latestVersion, entry.version) > MAX_VERSION_GAP) continue;
       return { latest: history[latestIdx], previous: entry };
     }
     // No valid baseline for this latest — try the next candidate
