@@ -100,6 +100,16 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   above the natural variance of the small target set. Not reproducible
  *   locally (~30ms steady-state); will be re-validated on v3.9.7+ data.
  *
+ * - 3.9.6:1-file rebuild — native incremental 1-file rebuild regressed
+ *   from 78ms to ~116ms (build) / 54ms to ~81ms (incremental). #1069 made
+ *   `backfillNativeDroppedFiles` run on every successful orchestrator pass
+ *   including incrementals; #1070 then taught the orchestrator to skip
+ *   unsupported-extension files in `detect_removed_files`, but the JS side
+ *   kept calling backfill unconditionally, wasting ~45ms per incremental
+ *   on this repo (fs walk + 2 DB queries + WASM re-parse). Fix tracked in
+ *   PR #1082 (gates backfill on `isFullBuild || removedCount > 0`).
+ *   Will reclear in v3.9.7+ data once #1082 lands.
+ *
  * - 3.9.6:resolution haskell precision/recall — Haskell AST visitor walked
  *   `astTypeMap` with bracket-notation lookup, so node type `constructor`
  *   (Haskell sum-types: Left, Right) resolved to `Object.prototype.constructor`
@@ -120,6 +130,7 @@ const KNOWN_REGRESSIONS = new Set([
   '3.9.6:No-op rebuild',
   '3.9.6:Full build',
   '3.9.6:Query time',
+  '3.9.6:1-file rebuild',
   '3.9.6:resolution haskell precision',
   '3.9.6:resolution haskell recall',
 ]);
