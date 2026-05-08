@@ -128,7 +128,7 @@ export function buildFileHashes(
         size = precomputed.stat.size;
       } else {
         const rawStat = fileStat(path.join(rootDir, relPath));
-        mtime = rawStat ? rawStat.mtime : 0;
+        mtime = rawStat ? Math.floor(rawStat.mtimeMs) : 0;
         size = rawStat ? rawStat.size : 0;
       }
       fileHashes.push({ file: relPath, hash: precomputed.hash, mtime, size });
@@ -143,7 +143,7 @@ export function buildFileHashes(
       }
       if (code !== null) {
         const stat = fileStat(absPath);
-        const mtime = stat ? stat.mtime : 0;
+        const mtime = stat ? Math.floor(stat.mtimeMs) : 0;
         const size = stat ? stat.size : 0;
         fileHashes.push({ file: relPath, hash: fileHash(code), mtime, size });
       }
@@ -365,7 +365,7 @@ function updateFileHashes(
         size = precomputed.stat.size;
       } else {
         const rawStat = fileStat(path.join(rootDir, relPath));
-        mtime = rawStat ? rawStat.mtime : 0;
+        mtime = rawStat ? Math.floor(rawStat.mtimeMs) : 0;
         size = rawStat ? rawStat.size : 0;
       }
       upsertHash.run(relPath, precomputed.hash, mtime, size);
@@ -380,7 +380,7 @@ function updateFileHashes(
       }
       if (code !== null) {
         const stat = fileStat(absPath);
-        const mtime = stat ? stat.mtime : 0;
+        const mtime = stat ? Math.floor(stat.mtimeMs) : 0;
         const size = stat ? stat.size : 0;
         upsertHash.run(relPath, fileHash(code), mtime, size);
       }

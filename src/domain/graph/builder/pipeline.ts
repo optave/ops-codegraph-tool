@@ -938,7 +938,7 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
         }
         if (code === null) continue;
         const stat = fileStat(absPath);
-        const mtime = stat ? stat.mtime : 0;
+        const mtime = stat ? Math.floor(stat.mtimeMs) : 0;
         const size = stat ? stat.size : 0;
         upsertHash.run(relPath, fileHash(code), mtime, size);
       }

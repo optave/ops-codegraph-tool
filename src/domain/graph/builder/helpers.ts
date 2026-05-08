@@ -222,18 +222,12 @@ export function fileHash(content: string): string {
 }
 
 /**
- * Stat a file, returning integer-truncated mtime in ms (and size).
- *
- * Reads via BigInt nanoseconds and truncates with integer math so the value
- * matches Rust's `Duration::as_millis() as i64` exactly. `Math.floor(stat.mtimeMs)`
- * cannot be substituted: at large epoch values the f64 `mtimeMs` rounds, so a
- * Rust-written `file_hashes.mtime` of N can read back as N+1 in JS and bust the
- * fast-skip path on every native→JS handoff.
+ * Stat a file, returning { mtimeMs, size } or null on error.
  */
-export function fileStat(filePath: string): { mtime: number; size: number } | null {
+export function fileStat(filePath: string): { mtimeMs: number; size: number } | null {
   try {
-    const s = fs.statSync(filePath, { bigint: true });
-    return { mtime: Number(s.mtimeNs / 1_000_000n), size: Number(s.size) };
+    const s = fs.statSync(filePath);
+    return { mtimeMs: s.mtimeMs, size: s.size };
   } catch {
     return null;
   }
