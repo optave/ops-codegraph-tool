@@ -222,12 +222,17 @@ export function fileHash(content: string): string {
 }
 
 /**
- * Stat a file, returning { mtimeMs, size } or null on error.
+ * Stat a file, returning { mtime, size } or null on error.
+ *
+ * `mtime` is `Math.floor(stat.mtimeMs)` so it matches the integer column
+ * stored in the DB. Floor-once-here keeps every consumer honest: storing or
+ * comparing a non-floored `mtimeMs` against the integer DB column would cause
+ * spurious fast-skip misses on the next build.
  */
-export function fileStat(filePath: string): { mtimeMs: number; size: number } | null {
+export function fileStat(filePath: string): { mtime: number; size: number } | null {
   try {
     const s = fs.statSync(filePath);
-    return { mtimeMs: s.mtimeMs, size: s.size };
+    return { mtime: Math.floor(s.mtimeMs), size: s.size };
   } catch {
     return null;
   }
