@@ -4,9 +4,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { closeDb, initSchema, openDb } from '../../src/db/index.js';
 import { PipelineContext } from '../../src/domain/graph/builder/context.js';
+import { fileStat } from '../../src/domain/graph/builder/helpers.js';
 import {
   detectChanges,
   detectNoChanges,
@@ -62,12 +63,12 @@ describe('detectChanges stage', () => {
     const content = fs.readFileSync(path.join(dir, 'a.js'), 'utf-8');
     const { createHash } = await import('node:crypto');
     const hash = createHash('md5').update(content).digest('hex');
-    const stat = fs.statSync(path.join(dir, 'a.js'));
+    const stat = fs.statSync(path.join(dir, 'a.js'), { bigint: true });
     db.prepare('INSERT INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)').run(
       'a.js',
       hash,
-      Math.floor(stat.mtimeMs),
-      stat.size,
+      Number(stat.mtimeNs / 1_000_000n),
+      Number(stat.size),
     );
 
     // Write journal header so journal check doesn't confuse things
@@ -158,15 +159,16 @@ describe('detectNoChanges fast-skip', () => {
     relPath: string,
     filePath: string,
   ): { mtime: number; size: number } {
-    const stat = fs.statSync(filePath);
-    const mtime = Math.floor(stat.mtimeMs);
+    const stat = fs.statSync(filePath, { bigint: true });
+    const mtime = Number(stat.mtimeNs / 1_000_000n);
+    const size = Number(stat.size);
     db.prepare('INSERT INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)').run(
       relPath,
       'deadbeef',
       mtime,
-      stat.size,
+      size,
     );
-    return { mtime, size: stat.size };
+    return { mtime, size };
   }
 
   it('returns false when file_hashes is empty (first build)', () => {
@@ -221,12 +223,12 @@ describe('detectNoChanges fast-skip', () => {
     const db = openDb(path.join(dbDir, 'graph.db'));
     initSchema(db);
     const file = seedFile(dir, 'a.js', 'export const a = 1;');
-    const stat = fs.statSync(file);
+    const stat = fs.statSync(file, { bigint: true });
     db.prepare('INSERT INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)').run(
       'a.js',
       'deadbeef',
-      Math.floor(stat.mtimeMs) + 1000, // skewed mtime
-      stat.size,
+      Number(stat.mtimeNs / 1_000_000n) + 1000, // skewed mtime
+      Number(stat.size),
     );
 
     expect(detectNoChanges(db, [file], dir)).toBe(false);
@@ -275,5 +277,57 @@ describe('detectNoChanges fast-skip', () => {
 
     closeDb(db);
     fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Pins down the BigInt-nanosecond truncation the helper uses to match Rust's
+  // `Duration::as_millis() as i64`. We can't trigger the f64 ULP rounding bug
+  // with a freshly-created file (the failure window is ~256 ns out of every ms,
+  // ~0.026% of values), so instead we stub `fs.statSync` to return a hand-picked
+  // BigInt `mtimeNs` whose f64-mtimeMs path diverges from the BigInt path:
+  //   ns = 1748400000000999808n  (≈ 2025-05-28 epoch ns)
+  //   BigInt:        Number(ns / 1_000_000n)         === 1748400000000
+  //   f64 (broken):  Math.floor(Number(ns) / 1e6)    === 1748400000001
+  // Reverting `fileStat` to `Math.floor(stat.mtimeMs)` would flip the result to
+  // N+1 and fail the assertion deterministically — re-introducing #1075 (the
+  // Rust-written `file_hashes.mtime` of N reading back as N+1 in JS, busting
+  // the fast-skip path on every native→JS handoff).
+  describe('fileStat #1075 mtime truncation', () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it('matches Rust Duration::as_millis() truncation at f64-rounding boundary', () => {
+      // Hand-picked epoch ns where Number(ns)/1e6 rounds up across a ms boundary.
+      const badMtimeNs = 1748400000000999808n;
+      const truncatedMs = 1748400000000;
+      const roundedMs = 1748400000001;
+
+      // Sanity: confirm the chosen value actually triggers the divergence; if a
+      // future Node.js release changes f64 rounding, this baseline assertion
+      // catches it before we trust the spy-based test below.
+      expect(Number(badMtimeNs / 1_000_000n)).toBe(truncatedMs);
+      expect(Math.floor(Number(badMtimeNs) / 1e6)).toBe(roundedMs);
+
+      const stubStats = {
+        mtimeNs: badMtimeNs,
+        mtimeMs: Number(badMtimeNs) / 1e6,
+        size: 42n,
+      } as unknown as fs.BigIntStats;
+      vi.spyOn(fs, 'statSync').mockReturnValue(stubStats);
+
+      // BigInt path must win: N, not N+1.
+      expect(fileStat('/fake/path.js')?.mtime).toBe(truncatedMs);
+    });
+
+    it('returns the BigInt-truncated mtime for a real file on disk', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-fileStat-trunc-'));
+      const file = seedFile(dir, 'a.js', 'export const a = 1;');
+
+      const big = fs.statSync(file, { bigint: true });
+      const expected = Number(big.mtimeNs / 1_000_000n);
+      expect(fileStat(file)?.mtime).toBe(expected);
+
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
   });
 });
