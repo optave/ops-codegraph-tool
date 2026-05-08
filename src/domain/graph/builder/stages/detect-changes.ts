@@ -27,7 +27,7 @@ interface FileHashRow {
 }
 
 interface FileStat {
-  mtimeMs: number;
+  mtime: number;
   size: number;
 }
 
@@ -182,7 +182,7 @@ function mtimeAndHashTiers(
     if (!stat) continue;
     const storedMtime = record.mtime || 0;
     const storedSize = record.size || 0;
-    if (storedSize > 0 && Math.floor(stat.mtimeMs) === storedMtime && stat.size === storedSize) {
+    if (storedSize > 0 && stat.mtime === storedMtime && stat.size === storedSize) {
       skipped.push(relPath);
       continue;
     }
@@ -596,9 +596,9 @@ export function detectNoChanges(
       log(`false: stored size <= 0 for ${relPath} (stored=${record.size})`);
       return false;
     }
-    if (Math.floor(stat.mtimeMs) !== storedMtime || stat.size !== storedSize) {
+    if (stat.mtime !== storedMtime || stat.size !== storedSize) {
       log(
-        `false: mtime/size diff for ${relPath}: stat=${Math.floor(stat.mtimeMs)}/${stat.size} stored=${storedMtime}/${storedSize} (mtimeMs=${stat.mtimeMs})`,
+        `false: mtime/size diff for ${relPath}: stat=${stat.mtime}/${stat.size} stored=${storedMtime}/${storedSize}`,
       );
       return false;
     }
@@ -663,7 +663,7 @@ export async function detectChanges(ctx: PipelineContext): Promise<void> {
         relPath: c.relPath,
         content: c.content,
         hash: c.hash,
-        stat: c.stat ? { mtime: Math.floor(c.stat.mtimeMs), size: c.stat.size } : undefined,
+        stat: c.stat ? { mtime: c.stat.mtime, size: c.stat.size } : undefined,
         _reverseDepOnly: c._reverseDepOnly,
       }));
     ctx.metadataUpdates = increResult.changed
@@ -674,7 +674,7 @@ export async function detectChanges(ctx: PipelineContext): Promise<void> {
       .map((c) => ({
         relPath: c.relPath,
         hash: c.hash,
-        stat: { mtime: Math.floor(c.stat.mtimeMs), size: c.stat.size },
+        stat: { mtime: c.stat.mtime, size: c.stat.size },
       }));
     if (!ctx.isFullBuild && ctx.parseChanges.length === 0 && ctx.removed.length === 0) {
       const ranAnalysis = await runPendingAnalysis(ctx);
