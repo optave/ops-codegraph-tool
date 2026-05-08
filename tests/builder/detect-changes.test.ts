@@ -7,6 +7,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDb, initSchema, openDb } from '../../src/db/index.js';
 import { PipelineContext } from '../../src/domain/graph/builder/context.js';
+import { fileStat } from '../../src/domain/graph/builder/helpers.js';
 import {
   detectChanges,
   detectNoChanges,
@@ -62,12 +63,12 @@ describe('detectChanges stage', () => {
     const content = fs.readFileSync(path.join(dir, 'a.js'), 'utf-8');
     const { createHash } = await import('node:crypto');
     const hash = createHash('md5').update(content).digest('hex');
-    const stat = fs.statSync(path.join(dir, 'a.js'));
+    const stat = fs.statSync(path.join(dir, 'a.js'), { bigint: true });
     db.prepare('INSERT INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)').run(
       'a.js',
       hash,
-      Math.floor(stat.mtimeMs),
-      stat.size,
+      Number(stat.mtimeNs / 1_000_000n),
+      Number(stat.size),
     );
 
     // Write journal header so journal check doesn't confuse things
@@ -158,15 +159,16 @@ describe('detectNoChanges fast-skip', () => {
     relPath: string,
     filePath: string,
   ): { mtime: number; size: number } {
-    const stat = fs.statSync(filePath);
-    const mtime = Math.floor(stat.mtimeMs);
+    const stat = fs.statSync(filePath, { bigint: true });
+    const mtime = Number(stat.mtimeNs / 1_000_000n);
+    const size = Number(stat.size);
     db.prepare('INSERT INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)').run(
       relPath,
       'deadbeef',
       mtime,
-      stat.size,
+      size,
     );
-    return { mtime, size: stat.size };
+    return { mtime, size };
   }
 
   it('returns false when file_hashes is empty (first build)', () => {
@@ -221,12 +223,12 @@ describe('detectNoChanges fast-skip', () => {
     const db = openDb(path.join(dbDir, 'graph.db'));
     initSchema(db);
     const file = seedFile(dir, 'a.js', 'export const a = 1;');
-    const stat = fs.statSync(file);
+    const stat = fs.statSync(file, { bigint: true });
     db.prepare('INSERT INTO file_hashes (file, hash, mtime, size) VALUES (?, ?, ?, ?)').run(
       'a.js',
       'deadbeef',
-      Math.floor(stat.mtimeMs) + 1000, // skewed mtime
-      stat.size,
+      Number(stat.mtimeNs / 1_000_000n) + 1000, // skewed mtime
+      Number(stat.size),
     );
 
     expect(detectNoChanges(db, [file], dir)).toBe(false);
@@ -274,6 +276,22 @@ describe('detectNoChanges fast-skip', () => {
     expect(detectNoChanges(db, [file], dir, { cfg: false, dataflow: false })).toBe(true);
 
     closeDb(db);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Pins down the BigInt-nanosecond truncation the helper uses to match Rust's
+  // `Duration::as_millis() as i64`. Reverting to `Math.floor(stat.mtimeMs)`
+  // re-introduces #1075: at large epoch values the f64 `mtimeMs` rounds, so a
+  // Rust-written `file_hashes.mtime` reads back 1ms ahead in JS and busts the
+  // fast-skip path on every native→JS handoff.
+  it('fileStat mtime matches Rust Duration::as_millis() truncation (#1075)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-fileStat-trunc-'));
+    const file = seedFile(dir, 'a.js', 'export const a = 1;');
+
+    const big = fs.statSync(file, { bigint: true });
+    const expected = Number(big.mtimeNs / 1_000_000n);
+    expect(fileStat(file)?.mtime).toBe(expected);
+
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
