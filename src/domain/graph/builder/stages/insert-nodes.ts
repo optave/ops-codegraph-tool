@@ -152,7 +152,7 @@ export function buildFileHashes(
 
   // Also include metadata-only updates (self-heal mtime/size without re-parse)
   for (const item of metadataUpdates) {
-    const mtime = item.stat ? Math.floor(item.stat.mtime) : 0;
+    const mtime = item.stat ? item.stat.mtime : 0;
     const size = item.stat ? item.stat.size : 0;
     fileHashes.push({ file: item.relPath, hash: item.hash, mtime, size });
   }
@@ -389,7 +389,7 @@ function updateFileHashes(
 
   // Also update metadata-only entries (self-heal mtime/size without re-parse)
   for (const item of metadataUpdates) {
-    const mtime = item.stat ? Math.floor(item.stat.mtime) : 0;
+    const mtime = item.stat ? item.stat.mtime : 0;
     const size = item.stat ? item.stat.size : 0;
     upsertHash.run(item.relPath, item.hash, mtime, size);
   }
