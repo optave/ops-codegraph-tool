@@ -63,6 +63,13 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  * Format: "version:metric-label" (must match the label passed to checkRegression).
  * Resolution keys use: "version:resolution <lang> precision" or "version:resolution <lang> recall".
  *
+ * The `version` is the release where the regression was first observed.
+ * When the per-PR gate runs `dev` against that release as baseline, the
+ * exemption applies via the baseline-version fallback in assertNoRegressions
+ * (and the resolution loop) — so a single `3.9.6:Foo` entry covers both
+ * `3.9.6 vs 3.9.5` and every subsequent `dev vs 3.9.6` comparison until
+ * the next release clears the regression and the entry is pruned.
+ *
  * - 3.9.0:1-file rebuild — native incremental path re-runs graph-wide phases
  *   (structureMs, AST, CFG, dataflow) on single-file rebuilds. Documented in
  *   BUILD-BENCHMARKS.md Notes section with phase-level breakdown.
@@ -295,11 +302,27 @@ function checkRegression(
   return { label, current, previous, pctChange };
 }
 
-function assertNoRegressions(checks: (RegressionCheck | null)[], version?: string) {
+function assertNoRegressions(
+  checks: (RegressionCheck | null)[],
+  version?: string,
+  baselineVersion?: string,
+) {
   const real = checks.filter(Boolean) as RegressionCheck[];
   const regressions = real.filter((c) => {
     if (c.pctChange <= REGRESSION_THRESHOLD) return false;
     if (version && KNOWN_REGRESSIONS.has(`${version}:${c.label}`)) return false;
+    // When `latest` is the rolling 'dev' build, KNOWN_REGRESSIONS entries
+    // are anchored to the release where the regression was first observed
+    // (e.g. '3.9.6:No-op rebuild'), not to 'dev'. Fall back to the baseline
+    // version so a regression introduced before release N stays exempt for
+    // every PR comparing dev → N until release N+1 clears it.
+    if (
+      version === 'dev' &&
+      baselineVersion &&
+      KNOWN_REGRESSIONS.has(`${baselineVersion}:${c.label}`)
+    ) {
+      return false;
+    }
     return true;
   });
 
@@ -461,6 +484,7 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
             checkRegression(`1-file rebuild`, cur.oneFileRebuildMs, prev.oneFileRebuildMs),
           ],
           latest.version,
+          previous.version,
         );
       });
     }
@@ -498,6 +522,7 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
             ),
           ],
           latest.version,
+          previous.version,
         );
       });
     }
@@ -527,6 +552,7 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
             checkRegression(`1-file rebuild`, cur.oneFileRebuildMs, prev.oneFileRebuildMs),
           ],
           latest.version,
+          previous.version,
         );
       });
     }
@@ -612,10 +638,18 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
           const prv = prevRes[lang];
           if (!cur || !prv) continue;
 
+          // When latest is 'dev' (per-PR build), KNOWN_REGRESSIONS keys
+          // are anchored to the baseline release where the regression was
+          // first observed, not to 'dev' — fall back to previousRes.version.
+          const isDev = latestRes.version === 'dev';
+
           const precDrop = prv.precision - cur.precision;
           if (precDrop > PRECISION_DROP_PP) {
             const key = `${latestRes.version}:resolution ${lang} precision`;
-            if (!KNOWN_REGRESSIONS.has(key)) {
+            const fallbackKey = `${previousRes.version}:resolution ${lang} precision`;
+            const isKnown =
+              KNOWN_REGRESSIONS.has(key) || (isDev && KNOWN_REGRESSIONS.has(fallbackKey));
+            if (!isKnown) {
               regressions.push(
                 `  ${lang} precision: ${(prv.precision * 100).toFixed(1)}% → ${(cur.precision * 100).toFixed(1)}% (−${(precDrop * 100).toFixed(1)}pp, threshold ${(PRECISION_DROP_PP * 100).toFixed(0)}pp)`,
               );
@@ -625,7 +659,10 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
           const recDrop = prv.recall - cur.recall;
           if (recDrop > RECALL_DROP_PP) {
             const key = `${latestRes.version}:resolution ${lang} recall`;
-            if (!KNOWN_REGRESSIONS.has(key)) {
+            const fallbackKey = `${previousRes.version}:resolution ${lang} recall`;
+            const isKnown =
+              KNOWN_REGRESSIONS.has(key) || (isDev && KNOWN_REGRESSIONS.has(fallbackKey));
+            if (!isKnown) {
               regressions.push(
                 `  ${lang} recall: ${(prv.recall * 100).toFixed(1)}% → ${(cur.recall * 100).toFixed(1)}% (−${(recDrop * 100).toFixed(1)}pp, threshold ${(RECALL_DROP_PP * 100).toFixed(0)}pp)`,
               );
