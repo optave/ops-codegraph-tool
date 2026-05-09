@@ -17,17 +17,40 @@ import { describe, expect, test } from 'vitest';
 // ── Configuration ────────────────────────────────────────────────────────
 
 /**
- * Maximum allowed regression (as a fraction, e.g. 0.50 = 50%).
+ * Maximum allowed regression (as a fraction, e.g. 0.25 = 25%).
  *
- * Why 50%: The report script warns at 15%, but timing benchmarks have
- * substantial natural variance — sub-30ms metrics (no-op rebuild,
- * 1-file rebuild) routinely jitter ±10ms from CI runner load, GC pauses,
- * and OS scheduling, which translates to ±50%+ on small absolute numbers.
- * 50% filters that noise while still catching catastrophic regressions
- * we've seen historically (100%–220%). Tune this down as benchmarks
- * stabilize.
+ * Why 25%: The report script warns at 15%, but timing benchmarks have
+ * natural variance from CI runner load, GC pauses, etc. 25% filters
+ * noise while still catching the catastrophic regressions we've seen
+ * historically (100%–220%). Tune this down as benchmarks stabilize.
+ *
+ * Genuinely high-variance sub-30ms metrics get a wider tolerance via
+ * `NOISY_METRICS` below — see that set's docstring for rationale.
  */
-const REGRESSION_THRESHOLD = 0.5;
+const REGRESSION_THRESHOLD = 0.25;
+
+/**
+ * Wider regression threshold applied to metrics in NOISY_METRICS.
+ *
+ * Sub-30ms timing metrics (no-op rebuild, 1-file rebuild) routinely
+ * jitter ±10ms from CI runner load, GC pauses, and OS scheduling,
+ * which translates to ±50%+ on small absolute numbers. The MIN_ABSOLUTE_DELTA
+ * floor (10ms) filters trivial noise but cannot distinguish a 10–14ms
+ * "real" jitter event from a regression on these specific metrics.
+ *
+ * Keeping the global threshold at 25% means a regression in the 30–100ms
+ * range is still caught (e.g. 50ms→63ms = +26%, flagged), while sub-30ms
+ * metrics in this set get the wider 50% allowance.
+ */
+const NOISY_METRIC_THRESHOLD = 0.5;
+
+/**
+ * Metric labels treated as high-variance and given the NOISY_METRIC_THRESHOLD
+ * tolerance instead of the default REGRESSION_THRESHOLD. Add a metric here
+ * only when its baseline is consistently sub-30ms and CI variance has been
+ * empirically shown to exceed 25%.
+ */
+const NOISY_METRICS = new Set<string>(['No-op rebuild', '1-file rebuild']);
 
 /**
  * Minimum absolute delta required before a regression is flagged.
@@ -278,10 +301,14 @@ function checkRegression(
   return { label, current, previous, pctChange };
 }
 
+function thresholdFor(label: string): number {
+  return NOISY_METRICS.has(label) ? NOISY_METRIC_THRESHOLD : REGRESSION_THRESHOLD;
+}
+
 function assertNoRegressions(checks: (RegressionCheck | null)[], version?: string) {
   const real = checks.filter(Boolean) as RegressionCheck[];
   const regressions = real.filter((c) => {
-    if (c.pctChange <= REGRESSION_THRESHOLD) return false;
+    if (c.pctChange <= thresholdFor(c.label)) return false;
     if (version && KNOWN_REGRESSIONS.has(`${version}:${c.label}`)) return false;
     return true;
   });
@@ -290,12 +317,10 @@ function assertNoRegressions(checks: (RegressionCheck | null)[], version?: strin
     const details = regressions
       .map(
         (r) =>
-          `  ${r.label}: ${r.previous} → ${r.current} (+${Math.round(r.pctChange * 100)}%, threshold ${Math.round(REGRESSION_THRESHOLD * 100)}%)`,
+          `  ${r.label}: ${r.previous} → ${r.current} (+${Math.round(r.pctChange * 100)}%, threshold ${Math.round(thresholdFor(r.label) * 100)}%)`,
       )
       .join('\n');
-    expect.fail(
-      `Benchmark regressions exceed ${Math.round(REGRESSION_THRESHOLD * 100)}% threshold:\n${details}`,
-    );
+    expect.fail(`Benchmark regressions exceed threshold:\n${details}`);
   }
 }
 
