@@ -12,3 +12,4 @@ generated/DEPENDENCIES.md
 generated/DEPENDENCIES.json
 artifacts/
 pkg/
+target/
