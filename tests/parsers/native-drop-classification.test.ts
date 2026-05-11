@@ -16,7 +16,6 @@ describe('classifyNativeDrops', () => {
   it('groups WASM-only languages under unsupported-by-native', () => {
     const { byReason, totals } = classifyNativeDrops([
       'src/a.fs',
-      'src/b.gleam',
       'src/c.clj',
       'src/d.jl',
       'src/e.R',
@@ -27,10 +26,9 @@ describe('classifyNativeDrops', () => {
       'src/j.v',
       'src/k.m',
     ]);
-    expect(totals['unsupported-by-native']).toBe(11);
+    expect(totals['unsupported-by-native']).toBe(10);
     expect(totals['native-extractor-failure']).toBe(0);
     expect(byReason['unsupported-by-native'].get('.fs')).toEqual(['src/a.fs']);
-    expect(byReason['unsupported-by-native'].get('.gleam')).toEqual(['src/b.gleam']);
     expect(byReason['unsupported-by-native'].get('.r')).toEqual(['src/e.R']);
   });
 
@@ -52,12 +50,12 @@ describe('classifyNativeDrops', () => {
       'src/a.ts',
       'src/b.fs',
       'src/c.fs',
-      'src/d.gleam',
+      'src/d.clj',
     ]);
     expect(totals['native-extractor-failure']).toBe(1);
     expect(totals['unsupported-by-native']).toBe(3);
     expect(byReason['unsupported-by-native'].get('.fs')).toEqual(['src/b.fs', 'src/c.fs']);
-    expect(byReason['unsupported-by-native'].get('.gleam')).toEqual(['src/d.gleam']);
+    expect(byReason['unsupported-by-native'].get('.clj')).toEqual(['src/d.clj']);
   });
 
   it('lowercases extensions so .R and .r share a bucket', () => {
@@ -78,7 +76,7 @@ describe('classifyNativeDrops', () => {
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.ts')).toBe(true);
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.py')).toBe(true);
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.fs')).toBe(false);
-    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.gleam')).toBe(false);
+    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.clj')).toBe(false);
   });
 });
 

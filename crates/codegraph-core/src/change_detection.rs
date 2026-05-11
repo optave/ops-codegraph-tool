@@ -132,7 +132,7 @@ fn load_file_hashes(conn: &Connection) -> Option<HashMap<String, FileHashRow>> {
 /// found on disk are treated as removed.
 ///
 /// Files whose extension is outside the Rust file_collector's supported set
-/// (e.g. `.clj`, `.gleam`, `.jl`, `.fs` — WASM-only languages) are skipped:
+/// (e.g. `.clj`, `.jl`, `.fs` — WASM-only languages) are skipped:
 /// the orchestrator's narrower collector never sees them, so absence from
 /// `current` is a capability boundary, not a deletion. Their `nodes` and
 /// `file_hashes` rows are owned by the JS-side WASM backfill (#967, #1068)
@@ -774,7 +774,7 @@ mod tests {
 
     #[test]
     fn detect_removed_skips_unsupported_extensions() {
-        // Files in WASM-only languages (Clojure, Gleam, Julia, F#) live in
+        // Files in WASM-only languages (Clojure, Julia, F#) live in
         // `file_hashes` because the JS-side WASM backfill writes them, but
         // Rust's narrower file_collector never collects them. Without this
         // skip, every incremental rebuild would flag them as removed and
@@ -782,7 +782,6 @@ mod tests {
         let mut existing = HashMap::new();
         for path in [
             "tests/fixtures/clojure/main.clj",
-            "tests/fixtures/gleam/main.gleam",
             "tests/fixtures/julia/main.jl",
             "tests/fixtures/fsharp/Main.fs",
         ] {
