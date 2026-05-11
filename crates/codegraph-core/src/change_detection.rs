@@ -774,7 +774,7 @@ mod tests {
 
     #[test]
     fn detect_removed_skips_unsupported_extensions() {
-        // Files in WASM-only languages (Clojure, Gleam, Julia, F#) live in
+        // Files in WASM-only languages (Clojure, Gleam, F#) live in
         // `file_hashes` because the JS-side WASM backfill writes them, but
         // Rust's narrower file_collector never collects them. Without this
         // skip, every incremental rebuild would flag them as removed and
@@ -783,7 +783,6 @@ mod tests {
         for path in [
             "tests/fixtures/clojure/main.clj",
             "tests/fixtures/gleam/main.gleam",
-            "tests/fixtures/julia/main.jl",
             "tests/fixtures/fsharp/Main.fs",
         ] {
             existing.insert(
