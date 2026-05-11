@@ -360,6 +360,16 @@ pub const OCAML_AST_CONFIG: LangAstConfig = LangAstConfig {
     string_prefixes: &[],
 };
 
+pub const ERLANG_AST_CONFIG: LangAstConfig = LangAstConfig {
+    new_types: &[],
+    throw_types: &[],
+    await_types: &[],
+    string_types: &["string"],
+    regex_types: &[],
+    quote_chars: &['"'],
+    string_prefixes: &[],
+};
+
 // ── Generic AST node walker ──────────────────────────────────────────────────
 
 /// Node types that represent identifiers across languages.
