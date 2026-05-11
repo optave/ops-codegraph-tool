@@ -471,6 +471,8 @@ export const NATIVE_SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
   '.hs',
   '.ml',
   '.mli',
+  '.v',
+  '.sv',
 ]);
 
 /**
