@@ -43,7 +43,14 @@ if (!isWorker()) {
 		srcImport(parentSrcDir, 'infrastructure/native.js')
 	);
 
-	const RUNS = 3;
+	// Mirror the worker-side methodology (WARMUP_RUNS=2, RUNS=5) so the parent's
+	// import-resolution timings are not exposed to the same cold-start outlier
+	// dynamic this PR is fixing. nativeBatchMs / jsFallbackMs are sub-15ms on
+	// codegraph itself today — exactly the sub-30ms band where a 3-sample
+	// median without warmup picks up rusqlite statement-cache and NAPI init
+	// jitter and produces CI-amplified false regressions.
+	const RUNS = 5;
+	const WARMUP_RUNS = 2;
 	function median(arr) {
 		const sorted = [...arr].sort((a, b) => a - b);
 		const mid = Math.floor(sorted.length / 2);
@@ -82,6 +89,9 @@ if (!isWorker()) {
 	let nativeBatchMs = null;
 	let perImportNativeMs = null;
 	if (parentNativeCheck()) {
+		for (let i = 0; i < WARMUP_RUNS; i++) {
+			parentBatch(inputs, rootParent, null);
+		}
 		const timings = [];
 		for (let i = 0; i < RUNS; i++) {
 			const start = performance.now();
@@ -90,6 +100,11 @@ if (!isWorker()) {
 		}
 		nativeBatchMs = round1(median(timings));
 		perImportNativeMs = inputs.length > 0 ? round1(nativeBatchMs / inputs.length) : 0;
+	}
+	for (let i = 0; i < WARMUP_RUNS; i++) {
+		for (const { fromFile, importSource } of inputs) {
+			parentJS(fromFile, importSource, rootParent, null);
+		}
 	}
 	const jsTimings = [];
 	for (let i = 0; i < RUNS; i++) {
