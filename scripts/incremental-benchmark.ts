@@ -155,8 +155,16 @@ try {
 const origLog = console.log;
 console.log = (...args) => console.error(...args);
 
-const RUNS = 3;
+const RUNS = 5;
 const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.ts');
+
+// First 1–2 incremental rebuilds per process pay a cold-start cost (rusqlite
+// statement-cache warmup, OS page cache for the DB file, NAPI-side static
+// init from tree-sitter's transitive crates linked into the .node binary).
+// Mirrors the WARMUP_RUNS used in scripts/query-benchmark.ts since #1077 —
+// without this, a 3-sample median includes cold-start outliers and shows
+// CI-amplified false regressions on sub-30ms metrics like No-op rebuild.
+const WARMUP_RUNS = 2;
 
 function median(arr) {
 	const sorted = [...arr].sort((a, b) => a - b);
@@ -179,6 +187,9 @@ const fullBuildMs = Math.round(median(fullTimings));
 // No-op rebuild (nothing changed)
 let noopRebuildMs = null;
 try {
+	for (let i = 0; i < WARMUP_RUNS; i++) {
+		await buildGraph(root, { engine, incremental: true });
+	}
 	const noopTimings = [];
 	for (let i = 0; i < RUNS; i++) {
 		const start = performance.now();
@@ -195,6 +206,10 @@ const original = fs.readFileSync(PROBE_FILE, 'utf8');
 let oneFileRebuildMs = null;
 let oneFilePhases = null;
 try {
+	for (let i = 0; i < WARMUP_RUNS; i++) {
+		fs.writeFileSync(PROBE_FILE, original + `\n// warmup-${i}\n`);
+		await buildGraph(root, { engine, incremental: true });
+	}
 	const oneFileRuns = [];
 	for (let i = 0; i < RUNS; i++) {
 		fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`);

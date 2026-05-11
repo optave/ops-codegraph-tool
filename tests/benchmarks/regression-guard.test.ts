@@ -32,8 +32,8 @@ const REGRESSION_THRESHOLD = 0.25;
 /**
  * Wider regression threshold applied to metrics in NOISY_METRICS.
  *
- * Sub-30ms timing metrics (no-op rebuild, 1-file rebuild) routinely
- * jitter ±10ms from CI runner load, GC pauses, and OS scheduling,
+ * Sub-30ms timing metrics (no-op rebuild, 1-file rebuild, fnDeps depth 1)
+ * routinely jitter ±10ms from CI runner load, GC pauses, and OS scheduling,
  * which translates to ±50%+ on small absolute numbers. The MIN_ABSOLUTE_DELTA
  * floor (10ms) filters trivial noise but cannot distinguish a 10–14ms
  * "real" jitter event from a regression on these specific metrics.
@@ -49,8 +49,19 @@ const NOISY_METRIC_THRESHOLD = 0.5;
  * tolerance instead of the default REGRESSION_THRESHOLD. Add a metric here
  * only when its baseline is consistently sub-30ms and CI variance has been
  * empirically shown to exceed 25%.
+ *
+ * - `fnDeps depth 1`: native baseline 28.7ms (v3.9.6). The fn_deps Rust
+ *   implementation, fnDepsData JS wrapper, and DB schema/indexes are all
+ *   byte-for-byte unchanged since v3.9.6 (verified by `git log v3.9.6..HEAD`
+ *   on crates/codegraph-core/src/read_queries.rs, src/domain/analysis/
+ *   dependencies.ts, src/db/, crates/codegraph-core/src/native_db.rs).
+ *   CI consistently measures +40–60% on this sub-30ms metric while the
+ *   absolute delta (~13ms) is at the noise floor for shared runners.
+ *   Methodology already discards 3 warmup runs (#1077). Same pattern as
+ *   No-op rebuild and 1-file rebuild — sub-30ms baseline amplified by
+ *   ±10ms runner jitter into a percentage swing that looks like regression.
  */
-const NOISY_METRICS = new Set<string>(['No-op rebuild', '1-file rebuild']);
+const NOISY_METRICS = new Set<string>(['No-op rebuild', '1-file rebuild', 'fnDeps depth 1']);
 
 /**
  * Minimum absolute delta required before a regression is flagged.
@@ -123,6 +134,18 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   Each is a few hundred microseconds; aggregated they explain the
  *   local delta. CI's +120% reflects sub-30ms metric noise floor on
  *   shared runners — not a 2x slowdown.
+ *
+ * - 3.10.0:1-file rebuild — same CI-amplification pattern on a sub-100ms
+ *   metric. Local steady-state is ~60ms (PR #1085 brought it down from
+ *   ~108ms by skipping unnecessary backfill on clean incrementals); CI
+ *   measures 75–82ms = local + ~20ms shared-runner overhead. Against the
+ *   v3.9.6 baseline of 54ms that's +44–52% on CI, fluctuating across runs
+ *   (run 25624120076: 79ms / +46%; run 25627318198: 82ms / +52%). The
+ *   underlying perf work is real and incremental-benchmark.ts now uses
+ *   warmup + 5 samples to reduce variance, but a 50% threshold on a
+ *   sub-100ms metric is still razor-thin. Exempt this release; remove
+ *   once 3.11.0+ data confirms CI numbers stabilize under the new
+ *   methodology.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.9.6:Build ms/file',
@@ -131,6 +154,7 @@ const KNOWN_REGRESSIONS = new Set([
   '3.9.6:resolution haskell precision',
   '3.9.6:resolution haskell recall',
   '3.10.0:No-op rebuild',
+  '3.10.0:1-file rebuild',
 ]);
 
 /**
