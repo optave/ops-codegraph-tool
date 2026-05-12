@@ -203,15 +203,40 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 /// Returns the inner string literal text (quotes stripped) or the bare
 /// identifier text — whichever appears first. Used for `library(pkg)`,
 /// `source("file.R")`, `setClass("Foo", ...)`, etc.
+///
+/// For named arguments like `library(package = dplyr)`, the tree-sitter-r
+/// grammar exposes a `value` field on the `argument` node — we prefer that
+/// over a positional child scan so we extract `dplyr`, not `package`.
 fn first_argument_value(node: &Node, source: &[u8], accept_identifier: bool) -> Option<String> {
     let args = node.child_by_field_name("arguments").or_else(|| find_child(node, "arguments"))?;
     for i in 0..args.child_count() {
         let Some(arg) = args.child(i) else { continue };
         match arg.kind() {
             "argument" => {
-                // argument wraps the actual value
+                // Prefer the field-named `value` child when present — this
+                // correctly handles `library(package = dplyr)` by returning
+                // `dplyr` (the value), not `package` (the parameter name).
+                if let Some(value) = arg.child_by_field_name("value") {
+                    if value.kind() == "string" {
+                        return Some(strip_string_quotes(&value, source));
+                    }
+                    if accept_identifier && value.kind() == "identifier" {
+                        return Some(node_text(&value, source).to_string());
+                    }
+                }
+                // Fallback: scan children but skip anything before the `=`
+                // operator. The grammar exposes the parameter name via the
+                // `name` field, so we use that to know which children are
+                // before/after the `=`.
+                let name_node = arg.child_by_field_name("name");
                 for j in 0..arg.child_count() {
                     let Some(inner) = arg.child(j) else { continue };
+                    // Skip the parameter-name identifier itself for named args.
+                    if let Some(ref n) = name_node {
+                        if inner.id() == n.id() {
+                            continue;
+                        }
+                    }
                     if inner.kind() == "string" {
                         return Some(strip_string_quotes(&inner, source));
                     }
@@ -407,5 +432,35 @@ mod tests {
         let s = parse_r("g <<- function() { 1 }\n");
         let g = s.definitions.iter().find(|d| d.name == "g").unwrap();
         assert_eq!(g.kind, "function");
+    }
+
+    #[test]
+    fn library_named_argument_extracts_value_not_name() {
+        // `library(package = dplyr)` uses a named argument — the import
+        // source must be `dplyr` (the value), not `package` (the name).
+        let s = parse_r("library(package = dplyr)\n");
+        assert_eq!(s.imports.len(), 1);
+        assert_eq!(s.imports[0].source, "dplyr");
+        assert_eq!(s.imports[0].names, vec!["dplyr".to_string()]);
+    }
+
+    #[test]
+    fn library_named_argument_with_string_value() {
+        // Same pattern but with a string literal as the value.
+        let s = parse_r("library(package = \"dplyr\")\n");
+        assert_eq!(s.imports.len(), 1);
+        assert_eq!(s.imports[0].source, "dplyr");
+    }
+
+    #[test]
+    fn nested_function_assignment_is_recorded() {
+        // Matches the JS extractor's documented behavior: function
+        // definitions are emitted regardless of nesting depth (only
+        // variable assignments are filtered by `is_program_level`).
+        // This test pins the behavior so future changes are intentional.
+        let s = parse_r("outer <- function() { inner <- function() { 1 }; inner() }\n");
+        let defs: Vec<&str> = s.definitions.iter().map(|d| d.name.as_str()).collect();
+        assert!(defs.contains(&"outer"));
+        assert!(defs.contains(&"inner"));
     }
 }

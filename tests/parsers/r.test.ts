@@ -44,4 +44,15 @@ require(ggplot2)`);
 mean(c(1, 2, 3))`);
     expect(symbols.calls.length).toBeGreaterThanOrEqual(1);
   });
+
+  it('extracts the value (not the parameter name) for named library arguments', () => {
+    // `library(package = dplyr)` is rare but valid R. The import source must
+    // be `dplyr` (the value), not `package` (the parameter name). Keeps the
+    // WASM and native extractors in parity.
+    const symbols = parseR(`library(package = dplyr)`);
+    expect(symbols.imports).toContainEqual(
+      expect.objectContaining({ source: 'dplyr' }),
+    );
+    expect(symbols.imports.some((i) => i.source === 'package')).toBe(false);
+  });
 });
