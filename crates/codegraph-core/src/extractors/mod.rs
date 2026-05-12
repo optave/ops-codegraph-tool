@@ -3,6 +3,7 @@ pub mod c;
 pub mod clojure;
 pub mod cpp;
 pub mod csharp;
+pub mod cuda;
 pub mod dart;
 pub mod elixir;
 pub mod go;
@@ -126,6 +127,9 @@ pub fn extract_symbols_with_opts(
         }
         LanguageKind::Ocaml | LanguageKind::OcamlInterface => {
             ocaml::OcamlExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Cuda => {
+            cuda::CudaExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
         }
         LanguageKind::Clojure => {
             clojure::ClojureExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)

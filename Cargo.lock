@@ -66,7 +66,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "codegraph-core"
-version = "3.9.6"
+version = "3.10.0"
 dependencies = [
  "globset",
  "ignore",
@@ -85,6 +85,7 @@ dependencies = [
  "tree-sitter-c-sharp",
  "tree-sitter-clojure-orchard",
  "tree-sitter-cpp",
+ "tree-sitter-cuda",
  "tree-sitter-dart",
  "tree-sitter-elixir",
  "tree-sitter-go",
@@ -775,6 +776,16 @@ name = "tree-sitter-cpp"
 version = "0.23.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df2196ea9d47b4ab4a31b9297eaa5a5d19a0b121dceb9f118f6790ad0ab94743"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-cuda"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "715eecfee69b15991de5b9f78009c6d4cb34e18d20d028304a75d38528cddb45"
 dependencies = [
  "cc",
  "tree-sitter-language",
