@@ -34,9 +34,9 @@ const DEFAULT_IGNORE_DIRS: &[&str] = &[
 /// Must stay in sync with `LanguageKind::from_extension`.
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "js", "jsx", "mjs", "cjs", "ts", "tsx", "d.ts", "py", "pyi", "go", "rs", "java", "cs", "rb",
-    "rake", "gemspec", "php", "phtml", "tf", "hcl", "c", "h", "cpp", "cc", "cxx", "hpp", "kt",
-    "kts", "swift", "scala", "sh", "bash", "ex", "exs", "lua", "dart", "zig", "hs", "ml", "mli",
-    "clj", "cljs", "cljc", "groovy", "gvy",
+    "rake", "gemspec", "php", "phtml", "tf", "hcl", "c", "h", "cpp", "cc", "cxx", "hpp", "cu",
+    "cuh", "kt", "kts", "swift", "scala", "sh", "bash", "ex", "exs", "lua", "dart", "zig", "hs",
+    "ml", "mli", "clj", "cljs", "cljc", "groovy", "gvy",
 ];
 
 /// Returns whether `path` has an extension the Rust file_collector would accept.
