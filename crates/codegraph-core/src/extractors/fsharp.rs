@@ -240,22 +240,21 @@ fn handle_application(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             });
         }
         "long_identifier_or_op" => {
-            // Inner child is either `long_identifier` (qualified, e.g.
-            // `Repository.save`) or `identifier` (bare, e.g. `validateUser`).
-            // Fall back to the wrapper text if neither exists (e.g.
-            // operator forms like `( + )`).
-            let inner = find_child(&func_node, "long_identifier")
-                .or_else(|| find_child(&func_node, "identifier"));
-            let name = match inner {
-                Some(n) => node_text(&n, source).to_string(),
-                None => node_text(&func_node, source).to_string(),
-            };
-            symbols.calls.push(Call {
-                name,
-                line: start_line(node),
-                dynamic: None,
-                receiver: None,
-            });
+            // Inner child is either `identifier` (bare, e.g. `validateUser`) or
+            // `long_identifier` (qualified, e.g. `Repository.save`). Order
+            // matches the JS extractor (`identifier` first). Operator forms
+            // like `( + )` have neither child; we emit nothing in that case,
+            // mirroring the JS extractor's silent skip.
+            if let Some(inner) = find_child(&func_node, "identifier")
+                .or_else(|| find_child(&func_node, "long_identifier"))
+            {
+                symbols.calls.push(Call {
+                    name: node_text(&inner, source).to_string(),
+                    line: start_line(node),
+                    dynamic: None,
+                    receiver: None,
+                });
+            }
         }
         _ => {}
     }

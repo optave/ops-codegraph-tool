@@ -16,7 +16,6 @@ describe('classifyNativeDrops', () => {
   it('groups WASM-only languages under unsupported-by-native', () => {
     const { byReason, totals } = classifyNativeDrops([
       'src/b.gleam',
-      'src/c.clj',
       'src/d.jl',
       'src/e.R',
       'src/f.erl',

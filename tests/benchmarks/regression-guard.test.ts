@@ -100,9 +100,18 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  * Format: "version:metric-label" (must match the label passed to checkRegression).
  * Resolution keys use: "version:resolution <lang> precision" or "version:resolution <lang> recall".
  *
- * Entries fire only when `latest.version` matches the prefix, so once a
- * version is no longer the latest in committed history its entries become
- * dead weight and should be removed (last pruned: 3.9.0/3.9.1/3.9.2).
+ * The `version` is the release where the regression was first observed.
+ * When the per-PR gate runs `dev` against that release as baseline, the
+ * exemption applies via the baseline-version fallback in assertNoRegressions
+ * (and the resolution loop) — so a single `3.9.6:Foo` entry covers both
+ * `3.9.6 vs 3.9.5` and every subsequent `dev vs 3.9.6` comparison until
+ * the next release clears the regression and the entry is pruned.
+ *
+ * Entries fire only when `latest.version` matches the prefix (or, for `dev`
+ * latest, when `previous.version` matches via the baseline fallback). Once
+ * a version is no longer the latest in committed history and no longer the
+ * baseline used for `dev` comparisons, its entries become dead weight and
+ * should be removed (last pruned: 3.9.0/3.9.1/3.9.2).
  *
  * - 3.9.6:Build ms/file / 3.9.6:No-op rebuild — WASM full build regressed
  *   (#1036) when PR #1016 expanded AST_TYPE_MAPS from 3 to 23 languages,
@@ -146,6 +155,17 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   sub-100ms metric is still razor-thin. Exempt this release; remove
  *   once 3.11.0+ data confirms CI numbers stabilize under the new
  *   methodology.
+ *
+ * - 3.10.0:fnDeps depth 1 — CI variance on a sub-30ms metric (24.7ms native
+ *   baseline). The fn_deps Rust implementation, fnDepsData JS wrapper, and
+ *   DB schema/indexes are all byte-for-byte unchanged since v3.9.6 (already
+ *   documented in NOISY_METRICS above). Measured runs land at +40–60%
+ *   typically (within the 50% NOISY_METRIC_THRESHOLD), but the per-PR gate
+ *   has seen outliers up to +82% (run 25708925467: 24.7 → 44.9ms) on
+ *   shared runners — the ~20ms absolute delta is the runner noise floor.
+ *   Exempt this release; remove once 3.11.0+ data confirms stabilization
+ *   under the warmup + 5-sample methodology already applied to incremental
+ *   benchmarks.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.9.6:Build ms/file',
@@ -155,6 +175,7 @@ const KNOWN_REGRESSIONS = new Set([
   '3.9.6:resolution haskell recall',
   '3.10.0:No-op rebuild',
   '3.10.0:1-file rebuild',
+  '3.10.0:fnDeps depth 1',
 ]);
 
 /**
@@ -272,6 +293,13 @@ function findLatestPair<T extends { version: string }>(
     if (!hasEngine(history[latestIdx])) continue;
 
     const latestVersion = history[latestIdx].version;
+    // 'dev' represents the current PR build (rolling entry — see
+    // scripts/update-benchmark-report.ts). It has no parseable semver,
+    // so effectiveGap('dev', anyRelease) returns Infinity — without this
+    // bypass, the gap check below would skip dev entirely and the loop
+    // would silently fall through to compare two real releases instead
+    // of dev vs the latest release, defeating the per-PR gate.
+    const isDevLatest = latestVersion === 'dev';
 
     // Find previous non-dev entry with data for this engine, skipping
     // versions with known unreliable benchmark data and versions that
@@ -284,7 +312,10 @@ function findLatestPair<T extends { version: string }>(
       if (entry.version === 'dev') continue;
       if (SKIP_VERSIONS.has(entry.version)) continue;
       if (!hasEngine(entry)) continue;
-      if (effectiveGap(latestVersion, entry.version) > MAX_VERSION_GAP) continue;
+      // Skip the gap check when comparing dev → release: dev is always
+      // the current build, so the most recent comparable release is the
+      // correct baseline regardless of feature-expansion distance.
+      if (!isDevLatest && effectiveGap(latestVersion, entry.version) > MAX_VERSION_GAP) continue;
       return { latest: history[latestIdx], previous: entry };
     }
     // No valid baseline for this latest — try the next candidate
@@ -329,11 +360,27 @@ function thresholdFor(label: string): number {
   return NOISY_METRICS.has(label) ? NOISY_METRIC_THRESHOLD : REGRESSION_THRESHOLD;
 }
 
-function assertNoRegressions(checks: (RegressionCheck | null)[], version?: string) {
+function assertNoRegressions(
+  checks: (RegressionCheck | null)[],
+  version?: string,
+  baselineVersion?: string,
+) {
   const real = checks.filter(Boolean) as RegressionCheck[];
   const regressions = real.filter((c) => {
     if (c.pctChange <= thresholdFor(c.label)) return false;
     if (version && KNOWN_REGRESSIONS.has(`${version}:${c.label}`)) return false;
+    // When `latest` is the rolling 'dev' build, KNOWN_REGRESSIONS entries
+    // are anchored to the release where the regression was first observed
+    // (e.g. '3.9.6:No-op rebuild'), not to 'dev'. Fall back to the baseline
+    // version so a regression introduced before release N stays exempt for
+    // every PR comparing dev → N until release N+1 clears it.
+    if (
+      version === 'dev' &&
+      baselineVersion &&
+      KNOWN_REGRESSIONS.has(`${baselineVersion}:${c.label}`)
+    ) {
+      return false;
+    }
     return true;
   });
 
@@ -493,6 +540,7 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
             checkRegression(`1-file rebuild`, cur.oneFileRebuildMs, prev.oneFileRebuildMs),
           ],
           latest.version,
+          previous.version,
         );
       });
     }
@@ -530,6 +578,7 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
             ),
           ],
           latest.version,
+          previous.version,
         );
       });
     }
@@ -559,22 +608,32 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
             checkRegression(`1-file rebuild`, cur.oneFileRebuildMs, prev.oneFileRebuildMs),
           ],
           latest.version,
+          previous.version,
         );
       });
     }
 
-    // Resolve benchmarks (not engine-specific)
-    const resolveEntries = incrementalHistory.filter(
-      (e) => e.resolve != null && e.version !== 'dev' && !SKIP_VERSIONS.has(e.version),
+    // Resolve benchmarks (not engine-specific). Keep `dev` in the candidate
+    // pool so the per-PR gate (which produces a `dev` resolve entry) covers
+    // import resolution; previously the filter dropped dev outright, leaving
+    // nativeBatchMs / jsFallbackMs blind to PR-introduced regressions.
+    const resolvePair = findLatestPair(
+      incrementalHistory.filter((e) => e.resolve != null),
+      (e) => e.resolve != null,
     );
-    if (resolveEntries.length >= 2) {
-      test(`import resolution — ${resolveEntries[0].version} vs ${resolveEntries[1].version}`, () => {
-        const cur = resolveEntries[0].resolve!;
-        const prev = resolveEntries[1].resolve!;
-        assertNoRegressions([
-          checkRegression(`Native batch resolve`, cur.nativeBatchMs, prev.nativeBatchMs),
-          checkRegression(`JS fallback resolve`, cur.jsFallbackMs, prev.jsFallbackMs),
-        ]);
+    if (resolvePair) {
+      const { latest: latestRes, previous: previousRes } = resolvePair;
+      test(`import resolution — ${latestRes.version} vs ${previousRes.version}`, () => {
+        const cur = latestRes.resolve!;
+        const prev = previousRes.resolve!;
+        assertNoRegressions(
+          [
+            checkRegression(`Native batch resolve`, cur.nativeBatchMs, prev.nativeBatchMs),
+            checkRegression(`JS fallback resolve`, cur.jsFallbackMs, prev.jsFallbackMs),
+          ],
+          latestRes.version,
+          previousRes.version,
+        );
       });
     }
 
@@ -589,8 +648,8 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
 
     test('has resolve data to compare', () => {
       expect(
-        resolveEntries.length >= 2,
-        'No import-resolution benchmark data with ≥2 non-dev entries to compare',
+        resolvePair != null,
+        'No import-resolution benchmark data with ≥2 comparable entries',
       ).toBe(true);
     });
   });
@@ -644,10 +703,18 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
           const prv = prevRes[lang];
           if (!cur || !prv) continue;
 
+          // When latest is 'dev' (per-PR build), KNOWN_REGRESSIONS keys
+          // are anchored to the baseline release where the regression was
+          // first observed, not to 'dev' — fall back to previousRes.version.
+          const isDev = latestRes.version === 'dev';
+
           const precDrop = prv.precision - cur.precision;
           if (precDrop > PRECISION_DROP_PP) {
             const key = `${latestRes.version}:resolution ${lang} precision`;
-            if (!KNOWN_REGRESSIONS.has(key)) {
+            const fallbackKey = `${previousRes.version}:resolution ${lang} precision`;
+            const isKnown =
+              KNOWN_REGRESSIONS.has(key) || (isDev && KNOWN_REGRESSIONS.has(fallbackKey));
+            if (!isKnown) {
               regressions.push(
                 `  ${lang} precision: ${(prv.precision * 100).toFixed(1)}% → ${(cur.precision * 100).toFixed(1)}% (−${(precDrop * 100).toFixed(1)}pp, threshold ${(PRECISION_DROP_PP * 100).toFixed(0)}pp)`,
               );
@@ -657,7 +724,10 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
           const recDrop = prv.recall - cur.recall;
           if (recDrop > RECALL_DROP_PP) {
             const key = `${latestRes.version}:resolution ${lang} recall`;
-            if (!KNOWN_REGRESSIONS.has(key)) {
+            const fallbackKey = `${previousRes.version}:resolution ${lang} recall`;
+            const isKnown =
+              KNOWN_REGRESSIONS.has(key) || (isDev && KNOWN_REGRESSIONS.has(fallbackKey));
+            if (!isKnown) {
               regressions.push(
                 `  ${lang} recall: ${(prv.recall * 100).toFixed(1)}% → ${(cur.recall * 100).toFixed(1)}% (−${(recDrop * 100).toFixed(1)}pp, threshold ${(RECALL_DROP_PP * 100).toFixed(0)}pp)`,
               );

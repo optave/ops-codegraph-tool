@@ -474,6 +474,9 @@ export const NATIVE_SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
   '.fs',
   '.fsx',
   '.fsi',
+  '.clj',
+  '.cljs',
+  '.cljc',
 ]);
 
 /**

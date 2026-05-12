@@ -157,6 +157,11 @@ const FSHARP_AST_TYPES: Record<string, string> = {
   string: 'string',
 };
 
+const CLOJURE_AST_TYPES: Record<string, string> = {
+  str_lit: 'string',
+  regex_lit: 'regex',
+};
+
 export const AST_TYPE_MAPS: Map<string, Record<string, string>> = new Map([
   ['javascript', JS_AST_TYPES],
   ['typescript', JS_AST_TYPES],
@@ -182,6 +187,7 @@ export const AST_TYPE_MAPS: Map<string, Record<string, string>> = new Map([
   ['ocaml', OCAML_AST_TYPES],
   ['ocaml-interface', OCAML_AST_TYPES],
   ['fsharp', FSHARP_AST_TYPES],
+  ['clojure', CLOJURE_AST_TYPES],
 ]);
 
 // ─── Per-language string-extraction config ───────────────────────────────
@@ -217,6 +223,7 @@ const ZIG_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: ''
 const HASKELL_STRING_CONFIG: AstStringConfig = { quoteChars: '"\'', stringPrefixes: '' };
 const OCAML_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
 const FSHARP_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
+const CLOJURE_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
 
 export const AST_STRING_CONFIGS: Map<string, AstStringConfig> = new Map([
   ['javascript', JS_STRING_CONFIG],
@@ -243,6 +250,7 @@ export const AST_STRING_CONFIGS: Map<string, AstStringConfig> = new Map([
   ['ocaml', OCAML_STRING_CONFIG],
   ['ocaml-interface', OCAML_STRING_CONFIG],
   ['fsharp', FSHARP_STRING_CONFIG],
+  ['clojure', CLOJURE_STRING_CONFIG],
 ]);
 
 // ─── Per-language "stop-after-collect" kinds ─────────────────────────────
