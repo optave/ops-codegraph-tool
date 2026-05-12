@@ -19,7 +19,6 @@ describe('classifyNativeDrops', () => {
       'src/b.gleam',
       'src/c.clj',
       'src/d.jl',
-      'src/e.R',
       'src/f.erl',
       'src/g.sol',
       'src/h.cu',
@@ -27,11 +26,10 @@ describe('classifyNativeDrops', () => {
       'src/j.v',
       'src/k.m',
     ]);
-    expect(totals['unsupported-by-native']).toBe(11);
+    expect(totals['unsupported-by-native']).toBe(10);
     expect(totals['native-extractor-failure']).toBe(0);
     expect(byReason['unsupported-by-native'].get('.fs')).toEqual(['src/a.fs']);
     expect(byReason['unsupported-by-native'].get('.gleam')).toEqual(['src/b.gleam']);
-    expect(byReason['unsupported-by-native'].get('.r')).toEqual(['src/e.R']);
   });
 
   it('flags natively-supported extensions as native-extractor-failure', () => {
@@ -61,9 +59,11 @@ describe('classifyNativeDrops', () => {
   });
 
   it('lowercases extensions so .R and .r share a bucket', () => {
+    // `.r` is now natively supported (R extractor was ported to Rust), so
+    // any dropped `.R`/`.r` files indicate a native extractor failure.
     const { byReason, totals } = classifyNativeDrops(['scripts/a.R', 'scripts/b.r']);
-    expect(totals['unsupported-by-native']).toBe(2);
-    expect(byReason['unsupported-by-native'].get('.r')).toEqual(['scripts/a.R', 'scripts/b.r']);
+    expect(totals['native-extractor-failure']).toBe(2);
+    expect(byReason['native-extractor-failure'].get('.r')).toEqual(['scripts/a.R', 'scripts/b.r']);
   });
 
   it('returns empty buckets when no files are passed', () => {
