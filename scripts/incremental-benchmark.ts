@@ -43,7 +43,14 @@ if (!isWorker()) {
 		srcImport(parentSrcDir, 'infrastructure/native.js')
 	);
 
-	const RUNS = 3;
+	// Mirror the worker-side methodology (WARMUP_RUNS=2, RUNS=5) so the parent's
+	// import-resolution timings are not exposed to the same cold-start outlier
+	// dynamic this PR is fixing. nativeBatchMs / jsFallbackMs are sub-15ms on
+	// codegraph itself today — exactly the sub-30ms band where a 3-sample
+	// median without warmup picks up rusqlite statement-cache and NAPI init
+	// jitter and produces CI-amplified false regressions.
+	const RUNS = 5;
+	const WARMUP_RUNS = 2;
 	function median(arr) {
 		const sorted = [...arr].sort((a, b) => a - b);
 		const mid = Math.floor(sorted.length / 2);
@@ -82,6 +89,9 @@ if (!isWorker()) {
 	let nativeBatchMs = null;
 	let perImportNativeMs = null;
 	if (parentNativeCheck()) {
+		for (let i = 0; i < WARMUP_RUNS; i++) {
+			parentBatch(inputs, rootParent, null);
+		}
 		const timings = [];
 		for (let i = 0; i < RUNS; i++) {
 			const start = performance.now();
@@ -90,6 +100,11 @@ if (!isWorker()) {
 		}
 		nativeBatchMs = round1(median(timings));
 		perImportNativeMs = inputs.length > 0 ? round1(nativeBatchMs / inputs.length) : 0;
+	}
+	for (let i = 0; i < WARMUP_RUNS; i++) {
+		for (const { fromFile, importSource } of inputs) {
+			parentJS(fromFile, importSource, rootParent, null);
+		}
 	}
 	const jsTimings = [];
 	for (let i = 0; i < RUNS; i++) {
@@ -155,8 +170,16 @@ try {
 const origLog = console.log;
 console.log = (...args) => console.error(...args);
 
-const RUNS = 3;
+const RUNS = 5;
 const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.ts');
+
+// First 1–2 incremental rebuilds per process pay a cold-start cost (rusqlite
+// statement-cache warmup, OS page cache for the DB file, NAPI-side static
+// init from tree-sitter's transitive crates linked into the .node binary).
+// Mirrors the WARMUP_RUNS used in scripts/query-benchmark.ts since #1077 —
+// without this, a 3-sample median includes cold-start outliers and shows
+// CI-amplified false regressions on sub-30ms metrics like No-op rebuild.
+const WARMUP_RUNS = 2;
 
 function median(arr) {
 	const sorted = [...arr].sort((a, b) => a - b);
@@ -179,6 +202,9 @@ const fullBuildMs = Math.round(median(fullTimings));
 // No-op rebuild (nothing changed)
 let noopRebuildMs = null;
 try {
+	for (let i = 0; i < WARMUP_RUNS; i++) {
+		await buildGraph(root, { engine, incremental: true });
+	}
 	const noopTimings = [];
 	for (let i = 0; i < RUNS; i++) {
 		const start = performance.now();
@@ -195,6 +221,10 @@ const original = fs.readFileSync(PROBE_FILE, 'utf8');
 let oneFileRebuildMs = null;
 let oneFilePhases = null;
 try {
+	for (let i = 0; i < WARMUP_RUNS; i++) {
+		fs.writeFileSync(PROBE_FILE, original + `\n// warmup-${i}\n`);
+		await buildGraph(root, { engine, incremental: true });
+	}
 	const oneFileRuns = [];
 	for (let i = 0; i < RUNS; i++) {
 		fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`);

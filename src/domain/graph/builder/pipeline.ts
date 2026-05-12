@@ -754,14 +754,19 @@ async function tryNativeOrchestrator(
   // engines process the same file set (#967).
   //
   // Runs on full builds and on incrementals when the orchestrator reports
-  // any deletions. The orchestrator's `detect_removed_files` filter (#1070)
-  // skips files outside its narrower file_collector, so on a current binary
-  // an unchanged 1-file rebuild reports `removedCount=0` and the backfill
-  // call is pure overhead (fs walk + 2 DB queries + 48-file WASM re-parse).
-  // Legacy binaries lacking the filter still report `removedCount>0` and
-  // get the gap-repair behavior #1068 introduced.
+  // any file activity (removals or changes). The orchestrator's
+  // `detect_removed_files` filter (#1070) skips files outside its narrower
+  // file_collector, so on a current binary a no-op rebuild reports
+  // `removedCount=0` and `changedCount=0`, making the backfill call pure
+  // overhead (fs walk + 2 DB queries + 48-file WASM re-parse). Legacy
+  // binaries lacking the filter still report `removedCount>0` and get the
+  // gap-repair behavior #1068 introduced. Triggering on `changedCount>0`
+  // narrows (but does not fully close) the gap where a brand-new
+  // unsupported-extension file is added on an otherwise-quiet incremental
+  // — see #1091 for the residual gap.
   const removedCount = result.removedCount ?? 0;
-  if (result.isFullBuild || removedCount > 0) {
+  const changedCount = result.changedCount ?? 0;
+  if (result.isFullBuild || removedCount > 0 || changedCount > 0) {
     await backfillNativeDroppedFiles(ctx);
   }
 
