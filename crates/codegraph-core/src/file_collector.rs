@@ -32,6 +32,15 @@ const DEFAULT_IGNORE_DIRS: &[&str] = &[
 
 /// All supported file extensions (mirrors the JS `EXTENSIONS` set).
 /// Must stay in sync with `LanguageKind::from_extension`.
+///
+/// **Extension collisions to be aware of:**
+/// - `.v` is shared by Verilog and Coq theorem-prover source files. Codegraph
+///   routes `.v` to the Verilog parser; Coq-heavy repositories will see Coq
+///   files mis-classified as Verilog and produce mostly-empty symbol output.
+///   There is currently no per-repo override for this; users with Coq files
+///   should exclude `*.v` via the `exclude` config glob.
+/// - `.m` (OCaml `.ml` variant vs Objective-C/MATLAB) and `.h` (C vs Objective-C)
+///   have similar ambiguity in other ecosystems but are unambiguous here.
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "js", "jsx", "mjs", "cjs", "ts", "tsx", "d.ts", "py", "pyi", "go", "rs", "java", "cs", "rb",
     "rake", "gemspec", "php", "phtml", "tf", "hcl", "c", "h", "cpp", "cc", "cxx", "hpp", "kt",

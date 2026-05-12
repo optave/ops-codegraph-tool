@@ -107,9 +107,17 @@ fn handle_package_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 }
 
 fn handle_class_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    // The JS extractor calls `node.childForFieldName('name')`; tree-sitter-verilog
-    // exposes no fields on `class_declaration`, so this returns null in JS too —
-    // matching that behavior keeps native and WASM in lockstep.
+    // ⚠️ CURRENTLY A NO-OP. The JS extractor calls
+    // `node.childForFieldName('name')`; tree-sitter-verilog exposes no `name`
+    // field on `class_declaration` (and no `superclass` field), so this lookup
+    // always returns `None` and the handler exits at the early `return` below.
+    // Neither the class `Definition` nor the `extends` relation is ever
+    // emitted on the current grammar — matching the WASM engine, which has
+    // the same behavior. If a future grammar revision adds the `name` (and
+    // `superclass`) fields, this handler will start firing automatically and
+    // pick up both class definitions and inheritance relations in one step.
+    // Until then, class extraction is intentional dead code kept as a hook
+    // so the grammar upgrade doesn't go unnoticed.
     let name = match named_child_text(node, "name", source) {
         Some(n) => n.to_string(),
         None => return,
@@ -181,12 +189,18 @@ fn handle_task_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
 fn handle_module_instantiation(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     // Tree-sitter-verilog exposes no field name on `module_instantiation`; the
-    // first child holds the module type being instantiated. The JS extractor
-    // uses `childForFieldName('type') || child(0)` — the field lookup never
-    // hits, so first-child fallback is the live path.
+    // first *named* child holds the module type being instantiated. The JS
+    // extractor uses `childForFieldName('type') || child(0)` — the field
+    // lookup never hits, so first-named-child fallback is the live path.
+    //
+    // Using `named_child(0)` (instead of `child(0)`) skips any anonymous
+    // grammar tokens (parameter-override punctuation like `#`, keywords)
+    // that could otherwise lead the call name. Producing punctuation as a
+    // call name would silently corrupt the call graph for any non-ANSI
+    // instantiation form.
     let name_node = node
         .child_by_field_name("type")
-        .or_else(|| node.child(0));
+        .or_else(|| node.named_child(0));
     let name_node = match name_node {
         Some(n) => n,
         None => return,
