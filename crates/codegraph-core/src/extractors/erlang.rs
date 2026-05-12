@@ -36,7 +36,13 @@ fn match_erlang_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
 
 fn handle_module_attr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     // module_attribute: - module ( atom ) .
-    let name_node = match find_child(node, "atom") {
+    // Prefer the named `name` field exposed by tree-sitter-erlang so we don't
+    // accidentally pick up the `module` keyword if a future grammar exposes it
+    // as a named `atom` child.
+    let name_node = match node
+        .child_by_field_name("name")
+        .or_else(|| find_child(node, "atom"))
+    {
         Some(n) => n,
         None => return,
     };
@@ -126,22 +132,27 @@ fn handle_fun_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
 fn handle_function_clause(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     // function_clause: atom expr_args clause_body
-    let name_node = match find_child(node, "atom") {
+    let name_node = match node
+        .child_by_field_name("name")
+        .or_else(|| find_child(node, "atom"))
+    {
         Some(n) => n,
         None => return,
     };
     let name = node_text(&name_node, source).to_string();
 
-    // Don't duplicate if we already have this function
-    if symbols
-        .definitions
-        .iter()
-        .any(|d| d.name == name && d.kind == "function")
-    {
+    let params = extract_params(node, source);
+    let arity = params.len();
+
+    // Don't duplicate if we already have this function at the same arity.
+    // Erlang overloads by arity, so `foo/1` and `foo/2` are distinct definitions.
+    if symbols.definitions.iter().any(|d| {
+        d.name == name
+            && d.kind == "function"
+            && d.children.as_ref().map_or(0, |c| c.len()) == arity
+    }) {
         return;
     }
-
-    let params = extract_params(node, source);
 
     // End line spans the full fun_decl when this clause is wrapped in one
     let end_node = match node.parent() {
@@ -163,22 +174,29 @@ fn handle_function_clause(node: &Node, source: &[u8], symbols: &mut FileSymbols)
 
 fn extract_params(clause_node: &Node, source: &[u8]) -> Vec<Definition> {
     let mut params = Vec::new();
-    let args_node = match find_child(clause_node, "expr_args") {
+    let args_node = match clause_node
+        .child_by_field_name("args")
+        .or_else(|| find_child(clause_node, "expr_args"))
+    {
         Some(n) => n,
         None => return params,
     };
-    for i in 0..args_node.child_count() {
-        let child = match args_node.child(i) {
+    // Iterate named children so every argument pattern counts as one parameter,
+    // independent of whether it is a bare `var`/`atom` or a complex destructuring
+    // pattern (tuple, list, binary, etc.). Punctuation tokens are anonymous and
+    // therefore excluded automatically.
+    for i in 0..args_node.named_child_count() {
+        let child = match args_node.named_child(i) {
             Some(c) => c,
             None => continue,
         };
-        if child.kind() == "var" || child.kind() == "atom" {
-            params.push(child_def(
-                node_text(&child, source).to_string(),
-                "parameter",
-                start_line(&child),
-            ));
-        }
+        let label = if child.kind() == "var" || child.kind() == "atom" {
+            node_text(&child, source).to_string()
+        } else {
+            // Placeholder for complex patterns so arity is preserved.
+            format!("_{}", i)
+        };
+        params.push(child_def(label, "parameter", start_line(&child)));
     }
     params
 }
@@ -392,5 +410,41 @@ mod tests {
             .filter(|d| d.name == "fact" && d.kind == "function")
             .collect();
         assert_eq!(fact_defs.len(), 1, "expected single function def for multi-clause");
+    }
+
+    #[test]
+    fn keeps_distinct_arities_for_same_name() {
+        // Erlang overloads by arity: foo/1 and foo/2 are distinct definitions
+        // and must not be collapsed by name-only deduplication.
+        let s = parse_erlang(
+            "foo(X) -> X.\nfoo(X, Y) -> X + Y.\nfoo(X, Y, Z) -> X + Y + Z.\n",
+        );
+        let foo_defs: Vec<&Definition> = s
+            .definitions
+            .iter()
+            .filter(|d| d.name == "foo" && d.kind == "function")
+            .collect();
+        assert_eq!(foo_defs.len(), 3, "expected one def per arity");
+        let mut arities: Vec<usize> = foo_defs
+            .iter()
+            .map(|d| d.children.as_ref().map_or(0, |c| c.len()))
+            .collect();
+        arities.sort();
+        assert_eq!(arities, vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn counts_complex_pattern_arguments_as_parameters() {
+        // Tuple, list and binary pattern arguments must still count toward arity.
+        let s = parse_erlang(
+            "handle({ok, X}, [H | T]) -> {X, H, T}.\n",
+        );
+        let f = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "handle" && d.kind == "function")
+            .expect("function def");
+        let params = f.children.as_ref().expect("params");
+        assert_eq!(params.len(), 2, "expected one parameter per pattern");
     }
 }

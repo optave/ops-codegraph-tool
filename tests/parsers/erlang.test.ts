@@ -43,4 +43,23 @@ describe('Erlang parser', () => {
     io:format("Hello~n").`);
     expect(symbols.calls.length).toBeGreaterThanOrEqual(1);
   });
+
+  it('keeps distinct arities for the same function name', () => {
+    // Erlang overloads by arity; foo/1 and foo/2 are distinct definitions.
+    const symbols = parseErlang(`foo(X) -> X.
+foo(X, Y) -> X + Y.
+foo(X, Y, Z) -> X + Y + Z.`);
+    const fooDefs = symbols.definitions.filter((d) => d.name === 'foo' && d.kind === 'function');
+    expect(fooDefs).toHaveLength(3);
+    const arities = fooDefs.map((d) => d.children?.length ?? 0).sort();
+    expect(arities).toEqual([1, 2, 3]);
+  });
+
+  it('counts complex pattern arguments as parameters', () => {
+    // Tuple, list, and binary pattern arguments must still count toward arity.
+    const symbols = parseErlang(`handle({ok, X}, [H | T]) -> {X, H, T}.`);
+    const f = symbols.definitions.find((d) => d.name === 'handle' && d.kind === 'function');
+    expect(f).toBeDefined();
+    expect(f?.children?.length).toBe(2);
+  });
 });

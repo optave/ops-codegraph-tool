@@ -70,7 +70,10 @@ function walkErlangNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
 
 function handleModuleAttr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // module_attribute: - module ( atom ) .
-  const nameNode = findChild(node, 'atom');
+  // Prefer the named `name` field exposed by tree-sitter-erlang so we don't
+  // accidentally pick up the `module` keyword if a future grammar exposes it
+  // as a named `atom` child.
+  const nameNode = node.childForFieldName('name') ?? findChild(node, 'atom');
   if (!nameNode) return;
 
   ctx.definitions.push({
@@ -134,13 +137,22 @@ function handleFunDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 
 function handleFunctionClause(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // function_clause: atom expr_args clause_body
-  const nameNode = findChild(node, 'atom');
+  const nameNode = node.childForFieldName('name') ?? findChild(node, 'atom');
   if (!nameNode) return;
 
-  // Don't duplicate if we already have this function
-  if (ctx.definitions.some((d) => d.name === nameNode.text && d.kind === 'function')) return;
-
   const params = extractErlangParams(node);
+  const arity = params.length;
+
+  // Don't duplicate if we already have this function at the same arity.
+  // Erlang overloads by arity, so `foo/1` and `foo/2` are distinct definitions.
+  if (
+    ctx.definitions.some(
+      (d) =>
+        d.name === nameNode.text && d.kind === 'function' && (d.children?.length ?? 0) === arity,
+    )
+  ) {
+    return;
+  }
 
   ctx.definitions.push({
     name: nameNode.text,
@@ -154,18 +166,22 @@ function handleFunctionClause(node: TreeSitterNode, ctx: ExtractorOutput): void 
 
 function extractErlangParams(clauseNode: TreeSitterNode): SubDeclaration[] {
   const params: SubDeclaration[] = [];
-  const argsNode = findChild(clauseNode, 'expr_args');
+  const argsNode = clauseNode.childForFieldName('args') ?? findChild(clauseNode, 'expr_args');
   if (!argsNode) return params;
 
-  for (let i = 0; i < argsNode.childCount; i++) {
-    const child = argsNode.child(i);
+  // Iterate named children so every argument pattern counts as one parameter,
+  // independent of whether it is a bare `var`/`atom` or a complex destructuring
+  // pattern (tuple, list, binary, etc.). Punctuation tokens are anonymous and
+  // therefore excluded automatically.
+  for (let i = 0; i < argsNode.namedChildCount; i++) {
+    const child = argsNode.namedChild(i);
     if (!child) continue;
-    if (child.type === 'var') {
-      params.push({ name: child.text, kind: 'parameter', line: child.startPosition.row + 1 });
-    }
-    if (child.type === 'atom') {
-      params.push({ name: child.text, kind: 'parameter', line: child.startPosition.row + 1 });
-    }
+    const label =
+      child.type === 'var' || child.type === 'atom'
+        ? child.text
+        : // Placeholder for complex patterns so arity is preserved.
+          `_${i}`;
+    params.push({ name: label, kind: 'parameter', line: child.startPosition.row + 1 });
   }
   return params;
 }
