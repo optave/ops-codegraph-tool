@@ -27,6 +27,7 @@ pub enum LanguageKind {
     Haskell,
     Ocaml,
     OcamlInterface,
+    Cuda,
     Clojure,
     R,
 }
@@ -60,6 +61,7 @@ impl LanguageKind {
             Self::Haskell => "haskell",
             Self::Ocaml => "ocaml",
             Self::OcamlInterface => "ocaml-interface",
+            Self::Cuda => "cuda",
             Self::Clojure => "clojure",
             Self::R => "r",
         }
@@ -90,6 +92,7 @@ impl LanguageKind {
             "php" | "phtml" => Some(Self::Php),
             "c" | "h" => Some(Self::C),
             "cpp" | "cc" | "cxx" | "hpp" => Some(Self::Cpp),
+            "cu" | "cuh" => Some(Self::Cuda),
             "kt" | "kts" => Some(Self::Kotlin),
             "swift" => Some(Self::Swift),
             "scala" => Some(Self::Scala),
@@ -137,6 +140,7 @@ impl LanguageKind {
             "haskell" => Some(Self::Haskell),
             "ocaml" => Some(Self::Ocaml),
             "ocaml-interface" => Some(Self::OcamlInterface),
+            "cuda" => Some(Self::Cuda),
             "clojure" => Some(Self::Clojure),
             "r" => Some(Self::R),
             _ => None,
@@ -170,6 +174,7 @@ impl LanguageKind {
             Self::Haskell => tree_sitter_haskell::LANGUAGE.into(),
             Self::Ocaml => tree_sitter_ocaml::LANGUAGE_OCAML.into(),
             Self::OcamlInterface => tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
+            Self::Cuda => tree_sitter_cuda::LANGUAGE.into(),
             Self::Clojure => tree_sitter_clojure_orchard::LANGUAGE.into(),
             Self::R => tree_sitter_r::LANGUAGE.into(),
         }
@@ -187,7 +192,7 @@ impl LanguageKind {
         &[
             JavaScript, TypeScript, Tsx, Python, Go, Rust, Java, CSharp, Ruby, Php, Hcl, C,
             Cpp, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, Ocaml,
-            OcamlInterface, Clojure, R,
+            OcamlInterface, Cuda, Clojure, R,
         ]
     }
 }
@@ -257,6 +262,7 @@ mod tests {
             | LanguageKind::Haskell
             | LanguageKind::Ocaml
             | LanguageKind::OcamlInterface
+            | LanguageKind::Cuda
             | LanguageKind::Clojure
             | LanguageKind::R => (),
         };
@@ -265,7 +271,7 @@ mod tests {
         // Because both checks require the same manual update, they reinforce
         // each other: a developer who updates the match is reminded to also
         // update `all()` and this count.
-        const EXPECTED_LEN: usize = 26;
+        const EXPECTED_LEN: usize = 27;
         assert_eq!(
             LanguageKind::all().len(),
             EXPECTED_LEN,

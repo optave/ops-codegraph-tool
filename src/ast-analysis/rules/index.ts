@@ -101,6 +101,11 @@ const CPP_AST_TYPES: Record<string, string> = {
   raw_string_literal: 'string',
 };
 
+// CUDA's tree-sitter grammar inherits the full C++ node vocabulary, so the
+// AST node types and quote rules are identical to C++. Mirrors the native
+// `CUDA_AST_CONFIG` in `crates/codegraph-core/src/extractors/helpers.rs`.
+const CUDA_AST_TYPES: Record<string, string> = CPP_AST_TYPES;
+
 const KOTLIN_AST_TYPES: Record<string, string> = {
   throw_expression: 'throw',
   string_literal: 'string',
@@ -175,6 +180,7 @@ export const AST_TYPE_MAPS: Map<string, Record<string, string>> = new Map([
   ['php', PHP_AST_TYPES],
   ['c', C_AST_TYPES],
   ['cpp', CPP_AST_TYPES],
+  ['cuda', CUDA_AST_TYPES],
   ['kotlin', KOTLIN_AST_TYPES],
   ['swift', SWIFT_AST_TYPES],
   ['scala', SCALA_AST_TYPES],
@@ -212,6 +218,8 @@ const RB_STRING_CONFIG: AstStringConfig = { quoteChars: '\'"', stringPrefixes: '
 const PHP_STRING_CONFIG: AstStringConfig = { quoteChars: '\'"', stringPrefixes: '' };
 const C_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
 const CPP_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: 'LuUR' };
+// CUDA shares C++ string-literal lexing, including the `L`/`u`/`U`/`R` prefixes.
+const CUDA_STRING_CONFIG: AstStringConfig = CPP_STRING_CONFIG;
 const KOTLIN_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
 const SWIFT_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
 const SCALA_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
@@ -238,6 +246,7 @@ export const AST_STRING_CONFIGS: Map<string, AstStringConfig> = new Map([
   ['php', PHP_STRING_CONFIG],
   ['c', C_STRING_CONFIG],
   ['cpp', CPP_STRING_CONFIG],
+  ['cuda', CUDA_STRING_CONFIG],
   ['kotlin', KOTLIN_STRING_CONFIG],
   ['swift', SWIFT_STRING_CONFIG],
   ['scala', SCALA_STRING_CONFIG],
