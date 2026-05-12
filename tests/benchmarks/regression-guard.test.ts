@@ -601,18 +601,27 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
       });
     }
 
-    // Resolve benchmarks (not engine-specific)
-    const resolveEntries = incrementalHistory.filter(
-      (e) => e.resolve != null && e.version !== 'dev' && !SKIP_VERSIONS.has(e.version),
+    // Resolve benchmarks (not engine-specific). Keep `dev` in the candidate
+    // pool so the per-PR gate (which produces a `dev` resolve entry) covers
+    // import resolution; previously the filter dropped dev outright, leaving
+    // nativeBatchMs / jsFallbackMs blind to PR-introduced regressions.
+    const resolvePair = findLatestPair(
+      incrementalHistory.filter((e) => e.resolve != null),
+      (e) => e.resolve != null,
     );
-    if (resolveEntries.length >= 2) {
-      test(`import resolution — ${resolveEntries[0].version} vs ${resolveEntries[1].version}`, () => {
-        const cur = resolveEntries[0].resolve!;
-        const prev = resolveEntries[1].resolve!;
-        assertNoRegressions([
-          checkRegression(`Native batch resolve`, cur.nativeBatchMs, prev.nativeBatchMs),
-          checkRegression(`JS fallback resolve`, cur.jsFallbackMs, prev.jsFallbackMs),
-        ]);
+    if (resolvePair) {
+      const { latest: latestRes, previous: previousRes } = resolvePair;
+      test(`import resolution — ${latestRes.version} vs ${previousRes.version}`, () => {
+        const cur = latestRes.resolve!;
+        const prev = previousRes.resolve!;
+        assertNoRegressions(
+          [
+            checkRegression(`Native batch resolve`, cur.nativeBatchMs, prev.nativeBatchMs),
+            checkRegression(`JS fallback resolve`, cur.jsFallbackMs, prev.jsFallbackMs),
+          ],
+          latestRes.version,
+          previousRes.version,
+        );
       });
     }
 
@@ -627,8 +636,8 @@ describe.runIf(RUN_REGRESSION_GUARD)('Benchmark regression guard', () => {
 
     test('has resolve data to compare', () => {
       expect(
-        resolveEntries.length >= 2,
-        'No import-resolution benchmark data with ≥2 non-dev entries to compare',
+        resolvePair != null,
+        'No import-resolution benchmark data with ≥2 comparable entries',
       ).toBe(true);
     });
   });
