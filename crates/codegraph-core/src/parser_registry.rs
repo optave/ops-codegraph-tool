@@ -28,6 +28,7 @@ pub enum LanguageKind {
     Ocaml,
     OcamlInterface,
     ObjC,
+    Julia,
     Cuda,
     Clojure,
 }
@@ -62,6 +63,7 @@ impl LanguageKind {
             Self::Ocaml => "ocaml",
             Self::OcamlInterface => "ocaml-interface",
             Self::ObjC => "objc",
+            Self::Julia => "julia",
             Self::Cuda => "cuda",
             Self::Clojure => "clojure",
         }
@@ -105,6 +107,7 @@ impl LanguageKind {
             "ml" => Some(Self::Ocaml),
             "mli" => Some(Self::OcamlInterface),
             "m" => Some(Self::ObjC),
+            "jl" => Some(Self::Julia),
             "clj" | "cljs" | "cljc" => Some(Self::Clojure),
             _ => None,
         }
@@ -139,6 +142,7 @@ impl LanguageKind {
             "ocaml" => Some(Self::Ocaml),
             "ocaml-interface" => Some(Self::OcamlInterface),
             "objc" => Some(Self::ObjC),
+            "julia" => Some(Self::Julia),
             "cuda" => Some(Self::Cuda),
             "clojure" => Some(Self::Clojure),
             _ => None,
@@ -173,6 +177,7 @@ impl LanguageKind {
             Self::Ocaml => tree_sitter_ocaml::LANGUAGE_OCAML.into(),
             Self::OcamlInterface => tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
             Self::ObjC => tree_sitter_objc::LANGUAGE.into(),
+            Self::Julia => tree_sitter_julia::LANGUAGE.into(),
             Self::Cuda => tree_sitter_cuda::LANGUAGE.into(),
             Self::Clojure => tree_sitter_clojure_orchard::LANGUAGE.into(),
         }
@@ -190,7 +195,7 @@ impl LanguageKind {
         &[
             JavaScript, TypeScript, Tsx, Python, Go, Rust, Java, CSharp, Ruby, Php, Hcl, C,
             Cpp, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, Ocaml,
-            OcamlInterface, ObjC, Cuda, Clojure,
+            OcamlInterface, ObjC, Julia, Cuda, Clojure,
         ]
     }
 }
@@ -261,6 +266,7 @@ mod tests {
             | LanguageKind::Ocaml
             | LanguageKind::OcamlInterface
             | LanguageKind::ObjC
+            | LanguageKind::Julia
             | LanguageKind::Cuda
             | LanguageKind::Clojure => (),
         };
@@ -269,7 +275,7 @@ mod tests {
         // Because both checks require the same manual update, they reinforce
         // each other: a developer who updates the match is reminded to also
         // update `all()` and this count.
-        const EXPECTED_LEN: usize = 27;
+        const EXPECTED_LEN: usize = 28;
         assert_eq!(
             LanguageKind::all().len(),
             EXPECTED_LEN,

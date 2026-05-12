@@ -474,6 +474,7 @@ export const NATIVE_SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
   '.ml',
   '.mli',
   '.m',
+  '.jl',
   '.clj',
   '.cljs',
   '.cljc',
