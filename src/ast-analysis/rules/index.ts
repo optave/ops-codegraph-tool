@@ -157,6 +157,10 @@ const GROOVY_AST_TYPES: Record<string, string> = {
   object_creation_expression: 'new',
   throw_statement: 'throw',
   string_literal: 'string',
+  // `gstring` listed defensively: tree-sitter-groovy 0.1.x emits `string_literal`
+  // for both single- and double-quoted strings, but some grammar variants use
+  // `gstring` for double-quoted / interpolated strings.
+  gstring: 'string',
 };
 
 export const AST_TYPE_MAPS: Map<string, Record<string, string>> = new Map([

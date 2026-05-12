@@ -8,16 +8,20 @@ use tree_sitter::{Node, Tree};
 /// Groovy extractor — mirrors `extractGroovySymbols` in `src/extractors/groovy.ts`.
 ///
 /// Groovy is a JVM language with Java-like class/interface/enum structures plus
-/// closures (`function_definition`), `juxt_function_call`, and dynamic typing.
-/// The tree-sitter-groovy grammar shares many node kinds with tree-sitter-java
-/// (`class_declaration`, `method_declaration`, `method_invocation`,
-/// `object_creation_expression`, `import_declaration`).
+/// closures (`function_definition`) and dynamic typing. The tree-sitter-groovy
+/// grammar shares many node kinds with tree-sitter-java (`class_declaration`,
+/// `method_declaration`, `method_invocation`, `object_creation_expression`,
+/// `import_declaration`).
 ///
 /// The JS source-of-truth extractor handles a superset of node kinds for
 /// resilience across grammar variants (`class_definition`, `interface_definition`,
 /// `method_definition`, `function_declaration`, `import_statement`, `call_expression`,
 /// `method_call`, `function_call`, `member_access`); the Rust port mirrors those
 /// arms so engine parity holds even if a future grammar version renames nodes.
+///
+/// Note: `juxt_function_call` (Groovy command-style calls like `foo bar(x)`)
+/// is not dispatched here — the JS extractor also omits it. Tracked in #1108
+/// for adding support to both engines.
 pub struct GroovyExtractor;
 
 impl SymbolExtractor for GroovyExtractor {
@@ -170,7 +174,7 @@ fn handle_enum_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(body) = body {
         for i in 0..body.child_count() {
             let Some(child) = body.child(i) else { continue };
-            if child.kind() == "enum_constant" {
+            if child.kind() == "enum_constant" || child.kind() == "identifier" {
                 let name = child.child_by_field_name("name").unwrap_or(child);
                 members.push(child_def(
                     node_text(&name, source).to_string(),
