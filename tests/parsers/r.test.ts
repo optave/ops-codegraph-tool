@@ -50,9 +50,7 @@ mean(c(1, 2, 3))`);
     // be `dplyr` (the value), not `package` (the parameter name). Keeps the
     // WASM and native extractors in parity.
     const symbols = parseR(`library(package = dplyr)`);
-    expect(symbols.imports).toContainEqual(
-      expect.objectContaining({ source: 'dplyr' }),
-    );
+    expect(symbols.imports).toContainEqual(expect.objectContaining({ source: 'dplyr' }));
     expect(symbols.imports.some((i) => i.source === 'package')).toBe(false);
   });
 });
