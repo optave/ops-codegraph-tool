@@ -115,7 +115,16 @@ function handleRecordDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function handleTypeAlias(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  const nameNode = findChild(node, 'atom');
+  // type_alias: -type name(...) :: ty.
+  // Name is typically wrapped in a `type_name` node containing an `atom`.
+  // Mirrors the Rust `handle_type_alias` fallback so the two engines agree
+  // even when the grammar nests the name inside `type_name`.
+  const directAtom = findChild(node, 'atom');
+  const wrappedAtom =
+    !directAtom && findChild(node, 'type_name') != null
+      ? findChild(findChild(node, 'type_name') as TreeSitterNode, 'atom')
+      : null;
+  const nameNode = directAtom ?? wrappedAtom;
   if (!nameNode) return;
 
   ctx.definitions.push({

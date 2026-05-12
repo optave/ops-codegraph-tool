@@ -60,7 +60,13 @@ fn handle_module_attr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 }
 
 fn handle_record_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    let name_node = match find_child(node, "atom") {
+    // Mirror the defensive pattern used by `handle_module_attr` and
+    // `handle_function_clause`: prefer the named field if the grammar exposes
+    // it, otherwise fall back to the first `atom` child.
+    let name_node = match node
+        .child_by_field_name("name")
+        .or_else(|| find_child(node, "atom"))
+    {
         Some(n) => n,
         None => return,
     };
