@@ -360,6 +360,16 @@ pub const OCAML_AST_CONFIG: LangAstConfig = LangAstConfig {
     string_prefixes: &[],
 };
 
+pub const CLOJURE_AST_CONFIG: LangAstConfig = LangAstConfig {
+    new_types: &[],
+    throw_types: &[],
+    await_types: &[],
+    string_types: &["str_lit"],
+    regex_types: &["regex_lit"],
+    quote_chars: &['"'],
+    string_prefixes: &[],
+};
+
 pub const R_AST_CONFIG: LangAstConfig = LangAstConfig {
     new_types: &[],
     throw_types: &[],

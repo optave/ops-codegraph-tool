@@ -17,7 +17,6 @@ describe('classifyNativeDrops', () => {
     const { byReason, totals } = classifyNativeDrops([
       'src/a.fs',
       'src/b.gleam',
-      'src/c.clj',
       'src/d.jl',
       'src/f.erl',
       'src/g.sol',
