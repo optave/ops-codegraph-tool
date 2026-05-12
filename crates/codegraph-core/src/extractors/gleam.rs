@@ -24,7 +24,7 @@ fn match_gleam_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dept
         "type_alias" => handle_type_alias(node, source, symbols),
         "constant" => handle_constant(node, source, symbols),
         "import" => handle_import(node, source, symbols),
-        "function_call" => handle_call(node, source, symbols),
+        "function_call" | "call" => handle_call(node, source, symbols),
         _ => {}
     }
 }
