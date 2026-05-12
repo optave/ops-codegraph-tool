@@ -93,9 +93,12 @@ fn handle_function_def(
     if let Some(call_sig) = signature_call(node) {
         if let Some(func_name_node) = call_sig.child(0) {
             let base = node_text(&func_name_node, source);
+            // For qualified names (`function Base.show ... end` inside a module),
+            // the LHS is a `scoped_identifier` already containing the qualifier —
+            // skip the module prefix to avoid producing `Outer.Base.show`.
             let name = match current_module {
-                Some(m) => format!("{}.{}", m, base),
-                None => base.to_string(),
+                Some(m) if !base.contains('.') => format!("{}.{}", m, base),
+                _ => base.to_string(),
             };
             let params = extract_julia_params(&call_sig, source);
             symbols.definitions.push(Definition {
@@ -122,8 +125,8 @@ fn handle_function_def(
     };
     let base = node_text(&name_node, source);
     let name = match current_module {
-        Some(m) => format!("{}.{}", m, base),
-        None => base.to_string(),
+        Some(m) if !base.contains('.') => format!("{}.{}", m, base),
+        _ => base.to_string(),
     };
     symbols.definitions.push(Definition {
         name,
@@ -156,9 +159,12 @@ fn handle_assignment(
         None => return,
     };
     let base = node_text(&func_name_node, source);
+    // For qualified short-form definitions like `Foo.bar(x, y) = x + y`,
+    // `func_name_node` is a `scoped_identifier` already containing the
+    // qualifier — skip the module prefix to avoid producing `Outer.Foo.bar`.
     let name = match current_module {
-        Some(m) => format!("{}.{}", m, base),
-        None => base.to_string(),
+        Some(m) if !base.contains('.') => format!("{}.{}", m, base),
+        _ => base.to_string(),
     };
     let params = extract_julia_params(&lhs, source);
 
@@ -176,8 +182,9 @@ fn handle_assignment(
 
 fn handle_struct_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     // struct_definition: `struct` type_head <fields> `end`
-    // type_head is either a bare `identifier` (no supertype) or a
-    // `binary_expression` of the form `Name <: Super`.
+    // type_head wraps the name and optional supertype. The name may be a
+    // bare `identifier`, a `parameterized_identifier` (e.g. `Vec{T}`), or
+    // either of those nested inside a `binary_expression` (`Name <: Super`).
     let type_head = match find_child(node, "type_head") {
         Some(th) => th,
         None => return,
@@ -186,26 +193,24 @@ fn handle_struct_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let (name_node, supertype): (Node, Option<Node>) = if let Some(bin) =
         find_child(&type_head, "binary_expression")
     {
-        // First identifier is the struct name, last identifier (after `<:`) is the supertype.
-        let mut name_id: Option<Node> = None;
-        let mut super_id: Option<Node> = None;
+        // Walk into each side of the binary expression to find the base-name
+        // identifier — handles parameterized forms like `Vec{T} <: AbstractArray{T,1}`.
+        let mut sides: Vec<Node> = Vec::new();
         for i in 0..bin.child_count() {
             if let Some(c) = bin.child(i) {
-                if c.kind() == "identifier" {
-                    if name_id.is_none() {
-                        name_id = Some(c);
-                    } else {
-                        super_id = Some(c);
-                    }
+                if c.kind() != "operator" {
+                    sides.push(c);
                 }
             }
         }
+        let name_id = sides.first().and_then(|n| find_base_name(n));
+        let super_id = sides.get(1).and_then(|n| find_base_name(n));
         match name_id {
             Some(n) => (n, super_id),
             None => return,
         }
-    } else if let Some(id) = find_child(&type_head, "identifier") {
-        (id, None)
+    } else if let Some(n) = find_base_name(&type_head) {
+        (n, None)
     } else {
         return;
     };
@@ -267,7 +272,7 @@ fn handle_abstract_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     {
         Some(n) => n,
         None => match find_child(node, "type_head") {
-            Some(th) => match find_abstract_name(&th) {
+            Some(th) => match find_base_name(&th) {
                 Some(n) => n,
                 // Mirror the TS extractor: skip rather than emit a garbled
                 // definition name (e.g. raw `Name{T} <: Super{T,1}` text).
@@ -295,7 +300,12 @@ fn handle_abstract_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 /// into common wrapper kinds (binary expressions, parametrized identifiers,
 /// type-parameter lists). Returns `None` when no identifier can be located —
 /// callers should skip emitting a definition in that case.
-fn find_abstract_name<'a>(node: &Node<'a>) -> Option<Node<'a>> {
+fn find_base_name<'a>(node: &Node<'a>) -> Option<Node<'a>> {
+    // The node itself may already be the identifier (e.g. when called on a
+    // direct side of a binary_expression like `Point <: AbstractPoint`).
+    if node.kind() == "identifier" {
+        return Some(*node);
+    }
     // Direct identifier child wins.
     if let Some(id) = find_child(node, "identifier") {
         return Some(id);
@@ -310,7 +320,7 @@ fn find_abstract_name<'a>(node: &Node<'a>) -> Option<Node<'a>> {
             | "parameterized_identifier"
             | "type_parameter_list"
             | "type_argument_list" => {
-                if let Some(found) = find_abstract_name(&child) {
+                if let Some(found) = find_base_name(&child) {
                     return Some(found);
                 }
             }
@@ -391,11 +401,15 @@ fn handle_import(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 }
             }
             "selected_import" => {
-                // First identifier is the source module; the rest are imported names.
+                // First identifier-bearing node is the source module; the rest
+                // are imported names. The module may itself be a
+                // `scoped_identifier` (e.g. `import Foo.Bar: baz`) — handle it
+                // alongside bare `identifier` and use the trailing segment as
+                // the display name, mirroring the outer loop.
                 let mut first = true;
                 for j in 0..child.child_count() {
                     let Some(part) = child.child(j) else { continue };
-                    if part.kind() == "identifier" {
+                    if part.kind() == "identifier" || part.kind() == "scoped_identifier" {
                         let txt = node_text(&part, source).to_string();
                         if first {
                             if source_str.is_empty() {
@@ -403,7 +417,8 @@ fn handle_import(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                             }
                             first = false;
                         } else {
-                            names.push(txt);
+                            let last = txt.rsplit('.').next().unwrap_or(&txt).to_string();
+                            names.push(last);
                         }
                     }
                 }
@@ -668,5 +683,74 @@ mod tests {
         let call_names: Vec<&str> = s.calls.iter().map(|c| c.name.as_str()).collect();
         assert!(!call_names.contains(&"greet"));
         assert!(call_names.contains(&"println"));
+    }
+
+    #[test]
+    fn extracts_parameterized_struct_base_name() {
+        // Parameterized struct names (e.g. `Vec{T}`) must record the base
+        // identifier — not be silently dropped or include type-parameter text.
+        let s = parse_jl("struct Vec{T} <: AbstractArray{T,1}\n    data::Vector{T}\nend\n");
+        let names: Vec<&str> = s.definitions.iter().map(|d| d.name.as_str()).collect();
+        assert!(
+            names.contains(&"Vec"),
+            "expected base name `Vec`, got {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.contains('{') || n.contains('<')),
+            "definition name leaked raw type-head text: {names:?}"
+        );
+        // Supertype should still resolve to the base identifier `AbstractArray`.
+        assert_eq!(s.classes.len(), 1);
+        assert_eq!(s.classes[0].name, "Vec");
+        assert_eq!(s.classes[0].extends.as_deref(), Some("AbstractArray"));
+    }
+
+    #[test]
+    fn qualified_short_form_method_does_not_double_prefix() {
+        // `Foo.bar(x, y) = x + y` inside `module Outer` must record `Foo.bar`,
+        // not `Outer.Foo.bar` — the scoped_identifier already carries the
+        // qualifier.
+        let s = parse_jl("module Outer\n    Foo.bar(x, y) = x + y\nend\n");
+        let names: Vec<&str> = s.definitions.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"Foo.bar"), "got {names:?}");
+        assert!(
+            !names.iter().any(|n| *n == "Outer.Foo.bar"),
+            "qualified method got double-prefixed: {names:?}"
+        );
+    }
+
+    #[test]
+    fn qualified_function_def_does_not_double_prefix() {
+        // `function Base.show(io, x) ... end` inside `module Foo` must record
+        // `Base.show`, not `Foo.Base.show`.
+        let s = parse_jl(
+            "module Foo\n    function Base.show(io, x)\n        println(io, x)\n    end\nend\n",
+        );
+        let names: Vec<&str> = s.definitions.iter().map(|d| d.name.as_str()).collect();
+        assert!(names.contains(&"Base.show"), "got {names:?}");
+        assert!(
+            !names.iter().any(|n| *n == "Foo.Base.show"),
+            "qualified function def got double-prefixed: {names:?}"
+        );
+    }
+
+    #[test]
+    fn selected_import_handles_qualified_module() {
+        // `import Foo.Bar: baz` — module is a scoped_identifier. The import
+        // must record `Foo.Bar` as the source and `baz` as the imported name,
+        // not the malformed `source="baz", names=["baz"]`.
+        let s = parse_jl("import LinearAlgebra.BLAS: gemm\n");
+        assert_eq!(s.imports.len(), 1);
+        assert_eq!(s.imports[0].source, "LinearAlgebra.BLAS");
+        assert!(
+            s.imports[0].names.contains(&"gemm".to_string()),
+            "expected `gemm` in imported names, got {:?}",
+            s.imports[0].names
+        );
+        assert!(
+            !s.imports[0].names.contains(&"LinearAlgebra.BLAS".to_string()),
+            "source module leaked into names: {:?}",
+            s.imports[0].names
+        );
     }
 }
