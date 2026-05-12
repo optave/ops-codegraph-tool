@@ -457,6 +457,8 @@ export const NATIVE_SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
   '.cc',
   '.cxx',
   '.hpp',
+  '.cu',
+  '.cuh',
   '.kt',
   '.kts',
   '.swift',

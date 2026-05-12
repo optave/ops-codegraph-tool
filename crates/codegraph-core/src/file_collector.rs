@@ -42,9 +42,9 @@ const DEFAULT_IGNORE_DIRS: &[&str] = &[
 ///   vs MATLAB keywords like `function`/`classdef`).
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "js", "jsx", "mjs", "cjs", "ts", "tsx", "d.ts", "py", "pyi", "go", "rs", "java", "cs", "rb",
-    "rake", "gemspec", "php", "phtml", "tf", "hcl", "c", "h", "cpp", "cc", "cxx", "hpp", "kt",
-    "kts", "swift", "scala", "sh", "bash", "ex", "exs", "lua", "dart", "zig", "hs", "ml", "mli",
-    "m", "clj", "cljs", "cljc",
+    "rake", "gemspec", "php", "phtml", "tf", "hcl", "c", "h", "cpp", "cc", "cxx", "hpp", "cu",
+    "cuh", "kt", "kts", "swift", "scala", "sh", "bash", "ex", "exs", "lua", "dart", "zig", "hs",
+    "ml", "mli", "m", "clj", "cljs", "cljc",
 ];
 
 /// Returns whether `path` has an extension the Rust file_collector would accept.

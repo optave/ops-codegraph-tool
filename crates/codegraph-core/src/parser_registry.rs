@@ -28,6 +28,7 @@ pub enum LanguageKind {
     Ocaml,
     OcamlInterface,
     ObjC,
+    Cuda,
     Clojure,
 }
 
@@ -61,6 +62,7 @@ impl LanguageKind {
             Self::Ocaml => "ocaml",
             Self::OcamlInterface => "ocaml-interface",
             Self::ObjC => "objc",
+            Self::Cuda => "cuda",
             Self::Clojure => "clojure",
         }
     }
@@ -90,6 +92,7 @@ impl LanguageKind {
             "php" | "phtml" => Some(Self::Php),
             "c" | "h" => Some(Self::C),
             "cpp" | "cc" | "cxx" | "hpp" => Some(Self::Cpp),
+            "cu" | "cuh" => Some(Self::Cuda),
             "kt" | "kts" => Some(Self::Kotlin),
             "swift" => Some(Self::Swift),
             "scala" => Some(Self::Scala),
@@ -136,6 +139,7 @@ impl LanguageKind {
             "ocaml" => Some(Self::Ocaml),
             "ocaml-interface" => Some(Self::OcamlInterface),
             "objc" => Some(Self::ObjC),
+            "cuda" => Some(Self::Cuda),
             "clojure" => Some(Self::Clojure),
             _ => None,
         }
@@ -169,6 +173,7 @@ impl LanguageKind {
             Self::Ocaml => tree_sitter_ocaml::LANGUAGE_OCAML.into(),
             Self::OcamlInterface => tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
             Self::ObjC => tree_sitter_objc::LANGUAGE.into(),
+            Self::Cuda => tree_sitter_cuda::LANGUAGE.into(),
             Self::Clojure => tree_sitter_clojure_orchard::LANGUAGE.into(),
         }
     }
@@ -185,7 +190,7 @@ impl LanguageKind {
         &[
             JavaScript, TypeScript, Tsx, Python, Go, Rust, Java, CSharp, Ruby, Php, Hcl, C,
             Cpp, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, Ocaml,
-            OcamlInterface, ObjC, Clojure,
+            OcamlInterface, ObjC, Cuda, Clojure,
         ]
     }
 }
@@ -256,6 +261,7 @@ mod tests {
             | LanguageKind::Ocaml
             | LanguageKind::OcamlInterface
             | LanguageKind::ObjC
+            | LanguageKind::Cuda
             | LanguageKind::Clojure => (),
         };
         // IMPORTANT: this constant must equal the number of arms in the match
@@ -263,7 +269,7 @@ mod tests {
         // Because both checks require the same manual update, they reinforce
         // each other: a developer who updates the match is reminded to also
         // update `all()` and this count.
-        const EXPECTED_LEN: usize = 26;
+        const EXPECTED_LEN: usize = 27;
         assert_eq!(
             LanguageKind::all().len(),
             EXPECTED_LEN,
