@@ -617,19 +617,19 @@ Codegraph also extracts symbols from common callback patterns: Commander `.comma
 
 Self-measured on every release via CI ([build benchmarks](generated/benchmarks/BUILD-BENCHMARKS.md) | [embedding benchmarks](generated/benchmarks/EMBEDDING-BENCHMARKS.md) | [query benchmarks](generated/benchmarks/QUERY-BENCHMARKS.md) | [incremental benchmarks](generated/benchmarks/INCREMENTAL-BENCHMARKS.md) | [resolution precision/recall](tests/benchmarks/resolution/)):
 
-*Last updated: v3.9.6 (2026-04-30)*
+*Last updated: v3.10.0 (2026-05-11)*
 
 | Metric | Native | WASM |
 |---|---|---|
-| Build speed | **5.8 ms/file** | **28.3 ms/file** |
-| Query time | **47ms** | **43ms** |
-| No-op rebuild | **13ms** | **134ms** |
-| 1-file rebuild | **78ms** | **68ms** |
-| Query: fn-deps | **3.4ms** | **2.4ms** |
-| Query: path | **3.1ms** | **2.2ms** |
-| ~50,000 files (est.) | **~290.0s build** | **~1415.0s build** |
-| Resolution precision | **90.5%** | — |
-| Resolution recall | **42.0%** | — |
+| Build speed | **4.8 ms/file** | **18.1 ms/file** |
+| Query time | **50ms** | **38ms** |
+| No-op rebuild | **24ms** | **15ms** |
+| 1-file rebuild | **67ms** | **51ms** |
+| Query: fn-deps | **2.2ms** | **2.1ms** |
+| Query: path | **2.3ms** | **2.1ms** |
+| ~50,000 files (est.) | **~240.0s build** | **~905.0s build** |
+| Resolution precision | **90.7%** | — |
+| Resolution recall | **42.9%** | — |
 
 Metrics are normalized per file for cross-version comparability. Times above are for a full initial build — incremental rebuilds only re-parse changed files.
 
@@ -652,7 +652,7 @@ Metrics are normalized per file for cross-version comparability. Times above are
 | gleam | 100.0% | 26.7% | 4 | 0 | 11 | 15 | — |
 | go | 100.0% | 69.2% | 9 | 0 | 4 | 13 | 13/14 |
 | groovy | 100.0% | 7.7% | 1 | 0 | 12 | 13 | — |
-| haskell | 0.0% | 0.0% | 0 | 0 | 12 | 12 | — |
+| haskell | 100.0% | 33.3% | 4 | 0 | 8 | 12 | — |
 | hcl | 0.0% | 0.0% | 0 | 0 | 2 | 2 | — |
 | java | 100.0% | 52.9% | 9 | 0 | 8 | 17 | — |
 | julia | 0.0% | 0.0% | 0 | 0 | 15 | 15 | — |
@@ -676,10 +676,10 @@ Metrics are normalized per file for cross-version comparability. Times above are
 
 | Mode | Resolved | Expected | Recall |
 |------|--------:|---------:|-------:|
-| module-function | 13 | 106 | 12.3% |
+| module-function | 16 | 106 | 15.1% |
 | receiver-typed | 17 | 104 | 16.3% |
 | static | 66 | 93 | 71.0% |
-| same-file | 47 | 86 | 54.7% |
+| same-file | 48 | 86 | 55.8% |
 | interface-dispatched | 7 | 12 | 58.3% |
 | class-inheritance | 0 | 4 | 0.0% |
 | trait-dispatch | 0 | 2 | 0.0% |
