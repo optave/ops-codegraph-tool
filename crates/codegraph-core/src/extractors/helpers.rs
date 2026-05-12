@@ -260,6 +260,20 @@ pub const CPP_AST_CONFIG: LangAstConfig = LangAstConfig {
     string_prefixes: &['L', 'u', 'U', 'R'],
 };
 
+/// CUDA is a C++ superset; the tree-sitter-cuda grammar extends C++ with
+/// `__global__`/`__device__`/`__host__`/`__shared__` qualifiers and kernel
+/// launch syntax. The node-type vocabulary for literals, exceptions, and
+/// awaits is otherwise identical to C++.
+pub const CUDA_AST_CONFIG: LangAstConfig = LangAstConfig {
+    new_types: &["new_expression"],
+    throw_types: &["throw_statement"],
+    await_types: &["co_await_expression"],
+    string_types: &["string_literal", "raw_string_literal"],
+    regex_types: &[],
+    quote_chars: &['"'],
+    string_prefixes: &['L', 'u', 'U', 'R'],
+};
+
 pub const KOTLIN_AST_CONFIG: LangAstConfig = LangAstConfig {
     new_types: &[],
     throw_types: &["throw_expression"],
