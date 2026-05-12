@@ -166,6 +166,18 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   Exempt this release; remove once 3.11.0+ data confirms stabilization
  *   under the warmup + 5-sample methodology already applied to incremental
  *   benchmarks.
+ *
+ * - 3.10.0:Full build — adding native Verilog support (#1107) pulled the
+ *   4 `.v` resolution-benchmark fixtures into the corpus the incremental
+ *   benchmark sweeps (it runs against the repo root). tree-sitter-verilog
+ *   is a large grammar (SystemVerilog is one of the heaviest in the
+ *   tree-sitter ecosystem) so each file costs noticeably more than the
+ *   other fixture languages. Local measurement: 1959 → 2809 (+43%, run
+ *   25716010487). The cost is real and structural — not a regression in
+ *   shared code paths. Resolution: either exclude `tests/benchmarks/
+ *   resolution/fixtures/verilog/**` from the benchmark sweep or accept the
+ *   one-time bump as the cost of supporting Verilog. Tracked separately;
+ *   exempt this release.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.9.6:Build ms/file',
@@ -176,6 +188,7 @@ const KNOWN_REGRESSIONS = new Set([
   '3.10.0:No-op rebuild',
   '3.10.0:1-file rebuild',
   '3.10.0:fnDeps depth 1',
+  '3.10.0:Full build',
 ]);
 
 /**
