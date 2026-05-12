@@ -161,21 +161,31 @@ fn extract_contract_member(child: &Node, source: &[u8]) -> Option<Definition> {
 }
 
 /// Extract inheritance (extends) relationships from a contract node.
+///
+/// Each parent in `contract A is B, C, D { }` is its own `inheritance_specifier`
+/// sibling under the contract node (see tree-sitter-solidity grammar:
+/// `_class_heritage: "is" commaSep1($.inheritance_specifier)`), so we must walk
+/// all direct children rather than stopping at the first match.
 fn extract_inheritance(node: &Node, name: &str, source: &[u8], symbols: &mut FileSymbols) {
-    let Some(inheritance) = find_child(node, "inheritance_specifier") else {
-        return;
-    };
-    for i in 0..inheritance.child_count() {
-        let Some(child) = inheritance.child(i) else {
+    for i in 0..node.child_count() {
+        let Some(inheritance) = node.child(i) else {
             continue;
         };
-        if child.kind() == "user_defined_type" || child.kind() == "identifier" {
-            symbols.classes.push(ClassRelation {
-                name: name.to_string(),
-                extends: Some(node_text(&child, source).to_string()),
-                implements: None,
-                line: start_line(node),
-            });
+        if inheritance.kind() != "inheritance_specifier" {
+            continue;
+        }
+        for j in 0..inheritance.child_count() {
+            let Some(child) = inheritance.child(j) else {
+                continue;
+            };
+            if child.kind() == "user_defined_type" || child.kind() == "identifier" {
+                symbols.classes.push(ClassRelation {
+                    name: name.to_string(),
+                    extends: Some(node_text(&child, source).to_string()),
+                    implements: None,
+                    line: start_line(node),
+                });
+            }
         }
     }
 }
@@ -571,6 +581,21 @@ mod tests {
         let s = parse_sol("contract MyToken is ERC20 {}");
         let c = s.classes.iter().find(|c| c.name == "MyToken").unwrap();
         assert_eq!(c.extends.as_deref(), Some("ERC20"));
+    }
+
+    #[test]
+    fn extracts_multi_parent_inheritance() {
+        // Each parent in `is B, C` becomes a separate `inheritance_specifier`
+        // sibling in the tree-sitter-solidity grammar — make sure we emit a
+        // ClassRelation for each.
+        let s = parse_sol("contract A is B, C, D {}");
+        let parents: Vec<_> = s
+            .classes
+            .iter()
+            .filter(|c| c.name == "A")
+            .filter_map(|c| c.extends.as_deref())
+            .collect();
+        assert_eq!(parents, vec!["B", "C", "D"]);
     }
 
     #[test]

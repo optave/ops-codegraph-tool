@@ -156,15 +156,24 @@ function extractContractMember(child: TreeSitterNode): SubDeclaration | null {
   }
 }
 
-/** Extract inheritance (extends) relationships from a contract node. */
+/**
+ * Extract inheritance (extends) relationships from a contract node.
+ *
+ * Each parent in `contract A is B, C, D { }` is its own `inheritance_specifier`
+ * sibling under the contract node (see tree-sitter-solidity grammar:
+ * `_class_heritage: "is" commaSep1($.inheritance_specifier)`), so we must walk
+ * all direct children rather than stopping at the first match.
+ */
 function extractInheritance(node: TreeSitterNode, name: string, ctx: ExtractorOutput): void {
-  const inheritance = findChild(node, 'inheritance_specifier');
-  if (!inheritance) return;
-  for (let i = 0; i < inheritance.childCount; i++) {
-    const child = inheritance.child(i);
-    if (!child) continue;
-    if (child.type === 'user_defined_type' || child.type === 'identifier') {
-      ctx.classes.push({ name, extends: child.text, line: node.startPosition.row + 1 });
+  for (let i = 0; i < node.childCount; i++) {
+    const inheritance = node.child(i);
+    if (!inheritance || inheritance.type !== 'inheritance_specifier') continue;
+    for (let j = 0; j < inheritance.childCount; j++) {
+      const child = inheritance.child(j);
+      if (!child) continue;
+      if (child.type === 'user_defined_type' || child.type === 'identifier') {
+        ctx.classes.push({ name, extends: child.text, line: node.startPosition.row + 1 });
+      }
     }
   }
 }
