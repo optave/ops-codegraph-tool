@@ -12,6 +12,7 @@ pub mod hcl;
 pub mod helpers;
 pub mod java;
 pub mod javascript;
+pub mod julia;
 pub mod kotlin;
 pub mod lua;
 pub mod ocaml;
@@ -115,6 +116,9 @@ pub fn extract_symbols_with_opts(
         }
         LanguageKind::Lua => {
             lua::LuaExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Julia => {
+            julia::JuliaExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
         }
         LanguageKind::Dart => {
             dart::DartExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
