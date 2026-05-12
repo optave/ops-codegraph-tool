@@ -241,7 +241,10 @@ fn handle_import(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 }
 
 fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    let func_node = match node.child_by_field_name("function").or_else(|| node.child(0)) {
+    let func_node = match node
+        .child_by_field_name("function")
+        .or_else(|| node.named_child(0))
+    {
         Some(n) => n,
         None => return,
     };
@@ -263,7 +266,7 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 .or_else(|| func_node.child_by_field_name("label"));
             let record = func_node
                 .child_by_field_name("record")
-                .or_else(|| func_node.child(0));
+                .or_else(|| func_node.named_child(0));
             if let Some(f) = field {
                 let receiver = record.and_then(|r| {
                     // Don't use the field itself as the receiver.
