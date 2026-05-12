@@ -29,7 +29,63 @@ impl SymbolExtractor for CudaExtractor {
             &mut symbols.ast_nodes,
             &CUDA_AST_CONFIG,
         );
+        // Third pass: populate type_map with variable-to-type bindings so
+        // receiver-typed call resolution (e.g. `buf.copy(...)` → `DeviceBuffer.copy`)
+        // fires for CUDA files just like it does for C++ files. Mirrors the
+        // third walk in `cpp.rs`.
+        walk_tree(&tree.root_node(), source, &mut symbols, match_cuda_type_map);
         symbols
+    }
+}
+
+// ── Type inference ──────────────────────────────────────────────────────────
+
+/// Populate `symbols.type_map` from `declaration` and `parameter_declaration`
+/// nodes. Mirrors `match_cpp_type_map` in `cpp.rs` — the CUDA grammar shares
+/// these C++ node types, so the same logic works unchanged.
+fn match_cuda_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth: usize) {
+    match node.kind() {
+        "declaration" => {
+            if let Some(type_node) = node.child_by_field_name("type") {
+                let type_name = node_text(&type_node, source);
+                for i in 0..node.child_count() {
+                    if let Some(child) = node.child(i) {
+                        if child.kind() == "init_declarator" || child.kind() == "identifier" {
+                            let name_node = if child.kind() == "init_declarator" {
+                                child.child_by_field_name("declarator")
+                            } else {
+                                Some(child)
+                            };
+                            if let Some(name_node) = name_node {
+                                let final_name = unwrap_cuda_declarator(&name_node, source);
+                                if !final_name.is_empty() {
+                                    symbols.type_map.push(TypeMapEntry {
+                                        name: final_name,
+                                        type_name: type_name.to_string(),
+                                        confidence: 0.9,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        "parameter_declaration" => {
+            if let Some(type_node) = node.child_by_field_name("type") {
+                if let Some(decl) = node.child_by_field_name("declarator") {
+                    let name = unwrap_cuda_declarator(&decl, source);
+                    if !name.is_empty() {
+                        symbols.type_map.push(TypeMapEntry {
+                            name,
+                            type_name: node_text(&type_node, source).to_string(),
+                            confidence: 0.9,
+                        });
+                    }
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -364,18 +420,24 @@ fn handle_cuda_type_definition(node: &Node, source: &[u8], symbols: &mut FileSym
 }
 
 fn handle_cuda_preproc_include(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    // JS strips quote/angle delimiters and exposes the full include path as
-    // the `source` plus the file's basename (no extension strip) as the only
-    // import name. Tagged with `cInclude` so resolution treats it like a C/C++
-    // header.
+    // Strip quote/angle delimiters and expose the basename minus header
+    // extension as the import name, matching the native C++ extractor so
+    // `cInclude` resolution links CUDA includes consistently with C/C++.
+    // CUDA-specific `.cuh` headers are stripped in addition to `.h`/`.hpp`.
+    // Tagged with `cInclude` so resolution treats it like a C/C++ header.
     if let Some(path_node) = node.child_by_field_name("path") {
         let raw = node_text(&path_node, source);
         let path = raw.trim_matches(|c| c == '"' || c == '<' || c == '>');
         if !path.is_empty() {
             let last = path.rsplit('/').next().unwrap_or(path);
+            let name = last
+                .strip_suffix(".cuh")
+                .or_else(|| last.strip_suffix(".hpp"))
+                .or_else(|| last.strip_suffix(".h"))
+                .unwrap_or(last);
             let mut imp = Import::new(
                 path.to_string(),
-                vec![last.to_string()],
+                vec![name.to_string()],
                 start_line(node),
             );
             imp.c_include = Some(true);
@@ -508,7 +570,37 @@ mod tests {
         assert_eq!(s.imports.len(), 2);
         assert!(s.imports[0].c_include.unwrap_or(false));
         assert_eq!(s.imports[0].source, "cuda_runtime.h");
+        // Header extensions are stripped from import names so `cInclude`
+        // resolution matches C/C++ behavior in the native layer.
+        assert_eq!(s.imports[0].names, vec!["cuda_runtime".to_string()]);
         assert_eq!(s.imports[1].source, "mylib.cuh");
+        assert_eq!(s.imports[1].names, vec!["mylib".to_string()]);
+    }
+
+    #[test]
+    fn populates_type_map_from_declarations() {
+        let s = parse_cuda(
+            "void run() { DeviceBuffer buf; buf.copy(src, n); }",
+        );
+        // `DeviceBuffer buf;` should be recorded so receiver-typed call
+        // resolution can map `buf.copy` to `DeviceBuffer.copy`.
+        let entry = s
+            .type_map
+            .iter()
+            .find(|e| e.name == "buf")
+            .expect("buf type binding present in type_map");
+        assert_eq!(entry.type_name, "DeviceBuffer");
+    }
+
+    #[test]
+    fn populates_type_map_from_parameters() {
+        let s = parse_cuda("void run(DeviceBuffer buf) { buf.copy(); }");
+        let entry = s
+            .type_map
+            .iter()
+            .find(|e| e.name == "buf")
+            .expect("buf parameter type binding present in type_map");
+        assert_eq!(entry.type_name, "DeviceBuffer");
     }
 
     #[test]
