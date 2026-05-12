@@ -155,6 +155,17 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   sub-100ms metric is still razor-thin. Exempt this release; remove
  *   once 3.11.0+ data confirms CI numbers stabilize under the new
  *   methodology.
+ *
+ * - 3.10.0:fnDeps depth 1 — CI variance on a sub-30ms metric (24.7ms native
+ *   baseline). The fn_deps Rust implementation, fnDepsData JS wrapper, and
+ *   DB schema/indexes are all byte-for-byte unchanged since v3.9.6 (already
+ *   documented in NOISY_METRICS above). Measured runs land at +40–60%
+ *   typically (within the 50% NOISY_METRIC_THRESHOLD), but the per-PR gate
+ *   has seen outliers up to +82% (run 25708925467: 24.7 → 44.9ms) on
+ *   shared runners — the ~20ms absolute delta is the runner noise floor.
+ *   Exempt this release; remove once 3.11.0+ data confirms stabilization
+ *   under the warmup + 5-sample methodology already applied to incremental
+ *   benchmarks.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.9.6:Build ms/file',
@@ -164,6 +175,7 @@ const KNOWN_REGRESSIONS = new Set([
   '3.9.6:resolution haskell recall',
   '3.10.0:No-op rebuild',
   '3.10.0:1-file rebuild',
+  '3.10.0:fnDeps depth 1',
 ]);
 
 /**
