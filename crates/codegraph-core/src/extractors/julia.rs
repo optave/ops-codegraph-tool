@@ -258,16 +258,21 @@ fn handle_struct_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
 fn handle_abstract_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     // abstract_definition: `abstract type` type_head `end`
-    // type_head wraps the name identifier (or a `Name <: Super` binary_expr).
-    let name_node = match find_child(node, "type_head") {
-        Some(th) => find_child(&th, "identifier")
-            .or_else(|| {
-                find_child(&th, "binary_expression")
-                    .and_then(|bin| find_child(&bin, "identifier"))
-            })
-            .unwrap_or(th),
-        None => match find_child(node, "identifier") {
-            Some(n) => n,
+    // type_head wraps the name identifier — possibly nested in a
+    // `Name <: Super` binary_expression or a `Name{T,...}` parametrized form
+    // (`parameterized_identifier` / `type_parameter_list`).
+    let name_node = match node
+        .child_by_field_name("name")
+        .or_else(|| find_child(node, "identifier"))
+    {
+        Some(n) => n,
+        None => match find_child(node, "type_head") {
+            Some(th) => match find_abstract_name(&th) {
+                Some(n) => n,
+                // Mirror the TS extractor: skip rather than emit a garbled
+                // definition name (e.g. raw `Name{T} <: Super{T,1}` text).
+                None => return,
+            },
             None => return,
         },
     };
@@ -281,6 +286,38 @@ fn handle_abstract_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         cfg: None,
         children: None,
     });
+}
+
+/// Locate the base-name identifier within a `type_head` node.
+///
+/// Handles plain identifiers, `Name <: Super` binary expressions, and
+/// parameterized forms like `Name{T}` / `Name{T} <: Super{T,1}` by recursing
+/// into common wrapper kinds (binary expressions, parametrized identifiers,
+/// type-parameter lists). Returns `None` when no identifier can be located —
+/// callers should skip emitting a definition in that case.
+fn find_abstract_name<'a>(node: &Node<'a>) -> Option<Node<'a>> {
+    // Direct identifier child wins.
+    if let Some(id) = find_child(node, "identifier") {
+        return Some(id);
+    }
+    // Otherwise recurse through wrapper shapes that may contain the
+    // base-name identifier (parameterized or supertyped forms).
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else { continue };
+        match child.kind() {
+            "binary_expression"
+            | "parametrized_type_expression"
+            | "parameterized_identifier"
+            | "type_parameter_list"
+            | "type_argument_list" => {
+                if let Some(found) = find_abstract_name(&child) {
+                    return Some(found);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 fn handle_macro_def(
@@ -571,6 +608,23 @@ mod tests {
             .find(|d| d.name == "AbstractShape")
             .expect("abstract should be found");
         assert_eq!(t.kind, "type");
+    }
+
+    #[test]
+    fn extracts_parameterized_abstract_type_base_name() {
+        // Parameterized generics with a supertype must record only the base
+        // identifier — never the raw `Name{T} <: Super{T,1}` text.
+        let s = parse_jl("abstract type AbstractVector{T} <: AbstractArray{T,1} end\n");
+        let names: Vec<&str> = s.definitions.iter().map(|d| d.name.as_str()).collect();
+        assert!(
+            names.contains(&"AbstractVector"),
+            "expected base name `AbstractVector`, got {names:?}"
+        );
+        // Guard against the previous garbled-name regression.
+        assert!(
+            !names.iter().any(|n| n.contains('{') || n.contains('<')),
+            "definition name leaked raw type-head text: {names:?}"
+        );
     }
 
     #[test]
