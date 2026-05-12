@@ -472,6 +472,9 @@ export const NATIVE_SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
   '.ml',
   '.mli',
   '.gleam',
+  '.clj',
+  '.cljs',
+  '.cljc',
 ]);
 
 /**
