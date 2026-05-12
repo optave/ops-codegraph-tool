@@ -120,9 +120,16 @@ fn handle_list_form(
 
 /// Find the first `sym_lit` or `kwd_lit` child, skipping delimiters and metadata.
 /// Mirrors `findFirstSymbol` in the JS extractor.
+///
+/// A missing child at index `i < child_count()` is treated as "skip and continue"
+/// to match the JS counterpart (`if (!child) continue;`), rather than aborting
+/// the search via `?`.
 fn find_first_symbol<'a>(list_node: &Node<'a>) -> Option<Node<'a>> {
     for i in 0..list_node.child_count() {
-        let child = list_node.child(i)?;
+        let child = match list_node.child(i) {
+            Some(c) => c,
+            None => continue,
+        };
         if is_delimiter_or_meta(child.kind()) {
             continue;
         }
@@ -136,10 +143,16 @@ fn find_first_symbol<'a>(list_node: &Node<'a>) -> Option<Node<'a>> {
 
 /// Find the second `sym_lit` or `kwd_lit` child. Used to extract the bound
 /// name from forms like `(defn foo [...] ...)`.
+///
+/// Like `find_first_symbol`, a missing child is skipped (not propagated via `?`)
+/// to preserve parity with the JS extractor.
 fn find_second_symbol<'a>(list_node: &Node<'a>) -> Option<Node<'a>> {
     let mut count = 0;
     for i in 0..list_node.child_count() {
-        let child = list_node.child(i)?;
+        let child = match list_node.child(i) {
+            Some(c) => c,
+            None => continue,
+        };
         if is_delimiter_or_meta(child.kind()) {
             continue;
         }
@@ -290,6 +303,14 @@ fn handle_defn_form(
 fn extract_clojure_params(defn_node: &Node, source: &[u8]) -> Vec<Definition> {
     let mut params = Vec::new();
     // First `vec_lit` child is the parameter vector `[x y z]`.
+    //
+    // Known limitation (parity with JS extractor): for `defmethod` forms like
+    // `(defmethod foo [:a :b] [x] body)`, the dispatch vector `[:a :b]` is the
+    // first `vec_lit` and the actual parameter vector `[x]` is silently
+    // skipped because of the `break` below. The dispatch vector contributes
+    // no `sym_lit` entries (its elements are `kwd_lit`), so `params` ends up
+    // empty rather than wrong. Tracked as a future enhancement once
+    // visibility/metadata fields land in `Definition`.
     for i in 0..defn_node.child_count() {
         let child = match defn_node.child(i) {
             Some(c) if c.kind() == "vec_lit" => c,
@@ -345,6 +366,17 @@ fn handle_defrecord(node: &Node, source: &[u8], symbols: &mut FileSymbols, kind:
     });
 }
 
+/// Handle a top-level `(require ...)`, `(use ...)`, or `(import ...)` form.
+///
+/// Known limitation (parity with JS extractor): in real Clojure code these
+/// top-level forms almost always use a quoted symbol (`(require 'some.ns)`
+/// → `quoting_lit`) or a quoted vector (`(require '[some.ns :as s])`).
+/// `find_second_symbol` only matches `sym_lit` / `kwd_lit`, so those shapes
+/// return `None` and the import is silently dropped here. Imports inside
+/// `(ns ...)` declarations are still extracted correctly by
+/// `extract_ns_requires` — that path is the recommended one and covers
+/// real-world Clojure code, while this top-level fallback only handles the
+/// degenerate unquoted shape.
 fn handle_import_form(node: &Node, source: &[u8], symbols: &mut FileSymbols, keyword: &str) {
     let name_node = match find_second_symbol(node) {
         Some(n) => n,
