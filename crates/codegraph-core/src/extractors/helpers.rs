@@ -374,6 +374,16 @@ pub const OCAML_AST_CONFIG: LangAstConfig = LangAstConfig {
     string_prefixes: &[],
 };
 
+pub const JULIA_AST_CONFIG: LangAstConfig = LangAstConfig {
+    new_types: &[],
+    throw_types: &[],
+    await_types: &[],
+    string_types: &["string_literal", "prefixed_string_literal"],
+    regex_types: &[],
+    quote_chars: &['"'],
+    string_prefixes: &[],
+};
+
 pub const CLOJURE_AST_CONFIG: LangAstConfig = LangAstConfig {
     new_types: &[],
     throw_types: &[],
