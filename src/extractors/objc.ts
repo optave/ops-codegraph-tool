@@ -87,17 +87,23 @@ function handleClassInterface(node: TreeSitterNode, ctx: ExtractorOutput): void 
   const nameNode = node.childForFieldName('name') || findObjCDeclName(node);
   if (!nameNode) return;
   const name = nameNode.text;
+  // Categories declared as `@interface Foo (Cat)` arrive as `class_interface`
+  // with a `category` field (rather than the `category_interface` node type).
+  // Qualify the display name with `(Cat)` so symbols stay grouped per category
+  // and match the Rust extractor.
+  const category = node.childForFieldName('category');
+  const displayName = category ? `${name}(${category.text})` : name;
 
   const members = collectClassMembers(node);
   ctx.definitions.push({
-    name,
+    name: displayName,
     kind: 'class',
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
     children: members.length > 0 ? members : undefined,
   });
 
-  // Superclass
+  // Superclass — keyed on the bare class name (categories don't have a superclass).
   const superclass = node.childForFieldName('superclass');
   if (superclass) {
     ctx.classes.push({ name, extends: superclass.text, line: node.startPosition.row + 1 });
@@ -118,9 +124,14 @@ function handleClassInterface(node: TreeSitterNode, ctx: ExtractorOutput): void 
 function handleClassImplementation(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name') || findObjCDeclName(node);
   if (!nameNode) return;
+  // Categories declared as `@implementation Foo (Cat)` arrive as
+  // `class_implementation` with a `category` field. Mirror the Rust extractor
+  // and qualify the display name with `(Cat)`.
+  const category = node.childForFieldName('category');
+  const displayName = category ? `${nameNode.text}(${category.text})` : nameNode.text;
 
   ctx.definitions.push({
-    name: nameNode.text,
+    name: displayName,
     kind: 'class',
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
@@ -349,7 +360,14 @@ function findObjCParentClass(node: TreeSitterNode): string | null {
       current.type === 'category_implementation'
     ) {
       const nameNode = current.childForFieldName('name') || findObjCDeclName(current);
-      return nameNode ? nameNode.text : null;
+      if (!nameNode) return null;
+      // Categories: include `(Cat)` so methods are grouped per category.
+      // Two categories on the same class can declare same-named methods, so
+      // qualifying the parent name keeps the symbols disambiguated. Mirrors
+      // `find_objc_parent_class` in `crates/codegraph-core/src/extractors/objc.rs`.
+      const category = current.childForFieldName('category');
+      if (category) return `${nameNode.text}(${category.text})`;
+      return nameNode.text;
     }
     current = current.parent;
   }

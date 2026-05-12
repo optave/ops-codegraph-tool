@@ -9,10 +9,9 @@ use super::SymbolExtractor;
 ///
 /// The tree-sitter-objc grammar extends C with `@interface`, `@implementation`,
 /// `@protocol`, method declarations/definitions, `#import`, `@import`, and
-/// message expressions. Methods inside `class_implementation` are wrapped in
-/// `implementation_definition`, and selectors are not exposed as a named
-/// `selector` field — they are assembled from leading `identifier` keywords
-/// followed by `method_parameter` children.
+/// message expressions. Selectors are not exposed as a named `selector` field
+/// — they are assembled from leading `identifier` keywords followed by
+/// `method_parameter` children.
 pub struct ObjCExtractor;
 
 impl SymbolExtractor for ObjCExtractor {
@@ -218,10 +217,12 @@ fn handle_import(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     symbols.imports.push(imp);
 }
 
-/// `@import Foundation;` — grammar emits `module_import` with `path` field
-/// pointing at the module identifier.
+/// `@import Foundation;` — grammar emits `module_import` with a `module`
+/// field pointing at the module identifier. (`path` is the `#import`
+/// preprocessor field; `module_import` uses `module`.) Mirrors
+/// `src/extractors/objc.ts`.
 fn handle_at_import(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    let module_node = node.child_by_field_name("path")
+    let module_node = node.child_by_field_name("module")
         .or_else(|| find_child(node, "identifier"));
     if let Some(m) = module_node {
         let name = node_text(&m, source).to_string();
@@ -474,14 +475,6 @@ fn collect_class_members(class_node: &Node, source: &[u8]) -> Vec<Definition> {
             "method_declaration" | "method_definition" => {
                 if let Some(sel) = build_selector(&child, source) {
                     members.push(child_def(sel, "method", start_line(&child)));
-                }
-            }
-            "implementation_definition" => {
-                // Wraps a `method_definition` inside `class_implementation`.
-                if let Some(method) = find_child(&child, "method_definition") {
-                    if let Some(sel) = build_selector(&method, source) {
-                        members.push(child_def(sel, "method", start_line(&method)));
-                    }
                 }
             }
             "property_declaration" => {
