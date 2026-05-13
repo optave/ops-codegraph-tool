@@ -17,12 +17,12 @@ describe('classifyNativeDrops', () => {
     const { byReason, totals } = classifyNativeDrops([
       'src/a.fs',
       'src/e.R',
-      'src/f.erl',
+      'src/h.fsx',
       'src/i.groovy',
       'src/j.v',
       'src/k.m',
     ]);
-    expect(totals['unsupported-by-native']).toBe(7);
+    expect(totals['unsupported-by-native']).toBe(6);
     expect(totals['native-extractor-failure']).toBe(0);
     expect(byReason['unsupported-by-native'].get('.fs')).toEqual(['src/a.fs']);
     expect(byReason['unsupported-by-native'].get('.r')).toEqual(['src/e.R']);
@@ -46,12 +46,12 @@ describe('classifyNativeDrops', () => {
       'src/a.ts',
       'src/b.fs',
       'src/c.fs',
-      'src/d.erl',
+      'src/d.fsx',
     ]);
     expect(totals['native-extractor-failure']).toBe(1);
     expect(totals['unsupported-by-native']).toBe(3);
     expect(byReason['unsupported-by-native'].get('.fs')).toEqual(['src/b.fs', 'src/c.fs']);
-    expect(byReason['unsupported-by-native'].get('.erl')).toEqual(['src/d.erl']);
+    expect(byReason['unsupported-by-native'].get('.fsx')).toEqual(['src/d.fsx']);
   });
 
   it('lowercases extensions so .R and .r share a bucket', () => {
@@ -72,7 +72,7 @@ describe('classifyNativeDrops', () => {
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.ts')).toBe(true);
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.py')).toBe(true);
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.fs')).toBe(false);
-    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.erl')).toBe(false);
+    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.fsx')).toBe(false);
   });
 });
 
