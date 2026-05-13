@@ -167,6 +167,15 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   under the warmup + 5-sample methodology already applied to incremental
  *   benchmarks.
  *
+ * - 3.10.0:fnDeps depth 3 — same CI-variance pattern as fnDeps depth 1, just
+ *   one depth-level deeper. WASM baseline is 33ms (sub-30ms range when CI
+ *   jitter is included). The fn_deps codepath is depth-agnostic — same Rust
+ *   implementation, same JS wrapper, same DB indexes — so a deviation at
+ *   depth 3 but not depth 1/5 indicates per-run runner noise, not a
+ *   structural regression. Observed +32% (33 → 43.4ms) on run 25790873005,
+ *   absolute delta 10.4ms exactly at the MIN_ABSOLUTE_DELTA floor. Exempt
+ *   this release; remove once 3.11.0+ data confirms stabilization.
+ *
  * - 3.10.0:Full build — adding native Verilog support (#1107) pulled the
  *   4 `.v` resolution-benchmark fixtures into the corpus the incremental
  *   benchmark sweeps (it runs against the repo root). tree-sitter-verilog
@@ -188,6 +197,7 @@ const KNOWN_REGRESSIONS = new Set([
   '3.10.0:No-op rebuild',
   '3.10.0:1-file rebuild',
   '3.10.0:fnDeps depth 1',
+  '3.10.0:fnDeps depth 3',
   '3.10.0:Full build',
 ]);
 
