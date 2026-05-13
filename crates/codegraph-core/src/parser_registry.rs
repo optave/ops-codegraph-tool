@@ -30,7 +30,9 @@ pub enum LanguageKind {
     Julia,
     Cuda,
     Clojure,
+    Erlang,
     Groovy,
+    Solidity,
 }
 
 impl LanguageKind {
@@ -65,7 +67,9 @@ impl LanguageKind {
             Self::Julia => "julia",
             Self::Cuda => "cuda",
             Self::Clojure => "clojure",
+            Self::Erlang => "erlang",
             Self::Groovy => "groovy",
+            Self::Solidity => "solidity",
         }
     }
 
@@ -108,7 +112,9 @@ impl LanguageKind {
             "mli" => Some(Self::OcamlInterface),
             "jl" => Some(Self::Julia),
             "clj" | "cljs" | "cljc" => Some(Self::Clojure),
+            "erl" | "hrl" => Some(Self::Erlang),
             "groovy" | "gvy" => Some(Self::Groovy),
+            "sol" => Some(Self::Solidity),
             _ => None,
         }
     }
@@ -144,7 +150,9 @@ impl LanguageKind {
             "julia" => Some(Self::Julia),
             "cuda" => Some(Self::Cuda),
             "clojure" => Some(Self::Clojure),
+            "erlang" => Some(Self::Erlang),
             "groovy" => Some(Self::Groovy),
+            "solidity" => Some(Self::Solidity),
             _ => None,
         }
     }
@@ -179,7 +187,9 @@ impl LanguageKind {
             Self::Julia => tree_sitter_julia::LANGUAGE.into(),
             Self::Cuda => tree_sitter_cuda::LANGUAGE.into(),
             Self::Clojure => tree_sitter_clojure_orchard::LANGUAGE.into(),
+            Self::Erlang => tree_sitter_erlang::LANGUAGE.into(),
             Self::Groovy => tree_sitter_groovy::LANGUAGE.into(),
+            Self::Solidity => tree_sitter_solidity::LANGUAGE.into(),
         }
     }
 
@@ -195,7 +205,7 @@ impl LanguageKind {
         &[
             JavaScript, TypeScript, Tsx, Python, Go, Rust, Java, CSharp, Ruby, Php, Hcl, C,
             Cpp, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, Ocaml,
-            OcamlInterface, Julia, Cuda, Clojure, Groovy,
+            OcamlInterface, Julia, Cuda, Clojure, Erlang, Groovy, Solidity,
         ]
     }
 }
@@ -268,14 +278,16 @@ mod tests {
             | LanguageKind::Julia
             | LanguageKind::Cuda
             | LanguageKind::Clojure
-            | LanguageKind::Groovy => (),
+            | LanguageKind::Erlang
+            | LanguageKind::Groovy
+            | LanguageKind::Solidity => (),
         };
         // IMPORTANT: this constant must equal the number of arms in the match
         // above AND the length of the slice returned by `LanguageKind::all()`.
         // Because both checks require the same manual update, they reinforce
         // each other: a developer who updates the match is reminded to also
         // update `all()` and this count.
-        const EXPECTED_LEN: usize = 28;
+        const EXPECTED_LEN: usize = 30;
         assert_eq!(
             LanguageKind::all().len(),
             EXPECTED_LEN,

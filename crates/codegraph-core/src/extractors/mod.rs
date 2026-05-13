@@ -6,6 +6,7 @@ pub mod csharp;
 pub mod cuda;
 pub mod dart;
 pub mod elixir;
+pub mod erlang;
 pub mod go;
 pub mod groovy;
 pub mod haskell;
@@ -22,6 +23,7 @@ pub mod python;
 pub mod ruby;
 pub mod rust_lang;
 pub mod scala;
+pub mod solidity;
 pub mod swift;
 pub mod zig;
 
@@ -139,8 +141,14 @@ pub fn extract_symbols_with_opts(
         LanguageKind::Clojure => {
             clojure::ClojureExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
         }
+        LanguageKind::Erlang => {
+            erlang::ErlangExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
         LanguageKind::Groovy => {
             groovy::GroovyExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Solidity => {
+            solidity::SolidityExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
         }
     }
 }
