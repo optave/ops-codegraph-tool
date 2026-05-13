@@ -224,9 +224,15 @@ function handleInclude(node: TreeSitterNode, ctx: ExtractorOutput): void {
   if (!strNode) return;
 
   const source = strNode.text.replace(/^"|"$/g, '');
+  // Preserve the distinction between local includes (`-include("foo.hrl")`)
+  // and OTP library includes (`-include_lib("kernel/include/file.hrl")`) so
+  // downstream consumers can apply the correct path-resolution strategy
+  // (local: relative to the source file; lib: relative to an OTP app root).
+  // Mirrors the Rust `handle_include` so both engines agree.
+  const kind = node.type === 'pp_include_lib' ? 'include_lib' : 'include';
   ctx.imports.push({
     source,
-    names: ['include'],
+    names: [kind],
     line: node.startPosition.row + 1,
   });
 }

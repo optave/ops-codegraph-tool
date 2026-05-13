@@ -249,9 +249,18 @@ fn handle_include(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
     let raw = node_text(&str_node, source);
     let source_path = raw.trim_matches('"').to_string();
+    // Preserve the distinction between local includes (`-include("foo.hrl")`)
+    // and OTP library includes (`-include_lib("kernel/include/file.hrl")`) so
+    // downstream consumers can apply the correct path-resolution strategy
+    // (local: relative to the source file; lib: relative to an OTP app root).
+    let kind = if node.kind() == "pp_include_lib" {
+        "include_lib"
+    } else {
+        "include"
+    };
     symbols.imports.push(Import::new(
         source_path,
-        vec!["include".to_string()],
+        vec![kind.to_string()],
         start_line(node),
     ));
 }
@@ -410,8 +419,29 @@ mod tests {
 
     #[test]
     fn extracts_include_directive() {
+        // Local includes carry kind "include" so downstream consumers resolve
+        // them relative to the source file.
         let s = parse_erlang("-include(\"foo.hrl\").\n");
-        assert!(s.imports.iter().any(|i| i.source == "foo.hrl"));
+        let imp = s
+            .imports
+            .iter()
+            .find(|i| i.source == "foo.hrl")
+            .expect("include import");
+        assert_eq!(imp.names, vec!["include".to_string()]);
+    }
+
+    #[test]
+    fn extracts_include_lib_directive() {
+        // OTP library includes carry kind "include_lib" so downstream consumers
+        // resolve them against application code paths rather than the source
+        // file's directory.
+        let s = parse_erlang("-include_lib(\"kernel/include/file.hrl\").\n");
+        let imp = s
+            .imports
+            .iter()
+            .find(|i| i.source == "kernel/include/file.hrl")
+            .expect("include_lib import");
+        assert_eq!(imp.names, vec!["include_lib".to_string()]);
     }
 
     #[test]

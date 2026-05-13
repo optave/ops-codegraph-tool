@@ -108,4 +108,18 @@ foo(X, Y, Z) -> X + Y + Z.`);
     // Argument variable must not be recorded as the macro name.
     expect(symbols.definitions.some((d) => d.name === 'X')).toBe(false);
   });
+
+  it('records -include with kind "include" so consumers resolve locally', () => {
+    const symbols = parseErlang(`-include("foo.hrl").`);
+    const imp = symbols.imports.find((i) => i.source === 'foo.hrl');
+    expect(imp).toBeDefined();
+    expect(imp?.names).toEqual(['include']);
+  });
+
+  it('records -include_lib with kind "include_lib" so consumers resolve against OTP paths', () => {
+    const symbols = parseErlang(`-include_lib("kernel/include/file.hrl").`);
+    const imp = symbols.imports.find((i) => i.source === 'kernel/include/file.hrl');
+    expect(imp).toBeDefined();
+    expect(imp?.names).toEqual(['include_lib']);
+  });
 });
