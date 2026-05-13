@@ -56,4 +56,38 @@ describe('Objective-C parser', () => {
       expect.objectContaining({ name: 'MyView', extends: 'UIView' }),
     );
   });
+
+  it('extracts @import module statements', () => {
+    // tree-sitter-objc v3 emits `module_import` for `@import` statements.
+    // The Rust extractor dispatches on this node type and the JS extractor
+    // must match it to keep engine parity (otherwise every `@import` is
+    // silently dropped on the JS side).
+    const symbols = parseObjC(`@import Foundation;`);
+    expect(symbols.imports).toContainEqual(
+      expect.objectContaining({ source: 'Foundation', names: ['Foundation'] }),
+    );
+  });
+
+  it('extracts C-style function calls without a `function` field', () => {
+    // tree-sitter-objc does not expose a `function` field on `call_expression`,
+    // so the JS extractor must fall back to the first identifier child —
+    // matching the Rust side. Otherwise C calls like `printf(...)` are
+    // silently dropped.
+    const symbols = parseObjC(`void main() {
+    printf("hello");
+}`);
+    expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'printf' }));
+  });
+
+  it('builds keyword-selector calls from message expressions', () => {
+    // The grammar tags each keyword identifier with the `method` field rather
+    // than exposing a single `selector` field. Mirror the Rust assembly so
+    // selectors like `initWithName:age:` are recorded identically.
+    const symbols = parseObjC(`void main() {
+    [obj initWithName:@"x" age:10];
+}`);
+    expect(symbols.calls).toContainEqual(
+      expect.objectContaining({ name: 'initWithName:age:', receiver: 'obj' }),
+    );
+  });
 });

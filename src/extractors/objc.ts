@@ -55,6 +55,11 @@ function walkObjCNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
     case 'preproc_import':
       handleImport(node, ctx);
       break;
+    // tree-sitter-objc v3 emits `module_import` for `@import Foundation;`
+    // statements. Older grammar revisions used `import_declaration`, so we
+    // accept both for forward/backward compatibility and keep behaviour
+    // aligned with `handle_at_import` on the Rust side.
+    case 'module_import':
     case 'import_declaration':
       handleAtImport(node, ctx);
       break;
@@ -296,7 +301,20 @@ function handleTypedef(node: TreeSitterNode, ctx: ExtractorOutput): void {
 // ── Call handlers ─────────────────────────────────────────────────────────
 
 function handleCCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  const funcNode = node.childForFieldName('function');
+  // tree-sitter-objc does not expose a `function` field on `call_expression`,
+  // so the named-field lookup almost always misses. Fall back to the first
+  // `identifier` / `field_expression` child to mirror `handle_c_call_expr` in
+  // `crates/codegraph-core/src/extractors/objc.rs` and keep engine parity.
+  let funcNode = node.childForFieldName('function');
+  if (!funcNode) {
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child && (child.type === 'identifier' || child.type === 'field_expression')) {
+        funcNode = child;
+        break;
+      }
+    }
+  }
   if (!funcNode) return;
   const call: Call = { name: '', line: node.startPosition.row + 1 };
   if (funcNode.type === 'field_expression') {
@@ -313,10 +331,33 @@ function handleCCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
 function handleMessageExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // [receiver selector:arg ...]
   const receiver = node.childForFieldName('receiver');
-  const selector = node.childForFieldName('selector');
-  if (!selector) return;
 
-  const call: Call = { name: selector.text, line: node.startPosition.row + 1 };
+  // tree-sitter-objc v3 does not expose a `selector` field on
+  // `message_expression`; instead every keyword identifier has the `method`
+  // field. Assemble the selector by joining `method` children with `:`,
+  // appending a trailing `:` when the message has at least one colon
+  // (keyword form). Mirrors `build_message_selector` in
+  // `crates/codegraph-core/src/extractors/objc.rs`.
+  const parts: string[] = [];
+  let hasColon = false;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    const fieldName = node.fieldNameForChild(i);
+    if (fieldName === 'method') parts.push(child.text);
+    if (child.type === ':') hasColon = true;
+  }
+  let name: string;
+  if (parts.length > 0) {
+    name = hasColon ? `${parts.join(':')}:` : parts.join(':');
+  } else {
+    // Fallback: some grammar revisions expose a `selector` field.
+    const selector = node.childForFieldName('selector');
+    if (!selector) return;
+    name = selector.text;
+  }
+
+  const call: Call = { name, line: node.startPosition.row + 1 };
   if (receiver) call.receiver = receiver.text;
   ctx.calls.push(call);
 }
