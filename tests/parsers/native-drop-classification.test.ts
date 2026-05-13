@@ -17,12 +17,11 @@ describe('classifyNativeDrops', () => {
     const { byReason, totals } = classifyNativeDrops([
       'src/b.gleam',
       'src/e.R',
-      'src/f.erl',
       'src/i.groovy',
       'src/j.v',
       'src/k.m',
     ]);
-    expect(totals['unsupported-by-native']).toBe(6);
+    expect(totals['unsupported-by-native']).toBe(5);
     expect(totals['native-extractor-failure']).toBe(0);
     expect(byReason['unsupported-by-native'].get('.gleam')).toEqual(['src/b.gleam']);
     expect(byReason['unsupported-by-native'].get('.r')).toEqual(['src/e.R']);
@@ -46,12 +45,12 @@ describe('classifyNativeDrops', () => {
       'src/a.ts',
       'src/b.gleam',
       'src/c.gleam',
-      'src/d.erl',
+      'src/d.groovy',
     ]);
     expect(totals['native-extractor-failure']).toBe(1);
     expect(totals['unsupported-by-native']).toBe(3);
     expect(byReason['unsupported-by-native'].get('.gleam')).toEqual(['src/b.gleam', 'src/c.gleam']);
-    expect(byReason['unsupported-by-native'].get('.erl')).toEqual(['src/d.erl']);
+    expect(byReason['unsupported-by-native'].get('.groovy')).toEqual(['src/d.groovy']);
   });
 
   it('lowercases extensions so .R and .r share a bucket', () => {

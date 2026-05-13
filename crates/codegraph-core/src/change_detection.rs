@@ -132,7 +132,7 @@ fn load_file_hashes(conn: &Connection) -> Option<HashMap<String, FileHashRow>> {
 /// found on disk are treated as removed.
 ///
 /// Files whose extension is outside the Rust file_collector's supported set
-/// (e.g. `.gleam`, `.jl`, `.fs` — WASM-only languages) are skipped:
+/// (e.g. `.gleam`, `.groovy` — WASM-only languages) are skipped:
 /// the orchestrator's narrower collector never sees them, so absence from
 /// `current` is a capability boundary, not a deletion. Their `nodes` and
 /// `file_hashes` rows are owned by the JS-side WASM backfill (#967, #1068)
