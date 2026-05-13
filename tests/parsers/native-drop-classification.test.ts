@@ -16,16 +16,14 @@ describe('classifyNativeDrops', () => {
   it('groups WASM-only languages under unsupported-by-native', () => {
     const { byReason, totals } = classifyNativeDrops([
       'src/a.fs',
-      'src/d.jl',
       'src/e.R',
       'src/f.erl',
       'src/g.sol',
-      'src/h.cu',
       'src/i.groovy',
       'src/j.v',
       'src/k.m',
     ]);
-    expect(totals['unsupported-by-native']).toBe(9);
+    expect(totals['unsupported-by-native']).toBe(7);
     expect(totals['native-extractor-failure']).toBe(0);
     expect(byReason['unsupported-by-native'].get('.fs')).toEqual(['src/a.fs']);
     expect(byReason['unsupported-by-native'].get('.r')).toEqual(['src/e.R']);
@@ -49,12 +47,12 @@ describe('classifyNativeDrops', () => {
       'src/a.ts',
       'src/b.fs',
       'src/c.fs',
-      'src/d.jl',
+      'src/d.erl',
     ]);
     expect(totals['native-extractor-failure']).toBe(1);
     expect(totals['unsupported-by-native']).toBe(3);
     expect(byReason['unsupported-by-native'].get('.fs')).toEqual(['src/b.fs', 'src/c.fs']);
-    expect(byReason['unsupported-by-native'].get('.jl')).toEqual(['src/d.jl']);
+    expect(byReason['unsupported-by-native'].get('.erl')).toEqual(['src/d.erl']);
   });
 
   it('lowercases extensions so .R and .r share a bucket', () => {
@@ -75,7 +73,7 @@ describe('classifyNativeDrops', () => {
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.ts')).toBe(true);
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.py')).toBe(true);
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.fs')).toBe(false);
-    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.jl')).toBe(false);
+    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.erl')).toBe(false);
   });
 });
 
