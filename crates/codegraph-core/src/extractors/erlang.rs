@@ -209,13 +209,21 @@ fn extract_params(clause_node: &Node, source: &[u8]) -> Vec<Definition> {
 
 fn handle_define(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     // pp_define: -define(NAME, value).  Name may be in `var`, `atom`, or `macro_lhs`.
+    // For parametric macros, the grammar wraps the name in a `macro_lhs(name, args)`
+    // node. Inside `macro_lhs` the name comes first, followed by `(`, the argument
+    // `var` children, and `)`. We must therefore try `atom` (lowercase macros,
+    // e.g. `-define(foo(X), X+1)`) before `var` (uppercase macros, e.g.
+    // `-define(FOO(X), X+1)`) — otherwise `find_child(.., "var")` skips the
+    // leading atom and lands on the first argument variable, mislabeling the
+    // definition with the argument name instead of the macro name.
     let name = if let Some(v) = find_child(node, "var") {
         node_text(&v, source).to_string()
     } else if let Some(a) = find_child(node, "atom") {
         node_text(&a, source).to_string()
     } else if let Some(lhs) = find_child(node, "macro_lhs") {
-        find_child(&lhs, "var")
-            .map(|v| node_text(&v, source).to_string())
+        find_child(&lhs, "atom")
+            .or_else(|| find_child(&lhs, "var"))
+            .map(|n| node_text(&n, source).to_string())
             .unwrap_or_else(|| node_text(&lhs, source).to_string())
     } else {
         return;
@@ -493,5 +501,37 @@ mod tests {
             .find(|d| d.name == "MAX_SIZE")
             .expect("define def");
         assert_eq!(m.kind, "variable");
+    }
+
+    #[test]
+    fn extracts_uppercase_parametric_macro_name() {
+        // Parametric macros wrap the name in `macro_lhs(atom_or_var, ...)`.
+        // For uppercase names the leading child is a `var` and the macro name
+        // must come from that var, not from any argument-position var.
+        let s = parse_erlang("-define(FOO(X), X + 1).\n");
+        let m = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "FOO")
+            .expect("FOO define def");
+        assert_eq!(m.kind, "variable");
+    }
+
+    #[test]
+    fn extracts_lowercase_parametric_macro_name() {
+        // For lowercase parametric macros the macro_lhs children are
+        // `atom("foo"), '(', var("X"), ')'`. Without preferring the atom we
+        // would mislabel the definition with the first argument's variable
+        // name ("X") instead of the macro name ("foo").
+        let s = parse_erlang("-define(foo(X), X + 1).\n");
+        let m = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "foo")
+            .expect("foo define def");
+        assert_eq!(m.kind, "variable");
+        // Make sure we did NOT mistakenly record the argument variable as the
+        // macro name.
+        assert!(s.definitions.iter().all(|d| d.name != "X"));
     }
 }

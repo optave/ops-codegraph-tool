@@ -87,4 +87,25 @@ foo(X, Y, Z) -> X + Y + Z.`);
       expect.objectContaining({ name: 'MAX_SIZE', kind: 'variable' }),
     );
   });
+
+  it('extracts uppercase parametric macro names', () => {
+    // Parametric macros wrap the name in `macro_lhs(name, args)`; the leading
+    // child is the name (var for uppercase).
+    const symbols = parseErlang(`-define(FOO(X), X + 1).`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'FOO', kind: 'variable' }),
+    );
+  });
+
+  it('extracts lowercase parametric macro names without mislabeling on argument vars', () => {
+    // For lowercase parametric macros, macro_lhs children are
+    // `atom("foo"), '(', var("X"), ')'`. The macro name must come from the
+    // atom, not from `findChild(.., 'var')` which would land on the argument.
+    const symbols = parseErlang(`-define(foo(X), X + 1).`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'foo', kind: 'variable' }),
+    );
+    // Argument variable must not be recorded as the macro name.
+    expect(symbols.definitions.some((d) => d.name === 'X')).toBe(false);
+  });
 });

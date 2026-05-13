@@ -195,13 +195,20 @@ function extractErlangParams(clauseNode: TreeSitterNode): SubDeclaration[] {
 
 function handleDefine(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // pp_define: -define(NAME, value).
+  // For parametric macros, the grammar wraps the name in a `macro_lhs(name, args)`
+  // node. Inside `macro_lhs` the name comes first, followed by `(`, the argument
+  // `var` children, and `)`. We must therefore try `atom` (lowercase macros,
+  // e.g. `-define(foo(X), X+1)`) before `var` (uppercase macros, e.g.
+  // `-define(FOO(X), X+1)`) — otherwise `findChild(.., 'var')` skips the leading
+  // atom and lands on the first argument variable, mislabeling the definition.
+  // Mirrors the Rust `handle_define` so both engines agree.
   const nameNode =
     findChild(node, 'var') || findChild(node, 'atom') || findChild(node, 'macro_lhs');
   if (!nameNode) return;
 
   const name =
     nameNode.type === 'macro_lhs'
-      ? (findChild(nameNode, 'var')?.text ?? nameNode.text)
+      ? (findChild(nameNode, 'atom')?.text ?? findChild(nameNode, 'var')?.text ?? nameNode.text)
       : nameNode.text;
 
   ctx.definitions.push({
