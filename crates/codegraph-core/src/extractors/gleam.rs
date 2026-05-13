@@ -218,11 +218,15 @@ fn handle_import(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 
     // Alias: `import gleam/io as my_io`
-    if let Some(alias) = node.child_by_field_name("alias") {
-        let alias_text = node_text(&alias, source).to_string();
-        if alias_text != source_path {
-            names.push(alias_text);
-        }
+    // Mirror JS: prefer `alias` field, fall back to first identifier child
+    // that isn't the module node itself. Compare by node ID rather than text
+    // so a self-alias like `import mymodule as mymodule` is still recorded.
+    let alias_node = node
+        .child_by_field_name("alias")
+        .or_else(|| find_child(node, "identifier"))
+        .filter(|a| a.id() != module_node.id());
+    if let Some(alias) = alias_node {
+        names.push(node_text(&alias, source).to_string());
     }
 
     if names.is_empty() {
@@ -397,6 +401,14 @@ mod tests {
         assert_eq!(s.imports[0].source, "gleam/io");
         assert!(s.imports[0].names.contains(&"println".to_string()));
         assert!(s.imports[0].names.contains(&"print".to_string()));
+    }
+
+    #[test]
+    fn extracts_aliased_import() {
+        let s = parse_gleam("import gleam/io as my_io\n");
+        assert_eq!(s.imports.len(), 1);
+        assert_eq!(s.imports[0].source, "gleam/io");
+        assert_eq!(s.imports[0].names, vec!["my_io".to_string()]);
     }
 
     #[test]
