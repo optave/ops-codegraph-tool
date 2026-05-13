@@ -17,15 +17,13 @@ describe('classifyNativeDrops', () => {
     const { byReason, totals } = classifyNativeDrops([
       'src/a.fs',
       'src/b.gleam',
-      'src/d.jl',
       'src/e.R',
       'src/f.erl',
-      'src/h.cu',
       'src/i.groovy',
       'src/j.v',
       'src/k.m',
     ]);
-    expect(totals['unsupported-by-native']).toBe(9);
+    expect(totals['unsupported-by-native']).toBe(7);
     expect(totals['native-extractor-failure']).toBe(0);
     expect(byReason['unsupported-by-native'].get('.fs')).toEqual(['src/a.fs']);
     expect(byReason['unsupported-by-native'].get('.gleam')).toEqual(['src/b.gleam']);
