@@ -455,4 +455,43 @@ mod tests {
         let params = f.children.as_ref().expect("params");
         assert_eq!(params.len(), 2, "expected one parameter per pattern");
     }
+
+    #[test]
+    fn extracts_type_alias() {
+        // -type creates a type definition; name is wrapped in `type_name(atom)`
+        // in the current grammar but may be a direct atom in older grammars —
+        // the extractor handles both shapes via the fallback in `handle_type_alias`.
+        let s = parse_erlang("-type id() :: integer().\n");
+        let t = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "id" && d.kind == "type")
+            .expect("type def");
+        assert_eq!(t.kind, "type");
+    }
+
+    #[test]
+    fn extracts_opaque_type() {
+        // -opaque uses the same `type_alias` node shape and must produce a
+        // type definition keyed on the alias name.
+        let s = parse_erlang("-opaque handle() :: reference().\n");
+        let t = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "handle" && d.kind == "type")
+            .expect("opaque type def");
+        assert_eq!(t.kind, "type");
+    }
+
+    #[test]
+    fn extracts_macro_define() {
+        // -define produces a variable-kind definition keyed on the macro name.
+        let s = parse_erlang("-define(MAX_SIZE, 1024).\n");
+        let m = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "MAX_SIZE")
+            .expect("define def");
+        assert_eq!(m.kind, "variable");
+    }
 }

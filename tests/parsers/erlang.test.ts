@@ -62,4 +62,29 @@ foo(X, Y, Z) -> X + Y + Z.`);
     expect(f).toBeDefined();
     expect(f?.children?.length).toBe(2);
   });
+
+  it('extracts -type aliases', () => {
+    // Type-alias names are wrapped in a `type_name` node containing an atom in
+    // the current grammar; the extractor handles both the wrapped form and a
+    // direct atom fallback.
+    const symbols = parseErlang(`-type id() :: integer().`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'id', kind: 'type' }),
+    );
+  });
+
+  it('extracts -opaque types', () => {
+    // -opaque uses the same `type_alias` node shape and must produce a type def.
+    const symbols = parseErlang(`-opaque handle() :: reference().`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'handle', kind: 'type' }),
+    );
+  });
+
+  it('extracts -define macros as variables', () => {
+    const symbols = parseErlang(`-define(MAX_SIZE, 1024).`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'MAX_SIZE', kind: 'variable' }),
+    );
+  });
 });
