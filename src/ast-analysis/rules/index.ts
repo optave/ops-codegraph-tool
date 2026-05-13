@@ -172,6 +172,14 @@ const CLOJURE_AST_TYPES: Record<string, string> = {
   regex_lit: 'regex',
 };
 
+const SOLIDITY_AST_TYPES: Record<string, string> = {
+  new_expression: 'new',
+  revert_statement: 'throw',
+  string_literal: 'string',
+  hex_string_literal: 'string',
+  unicode_string_literal: 'string',
+};
+
 export const AST_TYPE_MAPS: Map<string, Record<string, string>> = new Map([
   ['javascript', JS_AST_TYPES],
   ['typescript', JS_AST_TYPES],
@@ -200,6 +208,7 @@ export const AST_TYPE_MAPS: Map<string, Record<string, string>> = new Map([
   ['gleam', GLEAM_AST_TYPES],
   ['julia', JULIA_AST_TYPES],
   ['clojure', CLOJURE_AST_TYPES],
+  ['solidity', SOLIDITY_AST_TYPES],
 ]);
 
 // ─── Per-language string-extraction config ───────────────────────────────
@@ -239,6 +248,7 @@ const OCAML_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: 
 const GLEAM_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
 const JULIA_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
 const CLOJURE_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
+const SOLIDITY_STRING_CONFIG: AstStringConfig = { quoteChars: '"\'', stringPrefixes: '' };
 
 export const AST_STRING_CONFIGS: Map<string, AstStringConfig> = new Map([
   ['javascript', JS_STRING_CONFIG],
@@ -268,6 +278,7 @@ export const AST_STRING_CONFIGS: Map<string, AstStringConfig> = new Map([
   ['gleam', GLEAM_STRING_CONFIG],
   ['julia', JULIA_STRING_CONFIG],
   ['clojure', CLOJURE_STRING_CONFIG],
+  ['solidity', SOLIDITY_STRING_CONFIG],
 ]);
 
 // ─── Per-language "stop-after-collect" kinds ─────────────────────────────
