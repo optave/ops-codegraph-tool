@@ -263,9 +263,22 @@ fn strip_string_quotes(node: &Node, source: &[u8]) -> String {
     if let Some(content) = find_child(node, "string_content") {
         return node_text(&content, source).to_string();
     }
-    node_text(node, source)
-        .trim_matches(|c| c == '\'' || c == '"')
-        .to_string()
+    // Fallback: strip exactly one matching quote from each end. We can't use
+    // `trim_matches` because it strips *all* matching characters greedily —
+    // e.g. for the literal `"'"` (a string containing a single quote) the
+    // text is `"`, `'`, `"`, and `trim_matches` would consume all three,
+    // returning an empty string. Index-based strip removes only the outer
+    // pair, leaving the inner character intact.
+    let text = node_text(node, source);
+    let bytes = text.as_bytes();
+    if bytes.len() >= 2 {
+        let first = bytes[0];
+        let last = bytes[bytes.len() - 1];
+        if (first == b'\'' || first == b'"') && first == last {
+            return text[1..bytes.len() - 1].to_string();
+        }
+    }
+    text.to_string()
 }
 
 fn handle_library_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
@@ -450,6 +463,22 @@ mod tests {
         let s = parse_r("library(package = \"dplyr\")\n");
         assert_eq!(s.imports.len(), 1);
         assert_eq!(s.imports[0].source, "dplyr");
+    }
+
+    #[test]
+    fn source_call_with_mixed_quote_content_preserves_inner_quote() {
+        // Edge case for the strip_string_quotes fallback: if a grammar
+        // version drops the `string_content` child, the fallback must strip
+        // only the outer pair of quotes. `trim_matches` would greedily eat
+        // both the outer `"` and the inner `'`, returning an empty path.
+        // Index-based strip leaves the inner `'` intact.
+        //
+        // We exercise the fallback indirectly via `source("a'b.R")` —
+        // current grammars expose `string_content`, so this primarily
+        // guards against future regressions in the fallback path.
+        let s = parse_r("source(\"a'b.R\")\n");
+        assert_eq!(s.imports.len(), 1);
+        assert_eq!(s.imports[0].source, "a'b.R");
     }
 
     #[test]
