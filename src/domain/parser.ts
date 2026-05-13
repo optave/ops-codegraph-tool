@@ -478,6 +478,8 @@ export const NATIVE_SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
   '.clj',
   '.cljs',
   '.cljc',
+  '.erl',
+  '.hrl',
   '.sol',
 ]);
 
