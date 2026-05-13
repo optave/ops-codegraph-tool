@@ -30,6 +30,7 @@ pub enum LanguageKind {
     Julia,
     Cuda,
     Clojure,
+    Solidity,
     Verilog,
 }
 
@@ -65,6 +66,7 @@ impl LanguageKind {
             Self::Julia => "julia",
             Self::Cuda => "cuda",
             Self::Clojure => "clojure",
+            Self::Solidity => "solidity",
             Self::Verilog => "verilog",
         }
     }
@@ -108,6 +110,7 @@ impl LanguageKind {
             "mli" => Some(Self::OcamlInterface),
             "jl" => Some(Self::Julia),
             "clj" | "cljs" | "cljc" => Some(Self::Clojure),
+            "sol" => Some(Self::Solidity),
             "v" | "sv" => Some(Self::Verilog),
             _ => None,
         }
@@ -144,6 +147,7 @@ impl LanguageKind {
             "julia" => Some(Self::Julia),
             "cuda" => Some(Self::Cuda),
             "clojure" => Some(Self::Clojure),
+            "solidity" => Some(Self::Solidity),
             "verilog" => Some(Self::Verilog),
             _ => None,
         }
@@ -179,6 +183,7 @@ impl LanguageKind {
             Self::Julia => tree_sitter_julia::LANGUAGE.into(),
             Self::Cuda => tree_sitter_cuda::LANGUAGE.into(),
             Self::Clojure => tree_sitter_clojure_orchard::LANGUAGE.into(),
+            Self::Solidity => tree_sitter_solidity::LANGUAGE.into(),
             Self::Verilog => tree_sitter_verilog::LANGUAGE.into(),
         }
     }
@@ -195,7 +200,7 @@ impl LanguageKind {
         &[
             JavaScript, TypeScript, Tsx, Python, Go, Rust, Java, CSharp, Ruby, Php, Hcl, C,
             Cpp, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, Ocaml,
-            OcamlInterface, Julia, Cuda, Clojure, Verilog,
+            OcamlInterface, Julia, Cuda, Clojure, Solidity, Verilog,
         ]
     }
 }
@@ -268,6 +273,7 @@ mod tests {
             | LanguageKind::Julia
             | LanguageKind::Cuda
             | LanguageKind::Clojure
+            | LanguageKind::Solidity
             | LanguageKind::Verilog => (),
         };
         // IMPORTANT: this constant must equal the number of arms in the match
@@ -275,7 +281,7 @@ mod tests {
         // Because both checks require the same manual update, they reinforce
         // each other: a developer who updates the match is reminded to also
         // update `all()` and this count.
-        const EXPECTED_LEN: usize = 28;
+        const EXPECTED_LEN: usize = 29;
         assert_eq!(
             LanguageKind::all().len(),
             EXPECTED_LEN,

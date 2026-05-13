@@ -21,6 +21,7 @@ pub mod python;
 pub mod ruby;
 pub mod rust_lang;
 pub mod scala;
+pub mod solidity;
 pub mod swift;
 pub mod verilog;
 pub mod zig;
@@ -138,6 +139,9 @@ pub fn extract_symbols_with_opts(
         }
         LanguageKind::Clojure => {
             clojure::ClojureExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Solidity => {
+            solidity::SolidityExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
         }
         LanguageKind::Verilog => {
             verilog::VerilogExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)

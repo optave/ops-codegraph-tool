@@ -45,7 +45,7 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
     "js", "jsx", "mjs", "cjs", "ts", "tsx", "d.ts", "py", "pyi", "go", "rs", "java", "cs", "rb",
     "rake", "gemspec", "php", "phtml", "tf", "hcl", "c", "h", "cpp", "cc", "cxx", "hpp", "cu",
     "cuh", "kt", "kts", "swift", "scala", "sh", "bash", "ex", "exs", "lua", "dart", "zig", "hs",
-    "ml", "mli", "jl", "clj", "cljs", "cljc", "v", "sv",
+    "ml", "mli", "jl", "clj", "cljs", "cljc", "sol", "v", "sv",
 ];
 
 /// Returns whether `path` has an extension the Rust file_collector would accept.
