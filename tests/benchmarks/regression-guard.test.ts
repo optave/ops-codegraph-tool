@@ -177,6 +177,15 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   DB row counts. Tracked in #1113 — exempt this release; remove once
  *   3.11.0+ data captures the new steady-state and the per-language
  *   fixture footprint has been evaluated.
+ *
+ * - 3.10.0:fnDeps depth 5 — same cause as Query time above. Merging main
+ *   into #1102 added the Erlang extractor (#1103) on top of the existing
+ *   Solidity (#1100) + R (#1102) growth, expanding `buildGraph`'s
+ *   depth-5 transitive callee fan-out by another step. The depth-5 walk
+ *   amplifies any base-graph growth quadratically (each new node adds
+ *   its own depth-5 subtree). +31% over the 25% threshold maps to the
+ *   ~33→43ms swing on a sub-50ms metric. Tracked in #1113 alongside
+ *   Query time; remove both once 3.11.0+ data confirms the new steady-state.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.9.6:Build ms/file',
@@ -187,6 +196,7 @@ const KNOWN_REGRESSIONS = new Set([
   '3.10.0:No-op rebuild',
   '3.10.0:1-file rebuild',
   '3.10.0:fnDeps depth 1',
+  '3.10.0:fnDeps depth 5',
   '3.10.0:Query time',
 ]);
 
