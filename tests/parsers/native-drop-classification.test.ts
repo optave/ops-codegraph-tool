@@ -18,7 +18,7 @@ describe('classifyNativeDrops', () => {
       'src/a.fs',
       'src/b.gleam',
       'src/e.R',
-      'src/g.sol',
+      'src/h.fsx',
       'src/i.groovy',
       'src/j.v',
       'src/k.m',
