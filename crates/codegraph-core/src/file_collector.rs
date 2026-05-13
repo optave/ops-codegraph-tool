@@ -34,9 +34,9 @@ const DEFAULT_IGNORE_DIRS: &[&str] = &[
 /// Must stay in sync with `LanguageKind::from_extension`.
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "js", "jsx", "mjs", "cjs", "ts", "tsx", "d.ts", "py", "pyi", "go", "rs", "java", "cs", "rb",
-    "rake", "gemspec", "php", "phtml", "tf", "hcl", "c", "h", "cpp", "cc", "cxx", "hpp", "kt",
-    "kts", "swift", "scala", "sh", "bash", "ex", "exs", "lua", "dart", "zig", "hs", "ml", "mli",
-    "clj", "cljs", "cljc", "erl", "hrl",
+    "rake", "gemspec", "php", "phtml", "tf", "hcl", "c", "h", "cpp", "cc", "cxx", "hpp", "cu",
+    "cuh", "kt", "kts", "swift", "scala", "sh", "bash", "ex", "exs", "lua", "dart", "zig", "hs",
+    "ml", "mli", "jl", "clj", "cljs", "cljc", "erl", "hrl",
 ];
 
 /// Returns whether `path` has an extension the Rust file_collector would accept.
@@ -44,8 +44,8 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
 /// Mirrors the predicate at the heart of `collect_files`: a file is collected
 /// if `LanguageKind::from_extension` recognizes it OR its raw extension is in
 /// `SUPPORTED_EXTENSIONS`. Exposed for `change_detection::detect_removed_files`
-/// so that files outside Rust's capability (e.g. WASM-only `.gleam`, `.jl`,
-/// `.fs`) are not flagged as "removed" merely because the orchestrator's
+/// so that files outside Rust's capability (e.g. WASM-only `.gleam`, `.fs`)
+/// are not flagged as "removed" merely because the orchestrator's
 /// narrower collector never sees them.
 pub fn is_supported_extension(path: &str) -> bool {
     if LanguageKind::from_extension(path).is_some() {

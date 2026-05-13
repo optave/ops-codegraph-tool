@@ -66,7 +66,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "codegraph-core"
-version = "3.9.6"
+version = "3.10.0"
 dependencies = [
  "globset",
  "ignore",
@@ -85,6 +85,7 @@ dependencies = [
  "tree-sitter-c-sharp",
  "tree-sitter-clojure-orchard",
  "tree-sitter-cpp",
+ "tree-sitter-cuda",
  "tree-sitter-dart",
  "tree-sitter-elixir",
  "tree-sitter-erlang",
@@ -93,6 +94,7 @@ dependencies = [
  "tree-sitter-hcl",
  "tree-sitter-java",
  "tree-sitter-javascript",
+ "tree-sitter-julia",
  "tree-sitter-kotlin-sg",
  "tree-sitter-lua",
  "tree-sitter-ocaml",
@@ -782,6 +784,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-cuda"
+version = "0.21.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "715eecfee69b15991de5b9f78009c6d4cb34e18d20d028304a75d38528cddb45"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter-dart"
 version = "0.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -856,6 +868,16 @@ name = "tree-sitter-javascript"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bf40bf599e0416c16c125c3cec10ee5ddc7d1bb8b0c60fa5c4de249ad34dc1b1"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-julia"
+version = "0.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4144731a178812ee867619b1e98b3b91e54c1652304b26e5ebe3175b701de323"
 dependencies = [
  "cc",
  "tree-sitter-language",
