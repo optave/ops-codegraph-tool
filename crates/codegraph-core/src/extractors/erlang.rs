@@ -209,13 +209,19 @@ fn extract_params(clause_node: &Node, source: &[u8]) -> Vec<Definition> {
 
 fn handle_define(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     // pp_define: -define(NAME, value).  Name may be in `var`, `atom`, or `macro_lhs`.
-    // For parametric macros, the grammar wraps the name in a `macro_lhs(name, args)`
-    // node. Inside `macro_lhs` the name comes first, followed by `(`, the argument
-    // `var` children, and `)`. We must therefore try `atom` (lowercase macros,
-    // e.g. `-define(foo(X), X+1)`) before `var` (uppercase macros, e.g.
-    // `-define(FOO(X), X+1)`) — otherwise `find_child(.., "var")` skips the
-    // leading atom and lands on the first argument variable, mislabeling the
-    // definition with the argument name instead of the macro name.
+    // For non-parametric macros the grammar exposes the name directly as either
+    // a `var` (uppercase, e.g. `-define(FOO, 1)`) or an `atom` (lowercase,
+    // e.g. `-define(foo, 1)`) child of `pp_define`. We check `var` first
+    // because uppercase macros are the common case.
+    //
+    // For parametric macros the grammar wraps the name in a
+    // `macro_lhs(name, args)` node. Inside `macro_lhs` the name comes first,
+    // followed by `(`, the argument `var` children, and `)`. We must therefore
+    // try `atom` (lowercase, e.g. `-define(foo(X), X+1)`) before `var`
+    // (uppercase, e.g. `-define(FOO(X), X+1)`) inside `macro_lhs` —
+    // otherwise `find_child(.., "var")` skips the leading atom and lands on
+    // the first argument variable, mislabeling the definition with the
+    // argument name instead of the macro name.
     let name = if let Some(v) = find_child(node, "var") {
         node_text(&v, source).to_string()
     } else if let Some(a) = find_child(node, "atom") {

@@ -86,7 +86,10 @@ function handleModuleAttr(node: TreeSitterNode, ctx: ExtractorOutput): void {
 
 function handleRecordDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // record_decl: - record ( atom , { record_field, ... } ) .
-  const nameNode = findChild(node, 'atom');
+  // Prefer the named `name` field exposed by tree-sitter-erlang; fall back to
+  // the first atom child for grammar versions that don't expose it. Mirrors
+  // the Rust `handle_record_decl` defensive pattern.
+  const nameNode = node.childForFieldName('name') ?? findChild(node, 'atom');
   if (!nameNode) return;
 
   const children: SubDeclaration[] = [];
