@@ -120,10 +120,8 @@ function handleTypeAlias(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // Mirrors the Rust `handle_type_alias` fallback so the two engines agree
   // even when the grammar nests the name inside `type_name`.
   const directAtom = findChild(node, 'atom');
-  const wrappedAtom =
-    !directAtom && findChild(node, 'type_name') != null
-      ? findChild(findChild(node, 'type_name') as TreeSitterNode, 'atom')
-      : null;
+  const typeNameNode = !directAtom ? findChild(node, 'type_name') : null;
+  const wrappedAtom = typeNameNode ? findChild(typeNameNode, 'atom') : null;
   const nameNode = directAtom ?? wrappedAtom;
   if (!nameNode) return;
 
@@ -249,8 +247,12 @@ function handleImportAttr(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function handleCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  // call: first child is function ref (atom or remote), then expr_args
-  const funcNode = node.child(0);
+  // call: first named child is function ref (atom or remote), then expr_args.
+  // Using `namedChild(0)` rather than `child(0)` skips anonymous tokens
+  // (punctuation, keywords) so a future grammar revision that inserts a
+  // leading anonymous node won't silently drop the call. Mirrors the Rust
+  // `handle_call` so both engines emit the same set of calls.
+  const funcNode = node.namedChild(0);
   if (!funcNode) return;
 
   if (funcNode.type === 'atom' || funcNode.type === 'identifier') {

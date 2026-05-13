@@ -280,10 +280,12 @@ fn handle_import_attr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 }
 
 fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    // call: first child is function ref (atom for plain, may be wrapped in `remote`
-    // in newer grammars). Mirrors the JS extractor's behavior so both engines emit
-    // the same set of calls.
-    let func_node = match node.child(0) {
+    // call: first named child is function ref (atom for plain, may be wrapped in
+    // `remote` in newer grammars). Using `named_child(0)` instead of `child(0)`
+    // skips anonymous tokens (punctuation, keywords) so a future grammar revision
+    // that inserts a leading anonymous node won't silently drop the call. Mirrors
+    // the JS extractor's behavior so both engines emit the same set of calls.
+    let func_node = match node.named_child(0) {
         Some(n) => n,
         None => return,
     };
