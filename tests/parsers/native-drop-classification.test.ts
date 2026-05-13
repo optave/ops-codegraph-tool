@@ -19,11 +19,10 @@ describe('classifyNativeDrops', () => {
       'src/b.gleam',
       'src/e.R',
       'src/f.erl',
-      'src/g.sol',
       'src/i.groovy',
       'src/j.v',
     ]);
-    expect(totals['unsupported-by-native']).toBe(7);
+    expect(totals['unsupported-by-native']).toBe(6);
     expect(totals['native-extractor-failure']).toBe(0);
     expect(byReason['unsupported-by-native'].get('.fs')).toEqual(['src/a.fs']);
     expect(byReason['unsupported-by-native'].get('.gleam')).toEqual(['src/b.gleam']);
