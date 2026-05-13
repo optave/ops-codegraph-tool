@@ -27,6 +27,7 @@ pub enum LanguageKind {
     Haskell,
     Ocaml,
     OcamlInterface,
+    Julia,
     Cuda,
     Clojure,
     R,
@@ -61,6 +62,7 @@ impl LanguageKind {
             Self::Haskell => "haskell",
             Self::Ocaml => "ocaml",
             Self::OcamlInterface => "ocaml-interface",
+            Self::Julia => "julia",
             Self::Cuda => "cuda",
             Self::Clojure => "clojure",
             Self::R => "r",
@@ -104,6 +106,7 @@ impl LanguageKind {
             "hs" => Some(Self::Haskell),
             "ml" => Some(Self::Ocaml),
             "mli" => Some(Self::OcamlInterface),
+            "jl" => Some(Self::Julia),
             "clj" | "cljs" | "cljc" => Some(Self::Clojure),
             // R is case-sensitive: both `.r` (lowercase) and `.R` (uppercase)
             // are conventional. `Path::extension` preserves case on Unix.
@@ -140,6 +143,7 @@ impl LanguageKind {
             "haskell" => Some(Self::Haskell),
             "ocaml" => Some(Self::Ocaml),
             "ocaml-interface" => Some(Self::OcamlInterface),
+            "julia" => Some(Self::Julia),
             "cuda" => Some(Self::Cuda),
             "clojure" => Some(Self::Clojure),
             "r" => Some(Self::R),
@@ -174,6 +178,7 @@ impl LanguageKind {
             Self::Haskell => tree_sitter_haskell::LANGUAGE.into(),
             Self::Ocaml => tree_sitter_ocaml::LANGUAGE_OCAML.into(),
             Self::OcamlInterface => tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
+            Self::Julia => tree_sitter_julia::LANGUAGE.into(),
             Self::Cuda => tree_sitter_cuda::LANGUAGE.into(),
             Self::Clojure => tree_sitter_clojure_orchard::LANGUAGE.into(),
             Self::R => tree_sitter_r::LANGUAGE.into(),
@@ -192,7 +197,7 @@ impl LanguageKind {
         &[
             JavaScript, TypeScript, Tsx, Python, Go, Rust, Java, CSharp, Ruby, Php, Hcl, C,
             Cpp, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, Ocaml,
-            OcamlInterface, Cuda, Clojure, R,
+            OcamlInterface, Julia, Cuda, Clojure, R,
         ]
     }
 }
@@ -262,6 +267,7 @@ mod tests {
             | LanguageKind::Haskell
             | LanguageKind::Ocaml
             | LanguageKind::OcamlInterface
+            | LanguageKind::Julia
             | LanguageKind::Cuda
             | LanguageKind::Clojure
             | LanguageKind::R => (),
