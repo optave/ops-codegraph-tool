@@ -315,9 +315,15 @@ fn handle_call_expr(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 let field = func_node
                     .child_by_field_name("field")
                     .or_else(|| func_node.child_by_field_name("property"));
+                // Mirrors `handleGroovyCallExpr` in groovy.ts: tries the `argument`
+                // field first (used by some tree-sitter grammar variants), then
+                // falls back to `object`. tree-sitter-groovy 0.1.x only emits
+                // `object`, so `argument` is currently dead — but removing it
+                // would diverge from the JS engine and silently drop receivers
+                // on any future grammar variant that uses `argument`.
                 let obj = func_node
-                    .child_by_field_name("object")
-                    .or_else(|| func_node.child_by_field_name("argument"));
+                    .child_by_field_name("argument")
+                    .or_else(|| func_node.child_by_field_name("object"));
                 if let Some(field) = field {
                     symbols.calls.push(Call {
                         name: node_text(&field, source).to_string(),
