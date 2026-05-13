@@ -22,6 +22,7 @@ pub mod r_lang;
 pub mod ruby;
 pub mod rust_lang;
 pub mod scala;
+pub mod solidity;
 pub mod swift;
 pub mod zig;
 
@@ -141,6 +142,9 @@ pub fn extract_symbols_with_opts(
         }
         LanguageKind::R => {
             r_lang::RExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Solidity => {
+            solidity::SolidityExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
         }
     }
 }

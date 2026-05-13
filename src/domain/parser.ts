@@ -478,6 +478,7 @@ export const NATIVE_SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
   '.cljs',
   '.cljc',
   '.r',
+  '.sol',
 ]);
 
 /**

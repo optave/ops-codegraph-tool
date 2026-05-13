@@ -405,6 +405,16 @@ pub const R_AST_CONFIG: LangAstConfig = LangAstConfig {
     string_prefixes: &[],
 };
 
+pub const SOLIDITY_AST_CONFIG: LangAstConfig = LangAstConfig {
+    new_types: &["new_expression"],
+    throw_types: &["revert_statement"],
+    await_types: &[],
+    string_types: &["string_literal", "hex_string_literal", "unicode_string_literal"],
+    regex_types: &[],
+    quote_chars: &['"', '\''],
+    string_prefixes: &[],
+};
+
 // ── Generic AST node walker ──────────────────────────────────────────────────
 
 /// Node types that represent identifiers across languages.
