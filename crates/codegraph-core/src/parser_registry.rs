@@ -31,6 +31,7 @@ pub enum LanguageKind {
     Julia,
     Cuda,
     Clojure,
+    Solidity,
 }
 
 impl LanguageKind {
@@ -66,6 +67,7 @@ impl LanguageKind {
             Self::Julia => "julia",
             Self::Cuda => "cuda",
             Self::Clojure => "clojure",
+            Self::Solidity => "solidity",
         }
     }
 
@@ -109,6 +111,7 @@ impl LanguageKind {
             "fs" | "fsx" | "fsi" => Some(Self::FSharp),
             "jl" => Some(Self::Julia),
             "clj" | "cljs" | "cljc" => Some(Self::Clojure),
+            "sol" => Some(Self::Solidity),
             _ => None,
         }
     }
@@ -145,6 +148,7 @@ impl LanguageKind {
             "julia" => Some(Self::Julia),
             "cuda" => Some(Self::Cuda),
             "clojure" => Some(Self::Clojure),
+            "solidity" => Some(Self::Solidity),
             _ => None,
         }
     }
@@ -180,6 +184,7 @@ impl LanguageKind {
             Self::Julia => tree_sitter_julia::LANGUAGE.into(),
             Self::Cuda => tree_sitter_cuda::LANGUAGE.into(),
             Self::Clojure => tree_sitter_clojure_orchard::LANGUAGE.into(),
+            Self::Solidity => tree_sitter_solidity::LANGUAGE.into(),
         }
     }
 
@@ -195,7 +200,7 @@ impl LanguageKind {
         &[
             JavaScript, TypeScript, Tsx, Python, Go, Rust, Java, CSharp, Ruby, Php, Hcl, C,
             Cpp, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, Ocaml,
-            OcamlInterface, FSharp, Julia, Cuda, Clojure,
+            OcamlInterface, FSharp, Julia, Cuda, Clojure, Solidity,
         ]
     }
 }
@@ -268,14 +273,15 @@ mod tests {
             | LanguageKind::FSharp
             | LanguageKind::Julia
             | LanguageKind::Cuda
-            | LanguageKind::Clojure => (),
+            | LanguageKind::Clojure
+            | LanguageKind::Solidity => (),
         };
         // IMPORTANT: this constant must equal the number of arms in the match
         // above AND the length of the slice returned by `LanguageKind::all()`.
         // Because both checks require the same manual update, they reinforce
         // each other: a developer who updates the match is reminded to also
         // update `all()` and this count.
-        const EXPECTED_LEN: usize = 28;
+        const EXPECTED_LEN: usize = 29;
         assert_eq!(
             LanguageKind::all().len(),
             EXPECTED_LEN,

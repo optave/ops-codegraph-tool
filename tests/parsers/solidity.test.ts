@@ -59,4 +59,14 @@ contract MyToken {
       expect.objectContaining({ name: 'MyToken', extends: 'ERC20' }),
     );
   });
+
+  it('extracts multi-parent inheritance', () => {
+    // Each parent in `is B, C, D` is its own inheritance_specifier sibling in
+    // the tree-sitter-solidity grammar — we should emit a ClassRelation for
+    // each parent, not just the first.
+    const symbols = parseSol(`contract A is B, C, D {
+}`);
+    const parents = symbols.classes.filter((c) => c.name === 'A').map((c) => c.extends);
+    expect(parents).toEqual(['B', 'C', 'D']);
+  });
 });
