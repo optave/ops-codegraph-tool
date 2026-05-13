@@ -166,6 +166,17 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   Exempt this release; remove once 3.11.0+ data confirms stabilization
  *   under the warmup + 5-sample methodology already applied to incremental
  *   benchmarks.
+ *
+ * - 3.10.0:Query time — cumulative effect of adding two native extractors
+ *   (Solidity #1100 + R #1102) in quick succession. Neither tripped the
+ *   threshold individually (Solidity PR's Query time stayed at 49ms, R PR
+ *   showed no warning), but the combined +110% (49.6 → ~105ms) on the
+ *   `fnDepsData('buildGraph', dbPath)` measurement reflects natural graph
+ *   growth: ~1100 LoC of new extractor code + 9 fixture files added to the
+ *   self-build benchmark expand `buildGraph`'s transitive callee count and
+ *   DB row counts. Tracked in #1113 — exempt this release; remove once
+ *   3.11.0+ data captures the new steady-state and the per-language
+ *   fixture footprint has been evaluated.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.9.6:Build ms/file',
@@ -176,6 +187,7 @@ const KNOWN_REGRESSIONS = new Set([
   '3.10.0:No-op rebuild',
   '3.10.0:1-file rebuild',
   '3.10.0:fnDeps depth 1',
+  '3.10.0:Query time',
 ]);
 
 /**
