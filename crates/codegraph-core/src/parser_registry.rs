@@ -281,7 +281,7 @@ mod tests {
         // Because both checks require the same manual update, they reinforce
         // each other: a developer who updates the match is reminded to also
         // update `all()` and this count.
-        const EXPECTED_LEN: usize = 28;
+        const EXPECTED_LEN: usize = 29;
         assert_eq!(
             LanguageKind::all().len(),
             EXPECTED_LEN,
