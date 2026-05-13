@@ -394,6 +394,16 @@ pub const CLOJURE_AST_CONFIG: LangAstConfig = LangAstConfig {
     string_prefixes: &[],
 };
 
+pub const ERLANG_AST_CONFIG: LangAstConfig = LangAstConfig {
+    new_types: &[],
+    throw_types: &[],
+    await_types: &[],
+    string_types: &["string"],
+    regex_types: &[],
+    quote_chars: &['"'],
+    string_prefixes: &[],
+};
+
 pub const SOLIDITY_AST_CONFIG: LangAstConfig = LangAstConfig {
     new_types: &["new_expression"],
     throw_types: &["revert_statement"],

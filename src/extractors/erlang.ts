@@ -70,7 +70,10 @@ function walkErlangNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
 
 function handleModuleAttr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // module_attribute: - module ( atom ) .
-  const nameNode = findChild(node, 'atom');
+  // Prefer the named `name` field exposed by tree-sitter-erlang so we don't
+  // accidentally pick up the `module` keyword if a future grammar exposes it
+  // as a named `atom` child.
+  const nameNode = node.childForFieldName('name') ?? findChild(node, 'atom');
   if (!nameNode) return;
 
   ctx.definitions.push({
@@ -83,7 +86,10 @@ function handleModuleAttr(node: TreeSitterNode, ctx: ExtractorOutput): void {
 
 function handleRecordDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // record_decl: - record ( atom , { record_field, ... } ) .
-  const nameNode = findChild(node, 'atom');
+  // Prefer the named `name` field exposed by tree-sitter-erlang; fall back to
+  // the first atom child for grammar versions that don't expose it. Mirrors
+  // the Rust `handle_record_decl` defensive pattern.
+  const nameNode = node.childForFieldName('name') ?? findChild(node, 'atom');
   if (!nameNode) return;
 
   const children: SubDeclaration[] = [];
@@ -112,7 +118,14 @@ function handleRecordDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function handleTypeAlias(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  const nameNode = findChild(node, 'atom');
+  // type_alias: -type name(...) :: ty.
+  // Name is typically wrapped in a `type_name` node containing an `atom`.
+  // Mirrors the Rust `handle_type_alias` fallback so the two engines agree
+  // even when the grammar nests the name inside `type_name`.
+  const directAtom = findChild(node, 'atom');
+  const typeNameNode = !directAtom ? findChild(node, 'type_name') : null;
+  const wrappedAtom = typeNameNode ? findChild(typeNameNode, 'atom') : null;
+  const nameNode = directAtom ?? wrappedAtom;
   if (!nameNode) return;
 
   ctx.definitions.push({
@@ -134,13 +147,22 @@ function handleFunDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 
 function handleFunctionClause(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // function_clause: atom expr_args clause_body
-  const nameNode = findChild(node, 'atom');
+  const nameNode = node.childForFieldName('name') ?? findChild(node, 'atom');
   if (!nameNode) return;
 
-  // Don't duplicate if we already have this function
-  if (ctx.definitions.some((d) => d.name === nameNode.text && d.kind === 'function')) return;
-
   const params = extractErlangParams(node);
+  const arity = params.length;
+
+  // Don't duplicate if we already have this function at the same arity.
+  // Erlang overloads by arity, so `foo/1` and `foo/2` are distinct definitions.
+  if (
+    ctx.definitions.some(
+      (d) =>
+        d.name === nameNode.text && d.kind === 'function' && (d.children?.length ?? 0) === arity,
+    )
+  ) {
+    return;
+  }
 
   ctx.definitions.push({
     name: nameNode.text,
@@ -154,31 +176,42 @@ function handleFunctionClause(node: TreeSitterNode, ctx: ExtractorOutput): void 
 
 function extractErlangParams(clauseNode: TreeSitterNode): SubDeclaration[] {
   const params: SubDeclaration[] = [];
-  const argsNode = findChild(clauseNode, 'expr_args');
+  const argsNode = clauseNode.childForFieldName('args') ?? findChild(clauseNode, 'expr_args');
   if (!argsNode) return params;
 
-  for (let i = 0; i < argsNode.childCount; i++) {
-    const child = argsNode.child(i);
+  // Iterate named children so every argument pattern counts as one parameter,
+  // independent of whether it is a bare `var`/`atom` or a complex destructuring
+  // pattern (tuple, list, binary, etc.). Punctuation tokens are anonymous and
+  // therefore excluded automatically.
+  for (let i = 0; i < argsNode.namedChildCount; i++) {
+    const child = argsNode.namedChild(i);
     if (!child) continue;
-    if (child.type === 'var') {
-      params.push({ name: child.text, kind: 'parameter', line: child.startPosition.row + 1 });
-    }
-    if (child.type === 'atom') {
-      params.push({ name: child.text, kind: 'parameter', line: child.startPosition.row + 1 });
-    }
+    const label =
+      child.type === 'var' || child.type === 'atom'
+        ? child.text
+        : // Placeholder for complex patterns so arity is preserved.
+          `_${i}`;
+    params.push({ name: label, kind: 'parameter', line: child.startPosition.row + 1 });
   }
   return params;
 }
 
 function handleDefine(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // pp_define: -define(NAME, value).
+  // For parametric macros, the grammar wraps the name in a `macro_lhs(name, args)`
+  // node. Inside `macro_lhs` the name comes first, followed by `(`, the argument
+  // `var` children, and `)`. We must therefore try `atom` (lowercase macros,
+  // e.g. `-define(foo(X), X+1)`) before `var` (uppercase macros, e.g.
+  // `-define(FOO(X), X+1)`) — otherwise `findChild(.., 'var')` skips the leading
+  // atom and lands on the first argument variable, mislabeling the definition.
+  // Mirrors the Rust `handle_define` so both engines agree.
   const nameNode =
     findChild(node, 'var') || findChild(node, 'atom') || findChild(node, 'macro_lhs');
   if (!nameNode) return;
 
   const name =
     nameNode.type === 'macro_lhs'
-      ? (findChild(nameNode, 'var')?.text ?? nameNode.text)
+      ? (findChild(nameNode, 'atom')?.text ?? findChild(nameNode, 'var')?.text ?? nameNode.text)
       : nameNode.text;
 
   ctx.definitions.push({
@@ -194,9 +227,15 @@ function handleInclude(node: TreeSitterNode, ctx: ExtractorOutput): void {
   if (!strNode) return;
 
   const source = strNode.text.replace(/^"|"$/g, '');
+  // Preserve the distinction between local includes (`-include("foo.hrl")`)
+  // and OTP library includes (`-include_lib("kernel/include/file.hrl")`) so
+  // downstream consumers can apply the correct path-resolution strategy
+  // (local: relative to the source file; lib: relative to an OTP app root).
+  // Mirrors the Rust `handle_include` so both engines agree.
+  const kind = node.type === 'pp_include_lib' ? 'include_lib' : 'include';
   ctx.imports.push({
     source,
-    names: ['include'],
+    names: [kind],
     line: node.startPosition.row + 1,
   });
 }
@@ -224,8 +263,12 @@ function handleImportAttr(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function handleCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  // call: first child is function ref (atom or remote), then expr_args
-  const funcNode = node.child(0);
+  // call: first named child is function ref (atom or remote), then expr_args.
+  // Using `namedChild(0)` rather than `child(0)` skips anonymous tokens
+  // (punctuation, keywords) so a future grammar revision that inserts a
+  // leading anonymous node won't silently drop the call. Mirrors the Rust
+  // `handle_call` so both engines emit the same set of calls.
+  const funcNode = node.namedChild(0);
   if (!funcNode) return;
 
   if (funcNode.type === 'atom' || funcNode.type === 'identifier') {
