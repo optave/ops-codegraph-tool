@@ -99,25 +99,58 @@ function handlePackageDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function handleClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  const nameNode = node.childForFieldName('name');
-  if (!nameNode) return;
+  // tree-sitter-verilog exposes no field names on `class_declaration`. The
+  // class name lives under a `class_identifier > simple_identifier` chain, and
+  // the superclass appears as a `class_type` child (no `superclass` field).
+  // The Rust extractor in `crates/codegraph-core/src/extractors/verilog.rs`
+  // uses the same structural lookups so both engines emit identical class
+  // definitions and `extends` relations.
+  const name = findClassName(node);
+  if (!name) return;
 
   ctx.definitions.push({
-    name: nameNode.text,
+    name,
     kind: 'class',
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
   });
 
-  // Superclass via extends
-  const superclass = node.childForFieldName('superclass');
+  const superclass = findClassSuperclass(node);
   if (superclass) {
     ctx.classes.push({
-      name: nameNode.text,
-      extends: superclass.text,
+      name,
+      extends: superclass,
       line: node.startPosition.row + 1,
     });
   }
+}
+
+function findClassName(node: TreeSitterNode): string | null {
+  const fieldName = node.childForFieldName('name');
+  if (fieldName) return fieldName.text;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child && child.type === 'class_identifier') {
+      const simple = findChild(child, 'simple_identifier');
+      return (simple ?? child).text.trim();
+    }
+  }
+  return null;
+}
+
+function findClassSuperclass(node: TreeSitterNode): string | null {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child && child.type === 'class_type') {
+      const id = findChild(child, 'class_identifier');
+      if (id) {
+        const simple = findChild(id, 'simple_identifier');
+        return (simple ?? id).text.trim();
+      }
+      return child.text.trim();
+    }
+  }
+  return null;
 }
 
 function handleFunctionDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
@@ -151,8 +184,12 @@ function handleTaskDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function handleModuleInstantiation(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  // Module instantiations are like function calls: `ModuleName instance_name(...);`
-  const moduleType = node.childForFieldName('type') || node.child(0);
+  // Module instantiations are like function calls: `ModuleName instance_name(...);`.
+  // The module type identifier is the first *named* child; using
+  // `namedChild(0)` (instead of `child(0)`) skips anonymous tokens like a
+  // leading `#` parameter-override punctuation so we never capture that as a
+  // call name. The Rust extractor uses the same lookup for parity.
+  const moduleType = node.childForFieldName('type') ?? node.namedChild(0);
   if (!moduleType) return;
 
   ctx.calls.push({
@@ -169,7 +206,10 @@ function handlePackageImport(node: TreeSitterNode, ctx: ExtractorOutput): void {
     if (child.type === 'package_import_item') {
       const text = child.text;
       const parts = text.split('::');
-      const pkg = parts[0] ?? text;
+      // `String.split('::')` always yields at least one element — when the
+      // delimiter is absent the whole string is the sole item, so the
+      // empty-string fallback is unreachable in practice.
+      const pkg = parts[0] ?? '';
       const item = parts[1] ?? '*';
       ctx.imports.push({
         source: pkg,
@@ -182,9 +222,18 @@ function handlePackageImport(node: TreeSitterNode, ctx: ExtractorOutput): void {
 
 function handleIncludeDirective(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // `include "file.vh"
+  // Mirrors the Rust `handle_include_directive` which checks all three node
+  // kinds — tree-sitter-verilog has emitted `double_quoted_string` in some
+  // grammar revisions, and missing it would silently drop the import in WASM
+  // while the native engine still records it.
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
-    if (child && (child.type === 'string_literal' || child.type === 'quoted_string')) {
+    if (
+      child &&
+      (child.type === 'string_literal' ||
+        child.type === 'quoted_string' ||
+        child.type === 'double_quoted_string')
+    ) {
       const source = child.text.replace(/^["']|["']$/g, '');
       ctx.imports.push({
         source,
@@ -266,8 +315,14 @@ function findVerilogParent(node: TreeSitterNode): string | null {
       current.type === 'package_declaration' ||
       current.type === 'class_declaration'
     ) {
-      const name = findDeclName(current) || findModuleName(current);
-      return name ? name.text : null;
+      // `class_declaration` wraps its name in `class_identifier >
+      // simple_identifier`; `findDeclName` / `findModuleName` only look at
+      // bare `simple_identifier`/`identifier` children, so they miss it.
+      // `findClassName` already handles the wrapper, so consult it last to
+      // qualify tasks/functions nested inside a SystemVerilog class.
+      const nameNode = findDeclName(current) || findModuleName(current);
+      if (nameNode) return nameNode.text;
+      return findClassName(current);
     }
     current = current.parent;
   }
@@ -292,17 +347,30 @@ function extractPorts(moduleNode: TreeSitterNode): SubDeclaration[] {
       ) {
         const nameNode =
           child.childForFieldName('name') ||
+          findChild(child, 'port_identifier') ||
           findChild(child, 'simple_identifier') ||
           findChild(child, 'identifier');
         if (nameNode) {
-          ports.push({ name: nameNode.text, kind: 'property', line: child.startPosition.row + 1 });
+          // `port_identifier` wraps a `simple_identifier`; descend to the
+          // innermost identifier for a clean, whitespace-free name.
+          const inner =
+            findChild(nameNode, 'simple_identifier') ||
+            findChild(nameNode, 'identifier') ||
+            nameNode;
+          ports.push({ name: inner.text, kind: 'property', line: child.startPosition.row + 1 });
         }
       }
 
-      // Recurse into port list containers
+      // Recurse into port list containers. `module_ansi_header` wraps the
+      // ANSI-style declarations emitted by tree-sitter-verilog (e.g.
+      // `module top(input clk, output reg q);`) — without this branch the
+      // WASM engine returns an empty children array while the native engine
+      // (which includes the same kind in its CONTAINER_KINDS list) returns
+      // the correct ports, breaking engine parity.
       if (
         child.type === 'list_of_port_declarations' ||
         child.type === 'module_header' ||
+        child.type === 'module_ansi_header' ||
         child.type === 'port_declaration_list'
       ) {
         collectFromNode(child);

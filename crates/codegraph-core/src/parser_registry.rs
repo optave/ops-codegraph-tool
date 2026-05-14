@@ -37,6 +37,7 @@ pub enum LanguageKind {
     Groovy,
     R,
     Solidity,
+    Verilog,
 }
 
 impl LanguageKind {
@@ -78,6 +79,7 @@ impl LanguageKind {
             Self::Groovy => "groovy",
             Self::R => "r",
             Self::Solidity => "solidity",
+            Self::Verilog => "verilog",
         }
     }
 
@@ -129,6 +131,7 @@ impl LanguageKind {
             // are conventional. `Path::extension` preserves case on Unix.
             "r" | "R" => Some(Self::R),
             "sol" => Some(Self::Solidity),
+            "v" | "sv" => Some(Self::Verilog),
             _ => None,
         }
     }
@@ -171,6 +174,7 @@ impl LanguageKind {
             "groovy" => Some(Self::Groovy),
             "r" => Some(Self::R),
             "solidity" => Some(Self::Solidity),
+            "verilog" => Some(Self::Verilog),
             _ => None,
         }
     }
@@ -212,6 +216,7 @@ impl LanguageKind {
             Self::Groovy => tree_sitter_groovy::LANGUAGE.into(),
             Self::R => tree_sitter_r::LANGUAGE.into(),
             Self::Solidity => tree_sitter_solidity::LANGUAGE.into(),
+            Self::Verilog => tree_sitter_verilog::LANGUAGE.into(),
         }
     }
 
@@ -228,6 +233,7 @@ impl LanguageKind {
             JavaScript, TypeScript, Tsx, Python, Go, Rust, Java, CSharp, Ruby, Php, Hcl, C,
             Cpp, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, Ocaml,
             OcamlInterface, FSharp, ObjC, Gleam, Julia, Cuda, Clojure, Erlang, Groovy, R, Solidity,
+            Verilog,
         ]
     }
 }
@@ -306,14 +312,15 @@ mod tests {
             | LanguageKind::Erlang
             | LanguageKind::Groovy
             | LanguageKind::R
-            | LanguageKind::Solidity => (),
+            | LanguageKind::Solidity
+            | LanguageKind::Verilog => (),
         };
         // IMPORTANT: this constant must equal the number of arms in the match
         // above AND the length of the slice returned by `LanguageKind::all()`.
         // Because both checks require the same manual update, they reinforce
         // each other: a developer who updates the match is reminded to also
         // update `all()` and this count.
-        const EXPECTED_LEN: usize = 34;
+        const EXPECTED_LEN: usize = 35;
         assert_eq!(
             LanguageKind::all().len(),
             EXPECTED_LEN,

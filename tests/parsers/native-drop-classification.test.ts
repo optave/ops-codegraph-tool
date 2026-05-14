@@ -13,12 +13,16 @@ const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 describe('classifyNativeDrops', () => {
-  it('groups WASM-only languages under unsupported-by-native', () => {
-    const { byReason, totals } = classifyNativeDrops(['src/j.v', 'src/k.sv']);
+  it('groups extensions without a native extractor under unsupported-by-native', () => {
+    // No real language in `LANGUAGE_REGISTRY` is WASM-only anymore (every
+    // supported grammar has a native extractor), so this test uses synthetic
+    // extensions that are deliberately absent from
+    // `NATIVE_SUPPORTED_EXTENSIONS` to exercise the unsupported branch.
+    const { byReason, totals } = classifyNativeDrops(['src/a.unknownlang', 'src/b.fakelang']);
     expect(totals['unsupported-by-native']).toBe(2);
     expect(totals['native-extractor-failure']).toBe(0);
-    expect(byReason['unsupported-by-native'].get('.v')).toEqual(['src/j.v']);
-    expect(byReason['unsupported-by-native'].get('.sv')).toEqual(['src/k.sv']);
+    expect(byReason['unsupported-by-native'].get('.unknownlang')).toEqual(['src/a.unknownlang']);
+    expect(byReason['unsupported-by-native'].get('.fakelang')).toEqual(['src/b.fakelang']);
   });
 
   it('flags natively-supported extensions as native-extractor-failure', () => {
@@ -37,14 +41,17 @@ describe('classifyNativeDrops', () => {
   it('handles a mix of supported and unsupported extensions', () => {
     const { byReason, totals } = classifyNativeDrops([
       'src/a.ts',
-      'src/b.v',
-      'src/c.v',
-      'src/d.sv',
+      'src/b.unknownlang',
+      'src/c.unknownlang',
+      'src/d.fakelang',
     ]);
     expect(totals['native-extractor-failure']).toBe(1);
     expect(totals['unsupported-by-native']).toBe(3);
-    expect(byReason['unsupported-by-native'].get('.v')).toEqual(['src/b.v', 'src/c.v']);
-    expect(byReason['unsupported-by-native'].get('.sv')).toEqual(['src/d.sv']);
+    expect(byReason['unsupported-by-native'].get('.unknownlang')).toEqual([
+      'src/b.unknownlang',
+      'src/c.unknownlang',
+    ]);
+    expect(byReason['unsupported-by-native'].get('.fakelang')).toEqual(['src/d.fakelang']);
   });
 
   it('lowercases extensions so .R and .r share a bucket', () => {
@@ -70,8 +77,9 @@ describe('classifyNativeDrops', () => {
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.fsx')).toBe(true);
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.gleam')).toBe(true);
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.m')).toBe(true);
-    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.v')).toBe(false);
-    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.sv')).toBe(false);
+    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.v')).toBe(true);
+    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.sv')).toBe(true);
+    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.unknownlang')).toBe(false);
   });
 });
 

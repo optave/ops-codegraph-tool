@@ -488,6 +488,8 @@ export const NATIVE_SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
   '.gvy',
   '.r',
   '.sol',
+  '.v',
+  '.sv',
 ]);
 
 /**
