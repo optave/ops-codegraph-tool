@@ -55,6 +55,11 @@ function walkObjCNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
     case 'preproc_import':
       handleImport(node, ctx);
       break;
+    // tree-sitter-objc v3 emits `module_import` for `@import Foundation;`
+    // statements. Older grammar revisions used `import_declaration`, so we
+    // accept both for forward/backward compatibility and keep behaviour
+    // aligned with `handle_at_import` on the Rust side.
+    case 'module_import':
     case 'import_declaration':
       handleAtImport(node, ctx);
       break;
@@ -87,29 +92,46 @@ function handleClassInterface(node: TreeSitterNode, ctx: ExtractorOutput): void 
   const nameNode = node.childForFieldName('name') || findObjCDeclName(node);
   if (!nameNode) return;
   const name = nameNode.text;
+  // Categories declared as `@interface Foo (Cat)` arrive as `class_interface`
+  // with a `category` field (rather than the `category_interface` node type).
+  // Qualify the display name with `(Cat)` so symbols stay grouped per category
+  // and match the Rust extractor.
+  const category = node.childForFieldName('category');
+  const displayName = category ? `${name}(${category.text})` : name;
 
   const members = collectClassMembers(node);
   ctx.definitions.push({
-    name,
+    name: displayName,
     kind: 'class',
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
     children: members.length > 0 ? members : undefined,
   });
 
-  // Superclass
+  // Superclass — keyed on the bare class name (categories don't have a superclass).
   const superclass = node.childForFieldName('superclass');
   if (superclass) {
     ctx.classes.push({ name, extends: superclass.text, line: node.startPosition.row + 1 });
   }
 
-  // Protocols
-  const protocols = findChild(node, 'protocol_qualifiers');
+  // Adopted protocols. tree-sitter-objc v3 wraps the adopted-protocol list in
+  // `parameterized_arguments` (not `protocol_qualifiers`, which was the v2
+  // grammar shape). Each child is wrapped in `type_name > type_identifier`;
+  // fall back to a bare `identifier`/`type_identifier` for older grammars.
+  const protocols = findChild(node, 'parameterized_arguments');
   if (protocols) {
     for (let i = 0; i < protocols.childCount; i++) {
       const proto = protocols.child(i);
-      if (proto && proto.type === 'identifier') {
-        ctx.classes.push({ name, implements: proto.text, line: node.startPosition.row + 1 });
+      if (!proto) continue;
+      let protoName: string | null = null;
+      if (proto.type === 'type_name') {
+        const inner = findChild(proto, 'type_identifier') || findChild(proto, 'identifier');
+        if (inner) protoName = inner.text;
+      } else if (proto.type === 'identifier' || proto.type === 'type_identifier') {
+        protoName = proto.text;
+      }
+      if (protoName) {
+        ctx.classes.push({ name, implements: protoName, line: node.startPosition.row + 1 });
       }
     }
   }
@@ -118,9 +140,14 @@ function handleClassInterface(node: TreeSitterNode, ctx: ExtractorOutput): void 
 function handleClassImplementation(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name') || findObjCDeclName(node);
   if (!nameNode) return;
+  // Categories declared as `@implementation Foo (Cat)` arrive as
+  // `class_implementation` with a `category` field. Mirror the Rust extractor
+  // and qualify the display name with `(Cat)`.
+  const category = node.childForFieldName('category');
+  const displayName = category ? `${nameNode.text}(${category.text})` : nameNode.text;
 
   ctx.definitions.push({
-    name: nameNode.text,
+    name: displayName,
     kind: 'class',
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
@@ -285,7 +312,20 @@ function handleTypedef(node: TreeSitterNode, ctx: ExtractorOutput): void {
 // ── Call handlers ─────────────────────────────────────────────────────────
 
 function handleCCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  const funcNode = node.childForFieldName('function');
+  // tree-sitter-objc does not expose a `function` field on `call_expression`,
+  // so the named-field lookup almost always misses. Fall back to the first
+  // `identifier` / `field_expression` child to mirror `handle_c_call_expr` in
+  // `crates/codegraph-core/src/extractors/objc.rs` and keep engine parity.
+  let funcNode = node.childForFieldName('function');
+  if (!funcNode) {
+    for (let i = 0; i < node.childCount; i++) {
+      const child = node.child(i);
+      if (child && (child.type === 'identifier' || child.type === 'field_expression')) {
+        funcNode = child;
+        break;
+      }
+    }
+  }
   if (!funcNode) return;
   const call: Call = { name: '', line: node.startPosition.row + 1 };
   if (funcNode.type === 'field_expression') {
@@ -302,10 +342,33 @@ function handleCCallExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
 function handleMessageExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // [receiver selector:arg ...]
   const receiver = node.childForFieldName('receiver');
-  const selector = node.childForFieldName('selector');
-  if (!selector) return;
 
-  const call: Call = { name: selector.text, line: node.startPosition.row + 1 };
+  // tree-sitter-objc v3 does not expose a `selector` field on
+  // `message_expression`; instead every keyword identifier has the `method`
+  // field. Assemble the selector by joining `method` children with `:`,
+  // appending a trailing `:` when the message has at least one colon
+  // (keyword form). Mirrors `build_message_selector` in
+  // `crates/codegraph-core/src/extractors/objc.rs`.
+  const parts: string[] = [];
+  let hasColon = false;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    const fieldName = node.fieldNameForChild(i);
+    if (fieldName === 'method') parts.push(child.text);
+    if (child.type === ':') hasColon = true;
+  }
+  let name: string;
+  if (parts.length > 0) {
+    name = hasColon ? `${parts.join(':')}:` : parts.join(':');
+  } else {
+    // Fallback: some grammar revisions expose a `selector` field.
+    const selector = node.childForFieldName('selector');
+    if (!selector) return;
+    name = selector.text;
+  }
+
+  const call: Call = { name, line: node.startPosition.row + 1 };
   if (receiver) call.receiver = receiver.text;
   ctx.calls.push(call);
 }
@@ -313,29 +376,25 @@ function handleMessageExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function buildSelector(methodNode: TreeSitterNode): string | null {
-  const selector = methodNode.childForFieldName('selector');
-  if (selector) return selector.text;
-
-  // Build selector from keyword children: initWith:name:
+  // tree-sitter-objc v3 does not expose a `selector` field; the selector is
+  // assembled from the leading `identifier` keywords. Multi-keyword forms
+  // look like `setName:(...)x age:(...)y` and appear as flat
+  // `identifier` + `method_parameter` children directly under the method
+  // node (not wrapped in `keyword_selector`). Mirrors `build_selector` in
+  // `crates/codegraph-core/src/extractors/objc.rs`.
   const parts: string[] = [];
+  let hasParams = false;
   for (let i = 0; i < methodNode.childCount; i++) {
     const child = methodNode.child(i);
     if (!child) continue;
-    if (child.type === 'keyword_selector') {
-      for (let j = 0; j < child.childCount; j++) {
-        const kw = child.child(j);
-        if (kw && kw.type === 'keyword_declarator') {
-          const kwName = kw.childForFieldName('keyword');
-          if (kwName) parts.push(kwName.text);
-        }
-      }
-    }
-    if (child.type === 'identifier' && i === 1) {
-      // Simple unary selector
-      return child.text;
+    if (child.type === 'identifier') {
+      parts.push(child.text);
+    } else if (child.type === 'method_parameter') {
+      hasParams = true;
     }
   }
-  return parts.length > 0 ? `${parts.join(':')}:` : null;
+  if (parts.length === 0) return null;
+  return hasParams ? `${parts.join(':')}:` : parts.join(':');
 }
 
 function findObjCParentClass(node: TreeSitterNode): string | null {
@@ -349,7 +408,14 @@ function findObjCParentClass(node: TreeSitterNode): string | null {
       current.type === 'category_implementation'
     ) {
       const nameNode = current.childForFieldName('name') || findObjCDeclName(current);
-      return nameNode ? nameNode.text : null;
+      if (!nameNode) return null;
+      // Categories: include `(Cat)` so methods are grouped per category.
+      // Two categories on the same class can declare same-named methods, so
+      // qualifying the parent name keeps the symbols disambiguated. Mirrors
+      // `find_objc_parent_class` in `crates/codegraph-core/src/extractors/objc.rs`.
+      const category = current.childForFieldName('category');
+      if (category) return `${nameNode.text}(${category.text})`;
+      return nameNode.text;
     }
     current = current.parent;
   }
@@ -381,32 +447,65 @@ function collectClassMembers(classNode: TreeSitterNode): SubDeclaration[] {
       }
     }
     if (child.type === 'property_declaration') {
-      const propName = child.childForFieldName('name');
+      const propName = extractPropertyName(child);
       if (propName) {
-        members.push({ name: propName.text, kind: 'property', line: child.startPosition.row + 1 });
+        members.push({ name: propName, kind: 'property', line: child.startPosition.row + 1 });
       }
     }
   }
   return members;
 }
 
+/**
+ * Extract the property name from `@property (...) Type *foo;`. The v3 grammar
+ * does not expose `name` as a named field on `property_declaration`; instead
+ * the identifier nests under `struct_declaration > struct_declarator >
+ * [pointer_declarator >] identifier`. Mirrors `extract_property_name` in
+ * `crates/codegraph-core/src/extractors/objc.rs`.
+ */
+function extractPropertyName(propNode: TreeSitterNode): string | null {
+  const structDecl = findChild(propNode, 'struct_declaration');
+  if (!structDecl) return null;
+  for (let i = 0; i < structDecl.childCount; i++) {
+    const child = structDecl.child(i);
+    if (!child || child.type !== 'struct_declarator') continue;
+    const id = findIdentifierDeep(child);
+    if (id) return id.text;
+  }
+  return null;
+}
+
+function findIdentifierDeep(node: TreeSitterNode): TreeSitterNode | null {
+  if (node.type === 'identifier') return node;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    const found = findIdentifierDeep(child);
+    if (found) return found;
+  }
+  return null;
+}
+
 function extractMethodParams(methodNode: TreeSitterNode): SubDeclaration[] {
+  // The v3 grammar emits flat `method_parameter` children under the method
+  // node; the parameter name is the last `identifier` inside each
+  // `method_parameter`. Mirrors `extract_method_params` in
+  // `crates/codegraph-core/src/extractors/objc.rs`.
   const params: SubDeclaration[] = [];
   for (let i = 0; i < methodNode.childCount; i++) {
     const child = methodNode.child(i);
-    if (!child || child.type !== 'keyword_selector') continue;
+    if (!child || child.type !== 'method_parameter') continue;
+    let nameNode: TreeSitterNode | null = null;
     for (let j = 0; j < child.childCount; j++) {
-      const kw = child.child(j);
-      if (kw && kw.type === 'keyword_declarator') {
-        const nameNode = kw.childForFieldName('name');
-        if (nameNode) {
-          params.push({
-            name: nameNode.text,
-            kind: 'parameter',
-            line: nameNode.startPosition.row + 1,
-          });
-        }
-      }
+      const inner = child.child(j);
+      if (inner && inner.type === 'identifier') nameNode = inner;
+    }
+    if (nameNode) {
+      params.push({
+        name: nameNode.text,
+        kind: 'parameter',
+        line: nameNode.startPosition.row + 1,
+      });
     }
   }
   return params;
