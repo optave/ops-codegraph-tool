@@ -14,11 +14,7 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 describe('classifyNativeDrops', () => {
   it('groups WASM-only languages under unsupported-by-native', () => {
-    const { byReason, totals } = classifyNativeDrops([
-      'src/b.gleam',
-      'src/j.v',
-      'src/k.m',
-    ]);
+    const { byReason, totals } = classifyNativeDrops(['src/b.gleam', 'src/j.v', 'src/k.m']);
     expect(totals['unsupported-by-native']).toBe(3);
     expect(totals['native-extractor-failure']).toBe(0);
     expect(byReason['unsupported-by-native'].get('.gleam')).toEqual(['src/b.gleam']);

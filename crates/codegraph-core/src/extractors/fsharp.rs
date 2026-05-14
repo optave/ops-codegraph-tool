@@ -60,13 +60,28 @@ fn handle_function_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         None => return,
     };
     let raw_name = node_text(&name_node, source).to_string();
+    let line = start_line(node);
 
-    let params = extract_fsharp_params(node, source);
+    // Avoid duplicates — the DFS walk also visits the inner curried
+    // `function_declaration_left` of multi-parameter functions
+    // (e.g. `let add x y = …`), which would otherwise push the same
+    // `(name, line)` definition twice. Mirrors the JS extractor's guard,
+    // which compares against the raw (unqualified) identifier text.
+    if symbols
+        .definitions
+        .iter()
+        .any(|d| d.name == raw_name && d.line == line)
+    {
+        return;
+    }
+
     let module_name = enclosing_module_name(node, source);
     let qualified = match module_name {
         Some(m) => format!("{}.{}", m, raw_name),
         None => raw_name,
     };
+
+    let params = extract_fsharp_params(node, source);
 
     // JS extractor uses the parent's endLine (the function_or_value_defn) for
     // a tighter bound; do the same to preserve parity.
@@ -75,7 +90,7 @@ fn handle_function_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     symbols.definitions.push(Definition {
         name: qualified,
         kind: "function".to_string(),
-        line: start_line(node),
+        line,
         end_line: Some(end_line(&end)),
         decorators: None,
         complexity: compute_all_metrics(&end, source, "fsharp"),
