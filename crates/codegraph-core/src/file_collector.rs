@@ -33,13 +33,19 @@ const DEFAULT_IGNORE_DIRS: &[&str] = &[
 /// All supported file extensions (mirrors the JS `EXTENSIONS` set).
 /// Must stay in sync with `LanguageKind::from_extension`.
 ///
-/// Known extension collisions:
+/// **Extension collisions to be aware of:**
+/// - `.v` is shared by Verilog and Coq theorem-prover source files. Codegraph
+///   routes `.v` to the Verilog parser; Coq-heavy repositories will see Coq
+///   files mis-classified as Verilog and produce mostly-empty symbol output.
+///   There is currently no per-repo override for this; users with Coq files
+///   should exclude `*.v` via the `exclude` config glob.
 /// - `.m` is the canonical extension for both Objective-C *and* MATLAB/GNU
 ///   Octave source files. We route every `.m` file through the Objective-C
 ///   extractor. MATLAB files will parse but produce garbled or empty symbol
 ///   output (no error is raised). If MATLAB support is added later this will
 ///   need disambiguation heuristics (e.g. presence of `@interface`/`@import`
 ///   vs MATLAB keywords like `function`/`classdef`).
+/// - `.h` (C vs Objective-C) is unambiguous here — routed to C parser.
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "js", "jsx", "mjs", "cjs", "ts", "tsx", "d.ts", "py", "pyi", "go", "rs", "java", "cs", "rb",
     "rake", "gemspec", "php", "phtml", "tf", "hcl", "c", "h", "cpp", "cc", "cxx", "hpp", "cu",
@@ -47,7 +53,7 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
     "ml", "mli", "fs", "fsx", "fsi", "m", "jl", "gleam", "clj", "cljs", "cljc", "erl", "hrl",
     "groovy", "gvy", "sol",
     // R is case-sensitive: both `.r` and `.R` are conventional.
-    "r", "R",
+    "r", "R", "v", "sv",
 ];
 
 /// Returns whether `path` has an extension the Rust file_collector would accept.
@@ -55,9 +61,8 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
 /// Mirrors the predicate at the heart of `collect_files`: a file is collected
 /// if `LanguageKind::from_extension` recognizes it OR its raw extension is in
 /// `SUPPORTED_EXTENSIONS`. Exposed for `change_detection::detect_removed_files`
-/// so that files outside Rust's capability (e.g. WASM-only `.v`) are
-/// not flagged as "removed" merely because the orchestrator's narrower
-/// collector never sees them.
+/// so that files outside Rust's capability are not flagged as "removed"
+/// merely because the orchestrator's narrower collector never sees them.
 pub fn is_supported_extension(path: &str) -> bool {
     if LanguageKind::from_extension(path).is_some() {
         return true;

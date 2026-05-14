@@ -473,6 +473,23 @@ pub const SOLIDITY_AST_CONFIG: LangAstConfig = LangAstConfig {
     string_prefixes: &[],
 };
 
+/// Verilog/SystemVerilog AST config.
+///
+/// The WASM-side `AST_TYPE_MAPS` (in `src/ast-analysis/rules/index.ts`) has no
+/// `verilog` entry, so the JS engine emits no `ast_nodes` rows for Verilog
+/// files. Keeping every list empty produces the same outcome here: the generic
+/// walker visits every node but classifies none, so nothing is pushed. If the
+/// JS map ever grows a Verilog entry, mirror it here.
+pub const VERILOG_AST_CONFIG: LangAstConfig = LangAstConfig {
+    new_types: &[],
+    throw_types: &[],
+    await_types: &[],
+    string_types: &[],
+    regex_types: &[],
+    quote_chars: &['"'],
+    string_prefixes: &[],
+};
+
 // ── Generic AST node walker ──────────────────────────────────────────────────
 
 /// Node types that represent identifiers across languages.

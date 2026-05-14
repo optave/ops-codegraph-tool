@@ -774,15 +774,18 @@ mod tests {
 
     #[test]
     fn detect_removed_skips_unsupported_extensions() {
-        // Files in WASM-only languages (Verilog) live in
-        // `file_hashes` because the JS-side WASM backfill writes them, but
-        // Rust's narrower file_collector never collects them. Without this
-        // skip, every incremental rebuild would flag them as removed and
-        // purge their rows — the #1066 ~2s floor.
+        // Files that the JS-side WASM backfill wrote into `file_hashes` for
+        // an extension that the Rust `file_collector` doesn't recognise must
+        // not be flagged as removed merely because the orchestrator's
+        // narrower collector never sees them — that would purge their rows
+        // on every incremental rebuild (the #1066 ~2s floor). All currently
+        // registered languages have native extractors, so this test uses
+        // synthetic extensions that are deliberately outside the
+        // `SUPPORTED_EXTENSIONS` set to exercise the skip path.
         let mut existing = HashMap::new();
         for path in [
-            "tests/fixtures/verilog/main.v",
-            "tests/fixtures/verilog/util.sv",
+            "tests/fixtures/unknown/main.unknownlang",
+            "tests/fixtures/unknown/util.fakelang",
         ] {
             existing.insert(
                 path.to_string(),
