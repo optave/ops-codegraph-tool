@@ -99,25 +99,58 @@ function handlePackageDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function handleClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  const nameNode = node.childForFieldName('name');
-  if (!nameNode) return;
+  // tree-sitter-verilog exposes no field names on `class_declaration`. The
+  // class name lives under a `class_identifier > simple_identifier` chain, and
+  // the superclass appears as a `class_type` child (no `superclass` field).
+  // The Rust extractor in `crates/codegraph-core/src/extractors/verilog.rs`
+  // uses the same structural lookups so both engines emit identical class
+  // definitions and `extends` relations.
+  const name = findClassName(node);
+  if (!name) return;
 
   ctx.definitions.push({
-    name: nameNode.text,
+    name,
     kind: 'class',
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
   });
 
-  // Superclass via extends
-  const superclass = node.childForFieldName('superclass');
+  const superclass = findClassSuperclass(node);
   if (superclass) {
     ctx.classes.push({
-      name: nameNode.text,
-      extends: superclass.text,
+      name,
+      extends: superclass,
       line: node.startPosition.row + 1,
     });
   }
+}
+
+function findClassName(node: TreeSitterNode): string | null {
+  const fieldName = node.childForFieldName('name');
+  if (fieldName) return fieldName.text;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child && child.type === 'class_identifier') {
+      const simple = findChild(child, 'simple_identifier');
+      return (simple ?? child).text.trim();
+    }
+  }
+  return null;
+}
+
+function findClassSuperclass(node: TreeSitterNode): string | null {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child && child.type === 'class_type') {
+      const id = findChild(child, 'class_identifier');
+      if (id) {
+        const simple = findChild(id, 'simple_identifier');
+        return (simple ?? id).text.trim();
+      }
+      return child.text.trim();
+    }
+  }
+  return null;
 }
 
 function handleFunctionDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
@@ -151,8 +184,12 @@ function handleTaskDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function handleModuleInstantiation(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  // Module instantiations are like function calls: `ModuleName instance_name(...);`
-  const moduleType = node.childForFieldName('type') || node.child(0);
+  // Module instantiations are like function calls: `ModuleName instance_name(...);`.
+  // The module type identifier is the first *named* child; using
+  // `namedChild(0)` (instead of `child(0)`) skips anonymous tokens like a
+  // leading `#` parameter-override punctuation so we never capture that as a
+  // call name. The Rust extractor uses the same lookup for parity.
+  const moduleType = node.childForFieldName('type') ?? node.namedChild(0);
   if (!moduleType) return;
 
   ctx.calls.push({

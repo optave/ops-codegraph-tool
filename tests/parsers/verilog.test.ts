@@ -61,4 +61,26 @@ endmodule`);
       expect.objectContaining({ source: 'pkg', names: ['item'] }),
     );
   });
+
+  it('extracts class declarations with extends', () => {
+    // tree-sitter-verilog wraps the class name in `class_identifier`, not a
+    // bare `simple_identifier`, so the lookup must descend through the
+    // wrapper. Guards against the silent regression where class extraction
+    // was a no-op despite the grammar parsing the class cleanly.
+    const symbols = parseVerilog(`class Foo extends Bar; endclass`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'Foo', kind: 'class' }),
+    );
+    expect(symbols.classes).toContainEqual(
+      expect.objectContaining({ name: 'Foo', extends: 'Bar' }),
+    );
+  });
+
+  it('extracts class declarations without extends', () => {
+    const symbols = parseVerilog(`class Baz; endclass`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'Baz', kind: 'class' }),
+    );
+    expect(symbols.classes.find((c: { name: string }) => c.name === 'Baz')).toBeUndefined();
+  });
 });

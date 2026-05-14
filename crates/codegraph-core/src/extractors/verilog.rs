@@ -107,19 +107,16 @@ fn handle_package_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 }
 
 fn handle_class_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
-    // ⚠️ CURRENTLY A NO-OP. The JS extractor calls
-    // `node.childForFieldName('name')`; tree-sitter-verilog exposes no `name`
-    // field on `class_declaration` (and no `superclass` field), so this lookup
-    // always returns `None` and the handler exits at the early `return` below.
-    // Neither the class `Definition` nor the `extends` relation is ever
-    // emitted on the current grammar — matching the WASM engine, which has
-    // the same behavior. If a future grammar revision adds the `name` (and
-    // `superclass`) fields, this handler will start firing automatically and
-    // pick up both class definitions and inheritance relations in one step.
-    // Until then, class extraction is intentional dead code kept as a hook
-    // so the grammar upgrade doesn't go unnoticed.
-    let name = match named_child_text(node, "name", source) {
-        Some(n) => n.to_string(),
+    // tree-sitter-verilog exposes no field names on `class_declaration`. The class
+    // name lives under a `class_identifier` wrapper (`class_identifier >
+    // simple_identifier`), and the superclass appears as a `class_type` child
+    // (`class_type > class_identifier > simple_identifier`) — there is no
+    // `superclass` field. The WASM extractor's `childForFieldName('name')`
+    // returns null for the same reason, so we use the structural lookup here
+    // and mirror the fix in `src/extractors/verilog.ts` to keep both engines
+    // producing the same class definitions and `extends` relations.
+    let name = match find_class_name(node, source) {
+        Some(n) => n,
         None => return,
     };
     symbols.definitions.push(Definition {
@@ -133,14 +130,46 @@ fn handle_class_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
         children: None,
     });
 
-    if let Some(superclass) = node.child_by_field_name("superclass") {
+    if let Some(superclass) = find_class_superclass(node, source) {
         symbols.classes.push(ClassRelation {
             name,
-            extends: Some(node_text(&superclass, source).to_string()),
+            extends: Some(superclass),
             implements: None,
             line: start_line(node),
         });
     }
+}
+
+/// Resolve the name of a `class_declaration`. The grammar wraps the name in a
+/// `class_identifier > simple_identifier` chain, so a plain identifier scan
+/// (used by `find_decl_name`) misses it.
+fn find_class_name(node: &Node, source: &[u8]) -> Option<String> {
+    if let Some(text) = named_child_text(node, "name", source) {
+        return Some(text.to_string());
+    }
+    for i in 0..node.child_count() {
+        let child = node.child(i)?;
+        if child.kind() == "class_identifier" {
+            return Some(extract_identifier_text(&child, source));
+        }
+    }
+    None
+}
+
+/// Resolve the superclass of a `class_declaration`. The grammar emits the
+/// `extends` keyword followed by a `class_type` node holding a
+/// `class_identifier > simple_identifier`.
+fn find_class_superclass(node: &Node, source: &[u8]) -> Option<String> {
+    for i in 0..node.child_count() {
+        let child = node.child(i)?;
+        if child.kind() == "class_type" {
+            if let Some(id) = find_child(&child, "class_identifier") {
+                return Some(extract_identifier_text(&id, source));
+            }
+            return Some(node_text(&child, source).trim().to_string());
+        }
+    }
+    None
 }
 
 fn handle_function_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
@@ -189,15 +218,11 @@ fn handle_task_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
 fn handle_module_instantiation(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     // Tree-sitter-verilog exposes no field name on `module_instantiation`; the
-    // first *named* child holds the module type being instantiated. The JS
-    // extractor uses `childForFieldName('type') || child(0)` — the field
-    // lookup never hits, so first-named-child fallback is the live path.
-    //
-    // Using `named_child(0)` (instead of `child(0)`) skips any anonymous
-    // grammar tokens (parameter-override punctuation like `#`, keywords)
-    // that could otherwise lead the call name. Producing punctuation as a
-    // call name would silently corrupt the call graph for any non-ANSI
-    // instantiation form.
+    // module type identifier is the first *named* child. Using `named_child(0)`
+    // (instead of `child(0)`) skips anonymous tokens like a leading `#`
+    // parameter-override punctuation, which would otherwise be captured as the
+    // call name on some non-ANSI instantiation shapes. The WASM extractor in
+    // `src/extractors/verilog.ts` is updated in lockstep to keep parity.
     let name_node = node
         .child_by_field_name("type")
         .or_else(|| node.named_child(0));
@@ -526,4 +551,41 @@ mod tests {
         assert_eq!(inc.c_include, Some(true));
         assert_eq!(inc.names, vec!["defs.vh".to_string()]);
     }
+
+    #[test]
+    fn extracts_class_with_superclass() {
+        // tree-sitter-verilog wraps the class name in `class_identifier`, not a
+        // bare `simple_identifier`, so the lookup must descend through the
+        // wrapper. Guards against the silent regression where class extraction
+        // was a no-op despite a parseable class.
+        let s = parse("class Foo extends Bar; endclass");
+        let class_def = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "Foo" && d.kind == "class")
+            .expect("class Foo should be extracted");
+        assert_eq!(class_def.kind, "class");
+        let rel = s
+            .classes
+            .iter()
+            .find(|c| c.name == "Foo")
+            .expect("extends relation should be emitted");
+        assert_eq!(rel.extends.as_deref(), Some("Bar"));
+    }
+
+    #[test]
+    fn extracts_class_without_superclass() {
+        let s = parse("class Baz; endclass");
+        let class_def = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "Baz" && d.kind == "class")
+            .expect("class Baz should be extracted");
+        assert_eq!(class_def.kind, "class");
+        assert!(
+            s.classes.iter().all(|c| c.name != "Baz"),
+            "no extends relation should be emitted for a class without a superclass"
+        );
+    }
 }
+
