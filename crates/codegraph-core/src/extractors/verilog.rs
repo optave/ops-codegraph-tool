@@ -249,7 +249,10 @@ fn handle_package_import(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
             if child.kind() == "package_import_item" {
                 let text = node_text(&child, source);
                 let mut parts = text.splitn(2, "::");
-                let pkg = parts.next().unwrap_or(text).to_string();
+                // `splitn(2, …).next()` always yields `Some(…)` — when the
+                // delimiter is absent the whole string is the sole item, so
+                // the empty-string fallback is unreachable in practice.
+                let pkg = parts.next().unwrap_or("").to_string();
                 let item = parts.next().unwrap_or("*").to_string();
                 symbols.imports.push(Import::new(
                     pkg,

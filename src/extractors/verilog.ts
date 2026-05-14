@@ -206,7 +206,10 @@ function handlePackageImport(node: TreeSitterNode, ctx: ExtractorOutput): void {
     if (child.type === 'package_import_item') {
       const text = child.text;
       const parts = text.split('::');
-      const pkg = parts[0] ?? text;
+      // `String.split('::')` always yields at least one element — when the
+      // delimiter is absent the whole string is the sole item, so the
+      // empty-string fallback is unreachable in practice.
+      const pkg = parts[0] ?? '';
       const item = parts[1] ?? '*';
       ctx.imports.push({
         source: pkg,
