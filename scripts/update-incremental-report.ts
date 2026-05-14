@@ -27,7 +27,9 @@ if (arg) {
 const entry = JSON.parse(jsonText);
 
 // ── Paths ────────────────────────────────────────────────────────────────
-const reportPath = path.join(root, 'generated', 'benchmarks', 'INCREMENTAL-BENCHMARKS.md');
+const reportPath =
+	process.env.CODEGRAPH_INCREMENTAL_REPORT_PATH ??
+	path.join(root, 'generated', 'benchmarks', 'INCREMENTAL-BENCHMARKS.md');
 
 // ── Load existing history ────────────────────────────────────────────────
 let history = [];
@@ -53,9 +55,15 @@ if (!isDev) {
 }
 history.unshift(entry);
 
-function findPrevRelease(hist, fromIdx) {
+// Walk back through release history to find the most recent non-null value
+// for a specific metric. Lets trend annotations skip past releases whose
+// workers crashed and stored null, instead of hiding regressions behind an
+// empty cell.
+function findPrevMetric(hist, fromIdx, getter) {
 	for (let i = fromIdx + 1; i < hist.length; i++) {
-		if (hist[i].version !== 'dev') return hist[i];
+		if (hist[i].version === 'dev') continue;
+		const v = getter(hist[i]);
+		if (v != null) return v;
 	}
 	return null;
 }
@@ -76,19 +84,24 @@ function formatMs(ms) {
 	return `${Math.round(ms)}ms`;
 }
 
-function engineRow(h, prev, engineKey) {
+function engineRow(hist, i, engineKey) {
+	const h = hist[i];
 	const e = h[engineKey];
-	const p = prev?.[engineKey] || null;
 	if (!e) return null;
 
-	const fullT = trend(e.fullBuildMs, p?.fullBuildMs);
-	const noopT = trend(e.noopRebuildMs, p?.noopRebuildMs);
-	const oneT = trend(e.oneFileRebuildMs, p?.oneFileRebuildMs);
+	const fullT = trend(e.fullBuildMs, findPrevMetric(hist, i, (r) => r[engineKey]?.fullBuildMs));
+	const noopT = trend(e.noopRebuildMs, findPrevMetric(hist, i, (r) => r[engineKey]?.noopRebuildMs));
+	const oneT = trend(
+		e.oneFileRebuildMs,
+		findPrevMetric(hist, i, (r) => r[engineKey]?.oneFileRebuildMs),
+	);
 
 	const r = h.resolve;
-	const pr = prev?.resolve || null;
-	const natT = r.nativeBatchMs != null ? trend(r.nativeBatchMs, pr?.nativeBatchMs) : '';
-	const jsT = trend(r.jsFallbackMs, pr?.jsFallbackMs);
+	const natT =
+		r.nativeBatchMs != null
+			? trend(r.nativeBatchMs, findPrevMetric(hist, i, (x) => x.resolve?.nativeBatchMs))
+			: '';
+	const jsT = trend(r.jsFallbackMs, findPrevMetric(hist, i, (x) => x.resolve?.jsFallbackMs));
 
 	const noopCell = e.noopRebuildMs != null ? `${formatMs(e.noopRebuildMs)}${noopT}` : 'n/a';
 	const oneFileCell = e.oneFileRebuildMs != null ? `${formatMs(e.oneFileRebuildMs)}${oneT}` : 'n/a';
@@ -115,11 +128,8 @@ md +=
 	'|---------|--------|------:|-----------:|------:|-------:|------------------:|-------------:|\n';
 
 for (let i = 0; i < history.length; i++) {
-	const h = history[i];
-	const prev = findPrevRelease(history, i);
-
-	const nativeRow = engineRow(h, prev, 'native');
-	const wasmRow = engineRow(h, prev, 'wasm');
+	const nativeRow = engineRow(history, i, 'native');
+	const wasmRow = engineRow(history, i, 'wasm');
 	if (nativeRow) md += nativeRow + '\n';
 	if (wasmRow) md += wasmRow + '\n';
 }
@@ -163,7 +173,6 @@ console.error(`Updated ${path.relative(root, reportPath)}`);
 
 // ── Regression detection ─────────────────────────────────────────────────
 const REGRESSION_THRESHOLD = 0.15; // 15% regression triggers a warning
-const prev = findPrevRelease(history, 0);
 
 function checkRegression(label, current, previous) {
 	if (previous == null || previous === 0) return;
@@ -178,26 +187,42 @@ function checkRegression(label, current, previous) {
 	}
 }
 
-if (prev) {
-	for (const engineKey of ['native', 'wasm']) {
-		const e = latest[engineKey];
-		const p = prev[engineKey];
-		if (!e || !p) continue;
-		const tag = `[${engineKey}]`;
-		checkRegression(`${tag} Full build`, e.fullBuildMs, p.fullBuildMs);
-		if (e.noopRebuildMs != null && p.noopRebuildMs != null) {
-			checkRegression(`${tag} No-op rebuild`, e.noopRebuildMs, p.noopRebuildMs);
-		}
-		if (e.oneFileRebuildMs != null && p.oneFileRebuildMs != null) {
-			checkRegression(`${tag} 1-file rebuild`, e.oneFileRebuildMs, p.oneFileRebuildMs);
-		}
+for (const engineKey of ['native', 'wasm']) {
+	const e = latest[engineKey];
+	if (!e) continue;
+	const tag = `[${engineKey}]`;
+	checkRegression(
+		`${tag} Full build`,
+		e.fullBuildMs,
+		findPrevMetric(history, 0, (r) => r[engineKey]?.fullBuildMs),
+	);
+	if (e.noopRebuildMs != null) {
+		checkRegression(
+			`${tag} No-op rebuild`,
+			e.noopRebuildMs,
+			findPrevMetric(history, 0, (r) => r[engineKey]?.noopRebuildMs),
+		);
 	}
-	const re = latest.resolve;
-	const rp = prev.resolve;
-	if (re && rp) {
-		checkRegression(`[resolve] JS fallback`, re.jsFallbackMs, rp.jsFallbackMs);
-		if (re.nativeBatchMs != null && rp.nativeBatchMs != null) {
-			checkRegression(`[resolve] Native batch`, re.nativeBatchMs, rp.nativeBatchMs);
-		}
+	if (e.oneFileRebuildMs != null) {
+		checkRegression(
+			`${tag} 1-file rebuild`,
+			e.oneFileRebuildMs,
+			findPrevMetric(history, 0, (r) => r[engineKey]?.oneFileRebuildMs),
+		);
+	}
+}
+const re = latest.resolve;
+if (re) {
+	checkRegression(
+		`[resolve] JS fallback`,
+		re.jsFallbackMs,
+		findPrevMetric(history, 0, (r) => r.resolve?.jsFallbackMs),
+	);
+	if (re.nativeBatchMs != null) {
+		checkRegression(
+			`[resolve] Native batch`,
+			re.nativeBatchMs,
+			findPrevMetric(history, 0, (r) => r.resolve?.nativeBatchMs),
+		);
 	}
 }
