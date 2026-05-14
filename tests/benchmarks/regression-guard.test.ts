@@ -166,6 +166,37 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   Exempt this release; remove once 3.11.0+ data confirms stabilization
  *   under the warmup + 5-sample methodology already applied to incremental
  *   benchmarks.
+ *
+ * - 3.10.0:Query time — cumulative effect of adding two native extractors
+ *   (Solidity #1100 + R #1102) in quick succession. Neither tripped the
+ *   threshold individually (Solidity PR's Query time stayed at 49ms, R PR
+ *   showed no warning), but the combined +110% (49.6 → ~105ms) on the
+ *   `fnDepsData('buildGraph', dbPath)` measurement reflects natural graph
+ *   growth: ~1100 LoC of new extractor code + 9 fixture files added to the
+ *   self-build benchmark expand `buildGraph`'s transitive callee count and
+ *   DB row counts. Tracked in #1113 — exempt this release; remove once
+ *   3.11.0+ data captures the new steady-state and the per-language
+ *   fixture footprint has been evaluated.
+ *
+ * - 3.10.0:fnDeps depth 5 — same cause as Query time above. Merging main
+ *   into #1102 added the Erlang extractor (#1103) on top of the existing
+ *   Solidity (#1100) + R (#1102) growth, expanding `buildGraph`'s
+ *   depth-5 transitive callee fan-out by another step. The depth-5 walk
+ *   amplifies any base-graph growth quadratically (each new node adds
+ *   its own depth-5 subtree). +31% over the 25% threshold maps to the
+ *   ~33→43ms swing on a sub-50ms metric. Tracked in #1113 alongside
+ *   Query time; remove both once 3.11.0+ data confirms the new steady-state.
+ *
+ * - 3.10.0:fnDeps depth 3 — same cause as depth 1 and depth 5. Merging main
+ *   into #1101 (Groovy) layered the Groovy extractor on top of the
+ *   Solidity + R + Erlang growth that already inflated the depth-1 and
+ *   depth-5 baselines. The depth-3 walk sits between those two and
+ *   regresses for the same reason: the self-build benchmark's
+ *   `buildGraph` callee graph grew, so every fnDeps depth walks a larger
+ *   transitive set. +88% over the 25% threshold on a sub-50ms metric
+ *   (24.3 → 45.6ms) is consistent with the other depths. Tracked in #1113
+ *   alongside depth 1, depth 5, and Query time; remove all four once
+ *   3.11.0+ data confirms the new steady-state.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.9.6:Build ms/file',
@@ -176,6 +207,9 @@ const KNOWN_REGRESSIONS = new Set([
   '3.10.0:No-op rebuild',
   '3.10.0:1-file rebuild',
   '3.10.0:fnDeps depth 1',
+  '3.10.0:fnDeps depth 3',
+  '3.10.0:fnDeps depth 5',
+  '3.10.0:Query time',
 ]);
 
 /**

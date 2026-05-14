@@ -32,6 +32,8 @@ pub enum LanguageKind {
     Cuda,
     Clojure,
     Erlang,
+    Groovy,
+    R,
     Solidity,
 }
 
@@ -69,6 +71,8 @@ impl LanguageKind {
             Self::Cuda => "cuda",
             Self::Clojure => "clojure",
             Self::Erlang => "erlang",
+            Self::Groovy => "groovy",
+            Self::R => "r",
             Self::Solidity => "solidity",
         }
     }
@@ -114,6 +118,10 @@ impl LanguageKind {
             "jl" => Some(Self::Julia),
             "clj" | "cljs" | "cljc" => Some(Self::Clojure),
             "erl" | "hrl" => Some(Self::Erlang),
+            "groovy" | "gvy" => Some(Self::Groovy),
+            // R is case-sensitive: both `.r` (lowercase) and `.R` (uppercase)
+            // are conventional. `Path::extension` preserves case on Unix.
+            "r" | "R" => Some(Self::R),
             "sol" => Some(Self::Solidity),
             _ => None,
         }
@@ -152,6 +160,8 @@ impl LanguageKind {
             "cuda" => Some(Self::Cuda),
             "clojure" => Some(Self::Clojure),
             "erlang" => Some(Self::Erlang),
+            "groovy" => Some(Self::Groovy),
+            "r" => Some(Self::R),
             "solidity" => Some(Self::Solidity),
             _ => None,
         }
@@ -189,6 +199,8 @@ impl LanguageKind {
             Self::Cuda => tree_sitter_cuda::LANGUAGE.into(),
             Self::Clojure => tree_sitter_clojure_orchard::LANGUAGE.into(),
             Self::Erlang => tree_sitter_erlang::LANGUAGE.into(),
+            Self::Groovy => tree_sitter_groovy::LANGUAGE.into(),
+            Self::R => tree_sitter_r::LANGUAGE.into(),
             Self::Solidity => tree_sitter_solidity::LANGUAGE.into(),
         }
     }
@@ -205,7 +217,7 @@ impl LanguageKind {
         &[
             JavaScript, TypeScript, Tsx, Python, Go, Rust, Java, CSharp, Ruby, Php, Hcl, C,
             Cpp, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, Ocaml,
-            OcamlInterface, Gleam, Julia, Cuda, Clojure, Erlang, Solidity,
+            OcamlInterface, Gleam, Julia, Cuda, Clojure, Erlang, Groovy, R, Solidity,
         ]
     }
 }
@@ -280,6 +292,8 @@ mod tests {
             | LanguageKind::Cuda
             | LanguageKind::Clojure
             | LanguageKind::Erlang
+            | LanguageKind::Groovy
+            | LanguageKind::R
             | LanguageKind::Solidity => (),
         };
         // IMPORTANT: this constant must equal the number of arms in the match
@@ -287,7 +301,7 @@ mod tests {
         // Because both checks require the same manual update, they reinforce
         // each other: a developer who updates the match is reminded to also
         // update `all()` and this count.
-        const EXPECTED_LEN: usize = 30;
+        const EXPECTED_LEN: usize = 32;
         assert_eq!(
             LanguageKind::all().len(),
             EXPECTED_LEN,

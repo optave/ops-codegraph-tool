@@ -9,6 +9,7 @@ pub mod elixir;
 pub mod erlang;
 pub mod gleam;
 pub mod go;
+pub mod groovy;
 pub mod haskell;
 pub mod hcl;
 pub mod helpers;
@@ -20,6 +21,7 @@ pub mod lua;
 pub mod ocaml;
 pub mod php;
 pub mod python;
+pub mod r_lang;
 pub mod ruby;
 pub mod rust_lang;
 pub mod scala;
@@ -146,6 +148,12 @@ pub fn extract_symbols_with_opts(
         }
         LanguageKind::Erlang => {
             erlang::ErlangExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::Groovy => {
+            groovy::GroovyExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::R => {
+            r_lang::RExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
         }
         LanguageKind::Solidity => {
             solidity::SolidityExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
