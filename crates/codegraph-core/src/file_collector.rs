@@ -32,11 +32,19 @@ const DEFAULT_IGNORE_DIRS: &[&str] = &[
 
 /// All supported file extensions (mirrors the JS `EXTENSIONS` set).
 /// Must stay in sync with `LanguageKind::from_extension`.
+///
+/// Known extension collisions:
+/// - `.m` is the canonical extension for both Objective-C *and* MATLAB/GNU
+///   Octave source files. We route every `.m` file through the Objective-C
+///   extractor. MATLAB files will parse but produce garbled or empty symbol
+///   output (no error is raised). If MATLAB support is added later this will
+///   need disambiguation heuristics (e.g. presence of `@interface`/`@import`
+///   vs MATLAB keywords like `function`/`classdef`).
 const SUPPORTED_EXTENSIONS: &[&str] = &[
     "js", "jsx", "mjs", "cjs", "ts", "tsx", "d.ts", "py", "pyi", "go", "rs", "java", "cs", "rb",
     "rake", "gemspec", "php", "phtml", "tf", "hcl", "c", "h", "cpp", "cc", "cxx", "hpp", "cu",
     "cuh", "kt", "kts", "swift", "scala", "sh", "bash", "ex", "exs", "lua", "dart", "zig", "hs",
-    "ml", "mli", "jl", "fs", "fsx", "fsi", "gleam", "clj", "cljs", "cljc", "erl", "hrl",
+    "ml", "mli", "fs", "fsx", "fsi", "m", "jl", "gleam", "clj", "cljs", "cljc", "erl", "hrl",
     "groovy", "gvy", "sol",
     // R is case-sensitive: both `.r` and `.R` are conventional.
     "r", "R",
@@ -47,7 +55,7 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
 /// Mirrors the predicate at the heart of `collect_files`: a file is collected
 /// if `LanguageKind::from_extension` recognizes it OR its raw extension is in
 /// `SUPPORTED_EXTENSIONS`. Exposed for `change_detection::detect_removed_files`
-/// so that files outside Rust's capability (e.g. WASM-only `.m`) are
+/// so that files outside Rust's capability (e.g. WASM-only `.v`) are
 /// not flagged as "removed" merely because the orchestrator's narrower
 /// collector never sees them.
 pub fn is_supported_extension(path: &str) -> bool {

@@ -19,6 +19,7 @@ pub mod javascript;
 pub mod julia;
 pub mod kotlin;
 pub mod lua;
+pub mod objc;
 pub mod ocaml;
 pub mod php;
 pub mod python;
@@ -140,6 +141,9 @@ pub fn extract_symbols_with_opts(
         }
         LanguageKind::FSharp => {
             fsharp::FSharpExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
+        }
+        LanguageKind::ObjC => {
+            objc::ObjCExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
         }
         LanguageKind::Gleam => {
             gleam::GleamExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
