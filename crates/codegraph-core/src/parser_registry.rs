@@ -28,6 +28,7 @@ pub enum LanguageKind {
     Ocaml,
     OcamlInterface,
     FSharp,
+    Gleam,
     Julia,
     Cuda,
     Clojure,
@@ -67,6 +68,7 @@ impl LanguageKind {
             Self::Ocaml => "ocaml",
             Self::OcamlInterface => "ocaml-interface",
             Self::FSharp => "fsharp",
+            Self::Gleam => "gleam",
             Self::Julia => "julia",
             Self::Cuda => "cuda",
             Self::Clojure => "clojure",
@@ -115,6 +117,7 @@ impl LanguageKind {
             "ml" => Some(Self::Ocaml),
             "mli" => Some(Self::OcamlInterface),
             "fs" | "fsx" | "fsi" => Some(Self::FSharp),
+            "gleam" => Some(Self::Gleam),
             "jl" => Some(Self::Julia),
             "clj" | "cljs" | "cljc" => Some(Self::Clojure),
             "erl" | "hrl" => Some(Self::Erlang),
@@ -156,6 +159,7 @@ impl LanguageKind {
             "ocaml" => Some(Self::Ocaml),
             "ocaml-interface" => Some(Self::OcamlInterface),
             "fsharp" => Some(Self::FSharp),
+            "gleam" => Some(Self::Gleam),
             "julia" => Some(Self::Julia),
             "cuda" => Some(Self::Cuda),
             "clojure" => Some(Self::Clojure),
@@ -195,6 +199,7 @@ impl LanguageKind {
             Self::Ocaml => tree_sitter_ocaml::LANGUAGE_OCAML.into(),
             Self::OcamlInterface => tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
             Self::FSharp => tree_sitter_fsharp::LANGUAGE_FSHARP.into(),
+            Self::Gleam => tree_sitter_gleam::LANGUAGE.into(),
             Self::Julia => tree_sitter_julia::LANGUAGE.into(),
             Self::Cuda => tree_sitter_cuda::LANGUAGE.into(),
             Self::Clojure => tree_sitter_clojure_orchard::LANGUAGE.into(),
@@ -217,7 +222,7 @@ impl LanguageKind {
         &[
             JavaScript, TypeScript, Tsx, Python, Go, Rust, Java, CSharp, Ruby, Php, Hcl, C,
             Cpp, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, Ocaml,
-            OcamlInterface, FSharp, Julia, Cuda, Clojure, Erlang, Groovy, R, Solidity,
+            OcamlInterface, FSharp, Gleam, Julia, Cuda, Clojure, Erlang, Groovy, R, Solidity,
         ]
     }
 }
@@ -288,6 +293,7 @@ mod tests {
             | LanguageKind::Ocaml
             | LanguageKind::OcamlInterface
             | LanguageKind::FSharp
+            | LanguageKind::Gleam
             | LanguageKind::Julia
             | LanguageKind::Cuda
             | LanguageKind::Clojure
@@ -301,7 +307,7 @@ mod tests {
         // Because both checks require the same manual update, they reinforce
         // each other: a developer who updates the match is reminded to also
         // update `all()` and this count.
-        const EXPECTED_LEN: usize = 32;
+        const EXPECTED_LEN: usize = 33;
         assert_eq!(
             LanguageKind::all().len(),
             EXPECTED_LEN,
