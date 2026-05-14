@@ -481,6 +481,7 @@ export const NATIVE_SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
   '.hrl',
   '.groovy',
   '.gvy',
+  '.r',
   '.sol',
 ]);
 

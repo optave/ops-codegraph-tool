@@ -182,6 +182,10 @@ const GROOVY_AST_TYPES: Record<string, string> = {
   gstring: 'string',
 };
 
+const R_AST_TYPES: Record<string, string> = {
+  string: 'string',
+};
+
 const SOLIDITY_AST_TYPES: Record<string, string> = {
   new_expression: 'new',
   revert_statement: 'throw',
@@ -219,6 +223,7 @@ export const AST_TYPE_MAPS: Map<string, Record<string, string>> = new Map([
   ['clojure', CLOJURE_AST_TYPES],
   ['erlang', ERLANG_AST_TYPES],
   ['groovy', GROOVY_AST_TYPES],
+  ['r', R_AST_TYPES],
   ['solidity', SOLIDITY_AST_TYPES],
 ]);
 
@@ -260,6 +265,7 @@ const JULIA_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: 
 const CLOJURE_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
 const ERLANG_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
 const GROOVY_STRING_CONFIG: AstStringConfig = { quoteChars: '\'"', stringPrefixes: '' };
+const R_STRING_CONFIG: AstStringConfig = { quoteChars: '\'"', stringPrefixes: '' };
 const SOLIDITY_STRING_CONFIG: AstStringConfig = { quoteChars: '"\'', stringPrefixes: '' };
 
 export const AST_STRING_CONFIGS: Map<string, AstStringConfig> = new Map([
@@ -291,6 +297,7 @@ export const AST_STRING_CONFIGS: Map<string, AstStringConfig> = new Map([
   ['clojure', CLOJURE_STRING_CONFIG],
   ['erlang', ERLANG_STRING_CONFIG],
   ['groovy', GROOVY_STRING_CONFIG],
+  ['r', R_STRING_CONFIG],
   ['solidity', SOLIDITY_STRING_CONFIG],
 ]);
 
