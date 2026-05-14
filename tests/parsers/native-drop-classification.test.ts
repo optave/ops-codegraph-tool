@@ -16,15 +16,12 @@ describe('classifyNativeDrops', () => {
   it('groups WASM-only languages under unsupported-by-native', () => {
     const { byReason, totals } = classifyNativeDrops([
       'src/b.gleam',
-      'src/e.R',
-      'src/i.groovy',
       'src/j.v',
       'src/k.m',
     ]);
-    expect(totals['unsupported-by-native']).toBe(5);
+    expect(totals['unsupported-by-native']).toBe(3);
     expect(totals['native-extractor-failure']).toBe(0);
     expect(byReason['unsupported-by-native'].get('.gleam')).toEqual(['src/b.gleam']);
-    expect(byReason['unsupported-by-native'].get('.r')).toEqual(['src/e.R']);
   });
 
   it('flags natively-supported extensions as native-extractor-failure', () => {
@@ -45,18 +42,20 @@ describe('classifyNativeDrops', () => {
       'src/a.ts',
       'src/b.gleam',
       'src/c.gleam',
-      'src/d.groovy',
+      'src/d.v',
     ]);
     expect(totals['native-extractor-failure']).toBe(1);
     expect(totals['unsupported-by-native']).toBe(3);
     expect(byReason['unsupported-by-native'].get('.gleam')).toEqual(['src/b.gleam', 'src/c.gleam']);
-    expect(byReason['unsupported-by-native'].get('.groovy')).toEqual(['src/d.groovy']);
+    expect(byReason['unsupported-by-native'].get('.v')).toEqual(['src/d.v']);
   });
 
   it('lowercases extensions so .R and .r share a bucket', () => {
+    // `.r` is now natively supported (R extractor was ported to Rust), so
+    // any dropped `.R`/`.r` files indicate a native extractor failure.
     const { byReason, totals } = classifyNativeDrops(['scripts/a.R', 'scripts/b.r']);
-    expect(totals['unsupported-by-native']).toBe(2);
-    expect(byReason['unsupported-by-native'].get('.r')).toEqual(['scripts/a.R', 'scripts/b.r']);
+    expect(totals['native-extractor-failure']).toBe(2);
+    expect(byReason['native-extractor-failure'].get('.r')).toEqual(['scripts/a.R', 'scripts/b.r']);
   });
 
   it('returns empty buckets when no files are passed', () => {
