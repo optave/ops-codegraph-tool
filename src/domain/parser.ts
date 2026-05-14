@@ -479,6 +479,8 @@ export const NATIVE_SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
   '.cljc',
   '.erl',
   '.hrl',
+  '.groovy',
+  '.gvy',
   '.r',
   '.sol',
   '.v',
