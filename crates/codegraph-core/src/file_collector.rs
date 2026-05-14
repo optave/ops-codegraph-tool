@@ -45,6 +45,8 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
     "rake", "gemspec", "php", "phtml", "tf", "hcl", "c", "h", "cpp", "cc", "cxx", "hpp", "cu",
     "cuh", "kt", "kts", "swift", "scala", "sh", "bash", "ex", "exs", "lua", "dart", "zig", "hs",
     "ml", "mli", "m", "jl", "clj", "cljs", "cljc", "erl", "hrl", "sol",
+    // R is case-sensitive: both `.r` and `.R` are conventional.
+    "r", "R",
 ];
 
 /// Returns whether `path` has an extension the Rust file_collector would accept.
