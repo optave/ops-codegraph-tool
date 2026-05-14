@@ -15,6 +15,7 @@ import {
   initSchema,
   MIGRATIONS,
   openDb,
+  purgeFilesData,
   releaseAdvisoryLock,
   setBuildMeta,
 } from '../../../db/index.js';
@@ -38,6 +39,7 @@ import {
   formatDropExtensionSummary,
   getActiveEngine,
   getInstalledWasmExtensions,
+  NATIVE_SUPPORTED_EXTENSIONS,
   parseFilesWasmForBackfill,
 } from '../../parser.js';
 import { writeJournalHeader } from '../journal.js';
@@ -775,6 +777,58 @@ async function tryNativeOrchestrator(
 }
 
 /**
+ * Inputs to {@link computeWasmOnlyStaleFiles}. Sets are passed in so the helper
+ * is pure and unit-testable independently of `getInstalledWasmExtensions` and
+ * the `NATIVE_SUPPORTED_EXTENSIONS` global state.
+ */
+export interface WasmOnlyStaleFilesInput {
+  /** Distinct `file` values from the `nodes` table. */
+  existingNodes: ReadonlySet<string>;
+  /** Distinct `file` values from the `file_hashes` table. */
+  existingHashes: ReadonlySet<string>;
+  /** Relative paths currently on disk (from `collectFilesUtil`). */
+  expected: ReadonlySet<string>;
+  /** Lowercased extensions whose WASM grammar is installed. */
+  installedExts: ReadonlySet<string>;
+  /** Extensions covered by the Rust addon — Rust owns deletion for these. */
+  nativeSupported: ReadonlySet<string>;
+}
+
+/**
+ * Compute the WASM-only files present in the DB but missing from disk (#1073).
+ *
+ * Returns relative paths that:
+ *   - appear in `existingNodes` or `existingHashes` (in DB),
+ *   - are absent from `expected` (not on disk),
+ *   - have an extension installed for WASM, AND
+ *   - have an extension NOT covered by `nativeSupported` — Rust's
+ *     `purge_changed_files` handles deletion for natively-supported extensions
+ *     via its own `detect_removed_files`, so the caller must not double-purge.
+ *
+ * Extensions are lowercased before lookup to match the registry and Rust's
+ * `LanguageKind::from_extension` (which normalises case for the languages
+ * where both cases are conventional, e.g. R's `.r` / `.R`).
+ *
+ * Exported for unit testing.
+ */
+export function computeWasmOnlyStaleFiles(input: WasmOnlyStaleFilesInput): string[] {
+  const { existingNodes, existingHashes, expected, installedExts, nativeSupported } = input;
+  const stale: string[] = [];
+  const seen = new Set<string>();
+  const consider = (rel: string): void => {
+    if (expected.has(rel) || seen.has(rel)) return;
+    const ext = path.extname(rel).toLowerCase();
+    if (nativeSupported.has(ext)) return;
+    if (!installedExts.has(ext)) return;
+    seen.add(rel);
+    stale.push(rel);
+  };
+  for (const rel of existingNodes) consider(rel);
+  for (const rel of existingHashes) consider(rel);
+  return stale;
+}
+
+/**
  * Backfill files that the native orchestrator silently dropped during parse.
  * Falls back to WASM + inserts file/symbol nodes so engine counts match (#967).
  */
@@ -830,7 +884,22 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
     missingRel.push(rel);
     missingAbs.push(path.join(ctx.rootDir, rel));
   }
-  if (missingAbs.length === 0) return;
+
+  // Detect WASM-only files deleted from disk (#1073). The Rust orchestrator's
+  // `detect_removed_files` filter (#1070) skips files outside its supported
+  // extensions, so deletions of WASM-only languages don't reach the native
+  // purge path. JS doesn't notice either — the rest of this function only
+  // inserts rows. Result: stale `nodes`/`file_hashes` rows linger across
+  // incremental rebuilds until the next full rebuild.
+  const staleRel = computeWasmOnlyStaleFiles({
+    existingNodes,
+    existingHashes,
+    expected,
+    installedExts,
+    nativeSupported: NATIVE_SUPPORTED_EXTENSIONS,
+  });
+
+  if (missingAbs.length === 0 && staleRel.length === 0) return;
 
   // Now that we know there's work to do, hand off to better-sqlite3 (needed
   // for the INSERT path below).
@@ -839,6 +908,29 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
     ctx.db = openDb(ctx.dbPath);
     ctx.nativeFirstProxy = false;
   }
+
+  const dbConn = ctx.db as unknown as BetterSqlite3Database;
+
+  // Purge WASM-only files that were deleted from disk (#1073). Rust's
+  // detect_removed_files skips them and the insert path below never visits
+  // them, so without this their rows would persist across rebuilds until the
+  // next full rebuild reset the DB.
+  if (staleRel.length > 0) {
+    const { byReason: staleByReason, totals: staleTotals } = classifyNativeDrops(staleRel);
+    info(
+      `Detected ${staleRel.length} deleted WASM-only file(s) the native orchestrator skipped; purging stale rows: ${formatDropExtensionSummary(staleByReason['unsupported-by-native'])}`,
+    );
+    // staleRel is restricted above to extensions outside NATIVE_SUPPORTED_EXTENSIONS,
+    // so the native-extractor-failure bucket should always be empty here.
+    if (staleTotals['native-extractor-failure'] > 0) {
+      debug(
+        `backfillNativeDroppedFiles: stale-purge classified ${staleTotals['native-extractor-failure']} native-supported file(s) — unexpected; inspect the filter`,
+      );
+    }
+    purgeFilesData(dbConn, staleRel);
+  }
+
+  if (missingAbs.length === 0) return;
 
   // Classify drops so users see per-extension reasons instead of just a count
   // (#1011). `unsupported-by-native` is a legitimate parser limit (no Rust
@@ -888,7 +980,7 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
       exportKeys.push([exp.name, exp.kind, relPath, exp.line]);
     }
   }
-  const db = ctx.db as unknown as BetterSqlite3Database;
+  const db = dbConn;
   batchInsertNodes(db, rows);
 
   // Mark exported symbols in batches — mirrors insertDefinitionsAndExports.
