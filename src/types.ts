@@ -576,6 +576,7 @@ export interface TreeSitterNode {
   child(index: number): TreeSitterNode | null;
   namedChild(index: number): TreeSitterNode | null;
   childForFieldName(name: string): TreeSitterNode | null;
+  fieldNameForChild(index: number): string | null;
   parent: TreeSitterNode | null;
   previousSibling: TreeSitterNode | null;
   nextSibling: TreeSitterNode | null;

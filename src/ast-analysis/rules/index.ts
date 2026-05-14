@@ -158,6 +158,11 @@ const OCAML_AST_TYPES: Record<string, string> = {
   string: 'string',
 };
 
+const OBJC_AST_TYPES: Record<string, string> = {
+  throw_statement: 'throw',
+  string_literal: 'string',
+};
+
 const GLEAM_AST_TYPES: Record<string, string> = {
   string: 'string',
 };
@@ -223,6 +228,7 @@ export const AST_TYPE_MAPS: Map<string, Record<string, string>> = new Map([
   ['haskell', HASKELL_AST_TYPES],
   ['ocaml', OCAML_AST_TYPES],
   ['ocaml-interface', OCAML_AST_TYPES],
+  ['objc', OBJC_AST_TYPES],
   ['gleam', GLEAM_AST_TYPES],
   ['julia', JULIA_AST_TYPES],
   ['clojure', CLOJURE_AST_TYPES],
@@ -266,6 +272,7 @@ const DART_STRING_CONFIG: AstStringConfig = { quoteChars: '\'"', stringPrefixes:
 const ZIG_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
 const HASKELL_STRING_CONFIG: AstStringConfig = { quoteChars: '"\'', stringPrefixes: '' };
 const OCAML_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
+const OBJC_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
 const GLEAM_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
 const JULIA_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
 const CLOJURE_STRING_CONFIG: AstStringConfig = { quoteChars: '"', stringPrefixes: '' };
@@ -299,6 +306,7 @@ export const AST_STRING_CONFIGS: Map<string, AstStringConfig> = new Map([
   ['haskell', HASKELL_STRING_CONFIG],
   ['ocaml', OCAML_STRING_CONFIG],
   ['ocaml-interface', OCAML_STRING_CONFIG],
+  ['objc', OBJC_STRING_CONFIG],
   ['gleam', GLEAM_STRING_CONFIG],
   ['julia', JULIA_STRING_CONFIG],
   ['clojure', CLOJURE_STRING_CONFIG],

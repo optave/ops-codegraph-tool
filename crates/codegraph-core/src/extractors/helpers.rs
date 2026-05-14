@@ -374,6 +374,19 @@ pub const OCAML_AST_CONFIG: LangAstConfig = LangAstConfig {
     string_prefixes: &[],
 };
 
+/// Objective-C string literals use the `@"..."` prefix. The shared
+/// `build_string_node` strips a leading `@` before applying prefixes, so we
+/// don't need to list it explicitly here.
+pub const OBJC_AST_CONFIG: LangAstConfig = LangAstConfig {
+    new_types: &[],
+    throw_types: &["throw_statement"],
+    await_types: &[],
+    string_types: &["string_literal"],
+    regex_types: &[],
+    quote_chars: &['"'],
+    string_prefixes: &[],
+};
+
 pub const GLEAM_AST_CONFIG: LangAstConfig = LangAstConfig {
     new_types: &[],
     throw_types: &[],
