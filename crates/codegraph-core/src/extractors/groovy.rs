@@ -16,8 +16,12 @@ use tree_sitter::{Node, Tree};
 /// The JS source-of-truth extractor handles a superset of node kinds for
 /// resilience across grammar variants (`class_definition`, `interface_definition`,
 /// `method_definition`, `function_declaration`, `import_statement`, `call_expression`,
-/// `method_call`, `function_call`, `member_access`); the Rust port mirrors those
-/// arms so engine parity holds even if a future grammar version renames nodes.
+/// `method_call`, `function_call`); the Rust port mirrors those arms so engine
+/// parity holds even if a future grammar version renames nodes.
+///
+/// Note: `member_access` is not a top-level dispatch kind in either engine — it
+/// is only matched as a callee sub-node inside `handle_call_expr` when examining
+/// the `function`/`method` field of a call.
 ///
 /// Note: `juxt_function_call` (Groovy command-style calls like `foo bar(x)`)
 /// is not dispatched here — the JS extractor also omits it. Tracked in #1108
