@@ -417,6 +417,19 @@ pub const ERLANG_AST_CONFIG: LangAstConfig = LangAstConfig {
     string_prefixes: &[],
 };
 
+pub const GROOVY_AST_CONFIG: LangAstConfig = LangAstConfig {
+    new_types: &["object_creation_expression"],
+    throw_types: &["throw_statement"],
+    await_types: &[],
+    // `gstring` listed defensively: tree-sitter-groovy 0.1.x emits `string_literal`
+    // for both single- and double-quoted strings, but some grammar variants use
+    // `gstring` for double-quoted / interpolated strings. Mirrors TS config.
+    string_types: &["string_literal", "gstring"],
+    regex_types: &[],
+    quote_chars: &['\'', '"'],
+    string_prefixes: &[],
+};
+
 pub const R_AST_CONFIG: LangAstConfig = LangAstConfig {
     new_types: &[],
     throw_types: &[],
