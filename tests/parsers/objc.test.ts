@@ -111,6 +111,25 @@ describe('Objective-C parser', () => {
     ]);
   });
 
+  it('extracts adopted protocols as implements relations', () => {
+    // tree-sitter-objc v3 wraps the adopted-protocol list in
+    // `parameterized_arguments` (not the legacy `protocol_qualifiers`). The
+    // JS extractor must mirror `handle_class_interface` in
+    // `crates/codegraph-core/src/extractors/objc.rs`, otherwise every
+    // `implements` relation for an ObjC class interface is silently dropped.
+    const symbols = parseObjC(`@interface Foo : NSObject <Bar, Baz>
+@end`);
+    expect(symbols.classes).toContainEqual(
+      expect.objectContaining({ name: 'Foo', extends: 'NSObject' }),
+    );
+    expect(symbols.classes).toContainEqual(
+      expect.objectContaining({ name: 'Foo', implements: 'Bar' }),
+    );
+    expect(symbols.classes).toContainEqual(
+      expect.objectContaining({ name: 'Foo', implements: 'Baz' }),
+    );
+  });
+
   it('extracts @property names nested under struct_declarator', () => {
     // The v3 grammar does not expose `name` as a named field on
     // `property_declaration`; the identifier nests under

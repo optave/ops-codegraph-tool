@@ -114,13 +114,24 @@ function handleClassInterface(node: TreeSitterNode, ctx: ExtractorOutput): void 
     ctx.classes.push({ name, extends: superclass.text, line: node.startPosition.row + 1 });
   }
 
-  // Protocols
-  const protocols = findChild(node, 'protocol_qualifiers');
+  // Adopted protocols. tree-sitter-objc v3 wraps the adopted-protocol list in
+  // `parameterized_arguments` (not `protocol_qualifiers`, which was the v2
+  // grammar shape). Each child is wrapped in `type_name > type_identifier`;
+  // fall back to a bare `identifier`/`type_identifier` for older grammars.
+  const protocols = findChild(node, 'parameterized_arguments');
   if (protocols) {
     for (let i = 0; i < protocols.childCount; i++) {
       const proto = protocols.child(i);
-      if (proto && proto.type === 'identifier') {
-        ctx.classes.push({ name, implements: proto.text, line: node.startPosition.row + 1 });
+      if (!proto) continue;
+      let protoName: string | null = null;
+      if (proto.type === 'type_name') {
+        const inner = findChild(proto, 'type_identifier') || findChild(proto, 'identifier');
+        if (inner) protoName = inner.text;
+      } else if (proto.type === 'identifier' || proto.type === 'type_identifier') {
+        protoName = proto.text;
+      }
+      if (protoName) {
+        ctx.classes.push({ name, implements: protoName, line: node.startPosition.row + 1 });
       }
     }
   }
