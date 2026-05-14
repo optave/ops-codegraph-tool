@@ -365,29 +365,25 @@ function handleMessageExpr(node: TreeSitterNode, ctx: ExtractorOutput): void {
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function buildSelector(methodNode: TreeSitterNode): string | null {
-  const selector = methodNode.childForFieldName('selector');
-  if (selector) return selector.text;
-
-  // Build selector from keyword children: initWith:name:
+  // tree-sitter-objc v3 does not expose a `selector` field; the selector is
+  // assembled from the leading `identifier` keywords. Multi-keyword forms
+  // look like `setName:(...)x age:(...)y` and appear as flat
+  // `identifier` + `method_parameter` children directly under the method
+  // node (not wrapped in `keyword_selector`). Mirrors `build_selector` in
+  // `crates/codegraph-core/src/extractors/objc.rs`.
   const parts: string[] = [];
+  let hasParams = false;
   for (let i = 0; i < methodNode.childCount; i++) {
     const child = methodNode.child(i);
     if (!child) continue;
-    if (child.type === 'keyword_selector') {
-      for (let j = 0; j < child.childCount; j++) {
-        const kw = child.child(j);
-        if (kw && kw.type === 'keyword_declarator') {
-          const kwName = kw.childForFieldName('keyword');
-          if (kwName) parts.push(kwName.text);
-        }
-      }
-    }
-    if (child.type === 'identifier' && i === 1) {
-      // Simple unary selector
-      return child.text;
+    if (child.type === 'identifier') {
+      parts.push(child.text);
+    } else if (child.type === 'method_parameter') {
+      hasParams = true;
     }
   }
-  return parts.length > 0 ? `${parts.join(':')}:` : null;
+  if (parts.length === 0) return null;
+  return hasParams ? `${parts.join(':')}:` : parts.join(':');
 }
 
 function findObjCParentClass(node: TreeSitterNode): string | null {
@@ -440,32 +436,65 @@ function collectClassMembers(classNode: TreeSitterNode): SubDeclaration[] {
       }
     }
     if (child.type === 'property_declaration') {
-      const propName = child.childForFieldName('name');
+      const propName = extractPropertyName(child);
       if (propName) {
-        members.push({ name: propName.text, kind: 'property', line: child.startPosition.row + 1 });
+        members.push({ name: propName, kind: 'property', line: child.startPosition.row + 1 });
       }
     }
   }
   return members;
 }
 
+/**
+ * Extract the property name from `@property (...) Type *foo;`. The v3 grammar
+ * does not expose `name` as a named field on `property_declaration`; instead
+ * the identifier nests under `struct_declaration > struct_declarator >
+ * [pointer_declarator >] identifier`. Mirrors `extract_property_name` in
+ * `crates/codegraph-core/src/extractors/objc.rs`.
+ */
+function extractPropertyName(propNode: TreeSitterNode): string | null {
+  const structDecl = findChild(propNode, 'struct_declaration');
+  if (!structDecl) return null;
+  for (let i = 0; i < structDecl.childCount; i++) {
+    const child = structDecl.child(i);
+    if (!child || child.type !== 'struct_declarator') continue;
+    const id = findIdentifierDeep(child);
+    if (id) return id.text;
+  }
+  return null;
+}
+
+function findIdentifierDeep(node: TreeSitterNode): TreeSitterNode | null {
+  if (node.type === 'identifier') return node;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    const found = findIdentifierDeep(child);
+    if (found) return found;
+  }
+  return null;
+}
+
 function extractMethodParams(methodNode: TreeSitterNode): SubDeclaration[] {
+  // The v3 grammar emits flat `method_parameter` children under the method
+  // node; the parameter name is the last `identifier` inside each
+  // `method_parameter`. Mirrors `extract_method_params` in
+  // `crates/codegraph-core/src/extractors/objc.rs`.
   const params: SubDeclaration[] = [];
   for (let i = 0; i < methodNode.childCount; i++) {
     const child = methodNode.child(i);
-    if (!child || child.type !== 'keyword_selector') continue;
+    if (!child || child.type !== 'method_parameter') continue;
+    let nameNode: TreeSitterNode | null = null;
     for (let j = 0; j < child.childCount; j++) {
-      const kw = child.child(j);
-      if (kw && kw.type === 'keyword_declarator') {
-        const nameNode = kw.childForFieldName('name');
-        if (nameNode) {
-          params.push({
-            name: nameNode.text,
-            kind: 'parameter',
-            line: nameNode.startPosition.row + 1,
-          });
-        }
-      }
+      const inner = child.child(j);
+      if (inner && inner.type === 'identifier') nameNode = inner;
+    }
+    if (nameNode) {
+      params.push({
+        name: nameNode.text,
+        kind: 'parameter',
+        line: nameNode.startPosition.row + 1,
+      });
     }
   }
   return params;

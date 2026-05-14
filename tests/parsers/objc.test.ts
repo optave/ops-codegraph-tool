@@ -90,4 +90,44 @@ describe('Objective-C parser', () => {
       expect.objectContaining({ name: 'initWithName:age:', receiver: 'obj' }),
     );
   });
+
+  it('extracts keyword-selector method definitions with parameter names', () => {
+    // The v3 grammar emits flat `identifier`+`method_parameter` children under
+    // `method_definition` rather than wrapping them in `keyword_selector`. The
+    // JS extractor must mirror `build_selector` / `extract_method_params` in
+    // `crates/codegraph-core/src/extractors/objc.rs` so multi-keyword selectors
+    // like `setName:age:` appear in `definitions` with their parameter names
+    // populated. Otherwise these methods are silently dropped on the JS side.
+    const symbols = parseObjC(`@implementation Foo
+- (void)setName:(NSString *)name age:(int)age {
+}
+@end`);
+    const method = symbols.definitions.find((d) => d.name === 'Foo.setName:age:');
+    expect(method).toBeDefined();
+    expect(method?.kind).toBe('method');
+    expect(method?.children).toEqual([
+      expect.objectContaining({ name: 'name', kind: 'parameter' }),
+      expect.objectContaining({ name: 'age', kind: 'parameter' }),
+    ]);
+  });
+
+  it('extracts @property names nested under struct_declarator', () => {
+    // The v3 grammar does not expose `name` as a named field on
+    // `property_declaration`; the identifier nests under
+    // `struct_declaration > struct_declarator > [pointer_declarator >]
+    // identifier`. Mirror `extract_property_name` in the Rust extractor so
+    // pointer and non-pointer properties both surface as class children.
+    const symbols = parseObjC(`@interface Foo : NSObject
+@property (nonatomic, strong) NSString *name;
+@property (nonatomic) int age;
+@end`);
+    const foo = symbols.definitions.find((d) => d.name === 'Foo');
+    expect(foo).toBeDefined();
+    expect(foo?.children).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'name', kind: 'property' }),
+        expect.objectContaining({ name: 'age', kind: 'property' }),
+      ]),
+    );
+  });
 });
