@@ -374,6 +374,18 @@ pub const OCAML_AST_CONFIG: LangAstConfig = LangAstConfig {
     string_prefixes: &[],
 };
 
+// F# string nodes in tree-sitter-fsharp surface under the `string` kind inside
+// `const` literals. The grammar exposes no dedicated raw-string or regex form.
+pub const FSHARP_AST_CONFIG: LangAstConfig = LangAstConfig {
+    new_types: &[],
+    throw_types: &[],
+    await_types: &[],
+    string_types: &["string"],
+    regex_types: &[],
+    quote_chars: &['"'],
+    string_prefixes: &[],
+};
+
 /// Objective-C string literals use the `@"..."` prefix. The shared
 /// `build_string_node` strips a leading `@` before applying prefixes, so we
 /// don't need to list it explicitly here.

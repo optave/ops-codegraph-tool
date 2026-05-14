@@ -14,11 +14,11 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 describe('classifyNativeDrops', () => {
   it('groups WASM-only languages under unsupported-by-native', () => {
-    const { byReason, totals } = classifyNativeDrops(['src/a.fs', 'src/h.fsx', 'src/j.v']);
-    expect(totals['unsupported-by-native']).toBe(3);
+    const { byReason, totals } = classifyNativeDrops(['src/j.v', 'src/k.sv']);
+    expect(totals['unsupported-by-native']).toBe(2);
     expect(totals['native-extractor-failure']).toBe(0);
-    expect(byReason['unsupported-by-native'].get('.fs')).toEqual(['src/a.fs']);
-    expect(byReason['unsupported-by-native'].get('.fsx')).toEqual(['src/h.fsx']);
+    expect(byReason['unsupported-by-native'].get('.v')).toEqual(['src/j.v']);
+    expect(byReason['unsupported-by-native'].get('.sv')).toEqual(['src/k.sv']);
   });
 
   it('flags natively-supported extensions as native-extractor-failure', () => {
@@ -37,14 +37,14 @@ describe('classifyNativeDrops', () => {
   it('handles a mix of supported and unsupported extensions', () => {
     const { byReason, totals } = classifyNativeDrops([
       'src/a.ts',
-      'src/b.fs',
-      'src/c.fs',
-      'src/d.fsx',
+      'src/b.v',
+      'src/c.v',
+      'src/d.sv',
     ]);
     expect(totals['native-extractor-failure']).toBe(1);
     expect(totals['unsupported-by-native']).toBe(3);
-    expect(byReason['unsupported-by-native'].get('.fs')).toEqual(['src/b.fs', 'src/c.fs']);
-    expect(byReason['unsupported-by-native'].get('.fsx')).toEqual(['src/d.fsx']);
+    expect(byReason['unsupported-by-native'].get('.v')).toEqual(['src/b.v', 'src/c.v']);
+    expect(byReason['unsupported-by-native'].get('.sv')).toEqual(['src/d.sv']);
   });
 
   it('lowercases extensions so .R and .r share a bucket', () => {
@@ -66,9 +66,12 @@ describe('classifyNativeDrops', () => {
   it('exposes the native-supported extension set for callers', () => {
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.ts')).toBe(true);
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.py')).toBe(true);
+    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.fs')).toBe(true);
+    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.fsx')).toBe(true);
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.gleam')).toBe(true);
-    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.fs')).toBe(false);
-    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.fsx')).toBe(false);
+    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.m')).toBe(true);
+    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.v')).toBe(false);
+    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.sv')).toBe(false);
   });
 });
 
