@@ -27,10 +27,13 @@ if (arg) {
 const entry = JSON.parse(jsonText);
 
 // ── Paths ────────────────────────────────────────────────────────────────
-const reportPath = path.join(root, 'generated', 'benchmarks', 'INCREMENTAL-BENCHMARKS.md');
+const reportPath =
+	process.env.CODEGRAPH_INCREMENTAL_REPORT_PATH ??
+	path.join(root, 'generated', 'benchmarks', 'INCREMENTAL-BENCHMARKS.md');
 
-// ── Load existing history ────────────────────────────────────────────────
+// ── Load existing history + manual NOTES block ───────────────────────────
 let history = [];
+let notesBlock = '';
 if (fs.existsSync(reportPath)) {
 	const content = fs.readFileSync(reportPath, 'utf8');
 	const match = content.match(/<!--\s*INCREMENTAL_BENCHMARK_DATA\s*([\s\S]*?)\s*-->/);
@@ -41,6 +44,8 @@ if (fs.existsSync(reportPath)) {
 			/* start fresh if corrupt */
 		}
 	}
+	const notesMatch = content.match(/<!--\s*NOTES_START\s*-->[\s\S]*?<!--\s*NOTES_END\s*-->/);
+	if (notesMatch) notesBlock = notesMatch[0];
 }
 
 // Add new entry — dev entries are rolling, releases replace dev
@@ -154,6 +159,8 @@ if (r.nativeBatchMs != null && r.jsFallbackMs > 0) {
 	md += `| Speedup ratio | ${(r.jsFallbackMs / r.nativeBatchMs).toFixed(1)}x |\n`;
 }
 md += '\n';
+
+if (notesBlock) md += `${notesBlock}\n\n`;
 
 md += `<!-- INCREMENTAL_BENCHMARK_DATA\n${JSON.stringify(history, null, 2)}\n-->\n`;
 
