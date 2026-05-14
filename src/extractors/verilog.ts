@@ -222,9 +222,18 @@ function handlePackageImport(node: TreeSitterNode, ctx: ExtractorOutput): void {
 
 function handleIncludeDirective(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // `include "file.vh"
+  // Mirrors the Rust `handle_include_directive` which checks all three node
+  // kinds — tree-sitter-verilog has emitted `double_quoted_string` in some
+  // grammar revisions, and missing it would silently drop the import in WASM
+  // while the native engine still records it.
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
-    if (child && (child.type === 'string_literal' || child.type === 'quoted_string')) {
+    if (
+      child &&
+      (child.type === 'string_literal' ||
+        child.type === 'quoted_string' ||
+        child.type === 'double_quoted_string')
+    ) {
       const source = child.text.replace(/^["']|["']$/g, '');
       ctx.imports.push({
         source,
@@ -338,17 +347,30 @@ function extractPorts(moduleNode: TreeSitterNode): SubDeclaration[] {
       ) {
         const nameNode =
           child.childForFieldName('name') ||
+          findChild(child, 'port_identifier') ||
           findChild(child, 'simple_identifier') ||
           findChild(child, 'identifier');
         if (nameNode) {
-          ports.push({ name: nameNode.text, kind: 'property', line: child.startPosition.row + 1 });
+          // `port_identifier` wraps a `simple_identifier`; descend to the
+          // innermost identifier for a clean, whitespace-free name.
+          const inner =
+            findChild(nameNode, 'simple_identifier') ||
+            findChild(nameNode, 'identifier') ||
+            nameNode;
+          ports.push({ name: inner.text, kind: 'property', line: child.startPosition.row + 1 });
         }
       }
 
-      // Recurse into port list containers
+      // Recurse into port list containers. `module_ansi_header` wraps the
+      // ANSI-style declarations emitted by tree-sitter-verilog (e.g.
+      // `module top(input clk, output reg q);`) — without this branch the
+      // WASM engine returns an empty children array while the native engine
+      // (which includes the same kind in its CONTAINER_KINDS list) returns
+      // the correct ports, breaking engine parity.
       if (
         child.type === 'list_of_port_declarations' ||
         child.type === 'module_header' ||
+        child.type === 'module_ansi_header' ||
         child.type === 'port_declaration_list'
       ) {
         collectFromNode(child);
