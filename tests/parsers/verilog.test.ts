@@ -83,4 +83,19 @@ endmodule`);
     );
     expect(symbols.classes.find((c: { name: string }) => c.name === 'Baz')).toBeUndefined();
   });
+
+  it('qualifies tasks nested inside a class with the class name', () => {
+    // `findVerilogParent` must descend into `class_identifier` to recover the
+    // class name when qualifying nested function/task definitions, otherwise
+    // a task declared inside `class MyClass; task run; endtask endclass`
+    // would surface as a bare `run` instead of `MyClass.run`.
+    const symbols = parseVerilog(`class MyClass;
+  task run;
+    input x;
+  endtask
+endclass`);
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'MyClass.run', kind: 'function' }),
+    );
+  });
 });

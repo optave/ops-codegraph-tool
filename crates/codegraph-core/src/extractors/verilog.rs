@@ -372,7 +372,11 @@ fn extract_identifier_text(node: &Node, source: &[u8]) -> String {
 
 /// Walk up to find the enclosing module/interface/package/class and return its
 /// name — used to qualify nested function/task definitions like
-/// `validators.check_range`.
+/// `validators.check_range` or `MyClass.check_range`. `class_declaration`
+/// wraps its name in `class_identifier > simple_identifier`, which
+/// `find_decl_name` and `find_module_name` do not descend into, so we also
+/// try `find_class_name` to keep parity with the JS extractor for tasks and
+/// functions nested inside SystemVerilog classes.
 fn find_verilog_parent(node: &Node, source: &[u8]) -> Option<String> {
     const PARENT_KINDS: &[&str] = &[
         "module_declaration",
@@ -384,7 +388,8 @@ fn find_verilog_parent(node: &Node, source: &[u8]) -> Option<String> {
     while let Some(parent) = current {
         if PARENT_KINDS.contains(&parent.kind()) {
             return find_decl_name(&parent, source)
-                .or_else(|| find_module_name(&parent, source));
+                .or_else(|| find_module_name(&parent, source))
+                .or_else(|| find_class_name(&parent, source));
         }
         current = parent.parent();
     }
@@ -586,6 +591,27 @@ mod tests {
             s.classes.iter().all(|c| c.name != "Baz"),
             "no extends relation should be emitted for a class without a superclass"
         );
+    }
+
+    #[test]
+    fn qualifies_task_nested_in_class_with_class_name() {
+        // `find_verilog_parent` must descend into `class_identifier` to
+        // recover the class name when qualifying nested function/task
+        // definitions; otherwise a task declared inside a SystemVerilog
+        // class surfaces with a bare name rather than `ClassName.task`.
+        let s = parse(
+            "class MyClass; \
+             task run; \
+               input x; \
+             endtask \
+             endclass",
+        );
+        let t = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "MyClass.run")
+            .expect("task nested in a class should be qualified by the class name");
+        assert_eq!(t.kind, "function");
     }
 }
 

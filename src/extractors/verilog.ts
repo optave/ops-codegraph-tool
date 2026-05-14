@@ -303,8 +303,14 @@ function findVerilogParent(node: TreeSitterNode): string | null {
       current.type === 'package_declaration' ||
       current.type === 'class_declaration'
     ) {
-      const name = findDeclName(current) || findModuleName(current);
-      return name ? name.text : null;
+      // `class_declaration` wraps its name in `class_identifier >
+      // simple_identifier`; `findDeclName` / `findModuleName` only look at
+      // bare `simple_identifier`/`identifier` children, so they miss it.
+      // `findClassName` already handles the wrapper, so consult it last to
+      // qualify tasks/functions nested inside a SystemVerilog class.
+      const nameNode = findDeclName(current) || findModuleName(current);
+      if (nameNode) return nameNode.text;
+      return findClassName(current);
     }
     current = current.parent;
   }
