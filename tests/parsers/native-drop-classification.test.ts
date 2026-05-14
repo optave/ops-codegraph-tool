@@ -71,6 +71,7 @@ describe('classifyNativeDrops', () => {
   it('exposes the native-supported extension set for callers', () => {
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.ts')).toBe(true);
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.py')).toBe(true);
+    expect(NATIVE_SUPPORTED_EXTENSIONS.has('.gleam')).toBe(true);
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.fs')).toBe(false);
     expect(NATIVE_SUPPORTED_EXTENSIONS.has('.fsx')).toBe(false);
   });
