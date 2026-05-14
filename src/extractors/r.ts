@@ -147,7 +147,10 @@ function handleCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function handleLibraryCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  // Find the package name in arguments
+  // Find the package name in arguments. For named arguments like
+  // `library(package = dplyr)`, prefer the field-named `value` child of the
+  // `argument` node so we extract `dplyr` (the value), not `package` (the
+  // parameter name). Keeps native (Rust) and WASM extractors in parity.
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child) continue;
@@ -174,9 +177,27 @@ function handleLibraryCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
         }
         // Argument might be wrapped
         if (arg.type === 'argument') {
-          const id = findChild(arg, 'identifier') || findChild(arg, 'string');
-          if (id) {
-            const text = id.text.replace(/^["']|["']$/g, '');
+          // Prefer the `value` field (correct for named arguments).
+          const valueNode = arg.childForFieldName('value');
+          let pick: TreeSitterNode | null = null;
+          if (valueNode && (valueNode.type === 'string' || valueNode.type === 'identifier')) {
+            pick = valueNode;
+          } else {
+            // Fallback: skip the parameter-name child if the grammar exposes
+            // it via the `name` field, then pick the first string/identifier.
+            const nameNode = arg.childForFieldName('name');
+            for (let k = 0; k < arg.childCount; k++) {
+              const inner = arg.child(k);
+              if (!inner) continue;
+              if (nameNode && inner.id === nameNode.id) continue;
+              if (inner.type === 'string' || inner.type === 'identifier') {
+                pick = inner;
+                break;
+              }
+            }
+          }
+          if (pick) {
+            const text = pick.text.replace(/^["']|["']$/g, '');
             ctx.imports.push({
               source: text,
               names: [text],
