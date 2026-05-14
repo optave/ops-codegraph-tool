@@ -14,12 +14,8 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
 describe('classifyNativeDrops', () => {
   it('groups WASM-only languages under unsupported-by-native', () => {
-    const { byReason, totals } = classifyNativeDrops([
-      'src/a.fs',
-      'src/h.fsx',
-      'src/k.m',
-    ]);
-    expect(totals['unsupported-by-native']).toBe(4);
+    const { byReason, totals } = classifyNativeDrops(['src/a.fs', 'src/h.fsx', 'src/k.m']);
+    expect(totals['unsupported-by-native']).toBe(3);
     expect(totals['native-extractor-failure']).toBe(0);
     expect(byReason['unsupported-by-native'].get('.fs')).toEqual(['src/a.fs']);
     expect(byReason['unsupported-by-native'].get('.fsx')).toEqual(['src/h.fsx']);
