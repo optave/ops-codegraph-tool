@@ -198,14 +198,16 @@ function handleImport(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function handleCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  const funcNode = node.childForFieldName('function') || node.child(0);
+  const funcNode = node.childForFieldName('function') || node.namedChild(0);
   if (!funcNode) return;
 
   if (funcNode.type === 'identifier' || funcNode.type === 'variable') {
     ctx.calls.push({ name: funcNode.text, line: node.startPosition.row + 1 });
   } else if (funcNode.type === 'field_access' || funcNode.type === 'module_select') {
     const field = funcNode.childForFieldName('field') || funcNode.childForFieldName('label');
-    const record = funcNode.child(0);
+    // Prefer the `record` field; fall back to first named child to skip
+    // anonymous punctuation tokens (the `.` between record and field).
+    const record = funcNode.childForFieldName('record') || funcNode.namedChild(0);
     if (field) {
       const call: Call = { name: field.text, line: node.startPosition.row + 1 };
       if (record && record !== field) call.receiver = record.text;

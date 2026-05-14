@@ -44,7 +44,7 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
     "js", "jsx", "mjs", "cjs", "ts", "tsx", "d.ts", "py", "pyi", "go", "rs", "java", "cs", "rb",
     "rake", "gemspec", "php", "phtml", "tf", "hcl", "c", "h", "cpp", "cc", "cxx", "hpp", "cu",
     "cuh", "kt", "kts", "swift", "scala", "sh", "bash", "ex", "exs", "lua", "dart", "zig", "hs",
-    "ml", "mli", "m", "jl", "clj", "cljs", "cljc", "erl", "hrl", "groovy", "gvy", "sol",
+    "ml", "mli", "m", "jl", "gleam", "clj", "cljs", "cljc", "erl", "hrl", "groovy", "gvy", "sol",
     // R is case-sensitive: both `.r` and `.R` are conventional.
     "r", "R",
 ];
@@ -54,9 +54,9 @@ const SUPPORTED_EXTENSIONS: &[&str] = &[
 /// Mirrors the predicate at the heart of `collect_files`: a file is collected
 /// if `LanguageKind::from_extension` recognizes it OR its raw extension is in
 /// `SUPPORTED_EXTENSIONS`. Exposed for `change_detection::detect_removed_files`
-/// so that files outside Rust's capability (e.g. WASM-only `.gleam`, `.fs`)
-/// are not flagged as "removed" merely because the orchestrator's
-/// narrower collector never sees them.
+/// so that files outside Rust's capability (e.g. WASM-only `.fs`) are
+/// not flagged as "removed" merely because the orchestrator's narrower
+/// collector never sees them.
 pub fn is_supported_extension(path: &str) -> bool {
     if LanguageKind::from_extension(path).is_some() {
         return true;
