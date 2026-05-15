@@ -1064,6 +1064,12 @@ export interface BuildGraphOpts {
   cfg?: boolean;
   scope?: string[];
   skipRegistry?: boolean;
+  /**
+   * Extra exclude globs appended to `config.exclude`. Lets benchmark scripts
+   * skip fixture directories that bloat self-build timings without permanently
+   * affecting `.codegraphrc.json` for normal users.
+   */
+  exclude?: string[];
 }
 
 /** Build timing result from buildGraph. */
