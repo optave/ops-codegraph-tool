@@ -285,14 +285,12 @@ function handleAbstractDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // abstract_definition: `abstract type` type_head `end`
   // The identifier is nested inside `type_head` — possibly wrapped in a
   // `Name <: Super` binary_expression or a `Name{T,...}` parameterized form.
-  // Skip rather than emit a garbled name when no base identifier can be located.
-  let nameNode = node.childForFieldName('name') || findChild(node, 'identifier');
-  if (!nameNode) {
-    const typeHead = findChild(node, 'type_head');
-    if (!typeHead) return;
-    nameNode = findBaseName(typeHead);
-    if (!nameNode) return;
-  }
+  // Mirror handleStructDef and skip rather than emit a garbled name when no
+  // base identifier can be located.
+  const typeHead = findChild(node, 'type_head');
+  if (!typeHead) return;
+  const nameNode = findBaseName(typeHead);
+  if (!nameNode) return;
 
   ctx.definitions.push({
     name: nameNode.text,
