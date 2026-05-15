@@ -269,8 +269,17 @@ function handleStructDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function handleAbstractDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  const nameNode = node.childForFieldName('name') || findChild(node, 'identifier');
-  if (!nameNode) return;
+  // abstract_definition: `abstract type` type_head `end`
+  // The identifier is nested inside `type_head` — possibly wrapped in a
+  // `Name <: Super` binary_expression or a `Name{T,...}` parameterized form.
+  // Skip rather than emit a garbled name when no base identifier can be located.
+  let nameNode = node.childForFieldName('name') || findChild(node, 'identifier');
+  if (!nameNode) {
+    const typeHead = findChild(node, 'type_head');
+    if (!typeHead) return;
+    nameNode = findBaseName(typeHead);
+    if (!nameNode) return;
+  }
 
   ctx.definitions.push({
     name: nameNode.text,
@@ -285,10 +294,17 @@ function handleMacroDef(
   ctx: ExtractorOutput,
   currentModule: string | null,
 ): void {
-  const nameNode = node.childForFieldName('name') || findChild(node, 'identifier');
+  // macro_definition: `macro` signature/call_expression body `end`.
+  // The name lives in the same shape as a function signature — unwrap via
+  // signatureCall so we don't pick up an identifier from the body (e.g.
+  // `macro mymac(x) x end` would otherwise resolve to `@x`).
+  const callSig = signatureCall(node);
+  const nameNode =
+    callSig?.child(0) ?? node.childForFieldName('name') ?? findChild(node, 'identifier');
   if (!nameNode) return;
 
-  const name = currentModule ? `${currentModule}.@${nameNode.text}` : `@${nameNode.text}`;
+  const base = nameNode.text;
+  const name = currentModule ? `${currentModule}.@${base}` : `@${base}`;
   ctx.definitions.push({
     name,
     kind: 'function',
@@ -347,8 +363,15 @@ function handleImport(node: TreeSitterNode, ctx: ExtractorOutput): void {
 function handleCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // Don't record if parent is assignment LHS (that's a function definition)
   if (node.parent?.type === 'assignment' && node === node.parent.child(0)) return;
-  // Don't record if parent is function_definition (that's a signature)
-  if (node.parent?.type === 'function_definition') return;
+  // Skip when this call is the signature of a function/macro definition.
+  // tree-sitter-julia wraps the signature in a `signature` node whose parent
+  // is `function_definition` or `macro_definition`. Body calls (e.g.
+  // `println(name)` inside `function greet ... end`) appear as descendants of
+  // the body, not as direct children of `signature`, so they are unaffected.
+  if (node.parent?.type === 'signature') {
+    const grand = node.parent.parent;
+    if (grand?.type === 'function_definition' || grand?.type === 'macro_definition') return;
+  }
 
   const funcNode = node.child(0);
   if (!funcNode) return;
