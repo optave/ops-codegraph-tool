@@ -85,12 +85,15 @@ function handleExternalFunction(node: TreeSitterNode, ctx: ExtractorOutput): voi
   const nameNode = node.childForFieldName('name') || findChild(node, 'identifier');
   if (!nameNode) return;
 
+  const params = extractParams(node);
+
   ctx.definitions.push({
     name: nameNode.text,
     kind: 'function',
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
     visibility: isPublic(node) ? 'public' : 'private',
+    children: params.length > 0 ? params : undefined,
   });
 }
 
