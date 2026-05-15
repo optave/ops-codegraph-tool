@@ -92,6 +92,7 @@ try {
 
 const INCREMENTAL_RUNS = 3;
 const QUERY_RUNS = 5;
+const QUERY_WARMUP_RUNS = 3;
 const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.ts');
 
 function median(arr) {
@@ -135,21 +136,12 @@ const buildTimeMs = performance.now() - buildStart;
 
 // Warmed median of QUERY_RUNS samples with `noTests: true` to match the
 // methodology used by query-benchmark.ts and the per-target `queries.*Ms`
-// block below. Earlier versions of this script measured a single cold call,
-// which conflated steady-state query latency with NAPI/rusqlite/OS-page-cache
-// init costs (~65ms on macOS) and inflated growth from test-fixture files
-// pulled in by new native extractors. See #1113 for the methodology rationale.
-const QUERY_WARMUP_RUNS = 3;
-for (let i = 0; i < QUERY_WARMUP_RUNS; i++) {
-	fnDepsData('buildGraph', dbPath, { depth: 3, noTests: true });
-}
-const queryTimings: number[] = [];
-for (let i = 0; i < QUERY_RUNS; i++) {
-	const start = performance.now();
-	fnDepsData('buildGraph', dbPath, { depth: 3, noTests: true });
-	queryTimings.push(performance.now() - start);
-}
-const queryTimeMs = median(queryTimings);
+// block below (which calls `benchQuery`, also warmed). Earlier versions of
+// this script measured a single cold call, which conflated steady-state
+// query latency with NAPI/rusqlite/OS-page-cache init costs (~65ms on
+// macOS) and inflated growth from test-fixture files pulled in by new
+// native extractors. See #1113 for the methodology rationale.
+const queryTimeMs = benchQuery(fnDepsData, 'buildGraph', dbPath, { depth: 3, noTests: true });
 
 const stats = statsData(dbPath);
 const totalFiles = stats.files.total;
@@ -205,6 +197,11 @@ const targets = workerTargets() || selectTargets();
 console.error(`    hub=${targets.hub}, leaf=${targets.leaf}`);
 
 function benchQuery(fn, ...args) {
+	// Warmup runs prime NAPI bindings, the rusqlite statement cache, and the
+	// OS page cache so the timed loop measures steady-state query latency
+	// rather than first-call init (~65ms on macOS). Each call site warms
+	// independently — methodology does not rely on call ordering elsewhere.
+	for (let i = 0; i < QUERY_WARMUP_RUNS; i++) fn(...args);
 	const timings = [];
 	for (let i = 0; i < QUERY_RUNS; i++) {
 		const start = performance.now();
