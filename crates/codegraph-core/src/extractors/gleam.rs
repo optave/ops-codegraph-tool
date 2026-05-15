@@ -468,8 +468,10 @@ mod tests {
 
     #[test]
     fn external_function_without_param_names_has_no_children() {
-        // External function with type-only parameters (no names) — should not emit children.
-        let code = "pub external fn random() -> Int = \"rand\" \"uniform\"\n";
+        // External function with type-only parameters (no names) — the tree-sitter
+        // grammar still produces parameter nodes, but they lack a `name` field, so
+        // `extract_params` returns an empty Vec and `children` is None.
+        let code = "pub external fn random(Int, String) -> Int = \"rand\" \"uniform\"\n";
         let s = parse_gleam(code);
         let random_fn = s
             .definitions

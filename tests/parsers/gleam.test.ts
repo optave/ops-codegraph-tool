@@ -61,7 +61,9 @@ import gleam/string`);
   });
 
   it('omits children for external functions with type-only parameters', () => {
-    const symbols = parseGleam(`pub external fn random() -> Int = "rand" "uniform"`);
+    // Type-only params: parameter nodes exist in the tree but lack a `name` field,
+    // so extractParams returns an empty list and `children` is omitted.
+    const symbols = parseGleam(`pub external fn random(Int, String) -> Int = "rand" "uniform"`);
     const randomFn = symbols.definitions.find((d) => d.name === 'random');
     expect(randomFn).toBeDefined();
     expect(randomFn?.children).toBeUndefined();
