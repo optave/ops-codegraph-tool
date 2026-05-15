@@ -45,4 +45,27 @@ import gleam/string`);
 }`);
     expect(symbols.calls.length).toBeGreaterThanOrEqual(1);
   });
+
+  it('extracts external function parameters as children', () => {
+    const symbols = parseGleam(
+      `pub external fn parse(input: String, base: Int) -> Int = "erlang_mod" "parse"`,
+    );
+    const parseFn = symbols.definitions.find((d) => d.name === 'parse');
+    expect(parseFn).toBeDefined();
+    expect(parseFn?.kind).toBe('function');
+    expect(parseFn?.children).toBeDefined();
+    const names = parseFn?.children?.map((c) => c.name) ?? [];
+    expect(names).toContain('input');
+    expect(names).toContain('base');
+    expect(parseFn?.children?.every((c) => c.kind === 'parameter')).toBe(true);
+  });
+
+  it('omits children for external functions with type-only parameters', () => {
+    // Type-only params: parameter nodes exist in the tree but lack a `name` field,
+    // so extractParams returns an empty list and `children` is omitted.
+    const symbols = parseGleam(`pub external fn random(Int, String) -> Int = "rand" "uniform"`);
+    const randomFn = symbols.definitions.find((d) => d.name === 'random');
+    expect(randomFn).toBeDefined();
+    expect(randomFn?.children).toBeUndefined();
+  });
 });
