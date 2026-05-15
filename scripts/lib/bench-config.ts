@@ -15,6 +15,21 @@ import { pathToFileURL } from 'node:url';
 
 import { getBenchmarkVersion } from '../bench-version.js';
 
+/**
+ * Globs excluded from every benchmark's `buildGraph(root, ...)` invocation.
+ *
+ * Resolution-benchmark fixtures (`tests/benchmarks/resolution/fixtures/**`)
+ * are hand-annotated scaffolding for the static-resolution test suite, not
+ * representative source code. They inflate dogfooding timing measurements
+ * disproportionately whenever a new-language PR lands a heavyweight grammar
+ * (e.g. tree-sitter-verilog added ~850ms to native fullBuildMs in #1107).
+ * Excluding them here keeps build/query/incremental benchmarks measuring
+ * codegraph's own source rather than its test fixtures.
+ */
+export const BENCHMARK_EXCLUDES: readonly string[] = [
+	'tests/benchmarks/resolution/fixtures/**',
+];
+
 // On Windows, `npm` is `npm.cmd` and Node refuses to spawn `.cmd`/`.bat`
 // without `shell: true` (since Node 18.20 / 20.15). When `shell: true`, the
 // Windows `cmd.exe` shell resolves bare `npm` to `npm.cmd` automatically, so

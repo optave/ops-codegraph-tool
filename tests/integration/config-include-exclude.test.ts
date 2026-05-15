@@ -178,4 +178,37 @@ describe('config.include / config.exclude (issue #981)', () => {
     // Paths are already relative to each run's own tmpDir so they compare directly.
     expect(nativeFiles).toEqual(wasmFiles);
   });
+
+  // ── opts.exclude (programmatic, no on-disk config) ───────────────
+
+  async function buildWithOptsExclude(
+    root: string,
+    engine: EngineName,
+    optsExclude: string[],
+  ): Promise<string[]> {
+    clearConfigCache();
+    const dbDir = path.join(root, '.codegraph');
+    if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+    await buildGraph(root, { engine, exclude: optsExclude, skipRegistry: true });
+    const files = readFileRows(path.join(dbDir, 'graph.db'));
+    return files.map((f) => f.replace(/\\/g, '/')).sort();
+  }
+
+  it('wasm: opts.exclude rejects matching files without writing config', async () => {
+    const root = fs.mkdtempSync(path.join(tmpDir, 'opts-wasm-'));
+    writeFixture(root);
+    const files = await buildWithOptsExclude(root, 'wasm', ['**/*.test.js', '**/*.spec.js']);
+    expect(files).toContain('src/math.js');
+    expect(files).not.toContain('src/math.test.js');
+    expect(files).not.toContain('src/util.spec.js');
+  });
+
+  itNative('native: opts.exclude rejects matching files without writing config', async () => {
+    const root = fs.mkdtempSync(path.join(tmpDir, 'opts-native-'));
+    writeFixture(root);
+    const files = await buildWithOptsExclude(root, 'native', ['**/*.test.js', '**/*.spec.js']);
+    expect(files).toContain('src/math.js');
+    expect(files).not.toContain('src/math.test.js');
+    expect(files).not.toContain('src/util.spec.js');
+  });
 });

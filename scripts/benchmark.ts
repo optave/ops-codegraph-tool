@@ -15,7 +15,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
-import { resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
+import { BENCHMARK_EXCLUDES, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, workerTargets, forkEngines } from './lib/fork-engine.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
@@ -130,7 +130,7 @@ console.log = (...args) => console.error(...args);
 if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
 
 const buildStart = performance.now();
-const buildResult = await buildGraph(root, { engine, incremental: false });
+const buildResult = await buildGraph(root, { engine, incremental: false, exclude: [...BENCHMARK_EXCLUDES] });
 const buildTimeMs = performance.now() - buildStart;
 
 const queryStart = performance.now();
@@ -150,7 +150,7 @@ try {
 	const noopTimings = [];
 	for (let i = 0; i < INCREMENTAL_RUNS; i++) {
 		const start = performance.now();
-		await buildGraph(root, { engine, incremental: true });
+		await buildGraph(root, { engine, incremental: true, exclude: [...BENCHMARK_EXCLUDES] });
 		noopTimings.push(performance.now() - start);
 	}
 	noopRebuildMs = Math.round(median(noopTimings));
@@ -167,7 +167,7 @@ try {
 	for (let i = 0; i < INCREMENTAL_RUNS; i++) {
 		fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`);
 		const start = performance.now();
-		const res = await buildGraph(root, { engine, incremental: true });
+		const res = await buildGraph(root, { engine, incremental: true, exclude: [...BENCHMARK_EXCLUDES] });
 		oneFileRuns.push({ ms: performance.now() - start, phases: res?.phases || null });
 	}
 	oneFileRuns.sort((a, b) => a.ms - b.ms);
@@ -179,7 +179,7 @@ try {
 } finally {
 	fs.writeFileSync(PROBE_FILE, original);
 	try {
-		await buildGraph(root, { engine, incremental: true });
+		await buildGraph(root, { engine, incremental: true, exclude: [...BENCHMARK_EXCLUDES] });
 	} catch {
 		// Cleanup rebuild failed — probe file is already restored, move on
 	}

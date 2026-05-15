@@ -183,6 +183,13 @@ function setupPipeline(ctx: PipelineContext): void {
   initSchema(ctx.db);
 
   ctx.config = loadConfig(ctx.rootDir);
+  // Merge caller-supplied excludes on top of the file-config excludes so
+  // programmatic callers (e.g. benchmark scripts) can extend exclusion
+  // without mutating .codegraphrc.json. Native orchestrator picks this up
+  // automatically — it reads exclude off the serialized ctx.config below.
+  if (ctx.opts.exclude?.length) {
+    ctx.config.exclude = [...(ctx.config.exclude ?? []), ...ctx.opts.exclude];
+  }
   ctx.incremental =
     ctx.opts.incremental !== false && ctx.config.build && ctx.config.build.incremental !== false;
 

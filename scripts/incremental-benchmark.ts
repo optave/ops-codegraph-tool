@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
-import { resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
+import { BENCHMARK_EXCLUDES, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, forkEngines } from './lib/fork-engine.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
@@ -194,7 +194,7 @@ const fullTimings = [];
 for (let i = 0; i < RUNS; i++) {
 	if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
 	const start = performance.now();
-	await buildGraph(root, { engine, incremental: false });
+	await buildGraph(root, { engine, incremental: false, exclude: [...BENCHMARK_EXCLUDES] });
 	fullTimings.push(performance.now() - start);
 }
 const fullBuildMs = Math.round(median(fullTimings));
@@ -203,12 +203,12 @@ const fullBuildMs = Math.round(median(fullTimings));
 let noopRebuildMs = null;
 try {
 	for (let i = 0; i < WARMUP_RUNS; i++) {
-		await buildGraph(root, { engine, incremental: true });
+		await buildGraph(root, { engine, incremental: true, exclude: [...BENCHMARK_EXCLUDES] });
 	}
 	const noopTimings = [];
 	for (let i = 0; i < RUNS; i++) {
 		const start = performance.now();
-		await buildGraph(root, { engine, incremental: true });
+		await buildGraph(root, { engine, incremental: true, exclude: [...BENCHMARK_EXCLUDES] });
 		noopTimings.push(performance.now() - start);
 	}
 	noopRebuildMs = Math.round(median(noopTimings));
@@ -223,13 +223,13 @@ let oneFilePhases = null;
 try {
 	for (let i = 0; i < WARMUP_RUNS; i++) {
 		fs.writeFileSync(PROBE_FILE, original + `\n// warmup-${i}\n`);
-		await buildGraph(root, { engine, incremental: true });
+		await buildGraph(root, { engine, incremental: true, exclude: [...BENCHMARK_EXCLUDES] });
 	}
 	const oneFileRuns = [];
 	for (let i = 0; i < RUNS; i++) {
 		fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`);
 		const start = performance.now();
-		const res = await buildGraph(root, { engine, incremental: true });
+		const res = await buildGraph(root, { engine, incremental: true, exclude: [...BENCHMARK_EXCLUDES] });
 		oneFileRuns.push({ ms: performance.now() - start, phases: res?.phases || null });
 	}
 	oneFileRuns.sort((a, b) => a.ms - b.ms);
@@ -241,7 +241,7 @@ try {
 } finally {
 	fs.writeFileSync(PROBE_FILE, original);
 	try {
-		await buildGraph(root, { engine, incremental: true });
+		await buildGraph(root, { engine, incremental: true, exclude: [...BENCHMARK_EXCLUDES] });
 	} catch {
 		// Cleanup rebuild failed — probe file is already restored, move on
 	}
