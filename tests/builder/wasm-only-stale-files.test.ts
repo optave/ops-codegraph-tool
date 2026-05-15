@@ -114,4 +114,19 @@ describe('computeWasmOnlyStaleFiles', () => {
     });
     expect(stale).toEqual([]);
   });
+
+  it('normalises DB paths with back-slashes against forward-slash expected set', () => {
+    // Defends against false-positive purges on Windows where a stale DB row
+    // (written by older code) could carry back-slashes while `expected` is
+    // always normalised. Without `normalizePath` inside `consider`, the file
+    // would look stale and be purged even though it exists on disk.
+    const stale = computeWasmOnlyStaleFiles({
+      existingNodes: new Set(['src\\live.gleam']),
+      existingHashes: new Set(['src\\live.gleam']),
+      expected: new Set(['src/live.gleam']),
+      installedExts: INSTALLED,
+      nativeSupported: NATIVE,
+    });
+    expect(stale).toEqual([]);
+  });
 });

@@ -809,13 +809,23 @@ export interface WasmOnlyStaleFilesInput {
  * `LanguageKind::from_extension` (which normalises case for the languages
  * where both cases are conventional, e.g. R's `.r` / `.R`).
  *
+ * DB paths are forced to forward slashes before comparison with `expected`
+ * (which is always normalised). The on-disk invariant is that DB rows are
+ * written with forward slashes, but a stale row written by older code on
+ * Windows could carry back-slashes — normalising here makes the comparison
+ * platform-safe and prevents false-positive purges of live rows. We replace
+ * `\\` explicitly (rather than calling `normalizePath`, which only touches
+ * `path.sep`) so the defence works when running on POSIX against a DB that
+ * was migrated from Windows.
+ *
  * Exported for unit testing.
  */
 export function computeWasmOnlyStaleFiles(input: WasmOnlyStaleFilesInput): string[] {
   const { existingNodes, existingHashes, expected, installedExts, nativeSupported } = input;
   const stale: string[] = [];
   const seen = new Set<string>();
-  const consider = (rel: string): void => {
+  const consider = (rawRel: string): void => {
+    const rel = rawRel.replace(/\\/g, '/');
     if (expected.has(rel) || seen.has(rel)) return;
     const ext = path.extname(rel).toLowerCase();
     if (nativeSupported.has(ext)) return;
@@ -826,6 +836,27 @@ export function computeWasmOnlyStaleFiles(input: WasmOnlyStaleFilesInput): strin
   for (const rel of existingNodes) consider(rel);
   for (const rel of existingHashes) consider(rel);
   return stale;
+}
+
+/**
+ * Group relative paths by their lowercased extension. Shape matches the bucket
+ * type that `formatDropExtensionSummary` consumes, so callers can render a
+ * log-friendly per-extension summary without going through `classifyNativeDrops`
+ * when the reason is already known (e.g. the stale-purge path where every path
+ * is guaranteed `unsupported-by-native`).
+ */
+function groupByExtension(relPaths: Iterable<string>): Map<string, string[]> {
+  const buckets = new Map<string, string[]>();
+  for (const rel of relPaths) {
+    const ext = path.extname(rel).toLowerCase();
+    let list = buckets.get(ext);
+    if (!list) {
+      list = [];
+      buckets.set(ext, list);
+    }
+    list.push(rel);
+  }
+  return buckets;
 }
 
 /**
@@ -916,17 +947,14 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
   // them, so without this their rows would persist across rebuilds until the
   // next full rebuild reset the DB.
   if (staleRel.length > 0) {
-    const { byReason: staleByReason, totals: staleTotals } = classifyNativeDrops(staleRel);
+    // `computeWasmOnlyStaleFiles` guarantees every path here has an extension
+    // outside NATIVE_SUPPORTED_EXTENSIONS, so `classifyNativeDrops` would
+    // always bucket 100% into `unsupported-by-native`. Build the extension
+    // summary directly to avoid a redundant classification pass.
+    const staleByExt = groupByExtension(staleRel);
     info(
-      `Detected ${staleRel.length} deleted WASM-only file(s) the native orchestrator skipped; purging stale rows: ${formatDropExtensionSummary(staleByReason['unsupported-by-native'])}`,
+      `Detected ${staleRel.length} deleted WASM-only file(s) the native orchestrator skipped; purging stale rows: ${formatDropExtensionSummary(staleByExt)}`,
     );
-    // staleRel is restricted above to extensions outside NATIVE_SUPPORTED_EXTENSIONS,
-    // so the native-extractor-failure bucket should always be empty here.
-    if (staleTotals['native-extractor-failure'] > 0) {
-      debug(
-        `backfillNativeDroppedFiles: stale-purge classified ${staleTotals['native-extractor-failure']} native-supported file(s) — unexpected; inspect the filter`,
-      );
-    }
     purgeFilesData(dbConn, staleRel);
   }
 
