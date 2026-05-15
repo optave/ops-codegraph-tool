@@ -129,4 +129,20 @@ describe('computeWasmOnlyStaleFiles', () => {
     });
     expect(stale).toEqual([]);
   });
+
+  it('preserves back-slash form so DELETE matches the actual DB row', () => {
+    // Counterpart to the previous test: when a back-slash DB row is GENUINELY
+    // stale (file no longer on disk), the returned path must keep its raw form
+    // so `purgeFilesData`'s `DELETE FROM nodes WHERE file = ?` matches the
+    // stored row. Pushing the forward-slash-normalised form would let the
+    // stale row silently persist — exactly the regression #1073 fixes.
+    const stale = computeWasmOnlyStaleFiles({
+      existingNodes: new Set(['src\\dead.gleam']),
+      existingHashes: new Set(['src\\dead.gleam']),
+      expected: new Set(),
+      installedExts: INSTALLED,
+      nativeSupported: NATIVE,
+    });
+    expect(stale).toEqual(['src\\dead.gleam']);
+  });
 });

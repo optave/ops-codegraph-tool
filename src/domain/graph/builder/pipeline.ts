@@ -859,7 +859,13 @@ export function computeWasmOnlyStaleFiles(input: WasmOnlyStaleFilesInput): strin
     if (nativeSupported.has(ext)) return;
     if (!installedExts.has(ext)) return;
     seen.add(rel);
-    stale.push(rel);
+    // Push the ORIGINAL raw path (not the normalised form) so the eventual
+    // `DELETE FROM nodes WHERE file = ?` predicate in `purgeFilesData`
+    // matches the actual stored row. The dedup `seen` set keeps the
+    // normalised form so a file written once with `\` and once with `/`
+    // is still treated as one entry — but the value the SQL sees has to
+    // be byte-identical to what's on disk in the DB.
+    stale.push(rawRel);
   };
   for (const rel of existingNodes) consider(rel);
   for (const rel of existingHashes) consider(rel);
