@@ -113,6 +113,45 @@ end`);
     expect(names).not.toContain('Foo.Base.show');
   });
 
+  it('extracts abstract type', () => {
+    const symbols = parseJulia(`abstract type AbstractShape end`);
+    const abs = symbols.definitions.find((d) => d.name === 'AbstractShape');
+    expect(abs).toBeDefined();
+    expect(abs).toMatchObject({ kind: 'type' });
+  });
+
+  it('extracts parameterized abstract type base name', () => {
+    // Parameterized generics with a supertype must record only the base
+    // identifier — never the raw `Name{T} <: Super{T,1}` text.
+    const symbols = parseJulia(`abstract type AbstractVector{T} <: AbstractArray{T,1} end`);
+    const names = symbols.definitions.map((d) => d.name);
+    expect(names).toContain('AbstractVector');
+    expect(names.every((n) => !n.includes('{') && !n.includes('<'))).toBe(true);
+  });
+
+  it('extracts macro definitions with correct name', () => {
+    // `findChild(node, 'identifier')` would resolve to the body's `x` here,
+    // recording the macro as `@x` instead of `@mymac`.
+    const symbols = parseJulia(`macro mymac(x)
+    x
+end`);
+    const names = symbols.definitions.map((d) => d.name);
+    expect(names).toContain('@mymac');
+    expect(names).not.toContain('@x');
+  });
+
+  it('does not record function signature as call', () => {
+    // The signature's `call_expression` lives inside a `signature` node — a
+    // naive `parent.type === 'function_definition'` guard misses it and
+    // records `greet` as both a definition and a call.
+    const symbols = parseJulia(`function greet(name)
+    println(name)
+end`);
+    const callNames = symbols.calls.map((c) => c.name);
+    expect(callNames).not.toContain('greet');
+    expect(callNames).toContain('println');
+  });
+
   it('selected_import handles qualified module', () => {
     // `import Foo.Bar: baz` — module is a scoped_identifier. The import
     // must record `Foo.Bar` as the source and `baz` as the imported name,
