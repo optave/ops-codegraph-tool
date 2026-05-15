@@ -77,6 +77,14 @@ fn handle_module_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) -> O
 /// `function_definition` / `macro_definition` in a `signature` node whose
 /// first child is the `call_expression` — `find_child` only inspects direct
 /// children, so we unwrap one level explicitly.
+///
+/// Grammar assumption: every `function_definition` / `macro_definition` emits
+/// a `signature` child in the current tree-sitter-julia grammar. The fallback
+/// to `find_child(node, "call_expression")` exists only as a defensive measure
+/// for grammar drift — if it ever fires on a real definition, that fallback
+/// would silently match the first body call_expression and mis-record the
+/// function name. Callers must therefore treat a missing `signature` as a
+/// parser/grammar mismatch worth investigating, not as a routine code path.
 fn signature_call<'a>(node: &Node<'a>) -> Option<Node<'a>> {
     if let Some(sig) = find_child(node, "signature") {
         return find_child(&sig, "call_expression");

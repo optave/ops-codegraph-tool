@@ -48,6 +48,12 @@ end`);
     const symbols = parseJulia(`using LinearAlgebra
 import Base: show`);
     expect(symbols.imports.length).toBeGreaterThanOrEqual(1);
+    // `import Base: show` must record `source: 'Base'` and `names: ['show']`,
+    // not the previously-broken `source: 'Base: show', names: ['Base: show']`.
+    const selected = symbols.imports.find((imp) => imp.source === 'Base');
+    expect(selected).toBeDefined();
+    expect(selected?.names).toContain('show');
+    expect(selected?.names).not.toContain('Base');
   });
 
   it('extracts function calls', () => {

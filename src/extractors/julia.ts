@@ -101,6 +101,14 @@ function qualifyName(base: string, currentModule: string | null): string {
  * Without this step, `findChild(node, 'call_expression')` on a
  * `function_definition` would match the *body's* first call_expression
  * (e.g. `println(...)` inside the body) instead of the signature.
+ *
+ * Grammar assumption: every `function_definition` / `macro_definition` emits a
+ * `signature` child in the current tree-sitter-julia grammar. The fallback to
+ * `findChild(node, 'call_expression')` exists only as a defensive measure for
+ * grammar drift — if it ever fires on a real definition, that fallback would
+ * silently match the first body call_expression and mis-record the function
+ * name. Callers must therefore treat a missing `signature` as a parser/grammar
+ * mismatch worth investigating, not as a routine code path.
  */
 function signatureCall(node: TreeSitterNode): TreeSitterNode | null {
   const sig = findChild(node, 'signature');
