@@ -70,7 +70,9 @@ function findPrevMetric(hist, fromIdx, getter) {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 function trend(current, previous, lowerIsBetter = true) {
-	if (current == null || previous == null) return '';
+	// Guard against null/undefined and a zero baseline — dividing by zero would
+	// emit `↑Infinity%`. Matches the `previous === 0` guard in checkRegression.
+	if (current == null || previous == null || previous === 0) return '';
 	const pct = ((current - previous) / previous) * 100;
 	if (Math.abs(pct) < 2) return ' ~';
 	if (lowerIsBetter) {
@@ -84,7 +86,7 @@ function formatMs(ms) {
 	return `${Math.round(ms)}ms`;
 }
 
-function engineRow(hist, i, engineKey) {
+function engineRow(hist, i, engineKey, prevResolveNative, prevResolveJs) {
 	const h = hist[i];
 	const e = h[engineKey];
 	if (!e) return null;
@@ -97,11 +99,8 @@ function engineRow(hist, i, engineKey) {
 	);
 
 	const r = h.resolve;
-	const natT =
-		r.nativeBatchMs != null
-			? trend(r.nativeBatchMs, findPrevMetric(hist, i, (x) => x.resolve?.nativeBatchMs))
-			: '';
-	const jsT = trend(r.jsFallbackMs, findPrevMetric(hist, i, (x) => x.resolve?.jsFallbackMs));
+	const natT = r.nativeBatchMs != null ? trend(r.nativeBatchMs, prevResolveNative) : '';
+	const jsT = trend(r.jsFallbackMs, prevResolveJs);
 
 	const noopCell = e.noopRebuildMs != null ? `${formatMs(e.noopRebuildMs)}${noopT}` : 'n/a';
 	const oneFileCell = e.oneFileRebuildMs != null ? `${formatMs(e.oneFileRebuildMs)}${oneT}` : 'n/a';
@@ -128,8 +127,13 @@ md +=
 	'|---------|--------|------:|-----------:|------:|-------:|------------------:|-------------:|\n';
 
 for (let i = 0; i < history.length; i++) {
-	const nativeRow = engineRow(history, i, 'native');
-	const wasmRow = engineRow(history, i, 'wasm');
+	// Resolve metrics are release-level (not engine-specific), so pre-compute
+	// their fallback baselines once per release instead of having engineRow walk
+	// history twice (once per engine type).
+	const prevResolveNative = findPrevMetric(history, i, (x) => x.resolve?.nativeBatchMs);
+	const prevResolveJs = findPrevMetric(history, i, (x) => x.resolve?.jsFallbackMs);
+	const nativeRow = engineRow(history, i, 'native', prevResolveNative, prevResolveJs);
+	const wasmRow = engineRow(history, i, 'wasm', prevResolveNative, prevResolveJs);
 	if (nativeRow) md += nativeRow + '\n';
 	if (wasmRow) md += wasmRow + '\n';
 }
