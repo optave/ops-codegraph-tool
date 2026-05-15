@@ -183,6 +183,9 @@ function setupPipeline(ctx: PipelineContext): void {
   initSchema(ctx.db);
 
   ctx.config = loadConfig(ctx.rootDir);
+  if (ctx.opts.exclude && ctx.opts.exclude.length > 0) {
+    ctx.config = { ...ctx.config, exclude: [...ctx.config.exclude, ...ctx.opts.exclude] };
+  }
   ctx.incremental =
     ctx.opts.incremental !== false && ctx.config.build && ctx.config.build.incremental !== false;
 
