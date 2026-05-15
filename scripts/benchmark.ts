@@ -133,9 +133,23 @@ const buildStart = performance.now();
 const buildResult = await buildGraph(root, { engine, incremental: false });
 const buildTimeMs = performance.now() - buildStart;
 
-const queryStart = performance.now();
-fnDepsData('buildGraph', dbPath);
-const queryTimeMs = performance.now() - queryStart;
+// Warmed median of QUERY_RUNS samples with `noTests: true` to match the
+// methodology used by query-benchmark.ts and the per-target `queries.*Ms`
+// block below. Earlier versions of this script measured a single cold call,
+// which conflated steady-state query latency with NAPI/rusqlite/OS-page-cache
+// init costs (~65ms on macOS) and inflated growth from test-fixture files
+// pulled in by new native extractors. See #1113 for the methodology rationale.
+const QUERY_WARMUP_RUNS = 3;
+for (let i = 0; i < QUERY_WARMUP_RUNS; i++) {
+	fnDepsData('buildGraph', dbPath, { depth: 3, noTests: true });
+}
+const queryTimings: number[] = [];
+for (let i = 0; i < QUERY_RUNS; i++) {
+	const start = performance.now();
+	fnDepsData('buildGraph', dbPath, { depth: 3, noTests: true });
+	queryTimings.push(performance.now() - start);
+}
+const queryTimeMs = median(queryTimings);
 
 const stats = statsData(dbPath);
 const totalFiles = stats.files.total;

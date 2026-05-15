@@ -188,16 +188,19 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   one-time bump as the cost of supporting Verilog. Tracked separately;
  *   exempt this release.
  *
- * - 3.10.0:Query time — cumulative effect of adding two native extractors
- *   (Solidity #1100 + R #1102) in quick succession. Neither tripped the
- *   threshold individually (Solidity PR's Query time stayed at 49ms, R PR
- *   showed no warning), but the combined +110% (49.6 → ~105ms) on the
- *   `fnDepsData('buildGraph', dbPath)` measurement reflects natural graph
- *   growth: ~1100 LoC of new extractor code + 9 fixture files added to the
- *   self-build benchmark expand `buildGraph`'s transitive callee count and
- *   DB row counts. Tracked in #1113 — exempt this release; remove once
- *   3.11.0+ data captures the new steady-state and the per-language
- *   fixture footprint has been evaluated.
+ * - 3.10.0:Query time — methodology artifact, not a real regression. The
+ *   metric was a single-shot cold call to `fnDepsData('buildGraph', dbPath)`
+ *   with no warmup, no median, and `noTests: false` — so it captured ~65ms
+ *   of NAPI/rusqlite/OS-page-cache init plus the cost of walking through
+ *   fixture files added by new language extractors. Local v3.9.6 vs HEAD
+ *   on the same corpus measured 78.8ms vs 67.5ms single-shot (HEAD faster),
+ *   while the warmed `queries.fnDepsMs` in the same benchmark showed 4.0ms
+ *   vs 2.8ms — confirming no underlying regression. Methodology fixed in
+ *   #1113: queryTimeMs now uses 3 warmup runs + median of 5 with
+ *   `noTests: true`, matching query-benchmark.ts hygiene. Exemption kept
+ *   in place until 3.11.0+ data captures the new steady-state under the
+ *   updated methodology (expected ~36ms native on this corpus); remove
+ *   the entry then.
  *
  * - 3.10.0:fnDeps depth 5 — same cause as Query time above. Merging main
  *   into #1102 added the Erlang extractor (#1103) on top of the existing
