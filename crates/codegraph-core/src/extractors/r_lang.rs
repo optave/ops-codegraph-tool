@@ -163,8 +163,12 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
                 handle_set_class(node, source, symbols);
                 return;
             }
-            "setGeneric" | "setMethod" => {
+            "setGeneric" => {
                 handle_set_generic(node, source, symbols);
+                return;
+            }
+            "setMethod" => {
+                handle_set_method(node, source, symbols);
                 return;
             }
             _ => {}
@@ -332,6 +336,23 @@ fn handle_set_generic(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     }
 }
 
+// `setMethod("greet", "Person", function(x) ...)` registers an implementation
+// of the generic `greet` — it is not a new top-level definition. Emitting a
+// definition here produced two `function` nodes with the same name (one from
+// setGeneric, one from setMethod) and broke resolution. Emit a call edge to
+// the generic instead; the method body's calls are still picked up by the
+// recursive walk of the anonymous function argument.
+fn handle_set_method(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    if let Some(name) = first_argument_value(node, source, false) {
+        symbols.calls.push(Call {
+            name,
+            line: start_line(node),
+            dynamic: None,
+            receiver: None,
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,6 +458,51 @@ mod tests {
         let s = parse_r("setGeneric(\"doIt\", function(x) standardGeneric(\"doIt\"))\n");
         let d = s.definitions.iter().find(|d| d.name == "doIt").unwrap();
         assert_eq!(d.kind, "function");
+    }
+
+    #[test]
+    fn set_method_does_not_duplicate_generic_definition() {
+        // Idiomatic S4: a setGeneric followed by setMethod implementations.
+        // Only the setGeneric should emit a definition — setMethod registers
+        // an implementation of the generic, which we model as a call edge.
+        let code = r#"
+setGeneric("greet", function(x) standardGeneric("greet"))
+setMethod("greet", "Person", function(x) paste("Hello", x@name))
+setMethod("greet", "Animal", function(x) paste("Hi", x@species))
+"#;
+        let s = parse_r(code);
+        let greet_defs: Vec<&Definition> =
+            s.definitions.iter().filter(|d| d.name == "greet").collect();
+        assert_eq!(
+            greet_defs.len(),
+            1,
+            "expected exactly one `greet` definition, got {greet_defs:#?}",
+        );
+        assert_eq!(greet_defs[0].kind, "function");
+    }
+
+    #[test]
+    fn set_method_emits_call_to_generic() {
+        // setMethod registers an implementation of the generic. The fix emits
+        // a call edge to the generic so the dispatch relationship is visible
+        // in the graph.
+        let s = parse_r(
+            "setMethod(\"greet\", \"Person\", function(x) paste(\"Hello\", x@name))\n",
+        );
+        let calls: Vec<&Call> = s.calls.iter().filter(|c| c.name == "greet").collect();
+        assert_eq!(calls.len(), 1, "expected setMethod to emit one call to `greet`");
+    }
+
+    #[test]
+    fn set_method_body_calls_are_still_captured() {
+        // The recursive walk visits the anonymous function passed to
+        // setMethod, so calls inside the method body must still appear.
+        let s = parse_r(
+            "setMethod(\"greet\", \"Person\", function(x) { helper(x); validate(x) })\n",
+        );
+        let names: Vec<&str> = s.calls.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"helper"), "method body call `helper` not captured");
+        assert!(names.contains(&"validate"), "method body call `validate` not captured");
     }
 
     #[test]
