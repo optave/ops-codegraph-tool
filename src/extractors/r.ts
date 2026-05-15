@@ -125,8 +125,13 @@ function handleCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
     return;
   }
 
-  if (funcName === 'setGeneric' || funcName === 'setMethod') {
+  if (funcName === 'setGeneric') {
     handleSetGeneric(node, ctx);
+    return;
+  }
+
+  if (funcName === 'setMethod') {
+    handleSetMethod(node, ctx);
     return;
   }
 
@@ -212,47 +217,55 @@ function handleLibraryCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
 }
 
 function handleSourceCall(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (!child || child.type !== 'arguments') continue;
-    for (let j = 0; j < child.childCount; j++) {
-      const arg = child.child(j);
-      if (!arg) continue;
-      if (arg.type === 'string') {
-        const text = arg.text.replace(/^["']|["']$/g, '');
-        ctx.imports.push({
-          source: text,
-          names: ['source'],
-          line: node.startPosition.row + 1,
-        });
-        return;
-      }
-    }
-  }
+  // source() only accepts string literals — `source(varname)` is not an import.
+  const path = firstStringArgument(node);
+  if (path === null) return;
+  ctx.imports.push({
+    source: path,
+    names: ['source'],
+    line: node.startPosition.row + 1,
+  });
 }
 
 function handleSetClass(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (!child || child.type !== 'arguments') continue;
-    for (let j = 0; j < child.childCount; j++) {
-      const arg = child.child(j);
-      if (!arg) continue;
-      if (arg.type === 'string') {
-        const name = arg.text.replace(/^["']|["']$/g, '');
-        ctx.definitions.push({
-          name,
-          kind: 'class',
-          line: node.startPosition.row + 1,
-          endLine: nodeEndLine(node),
-        });
-        return;
-      }
-    }
-  }
+  const name = firstStringArgument(node);
+  if (name === null) return;
+  ctx.definitions.push({
+    name,
+    kind: 'class',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+  });
 }
 
 function handleSetGeneric(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const name = firstStringArgument(node);
+  if (name === null) return;
+  ctx.definitions.push({
+    name,
+    kind: 'function',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+  });
+}
+
+// setMethod("greet", "Person", function(x) ...) registers an implementation of
+// the generic `greet` — it is not a new top-level definition. Emitting a
+// definition here produced two `function` nodes with the same name (one from
+// setGeneric, one from setMethod) and broke resolution. Emit a call edge to
+// the generic instead; the method body's calls are still picked up by the
+// recursive walk of the anonymous function argument.
+function handleSetMethod(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  const name = firstStringArgument(node);
+  if (name === null) return;
+  ctx.calls.push({ name, line: node.startPosition.row + 1 });
+}
+
+// tree-sitter-r wraps each positional argument in an `argument` node that
+// contains the actual `string` (or `identifier`) child, so the inner string
+// must be unwrapped — checking `child.type === 'string'` directly misses it.
+// Mirrors `first_argument_value` in the Rust extractor for parity.
+function firstStringArgument(node: TreeSitterNode): string | null {
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child || child.type !== 'arguments') continue;
@@ -260,15 +273,21 @@ function handleSetGeneric(node: TreeSitterNode, ctx: ExtractorOutput): void {
       const arg = child.child(j);
       if (!arg) continue;
       if (arg.type === 'string') {
-        const name = arg.text.replace(/^["']|["']$/g, '');
-        ctx.definitions.push({
-          name,
-          kind: 'function',
-          line: node.startPosition.row + 1,
-          endLine: nodeEndLine(node),
-        });
-        return;
+        return stripQuotes(arg.text);
+      }
+      if (arg.type === 'argument') {
+        const valueNode = arg.childForFieldName('value');
+        if (valueNode && valueNode.type === 'string') return stripQuotes(valueNode.text);
+        for (let k = 0; k < arg.childCount; k++) {
+          const inner = arg.child(k);
+          if (inner && inner.type === 'string') return stripQuotes(inner.text);
+        }
       }
     }
   }
+  return null;
+}
+
+function stripQuotes(text: string): string {
+  return text.replace(/^["']|["']$/g, '');
 }
