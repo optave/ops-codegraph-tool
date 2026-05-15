@@ -48,6 +48,12 @@ end`);
     const symbols = parseJulia(`using LinearAlgebra
 import Base: show`);
     expect(symbols.imports.length).toBeGreaterThanOrEqual(1);
+    // `import Base: show` must record `source: 'Base'` and `names: ['show']`,
+    // not the previously-broken `source: 'Base: show', names: ['Base: show']`.
+    const selected = symbols.imports.find((imp) => imp.source === 'Base');
+    expect(selected).toBeDefined();
+    expect(selected?.names).toContain('show');
+    expect(selected?.names).not.toContain('Base');
   });
 
   it('extracts function calls', () => {
@@ -67,6 +73,20 @@ end`);
     expect(names.every((n) => !n.includes('{') && !n.includes('<'))).toBe(true);
     expect(symbols.classes).toHaveLength(1);
     expect(symbols.classes[0]).toMatchObject({ name: 'Vec', extends: 'AbstractArray' });
+  });
+
+  it('extracts non-parameterized struct inheritance', () => {
+    // Simple `struct Name <: Super` must still record both the definition
+    // and the `extends` relationship — the grammar wraps it in a
+    // `binary_expression` just like the parameterized form.
+    const symbols = parseJulia(`struct Point <: AbstractPoint
+    x::Float64
+    y::Float64
+end`);
+    const names = symbols.definitions.map((d) => d.name);
+    expect(names).toContain('Point');
+    expect(symbols.classes).toHaveLength(1);
+    expect(symbols.classes[0]).toMatchObject({ name: 'Point', extends: 'AbstractPoint' });
   });
 
   it('qualified short-form method does not double-prefix', () => {
