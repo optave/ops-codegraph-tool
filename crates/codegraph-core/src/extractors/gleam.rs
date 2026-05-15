@@ -61,6 +61,8 @@ fn handle_external_function(node: &Node, source: &[u8], symbols: &mut FileSymbol
         None => return,
     };
 
+    let params = extract_params(node, source);
+
     symbols.definitions.push(Definition {
         name: node_text(&name_node, source).to_string(),
         kind: "function".to_string(),
@@ -69,7 +71,7 @@ fn handle_external_function(node: &Node, source: &[u8], symbols: &mut FileSymbol
         decorators: None,
         complexity: None,
         cfg: None,
-        children: None,
+        children: opt_children(params),
     });
 }
 
@@ -442,5 +444,38 @@ mod tests {
             .find(|d| d.name == "max_users")
             .expect("expected constant");
         assert_eq!(c.kind, "variable");
+    }
+
+    #[test]
+    fn extracts_external_function_with_named_parameters() {
+        let code = "pub external fn parse(input: String, base: Int) -> Int = \"erlang_mod\" \"parse\"\n";
+        let s = parse_gleam(code);
+        let parse_fn = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "parse")
+            .expect("expected external function `parse`");
+        assert_eq!(parse_fn.kind, "function");
+        let children = parse_fn
+            .children
+            .as_ref()
+            .expect("expected external function parameters as children");
+        let names: Vec<&str> = children.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"input"), "missing `input` param, got {names:?}");
+        assert!(names.contains(&"base"), "missing `base` param, got {names:?}");
+        assert!(children.iter().all(|c| c.kind == "parameter"));
+    }
+
+    #[test]
+    fn external_function_without_param_names_has_no_children() {
+        // External function with type-only parameters (no names) — should not emit children.
+        let code = "pub external fn random() -> Int = \"rand\" \"uniform\"\n";
+        let s = parse_gleam(code);
+        let random_fn = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "random")
+            .expect("expected external function `random`");
+        assert!(random_fn.children.is_none());
     }
 }
