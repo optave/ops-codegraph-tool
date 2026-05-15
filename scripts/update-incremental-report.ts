@@ -44,8 +44,13 @@ if (fs.existsSync(reportPath)) {
 			/* start fresh if corrupt */
 		}
 	}
-	const notesMatch = content.match(/<!--\s*NOTES_START\s*-->[\s\S]*?<!--\s*NOTES_END\s*-->/);
-	if (notesMatch) notesBlock = notesMatch[0];
+	// Use matchAll so multiple NOTES blocks (annotating different anomalous releases)
+	// are all preserved. The exact data-loss bug this fix targets stemmed from silently
+	// dropping a NOTES block; we must not reintroduce that failure mode for additional blocks.
+	const notesMatches = content.matchAll(
+		/<!--\s*NOTES_START\s*-->[\s\S]*?<!--\s*NOTES_END\s*-->/g,
+	);
+	notesBlock = Array.from(notesMatches, (m) => m[0]).join('\n\n');
 }
 
 // Add new entry — dev entries are rolling, releases replace dev
