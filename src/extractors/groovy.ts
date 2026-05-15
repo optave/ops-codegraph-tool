@@ -68,6 +68,7 @@ function walkGroovyNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
     case 'method_invocation':
     case 'call_expression':
     case 'function_call':
+    case 'juxt_function_call':
       handleGroovyCallExpr(node, ctx);
       break;
     case 'object_creation_expression':
