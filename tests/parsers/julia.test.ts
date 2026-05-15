@@ -69,6 +69,20 @@ end`);
     expect(symbols.classes[0]).toMatchObject({ name: 'Vec', extends: 'AbstractArray' });
   });
 
+  it('extracts non-parameterized struct inheritance', () => {
+    // Simple `struct Name <: Super` must still record both the definition
+    // and the `extends` relationship — the grammar wraps it in a
+    // `binary_expression` just like the parameterized form.
+    const symbols = parseJulia(`struct Point <: AbstractPoint
+    x::Float64
+    y::Float64
+end`);
+    const names = symbols.definitions.map((d) => d.name);
+    expect(names).toContain('Point');
+    expect(symbols.classes).toHaveLength(1);
+    expect(symbols.classes[0]).toMatchObject({ name: 'Point', extends: 'AbstractPoint' });
+  });
+
   it('qualified short-form method does not double-prefix', () => {
     // `Foo.bar(x, y) = x + y` inside `module Outer` must record `Foo.bar`,
     // not `Outer.Foo.bar` — the scoped_identifier already carries the qualifier.

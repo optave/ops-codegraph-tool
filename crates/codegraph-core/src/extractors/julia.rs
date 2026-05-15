@@ -297,9 +297,17 @@ fn handle_abstract_def(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 ///
 /// Handles plain identifiers, `Name <: Super` binary expressions, and
 /// parameterized forms like `Name{T}` / `Name{T} <: Super{T,1}` by recursing
-/// into common wrapper kinds (binary expressions, parametrized identifiers,
-/// type-parameter lists). Returns `None` when no identifier can be located —
+/// into wrapper kinds the Julia grammar actually emits for type heads
+/// (binary expressions, parametrized type expressions, parameterized
+/// identifiers). Returns `None` when no identifier can be located —
 /// callers should skip emitting a definition in that case.
+///
+/// Note: `type_parameter_list` / `type_argument_list` are intentionally
+/// excluded — Julia's grammar uses `curly_expression` for `{T}` constructs,
+/// not those node kinds. Including them would risk recursing into a
+/// type-parameter list and returning a type variable (e.g. `T`) instead of
+/// the struct name if `find_base_name` were ever called on a node lacking a
+/// direct `identifier` child.
 fn find_base_name<'a>(node: &Node<'a>) -> Option<Node<'a>> {
     // The node itself may already be the identifier (e.g. when called on a
     // direct side of a binary_expression like `Point <: AbstractPoint`).
@@ -317,9 +325,7 @@ fn find_base_name<'a>(node: &Node<'a>) -> Option<Node<'a>> {
         match child.kind() {
             "binary_expression"
             | "parametrized_type_expression"
-            | "parameterized_identifier"
-            | "type_parameter_list"
-            | "type_argument_list" => {
+            | "parameterized_identifier" => {
                 if let Some(found) = find_base_name(&child) {
                     return Some(found);
                 }
