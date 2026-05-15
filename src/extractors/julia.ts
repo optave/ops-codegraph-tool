@@ -83,17 +83,41 @@ function handleModuleDef(node: TreeSitterNode, ctx: ExtractorOutput): string | n
   return nameNode.text;
 }
 
+function qualifyName(base: string, currentModule: string | null): string {
+  // For qualified names (`function Base.show ... end` inside `module Foo`,
+  // or short-form `Foo.bar(x, y) = x + y` inside `module Outer`), the LHS
+  // is a `scoped_identifier` already containing the qualifier — skip the
+  // module prefix to avoid producing `Foo.Base.show` / `Outer.Foo.bar`.
+  if (currentModule && !base.includes('.')) return `${currentModule}.${base}`;
+  return base;
+}
+
+/**
+ * Extract the call_expression from a function/macro definition's signature.
+ *
+ * tree-sitter-julia wraps the signature in a `signature` node whose direct
+ * children include the `call_expression` for the function name and parameters.
+ * `findChild` only inspects direct children, so we unwrap one level explicitly.
+ * Without this step, `findChild(node, 'call_expression')` on a
+ * `function_definition` would match the *body's* first call_expression
+ * (e.g. `println(...)` inside the body) instead of the signature.
+ */
+function signatureCall(node: TreeSitterNode): TreeSitterNode | null {
+  const sig = findChild(node, 'signature');
+  if (sig) return findChild(sig, 'call_expression');
+  return findChild(node, 'call_expression');
+}
+
 function handleFunctionDef(
   node: TreeSitterNode,
   ctx: ExtractorOutput,
   currentModule: string | null,
 ): void {
-  // function_definition may have a call_expression child as the signature
-  const callSig = findChild(node, 'call_expression');
+  const callSig = signatureCall(node);
   if (callSig) {
     const funcNameNode = callSig.child(0);
     if (funcNameNode) {
-      const name = currentModule ? `${currentModule}.${funcNameNode.text}` : funcNameNode.text;
+      const name = qualifyName(funcNameNode.text, currentModule);
       const params = extractJuliaParams(callSig);
       ctx.definitions.push({
         name,
@@ -110,9 +134,8 @@ function handleFunctionDef(
   const nameNode = node.childForFieldName('name') || findChild(node, 'identifier');
   if (!nameNode) return;
 
-  const name = currentModule ? `${currentModule}.${nameNode.text}` : nameNode.text;
   ctx.definitions.push({
-    name,
+    name: qualifyName(nameNode.text, currentModule),
     kind: 'function',
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
@@ -133,11 +156,10 @@ function handleAssignment(
     const funcNameNode = lhs.child(0);
     if (!funcNameNode) return;
 
-    const name = currentModule ? `${currentModule}.${funcNameNode.text}` : funcNameNode.text;
     const params = extractJuliaParams(lhs);
 
     ctx.definitions.push({
-      name,
+      name: qualifyName(funcNameNode.text, currentModule),
       kind: 'function',
       line: node.startPosition.row + 1,
       endLine: nodeEndLine(node),
@@ -146,16 +168,69 @@ function handleAssignment(
   }
 }
 
+/**
+ * Locate the base-name identifier within a `type_head` node.
+ *
+ * Handles plain identifiers, `Name <: Super` binary expressions, and
+ * parameterized forms like `Name{T}` / `Name{T} <: Super{T,1}` by recursing
+ * into common wrapper kinds (binary expressions, parametrized type
+ * expressions, parameterized identifiers, type-parameter / type-argument
+ * lists). Returns `null` when no identifier can be located — callers should
+ * skip emitting a definition in that case.
+ */
+const TYPE_HEAD_WRAPPERS: ReadonlySet<string> = new Set([
+  'binary_expression',
+  'parametrized_type_expression',
+  'parameterized_identifier',
+  'type_parameter_list',
+  'type_argument_list',
+]);
+
+function findBaseName(node: TreeSitterNode): TreeSitterNode | null {
+  if (node.type === 'identifier') return node;
+  const direct = findChild(node, 'identifier');
+  if (direct) return direct;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    if (TYPE_HEAD_WRAPPERS.has(child.type)) {
+      const found = findBaseName(child);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 function handleStructDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   // struct_definition: struct type_head fields... end
+  // type_head wraps the name and optional supertype. The name may be a
+  // bare `identifier`, a parameterized form (e.g. `Vec{T}`), or either
+  // of those nested inside a `binary_expression` (`Name <: Super`).
   const typeHead = findChild(node, 'type_head');
-  const nameNode = typeHead
-    ? (findChild(typeHead, 'identifier') ?? typeHead)
-    : findChild(node, 'identifier');
+  if (!typeHead) return;
+
+  let nameNode: TreeSitterNode | null;
+  let supertypeNode: TreeSitterNode | null = null;
+
+  const binary = findChild(typeHead, 'binary_expression');
+  if (binary) {
+    // Walk into each side of the binary expression to find the base-name
+    // identifier — handles parameterized forms like `Vec{T} <: AbstractArray{T,1}`.
+    const sides: TreeSitterNode[] = [];
+    for (let i = 0; i < binary.childCount; i++) {
+      const c = binary.child(i);
+      if (c && c.type !== 'operator') sides.push(c);
+    }
+    nameNode = sides[0] ? findBaseName(sides[0]) : null;
+    supertypeNode = sides[1] ? findBaseName(sides[1]) : null;
+  } else {
+    nameNode = findBaseName(typeHead);
+  }
+
   if (!nameNode) return;
+  const structName = nameNode.text;
 
   const children: SubDeclaration[] = [];
-  // Fields are typed_expression children of struct_definition
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child) continue;
@@ -168,33 +243,24 @@ function handleStructDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
           line: child.startPosition.row + 1,
         });
       }
-    }
-    // Plain identifier fields (no type annotation)
-    if (child.type === 'identifier' && child !== nameNode && typeHead && child !== typeHead) {
+    } else if (child.type === 'identifier') {
+      // Plain identifier fields (no type annotation) appear as direct
+      // identifier children of struct_definition. The type_head is a
+      // separate node so there is nothing to filter out here.
       children.push({ name: child.text, kind: 'property', line: child.startPosition.row + 1 });
     }
   }
 
-  // Check for supertype in type_head (Point <: AbstractPoint)
-  if (typeHead) {
-    const subtypeExpr = findChild(typeHead, 'subtype_expression');
-    if (subtypeExpr) {
-      // Find the supertype identifier
-      for (let i = 0; i < subtypeExpr.childCount; i++) {
-        const child = subtypeExpr.child(i);
-        if (child?.type === 'identifier' && i > 0) {
-          ctx.classes.push({
-            name: nameNode.text,
-            extends: child.text,
-            line: node.startPosition.row + 1,
-          });
-        }
-      }
-    }
+  if (supertypeNode) {
+    ctx.classes.push({
+      name: structName,
+      extends: supertypeNode.text,
+      line: node.startPosition.row + 1,
+    });
   }
 
   ctx.definitions.push({
-    name: nameNode.text,
+    name: structName,
     kind: 'struct',
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
@@ -232,19 +298,40 @@ function handleMacroDef(
 }
 
 function handleImport(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  // tree-sitter-julia shapes:
+  //   `using LinearAlgebra`     → using_statement [ using, identifier ]
+  //   `import Foo.Bar`          → import_statement [ import, scoped_identifier ]
+  //   `import Base: show`       → import_statement [ import, selected_import[Base, show] ]
+  //   `import Foo.Bar: baz`     → import_statement [ import, selected_import[scoped_identifier, baz] ]
   const names: string[] = [];
   let source = '';
 
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (!child) continue;
-    if (
-      child.type === 'identifier' ||
-      child.type === 'scoped_identifier' ||
-      child.type === 'selected_import'
-    ) {
-      if (!source) source = child.text;
-      names.push(child.text.split('.').pop() || child.text);
+    if (child.type === 'identifier' || child.type === 'scoped_identifier') {
+      const txt = child.text;
+      if (!source) source = txt;
+      names.push(txt.split('.').pop() || txt);
+    } else if (child.type === 'selected_import') {
+      // First identifier-bearing node is the source module; the rest are
+      // imported names. The module may itself be a `scoped_identifier`
+      // (e.g. `import Foo.Bar: baz`) — handle it alongside bare
+      // `identifier` and use the trailing segment as the display name,
+      // mirroring the outer loop.
+      let first = true;
+      for (let j = 0; j < child.childCount; j++) {
+        const part = child.child(j);
+        if (!part) continue;
+        if (part.type !== 'identifier' && part.type !== 'scoped_identifier') continue;
+        const txt = part.text;
+        if (first) {
+          if (!source) source = txt;
+          first = false;
+        } else {
+          names.push(txt.split('.').pop() || txt);
+        }
+      }
     }
   }
 
