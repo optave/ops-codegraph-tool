@@ -31,8 +31,9 @@ const reportPath =
 	process.env.CODEGRAPH_INCREMENTAL_REPORT_PATH ??
 	path.join(root, 'generated', 'benchmarks', 'INCREMENTAL-BENCHMARKS.md');
 
-// ── Load existing history ────────────────────────────────────────────────
+// ── Load existing history + manual NOTES block ───────────────────────────
 let history = [];
+let notesBlock = '';
 if (fs.existsSync(reportPath)) {
 	const content = fs.readFileSync(reportPath, 'utf8');
 	const match = content.match(/<!--\s*INCREMENTAL_BENCHMARK_DATA\s*([\s\S]*?)\s*-->/);
@@ -43,6 +44,13 @@ if (fs.existsSync(reportPath)) {
 			/* start fresh if corrupt */
 		}
 	}
+	// Use matchAll so multiple NOTES blocks (annotating different anomalous releases)
+	// are all preserved. The exact data-loss bug this fix targets stemmed from silently
+	// dropping a NOTES block; we must not reintroduce that failure mode for additional blocks.
+	const notesMatches = content.matchAll(
+		/<!--\s*NOTES_START\s*-->[\s\S]*?<!--\s*NOTES_END\s*-->/g,
+	);
+	notesBlock = Array.from(notesMatches, (m) => m[0]).join('\n\n');
 }
 
 // Add new entry — dev entries are rolling, releases replace dev
@@ -168,6 +176,8 @@ if (r.nativeBatchMs != null && r.jsFallbackMs > 0) {
 	md += `| Speedup ratio | ${(r.jsFallbackMs / r.nativeBatchMs).toFixed(1)}x |\n`;
 }
 md += '\n';
+
+if (notesBlock) md += `${notesBlock}\n\n`;
 
 md += `<!-- INCREMENTAL_BENCHMARK_DATA\n${JSON.stringify(history, null, 2)}\n-->\n`;
 
