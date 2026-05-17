@@ -8,8 +8,8 @@ Import resolution: native batch vs JS fallback throughput.
 |---------|--------|------:|-----------:|------:|-------:|------------------:|-------------:|
 | 3.10.0 | native | 745 | 2.0s ↓34% | 15ms ↑50% | 66ms ↑22% | 5ms ↓18% | 7ms ↓38% |
 | 3.10.0 | wasm | 745 | 8.4s ↓40% | 13ms ↓90% | 51ms ↓18% | 5ms ↓18% | 7ms ↓38% |
-| 3.9.6 | native | 744 | 3.0s | 10ms | 54ms | 7ms ~ | 11ms ↑7% |
-| 3.9.6 | wasm | 744 | 14.0s | 131ms | 62ms | 7ms ~ | 11ms ↑7% |
+| 3.9.6 | native | 744 | 3.0s ↑39% | 10ms ↑11% | 54ms ↓87% | 7ms ~ | 11ms ↑7% |
+| 3.9.6 | wasm | 744 | 14.0s ↑86% | 131ms ↑589% | 62ms ~ | 7ms ~ | 11ms ↑7% |
 | 3.9.4 | native | 668 | 2.1s ↓4% | 9ms ~ | 406ms ↑7% | 6ms ↑7% | 9ms ↓15% |
 | 3.9.4 | wasm | 668 | 7.6s ~ | 19ms ↑6% | 61ms ↓90% | 6ms ↑7% | 9ms ↓15% |
 | 3.9.3 | native | 667 | 2.2s ↓76% | 9ms ↑13% | 380ms ↓32% | 6ms ↓5% | 11ms ↑6% |
@@ -22,10 +22,10 @@ Import resolution: native batch vs JS fallback throughput.
 | 3.9.0 | wasm | 567 | 6.8s ↓3% | 12ms ↓20% | 541ms ↓10% | 5ms ↓18% | 11ms ~ |
 | 3.8.1 | native | 565 | 6.6s ↑468% | 8ms ↑14% | 41ms ↑24% | 6ms ↑51% | 11ms ↓14% |
 | 3.8.1 | wasm | 565 | 7.0s ↑493% | 15ms ↑88% | 603ms ↑1727% | 6ms ↑51% | 11ms ↓14% |
-| 3.8.0 | native | 564 | 1.2s | 7ms | 33ms | 4ms ↑2% | 12ms ↓19% |
+| 3.8.0 | native | 564 | 1.2s ↓50% | 7ms ↓46% | 33ms ↓90% | 4ms ↑2% | 12ms ↓19% |
 | 3.8.0 | wasm | 564 | 1.2s ↓82% | 8ms ↓58% | 33ms ↓94% | 4ms ↑2% | 12ms ↓19% |
 | 3.7.0 | wasm | 532 | 6.4s ↑5% | 19ms ↑46% | 558ms ↑2% | 4ms ↑3% | 15ms ↑31% |
-| 3.6.0 | wasm | 514 | 6.1s | 13ms | 545ms | 4ms ↓3% | 12ms ↑9% |
+| 3.6.0 | wasm | 514 | 6.1s ↑20% | 13ms ~ | 545ms ↑7% | 4ms ↓3% | 12ms ↑9% |
 | 3.4.1 | native | 473 | 2.4s ↑3% | 13ms ↑8% | 331ms ↓26% | 4ms ~ | 13ms ↑8% |
 | 3.4.1 | wasm | 473 | 5.1s ~ | 13ms ↑8% | 511ms ↓17% | 4ms ~ | 13ms ↑8% |
 | 3.4.0 | native | 473 | 2.3s ↓4% | 12ms ↑9% | 448ms ↑29% | 4ms ↓58% | 12ms ↓54% |
@@ -87,6 +87,10 @@ Import resolution: native batch vs JS fallback throughput.
 | Per-import (native) | 0ms |
 | Per-import (JS) | 0ms |
 | Speedup ratio | 1.2x |
+
+<!-- NOTES_START -->
+**Note (3.9.5):** No build/rebuild metrics for this release (both engines null) — only import resolution data was collected. Both the WASM and native workers reached the 1-file rebuild phase and then hung past the benchmark's 10-minute per-engine timeout (see `scripts/lib/fork-engine.ts`), so each was killed (`SIGKILL`) before returning results. Import resolution is unaffected because it runs in the parent process and doesn't depend on the full build. 3.9.5 is consequently absent from the top-level version-history comparison table since there are no build-time figures to compare against prior releases. The workflow run is [here](https://github.com/optave/ops-codegraph-tool/actions/runs/24863501577); the root cause will be investigated and the numbers backfilled in a follow-up if possible.
+<!-- NOTES_END -->
 
 <!-- INCREMENTAL_BENCHMARK_DATA
 [
