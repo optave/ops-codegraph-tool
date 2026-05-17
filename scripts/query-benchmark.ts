@@ -16,7 +16,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import Database from 'better-sqlite3';
-import { resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
+import { resolveBenchmarkExcludes, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, workerTargets, forkEngines } from './lib/fork-engine.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
@@ -254,7 +254,7 @@ function benchDiffImpact(hubName) {
 
 // Build graph for this engine
 if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
-await buildGraph(root, { engine, incremental: false });
+await buildGraph(root, { engine, incremental: false, exclude: [...resolveBenchmarkExcludes()] });
 
 const targets = workerTargets() || selectTargets();
 console.error(`Targets: hub=${targets.hub}, mid=${targets.mid}, leaf=${targets.leaf}`);
