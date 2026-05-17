@@ -15,6 +15,57 @@ import { pathToFileURL } from 'node:url';
 
 import { getBenchmarkVersion } from '../bench-version.js';
 
+/**
+ * Globs excluded from every benchmark's `buildGraph(root, ...)` invocation.
+ *
+ * Resolution-benchmark fixtures (`tests/benchmarks/resolution/fixtures/**`)
+ * are hand-annotated scaffolding for the static-resolution test suite, not
+ * representative source code. They inflate dogfooding timing measurements
+ * disproportionately whenever a new-language PR lands a heavyweight grammar
+ * (e.g. tree-sitter-verilog added ~850ms to native fullBuildMs in #1107).
+ * Excluding them here keeps build/query/incremental benchmarks measuring
+ * codegraph's own source rather than its test fixtures.
+ *
+ * NOTE: callers should generally prefer `resolveBenchmarkExcludes()` instead
+ * of this constant. The helper returns `[]` in `--npm` mode so the dev-vs-
+ * baseline corpus stays consistent — published versions before this PR
+ * silently dropped `opts.exclude`, which would otherwise leave the baseline
+ * sweeping fixtures while the dev run skipped them.
+ */
+export const BENCHMARK_EXCLUDES: readonly string[] = [
+	'tests/benchmarks/resolution/fixtures/**',
+];
+
+/**
+ * `BENCHMARK_EXCLUDES` in local mode; `[]` in `--npm` mode.
+ *
+ * `--npm` benchmarks load `buildGraph` from a previously-published version
+ * via `srcImport(srcDir, ...)`. Releases before `BuildGraphOpts.exclude`
+ * landed don't recognise the option and silently drop it, so passing the
+ * excludes to a stale baseline would make it sweep ~745 files while the dev
+ * run sweeps ~607 — a corpus-mismatch that disguises measurement-shift as a
+ * perf delta. Emitting `[]` in `--npm` mode keeps the comparison apples-to-
+ * apples; the warning makes the methodology shift explicit.
+ *
+ * Idempotent across calls (the warning is printed on the first invocation
+ * only — `process.stderr.write` is a no-op but the helper is conceptually
+ * "compute once, return constant"); intentionally synchronous because
+ * `parseArgs` is.
+ */
+let warnedAboutNpmExcludeSkip = false;
+export function resolveBenchmarkExcludes(): readonly string[] {
+	const { npm } = parseArgs();
+	if (!npm) return BENCHMARK_EXCLUDES;
+	if (!warnedAboutNpmExcludeSkip) {
+		console.error(
+			'Note: --npm mode skips BENCHMARK_EXCLUDES so the baseline and dev runs sweep the same corpus. ' +
+				'Published versions before #1134 ignore opts.exclude silently; passing it would skew dev timings down by ~138 fewer files.',
+		);
+		warnedAboutNpmExcludeSkip = true;
+	}
+	return [];
+}
+
 // On Windows, `npm` is `npm.cmd` and Node refuses to spawn `.cmd`/`.bat`
 // without `shell: true` (since Node 18.20 / 20.15). When `shell: true`, the
 // Windows `cmd.exe` shell resolves bare `npm` to `npm.cmd` automatically, so

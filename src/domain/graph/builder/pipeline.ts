@@ -15,6 +15,7 @@ import {
   initSchema,
   MIGRATIONS,
   openDb,
+  purgeFilesData,
   releaseAdvisoryLock,
   setBuildMeta,
 } from '../../../db/index.js';
@@ -38,6 +39,7 @@ import {
   formatDropExtensionSummary,
   getActiveEngine,
   getInstalledWasmExtensions,
+  NATIVE_SUPPORTED_EXTENSIONS,
   parseFilesWasmForBackfill,
 } from '../../parser.js';
 import { writeJournalHeader } from '../journal.js';
@@ -183,6 +185,16 @@ function setupPipeline(ctx: PipelineContext): void {
   initSchema(ctx.db);
 
   ctx.config = loadConfig(ctx.rootDir);
+  // Merge caller-supplied excludes on top of the file-config excludes so
+  // programmatic callers (e.g. benchmark scripts) can extend exclusion
+  // without mutating .codegraphrc.json. Native orchestrator picks this up
+  // automatically — it reads exclude off the serialized ctx.config below.
+  if (ctx.opts.exclude?.length) {
+    ctx.config = {
+      ...ctx.config,
+      exclude: [...(ctx.config.exclude ?? []), ...ctx.opts.exclude],
+    };
+  }
   ctx.incremental =
     ctx.opts.incremental !== false && ctx.config.build && ctx.config.build.incremental !== false;
 
@@ -658,6 +670,15 @@ async function tryNativeOrchestrator(
 
   if (result.earlyExit) {
     info('No changes detected');
+    // Even on no-op rebuilds, dropped-language files added since the last
+    // full build are still missing from `nodes`/`file_hashes` (#1083), and
+    // WASM-only files deleted from disk leave stale rows behind (#1073).
+    // The orchestrator's file_collector skipped them, so its earlyExit
+    // doesn't imply DB consistency. Run the gap repair before returning.
+    const gap = detectDroppedLanguageGap(ctx);
+    if (gap.missingAbs.length > 0 || gap.staleRel.length > 0) {
+      await backfillNativeDroppedFiles(ctx, gap);
+    }
     closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
     return 'early-exit';
   }
@@ -753,37 +774,163 @@ async function tryNativeOrchestrator(
   // stale native binaries). WASM handles those — backfill via WASM so both
   // engines process the same file set (#967).
   //
-  // Runs on full builds and on incrementals when the orchestrator reports
-  // any file activity (removals or changes). The orchestrator's
-  // `detect_removed_files` filter (#1070) skips files outside its narrower
-  // file_collector, so on a current binary a no-op rebuild reports
-  // `removedCount=0` and `changedCount=0`, making the backfill call pure
-  // overhead (fs walk + 2 DB queries + 48-file WASM re-parse). Legacy
-  // binaries lacking the filter still report `removedCount>0` and get the
-  // gap-repair behavior #1068 introduced. Triggering on `changedCount>0`
-  // narrows (but does not fully close) the gap where a brand-new
-  // unsupported-extension file is added on an otherwise-quiet incremental
-  // — see #1091 for the residual gap.
+  // Detect the gap once (fs walk + 2 DB queries, ~20–30ms) and use it for
+  // both gating and the backfill itself. On dirty incrementals/full builds
+  // the orchestrator signals trigger backfill, so the walk happens once
+  // (instead of redundantly inside backfill). On quiet incrementals we
+  // still pay the walk so we can detect brand-new files in dropped-language
+  // extensions — a gap that the orchestrator's `detect_removed_files`
+  // filter (#1070) leaves open (#1083, #1091). The pre-check is cheap
+  // because the expensive part (WASM re-parse of the missing set) is
+  // gated below.
   const removedCount = result.removedCount ?? 0;
   const changedCount = result.changedCount ?? 0;
-  if (result.isFullBuild || removedCount > 0 || changedCount > 0) {
-    await backfillNativeDroppedFiles(ctx);
+  const gap = detectDroppedLanguageGap(ctx);
+  if (
+    result.isFullBuild ||
+    removedCount > 0 ||
+    changedCount > 0 ||
+    gap.missingAbs.length > 0 ||
+    gap.staleRel.length > 0
+  ) {
+    await backfillNativeDroppedFiles(ctx, gap);
   }
 
   closeDbPair({ db: ctx.db, nativeDb: ctx.nativeDb });
   return formatNativeTimingResult(p, structurePatchMs, analysisTiming);
 }
 
+/** Files the native orchestrator silently dropped — the working set for backfill. */
+interface DroppedLanguageGap {
+  /** Relative paths (normalized) of files missing from `nodes` or `file_hashes`. */
+  missingRel: string[];
+  /** Absolute paths, aligned by index with `missingRel`. */
+  missingAbs: string[];
+  /**
+   * Relative paths of WASM-only files present in DB but absent from disk (#1073).
+   * Rust's `detect_removed_files` filter (#1070) skips these, so the JS-side
+   * backfill must purge them. Always disjoint from `missingRel`.
+   */
+  staleRel: string[];
+}
+
 /**
- * Backfill files that the native orchestrator silently dropped during parse.
- * Falls back to WASM + inserts file/symbol nodes so engine counts match (#967).
+ * Inputs to {@link computeWasmOnlyStaleFiles}. Sets are passed in so the helper
+ * is pure and unit-testable independently of `getInstalledWasmExtensions` and
+ * the `NATIVE_SUPPORTED_EXTENSIONS` global state.
  */
-async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
-  // Compute the missing-file set FIRST, before any expensive DB handoff.
-  // NativeDbProxy supports .prepare().all(), so the upfront query works
-  // whether ctx.db is a proxy or a real better-sqlite3 connection. On
-  // incremental no-op rebuilds nothing is missing, so we want to early-return
-  // without paying the close-native / reopen-better-sqlite3 cost.
+export interface WasmOnlyStaleFilesInput {
+  /** Distinct `file` values from the `nodes` table. */
+  existingNodes: ReadonlySet<string>;
+  /** Distinct `file` values from the `file_hashes` table. */
+  existingHashes: ReadonlySet<string>;
+  /** Relative paths currently on disk (from `collectFilesUtil`). */
+  expected: ReadonlySet<string>;
+  /** Lowercased extensions whose WASM grammar is installed. */
+  installedExts: ReadonlySet<string>;
+  /** Extensions covered by the Rust addon — Rust owns deletion for these. */
+  nativeSupported: ReadonlySet<string>;
+}
+
+/**
+ * Compute the WASM-only files present in the DB but missing from disk (#1073).
+ *
+ * Returns relative paths that:
+ *   - appear in `existingNodes` or `existingHashes` (in DB),
+ *   - are absent from `expected` (not on disk),
+ *   - have an extension installed for WASM, AND
+ *   - have an extension NOT covered by `nativeSupported` — Rust's
+ *     `purge_changed_files` handles deletion for natively-supported extensions
+ *     via its own `detect_removed_files`, so the caller must not double-purge.
+ *
+ * Extensions are lowercased before lookup to match the registry and Rust's
+ * `LanguageKind::from_extension` (which normalises case for the languages
+ * where both cases are conventional, e.g. R's `.r` / `.R`).
+ *
+ * DB paths are forced to forward slashes before comparison with `expected`
+ * (which is always normalised). The on-disk invariant is that DB rows are
+ * written with forward slashes, but a stale row written by older code on
+ * Windows could carry back-slashes — normalising here makes the comparison
+ * platform-safe and prevents false-positive purges of live rows. We replace
+ * `\\` explicitly (rather than calling `normalizePath`, which only touches
+ * `path.sep`) so the defence works when running on POSIX against a DB that
+ * was migrated from Windows.
+ *
+ * Exported for unit testing.
+ */
+export function computeWasmOnlyStaleFiles(input: WasmOnlyStaleFilesInput): string[] {
+  const { existingNodes, existingHashes, expected, installedExts, nativeSupported } = input;
+  const stale: string[] = [];
+  const seen = new Set<string>();
+  const consider = (rawRel: string): void => {
+    const rel = rawRel.replace(/\\/g, '/');
+    if (expected.has(rel) || seen.has(rel)) return;
+    const ext = path.extname(rel).toLowerCase();
+    if (nativeSupported.has(ext)) return;
+    if (!installedExts.has(ext)) return;
+    seen.add(rel);
+    // Push the ORIGINAL raw path (not the normalised form) so the eventual
+    // `DELETE FROM nodes WHERE file = ?` predicate in `purgeFilesData`
+    // matches the actual stored row. The dedup `seen` set keeps the
+    // normalised form so a file written once with `\` and once with `/`
+    // is still treated as one entry — but the value the SQL sees has to
+    // be byte-identical to what's on disk in the DB.
+    stale.push(rawRel);
+  };
+  for (const rel of existingNodes) consider(rel);
+  for (const rel of existingHashes) consider(rel);
+  return stale;
+}
+
+/**
+ * Group relative paths by their lowercased extension. Shape matches the bucket
+ * type that `formatDropExtensionSummary` consumes, so callers can render a
+ * log-friendly per-extension summary without going through `classifyNativeDrops`
+ * when the reason is already known (e.g. the stale-purge path where every path
+ * is guaranteed `unsupported-by-native`).
+ */
+function groupByExtension(relPaths: Iterable<string>): Map<string, string[]> {
+  const buckets = new Map<string, string[]>();
+  for (const rel of relPaths) {
+    const ext = path.extname(rel).toLowerCase();
+    let list = buckets.get(ext);
+    if (!list) {
+      list = [];
+      buckets.set(ext, list);
+    }
+    list.push(rel);
+  }
+  return buckets;
+}
+
+/**
+ * Detect files the native orchestrator silently dropped.
+ *
+ * Walks the filesystem and compares against `nodes` + `file_hashes`. A file
+ * is "missing" if it's absent from EITHER table — both must be present for
+ * the fast-skip pre-flight (#1054) to work, and the two can diverge (e.g.
+ * legacy DBs where `nodes` was populated but `file_hashes` was not).
+ *
+ * Restricted to files with an installed WASM grammar; extensions in
+ * `LANGUAGE_REGISTRY` without a shipped grammar (e.g. groovy on minimal
+ * installs) can't be parsed by either engine, so they're not a native
+ * regression — excluding them keeps the warn count in
+ * `backfillNativeDroppedFiles` meaningful.
+ *
+ * Also detects WASM-only files deleted from disk (#1073). Rust's
+ * `detect_removed_files` filter (#1070) skips files outside its supported
+ * extensions, so deletions of WASM-only languages don't reach the native
+ * purge path; the rest of the backfill only inserts rows, so without this
+ * step stale `nodes`/`file_hashes` rows would linger across incremental
+ * rebuilds until the next full rebuild.
+ *
+ * Cheap (no DB handoff, no parsing): used both to gate the backfill call
+ * and as its working set. NativeDbProxy supports `.prepare().all()`, so
+ * this works whether `ctx.db` is a proxy or a real better-sqlite3
+ * connection — letting us skip the close-native / reopen-better-sqlite3
+ * cost when there's nothing to backfill.
+ */
+function detectDroppedLanguageGap(ctx: PipelineContext): DroppedLanguageGap {
   const collected = collectFilesUtil(ctx.rootDir, [], ctx.config, new Set<string>());
   const expected = new Set(
     collected.files.map((f) => normalizePath(path.relative(ctx.rootDir, f))),
@@ -794,12 +941,6 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
     .all() as Array<{ file: string }>;
   const existingNodes = new Set(existingNodeRows.map((r) => r.file));
 
-  // Belt-and-suspenders: also check `file_hashes`. The fast-skip pre-flight
-  // (#1054) rejects on `file_hashes` gaps, and the two tables can diverge
-  // (e.g. a DB written by old code where `nodes` was populated but
-  // `file_hashes` was not). Treating "in nodes but not in file_hashes" as
-  // missing closes the gap so the backfill repairs the file_hashes row even
-  // when the node row already exists.
   let existingHashes = new Set<string>();
   try {
     const existingHashRows = ctx.db
@@ -810,27 +951,49 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
     // file_hashes table may not exist on legacy DBs; treat as fully missing
     // so the backfill writes rows on the upsert path below.
     debug(
-      `backfillNativeDroppedFiles: file_hashes read failed (table may not exist): ${toErrorMessage(e)}`,
+      `detectDroppedLanguageGap: file_hashes read failed (table may not exist): ${toErrorMessage(e)}`,
     );
   }
 
-  // Restrict backfill to files with an installed WASM grammar. Extensions in
-  // LANGUAGE_REGISTRY without a shipped grammar file (e.g. groovy, erlang on
-  // minimal installs) can't be parsed by either engine, so they're not a
-  // native regression — excluding them keeps the warn count meaningful.
   const installedExts = getInstalledWasmExtensions();
   const missingRel: string[] = [];
   const missingAbs: string[] = [];
   for (const rel of expected) {
-    // A file is "missing" if it's absent from EITHER nodes OR file_hashes.
-    // Both must be present for fast-skip to work correctly.
     if (existingNodes.has(rel) && existingHashes.has(rel)) continue;
     const ext = path.extname(rel).toLowerCase();
     if (!installedExts.has(ext)) continue;
     missingRel.push(rel);
     missingAbs.push(path.join(ctx.rootDir, rel));
   }
-  if (missingAbs.length === 0) return;
+
+  const staleRel = computeWasmOnlyStaleFiles({
+    existingNodes,
+    existingHashes,
+    expected,
+    installedExts,
+    nativeSupported: NATIVE_SUPPORTED_EXTENSIONS,
+  });
+
+  return { missingRel, missingAbs, staleRel };
+}
+
+/**
+ * Backfill files that the native orchestrator silently dropped during parse.
+ * Falls back to WASM + inserts file/symbol nodes so engine counts match (#967).
+ *
+ * Also purges stale rows for WASM-only files deleted from disk (#1073), which
+ * Rust's `detect_removed_files` filter (#1070) skips.
+ *
+ * Accepts a pre-computed `gap` from `detectDroppedLanguageGap` so the caller
+ * can use the same scan for both gating and the actual backfill — avoiding
+ * a redundant fs walk when the orchestrator's signals already triggered.
+ */
+async function backfillNativeDroppedFiles(
+  ctx: PipelineContext,
+  gap: DroppedLanguageGap,
+): Promise<void> {
+  const { missingRel, missingAbs, staleRel } = gap;
+  if (missingAbs.length === 0 && staleRel.length === 0) return;
 
   // Now that we know there's work to do, hand off to better-sqlite3 (needed
   // for the INSERT path below).
@@ -839,6 +1002,28 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
     ctx.db = openDb(ctx.dbPath);
     ctx.nativeFirstProxy = false;
   }
+
+  const dbConn = ctx.db as unknown as BetterSqlite3Database;
+
+  // Purge WASM-only files that were deleted from disk (#1073). Rust's
+  // detect_removed_files skips them and the insert path below never visits
+  // them, so without this their rows would persist across rebuilds until the
+  // next full rebuild reset the DB.
+  if (staleRel.length > 0) {
+    // `computeWasmOnlyStaleFiles` guarantees every path here has an extension
+    // outside NATIVE_SUPPORTED_EXTENSIONS, so `classifyNativeDrops` would
+    // always bucket 100% into `unsupported-by-native`. Build the extension
+    // summary directly to avoid a redundant classification pass.
+    const staleByExt = groupByExtension(staleRel);
+    info(
+      `Detected ${staleRel.length} deleted WASM-only file(s) the native orchestrator skipped; purging stale rows: ${formatDropExtensionSummary(staleByExt)}`,
+    );
+    purgeFilesData(dbConn, staleRel);
+  }
+
+  if (missingAbs.length === 0) return;
+
+  if (missingAbs.length === 0) return;
 
   // Classify drops so users see per-extension reasons instead of just a count
   // (#1011). `unsupported-by-native` is a legitimate parser limit (no Rust
@@ -888,7 +1073,7 @@ async function backfillNativeDroppedFiles(ctx: PipelineContext): Promise<void> {
       exportKeys.push([exp.name, exp.kind, relPath, exp.line]);
     }
   }
-  const db = ctx.db as unknown as BetterSqlite3Database;
+  const db = dbConn;
   batchInsertNodes(db, rows);
 
   // Mark exported symbols in batches — mirrors insertDefinitionsAndExports.

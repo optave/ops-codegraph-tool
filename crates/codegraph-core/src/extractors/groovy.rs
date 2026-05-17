@@ -23,9 +23,11 @@ use tree_sitter::{Node, Tree};
 /// is only matched as a callee sub-node inside `handle_call_expr` when examining
 /// the `function`/`method` field of a call.
 ///
-/// Note: `juxt_function_call` (Groovy command-style calls like `foo bar(x)`)
-/// is not dispatched here — the JS extractor also omits it. Tracked in #1108
-/// for adding support to both engines.
+/// `juxt_function_call` (Groovy command-style calls like `foo bar(x)` or the
+/// Gradle DSL `task someTask { ... }`) is dispatched through `handle_call_expr`:
+/// the grammar gives the juxt node a `name` field with the same shape as
+/// `method_invocation`, so the existing handler picks up the callee without
+/// special-casing.
 pub struct GroovyExtractor;
 
 impl SymbolExtractor for GroovyExtractor {
@@ -59,9 +61,8 @@ fn match_groovy_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
         "constructor_declaration" | "constructor_definition" => handle_constructor_decl(node, source, symbols),
         "function_definition" | "function_declaration" => handle_function_decl(node, source, symbols),
         "import_declaration" | "import_statement" => handle_import_decl(node, source, symbols),
-        "method_invocation" | "method_call" | "call_expression" | "function_call" => {
-            handle_call_expr(node, source, symbols)
-        }
+        "method_invocation" | "method_call" | "call_expression" | "function_call"
+        | "juxt_function_call" => handle_call_expr(node, source, symbols),
         "object_creation_expression" => handle_object_creation(node, source, symbols),
         _ => {}
     }
@@ -497,6 +498,21 @@ mod tests {
         let names: Vec<&str> = children.iter().map(|c| c.name.as_str()).collect();
         assert!(names.contains(&"RED"));
         assert!(names.contains(&"GREEN"));
+    }
+
+    #[test]
+    fn extracts_command_style_juxt_calls() {
+        // Gradle DSL pattern: `task`, `apply`, and `println` are invoked
+        // command-style without parens. The grammar emits these as
+        // `juxt_function_call` nodes; missing dispatch silently drops them
+        // from the call graph.
+        let s = parse_groovy(
+            "apply plugin: 'java'\ntask someTask {\n  doLast {\n    println \"hello\"\n  }\n}",
+        );
+        let names: Vec<&str> = s.calls.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"apply"), "missing `apply` juxt call: {:?}", names);
+        assert!(names.contains(&"task"), "missing `task` juxt call: {:?}", names);
+        assert!(names.contains(&"println"), "missing `println` juxt call: {:?}", names);
     }
 
     #[test]

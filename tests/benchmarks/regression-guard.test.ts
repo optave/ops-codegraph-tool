@@ -176,28 +176,19 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   absolute delta 10.4ms exactly at the MIN_ABSOLUTE_DELTA floor. Exempt
  *   this release; remove once 3.11.0+ data confirms stabilization.
  *
- * - 3.10.0:Full build — adding native Verilog support (#1107) pulled the
- *   4 `.v` resolution-benchmark fixtures into the corpus the incremental
- *   benchmark sweeps (it runs against the repo root). tree-sitter-verilog
- *   is a large grammar (SystemVerilog is one of the heaviest in the
- *   tree-sitter ecosystem) so each file costs noticeably more than the
- *   other fixture languages. Local measurement: 1959 → 2809 (+43%, run
- *   25716010487). The cost is real and structural — not a regression in
- *   shared code paths. Resolution: either exclude `tests/benchmarks/
- *   resolution/fixtures/verilog/**` from the benchmark sweep or accept the
- *   one-time bump as the cost of supporting Verilog. Tracked separately;
- *   exempt this release.
- *
- * - 3.10.0:Query time — cumulative effect of adding two native extractors
- *   (Solidity #1100 + R #1102) in quick succession. Neither tripped the
- *   threshold individually (Solidity PR's Query time stayed at 49ms, R PR
- *   showed no warning), but the combined +110% (49.6 → ~105ms) on the
- *   `fnDepsData('buildGraph', dbPath)` measurement reflects natural graph
- *   growth: ~1100 LoC of new extractor code + 9 fixture files added to the
- *   self-build benchmark expand `buildGraph`'s transitive callee count and
- *   DB row counts. Tracked in #1113 — exempt this release; remove once
- *   3.11.0+ data captures the new steady-state and the per-language
- *   fixture footprint has been evaluated.
+ * - 3.10.0:Query time — methodology artifact, not a real regression. The
+ *   metric was a single-shot cold call to `fnDepsData('buildGraph', dbPath)`
+ *   with no warmup, no median, and `noTests: false` — so it captured ~65ms
+ *   of NAPI/rusqlite/OS-page-cache init plus the cost of walking through
+ *   fixture files added by new language extractors. Local v3.9.6 vs HEAD
+ *   on the same corpus measured 78.8ms vs 67.5ms single-shot (HEAD faster),
+ *   while the warmed `queries.fnDepsMs` in the same benchmark showed 4.0ms
+ *   vs 2.8ms — confirming no underlying regression. Methodology fixed in
+ *   #1113: queryTimeMs now uses 3 warmup runs + median of 5 with
+ *   `noTests: true`, matching query-benchmark.ts hygiene. Exemption kept
+ *   in place until 3.11.0+ data captures the new steady-state under the
+ *   updated methodology (expected ~36ms native on this corpus); remove
+ *   the entry then.
  *
  * - 3.10.0:fnDeps depth 5 — same cause as Query time above. Merging main
  *   into #1102 added the Erlang extractor (#1103) on top of the existing
@@ -218,6 +209,20 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   (24.3 → 45.6ms) is consistent with the other depths. Tracked in #1113
  *   alongside depth 1, depth 5, and Query time; remove all four once
  *   3.11.0+ data confirms the new steady-state.
+ *
+ * - 3.10.0:DB bytes/file — one-time per-file methodology shift introduced
+ *   by #1134, which excludes `tests/benchmarks/resolution/fixtures/**`
+ *   from the dogfooding `buildGraph` sweep so heavyweight new grammars
+ *   (e.g. Verilog #1107) no longer inflate timing. The 3.10.0 baseline
+ *   was measured with fixtures in the corpus (~745 files); dev now
+ *   measures the codegraph source alone (~607 files). DB content is
+ *   dominated by `src/`, so total bytes stay roughly constant while the
+ *   denominator drops, inflating `dbSizeBytes/file` from 41614 → ~52211
+ *   (+25%, exactly at the threshold). This is the same shape as the old
+ *   `3.10.0:Full build` exemption (now removed because Full build absolute
+ *   timing actually improved) — a measurement-scope artifact, not a real
+ *   regression in the schema or extraction layer. Exempt this release;
+ *   remove once 3.11.0+ data is captured under the post-#1134 methodology.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.9.6:Build ms/file',
@@ -230,8 +235,8 @@ const KNOWN_REGRESSIONS = new Set([
   '3.10.0:fnDeps depth 1',
   '3.10.0:fnDeps depth 3',
   '3.10.0:fnDeps depth 5',
-  '3.10.0:Full build',
   '3.10.0:Query time',
+  '3.10.0:DB bytes/file',
 ]);
 
 /**

@@ -58,4 +58,20 @@ describe('Groovy parser', () => {
       expect.objectContaining({ name: 'Color', kind: 'enum' }),
     );
   });
+
+  it('extracts command-style (juxt) function calls', () => {
+    // Gradle DSL pattern: `task` and `apply` are invoked command-style without
+    // parens. The grammar emits these as `juxt_function_call` nodes; missing
+    // dispatch silently drops them from the call graph.
+    const symbols = parseGroovy(`apply plugin: 'java'
+task someTask {
+    doLast {
+        println "hello"
+    }
+}`);
+    const callNames = symbols.calls.map((c) => c.name);
+    expect(callNames).toContain('apply');
+    expect(callNames).toContain('task');
+    expect(callNames).toContain('println');
+  });
 });
