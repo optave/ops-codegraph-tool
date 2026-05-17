@@ -181,6 +181,15 @@ const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.ts');
 // CI-amplified false regressions on sub-30ms metrics like No-op rebuild.
 const WARMUP_RUNS = 2;
 
+// Resolution-benchmark fixtures live under the repo root and get pulled into
+// every self-build sweep. They are hand-annotated test corpora — not real
+// codegraph code — and a single heavy grammar (e.g. tree-sitter-verilog) can
+// add hundreds of milliseconds to fullBuildMs purely from fixture parsing
+// (#1112). Exclude them so adding native support for a new language doesn't
+// silently inflate the incremental-benchmark numbers.
+const BENCH_EXCLUDE = ['tests/benchmarks/resolution/fixtures/**'];
+const BUILD_OPTS = { engine, exclude: BENCH_EXCLUDE };
+
 function median(arr) {
 	const sorted = [...arr].sort((a, b) => a - b);
 	const mid = Math.floor(sorted.length / 2);
@@ -194,7 +203,7 @@ const fullTimings = [];
 for (let i = 0; i < RUNS; i++) {
 	if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
 	const start = performance.now();
-	await buildGraph(root, { engine, incremental: false });
+	await buildGraph(root, { ...BUILD_OPTS, incremental: false });
 	fullTimings.push(performance.now() - start);
 }
 const fullBuildMs = Math.round(median(fullTimings));
@@ -203,12 +212,12 @@ const fullBuildMs = Math.round(median(fullTimings));
 let noopRebuildMs = null;
 try {
 	for (let i = 0; i < WARMUP_RUNS; i++) {
-		await buildGraph(root, { engine, incremental: true });
+		await buildGraph(root, { ...BUILD_OPTS, incremental: true });
 	}
 	const noopTimings = [];
 	for (let i = 0; i < RUNS; i++) {
 		const start = performance.now();
-		await buildGraph(root, { engine, incremental: true });
+		await buildGraph(root, { ...BUILD_OPTS, incremental: true });
 		noopTimings.push(performance.now() - start);
 	}
 	noopRebuildMs = Math.round(median(noopTimings));
@@ -223,13 +232,13 @@ let oneFilePhases = null;
 try {
 	for (let i = 0; i < WARMUP_RUNS; i++) {
 		fs.writeFileSync(PROBE_FILE, original + `\n// warmup-${i}\n`);
-		await buildGraph(root, { engine, incremental: true });
+		await buildGraph(root, { ...BUILD_OPTS, incremental: true });
 	}
 	const oneFileRuns = [];
 	for (let i = 0; i < RUNS; i++) {
 		fs.writeFileSync(PROBE_FILE, original + `\n// probe-${i}\n`);
 		const start = performance.now();
-		const res = await buildGraph(root, { engine, incremental: true });
+		const res = await buildGraph(root, { ...BUILD_OPTS, incremental: true });
 		oneFileRuns.push({ ms: performance.now() - start, phases: res?.phases || null });
 	}
 	oneFileRuns.sort((a, b) => a.ms - b.ms);
@@ -241,7 +250,7 @@ try {
 } finally {
 	fs.writeFileSync(PROBE_FILE, original);
 	try {
-		await buildGraph(root, { engine, incremental: true });
+		await buildGraph(root, { ...BUILD_OPTS, incremental: true });
 	} catch {
 		// Cleanup rebuild failed — probe file is already restored, move on
 	}
