@@ -178,4 +178,103 @@ describe('config.include / config.exclude (issue #981)', () => {
     // Paths are already relative to each run's own tmpDir so they compare directly.
     expect(nativeFiles).toEqual(wasmFiles);
   });
+
+  // ── opts.exclude (programmatic, no on-disk config) ───────────────
+
+  async function buildWithOptsExclude(
+    root: string,
+    engine: EngineName,
+    optsExclude: string[],
+  ): Promise<string[]> {
+    clearConfigCache();
+    const dbDir = path.join(root, '.codegraph');
+    if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+    await buildGraph(root, { engine, exclude: optsExclude, skipRegistry: true });
+    const files = readFileRows(path.join(dbDir, 'graph.db'));
+    return files.map((f) => f.replace(/\\/g, '/')).sort();
+  }
+
+  it('wasm: opts.exclude rejects matching files without writing config', async () => {
+    const root = fs.mkdtempSync(path.join(tmpDir, 'opts-wasm-'));
+    writeFixture(root);
+    const files = await buildWithOptsExclude(root, 'wasm', ['**/*.test.js', '**/*.spec.js']);
+    expect(files).toContain('src/math.js');
+    expect(files).not.toContain('src/math.test.js');
+    expect(files).not.toContain('src/util.spec.js');
+  });
+
+  itNative('native: opts.exclude rejects matching files without writing config', async () => {
+    const root = fs.mkdtempSync(path.join(tmpDir, 'opts-native-'));
+    writeFixture(root);
+    const files = await buildWithOptsExclude(root, 'native', ['**/*.test.js', '**/*.spec.js']);
+    expect(files).toContain('src/math.js');
+    expect(files).not.toContain('src/math.test.js');
+    expect(files).not.toContain('src/util.spec.js');
+  });
+
+  // ── opts.exclude incremental round trip ──────────────────────────
+  //
+  // Greptile feedback on PR #1134: the opts.exclude tests above always wipe
+  // the DB before building, so they only exercise the fresh-build path. The
+  // scenario where files that were previously indexed become excluded on a
+  // subsequent incremental run (i.e. opts.exclude changes between builds
+  // against the same DB) was untested. This round trip locks in the
+  // collect → detect behaviour: the second build must observe the newly
+  // excluded files as removals and drop them from file_hashes.
+
+  async function buildSameDb(
+    root: string,
+    engine: EngineName,
+    optsExclude: string[] | undefined,
+  ): Promise<string[]> {
+    clearConfigCache();
+    await buildGraph(root, {
+      engine,
+      ...(optsExclude !== undefined ? { exclude: optsExclude } : {}),
+      skipRegistry: true,
+    });
+    const files = readFileRows(path.join(root, '.codegraph', 'graph.db'));
+    return files.map((f) => f.replace(/\\/g, '/')).sort();
+  }
+
+  it('wasm: opts.exclude introduced on second incremental build drops previously-indexed files', async () => {
+    const root = fs.mkdtempSync(path.join(tmpDir, 'opts-inc-wasm-'));
+    writeFixture(root);
+    // Wipe DB so the first build is a clean baseline that indexes everything.
+    const dbDir = path.join(root, '.codegraph');
+    if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+
+    // First build: no exclude — every supported file is indexed.
+    const firstFiles = await buildSameDb(root, 'wasm', undefined);
+    expect(firstFiles).toContain('src/math.test.js');
+    expect(firstFiles).toContain('src/util.spec.js');
+
+    // Second build against the same DB with exclude — previously-indexed
+    // test files must be detected as removals and disappear from file_hashes.
+    const secondFiles = await buildSameDb(root, 'wasm', ['**/*.test.js', '**/*.spec.js']);
+    expect(secondFiles).toContain('src/math.js');
+    expect(secondFiles).toContain('src/util.js');
+    expect(secondFiles).not.toContain('src/math.test.js');
+    expect(secondFiles).not.toContain('src/util.spec.js');
+  });
+
+  itNative(
+    'native: opts.exclude introduced on second incremental build drops previously-indexed files',
+    async () => {
+      const root = fs.mkdtempSync(path.join(tmpDir, 'opts-inc-native-'));
+      writeFixture(root);
+      const dbDir = path.join(root, '.codegraph');
+      if (fs.existsSync(dbDir)) fs.rmSync(dbDir, { recursive: true, force: true });
+
+      const firstFiles = await buildSameDb(root, 'native', undefined);
+      expect(firstFiles).toContain('src/math.test.js');
+      expect(firstFiles).toContain('src/util.spec.js');
+
+      const secondFiles = await buildSameDb(root, 'native', ['**/*.test.js', '**/*.spec.js']);
+      expect(secondFiles).toContain('src/math.js');
+      expect(secondFiles).toContain('src/util.js');
+      expect(secondFiles).not.toContain('src/math.test.js');
+      expect(secondFiles).not.toContain('src/util.spec.js');
+    },
+  );
 });

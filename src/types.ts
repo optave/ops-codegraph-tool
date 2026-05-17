@@ -1063,13 +1063,14 @@ export interface BuildGraphOpts {
   complexity?: boolean;
   cfg?: boolean;
   scope?: string[];
-  skipRegistry?: boolean;
   /**
-   * Extra exclude globs appended to `config.exclude`. Lets benchmark scripts
-   * skip fixture directories that bloat self-build timings without permanently
-   * affecting `.codegraphrc.json` for normal users.
+   * Glob patterns merged on top of `config.exclude` for this build only.
+   * Lets callers extend exclusion programmatically without writing a config
+   * file — used by the benchmark scripts to skip resolution-benchmark
+   * fixtures that aren't representative of real code.
    */
   exclude?: string[];
+  skipRegistry?: boolean;
 }
 
 /** Build timing result from buildGraph. */
