@@ -1023,8 +1023,6 @@ async function backfillNativeDroppedFiles(
 
   if (missingAbs.length === 0) return;
 
-  if (missingAbs.length === 0) return;
-
   // Classify drops so users see per-extension reasons instead of just a count
   // (#1011). `unsupported-by-native` is a legitimate parser limit (no Rust
   // extractor); `native-extractor-failure` indicates a real native bug since
