@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
-import { BENCHMARK_EXCLUDES, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
+import { resolveBenchmarkExcludes, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, forkEngines } from './lib/fork-engine.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
@@ -185,7 +185,10 @@ const WARMUP_RUNS = 2;
 // are excluded from every benchmark `buildGraph` call. See that constant for the
 // full rationale — short version: hand-annotated fixtures aren't representative
 // of real source, and heavyweight grammars (#1107) silently inflate timings.
-const BUILD_OPTS = { engine, exclude: [...BENCHMARK_EXCLUDES] };
+// `resolveBenchmarkExcludes` returns `[]` in `--npm` mode so the baseline (an
+// older published version that ignores `opts.exclude`) and the dev run sweep
+// the same corpus.
+const BUILD_OPTS = { engine, exclude: [...resolveBenchmarkExcludes()] };
 
 function median(arr) {
 	const sorted = [...arr].sort((a, b) => a - b);
