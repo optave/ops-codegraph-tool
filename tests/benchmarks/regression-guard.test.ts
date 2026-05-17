@@ -209,6 +209,20 @@ const SKIP_VERSIONS = new Set(['3.8.0']);
  *   (24.3 → 45.6ms) is consistent with the other depths. Tracked in #1113
  *   alongside depth 1, depth 5, and Query time; remove all four once
  *   3.11.0+ data confirms the new steady-state.
+ *
+ * - 3.10.0:DB bytes/file — one-time per-file methodology shift introduced
+ *   by #1134, which excludes `tests/benchmarks/resolution/fixtures/**`
+ *   from the dogfooding `buildGraph` sweep so heavyweight new grammars
+ *   (e.g. Verilog #1107) no longer inflate timing. The 3.10.0 baseline
+ *   was measured with fixtures in the corpus (~745 files); dev now
+ *   measures the codegraph source alone (~607 files). DB content is
+ *   dominated by `src/`, so total bytes stay roughly constant while the
+ *   denominator drops, inflating `dbSizeBytes/file` from 41614 → ~52211
+ *   (+25%, exactly at the threshold). This is the same shape as the old
+ *   `3.10.0:Full build` exemption (now removed because Full build absolute
+ *   timing actually improved) — a measurement-scope artifact, not a real
+ *   regression in the schema or extraction layer. Exempt this release;
+ *   remove once 3.11.0+ data is captured under the post-#1134 methodology.
  */
 const KNOWN_REGRESSIONS = new Set([
   '3.9.6:Build ms/file',
@@ -222,6 +236,7 @@ const KNOWN_REGRESSIONS = new Set([
   '3.10.0:fnDeps depth 3',
   '3.10.0:fnDeps depth 5',
   '3.10.0:Query time',
+  '3.10.0:DB bytes/file',
 ]);
 
 /**

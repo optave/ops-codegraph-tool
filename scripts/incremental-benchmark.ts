@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
-import { resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
+import { resolveBenchmarkExcludes, resolveBenchmarkSource, srcImport } from './lib/bench-config.js';
 import { isWorker, workerEngine, forkEngines } from './lib/fork-engine.js';
 
 // ── Parent process: fork one child per engine, assemble final output ─────
@@ -181,14 +181,14 @@ const PROBE_FILE = path.join(root, 'src', 'domain', 'queries.ts');
 // CI-amplified false regressions on sub-30ms metrics like No-op rebuild.
 const WARMUP_RUNS = 2;
 
-// Resolution-benchmark fixtures live under the repo root and get pulled into
-// every self-build sweep. They are hand-annotated test corpora — not real
-// codegraph code — and a single heavy grammar (e.g. tree-sitter-verilog) can
-// add hundreds of milliseconds to fullBuildMs purely from fixture parsing
-// (#1112). Exclude them so adding native support for a new language doesn't
-// silently inflate the incremental-benchmark numbers.
-const BENCH_EXCLUDE = ['tests/benchmarks/resolution/fixtures/**'];
-const BUILD_OPTS = { engine, exclude: BENCH_EXCLUDE };
+// Resolution-benchmark fixtures (`BENCHMARK_EXCLUDES` in scripts/lib/bench-config.ts)
+// are excluded from every benchmark `buildGraph` call. See that constant for the
+// full rationale — short version: hand-annotated fixtures aren't representative
+// of real source, and heavyweight grammars (#1107) silently inflate timings.
+// `resolveBenchmarkExcludes` returns `[]` in `--npm` mode so the baseline (an
+// older published version that ignores `opts.exclude`) and the dev run sweep
+// the same corpus.
+const BUILD_OPTS = { engine, exclude: [...resolveBenchmarkExcludes()] };
 
 function median(arr) {
 	const sorted = [...arr].sort((a, b) => a - b);
