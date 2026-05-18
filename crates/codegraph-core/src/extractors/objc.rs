@@ -493,13 +493,14 @@ fn collect_class_members(class_node: &Node, source: &[u8]) -> Vec<Definition> {
 fn extract_property_name(prop_node: &Node, source: &[u8]) -> Option<String> {
     let struct_decl = find_child(prop_node, "struct_declaration")?;
     for i in 0..struct_decl.child_count() {
-        let child = struct_decl.child(i)?;
-        if child.kind() == "struct_declarator" {
-            // struct_declarator > pointer_declarator > identifier
-            // or struct_declarator > identifier (no pointer)
-            let name = unwrap_property_declarator(&child, source);
-            if !name.is_empty() {
-                return Some(name);
+        if let Some(child) = struct_decl.child(i) {
+            if child.kind() == "struct_declarator" {
+                // struct_declarator > pointer_declarator > identifier
+                // or struct_declarator > identifier (no pointer)
+                let name = unwrap_property_declarator(&child, source);
+                if !name.is_empty() {
+                    return Some(name);
+                }
             }
         }
     }
