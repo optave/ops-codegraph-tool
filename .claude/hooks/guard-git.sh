@@ -117,8 +117,14 @@ detect_work_dir() {
   # `git -C` is the explicit git-level override and wins over any ambient cd prefix,
   # so check it first (e.g. `cd /tmp && git -C /worktree push` targets /worktree).
   # Greedy `.*-C` anchors on the LAST `-C` in the chosen segment.
+  # Split into two sed invocations (quoted form, then unquoted) — BSD sed (macOS)
+  # parses `;t;` as a `t` branch to a label named `;s/...`, not as "branch on
+  # substitution made; end statement", so the GNU one-liner errors on macOS.
   if echo "$search_str" | grep -qE 'git\s+([^&|;]*\s)?-C\s+'; then
-    work_dir=$(echo "$search_str" | sed -nE 's/.*-C[[:space:]]+"([^"]+)".*/\1/p;t;s/.*-C[[:space:]]+([^[:space:]]+).*/\1/p')
+    work_dir=$(echo "$search_str" | sed -nE 's/.*-C[[:space:]]+"([^"]+)".*/\1/p')
+    if [ -z "$work_dir" ]; then
+      work_dir=$(echo "$search_str" | sed -nE 's/.*-C[[:space:]]+([^[:space:]]+).*/\1/p')
+    fi
   fi
   if [ -z "$work_dir" ] && echo "$COMMAND" | grep -qE '^\s*cd\s+'; then
     work_dir=$(echo "$COMMAND" | sed -nE 's/^\s*cd\s+"?([^"&]+)"?\s*&&.*/\1/p')
