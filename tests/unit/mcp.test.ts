@@ -161,6 +161,7 @@ describe('TOOLS', () => {
     expect(ss.inputSchema.required).toContain('query');
     expect(ss.inputSchema.properties).toHaveProperty('limit');
     expect(ss.inputSchema.properties).toHaveProperty('min_score');
+    expect(ss.inputSchema.properties).toHaveProperty('file_pattern');
   });
 
   it('export_graph requires format parameter with enum', () => {
@@ -1232,5 +1233,76 @@ describe('startMCPServer handler dispatch', () => {
       noTests: true,
       kind: 'function',
     });
+  });
+
+  it('dispatches semantic_search and forwards file_pattern as filePattern', async () => {
+    const handlers = {};
+
+    vi.doMock('@modelcontextprotocol/sdk/server/index.js', () => ({
+      Server: class MockServer {
+        setRequestHandler(name, handler) {
+          handlers[name] = handler;
+        }
+        async connect() {}
+      },
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/server/stdio.js', () => ({
+      StdioServerTransport: class MockTransport {},
+    }));
+    vi.doMock('@modelcontextprotocol/sdk/types.js', () => ({
+      ListToolsRequestSchema: 'tools/list',
+      CallToolRequestSchema: 'tools/call',
+    }));
+
+    const hybridSearchMock = vi.fn(async () => ({ results: [] }));
+    const ftsSearchMock = vi.fn(() => ({ results: [] }));
+    const searchDataMock = vi.fn(async () => ({ results: [] }));
+    vi.doMock('../../src/domain/search/index.js', () => ({
+      hybridSearchData: hybridSearchMock,
+      ftsSearchData: ftsSearchMock,
+      searchData: searchDataMock,
+    }));
+
+    const { startMCPServer } = await import('../../src/mcp/index.js');
+    await startMCPServer('/tmp/test.db');
+
+    // hybrid (default): forwards filePattern as array
+    await handlers['tools/call']({
+      params: {
+        name: 'semantic_search',
+        arguments: { query: 'GUC variable', file_pattern: ['db/'], limit: 5 },
+      },
+    });
+    expect(hybridSearchMock).toHaveBeenCalledWith(
+      'GUC variable',
+      '/tmp/test.db',
+      expect.objectContaining({ filePattern: ['db/'], limit: 5 }),
+    );
+
+    // semantic mode: forwards filePattern as string
+    await handlers['tools/call']({
+      params: {
+        name: 'semantic_search',
+        arguments: { query: 'q', mode: 'semantic', file_pattern: 'src/mcp/' },
+      },
+    });
+    expect(searchDataMock).toHaveBeenCalledWith(
+      'q',
+      '/tmp/test.db',
+      expect.objectContaining({ filePattern: 'src/mcp/' }),
+    );
+
+    // keyword mode: forwards filePattern
+    await handlers['tools/call']({
+      params: {
+        name: 'semantic_search',
+        arguments: { query: 'q', mode: 'keyword', file_pattern: ['tests/'] },
+      },
+    });
+    expect(ftsSearchMock).toHaveBeenCalledWith(
+      'q',
+      '/tmp/test.db',
+      expect.objectContaining({ filePattern: ['tests/'] }),
+    );
   });
 });

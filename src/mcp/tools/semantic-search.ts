@@ -9,6 +9,7 @@ interface SemanticSearchArgs {
   limit?: number;
   offset?: number;
   min_score?: number;
+  file_pattern?: string | string[];
 }
 
 export async function handler(args: SemanticSearchArgs, ctx: McpToolContext): Promise<unknown> {
@@ -17,6 +18,7 @@ export async function handler(args: SemanticSearchArgs, ctx: McpToolContext): Pr
     limit: Math.min(args.limit ?? MCP_DEFAULTS.semantic_search ?? 100, ctx.MCP_MAX_LIMIT),
     offset: effectiveOffset(args),
     minScore: args.min_score,
+    filePattern: args.file_pattern,
   };
 
   if (mode === 'keyword') {

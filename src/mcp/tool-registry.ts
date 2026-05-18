@@ -322,6 +322,11 @@ const BASE_TOOLS: ToolSchema[] = [
           description:
             'Search mode: hybrid (BM25 + semantic, default), semantic (embeddings only), keyword (BM25 only)',
         },
+        file_pattern: {
+          oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+          description:
+            'Restrict results to files matching one or more substring patterns (e.g. "db/" or ["db/", "src/"])',
+        },
         ...PAGINATION_PROPS,
       },
       required: ['query'],
