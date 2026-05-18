@@ -50,6 +50,20 @@ describe('Groovy parser', () => {
     );
   });
 
+  it('extracts interface inheritance (extends_interfaces)', () => {
+    // `interface X extends Y, Z` — the grammar exposes parent interfaces via
+    // an unnamed `extends_interfaces` child (not a field), distinct from class
+    // declarations which use the `interfaces` field.
+    const symbols = parseGroovy(`interface Serializable extends Comparable, Cloneable {}`);
+    const rels = symbols.classes.filter((c) => c.name === 'Serializable');
+    expect(rels).toContainEqual(
+      expect.objectContaining({ name: 'Serializable', implements: 'Comparable' }),
+    );
+    expect(rels).toContainEqual(
+      expect.objectContaining({ name: 'Serializable', implements: 'Cloneable' }),
+    );
+  });
+
   it('extracts enum declarations', () => {
     const symbols = parseGroovy(`enum Color {
     RED, GREEN, BLUE
