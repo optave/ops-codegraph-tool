@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyNativeDrops,
   formatDropExtensionSummary,
+  LANGUAGE_REGISTRY,
   NATIVE_SUPPORTED_EXTENSIONS,
 } from '../../src/domain/parser.js';
 
@@ -200,6 +201,83 @@ describe('NATIVE_SUPPORTED_EXTENSIONS drift guard', () => {
     expect(
       onlyInJs,
       `Extensions in NATIVE_SUPPORTED_EXTENSIONS but missing from parser_registry.rs: ${onlyInJs.join(', ')}`,
+    ).toEqual([]);
+  });
+});
+
+/**
+ * Parity gate for `LANGUAGE_REGISTRY` ↔ `NATIVE_SUPPORTED_EXTENSIONS`.
+ *
+ * Acceptance criterion from #1071 (tracked in #1121): a CI gate prevents
+ * future drift between the JS `LANGUAGE_REGISTRY` and the Rust extractor
+ * coverage. The existing drift guard above covers
+ * `NATIVE_SUPPORTED_EXTENSIONS ↔ parser_registry.rs`, but the link from
+ * `LANGUAGE_REGISTRY` (the source of truth for languages we support at all)
+ * to `NATIVE_SUPPORTED_EXTENSIONS` (the hand-maintained mirror of the Rust
+ * enum) had no test — silently adding a WASM-only language would degrade the
+ * native engine without flagging the regression.
+ *
+ * This test closes that gap. Every extension declared in `LANGUAGE_REGISTRY`
+ * must either:
+ *   1. Be present in `NATIVE_SUPPORTED_EXTENSIONS` (i.e. a Rust extractor
+ *      exists), or
+ *   2. Appear in `WASM_ONLY_ALLOWLIST` below, with a comment explaining why
+ *      the language is intentionally WASM-only.
+ *
+ * Adding an extension to the allowlist is a deliberate choice: prefer porting
+ * the extractor to Rust. The allowlist exists so a contributor can land a
+ * WASM-only grammar (e.g. while a Rust port is in flight) without bypassing
+ * the gate entirely, but every entry should have a tracking issue.
+ */
+describe('LANGUAGE_REGISTRY ↔ NATIVE_SUPPORTED_EXTENSIONS parity', () => {
+  // Extensions intentionally left WASM-only. Currently empty: every language
+  // in `LANGUAGE_REGISTRY` has a corresponding Rust extractor. If you must
+  // add an entry, include a comment with the language id and the issue
+  // tracking the Rust port.
+  const WASM_ONLY_ALLOWLIST: ReadonlySet<string> = new Set<string>();
+
+  it('every LANGUAGE_REGISTRY extension has a Rust extractor or is on the allowlist', () => {
+    const registryExts = new Set<string>();
+    for (const entry of LANGUAGE_REGISTRY) {
+      for (const ext of entry.extensions) {
+        registryExts.add(ext.toLowerCase());
+      }
+    }
+    const missingFromNative = [...registryExts]
+      .filter((ext) => !NATIVE_SUPPORTED_EXTENSIONS.has(ext))
+      .filter((ext) => !WASM_ONLY_ALLOWLIST.has(ext))
+      .sort();
+    expect(
+      missingFromNative,
+      `LANGUAGE_REGISTRY extensions without a Rust extractor (and not on WASM_ONLY_ALLOWLIST): ${missingFromNative.join(
+        ', ',
+      )}. Either port the extractor to Rust and add the extension to NATIVE_SUPPORTED_EXTENSIONS, or add it to WASM_ONLY_ALLOWLIST with a justification.`,
+    ).toEqual([]);
+  });
+
+  it('WASM_ONLY_ALLOWLIST does not list extensions that already have a Rust extractor', () => {
+    // Catches stale allowlist entries: once a language is ported to Rust the
+    // allowlist line should be deleted, not left behind as dead config.
+    const stale = [...WASM_ONLY_ALLOWLIST].filter((ext) => NATIVE_SUPPORTED_EXTENSIONS.has(ext));
+    expect(
+      stale,
+      `WASM_ONLY_ALLOWLIST entries that already have a Rust extractor — remove them: ${stale.join(', ')}`,
+    ).toEqual([]);
+  });
+
+  it('WASM_ONLY_ALLOWLIST only references extensions that LANGUAGE_REGISTRY declares', () => {
+    // Catches typos and dead entries: an allowlist line for an extension no
+    // longer in the registry is silently useless.
+    const registryExts = new Set<string>();
+    for (const entry of LANGUAGE_REGISTRY) {
+      for (const ext of entry.extensions) {
+        registryExts.add(ext.toLowerCase());
+      }
+    }
+    const orphans = [...WASM_ONLY_ALLOWLIST].filter((ext) => !registryExts.has(ext));
+    expect(
+      orphans,
+      `WASM_ONLY_ALLOWLIST entries not declared in LANGUAGE_REGISTRY — likely a typo: ${orphans.join(', ')}`,
     ).toEqual([]);
   });
 });
