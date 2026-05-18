@@ -258,7 +258,9 @@ describe('LANGUAGE_REGISTRY ↔ NATIVE_SUPPORTED_EXTENSIONS parity', () => {
   it('WASM_ONLY_ALLOWLIST does not list extensions that already have a Rust extractor', () => {
     // Catches stale allowlist entries: once a language is ported to Rust the
     // allowlist line should be deleted, not left behind as dead config.
-    const stale = [...WASM_ONLY_ALLOWLIST].filter((ext) => NATIVE_SUPPORTED_EXTENSIONS.has(ext));
+    const stale = [...WASM_ONLY_ALLOWLIST]
+      .map((ext) => ext.toLowerCase())
+      .filter((ext) => NATIVE_SUPPORTED_EXTENSIONS.has(ext));
     expect(
       stale,
       `WASM_ONLY_ALLOWLIST entries that already have a Rust extractor — remove them: ${stale.join(', ')}`,
@@ -274,7 +276,9 @@ describe('LANGUAGE_REGISTRY ↔ NATIVE_SUPPORTED_EXTENSIONS parity', () => {
         registryExts.add(ext.toLowerCase());
       }
     }
-    const orphans = [...WASM_ONLY_ALLOWLIST].filter((ext) => !registryExts.has(ext));
+    const orphans = [...WASM_ONLY_ALLOWLIST]
+      .map((ext) => ext.toLowerCase())
+      .filter((ext) => !registryExts.has(ext));
     expect(
       orphans,
       `WASM_ONLY_ALLOWLIST entries not declared in LANGUAGE_REGISTRY — likely a typo: ${orphans.join(', ')}`,
