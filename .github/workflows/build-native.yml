@@ -67,6 +67,18 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Verify cargo resolves to rustup proxy (macos-14 shim workaround)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # macos-14 ARM runners intermittently expose a stale `cargo` on
+          # PATH that resolves to `rustup-init`, breaking `cargo metadata`
+          # invocations from napi-rs (#1136). Force the rustup proxy bin
+          # dir to the front of PATH and fail fast if cargo is unhealthy.
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/cargo" --version
+          "$HOME/.cargo/bin/rustc" --version
+
       - name: Rust cache
         uses: Swatinem/rust-cache@v2
         with:
