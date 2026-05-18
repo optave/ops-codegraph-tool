@@ -325,7 +325,7 @@ const BASE_TOOLS: ToolSchema[] = [
         file_pattern: {
           oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
           description:
-            'Restrict results to files matching one or more substring patterns (e.g. "db/" or ["db/", "src/"])',
+            'Restrict results to files matching one or more glob or substring patterns (e.g. "db/", "src/**/*.ts", or ["db/", "src/"])',
         },
         ...PAGINATION_PROPS,
       },
