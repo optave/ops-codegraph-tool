@@ -33,8 +33,8 @@ fi
 # the opening `"` of a quoted path (which would leave a trailing `path"` in
 # NCOMMAND). The pattern re-anchors on `git`, so multi-`-C` chains (e.g.
 # `git -C /a -C /b push`) need a second pass to collapse the residual `-C`.
-NCOMMAND=$(echo "$COMMAND" | sed -E 's/(^|\s|&&\s*)git[[:space:]]+-C[[:space:]]+"[^"]+"/\1git/g; s/(^|\s|&&\s*)git[[:space:]]+-C[[:space:]]+[^"[:space:]][^[:space:]]*/\1git/g')
-NCOMMAND=$(echo "$NCOMMAND" | sed -E 's/(^|\s|&&\s*)git[[:space:]]+-C[[:space:]]+"[^"]+"/\1git/g; s/(^|\s|&&\s*)git[[:space:]]+-C[[:space:]]+[^"[:space:]][^[:space:]]*/\1git/g')
+NCOMMAND=$(echo "$COMMAND" | sed -E 's/(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+-C[[:space:]]+"[^"]+"/\1git/g; s/(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+-C[[:space:]]+[^"[:space:]][^[:space:]]*/\1git/g')
+NCOMMAND=$(echo "$NCOMMAND" | sed -E 's/(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+-C[[:space:]]+"[^"]+"/\1git/g; s/(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+-C[[:space:]]+[^"[:space:]][^[:space:]]*/\1git/g')
 
 deny() {
   local reason="$1"
@@ -117,11 +117,16 @@ detect_work_dir() {
   # `git -C` is the explicit git-level override and wins over any ambient cd prefix,
   # so check it first (e.g. `cd /tmp && git -C /worktree push` targets /worktree).
   # Greedy `.*-C` anchors on the LAST `-C` in the chosen segment.
-  if echo "$search_str" | grep -qE 'git\s+([^&|;]*\s)?-C\s+'; then
-    work_dir=$(echo "$search_str" | sed -nE 's/.*-C[[:space:]]+"([^"]+)".*/\1/p;t;s/.*-C[[:space:]]+([^[:space:]]+).*/\1/p')
+  # Two separate sed invocations (quoted path first, then unquoted fallback) instead
+  # of a single `;t;s` chain — BSD sed parses chained s/// after `t` as a label.
+  if echo "$search_str" | grep -qE 'git[[:space:]]+([^&|;]*[[:space:]])?-C[[:space:]]+'; then
+    work_dir=$(echo "$search_str" | sed -nE 's/.*-C[[:space:]]+"([^"]+)".*/\1/p')
+    if [ -z "$work_dir" ]; then
+      work_dir=$(echo "$search_str" | sed -nE 's/.*-C[[:space:]]+([^[:space:]]+).*/\1/p')
+    fi
   fi
-  if [ -z "$work_dir" ] && echo "$COMMAND" | grep -qE '^\s*cd\s+'; then
-    work_dir=$(echo "$COMMAND" | sed -nE 's/^\s*cd\s+"?([^"&]+)"?\s*&&.*/\1/p')
+  if [ -z "$work_dir" ] && echo "$COMMAND" | grep -qE '^[[:space:]]*cd[[:space:]]+'; then
+    work_dir=$(echo "$COMMAND" | sed -nE 's/^[[:space:]]*cd[[:space:]]+"?([^"&]+)"?[[:space:]]*&&.*/\1/p')
   fi
   # Trim trailing whitespace
   work_dir="${work_dir%"${work_dir##*[![:space:]]}"}"
