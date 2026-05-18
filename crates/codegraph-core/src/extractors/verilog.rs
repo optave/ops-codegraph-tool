@@ -148,9 +148,10 @@ fn find_class_name(node: &Node, source: &[u8]) -> Option<String> {
         return Some(text.to_string());
     }
     for i in 0..node.child_count() {
-        let child = node.child(i)?;
-        if child.kind() == "class_identifier" {
-            return Some(extract_identifier_text(&child, source));
+        if let Some(child) = node.child(i) {
+            if child.kind() == "class_identifier" {
+                return Some(extract_identifier_text(&child, source));
+            }
         }
     }
     None
@@ -161,12 +162,13 @@ fn find_class_name(node: &Node, source: &[u8]) -> Option<String> {
 /// `class_identifier > simple_identifier`.
 fn find_class_superclass(node: &Node, source: &[u8]) -> Option<String> {
     for i in 0..node.child_count() {
-        let child = node.child(i)?;
-        if child.kind() == "class_type" {
-            if let Some(id) = find_child(&child, "class_identifier") {
-                return Some(extract_identifier_text(&id, source));
+        if let Some(child) = node.child(i) {
+            if child.kind() == "class_type" {
+                if let Some(id) = find_child(&child, "class_identifier") {
+                    return Some(extract_identifier_text(&id, source));
+                }
+                return Some(node_text(&child, source).trim().to_string());
             }
-            return Some(node_text(&child, source).trim().to_string());
         }
     }
     None
