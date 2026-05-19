@@ -55,6 +55,14 @@ interface DynamicEdge {
 	target_file: string;
 }
 
+interface TracerArtifact {
+	// `skipped` means the tracer's toolchain was unavailable (no edges captured,
+	// not a recall failure). `ok` means the tracer ran — the edges array may
+	// still be empty if the language's tracer legitimately produced no calls.
+	status: 'ok' | 'skipped';
+	edges: DynamicEdge[];
+}
+
 interface LangResult {
 	precision: number;
 	recall: number;
@@ -68,6 +76,10 @@ interface LangResult {
 	// instead of rebuilding fixtures from scratch (see issue #1052).
 	falsePositiveEdges: string[];
 	falseNegativeEdges: string[];
+	// Raw tracer output so tests/benchmarks/resolution/tracer/tracer-validation.test.ts
+	// can reuse it instead of re-running the per-language tracer subprocess
+	// (see issue #1166).
+	tracer: TracerArtifact;
 	dynamicEdges?: number;
 	dynamicConfirmed?: number;
 }
@@ -99,7 +111,10 @@ function edgeKey(sourceName: string, sourceFile: string, targetName: string, tar
 	return `${sourceName}@${normalizeFile(sourceFile)} -> ${targetName}@${normalizeFile(targetFile)}`;
 }
 
-function computeMetrics(resolvedEdges: ResolvedEdge[], expectedEdges: ExpectedEdge[]): LangResult {
+function computeMetrics(
+	resolvedEdges: ResolvedEdge[],
+	expectedEdges: ExpectedEdge[],
+): Omit<LangResult, 'tracer' | 'dynamicEdges' | 'dynamicConfirmed'> {
 	const resolvedSet = new Set(
 		resolvedEdges.map((e) => edgeKey(e.source_name, e.source_file, e.target_name, e.target_file)),
 	);
@@ -162,10 +177,15 @@ const TRACER_SCRIPT = path.join(root, 'tests', 'benchmarks', 'resolution', 'trac
 
 /**
  * Attempt to run the dynamic call tracer for a language fixture.
- * Returns captured edges on success, empty array on failure or unavailability.
+ *
+ * Returns `{ status: 'ok', edges }` on a successful run (edges may be empty if
+ * the tracer produced no calls) and `{ status: 'skipped', edges: [] }` when
+ * the tracer subprocess failed or its toolchain wasn't available. The status
+ * distinction lets tests reusing this artifact (see issue #1166) preserve the
+ * tracer-validation suite's skip-on-toolchain-missing behavior.
  */
-function runDynamicTracer(lang: string): DynamicEdge[] {
-	if (!fs.existsSync(TRACER_SCRIPT)) return [];
+function runDynamicTracer(lang: string): TracerArtifact {
+	if (!fs.existsSync(TRACER_SCRIPT)) return { status: 'skipped', edges: [] };
 
 	const fixtureDir = path.join(FIXTURES_DIR, lang);
 	try {
@@ -176,12 +196,17 @@ function runDynamicTracer(lang: string): DynamicEdge[] {
 			stdio: ['pipe', 'pipe', 'pipe'],
 		});
 		const parsed = JSON.parse(result);
-		if (parsed.error) {
+		const edges: DynamicEdge[] = Array.isArray(parsed.edges) ? parsed.edges : [];
+		// Mirror tracer-validation.test.ts: when run-tracer.mjs reports an error
+		// and produced no edges, treat the run as a toolchain-missing skip
+		// rather than a recall failure.
+		if (parsed.error && edges.length === 0) {
 			console.error(`    Dynamic tracer for ${lang}: ${parsed.error}`);
+			return { status: 'skipped', edges: [] };
 		}
-		return Array.isArray(parsed.edges) ? parsed.edges : [];
+		return { status: 'ok', edges };
 	} catch {
-		return [];
+		return { status: 'skipped', edges: [] };
 	}
 }
 
@@ -285,20 +310,23 @@ try {
 			const expectedEdges: ExpectedEdge[] = manifest.edges;
 
 			// Run dynamic tracer if available
-			const dynamicEdges = runDynamicTracer(lang);
-			const { dynamicConfirmed } = mergeWithDynamic(expectedEdges, dynamicEdges);
+			const tracer = runDynamicTracer(lang);
+			const { dynamicConfirmed } = mergeWithDynamic(expectedEdges, tracer.edges);
 
 			// Use only expected edges for metrics (dynamic edges are supplemental)
-			const metrics = computeMetrics(resolvedEdges, expectedEdges);
-			if (dynamicEdges.length > 0) {
-				metrics.dynamicEdges = dynamicEdges.length;
+			const metrics: LangResult = {
+				...computeMetrics(resolvedEdges, expectedEdges),
+				tracer,
+			};
+			if (tracer.edges.length > 0) {
+				metrics.dynamicEdges = tracer.edges.length;
 				metrics.dynamicConfirmed = dynamicConfirmed;
 			}
 			results[lang] = metrics;
 
 			const dynamicInfo =
-				dynamicEdges.length > 0
-					? ` dynamic=${dynamicEdges.length} confirmed=${dynamicConfirmed}`
+				tracer.edges.length > 0
+					? ` dynamic=${tracer.edges.length} confirmed=${dynamicConfirmed}`
 					: '';
 			console.error(
 				`    ${lang}: precision=${(metrics.precision * 100).toFixed(1)}% recall=${(metrics.recall * 100).toFixed(1)}%${dynamicInfo}`,
