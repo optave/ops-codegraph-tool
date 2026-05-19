@@ -64,6 +64,20 @@ describe('Groovy parser', () => {
     );
   });
 
+  it('reports line of extends_interfaces clause for multi-line declarations', () => {
+    // Engine-parity guard: the line should match the `extends_interfaces`
+    // node's start line, not the `interface_declaration`'s start line, so the
+    // WASM extractor stays consistent with the Rust `collect_interfaces`
+    // helper which re-evaluates the current node's `start_line` at each
+    // recursion level.
+    const symbols = parseGroovy(`interface Serializable\n  extends Comparable, Cloneable {}`);
+    const rels = symbols.classes.filter((c) => c.name === 'Serializable');
+    expect(rels.length).toBeGreaterThan(0);
+    for (const rel of rels) {
+      expect(rel.line).toBe(2);
+    }
+  });
+
   it('extracts enum declarations', () => {
     const symbols = parseGroovy(`enum Color {
     RED, GREEN, BLUE

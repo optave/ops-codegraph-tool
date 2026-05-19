@@ -555,4 +555,18 @@ mod tests {
             rels
         );
     }
+
+    #[test]
+    fn interface_inheritance_line_tracks_extends_clause() {
+        // Engine-parity guard: the relation line should match the
+        // `extends_interfaces` node's start line, not the `interface_declaration`'s
+        // — `collect_interfaces` re-evaluates `start_line(interfaces)` on every
+        // recursive call, and the WASM extractor must match.
+        let s = parse_groovy("interface Serializable\n  extends Comparable, Cloneable {}");
+        let rels: Vec<_> = s.classes.iter().filter(|c| c.name == "Serializable").collect();
+        assert!(!rels.is_empty(), "expected at least one ClassRelation");
+        for rel in &rels {
+            assert_eq!(rel.line, 2, "line should track the extends clause, got: {:?}", rel);
+        }
+    }
 }

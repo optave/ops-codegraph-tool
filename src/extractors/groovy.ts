@@ -157,7 +157,7 @@ function handleGroovyInterfaceDecl(node: TreeSitterNode, ctx: ExtractorOutput): 
   for (let i = 0; i < node.childCount; i++) {
     const child = node.child(i);
     if (child && child.type === 'extends_interfaces') {
-      collectGroovyParentInterfaces(child, ifaceName, node.startPosition.row + 1, ctx);
+      collectGroovyParentInterfaces(child, ifaceName, ctx);
       break;
     }
   }
@@ -166,9 +166,12 @@ function handleGroovyInterfaceDecl(node: TreeSitterNode, ctx: ExtractorOutput): 
 function collectGroovyParentInterfaces(
   parent: TreeSitterNode,
   name: string,
-  line: number,
   ctx: ExtractorOutput,
 ): void {
+  // Use the current node's start line at each recursion level — matches the
+  // Rust `collect_interfaces` helper, which re-evaluates `start_line(interfaces)`
+  // for whatever node (`extends_interfaces` → `type_list`) is being processed.
+  const line = parent.startPosition.row + 1;
   for (let i = 0; i < parent.childCount; i++) {
     const child = parent.child(i);
     if (!child) continue;
@@ -185,7 +188,7 @@ function collectGroovyParentInterfaces(
         break;
       }
       case 'type_list':
-        collectGroovyParentInterfaces(child, name, line, ctx);
+        collectGroovyParentInterfaces(child, name, ctx);
         break;
     }
   }
