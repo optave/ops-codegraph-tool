@@ -10,6 +10,13 @@ import { findChild, nodeEndLine } from './helpers.js';
 /**
  * Extract symbols from F# files.
  *
+ * Grammar source: `tree-sitter-fsharp` v0.3.0 installed via a pinned GitHub
+ * tarball in `package.json` because the ionide/tree-sitter-fsharp project has
+ * no v0.3.0 release published to the npm registry. The cargo crate the native
+ * engine uses is also v0.3.0; both engines must stay aligned. Upgrading
+ * requires a manual edit of the tarball URL in `package.json` and
+ * `package-lock.json` — `npm update` will not bump this entry.
+ *
  * tree-sitter-fsharp grammar notes:
  * - named_module: top-level module declaration
  * - function_declaration_left: LHS of `let name params = ...`
@@ -310,31 +317,17 @@ function handleValueDefinition(
     findChild(pattern, 'identifier');
   if (!ident) return;
 
-  // The two grammar versions use different shapes for type signatures:
-  //   • WASM (npm tree-sitter-fsharp 0.1.0): `function_type` is the explicit
-  //     function-type kind, only present for `a -> b` types.
-  //   • Native (cargo tree-sitter-fsharp 0.3.0): every type signature is
-  //     wrapped in `curried_spec`. For a function it contains `arguments_spec`
-  //     children; for a plain value (e.g. `val pi : float`) it wraps a single
-  //     `simple_type`.
-  // Treat both engines consistently by classifying as a function whenever
-  // function_type appears OR a curried_spec contains an arguments_spec child.
+  // The grammar wraps every type signature in `curried_spec`. A function type
+  // (e.g. `val add : int -> int -> int`) contains one or more `arguments_spec`
+  // children; a plain value (e.g. `val pi : float`) wraps a single `simple_type`.
+  const curriedSpec = findChild(node, 'curried_spec');
   let hasFunctionType = false;
-  for (let i = 0; i < node.childCount; i++) {
-    const c = node.child(i);
-    if (!c) continue;
-    if (c.type === 'function_type') {
-      hasFunctionType = true;
-      break;
-    }
-    if (c.type === 'curried_spec') {
-      for (let j = 0; j < c.childCount; j++) {
-        if (c.child(j)?.type === 'arguments_spec') {
-          hasFunctionType = true;
-          break;
-        }
+  if (curriedSpec) {
+    for (let i = 0; i < curriedSpec.childCount; i++) {
+      if (curriedSpec.child(i)?.type === 'arguments_spec') {
+        hasFunctionType = true;
+        break;
       }
-      if (hasFunctionType) break;
     }
   }
 
