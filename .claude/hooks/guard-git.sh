@@ -22,12 +22,12 @@ if [ -z "$COMMAND" ]; then
 fi
 
 # Act on git and gh commands (may appear after cd "..." &&)
-if ! echo "$COMMAND" | grep -qE '(^|\s|&&\s*)(git|gh)\s+'; then
+if ! echo "$COMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)(git|gh)[[:space:]]+'; then
   exit 0
 fi
 
 # Normalize: strip `git -C "<path>"` / `git -C <path>` so downstream subcommand
-# patterns (git\s+push, git\s+commit, …) match regardless of whether `-C` is
+# patterns (git[[:space:]]+push, git[[:space:]]+commit, …) match regardless of whether `-C` is
 # present. detect_work_dir still inspects the raw $COMMAND to find the target.
 # The unquoted pattern requires a non-quote first char so it does not mis-match
 # the opening `"` of a quoted path (which would leave a trailing `path"` in
@@ -53,34 +53,34 @@ deny() {
 # --- Block dangerous commands ---
 
 # git add . / git add -A / git add --all (broad staging)
-if echo "$NCOMMAND" | grep -qE '(^|\s|&&\s*)git\s+add\s+(\.\s*$|-A|--all)'; then
+if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+add[[:space:]]+(\.[[:space:]]*$|-A|--all)'; then
   deny "BLOCKED: 'git add .' / 'git add -A' stages ALL changes including other sessions' work. Stage specific files instead: git add <file1> <file2>"
 fi
 
 # git reset (unstaging / hard reset)
-if echo "$NCOMMAND" | grep -qE '(^|\s|&&\s*)git\s+reset'; then
+if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+reset'; then
   deny "BLOCKED: 'git reset' can unstage or destroy other sessions' work. To unstage your own files, use: git restore --staged <file>"
 fi
 
 # git checkout -- <file> (reverting files)
-if echo "$NCOMMAND" | grep -qE '(^|\s|&&\s*)git\s+checkout\s+--'; then
+if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+checkout[[:space:]]+--'; then
   deny "BLOCKED: 'git checkout -- <file>' reverts working tree changes and may destroy other sessions' edits. If you need to discard your own changes, be explicit about which files."
 fi
 
 # git restore (reverting) — EXCEPT git restore --staged (safe unstaging)
-if echo "$NCOMMAND" | grep -qE '(^|\s|&&\s*)git\s+restore'; then
-  if ! echo "$NCOMMAND" | grep -qE '(^|\s|&&\s*)git\s+restore\s+--staged'; then
+if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+restore'; then
+  if ! echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+restore[[:space:]]+--staged'; then
     deny "BLOCKED: 'git restore <file>' reverts working tree changes and may destroy other sessions' edits. To unstage files safely, use: git restore --staged <file>"
   fi
 fi
 
 # git clean (delete untracked files)
-if echo "$NCOMMAND" | grep -qE '(^|\s|&&\s*)git\s+clean'; then
+if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+clean'; then
   deny "BLOCKED: 'git clean' deletes untracked files that may belong to other sessions."
 fi
 
 # git stash (hides all changes)
-if echo "$NCOMMAND" | grep -qE '(^|\s|&&\s*)git\s+stash'; then
+if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+stash'; then
   deny "BLOCKED: 'git stash' hides all working tree changes including other sessions' work. In worktree mode, commit your changes directly instead."
 fi
 
@@ -158,13 +158,13 @@ validate_branch_name() {
 
 # --- Branch name validation on push ---
 
-if echo "$NCOMMAND" | grep -qE '(^|\s|&&\s*)git\s+push'; then
+if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+push'; then
   validate_branch_name push
 fi
 
 # --- Branch name validation on gh pr create ---
 
-if echo "$NCOMMAND" | grep -qE '(^|\s|&&\s*)gh\s+pr\s+create'; then
+if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)gh[[:space:]]+pr[[:space:]]+create'; then
   # `gh pr create` does not use `git -C`; detect_work_dir falls through to the
   # `cd` path or cwd. No subcommand hint to pass.
   validate_branch_name
@@ -172,7 +172,7 @@ fi
 
 # --- Commit validation against edit log ---
 
-if echo "$NCOMMAND" | grep -qE '(^|\s|&&\s*)git\s+commit'; then
+if echo "$NCOMMAND" | grep -qE '(^|[[:space:]]|&&[[:space:]]*)git[[:space:]]+commit'; then
   # Resolve the target worktree so the edit log and staged-file listing come
   # from the same repo the commit targets (e.g. `git -C <pr-worktree> commit`).
   WORK_DIR=$(detect_work_dir commit)
