@@ -337,6 +337,10 @@ jobs:
 
       - name: Run tracer validation (same-file edge recall)
         timeout-minutes: 10
+        # Reuse the tracer subprocess output captured by the resolution benchmark
+        # step above (#1166) instead of re-running run-tracer.mjs per fixture.
+        env:
+          RESOLUTION_RESULT_JSON: ${{ github.workspace }}/resolution-result.json
         run: npx vitest run tests/benchmarks/resolution/tracer/tracer-validation.test.ts --reporter=verbose
 
       - name: Merge resolution into build result

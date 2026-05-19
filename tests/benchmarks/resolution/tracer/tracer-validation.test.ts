@@ -41,6 +41,34 @@ const FIXTURES_DIR = path.join(import.meta.dirname, '..', 'fixtures');
 const RUN_TRACER = path.join(import.meta.dirname, 'run-tracer.mjs');
 
 /**
+ * When set, points to a resolution-result.json artifact produced by
+ * scripts/resolution-benchmark.ts. The benchmark script already runs each
+ * language's tracer subprocess and embeds the raw edges + status under
+ * `<lang>.tracer`. Reading that artifact lets the gate test skip a second
+ * subprocess per fixture in CI (~doubling the tracer cost otherwise — see #1166).
+ *
+ * When unset, the test falls back to running run-tracer.mjs directly so devs
+ * can still execute `npx vitest run tests/benchmarks/resolution/tracer/...`
+ * standalone.
+ */
+const RESOLUTION_RESULT_JSON = process.env.RESOLUTION_RESULT_JSON;
+
+interface ArtifactTracerEntry {
+  status: 'ok' | 'skipped';
+  edges: TracerEdge[];
+}
+
+const artifactResults: Record<string, { tracer?: ArtifactTracerEntry }> | null = (() => {
+  if (!RESOLUTION_RESULT_JSON) return null;
+  if (!fs.existsSync(RESOLUTION_RESULT_JSON)) {
+    throw new Error(
+      `RESOLUTION_RESULT_JSON=${RESOLUTION_RESULT_JSON} does not exist — produce it with scripts/resolution-benchmark.ts first.`,
+    );
+  }
+  return JSON.parse(fs.readFileSync(RESOLUTION_RESULT_JSON, 'utf-8'));
+})();
+
+/**
  * Per-language same-file recall thresholds.
  *
  * Languages with working intra-module tracing have non-zero thresholds.
@@ -113,6 +141,16 @@ function basename(filePath: string): string {
 }
 
 function runTracer(lang: string): TracerEdge[] | null {
+  // Artifact mode: reuse the tracer output already produced by
+  // scripts/resolution-benchmark.ts during the publish workflow's resolution
+  // benchmark step (#1166). The script writes status='skipped' for missing
+  // toolchains, mirroring this function's null-return semantics.
+  if (artifactResults) {
+    const entry = artifactResults[lang]?.tracer;
+    if (!entry || entry.status === 'skipped') return null;
+    return entry.edges;
+  }
+
   const fixtureDir = path.join(FIXTURES_DIR, lang);
   if (!fs.existsSync(fixtureDir)) return null;
 

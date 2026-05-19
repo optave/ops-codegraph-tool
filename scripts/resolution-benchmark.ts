@@ -55,6 +55,20 @@ interface DynamicEdge {
 	target_file: string;
 }
 
+/**
+ * Per-language tracer artifact consumed by tests/benchmarks/resolution/tracer/tracer-validation.test.ts
+ * to avoid re-running tracer subprocesses. See #1166.
+ *
+ * status:
+ *   - 'ok'      — tracer subprocess produced edges (possibly an empty array if the language has no
+ *                 same-file calls). Consumers should treat edges as authoritative.
+ *   - 'skipped' — toolchain not available or tracer crashed. Consumers should skip recall assertions.
+ */
+interface TracerArtifact {
+	status: 'ok' | 'skipped';
+	edges: DynamicEdge[];
+}
+
 interface LangResult {
 	precision: number;
 	recall: number;
@@ -66,6 +80,7 @@ interface LangResult {
 	byMode: Record<string, ModeMetrics>;
 	dynamicEdges?: number;
 	dynamicConfirmed?: number;
+	tracer?: TracerArtifact;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────
@@ -153,10 +168,17 @@ const TRACER_SCRIPT = path.join(root, 'tests', 'benchmarks', 'resolution', 'trac
 
 /**
  * Attempt to run the dynamic call tracer for a language fixture.
- * Returns captured edges on success, empty array on failure or unavailability.
+ *
+ * Returns a TracerArtifact discriminating between:
+ *   - 'ok'      — tracer ran (edges may be empty if the fixture has no captured calls)
+ *   - 'skipped' — tracer script missing, toolchain unavailable, or subprocess crashed
+ *
+ * The status distinction mirrors the semantics in
+ * tests/benchmarks/resolution/tracer/tracer-validation.test.ts so its `runTracer`
+ * can reuse this artifact directly (#1166).
  */
-function runDynamicTracer(lang: string): DynamicEdge[] {
-	if (!fs.existsSync(TRACER_SCRIPT)) return [];
+function runDynamicTracer(lang: string): TracerArtifact {
+	if (!fs.existsSync(TRACER_SCRIPT)) return { status: 'skipped', edges: [] };
 
 	const fixtureDir = path.join(FIXTURES_DIR, lang);
 	try {
@@ -167,12 +189,15 @@ function runDynamicTracer(lang: string): DynamicEdge[] {
 			stdio: ['pipe', 'pipe', 'pipe'],
 		});
 		const parsed = JSON.parse(result);
+		const edges = Array.isArray(parsed.edges) ? parsed.edges : [];
 		if (parsed.error) {
 			console.error(`    Dynamic tracer for ${lang}: ${parsed.error}`);
+			// Treat "error reported and no edges" as toolchain-missing skip
+			if (edges.length === 0) return { status: 'skipped', edges: [] };
 		}
-		return Array.isArray(parsed.edges) ? parsed.edges : [];
+		return { status: 'ok', edges };
 	} catch {
-		return [];
+		return { status: 'skipped', edges: [] };
 	}
 }
 
@@ -276,7 +301,8 @@ try {
 			const expectedEdges: ExpectedEdge[] = manifest.edges;
 
 			// Run dynamic tracer if available
-			const dynamicEdges = runDynamicTracer(lang);
+			const tracerArtifact = runDynamicTracer(lang);
+			const dynamicEdges = tracerArtifact.edges;
 			const { dynamicConfirmed } = mergeWithDynamic(expectedEdges, dynamicEdges);
 
 			// Use only expected edges for metrics (dynamic edges are supplemental)
@@ -285,6 +311,9 @@ try {
 				metrics.dynamicEdges = dynamicEdges.length;
 				metrics.dynamicConfirmed = dynamicConfirmed;
 			}
+			// Emit raw tracer artifact so the tracer-validation gate test can reuse it
+			// without spawning a second subprocess per fixture (#1166).
+			metrics.tracer = tracerArtifact;
 			results[lang] = metrics;
 
 			const dynamicInfo =
