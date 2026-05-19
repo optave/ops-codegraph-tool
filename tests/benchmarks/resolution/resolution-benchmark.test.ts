@@ -291,10 +291,37 @@ function loadArtifact(artifactPath: string): Record<string, ArtifactLangResult> 
       `RESOLUTION_RESULT_JSON=${artifactPath} not found — run scripts/resolution-benchmark.ts first.`,
     );
   }
-  return JSON.parse(fs.readFileSync(artifactPath, 'utf-8'));
+  const parsed = JSON.parse(fs.readFileSync(artifactPath, 'utf-8')) as Record<
+    string,
+    ArtifactLangResult
+  >;
+  // Refuse to proceed on an empty artifact: with zero languages, vitest would
+  // register no describe blocks and exit 0, silently passing the gate without
+  // evaluating a single threshold.
+  if (!parsed || typeof parsed !== 'object' || Object.keys(parsed).length === 0) {
+    throw new Error(
+      `RESOLUTION_RESULT_JSON=${artifactPath} contains no language results — regenerate with scripts/resolution-benchmark.ts.`,
+    );
+  }
+  return parsed;
 }
 
 function metricsFromArtifact(lang: string, raw: ArtifactLangResult): BenchmarkMetrics {
+  if (
+    typeof raw.precision !== 'number' ||
+    typeof raw.recall !== 'number' ||
+    typeof raw.truePositives !== 'number' ||
+    typeof raw.falsePositives !== 'number' ||
+    typeof raw.falseNegatives !== 'number' ||
+    typeof raw.totalResolved !== 'number' ||
+    typeof raw.totalExpected !== 'number' ||
+    !raw.byMode ||
+    typeof raw.byMode !== 'object'
+  ) {
+    throw new Error(
+      `Resolution artifact for ${lang} is missing required numeric fields — regenerate with the current resolution-benchmark.ts.`,
+    );
+  }
   if (!Array.isArray(raw.falsePositiveEdges) || !Array.isArray(raw.falseNegativeEdges)) {
     throw new Error(
       `Resolution artifact for ${lang} is missing falsePositiveEdges/falseNegativeEdges — regenerate with the current resolution-benchmark.ts.`,
