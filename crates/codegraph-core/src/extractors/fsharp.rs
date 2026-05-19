@@ -355,31 +355,15 @@ fn extract_value_name(decl_left: &Node, source: &[u8]) -> Option<String> {
 }
 
 fn has_function_type(node: &Node) -> bool {
-    // The two grammar versions use different node shapes for type signatures:
-    //
-    //   • WASM (tree-sitter-fsharp npm 0.1.0): `function_type` is the explicit
-    //     function-type kind, only present for `a -> b` types.
-    //   • Native (tree-sitter-fsharp 0.3.0): every type signature is wrapped
-    //     in `curried_spec`. For a function it contains `arguments_spec`
-    //     children; for a plain value (e.g. `val pi : float`) it wraps a
-    //     single `simple_type`.
-    //
-    // Treat both engines consistently by classifying as a function whenever
-    // a function_type node appears OR a curried_spec contains `arguments_spec`.
-    for i in 0..node.child_count() {
-        let Some(child) = node.child(i) else { continue };
-        match child.kind() {
-            "function_type" => return true,
-            "curried_spec" => {
-                for j in 0..child.child_count() {
-                    if let Some(g) = child.child(j) {
-                        if g.kind() == "arguments_spec" {
-                            return true;
-                        }
-                    }
-                }
+    // The grammar wraps every type signature in `curried_spec`. A function type
+    // (e.g. `val add : int -> int -> int`) contains one or more `arguments_spec`
+    // children; a plain value (e.g. `val pi : float`) wraps a single `simple_type`.
+    let Some(curried) = find_child(node, "curried_spec") else { return false };
+    for i in 0..curried.child_count() {
+        if let Some(child) = curried.child(i) {
+            if child.kind() == "arguments_spec" {
+                return true;
             }
-            _ => {}
         }
     }
     false
