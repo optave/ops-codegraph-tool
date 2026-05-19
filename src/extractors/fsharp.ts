@@ -42,6 +42,15 @@ function walkFSharpNode(
     case 'named_module':
       nextModule = handleNamedModule(node, ctx);
       break;
+    case 'module_defn':
+      // Nested signature module (`module Foo = ...`) in `.fsi` files,
+      // produced by the cargo 0.3.0 grammar. The WASM 0.1.0 signature
+      // grammar currently emits ERROR nodes for this construct, so it
+      // never reaches this branch there (tracked in #1161). When it
+      // does fire, accumulate the dotted module path so nested `val`
+      // declarations are qualified as `Outer.Inner.foo`.
+      nextModule = handleModuleDefn(node, ctx, currentModule);
+      break;
     case 'function_declaration_left':
       handleFunctionDecl(node, ctx, currentModule);
       break;
@@ -80,6 +89,27 @@ function handleNamedModule(node: TreeSitterNode, ctx: ExtractorOutput): string |
   });
 
   return nameNode.text;
+}
+
+function handleModuleDefn(
+  node: TreeSitterNode,
+  ctx: ExtractorOutput,
+  currentModule: string | null,
+): string | null {
+  // `module_defn` (cargo 0.3.0 signature grammar) wraps `module Foo = ...`
+  // sections inside an outer `namespace` or another module. The name is a
+  // direct `identifier` child.
+  const nameNode = findChild(node, 'identifier');
+  if (!nameNode) return currentModule;
+
+  const qualified = currentModule ? `${currentModule}.${nameNode.text}` : nameNode.text;
+  ctx.definitions.push({
+    name: qualified,
+    kind: 'module',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+  });
+  return qualified;
 }
 
 function handleFunctionDecl(
