@@ -141,14 +141,57 @@ function handleGroovyClassDecl(node: TreeSitterNode, ctx: ExtractorOutput): void
 function handleGroovyInterfaceDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
+  const ifaceName = nameNode.text;
 
   ctx.definitions.push({
-    name: nameNode.text,
+    name: ifaceName,
     kind: 'interface',
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
     visibility: extractModifierVisibility(node),
   });
+
+  // `interface X extends Y, Z` — tree-sitter-groovy 0.1.x exposes parent
+  // interfaces via an unnamed `extends_interfaces` child (not a field), which
+  // wraps a `type_list` of `_type` nodes. Mirrors the Rust extractor.
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child && child.type === 'extends_interfaces') {
+      collectGroovyParentInterfaces(child, ifaceName, ctx);
+      break;
+    }
+  }
+}
+
+function collectGroovyParentInterfaces(
+  parent: TreeSitterNode,
+  name: string,
+  ctx: ExtractorOutput,
+): void {
+  // Use the current node's start line at each recursion level — matches the
+  // Rust `collect_interfaces` helper, which re-evaluates `start_line(interfaces)`
+  // for whatever node (`extends_interfaces` → `type_list`) is being processed.
+  const line = parent.startPosition.row + 1;
+  for (let i = 0; i < parent.childCount; i++) {
+    const child = parent.child(i);
+    if (!child) continue;
+    switch (child.type) {
+      case 'type_identifier':
+      case 'identifier':
+      case 'scoped_type_identifier': {
+        ctx.classes.push({ name, implements: child.text, line });
+        break;
+      }
+      case 'generic_type': {
+        const inner = child.child(0)?.text;
+        if (inner) ctx.classes.push({ name, implements: inner, line });
+        break;
+      }
+      case 'type_list':
+        collectGroovyParentInterfaces(child, name, ctx);
+        break;
+    }
+  }
 }
 
 function handleGroovyEnumDecl(node: TreeSitterNode, ctx: ExtractorOutput): void {
