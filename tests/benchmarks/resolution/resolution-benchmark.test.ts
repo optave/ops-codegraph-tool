@@ -8,6 +8,12 @@
  * per language and per resolution mode.
  *
  * CI gate: fails if precision or recall drops below per-language thresholds.
+ *
+ * **Artifact mode (CI):** when `RESOLUTION_RESULT_JSON` points at a result
+ * file produced by `scripts/resolution-benchmark.ts`, the suite reads those
+ * pre-computed metrics and skips the fixture rebuild — avoiding the duplicate
+ * work that doubled pre-publish CI time (issue #1052). Local runs without
+ * the env var fall back to the build-from-fixtures path.
  */
 
 import fs from 'node:fs';
@@ -262,6 +268,52 @@ function formatReport(lang: string, metrics: BenchmarkMetrics): string {
   return lines.join('\n');
 }
 
+// ── Artifact loading (CI dedup, issue #1052) ─────────────────────────────
+
+const ARTIFACT_PATH = process.env.RESOLUTION_RESULT_JSON;
+
+interface ArtifactLangResult {
+  precision: number;
+  recall: number;
+  truePositives: number;
+  falsePositives: number;
+  falseNegatives: number;
+  totalResolved: number;
+  totalExpected: number;
+  byMode: Record<string, ModeMetrics>;
+  falsePositiveEdges?: string[];
+  falseNegativeEdges?: string[];
+}
+
+function loadArtifact(artifactPath: string): Record<string, ArtifactLangResult> {
+  if (!fs.existsSync(artifactPath)) {
+    throw new Error(
+      `RESOLUTION_RESULT_JSON=${artifactPath} not found — run scripts/resolution-benchmark.ts first.`,
+    );
+  }
+  return JSON.parse(fs.readFileSync(artifactPath, 'utf-8'));
+}
+
+function metricsFromArtifact(lang: string, raw: ArtifactLangResult): BenchmarkMetrics {
+  if (!Array.isArray(raw.falsePositiveEdges) || !Array.isArray(raw.falseNegativeEdges)) {
+    throw new Error(
+      `Resolution artifact for ${lang} is missing falsePositiveEdges/falseNegativeEdges — regenerate with the current resolution-benchmark.ts.`,
+    );
+  }
+  return {
+    precision: raw.precision,
+    recall: raw.recall,
+    truePositives: raw.truePositives,
+    falsePositives: raw.falsePositives,
+    falseNegatives: raw.falseNegatives,
+    totalResolved: raw.totalResolved,
+    totalExpected: raw.totalExpected,
+    byMode: raw.byMode,
+    falsePositiveEdges: raw.falsePositiveEdges,
+    falseNegativeEdges: raw.falseNegativeEdges,
+  };
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────
 
 function discoverFixtures(): string[] {
@@ -276,7 +328,11 @@ function discoverFixtures(): string[] {
   return languages;
 }
 
-const languages = discoverFixtures();
+const artifact = ARTIFACT_PATH ? loadArtifact(ARTIFACT_PATH) : null;
+// In artifact mode, drive the suite from the keys in the artifact so we never
+// silently skip a language the script reported. In local mode, discover from
+// the filesystem like before.
+const languages = artifact ? Object.keys(artifact).sort() : discoverFixtures();
 
 /** Stores all results for the final summary */
 const allResults: Record<string, BenchmarkMetrics> = {};
@@ -309,22 +365,24 @@ describe('Call Resolution Precision/Recall', () => {
 
   for (const lang of languages) {
     describe(lang, () => {
-      let fixtureDir: string;
-      let resolvedEdges: ResolvedEdge[];
-      let expectedEdges: ExpectedEdge[];
+      let fixtureDir: string | null = null;
       let metrics: BenchmarkMetrics;
 
       beforeAll(async () => {
-        fixtureDir = copyFixture(lang);
-        await buildFixtureGraph(fixtureDir);
+        if (artifact) {
+          metrics = metricsFromArtifact(lang, artifact[lang]);
+        } else {
+          fixtureDir = copyFixture(lang);
+          await buildFixtureGraph(fixtureDir);
 
-        resolvedEdges = extractResolvedEdges(fixtureDir);
+          const resolvedEdges = extractResolvedEdges(fixtureDir) as ResolvedEdge[];
 
-        const manifestPath = path.join(FIXTURES_DIR, lang, 'expected-edges.json');
-        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
-        expectedEdges = manifest.edges;
+          const manifestPath = path.join(FIXTURES_DIR, lang, 'expected-edges.json');
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+          const expectedEdges: ExpectedEdge[] = manifest.edges;
 
-        metrics = computeMetrics(resolvedEdges, expectedEdges);
+          metrics = computeMetrics(resolvedEdges, expectedEdges);
+        }
         allResults[lang] = metrics;
       }, 60_000);
 
@@ -334,16 +392,13 @@ describe('Call Resolution Precision/Recall', () => {
         }
       });
 
-      test('builds graph successfully', () => {
-        expect(resolvedEdges).toBeDefined();
-        expect(Array.isArray(resolvedEdges)).toBe(true);
-        // Some languages may have 0 resolved call edges if resolution isn't
-        // implemented yet — that's okay, the precision/recall tests will
-        // catch it at the appropriate threshold level.
+      test('metrics are populated', () => {
+        expect(metrics).toBeDefined();
+        expect(metrics.totalResolved).toBeGreaterThanOrEqual(0);
       });
 
       test('expected edges manifest is non-empty', () => {
-        expect(expectedEdges.length).toBeGreaterThan(0);
+        expect(metrics.totalExpected).toBeGreaterThan(0);
       });
 
       test('precision meets threshold', () => {
