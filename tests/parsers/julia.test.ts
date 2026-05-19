@@ -152,6 +152,18 @@ end`);
     expect(callNames).toContain('println');
   });
 
+  it('does not record macro signature as call', () => {
+    // Mirrors the function-signature guard for the `macro_definition`
+    // grandparent branch. Without it, the macro name (`mymac`) would be
+    // recorded as both a definition and a call.
+    const symbols = parseJulia(`macro mymac(x)
+    println(x)
+end`);
+    const callNames = symbols.calls.map((c) => c.name);
+    expect(callNames).not.toContain('mymac');
+    expect(callNames).toContain('println');
+  });
+
   it('selected_import handles qualified module', () => {
     // `import Foo.Bar: baz` — module is a scoped_identifier. The import
     // must record `Foo.Bar` as the source and `baz` as the imported name,
