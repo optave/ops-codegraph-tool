@@ -158,8 +158,9 @@ fn collect_interfaces(
 
 fn handle_interface_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let Some(name_node) = node.child_by_field_name("name") else { return };
+    let iface_name = node_text(&name_node, source).to_string();
     symbols.definitions.push(Definition {
-        name: node_text(&name_node, source).to_string(),
+        name: iface_name.clone(),
         kind: "interface".to_string(),
         line: start_line(node),
         end_line: Some(end_line(node)),
@@ -168,6 +169,18 @@ fn handle_interface_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
         cfg: None,
         children: None,
     });
+
+    // `interface X extends Y, Z` — tree-sitter-groovy 0.1.x exposes parent
+    // interfaces as an unnamed `extends_interfaces` child wrapping a `type_list`.
+    // collect_interfaces already recurses into `type_list`, so passing the
+    // wrapper node works without a dedicated helper.
+    for i in 0..node.child_count() {
+        let Some(child) = node.child(i) else { continue };
+        if child.kind() == "extends_interfaces" {
+            collect_interfaces(&child, &iface_name, source, symbols);
+            break;
+        }
+    }
 }
 
 fn handle_enum_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
@@ -522,5 +535,38 @@ mod tests {
         assert!(rels.iter().any(|c| c.extends.as_deref() == Some("Base")));
         assert!(rels.iter().any(|c| c.implements.as_deref() == Some("I1")));
         assert!(rels.iter().any(|c| c.implements.as_deref() == Some("I2")));
+    }
+
+    #[test]
+    fn extracts_interface_inheritance() {
+        // `interface X extends Y, Z` — the grammar exposes parent interfaces
+        // via an unnamed `extends_interfaces` child (not a field), distinct
+        // from class declarations which use the `interfaces` field.
+        let s = parse_groovy("interface Serializable extends Comparable, Cloneable {}");
+        let rels: Vec<_> = s.classes.iter().filter(|c| c.name == "Serializable").collect();
+        assert!(
+            rels.iter().any(|c| c.implements.as_deref() == Some("Comparable")),
+            "missing implements=Comparable, got: {:?}",
+            rels
+        );
+        assert!(
+            rels.iter().any(|c| c.implements.as_deref() == Some("Cloneable")),
+            "missing implements=Cloneable, got: {:?}",
+            rels
+        );
+    }
+
+    #[test]
+    fn interface_inheritance_line_tracks_extends_clause() {
+        // Engine-parity guard: the relation line should match the
+        // `extends_interfaces` node's start line, not the `interface_declaration`'s
+        // — `collect_interfaces` re-evaluates `start_line(interfaces)` on every
+        // recursive call, and the WASM extractor must match.
+        let s = parse_groovy("interface Serializable\n  extends Comparable, Cloneable {}");
+        let rels: Vec<_> = s.classes.iter().filter(|c| c.name == "Serializable").collect();
+        assert!(!rels.is_empty(), "expected at least one ClassRelation");
+        for rel in &rels {
+            assert_eq!(rel.line, 2, "line should track the extends clause, got: {:?}", rel);
+        }
     }
 }
