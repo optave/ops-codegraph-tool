@@ -9,6 +9,8 @@
 // Run via `npm run lint` (or directly) in CI to catch silent regressions from
 // Dependabot bumps and contributor `npm install` runs.
 import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const EXPECTED_LIBC = {
   '@optave/codegraph-linux-arm64-gnu': 'glibc',
@@ -16,7 +18,12 @@ const EXPECTED_LIBC = {
   '@optave/codegraph-linux-x64-musl': 'musl',
 };
 
-const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
+// Resolve relative to this script's location so it works regardless of CWD
+// (e.g. running `node scripts/verify-lockfile-libc.mjs` from the `scripts/`
+// subdirectory still finds the repo-root lockfile).
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const lockfilePath = resolve(__dirname, '..', 'package-lock.json');
+const lock = JSON.parse(readFileSync(lockfilePath, 'utf8'));
 const failures = [];
 
 for (const [pkgName, expectedLibc] of Object.entries(EXPECTED_LIBC)) {
