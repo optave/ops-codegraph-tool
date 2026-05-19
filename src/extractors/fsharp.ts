@@ -10,6 +10,13 @@ import { findChild, nodeEndLine } from './helpers.js';
 /**
  * Extract symbols from F# files.
  *
+ * Grammar source: `tree-sitter-fsharp` v0.3.0 installed via a pinned GitHub
+ * tarball in `package.json` because the ionide/tree-sitter-fsharp project has
+ * no v0.3.0 release published to the npm registry. The cargo crate the native
+ * engine uses is also v0.3.0; both engines must stay aligned. Upgrading
+ * requires a manual edit of the tarball URL in `package.json` and
+ * `package-lock.json` — `npm update` will not bump this entry.
+ *
  * tree-sitter-fsharp grammar notes:
  * - named_module: top-level module declaration
  * - function_declaration_left: LHS of `let name params = ...`
