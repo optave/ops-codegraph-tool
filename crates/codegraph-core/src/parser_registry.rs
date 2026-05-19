@@ -28,6 +28,7 @@ pub enum LanguageKind {
     Ocaml,
     OcamlInterface,
     FSharp,
+    FSharpSignature,
     ObjC,
     Gleam,
     Julia,
@@ -70,6 +71,7 @@ impl LanguageKind {
             Self::Ocaml => "ocaml",
             Self::OcamlInterface => "ocaml-interface",
             Self::FSharp => "fsharp",
+            Self::FSharpSignature => "fsharp-signature",
             Self::ObjC => "objc",
             Self::Gleam => "gleam",
             Self::Julia => "julia",
@@ -120,7 +122,8 @@ impl LanguageKind {
             "hs" => Some(Self::Haskell),
             "ml" => Some(Self::Ocaml),
             "mli" => Some(Self::OcamlInterface),
-            "fs" | "fsx" | "fsi" => Some(Self::FSharp),
+            "fs" | "fsx" => Some(Self::FSharp),
+            "fsi" => Some(Self::FSharpSignature),
             "m" => Some(Self::ObjC),
             "gleam" => Some(Self::Gleam),
             "jl" => Some(Self::Julia),
@@ -165,6 +168,7 @@ impl LanguageKind {
             "ocaml" => Some(Self::Ocaml),
             "ocaml-interface" => Some(Self::OcamlInterface),
             "fsharp" => Some(Self::FSharp),
+            "fsharp-signature" => Some(Self::FSharpSignature),
             "objc" => Some(Self::ObjC),
             "gleam" => Some(Self::Gleam),
             "julia" => Some(Self::Julia),
@@ -207,6 +211,7 @@ impl LanguageKind {
             Self::Ocaml => tree_sitter_ocaml::LANGUAGE_OCAML.into(),
             Self::OcamlInterface => tree_sitter_ocaml::LANGUAGE_OCAML_INTERFACE.into(),
             Self::FSharp => tree_sitter_fsharp::LANGUAGE_FSHARP.into(),
+            Self::FSharpSignature => tree_sitter_fsharp::LANGUAGE_SIGNATURE.into(),
             Self::ObjC => tree_sitter_objc::LANGUAGE.into(),
             Self::Gleam => tree_sitter_gleam::LANGUAGE.into(),
             Self::Julia => tree_sitter_julia::LANGUAGE.into(),
@@ -232,8 +237,8 @@ impl LanguageKind {
         &[
             JavaScript, TypeScript, Tsx, Python, Go, Rust, Java, CSharp, Ruby, Php, Hcl, C,
             Cpp, Kotlin, Swift, Scala, Bash, Elixir, Lua, Dart, Zig, Haskell, Ocaml,
-            OcamlInterface, FSharp, ObjC, Gleam, Julia, Cuda, Clojure, Erlang, Groovy, R, Solidity,
-            Verilog,
+            OcamlInterface, FSharp, FSharpSignature, ObjC, Gleam, Julia, Cuda, Clojure, Erlang,
+            Groovy, R, Solidity, Verilog,
         ]
     }
 }
@@ -304,6 +309,7 @@ mod tests {
             | LanguageKind::Ocaml
             | LanguageKind::OcamlInterface
             | LanguageKind::FSharp
+            | LanguageKind::FSharpSignature
             | LanguageKind::ObjC
             | LanguageKind::Gleam
             | LanguageKind::Julia
@@ -320,7 +326,7 @@ mod tests {
         // Because both checks require the same manual update, they reinforce
         // each other: a developer who updates the match is reminded to also
         // update `all()` and this count.
-        const EXPECTED_LEN: usize = 35;
+        const EXPECTED_LEN: usize = 36;
         assert_eq!(
             LanguageKind::all().len(),
             EXPECTED_LEN,

@@ -57,6 +57,9 @@ function walkFSharpNode(
     case 'dot_expression':
       handleDotExpression(node, ctx);
       break;
+    case 'value_definition':
+      handleValueDefinition(node, ctx, currentModule);
+      break;
   }
 
   for (let i = 0; i < node.childCount; i++) {
@@ -250,4 +253,66 @@ function handleDotExpression(node: TreeSitterNode, ctx: ExtractorOutput): void {
     };
     ctx.calls.push(call);
   }
+}
+
+// Handle `val name : type` declarations in `.fsi` signature files.
+// The signature grammar reuses `value_definition` for `val` bindings,
+// distinguished from the source grammar's `let` bindings by the first
+// child being the literal `val` keyword. Source-file `value_definition`
+// nodes (which start with `let`) are intentionally ignored to preserve
+// `.fs` extractor parity.
+function handleValueDefinition(
+  node: TreeSitterNode,
+  ctx: ExtractorOutput,
+  currentModule: string | null,
+): void {
+  const first = node.child(0);
+  if (!first || first.type !== 'val') return;
+
+  const declLeft = findChild(node, 'value_declaration_left');
+  if (!declLeft) return;
+
+  const pattern = findChild(declLeft, 'identifier_pattern');
+  if (!pattern) return;
+
+  const ident =
+    findChild(findChild(pattern, 'long_identifier_or_op') ?? pattern, 'identifier') ??
+    findChild(pattern, 'identifier');
+  if (!ident) return;
+
+  // The two grammar versions use different shapes for type signatures:
+  //   • WASM (npm tree-sitter-fsharp 0.1.0): `function_type` is the explicit
+  //     function-type kind, only present for `a -> b` types.
+  //   • Native (cargo tree-sitter-fsharp 0.3.0): every type signature is
+  //     wrapped in `curried_spec`. For a function it contains `arguments_spec`
+  //     children; for a plain value (e.g. `val pi : float`) it wraps a single
+  //     `simple_type`.
+  // Treat both engines consistently by classifying as a function whenever
+  // function_type appears OR a curried_spec contains an arguments_spec child.
+  let hasFunctionType = false;
+  for (let i = 0; i < node.childCount; i++) {
+    const c = node.child(i);
+    if (!c) continue;
+    if (c.type === 'function_type') {
+      hasFunctionType = true;
+      break;
+    }
+    if (c.type === 'curried_spec') {
+      for (let j = 0; j < c.childCount; j++) {
+        if (c.child(j)?.type === 'arguments_spec') {
+          hasFunctionType = true;
+          break;
+        }
+      }
+      if (hasFunctionType) break;
+    }
+  }
+
+  const name = currentModule ? `${currentModule}.${ident.text}` : ident.text;
+  ctx.definitions.push({
+    name,
+    kind: hasFunctionType ? 'function' : 'variable',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+  });
 }
