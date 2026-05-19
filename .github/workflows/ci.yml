@@ -21,6 +21,13 @@ jobs:
         with:
           node-version: 22
 
+      # Runs before `npm install` because npm 11 silently strips the `libc`
+      # field from optional-dependency lockfile entries (see #1160). If the
+      # check ran post-install we'd flag every CI run instead of the PRs that
+      # actually introduce the regression.
+      - name: Verify lockfile libc discriminators
+        run: node scripts/verify-lockfile-libc.mjs
+
       - name: Install dependencies
         timeout-minutes: 20
         shell: bash
