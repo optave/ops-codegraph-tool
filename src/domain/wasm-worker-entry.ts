@@ -306,8 +306,15 @@ const LANGUAGE_REGISTRY: LanguageRegistryEntry[] = [
   },
   {
     id: 'fsharp',
-    extensions: ['.fs', '.fsx', '.fsi'],
+    extensions: ['.fs', '.fsx'],
     grammarFile: 'tree-sitter-fsharp.wasm',
+    extractor: extractFSharpSymbols,
+    required: false,
+  },
+  {
+    id: 'fsharp-signature',
+    extensions: ['.fsi'],
+    grammarFile: 'tree-sitter-fsharp_signature.wasm',
     extractor: extractFSharpSymbols,
     required: false,
   },
