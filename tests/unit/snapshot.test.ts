@@ -149,16 +149,16 @@ describe('snapshotSave', () => {
   // snapshotSave. better-sqlite3 is synchronous, so Promise-based
   // concurrency would queue two sequential microtasks — only separate
   // threads exercise the TOCTOU race.
-  const nodeMajor = Number(process.versions.node.split('.')[0]);
   const raceWorkerPath = path.join(__dirname, 'snapshot-race-worker.mjs');
   // --import requires a URL (file://…) or a bare/relative specifier, not a
   // drive-letter path on Windows. Use the file:// URL directly.
   const loaderUrl = new URL('../../scripts/ts-resolve-loader.js', import.meta.url).href;
-  const raceExecArgv = [
-    nodeMajor >= 23 ? '--strip-types' : '--experimental-strip-types',
-    '--import',
-    loaderUrl,
-  ];
+  // `--experimental-strip-types` is accepted by Worker execArgv across all
+  // supported Node versions (≥ 22.6); the unprefixed `--strip-types` flag
+  // is not in the Worker allowlist on Node 24 and causes
+  // ERR_WORKER_INVALID_EXEC_ARGV. On Node ≥ 23.6 type stripping is on by
+  // default, so the flag is a harmless no-op there.
+  const raceExecArgv = ['--experimental-strip-types', '--import', loaderUrl];
   const spawnSaveWorker = (workerData: {
     dbPath: string;
     name: string;
