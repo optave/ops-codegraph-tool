@@ -95,11 +95,22 @@ function findBarrelCandidates(ctx: PipelineContext): Array<{ file: string }> {
     .all() as Array<{ file: string }>;
 }
 
-/** Re-parse barrel files and update fileSymbols/reexportMap with fresh data. */
+/**
+ * Re-parse barrel files and update fileSymbols/reexportMap with fresh data.
+ * Returns the relative paths of newly-merged files so the caller can scan
+ * them for the next level of barrel candidates.
+ *
+ * A re-parsed file is marked `barrel-only` only when it really is one (the
+ * `isBarrelFile` check — reexports >= ownDefs). The previous unconditional
+ * `.add(relPath)` caused hybrid barrels with many local defs (e.g. a file
+ * with one `export type ... from` and dozens of internal functions) to drop
+ * all their non-reexport imports in build-edges, since the barrel-only branch
+ * skips them (#1174).
+ */
 async function reparseBarrelFiles(
   ctx: PipelineContext,
   barrelCandidates: Array<{ file: string }>,
-): Promise<void> {
+): Promise<string[]> {
   const { db, fileSymbols, rootDir, engineOpts } = ctx;
 
   const barrelPaths: string[] = [];
@@ -109,18 +120,27 @@ async function reparseBarrelFiles(
     }
   }
 
-  if (barrelPaths.length === 0) return;
+  if (barrelPaths.length === 0) return [];
 
+  // Preserve `contains` and `parameter_of` — those are emitted by insertNodes,
+  // which only runs on the original (changed + reverse-dep) fileSymbols. Barrel
+  // candidates are merged here *after* insertNodes, so wiping those kinds
+  // would permanently drop them (mirrors the Rust orchestrator's Stage 6b
+  // delete in build_pipeline.rs).
   const deleteOutgoingEdges = db.prepare(
-    'DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
+    `DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)
+     AND kind NOT IN ('contains', 'parameter_of')`,
   );
 
+  const added: string[] = [];
   try {
     const barrelSymbols = await parseFilesAuto(barrelPaths, rootDir, engineOpts);
     for (const [relPath, fileSym] of barrelSymbols) {
       deleteOutgoingEdges.run(relPath);
       fileSymbols.set(relPath, fileSym);
-      ctx.barrelOnlyFiles.add(relPath);
+      if (isBarrelFile(ctx, relPath)) {
+        ctx.barrelOnlyFiles.add(relPath);
+      }
       const reexports = fileSym.imports.filter((imp: Import) => imp.reexport);
       if (reexports.length > 0) {
         ctx.reexportMap.set(
@@ -132,10 +152,12 @@ async function reparseBarrelFiles(
           })),
         );
       }
+      added.push(relPath);
     }
   } catch (e: unknown) {
     debug(`Barrel re-parse failed (non-fatal): ${(e as Error).message}`);
   }
+  return added;
 }
 
 export async function resolveImports(ctx: PipelineContext): Promise<void> {
@@ -156,8 +178,23 @@ export async function resolveImports(ctx: PipelineContext): Promise<void> {
 
   ctx.barrelOnlyFiles = new Set<string>();
   if (!isFullBuild) {
-    const barrelCandidates = findBarrelCandidates(ctx);
-    await reparseBarrelFiles(ctx, barrelCandidates);
+    // Iteratively discover and re-parse barrel chains. A barrel that imports
+    // another barrel (e.g. `parser.ts → extractors/index.ts → extractors/<lang>.ts`)
+    // needs both loaded so build-edges can emit the barrel-through edges from
+    // the first barrel to the leaf targets. Without iteration, only the first
+    // level of barrels gets merged into fileSymbols; the deeper chain has no
+    // entry in reexportMap and the resolver silently drops the affected edges
+    // on every incremental rebuild (#1174).
+    //
+    // Convergence is guaranteed because fileSymbols grows monotonically and
+    // is bounded by the set of barrel files in the project — each iteration
+    // either adds a previously-unseen barrel or terminates.
+    while (true) {
+      const before = fileSymbols.size;
+      const barrelCandidates = findBarrelCandidates(ctx);
+      await reparseBarrelFiles(ctx, barrelCandidates);
+      if (fileSymbols.size === before) break;
+    }
   }
 }
 

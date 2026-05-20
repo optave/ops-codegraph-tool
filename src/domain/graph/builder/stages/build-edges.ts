@@ -770,9 +770,11 @@ function reconnectReverseDepEdges(ctx: PipelineContext): void {
  * their import targets. Falls back to loading ALL nodes for full builds or
  * larger incremental changes.
  */
+const NODE_KIND_FILTER_SQL = `kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')`;
+
 function loadNodes(ctx: PipelineContext): { rows: QueryNodeRow[]; scoped: boolean } {
   const { db, fileSymbols, isFullBuild, batchResolved } = ctx;
-  const nodeKindFilter = `kind IN ('function','method','class','interface','struct','type','module','enum','trait','record','constant')`;
+  const nodeKindFilter = NODE_KIND_FILTER_SQL;
 
   // Gate: only scope for small incremental on large codebases
   if (!isFullBuild && fileSymbols.size <= ctx.config.build.smallFilesThreshold) {
@@ -816,8 +818,13 @@ function loadNodes(ctx: PipelineContext): { rows: QueryNodeRow[]; scoped: boolea
 function addLazyFallback(ctx: PipelineContext, scopedLoad: boolean): void {
   if (!scopedLoad) return;
   const { db } = ctx;
+  // Match the upfront kind filter exactly. Using `kind != 'file'` here lets
+  // parameters, properties, and other non-definition kinds leak into call
+  // resolution, producing bogus call edges like `parser.ts → <a parameter
+  // with the same name>` (#1174 follow-up). Calls only ever target the
+  // definition kinds, so the fallback's filter must agree with `loadNodes`.
   const fallbackStmt = db.prepare(
-    `SELECT id, name, kind, file, line FROM nodes WHERE name = ? AND kind != 'file'`,
+    `SELECT id, name, kind, file, line FROM nodes WHERE name = ? AND ${NODE_KIND_FILTER_SQL}`,
   );
   const originalGet = ctx.nodesByName.get.bind(ctx.nodesByName);
   ctx.nodesByName.get = (name: string) => {
