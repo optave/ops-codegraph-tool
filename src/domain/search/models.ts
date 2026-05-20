@@ -19,8 +19,10 @@ const _require = createRequire(import.meta.url);
  *
  * Pin cwd to the directory that contains @optave/codegraph's `node_modules`
  * so the install lands where Node's resolution algorithm will find it.
+ *
+ * @internal Exported for unit tests; not part of the public barrel.
  */
-function resolveNpmInstallCwd(): string | undefined {
+export function resolveNpmInstallCwd(): string | undefined {
   try {
     const pkgJsonPath = _require.resolve('@optave/codegraph/package.json');
     // pkgJsonPath = <host>/node_modules/@optave/codegraph/package.json
