@@ -65,7 +65,13 @@ const artifactResults: Record<string, { tracer?: ArtifactTracerEntry }> | null =
       `RESOLUTION_RESULT_JSON=${RESOLUTION_RESULT_JSON} does not exist — produce it with scripts/resolution-benchmark.ts first.`,
     );
   }
-  return JSON.parse(fs.readFileSync(RESOLUTION_RESULT_JSON, 'utf-8'));
+  try {
+    return JSON.parse(fs.readFileSync(RESOLUTION_RESULT_JSON, 'utf-8'));
+  } catch (err) {
+    throw new Error(
+      `RESOLUTION_RESULT_JSON=${RESOLUTION_RESULT_JSON} is not valid JSON — regenerate it with scripts/resolution-benchmark.ts. (${err})`,
+    );
+  }
 })();
 
 /**
