@@ -198,7 +198,7 @@ Built each `tests/benchmarks/resolution/fixtures/<lang>/` with both engines:
 
 ## 6. Release-Specific Tests (changes since v3.10.0)
 
-The v3.10.1-dev.80 series adds 12 native extractor ports (#1097–#1107), several language-specific fixes (#1109, #1122, #1123, #1124, #1127, #1128, #1158), a MCP enhancement (#1149), benchmark-stability fixes (#1119, #1120, #1131, #1133, #1134), and CI hardening (#1146, #1151, #1164).
+The v3.10.1-dev.80 series adds 11 native extractor ports (#1097–#1107), several language-specific fixes (#1109, #1122, #1123, #1124, #1127, #1128, #1158), a MCP enhancement (#1149), benchmark-stability fixes (#1119, #1120, #1131, #1133, #1134), and CI hardening (#1146, #1151, #1164).
 
 | Change | Test | Result |
 |--------|------|--------|
@@ -312,7 +312,7 @@ Observations:
 |-------|------:|------:|------:|-------:|
 | minilm (384d) | 981/1500 (65.4%) | 1291/1500 (86.1%) | 1367/1500 (91.1%) | 63 |
 | jina-small (512d) | 1168/1500 (77.9%) | 1402/1500 (93.5%) | 1445/1500 (96.3%) | 23 |
-| jina-base (768d) | _benchmark still running at report cut_ | | | |
+| jina-base (768d) | _not completed in this session — see follow-up [#1181](https://github.com/optave/ops-codegraph-tool/issues/1181)_ | — | — | — |
 
 ### Benchmark Assessment
 
