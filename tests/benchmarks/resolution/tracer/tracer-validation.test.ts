@@ -161,10 +161,16 @@ function loadArtifact(artifactPath: string): Record<string, ArtifactLangResult> 
       `RESOLUTION_RESULT_JSON=${artifactPath} not found — run scripts/resolution-benchmark.ts first.`,
     );
   }
-  const parsed = JSON.parse(fs.readFileSync(artifactPath, 'utf-8')) as Record<
-    string,
-    ArtifactLangResult
-  >;
+  const raw = fs.readFileSync(artifactPath, 'utf-8');
+  let parsed: Record<string, ArtifactLangResult>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, ArtifactLangResult>;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `RESOLUTION_RESULT_JSON=${artifactPath} contains malformed JSON (${reason}) — regenerate with scripts/resolution-benchmark.ts.`,
+    );
+  }
   // Refuse to proceed on an empty artifact: with zero languages, vitest would
   // register no test cases and exit 0, silently passing the gate.
   if (!parsed || typeof parsed !== 'object' || Object.keys(parsed).length === 0) {
