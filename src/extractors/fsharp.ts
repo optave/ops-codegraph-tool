@@ -10,6 +10,13 @@ import { findChild, nodeEndLine } from './helpers.js';
 /**
  * Extract symbols from F# files.
  *
+ * Grammar source: `tree-sitter-fsharp` v0.3.0 installed via a pinned GitHub
+ * tarball in `package.json` because the ionide/tree-sitter-fsharp project has
+ * no v0.3.0 release published to the npm registry. The cargo crate the native
+ * engine uses is also v0.3.0; both engines must stay aligned. Upgrading
+ * requires a manual edit of the tarball URL in `package.json` and
+ * `package-lock.json` — `npm update` will not bump this entry.
+ *
  * tree-sitter-fsharp grammar notes:
  * - named_module: top-level module declaration
  * - function_declaration_left: LHS of `let name params = ...`
@@ -42,6 +49,14 @@ function walkFSharpNode(
     case 'named_module':
       nextModule = handleNamedModule(node, ctx);
       break;
+    case 'module_defn':
+      // Nested signature module (`module Foo = ...`) in `.fsi` files,
+      // emitted by both the WASM (npm ionide tarball v0.3.0) and cargo
+      // v0.3.0 tree-sitter-fsharp signature grammars. Accumulate the
+      // dotted module path so nested `val` declarations are qualified
+      // as `Outer.Inner.foo` in parity with the native engine.
+      nextModule = handleModuleDefn(node, ctx, currentModule);
+      break;
     case 'function_declaration_left':
       handleFunctionDecl(node, ctx, currentModule);
       break;
@@ -56,6 +71,9 @@ function walkFSharpNode(
       break;
     case 'dot_expression':
       handleDotExpression(node, ctx);
+      break;
+    case 'value_definition':
+      handleValueDefinition(node, ctx, currentModule);
       break;
   }
 
@@ -77,6 +95,27 @@ function handleNamedModule(node: TreeSitterNode, ctx: ExtractorOutput): string |
   });
 
   return nameNode.text;
+}
+
+function handleModuleDefn(
+  node: TreeSitterNode,
+  ctx: ExtractorOutput,
+  currentModule: string | null,
+): string | null {
+  // `module_defn` (cargo 0.3.0 signature grammar) wraps `module Foo = ...`
+  // sections inside an outer `namespace` or another module. The name is a
+  // direct `identifier` child.
+  const nameNode = findChild(node, 'identifier');
+  if (!nameNode) return currentModule;
+
+  const qualified = currentModule ? `${currentModule}.${nameNode.text}` : nameNode.text;
+  ctx.definitions.push({
+    name: qualified,
+    kind: 'module',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+  });
+  return qualified;
 }
 
 function handleFunctionDecl(
@@ -250,4 +289,69 @@ function handleDotExpression(node: TreeSitterNode, ctx: ExtractorOutput): void {
     };
     ctx.calls.push(call);
   }
+}
+
+// Handle `val name : type` declarations in `.fsi` signature files.
+// The signature grammar reuses `value_definition` for `val` bindings,
+// distinguished from the source grammar's `let` bindings by the first
+// child being the literal `val` keyword. Source-file `value_definition`
+// nodes (which start with `let`) are intentionally ignored to preserve
+// `.fs` extractor parity.
+function handleValueDefinition(
+  node: TreeSitterNode,
+  ctx: ExtractorOutput,
+  currentModule: string | null,
+): void {
+  const first = node.child(0);
+  if (!first || first.type !== 'val') return;
+
+  const declLeft = findChild(node, 'value_declaration_left');
+  if (!declLeft) return;
+
+  const pattern = findChild(declLeft, 'identifier_pattern');
+  if (!pattern) return;
+
+  const ident =
+    findChild(findChild(pattern, 'long_identifier_or_op') ?? pattern, 'identifier') ??
+    findChild(pattern, 'identifier');
+  if (!ident) return;
+
+  // The npm and cargo tree-sitter-fsharp 0.3.0 grammars — though sharing a
+  // version tag — emit type signatures with different node shapes:
+  //   • WASM (npm 0.3.0 ionide tarball): `function_type` is the explicit
+  //     function-type kind, present as a direct child of `value_definition`
+  //     for `a -> b` types; plain values (e.g. `val pi : float`) appear as
+  //     `simple_type`.
+  //   • Native (cargo 0.3.0): every type signature is wrapped in
+  //     `curried_spec`. A function type contains one or more `arguments_spec`
+  //     children; a plain value wraps a single `simple_type`.
+  // Classify as a function whenever `function_type` appears OR a
+  // `curried_spec` contains an `arguments_spec` child, so both engines stay
+  // in parity until the grammars converge.
+  let hasFunctionType = false;
+  for (let i = 0; i < node.childCount; i++) {
+    const c = node.child(i);
+    if (!c) continue;
+    if (c.type === 'function_type') {
+      hasFunctionType = true;
+      break;
+    }
+    if (c.type === 'curried_spec') {
+      for (let j = 0; j < c.childCount; j++) {
+        if (c.child(j)?.type === 'arguments_spec') {
+          hasFunctionType = true;
+          break;
+        }
+      }
+      if (hasFunctionType) break;
+    }
+  }
+
+  const name = currentModule ? `${currentModule}.${ident.text}` : ident.text;
+  ctx.definitions.push({
+    name,
+    kind: hasFunctionType ? 'function' : 'variable',
+    line: node.startPosition.row + 1,
+    endLine: nodeEndLine(node),
+  });
 }

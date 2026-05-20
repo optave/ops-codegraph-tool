@@ -140,7 +140,7 @@ pub fn extract_symbols_with_opts(
         LanguageKind::Ocaml | LanguageKind::OcamlInterface => {
             ocaml::OcamlExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
         }
-        LanguageKind::FSharp => {
+        LanguageKind::FSharp | LanguageKind::FSharpSignature => {
             fsharp::FSharpExtractor.extract_with_opts(tree, source, file_path, include_ast_nodes)
         }
         LanguageKind::ObjC => {

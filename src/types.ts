@@ -99,6 +99,7 @@ export type LanguageId =
   | 'ocaml'
   | 'ocaml-interface'
   | 'fsharp'
+  | 'fsharp-signature'
   | 'gleam'
   | 'clojure'
   | 'julia'
