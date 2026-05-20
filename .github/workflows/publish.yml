@@ -343,6 +343,12 @@ jobs:
 
       - name: Run tracer validation (same-file edge recall)
         timeout-minutes: 10
+        # Reuse the tracer edges captured by Run resolution benchmark instead
+        # of re-spawning the per-language tracer subprocess (issue #1166). The
+        # test falls back to spawning run-tracer.mjs when this env var is
+        # unset, so local runs still work standalone.
+        env:
+          RESOLUTION_RESULT_JSON: ${{ github.workspace }}/resolution-result.json
         run: npx vitest run tests/benchmarks/resolution/tracer/tracer-validation.test.ts --reporter=verbose
 
       - name: Merge resolution into build result
