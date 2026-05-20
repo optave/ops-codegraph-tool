@@ -206,6 +206,7 @@ const grammars = [
   { name: 'tree-sitter-ocaml', pkg: 'tree-sitter-ocaml', sub: 'grammars/ocaml' },
   { name: 'tree-sitter-ocaml_interface', pkg: 'tree-sitter-ocaml', sub: 'grammars/interface' },
   { name: 'tree-sitter-fsharp', pkg: 'tree-sitter-fsharp', sub: 'fsharp' },
+  { name: 'tree-sitter-fsharp_signature', pkg: 'tree-sitter-fsharp', sub: 'fsharp_signature' },
   { name: 'tree-sitter-gleam', pkg: 'tree-sitter-gleam', sub: null },
   { name: 'tree-sitter-clojure', pkg: 'tree-sitter-clojure', sub: null },
   { name: 'tree-sitter-julia', pkg: 'tree-sitter-julia', sub: null },
