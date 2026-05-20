@@ -49,4 +49,17 @@ open System.IO`);
     const symbols = parseFSharp(`let result = List.map (fun x -> x + 1) [1; 2; 3]`);
     expect(symbols.calls.length).toBeGreaterThanOrEqual(1);
   });
+
+  it('does not extract `val mutable` class fields as definitions', () => {
+    // `val mutable count: int = 0` inside a class is parsed as `member_defn`
+    // in the source grammar — NOT `value_definition` — so the signature
+    // `val`-style handler must not produce a definition for it.
+    const symbols = parseFSharp(`module M
+
+type C() =
+    val mutable count: int = 0
+`);
+    expect(symbols.definitions.find((d) => d.name === 'count')).toBeUndefined();
+    expect(symbols.definitions.find((d) => d.name === 'M.count')).toBeUndefined();
+  });
 });
