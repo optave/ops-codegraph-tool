@@ -6,27 +6,60 @@
 // linux-x64-gnu vs linux-x64-musl when resolving from the lockfile and may
 // install (or load) the wrong native binary on Alpine/musl hosts.
 //
+// The set of packages to check is derived from `optionalDependencies` in
+// package.json, so adding a new linux-* platform there automatically extends
+// this guard with no script change required. The expected libc value is
+// inferred from the package name's `-gnu`/`-musl` suffix (the napi-rs naming
+// convention).
+//
 // Run via `npm run lint` (or directly) in CI to catch silent regressions from
 // Dependabot bumps and contributor `npm install` runs.
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const EXPECTED_LIBC = {
-  '@optave/codegraph-linux-arm64-gnu': 'glibc',
-  '@optave/codegraph-linux-x64-gnu': 'glibc',
-  '@optave/codegraph-linux-x64-musl': 'musl',
+// Map of napi-rs name suffix → expected `libc` value in package-lock.json.
+// Adding a new entry here is the ONLY edit required to teach the verifier
+// about a new libc variant — `LINUX_PKG_PATTERN` is derived from these keys
+// below so the regex and the map can never drift apart.
+const LIBC_BY_SUFFIX = {
+  gnu: 'glibc',
+  musl: 'musl',
 };
+const LIBC_SUFFIXES = Object.keys(LIBC_BY_SUFFIX);
+const LINUX_PKG_PATTERN = new RegExp(
+  `^@optave/codegraph-linux-[^-]+-(${LIBC_SUFFIXES.join('|')})$`,
+);
 
 // Resolve relative to this script's location so it works regardless of CWD
 // (e.g. running `node scripts/verify-lockfile-libc.mjs` from the `scripts/`
-// subdirectory still finds the repo-root lockfile).
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const lockfilePath = resolve(__dirname, '..', 'package-lock.json');
-const lock = JSON.parse(readFileSync(lockfilePath, 'utf8'));
-const failures = [];
+// subdirectory still finds the repo-root manifests).
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const repoRoot = resolve(__dirname, '..');
+const pkg = JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8'));
+const lock = JSON.parse(readFileSync(resolve(repoRoot, 'package-lock.json'), 'utf8'));
 
-for (const [pkgName, expectedLibc] of Object.entries(EXPECTED_LIBC)) {
+const optionalDeps = pkg.optionalDependencies ?? {};
+const linuxPackages = Object.keys(optionalDeps).filter((name) =>
+  name.startsWith('@optave/codegraph-linux-'),
+);
+
+if (linuxPackages.length === 0) {
+  console.log('package-lock.json libc check: no @optave/codegraph-linux-* packages declared, skipping');
+  process.exit(0);
+}
+
+const failures = [];
+const unknownSuffixes = [];
+
+for (const pkgName of linuxPackages) {
+  const match = LINUX_PKG_PATTERN.exec(pkgName);
+  if (!match) {
+    unknownSuffixes.push(pkgName);
+    continue;
+  }
+  const expectedLibc = LIBC_BY_SUFFIX[match[1]];
   const entry = lock.packages?.[`node_modules/${pkgName}`];
   if (!entry) {
     failures.push(`${pkgName}: missing from package-lock.json`);
@@ -40,6 +73,20 @@ for (const [pkgName, expectedLibc] of Object.entries(EXPECTED_LIBC)) {
   }
 }
 
+if (unknownSuffixes.length > 0) {
+  const knownRule = LIBC_SUFFIXES.map((s) => `-${s} → ${LIBC_BY_SUFFIX[s]}`).join(', ');
+  console.error(
+    'package-lock.json libc discriminator check cannot infer expected libc for:\n',
+  );
+  for (const name of unknownSuffixes) console.error(`  - ${name}`);
+  console.error(
+    `\nAdd the new suffix to LIBC_BY_SUFFIX in ${__filename}\n` +
+      '(LINUX_PKG_PATTERN is derived from its keys, so no separate regex update\n' +
+      `is needed). Current rule: ${knownRule}.`,
+  );
+  process.exit(1);
+}
+
 if (failures.length > 0) {
   console.error('package-lock.json libc discriminator check failed:\n');
   for (const f of failures) console.error(`  - ${f}`);
@@ -51,4 +98,6 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log('package-lock.json libc discriminators OK');
+console.log(
+  `package-lock.json libc discriminators OK (${linuxPackages.length} linux package(s) checked)`,
+);
