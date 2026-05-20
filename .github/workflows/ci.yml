@@ -284,6 +284,18 @@ jobs:
           CODEGRAPH_PARITY: '1'
         run: npx vitest run tests/engines/ tests/integration/build-parity.test.ts --reporter=verbose
 
+      # Isolated regression canary for #1147 — runs only the dropped-language-gap
+      # suite so a failure surfaces under a clear step name and can't be masked
+      # by pollution from neighbouring tests in the larger `test` job. The gap
+      # repair path (#1083) is load-bearing for engine parity but easy to break
+      # silently — the bug shape is "node row never re-inserted", which only
+      # this test exercises directly.
+      - name: Dropped-language gap regression guard (#1147)
+        shell: bash
+        env:
+          CODEGRAPH_PARITY: '1'
+        run: npx vitest run tests/integration/dropped-language-gap.test.ts --reporter=verbose
+
   rust-check:
     runs-on: ubuntu-latest
     name: Rust compile check

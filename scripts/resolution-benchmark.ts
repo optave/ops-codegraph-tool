@@ -64,6 +64,10 @@ interface LangResult {
 	totalResolved: number;
 	totalExpected: number;
 	byMode: Record<string, ModeMetrics>;
+	// Edge lists are included so the gate test can reuse this artifact
+	// instead of rebuilding fixtures from scratch (see issue #1052).
+	falsePositiveEdges: string[];
+	falseNegativeEdges: string[];
 	dynamicEdges?: number;
 	dynamicConfirmed?: number;
 }
@@ -123,15 +127,20 @@ function computeMetrics(resolvedEdges: ResolvedEdge[], expectedEdges: ExpectedEd
 		m.recall = m.expected > 0 ? m.resolved / m.expected : 0;
 	}
 
+	// Keep full precision so the artifact-mode gate compares the exact same
+	// values the fixture-mode gate would compute. Rounding here let a near-miss
+	// like 0.8497 round up to 0.850 and silently clear a 0.85 threshold.
 	return {
-		precision: Math.round(precision * 1000) / 1000,
-		recall: Math.round(recall * 1000) / 1000,
+		precision,
+		recall,
 		truePositives: truePositives.size,
 		falsePositives: falsePositives.size,
 		falseNegatives: falseNegatives.size,
 		totalResolved: resolvedSet.size,
 		totalExpected: expectedSet.size,
 		byMode,
+		falsePositiveEdges: [...falsePositives],
+		falseNegativeEdges: [...falseNegatives],
 	};
 }
 
