@@ -18,16 +18,24 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Map of napi-rs name suffix → expected `libc` value in package-lock.json.
+// Adding a new entry here is the ONLY edit required to teach the verifier
+// about a new libc variant — `LINUX_PKG_PATTERN` is derived from these keys
+// below so the regex and the map can never drift apart.
 const LIBC_BY_SUFFIX = {
   gnu: 'glibc',
   musl: 'musl',
 };
-const LINUX_PKG_PATTERN = /^@optave\/codegraph-linux-[^-]+-(gnu|musl)$/;
+const LIBC_SUFFIXES = Object.keys(LIBC_BY_SUFFIX);
+const LINUX_PKG_PATTERN = new RegExp(
+  `^@optave/codegraph-linux-[^-]+-(${LIBC_SUFFIXES.join('|')})$`,
+);
 
 // Resolve relative to this script's location so it works regardless of CWD
 // (e.g. running `node scripts/verify-lockfile-libc.mjs` from the `scripts/`
 // subdirectory still finds the repo-root manifests).
-const __dirname = dirname(fileURLToPath(import.meta.url));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 const repoRoot = resolve(__dirname, '..');
 const pkg = JSON.parse(readFileSync(resolve(repoRoot, 'package.json'), 'utf8'));
 const lock = JSON.parse(readFileSync(resolve(repoRoot, 'package-lock.json'), 'utf8'));
@@ -66,13 +74,15 @@ for (const pkgName of linuxPackages) {
 }
 
 if (unknownSuffixes.length > 0) {
+  const knownRule = LIBC_SUFFIXES.map((s) => `-${s} → ${LIBC_BY_SUFFIX[s]}`).join(', ');
   console.error(
     'package-lock.json libc discriminator check cannot infer expected libc for:\n',
   );
   for (const name of unknownSuffixes) console.error(`  - ${name}`);
   console.error(
-    `\nExtend LIBC_BY_SUFFIX in ${import.meta.url.replace('file://', '')}\n` +
-      'to cover the new suffix (current rule: -gnu → glibc, -musl → musl).',
+    `\nAdd the new suffix to LIBC_BY_SUFFIX in ${__filename}\n` +
+      '(LINUX_PKG_PATTERN is derived from its keys, so no separate regex update\n' +
+      `is needed). Current rule: ${knownRule}.`,
   );
   process.exit(1);
 }
