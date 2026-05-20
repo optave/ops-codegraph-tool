@@ -160,7 +160,7 @@ export function promptInstall(packageName: string): Promise<boolean> {
         rl.close();
         if (answer.trim().toLowerCase() !== 'y') return resolve(false);
         try {
-          execFileSync(NPM_BIN, ['install', packageName], {
+          execFileSync(NPM_BIN, ['install', '--no-save', packageName], {
             stdio: 'inherit',
             timeout: 300_000,
             cwd: installCwd,

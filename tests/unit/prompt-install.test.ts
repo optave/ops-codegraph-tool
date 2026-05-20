@@ -151,7 +151,7 @@ describe('loadTransformers install prompt', () => {
     });
     expect(execMock).toHaveBeenCalledWith(
       expectedNpmBin,
-      ['install', '@huggingface/transformers'],
+      ['install', '--no-save', '@huggingface/transformers'],
       expect.objectContaining({ stdio: 'inherit', timeout: 300_000 }),
     );
   });
