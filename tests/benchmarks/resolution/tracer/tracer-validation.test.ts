@@ -11,6 +11,13 @@
  *   3. Load expected-edges.json and filter to mode === "same-file"
  *   4. Compute recall = matched / total same-file expected edges
  *   5. Assert recall >= per-language threshold
+ *
+ * **Artifact mode (CI):** when `RESOLUTION_RESULT_JSON` points at a result
+ * file produced by `scripts/resolution-benchmark.ts`, the suite reads the
+ * pre-captured tracer edges from that artifact instead of re-running the
+ * per-language tracer subprocess — avoiding the duplicate work that doubled
+ * pre-publish tracer cost (issue #1166). Local runs without the env var
+ * fall back to spawning `run-tracer.mjs` directly.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -135,6 +142,65 @@ function runTracer(lang: string): TracerEdge[] | null {
   }
 }
 
+// ── Artifact loading (CI dedup, issue #1166) ─────────────────────────────
+
+interface ArtifactTracer {
+  status: 'ok' | 'skipped';
+  edges: TracerEdge[];
+}
+
+interface ArtifactLangResult {
+  tracer?: ArtifactTracer;
+}
+
+const ARTIFACT_PATH = process.env.RESOLUTION_RESULT_JSON;
+
+function loadArtifact(artifactPath: string): Record<string, ArtifactLangResult> {
+  if (!fs.existsSync(artifactPath)) {
+    throw new Error(
+      `RESOLUTION_RESULT_JSON=${artifactPath} not found — run scripts/resolution-benchmark.ts first.`,
+    );
+  }
+  const raw = fs.readFileSync(artifactPath, 'utf-8');
+  let parsed: Record<string, ArtifactLangResult>;
+  try {
+    parsed = JSON.parse(raw) as Record<string, ArtifactLangResult>;
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `RESOLUTION_RESULT_JSON=${artifactPath} contains malformed JSON (${reason}) — regenerate with scripts/resolution-benchmark.ts.`,
+    );
+  }
+  // Refuse to proceed on an empty artifact: with zero languages, vitest would
+  // register no test cases and exit 0, silently passing the gate.
+  if (!parsed || typeof parsed !== 'object' || Object.keys(parsed).length === 0) {
+    throw new Error(
+      `RESOLUTION_RESULT_JSON=${artifactPath} contains no language results — regenerate with scripts/resolution-benchmark.ts.`,
+    );
+  }
+  return parsed;
+}
+
+function tracerFromArtifact(
+  lang: string,
+  raw: ArtifactLangResult | undefined,
+): TracerEdge[] | null {
+  if (!raw?.tracer) {
+    throw new Error(
+      `Resolution artifact for ${lang} is missing the tracer block — regenerate with the current scripts/resolution-benchmark.ts.`,
+    );
+  }
+  // Preserve the runTracer null-as-skipped contract so toolchain-missing
+  // languages are skipped gracefully in artifact mode too.
+  if (raw.tracer.status === 'skipped') return null;
+  if (!Array.isArray(raw.tracer.edges)) {
+    throw new Error(
+      `Resolution artifact for ${lang} has malformed tracer.edges — regenerate with the current scripts/resolution-benchmark.ts.`,
+    );
+  }
+  return raw.tracer.edges;
+}
+
 function loadExpectedEdges(lang: string): ExpectedEdge[] {
   const edgesFile = path.join(FIXTURES_DIR, lang, 'expected-edges.json');
   if (!fs.existsSync(edgesFile)) return [];
@@ -180,13 +246,19 @@ function computeSameFileRecall(
 
 // ── Test Suite ───────────────────────────────────────────────────────────
 
-// Discover all fixture languages that have expected-edges.json
-const languages = fs
-  .readdirSync(FIXTURES_DIR, { withFileTypes: true })
-  .filter((d) => d.isDirectory())
-  .map((d) => d.name)
-  .filter((lang) => fs.existsSync(path.join(FIXTURES_DIR, lang, 'expected-edges.json')))
-  .sort();
+const artifact = ARTIFACT_PATH ? loadArtifact(ARTIFACT_PATH) : null;
+
+// In artifact mode, drive the suite from the keys in the artifact so we never
+// silently skip a language the script reported. In local mode, discover from
+// the filesystem like before.
+const languages = artifact
+  ? Object.keys(artifact).sort()
+  : fs
+      .readdirSync(FIXTURES_DIR, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .filter((lang) => fs.existsSync(path.join(FIXTURES_DIR, lang, 'expected-edges.json')))
+      .sort();
 
 describe('Dynamic Tracer — Same-File Edge Recall', () => {
   // Summary table printed after all tests
@@ -211,7 +283,7 @@ describe('Dynamic Tracer — Same-File Edge Recall', () => {
         return;
       }
 
-      const tracerEdges = runTracer(lang);
+      const tracerEdges = artifact ? tracerFromArtifact(lang, artifact[lang]) : runTracer(lang);
 
       // If tracer couldn't run (toolchain missing), skip gracefully.
       // Many languages require runtimes (rustc, ghc, ruby, etc.) that aren't
