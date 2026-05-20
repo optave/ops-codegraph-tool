@@ -333,6 +333,12 @@ jobs:
 
       - name: Gate on resolution thresholds
         timeout-minutes: 30
+        # Reuse the metrics produced by the previous step instead of rebuilding
+        # every fixture from scratch (issue #1052). The gate test falls back to
+        # the build-from-fixtures path when this env var is unset, so local
+        # runs (`npx vitest run …`) still work standalone.
+        env:
+          RESOLUTION_RESULT_JSON: ${{ github.workspace }}/resolution-result.json
         run: npx vitest run tests/benchmarks/resolution/resolution-benchmark.test.ts --reporter=verbose
 
       - name: Run tracer validation (same-file edge recall)
