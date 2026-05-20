@@ -42,16 +42,21 @@ describe('F# signature (.fsi) parser', () => {
   });
 
   it('extracts val declarations nested inside a module signature', () => {
-    // The WASM tree-sitter-fsharp signature grammar (currently v0.3.0) does
-    // NOT yet produce a `module_defn` for `module Foo = ...` — it emits
-    // ERROR nodes and the `val` declarations float to the top level (so
-    // they're indexed as `add`, not `Foo.add`). The cargo 0.3.0 grammar
-    // parses it correctly and the Rust extractor qualifies as `Foo.add`.
-    // The WASM grammar fix is tracked under #1161; once the signature
-    // grammar emits `module_defn` for nested modules, this assertion
-    // should be updated to expect `Foo.add` to match the native engine.
+    // Both the WASM (npm ionide tarball v0.3.0) and the cargo v0.3.0
+    // tree-sitter-fsharp signature grammars emit `module_defn` for
+    // `module Foo = ...`, so `val` declarations nested inside are
+    // qualified with the module path (`Foo.add`) in both engines. The
+    // outer `module Foo` is also indexed as a `module` definition.
     const { symbols } = parseFSi(`module Foo =\n  val add : int -> int\n`);
     expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'Foo', kind: 'module' }),
+    );
+    expect(symbols.definitions).toContainEqual(
+      expect.objectContaining({ name: 'Foo.add', kind: 'function' }),
+    );
+    // The unqualified name must NOT appear — that would mean the walker
+    // failed to thread the enclosing module through to `handleValueDefinition`.
+    expect(symbols.definitions).not.toContainEqual(
       expect.objectContaining({ name: 'add', kind: 'function' }),
     );
   });

@@ -51,11 +51,10 @@ function walkFSharpNode(
       break;
     case 'module_defn':
       // Nested signature module (`module Foo = ...`) in `.fsi` files,
-      // produced by the cargo 0.3.0 grammar. The WASM 0.1.0 signature
-      // grammar currently emits ERROR nodes for this construct, so it
-      // never reaches this branch there (tracked in #1161). When it
-      // does fire, accumulate the dotted module path so nested `val`
-      // declarations are qualified as `Outer.Inner.foo`.
+      // emitted by both the WASM (npm ionide tarball v0.3.0) and cargo
+      // v0.3.0 tree-sitter-fsharp signature grammars. Accumulate the
+      // dotted module path so nested `val` declarations are qualified
+      // as `Outer.Inner.foo` in parity with the native engine.
       nextModule = handleModuleDefn(node, ctx, currentModule);
       break;
     case 'function_declaration_left':
