@@ -1,7 +1,37 @@
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
+import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { info } from '../../infrastructure/logger.js';
 import { ConfigError, EngineError } from '../../shared/errors.js';
+
+const _require = createRequire(import.meta.url);
+
+/**
+ * Resolve the directory where `npm install` should run so the installed
+ * package ends up reachable by `await import(pkg)` from inside this module.
+ *
+ * Without a `cwd`, `execFileSync('npm', ['install', ...])` operates on
+ * `process.cwd()` — when the user runs codegraph against a repo that is *not*
+ * the directory where codegraph itself is installed, npm installs into the
+ * wrong `node_modules`, the dynamic import still fails, and the user gets
+ * `ENGINE_UNAVAILABLE: ... installed but failed to load`.
+ *
+ * Pin cwd to the directory that contains @optave/codegraph's `node_modules`
+ * so the install lands where Node's resolution algorithm will find it.
+ */
+function resolveNpmInstallCwd(): string | undefined {
+  try {
+    const pkgJsonPath = _require.resolve('@optave/codegraph/package.json');
+    // pkgJsonPath = <host>/node_modules/@optave/codegraph/package.json
+    // dirname x4: package.json → codegraph → @optave → node_modules → <host>
+    return path.dirname(path.dirname(path.dirname(path.dirname(pkgJsonPath))));
+  } catch {
+    // Source-of-truth checkout (no @optave/codegraph in node_modules) — fall back
+    // to process.cwd() so legacy behavior survives in tests.
+    return undefined;
+  }
+}
 
 export interface ModelConfig {
   name: string;
@@ -104,12 +134,14 @@ export function getModelConfig(modelKey?: string): ModelConfig {
  * @internal Not part of the public barrel.
  */
 export function promptInstall(packageName: string): Promise<boolean> {
+  const installCwd = resolveNpmInstallCwd();
   if (!process.stdin.isTTY) {
     info(`Installing ${packageName} (optional dependency for semantic search)…`);
     try {
       execFileSync(NPM_BIN, ['install', '--no-save', packageName], {
         stdio: 'inherit',
         timeout: 300_000,
+        cwd: installCwd,
       });
       return Promise.resolve(true);
     } catch (err) {
@@ -131,6 +163,7 @@ export function promptInstall(packageName: string): Promise<boolean> {
           execFileSync(NPM_BIN, ['install', packageName], {
             stdio: 'inherit',
             timeout: 300_000,
+            cwd: installCwd,
           });
           resolve(true);
         } catch (err) {
