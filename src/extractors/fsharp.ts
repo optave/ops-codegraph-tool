@@ -317,17 +317,34 @@ function handleValueDefinition(
     findChild(pattern, 'identifier');
   if (!ident) return;
 
-  // The grammar wraps every type signature in `curried_spec`. A function type
-  // (e.g. `val add : int -> int -> int`) contains one or more `arguments_spec`
-  // children; a plain value (e.g. `val pi : float`) wraps a single `simple_type`.
-  const curriedSpec = findChild(node, 'curried_spec');
+  // The npm and cargo tree-sitter-fsharp 0.3.0 grammars — though sharing a
+  // version tag — emit type signatures with different node shapes:
+  //   • WASM (npm 0.3.0 ionide tarball): `function_type` is the explicit
+  //     function-type kind, present as a direct child of `value_definition`
+  //     for `a -> b` types; plain values (e.g. `val pi : float`) appear as
+  //     `simple_type`.
+  //   • Native (cargo 0.3.0): every type signature is wrapped in
+  //     `curried_spec`. A function type contains one or more `arguments_spec`
+  //     children; a plain value wraps a single `simple_type`.
+  // Classify as a function whenever `function_type` appears OR a
+  // `curried_spec` contains an `arguments_spec` child, so both engines stay
+  // in parity until the grammars converge.
   let hasFunctionType = false;
-  if (curriedSpec) {
-    for (let i = 0; i < curriedSpec.childCount; i++) {
-      if (curriedSpec.child(i)?.type === 'arguments_spec') {
-        hasFunctionType = true;
-        break;
+  for (let i = 0; i < node.childCount; i++) {
+    const c = node.child(i);
+    if (!c) continue;
+    if (c.type === 'function_type') {
+      hasFunctionType = true;
+      break;
+    }
+    if (c.type === 'curried_spec') {
+      for (let j = 0; j < c.childCount; j++) {
+        if (c.child(j)?.type === 'arguments_spec') {
+          hasFunctionType = true;
+          break;
+        }
       }
+      if (hasFunctionType) break;
     }
   }
 

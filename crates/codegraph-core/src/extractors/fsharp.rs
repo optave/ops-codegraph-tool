@@ -36,9 +36,9 @@ fn match_fsharp_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
 ///
 /// Source files use `named_module` for the top-level `module M = …` and
 /// the signature grammar (cargo 0.3.0) wraps nested signature modules in
-/// `module_defn` nodes. WASM signature grammar (npm 0.1.0) currently
-/// produces ERROR nodes for nested signature modules so we cannot recover
-/// qualification there — tracked under #1161.
+/// `module_defn` nodes. The WASM signature grammar currently emits ERROR
+/// nodes for nested signature modules so we cannot recover qualification
+/// there — tracked under #1161.
 fn enclosing_module_name(node: &Node, source: &[u8]) -> Option<String> {
     let mut parts: Vec<String> = Vec::new();
     let mut current = node.parent();

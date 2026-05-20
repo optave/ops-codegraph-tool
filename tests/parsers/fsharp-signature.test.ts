@@ -42,13 +42,14 @@ describe('F# signature (.fsi) parser', () => {
   });
 
   it('extracts val declarations nested inside a module signature', () => {
-    // The WASM tree-sitter-fsharp 0.1.0 signature grammar does NOT produce a
-    // `module_defn` for `module Foo = ...` — it emits ERROR nodes and the
-    // `val` declarations float to the top level (so they're indexed as
-    // `add`, not `Foo.add`). The cargo 0.3.0 grammar parses it correctly
-    // and the Rust extractor qualifies as `Foo.add`. Grammar version skew
-    // is tracked under #1161; once npm bumps to 0.3.0+ this test should
-    // assert `Foo.add` to match the native engine.
+    // The WASM tree-sitter-fsharp signature grammar (currently v0.3.0) does
+    // NOT yet produce a `module_defn` for `module Foo = ...` — it emits
+    // ERROR nodes and the `val` declarations float to the top level (so
+    // they're indexed as `add`, not `Foo.add`). The cargo 0.3.0 grammar
+    // parses it correctly and the Rust extractor qualifies as `Foo.add`.
+    // The WASM grammar fix is tracked under #1161; once the signature
+    // grammar emits `module_defn` for nested modules, this assertion
+    // should be updated to expect `Foo.add` to match the native engine.
     const { symbols } = parseFSi(`module Foo =\n  val add : int -> int\n`);
     expect(symbols.definitions).toContainEqual(
       expect.objectContaining({ name: 'add', kind: 'function' }),
