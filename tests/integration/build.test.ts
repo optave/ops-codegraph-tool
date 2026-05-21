@@ -153,6 +153,48 @@ describe('buildGraph', () => {
   });
 });
 
+describe('buildGraph with custom dbPath (issue #1177)', () => {
+  let customDir: string, customDbPath: string;
+
+  beforeAll(async () => {
+    customDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-custom-db-'));
+    for (const [name, content] of Object.entries(FIXTURE_FILES)) {
+      fs.writeFileSync(path.join(customDir, name), content);
+    }
+    customDbPath = path.join(os.tmpdir(), `codegraph-custom-${Date.now()}.db`);
+    await buildGraph(customDir, { skipRegistry: true, dbPath: customDbPath });
+  });
+
+  afterAll(() => {
+    if (customDir) fs.rmSync(customDir, { recursive: true, force: true });
+    if (customDbPath && fs.existsSync(customDbPath)) {
+      fs.rmSync(customDbPath, { force: true });
+      // Clean up sidecar WAL/SHM files
+      for (const ext of ['-wal', '-shm', '.lock']) {
+        const sidecar = `${customDbPath}${ext}`;
+        if (fs.existsSync(sidecar)) fs.rmSync(sidecar, { force: true });
+      }
+    }
+  });
+
+  test('writes DB to the custom path, not <rootDir>/.codegraph/graph.db', () => {
+    expect(fs.existsSync(customDbPath)).toBe(true);
+    expect(fs.existsSync(path.join(customDir, '.codegraph', 'graph.db'))).toBe(false);
+  });
+
+  test('custom DB contains expected nodes and edges', () => {
+    const db = new Database(customDbPath, { readonly: true });
+    const files = db
+      .prepare("SELECT file FROM nodes WHERE kind = 'file'")
+      .all()
+      .map((r) => r.file);
+    db.close();
+    expect(files).toContain('math.js');
+    expect(files).toContain('utils.js');
+    expect(files).toContain('index.js');
+  });
+});
+
 describe('three-tier incremental builds', () => {
   let incrDir: string, incrDbPath: string;
 

@@ -1072,6 +1072,12 @@ export interface BuildGraphOpts {
    */
   exclude?: string[];
   skipRegistry?: boolean;
+  /**
+   * Override the graph.db location. Resolved absolute. When omitted, the
+   * pipeline writes to `<rootDir>/.codegraph/graph.db` — same default as
+   * `findDbPath` for every other DB-scoped command.
+   */
+  dbPath?: string;
 }
 
 /** Build timing result from buildGraph. */
