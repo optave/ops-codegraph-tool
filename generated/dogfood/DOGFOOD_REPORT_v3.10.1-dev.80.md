@@ -432,7 +432,7 @@ Either install into the right directory (the proposed fix) OR don't auto-install
 
 ## 12. Overall Assessment
 
-Codegraph v3.10.1-dev.80 is **a solid dev build** with 12 new native extractors landing at byte-identical parity to WASM, a useful MCP enhancement (`file_pattern` in `semantic_search`), and meaningful CI/benchmark hardening. The release-specific work is high quality — every change touched in the changelog held up to scrutiny.
+Codegraph v3.10.1-dev.80 is **a solid dev build** with 11 new native extractors landing at byte-identical parity to WASM, a useful MCP enhancement (`file_pattern` in `semantic_search`), and meaningful CI/benchmark hardening. The release-specific work is high quality — every change touched in the changelog held up to scrutiny.
 
 The two notable findings are:
 
