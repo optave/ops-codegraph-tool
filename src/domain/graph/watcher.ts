@@ -21,7 +21,8 @@ function prepareWatcherStatements(db: ReturnType<typeof openDb>): IncrementalStm
       'INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
     ),
     getNodeId: {
-      get: (name: string, kind: string, file: string, line: number) => {
+      get: (...params: unknown[]) => {
+        const [name, kind, file, line] = params as [string, string, string, number];
         const id = getNodeIdQuery(db, name, kind, file, line);
         return id != null ? { id } : undefined;
       },
