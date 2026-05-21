@@ -350,6 +350,33 @@ describe('findDbPath with git ceiling', () => {
       fs.rmSync(emptyDir, { recursive: true, force: true });
     }
   });
+
+  it('does not pick up stale parent .codegraph/ when no git repo exists', () => {
+    // Regression for the Phase 0 footgun (dogfood report 10.6): when no git
+    // repo wraps cwd, findDbPath used to walk all the way to `/`, latching
+    // onto stale .codegraph/ from unrelated parents (e.g. /private/tmp/).
+    const parentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-stale-parent-'));
+    fs.mkdirSync(path.join(parentDir, '.codegraph'), { recursive: true });
+    fs.writeFileSync(path.join(parentDir, '.codegraph', 'graph.db'), '');
+    const innerDir = path.join(parentDir, 'inner');
+    fs.mkdirSync(innerDir, { recursive: true });
+    const origCwd = process.cwd;
+    process.cwd = () => innerDir;
+    _resetRepoRootCache();
+    execFileSyncSpy.mockImplementationOnce(() => {
+      throw new Error('not a git repo');
+    });
+    try {
+      const result = findDbPath();
+      // Must NOT return the stale parent's DB.
+      expect(result).not.toBe(path.join(parentDir, '.codegraph', 'graph.db'));
+      // Falls back to the default path at cwd.
+      expect(result).toBe(path.join(innerDir, '.codegraph', 'graph.db'));
+    } finally {
+      process.cwd = origCwd;
+      fs.rmSync(parentDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('openReadonlyOrFail', () => {
