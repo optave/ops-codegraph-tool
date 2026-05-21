@@ -144,6 +144,27 @@ const add = (a, b) => a + b;
 `,
     },
     {
+      // Regression guard: native must apply the same callback-callee gating as
+      // WASM. Without the gate, native over-emits dynamic calls for member-expr
+      // args of non-allowlisted callees (e.g. `store.set(user.id, user)` →
+      // bogus call to `id` with receiver `user`), inflating call and receiver
+      // edge counts. Each line below probes a different branch of the gate:
+      //   1. non-allowlisted callee  → drop member-expr arg
+      //   2. cache/Map .get          → drop (HTTP verb without string-literal path)
+      //   3. router HTTP route        → keep (HTTP verb WITH string-literal path)
+      //   4. promise.then            → keep (always-allowlisted callback API)
+      //   5. optional-chain on .on   → keep (allowlisted, callee name still resolves)
+      name: 'JavaScript — callback gating must agree between engines',
+      file: 'callbacks.js',
+      code: `
+store.set(user.id, user);
+cache.get(user.id);
+router.get('/users/:id', auth.check);
+promise.then(handlers.onSuccess);
+emitter?.on('tick', handlers.fn);
+`,
+    },
+    {
       name: 'TypeScript — destructured parameters',
       file: 'destruct.ts',
       code: `
