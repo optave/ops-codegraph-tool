@@ -53,7 +53,7 @@ function readGraph(dbPath) {
 
 /** Build the prepared statements object that watcher.js normally provides. */
 function makeStmts(db) {
-  const stmts = {
+  return {
     insertNode: db.prepare(
       'INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
     ),
@@ -66,10 +66,7 @@ function makeStmts(db) {
     insertEdge: db.prepare(
       'INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?, ?, ?, ?, ?)',
     ),
-    deleteNodes: db.prepare('DELETE FROM nodes WHERE file = ?'),
-    deleteEdgesForFile: null,
     countNodes: db.prepare('SELECT COUNT(*) as c FROM nodes WHERE file = ?'),
-    countEdgesForFile: null,
     findNodeInFile: db.prepare(
       "SELECT id, file FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant') AND file = ?",
     ),
@@ -78,17 +75,6 @@ function makeStmts(db) {
     ),
     listSymbols: db.prepare("SELECT name, kind, line FROM nodes WHERE file = ? AND kind != 'file'"),
   };
-
-  const origDeleteEdges = db.prepare(
-    `DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = @f) OR target_id IN (SELECT id FROM nodes WHERE file = @f)`,
-  );
-  const origCountEdges = db.prepare(
-    `SELECT COUNT(*) as c FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = @f) OR target_id IN (SELECT id FROM nodes WHERE file = @f)`,
-  );
-  stmts.deleteEdgesForFile = { run: (f) => origDeleteEdges.run({ f }) };
-  stmts.countEdgesForFile = { get: (f) => origCountEdges.get({ f }) };
-
-  return stmts;
 }
 
 describe('Watcher rebuildFile parity (#533)', () => {
