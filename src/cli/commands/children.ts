@@ -16,7 +16,7 @@ export const command: CommandDefinition = {
     ['-k, --kind <kind>', 'Filter to a specific symbol kind'],
     ['-T, --no-tests', 'Exclude test/spec files from results'],
     ['-j, --json', 'Output as JSON'],
-    ['--limit <number>', 'Max results to return'],
+    ['-n, --limit <number>', 'Max results to return'],
     ['--offset <number>', 'Skip N results (default: 0)'],
   ],
   validate([_name], opts) {

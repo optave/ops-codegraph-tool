@@ -38,7 +38,7 @@ export const command: CommandDefinition = {
     ['-T, --no-tests', 'Exclude test/spec files from results'],
     ['--include-tests', 'Include test/spec files (overrides excludeTests config)'],
     ['-j, --json', 'Output as JSON'],
-    ['--limit <number>', 'Max results to return (manifesto mode)'],
+    ['-n, --limit <number>', 'Max results to return (manifesto mode)'],
     ['--offset <number>', 'Skip N results (manifesto mode)'],
     ['--ndjson', 'Newline-delimited JSON output (manifesto mode)'],
   ],
