@@ -8,6 +8,7 @@
  * so every test gets a fresh embedder module with its own mocks.
  */
 
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
 const expectedNpmBin = process.platform === 'win32' ? 'npm.cmd' : 'npm';
@@ -151,7 +152,7 @@ describe('loadTransformers install prompt', () => {
     });
     expect(execMock).toHaveBeenCalledWith(
       expectedNpmBin,
-      ['install', '@huggingface/transformers'],
+      ['install', '--no-save', '@huggingface/transformers'],
       expect.objectContaining({ stdio: 'inherit', timeout: 300_000 }),
     );
   });
@@ -184,5 +185,50 @@ describe('loadTransformers install prompt', () => {
     expect(result.vectors).toHaveLength(1);
     expect(result.dim).toBe(384);
     expect(exitSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('resolveNpmInstallCwd', () => {
+  beforeEach(() => {
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('returns host directory (4 dirname hops from scoped package.json)', async () => {
+    const fakePkg = path.join(
+      path.sep,
+      'host',
+      'node_modules',
+      '@optave',
+      'codegraph',
+      'package.json',
+    );
+    vi.doMock('node:module', () => ({
+      createRequire: () => ({
+        resolve: (req: string) => {
+          if (req === '@optave/codegraph/package.json') return fakePkg;
+          throw new Error(`Cannot find: ${req}`);
+        },
+      }),
+    }));
+
+    const { resolveNpmInstallCwd } = await import('../../src/domain/search/models.js');
+    expect(resolveNpmInstallCwd()).toBe(path.join(path.sep, 'host'));
+  });
+
+  test('returns undefined when @optave/codegraph cannot be resolved', async () => {
+    vi.doMock('node:module', () => ({
+      createRequire: () => ({
+        resolve: () => {
+          throw new Error('Cannot find module @optave/codegraph');
+        },
+      }),
+    }));
+
+    const { resolveNpmInstallCwd } = await import('../../src/domain/search/models.js');
+    expect(resolveNpmInstallCwd()).toBeUndefined();
   });
 });
