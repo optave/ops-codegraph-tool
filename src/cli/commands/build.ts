@@ -7,6 +7,7 @@ export const command: CommandDefinition = {
   name: 'build [dir]',
   description: 'Parse repo and build graph in .codegraph/graph.db',
   options: [
+    ['-d, --db <path>', 'Path to graph.db'],
     ['--no-incremental', 'Force full rebuild (ignore file hashes)'],
     ['--no-ast', 'Skip AST node extraction (calls, new, string, regex, throw, await)'],
     ['--no-complexity', 'Skip complexity metrics computation'],
@@ -23,6 +24,7 @@ export const command: CommandDefinition = {
       engine: engine as EngineMode,
       dataflow: opts.dataflow as boolean,
       cfg: opts.cfg as boolean,
+      dbPath: opts.db ? path.resolve(opts.db as string) : undefined,
     });
   },
 };

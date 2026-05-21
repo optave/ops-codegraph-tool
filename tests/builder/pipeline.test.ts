@@ -81,4 +81,17 @@ describe('buildGraph pipeline', () => {
     const { buildGraph: fromBarrel } = await import('../../src/domain/graph/builder.js');
     expect(fromBarrel).toBe(buildGraph);
   });
+
+  it('writes the DB to opts.dbPath when provided', async () => {
+    const customDbPath = path.join(tmpDir, 'custom', 'graph.db');
+    await buildGraph(tmpDir, { incremental: false, dbPath: customDbPath });
+
+    expect(fs.existsSync(customDbPath)).toBe(true);
+
+    const Database = (await import('better-sqlite3')).default;
+    const db = new Database(customDbPath, { readonly: true });
+    const nodeCount = (db.prepare('SELECT COUNT(*) as c FROM nodes').get() as { c: number }).c;
+    expect(nodeCount).toBeGreaterThan(0);
+    db.close();
+  });
 });

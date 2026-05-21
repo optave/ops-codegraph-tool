@@ -1072,6 +1072,10 @@ export interface BuildGraphOpts {
    */
   exclude?: string[];
   skipRegistry?: boolean;
+  /**
+   * Absolute path to the graph.db file. Defaults to `<rootDir>/.codegraph/graph.db`.
+   */
+  dbPath?: string;
 }
 
 /** Build timing result from buildGraph. */
