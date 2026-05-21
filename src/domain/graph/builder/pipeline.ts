@@ -167,7 +167,9 @@ function loadAliases(ctx: PipelineContext): void {
 
 function setupPipeline(ctx: PipelineContext): void {
   ctx.rootDir = path.resolve(ctx.rootDir);
-  ctx.dbPath = path.join(ctx.rootDir, '.codegraph', 'graph.db');
+  ctx.dbPath = ctx.opts.dbPath
+    ? path.resolve(ctx.opts.dbPath)
+    : path.join(ctx.rootDir, '.codegraph', 'graph.db');
 
   // Detect whether native engine is available.
   const enginePref = ctx.opts.engine || 'auto';
