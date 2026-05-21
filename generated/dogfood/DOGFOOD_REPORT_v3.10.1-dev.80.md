@@ -462,3 +462,6 @@ The native receiver-edge gap (+36% vs WASM) is concerning per CLAUDE.md's "engin
 | Issue | [#1176](https://github.com/optave/ops-codegraph-tool/issues/1176) | bug: watch mode crashes with FOREIGN KEY constraint failed in rebuildFile | open |
 | Issue | [#1177](https://github.com/optave/ops-codegraph-tool/issues/1177) | bug: build command rejects --db flag, breaking workflow with non-default DB locations | open |
 | PR | [#1178](https://github.com/optave/ops-codegraph-tool/pull/1178) | fix(embed): install @huggingface/transformers into codegraph's host node_modules | open |
+| Issue[^1] | [#1181](https://github.com/optave/ops-codegraph-tool/issues/1181) | follow-up: complete jina-base (768d) embedding Hit@k benchmark for v3.10.1 dogfood report | open |
+
+[^1]: Filed post-session to track the deferred jina-base benchmark referenced in §8.
