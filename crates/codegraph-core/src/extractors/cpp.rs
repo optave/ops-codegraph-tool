@@ -71,7 +71,14 @@ fn unwrap_cpp_declarator(node: &Node, source: &[u8]) -> String {
         match current.kind() {
             "pointer_declarator" | "reference_declarator" | "array_declarator"
             | "parenthesized_declarator" => {
-                if let Some(inner) = current.child_by_field_name("declarator") {
+                // tree-sitter-cpp's `reference_declarator` rule does not expose a
+                // `declarator` field, so `child_by_field_name` returns None and
+                // the full node text (`& name`) leaks out. Fall back to scanning
+                // children for the next nested declarator or identifier.
+                let inner = current
+                    .child_by_field_name("declarator")
+                    .or_else(|| next_cpp_declarator_child(&current));
+                if let Some(inner) = inner {
                     current = inner;
                 } else {
                     break;
@@ -82,6 +89,24 @@ fn unwrap_cpp_declarator(node: &Node, source: &[u8]) -> String {
         }
     }
     node_text(&current, source).to_string()
+}
+
+fn next_cpp_declarator_child<'a>(node: &Node<'a>) -> Option<Node<'a>> {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            match child.kind() {
+                "identifier"
+                | "field_identifier"
+                | "pointer_declarator"
+                | "reference_declarator"
+                | "array_declarator"
+                | "parenthesized_declarator"
+                | "function_declarator" => return Some(child),
+                _ => {}
+            }
+        }
+    }
+    None
 }
 
 fn extract_cpp_function_name(node: &Node, source: &[u8]) -> Option<String> {
@@ -432,5 +457,27 @@ mod tests {
         let s = parse_cpp("#include <iostream>\n#include \"mylib.hpp\"");
         assert_eq!(s.imports.len(), 2);
         assert!(s.imports[0].c_include.unwrap());
+    }
+
+    #[test]
+    fn reference_parameter_name_strips_ampersand() {
+        // tree-sitter-cpp's `reference_declarator` does not expose a `declarator`
+        // field, so the unwrap helper has to scan children for the underlying
+        // identifier — otherwise the parameter name comes back as `& action`.
+        let s = parse_cpp("void log_action(const std::string& action) {}");
+        let func = s.definitions.iter().find(|d| d.name == "log_action").unwrap();
+        let params = func.children.as_ref().expect("function has children");
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "action");
+        assert_eq!(params[0].kind, "parameter");
+    }
+
+    #[test]
+    fn rvalue_reference_parameter_name_strips_ampersand() {
+        let s = parse_cpp("void take(int&& x) {}");
+        let func = s.definitions.iter().find(|d| d.name == "take").unwrap();
+        let params = func.children.as_ref().expect("function has children");
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "x");
     }
 }
