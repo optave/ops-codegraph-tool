@@ -9,7 +9,7 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { bulkNodeIdsByFile } from '../../../db/index.js';
+import { bulkNodeIdsByFile, purgeFileData } from '../../../db/index.js';
 import { debug, warn } from '../../../infrastructure/logger.js';
 import { normalizePath } from '../../../shared/constants.js';
 import type {
@@ -29,8 +29,6 @@ export interface IncrementalStmts {
   insertNode: { run: (...params: unknown[]) => unknown };
   insertEdge: { run: (...params: unknown[]) => unknown };
   getNodeId: { get: (...params: unknown[]) => { id: number } | undefined };
-  deleteEdgesForFile: { run: (...params: unknown[]) => unknown };
-  deleteNodes: { run: (...params: unknown[]) => unknown };
   countNodes: { get: (...params: unknown[]) => { c: number } | undefined };
   listSymbols: { all: (...params: unknown[]) => unknown[] };
   findNodeInFile: { all: (...params: unknown[]) => unknown[] };
@@ -206,40 +204,6 @@ function rebuildDirContainment(
     return 1;
   }
   return 0;
-}
-
-// ── Ancillary table cleanup ────────────────────────────────────────────
-
-function purgeAncillaryData(db: BetterSqlite3Database, relPath: string): void {
-  const tryExec = (sql: string, ...args: string[]): void => {
-    try {
-      db.prepare(sql).run(...args);
-    } catch (err: unknown) {
-      if (!(err as Error | undefined)?.message?.includes('no such table')) throw err;
-    }
-  };
-  tryExec(
-    'DELETE FROM function_complexity WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)',
-    relPath,
-  );
-  tryExec(
-    'DELETE FROM node_metrics WHERE node_id IN (SELECT id FROM nodes WHERE file = ?)',
-    relPath,
-  );
-  tryExec(
-    'DELETE FROM cfg_edges WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?)',
-    relPath,
-  );
-  tryExec(
-    'DELETE FROM cfg_blocks WHERE function_node_id IN (SELECT id FROM nodes WHERE file = ?)',
-    relPath,
-  );
-  tryExec(
-    'DELETE FROM dataflow WHERE source_id IN (SELECT id FROM nodes WHERE file = ?) OR target_id IN (SELECT id FROM nodes WHERE file = ?)',
-    relPath,
-    relPath,
-  );
-  tryExec('DELETE FROM ast_nodes WHERE file = ?', relPath);
 }
 
 // ── Import edge building ────────────────────────────────────────────────
@@ -547,10 +511,11 @@ export async function rebuildFile(
   // Find reverse-deps BEFORE purging (edges still reference the old nodes)
   const reverseDeps = findReverseDeps(db, relPath);
 
-  // Purge ancillary tables, then edges, then nodes
-  purgeAncillaryData(db, relPath);
-  stmts.deleteEdgesForFile.run(relPath);
-  stmts.deleteNodes.run(relPath);
+  // Purge ancillary tables (incl. embeddings), edges, and nodes in one pass.
+  // Embeddings must be purged before nodes — better-sqlite3 enforces foreign
+  // keys by default, and `embeddings.node_id` references `nodes.id`. Issue #1176.
+  // `purgeHashes: false` preserves file_hashes for the next incremental build.
+  purgeFileData(db, relPath, { purgeHashes: false });
 
   if (!fs.existsSync(filePath)) {
     if (cache) (cache as { remove(p: string): void }).remove(filePath);
