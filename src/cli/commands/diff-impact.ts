@@ -8,7 +8,7 @@ export const command: CommandDefinition = {
     ['-d, --db <path>', 'Path to graph.db'],
     ['-T, --no-tests', 'Exclude test/spec files from results'],
     ['--include-tests', 'Include test/spec files (overrides excludeTests config)'],
-    ['--limit <number>', 'Max results to return'],
+    ['-n, --limit <number>', 'Max results to return'],
     ['--offset <number>', 'Skip N results (default: 0)'],
     ['--ndjson', 'Newline-delimited JSON output'],
     ['--staged', 'Analyze staged changes instead of unstaged'],
