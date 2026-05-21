@@ -914,8 +914,9 @@ const CALLBACK_ACCEPTING_CALLEES: &[&str] = &[
 /// first argument (`app.get('/path', handler)`), whereas Map-like APIs pass
 /// values/keys (`cache.get(user.id)`). Requiring a string-literal first arg
 /// for these callees keeps real route handlers covered while dropping the
-/// Map/cache false-positive surface. `use` and `all` are intentionally
-/// excluded — they're legitimate middleware registrations without a path.
+/// Map/cache false-positive surface. `use` is intentionally excluded here —
+/// it stays in the general allowlist as a legitimate middleware registration
+/// without a required path.
 ///
 /// Mirrors `HTTP_VERB_CALLEES` in `src/extractors/javascript.ts`.
 const HTTP_VERB_CALLEES: &[&str] = &[
