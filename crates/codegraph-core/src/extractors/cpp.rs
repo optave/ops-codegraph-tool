@@ -100,8 +100,7 @@ fn next_cpp_declarator_child<'a>(node: &Node<'a>) -> Option<Node<'a>> {
                 | "pointer_declarator"
                 | "reference_declarator"
                 | "array_declarator"
-                | "parenthesized_declarator"
-                | "function_declarator" => return Some(child),
+                | "parenthesized_declarator" => return Some(child),
                 _ => {}
             }
         }
