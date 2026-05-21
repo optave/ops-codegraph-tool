@@ -117,14 +117,10 @@ describe('rebuildFile FK safety with embeddings (#1176)', () => {
     ).resolves.not.toBeNull();
 
     // The seeded embedding row should be gone — embeddings for a rebuilt
-    // file are purged alongside the nodes they referenced.
-    const remaining = db
-      .prepare(
-        `SELECT COUNT(*) AS c FROM embeddings e
-         JOIN nodes n ON e.node_id = n.id
-         WHERE n.file = ?`,
-      )
-      .get('shared/constants.js') as { c: number };
+    // file are purged alongside the nodes they referenced. Count all rows in
+    // `embeddings` directly (exactly one was seeded) so the assertion still
+    // fails if the row survives as an orphan with a dangling node_id.
+    const remaining = db.prepare('SELECT COUNT(*) AS c FROM embeddings').get() as { c: number };
     expect(remaining.c).toBe(0);
 
     db.close();

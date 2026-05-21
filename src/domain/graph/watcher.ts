@@ -75,8 +75,12 @@ async function processPendingFiles(
       if (result) results.push(result);
     } catch (err: unknown) {
       const relPath = normalizePath(path.relative(rootDir, filePath));
-      warn(`Failed to rebuild ${relPath}: ${(err as Error).message} — skipping`);
-      debug((err as Error).stack ?? String(err));
+      // Narrow with `instanceof` instead of casting: a non-Error throw (a plain
+      // string, `null`, or any value a third-party dependency throws) would log
+      // `(err as Error).message` as `undefined`. See Greptile review on #1182.
+      const message = err instanceof Error ? err.message : String(err);
+      warn(`Failed to rebuild ${relPath}: ${message} — skipping`);
+      debug(err instanceof Error ? (err.stack ?? message) : String(err));
     }
   }
 
