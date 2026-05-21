@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { closeDb, getNodeId as getNodeIdQuery, initSchema, openDb } from '../../db/index.js';
-import { debug, info } from '../../infrastructure/logger.js';
+import { debug, info, warn } from '../../infrastructure/logger.js';
 import { isSupportedFile, normalizePath, shouldIgnore } from '../../shared/constants.js';
 import { DbError } from '../../shared/errors.js';
 import { createParseTreeCache, getActiveEngine } from '../parser.js';
@@ -16,7 +16,7 @@ function shouldIgnorePath(filePath: string): boolean {
 
 /** Prepare all SQL statements needed by the watcher's incremental rebuild. */
 function prepareWatcherStatements(db: ReturnType<typeof openDb>): IncrementalStmts {
-  const stmts = {
+  return {
     insertNode: db.prepare(
       'INSERT OR IGNORE INTO nodes (name, kind, file, line, end_line) VALUES (?, ?, ?, ?, ?)',
     ),
@@ -29,10 +29,7 @@ function prepareWatcherStatements(db: ReturnType<typeof openDb>): IncrementalStm
     insertEdge: db.prepare(
       'INSERT INTO edges (source_id, target_id, kind, confidence, dynamic) VALUES (?, ?, ?, ?, ?)',
     ),
-    deleteNodes: db.prepare('DELETE FROM nodes WHERE file = ?'),
-    deleteEdgesForFile: null as { run: (f: string) => void } | null,
     countNodes: db.prepare('SELECT COUNT(*) as c FROM nodes WHERE file = ?'),
-    countEdgesForFile: null as { get: (f: string) => { c: number } | undefined } | null,
     findNodeInFile: db.prepare(
       "SELECT id, file FROM nodes WHERE name = ? AND kind IN ('function', 'method', 'class', 'interface', 'type', 'struct', 'enum', 'trait', 'record', 'module', 'constant') AND file = ?",
     ),
@@ -41,19 +38,6 @@ function prepareWatcherStatements(db: ReturnType<typeof openDb>): IncrementalStm
     ),
     listSymbols: db.prepare("SELECT name, kind, line FROM nodes WHERE file = ? AND kind != 'file'"),
   };
-
-  const origDeleteEdges = db.prepare(
-    `DELETE FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = @f) OR target_id IN (SELECT id FROM nodes WHERE file = @f)`,
-  );
-  const origCountEdges = db.prepare(
-    `SELECT COUNT(*) as c FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = @f) OR target_id IN (SELECT id FROM nodes WHERE file = @f)`,
-  );
-  stmts.deleteEdgesForFile = { run: (f: string) => origDeleteEdges.run({ f }) };
-  stmts.countEdgesForFile = {
-    get: (f: string) => origCountEdges.get({ f }) as { c: number } | undefined,
-  };
-
-  return stmts as IncrementalStmts;
 }
 
 /** Rebuild result shape from rebuildFile. */
@@ -80,10 +64,19 @@ async function processPendingFiles(
 ): Promise<void> {
   const results: RebuildResult[] = [];
   for (const filePath of files) {
-    const result = (await rebuildFile(db, rootDir, filePath, stmts, engineOpts, cache, {
-      diffSymbols: diffSymbols as (old: unknown[], new_: unknown[]) => unknown,
-    })) as RebuildResult | null;
-    if (result) results.push(result);
+    // Per-file try/catch so one bad rebuild doesn't crash the watcher loop.
+    // The watcher is a long-running session — any SQLite error, parse failure,
+    // or filesystem race must be reported and skipped, not propagated. Issue #1176.
+    try {
+      const result = (await rebuildFile(db, rootDir, filePath, stmts, engineOpts, cache, {
+        diffSymbols: diffSymbols as (old: unknown[], new_: unknown[]) => unknown,
+      })) as RebuildResult | null;
+      if (result) results.push(result);
+    } catch (err: unknown) {
+      const relPath = normalizePath(path.relative(rootDir, filePath));
+      warn(`Failed to rebuild ${relPath}: ${(err as Error).message} — skipping`);
+      debug((err as Error).stack ?? String(err));
+    }
   }
 
   if (results.length > 0) {
