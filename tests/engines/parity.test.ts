@@ -12,7 +12,9 @@ import {
   createParsers,
   extractCSharpSymbols,
   extractDartSymbols,
+  extractElixirSymbols,
   extractGoSymbols,
+  extractHaskellSymbols,
   extractHCLSymbols,
   extractJavaSymbols,
   extractPHPSymbols,
@@ -43,6 +45,9 @@ function wasmExtract(code, filePath) {
   if (filePath.endsWith('.php')) return extractPHPSymbols(tree, filePath);
   if (filePath.endsWith('.dart')) return extractDartSymbols(tree, filePath);
   if (filePath.endsWith('.scala')) return extractScalaSymbols(tree, filePath);
+  if (filePath.endsWith('.ex') || filePath.endsWith('.exs'))
+    return extractElixirSymbols(tree, filePath);
+  if (filePath.endsWith('.hs')) return extractHaskellSymbols(tree, filePath);
   return extractSymbols(tree, filePath);
 }
 
@@ -61,7 +66,8 @@ function normalize(symbols) {
         line: d.line,
         endLine: d.endLine ?? d.end_line ?? null,
         ...(() => {
-          // Native engine doesn't extract implicit `self`/`&self` parameters for Python/Rust
+          // Both engines skip implicit `self`/`&self` parameters for Python/Rust;
+          // this filter is a safety net for any language that hasn't been aligned yet.
           const filtered = (d.children || [])
             .filter((c) => c.name !== 'self')
             .map((c) => ({ name: c.name, kind: c.kind, line: c.line }));
@@ -199,6 +205,55 @@ class Animal:
 class Dog(Animal):
     def speak(self):
         print("Woof")
+`,
+    },
+    {
+      // Regression guard: both engines must extract function parameters as
+      // `parameter` children — drives contains / parameter_of edges. Native
+      // previously dropped all Elixir params, leaving WASM-only contains
+      // edges on every function. See #1189.
+      name: 'Elixir — module with parameterised defs',
+      file: 'test.ex',
+      code: `defmodule UserService do
+  def create_user(store, id, name) do
+    UserRepository.save(store, id, name)
+  end
+
+  defp format_user(user) do
+    user.name
+  end
+end
+`,
+    },
+    {
+      // Regression guard: native previously dropped all Haskell function
+      // parameters (positional pattern children). See #1189.
+      name: 'Haskell — top-level functions with parameters',
+      file: 'Service.hs',
+      code: `module Service where
+
+createUser uid name age store =
+  if validateUser name age then Right store else Left "invalid"
+
+getUser uid store = lookup uid store
+`,
+    },
+    {
+      // Regression guard: WASM previously emitted `self`/`cls` as `parameter`
+      // children of methods, but native skipped them — inflating contains and
+      // parameter_of counts on every method. WASM now skips them too. See #1189.
+      name: 'Python — methods must skip implicit self/cls',
+      file: 'pyself.py',
+      code: `class Store:
+    def __init__(self, name):
+        self.name = name
+
+    def get(self, key):
+        return key
+
+    @classmethod
+    def build(cls, name):
+        return cls(name)
 `,
     },
     {
@@ -343,4 +398,26 @@ class UserService {
       expect(nativeResult).toEqual(wasmResult);
     });
   }
+
+  // Explicit guard for the WASM Python fix in #1189. The structural parity
+  // loop above strips `self` from both sides via normalize(), so a regression
+  // where WASM re-emits self/cls would slip through. Assert it directly.
+  it('Python WASM must skip implicit self/cls in method parameter children', () => {
+    const code = `class Foo:
+    def bar(self, x, y):
+        pass
+
+    @classmethod
+    def baz(cls, name):
+        pass
+`;
+    const wasm = wasmExtract(code, 'test.py');
+    const methods = (wasm?.definitions ?? []).filter((d) => d.kind === 'method');
+    expect(methods.length).toBeGreaterThan(0);
+    for (const m of methods) {
+      const childNames = (m.children ?? []).map((c) => c.name);
+      expect(childNames).not.toContain('self');
+      expect(childNames).not.toContain('cls');
+    }
+  });
 });
