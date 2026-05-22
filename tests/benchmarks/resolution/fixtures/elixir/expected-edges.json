@@ -107,6 +107,34 @@
       "kind": "calls",
       "mode": "module-function",
       "notes": "UserService.remove_user() — cross-module qualified call"
+    },
+    {
+      "source": { "name": "run", "file": "main.ex" },
+      "target": { "name": "fetch", "file": "patterns.ex" },
+      "kind": "calls",
+      "mode": "module-function",
+      "notes": "Patterns.fetch() — exercises default-value parameter extraction"
+    },
+    {
+      "source": { "name": "run", "file": "main.ex" },
+      "target": { "name": "first_of", "file": "patterns.ex" },
+      "kind": "calls",
+      "mode": "module-function",
+      "notes": "Patterns.first_of() — exercises tuple-pattern parameter extraction"
+    },
+    {
+      "source": { "name": "run", "file": "main.ex" },
+      "target": { "name": "name_of", "file": "patterns.ex" },
+      "kind": "calls",
+      "mode": "module-function",
+      "notes": "Patterns.name_of() — exercises map-pattern parameter extraction"
+    },
+    {
+      "source": { "name": "run", "file": "main.ex" },
+      "target": { "name": "id_of", "file": "patterns.ex" },
+      "kind": "calls",
+      "mode": "module-function",
+      "notes": "Patterns.id_of() — exercises struct-pattern parameter extraction"
     }
   ]
 }
