@@ -17,7 +17,7 @@ export const command: CommandDefinition = {
     ['-T, --no-tests', 'Exclude test/spec files from results'],
     ['--include-tests', 'Include test/spec files (overrides excludeTests config)'],
     ['-j, --json', 'Output as JSON'],
-    ['--limit <number>', 'Max results to return (quick mode)'],
+    ['-n, --limit <number>', 'Max results to return (quick mode)'],
     ['--offset <number>', 'Skip N results (quick mode)'],
     ['--ndjson', 'Newline-delimited JSON output (quick mode)'],
   ],

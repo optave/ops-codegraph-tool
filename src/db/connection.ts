@@ -292,6 +292,14 @@ export function findDbPath(customPath?: string): string {
       debug(`findDbPath: stopped at git ceiling ${ceiling}`);
       break;
     }
+    // Outside a git repo, cwd is the first (and only) directory we'll check.
+    // Walking past it risks attaching to a stale .codegraph/ in an unrelated
+    // parent — e.g. /private/tmp/.codegraph/ leaking into every /tmp/foo/ run,
+    // or $HOME/.codegraph/ leaking into every scratch dir under $HOME.
+    if (!ceiling) {
+      debug(`findDbPath: no git ceiling, stopping at ${dir}`);
+      break;
+    }
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;

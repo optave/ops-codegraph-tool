@@ -13,7 +13,7 @@ export function applyQueryOpts(cmd: Command): Command {
     .option('-T, --no-tests', 'Exclude test/spec files from results')
     .option('--include-tests', 'Include test/spec files (overrides excludeTests config)')
     .option('-j, --json', 'Output as JSON')
-    .option('--limit <number>', 'Max results to return')
+    .option('-n, --limit <number>', 'Max results to return')
     .option('--offset <number>', 'Skip N results (default: 0)')
     .option('--ndjson', 'Newline-delimited JSON output')
     .option('--table', 'Output as aligned table')
