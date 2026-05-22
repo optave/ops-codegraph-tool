@@ -37,6 +37,8 @@ fn handle_haskell_function(node: &Node, source: &[u8], symbols: &mut FileSymbols
         None => return,
     };
 
+    let params = extract_haskell_params(node, source);
+
     symbols.definitions.push(Definition {
         name: node_text(&name_node, source).to_string(),
         kind: "function".to_string(),
@@ -45,8 +47,40 @@ fn handle_haskell_function(node: &Node, source: &[u8], symbols: &mut FileSymbols
         decorators: None,
         complexity: compute_all_metrics(node, source, "haskell"),
         cfg: build_function_cfg(node, "haskell", source),
-        children: None,
+        children: opt_children(params),
     });
+}
+
+fn extract_haskell_params(func_node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut params = Vec::new();
+    for i in 0..func_node.child_count() {
+        let Some(child) = func_node.child(i) else { continue };
+        match child.kind() {
+            "patterns" | "parameter" => {
+                for j in 0..child.child_count() {
+                    if let Some(pat) = child.child(j) {
+                        if pat.kind() == "variable" || pat.kind() == "identifier" {
+                            params.push(child_def(
+                                node_text(&pat, source).to_string(),
+                                "parameter",
+                                start_line(&pat),
+                            ));
+                        }
+                    }
+                }
+            }
+            "variable" if i > 0 => {
+                // Pattern parameter after the function name
+                params.push(child_def(
+                    node_text(&child, source).to_string(),
+                    "parameter",
+                    start_line(&child),
+                ));
+            }
+            _ => {}
+        }
+    }
+    params
 }
 
 fn handle_haskell_bind(node: &Node, source: &[u8], symbols: &mut FileSymbols) {

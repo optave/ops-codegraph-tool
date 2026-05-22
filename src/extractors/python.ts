@@ -122,7 +122,7 @@ function handlePyFunctionDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
   const parentClass = findPythonParentClass(node);
   const fullName = parentClass ? `${parentClass}.${nameNode.text}` : nameNode.text;
   const kind = parentClass ? 'method' : 'function';
-  const fnChildren = extractPythonParameters(node);
+  const fnChildren = extractPythonParameters(node, parentClass !== null);
   ctx.definitions.push({
     name: fullName,
     kind,
@@ -238,7 +238,7 @@ function handlePyImportFrom(node: TreeSitterNode, ctx: ExtractorOutput): void {
 
 // ── Python-specific helpers ─────────────────────────────────────────────────
 
-function extractPythonParameters(fnNode: TreeSitterNode): SubDeclaration[] {
+function extractPythonParameters(fnNode: TreeSitterNode, isMethod: boolean): SubDeclaration[] {
   const params: SubDeclaration[] = [];
   const paramsNode = fnNode.childForFieldName('parameters') || findChild(fnNode, 'parameters');
   if (!paramsNode) return params;
@@ -246,7 +246,9 @@ function extractPythonParameters(fnNode: TreeSitterNode): SubDeclaration[] {
     const child = paramsNode.child(i);
     if (!child) continue;
     const param = extractSinglePyParam(child);
-    if (param) params.push(param);
+    if (!param) continue;
+    if (isMethod && (param.name === 'self' || param.name === 'cls')) continue;
+    params.push(param);
   }
   return params;
 }

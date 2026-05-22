@@ -125,6 +125,8 @@ fn handle_def_function(node: &Node, source: &[u8], symbols: &mut FileSymbols, _k
         None => fn_name,
     };
 
+    let params = extract_elixir_params(&args, source);
+
     // Note: visibility (public/private) is determined by keyword but the
     // Definition struct does not yet have a visibility field. When it does,
     // wire `keyword == "defp"` → private, else → public.
@@ -137,8 +139,28 @@ fn handle_def_function(node: &Node, source: &[u8], symbols: &mut FileSymbols, _k
         decorators: None,
         complexity: compute_all_metrics(node, source, "elixir"),
         cfg: build_function_cfg(node, "elixir", source),
-        children: None,
+        children: opt_children(params),
     });
+}
+
+fn extract_elixir_params(args: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut params = Vec::new();
+    for i in 0..args.child_count() {
+        let Some(child) = args.child(i) else { continue };
+        if child.kind() != "call" { continue; }
+        let Some(inner_args) = find_child(&child, "arguments") else { continue };
+        for j in 0..inner_args.child_count() {
+            let Some(param) = inner_args.child(j) else { continue };
+            if param.kind() == "identifier" {
+                params.push(child_def(
+                    node_text(&param, source).to_string(),
+                    "parameter",
+                    start_line(&param),
+                ));
+            }
+        }
+    }
+    params
 }
 
 fn extract_elixir_fn_name<'a>(args: &Node<'a>, source: &'a [u8]) -> Option<String> {
