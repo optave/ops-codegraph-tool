@@ -135,6 +135,20 @@
       "kind": "calls",
       "mode": "module-function",
       "notes": "Patterns.id_of() — exercises struct-pattern parameter extraction"
+    },
+    {
+      "source": { "name": "run", "file": "main.ex" },
+      "target": { "name": "head_of", "file": "patterns.ex" },
+      "kind": "calls",
+      "mode": "module-function",
+      "notes": "Patterns.head_of() — exercises list-cons pattern parameter extraction"
+    },
+    {
+      "source": { "name": "run", "file": "main.ex" },
+      "target": { "name": "all_of", "file": "patterns.ex" },
+      "kind": "calls",
+      "mode": "module-function",
+      "notes": "Patterns.all_of() — exercises list pattern parameter extraction"
     }
   ]
 }

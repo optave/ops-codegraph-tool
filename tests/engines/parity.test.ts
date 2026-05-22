@@ -245,6 +245,14 @@ end
   def id_of(%User{id: id}) do
     id
   end
+
+  def head_of([head | tail]) do
+    {head, tail}
+  end
+
+  def all_of([a, b, c]) do
+    {a, b, c}
+  end
 end
 `,
     },
@@ -387,6 +395,8 @@ module "vpc" {
   def first_of({x, _y}), do: x
   def name_of(%{name: name}), do: name
   def id_of(%User{id: id}), do: id
+  def head_of([head | tail]), do: head
+  def all_of([a, b, c]), do: a
 end
 `;
     const wasm = wasmExtract(code, 'patterns.ex');
@@ -405,6 +415,8 @@ end
       expect(byName.get('Patterns.first_of'), `${label} first_of`).toEqual(['x', '_y']);
       expect(byName.get('Patterns.name_of'), `${label} name_of`).toEqual(['name']);
       expect(byName.get('Patterns.id_of'), `${label} id_of`).toEqual(['id']);
+      expect(byName.get('Patterns.head_of'), `${label} head_of`).toEqual(['head', 'tail']);
+      expect(byName.get('Patterns.all_of'), `${label} all_of`).toEqual(['a', 'b', 'c']);
     }
   });
 

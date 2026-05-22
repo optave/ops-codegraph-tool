@@ -199,7 +199,8 @@ function extractElixirParams(defCallNode: TreeSitterNode): SubDeclaration[] {
 /**
  * Recursively walk a parameter pattern and emit each bound identifier as a
  * `parameter` child. Handles bare identifiers, default-value `a \\ default`,
- * and tuple / map / struct destructuring (`{x, y}`, `%{k: v}`, `%Foo{k: v}`).
+ * list-cons `[head | tail]`, list `[a, b, c]`, tuple `{x, y}`, and
+ * map / struct destructuring (`%{k: v}`, `%Foo{k: v}`).
  */
 function collectElixirParamIdentifiers(node: TreeSitterNode, out: SubDeclaration[]): void {
   switch (node.type) {
@@ -207,15 +208,33 @@ function collectElixirParamIdentifiers(node: TreeSitterNode, out: SubDeclaration
       out.push({ name: node.text, kind: 'parameter', line: node.startPosition.row + 1 });
       return;
     case 'binary_operator': {
-      // Default-value parameter: `name \\ default`. The bound name is the left operand.
-      // Only recurse when the operator is `\\` — other binary operators (e.g. `|` in
-      // list-cons patterns) are out of scope for this extractor pass.
+      // `name \\ default` (default-value) binds the left operand only.
+      // `head | tail` (list-cons, appears inside a `list` pattern) binds both operands.
       const op = node.child(1);
-      if (!op || op.type !== '\\\\') return;
-      const left = node.child(0);
-      if (left) collectElixirParamIdentifiers(left, out);
+      if (!op) return;
+      if (op.type === '\\\\') {
+        const left = node.child(0);
+        if (left) collectElixirParamIdentifiers(left, out);
+        return;
+      }
+      if (op.type === '|') {
+        const left = node.child(0);
+        const right = node.child(2);
+        if (left) collectElixirParamIdentifiers(left, out);
+        if (right) collectElixirParamIdentifiers(right, out);
+        return;
+      }
       return;
     }
+    case 'list':
+      // `[a, b, c]` or `[head | tail]` — walk children, skipping punctuation. The
+      // `|` cons case is handled by the `binary_operator` arm when we recurse.
+      for (let i = 0; i < node.childCount; i++) {
+        const c = node.child(i);
+        if (!c || c.type === '[' || c.type === ']' || c.type === ',') continue;
+        collectElixirParamIdentifiers(c, out);
+      }
+      return;
     case 'tuple':
       for (let i = 0; i < node.childCount; i++) {
         const c = node.child(i);

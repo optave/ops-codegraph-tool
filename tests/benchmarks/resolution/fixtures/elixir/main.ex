@@ -12,6 +12,8 @@ defmodule Main do
     _ = Patterns.first_of({1, 2})
     _ = Patterns.name_of(%{name: "x", email: "x@y"})
     _ = Patterns.id_of(%User{id: 1})
+    _ = Patterns.head_of([1, 2, 3])
+    _ = Patterns.all_of([1, 2, 3])
     store
   end
 end

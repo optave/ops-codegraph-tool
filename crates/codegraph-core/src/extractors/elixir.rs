@@ -159,7 +159,8 @@ fn extract_elixir_params(args: &Node, source: &[u8]) -> Vec<Definition> {
 
 /// Recursively walk a parameter pattern and emit each bound identifier as a
 /// `parameter` child. Handles bare identifiers, default-value `a \\ default`,
-/// and tuple / map / struct destructuring (`{x, y}`, `%{k: v}`, `%Foo{k: v}`).
+/// list-cons `[head | tail]`, list `[a, b, c]`, tuple `{x, y}`, and
+/// map / struct destructuring (`%{k: v}`, `%Foo{k: v}`).
 fn collect_elixir_param_identifiers(node: &Node, source: &[u8], out: &mut Vec<Definition>) {
     match node.kind() {
         "identifier" => {
@@ -170,13 +171,34 @@ fn collect_elixir_param_identifiers(node: &Node, source: &[u8], out: &mut Vec<De
             ));
         }
         "binary_operator" => {
-            // Default-value parameter: `name \\ default`. Only recurse when the operator
-            // is `\\` — other binary operators in argument position (e.g. list-cons `|`)
-            // are out of scope for this extractor pass.
+            // `name \\ default` (default-value) binds the left operand only.
+            // `head | tail` (list-cons, appears inside a `list` pattern) binds both operands.
             let Some(op) = node.child(1) else { return };
-            if op.kind() != "\\\\" { return; }
-            if let Some(left) = node.child(0) {
-                collect_elixir_param_identifiers(&left, source, out);
+            match op.kind() {
+                "\\\\" => {
+                    if let Some(left) = node.child(0) {
+                        collect_elixir_param_identifiers(&left, source, out);
+                    }
+                }
+                "|" => {
+                    if let Some(left) = node.child(0) {
+                        collect_elixir_param_identifiers(&left, source, out);
+                    }
+                    if let Some(right) = node.child(2) {
+                        collect_elixir_param_identifiers(&right, source, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        "list" => {
+            // `[a, b, c]` or `[head | tail]` — walk children, skipping punctuation.
+            // The `|` cons case is handled by the `binary_operator` arm on recursion.
+            for i in 0..node.child_count() {
+                let Some(c) = node.child(i) else { continue };
+                let k = c.kind();
+                if k == "[" || k == "]" || k == "," { continue; }
+                collect_elixir_param_identifiers(&c, source, out);
             }
         }
         "tuple" => {

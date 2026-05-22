@@ -14,4 +14,12 @@ defmodule Patterns do
   def id_of(%User{id: id}) do
     id
   end
+
+  def head_of([head | _tail]) do
+    head
+  end
+
+  def all_of([a, b, _c]) do
+    {a, b}
+  end
 end
