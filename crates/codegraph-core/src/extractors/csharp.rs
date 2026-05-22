@@ -114,14 +114,17 @@ fn handle_interface_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
             let Some(child) = body.child(i) else { continue };
             if child.kind() != "method_declaration" { continue; }
             if let Some(meth_name) = child.child_by_field_name("name") {
+                // Interface method declarations have no body — skip CFG and complexity
+                // to mirror the WASM extractor and avoid producing meaningless metrics
+                // for body-less declarations.
                 symbols.definitions.push(Definition {
                     name: format!("{}.{}", iface_name, node_text(&meth_name, source)),
                     kind: "method".to_string(),
                     line: start_line(&child),
                     end_line: Some(end_line(&child)),
                     decorators: None,
-                    complexity: compute_all_metrics(&child, source, "csharp"),
-                    cfg: build_function_cfg(&child, "csharp", source),
+                    complexity: None,
+                    cfg: None,
                     children: None,
                 });
             }
@@ -365,6 +368,12 @@ fn extract_csharp_enum_members(node: &Node, source: &[u8]) -> Vec<Definition> {
 /// is a known interface in the same file. At extraction time we cannot distinguish
 /// base classes from interfaces in the base_list, so we fix it up here using the
 /// definitions collected during the walk.
+///
+/// Known limitation (mirrors the WASM `reclassifyCSharpImplements`): this pass only
+/// inspects interfaces declared in the current file. Classes that implement an
+/// interface declared in a different file will keep the entry as `extends` and will
+/// surface as inheritance edges rather than implementation edges. Cross-file
+/// reclassification would require a project-wide post-build pass.
 fn reclassify_csharp_implements(symbols: &mut FileSymbols) {
     let interfaces: HashSet<String> = symbols
         .definitions
