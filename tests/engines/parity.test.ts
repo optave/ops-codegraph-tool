@@ -11,9 +11,11 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   createParsers,
   extractCSharpSymbols,
+  extractCudaSymbols,
   extractGoSymbols,
   extractHCLSymbols,
   extractJavaSymbols,
+  extractKotlinSymbols,
   extractPHPSymbols,
   extractPythonSymbols,
   extractRubySymbols,
@@ -30,31 +32,19 @@ function wasmExtract(code, filePath) {
   const parser = getParser(parsers, filePath);
   if (!parser) return null;
   const tree = parser.parse(code);
-  const isHCL = filePath.endsWith('.tf') || filePath.endsWith('.hcl');
-  const isPython = filePath.endsWith('.py');
-  const isGo = filePath.endsWith('.go');
-  const isRust = filePath.endsWith('.rs');
-  const isJava = filePath.endsWith('.java');
-  const isCSharp = filePath.endsWith('.cs');
-  const isRuby = filePath.endsWith('.rb');
-  const isPHP = filePath.endsWith('.php');
-  return isHCL
-    ? extractHCLSymbols(tree, filePath)
-    : isPython
-      ? extractPythonSymbols(tree, filePath)
-      : isGo
-        ? extractGoSymbols(tree, filePath)
-        : isRust
-          ? extractRustSymbols(tree, filePath)
-          : isJava
-            ? extractJavaSymbols(tree, filePath)
-            : isCSharp
-              ? extractCSharpSymbols(tree, filePath)
-              : isRuby
-                ? extractRubySymbols(tree, filePath)
-                : isPHP
-                  ? extractPHPSymbols(tree, filePath)
-                  : extractSymbols(tree, filePath);
+  if (filePath.endsWith('.tf') || filePath.endsWith('.hcl'))
+    return extractHCLSymbols(tree, filePath);
+  if (filePath.endsWith('.py')) return extractPythonSymbols(tree, filePath);
+  if (filePath.endsWith('.go')) return extractGoSymbols(tree, filePath);
+  if (filePath.endsWith('.rs')) return extractRustSymbols(tree, filePath);
+  if (filePath.endsWith('.java')) return extractJavaSymbols(tree, filePath);
+  if (filePath.endsWith('.cs')) return extractCSharpSymbols(tree, filePath);
+  if (filePath.endsWith('.rb')) return extractRubySymbols(tree, filePath);
+  if (filePath.endsWith('.php')) return extractPHPSymbols(tree, filePath);
+  if (filePath.endsWith('.kt')) return extractKotlinSymbols(tree, filePath);
+  if (filePath.endsWith('.cu') || filePath.endsWith('.cuh'))
+    return extractCudaSymbols(tree, filePath);
+  return extractSymbols(tree, filePath);
 }
 
 function nativeExtract(code, filePath) {
@@ -244,6 +234,55 @@ interface Printable { void print(); }
 class Document implements Printable {
     public void print() { System.out.println("doc"); }
 }
+`,
+    },
+    {
+      // Regression guard for #1189: native Java extractor used to double-emit
+      // interface methods (once from handle_interface_decl without children,
+      // once from the recursive handle_method_decl with parameter children),
+      // producing spurious `contains` edges to parameters of body-less
+      // declarations. Mirrors the C# fix in #1194.
+      name: 'Java — interface methods have no parameter children',
+      file: 'IFace.java',
+      code: `
+interface UserRepository {
+    String findById(String id);
+    void save(String id, String data);
+    boolean delete(String id);
+}
+`,
+    },
+    {
+      // Regression guard for #1189: WASM Kotlin extractor previously omitted
+      // parameter children from class/object methods (`collectKotlinMethods`
+      // built definitions without children), while native correctly extracted
+      // them. The two engines now agree.
+      name: 'Kotlin — class method parameters are children in both engines',
+      file: 'Repo.kt',
+      code: `
+class Repository {
+    private val storeRef = 0
+    fun save(item: String): Boolean { return true }
+    fun findByName(name: String): String? { return null }
+}
+`,
+    },
+    {
+      // Regression guard for #1189: CUDA grammar models a class-body member
+      // list as `field_declaration`s, so method declarations in `.cuh`
+      // headers used to be emitted as `property` children with the full
+      // signature as their name. Native stripped the `*` from pointer-return
+      // types while WASM kept it, producing 2+2 mismatched `contains` edges
+      // on the fixture. Both engines now skip method declarations during
+      // field extraction.
+      name: 'CUDA — class headers do not emit methods as property children',
+      file: 'svc.cuh',
+      code: `
+class UserRepository {
+public:
+    void save(const char *id, const char *name);
+    const char *findById(const char *id);
+};
 `,
     },
     {
