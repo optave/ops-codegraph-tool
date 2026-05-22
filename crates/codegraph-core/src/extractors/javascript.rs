@@ -883,11 +883,95 @@ fn extract_implements_depth(node: &Node, source: &[u8], result: &mut Vec<String>
     }
 }
 
+/// Callee names that idiomatically accept callback references. Member-expression
+/// args (e.g. `auth.validate`) are only emitted as dynamic callback calls when
+/// the callee is in this set; otherwise plain property reads passed as data
+/// (`store.set(user.id, user)`) would emit spurious `id` calls with receiver
+/// `user`. Identifier args are always emitted — collateral damage from dropping
+/// them outweighs the FP risk for plain identifier data args.
+///
+/// Mirrors `CALLBACK_ACCEPTING_CALLEES` in `src/extractors/javascript.ts`.
+const CALLBACK_ACCEPTING_CALLEES: &[&str] = &[
+    // Express / router / middleware
+    "use", "get", "post", "put", "delete", "patch", "options", "head", "all",
+    // Promises
+    "then", "catch", "finally",
+    // Array iteration / reduction
+    "map", "filter", "forEach", "find", "findIndex", "findLast", "findLastIndex",
+    "some", "every", "reduce", "reduceRight", "flatMap", "sort",
+    // Event emitters / DOM
+    "on", "once", "off", "addListener", "removeListener",
+    "addEventListener", "removeEventListener", "subscribe", "unsubscribe",
+    // Scheduling / plain function callbacks
+    "setTimeout", "setInterval", "setImmediate", "queueMicrotask",
+    "requestAnimationFrame", "requestIdleCallback", "nextTick",
+    // Commander / yargs / hooks
+    "action", "command",
+];
+
+/// HTTP-verb callees that double as Map/cache/repository method names.
+/// Express/router invocations always take a string-literal route path as the
+/// first argument (`app.get('/path', handler)`), whereas Map-like APIs pass
+/// values/keys (`cache.get(user.id)`). Requiring a string-literal first arg
+/// for these callees keeps real route handlers covered while dropping the
+/// Map/cache false-positive surface. `use` is intentionally excluded here —
+/// it stays in the general allowlist as a legitimate middleware registration
+/// without a required path.
+///
+/// Mirrors `HTTP_VERB_CALLEES` in `src/extractors/javascript.ts`.
+const HTTP_VERB_CALLEES: &[&str] = &[
+    "get", "post", "put", "delete", "patch", "options", "head", "all",
+];
+
+/// Extract the callee's final name (function identifier or member expression
+/// property) for callback-eligibility filtering. Returns `None` if the callee
+/// shape is not analyzable (e.g. computed subscripts, IIFEs).
+fn extract_callee_name<'a>(call_node: &Node, source: &'a [u8]) -> Option<&'a str> {
+    let fn_node = call_node.child_by_field_name("function")?;
+    match fn_node.kind() {
+        "identifier" => Some(node_text(&fn_node, source)),
+        "member_expression" => {
+            let prop = fn_node.child_by_field_name("property")?;
+            Some(node_text(&prop, source))
+        }
+        _ => None,
+    }
+}
+
+/// True iff the first argument of an `arguments` node is a string literal —
+/// used to distinguish Express/router route handlers (`app.get('/path', h)`)
+/// from Map/cache APIs that reuse the same verb names (`cache.get(user.id)`).
+fn first_arg_is_string_literal(args_node: &Node) -> bool {
+    for i in 0..args_node.child_count() {
+        let Some(child) = args_node.child(i) else { continue };
+        let kind = child.kind();
+        // Skip parens and commas; the first non-punctuation child is the first arg.
+        if kind == "(" || kind == "," || kind == ")" { continue; }
+        return kind == "string" || kind == "template_string";
+    }
+    false
+}
+
 fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut Vec<Call>) {
     let args = call_node.child_by_field_name("arguments")
         .or_else(|| find_child(call_node, "arguments"));
     let Some(args) = args else { return };
     let call_line = start_line(call_node);
+
+    let callee_name = extract_callee_name(call_node, source);
+    let mut member_expr_args_allowed = callee_name
+        .map(|n| CALLBACK_ACCEPTING_CALLEES.contains(&n))
+        .unwrap_or(false);
+    if member_expr_args_allowed {
+        if let Some(name) = callee_name {
+            if HTTP_VERB_CALLEES.contains(&name) {
+                // HTTP verbs require a string-literal route path to be treated as a
+                // callback-accepting API; otherwise `cache.get(user.id)` etc. would
+                // still emit `id` as a dynamic call.
+                member_expr_args_allowed = first_arg_is_string_literal(&args);
+            }
+        }
+    }
 
     for i in 0..args.child_count() {
         let Some(child) = args.child(i) else { continue };
@@ -900,7 +984,7 @@ fn extract_callback_reference_calls(call_node: &Node, source: &[u8], calls: &mut
                     receiver: None,
                 });
             }
-            "member_expression" => {
+            "member_expression" if member_expr_args_allowed => {
                 if let Some(prop) = child.child_by_field_name("property") {
                     let receiver = child.child_by_field_name("object")
                         .map(|obj| node_text(&obj, source).to_string());
@@ -1733,6 +1817,92 @@ mod tests {
         let s = parse_js("router.use(checkPermissions(['admin']));");
         let cp_calls: Vec<_> = s.calls.iter().filter(|c| c.name == "checkPermissions").collect();
         assert_eq!(cp_calls.len(), 1);
+    }
+
+    #[test]
+    fn no_member_expr_callback_for_non_allowlisted_callee() {
+        // `store.set(user.id, user)` — `user.id` is a property read passed as a
+        // value (map key), NOT a callback. Only allowlisted callees (use, then,
+        // map, addEventListener, etc.) get member_expression args emitted as
+        // dynamic calls. Mirrors WASM test in `tests/parsers/javascript.test.ts`.
+        let s = parse_js("store.set(user.id, user);");
+        let dyn_member_calls: Vec<_> =
+            s.calls.iter().filter(|c| c.dynamic == Some(true) && c.name == "id").collect();
+        assert!(
+            dyn_member_calls.is_empty(),
+            "store.set non-allowlisted callee must not emit member-expr arg `id` as dynamic call",
+        );
+    }
+
+    #[test]
+    fn emits_member_expr_callback_for_allowlisted_callee() {
+        // Positive companion: `app.use(auth.validate)` and `promise.then(handlers.onSuccess)`
+        // must still produce dynamic calls with receivers, because `use` and `then`
+        // are callback-accepting APIs.
+        let use_s = parse_js("app.use(auth.validate);");
+        let use_cb = use_s.calls.iter()
+            .find(|c| c.dynamic == Some(true) && c.name == "validate");
+        assert!(use_cb.is_some(), "app.use must still emit validate as dynamic call");
+        assert_eq!(use_cb.unwrap().receiver.as_deref(), Some("auth"));
+
+        let then_s = parse_js("promise.then(handlers.onSuccess);");
+        let then_cb = then_s.calls.iter()
+            .find(|c| c.dynamic == Some(true) && c.name == "onSuccess");
+        assert!(then_cb.is_some(), "promise.then must still emit onSuccess as dynamic call");
+        assert_eq!(then_cb.unwrap().receiver.as_deref(), Some("handlers"));
+    }
+
+    #[test]
+    fn no_member_expr_callback_for_cache_or_map_get() {
+        // `cache.get(user.id)` shares the verb name `get` with Express routes,
+        // but has no string-literal route path first arg — so member-expr args
+        // must not be emitted as dynamic calls. Same for `repo.put`, `map.delete`.
+        let cache_s = parse_js("cache.get(user.id);");
+        assert!(
+            !cache_s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "id"),
+            "cache.get(user.id) must not emit `id` as dynamic call",
+        );
+
+        let repo_s = parse_js("repo.put(record.key, value);");
+        assert!(
+            !repo_s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "key"),
+            "repo.put(record.key) must not emit `key` as dynamic call",
+        );
+
+        let map_s = parse_js("map.delete(entry.id);");
+        assert!(
+            !map_s.calls.iter().any(|c| c.dynamic == Some(true) && c.name == "id"),
+            "map.delete(entry.id) must not emit `id` as dynamic call",
+        );
+    }
+
+    #[test]
+    fn emits_member_expr_callback_for_http_route_with_string_path() {
+        // Positive regression guard: HTTP-verb calls with a string-literal
+        // first arg (Express route signature) must still emit member-expr args.
+        let router_s = parse_js("router.get('/users/:id', auth.check);");
+        let router_cb = router_s.calls.iter()
+            .find(|c| c.dynamic == Some(true) && c.name == "check");
+        assert!(router_cb.is_some(), "Express route with string path must emit auth.check");
+        assert_eq!(router_cb.unwrap().receiver.as_deref(), Some("auth"));
+
+        let template_s = parse_js("app.post(`/api`, handlers.create);");
+        let template_cb = template_s.calls.iter()
+            .find(|c| c.dynamic == Some(true) && c.name == "create");
+        assert!(template_cb.is_some(), "Express route with template string must emit handlers.create");
+        assert_eq!(template_cb.unwrap().receiver.as_deref(), Some("handlers"));
+    }
+
+    #[test]
+    fn handles_optional_chaining_callee_in_allowlist() {
+        // `emitter?.on('tick', handlers.fn)` — tree-sitter-javascript/typescript
+        // represent `obj?.on` as a `member_expression` with an `optional_chain`
+        // child, so `extract_callee_name` returns `on` and the allowlist gate works.
+        let s = parse_js("emitter?.on('tick', handlers.fn);");
+        let cb = s.calls.iter()
+            .find(|c| c.dynamic == Some(true) && c.name == "fn");
+        assert!(cb.is_some(), "optional-chain callee must still gate by allowlist");
+        assert_eq!(cb.unwrap().receiver.as_deref(), Some("handlers"));
     }
 
     #[test]

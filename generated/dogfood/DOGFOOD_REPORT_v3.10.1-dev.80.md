@@ -312,14 +312,17 @@ Observations:
 |-------|------:|------:|------:|-------:|
 | minilm (384d) | 981/1500 (65.4%) | 1291/1500 (86.1%) | 1367/1500 (91.1%) | 63 |
 | jina-small (512d) | 1168/1500 (77.9%) | 1402/1500 (93.5%) | 1445/1500 (96.3%) | 23 |
-| jina-base (768d) | _not completed in this session — see follow-up [#1181](https://github.com/optave/ops-codegraph-tool/issues/1181)_ | — | — | — |
+| jina-base (768d) † | 1094/1500 (72.9%) | 1370/1500 (91.3%) | 1425/1500 (95.0%) | 41 |
+
+† Backfilled in follow-up [#1181](https://github.com/optave/ops-codegraph-tool/issues/1181) after the session. Reproduced against the dev.80 source commit (`1a6ee7b`) with the `v3.10.1-dev.81` native binary — the Rust source is unchanged between dev.80 and dev.81 (only a CI-only commit between them), and the `v3.10.1-dev.80` GitHub release tarball had been pruned by the time the follow-up ran. Re-running `minilm` and `jina-small` as controls on the reproduced corpus produced numbers ~+0.4–1.2 pp higher than the published values (`minilm` Hit@5 92.3% vs 91.1%, a +1.2 pp delta; `jina-small` Hit@5 96.7% vs 96.3%, a +0.4 pp delta), attributable to a +2-file / +46-node corpus drift between session-time (612 files / 17,873 nodes) and re-run-time (614 files / 17,919 nodes). The jina-base row should be read with the same ±0.4–1.2 pp tolerance.
 
 ### Benchmark Assessment
 
 - No regressions vs the v3.10.0 baseline in `generated/benchmarks/BUILD-BENCHMARKS.md`. The corpus shrank (745 → 612 files) due to PR #1134's fixture exclusion, but per-file metrics improved on every engine.
 - Native fast-skip preflight (#1054) is firing as expected: 16 ms no-op rebuild matches WASM's, validating the `detectNoChanges` short-circuit.
 - The 1-file rebuild gap (WASM 45ms vs Native 67ms) is the inverse of full-build performance — WASM's lighter orchestrator setup wins on tiny incremental work.
-- jina-small is the recall sweet spot (96.3% Hit@5 with only 512d vectors) — minilm's 91% Hit@5 leaves embedding misses at 4× the jina-small rate.
+- jina-small remains the recall sweet spot — its 96.3% Hit@5 (512d) actually *beats* jina-base's 95.0% (768d) on this code-identifier corpus despite the larger model and 1.5× larger embeddings. The +1.3 pp Hit@5 gap holds at every rank cutoff (Hit@1: 77.9% vs 72.9%; Hit@3: 93.5% vs 91.3%; misses: 23 vs 41), suggesting the gain from going 512d → 768d is negative for split-identifier queries against a general-text encoder. The code-tuned variants (`jina-code`, `jina-embeddings-v2-base-code`) would likely close the gap — `jina-code` requires `HF_TOKEN` and was not run in this session.
+- minilm's 91.1% Hit@5 still leaves embedding misses at roughly 2.5× the jina-small rate (8.9% vs 3.7% miss rate; 63 vs 23 absolute misses), so the recall floor argument for jina-small over minilm holds. Picking jina-base over jina-small only pays off if you also need its 8192-token context window for long identifiers; otherwise it's strictly worse here.
 
 ---
 
