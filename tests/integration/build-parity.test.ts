@@ -93,7 +93,10 @@ for (const fixture of PARITY_FIXTURES) {
       await buildGraph(wasmDir, { engine: 'wasm', incremental: false, skipRegistry: true });
       // Build with native
       await buildGraph(nativeDir, { engine: 'native', incremental: false, skipRegistry: true });
-    }, 60_000);
+      // 120s budget: each fixture runs WASM + native sequentially, so the per-fixture
+      // wall time roughly doubles. Sized for the heaviest current fixture (C#
+      // Repository) on a resource-constrained CI runner.
+    }, 120_000);
 
     afterAll(() => {
       // Cleanup
