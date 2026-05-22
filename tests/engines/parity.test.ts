@@ -11,6 +11,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   createParsers,
   extractCSharpSymbols,
+  extractDartSymbols,
   extractGoSymbols,
   extractHCLSymbols,
   extractJavaSymbols,
@@ -18,6 +19,7 @@ import {
   extractPythonSymbols,
   extractRubySymbols,
   extractRustSymbols,
+  extractScalaSymbols,
   extractSymbols,
   getParser,
 } from '../../src/domain/parser.js';
@@ -30,31 +32,18 @@ function wasmExtract(code, filePath) {
   const parser = getParser(parsers, filePath);
   if (!parser) return null;
   const tree = parser.parse(code);
-  const isHCL = filePath.endsWith('.tf') || filePath.endsWith('.hcl');
-  const isPython = filePath.endsWith('.py');
-  const isGo = filePath.endsWith('.go');
-  const isRust = filePath.endsWith('.rs');
-  const isJava = filePath.endsWith('.java');
-  const isCSharp = filePath.endsWith('.cs');
-  const isRuby = filePath.endsWith('.rb');
-  const isPHP = filePath.endsWith('.php');
-  return isHCL
-    ? extractHCLSymbols(tree, filePath)
-    : isPython
-      ? extractPythonSymbols(tree, filePath)
-      : isGo
-        ? extractGoSymbols(tree, filePath)
-        : isRust
-          ? extractRustSymbols(tree, filePath)
-          : isJava
-            ? extractJavaSymbols(tree, filePath)
-            : isCSharp
-              ? extractCSharpSymbols(tree, filePath)
-              : isRuby
-                ? extractRubySymbols(tree, filePath)
-                : isPHP
-                  ? extractPHPSymbols(tree, filePath)
-                  : extractSymbols(tree, filePath);
+  if (filePath.endsWith('.tf') || filePath.endsWith('.hcl'))
+    return extractHCLSymbols(tree, filePath);
+  if (filePath.endsWith('.py')) return extractPythonSymbols(tree, filePath);
+  if (filePath.endsWith('.go')) return extractGoSymbols(tree, filePath);
+  if (filePath.endsWith('.rs')) return extractRustSymbols(tree, filePath);
+  if (filePath.endsWith('.java')) return extractJavaSymbols(tree, filePath);
+  if (filePath.endsWith('.cs')) return extractCSharpSymbols(tree, filePath);
+  if (filePath.endsWith('.rb')) return extractRubySymbols(tree, filePath);
+  if (filePath.endsWith('.php')) return extractPHPSymbols(tree, filePath);
+  if (filePath.endsWith('.dart')) return extractDartSymbols(tree, filePath);
+  if (filePath.endsWith('.scala')) return extractScalaSymbols(tree, filePath);
+  return extractSymbols(tree, filePath);
 }
 
 function nativeExtract(code, filePath) {
@@ -287,16 +276,45 @@ class Controller {
 `,
     },
     {
-      name: 'HCL — resources and modules',
-      file: 'main.tf',
-      // Known native gap: native engine does not support HCL
-      skip: true,
+      // Regression guard for #1189: native must extract `type`/`default`
+      // attributes as `property` children of `variable` and `output` blocks,
+      // matching WASM. Pre-fix native produced 0 children here.
+      name: 'HCL — variable and output attributes as property children',
+      file: 'vars.tf',
       code: `
-resource "aws_instance" "web" {
-  ami = "abc-123"
+variable "storage_type" {
+  type    = string
+  default = "memory"
 }
-module "vpc" {
-  source = "./modules/vpc"
+output "endpoint" {
+  value = "http://localhost"
+}
+`,
+    },
+    {
+      // Regression guard for #1189: native uses tree-sitter-dart 0.0.4 which
+      // wraps method/function signatures inside a `class_member_definition`
+      // node. Pre-fix native emitted only the class definition with no method
+      // children; this case probes that wrapper is unwrapped during extraction.
+      name: 'Dart — class methods extracted through class_member_definition wrapper',
+      file: 'repo.dart',
+      code: `
+class UserRepository {
+  void save(int id) {}
+  int findById(int id) { return 0; }
+}
+`,
+    },
+    {
+      // Regression guard for #1189: WASM must extract method parameters as
+      // `parameter` children for class/trait/object methods. Pre-fix WASM
+      // emitted the method definition without children, while native did.
+      name: 'Scala — method parameters as children of class methods',
+      file: 'Svc.scala',
+      code: `
+class UserService {
+  def createUser(id: String, name: String): String = name
+  def removeUser(id: String): Boolean = true
 }
 `,
     },
