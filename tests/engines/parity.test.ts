@@ -389,6 +389,23 @@ class UserService {
 }
 `,
     },
+    {
+      // Regression guard for the refactor in #1196: `handleScalaObjectDef`
+      // previously skipped `extractScalaInheritance`, leaving WASM blind to
+      // `object Foo extends Bar`. Routing object_definition through
+      // `emitScalaTypeDef` now tracks inheritance for objects; assert both
+      // engines agree on the resulting `classes[].extends` entry.
+      name: 'Scala — object with extends produces inheritance entry',
+      file: 'Obj.scala',
+      code: `
+trait Greeter {
+  def greet: String
+}
+object DefaultGreeter extends Greeter {
+  def greet: String = "hi"
+}
+`,
+    },
   ];
 
   for (const { name, file, code, skip } of cases) {
