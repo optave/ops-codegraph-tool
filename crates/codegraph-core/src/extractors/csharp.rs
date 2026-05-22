@@ -3,6 +3,7 @@ use super::SymbolExtractor;
 use crate::cfg::build_function_cfg;
 use crate::complexity::compute_all_metrics;
 use crate::types::*;
+use std::collections::HashSet;
 use tree_sitter::{Node, Tree};
 
 pub struct CSharpExtractor;
@@ -11,6 +12,7 @@ impl SymbolExtractor for CSharpExtractor {
     fn extract(&self, tree: &Tree, source: &[u8], file_path: &str) -> FileSymbols {
         let mut symbols = FileSymbols::new(file_path.to_string());
         walk_tree(&tree.root_node(), source, &mut symbols, match_csharp_node);
+        reclassify_csharp_implements(&mut symbols);
         walk_ast_nodes_with_config(&tree.root_node(), source, &mut symbols.ast_nodes, &CSHARP_AST_CONFIG);
         walk_tree(&tree.root_node(), source, &mut symbols, match_csharp_type_map);
         symbols
@@ -112,14 +114,17 @@ fn handle_interface_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
             let Some(child) = body.child(i) else { continue };
             if child.kind() != "method_declaration" { continue; }
             if let Some(meth_name) = child.child_by_field_name("name") {
+                // Interface method declarations have no body — skip CFG and complexity
+                // to mirror the WASM extractor and avoid producing meaningless metrics
+                // for body-less declarations.
                 symbols.definitions.push(Definition {
                     name: format!("{}.{}", iface_name, node_text(&meth_name, source)),
                     kind: "method".to_string(),
                     line: start_line(&child),
                     end_line: Some(end_line(&child)),
                     decorators: None,
-                    complexity: compute_all_metrics(&child, source, "csharp"),
-                    cfg: build_function_cfg(&child, "csharp", source),
+                    complexity: None,
+                    cfg: None,
                     children: None,
                 });
             }
@@ -166,6 +171,14 @@ fn handle_method_or_ctor(node: &Node, source: &[u8], symbols: &mut FileSymbols) 
 }
 
 fn handle_method_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    // Skip interface methods — already emitted by handle_interface_decl without
+    // parameters. Re-emitting them here would duplicate the definition and add
+    // spurious `contains` edges to parameters of body-less declarations.
+    if let Some(parent) = node.parent() {
+        if let Some(grand) = parent.parent() {
+            if grand.kind() == "interface_declaration" { return; }
+        }
+    }
     handle_method_or_ctor(node, source, symbols);
 }
 
@@ -183,12 +196,12 @@ fn handle_property_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     };
     symbols.definitions.push(Definition {
         name: full_name,
-        kind: "method".to_string(),
+        kind: "property".to_string(),
         line: start_line(node),
         end_line: Some(end_line(node)),
         decorators: None,
-        complexity: compute_all_metrics(node, source, "csharp"),
-        cfg: build_function_cfg(node, "csharp", source),
+        complexity: None,
+        cfg: None,
         children: None,
     });
 }
@@ -350,6 +363,32 @@ fn extract_csharp_enum_members(node: &Node, source: &[u8]) -> Vec<Definition> {
 }
 
 // ── Existing helpers ────────────────────────────────────────────────────────
+
+/// Post-walk pass: reclassify `extends` entries as `implements` when the target
+/// is a known interface in the same file. At extraction time we cannot distinguish
+/// base classes from interfaces in the base_list, so we fix it up here using the
+/// definitions collected during the walk.
+///
+/// Known limitation (mirrors the WASM `reclassifyCSharpImplements`): this pass only
+/// inspects interfaces declared in the current file. Classes that implement an
+/// interface declared in a different file will keep the entry as `extends` and will
+/// surface as inheritance edges rather than implementation edges. Cross-file
+/// reclassification would require a project-wide post-build pass.
+fn reclassify_csharp_implements(symbols: &mut FileSymbols) {
+    let interfaces: HashSet<String> = symbols
+        .definitions
+        .iter()
+        .filter(|d| d.kind == "interface")
+        .map(|d| d.name.clone())
+        .collect();
+    for cls in symbols.classes.iter_mut() {
+        if let Some(ext) = cls.extends.as_ref() {
+            if interfaces.contains(ext) {
+                cls.implements = cls.extends.take();
+            }
+        }
+    }
+}
 
 fn extract_csharp_base_types(
     node: &Node,
