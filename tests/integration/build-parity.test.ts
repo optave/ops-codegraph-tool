@@ -19,7 +19,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildGraph } from '../../src/domain/graph/builder.js';
 import { isNativeAvailable } from '../../src/infrastructure/native.js';
 
-const FIXTURE_DIR = path.join(import.meta.dirname, '..', 'fixtures', 'sample-project');
+const FIXTURES_ROOT = path.join(import.meta.dirname, '..');
+const PARITY_FIXTURES: Array<{ label: string; dir: string }> = [
+  { label: 'sample-project (JS)', dir: path.join(FIXTURES_ROOT, 'fixtures', 'sample-project') },
+  {
+    label: 'csharp Repository',
+    dir: path.join(FIXTURES_ROOT, 'benchmarks', 'resolution', 'fixtures', 'csharp'),
+  },
+];
 
 const hasNative = isNativeAvailable();
 // In the dedicated parity CI job (CODEGRAPH_PARITY=1), never silently skip —
@@ -69,54 +76,59 @@ function readGraph(dbPath) {
   return { nodes, edges, roles, astNodes };
 }
 
-describeOrSkip('Build parity: native vs WASM', () => {
-  let wasmDir: string;
-  let nativeDir: string;
+for (const fixture of PARITY_FIXTURES) {
+  describeOrSkip(`Build parity: native vs WASM — ${fixture.label}`, () => {
+    let wasmDir: string;
+    let nativeDir: string;
 
-  beforeAll(async () => {
-    // Create two temp copies of the fixture
-    const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-parity-'));
-    wasmDir = path.join(tmpBase, 'wasm');
-    nativeDir = path.join(tmpBase, 'native');
-    copyDirSync(FIXTURE_DIR, wasmDir);
-    copyDirSync(FIXTURE_DIR, nativeDir);
+    beforeAll(async () => {
+      // Create two temp copies of the fixture
+      const tmpBase = fs.mkdtempSync(path.join(os.tmpdir(), 'codegraph-parity-'));
+      wasmDir = path.join(tmpBase, 'wasm');
+      nativeDir = path.join(tmpBase, 'native');
+      copyDirSync(fixture.dir, wasmDir);
+      copyDirSync(fixture.dir, nativeDir);
 
-    // Build with WASM
-    await buildGraph(wasmDir, { engine: 'wasm', incremental: false, skipRegistry: true });
-    // Build with native
-    await buildGraph(nativeDir, { engine: 'native', incremental: false, skipRegistry: true });
-  }, 60_000);
+      // Build with WASM
+      await buildGraph(wasmDir, { engine: 'wasm', incremental: false, skipRegistry: true });
+      // Build with native
+      await buildGraph(nativeDir, { engine: 'native', incremental: false, skipRegistry: true });
+      // 120s budget: each fixture runs WASM + native sequentially, so the per-fixture
+      // wall time roughly doubles. Sized for the heaviest current fixture (C#
+      // Repository) on a resource-constrained CI runner.
+    }, 120_000);
 
-  afterAll(() => {
-    // Cleanup
-    try {
-      if (wasmDir) fs.rmSync(path.dirname(wasmDir), { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
+    afterAll(() => {
+      // Cleanup
+      try {
+        if (wasmDir) fs.rmSync(path.dirname(wasmDir), { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
+    });
+
+    it('produces identical nodes', () => {
+      const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
+      const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
+      expect(nativeGraph.nodes).toEqual(wasmGraph.nodes);
+    });
+
+    it('produces identical edges', () => {
+      const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
+      const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
+      expect(nativeGraph.edges).toEqual(wasmGraph.edges);
+    });
+
+    it('produces identical roles', () => {
+      const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
+      const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
+      expect(nativeGraph.roles).toEqual(wasmGraph.roles);
+    });
+
+    it('produces identical ast_nodes', () => {
+      const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
+      const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
+      expect(nativeGraph.astNodes).toEqual(wasmGraph.astNodes);
+    });
   });
-
-  it('produces identical nodes', () => {
-    const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
-    const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
-    expect(nativeGraph.nodes).toEqual(wasmGraph.nodes);
-  });
-
-  it('produces identical edges', () => {
-    const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
-    const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
-    expect(nativeGraph.edges).toEqual(wasmGraph.edges);
-  });
-
-  it('produces identical roles', () => {
-    const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
-    const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
-    expect(nativeGraph.roles).toEqual(wasmGraph.roles);
-  });
-
-  it('produces identical ast_nodes', () => {
-    const wasmGraph = readGraph(path.join(wasmDir, '.codegraph', 'graph.db'));
-    const nativeGraph = readGraph(path.join(nativeDir, '.codegraph', 'graph.db'));
-    expect(nativeGraph.astNodes).toEqual(wasmGraph.astNodes);
-  });
-});
+}
