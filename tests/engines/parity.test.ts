@@ -276,6 +276,22 @@ class Controller {
 `,
     },
     {
+      // Regression guard for the original HCL parity case (resources and
+      // module blocks). Native now has a full HCL extractor, so this no
+      // longer needs to be skipped — keep it active as a regression guard
+      // for the `resource` / `module` extraction paths.
+      name: 'HCL — resources and modules',
+      file: 'main.tf',
+      code: `
+resource "aws_instance" "web" {
+  ami = "abc-123"
+}
+module "vpc" {
+  source = "./modules/vpc"
+}
+`,
+    },
+    {
       // Regression guard for #1189: native must extract `type`/`default`
       // attributes as `property` children of `variable` and `output` blocks,
       // matching WASM. Pre-fix native produced 0 children here.
