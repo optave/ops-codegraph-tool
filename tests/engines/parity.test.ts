@@ -14,6 +14,7 @@ import {
   extractGoSymbols,
   extractHCLSymbols,
   extractJavaSymbols,
+  extractObjCSymbols,
   extractPHPSymbols,
   extractPythonSymbols,
   extractRubySymbols,
@@ -30,31 +31,18 @@ function wasmExtract(code, filePath) {
   const parser = getParser(parsers, filePath);
   if (!parser) return null;
   const tree = parser.parse(code);
-  const isHCL = filePath.endsWith('.tf') || filePath.endsWith('.hcl');
-  const isPython = filePath.endsWith('.py');
-  const isGo = filePath.endsWith('.go');
-  const isRust = filePath.endsWith('.rs');
-  const isJava = filePath.endsWith('.java');
-  const isCSharp = filePath.endsWith('.cs');
-  const isRuby = filePath.endsWith('.rb');
-  const isPHP = filePath.endsWith('.php');
-  return isHCL
-    ? extractHCLSymbols(tree, filePath)
-    : isPython
-      ? extractPythonSymbols(tree, filePath)
-      : isGo
-        ? extractGoSymbols(tree, filePath)
-        : isRust
-          ? extractRustSymbols(tree, filePath)
-          : isJava
-            ? extractJavaSymbols(tree, filePath)
-            : isCSharp
-              ? extractCSharpSymbols(tree, filePath)
-              : isRuby
-                ? extractRubySymbols(tree, filePath)
-                : isPHP
-                  ? extractPHPSymbols(tree, filePath)
-                  : extractSymbols(tree, filePath);
+  if (filePath.endsWith('.tf') || filePath.endsWith('.hcl'))
+    return extractHCLSymbols(tree, filePath);
+  if (filePath.endsWith('.py')) return extractPythonSymbols(tree, filePath);
+  if (filePath.endsWith('.go')) return extractGoSymbols(tree, filePath);
+  if (filePath.endsWith('.rs')) return extractRustSymbols(tree, filePath);
+  if (filePath.endsWith('.java')) return extractJavaSymbols(tree, filePath);
+  if (filePath.endsWith('.cs')) return extractCSharpSymbols(tree, filePath);
+  if (filePath.endsWith('.rb')) return extractRubySymbols(tree, filePath);
+  if (filePath.endsWith('.php')) return extractPHPSymbols(tree, filePath);
+  if (filePath.endsWith('.m') || filePath.endsWith('.mm'))
+    return extractObjCSymbols(tree, filePath);
+  return extractSymbols(tree, filePath);
 }
 
 function nativeExtract(code, filePath) {
@@ -271,6 +259,38 @@ end
 class Dog < Animal
   def speak; puts "Woof"; end
 end
+`,
+    },
+    {
+      // Regression guard for #1189: native `handle_singleton_method` (for
+      // `def self.foo`) used to set `children: None`, while `handle_method`
+      // (regular `def foo`) extracts parameters. WASM extracted parameters
+      // for both, producing a WASM-only `contains` edge for any singleton
+      // method with parameters. Now both engines emit parameter children.
+      name: 'Ruby — singleton method (def self.foo) parameters are children',
+      file: 'singleton.rb',
+      code: `
+module Greeter
+  def self.greet(name)
+    puts name
+  end
+end
+`,
+    },
+    {
+      // Regression guard for #1189: WASM `extractCParams` only looked one
+      // level deep for an `identifier` under the declarator, so a parameter
+      // like `const char *argv[]` (where the declarator is
+      // `pointer_declarator > array_declarator > identifier`) fell through
+      // to the raw declarator text (`*argv[]`). Native unwrapped to the
+      // bare identifier. Both engines now drill through pointer/array/
+      // reference/parenthesized declarator wrappers.
+      name: 'Objective-C — C-style pointer/array parameter unwraps to identifier',
+      file: 'main.m',
+      code: `
+int main(int argc, const char *argv[]) {
+    return 0;
+}
 `,
     },
     {
