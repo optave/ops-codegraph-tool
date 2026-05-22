@@ -349,6 +349,26 @@ int main(int argc, const char *argv[]) {
 `,
     },
     {
+      // Parity coverage for the second ObjC parameter path: `extractMethodParams`
+      // handles Objective-C native methods (`-(void)greet:(NSString *)name`),
+      // which uses `method_parameter` nodes rather than the C-style
+      // `parameter_declaration` path covered by the test above. Both engines
+      // should emit the parameter's identifier as a child.
+      name: 'Objective-C — native method parameter is a child',
+      file: 'Greeter.m',
+      code: `
+@interface Greeter : NSObject
+- (void)greet:(NSString *)name;
+@end
+
+@implementation Greeter
+- (void)greet:(NSString *)name {
+    NSLog(@"%@", name);
+}
+@end
+`,
+    },
+    {
       name: 'PHP — classes and use',
       file: 'test.php',
       // Known gap: PHP WASM grammar not always available in CI/worktrees
