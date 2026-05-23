@@ -135,7 +135,13 @@ fn extract_kotlin_class_properties(node: &Node, source: &[u8]) -> Vec<Definition
         for i in 0..body.child_count() {
             if let Some(child) = body.child(i) {
                 if child.kind() == "property_declaration" {
-                    let name = child.child_by_field_name("name")
+                    // Kotlin grammar nests the name as
+                    //   property_declaration > variable_declaration > simple_identifier
+                    // so drill through variable_declaration first (mirrors the
+                    // WASM `collectKotlinProperties` extractor).
+                    let name = find_child(&child, "variable_declaration")
+                        .and_then(|vd| find_child(&vd, "simple_identifier"))
+                        .or_else(|| child.child_by_field_name("name"))
                         .or_else(|| find_child(&child, "simple_identifier"))
                         .map(|n| node_text(&n, source).to_string());
                     if let Some(name) = name {

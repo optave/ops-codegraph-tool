@@ -284,20 +284,41 @@ function extractCudaClassFields(classNode: TreeSitterNode): SubDeclaration[] {
     const member = body.child(i);
     if (!member || member.type !== 'field_declaration') continue;
     const nameNode = member.childForFieldName('declarator');
-    if (nameNode) {
-      const name =
-        nameNode.type === 'identifier'
-          ? nameNode.text
-          : (findChild(nameNode, 'identifier')?.text ?? nameNode.text);
-      fields.push({
-        name,
-        kind: 'property',
-        line: member.startPosition.row + 1,
-        visibility: extractModifierVisibility(member),
-      });
-    }
+    if (!nameNode) continue;
+    // Skip method declarations — a `field_declaration` whose declarator
+    // (after unwrapping pointer/reference/array) is a `function_declarator`
+    // is a method signature in a header, not a data field. Native and WASM
+    // previously diverged on how to format these (native stripped the `*`
+    // from pointer-return types, WASM kept it), and both produced
+    // method-signature-shaped "property" entries that are not real fields.
+    if (isCudaMethodDeclarator(nameNode)) continue;
+    const name =
+      nameNode.type === 'identifier'
+        ? nameNode.text
+        : (findChild(nameNode, 'identifier')?.text ?? nameNode.text);
+    fields.push({
+      name,
+      kind: 'property',
+      line: member.startPosition.row + 1,
+      visibility: extractModifierVisibility(member),
+    });
   }
   return fields;
+}
+
+const CUDA_DECLARATOR_WRAPPERS = new Set([
+  'pointer_declarator',
+  'reference_declarator',
+  'array_declarator',
+  'parenthesized_declarator',
+]);
+
+function isCudaMethodDeclarator(node: TreeSitterNode): boolean {
+  let current: TreeSitterNode | null = node;
+  while (current && CUDA_DECLARATOR_WRAPPERS.has(current.type)) {
+    current = current.childForFieldName('declarator');
+  }
+  return current?.type === 'function_declarator';
 }
 
 function extractCudaEnumEntries(enumNode: TreeSitterNode): SubDeclaration[] {
