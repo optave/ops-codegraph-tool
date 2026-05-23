@@ -217,6 +217,12 @@ fn extract_cuda_fields(body: &Node, source: &[u8]) -> Vec<Definition> {
         if let Some(child) = body.child(i) {
             if child.kind() == "field_declaration" {
                 if let Some(decl) = child.child_by_field_name("declarator") {
+                    // Skip method declarations — a `field_declaration` whose
+                    // declarator (after unwrapping pointer/reference/array)
+                    // is a `function_declarator` is a method signature in a
+                    // header, not a data field. Mirrors the WASM
+                    // `isCudaMethodDeclarator` guard so both engines agree.
+                    if is_cuda_method_declarator(&decl) { continue; }
                     let name = unwrap_cuda_declarator(&decl, source);
                     if !name.is_empty() {
                         fields.push(child_def(name, "property", start_line(&child)));
@@ -226,6 +232,26 @@ fn extract_cuda_fields(body: &Node, source: &[u8]) -> Vec<Definition> {
         }
     }
     fields
+}
+
+fn is_cuda_method_declarator(node: &Node) -> bool {
+    let mut current = *node;
+    loop {
+        match current.kind() {
+            "pointer_declarator"
+            | "reference_declarator"
+            | "array_declarator"
+            | "parenthesized_declarator" => {
+                if let Some(inner) = current.child_by_field_name("declarator") {
+                    current = inner;
+                } else {
+                    return false;
+                }
+            }
+            "function_declarator" => return true,
+            _ => return false,
+        }
+    }
 }
 
 fn extract_cuda_enum_constants(node: &Node, source: &[u8]) -> Vec<Definition> {
