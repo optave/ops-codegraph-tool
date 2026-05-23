@@ -437,6 +437,5 @@ mod tests {
             .find(|c| !c.name.starts_with('.') && c.receiver.is_some())
             .expect("non-dot call with a receiver");
         assert_eq!(c_call.name, "c");
-        assert!(!c_call.name.starts_with('.'));
     }
 }
