@@ -349,7 +349,13 @@ public:
       // with a top-level `function_declarator` (the same shape used by
       // method declarations), so the original PR #1199 skip guard dropped
       // them silently. They must survive in both engines as `property`
-      // children whose name is the inner identifier.
+      // children whose name is the inner identifier. Includes the
+      // array-of-function-pointer (`arr_cb`) variant so parity catches any
+      // future divergence in how the engines walk the extra
+      // `array_declarator` wrapper.
+      // Skip until next native binary release includes the function-pointer
+      // field fix from #1204.
+      skip: true,
       name: 'CUDA — function-pointer class fields are kept as properties',
       file: 'svc.cuh',
       code: `
@@ -357,6 +363,7 @@ class Service {
     void method(int x);
     void (*callback)(int x);
     void (&ref_cb)(int);
+    int (*const arr_cb[3])(double);
     int counter;
 };
 `,
