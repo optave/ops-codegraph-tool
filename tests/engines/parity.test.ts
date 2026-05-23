@@ -11,6 +11,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   createParsers,
   extractCSharpSymbols,
+  extractDartSymbols,
   extractElixirSymbols,
   extractGoSymbols,
   extractHaskellSymbols,
@@ -21,6 +22,7 @@ import {
   extractPythonSymbols,
   extractRubySymbols,
   extractRustSymbols,
+  extractScalaSymbols,
   extractSymbols,
   getParser,
 } from '../../src/domain/parser.js';
@@ -44,6 +46,8 @@ function wasmExtract(code, filePath) {
   if (filePath.endsWith('.php')) return extractPHPSymbols(tree, filePath);
   if (filePath.endsWith('.m') || filePath.endsWith('.mm'))
     return extractObjCSymbols(tree, filePath);
+  if (filePath.endsWith('.dart')) return extractDartSymbols(tree, filePath);
+  if (filePath.endsWith('.scala')) return extractScalaSymbols(tree, filePath);
   if (filePath.endsWith('.ex') || filePath.endsWith('.exs'))
     return extractElixirSymbols(tree, filePath);
   if (filePath.endsWith('.hs')) return extractHaskellSymbols(tree, filePath);
@@ -382,16 +386,78 @@ class Controller {
 `,
     },
     {
+      // Regression guard for the original HCL parity case (resources and
+      // module blocks). Native now has a full HCL extractor, so this no
+      // longer needs to be skipped — keep it active as a regression guard
+      // for the `resource` / `module` extraction paths.
       name: 'HCL — resources and modules',
       file: 'main.tf',
-      // Known native gap: native engine does not support HCL
-      skip: true,
       code: `
 resource "aws_instance" "web" {
   ami = "abc-123"
 }
 module "vpc" {
   source = "./modules/vpc"
+}
+`,
+    },
+    {
+      // Regression guard for #1189: native must extract `type`/`default`
+      // attributes as `property` children of `variable` and `output` blocks,
+      // matching WASM. Pre-fix native produced 0 children here.
+      name: 'HCL — variable and output attributes as property children',
+      file: 'vars.tf',
+      code: `
+variable "storage_type" {
+  type    = string
+  default = "memory"
+}
+output "endpoint" {
+  value = "http://localhost"
+}
+`,
+    },
+    {
+      // Regression guard for #1189: native uses tree-sitter-dart 0.0.4 which
+      // wraps method/function signatures inside a `class_member_definition`
+      // node. Pre-fix native emitted only the class definition with no method
+      // children; this case probes that wrapper is unwrapped during extraction.
+      name: 'Dart — class methods extracted through class_member_definition wrapper',
+      file: 'repo.dart',
+      code: `
+class UserRepository {
+  void save(int id) {}
+  int findById(int id) { return 0; }
+}
+`,
+    },
+    {
+      // Regression guard for #1189: WASM must extract method parameters as
+      // `parameter` children for class/trait/object methods. Pre-fix WASM
+      // emitted the method definition without children, while native did.
+      name: 'Scala — method parameters as children of class methods',
+      file: 'Svc.scala',
+      code: `
+class UserService {
+  def createUser(id: String, name: String): String = name
+  def removeUser(id: String): Boolean = true
+}
+`,
+    },
+    {
+      // Regression guard for the refactor in #1196: `handleScalaObjectDef`
+      // previously skipped `extractScalaInheritance`, leaving WASM blind to
+      // `object Foo extends Bar`. Routing object_definition through
+      // `emitScalaTypeDef` now tracks inheritance for objects; assert both
+      // engines agree on the resulting `classes[].extends` entry.
+      name: 'Scala — object with extends produces inheritance entry',
+      file: 'Obj.scala',
+      code: `
+trait Greeter {
+  def greet: String
+}
+object DefaultGreeter extends Greeter {
+  def greet: String = "hi"
 }
 `,
     },
