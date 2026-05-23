@@ -1,5 +1,6 @@
 import type {
   Call,
+  Definition,
   ExtractorOutput,
   SubDeclaration,
   TreeSitterNode,
@@ -59,52 +60,37 @@ function walkScalaNode(node: TreeSitterNode, ctx: ExtractorOutput): void {
 // ── Walk-path per-node-type handlers ────────────────────────────────────────
 
 function handleScalaClassDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  const nameNode = node.childForFieldName('name');
-  if (!nameNode) return;
-  const name = nameNode.text;
-  const children = extractScalaBodyMembers(node, name, ctx);
-
-  ctx.definitions.push({
-    name,
-    kind: 'class',
-    line: node.startPosition.row + 1,
-    endLine: nodeEndLine(node),
-    children: children.length > 0 ? children : undefined,
-  });
-
-  extractScalaInheritance(node, name, ctx);
+  emitScalaTypeDef(node, ctx, 'class');
 }
 
 function handleScalaTraitDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
-  const nameNode = node.childForFieldName('name');
-  if (!nameNode) return;
-  const name = nameNode.text;
-  const children = extractScalaBodyMembers(node, name, ctx);
-
-  ctx.definitions.push({
-    name,
-    kind: 'interface',
-    line: node.startPosition.row + 1,
-    endLine: nodeEndLine(node),
-    children: children.length > 0 ? children : undefined,
-  });
-
-  extractScalaInheritance(node, name, ctx);
+  emitScalaTypeDef(node, ctx, 'interface');
 }
 
 function handleScalaObjectDef(node: TreeSitterNode, ctx: ExtractorOutput): void {
+  emitScalaTypeDef(node, ctx, 'class');
+}
+
+function emitScalaTypeDef(
+  node: TreeSitterNode,
+  ctx: ExtractorOutput,
+  kind: 'class' | 'interface',
+): void {
   const nameNode = node.childForFieldName('name');
   if (!nameNode) return;
   const name = nameNode.text;
-  const children = extractScalaBodyMembers(node, name, ctx);
+  const { children, methods } = collectScalaBodyMembers(node, name);
 
+  // Push the type def before its methods so the definition order follows
+  // source-line order (matches native, which walks depth-first).
   ctx.definitions.push({
     name,
-    kind: 'class',
+    kind,
     line: node.startPosition.row + 1,
     endLine: nodeEndLine(node),
     children: children.length > 0 ? children : undefined,
   });
+  for (const m of methods) ctx.definitions.push(m);
 
   extractScalaInheritance(node, name, ctx);
 }
@@ -224,14 +210,14 @@ function extractScalaInheritance(node: TreeSitterNode, name: string, ctx: Extrac
 
 // ── Body member extraction ──────────────────────────────────────────────────
 
-function extractScalaBodyMembers(
+function collectScalaBodyMembers(
   parentNode: TreeSitterNode,
   parentName: string,
-  ctx: ExtractorOutput,
-): SubDeclaration[] {
+): { children: SubDeclaration[]; methods: Definition[] } {
   const children: SubDeclaration[] = [];
+  const methods: Definition[] = [];
   const body = findChild(parentNode, 'template_body');
-  if (!body) return children;
+  if (!body) return { children, methods };
 
   for (let i = 0; i < body.childCount; i++) {
     const member = body.child(i);
@@ -240,12 +226,14 @@ function extractScalaBodyMembers(
     if (member.type === 'function_definition') {
       const methName = member.childForFieldName('name');
       if (methName) {
-        ctx.definitions.push({
+        const params = extractScalaParameters(member);
+        methods.push({
           name: `${parentName}.${methName.text}`,
           kind: 'method',
           line: member.startPosition.row + 1,
           endLine: member.endPosition.row + 1,
           visibility: extractModifierVisibility(member),
+          children: params.length > 0 ? params : undefined,
         });
       }
     } else if (member.type === 'val_definition' || member.type === 'var_definition') {
@@ -264,7 +252,7 @@ function extractScalaBodyMembers(
     }
   }
 
-  return children;
+  return { children, methods };
 }
 
 // ── Parameter extraction ────────────────────────────────────────────────────
