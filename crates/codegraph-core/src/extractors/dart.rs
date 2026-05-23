@@ -94,17 +94,31 @@ fn handle_dart_class(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 fn extract_dart_class_methods(body: &Node, class_name: &str, source: &[u8], symbols: &mut FileSymbols) {
     for i in 0..body.child_count() {
         if let Some(member) = body.child(i) {
-            match member.kind() {
+            // tree-sitter-dart 0.0.4 wraps method/function signatures in a
+            // `class_member_definition` container; newer grammar versions
+            // place the signatures directly under `class_body`. Either way,
+            // search the subtree for the first `method_signature` /
+            // `function_signature` so leading anonymous nodes, metadata, or
+            // modifier keywords don't cause us to silently drop the method.
+            let sig = if member.kind() == "class_member_definition" {
+                match find_dart_signature_child(&member) {
+                    Some(s) => s,
+                    None => continue,
+                }
+            } else {
+                member
+            };
+            match sig.kind() {
                 "method_signature" | "function_signature" => {
-                    if let Some(fn_name) = extract_dart_fn_name(&member, source) {
+                    if let Some(fn_name) = extract_dart_fn_name(&sig, source) {
                         symbols.definitions.push(Definition {
                             name: format!("{}.{}", class_name, fn_name),
                             kind: "method".to_string(),
-                            line: start_line(&member),
-                            end_line: Some(end_line(&member)),
+                            line: start_line(&sig),
+                            end_line: Some(end_line(&sig)),
                             decorators: None,
-                            complexity: compute_all_metrics(&member, source, "dart"),
-                            cfg: build_function_cfg(&member, "dart", source),
+                            complexity: compute_all_metrics(&sig, source, "dart"),
+                            cfg: build_function_cfg(&sig, "dart", source),
                             children: None,
                         });
                     }
@@ -113,6 +127,17 @@ fn extract_dart_class_methods(body: &Node, class_name: &str, source: &[u8], symb
             }
         }
     }
+}
+
+fn find_dart_signature_child<'a>(node: &Node<'a>) -> Option<Node<'a>> {
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if matches!(child.kind(), "method_signature" | "function_signature") {
+                return Some(child);
+            }
+        }
+    }
+    None
 }
 
 fn extract_dart_fn_name(node: &Node, source: &[u8]) -> Option<String> {
@@ -266,3 +291,4 @@ fn is_inside_class(node: &Node) -> bool {
     }
     false
 }
+
