@@ -286,6 +286,23 @@ public:
 `,
     },
     {
+      // Regression for follow-up #1204: function-pointer class fields parse
+      // with a top-level `function_declarator` (the same shape used by
+      // method declarations), so the original PR #1199 skip guard dropped
+      // them silently. They must survive in both engines as `property`
+      // children whose name is the inner identifier.
+      name: 'CUDA — function-pointer class fields are kept as properties',
+      file: 'svc.cuh',
+      code: `
+class Service {
+    void method(int x);
+    void (*callback)(int x);
+    void (&ref_cb)(int);
+    int counter;
+};
+`,
+    },
+    {
       name: 'C# — classes and using',
       file: 'Test.cs',
       // Skip until next native binary release includes base_list extraction fix
