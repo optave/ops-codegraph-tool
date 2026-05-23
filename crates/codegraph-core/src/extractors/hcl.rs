@@ -46,6 +46,35 @@ fn resolve_block_name(block_type: &str, strings: &[String]) -> String {
     }
 }
 
+/// Extract attribute children (e.g. `type`, `default`) from a block's body as
+/// `property` sub-declarations. Mirrors WASM `extractHclAttributes`.
+fn extract_block_attributes(node: &Node, source: &[u8]) -> Vec<Definition> {
+    let mut attrs = Vec::new();
+    let body = match node.children(&mut node.walk()).find(|c| c.kind() == "body") {
+        Some(b) => b,
+        None => return attrs,
+    };
+    for i in 0..body.child_count() {
+        let attr = match body.child(i) {
+            Some(a) if a.kind() == "attribute" => a,
+            _ => continue,
+        };
+        if let Some(key) = attr.child_by_field_name("key").or_else(|| attr.child(0)) {
+            attrs.push(Definition {
+                name: node_text(&key, source).to_string(),
+                kind: "property".to_string(),
+                line: start_line(&attr),
+                end_line: None,
+                decorators: None,
+                complexity: None,
+                cfg: None,
+                children: None,
+            });
+        }
+    }
+    attrs
+}
+
 /// Extract module source imports from a module block's body.
 fn extract_module_source(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     let body = node.children(&mut node.walk()).find(|c| c.kind() == "body");
@@ -80,6 +109,12 @@ fn match_hcl_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth:
             let block_type = &identifiers[0];
             let name = resolve_block_name(block_type, &strings);
             if !name.is_empty() {
+                let children = if block_type == "variable" || block_type == "output" {
+                    let attrs = extract_block_attributes(node, source);
+                    if attrs.is_empty() { None } else { Some(attrs) }
+                } else {
+                    None
+                };
                 symbols.definitions.push(Definition {
                     name,
                     kind: block_type.clone(),
@@ -88,7 +123,7 @@ fn match_hcl_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _depth:
                     decorators: None,
                     complexity: None,
                     cfg: None,
-                    children: None,
+                    children,
                 });
                 if block_type == "module" {
                     extract_module_source(node, source, symbols);
