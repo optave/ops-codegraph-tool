@@ -234,6 +234,41 @@ end
 `,
     },
     {
+      // Regression guard for #1197: both engines must extract bound identifiers
+      // from default-value (`a \\ default`), tuple, map, and struct parameter
+      // patterns. tree-sitter-elixir wraps these in `binary_operator` / `tuple`
+      // / `map` nodes rather than emitting bare identifiers, so naive
+      // identifier-only iteration drops the parameters silently.
+      name: 'Elixir — default-value and destructured parameter patterns',
+      file: 'patterns.ex',
+      code: `defmodule Patterns do
+  def fetch(url, timeout \\\\ 5000, retries \\\\ 3) do
+    {url, timeout, retries}
+  end
+
+  def first_of({x, _y}) do
+    x
+  end
+
+  def name_of(%{name: name, email: _email}) do
+    name
+  end
+
+  def id_of(%User{id: id}) do
+    id
+  end
+
+  def head_of([head | tail]) do
+    {head, tail}
+  end
+
+  def all_of([a, b, c]) do
+    {a, b, c}
+  end
+end
+`,
+    },
+    {
       // Regression guard: native previously dropped all Haskell function
       // parameters (positional pattern children). See #1189.
       name: 'Haskell — top-level functions with parameters',
@@ -524,6 +559,41 @@ object DefaultGreeter extends Greeter {
       expect(nativeResult).toEqual(wasmResult);
     });
   }
+
+  // Explicit guard for #1197. The structural parity loop above only catches
+  // *divergence*; a regression where *both* engines silently drop default-value
+  // or pattern parameters would still pass. Assert the bound identifiers are
+  // present in each engine's output.
+  it('Elixir engines must extract bound identifiers from default-value and pattern params', () => {
+    const code = `defmodule Patterns do
+  def fetch(url, timeout \\\\ 5000, retries \\\\ 3), do: url
+  def first_of({x, _y}), do: x
+  def name_of(%{name: name}), do: name
+  def id_of(%User{id: id}), do: id
+  def head_of([head | tail]), do: head
+  def all_of([a, b, c]), do: a
+end
+`;
+    const wasm = wasmExtract(code, 'patterns.ex');
+    const nat = nativeExtract(code, 'patterns.ex');
+    for (const [label, syms] of [
+      ['wasm', wasm],
+      ['native', nat],
+    ] as const) {
+      const byName = new Map(
+        (syms?.definitions ?? []).map((d: any) => [
+          d.name,
+          (d.children ?? []).map((c: any) => c.name),
+        ]),
+      );
+      expect(byName.get('Patterns.fetch'), `${label} fetch`).toEqual(['url', 'timeout', 'retries']);
+      expect(byName.get('Patterns.first_of'), `${label} first_of`).toEqual(['x', '_y']);
+      expect(byName.get('Patterns.name_of'), `${label} name_of`).toEqual(['name']);
+      expect(byName.get('Patterns.id_of'), `${label} id_of`).toEqual(['id']);
+      expect(byName.get('Patterns.head_of'), `${label} head_of`).toEqual(['head', 'tail']);
+      expect(byName.get('Patterns.all_of'), `${label} all_of`).toEqual(['a', 'b', 'c']);
+    }
+  });
 
   // Explicit guard for the WASM Python fix in #1189. The structural parity
   // loop above strips `self` from both sides via normalize(), so a regression
