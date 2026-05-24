@@ -19,6 +19,7 @@ import {
   extractHCLSymbols,
   extractJavaSymbols,
   extractKotlinSymbols,
+  extractObjCSymbols,
   extractPHPSymbols,
   extractPythonSymbols,
   extractRubySymbols,
@@ -48,6 +49,8 @@ function wasmExtract(code, filePath) {
   if (filePath.endsWith('.kt')) return extractKotlinSymbols(tree, filePath);
   if (filePath.endsWith('.cu') || filePath.endsWith('.cuh'))
     return extractCudaSymbols(tree, filePath);
+  if (filePath.endsWith('.m') || filePath.endsWith('.mm'))
+    return extractObjCSymbols(tree, filePath);
   if (filePath.endsWith('.dart')) return extractDartSymbols(tree, filePath);
   if (filePath.endsWith('.scala')) return extractScalaSymbols(tree, filePath);
   if (filePath.endsWith('.ex') || filePath.endsWith('.exs'))
@@ -404,6 +407,58 @@ end
 class Dog < Animal
   def speak; puts "Woof"; end
 end
+`,
+    },
+    {
+      // Regression guard for #1189: native `handle_singleton_method` (for
+      // `def self.foo`) used to set `children: None`, while `handle_method`
+      // (regular `def foo`) extracts parameters. WASM extracted parameters
+      // for both, producing a WASM-only `contains` edge for any singleton
+      // method with parameters. Now both engines emit parameter children.
+      name: 'Ruby — singleton method (def self.foo) parameters are children',
+      file: 'singleton.rb',
+      code: `
+module Greeter
+  def self.greet(name)
+    puts name
+  end
+end
+`,
+    },
+    {
+      // Regression guard for #1189: WASM `extractCParams` only looked one
+      // level deep for an `identifier` under the declarator, so a parameter
+      // like `const char *argv[]` (where the declarator is
+      // `pointer_declarator > array_declarator > identifier`) fell through
+      // to the raw declarator text (`*argv[]`). Native unwrapped to the
+      // bare identifier. Both engines now drill through pointer/array/
+      // reference/parenthesized declarator wrappers.
+      name: 'Objective-C — C-style pointer/array parameter unwraps to identifier',
+      file: 'main.m',
+      code: `
+int main(int argc, const char *argv[]) {
+    return 0;
+}
+`,
+    },
+    {
+      // Parity coverage for the second ObjC parameter path: `extractMethodParams`
+      // handles Objective-C native methods (`-(void)greet:(NSString *)name`),
+      // which uses `method_parameter` nodes rather than the C-style
+      // `parameter_declaration` path covered by the test above. Both engines
+      // should emit the parameter's identifier as a child.
+      name: 'Objective-C — native method parameter is a child',
+      file: 'Greeter.m',
+      code: `
+@interface Greeter : NSObject
+- (void)greet:(NSString *)name;
+@end
+
+@implementation Greeter
+- (void)greet:(NSString *)name {
+    NSLog(@"%@", name);
+}
+@end
 `,
     },
     {
