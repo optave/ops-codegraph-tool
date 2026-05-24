@@ -284,20 +284,92 @@ function extractCudaClassFields(classNode: TreeSitterNode): SubDeclaration[] {
     const member = body.child(i);
     if (!member || member.type !== 'field_declaration') continue;
     const nameNode = member.childForFieldName('declarator');
-    if (nameNode) {
-      const name =
-        nameNode.type === 'identifier'
-          ? nameNode.text
-          : (findChild(nameNode, 'identifier')?.text ?? nameNode.text);
-      fields.push({
-        name,
-        kind: 'property',
-        line: member.startPosition.row + 1,
-        visibility: extractModifierVisibility(member),
-      });
-    }
+    if (!nameNode) continue;
+    // Skip method declarations — a `field_declaration` whose declarator
+    // (after unwrapping pointer/reference/array) is a `function_declarator`
+    // is a method signature in a header, not a data field. Native and WASM
+    // previously diverged on how to format these (native stripped the `*`
+    // from pointer-return types, WASM kept it), and both produced
+    // method-signature-shaped "property" entries that are not real fields.
+    if (isCudaMethodDeclarator(nameNode)) continue;
+    const name = extractCudaFieldName(nameNode);
+    fields.push({
+      name,
+      kind: 'property',
+      line: member.startPosition.row + 1,
+      visibility: extractModifierVisibility(member),
+    });
   }
   return fields;
+}
+
+const CUDA_DECLARATOR_WRAPPERS = new Set([
+  'pointer_declarator',
+  'reference_declarator',
+  'array_declarator',
+  'parenthesized_declarator',
+]);
+
+function isCudaMethodDeclarator(node: TreeSitterNode): boolean {
+  let current: TreeSitterNode | null = node;
+  while (current && CUDA_DECLARATOR_WRAPPERS.has(current.type)) {
+    current = current.childForFieldName('declarator');
+  }
+  if (current?.type !== 'function_declarator') return false;
+  // A `function_declarator` whose inner declarator is a `parenthesized_declarator`
+  // is a function-pointer (or function-reference) field — e.g. `void (*cb)(int)`
+  // parses as function_declarator > parenthesized_declarator > pointer_declarator >
+  // field_identifier. Those are real data fields, not method declarations.
+  const inner = current.childForFieldName('declarator');
+  return inner?.type !== 'parenthesized_declarator';
+}
+
+/**
+ * Resolve the identifier of a class field's declarator by walking through any
+ * combination of pointer/reference/array/parenthesized wrappers and (for
+ * function-pointer fields) a `function_declarator`. Method declarations are
+ * filtered before this is called, so a `function_declarator` here always
+ * wraps a function-pointer field.
+ */
+function extractCudaFieldName(decl: TreeSitterNode): string {
+  let current: TreeSitterNode | null = decl;
+  while (current) {
+    if (current.type === 'identifier' || current.type === 'field_identifier') {
+      return current.text;
+    }
+    if (CUDA_DECLARATOR_WRAPPERS.has(current.type) || current.type === 'function_declarator') {
+      const next = innerCudaDeclarator(current);
+      if (!next) break;
+      current = next;
+      continue;
+    }
+    break;
+  }
+  return decl.text;
+}
+
+/**
+ * Find the inner declarator of a wrapper node. Most C++ declarator wrappers
+ * expose it via the `declarator` field, but some (e.g. `parenthesized_declarator`
+ * and `reference_declarator` in tree-sitter-cuda) have unnamed children — so
+ * fall back to scanning children for a declarator-shaped node.
+ */
+function innerCudaDeclarator(node: TreeSitterNode): TreeSitterNode | null {
+  const named = node.childForFieldName('declarator');
+  if (named) return named;
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    if (
+      child.type === 'identifier' ||
+      child.type === 'field_identifier' ||
+      child.type === 'function_declarator' ||
+      CUDA_DECLARATOR_WRAPPERS.has(child.type)
+    ) {
+      return child;
+    }
+  }
+  return null;
 }
 
 function extractCudaEnumEntries(enumNode: TreeSitterNode): SubDeclaration[] {

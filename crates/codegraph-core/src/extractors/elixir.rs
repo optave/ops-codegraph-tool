@@ -151,16 +151,93 @@ fn extract_elixir_params(args: &Node, source: &[u8]) -> Vec<Definition> {
         let Some(inner_args) = find_child(&child, "arguments") else { continue };
         for j in 0..inner_args.child_count() {
             let Some(param) = inner_args.child(j) else { continue };
-            if param.kind() == "identifier" {
-                params.push(child_def(
-                    node_text(&param, source).to_string(),
-                    "parameter",
-                    start_line(&param),
-                ));
-            }
+            collect_elixir_param_identifiers(&param, source, &mut params);
         }
     }
     params
+}
+
+/// Recursively walk a parameter pattern and emit each bound identifier as a
+/// `parameter` child. Handles bare identifiers, default-value `a \\ default`,
+/// list-cons `[head | tail]`, list `[a, b, c]`, tuple `{x, y}`, and
+/// map / struct destructuring (`%{k: v}`, `%Foo{k: v}`).
+fn collect_elixir_param_identifiers(node: &Node, source: &[u8], out: &mut Vec<Definition>) {
+    match node.kind() {
+        "identifier" => {
+            out.push(child_def(
+                node_text(node, source).to_string(),
+                "parameter",
+                start_line(node),
+            ));
+        }
+        "binary_operator" => {
+            // `name \\ default` (default-value) binds the left operand only.
+            // `head | tail` (list-cons, appears inside a `list` pattern) binds both operands.
+            let Some(op) = node.child(1) else { return };
+            match op.kind() {
+                "\\\\" => {
+                    if let Some(left) = node.child(0) {
+                        collect_elixir_param_identifiers(&left, source, out);
+                    }
+                }
+                "|" => {
+                    if let Some(left) = node.child(0) {
+                        collect_elixir_param_identifiers(&left, source, out);
+                    }
+                    if let Some(right) = node.child(2) {
+                        collect_elixir_param_identifiers(&right, source, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        "list" => {
+            // `[a, b, c]` or `[head | tail]` — walk children, skipping punctuation.
+            // The `|` cons case is handled by the `binary_operator` arm on recursion.
+            for i in 0..node.child_count() {
+                let Some(c) = node.child(i) else { continue };
+                let k = c.kind();
+                if k == "[" || k == "]" || k == "," { continue; }
+                collect_elixir_param_identifiers(&c, source, out);
+            }
+        }
+        "tuple" => {
+            for i in 0..node.child_count() {
+                let Some(c) = node.child(i) else { continue };
+                let k = c.kind();
+                if k == "{" || k == "}" || k == "," { continue; }
+                collect_elixir_param_identifiers(&c, source, out);
+            }
+        }
+        "map" => {
+            // `%{k: v}` or `%Foo{k: v}` — walk map_content > keywords > pair and emit
+            // each pair's value side (the bound name). The leading `struct` alias is a
+            // type, not a bound identifier, so it is intentionally skipped.
+            for i in 0..node.child_count() {
+                let Some(c) = node.child(i) else { continue };
+                if c.kind() == "map_content" {
+                    collect_elixir_map_bindings(&c, source, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_elixir_map_bindings(content: &Node, source: &[u8], out: &mut Vec<Definition>) {
+    for i in 0..content.child_count() {
+        let Some(kws) = content.child(i) else { continue };
+        if kws.kind() != "keywords" { continue; }
+        for j in 0..kws.child_count() {
+            let Some(pair) = kws.child(j) else { continue };
+            if pair.kind() != "pair" { continue; }
+            for k in 0..pair.child_count() {
+                let Some(part) = pair.child(k) else { continue };
+                if part.kind() == "keyword" { continue; }
+                collect_elixir_param_identifiers(&part, source, out);
+            }
+        }
+    }
 }
 
 fn extract_elixir_fn_name<'a>(args: &Node<'a>, source: &'a [u8]) -> Option<String> {

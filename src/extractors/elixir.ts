@@ -190,12 +190,84 @@ function extractElixirParams(defCallNode: TreeSitterNode): SubDeclaration[] {
     for (let j = 0; j < innerArgs.childCount; j++) {
       const param = innerArgs.child(j);
       if (!param) continue;
-      if (param.type === 'identifier') {
-        params.push({ name: param.text, kind: 'parameter', line: param.startPosition.row + 1 });
-      }
+      collectElixirParamIdentifiers(param, params);
     }
   }
   return params;
+}
+
+/**
+ * Recursively walk a parameter pattern and emit each bound identifier as a
+ * `parameter` child. Handles bare identifiers, default-value `a \\ default`,
+ * list-cons `[head | tail]`, list `[a, b, c]`, tuple `{x, y}`, and
+ * map / struct destructuring (`%{k: v}`, `%Foo{k: v}`).
+ */
+function collectElixirParamIdentifiers(node: TreeSitterNode, out: SubDeclaration[]): void {
+  switch (node.type) {
+    case 'identifier':
+      out.push({ name: node.text, kind: 'parameter', line: node.startPosition.row + 1 });
+      return;
+    case 'binary_operator': {
+      // `name \\ default` (default-value) binds the left operand only.
+      // `head | tail` (list-cons, appears inside a `list` pattern) binds both operands.
+      const op = node.child(1);
+      if (!op) return;
+      if (op.type === '\\\\') {
+        const left = node.child(0);
+        if (left) collectElixirParamIdentifiers(left, out);
+        return;
+      }
+      if (op.type === '|') {
+        const left = node.child(0);
+        const right = node.child(2);
+        if (left) collectElixirParamIdentifiers(left, out);
+        if (right) collectElixirParamIdentifiers(right, out);
+        return;
+      }
+      return;
+    }
+    case 'list':
+      // `[a, b, c]` or `[head | tail]` — walk children, skipping punctuation. The
+      // `|` cons case is handled by the `binary_operator` arm when we recurse.
+      for (let i = 0; i < node.childCount; i++) {
+        const c = node.child(i);
+        if (!c || c.type === '[' || c.type === ']' || c.type === ',') continue;
+        collectElixirParamIdentifiers(c, out);
+      }
+      return;
+    case 'tuple':
+      for (let i = 0; i < node.childCount; i++) {
+        const c = node.child(i);
+        if (!c || c.type === '{' || c.type === '}' || c.type === ',') continue;
+        collectElixirParamIdentifiers(c, out);
+      }
+      return;
+    case 'map':
+      // `%{k: v}` or `%Foo{k: v}` — walk map_content > keywords > pair and emit each
+      // pair's value side (the bound name). The struct alias (`Foo`) is a type, not a
+      // bound identifier, so the leading `struct` child is intentionally skipped.
+      for (let i = 0; i < node.childCount; i++) {
+        const c = node.child(i);
+        if (c && c.type === 'map_content') collectElixirMapBindings(c, out);
+      }
+      return;
+  }
+}
+
+function collectElixirMapBindings(content: TreeSitterNode, out: SubDeclaration[]): void {
+  for (let i = 0; i < content.childCount; i++) {
+    const kws = content.child(i);
+    if (!kws || kws.type !== 'keywords') continue;
+    for (let j = 0; j < kws.childCount; j++) {
+      const pair = kws.child(j);
+      if (!pair || pair.type !== 'pair') continue;
+      for (let k = 0; k < pair.childCount; k++) {
+        const part = pair.child(k);
+        if (!part || part.type === 'keyword') continue;
+        collectElixirParamIdentifiers(part, out);
+      }
+    }
+  }
 }
 
 function handleDefprotocol(node: TreeSitterNode, ctx: ExtractorOutput): void {

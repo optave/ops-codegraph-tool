@@ -147,11 +147,13 @@ function collectKotlinMethods(node: TreeSitterNode, className: string, ctx: Extr
     if (!child || child.type !== 'function_declaration') continue;
     const methName = findChild(child, 'simple_identifier');
     if (methName) {
+      const params = extractKotlinParameters(child);
       ctx.definitions.push({
         name: `${className}.${methName.text}`,
         kind: 'method',
         line: child.startPosition.row + 1,
         endLine: child.endPosition.row + 1,
+        children: params.length > 0 ? params : undefined,
         visibility: extractModifierVisibility(child),
       });
     }
@@ -214,11 +216,13 @@ function handleKotlinObjectDecl(node: TreeSitterNode, ctx: ExtractorOutput): voi
       if (child && child.type === 'function_declaration') {
         const methName = findChild(child, 'simple_identifier');
         if (methName) {
+          const params = extractKotlinParameters(child);
           ctx.definitions.push({
             name: `${nameNode.text}.${methName.text}`,
             kind: 'method',
             line: child.startPosition.row + 1,
             endLine: child.endPosition.row + 1,
+            children: params.length > 0 ? params : undefined,
             visibility: extractModifierVisibility(child),
           });
         }
