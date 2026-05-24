@@ -321,11 +321,22 @@ fn match_kotlin_node(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dep
                         });
                     }
                     "navigation_expression" => {
-                        // obj.method()
-                        let name = fn_node.child_by_field_name("member")
+                        // tree-sitter-kotlin-sg wraps the member in a
+                        // `navigation_suffix` (children: `.` + simple_identifier),
+                        // so take the inner identifier — using the suffix's own
+                        // text would include the leading dot.
+                        let count = fn_node.child_count();
+                        let last = if count > 0 { fn_node.child(count - 1) } else { None };
+                        let name = fn_node
+                            .child_by_field_name("member")
                             .or_else(|| {
-                                let count = fn_node.child_count();
-                                if count > 0 { fn_node.child(count - 1) } else { None }
+                                last.and_then(|n| {
+                                    if n.kind() == "navigation_suffix" {
+                                        find_child(&n, "simple_identifier")
+                                    } else {
+                                        Some(n)
+                                    }
+                                })
                             })
                             .map(|n| node_text(&n, source).to_string())
                             .unwrap_or_else(|| node_text(&fn_node, source).to_string());
@@ -402,5 +413,35 @@ mod tests {
         let s = parse_kotlin("object Singleton { val x = 1 }");
         let obj = s.definitions.iter().find(|d| d.name == "Singleton").unwrap();
         assert_eq!(obj.kind, "class");
+    }
+
+    #[test]
+    fn navigation_expression_call_name_has_no_leading_dot() {
+        // Regression for #1200: tree-sitter-kotlin-sg models the callee of
+        // `store.add(item)` as `navigation_expression > navigation_suffix > .` +
+        // `simple_identifier`. The native extractor previously emitted the call
+        // name as `.add` (text of the whole suffix) instead of `add`.
+        let s = parse_kotlin(
+            "class Repository {\n    private val store = mutableListOf<String>()\n    fun save(item: String): Boolean { return store.add(item) }\n}",
+        );
+        let add_call = s
+            .calls
+            .iter()
+            .find(|c| c.receiver.as_deref() == Some("store"))
+            .expect("navigation_expression call with receiver=store");
+        assert_eq!(add_call.name, "add");
+    }
+
+    #[test]
+    fn chained_navigation_expression_resolves_inner_member() {
+        // Chained access: `a.b.c()` — the inner navigation_expression should
+        // resolve to member `c`, not `.c`.
+        let s = parse_kotlin("fun f() { a.b.c() }");
+        let c_call = s
+            .calls
+            .iter()
+            .find(|c| !c.name.starts_with('.') && c.receiver.is_some())
+            .expect("non-dot call with a receiver");
+        assert_eq!(c_call.name, "c");
     }
 }
