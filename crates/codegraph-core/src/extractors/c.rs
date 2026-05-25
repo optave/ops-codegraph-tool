@@ -66,12 +66,18 @@ fn match_c_type_map(node: &Node, source: &[u8], symbols: &mut FileSymbols, _dept
     }
 }
 
-/// Walk pointer_declarator / array_declarator chains to reach the identifier.
+/// Walk pointer_declarator / array_declarator / function_declarator chains to
+/// reach the identifier. `function_declarator` is unwrapped so that
+/// function-type parameters like `void process(int callback(int))` yield the
+/// bare name (`callback`) instead of the full declarator text.
 fn unwrap_declarator(node: &Node, source: &[u8]) -> String {
     let mut current = *node;
     loop {
         match current.kind() {
-            "pointer_declarator" | "array_declarator" | "parenthesized_declarator" => {
+            "pointer_declarator"
+            | "array_declarator"
+            | "parenthesized_declarator"
+            | "function_declarator" => {
                 if let Some(inner) = current.child_by_field_name("declarator") {
                     current = inner;
                 } else {
@@ -381,5 +387,19 @@ mod tests {
         let s = parse_c("void f() { printf(\"hello\"); }");
         let call = s.calls.iter().find(|c| c.name == "printf").unwrap();
         assert_eq!(call.name, "printf");
+    }
+
+    #[test]
+    fn function_type_parameter_unwraps_to_bare_identifier() {
+        // `int callback(int)` as a parameter parses as a `function_declarator`
+        // whose inner declarator is the identifier. `unwrap_declarator` must
+        // drill through it so the parameter name is `callback`, not the raw
+        // declarator text `callback(int)`. Follow-up #1206.
+        let s = parse_c("void process(int callback(int)) {}");
+        let process = s.definitions.iter().find(|d| d.name == "process").unwrap();
+        let children = process.children.as_ref().expect("function has children");
+        assert_eq!(children.len(), 1);
+        assert_eq!(children[0].name, "callback");
+        assert_eq!(children[0].kind, "parameter");
     }
 }

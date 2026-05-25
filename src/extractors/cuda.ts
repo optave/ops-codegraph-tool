@@ -265,10 +265,10 @@ function extractCudaParameters(paramListNode: TreeSitterNode | null): SubDeclara
     if (!param || param.type !== 'parameter_declaration') continue;
     const nameNode = param.childForFieldName('declarator');
     if (nameNode) {
-      const name =
-        nameNode.type === 'identifier'
-          ? nameNode.text
-          : (findChild(nameNode, 'identifier')?.text ?? nameNode.text);
+      // Reuse the field-name drill helper so function-type parameters like
+      // `void process(int callback(int))` yield the bare name `callback`
+      // instead of the raw declarator text, matching the native unwrap path.
+      const name = extractCudaFieldName(nameNode);
       params.push({ name, kind: 'parameter', line: param.startPosition.row + 1 });
     }
   }

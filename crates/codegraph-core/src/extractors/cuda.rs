@@ -143,7 +143,8 @@ fn unwrap_cuda_declarator(node: &Node, source: &[u8]) -> String {
             "pointer_declarator"
             | "reference_declarator"
             | "array_declarator"
-            | "parenthesized_declarator" => {
+            | "parenthesized_declarator"
+            | "function_declarator" => {
                 if let Some(inner) = current.child_by_field_name("declarator") {
                     current = inner;
                 } else {
@@ -724,6 +725,20 @@ mod tests {
     fn extracts_typedef_alias() {
         let s = parse_cuda("typedef unsigned int uint32_t;");
         assert!(s.definitions.iter().any(|d| d.name == "uint32_t" && d.kind == "type"));
+    }
+
+    #[test]
+    fn function_type_parameter_unwraps_to_bare_identifier() {
+        // `int callback(int)` as a parameter parses as a `function_declarator`
+        // whose inner declarator is the identifier. `unwrap_cuda_declarator`
+        // must drill through it so the parameter name is `callback`, not the
+        // raw declarator text `callback(int)`. Follow-up #1206.
+        let s = parse_cuda("void process(int callback(int)) {}");
+        let process = s.definitions.iter().find(|d| d.name == "process").unwrap();
+        let params = process.children.as_ref().expect("function has children");
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "callback");
+        assert_eq!(params[0].kind, "parameter");
     }
 
     #[test]

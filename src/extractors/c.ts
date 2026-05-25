@@ -159,6 +159,31 @@ function handleCCallExpression(node: TreeSitterNode, ctx: ExtractorOutput): void
 
 // ── Child extraction helpers ────────────────────────────────────────────────
 
+const C_DECLARATOR_WRAPPERS = new Set([
+  'pointer_declarator',
+  'array_declarator',
+  'parenthesized_declarator',
+  'function_declarator',
+]);
+
+/**
+ * Drill through pointer/array/parenthesized/function declarator wrappers to
+ * recover the bare identifier. Mirrors `unwrap_declarator` in the native C
+ * extractor so both engines agree on the name for parameters such as
+ * `void process(int callback(int))` (function-type parameter → `callback`) or
+ * `int *func(int)` (pointer-returning function → `func`).
+ */
+function unwrapCDeclaratorName(node: TreeSitterNode): string {
+  let current: TreeSitterNode | null = node;
+  while (current && C_DECLARATOR_WRAPPERS.has(current.type)) {
+    current = current.childForFieldName('declarator');
+  }
+  if (current?.type === 'identifier' || current?.type === 'field_identifier') {
+    return current.text;
+  }
+  return current?.text ?? node.text;
+}
+
 function extractCParameters(paramListNode: TreeSitterNode | null): SubDeclaration[] {
   const params: SubDeclaration[] = [];
   if (!paramListNode) return params;
@@ -167,10 +192,7 @@ function extractCParameters(paramListNode: TreeSitterNode | null): SubDeclaratio
     if (!param || param.type !== 'parameter_declaration') continue;
     const nameNode = param.childForFieldName('declarator');
     if (nameNode) {
-      const name =
-        nameNode.type === 'identifier'
-          ? nameNode.text
-          : (findChild(nameNode, 'identifier')?.text ?? nameNode.text);
+      const name = unwrapCDeclaratorName(nameNode);
       params.push({ name, kind: 'parameter', line: param.startPosition.row + 1 });
     }
   }
@@ -186,10 +208,7 @@ function extractStructFields(structNode: TreeSitterNode): SubDeclaration[] {
     if (!member || member.type !== 'field_declaration') continue;
     const nameNode = member.childForFieldName('declarator');
     if (nameNode) {
-      const name =
-        nameNode.type === 'identifier'
-          ? nameNode.text
-          : (findChild(nameNode, 'identifier')?.text ?? nameNode.text);
+      const name = unwrapCDeclaratorName(nameNode);
       fields.push({ name, kind: 'property', line: member.startPosition.row + 1 });
     }
   }
