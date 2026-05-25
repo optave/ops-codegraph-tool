@@ -2,6 +2,109 @@
 
 All notable changes to this project will be documented in this file. See [commit-and-tag-version](https://github.com/absolute-version/commit-and-tag-version) for commit guidelines.
 
+## [3.11.0](https://github.com/optave/ops-codegraph-tool/compare/v3.10.0...v3.11.0) (2026-05-25)
+
+**Native engine reaches feature parity with WASM, plus an engine-parity sweep across 14 languages.** The final 11 extractors (Clojure, CUDA, Julia, Solidity, Erlang, R, Groovy, Gleam, Objective-C, F#, Verilog) are now ported to Rust, so every supported language extracts symbols natively when the prebuilt binary is available — no more silent fallback to WASM for these. In parallel, a multi-PR parity sweep aligned the `contains`/parameter/inheritance edges that the two engines disagreed on across Java/Kotlin/CUDA/Ruby/Objective-C/HCL/Dart/Scala/Elixir/Haskell/Python/C#/Groovy, so the native engine no longer drops parameters, function-pointer fields, default-value arguments, or interface inheritance edges that WASM was already emitting. F# `.fsi` signature files now route through a dedicated grammar instead of being parsed as `.fs` source. On the CLI, `-n` is now the short form of `--limit` on every limit-accepting command (previously only on five), `build` accepts `-d/--db`, and MCP `semantic_search` accepts `file_pattern` to scope hybrid/semantic/keyword searches to a subtree. Watch mode no longer crashes on rebuild when embeddings exist for the file, and barrel-chain re-parse discovery iterates until stable so chained re-exports stop dropping edges.
+
+### Features
+
+* **cli:** unify `-n` short flag across all `--limit`-accepting commands — `roles`, `structure`, `communities`, `audit`, `check`, `children`, `diff-impact`, `ast`, `brief`, `cfg`, `context`, `dataflow`, `deps`, `exports`, `flow`, `fn-impact`, `impact`, `implementations`, `interfaces`, `query`, `sequence`, and `where` now all accept `-n` in addition to `--limit` ([#1184](https://github.com/optave/ops-codegraph-tool/pull/1184))
+* **cli:** accept `-d/--db` on `build` to match every other DB-scoped command — pre-built graphs can now be re-targeted at build time without `cd`-ing into the project root ([#1183](https://github.com/optave/ops-codegraph-tool/pull/1183))
+* **mcp:** forward `file_pattern` (string or string[]) in `semantic_search` to scope hybrid/semantic/keyword results — closes a silent-drop where MCP callers passing `file_pattern` got unscoped global hits back with no error ([#1149](https://github.com/optave/ops-codegraph-tool/pull/1149))
+* **fsharp:** route `.fsi` files through a dedicated signature grammar — new `fsharp-signature` language id with a `val foo : type` handler that distinguishes signature declarations from `let foo = ...` source bindings ([#1162](https://github.com/optave/ops-codegraph-tool/pull/1162))
+
+### Performance
+
+* **native:** port Clojure extractor to Rust ([#1097](https://github.com/optave/ops-codegraph-tool/pull/1097))
+* **native:** port CUDA extractor to Rust ([#1099](https://github.com/optave/ops-codegraph-tool/pull/1099))
+* **native:** port Julia extractor to Rust ([#1098](https://github.com/optave/ops-codegraph-tool/pull/1098))
+* **native:** port Solidity extractor to Rust ([#1100](https://github.com/optave/ops-codegraph-tool/pull/1100))
+* **native:** port Erlang extractor to Rust ([#1103](https://github.com/optave/ops-codegraph-tool/pull/1103))
+* **native:** port R extractor to Rust ([#1102](https://github.com/optave/ops-codegraph-tool/pull/1102))
+* **native:** port Groovy extractor to Rust ([#1101](https://github.com/optave/ops-codegraph-tool/pull/1101))
+* **native:** port Gleam extractor to Rust ([#1105](https://github.com/optave/ops-codegraph-tool/pull/1105))
+* **native:** port Objective-C extractor to Rust ([#1106](https://github.com/optave/ops-codegraph-tool/pull/1106))
+* **native:** port F# extractor to Rust ([#1104](https://github.com/optave/ops-codegraph-tool/pull/1104))
+* **native:** port Verilog extractor to Rust ([#1107](https://github.com/optave/ops-codegraph-tool/pull/1107))
+* **native:** skip backfill on incrementals when orchestrator preserved files — avoids redundant WASM-side backfill work on clean incremental rebuilds ([#1082](https://github.com/optave/ops-codegraph-tool/pull/1082))
+* **native:** skip backfill on clean incrementals + bench guard tuning — removes the residual cost when nothing actually changed ([#1085](https://github.com/optave/ops-codegraph-tool/pull/1085))
+* **bench:** exclude resolution-benchmark fixtures from dogfooding and incremental-benchmark sweeps so per-file timings reflect real source code, not pinned-precision fixture corpora ([#1131](https://github.com/optave/ops-codegraph-tool/pull/1131), [#1134](https://github.com/optave/ops-codegraph-tool/pull/1134))
+
+### Bug Fixes
+
+* **extractors:** drill through `function_declarator` for parameter names — restores parameter extraction for C-family pointer-to-function declarations across all engines ([#1213](https://github.com/optave/ops-codegraph-tool/pull/1213))
+* **extractors:** recursively walk Haskell pattern parameters so destructured arguments emit edges ([#1203](https://github.com/optave/ops-codegraph-tool/pull/1203))
+* **extractors/cuda:** keep function-pointer class fields that were previously dropped at parity-align time ([#1207](https://github.com/optave/ops-codegraph-tool/pull/1207))
+* **native/kotlin:** strip `navigation_suffix` wrapper from call name so qualified calls resolve to the correct callee instead of the suffix node ([#1205](https://github.com/optave/ops-codegraph-tool/pull/1205))
+* **extractors/elixir:** extract default-value and pattern-match parameters that were silently dropped on multi-clause functions ([#1202](https://github.com/optave/ops-codegraph-tool/pull/1202))
+* **extractors:** align Ruby/Objective-C `contains` parity across engines ([#1201](https://github.com/optave/ops-codegraph-tool/pull/1201))
+* **extractors:** align Java/Kotlin/CUDA `contains` parity across engines ([#1199](https://github.com/optave/ops-codegraph-tool/pull/1199))
+* **extractors:** align HCL/Dart/Scala `contains` parity across engines ([#1196](https://github.com/optave/ops-codegraph-tool/pull/1196))
+* **extractors:** align Elixir/Haskell/Python `contains` parity across engines ([#1195](https://github.com/optave/ops-codegraph-tool/pull/1195))
+* **native/csharp:** align extractor with WASM on three engine-parity divergences ([#1194](https://github.com/optave/ops-codegraph-tool/pull/1194))
+* **db:** stop `findDbPath` walk at cwd when there is no git ceiling, so `codegraph` invoked outside a repo no longer climbs to the filesystem root ([#1193](https://github.com/optave/ops-codegraph-tool/pull/1193))
+* **native/cpp:** strip reference modifier from parameter names so `T& foo` extracts `foo`, not `& foo` ([#1192](https://github.com/optave/ops-codegraph-tool/pull/1192))
+* **native:** apply WASM callback-callee gating in JS extractor so `member_expression` callback args no longer create false-positive edges ([#1191](https://github.com/optave/ops-codegraph-tool/pull/1191))
+* **watch:** purge embeddings before nodes to stop FK crash in `rebuildFile` — incremental rebuilds on watched files with embeddings no longer crash with a foreign-key constraint violation ([#1182](https://github.com/optave/ops-codegraph-tool/pull/1182))
+* iterate barrel re-parse discovery to stop dropping chained-barrel edges — the WASM builder now loops until the dirty-barrel set is stable, so `a → b → c → d` chained re-exports no longer leave edges on the floor ([#1179](https://github.com/optave/ops-codegraph-tool/pull/1179))
+* **embed:** install `@huggingface/transformers` into codegraph's host node_modules — `codegraph embed` no longer fails when invoked from a project that hasn't installed transformers itself ([#1178](https://github.com/optave/ops-codegraph-tool/pull/1178))
+* **hooks:** use POSIX `[[:space:]]` in `guard-git.sh` grep patterns so the hook works under BSD grep on macOS ([#1170](https://github.com/optave/ops-codegraph-tool/pull/1170))
+* **hooks:** `guard-git.sh` sed patterns work on macOS BSD sed — closes a silent no-op where the hook ran but matched nothing under BSD ([#1146](https://github.com/optave/ops-codegraph-tool/pull/1146))
+* **groovy:** emit `ClassRelation` for interface inheritance in both engines so `implements` edges no longer go missing on Groovy classes ([#1158](https://github.com/optave/ops-codegraph-tool/pull/1158))
+* **builder:** remove duplicate early-return in `backfillNativeDroppedFiles` ([#1148](https://github.com/optave/ops-codegraph-tool/pull/1148))
+* **julia:** port parameterized-type / qualified-def / qualified-import fixes to WASM so Julia parity matches between engines ([#1128](https://github.com/optave/ops-codegraph-tool/pull/1128))
+* **gleam:** extract parameters for external functions so cross-module Gleam calls resolve ([#1127](https://github.com/optave/ops-codegraph-tool/pull/1127))
+* **native:** purge stale rows when WASM-only files are deleted ([#1122](https://github.com/optave/ops-codegraph-tool/pull/1122))
+* **native:** backfill new dropped-language files on quiet incrementals so newly-added Solidity/Erlang/Verilog files appear on the next rebuild even when the file system signal looks quiet ([#1123](https://github.com/optave/ops-codegraph-tool/pull/1123))
+* **r:** `setMethod` emits a call edge, not a duplicate definition ([#1125](https://github.com/optave/ops-codegraph-tool/pull/1125))
+* **groovy:** dispatch `juxt_function_call` in both engines so Groovy DSL-style calls (`task { ... }`) emit edges ([#1124](https://github.com/optave/ops-codegraph-tool/pull/1124))
+* **bench:** warmup + median for `queryTimeMs` to remove cold-start noise from the publish gate ([#1133](https://github.com/optave/ops-codegraph-tool/pull/1133))
+* **scripts:** trend annotations fall back to nearest non-null prior release so a missing run no longer breaks the trend chart ([#1120](https://github.com/optave/ops-codegraph-tool/pull/1120))
+* **scripts:** preserve manual NOTES block in incremental report generator ([#1119](https://github.com/optave/ops-codegraph-tool/pull/1119))
+
+### Refactors
+
+* **objc:** use `if let Some` in for-loop instead of `?` to fail-soft on extractor errors ([#1156](https://github.com/optave/ops-codegraph-tool/pull/1156))
+* **verilog:** use `if let Some` in for-loops instead of `?` ([#1155](https://github.com/optave/ops-codegraph-tool/pull/1155))
+* **ci:** let tracer-validation gate reuse benchmark artifact ([#1171](https://github.com/optave/ops-codegraph-tool/pull/1171))
+* **ci:** let resolution gate reuse benchmark artifact ([#1167](https://github.com/optave/ops-codegraph-tool/pull/1167))
+
+### CI
+
+* run pre-publish benchmark gate on every PR — regressions surface at PR time instead of at publish ([#1072](https://github.com/optave/ops-codegraph-tool/pull/1072))
+* isolate `dropped-language-gap.test.ts` as a regression canary so the engine-parity gap test no longer hides under broader suites ([#1169](https://github.com/optave/ops-codegraph-tool/pull/1169))
+* force rustup proxy on PATH for macos-14 x86_64 builds so the prebuilt binary keeps building on the deprecated runner ([#1151](https://github.com/optave/ops-codegraph-tool/pull/1151))
+* **test:** use `--experimental-strip-types` in Worker `execArgv` so vitest stays green on Node 24+ ([#1164](https://github.com/optave/ops-codegraph-tool/pull/1164))
+* **test/julia:** cover macro signature guard branch ([#1150](https://github.com/optave/ops-codegraph-tool/pull/1150))
+* **test/parsers:** gate `LANGUAGE_REGISTRY ↔ NATIVE_SUPPORTED_EXTENSIONS` parity to catch silent drift between the two registries ([#1154](https://github.com/optave/ops-codegraph-tool/pull/1154))
+
+### Build
+
+* derive libc verifier scope from `optionalDependencies` so the verifier no longer hard-codes the platform list ([#1172](https://github.com/optave/ops-codegraph-tool/pull/1172))
+* restore libc discriminator on linux lockfile entries — re-adds `libc: ["glibc"]` / `libc: ["musl"]` that npm v11 had silently stripped ([#1163](https://github.com/optave/ops-codegraph-tool/pull/1163))
+
+### Docs
+
+* dogfood report for v3.10.1-dev.80 ([#1180](https://github.com/optave/ops-codegraph-tool/pull/1180))
+* backfill jina-base Hit@k for v3.10.1-dev.80 ([#1186](https://github.com/optave/ops-codegraph-tool/pull/1186))
+
+### Chores
+
+* **deps:** bump web-tree-sitter from 0.26.8 to 0.26.9 ([#1210](https://github.com/optave/ops-codegraph-tool/pull/1210))
+* **deps:** bump better-sqlite3 from 12.9.0 to 12.10.0 ([#1141](https://github.com/optave/ops-codegraph-tool/pull/1141))
+* **deps-dev:** bump tree-sitter-cli from 0.26.8 to 0.26.9 ([#1212](https://github.com/optave/ops-codegraph-tool/pull/1212))
+* **deps-dev:** bump tree-sitter-erlang from 0.0.0 to 0.17 ([#1138](https://github.com/optave/ops-codegraph-tool/pull/1138))
+* **deps-dev:** bump tree-sitter-gleam from `1627dc5` to `4e4643c` ([#1089](https://github.com/optave/ops-codegraph-tool/pull/1089))
+* **deps-dev:** bump @vitest/coverage-v8 from 4.1.5 to 4.1.7 ([#1211](https://github.com/optave/ops-codegraph-tool/pull/1211))
+* **deps-dev:** bump vitest from 4.1.6 to 4.1.7 ([#1208](https://github.com/optave/ops-codegraph-tool/pull/1208))
+* **deps-dev:** bump vitest from 4.1.5 to 4.1.6 ([#1139](https://github.com/optave/ops-codegraph-tool/pull/1139))
+* **deps-dev:** bump vitest from 4.1.4 to 4.1.5 ([#1087](https://github.com/optave/ops-codegraph-tool/pull/1087))
+* **deps-dev:** bump commit-and-tag-version from 12.7.1 to 12.7.3 ([#1209](https://github.com/optave/ops-codegraph-tool/pull/1209))
+* **deps-dev:** bump @commitlint/cli from 21.0.0 to 21.0.1 ([#1142](https://github.com/optave/ops-codegraph-tool/pull/1142))
+* **deps-dev:** bump @commitlint/cli from 20.5.3 to 21.0.0 ([#1086](https://github.com/optave/ops-codegraph-tool/pull/1086))
+* **deps-dev:** bump @commitlint/config-conventional ([#1088](https://github.com/optave/ops-codegraph-tool/pull/1088), [#1140](https://github.com/optave/ops-codegraph-tool/pull/1140))
+* **deps-dev:** bump @biomejs/biome from 2.4.13 to 2.4.15 ([#1090](https://github.com/optave/ops-codegraph-tool/pull/1090))
+
 ## [3.10.0](https://github.com/optave/ops-codegraph-tool/compare/v3.9.6...v3.10.0) (2026-05-01)
 
 **Selective MCP tool filtering, WASM build-speed regression fix, and Haskell parity restoration.** A new `mcp.disabledTools` config field lets you remove specific MCP tools from the schema entirely — useful for smaller-context models that don't need all 33 tools competing for the initial prompt budget. The 3.9.6 expansion of `AST_TYPE_MAPS` to 23 languages had a side effect of making WASM full builds re-parse every WASM-parseable file in the corpus; the per-file `needsFn` filter now scopes the re-parse correctly, dropping the 744-file dogfooding build from 14.0s back to 7.8s (matching the 3.9.5 baseline). A second parity fix gates `astTypeMap` lookups with `Object.hasOwn` so Haskell's `constructor` node type no longer walks the prototype chain to `Object.prototype.constructor` — restoring the Haskell resolver from 0%/0% precision/recall in 3.9.6 to 100%/33% (matching the 3.9.4 baseline). The release benchmark workflow has also been restructured: regression guards now run inside `publish.yml` *before* npm publishes, instead of after the docs PR lands, so a regression can no longer ship to npm and then fire on unrelated dev commits.
