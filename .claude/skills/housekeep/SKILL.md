@@ -33,11 +33,17 @@ Clean up the local repo: remove stale worktrees, delete dirt/temp files, sync wi
 
 ### 1a. Total worktree disk usage
 
-Always print this, even on `--dry-run`:
+Always print this, even on `--dry-run`. Use `du -sk` (kilobytes) so the pipeline is portable across BSD (macOS) and GNU (Linux) — `sort -h` is a GNU coreutils extension and is rejected by stock macOS `sort`.
 
 ```bash
 du -sh .claude/worktrees 2>/dev/null
-du -sh .claude/worktrees/*/ 2>/dev/null | sort -h
+# Portable per-worktree sort: kilobytes through sort -n, then format back to human-readable.
+du -sk .claude/worktrees/*/ 2>/dev/null | sort -n | awk '{
+  k=$1; $1=""; sub(/^ /, "");
+  if (k >= 1048576)      printf "%.1fG\t%s\n", k/1048576, $0;
+  else if (k >= 1024)    printf "%.1fM\t%s\n", k/1024, $0;
+  else                   printf "%dK\t%s\n", k, $0;
+}'
 ```
 
 If the total exceeds **5GB**, raise it as a finding in the report regardless of whether any individual worktree is stale.
@@ -66,21 +72,62 @@ A worktree is **bloated** if it is not stale (so we can't just remove it) but co
 - `node_modules/` (typically ~1.8GB)
 - `target/` (Rust build cache, typically ~1.4GB)
 - `dist/` (compiled TS output)
-- `.codegraph/graph.db*` (rebuildable via `codegraph build`)
+- `.codegraph/graph.db*` (rebuildable via `codegraph build`) — measure **only the `graph.db` and `graph.db-journal` files**, not the whole `.codegraph/` directory, because cleanup in §1e only removes those files. Measuring the whole directory would overstate the freed space.
+
+For each worktree, sum the artifact sizes and emit a per-worktree subtotal so the 500MB threshold can be evaluated without manually regrouping flat output. Uses `du -sk` (kilobytes) with `sort -n` for portability — `sort -h` is GNU-only and breaks on stock macOS.
 
 ```bash
 for wt in .claude/worktrees/*/; do
-  for sub in node_modules target dist .codegraph; do
-    [ -d "$wt$sub" ] && du -sh "$wt$sub" 2>/dev/null
+  total_kb=0
+  breakdown=""
+  for sub in node_modules target dist; do
+    if [ -d "$wt$sub" ]; then
+      sz=$(du -sk "$wt$sub" 2>/dev/null | awk '{print $1}')
+      [ -n "$sz" ] && total_kb=$((total_kb + sz)) && breakdown="$breakdown  $sub=${sz}K"
+    fi
   done
-done | sort -h
+  # .codegraph: only measure the two files we will actually remove
+  for f in "$wt.codegraph/graph.db" "$wt.codegraph/graph.db-journal"; do
+    if [ -f "$f" ]; then
+      sz=$(du -sk "$f" 2>/dev/null | awk '{print $1}')
+      [ -n "$sz" ] && total_kb=$((total_kb + sz)) && breakdown="$breakdown  $(basename "$f")=${sz}K"
+    fi
+  done
+  [ "$total_kb" -gt 0 ] && printf "%d\t%s\t%s\n" "$total_kb" "$wt" "$breakdown"
+done | sort -n | awk -F'\t' '{
+  k=$1;
+  if (k >= 1048576)      printf "%.1fG\t%s%s\n", k/1048576, $2, $3;
+  else if (k >= 1024)    printf "%.1fM\t%s%s\n", k/1024, $2, $3;
+  else                   printf "%dK\t%s%s\n", k, $2, $3;
+}'
 ```
 
-Flag any worktree whose combined build artifact size exceeds **500MB**.
+Flag any worktree whose combined build artifact size exceeds **500MB** (512000 kilobytes).
 
 ### 1e. Clean up
 
-**For orphaned directories** (on disk but not in `git worktree list`): remove with `rm -rf <path>` after confirming with the user. Then run `git worktree prune` to clear any dangling refs.
+**For orphaned directories** (on disk but not in `git worktree list`):
+
+> **Critical: orphaned directories may still contain uncommitted work.** A worktree's git registration can be dropped (failed `git worktree add`, manual `git worktree prune`, etc.) while the user's source edits remain on disk. `rm -rf` on such a directory is permanent data loss.
+
+Before offering removal, run `git -C <path> status --short` to check for uncommitted changes:
+
+```bash
+for dir in $ORPHANED_DIRS; do
+  if [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; then
+    changes=$(git -C "$dir" status --short 2>/dev/null)
+    if [ -n "$changes" ]; then
+      echo "SKIP $dir — has uncommitted changes:"
+      echo "$changes" | sed 's/^/    /'
+      continue
+    fi
+  fi
+  # Safe to offer removal — confirm with user first
+  echo "ORPHANED (clean): $dir"
+done
+```
+
+Only after confirming the directory is clean (no uncommitted changes) AND the user has explicitly approved removal, run `rm -rf <path>`. Then run `git worktree prune` to clear any dangling refs. Apply the same "Never force-remove a worktree with uncommitted changes" rule that protects stale worktrees in `git worktree list` — orphaned dirs get the same guardrail.
 
 **For prunable worktrees** (in list but directory missing):
 ```bash
