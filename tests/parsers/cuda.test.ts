@@ -54,4 +54,24 @@ public:
 }`);
     expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'cudaMalloc' }));
   });
+
+  it('keeps function-pointer class fields and skips real methods', () => {
+    // Regression for follow-up #1204: a `field_declaration` whose declarator
+    // is a `function_declarator` wrapping a `parenthesized_declarator` is a
+    // function-pointer field, not a method declaration — keep it as a
+    // property with the inner identifier as its name.
+    const symbols = parseCuda(`class Service {
+    void method(int);
+    void (*callback)(int);
+    int (*const arr_cb[3])(double);
+    void (&ref_cb)(int);
+    int counter;
+};`);
+    const cls = symbols.definitions.find((d) => d.name === 'Service');
+    expect(cls).toBeDefined();
+    const childNames = (cls?.children ?? []).map((c) => c.name);
+    expect(childNames).toEqual(expect.arrayContaining(['callback', 'arr_cb', 'ref_cb', 'counter']));
+    // The real method declaration is still skipped at the field level.
+    expect(childNames).not.toContain('method');
+  });
 });
