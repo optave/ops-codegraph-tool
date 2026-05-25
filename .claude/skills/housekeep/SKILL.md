@@ -27,42 +27,137 @@ Clean up the local repo: remove stale worktrees, delete dirt/temp files, sync wi
 4. Record current git status: `git status --short`
 5. Warn the user if there are uncommitted changes — housekeeping works best from a clean state
 
-## Phase 1 — Clean Stale Worktrees
+## Phase 1 — Audit & Clean Worktrees
 
-### 1a. List all worktrees
+> **Always report disk usage first.** Worktree bloat (per-worktree `node_modules/`, `target/`, `dist/`) is the single largest source of disk waste in this repo — a fresh worktree with `npm install` + a Rust build is ~3GB. Even when no worktree is technically "stale" by branch criteria, the disk footprint must be surfaced so the user can decide what to keep.
+
+### 1a. Total worktree disk usage
+
+Always print this, even on `--dry-run`. Use `du -sk` (kilobytes) so the pipeline is portable across BSD (macOS) and GNU (Linux) — `sort -h` is a GNU coreutils extension and is rejected by stock macOS `sort`.
+
+```bash
+du -sh .claude/worktrees 2>/dev/null
+# Portable per-worktree sort: kilobytes through sort -n, then format back to human-readable.
+du -sk .claude/worktrees/*/ 2>/dev/null | sort -n | awk '{
+  k=$1; $1=""; sub(/^ /, "");
+  if (k >= 1048576)      printf "%.1fG\t%s\n", k/1048576, $0;
+  else if (k >= 1024)    printf "%.1fM\t%s\n", k/1024, $0;
+  else                   printf "%dK\t%s\n", k, $0;
+}'
+```
+
+If the total exceeds **5GB**, raise it as a finding in the report regardless of whether any individual worktree is stale.
+
+### 1b. List git-tracked worktrees
 
 ```bash
 git worktree list
 ```
 
-### 1b. Identify stale worktrees
+Cross-reference against `.claude/worktrees/*` on disk — directories there that aren't in `git worktree list` are **orphaned** (prunable). Worktrees in the list whose directory is missing are also prunable.
+
+### 1c. Identify stale worktrees
 
 A worktree is stale if:
-- Its directory no longer exists on disk (prunable)
+- Its directory no longer exists on disk, OR it exists on disk but is not in `git worktree list` (orphaned)
 - It has no uncommitted changes AND its branch has been merged to main
 - Its branch has no commits ahead of `origin/main` AND the branch's last commit is more than 7 days old
   (check: `git log -1 --format=%ci <branch>` — `git worktree list` does not expose creation timestamps)
+- It matches the sub-agent pattern `.claude/worktrees/agent-<hex>` AND has no uncommitted changes AND its branch has no commits ahead of `origin/main` (sub-agent worktrees are typically ephemeral and orphaned after the agent finishes)
 
-Check `.claude/worktrees/` for Claude Code worktrees specifically.
+### 1d. Identify bloated worktrees (NEW)
 
-### 1c. Clean up
+A worktree is **bloated** if it is not stale (so we can't just remove it) but contains regeneratable build artifacts taking significant disk space. Check each non-stale worktree for:
 
-For prunable worktrees (missing directory):
+- `node_modules/` (typically ~1.8GB)
+- `target/` (Rust build cache, typically ~1.4GB)
+- `dist/` (compiled TS output)
+- `.codegraph/graph.db*` (rebuildable via `codegraph build`) — measure **only the `graph.db` and `graph.db-journal` files**, not the whole `.codegraph/` directory, because cleanup in §1e only removes those files. Measuring the whole directory would overstate the freed space.
+
+For each worktree, sum the artifact sizes and emit a per-worktree subtotal so the 500MB threshold can be evaluated without manually regrouping flat output. Uses `du -sk` (kilobytes) with `sort -n` for portability — `sort -h` is GNU-only and breaks on stock macOS.
+
+```bash
+for wt in .claude/worktrees/*/; do
+  total_kb=0
+  breakdown=""
+  for sub in node_modules target dist; do
+    if [ -d "$wt$sub" ]; then
+      sz=$(du -sk "$wt$sub" 2>/dev/null | awk '{print $1}')
+      [ -n "$sz" ] && total_kb=$((total_kb + sz)) && breakdown="$breakdown  $sub=${sz}K"
+    fi
+  done
+  # .codegraph: only measure the two files we will actually remove
+  for f in "$wt.codegraph/graph.db" "$wt.codegraph/graph.db-journal"; do
+    if [ -f "$f" ]; then
+      sz=$(du -sk "$f" 2>/dev/null | awk '{print $1}')
+      [ -n "$sz" ] && total_kb=$((total_kb + sz)) && breakdown="$breakdown  $(basename "$f")=${sz}K"
+    fi
+  done
+  [ "$total_kb" -gt 0 ] && printf "%d\t%s\t%s\n" "$total_kb" "$wt" "$breakdown"
+done | sort -n | awk -F'\t' '{
+  k=$1;
+  if (k >= 1048576)      printf "%.1fG\t%s%s\n", k/1048576, $2, $3;
+  else if (k >= 1024)    printf "%.1fM\t%s%s\n", k/1024, $2, $3;
+  else                   printf "%dK\t%s%s\n", k, $2, $3;
+}'
+```
+
+Flag any worktree whose combined build artifact size exceeds **500MB** (512000 kilobytes).
+
+### 1e. Clean up
+
+**For orphaned directories** (on disk but not in `git worktree list`):
+
+> **Critical: orphaned directories may still contain uncommitted work.** A worktree's git registration can be dropped (failed `git worktree add`, manual `git worktree prune`, etc.) while the user's source edits remain on disk. `rm -rf` on such a directory is permanent data loss.
+
+Before offering removal, run `git -C <path> status --short` to check for uncommitted changes:
+
+```bash
+for dir in $ORPHANED_DIRS; do
+  if [ -d "$dir/.git" ] || [ -f "$dir/.git" ]; then
+    changes=$(git -C "$dir" status --short 2>/dev/null)
+    if [ -n "$changes" ]; then
+      echo "SKIP $dir — has uncommitted changes:"
+      echo "$changes" | sed 's/^/    /'
+      continue
+    fi
+  fi
+  # Safe to offer removal — confirm with user first
+  echo "ORPHANED (clean): $dir"
+done
+```
+
+Only after confirming the directory is clean (no uncommitted changes) AND the user has explicitly approved removal, run `rm -rf <path>`. Then run `git worktree prune` to clear any dangling refs. Apply the same "Never force-remove a worktree with uncommitted changes" rule that protects stale worktrees in `git worktree list` — orphaned dirs get the same guardrail.
+
+**For prunable worktrees** (in list but directory missing):
 ```bash
 git worktree prune
 ```
 
-For stale worktrees with merged branches:
-- List them and **always ask the user for confirmation before removing**, regardless of `--full`
+**For stale worktrees with merged branches:**
+- List them with their disk size and **always ask the user for confirmation before removing**, regardless of `--full`
 - If confirmed:
   ```bash
   git worktree remove <path>
   git branch -d <branch>  # only if fully merged
   ```
 
-**If `DRY_RUN`:** Just list what would be removed, don't do it.
+**For bloated (non-stale) worktrees:**
+- List them with a per-artifact size breakdown
+- Ask the user whether to **clean build artifacts only** (keep the source) — these regenerate on the next `npm install` / `cargo build` / `codegraph build`
+- If confirmed, for each selected worktree:
+  ```bash
+  rm -rf <worktree>/node_modules
+  rm -rf <worktree>/target
+  rm -rf <worktree>/dist
+  rm -f  <worktree>/.codegraph/graph.db <worktree>/.codegraph/graph.db-journal
+  ```
+- **Never run `npm install` / `cargo clean` inside the target worktree** — it may be in use by another Claude Code session
 
-> **Never force-remove** a worktree with uncommitted changes. List it as "has uncommitted work" and skip.
+**If `DRY_RUN`:** List everything that would be removed with sizes, don't do it.
+
+> **Never force-remove** a worktree with uncommitted changes. List it as "has uncommitted work" and skip — but still report its disk size so the user knows what it's costing.
+> **Never delete source files** in a bloated worktree — only delete the four regeneratable artifact paths above.
 
 ## Phase 2 — Delete Dirt Files
 
@@ -252,7 +347,9 @@ Print a summary to the console (no file needed — this is a local maintenance t
 ```
 === Housekeeping Report ===
 
-Worktrees:  removed 2 stale, 1 has uncommitted work (skipped)
+Worktrees:  total .claude/worktrees/ size 57G (32 worktrees)
+            removed 2 stale (4.2G freed), 1 has uncommitted work (skipped)
+            cleaned build artifacts in 3 active worktrees (9.6G freed)
 Dirt files: cleaned 5 temp files (12KB), 1 large untracked flagged
 Branches:   pruned 3 merged branches, 2 remote refs
 Main sync:  up to date (or: 4 commits behind — merge suggested)
@@ -264,6 +361,8 @@ Git:        OK
 Status: CLEAN ✓
 ```
 
+> **Always include the worktree total** at the top of the Worktrees line, even when no worktrees were removed. This is the metric that surfaces hidden disk bloat — without it, multi-GB worktree accumulations go invisible to the user.
+
 **If `DRY_RUN`:** prefix with `[DRY RUN]` and show what would happen without doing it.
 
 ## Rules
@@ -272,6 +371,8 @@ Status: CLEAN ✓
 - **Never rebase** — sync with main via merge only (per project rules)
 - **Never delete tracked files** — only clean untracked/ignored dirt
 - **Never delete worktrees with uncommitted changes** — warn and skip
+- **Always report worktree disk usage** — even when nothing is removed, the total must appear in the report. Worktree bloat is the #1 source of disk waste in this repo
+- **Bloated-but-active worktrees:** only delete the four regeneratable artifact paths (`node_modules/`, `target/`, `dist/`, `.codegraph/graph.db*`). Never touch source files in a worktree you don't own
 - **Ask before deleting large untracked files** — they might be intentional
 - **This is a local-only operation** — no pushes, no remote modifications, no PR creation
 - **Idempotent** — running twice should be safe (second run finds nothing to clean)
