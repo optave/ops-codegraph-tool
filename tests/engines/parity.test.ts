@@ -282,6 +282,30 @@ getUser uid store = lookup uid store
 `,
     },
     {
+      // Both engines must walk pattern-matched parameters recursively:
+      // constructor application (Just x), tuple (a, b), cons (x:xs), list [a, b],
+      // as-pattern xs@(...), and wildcards (_). See #1198.
+      name: 'Haskell — destructuring, wildcard, and constructor patterns',
+      file: 'Patterns.hs',
+      code: `module Patterns where
+
+fromJust (Just x) = x
+fromJust Nothing = error "Nothing"
+
+fstPair (a, b) = a
+sndPair (a, b) = b
+
+headList (x:xs) = x
+firstTwo [a, b] = a
+
+keepHead xs@(x:_) = (xs, x)
+
+ignoreFirst _ y = y
+
+deepUnpack (Just (a, b)) = (a, b)
+`,
+    },
+    {
       // Regression guard: WASM previously emitted `self`/`cls` as `parameter`
       // children of methods, but native skipped them — inflating contains and
       // parameter_of counts on every method. WASM now skips them too. See #1189.
@@ -623,6 +647,49 @@ object DefaultGreeter extends Greeter {
       expect(nativeResult).toEqual(wasmResult);
     });
   }
+
+  // Explicit content guard for Haskell pattern destructuring (#1198). The
+  // structural parity loop above would pass even if both engines silently
+  // skipped constructor/tuple/list/wildcard patterns in tandem. Lock the
+  // expected bound names so a regression on either side is visible.
+  it('Haskell engines must extract bound names from destructuring patterns', () => {
+    const code = `module Patterns where
+
+fromJust (Just x) = x
+
+fstPair (a, b) = a
+
+headList (x:xs) = x
+
+firstTwo [a, b] = a
+
+keepHead xs@(x:_) = (xs, x)
+
+ignoreFirst _ y = y
+
+deepUnpack (Just (a, b)) = (a, b)
+`;
+    const expected: Record<string, string[]> = {
+      fromJust: ['x'],
+      fstPair: ['a', 'b'],
+      headList: ['x', 'xs'],
+      firstTwo: ['a', 'b'],
+      keepHead: ['xs', 'x', '_'],
+      ignoreFirst: ['_', 'y'],
+      deepUnpack: ['a', 'b'],
+    };
+    const check = (label: string, symbols: any) => {
+      const fns = (symbols?.definitions ?? []).filter((d: any) => d.kind === 'function');
+      for (const [fnName, want] of Object.entries(expected)) {
+        const fn = fns.find((d: any) => d.name === fnName);
+        expect(fn, `${label}: missing function ${fnName}`).toBeTruthy();
+        const got = (fn.children ?? []).map((c: any) => c.name);
+        expect(got, `${label}: ${fnName} params`).toEqual(want);
+      }
+    };
+    check('wasm', wasmExtract(code, 'Patterns.hs'));
+    if (hasNative) check('native', nativeExtract(code, 'Patterns.hs'));
+  });
 
   // Explicit guard for #1197. The structural parity loop above only catches
   // *divergence*; a regression where *both* engines silently drop default-value

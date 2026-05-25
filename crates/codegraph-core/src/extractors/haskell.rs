@@ -59,18 +59,12 @@ fn extract_haskell_params(func_node: &Node, source: &[u8]) -> Vec<Definition> {
             "patterns" | "parameter" => {
                 for j in 0..child.child_count() {
                     if let Some(pat) = child.child(j) {
-                        if pat.kind() == "variable" || pat.kind() == "identifier" {
-                            params.push(child_def(
-                                node_text(&pat, source).to_string(),
-                                "parameter",
-                                start_line(&pat),
-                            ));
-                        }
+                        collect_haskell_pattern_bindings(&pat, source, &mut params);
                     }
                 }
             }
             "variable" if i > 0 => {
-                // Pattern parameter after the function name
+                // Pattern parameter after the function name (no enclosing `patterns` node)
                 params.push(child_def(
                     node_text(&child, source).to_string(),
                     "parameter",
@@ -81,6 +75,50 @@ fn extract_haskell_params(func_node: &Node, source: &[u8]) -> Vec<Definition> {
         }
     }
     params
+}
+
+// Walk a pattern node and emit each bound variable (and `_` for wildcards) as a parameter.
+// Container patterns — parens, constructor application, infix (cons), tuple, list, as, strict,
+// irrefutable, qualified — are transparent: descend into their children. `record` is special:
+// only the right-hand-side of each `field_pattern` is bound (the field name is not).
+// Literals, bare constructors, and operators do not bind.
+fn collect_haskell_pattern_bindings(node: &Node, source: &[u8], out: &mut Vec<Definition>) {
+    match node.kind() {
+        "variable" | "identifier" => {
+            out.push(child_def(
+                node_text(node, source).to_string(),
+                "parameter",
+                start_line(node),
+            ));
+        }
+        "wildcard" => {
+            out.push(child_def("_".to_string(), "parameter", start_line(node)));
+        }
+        "parens" | "apply" | "infix" | "tuple" | "list" | "strict" | "irrefutable" | "as"
+        | "qualified" => {
+            for i in 0..node.child_count() {
+                if let Some(c) = node.child(i) {
+                    collect_haskell_pattern_bindings(&c, source, out);
+                }
+            }
+        }
+        "record" => {
+            for i in 0..node.child_count() {
+                let Some(fp) = node.child(i) else { continue };
+                if fp.kind() != "field_pattern" {
+                    continue;
+                }
+                for j in 0..fp.child_count() {
+                    if let Some(g) = fp.child(j) {
+                        if g.kind() != "field_name" {
+                            collect_haskell_pattern_bindings(&g, source, out);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn handle_haskell_bind(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
