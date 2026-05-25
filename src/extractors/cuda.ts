@@ -325,11 +325,13 @@ function isCudaMethodDeclarator(node: TreeSitterNode): boolean {
 }
 
 /**
- * Resolve the identifier of a class field's declarator by walking through any
- * combination of pointer/reference/array/parenthesized wrappers and (for
- * function-pointer fields) a `function_declarator`. Method declarations are
- * filtered before this is called, so a `function_declarator` here always
- * wraps a function-pointer field.
+ * Resolve the identifier of a declarator by walking through any combination of
+ * pointer/reference/array/parenthesized wrappers and `function_declarator`
+ * nodes. Used by both class-field extraction (where `function_declarator`
+ * indicates a function-pointer field after method declarations have been
+ * filtered out) and parameter extraction (where `function_declarator` wraps a
+ * bare function-type parameter name like `callback` in
+ * `void process(int callback(int))`).
  */
 function extractCudaFieldName(decl: TreeSitterNode): string {
   let current: TreeSitterNode | null = decl;

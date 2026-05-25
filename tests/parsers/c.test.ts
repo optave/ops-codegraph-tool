@@ -71,10 +71,10 @@ describe('C parser', () => {
     const symbols = parseC(`void process(int callback(int)) {}`);
     const process = symbols.definitions.find((d) => d.name === 'process');
     expect(process).toBeDefined();
-    expect(process.children).toBeDefined();
-    expect(process.children.length).toBe(1);
-    expect(process.children[0].name).toBe('callback');
-    expect(process.children[0].kind).toBe('parameter');
+    expect(process?.children).toBeDefined();
+    expect(process?.children?.length).toBe(1);
+    expect(process?.children?.[0]?.name).toBe('callback');
+    expect(process?.children?.[0]?.kind).toBe('parameter');
   });
 
   it('extracts calls with receiver', () => {
