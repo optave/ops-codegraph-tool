@@ -19,6 +19,7 @@ import {
   extractHCLSymbols,
   extractJavaSymbols,
   extractKotlinSymbols,
+  extractObjCSymbols,
   extractPHPSymbols,
   extractPythonSymbols,
   extractRubySymbols,
@@ -48,6 +49,8 @@ function wasmExtract(code, filePath) {
   if (filePath.endsWith('.kt')) return extractKotlinSymbols(tree, filePath);
   if (filePath.endsWith('.cu') || filePath.endsWith('.cuh'))
     return extractCudaSymbols(tree, filePath);
+  if (filePath.endsWith('.m') || filePath.endsWith('.mm'))
+    return extractObjCSymbols(tree, filePath);
   if (filePath.endsWith('.dart')) return extractDartSymbols(tree, filePath);
   if (filePath.endsWith('.scala')) return extractScalaSymbols(tree, filePath);
   if (filePath.endsWith('.ex') || filePath.endsWith('.exs'))
@@ -231,6 +234,41 @@ end
 `,
     },
     {
+      // Regression guard for #1197: both engines must extract bound identifiers
+      // from default-value (`a \\ default`), tuple, map, and struct parameter
+      // patterns. tree-sitter-elixir wraps these in `binary_operator` / `tuple`
+      // / `map` nodes rather than emitting bare identifiers, so naive
+      // identifier-only iteration drops the parameters silently.
+      name: 'Elixir — default-value and destructured parameter patterns',
+      file: 'patterns.ex',
+      code: `defmodule Patterns do
+  def fetch(url, timeout \\\\ 5000, retries \\\\ 3) do
+    {url, timeout, retries}
+  end
+
+  def first_of({x, _y}) do
+    x
+  end
+
+  def name_of(%{name: name, email: _email}) do
+    name
+  end
+
+  def id_of(%User{id: id}) do
+    id
+  end
+
+  def head_of([head | tail]) do
+    {head, tail}
+  end
+
+  def all_of([a, b, c]) do
+    {a, b, c}
+  end
+end
+`,
+    },
+    {
       // Regression guard: native previously dropped all Haskell function
       // parameters (positional pattern children). See #1189.
       name: 'Haskell — top-level functions with parameters',
@@ -369,6 +407,30 @@ public:
 `,
     },
     {
+      // Regression for follow-up #1204: function-pointer class fields parse
+      // with a top-level `function_declarator` (the same shape used by
+      // method declarations), so the original PR #1199 skip guard dropped
+      // them silently. They must survive in both engines as `property`
+      // children whose name is the inner identifier. Includes the
+      // array-of-function-pointer (`arr_cb`) variant so parity catches any
+      // future divergence in how the engines walk the extra
+      // `array_declarator` wrapper.
+      // Skip until next native binary release includes the function-pointer
+      // field fix from #1204.
+      skip: true,
+      name: 'CUDA — function-pointer class fields are kept as properties',
+      file: 'svc.cuh',
+      code: `
+class Service {
+    void method(int x);
+    void (*callback)(int x);
+    void (&ref_cb)(int);
+    int (*const arr_cb[3])(double);
+    int counter;
+};
+`,
+    },
+    {
       name: 'C# — classes and using',
       file: 'Test.cs',
       // Skip until next native binary release includes base_list extraction fix
@@ -393,6 +455,58 @@ end
 class Dog < Animal
   def speak; puts "Woof"; end
 end
+`,
+    },
+    {
+      // Regression guard for #1189: native `handle_singleton_method` (for
+      // `def self.foo`) used to set `children: None`, while `handle_method`
+      // (regular `def foo`) extracts parameters. WASM extracted parameters
+      // for both, producing a WASM-only `contains` edge for any singleton
+      // method with parameters. Now both engines emit parameter children.
+      name: 'Ruby — singleton method (def self.foo) parameters are children',
+      file: 'singleton.rb',
+      code: `
+module Greeter
+  def self.greet(name)
+    puts name
+  end
+end
+`,
+    },
+    {
+      // Regression guard for #1189: WASM `extractCParams` only looked one
+      // level deep for an `identifier` under the declarator, so a parameter
+      // like `const char *argv[]` (where the declarator is
+      // `pointer_declarator > array_declarator > identifier`) fell through
+      // to the raw declarator text (`*argv[]`). Native unwrapped to the
+      // bare identifier. Both engines now drill through pointer/array/
+      // reference/parenthesized declarator wrappers.
+      name: 'Objective-C — C-style pointer/array parameter unwraps to identifier',
+      file: 'main.m',
+      code: `
+int main(int argc, const char *argv[]) {
+    return 0;
+}
+`,
+    },
+    {
+      // Parity coverage for the second ObjC parameter path: `extractMethodParams`
+      // handles Objective-C native methods (`-(void)greet:(NSString *)name`),
+      // which uses `method_parameter` nodes rather than the C-style
+      // `parameter_declaration` path covered by the test above. Both engines
+      // should emit the parameter's identifier as a child.
+      name: 'Objective-C — native method parameter is a child',
+      file: 'Greeter.m',
+      code: `
+@interface Greeter : NSObject
+- (void)greet:(NSString *)name;
+@end
+
+@implementation Greeter
+- (void)greet:(NSString *)name {
+    NSLog(@"%@", name);
+}
+@end
 `,
     },
     {
@@ -535,6 +649,41 @@ deepUnpack (Just (a, b)) = (a, b)
     };
     check('wasm', wasmExtract(code, 'Patterns.hs'));
     if (hasNative) check('native', nativeExtract(code, 'Patterns.hs'));
+  });
+
+  // Explicit guard for #1197. The structural parity loop above only catches
+  // *divergence*; a regression where *both* engines silently drop default-value
+  // or pattern parameters would still pass. Assert the bound identifiers are
+  // present in each engine's output.
+  it('Elixir engines must extract bound identifiers from default-value and pattern params', () => {
+    const code = `defmodule Patterns do
+  def fetch(url, timeout \\\\ 5000, retries \\\\ 3), do: url
+  def first_of({x, _y}), do: x
+  def name_of(%{name: name}), do: name
+  def id_of(%User{id: id}), do: id
+  def head_of([head | tail]), do: head
+  def all_of([a, b, c]), do: a
+end
+`;
+    const wasm = wasmExtract(code, 'patterns.ex');
+    const nat = nativeExtract(code, 'patterns.ex');
+    for (const [label, syms] of [
+      ['wasm', wasm],
+      ['native', nat],
+    ] as const) {
+      const byName = new Map(
+        (syms?.definitions ?? []).map((d: any) => [
+          d.name,
+          (d.children ?? []).map((c: any) => c.name),
+        ]),
+      );
+      expect(byName.get('Patterns.fetch'), `${label} fetch`).toEqual(['url', 'timeout', 'retries']);
+      expect(byName.get('Patterns.first_of'), `${label} first_of`).toEqual(['x', '_y']);
+      expect(byName.get('Patterns.name_of'), `${label} name_of`).toEqual(['name']);
+      expect(byName.get('Patterns.id_of'), `${label} id_of`).toEqual(['id']);
+      expect(byName.get('Patterns.head_of'), `${label} head_of`).toEqual(['head', 'tail']);
+      expect(byName.get('Patterns.all_of'), `${label} all_of`).toEqual(['a', 'b', 'c']);
+    }
   });
 
   // Explicit guard for the WASM Python fix in #1189. The structural parity

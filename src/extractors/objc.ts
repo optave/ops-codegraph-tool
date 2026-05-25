@@ -519,12 +519,34 @@ function extractCParams(paramListNode: TreeSitterNode | null): SubDeclaration[] 
     if (!param || param.type !== 'parameter_declaration') continue;
     const nameNode = param.childForFieldName('declarator');
     if (nameNode) {
-      const name =
-        nameNode.type === 'identifier'
-          ? nameNode.text
-          : (findChild(nameNode, 'identifier')?.text ?? nameNode.text);
+      const name = unwrapObjCDeclaratorName(nameNode);
       params.push({ name, kind: 'parameter', line: param.startPosition.row + 1 });
     }
   }
   return params;
+}
+
+const OBJC_DECLARATOR_WRAPPERS = new Set([
+  'pointer_declarator',
+  'reference_declarator',
+  'array_declarator',
+  'parenthesized_declarator',
+]);
+
+/**
+ * Drill through pointer/array/reference/parenthesized declarator wrappers to
+ * recover the bare parameter identifier. Without this the WASM extractor
+ * emitted raw declarator text (e.g. `*argv[]`) while native unwrapped to
+ * `argv`, producing a cross-engine `contains` divergence on
+ * `int main(int argc, const char *argv[])` and similar C-style parameters.
+ */
+function unwrapObjCDeclaratorName(node: TreeSitterNode): string {
+  let current: TreeSitterNode | null = node;
+  while (current && OBJC_DECLARATOR_WRAPPERS.has(current.type)) {
+    current = current.childForFieldName('declarator');
+  }
+  if (current?.type === 'identifier' || current?.type === 'field_identifier') {
+    return current.text;
+  }
+  return current?.text ?? node.text;
 }
