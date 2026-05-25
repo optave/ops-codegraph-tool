@@ -81,17 +81,58 @@ function extractHaskellParams(funcNode: TreeSitterNode): SubDeclaration[] {
     if (child.type === 'patterns' || child.type === 'parameter') {
       for (let j = 0; j < child.childCount; j++) {
         const pat = child.child(j);
-        if (pat && (pat.type === 'variable' || pat.type === 'identifier')) {
-          params.push({ name: pat.text, kind: 'parameter', line: pat.startPosition.row + 1 });
-        }
+        if (pat) collectHaskellPatternBindings(pat, params);
       }
     }
     if (child.type === 'variable' && i > 0) {
-      // Pattern parameters after the function name
+      // Pattern parameters after the function name (no enclosing `patterns` node)
       params.push({ name: child.text, kind: 'parameter', line: child.startPosition.row + 1 });
     }
   }
   return params;
+}
+
+// Walk a pattern node and emit each bound variable (and `_` for wildcards) as a parameter.
+// Container patterns — parens, constructor application, infix (cons), tuple, list, as, strict,
+// irrefutable, qualified — are transparent: descend into their children. `record` is special:
+// only the right-hand-side of each `field_pattern` is bound (the field name is not).
+// Literals, bare constructors, and operators do not bind.
+function collectHaskellPatternBindings(node: TreeSitterNode, out: SubDeclaration[]): void {
+  switch (node.type) {
+    case 'variable':
+    case 'identifier':
+      out.push({ name: node.text, kind: 'parameter', line: node.startPosition.row + 1 });
+      return;
+    case 'wildcard':
+      out.push({ name: '_', kind: 'parameter', line: node.startPosition.row + 1 });
+      return;
+    case 'parens':
+    case 'apply':
+    case 'infix':
+    case 'tuple':
+    case 'list':
+    case 'strict':
+    case 'irrefutable':
+    case 'as':
+    case 'qualified':
+      for (let i = 0; i < node.childCount; i++) {
+        const c = node.child(i);
+        if (c) collectHaskellPatternBindings(c, out);
+      }
+      return;
+    case 'record':
+      for (let i = 0; i < node.childCount; i++) {
+        const fp = node.child(i);
+        if (!fp || fp.type !== 'field_pattern') continue;
+        for (let j = 0; j < fp.childCount; j++) {
+          const g = fp.child(j);
+          if (g && g.type !== 'field_name') collectHaskellPatternBindings(g, out);
+        }
+      }
+      return;
+    default:
+      return;
+  }
 }
 
 function handleHaskellBind(node: TreeSitterNode, ctx: ExtractorOutput): void {

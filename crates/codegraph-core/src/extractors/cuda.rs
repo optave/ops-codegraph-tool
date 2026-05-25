@@ -217,7 +217,13 @@ fn extract_cuda_fields(body: &Node, source: &[u8]) -> Vec<Definition> {
         if let Some(child) = body.child(i) {
             if child.kind() == "field_declaration" {
                 if let Some(decl) = child.child_by_field_name("declarator") {
-                    let name = unwrap_cuda_declarator(&decl, source);
+                    // Skip method declarations — a `field_declaration` whose
+                    // declarator (after unwrapping pointer/reference/array)
+                    // is a `function_declarator` is a method signature in a
+                    // header, not a data field. Mirrors the WASM
+                    // `isCudaMethodDeclarator` guard so both engines agree.
+                    if is_cuda_method_declarator(&decl) { continue; }
+                    let name = extract_cuda_field_name(&decl, source);
                     if !name.is_empty() {
                         fields.push(child_def(name, "property", start_line(&child)));
                     }
@@ -226,6 +232,86 @@ fn extract_cuda_fields(body: &Node, source: &[u8]) -> Vec<Definition> {
         }
     }
     fields
+}
+
+fn is_cuda_method_declarator(node: &Node) -> bool {
+    let mut current = *node;
+    loop {
+        match current.kind() {
+            "pointer_declarator"
+            | "reference_declarator"
+            | "array_declarator"
+            | "parenthesized_declarator" => {
+                if let Some(inner) = current.child_by_field_name("declarator") {
+                    current = inner;
+                } else {
+                    return false;
+                }
+            }
+            "function_declarator" => {
+                // A `function_declarator` whose inner declarator is a
+                // `parenthesized_declarator` is a function-pointer (or
+                // function-reference) field — e.g. `void (*cb)(int)` parses
+                // as function_declarator > parenthesized_declarator >
+                // pointer_declarator > field_identifier. Those are real
+                // data fields, not method declarations.
+                return current
+                    .child_by_field_name("declarator")
+                    .map_or(true, |n| n.kind() != "parenthesized_declarator");
+            }
+            _ => return false,
+        }
+    }
+}
+
+/// Resolve the identifier of a class field's declarator by walking through any
+/// combination of pointer/reference/array/parenthesized wrappers and (for
+/// function-pointer fields) a `function_declarator`. Method declarations are
+/// filtered before this is called, so a `function_declarator` here always
+/// wraps a function-pointer field.
+fn extract_cuda_field_name(decl: &Node, source: &[u8]) -> String {
+    let mut current = *decl;
+    loop {
+        match current.kind() {
+            "identifier" | "field_identifier" => {
+                return node_text(&current, source).to_string();
+            }
+            "pointer_declarator"
+            | "reference_declarator"
+            | "array_declarator"
+            | "parenthesized_declarator"
+            | "function_declarator" => match inner_cuda_declarator(&current) {
+                Some(next) => current = next,
+                None => return node_text(&current, source).to_string(),
+            },
+            _ => return node_text(&current, source).to_string(),
+        }
+    }
+}
+
+/// Find the inner declarator of a wrapper node. Most C++ declarator wrappers
+/// expose it via the `declarator` field, but some (e.g. `parenthesized_declarator`
+/// and `reference_declarator` in tree-sitter-cuda) have unnamed children — so
+/// fall back to scanning children for a declarator-shaped node.
+fn inner_cuda_declarator<'a>(node: &Node<'a>) -> Option<Node<'a>> {
+    if let Some(named) = node.child_by_field_name("declarator") {
+        return Some(named);
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            match child.kind() {
+                "identifier"
+                | "field_identifier"
+                | "function_declarator"
+                | "pointer_declarator"
+                | "reference_declarator"
+                | "array_declarator"
+                | "parenthesized_declarator" => return Some(child),
+                _ => {}
+            }
+        }
+    }
+    None
 }
 
 fn extract_cuda_enum_constants(node: &Node, source: &[u8]) -> Vec<Definition> {
@@ -638,5 +724,37 @@ mod tests {
     fn extracts_typedef_alias() {
         let s = parse_cuda("typedef unsigned int uint32_t;");
         assert!(s.definitions.iter().any(|d| d.name == "uint32_t" && d.kind == "type"));
+    }
+
+    #[test]
+    fn keeps_function_pointer_class_fields() {
+        // Regression for follow-up #1204: a `field_declaration` whose
+        // declarator is a `function_declarator` wrapping a
+        // `parenthesized_declarator` is a function-pointer field, not a
+        // method declaration. The skip guard should let it through and the
+        // field name should be the identifier inside the parentheses.
+        let s = parse_cuda(
+            "class Service {\n\
+                 void method(int);\n\
+                 void (*callback)(int);\n\
+                 int (*const arr_cb[3])(double);\n\
+                 void (&ref_cb)(int);\n\
+                 int counter;\n\
+             };",
+        );
+        let cls = s
+            .definitions
+            .iter()
+            .find(|d| d.name == "Service")
+            .expect("Service class extracted");
+        let children = cls.children.as_ref().expect("class has children");
+        let names: Vec<&str> = children.iter().map(|c| c.name.as_str()).collect();
+        // Function-pointer/reference fields preserved with bare identifier names.
+        assert!(names.contains(&"callback"), "callback field kept: {names:?}");
+        assert!(names.contains(&"arr_cb"), "arr_cb field kept: {names:?}");
+        assert!(names.contains(&"ref_cb"), "ref_cb field kept: {names:?}");
+        assert!(names.contains(&"counter"), "counter field kept: {names:?}");
+        // Real method declarations are still skipped at the field level.
+        assert!(!names.contains(&"method"), "method skipped: {names:?}");
     }
 }

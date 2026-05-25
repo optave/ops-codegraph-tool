@@ -193,6 +193,16 @@ fn handle_enum_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 }
 
 fn handle_method_decl(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
+    // Skip interface methods — already emitted by handle_interface_decl without
+    // parameters. Re-emitting them here would duplicate the definition and add
+    // spurious `contains` edges to parameters of body-less declarations.
+    // Mirrors C# handle_method_decl (csharp.rs) and the WASM Java extractor's
+    // `node.parent?.parent?.type === 'interface_declaration'` guard.
+    if let Some(parent) = node.parent() {
+        if let Some(grand) = parent.parent() {
+            if grand.kind() == "interface_declaration" { return; }
+        }
+    }
     if let Some(name_node) = node.child_by_field_name("name") {
         let parent_class = find_java_parent_class(node, source);
         let name = node_text(&name_node, source);

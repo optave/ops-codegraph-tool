@@ -98,6 +98,7 @@ fn handle_singleton_method(node: &Node, source: &[u8], symbols: &mut FileSymbols
         Some(cls) => format!("{}.{}", cls, name),
         None => name.to_string(),
     };
+    let children = extract_ruby_parameters(node, source);
     symbols.definitions.push(Definition {
         name: full_name,
         kind: "function".to_string(),
@@ -106,7 +107,7 @@ fn handle_singleton_method(node: &Node, source: &[u8], symbols: &mut FileSymbols
         decorators: None,
         complexity: compute_all_metrics(node, source, "ruby"),
         cfg: build_function_cfg(node, "ruby", source),
-        children: None,
+        children: opt_children(children),
     });
 }
 
