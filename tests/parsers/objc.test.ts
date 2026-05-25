@@ -130,6 +130,21 @@ describe('Objective-C parser', () => {
     );
   });
 
+  it('unwraps function-type parameter to bare identifier', () => {
+    // `int callback(int)` as a parameter parses as a `function_declarator`
+    // whose inner `declarator` is the identifier. The unwrap helper must
+    // drill through it so the parameter name is `callback`, not
+    // `callback(int)`. Matches `unwrap_c_declarator` in
+    // `crates/codegraph-core/src/extractors/objc.rs`.
+    const symbols = parseObjC(`void process(int callback(int)) {}`);
+    const process = symbols.definitions.find((d) => d.name === 'process');
+    expect(process).toBeDefined();
+    expect(process?.children).toBeDefined();
+    expect(process?.children?.length).toBe(1);
+    expect(process?.children?.[0]?.name).toBe('callback');
+    expect(process?.children?.[0]?.kind).toBe('parameter');
+  });
+
   it('extracts @property names nested under struct_declarator', () => {
     // The v3 grammar does not expose `name` as a named field on
     // `property_declaration`; the identifier nests under

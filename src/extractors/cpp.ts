@@ -239,6 +239,54 @@ function findCppParentClass(node: TreeSitterNode): string | null {
   return null;
 }
 
+const CPP_DECLARATOR_WRAPPERS = new Set([
+  'pointer_declarator',
+  'reference_declarator',
+  'array_declarator',
+  'parenthesized_declarator',
+  'function_declarator',
+]);
+
+/**
+ * Drill through pointer/reference/array/parenthesized/function declarator
+ * wrappers to recover the bare identifier. Mirrors `unwrap_cpp_declarator` in
+ * the native C++ extractor. tree-sitter-cpp's `reference_declarator` does not
+ * expose a `declarator` field, so the loop falls back to scanning children
+ * for the next nested declarator or identifier.
+ */
+function unwrapCppDeclaratorName(node: TreeSitterNode): string {
+  let current: TreeSitterNode | null = node;
+  while (current && CPP_DECLARATOR_WRAPPERS.has(current.type)) {
+    const named = current.childForFieldName('declarator');
+    if (named) {
+      current = named;
+      continue;
+    }
+    const fallback = nextCppDeclaratorChild(current);
+    if (!fallback) break;
+    current = fallback;
+  }
+  if (current?.type === 'identifier' || current?.type === 'field_identifier') {
+    return current.text;
+  }
+  return current?.text ?? node.text;
+}
+
+function nextCppDeclaratorChild(node: TreeSitterNode): TreeSitterNode | null {
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (!child) continue;
+    if (
+      child.type === 'identifier' ||
+      child.type === 'field_identifier' ||
+      CPP_DECLARATOR_WRAPPERS.has(child.type)
+    ) {
+      return child;
+    }
+  }
+  return null;
+}
+
 function extractCppParameters(paramListNode: TreeSitterNode | null): SubDeclaration[] {
   const params: SubDeclaration[] = [];
   if (!paramListNode) return params;
@@ -247,10 +295,7 @@ function extractCppParameters(paramListNode: TreeSitterNode | null): SubDeclarat
     if (!param || param.type !== 'parameter_declaration') continue;
     const nameNode = param.childForFieldName('declarator');
     if (nameNode) {
-      const name =
-        nameNode.type === 'identifier'
-          ? nameNode.text
-          : (findChild(nameNode, 'identifier')?.text ?? nameNode.text);
+      const name = unwrapCppDeclaratorName(nameNode);
       params.push({ name, kind: 'parameter', line: param.startPosition.row + 1 });
     }
   }
@@ -267,10 +312,7 @@ function extractCppClassFields(classNode: TreeSitterNode): SubDeclaration[] {
     if (!member || member.type !== 'field_declaration') continue;
     const nameNode = member.childForFieldName('declarator');
     if (nameNode) {
-      const name =
-        nameNode.type === 'identifier'
-          ? nameNode.text
-          : (findChild(nameNode, 'identifier')?.text ?? nameNode.text);
+      const name = unwrapCppDeclaratorName(nameNode);
       fields.push({
         name,
         kind: 'property',

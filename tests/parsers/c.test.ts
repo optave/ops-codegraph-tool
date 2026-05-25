@@ -64,6 +64,19 @@ describe('C parser', () => {
     expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'printf' }));
   });
 
+  it('unwraps function-type parameter to bare identifier', () => {
+    // `int callback(int)` as a parameter parses as a `function_declarator`
+    // whose inner `declarator` is the identifier. Drill through it so the
+    // parameter name is `callback`, not `callback(int)`.
+    const symbols = parseC(`void process(int callback(int)) {}`);
+    const process = symbols.definitions.find((d) => d.name === 'process');
+    expect(process).toBeDefined();
+    expect(process?.children).toBeDefined();
+    expect(process?.children?.length).toBe(1);
+    expect(process?.children?.[0]?.name).toBe('callback');
+    expect(process?.children?.[0]?.kind).toBe('parameter');
+  });
+
   it('extracts calls with receiver', () => {
     const symbols = parseC(`void f() { obj->method(); }`);
     const call = symbols.calls.find((c) => c.name === 'method');

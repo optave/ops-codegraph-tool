@@ -613,7 +613,10 @@ fn unwrap_c_declarator(node: &Node, source: &[u8]) -> String {
     let mut current = *node;
     loop {
         match current.kind() {
-            "pointer_declarator" | "array_declarator" | "parenthesized_declarator" => {
+            "pointer_declarator"
+            | "array_declarator"
+            | "parenthesized_declarator"
+            | "function_declarator" => {
                 if let Some(inner) = current.child_by_field_name("declarator") {
                     current = inner;
                 } else {
@@ -765,5 +768,19 @@ mod tests {
         let kids = foo.children.as_ref().unwrap();
         let prop = kids.iter().find(|k| k.kind == "property").unwrap();
         assert_eq!(prop.name, "name");
+    }
+
+    #[test]
+    fn function_type_parameter_unwraps_to_bare_identifier() {
+        // `int callback(int)` as a parameter parses as a `function_declarator`
+        // whose inner declarator is the identifier. `unwrap_c_declarator` must
+        // drill through it so the parameter name is `callback`, not the raw
+        // declarator text `callback(int)`. Follow-up #1206.
+        let s = parse_objc("void process(int callback(int)) {}");
+        let process = s.definitions.iter().find(|d| d.name == "process").unwrap();
+        let params = process.children.as_ref().expect("function has children");
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "callback");
+        assert_eq!(params[0].kind, "parameter");
     }
 }
