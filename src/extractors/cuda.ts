@@ -265,10 +265,10 @@ function extractCudaParameters(paramListNode: TreeSitterNode | null): SubDeclara
     if (!param || param.type !== 'parameter_declaration') continue;
     const nameNode = param.childForFieldName('declarator');
     if (nameNode) {
-      const name =
-        nameNode.type === 'identifier'
-          ? nameNode.text
-          : (findChild(nameNode, 'identifier')?.text ?? nameNode.text);
+      // Reuse the field-name drill helper so function-type parameters like
+      // `void process(int callback(int))` yield the bare name `callback`
+      // instead of the raw declarator text, matching the native unwrap path.
+      const name = extractCudaFieldName(nameNode);
       params.push({ name, kind: 'parameter', line: param.startPosition.row + 1 });
     }
   }
@@ -325,11 +325,13 @@ function isCudaMethodDeclarator(node: TreeSitterNode): boolean {
 }
 
 /**
- * Resolve the identifier of a class field's declarator by walking through any
- * combination of pointer/reference/array/parenthesized wrappers and (for
- * function-pointer fields) a `function_declarator`. Method declarations are
- * filtered before this is called, so a `function_declarator` here always
- * wraps a function-pointer field.
+ * Resolve the identifier of a declarator by walking through any combination of
+ * pointer/reference/array/parenthesized wrappers and `function_declarator`
+ * nodes. Used by both class-field extraction (where `function_declarator`
+ * indicates a function-pointer field after method declarations have been
+ * filtered out) and parameter extraction (where `function_declarator` wraps a
+ * bare function-type parameter name like `callback` in
+ * `void process(int callback(int))`).
  */
 function extractCudaFieldName(decl: TreeSitterNode): string {
   let current: TreeSitterNode | null = decl;

@@ -531,14 +531,17 @@ const OBJC_DECLARATOR_WRAPPERS = new Set([
   'reference_declarator',
   'array_declarator',
   'parenthesized_declarator',
+  'function_declarator',
 ]);
 
 /**
- * Drill through pointer/array/reference/parenthesized declarator wrappers to
- * recover the bare parameter identifier. Without this the WASM extractor
- * emitted raw declarator text (e.g. `*argv[]`) while native unwrapped to
- * `argv`, producing a cross-engine `contains` divergence on
- * `int main(int argc, const char *argv[])` and similar C-style parameters.
+ * Drill through pointer/array/reference/parenthesized/function declarator
+ * wrappers to recover the bare parameter identifier. Without this the WASM
+ * extractor emitted raw declarator text (e.g. `*argv[]` or `callback(int x)`)
+ * while native unwrapped to `argv` / `callback`, producing cross-engine
+ * `contains` divergence on C-style parameters such as
+ * `int main(int argc, const char *argv[])` and function-type parameters such
+ * as `void process(int callback(int))`.
  */
 function unwrapObjCDeclaratorName(node: TreeSitterNode): string {
   let current: TreeSitterNode | null = node;

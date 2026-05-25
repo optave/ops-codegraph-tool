@@ -55,6 +55,20 @@ public:
     expect(symbols.calls).toContainEqual(expect.objectContaining({ name: 'cudaMalloc' }));
   });
 
+  it('unwraps function-type parameter to bare identifier', () => {
+    // `int callback(int)` as a parameter parses as a `function_declarator`
+    // whose inner `declarator` is the identifier. Drill through it so the
+    // parameter name is `callback`, not `callback(int)`. Matches
+    // `unwrap_cuda_declarator` in `crates/codegraph-core/src/extractors/cuda.rs`.
+    const symbols = parseCuda(`void process(int callback(int)) {}`);
+    const process = symbols.definitions.find((d) => d.name === 'process');
+    expect(process).toBeDefined();
+    expect(process?.children).toBeDefined();
+    expect(process?.children?.length).toBe(1);
+    expect(process?.children?.[0]?.name).toBe('callback');
+    expect(process?.children?.[0]?.kind).toBe('parameter');
+  });
+
   it('keeps function-pointer class fields and skips real methods', () => {
     // Regression for follow-up #1204: a `field_declaration` whose declarator
     // is a `function_declarator` wrapping a `parenthesized_declarator` is a

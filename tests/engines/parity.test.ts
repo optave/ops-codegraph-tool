@@ -510,6 +510,46 @@ int main(int argc, const char *argv[]) {
 `,
     },
     {
+      // Regression for follow-up #1206: function-type parameters such as
+      // `int callback(int)` parse the parameter's declarator as a
+      // `function_declarator` wrapping the bare identifier. Pre-fix both
+      // engines emitted the raw declarator text (`callback(int)`) for at
+      // least one of (native C/ObjC/C++/CUDA, WASM ObjC). After the fix all
+      // declarator-unwrap helpers drill through `function_declarator` so
+      // the parameter name is `callback` in every C-family engine.
+      // Skip until next native binary release includes the unwrap fix.
+      skip: true,
+      name: 'C — function-type parameter unwraps to bare identifier',
+      file: 'main.c',
+      code: `
+void process(int callback(int)) {}
+`,
+    },
+    {
+      skip: true,
+      name: 'C++ — function-type parameter unwraps to bare identifier',
+      file: 'main.cpp',
+      code: `
+void process(int callback(int)) {}
+`,
+    },
+    {
+      skip: true,
+      name: 'Objective-C — function-type parameter unwraps to bare identifier',
+      file: 'main.m',
+      code: `
+void process(int callback(int)) {}
+`,
+    },
+    {
+      skip: true,
+      name: 'CUDA — function-type parameter unwraps to bare identifier',
+      file: 'main.cu',
+      code: `
+void process(int callback(int)) {}
+`,
+    },
+    {
       name: 'PHP — classes and use',
       file: 'test.php',
       // Known gap: PHP WASM grammar not always available in CI/worktrees

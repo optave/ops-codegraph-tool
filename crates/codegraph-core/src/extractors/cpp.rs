@@ -70,11 +70,13 @@ fn unwrap_cpp_declarator(node: &Node, source: &[u8]) -> String {
     loop {
         match current.kind() {
             "pointer_declarator" | "reference_declarator" | "array_declarator"
-            | "parenthesized_declarator" => {
+            | "parenthesized_declarator" | "function_declarator" => {
                 // tree-sitter-cpp's `reference_declarator` rule does not expose a
                 // `declarator` field, so `child_by_field_name` returns None and
                 // the full node text (`& name`) leaks out. Fall back to scanning
                 // children for the next nested declarator or identifier.
+                // `function_declarator` is unwrapped so that function-type
+                // parameters like `void f(int cb(int))` yield the bare name.
                 let inner = current
                     .child_by_field_name("declarator")
                     .or_else(|| next_cpp_declarator_child(&current));
@@ -100,7 +102,8 @@ fn next_cpp_declarator_child<'a>(node: &Node<'a>) -> Option<Node<'a>> {
                 | "pointer_declarator"
                 | "reference_declarator"
                 | "array_declarator"
-                | "parenthesized_declarator" => return Some(child),
+                | "parenthesized_declarator"
+                | "function_declarator" => return Some(child),
                 _ => {}
             }
         }
@@ -478,5 +481,19 @@ mod tests {
         let params = func.children.as_ref().expect("function has children");
         assert_eq!(params.len(), 1);
         assert_eq!(params[0].name, "x");
+    }
+
+    #[test]
+    fn function_type_parameter_unwraps_to_bare_identifier() {
+        // `int callback(int)` as a parameter parses as a `function_declarator`
+        // whose inner declarator is the identifier. `unwrap_cpp_declarator`
+        // must drill through it so the parameter name is `callback`, not the
+        // raw declarator text `callback(int)`. Follow-up #1206.
+        let s = parse_cpp("void process(int callback(int)) {}");
+        let process = s.definitions.iter().find(|d| d.name == "process").unwrap();
+        let params = process.children.as_ref().expect("function has children");
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0].name, "callback");
+        assert_eq!(params[0].kind, "parameter");
     }
 }
