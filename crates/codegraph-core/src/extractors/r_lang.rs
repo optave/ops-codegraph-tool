@@ -177,12 +177,7 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 
     match func_node.kind() {
         "identifier" => {
-            symbols.calls.push(Call {
-                name: func_text.to_string(),
-                line: start_line(node),
-                dynamic: None,
-                receiver: None,
-            });
+            push_simple_call(symbols, node, func_text.to_string());
         }
         "namespace_operator" => {
             // `pkg::func` — receiver is the package; name is the function.
@@ -190,12 +185,7 @@ fn handle_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
             if parts.len() >= 2 {
                 let name = parts[parts.len() - 1].to_string();
                 let receiver = parts[..parts.len() - 1].join("::");
-                symbols.calls.push(Call {
-                    name,
-                    line: start_line(node),
-                    dynamic: None,
-                    receiver: Some(receiver),
-                });
+                push_call(symbols, node, name, Some(receiver), None);
             }
         }
         _ => {}
@@ -287,22 +277,14 @@ fn strip_string_quotes(node: &Node, source: &[u8]) -> String {
 
 fn handle_library_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(pkg) = first_argument_value(node, source, true) {
-        symbols.imports.push(Import::new(
-            pkg.clone(),
-            vec![pkg],
-            start_line(node),
-        ));
+        push_import(symbols, node, pkg.clone(), vec![pkg], |_| {});
     }
 }
 
 fn handle_source_call(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     // source() only accepts string literals — `source(varname)` is not an import.
     if let Some(path) = first_argument_value(node, source, false) {
-        symbols.imports.push(Import::new(
-            path,
-            vec!["source".to_string()],
-            start_line(node),
-        ));
+        push_import(symbols, node, path, vec!["source".to_string()], |_| {});
     }
 }
 
@@ -344,12 +326,7 @@ fn handle_set_generic(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
 // recursive walk of the anonymous function argument.
 fn handle_set_method(node: &Node, source: &[u8], symbols: &mut FileSymbols) {
     if let Some(name) = first_argument_value(node, source, false) {
-        symbols.calls.push(Call {
-            name,
-            line: start_line(node),
-            dynamic: None,
-            receiver: None,
-        });
+        push_simple_call(symbols, node, name);
     }
 }
 

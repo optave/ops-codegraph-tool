@@ -459,40 +459,24 @@ fn handle_call_expression(node: &Node, source: &[u8], symbols: &mut FileSymbols)
         _ => (node_text(&func_node, source).to_string(), None),
     };
 
-    if !name.is_empty() {
-        symbols.calls.push(Call {
-            name,
-            line: start_line(node),
-            dynamic: None,
-            receiver,
-        });
-    }
+    push_call(symbols, node, name, receiver, None);
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 fn extract_sol_params(func_node: &Node, source: &[u8]) -> Vec<Definition> {
-    let mut params = Vec::new();
     let param_list = func_node
         .child_by_field_name("parameters")
         .or_else(|| find_child(func_node, "parameter_list"));
-    let Some(param_list) = param_list else {
-        return params;
-    };
-    for i in 0..param_list.child_count() {
-        let Some(param) = param_list.child(i) else { continue };
-        if param.kind() != "parameter" {
-            continue;
-        }
-        if let Some(name_node) = param.child_by_field_name("name") {
-            params.push(child_def(
-                node_text(&name_node, source).to_string(),
-                "parameter",
-                start_line(&param),
-            ));
-        }
-    }
-    params
+    extract_simple_parameters(
+        param_list,
+        source,
+        &ExtractParametersOptions {
+            param_kinds: &["parameter"],
+            name_field: Some("name"),
+            fallback_to_identifier: false,
+        },
+    )
 }
 
 /// Find the name of an enclosing contract/interface/library, if any.
