@@ -1,5 +1,5 @@
 {
-  "version": "3.10.0",
+  "version": "3.11.0",
   "name": "@optave/codegraph",
   "problems": [
     "extraneous: @emnapi/runtime@1.10.0 /home/runner/work/ops-codegraph-tool/ops-codegraph-tool/node_modules/@emnapi/runtime",
@@ -756,15 +756,15 @@
     "@optave/codegraph-darwin-x64": {},
     "@optave/codegraph-linux-arm64-gnu": {},
     "@optave/codegraph-linux-x64-gnu": {
-      "version": "3.10.0",
-      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-3.10.0.tgz",
+      "version": "3.11.0",
+      "resolved": "https://registry.npmjs.org/@optave/codegraph-linux-x64-gnu/-/codegraph-linux-x64-gnu-3.11.0.tgz",
       "overridden": false
     },
     "@optave/codegraph-linux-x64-musl": {},
     "@optave/codegraph-win32-x64-msvc": {},
     "better-sqlite3": {
-      "version": "12.9.0",
-      "resolved": "https://registry.npmjs.org/better-sqlite3/-/better-sqlite3-12.9.0.tgz",
+      "version": "12.10.0",
+      "resolved": "https://registry.npmjs.org/better-sqlite3/-/better-sqlite3-12.10.0.tgz",
       "overridden": false,
       "dependencies": {
         "bindings": {
@@ -1020,8 +1020,8 @@
       ]
     },
     "web-tree-sitter": {
-      "version": "0.26.8",
-      "resolved": "https://registry.npmjs.org/web-tree-sitter/-/web-tree-sitter-0.26.8.tgz",
+      "version": "0.26.9",
+      "resolved": "https://registry.npmjs.org/web-tree-sitter/-/web-tree-sitter-0.26.9.tgz",
       "overridden": false
     }
   }
