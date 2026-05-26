@@ -5,7 +5,7 @@ import type {
   TreeSitterNode,
   TreeSitterTree,
 } from '../types.js';
-import { findChild, nodeEndLine } from './helpers.js';
+import { findChild, iterChildren, nodeEndLine, PUNCTUATION_TOKENS } from './helpers.js';
 
 /**
  * Extract symbols from Elixir files.
@@ -256,11 +256,7 @@ function pushElixirBinaryOperatorOperands(node: TreeSitterNode, stack: TreeSitte
  * the worklist, skipping punctuation tokens.
  */
 function pushElixirSequenceItems(node: TreeSitterNode, stack: TreeSitterNode[]): void {
-  for (let i = 0; i < node.childCount; i++) {
-    const c = node.child(i);
-    if (!c) continue;
-    const t = c.type;
-    if (t === '[' || t === ']' || t === '{' || t === '}' || t === ',') continue;
+  for (const c of iterChildren(node, PUNCTUATION_TOKENS)) {
     stack.push(c);
   }
 }
