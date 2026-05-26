@@ -22,6 +22,29 @@ interface ParsedDiff {
   newFiles: Set<string>;
 }
 
+const HUNK_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+const NEW_FILE_RE = /^\+\+\+ b\/(.+)/;
+
+function pushHunkRanges(
+  line: string,
+  currentFile: string,
+  changedRanges: Map<string, DiffRange[]>,
+  oldRanges: Map<string, DiffRange[]>,
+): void {
+  const hunkMatch = line.match(HUNK_RE);
+  if (!hunkMatch) return;
+  const oldStart = parseInt(hunkMatch[1]!, 10);
+  const oldCount = parseInt(hunkMatch[2] || '1', 10);
+  if (oldCount > 0) {
+    oldRanges.get(currentFile)!.push({ start: oldStart, end: oldStart + oldCount - 1 });
+  }
+  const newStart = parseInt(hunkMatch[3]!, 10);
+  const newCount = parseInt(hunkMatch[4] || '1', 10);
+  if (newCount > 0) {
+    changedRanges.get(currentFile)!.push({ start: newStart, end: newStart + newCount - 1 });
+  }
+}
+
 export function parseDiffOutput(diffOutput: string): ParsedDiff {
   const changedRanges = new Map<string, DiffRange[]>();
   const oldRanges = new Map<string, DiffRange[]>();
@@ -38,7 +61,7 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
       prevIsDevNull = false;
       continue;
     }
-    const fileMatch = line.match(/^\+\+\+ b\/(.+)/);
+    const fileMatch = line.match(NEW_FILE_RE);
     if (fileMatch) {
       currentFile = fileMatch[1]!;
       if (!changedRanges.has(currentFile)) changedRanges.set(currentFile, []);
@@ -47,19 +70,7 @@ export function parseDiffOutput(diffOutput: string): ParsedDiff {
       prevIsDevNull = false;
       continue;
     }
-    const hunkMatch = line.match(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/);
-    if (hunkMatch && currentFile) {
-      const oldStart = parseInt(hunkMatch[1]!, 10);
-      const oldCount = parseInt(hunkMatch[2] || '1', 10);
-      if (oldCount > 0) {
-        oldRanges.get(currentFile)!.push({ start: oldStart, end: oldStart + oldCount - 1 });
-      }
-      const newStart = parseInt(hunkMatch[3]!, 10);
-      const newCount = parseInt(hunkMatch[4] || '1', 10);
-      if (newCount > 0) {
-        changedRanges.get(currentFile)!.push({ start: newStart, end: newStart + newCount - 1 });
-      }
-    }
+    if (currentFile) pushHunkRanges(line, currentFile, changedRanges, oldRanges);
   }
   return { changedRanges, oldRanges, newFiles };
 }
@@ -96,6 +107,26 @@ interface BlastRadiusResult {
   violations: BlastRadiusViolation[];
 }
 
+type DefRow = {
+  id: number;
+  name: string;
+  kind: string;
+  file: string;
+  line: number;
+  end_line: number | null;
+};
+
+function rangesOverlap(defLine: number, endLine: number, ranges: DiffRange[]): boolean {
+  for (const range of ranges) {
+    if (range.start <= endLine && range.end >= defLine) return true;
+  }
+  return false;
+}
+
+function defEndLine(def: DefRow, nextDef: DefRow | undefined): number {
+  return def.end_line || (nextDef ? nextDef.line - 1 : 999999);
+}
+
 export function checkMaxBlastRadius(
   db: BetterSqlite3Database,
   changedRanges: Map<string, DiffRange[]>,
@@ -105,34 +136,18 @@ export function checkMaxBlastRadius(
 ): BlastRadiusResult {
   const violations: BlastRadiusViolation[] = [];
   let maxFound = 0;
+  const defsStmt = db.prepare(
+    `SELECT * FROM nodes WHERE file = ? AND kind IN ('function', 'method', 'class') ORDER BY line`,
+  );
 
   for (const [file, ranges] of changedRanges) {
     if (noTests && isTestFile(file)) continue;
-    const defs = db
-      .prepare(
-        `SELECT * FROM nodes WHERE file = ? AND kind IN ('function', 'method', 'class') ORDER BY line`,
-      )
-      .all(file) as Array<{
-      id: number;
-      name: string;
-      kind: string;
-      file: string;
-      line: number;
-      end_line: number | null;
-    }>;
+    const defs = defsStmt.all(file) as DefRow[];
 
     for (let i = 0; i < defs.length; i++) {
       const def = defs[i]!;
-      const nextDef = defs[i + 1];
-      const endLine = def.end_line || (nextDef ? nextDef.line - 1 : 999999);
-      let overlaps = false;
-      for (const range of ranges) {
-        if (range.start <= endLine && range.end >= def.line) {
-          overlaps = true;
-          break;
-        }
-      }
-      if (!overlaps) continue;
+      const endLine = defEndLine(def, defs[i + 1]);
+      if (!rangesOverlap(def.line, endLine, ranges)) continue;
 
       const { totalDependents: totalCallers } = bfsTransitiveCallers(db, def.id, {
         noTests,
