@@ -710,10 +710,10 @@ Available embedding models:
   jina-base     768d  8192 ctx  Good quality (~137MB). General text, 8192 token context.
   jina-code     768d  8192 ctx  Code-aware (~137MB). Trained on code+text, best for code search.
   nomic         768d  8192 ctx  Good local quality (~137MB). 8192 context.
-  nomic-v1.5    768d  8192 ctx  Improved nomic (~137MB). Matryoshka dimensions, 8192 context.
+  nomic-v1.5    768d  8192 ctx  Matryoshka MRL trained (~137MB). 8192 context. Codegraph stores full 768d (no truncation); v1 scores higher on our benchmark.
   bge-large    1024d  512 ctx   Best general retrieval (~335MB). Top MTEB scores.
-  mxbai-xsmall  384d  4096 ctx  Tiny model with long context (~50MB). 4096 ctx, Matryoshka dimensions.
-  mxbai-large  1024d  512 ctx   Top MTEB BERT-large (~400MB). Matryoshka dimensions, public mirror.
+  mxbai-xsmall  384d  4096 ctx  Tiny model with long context (~50MB). 4096 ctx.
+  mxbai-large  1024d  512 ctx   Top MTEB BERT-large (~400MB). Public mirror.
   bge-m3       1024d  8192 ctx  Multilingual, multi-task (~600MB). 100+ languages, 8192 context.
   modernbert    768d  8192 ctx  ModernBERT base (~150MB). Newer architecture, 8192 ctx, English.
 ```

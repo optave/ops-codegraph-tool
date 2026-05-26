@@ -91,7 +91,7 @@ export const MODELS: Record<string, ModelConfig> = {
     name: 'nomic-ai/nomic-embed-text-v1.5',
     dim: 768,
     contextWindow: 8192,
-    desc: 'Improved nomic (~137MB). Matryoshka dimensions, 8192 context.',
+    desc: 'Matryoshka MRL trained (~137MB). 8192 context. Codegraph stores full 768d (no truncation); v1 scores higher on our benchmark.',
     quantized: false,
   },
   'bge-large': {
@@ -105,14 +105,14 @@ export const MODELS: Record<string, ModelConfig> = {
     name: 'mixedbread-ai/mxbai-embed-xsmall-v1',
     dim: 384,
     contextWindow: 4096,
-    desc: 'Tiny model with long context (~50MB). 4096 ctx, Matryoshka dimensions.',
+    desc: 'Tiny model with long context (~50MB). 4096 ctx.',
     quantized: false,
   },
   'mxbai-large': {
     name: 'mixedbread-ai/mxbai-embed-large-v1',
     dim: 1024,
     contextWindow: 512,
-    desc: 'Top MTEB BERT-large (~400MB). Matryoshka dimensions, public mirror.',
+    desc: 'Top MTEB BERT-large (~400MB). Public mirror.',
     quantized: false,
   },
   'bge-m3': {
