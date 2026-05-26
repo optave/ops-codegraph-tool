@@ -753,6 +753,146 @@ function allNativeDataComplete(
 
 // ─── Public API ──────────────────────────────────────────────────────────
 
+/** Distribute the per-file walk time equally among the visitors that ran. */
+function accumulateWalkTime(
+  timing: AnalysisTiming,
+  walkMs: number,
+  astVisitor: Visitor | null,
+  complexityVisitor: Visitor | null,
+  cfgVisitor: Visitor | null,
+  dataflowVisitor: Visitor | null,
+): void {
+  const activeCount = [astVisitor, complexityVisitor, cfgVisitor, dataflowVisitor].filter(
+    Boolean,
+  ).length;
+  if (activeCount === 0) return;
+
+  const share = walkMs / activeCount;
+  if (astVisitor) timing.astMs += share;
+  if (complexityVisitor) timing.complexityMs += share;
+  if (cfgVisitor) timing.cfgMs += share;
+  if (dataflowVisitor) timing.dataflowMs += share;
+}
+
+/** Apply visitor walk results to the per-file symbols/definitions. */
+function applyVisitorResults(
+  results: WalkResults,
+  symbols: ExtractorOutput,
+  langId: string,
+  astVisitor: Visitor | null,
+  complexityVisitor: Visitor | null,
+  cfgVisitor: Visitor | null,
+  dataflowVisitor: Visitor | null,
+): void {
+  const defs = symbols.definitions || [];
+
+  if (astVisitor) {
+    const astRows = (results['ast-store'] || []) as ASTNodeRow[];
+    if (astRows.length > 0) symbols.astNodes = astRows;
+  }
+
+  if (complexityVisitor) storeComplexityResults(results, defs, langId);
+  if (cfgVisitor) storeCfgResults(results, defs);
+  if (dataflowVisitor) symbols.dataflow = results.dataflow as DataflowResult;
+}
+
+/** Process a single file: set up visitors, walk the tree, and apply results. */
+function processFileWalk(
+  db: BetterSqlite3Database,
+  relPath: string,
+  symbols: ExtractorOutput,
+  langId: string,
+  opts: AnalysisOpts,
+  timing: AnalysisTiming,
+): void {
+  if (!symbols._tree) return;
+
+  const { visitors, walkerOpts, astVisitor, complexityVisitor, cfgVisitor, dataflowVisitor } =
+    setupVisitors(db, relPath, symbols, langId, opts);
+
+  if (visitors.length === 0) return;
+
+  const walkStart = performance.now();
+  const results = walkWithVisitors(symbols._tree.rootNode, visitors, langId, walkerOpts);
+  const walkMs = performance.now() - walkStart;
+
+  accumulateWalkTime(timing, walkMs, astVisitor, complexityVisitor, cfgVisitor, dataflowVisitor);
+  applyVisitorResults(
+    results,
+    symbols,
+    langId,
+    astVisitor,
+    complexityVisitor,
+    cfgVisitor,
+    dataflowVisitor,
+  );
+}
+
+/**
+ * Unified pre-walk: run all applicable visitors in a single DFS per file.
+ * Returns the total wall-clock time for diagnostics.
+ */
+function runUnifiedWalkPass(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, ExtractorOutput>,
+  extToLang: Map<string, string>,
+  opts: AnalysisOpts,
+  timing: AnalysisTiming,
+): number {
+  const t0walk = performance.now();
+
+  for (const [relPath, symbols] of fileSymbols) {
+    if (!symbols._tree) continue;
+
+    const ext = path.extname(relPath).toLowerCase();
+    const langId = symbols._langId || extToLang.get(ext);
+    if (!langId) continue;
+
+    processFileWalk(db, relPath, symbols, langId, opts, timing);
+  }
+
+  return performance.now() - t0walk;
+}
+
+/** Try native Rust standalone analysis to fill gaps before WASM fallback. */
+function tryNativeStandaloneAnalysis(
+  fileSymbols: Map<string, ExtractorOutput>,
+  rootDir: string,
+  opts: AnalysisOpts,
+  extToLang: Map<string, string>,
+): void {
+  const native = loadNative();
+  if (!native?.analyzeComplexity && !native?.buildCfgAnalysis && !native?.extractDataflowAnalysis) {
+    return;
+  }
+  const t0native = performance.now();
+  runNativeAnalysis(native, fileSymbols, rootDir, opts, extToLang);
+  debug(`native standalone analysis: ${(performance.now() - t0native).toFixed(1)}ms`);
+}
+
+/**
+ * Fast path: when all files were parsed by the native engine with full analysis,
+ * skip WASM re-parse and JS visitor walks entirely and go straight to DB persistence.
+ * Returns true if the fast path handled the work.
+ */
+async function runFastPathIfApplicable(
+  db: BetterSqlite3Database,
+  fileSymbols: Map<string, ExtractorOutput>,
+  rootDir: string,
+  opts: AnalysisOpts,
+  engineOpts: EngineOpts | undefined,
+  timing: AnalysisTiming,
+): Promise<boolean> {
+  if (!allNativeDataComplete(fileSymbols, opts)) return false;
+
+  debug('native full-analysis fast path: all data present, skipping WASM/visitor passes');
+  const doComplexity = opts.complexity !== false;
+  const doCfg = opts.cfg !== false;
+  if (doComplexity && doCfg) reconcileCfgCyclomatic(fileSymbols);
+  await delegateToBuildFunctions(db, fileSymbols, rootDir, opts, engineOpts, timing);
+  return true;
+}
+
 export async function runAnalyses(
   db: BetterSqlite3Database,
   fileSymbols: Map<string, ExtractorOutput>,
@@ -771,80 +911,24 @@ export async function runAnalyses(
 
   const extToLang = buildExtToLangMap();
 
-  // Fast path: when all files were parsed by the native engine with full analysis
-  // (parseFilesFull), all data is already present — skip WASM re-parse and JS
-  // visitor walks entirely, go straight to DB persistence.
-  if (allNativeDataComplete(fileSymbols, opts)) {
-    debug('native full-analysis fast path: all data present, skipping WASM/visitor passes');
-    if (doComplexity && doCfg) reconcileCfgCyclomatic(fileSymbols);
-    await delegateToBuildFunctions(db, fileSymbols, rootDir, opts, engineOpts, timing);
+  if (await runFastPathIfApplicable(db, fileSymbols, rootDir, opts, engineOpts, timing)) {
     return timing;
   }
 
   // Native analysis pass: try Rust standalone functions before WASM fallback.
   // This fills in complexity/CFG/dataflow for files that the native parse pipeline
   // missed, avoiding the need to parse with WASM + run JS visitors.
-  const native = loadNative();
-  if (native?.analyzeComplexity || native?.buildCfgAnalysis || native?.extractDataflowAnalysis) {
-    const t0native = performance.now();
-    runNativeAnalysis(native, fileSymbols, rootDir, opts, extToLang);
-    debug(`native standalone analysis: ${(performance.now() - t0native).toFixed(1)}ms`);
-  }
+  tryNativeStandaloneAnalysis(fileSymbols, rootDir, opts, extToLang);
 
   // WASM pre-parse for files that still need it (AST store, or native gaps)
   await ensureWasmTreesIfNeeded(fileSymbols, opts, rootDir);
 
-  // Unified pre-walk: run all applicable visitors in a single DFS per file.
   // Time each file's walk and distribute equally among active visitors
   // so that phase timers (astMs, complexityMs, etc.) reflect real work — not
   // just the DB-write tail in delegateToBuildFunctions.
-  const t0walk = performance.now();
-
-  for (const [relPath, symbols] of fileSymbols) {
-    if (!symbols._tree) continue;
-
-    const ext = path.extname(relPath).toLowerCase();
-    const langId = symbols._langId || extToLang.get(ext);
-    if (!langId) continue;
-
-    const { visitors, walkerOpts, astVisitor, complexityVisitor, cfgVisitor, dataflowVisitor } =
-      setupVisitors(db, relPath, symbols, langId, opts);
-
-    if (visitors.length === 0) continue;
-
-    const walkStart = performance.now();
-    const results = walkWithVisitors(symbols._tree.rootNode, visitors, langId, walkerOpts);
-    const walkMs = performance.now() - walkStart;
-
-    // Distribute walk time equally among active visitors
-    const activeCount = [astVisitor, complexityVisitor, cfgVisitor, dataflowVisitor].filter(
-      Boolean,
-    ).length;
-    if (activeCount > 0) {
-      const share = walkMs / activeCount;
-      if (astVisitor) timing.astMs += share;
-      if (complexityVisitor) timing.complexityMs += share;
-      if (cfgVisitor) timing.cfgMs += share;
-      if (dataflowVisitor) timing.dataflowMs += share;
-    }
-
-    const defs = symbols.definitions || [];
-
-    if (astVisitor) {
-      const astRows = (results['ast-store'] || []) as ASTNodeRow[];
-      if (astRows.length > 0) symbols.astNodes = astRows;
-    }
-
-    if (complexityVisitor) storeComplexityResults(results, defs, langId);
-    if (cfgVisitor) storeCfgResults(results, defs);
-    if (dataflowVisitor) symbols.dataflow = results.dataflow as DataflowResult;
-  }
-
-  // Total wall-clock time for the unified walk loop, including per-file
-  // setupVisitors overhead. Walk time is already distributed into per-phase
-  // timers above, so this field overlaps with (astMs + complexityMs + ...).
-  // It is kept as a diagnostic cross-check, not an additive bucket.
-  timing._unifiedWalkMs = performance.now() - t0walk;
+  // _unifiedWalkMs is kept as a diagnostic cross-check (overlaps with the
+  // per-phase timers above, not additive).
+  timing._unifiedWalkMs = runUnifiedWalkPass(db, fileSymbols, extToLang, opts, timing);
 
   // Reconcile: apply CFG-derived cyclomatic override for any definitions that have
   // both precomputed complexity and CFG data but whose cyclomatic was never overridden.
