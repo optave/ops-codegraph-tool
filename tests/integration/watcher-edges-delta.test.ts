@@ -95,3 +95,56 @@ describe('rebuildFile edges accounting (#1219)', () => {
     expect(result.edgesAdded).toBeGreaterThan(result.edgesRemoved);
   });
 });
+
+/**
+ * Reverse-dep cross-file scenario: when `a.js` is imported by `b.js`, the
+ * naive accounting double-counts the `b.js → a.js` edge (once via
+ * `edgesTouchingFile(a.js)` and once via `outgoingEdges(b.js)`). Without the
+ * deduplicating union query, comment-only edits to `a.js` would report a
+ * negative net delta. Issue #1219 P1 review.
+ */
+describe('rebuildFile edges accounting with reverse-deps (#1219)', () => {
+  let tmpDir: string;
+  let dbPath: string;
+
+  beforeAll(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-edges-delta-revdep-'));
+    fs.writeFileSync(
+      path.join(tmpDir, 'a.js'),
+      `export function foo() { return 1; }\nexport function bar() { return 2; }\n`,
+    );
+    fs.writeFileSync(
+      path.join(tmpDir, 'b.js'),
+      `import { foo, bar } from './a.js';\nexport function callBoth() { return foo() + bar(); }\n`,
+    );
+    await buildGraph(tmpDir, { incremental: false, skipRegistry: true });
+    dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
+  });
+
+  afterAll(() => {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it('does not double-count dep→file edges (net delta ≈ 0 for comment-only edit with reverse deps)', async () => {
+    const filePath = path.join(tmpDir, 'a.js');
+    fs.appendFileSync(filePath, '\n// comment-only edit, b.js still imports foo+bar\n');
+
+    const db = openDb(dbPath);
+    initSchema(db);
+    const stmts = makeStmts(db);
+    const result = await rebuildFile(db, tmpDir, filePath, stmts, { engine: 'auto' }, null);
+    db.close();
+
+    expect(result).not.toBeNull();
+    if (!result) return;
+    // edgesAdded counts re-inserted edges (including b.js→a.js after cascade
+    // re-parse). edgesRemoved must equal edgesAdded — a naive
+    // touching+outgoing sum would overcount b.js→a.js, producing a negative
+    // delta.
+    expect(result.edgesAdded).toBe(result.edgesRemoved);
+  });
+});

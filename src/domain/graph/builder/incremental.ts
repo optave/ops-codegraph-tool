@@ -141,38 +141,40 @@ function deleteOutgoingEdges(db: BetterSqlite3Database, relPath: string): void {
   deleteOutEdgesStmt.run(relPath);
 }
 
-let _countEdgesDb: BetterSqlite3Database | null = null;
-let _countEdgesTouchingStmt: { get: (...params: unknown[]) => { c: number } | undefined } | null =
-  null;
-let _countOutgoingEdgesStmt: { get: (...params: unknown[]) => { c: number } | undefined } | null =
-  null;
-
-function getCountEdgeStmts(db: BetterSqlite3Database) {
-  if (_countEdgesDb !== db) {
-    _countEdgesDb = db;
-    _countEdgesTouchingStmt = db.prepare(
-      `SELECT COUNT(*) AS c FROM edges
-       WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)
-          OR target_id IN (SELECT id FROM nodes WHERE file = ?)`,
-    );
-    _countOutgoingEdgesStmt = db.prepare(
-      'SELECT COUNT(*) AS c FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
-    );
-  }
-  return {
-    countEdgesTouchingStmt: _countEdgesTouchingStmt!,
-    countOutgoingEdgesStmt: _countOutgoingEdgesStmt!,
-  };
-}
-
-function countEdgesTouchingFile(db: BetterSqlite3Database, relPath: string): number {
-  const { countEdgesTouchingStmt } = getCountEdgeStmts(db);
-  return countEdgesTouchingStmt.get(relPath, relPath)?.c ?? 0;
-}
-
-function countOutgoingEdges(db: BetterSqlite3Database, relPath: string): number {
-  const { countOutgoingEdgesStmt } = getCountEdgeStmts(db);
-  return countOutgoingEdgesStmt.get(relPath)?.c ?? 0;
+/**
+ * Count the edges that will be removed when rebuilding `relPath`.
+ *
+ * Mirrors the exact deletion semantics of the rebuild path:
+ *   1. `purgeFileData(relPath)` deletes every edge with source OR target in
+ *      `relPath`'s nodes (see `purgeFileData` in `db/repository/build-stmts.ts`).
+ *   2. For each reverse dep, `deleteOutgoingEdges(dep)` then deletes the
+ *      remaining outgoing edges from `dep`. The `dep → relPath` edges were
+ *      already removed in step 1, so this only deletes `dep → other-file` edges.
+ *
+ * A naive `touching(relPath) + Σ outgoing(dep)` overcounts because every
+ * `dep → relPath` edge is in both sets. Using a single DISTINCT query over the
+ * union of source files (plus the target filter on `relPath`) deduplicates
+ * automatically and matches the actual delete behaviour.
+ */
+function countEdgesRemovedOnRebuild(
+  db: BetterSqlite3Database,
+  relPath: string,
+  reverseDeps: string[],
+): number {
+  // Build the union of source files whose outgoing edges will be deleted:
+  // `relPath` itself (via purgeFileData) plus each reverse dep (via
+  // deleteOutgoingEdges). The query also catches every edge ending in
+  // `relPath`, regardless of source — also deleted by purgeFileData.
+  const sourceFiles = [relPath, ...reverseDeps];
+  const placeholders = sourceFiles.map(() => '?').join(',');
+  // SQL uses literal placeholders — sourceFiles is bound as parameters, not
+  // interpolated, so this is safe from injection.
+  const sql = `SELECT COUNT(*) AS c FROM edges
+       WHERE source_id IN (SELECT id FROM nodes WHERE file IN (${placeholders}))
+          OR target_id IN (SELECT id FROM nodes WHERE file = ?)`;
+  const stmt = db.prepare(sql);
+  const row = stmt.get(...sourceFiles, relPath) as { c: number } | undefined;
+  return row?.c ?? 0;
 }
 
 async function parseReverseDep(
@@ -550,10 +552,7 @@ export async function rebuildFile(
   // report a net delta (added − removed) instead of treating every re-inserted
   // edge as a positive delta. Without this, comment-only edits log "+N edges"
   // even when the DB total does not move. Issue #1219.
-  let edgesRemoved = countEdgesTouchingFile(db, relPath);
-  for (const depRelPath of reverseDeps) {
-    edgesRemoved += countOutgoingEdges(db, depRelPath);
-  }
+  const edgesRemoved = countEdgesRemovedOnRebuild(db, relPath, reverseDeps);
 
   // Purge ancillary tables (incl. embeddings), edges, and nodes in one pass.
   // Embeddings must be purged before nodes — better-sqlite3 enforces foreign
