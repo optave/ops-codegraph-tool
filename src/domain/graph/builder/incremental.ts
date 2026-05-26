@@ -40,6 +40,7 @@ interface RebuildResult {
   nodesAdded: number;
   nodesRemoved: number;
   edgesAdded: number;
+  edgesRemoved: number;
   deleted?: boolean;
   event?: string;
   symbolDiff?: unknown;
@@ -138,6 +139,40 @@ function findReverseDeps(db: BetterSqlite3Database, relPath: string): string[] {
 function deleteOutgoingEdges(db: BetterSqlite3Database, relPath: string): void {
   const { deleteOutEdgesStmt } = getRevDepStmts(db);
   deleteOutEdgesStmt.run(relPath);
+}
+
+let _countEdgesDb: BetterSqlite3Database | null = null;
+let _countEdgesTouchingStmt: { get: (...params: unknown[]) => { c: number } | undefined } | null =
+  null;
+let _countOutgoingEdgesStmt: { get: (...params: unknown[]) => { c: number } | undefined } | null =
+  null;
+
+function getCountEdgeStmts(db: BetterSqlite3Database) {
+  if (_countEdgesDb !== db) {
+    _countEdgesDb = db;
+    _countEdgesTouchingStmt = db.prepare(
+      `SELECT COUNT(*) AS c FROM edges
+       WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)
+          OR target_id IN (SELECT id FROM nodes WHERE file = ?)`,
+    );
+    _countOutgoingEdgesStmt = db.prepare(
+      'SELECT COUNT(*) AS c FROM edges WHERE source_id IN (SELECT id FROM nodes WHERE file = ?)',
+    );
+  }
+  return {
+    countEdgesTouchingStmt: _countEdgesTouchingStmt!,
+    countOutgoingEdgesStmt: _countOutgoingEdgesStmt!,
+  };
+}
+
+function countEdgesTouchingFile(db: BetterSqlite3Database, relPath: string): number {
+  const { countEdgesTouchingStmt } = getCountEdgeStmts(db);
+  return countEdgesTouchingStmt.get(relPath, relPath)?.c ?? 0;
+}
+
+function countOutgoingEdges(db: BetterSqlite3Database, relPath: string): number {
+  const { countOutgoingEdgesStmt } = getCountEdgeStmts(db);
+  return countOutgoingEdgesStmt.get(relPath)?.c ?? 0;
 }
 
 async function parseReverseDep(
@@ -511,6 +546,15 @@ export async function rebuildFile(
   // Find reverse-deps BEFORE purging (edges still reference the old nodes)
   const reverseDeps = findReverseDeps(db, relPath);
 
+  // Count edges that will be removed during this rebuild so the watcher log can
+  // report a net delta (added − removed) instead of treating every re-inserted
+  // edge as a positive delta. Without this, comment-only edits log "+N edges"
+  // even when the DB total does not move. Issue #1219.
+  let edgesRemoved = countEdgesTouchingFile(db, relPath);
+  for (const depRelPath of reverseDeps) {
+    edgesRemoved += countOutgoingEdges(db, depRelPath);
+  }
+
   // Purge ancillary tables (incl. embeddings), edges, and nodes in one pass.
   // Embeddings must be purged before nodes — better-sqlite3 enforces foreign
   // keys by default, and `embeddings.node_id` references `nodes.id`. Issue #1176.
@@ -525,6 +569,7 @@ export async function rebuildFile(
       nodesAdded: 0,
       nodesRemoved: oldNodes,
       edgesAdded: 0,
+      edgesRemoved,
       deleted: true,
       event: 'deleted',
       symbolDiff,
@@ -551,7 +596,13 @@ export async function rebuildFile(
 
   const fileNodeRow = stmts.getNodeId.get(relPath, 'file', relPath, 0);
   if (!fileNodeRow)
-    return { file: relPath, nodesAdded: newNodes, nodesRemoved: oldNodes, edgesAdded: 0 };
+    return {
+      file: relPath,
+      nodesAdded: newNodes,
+      nodesRemoved: oldNodes,
+      edgesAdded: 0,
+      edgesRemoved,
+    };
 
   const aliases: PathAliases = { baseUrl: null, paths: {} };
 
@@ -601,6 +652,7 @@ export async function rebuildFile(
     nodesAdded: newNodes,
     nodesRemoved: oldNodes,
     edgesAdded,
+    edgesRemoved,
     deleted: false,
     event,
     symbolDiff,
