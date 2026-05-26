@@ -148,3 +148,95 @@ describe('rebuildFile edges accounting with reverse-deps (#1219)', () => {
     expect(result.edgesAdded).toBe(result.edgesRemoved);
   });
 });
+
+/**
+ * Parse-failure scenario: if a reverse-dep file fails to parse,
+ * `parseReverseDep` returns null and that dep's outgoing edges to OTHER files
+ * (not `relPath`) are NOT deleted (since `deleteOutgoingEdges(dep)` only runs
+ * for deps that parsed). `edgesRemoved` must exclude those undeleted edges.
+ * Issue #1220 Greptile P1 follow-up.
+ */
+describe('rebuildFile edges accounting with unparseable reverse-dep (#1219)', () => {
+  let tmpDir: string;
+  let dbPath: string;
+
+  beforeAll(async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-edges-delta-noparse-'));
+    // a.js: target file we'll rebuild.
+    fs.writeFileSync(
+      path.join(tmpDir, 'a.js'),
+      `export function foo() { return 1; }\nexport function bar() { return 2; }\n`,
+    );
+    // c.js: another file that b.js imports from. Its incoming edges from b.js
+    // are NOT removed by purgeFileData(a.js), and NOT removed by
+    // deleteOutgoingEdges(b.js) when b.js fails to parse.
+    fs.writeFileSync(path.join(tmpDir, 'c.js'), `export function baz() { return 3; }\n`);
+    // b.js: reverse-dep that imports from BOTH a.js and c.js. We'll corrupt
+    // it to force parseReverseDep to fail.
+    fs.writeFileSync(
+      path.join(tmpDir, 'b.js'),
+      `import { foo, bar } from './a.js';\nimport { baz } from './c.js';\nexport function callAll() { return foo() + bar() + baz(); }\n`,
+    );
+    await buildGraph(tmpDir, { incremental: false, skipRegistry: true });
+    dbPath = path.join(tmpDir, '.codegraph', 'graph.db');
+  });
+
+  afterAll(() => {
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+  });
+
+  it('does not count b.js→c.js edges in edgesRemoved when b.js is unreadable', async () => {
+    // Delete b.js so parseReverseDep returns null. b.js→a.js edges get
+    // removed by purgeFileData(a.js) (target side), but b.js→c.js edges
+    // stay in the DB (deleteOutgoingEdges(b.js) never runs).
+    fs.unlinkSync(path.join(tmpDir, 'b.js'));
+
+    const filePath = path.join(tmpDir, 'a.js');
+    fs.appendFileSync(filePath, '\n// comment-only edit, b.js is gone\n');
+
+    const db = openDb(dbPath);
+    initSchema(db);
+    const stmts = makeStmts(db);
+
+    // Snapshot total edges + b.js→c.js edges before rebuild.
+    const totalBefore = (db.prepare('SELECT COUNT(*) AS c FROM edges').get() as { c: number }).c;
+    const bToC = (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM edges e
+           JOIN nodes s ON e.source_id = s.id
+           JOIN nodes t ON e.target_id = t.id
+           WHERE s.file = ? AND t.file = ?`,
+        )
+        .get('b.js', 'c.js') as { c: number }
+    ).c;
+    expect(bToC).toBeGreaterThan(0); // sanity — b.js → c.js edges exist pre-rebuild
+
+    const result = await rebuildFile(db, tmpDir, filePath, stmts, { engine: 'auto' }, null);
+
+    const totalAfter = (db.prepare('SELECT COUNT(*) AS c FROM edges').get() as { c: number }).c;
+    const bToCAfter = (
+      db
+        .prepare(
+          `SELECT COUNT(*) AS c FROM edges e
+           JOIN nodes s ON e.source_id = s.id
+           JOIN nodes t ON e.target_id = t.id
+           WHERE s.file = ? AND t.file = ?`,
+        )
+        .get('b.js', 'c.js') as { c: number }
+    ).c;
+    db.close();
+
+    expect(bToCAfter).toBe(bToC); // b.js → c.js edges survived (no delete ran)
+    expect(result).not.toBeNull();
+    if (!result) return;
+    // The reported delta must equal the actual net DB delta. Pre-fix,
+    // edgesRemoved over-counted by `bToC` because b.js's outgoing edges
+    // were included even though deleteOutgoingEdges(b.js) never ran.
+    expect(result.edgesAdded - result.edgesRemoved).toBe(totalAfter - totalBefore);
+  });
+});
